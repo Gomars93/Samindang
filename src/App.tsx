@@ -10,12 +10,14 @@ import {
 } from './screens/QuestionScreen'
 import { StaffCheckScreen } from './screens/StaffCheckScreen'
 import { StartScreen } from './screens/StartScreen'
+import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
+  buildSajuInput,
   computeFlags,
   pruneStaleResponses,
   visibleQuestions,
@@ -184,6 +186,8 @@ export default function App() {
       questionnaire_version: '1.0',
       session_id: sessionId,
       responses: buildResponsePayload(responses),
+      // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
+      myungri_calculation: computeSaju(buildSajuInput(responses)),
       flags,
       routing: buildRoutingPayload(responses),
       metadata: {

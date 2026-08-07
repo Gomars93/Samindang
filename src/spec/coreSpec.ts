@@ -13,6 +13,7 @@
  * 추가·수정하지 않는다.
  */
 import type { Option, Question, Responses } from '../types'
+import type { SajuInput, TimeBranchKey } from '../saju/types'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1593,28 +1594,56 @@ const BIRTH_QUESTIONS: Question[] = [
     ],
   },
   {
-    id: 'BIRTH_03',
-    variable: 'birth_time_known',
+    id: 'BIRTH_02A',
+    variable: 'lunar_leap_month',
     input: 'single_choice',
-    question: '태어난 시간을 알고 계신가요?',
+    question: '음력 생일이 윤달이었나요?',
+    helper: '윤달이 아니면 "평달이에요"를 선택해주세요.',
     required: true,
     step: '출생정보',
+    showIf: (r) => r['BIRTH_02'] === 'lunar',
     options: [
-      { value: 'exact', label: '정확히 알아요' },
-      { value: 'approximate', label: '대략 알아요' },
-      { value: 'unknown', label: '모르겠어요' },
+      { value: 'no', label: '평달이에요' },
+      { value: 'yes', label: '윤달이에요' },
+      { value: 'unknown', label: '잘 모르겠어요' },
     ],
   },
   {
-    id: 'BIRTH_04',
-    variable: 'birth_time_detail',
-    input: 'short_text',
-    question: '태어난 시간을 적어주세요.',
+    id: 'BIRTH_03',
+    variable: 'birth_time_branch',
+    input: 'single_choice',
+    question: '태어난 시간대를 선택해주세요.',
+    helper: '정확한 시간을 모르셔도 괜찮습니다.',
     required: true,
     step: '출생정보',
-    maxLength: 20,
-    placeholder: '예: 오전 7시경',
-    showIf: (r) => r['BIRTH_03'] === 'exact' || r['BIRTH_03'] === 'approximate',
+    options: [
+      { value: 'ja', label: '밤 11시 ~ 새벽 1시 (자시)' },
+      { value: 'chuk', label: '새벽 1시 ~ 새벽 3시 (축시)' },
+      { value: 'in', label: '새벽 3시 ~ 새벽 5시 (인시)' },
+      { value: 'myo', label: '새벽 5시 ~ 아침 7시 (묘시)' },
+      { value: 'jin', label: '아침 7시 ~ 오전 9시 (진시)' },
+      { value: 'sa', label: '오전 9시 ~ 오전 11시 (사시)' },
+      { value: 'o', label: '오전 11시 ~ 오후 1시 (오시)' },
+      { value: 'mi', label: '오후 1시 ~ 오후 3시 (미시)' },
+      { value: 'sin', label: '오후 3시 ~ 오후 5시 (신시)' },
+      { value: 'yu', label: '오후 5시 ~ 저녁 7시 (유시)' },
+      { value: 'sul', label: '저녁 7시 ~ 밤 9시 (술시)' },
+      { value: 'hae', label: '밤 9시 ~ 밤 11시 (해시)' },
+      { value: 'unknown', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'BIRTH_03A',
+    variable: 'birth_time_confidence',
+    input: 'single_choice',
+    question: '그 시간대가 얼마나 정확한가요?',
+    required: true,
+    step: '출생정보',
+    showIf: (r) => r['BIRTH_03'] !== 'unknown' && r['BIRTH_03'] !== null,
+    options: [
+      { value: 'exact', label: '정확히 알아요' },
+      { value: 'approximate', label: '대략 그 정도예요' },
+    ],
   },
 ]
 
@@ -1848,6 +1877,28 @@ export const pruneStaleResponses = (
   return { responses: cur, removed }
 }
 
+/**
+ * 문진 응답 -> Saju 계산 엔진 입력 어댑터.
+ * 엔진(src/saju)은 타입만 참조하고, 런타임 계산 호출은 App.tsx에서 한다.
+ */
+export const buildSajuInput = (r: Responses): SajuInput => {
+  const calendarType = r['BIRTH_02'] === 'solar' || r['BIRTH_02'] === 'lunar' ? r['BIRTH_02'] : 'unknown'
+  const timeBranch =
+    typeof r['BIRTH_03'] === 'string' ? (r['BIRTH_03'] as TimeBranchKey | 'unknown') : null
+
+  return {
+    birthDateRaw: typeof r['BIRTH_01'] === 'string' ? r['BIRTH_01'] : '',
+    calendarType,
+    lunarLeapMonth:
+      calendarType === 'lunar'
+        ? ((r['BIRTH_02A'] as 'yes' | 'no' | 'unknown' | null) ?? 'unknown')
+        : null,
+    timeBranch,
+    timeConfidence: (r['BIRTH_03A'] as 'exact' | 'approximate' | null) ?? null,
+    sex: (r['ID_03'] as 'male' | 'female' | null) ?? null,
+  }
+}
+
 /* ---------- Dev JSON: Master Spec 23장 그룹 구조 ---------- */
 
 export const buildResponsePayload = (r: Responses) => ({
@@ -1989,8 +2040,9 @@ export const buildResponsePayload = (r: Responses) => ({
   birth_info: {
     birth_date: r['BIRTH_01'],
     birth_calendar_type: r['BIRTH_02'],
-    birth_time_known: r['BIRTH_03'],
-    birth_time_detail: r['BIRTH_04'],
+    lunar_leap_month: r['BIRTH_02A'],
+    birth_time_branch: r['BIRTH_03'],
+    birth_time_confidence: r['BIRTH_03A'],
   },
   free_text: {
     free_text_yn: r['FREE_01'],

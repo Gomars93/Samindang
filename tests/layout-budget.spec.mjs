@@ -170,7 +170,10 @@ function estimateScreenHeight(q) {
 // long multi-select option lists (11 options each) that genuinely exceed
 // the 936px budget at the reference viewport and rely on .shell__main's
 // overflow-y: auto to scroll internally. Anything NOT in this list must fit.
-const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'HISTORY_01'])
+// BIRTH_03 (12시진 + 잘 모르겠어요, 13 options) also genuinely exceeds the
+// budget and is mitigated the same way -- the screen scrolls internally via
+// .shell__main's overflow-y: auto, so no content is unreachable.
+const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'HISTORY_01', 'BIRTH_03'])
 
 const estimates = ALL_QUESTIONS.map((q) => ({
   id: q.id,

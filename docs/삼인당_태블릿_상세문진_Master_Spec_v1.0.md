@@ -140,7 +140,7 @@ SURGERY_01 → (yes면 SURGERY_02)
   ↓
 TEST_01 (검사자료)
   ↓
-BIRTH_01 / BIRTH_02 / BIRTH_03 → (알고 있으면 BIRTH_04)
+BIRTH_01 / BIRTH_02 → (음력이면 BIRTH_02A) / BIRTH_03 → (시진을 선택했으면 BIRTH_03A)
   ↓
 FREE_01 → (yes면 FREE_02)
   ↓
@@ -1074,16 +1074,49 @@ r['WOMEN_SAFETY_01'], derived: deriveReproductiveStatus(r) }`.
 |---|---|---|---|---|
 | BIRTH_01 | birth_date | numeric(8) | 필수 | always |
 | BIRTH_02 | birth_calendar_type | single_choice | 필수 | always |
-| BIRTH_03 | birth_time_known | single_choice | 필수 | always |
-| BIRTH_04 | birth_time_detail | short_text | 필수 | `birth_time_known in [exact, approximate]` |
+| BIRTH_02A | lunar_leap_month | single_choice | 필수 | `birth_calendar_type === 'lunar'` |
+| BIRTH_03 | birth_time_branch | single_choice | 필수 | always |
+| BIRTH_03A | birth_time_confidence | single_choice | 필수 | `birth_time_branch`가 `unknown`도 미응답도 아닐 때 |
 
 - BIRTH_01: "생년월일을 입력해주세요." (숫자만, 예: 19900101)
 - BIRTH_02: "양력·음력을 알고 계신가요?" — solar(양력) / lunar(음력) / unknown(잘 모르겠어요)
-- BIRTH_03: "태어난 시간을 알고 계신가요?" — exact(정확히 알아요) / approximate(대략 알아요) / unknown(모르겠어요)
-- BIRTH_04: "태어난 시간을 적어주세요." (exact/approximate일 때만)
+- BIRTH_02A: "음력 생일이 윤달이었나요?" — no(평달이에요) / yes(윤달이에요) / unknown(잘 모르겠어요).
+  음력을 선택했을 때만 표시된다. 안내: "윤달이 아니면 '평달이에요'를 선택해주세요."
+- BIRTH_03: "태어난 시간대를 선택해주세요." — 환자에게 익숙한 시계 시간을
+  먼저 보여주고 괄호 안에 12시진 이름을 보조로 붙인 13개 선택지(12개 시진 +
+  잘 모르겠어요):
 
-이 정보는 Dev JSON에서 `birth_info` 그룹으로 증상·검사·병력 정보와 분리 저장한다.
-임상 진단값처럼 자동 해석하지 않는다.
+  | value | label |
+  |---|---|
+  | ja | 밤 11시 ~ 새벽 1시 (자시) |
+  | chuk | 새벽 1시 ~ 새벽 3시 (축시) |
+  | in | 새벽 3시 ~ 새벽 5시 (인시) |
+  | myo | 새벽 5시 ~ 아침 7시 (묘시) |
+  | jin | 아침 7시 ~ 오전 9시 (진시) |
+  | sa | 오전 9시 ~ 오전 11시 (사시) |
+  | o | 오전 11시 ~ 오후 1시 (오시) |
+  | mi | 오후 1시 ~ 오후 3시 (미시) |
+  | sin | 오후 3시 ~ 오후 5시 (신시) |
+  | yu | 오후 5시 ~ 저녁 7시 (유시) |
+  | sul | 저녁 7시 ~ 밤 9시 (술시) |
+  | hae | 밤 9시 ~ 밤 11시 (해시) |
+  | unknown | 잘 모르겠어요 |
+
+- BIRTH_03A: "그 시간대가 얼마나 정확한가요?" — exact(정확히 알아요) /
+  approximate(대략 그 정도예요). BIRTH_03에서 실제 시진을 선택했을 때만
+  표시된다(`unknown` 선택 시에는 묻지 않는다).
+
+**BIRTH_04(옛 `birth_time_detail`, 자유 텍스트)는 완전히 삭제했다.** 이유는
+두 가지다: (1) 자유입력 최소화 원칙(4.20 참고) — "오전 7시경" 같은 자유 텍스트는
+기계가 정확히 해석할 수 없어 결정적(deterministic) 계산에 쓸 수 없었다.
+(2) 12시진 선택지(BIRTH_03)만으로 이미 사주 계산 엔진이 필요로 하는 시간대
+정보를 결정적으로 얻을 수 있어, 같은 정보를 두 번 묻지 않는다. 정확도 신호는
+BIRTH_03A(정확히/대략)로 자유 텍스트 없이 보존한다.
+
+이 정보는 Dev JSON에서 `birth_info` 그룹으로 증상·검사·병력 정보와 분리
+저장한다. `birth_info`는 응답을 그대로 옮긴 것이고, 이 응답을 바탕으로
+계산한 사주 결과는 별도 최상위 필드 `myungri_calculation`이다(9장 참고).
+문진 응답 자체는 임상 진단값처럼 자동 해석하지 않는다.
 
 ### 4.20 마지막 자유입력
 
@@ -1227,7 +1260,71 @@ Router는 `primary_concern` 하나만을 유일한 정보원으로 쓰지 않도
 않는다(예: 이론상 primary와 secondary target이 같은 이름을 가리키는 경우
 방어). Dev JSON에서는 `responses`와 형제 필드인 최상위 `routing`으로 노출된다(`src/App.tsx`).
 
-## 9. 다음 Sprint 연결점
+## 9. 명리(사주) 계산 결과 (`myungri_calculation`)
+
+> **결정 대기 중 — 반드시 읽을 것**: 야자시/조자시(자시를 자정 기준으로
+> 나눌지) 정책과 진태양시(true solar time) 적용 여부는 **아직 결정되지
+> 않았다**. 이 소프트웨어는 그 둘 중 하나를 임의로 골라 계산하지 않고,
+> 대신 해당 상황을 명시적으로 플래그로 표시해 원장 박경남의 승인을
+> 기다린다. 정책 후보와 각 후보를 선택했을 때의 영향은
+> `docs/MYUNGRI_CALCULATION_POLICY_PENDING.md`에 정리되어 있다 — 이 정책을
+> 코드나 문서에서 바꾸려면 그 문서를 먼저 갱신하고 원장 승인을 받아야 한다.
+
+### 9.1 위치와 분리 원칙
+
+`myungri_calculation`은 Dev JSON(`src/App.tsx`의 done-phase payload)에서
+`responses`/`flags`/`routing`과 형제인 **최상위 필드**다. `responses` 안에
+넣지 않는다 — 계산된 사실(derived, 결정적 알고리즘의 산출물)과 환자가 직접
+답한 문진(patient-reported responses)을 데이터상 분리하기 위해서다. 값은
+`computeSaju(buildSajuInput(responses))`로 만든다:
+
+- `buildSajuInput`(`src/spec/coreSpec.ts`)은 BIRTH_01/02/02A/03/03A와
+  ID_03(성별) 응답을 엔진 입력 타입(`SajuInput`, `src/saju/types.ts`)으로
+  옮기는 순수 어댑터다. coreSpec은 이 타입만 참조하고, 계산 엔진의 런타임
+  코드(`src/saju/index.ts`)는 import하지 않는다 — 실제 계산 호출은
+  App.tsx에서만 일어난다.
+- `computeSaju`(`src/saju/index.ts`, 이번 Sprint에서 새로 만든
+  결정적(deterministic) 계산 엔진, **수정 금지 대상**)가 실제 사주(만세력)
+  계산을 수행한다.
+
+### 9.2 `SajuResult` 형태
+
+| 필드 | 설명 |
+|---|---|
+| `status` | `'resolved' \| 'partial' \| 'unresolved'` |
+| `unresolved_reason` | 계산 불가 사유(한글 설명). `resolved`면 `null` |
+| `input` | 엔진에 넘긴 `SajuInput`을 그대로 echo |
+| `normalized` | 변환된 양력 날짜 + 실제 사용한 시진/시/분. 계산 불가 시 `null` |
+| `pillars` | `{ year, month, day, hour }` 사주 네 기둥. 시간 미상이면 `hour: null` |
+| `alternatives` | 자시(23:00~00:59) 구간일 때만 채워지는 day-boundary 대안 3종(`midnight`/`jasi`/`splitJasi`) |
+| `flags` | `in_jasi_window` / `near_solar_term` / `hour_unknown` / `lunar_leap_unresolved` |
+| `policy` | 적용한 정책 이름 + `algorithm_version` + `pending_approval`(원장 승인 대기 항목 목록) |
+| `engine` | 사용 라이브러리(`manseryeok`)·버전·계산 시각 |
+
+### 9.3 상태 결정 규칙
+
+| 조건 | 결과 |
+|---|---|
+| `birth_calendar_type === 'unknown'` | `unresolved` — 양력/음력을 모르면 계산 불가 |
+| 음력인데 `lunar_leap_month === 'unknown'` | `unresolved` — 윤달 여부 없이는 양력 변환 불가 |
+| `birth_time_branch`가 `unknown` 또는 미응답 | `partial` — 다른 값은 모두 계산하되 `pillars.hour`는 `null` |
+| `birth_time_branch === 'ja'`(자시) | `resolved`(또는 시간 미상이면 `partial`) + `alternatives`에 세 가지 day-boundary 대안을 계산해 채우고 `flags.in_jasi_window = true`, `policy.pending_approval`에 `day_boundary` 추가 |
+| 그 외 정상 입력 | `resolved` |
+
+진태양시(`true_solar_time`)는 **기본적으로 절대 적용하지 않는다**
+(`policy.true_solar_time`은 항상 미적용을 의미하는 값). 생년월일이 절기
+경계 근처(`near_solar_term`)일 때는 `flags.near_solar_term = true`와 함께
+`policy.pending_approval`에 `true_solar_time`이 추가되어, 그 계산이 절기
+경계의 영향을 받을 수 있음을 알릴 뿐 자동으로 보정하지 않는다.
+
+### 9.4 소프트웨어가 하지 않는 것
+
+`computeSaju`는 네 기둥(사주팔자)과 그 계산에 필요한 메타데이터만
+산출한다. 십신·대운·용신 같은 명리 해석, 그리고 그 어떤 임상적 해석도
+소프트웨어가 만들어내지 않는다 — 사주 원국을 임상적으로 어떻게 읽을지는
+전적으로 원장의 몫이다.
+
+## 10. 다음 Sprint 연결점
 
 이번 Sprint로 11개 상세 Module(Sleep/GI/Bowel/Urinary/Pain/Fatigue/Stress/
 Women/Pregnancy/Postpartum/Weight) 문항 구현과, 동반문제 짧은 화면 9개
@@ -1239,15 +1336,18 @@ Women/Pregnancy/Postpartum/Weight) 문항 구현과, 동반문제 짧은 화면 
 - Stress Module에 자살사고/자해 선별 질문 추가 여부 검토(이번 Sprint에서는
   범위 밖으로 보고 추가하지 않음)
 - Weight Module에 비의도적 체중 감소 여부 질문 추가 여부 검토
+- 야자시/조자시·진태양시 정책 확정(9장, `docs/MYUNGRI_CALCULATION_POLICY_PENDING.md` 참고) — 원장 박경남 승인 필요
 
 **테스트**: `tests/integration.spec.mjs`에 자동 로직 테스트가 추가됐다.
 `npm run test:integration`으로 실행하며(esbuild로 `coreSpec.ts`를 번들해
 Node에서 바로 실행), 동반문제 짧은 화면, primary/secondary 중복 방지,
 reproductive-status 파생, routing payload, payload null 무결성, 11개
-primary Module 전체 회귀까지 201개 assertion으로 검증한다.
+primary Module 전체 회귀까지 검증한다. 사주 엔진 자체의 계산 정확성은
+`tests/saju.spec.mjs`(`npm run test:saju`)가 별도로 검증한다.
 
-## 10. 이번 Sprint 범위 밖 (금지)
+## 11. 이번 Sprint 범위 밖 (금지)
 
 DB, Supabase, Firebase, server, AI, LLM, 굿닥, 동의보감 연동, localStorage 사용
 전부 이번 Sprint에서 다루지 않는다. `src/spec/coreSpec.ts` / `src/App.tsx` 등
-어디에도 해당 연동 코드가 없다.
+어디에도 해당 연동 코드가 없다. `src/saju`의 결정적 계산 엔진 역시 임상
+해석이나 AI/LLM 추론을 전혀 포함하지 않는다(9.4 참고).

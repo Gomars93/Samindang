@@ -8,6 +8,7 @@ import {
   pruneStaleResponses,
   buildResponsePayload,
   buildRoutingPayload,
+  buildSajuInput,
   modulesActivated,
   deriveReproductiveStatus,
   SECONDARY_SHORT_SCREENS,
@@ -1008,14 +1009,20 @@ const H1_MODULES = [
   assert('H2: SURGERY_02 null after SURGERY_01 changed away from yes', r['SURGERY_02'] === null)
 }
 {
-  // BIRTH_03 exact/approximate -> BIRTH_04
-  for (const v of ['exact', 'approximate']) {
-    let r = emptyResponses()
-    r = set(r, { ID_03: 'female', BIRTH_03: v })
-    assert(`H2: BIRTH_04 visible when BIRTH_03=${v}`, visibleIds(r).has('BIRTH_04'))
-    r = set(r, { BIRTH_03: 'unknown' })
-    assert(`H2: BIRTH_04 null after BIRTH_03 changed away from ${v}`, r['BIRTH_04'] === null)
-  }
+  // BIRTH_02 lunar -> BIRTH_02A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', BIRTH_02: 'lunar' })
+  assert('H2: BIRTH_02A visible when BIRTH_02=lunar', visibleIds(r).has('BIRTH_02A'))
+  r = set(r, { BIRTH_02: 'solar' })
+  assert('H2: BIRTH_02A null after BIRTH_02 changed away from lunar', r['BIRTH_02A'] === null)
+}
+{
+  // BIRTH_03 an actual branch -> BIRTH_03A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', BIRTH_03: 'ja' })
+  assert('H2: BIRTH_03A visible when BIRTH_03=ja', visibleIds(r).has('BIRTH_03A'))
+  r = set(r, { BIRTH_03: 'unknown' })
+  assert('H2: BIRTH_03A null after BIRTH_03 changed to unknown', r['BIRTH_03A'] === null)
 }
 {
   // FREE_01 yes -> FREE_02
@@ -1165,6 +1172,169 @@ const H1_MODULES = [
     `I5: no question/option text contains developer terminology (violations: ${violations.join(' | ') || 'none'})`,
     violations.length === 0,
   )
+}
+
+/* =========================================================================
+ * J. Birth data / Saju input mapping
+ * ========================================================================= */
+
+// J1: BIRTH_02A visibility follows BIRTH_02
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', BIRTH_02: 'lunar' })
+  assert('J1: BIRTH_02A visible when BIRTH_02=lunar', visibleIds(r).has('BIRTH_02A'))
+  r = set(r, { BIRTH_02A: 'no' })
+  r = set(r, { BIRTH_02: 'solar' })
+  assert('J1: BIRTH_02A not visible when BIRTH_02=solar', !visibleIds(r).has('BIRTH_02A'))
+  assert('J1: BIRTH_02A nulled after switching BIRTH_02 back to solar', r['BIRTH_02A'] === null)
+}
+
+// J2: BIRTH_03A visibility follows BIRTH_03
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', BIRTH_03: 'o' })
+  assert('J2: BIRTH_03A visible when BIRTH_03=o', visibleIds(r).has('BIRTH_03A'))
+  r = set(r, { BIRTH_03A: 'exact' })
+  r = set(r, { BIRTH_03: 'unknown' })
+  assert('J2: BIRTH_03A not visible when BIRTH_03=unknown', !visibleIds(r).has('BIRTH_03A'))
+  assert('J2: BIRTH_03A nulled after BIRTH_03 set to unknown', r['BIRTH_03A'] === null)
+}
+
+// J3: BIRTH_03 has exactly 13 options -- the 12 branches + unknown
+{
+  const birth03 = ALL_QUESTIONS.find((q) => q.id === 'BIRTH_03')
+  assert('J3: BIRTH_03 has exactly 13 options', birth03.options.length === 13)
+  const values = birth03.options.map((o) => o.value).sort()
+  const expected = ['chuk', 'ja', 'in', 'jin', 'mi', 'myo', 'o', 'sa', 'sin', 'sul', 'unknown', 'yu', 'hae'].sort()
+  assert(
+    `J3: BIRTH_03 option values are exactly the 12 branches + unknown (got: ${values.join(',')})`,
+    JSON.stringify(values) === JSON.stringify(expected),
+  )
+}
+
+// J4: no question anywhere still uses the removed free-text birth-time variables
+{
+  const leftoverVars = ALL_QUESTIONS.filter(
+    (q) => q.variable === 'birth_time_detail' || q.variable === 'birth_time_known',
+  )
+  assert(
+    `J4: no question uses variable birth_time_detail or birth_time_known (found: ${leftoverVars.map((q) => q.id).join(', ') || 'none'})`,
+    leftoverVars.length === 0,
+  )
+}
+
+// J5: buildSajuInput mapping -- solar case
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    BIRTH_01: '19900101',
+    BIRTH_02: 'solar',
+    BIRTH_03: 'o',
+    BIRTH_03A: 'exact',
+  })
+  const input = buildSajuInput(r)
+  assert(
+    'J5: solar case maps field by field',
+    input.birthDateRaw === '19900101' &&
+      input.calendarType === 'solar' &&
+      input.lunarLeapMonth === null &&
+      input.timeBranch === 'o' &&
+      input.timeConfidence === 'exact' &&
+      input.sex === 'female',
+  )
+}
+
+// J6: buildSajuInput mapping -- lunar + leap case
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'male',
+    BIRTH_01: '19850615',
+    BIRTH_02: 'lunar',
+    BIRTH_02A: 'yes',
+    BIRTH_03: 'chuk',
+    BIRTH_03A: 'approximate',
+  })
+  const input = buildSajuInput(r)
+  assert(
+    'J6: lunar+leap case maps field by field',
+    input.birthDateRaw === '19850615' &&
+      input.calendarType === 'lunar' &&
+      input.lunarLeapMonth === 'yes' &&
+      input.timeBranch === 'chuk' &&
+      input.timeConfidence === 'approximate' &&
+      input.sex === 'male',
+  )
+}
+
+// J7: buildSajuInput mapping -- lunar + unknown-leap case
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    BIRTH_01: '20000229',
+    BIRTH_02: 'lunar',
+    BIRTH_02A: 'unknown',
+    BIRTH_03: 'unknown',
+  })
+  const input = buildSajuInput(r)
+  assert(
+    'J7: lunar+unknown-leap case maps field by field',
+    input.birthDateRaw === '20000229' &&
+      input.calendarType === 'lunar' &&
+      input.lunarLeapMonth === 'unknown' &&
+      input.timeBranch === 'unknown' &&
+      input.timeConfidence === null &&
+      input.sex === 'female',
+  )
+}
+
+// J8: buildSajuInput mapping -- time-unknown case (never answered)
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'male',
+    BIRTH_01: '19991231',
+    BIRTH_02: 'solar',
+  })
+  const input = buildSajuInput(r)
+  assert(
+    'J8: time-unanswered case maps timeBranch/timeConfidence to null',
+    input.birthDateRaw === '19991231' &&
+      input.calendarType === 'solar' &&
+      input.lunarLeapMonth === null &&
+      input.timeBranch === null &&
+      input.timeConfidence === null &&
+      input.sex === 'male',
+  )
+}
+
+// J9: buildResponsePayload().birth_info has the 5 new fields, not the old ones
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    BIRTH_01: '19900101',
+    BIRTH_02: 'lunar',
+    BIRTH_02A: 'no',
+    BIRTH_03: 'sa',
+    BIRTH_03A: 'exact',
+  })
+  const payload = buildResponsePayload(r)
+  assert(
+    'J9: birth_info has exactly the 5 new fields',
+    JSON.stringify(Object.keys(payload.birth_info).sort()) ===
+      JSON.stringify(
+        ['birth_date', 'birth_calendar_type', 'lunar_leap_month', 'birth_time_branch', 'birth_time_confidence'].sort(),
+      ),
+  )
+  assert('J9: birth_info.birth_date correct', payload.birth_info.birth_date === '19900101')
+  assert('J9: birth_info.birth_calendar_type correct', payload.birth_info.birth_calendar_type === 'lunar')
+  assert('J9: birth_info.lunar_leap_month correct', payload.birth_info.lunar_leap_month === 'no')
+  assert('J9: birth_info.birth_time_branch correct', payload.birth_info.birth_time_branch === 'sa')
+  assert('J9: birth_info.birth_time_confidence correct', payload.birth_info.birth_time_confidence === 'exact')
+  assert('J9: birth_info does not have birth_time_detail', !('birth_time_detail' in payload.birth_info))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

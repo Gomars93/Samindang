@@ -18,3 +18,9 @@ fix-samindang-queue-loop.ps1
 
 # esbuild bundle used by tests/integration.spec.mjs (regenerated, not source)
 tests/.spec-bundle.mjs
+
+# esbuild bundle used by tests/saju.spec.mjs (regenerated, not source)
+tests/.saju-bundle.mjs
+
+# TypeScript incremental build artifacts
+*.tsbuildinfo

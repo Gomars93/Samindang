@@ -9,9 +9,11 @@
     "preview": "vite preview --host",
     "test:integration": "esbuild src/spec/coreSpec.ts --bundle --format=esm --outfile=tests/.spec-bundle.mjs --platform=neutral && node tests/integration.spec.mjs",
     "test:layout": "esbuild src/spec/coreSpec.ts --bundle --format=esm --outfile=tests/.spec-bundle.mjs --platform=neutral && node tests/layout-budget.spec.mjs",
-    "test:all": "npm run test:integration && npm run test:layout"
+    "test:saju": "esbuild src/saju/index.ts --bundle --format=esm --outfile=tests/.saju-bundle.mjs --platform=neutral && node tests/saju.spec.mjs",
+    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju"
   },
   "dependencies": {
+    "manseryeok": "^2.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -1,0 +1,215 @@
+/*
+ * 원장/직원용 요약 화면 전용 스타일. 데스크톱(마우스) 기준이며 환자용
+ * 태블릿 스타일(src/styles.css)의 72px 터치 타겟 등은 재사용하지 않는다.
+ * 전부 .doctor 스코프 안에서만 적용되므로 환자 화면에는 영향이 없다.
+ */
+
+.doctor {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 40px 96px;
+  font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.doctor__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.doctor__title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.doctor__pickerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.doctor__pickerRow select {
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.doctor__banner {
+  padding: 16px 20px;
+  border-radius: 10px;
+  margin-bottom: 24px;
+}
+
+.doctor__banner--danger {
+  background: #f6ece9;
+  border: 2px solid var(--danger);
+  color: var(--danger);
+}
+
+.doctor__banner strong {
+  display: block;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.doctor__banner p {
+  margin: 0 0 8px;
+}
+
+.doctor__banner ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.doctor__section {
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+}
+
+.doctor__section:first-of-type {
+  border-top: none;
+}
+
+.doctor__section h2 {
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--primary);
+  margin: 0 0 12px;
+}
+
+.doctor__derivedNote {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -4px 0 12px;
+}
+
+.doctor__empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.doctor__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px 24px;
+}
+
+.doctorField {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.doctorField__label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.doctorField__value {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.doctorField__value--muted {
+  font-style: italic;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.doctor__derivedBox {
+  margin-top: 8px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+}
+
+.doctor__derivedLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  margin: 0 0 6px;
+}
+
+.doctor__derivedBox ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.doctor__warning {
+  font-size: 13px;
+  color: var(--danger);
+  background: #f6ece9;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0 0;
+}
+
+.doctor__pillars {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.doctor__pillar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.doctor__pillar span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.doctor__pillar strong {
+  font-size: 18px;
+}
+
+.doctor__raw {
+  margin-top: 24px;
+}
+
+.doctor__raw summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.doctor__raw pre {
+  margin-top: 12px;
+  padding: 16px;
+  background: #1c211e;
+  color: #e6ece9;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

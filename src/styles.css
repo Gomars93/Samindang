@@ -34,6 +34,18 @@ body,
   overflow: hidden;
 }
 
+/*
+ * 원장용 데스크톱 화면(#doctor)은 세로 스크롤이 필요하다. 환자용 태블릿
+ * 규칙(위 html, body, #root)은 절대 건드리지 않고, DoctorView가 마운트될
+ * 때만 <html>에 붙는 클래스로 범위를 좁혀 덮어쓴다.
+ */
+html.doctor-mode,
+html.doctor-mode body,
+html.doctor-mode #root {
+  height: auto;
+  overflow: auto;
+}
+
 body {
   background: var(--bg);
   color: var(--text);

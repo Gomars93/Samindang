@@ -1351,3 +1351,84 @@ DB, Supabase, Firebase, server, AI, LLM, 굿닥, 동의보감 연동, localStora
 전부 이번 Sprint에서 다루지 않는다. `src/spec/coreSpec.ts` / `src/App.tsx` 등
 어디에도 해당 연동 코드가 없다. `src/saju`의 결정적 계산 엔진 역시 임상
 해석이나 AI/LLM 추론을 전혀 포함하지 않는다(9.4 참고).
+
+## 12. 원장용 진료 전 요약 화면 (Doctor View)
+
+`src/doctor/DoctorView.tsx`가 `#doctor` URL 해시로 접근하는 데스크톱 전용
+화면을 구현한다(`src/App.tsx`가 `window.location.hash`를 읽어 분기하며,
+`hashchange`를 구독해 라우팅 라이브러리 없이 실시간 전환한다). 환자용
+태블릿 흐름(`src/App.tsx`의 나머지 phase, `src/styles.css`의 태블릿 규칙)은
+전혀 건드리지 않는다 — `html.doctor-mode` 클래스가 붙어 있을 때만 `overflow:
+hidden`을 `overflow: auto`로 덮어써서 데스크톱 스크롤을 허용한다(9장의
+`html, body, #root { overflow: hidden }` 규칙 자체는 그대로 둔다).
+
+### 12.1 데이터 계약
+
+DoctorView는 절대 새 payload 형태를 만들지 않는다. 입력은 App.tsx의
+`phase === 'done'`이 만드는 것과 동일한 shape이다:
+
+```
+{ questionnaire_version, session_id,
+  responses: buildResponsePayload(...),
+  flags: computeFlags(...),
+  routing: buildRoutingPayload(...),
+  myungri_calculation: computeSaju(buildSajuInput(...)),
+  metadata }
+```
+
+`src/doctor/fixtures.ts`의 미리보기용 예시 데이터 7종도 이 payload를 손으로
+쓰지 않고, 손으로 만든 `Responses` 위에 실제 builder를 그대로 실행해
+만든다 — 그래야 스펙이 바뀌면 fixture도 함께 깨지거나 함께 맞아떨어진다.
+라벨 해석은 `src/doctor/labels.ts`의 `optionLabel`/`answerLabel`이 저장된
+enum 값을 `ALL_QUESTIONS`의 실제 옵션 라벨로 되돌리는 방식으로만 하며,
+한글 라벨을 화면 쪽에 따로 하드코딩하지 않는다.
+
+### 12.2 표시 우선순위 (11블록)
+
+화면 상단부터 아래 순서로 배치하며, 진단·치료 추천 문구는 어디에도 넣지
+않는다:
+
+1. **안전 확인** — `flags.requires_staff_check`가 true일 때만 나타나는
+   `--danger` 색상 배너. 어떤 안전 문진 응답 때문인지(SAFETY_01 red flag,
+   GI_03, BOWEL_03) 나열하되 질병명을 절대 쓰지 않는다.
+2. **환자 기본** — 성함/휴대폰 끝 4자리/성별/출생정보
+3. **주호소** — 주호소 한글 라벨 + 지속기간 + 일상생활 영향 + 기타(자유입력)
+4. **동반문제** — 동반문제 카테고리 + 각 카테고리 짧은 화면 응답
+5. **상세 증상** — 활성화된 주호소 상세 Module 문항 전체 (label: value)
+6. **전신·한약 참고** — 체질/한약 처방 참고용 공통 문항
+7. **약물·병력·알레르기·수술**
+8. **여성 안전정보** — 환자가 답한 원본(WOMEN_SAFETY_01)과
+   `derived`(계산된 임신/산후/수유 여부) 및 그 `derived.source`를 함께 표시
+9. **검사자료 / 원장에게 하고 싶은 말**
+10. **계산된 사실 (명리)** — 사주 네 기둥 + status + (pending_approval이
+    있으면) 야자시/조자시·진태양시 정책 미확정 경고와
+    `docs/MYUNGRI_CALCULATION_POLICY_PENDING.md` 안내. 십신·용신 등 해석은
+    추가하지 않는다.
+11. **원본 응답 보기** — 접힌 `<details>` 안의 raw JSON
+
+### 12.3 null vs none vs unknown 표시 규칙
+
+3.3의 원칙(질문을 보지 않음=`null` ≠ 환자가 "없음"이라고 답함=`'none'` ≠
+환자가 "잘 모르겠어요"라고 답함=`'unknown'`)을 화면에서도 그대로 지킨다.
+`null`/`undefined`(또는 빈 배열/빈 문자열)인 필드는 렌더링 자체를 건너뛴다
+(정상/없음으로 표시하지 않는다). `'none'`/`'unknown'` 값은 실제로 렌더링하되
+`doctorField__value--muted` 스타일로 흐리게 표시해, "안 물어봄"과 시각적으로
+확실히 구분한다.
+
+### 12.4 환자가 답한 것 vs 시스템이 계산한 것
+
+문진 응답(환자가 직접 답한 것)과 routing/flags/`deriveReproductiveStatus`/
+`computeSaju` 같은 파생 정보(시스템이 계산한 것)는 항상 분리해서 보여준다.
+`routing.modules_activated`/`routing.secondary_screens`는 환자 응답 목록에
+섞지 않고 별도의 요약 문구(파생 정보)로만 노출하며, 여성 안전정보와 명리
+블록에는 "시스템이 계산한 것" 라벨을 명시적으로 붙인다.
+
+**테스트**: `tests/doctor.spec.mjs`(`npm run test:doctor`)가
+`src/doctor/fixtures.ts`/`src/doctor/labels.ts`를 esbuild로 번들해 검증한다
+— fixture 7종 모두 `responses`/`flags`/`routing`/`myungri_calculation`을
+갖는지, 안전 확인 fixture가 실제로 `requires_staff_check`인지, 임신 fixture의
+`reproductive_status.derived.source`가 `pregnancy_module`인지, 출생시간
+미상 fixture가 `status: 'partial'`에 `pillars.hour === null`인지, 자시
+fixture의 `policy.pending_approval`에 `day_boundary`가 포함되는지, 그리고
+라벨 해석 헬퍼가 여러 질문에 걸쳐 실제로 한글 라벨을 반환하고 원본 enum을
+그대로 흘리지 않는지까지 확인한다.

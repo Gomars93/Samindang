@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
 import { ScreenShell } from './components/ScreenShell'
+import { DoctorView } from './doctor/DoctorView'
 import { DevJsonScreen } from './screens/DevJsonScreen'
 import {
   QuestionBody,
@@ -44,6 +45,16 @@ const newSessionId = () =>
     : `sess-${Date.now()}`
 
 export default function App() {
+  const [isDoctorView, setIsDoctorView] = useState(
+    () => typeof window !== 'undefined' && window.location.hash.startsWith('#doctor'),
+  )
+
+  useEffect(() => {
+    const onHashChange = () => setIsDoctorView(window.location.hash.startsWith('#doctor'))
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
   const [phase, setPhase] = useState<Phase>('start')
   const [responses, setResponses] = useState<Responses>(emptyResponses)
   const [meta, setMeta] = useState<Record<string, AnswerMeta>>({})
@@ -151,6 +162,10 @@ export default function App() {
   }, [current, visible])
 
   /* ---------- render ---------- */
+
+  if (isDoctorView) {
+    return <DoctorView />
+  }
 
   if (phase === 'start') {
     return (

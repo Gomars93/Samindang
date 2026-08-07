@@ -10,7 +10,8 @@
     "test:integration": "esbuild src/spec/coreSpec.ts --bundle --format=esm --outfile=tests/.spec-bundle.mjs --platform=neutral && node tests/integration.spec.mjs",
     "test:layout": "esbuild src/spec/coreSpec.ts --bundle --format=esm --outfile=tests/.spec-bundle.mjs --platform=neutral && node tests/layout-budget.spec.mjs",
     "test:saju": "esbuild src/saju/index.ts --bundle --format=esm --outfile=tests/.saju-bundle.mjs --platform=neutral && node tests/saju.spec.mjs",
-    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju"
+    "test:doctor": "esbuild src/doctor/fixtures.ts --bundle --format=esm --outfile=tests/.doctor-fixtures-bundle.mjs --platform=neutral && esbuild src/doctor/labels.ts --bundle --format=esm --outfile=tests/.doctor-labels-bundle.mjs --platform=neutral && node tests/doctor.spec.mjs",
+    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju && npm run test:doctor"
   },
   "dependencies": {
     "manseryeok": "^2.0.0",

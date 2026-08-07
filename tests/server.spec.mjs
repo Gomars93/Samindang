@@ -2,10 +2,13 @@
 // "OK: <name>" and throws on failure. Starts the real server on an ephemeral
 // port with a temp data dir and exercises real HTTP end to end.
 import assert2 from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { execSync } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createApp } from '../server/index.js'
+import { createStore } from '../server/store.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from '../server/auth.js'
 
 let passCount = 0
@@ -144,7 +147,7 @@ async function main() {
       const patientPostRes = await fetch(`${base}/api/submissions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', origin: 'https://evil.example.com' },
-        body: JSON.stringify(validPayload()),
+        body: JSON.stringify(validPayload({ session_id: 'sess-arbitrary-origin' })),
       })
       assert('POST submission with arbitrary Origin still works -> 201', patientPostRes.status === 201)
     }
@@ -244,9 +247,277 @@ async function main() {
       const list = await res.json()
       assert('restart: submission still listed after server restart', list.some((s) => s.id === createdId))
     }
+
+    /* ---------------- idempotency: duplicate session_id ---------------- */
+    {
+      const payload = validPayload({ session_id: 'sess-dup-single' })
+      const res1 = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const body1 = await res1.json()
+      assert('first POST of a session_id -> 201', res1.status === 201)
+
+      const res2 = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const body2 = await res2.json()
+      assert('second POST of same session_id -> 200 (not 201)', res2.status === 200)
+      assert('second POST marked duplicate:true', body2.duplicate === true)
+      assert('second POST returns the SAME id as the first', body2.id === body1.id)
+
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      assert(
+        'duplicate session_id resulted in exactly one stored record',
+        list.filter((s) => s.id === body1.id).length === 1,
+      )
+    }
+
+    /* ---------------- idempotency under concurrency: SAME session_id ---------------- */
+    {
+      const sid = 'sess-dup-concurrent'
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          fetch(`${base}/api/submissions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(validPayload({ session_id: sid })),
+          }).then(async (r) => ({ status: r.status, body: await r.json() })),
+        ),
+      )
+      const ids = new Set(results.map((r) => r.body.id))
+      assert('5 concurrent POSTs of the same session_id -> a single id', ids.size === 1)
+      assert('exactly one 201 among the concurrent duplicate posts', results.filter((r) => r.status === 201).length === 1)
+      assert(
+        'the other 4 responses are 200 duplicate:true',
+        results.filter((r) => r.status === 200 && r.body.duplicate === true).length === 4,
+      )
+
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      assert(
+        'concurrent same-session posts create exactly one record',
+        list.filter((s) => s.id === [...ids][0]).length === 1,
+      )
+    }
+
+    /* ---------------- concurrency: DIFFERENT session_ids each keep their own myungri ---------------- */
+    {
+      const inputs = Array.from({ length: 5 }, (_, i) => ({
+        session_id: `sess-concurrent-diff-${i}`,
+        myungri_calculation: { status: 'resolved', marker: `marker-${i}` },
+      }))
+      const results = await Promise.all(
+        inputs.map((inp) =>
+          fetch(`${base}/api/submissions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(
+              validPayload({ session_id: inp.session_id, myungri_calculation: inp.myungri_calculation }),
+            ),
+          }).then(async (r) => ({ id: (await r.json()).id, ...inp })),
+        ),
+      )
+      assert('5 concurrent different-session POSTs -> 5 distinct ids', new Set(results.map((r) => r.id)).size === 5)
+
+      for (const r of results) {
+        const rec = await (await fetch(`${base}/api/submissions/${r.id}`)).json()
+        assert(`record for ${r.session_id} keeps its own session_id`, rec.submission.session_id === r.session_id)
+        assert(
+          `record for ${r.session_id} myungri matches its own submission, not another one`,
+          rec.myungri.marker === r.myungri_calculation.marker,
+        )
+      }
+    }
+
+    /* ---------------- concurrency: status + judgment writes on the SAME id stay well-formed ---------------- */
+    {
+      const created = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-concurrent-mutate' })),
+        })
+      ).json()
+      const id = created.id
+      const before = await (await fetch(`${base}/api/submissions/${id}`)).json()
+
+      const judgment = (n) => ({
+        schema_version: '1.0.0',
+        recorded_at: new Date().toISOString(),
+        source: { session_id: 'sess-concurrent-mutate', questionnaire_version: '1.0' },
+        innate_features: [`f${n}`],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      })
+
+      await Promise.all([
+        fetch(`${base}/api/submissions/${id}/status`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'viewed' }),
+        }),
+        fetch(`${base}/api/submissions/${id}/judgment`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(judgment(1)),
+        }),
+        fetch(`${base}/api/submissions/${id}/status`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'in_consultation' }),
+        }),
+        fetch(`${base}/api/submissions/${id}/judgment`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(judgment(2)),
+        }),
+      ])
+
+      const after = await (await fetch(`${base}/api/submissions/${id}`)).json()
+      assert(
+        'concurrent writes: record ends up with one of the written statuses (well-formed)',
+        ['viewed', 'in_consultation'].includes(after.status),
+      )
+      assert(
+        'concurrent writes: record ends up with one of the written judgments (well-formed)',
+        after.judgment && ['f1', 'f2'].includes(after.judgment.innate_features[0]),
+      )
+      assert(
+        'concurrent writes: submission left untouched',
+        (() => {
+          try {
+            assert2.deepStrictEqual(after.submission, before.submission)
+            return true
+          } catch {
+            return false
+          }
+        })(),
+      )
+      assert(
+        'concurrent writes: myungri left untouched',
+        (() => {
+          try {
+            assert2.deepStrictEqual(after.myungri, before.myungri)
+            return true
+          } catch {
+            return false
+          }
+        })(),
+      )
+    }
+
+    /* ---------------- judgment isolation across two submissions ---------------- */
+    {
+      const a = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-isolate-a' })),
+        })
+      ).json()
+      const b = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-isolate-b' })),
+        })
+      ).json()
+
+      const judgmentFor = (label) => ({
+        schema_version: '1.0.0',
+        recorded_at: new Date().toISOString(),
+        source: { session_id: label, questionnaire_version: '1.0' },
+        innate_features: [label],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      })
+
+      await fetch(`${base}/api/submissions/${a.id}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(judgmentFor('only-on-a')),
+      })
+
+      const recA = await (await fetch(`${base}/api/submissions/${a.id}`)).json()
+      const recB = await (await fetch(`${base}/api/submissions/${b.id}`)).json()
+      assert('judgment saved on submission A appears on A', recA.judgment?.innate_features[0] === 'only-on-a')
+      assert('judgment saved on submission A does NOT appear on B', recB.judgment === null)
+    }
   } finally {
     await stopServer(server)
     await rm(dataDir, { recursive: true, force: true })
+  }
+
+  /* ---------------- retention cleanup (store-level, no HTTP) ---------------- */
+  {
+    const retDir = await mkdtemp(path.join(tmpdir(), 'samindang-retention-'))
+    try {
+      const store = createStore(retDir)
+      const rec = await store.createSubmission({
+        submission: { questionnaire_version: '1.0', session_id: 'sess-old', responses: {} },
+        myungri: null,
+        patient_label: 'old patient',
+      })
+
+      // 파일을 직접 백데이트한다 — store에 created_at을 바꾸는 API가 없으므로
+      // 테스트 전용으로 파일시스템을 직접 건드린다.
+      const filePath = path.join(retDir, `${rec.id}.json`)
+      const onDisk = JSON.parse(await readFile(filePath, 'utf8'))
+      onDisk.created_at = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString()
+      await writeFile(filePath, JSON.stringify(onDisk, null, 2), 'utf8')
+
+      const deletedWithZero = await store.cleanupOlderThan(0)
+      assert('retention: days=0 (disabled) deletes nothing', deletedWithZero === 0)
+      assert('retention: days=0 record still present', (await store.getSubmission(rec.id)) !== null)
+
+      const deleted = await store.cleanupOlderThan(1)
+      assert('retention: 1-day window deletes the 40-day-old record', deleted === 1)
+      assert('retention: record actually removed from disk', (await store.getSubmission(rec.id)) === null)
+    } finally {
+      await rm(retDir, { recursive: true, force: true })
+    }
+  }
+
+  /* ---------------- patient path cannot list/read submissions ---------------- */
+  {
+    const appSrc = await readFile(fileURLToPath(new URL('../src/App.tsx', import.meta.url)), 'utf8')
+    assert(
+      "patient App.tsx never references listSubmissions/getSubmission (only submits, doesn't read)",
+      !appSrc.includes('listSubmissions') && !appSrc.includes('getSubmission'),
+    )
+
+    const serverIndexSrc = await readFile(fileURLToPath(new URL('../server/index.js', import.meta.url)), 'utf8')
+    const requireDoctorCalls = (serverIndexSrc.match(/!requireDoctor\(req\)/g) ?? []).length
+    assert(
+      'server has exactly the 4 doctor-guarded routes calling requireDoctor (list/get/status/judgment)',
+      requireDoctorCalls === 4,
+    )
+  }
+
+  /* ---------------- git: no secrets and no runtime patient data tracked ---------------- */
+  {
+    const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+    const tracked = execSync('git ls-files', { cwd: repoRoot, encoding: 'utf8' }).split('\n').filter(Boolean)
+    assert('git tracks no files under .data/', tracked.filter((f) => f.startsWith('.data/')).length === 0)
+    assert(
+      'git tracks no .env files',
+      tracked.filter((f) => f === '.env' || f.startsWith('.env.')).length === 0,
+    )
   }
 
   /* ---------------- doctor-endpoint guard (unit-level, fake remoteAddress) ---------------- */

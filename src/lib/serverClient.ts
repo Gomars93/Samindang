@@ -42,7 +42,10 @@ async function request<T>(
   }
 }
 
-export type SubmitResult = { id: string; created_at: string }
+// duplicate: true는 이 payload가 이전에 이미 저장된 session_id로 재전송됐다는
+// 뜻이다 — 서버가 새 레코드를 만들지 않고 기존 것을 그대로 돌려준 것이므로,
+// 태블릿 쪽에서는 평범한 성공과 완전히 동일하게 처리한다(에러 아님).
+export type SubmitResult = { id: string; created_at: string; duplicate?: boolean }
 
 export function submitQuestionnaire(payload: unknown): Promise<ServerResult<SubmitResult>> {
   return request('/api/submissions', { method: 'POST', body: JSON.stringify(payload) })

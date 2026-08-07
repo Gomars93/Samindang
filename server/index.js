@@ -21,14 +21,34 @@ function parseAllowedOrigins(raw) {
     .filter(Boolean)
 }
 
-export function createApp({ dataDir, doctorToken, allowedOrigins } = {}) {
+export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays } = {}) {
   const store = createStore(dataDir ?? process.env.SAMINDANG_DATA_DIR ?? './.data/submissions')
   const configuredToken = doctorToken !== undefined ? doctorToken : process.env.SAMINDANG_DOCTOR_TOKEN
   const doctorAllowedOrigins = allowedOrigins ?? parseAllowedOrigins(process.env.SAMINDANG_ALLOWED_ORIGINS)
+  const configuredRetentionDays =
+    retentionDays !== undefined ? retentionDays : Number(process.env.SAMINDANG_RETENTION_DAYS ?? '30')
 
-  function log(method, url, status, id, bytes) {
+  function log(method, url, status, id, bytes, extra) {
     // 절대 payload 본문/환자 이름/전화번호를 로그에 남기지 않는다.
-    console.log(`${new Date().toISOString()} ${method} ${url} ${status} id=${id ?? '-'} bytes=${bytes ?? '-'}`)
+    console.log(
+      `${new Date().toISOString()} ${method} ${url} ${status} id=${id ?? '-'} bytes=${bytes ?? '-'}${extra ? ` ${extra}` : ''}`,
+    )
+  }
+
+  // 보존기한 자동 삭제. SAMINDANG_RETENTION_DAYS=0(또는 음수)이면 비활성화.
+  // 개수만 로그에 남긴다 — 내용/id는 절대 남기지 않는다.
+  async function runRetention() {
+    if (!(configuredRetentionDays > 0)) return
+    try {
+      const deleted = await store.cleanupOlderThan(configuredRetentionDays)
+      if (deleted > 0) {
+        console.log(
+          `${new Date().toISOString()} retention: purged ${deleted} submission(s) older than ${configuredRetentionDays}d`,
+        )
+      }
+    } catch (err) {
+      console.error(`${new Date().toISOString()} retention: cleanup failed: ${err.message}`)
+    }
   }
 
   function corsHeaders(req, { doctorRoute }) {
@@ -154,8 +174,13 @@ export function createApp({ dataDir, doctorToken, allowedOrigins } = {}) {
             patient_label,
           })
           id = record.id
-          status = 201
-          bytes = sendJson(req, res, 201, { id: record.id, created_at: record.created_at }, cors)
+          if (record.duplicate) {
+            status = 200
+            bytes = sendJson(req, res, 200, { id: record.id, created_at: record.created_at, duplicate: true }, cors)
+          } else {
+            status = 201
+            bytes = sendJson(req, res, 201, { id: record.id, created_at: record.created_at }, cors)
+          }
         }
       } else if (parts[0] === 'api' && parts[1] === 'submissions' && parts.length === 2 && req.method === 'GET') {
         if (!requireDoctor(req)) {
@@ -223,7 +248,7 @@ export function createApp({ dataDir, doctorToken, allowedOrigins } = {}) {
     log(req.method, url.pathname, status, id, bytes)
   }
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     handle(req, res).catch(() => {
       if (!res.headersSent) {
         res.writeHead(500, { 'content-type': 'application/json' })
@@ -231,6 +256,16 @@ export function createApp({ dataDir, doctorToken, allowedOrigins } = {}) {
       }
     })
   })
+
+  // 서버 시작 시 1회, 이후 6시간마다 보존기한 지난 제출을 정리한다.
+  // unref()로 이 타이머 때문에 프로세스가 살아있지는 않게 하고, 서버가
+  // close되면(테스트 등) 타이머도 같이 정리한다.
+  runRetention()
+  const retentionTimer = setInterval(runRetention, 6 * 60 * 60 * 1000)
+  retentionTimer.unref()
+  server.on('close', () => clearInterval(retentionTimer))
+
+  return server
 }
 
 function isMain() {
@@ -243,8 +278,12 @@ if (isMain()) {
   const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
   const server = createApp({ dataDir })
   server.listen(port, host, () => {
+    const retentionDays = Number(process.env.SAMINDANG_RETENTION_DAYS ?? '30')
     console.log(`samindang handoff server listening on http://${host}:${port}`)
     console.log(`data dir: ${dataDir}`)
     console.log(`doctor token: ${process.env.SAMINDANG_DOCTOR_TOKEN ? 'set' : 'not set (loopback-only for doctor endpoints)'}`)
+    console.log(
+      `retention: ${retentionDays > 0 ? `auto-delete submissions older than ${retentionDays}d (every 6h)` : 'disabled (SAMINDANG_RETENTION_DAYS=0)'}`,
+    )
   })
 }

@@ -88,6 +88,26 @@ input {
   margin: 0 auto;
 }
 
+/* 직원 전용 초기화(2초 길게 누르기). 완료 화면 우측 하단 구석의 작고 눈에
+   띄지 않는 타겟 — 환자 흐름의 일부처럼 보이지 않도록 아이콘/문구 없음.
+   짧은 탭으로는 아무 일도 일어나지 않는다(핸들러가 타이머 완주만 본다). */
+.staffResetHold {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.staffResetHold--holding {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .shell__topRow {
   display: flex;
   align-items: center;

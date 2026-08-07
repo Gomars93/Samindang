@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 /**
  * 환자 제출 상태. App.tsx가 실제 전송 흐름(server/index.js 유무, 응답 성공/실패)을
@@ -20,6 +20,9 @@ const OPERATIONAL_STEPS = [
 ] as const
 
 const DEFAULT_WAIT_MESSAGE = '순서대로 안내해 드립니다. 잠시만 기다려 주세요.'
+
+/** 직원 리셋 길게 누르기 시간(ms). 실수로 스칠 때 발동하지 않도록 충분히 길게 잡는다. */
+const STAFF_RESET_HOLD_MS = 2000
 
 type StepStatus = 'done' | 'active' | 'pending'
 
@@ -48,11 +51,13 @@ type Props = {
 /**
  * 환자용 완료/대기 화면.
  *
- * 직원 리셋 배치 결정: "처음 화면으로 (세션 초기화)" 버튼은 개발자 JSON과 같은
- * dev 전용 문(devMode && '개발자 보기' 토글) 뒤에 둔다. 이 태블릿은 접수처 직원이
- * 매 환자마다 직접 조작하므로, 실기기에서는 devMode=false(프로덕션 빌드)로 두고
- * 직원이 태블릿 자체(OS 홈 버튼 등)로 다음 환자를 위해 새로고침하는 운영을 전제한다.
- * 개발/스테이징에서는 '개발자 보기'로 즉시 리셋 가능해야 하므로 같은 문 뒤에 둔다.
+ * 직원 리셋 배치 결정: 개발자 JSON과 같은 dev 전용 문(devMode && '개발자
+ * 보기' 토글) 뒤의 "처음 화면으로 (세션 초기화)" 버튼은 개발/스테이징
+ * 전용이다. 프로덕션 빌드(devMode=false)에서는 그 버튼이 없으므로, 화면
+ * 맨 아래 구석에 눈에 띄지 않는 `StaffResetHold`(2초 길게 누르기) 컨트롤을
+ * 항상 하나 둔다 — 태블릿을 매 환자마다 직접 조작하는 접수처 직원이 이전
+ * 환자의 응답이 화면에 남아 다음 환자에게 보이는 일 없이 세션을 초기화할
+ * 수 있게 하기 위함이다. 짧은 탭/스치는 접촉으로는 절대 발동하지 않는다.
  */
 export function PatientCompleteScreen({
   submitState,
@@ -95,6 +100,7 @@ export function PatientCompleteScreen({
             </button>
           </div>
         </main>
+        <StaffResetHold onReset={onStaffReset} />
         {devMode && (
           <DevDoor
             payload={payload}
@@ -126,6 +132,7 @@ export function PatientCompleteScreen({
           )}
         </div>
       </main>
+      <StaffResetHold onReset={onStaffReset} />
       {devMode && (
         <DevDoor
           payload={payload}
@@ -154,6 +161,47 @@ function StatusFlow({ statuses }: { statuses: StepStatus[] }) {
         </li>
       ))}
     </ol>
+  )
+}
+
+/**
+ * 항상 존재하는(devMode 무관) 직원 전용 세션 초기화 컨트롤. 화면 맨 아래
+ * 구석에 작고 눈에 띄지 않게 두고, 2초 이상 누르고 있어야 발동한다 — 짧은
+ * 탭이나 실수로 스치는 접촉으로는 절대 초기화되지 않는다. 환자 흐름의
+ * 일부처럼 보이지 않도록 라벨/문구를 넣지 않는다.
+ */
+function StaffResetHold({ onReset }: { onReset: () => void }) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [holding, setHolding] = useState(false)
+
+  const cancel = () => {
+    setHolding(false)
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }
+
+  const start = () => {
+    setHolding(true)
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      setHolding(false)
+      onReset()
+    }, STAFF_RESET_HOLD_MS)
+  }
+
+  return (
+    <button
+      type="button"
+      className={`staffResetHold${holding ? ' staffResetHold--holding' : ''}`}
+      aria-label="직원용: 2초 이상 눌러서 다음 환자를 위해 초기화"
+      title="직원용 초기화 (2초 이상 누르기)"
+      onPointerDown={start}
+      onPointerUp={cancel}
+      onPointerLeave={cancel}
+      onPointerCancel={cancel}
+    />
   )
 }
 

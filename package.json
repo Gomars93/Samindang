@@ -14,7 +14,8 @@
     "test:server": "node tests/server.spec.mjs",
     "test:patient": "esbuild src/screens/PatientCompleteScreen.tsx --bundle --format=cjs --platform=node --loader:.css=empty --jsx=automatic --external:react --external:react-dom --outfile=tests/.patient-complete-bundle.cjs && node tests/patient-flow.spec.mjs",
     "test:all": "npm run test:integration && npm run test:layout && npm run test:saju && npm run test:doctor && npm run test:server && npm run test:patient",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "purge:data": "node scripts/purge-data.mjs"
   },
   "dependencies": {
     "manseryeok": "^2.0.0",

@@ -220,6 +220,18 @@ function statusLabel(status: SubmissionSummary['status']): string {
   }
 }
 
+/** 상대 시간(예: '방금 전' / '3분 전' / '2시간 전' / '1일 전'). 절대 시각은 별도로 항상 같이 보여준다. */
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const min = Math.floor(diffMs / 60000)
+  if (min < 1) return '방금 전'
+  if (min < 60) return `${min}분 전`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}시간 전`
+  const day = Math.floor(hr / 24)
+  return `${day}일 전`
+}
+
 /**
  * 원장/직원용 진료 전 요약 화면. 진단·치료 추천을 하지 않는다 — 환자가 답한
  * 내용과, 라벨을 명확히 붙인 파생(계산된) 사실만 정리해서 보여준다.
@@ -239,14 +251,18 @@ export function DoctorView() {
 
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>([])
   const [serverError, setServerError] = useState<string | null>(null)
+  const [listLoading, setListLoading] = useState(true)
+  const [retryNonce, setRetryNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
   const viewedRef = useRef<Set<string>>(new Set())
 
-  // 서버 모드: 목록을 5초마다 폴링한다.
+  // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
+  // "다시 시도") 즉시 한 번 더 불러온다.
   useEffect(() => {
     if (mode !== 'server') return
     let cancelled = false
+    setListLoading(true)
 
     async function poll() {
       const result = await listSubmissions()
@@ -257,6 +273,7 @@ export function DoctorView() {
       } else {
         setServerError(result.error)
       }
+      setListLoading(false)
     }
 
     poll()
@@ -265,7 +282,7 @@ export function DoctorView() {
       cancelled = true
       clearInterval(timer)
     }
-  }, [mode])
+  }, [mode, retryNonce])
 
   // 서버 모드: 선택한 제출건 상세를 불러오고, 처음 열 때만 'viewed'로 표시한다.
   useEffect(() => {
@@ -303,6 +320,7 @@ export function DoctorView() {
   )
 
   const showingServerList = mode === 'server' && !selectedRecord
+  const newCount = submissions.filter((s) => s.status === 'new').length
 
   return (
     <div className="doctor">
@@ -348,20 +366,28 @@ export function DoctorView() {
       </header>
 
       {mode === 'server' && serverError && (
-        <div className="doctor__banner">
+        <div className="doctor__banner doctor__banner--danger">
           <strong>서버에 연결할 수 없습니다</strong>
           <p>
             {serverError} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
             VITE_SAMINDANG_SERVER_URL 설정이 맞는지 확인하세요. 그동안 예시
             데이터로 화면을 확인할 수 있습니다.
           </p>
+          <button type="button" className="judgment__recordBtn" onClick={() => setRetryNonce((n) => n + 1)}>
+            다시 시도
+          </button>
         </div>
       )}
 
       {showingServerList && !serverError && (
         <section className="doctor__section">
-          <h2>제출목록 ({submissions.length})</h2>
-          {submissions.length === 0 ? (
+          <h2>
+            제출목록 ({submissions.length})
+            {newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
+          </h2>
+          {listLoading && submissions.length === 0 ? (
+            <p className="doctor__empty">불러오는 중…</p>
+          ) : submissions.length === 0 ? (
             <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
           ) : (
             <div className="doctor__grid">
@@ -369,15 +395,15 @@ export function DoctorView() {
                 <button
                   key={s.id}
                   type="button"
-                  className="doctorField"
-                  style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}
+                  className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
                   onClick={() => setSelectedId(s.id)}
                 >
                   <span className="doctorField__label">
+                    {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
                     {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
                   </span>
                   <span className="doctorField__value">
-                    {statusLabel(s.status)} · {new Date(s.created_at).toLocaleString('ko-KR')}
+                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
                   </span>
                 </button>
               ))}

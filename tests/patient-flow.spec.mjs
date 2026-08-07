@@ -139,4 +139,31 @@ const STEP_LABELS = ['접수 완료', '상세문진 완료', '체질분석 준�
   )
 }
 
+/* ---------------------------------------------------------------------
+ * 8. Staff reset hold control: present on every completion state
+ *    (devMode-independent), but requires a deliberate press-and-hold —
+ *    it must not render any patient-visible label/text and must not be
+ *    reachable via the banned single-tap restart strings.
+ * ------------------------------------------------------------------- */
+
+{
+  for (const submitState of ['success', 'error', 'unconfigured']) {
+    const html = render({ submitState, submitId: 'abc123', errorReason: '서버에 연결할 수 없습니다.', devMode: false })
+    assert(
+      `${submitState} screen (devMode=false) still has the staff reset hold control`,
+      html.includes('staffResetHold'),
+    )
+    assert(
+      `${submitState} screen staff reset control has no patient-visible on-screen text`,
+      !html.includes('>초기화<') && !html.includes('>리셋<'),
+    )
+    for (const banned of ['다시 제출', '처음 화면', '문진 시작']) {
+      assert(
+        `${submitState} screen staff reset control does not surface "${banned}" text`,
+        !html.includes(banned),
+      )
+    }
+  }
+}
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

@@ -104,6 +104,42 @@
   margin: 0;
 }
 
+.doctor__newBadge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.doctor__row {
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.doctor__row--new {
+  border-color: var(--danger);
+  background: #f6ece9;
+}
+
+.doctor__newDot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  margin-right: 6px;
+}
+
 .doctor__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -1585,11 +1585,25 @@ ISO `recorded_at`을 채우며 빈 문자열 항목을 제거하는지, `Clinici
 (`POST /:id/status`)와 판단 저장(`PUT /:id/judgment`)은 그 두 필드를 건드릴
 수 없다는 불변식을 코드에서 직접 assert한다(`server/store.js`).
 
+#### 13.2.1 멱등성(중복 제출)과 동시성
+
+- `POST /api/submissions`는 `submission.session_id` 기준으로 **멱등**이다.
+  같은 `session_id`로 두 번째 이후 도착하는 제출은 새 레코드를 만들지
+  않고, 응답에 `duplicate: true`와 **기존** `{ id, created_at }`을 담아
+  `200`으로 돌려준다(최초 성공 제출만 `201`). 태블릿 재시도나 네트워크
+  중복 전송으로 레코드가 두 개 생기는 일을 막기 위함이다.
+- `server/store.js`는 이 검사+생성을 포함해 id별 read-modify-write
+  작업(`setStatus`, `saveJudgment`)을 의존성 없는 in-process
+  promise-체인 뮤텍스(키별 직렬화)로 감싼다. 이는 **서버 프로세스 1개가
+  데이터 디렉터리를 혼자 소유한다는 전제** 위에서만 유효하다 — 같은
+  데이터 디렉터리를 향해 서버 프로세스 2개를 동시에 띄우는 구성은
+  지원하지 않는다.
+
 ### 13.3 엔드포인트
 
 | 메서드 | 경로 | 접근 | 설명 |
 |---|---|---|---|
-| POST | `/api/submissions` | 환자(쓰기 전용) | 완료된 payload 제출. 응답은 `{ id, created_at }`뿐 — payload를 echo하지 않는다. |
+| POST | `/api/submissions` | 환자(쓰기 전용) | 완료된 payload 제출. `submission.session_id` 기준 멱등 — 이미 존재하면 새로 만들지 않고 기존 레코드를 재사용한다(13.2.1). 응답은 `{ id, created_at }`(+ 재사용된 경우 `duplicate: true`)뿐 — payload를 echo하지 않는다. |
 | GET | `/api/submissions` | 원장 | 목록(요약만: id/created_at/updated_at/status/patient_label/primary_concern/requires_staff_check). 전체 payload 없음. |
 | GET | `/api/submissions/:id` | 원장 | 전체 레코드. |
 | POST | `/api/submissions/:id/status` | 원장 | `{ status }`, `new\|viewed\|in_consultation\|completed`. |
@@ -1621,6 +1635,16 @@ CORS 응답에서 요청 Origin을 무조건 반사하면 그 결과(환자 목�
 
 인터넷에 노출하지 않는다. 클리닉 LAN 내부에서만 쓴다.
 
+### 13.4.1 보존기한(retention)
+
+`SAMINDANG_RETENTION_DAYS`(기본 **30**)보다 오래된(`created_at` 기준)
+제출 파일을 서버가 시작 시 1회, 이후 6시간마다 자동 삭제한다.
+`0`으로 설정하면 자동삭제를 비활성화한다. 삭제는 건수만 로그로
+남기고 내용은 남기지 않는다(`server/store.js`의 `cleanupOlderThan`).
+파일럿 종료 시 전체 삭제는 `npm run purge:data`(대화형 `DELETE` 확인,
+비대화형은 `--yes` 필수)로 한다. 운영 절차는
+`docs/RUNBOOK_LOCAL_HANDOFF.md` 7절 참고.
+
 ### 13.5 클라이언트 연동
 
 - 환자 앱: `phase === 'done'`이고 `VITE_SAMINDANG_SERVER_URL`이 설정된
@@ -1631,8 +1655,12 @@ CORS 응답에서 요청 Origin을 무조건 반사하면 그 결과(환자 목�
 - 원장 화면: `DoctorView`에 데이터 소스 토글(예시 데이터 vs 서버 제출목록)이
   있다. 서버 모드는 5초 간격으로 `GET /api/submissions`를 폴링하고, 항목을
   열면 1회 `status: 'viewed'`로 갱신하며, `JudgmentPanel`의 "기록" 버튼이
-  `PUT /:id/judgment`로 저장한다. 서버가 응답하지 않으면 오프라인 안내를
-  보여주고 예시 데이터 모드로 안전하게 degrade한다(크래시하지 않음).
+  `PUT /:id/judgment`로 저장한다. 목록은 로딩/빈 상태("아직 제출된 문진이
+  없습니다")/오류(재시도 버튼 포함) 3가지를 명시적으로 보여준다 — 빈 화면을
+  두지 않는다. 목록은 최신순이며, 각 항목에 상대 시간("3분 전")과 절대
+  시각을 함께 보여준다. `status: 'new'` 건수는 헤더 배지로, 개별 행은
+  강조 테두리로 표시한다. 서버가 응답하지 않으면 오프라인 안내를 보여주고
+  예시 데이터 모드로 안전하게 degrade한다(크래시하지 않음).
 
 ### 13.6 테스트
 
@@ -1640,7 +1668,14 @@ CORS 응답에서 요청 Origin을 무조건 반사하면 그 결과(환자 목�
 실제 서버를 띄워 HTTP로 검증한다: 정상/비정상/과대 payload, 목록에
 `responses` 미노출, 상태 전이·판단 저장이 `submission`/`myungri`를
 건드리지 않는지(deep-compare), 서버 재시작 후 데이터가 남아있는지(내구성),
-`isDoctorRequestAllowed` 가드 단위 테스트.
+`isDoctorRequestAllowed` 가드 단위 테스트. 추가로: 중복 `session_id`
+제출이 레코드 1건만 만드는지(순차 및 5개 동시 요청), 서로 다른
+`session_id` 동시 제출 각각이 자기 `myungri`와만 연결되는지, 같은
+레코드에 상태 변경과 판단 저장이 동시에 들어와도 레코드가 손상되지
+않는지, 판단이 다른 제출로 새지 않는지(isolation), 보존기한 정리가
+`days=0`일 때는 아무것도 지우지 않고 지정 일수보다 오래된 레코드는
+지우는지, 환자 경로(`src/App.tsx`)가 목록/상세 조회 함수를 전혀
+참조하지 않는지, `git ls-files`에 `.data/`나 `.env*`가 없는지.
 
 ## 14. 환자용 완료/대기 화면 (운영 상태 흐름)
 
@@ -1713,12 +1748,20 @@ CORS 응답에서 요청 Origin을 무조건 반사하면 그 결과(환자 목�
 - **직원 세션 초기화("처음 화면으로 (세션 초기화)") 버튼**도 이 시점에만
   나타난다.
 
-**선택한 방식**: 세션 초기화 버튼은 재제출/재입력 버튼과 마찬가지로
-dev 전용 문(devMode && "개발자 보기" 토글) 뒤에 둔다. 실제 태블릿은
-프로덕션 빌드(`devMode = false`)로 운영하므로, 환자가 실수로 다음 환자용
-초기화를 누를 방법이 없다. 접수처 직원이 매 환자마다 태블릿을 리셋해야
-하는 경우, 별도 스텝 08+(다음 스프린트)에서 PIN/OS 수준 킷오스크
-리셋으로 다룬다 — 이번 스프린트 범위에는 포함하지 않는다.
+**선택한 방식**: dev 전용 문 안의 "개발자 보기" → "처음 화면으로 (세션
+초기화)" 버튼은 개발/스테이징 전용으로 남겨둔다.
+
+프로덕션 빌드(`devMode = false`)로 운영하는 실제 태블릿을 위한 별도
+경로로, 완료 화면에는 `devMode`와 무관하게 항상 `StaffResetHold`
+컨트롤이 있다 — 화면 오른쪽 아래 구석의 표시 없는 작은(약 28×28px)
+영역을 **2초 이상 눌러야만** 초기화된다(`STAFF_RESET_HOLD_MS`). 짧은
+탭이나 실수로 스치는 접촉으로는 절대 발동하지 않으며, 라벨/아이콘이
+없어 환자 흐름의 일부처럼 보이지 않는다. 눌렀다 떼면(2초 전에) 타이머가
+취소되고 아무 일도 일어나지 않는다. 발동하면 `onStaffReset`(=
+`App.tsx`의 `restart()`)이 그대로 호출되어 응답/메타데이터/세션
+id/직원 안내 표시 여부를 전부 새로 만든다 — 이전 환자의 데이터가 다음
+환자 화면에 남아있을 수 없다. 정확한 제스처는
+`docs/RUNBOOK_LOCAL_HANDOFF.md` 10절에 직원 안내용으로 문서화돼 있다.
 
 환자 화면(devMode 무관)에는 재제출/재입력을 유도하는 어떤 버튼도 없다
 ("다시 제출", "처음 화면", "문진 시작" 등) — `success`/`unconfigured`

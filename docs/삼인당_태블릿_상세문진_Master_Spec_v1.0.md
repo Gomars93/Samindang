@@ -1509,12 +1509,12 @@ export type ClinicianJudgment = {
   `recorded_at = new Date().toISOString()`을 채우고, `innate_features`/
   `symptom_links`에서 빈 문자열 항목을 제거한 복사본을 반환한다.
 
-**저장소 없음** — 이 기능에는 DB/localStorage/백엔드가 전혀 없다.
-`ClinicianJudgment`는 `JudgmentPanel` 컴포넌트의 React state에만 존재하며
-화면을 새로고침하면 사라진다. `JudgmentPanel`은 이 사실을 화면에 그대로
-안내한다. 이 데이터 계약(직렬화 가능한 순수 JSON 모양)은 나중에 백엔드로
-넘길 때 그대로 `POST` body로 쓸 수 있도록 설계했지만, 저장/전송 로직 자체는
-이번 스코프 밖이며 아직 구현되지 않았다.
+**저장소 (선택적)** — `VITE_SAMINDANG_SERVER_URL`이 설정되지 않은 경우
+(예시 데이터 미리보기 모드) `ClinicianJudgment`는 `JudgmentPanel` 컴포넌트의
+React state에만 존재하며 화면을 새로고침하면 사라진다. `VITE_SAMINDANG_SERVER_URL`이
+설정된 서버 모드에서는 "기록" 버튼이 그대로 이 JSON 계약을
+`PUT /api/submissions/:id/judgment`로 저장한다 — 13장(로컬 핸드오프 서버)
+참고. 어느 모드든 `ClinicianJudgment`의 모양 자체는 동일하다.
 
 **1분 디브리핑** — `debrief`는 선택 항목이며, `DEBRIEF_QUESTIONS`(4개
 고정 질문)에 대한 원장의 짧은 답변 4개(`DebriefAnswers`)를 담는다. UI에서
@@ -1553,3 +1553,90 @@ fixture의 `policy.pending_approval`에 `day_boundary`가 포함되는지, 라�
 ISO `recorded_at`을 채우며 빈 문자열 항목을 제거하는지, `ClinicianJudgment`의
 키 집합이 문서화된 계약과 정확히 일치하는지, 그리고 `DOCTOR_SECTION_ORDER`
 에서 안전 배너/약물·병력이 명리 검토보다 항상 먼저 오는지까지 확인한다.
+
+## 13. 로컬 핸드오프 서버 (환자 태블릿 → 원장 PC)
+
+파일럿 등급, 클리닉 LAN 전용, 클라우드/EMR 연동 없음. 자세한 운영 절차(서버
+기동, 방화벽, 백업)는 `docs/RUNBOOK_LOCAL_HANDOFF.md` 참고. 여기서는 데이터
+계약만 다룬다.
+
+### 13.1 구현
+
+`server/index.js` (+ `server/store.js`, `server/auth.js`) — `node:http` +
+`node:fs/promises`만 사용하는 순수 JS(ESM), 빌드 단계 없이
+`node server/index.js`로 바로 실행한다. 새 npm 의존성 없음. 클라이언트는
+`src/lib/serverClient.ts`가 감싼다.
+
+### 13.2 3계층 분리 (저장 레코드)
+
+12.5절의 3계층 분리(계산된 사실 / 환자 응답 / 원장 판단) 원칙을 저장
+레코드에서도 그대로 강제한다. 제출 1건 = 파일 1개(JSON,
+`SAMINDANG_DATA_DIR` 아래), 형태는:
+
+```
+{ id, created_at, updated_at, status, patient_label,
+  submission: { questionnaire_version, session_id, responses, flags,
+                routing, metadata },
+  myungri: <myungri_calculation>,
+  judgment: <ClinicianJudgment | null> }
+```
+
+`submission`과 `myungri`는 절대 하나의 blob으로 합치지 않으며, 상태 전이
+(`POST /:id/status`)와 판단 저장(`PUT /:id/judgment`)은 그 두 필드를 건드릴
+수 없다는 불변식을 코드에서 직접 assert한다(`server/store.js`).
+
+### 13.3 엔드포인트
+
+| 메서드 | 경로 | 접근 | 설명 |
+|---|---|---|---|
+| POST | `/api/submissions` | 환자(쓰기 전용) | 완료된 payload 제출. 응답은 `{ id, created_at }`뿐 — payload를 echo하지 않는다. |
+| GET | `/api/submissions` | 원장 | 목록(요약만: id/created_at/updated_at/status/patient_label/primary_concern/requires_staff_check). 전체 payload 없음. |
+| GET | `/api/submissions/:id` | 원장 | 전체 레코드. |
+| POST | `/api/submissions/:id/status` | 원장 | `{ status }`, `new\|viewed\|in_consultation\|completed`. |
+| PUT | `/api/submissions/:id/judgment` | 원장 | `ClinicianJudgment` 저장. |
+| GET | `/api/health` | 공개 | `{ ok, version }`. |
+
+### 13.4 보안 모델 (파일럿 등급 — 실제 인증 아님)
+
+환자용 엔드포인트(`POST /api/submissions`)는 **쓰기 전용**이다 — 태블릿이
+자기가 방금 낸 제출조차 조회할 방법이 없다. 원장용 엔드포인트는 다음 중
+하나를 만족해야 허용된다(`server/auth.js`의 `isDoctorRequestAllowed`):
+
+1. 요청이 loopback(`127.0.0.1`/`::1`)에서 온다 — 서버가 원장 PC "위에서"
+   돈다는 전제이므로 이것이 실질적 보안 경계다.
+2. `x-doctor-token` 헤더가 `SAMINDANG_DOCTOR_TOKEN` 환경변수와 일치한다.
+   `SAMINDANG_DOCTOR_TOKEN`이 설정되지 않으면 loopback이 아닌 요청은
+   토큰 유무와 상관없이 전부 403이다.
+
+**loopback만으로는 브라우저 기반 공격을 막지 못한다.** 원장 PC 브라우저가
+악성 사이트를 열면 그 사이트의 JS도 loopback에서 fetch를 보낼 수 있으므로,
+CORS 응답에서 요청 Origin을 무조건 반사하면 그 결과(환자 목록 등)를
+브라우저가 악성 사이트에 넘겨준다. 그래서 원장 라우트는
+`server/auth.js`의 `isOriginAllowedForDoctor`로 Origin을 한 번 더
+검사한다: Origin 없음(브라우저 아님) 또는 `localhost`/`127.0.0.1`(도구
+서버 자신)은 허용, 그 외에는 `SAMINDANG_ALLOWED_ORIGINS`에 정확히
+등록된 경우만 허용하고 그렇지 않으면 store에 접근하기 전에 403으로
+차단한다. 기본 설정(localhost/127.0.0.1)만으로 일반적인 단일 PC 구성은
+추가 설정 없이 그대로 동작한다.
+
+인터넷에 노출하지 않는다. 클리닉 LAN 내부에서만 쓴다.
+
+### 13.5 클라이언트 연동
+
+- 환자 앱: `phase === 'done'`이고 `VITE_SAMINDANG_SERVER_URL`이 설정된
+  경우에만 1회 자동 제출(`src/App.tsx`). 미설정 시 기존과 완전히 동일하게
+  동작(네트워크 시도 없음). 전송 상태(전송 중/완료/실패)는
+  `src/screens/DevJsonScreen.tsx`가 보여주며 실패 시 재시도 버튼을 제공한다.
+- 원장 화면: `DoctorView`에 데이터 소스 토글(예시 데이터 vs 서버 제출목록)이
+  있다. 서버 모드는 5초 간격으로 `GET /api/submissions`를 폴링하고, 항목을
+  열면 1회 `status: 'viewed'`로 갱신하며, `JudgmentPanel`의 "기록" 버튼이
+  `PUT /:id/judgment`로 저장한다. 서버가 응답하지 않으면 오프라인 안내를
+  보여주고 예시 데이터 모드로 안전하게 degrade한다(크래시하지 않음).
+
+### 13.6 테스트
+
+`tests/server.spec.mjs`(`npm run test:server`)가 임시 데이터 디렉터리로
+실제 서버를 띄워 HTTP로 검증한다: 정상/비정상/과대 payload, 목록에
+`responses` 미노출, 상태 전이·판단 저장이 `submission`/`myungri`를
+건드리지 않는지(deep-compare), 서버 재시작 후 데이터가 남아있는지(내구성),
+`isDoctorRequestAllowed` 가드 단위 테스트.

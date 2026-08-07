@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
@@ -11,6 +11,7 @@ import {
 } from './screens/QuestionScreen'
 import { StaffCheckScreen } from './screens/StaffCheckScreen'
 import { StartScreen } from './screens/StartScreen'
+import { isServerConfigured, submitQuestionnaire } from './lib/serverClient'
 import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
@@ -73,6 +74,55 @@ export default function App() {
     visible.find((q) => q.id === currentId) ?? visible[0]
 
   const flags = useMemo(() => computeFlags(responses), [responses])
+
+  /* ---------- server handoff (optional) ---------- */
+
+  type SubmitState = 'idle' | 'sending' | 'sent' | 'error'
+  const [submitState, setSubmitState] = useState<SubmitState>('idle')
+  const [submitId, setSubmitId] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const submittingRef = useRef(false)
+
+  const donePayload = useMemo(
+    () => ({
+      questionnaire_version: '1.0',
+      session_id: sessionId,
+      responses: buildResponsePayload(responses),
+      // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
+      myungri_calculation: computeSaju(buildSajuInput(responses)),
+      flags,
+      routing: buildRoutingPayload(responses),
+      metadata: {
+        session_started_at: startedAt,
+        answers: meta,
+      },
+    }),
+    [sessionId, responses, flags, startedAt, meta],
+  )
+
+  const doSubmit = () => {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setSubmitState('sending')
+    setSubmitError(null)
+    submitQuestionnaire(donePayload).then((result) => {
+      if (result.ok) {
+        setSubmitId(result.data.id)
+        setSubmitState('sent')
+      } else {
+        setSubmitState('error')
+        setSubmitError(result.error)
+        submittingRef.current = false // allow retry
+      }
+    })
+  }
+
+  useEffect(() => {
+    if (phase !== 'done') return
+    if (!isServerConfigured()) return
+    doSubmit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
 
   /* ---------- navigation ---------- */
 
@@ -197,20 +247,17 @@ export default function App() {
   }
 
   if (phase === 'done') {
-    const payload = {
-      questionnaire_version: '1.0',
-      session_id: sessionId,
-      responses: buildResponsePayload(responses),
-      // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
-      myungri_calculation: computeSaju(buildSajuInput(responses)),
-      flags,
-      routing: buildRoutingPayload(responses),
-      metadata: {
-        session_started_at: startedAt,
-        answers: meta,
-      },
-    }
-    return <DevJsonScreen payload={payload} onRestart={restart} />
+    return (
+      <DevJsonScreen
+        payload={donePayload}
+        onRestart={restart}
+        submission={
+          isServerConfigured()
+            ? { state: submitState, id: submitId, error: submitError, onRetry: doSubmit }
+            : null
+        }
+      />
+    )
   }
 
   if (!current) return null

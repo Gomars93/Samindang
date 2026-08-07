@@ -1,11 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabels, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
+import type { ClinicianJudgment } from './judgment'
 import type { DoctorPayload } from './types'
 import type { AnswerValue } from '../types'
+import {
+  getSubmission,
+  listSubmissions,
+  saveJudgment as saveJudgmentToServer,
+  setSubmissionStatus,
+  type SubmissionRecord,
+  type SubmissionSummary,
+} from '../lib/serverClient'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -180,9 +189,44 @@ function primaryModuleFields(primaryModule: string | null, m: Responses['modules
   }
 }
 
+/** SubmissionRecord(서버) -> 화면이 이미 알고 있는 DoctorPayload 모양으로 변환. */
+function recordToPayload(record: SubmissionRecord): DoctorPayload {
+  const s = record.submission as Record<string, unknown>
+  return {
+    questionnaire_version: s.questionnaire_version as string,
+    session_id: (s.session_id as string) ?? record.id,
+    responses: s.responses as DoctorPayload['responses'],
+    flags: s.flags as DoctorPayload['flags'],
+    routing: s.routing as DoctorPayload['routing'],
+    myungri_calculation: record.myungri as DoctorPayload['myungri_calculation'],
+    metadata: (s.metadata as DoctorPayload['metadata']) ?? { session_started_at: null, answers: {} },
+  }
+}
+
+const POLL_MS = 5000
+
+function statusLabel(status: SubmissionSummary['status']): string {
+  switch (status) {
+    case 'new':
+      return '신규'
+    case 'viewed':
+      return '확인함'
+    case 'in_consultation':
+      return '진료 중'
+    case 'completed':
+      return '완료'
+    default:
+      return status
+  }
+}
+
 /**
  * 원장/직원용 진료 전 요약 화면. 진단·치료 추천을 하지 않는다 — 환자가 답한
  * 내용과, 라벨을 명확히 붙인 파생(계산된) 사실만 정리해서 보여준다.
+ *
+ * 데이터 소스는 두 가지: 예시 데이터(fixtures, 항상 동작)와 서버 제출목록
+ * (server/index.js가 LAN에서 떠 있을 때만). 서버 모드는 실패해도 예시
+ * 데이터로 안전하게 되돌아간다.
  */
 export function DoctorView() {
   useEffect(() => {
@@ -190,9 +234,65 @@ export function DoctorView() {
     return () => document.documentElement.classList.remove('doctor-mode')
   }, [])
 
+  const [mode, setMode] = useState<'fixtures' | 'server'>('fixtures')
   const [fixtureIndex, setFixtureIndex] = useState(0)
+
+  const [submissions, setSubmissions] = useState<SubmissionSummary[]>([])
+  const [serverError, setServerError] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
+  const viewedRef = useRef<Set<string>>(new Set())
+
+  // 서버 모드: 목록을 5초마다 폴링한다.
+  useEffect(() => {
+    if (mode !== 'server') return
+    let cancelled = false
+
+    async function poll() {
+      const result = await listSubmissions()
+      if (cancelled) return
+      if (result.ok) {
+        setSubmissions(result.data)
+        setServerError(null)
+      } else {
+        setServerError(result.error)
+      }
+    }
+
+    poll()
+    const timer = setInterval(poll, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [mode])
+
+  // 서버 모드: 선택한 제출건 상세를 불러오고, 처음 열 때만 'viewed'로 표시한다.
+  useEffect(() => {
+    if (mode !== 'server' || !selectedId) {
+      setSelectedRecord(null)
+      return
+    }
+    let cancelled = false
+    getSubmission(selectedId).then((result) => {
+      if (cancelled) return
+      if (result.ok) {
+        setSelectedRecord(result.data)
+        if (!viewedRef.current.has(selectedId)) {
+          viewedRef.current.add(selectedId)
+          setSubmissionStatus(selectedId, 'viewed')
+        }
+      } else {
+        setServerError(result.error)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mode, selectedId])
+
   const fixture = DOCTOR_FIXTURES[fixtureIndex]
-  const { payload } = fixture
+  const payload = mode === 'server' && selectedRecord ? recordToPayload(selectedRecord) : fixture.payload
   const r = payload.responses
   const { flags, routing } = payload
   const saju = payload.myungri_calculation
@@ -202,26 +302,92 @@ export function DoctorView() {
     ((r.safety_flags.red_flag_general as string[] | null) ?? []).filter((v) => v !== 'none'),
   )
 
+  const showingServerList = mode === 'server' && !selectedRecord
+
   return (
     <div className="doctor">
       <header className="doctor__header">
         <h1 className="doctor__title">진료 전 요약</h1>
         <div className="doctor__pickerRow">
-          <label htmlFor="doctor-fixture-select">미리보기용 예시 데이터</label>
+          <label htmlFor="doctor-source-select">데이터 소스</label>
           <select
-            id="doctor-fixture-select"
-            value={fixtureIndex}
-            onChange={(e) => setFixtureIndex(Number(e.target.value))}
+            id="doctor-source-select"
+            value={mode}
+            onChange={(e) => {
+              const next = e.target.value as 'fixtures' | 'server'
+              setMode(next)
+              setSelectedId(null)
+              setSelectedRecord(null)
+            }}
           >
-            {DOCTOR_FIXTURES.map((f, i) => (
-              <option key={f.name} value={i}>
-                {f.name}
-              </option>
-            ))}
+            <option value="fixtures">예시 데이터(fixtures)</option>
+            <option value="server">서버 제출목록</option>
           </select>
         </div>
+        {mode === 'fixtures' && (
+          <div className="doctor__pickerRow">
+            <label htmlFor="doctor-fixture-select">미리보기용 예시 데이터</label>
+            <select
+              id="doctor-fixture-select"
+              value={fixtureIndex}
+              onChange={(e) => setFixtureIndex(Number(e.target.value))}
+            >
+              {DOCTOR_FIXTURES.map((f, i) => (
+                <option key={f.name} value={i}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {mode === 'server' && selectedRecord && (
+          <button type="button" className="judgment__recordBtn" onClick={() => setSelectedId(null)}>
+            목록으로
+          </button>
+        )}
       </header>
 
+      {mode === 'server' && serverError && (
+        <div className="doctor__banner">
+          <strong>서버에 연결할 수 없습니다</strong>
+          <p>
+            {serverError} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
+            VITE_SAMINDANG_SERVER_URL 설정이 맞는지 확인하세요. 그동안 예시
+            데이터로 화면을 확인할 수 있습니다.
+          </p>
+        </div>
+      )}
+
+      {showingServerList && !serverError && (
+        <section className="doctor__section">
+          <h2>제출목록 ({submissions.length})</h2>
+          {submissions.length === 0 ? (
+            <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
+          ) : (
+            <div className="doctor__grid">
+              {submissions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="doctorField"
+                  style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}
+                  onClick={() => setSelectedId(s.id)}
+                >
+                  <span className="doctorField__label">
+                    {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
+                  </span>
+                  <span className="doctorField__value">
+                    {statusLabel(s.status)} · {new Date(s.created_at).toLocaleString('ko-KR')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {(mode === 'fixtures' || selectedRecord) && (
+      <>
       {flags.requires_staff_check && (
         <div className="doctor__banner doctor__banner--danger">
           <strong>안전 확인 필요</strong>
@@ -459,12 +625,22 @@ export function DoctorView() {
           myungri_status: saju.status,
           myungri_pending_approval: saju.policy.pending_approval,
         }}
+        initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
+        onSave={
+          mode === 'server' && selectedId
+            ? (judgment: ClinicianJudgment) => {
+                saveJudgmentToServer(selectedId, judgment)
+              }
+            : undefined
+        }
       />
 
       <details className="doctor__raw">
         <summary>원본 응답 보기 (JSON)</summary>
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
+      </>
+      )}
     </div>
   )
 }

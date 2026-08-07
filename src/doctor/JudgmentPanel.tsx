@@ -71,11 +71,23 @@ function LabeledTextarea({
 
 const emptyDebrief: DebriefAnswers = { q1: '', q2: '', q3: '', q4: '' }
 
-export function JudgmentPanel({ source }: { source: JudgmentSourcePayload }) {
-  const [judgment, setJudgment] = useState<ClinicianJudgment>(() => createEmptyJudgment(source))
-  const [debrief, setDebrief] = useState<DebriefAnswers>(emptyDebrief)
+export function JudgmentPanel({
+  source,
+  initialJudgment,
+  onSave,
+}: {
+  source: JudgmentSourcePayload
+  /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
+  initialJudgment?: ClinicianJudgment | null
+  /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
+  onSave?: (judgment: ClinicianJudgment) => void
+}) {
+  const [judgment, setJudgment] = useState<ClinicianJudgment>(
+    () => initialJudgment ?? createEmptyJudgment(source),
+  )
+  const [debrief, setDebrief] = useState<DebriefAnswers>(initialJudgment?.debrief ?? emptyDebrief)
   const [outlineQuestion, setOutlineQuestion] = useState('')
-  const [recorded, setRecorded] = useState<ClinicianJudgment | null>(null)
+  const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
 
   const hasDebrief = Object.values(debrief).some((v) => v.trim() !== '')
@@ -89,7 +101,9 @@ export function JudgmentPanel({ source }: { source: JudgmentSourcePayload }) {
       return
     }
     setErrors([])
-    setRecorded(finalizeJudgment(withDebrief))
+    const finalized = finalizeJudgment(withDebrief)
+    setRecorded(finalized)
+    onSave?.(finalized)
   }
 
   return (
@@ -97,8 +111,10 @@ export function JudgmentPanel({ source }: { source: JudgmentSourcePayload }) {
       <h2>원장 판단 기록</h2>
       <p className="doctor__derivedNote">
         아래 내용은 전부 원장이 직접 입력한 판단입니다. 소프트웨어가 자동으로
-        채우거나 추천한 내용이 아닙니다. 아직 어디에도 저장되지 않으며(백엔드
-        없음), 화면을 새로고침하면 사라집니다.
+        채우거나 추천한 내용이 아닙니다.{' '}
+        {onSave
+          ? '"기록" 버튼을 누르면 이 제출건에 저장됩니다.'
+          : '예시 데이터 미리보기이므로 저장되지 않으며, 화면을 새로고침하면 사라집니다.'}
       </p>
 
       <div className="judgment__grid">

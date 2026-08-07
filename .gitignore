@@ -30,3 +30,7 @@ tests/.doctor-sectionorder-bundle.mjs
 
 # TypeScript incremental build artifacts
 *.tsbuildinfo
+
+# runtime patient data written by server/index.js (SAMINDANG_DATA_DIR default) —
+# never commit real submissions
+.data/

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
-import { DevJsonScreen } from './screens/DevJsonScreen'
+import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
 import {
   QuestionBody,
   confirmLabel,
@@ -77,7 +77,6 @@ export default function App() {
 
   /* ---------- server handoff (optional) ---------- */
 
-  type SubmitState = 'idle' | 'sending' | 'sent' | 'error'
   const [submitState, setSubmitState] = useState<SubmitState>('idle')
   const [submitId, setSubmitId] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -103,12 +102,12 @@ export default function App() {
   const doSubmit = () => {
     if (submittingRef.current) return
     submittingRef.current = true
-    setSubmitState('sending')
+    setSubmitState('submitting')
     setSubmitError(null)
     submitQuestionnaire(donePayload).then((result) => {
       if (result.ok) {
         setSubmitId(result.data.id)
-        setSubmitState('sent')
+        setSubmitState('success')
       } else {
         setSubmitState('error')
         setSubmitError(result.error)
@@ -119,7 +118,11 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'done') return
-    if (!isServerConfigured()) return
+    if (!isServerConfigured()) {
+      // dev/standalone: 전송을 시도하지 않는다 — 완료 화면은 "전송됨"을 주장하지 않는다.
+      setSubmitState('unconfigured')
+      return
+    }
     doSubmit()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
@@ -248,14 +251,14 @@ export default function App() {
 
   if (phase === 'done') {
     return (
-      <DevJsonScreen
+      <PatientCompleteScreen
+        submitState={submitState}
+        submitId={submitId}
+        errorReason={submitError}
+        onRetry={doSubmit}
         payload={donePayload}
-        onRestart={restart}
-        submission={
-          isServerConfigured()
-            ? { state: submitState, id: submitId, error: submitError, onRetry: doSubmit }
-            : null
-        }
+        devMode={import.meta.env.DEV}
+        onStaffReset={restart}
       />
     )
   }

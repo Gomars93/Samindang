@@ -380,23 +380,103 @@ input {
   margin-bottom: 32px;
 }
 
-/* ---------- dev json ---------- */
+/* ---------- patient completion / waiting ---------- */
 
-.devJson {
-  padding: 24px var(--gutter);
+.complete {
+  padding: 40px var(--gutter) 16px;
 }
 
-.devJson__inner {
+.complete__inner {
   max-width: var(--content-max);
   margin: 0 auto;
 }
 
-.devJson h2 {
-  font-size: 25px;
-  margin: 0 0 8px;
+.waitStatus {
+  font-size: var(--fs-question);
+  font-weight: 700;
+  text-align: center;
 }
 
-.devJson pre {
+.helper--strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.statusFlow {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.statusFlow__item {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 4px;
+  font-size: var(--fs-answer);
+  color: var(--text-muted);
+}
+
+.statusFlow__mark {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.statusFlow__item--done .statusFlow__mark {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.statusFlow__item--done .statusFlow__label {
+  color: var(--text);
+}
+
+.statusFlow__item--active {
+  font-weight: 700;
+}
+
+.statusFlow__item--active .statusFlow__mark {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.statusFlow__item--active .statusFlow__label {
+  color: var(--primary);
+}
+
+.submitIdMuted {
+  margin-top: 24px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.devToggle {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px;
+  font-size: 15px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.devJson-pre {
   background: #1c211e;
   color: #e6ece9;
   padding: 20px;
@@ -406,6 +486,7 @@ input {
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
+  margin: 8px 0 16px;
 }
 
 /* ---------- modal ---------- */

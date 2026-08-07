@@ -1383,7 +1383,7 @@ DoctorView는 절대 새 payload 형태를 만들지 않는다. 입력은 App.ts
 enum 값을 `ALL_QUESTIONS`의 실제 옵션 라벨로 되돌리는 방식으로만 하며,
 한글 라벨을 화면 쪽에 따로 하드코딩하지 않는다.
 
-### 12.2 표시 우선순위 (11블록)
+### 12.2 표시 우선순위 (12블록)
 
 화면 상단부터 아래 순서로 배치하며, 진단·치료 추천 문구는 어디에도 넣지
 않는다:
@@ -1400,11 +1400,16 @@ enum 값을 `ALL_QUESTIONS`의 실제 옵션 라벨로 되돌리는 방식으로
 8. **여성 안전정보** — 환자가 답한 원본(WOMEN_SAFETY_01)과
    `derived`(계산된 임신/산후/수유 여부) 및 그 `derived.source`를 함께 표시
 9. **검사자료 / 원장에게 하고 싶은 말**
-10. **계산된 사실 (명리)** — 사주 네 기둥 + status + (pending_approval이
-    있으면) 야자시/조자시·진태양시 정책 미확정 경고와
-    `docs/MYUNGRI_CALCULATION_POLICY_PENDING.md` 안내. 십신·용신 등 해석은
-    추가하지 않는다.
-11. **원본 응답 보기** — 접힌 `<details>` 안의 raw JSON
+10. **명리 검토** — 좌우로 명확히 분리된 3열: (왼쪽) 원본 출생정보 —
+    환자가 입력한 그대로(생년월일/달력 종류/윤달/시주 라벨/시간 확신도),
+    (가운데) 계산된 사실 — 사주 네 기둥 + status + `flags.hour_unknown`이면
+    "시주 미상" 명시 + (pending_approval이 있으면) 야자시/조자시·진태양시
+    정책 미확정 경고와 `docs/MYUNGRI_CALCULATION_POLICY_PENDING.md` 안내,
+    (오른쪽) 현재 문진 요약 — 주호소/기간/일상 영향/주요 모듈 응답. 십신·
+    용신 등 해석은 추가하지 않는다.
+11. **원장 판단 기록** — 12.5절의 `ClinicianJudgment` 폼. 명리 검토(10번)
+    바로 아래, 원본 응답 보기(12번) 바로 위에 위치한다.
+12. **원본 응답 보기** — 접힌 `<details>` 안의 raw JSON
 
 ### 12.3 null vs none vs unknown 표시 규칙
 
@@ -1423,12 +1428,128 @@ enum 값을 `ALL_QUESTIONS`의 실제 옵션 라벨로 되돌리는 방식으로
 섞지 않고 별도의 요약 문구(파생 정보)로만 노출하며, 여성 안전정보와 명리
 블록에는 "시스템이 계산한 것" 라벨을 명시적으로 붙인다.
 
+### 12.5 원장 판단 데이터 계약 (`ClinicianJudgment`)
+
+`src/doctor/judgment.ts`(순수 타입 + 헬퍼, React 없음)와
+`src/doctor/JudgmentPanel.tsx`(폼 UI)가 구현한다. 이 계약은 **소프트웨어가
+명리 해석이나 진단·처방을 생성하지 않는다**는 원칙을 데이터 모델 수준에서
+강제하기 위한 것이다 — `ClinicianJudgment`의 모든 해석성 필드(`string`)는
+원장이 화면에서 직접 타이핑한 값이며, 어떤 필드도 계산 로직으로 채워지지
+않는다.
+
+**3계층 분리(three-layer separation)** — 이 기능 전체의 핵심 전제:
+
+1. **계산된 사실** — 결정적 사주 계산 + 라우팅/플래그
+   (`payload.myungri_calculation`, `payload.flags`, `payload.routing`).
+   이미 12.1~12.4절에서 다룬 기존 계약이며 이번 작업에서 손대지 않았다.
+2. **환자가 답한 문진** — `payload.responses`. 마찬가지로 기존 계약 그대로.
+3. **원장의 판단** — 이번에 추가된 `ClinicianJudgment`. 위 두 계층과 절대
+   병합하지 않으며, UI에서도 명리 검토 블록(10번)과 원장 판단 기록
+   블록(11번)으로 시각적으로 분리한다.
+
+**타입 전문 (`src/doctor/judgment.ts`)**:
+
+```ts
+export const JUDGMENT_SCHEMA_VERSION = '1.0.0'
+export const MAX_INNATE_FEATURES = 3
+export const MAX_SYMPTOM_LINKS = 2
+
+export type DebriefAnswers = { q1: string; q2: string; q3: string; q4: string }
+
+export const DEBRIEF_QUESTIONS = [
+  '이 사주에서 제일 중요하게 본 것은 무엇인가?',
+  '사주만 보고 어떤 임상문제를 예상했는가?',
+  '실제 문진·맥·설을 보고 무엇을 수정했는가?',
+  '그 수정이 처방을 어떻게 바꿨는가?',
+] as const
+
+export type ClinicianJudgment = {
+  schema_version: string
+  recorded_at: string | null          // ISO, null until the clinician saves
+  source: {
+    session_id: string
+    questionnaire_version: string
+    myungri_algorithm_version: string
+    myungri_library_version: string
+    myungri_status: 'resolved' | 'partial' | 'unresolved'
+    myungri_pending_approval: string[]
+  }
+  innate_features: string[]           // 핵심 선천 특징, 최대 3
+  symptom_links: string[]             // 현재 증상과 연결되는 핵심, 최대 2
+  saju_only_prediction: string
+  revised_after_exam: string
+  final_treatment_axis: string
+  prescription_direction: string
+  learning_case: boolean              // ★ 학습 케이스
+  debrief: DebriefAnswers | null
+  transcript_import: null             // 향후 녹취 임포트용 hook, MVP는 항상 null
+}
+```
+
+**버전 필드** — `schema_version`은 `ClinicianJudgment`의 모양 자체가 바뀔 때
+올린다. `source.myungri_algorithm_version`/`source.myungri_library_version`은
+그 판단이 어떤 계산 엔진 버전을 보고 내려졌는지의 provenance이며
+`src/saju/policy.ts`(`MYUNGRI_ALGORITHM_VERSION`)와 `manseryeok` 패키지
+버전을 각각 그대로 echo한다 — 나중에 계산 로직이 바뀌었을 때 과거 판단이
+어느 버전을 기준으로 했는지 추적하기 위함이다.
+
+**최대 개수 제한** — `innate_features`는 최대 `MAX_INNATE_FEATURES`(3)개,
+`symptom_links`는 최대 `MAX_SYMPTOM_LINKS`(2)개. UI(`JudgmentPanel.tsx`)는
+처음부터 고정된 개수의 입력칸만 렌더링해 4번째를 추가할 방법 자체를 주지
+않으며, `validateJudgment`가 방어적으로 한 번 더 개수를 검증한다.
+
+**헬퍼 함수**:
+
+- `createEmptyJudgment(payload)` — provenance(`source.*`)를 채우고 나머지는
+  빈 값(빈 배열/빈 문자열/`false`/`null`)으로 초기화한다.
+- `validateJudgment(j)` — 개수 제한과 `recorded_at`이 ISO 문자열이거나
+  `null`인지만 검증한다. 한국어 에러 문자열을 반환한다. 내용의 임상적
+  타당성은 절대 검사하지 않는다(그건 원장의 판단이다).
+- `finalizeJudgment(j)` — 입력을 변경하지 않고 복사본에
+  `recorded_at = new Date().toISOString()`을 채우고, `innate_features`/
+  `symptom_links`에서 빈 문자열 항목을 제거한 복사본을 반환한다.
+
+**저장소 없음** — 이 기능에는 DB/localStorage/백엔드가 전혀 없다.
+`ClinicianJudgment`는 `JudgmentPanel` 컴포넌트의 React state에만 존재하며
+화면을 새로고침하면 사라진다. `JudgmentPanel`은 이 사실을 화면에 그대로
+안내한다. 이 데이터 계약(직렬화 가능한 순수 JSON 모양)은 나중에 백엔드로
+넘길 때 그대로 `POST` body로 쓸 수 있도록 설계했지만, 저장/전송 로직 자체는
+이번 스코프 밖이며 아직 구현되지 않았다.
+
+**1분 디브리핑** — `debrief`는 선택 항목이며, `DEBRIEF_QUESTIONS`(4개
+고정 질문)에 대한 원장의 짧은 답변 4개(`DebriefAnswers`)를 담는다. UI에서
+기본적으로 접혀 있어(collapsed `<details>`) 아무 입력을 하지 않아도 부담이
+없다. 음성 녹음 기능은 없으며, `transcript_import` 필드는 향후 녹취 임포트
+기능을 위한 자리표시자로만 존재하고 MVP에서는 항상 `null`이다.
+
+**설명 개요(explanation outline)** — 원장 전용 프레젠테이션 스캐폴드로,
+원장이 입력한 `innate_features`/`symptom_links`/`final_treatment_axis`/
+`prescription_direction`을 고정된 4단계 순서(1. 선천 특징 2. 현재 증상
+연결 3. 치료 우선순위·한약 방향 4. 질문)로 그대로 재구성해서 보여준다.
+새 내용을 추가하거나 만들어내지 않으며, 빈 항목은 `(미입력)`으로 표시한다.
+자유 입력 질문 칸이 별도로 있으나 이는 `ClinicianJudgment` 계약에 포함되지
+않는 UI 전용 메모다.
+
+**향후 AI/규칙엔진과의 경계** — 만약 이후 스프린트에서 AI가 판단 후보를
+생성하는 기능(예: Shadow Mode)이 추가되더라도, 그 결과는 절대
+`ClinicianJudgment` 안에 병합하지 않는다. `ClinicianJudgment`의 모든 필드는
+"원장이 실제로 타이핑한 값"이라는 불변식을 유지해야만, 나중에 AI 후보와
+원장의 실제 판단을 나란히 비교하는 Shadow Mode가 정직하게 성립한다. AI가
+생성한 후보는 완전히 별도의 네임스페이스(예: 별도 타입/파일)에 저장해야
+한다.
+
 **테스트**: `tests/doctor.spec.mjs`(`npm run test:doctor`)가
-`src/doctor/fixtures.ts`/`src/doctor/labels.ts`를 esbuild로 번들해 검증한다
-— fixture 7종 모두 `responses`/`flags`/`routing`/`myungri_calculation`을
-갖는지, 안전 확인 fixture가 실제로 `requires_staff_check`인지, 임신 fixture의
+`src/doctor/fixtures.ts`/`src/doctor/labels.ts`/`src/doctor/judgment.ts`/
+`src/doctor/sectionOrder.ts`를 esbuild로 번들해 검증한다 — fixture 7종
+모두 `responses`/`flags`/`routing`/`myungri_calculation`을 갖는지, 안전
+확인 fixture가 실제로 `requires_staff_check`인지, 임신 fixture의
 `reproductive_status.derived.source`가 `pregnancy_module`인지, 출생시간
 미상 fixture가 `status: 'partial'`에 `pillars.hour === null`인지, 자시
-fixture의 `policy.pending_approval`에 `day_boundary`가 포함되는지, 그리고
-라벨 해석 헬퍼가 여러 질문에 걸쳐 실제로 한글 라벨을 반환하고 원본 enum을
-그대로 흘리지 않는지까지 확인한다.
+fixture의 `policy.pending_approval`에 `day_boundary`가 포함되는지, 라벨
+해석 헬퍼가 여러 질문에 걸쳐 실제로 한글 라벨을 반환하고 원본 enum을 그대로
+흘리지 않는지, `createEmptyJudgment`가 fixture의 provenance를 정확히
+채우는지, `validateJudgment`가 4개/3개 초과를 한국어 에러로 거부하고
+3개/2개는 통과시키는지, `finalizeJudgment`가 입력을 변경하지 않고
+ISO `recorded_at`을 채우며 빈 문자열 항목을 제거하는지, `ClinicianJudgment`의
+키 집합이 문서화된 계약과 정확히 일치하는지, 그리고 `DOCTOR_SECTION_ORDER`
+에서 안전 배너/약물·병력이 명리 검토보다 항상 먼저 오는지까지 확인한다.

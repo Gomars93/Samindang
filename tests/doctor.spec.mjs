@@ -5,6 +5,12 @@
 
 import { DOCTOR_FIXTURES } from './.doctor-fixtures-bundle.mjs'
 import { optionLabel, optionLabels } from './.doctor-labels-bundle.mjs'
+import {
+  createEmptyJudgment,
+  validateJudgment,
+  finalizeJudgment,
+} from './.doctor-judgment-bundle.mjs'
+import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
 
 let passCount = 0
 
@@ -144,6 +150,136 @@ for (const f of DOCTOR_FIXTURES) {
   // correct "label" (there is nothing to translate); confirm the helper
   // doesn't crash and doesn't invent a label for those.
   assert('optionLabel falls back to raw value for free-text questions', optionLabel('ID_01', '김민준') === '김민준')
+}
+
+/* ---------------------------------------------------------------------
+ * 8. createEmptyJudgment fills provenance from the payload, leaves
+ *    interpretive fields empty, recorded_at/transcript_import null.
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('안전 확인 필요')
+  const saju = f.payload.myungri_calculation
+  const sourcePayload = {
+    session_id: f.payload.session_id,
+    questionnaire_version: f.payload.questionnaire_version,
+    myungri_algorithm_version: saju.policy.algorithm_version,
+    myungri_library_version: saju.engine.library_version,
+    myungri_status: saju.status,
+    myungri_pending_approval: saju.policy.pending_approval,
+  }
+  const j = createEmptyJudgment(sourcePayload)
+
+  assert('createEmptyJudgment: schema_version set', j.schema_version === '1.0.0')
+  assert('createEmptyJudgment: recorded_at null', j.recorded_at === null)
+  assert('createEmptyJudgment: transcript_import null', j.transcript_import === null)
+  assert('createEmptyJudgment: source.session_id from payload', j.source.session_id === f.payload.session_id)
+  assert(
+    'createEmptyJudgment: source.questionnaire_version from payload',
+    j.source.questionnaire_version === f.payload.questionnaire_version,
+  )
+  assert(
+    'createEmptyJudgment: source.myungri_algorithm_version from payload',
+    j.source.myungri_algorithm_version === saju.policy.algorithm_version,
+  )
+  assert('createEmptyJudgment: source.myungri_status from payload', j.source.myungri_status === saju.status)
+  assert(
+    'createEmptyJudgment: source.myungri_pending_approval from payload (day_boundary)',
+    j.source.myungri_pending_approval.includes('day_boundary'),
+  )
+  assert('createEmptyJudgment: innate_features empty', j.innate_features.length === 0)
+  assert('createEmptyJudgment: symptom_links empty', j.symptom_links.length === 0)
+  assert('createEmptyJudgment: learning_case false', j.learning_case === false)
+  assert('createEmptyJudgment: debrief null', j.debrief === null)
+
+  /* -------------------------------------------------------------------
+   * 9. validateJudgment enforces the max-3 / max-2 caps with Korean errors.
+   * ----------------------------------------------------------------- */
+
+  const tooManyInnate = { ...j, innate_features: ['a', 'b', 'c', 'd'], symptom_links: [] }
+  const rInnate = validateJudgment(tooManyInnate)
+  assert('validateJudgment: rejects 4 innate_features', rInnate.ok === false)
+  assert(
+    'validateJudgment: 4 innate_features error is Korean',
+    rInnate.errors.some((e) => /핵심 선천 특징/.test(e)),
+  )
+
+  const tooManySymptom = { ...j, innate_features: [], symptom_links: ['a', 'b', 'c'] }
+  const rSymptom = validateJudgment(tooManySymptom)
+  assert('validateJudgment: rejects 3 symptom_links', rSymptom.ok === false)
+  assert(
+    'validateJudgment: 3 symptom_links error is Korean',
+    rSymptom.errors.some((e) => /현재 증상과 연결되는 핵심/.test(e)),
+  )
+
+  const okCounts = { ...j, innate_features: ['a', 'b', 'c'], symptom_links: ['a', 'b'] }
+  const rOk = validateJudgment(okCounts)
+  assert('validateJudgment: accepts 3 innate_features and 2 symptom_links', rOk.ok === true && rOk.errors.length === 0)
+
+  /* -------------------------------------------------------------------
+   * 10. finalizeJudgment sets ISO recorded_at, drops empty strings,
+   *     and does not mutate the input.
+   * ----------------------------------------------------------------- */
+
+  const beforeFinalize = { ...j, innate_features: ['간 기운이 강함', '', '  '], symptom_links: ['', '수면 문제'] }
+  const frozenCopy = JSON.parse(JSON.stringify(beforeFinalize))
+  const finalized = finalizeJudgment(beforeFinalize)
+
+  assert('finalizeJudgment: recorded_at is ISO string', !Number.isNaN(Date.parse(finalized.recorded_at)))
+  assert(
+    'finalizeJudgment: drops empty-string entries from innate_features',
+    finalized.innate_features.length === 1 && finalized.innate_features[0] === '간 기운이 강함',
+  )
+  assert(
+    'finalizeJudgment: drops empty-string entries from symptom_links',
+    finalized.symptom_links.length === 1 && finalized.symptom_links[0] === '수면 문제',
+  )
+  assert(
+    'finalizeJudgment: does not mutate the input object',
+    JSON.stringify(beforeFinalize) === JSON.stringify(frozenCopy),
+  )
+
+  /* -------------------------------------------------------------------
+   * 11. ClinicianJudgment key set matches the documented contract exactly
+   *     (no machine-generated interpretation field ever sneaks in).
+   * ----------------------------------------------------------------- */
+
+  const expectedKeys = [
+    'schema_version',
+    'recorded_at',
+    'source',
+    'innate_features',
+    'symptom_links',
+    'saju_only_prediction',
+    'revised_after_exam',
+    'final_treatment_axis',
+    'prescription_direction',
+    'learning_case',
+    'debrief',
+    'transcript_import',
+  ].sort()
+  assert(
+    'ClinicianJudgment: key set exactly matches the documented contract',
+    JSON.stringify(Object.keys(j).sort()) === JSON.stringify(expectedKeys),
+  )
+}
+
+/* ---------------------------------------------------------------------
+ * 12. Section ordering: safety banner and medication/history must render
+ *     before the myungri review block, and judgment_record comes last.
+ * ------------------------------------------------------------------- */
+
+{
+  const idx = (id) => DOCTOR_SECTION_ORDER.indexOf(id)
+  assert('DOCTOR_SECTION_ORDER: safety_banner before myungri_review', idx('safety_banner') < idx('myungri_review'))
+  assert(
+    'DOCTOR_SECTION_ORDER: medication_history before myungri_review',
+    idx('medication_history') < idx('myungri_review'),
+  )
+  assert(
+    'DOCTOR_SECTION_ORDER: judgment_record after myungri_review',
+    idx('judgment_record') > idx('myungri_review'),
+  )
 }
 
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

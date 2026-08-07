@@ -25,6 +25,8 @@ tests/.saju-bundle.mjs
 # esbuild bundles used by tests/doctor.spec.mjs (regenerated, not source)
 tests/.doctor-fixtures-bundle.mjs
 tests/.doctor-labels-bundle.mjs
+tests/.doctor-judgment-bundle.mjs
+tests/.doctor-sectionorder-bundle.mjs
 
 # TypeScript incremental build artifacts
 *.tsbuildinfo

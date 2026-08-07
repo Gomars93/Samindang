@@ -2,9 +2,13 @@ import { useEffect, useState } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabels, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
+import { JudgmentPanel } from './JudgmentPanel'
+import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import type { DoctorPayload } from './types'
 import type { AnswerValue } from '../types'
 import './doctor.css'
+
+export { DOCTOR_SECTION_ORDER }
 
 type Responses = DoctorPayload['responses']
 
@@ -358,48 +362,104 @@ export function DoctorView() {
       </section>
 
       <section className="doctor__section doctor__section--myungri">
-        <h2>계산된 사실 (명리) — 시스템이 계산한 것</h2>
+        <h2>명리 검토</h2>
         <p className="doctor__derivedLabel">
-          환자 답변이 아니라 생년월일·출생시간 입력값으로부터 결정적으로 계산된
-          값입니다. 해석(십신·용신 등)은 어디에도 포함하지 않습니다.
+          왼쪽은 환자가 입력한 원본 정보, 오른쪽은 그 입력값으로부터 결정적으로
+          계산된 사실입니다. 두 열은 서로 다른 것이며, 해석(십신·용신 등)은
+          어디에도 포함하지 않습니다.
         </p>
 
-        {saju.status !== 'resolved' && (
-          <p className="doctor__warning">
-            상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
-            {saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
-          </p>
-        )}
-
-        {saju.pillars && (
-          <div className="doctor__pillars">
-            <div className="doctor__pillar">
-              <span>연주</span>
-              <strong>{saju.pillars.year}</strong>
+        <div className="judgment__reviewGrid">
+          <div className="judgment__reviewCol">
+            <h3>원본 출생정보 — 환자 입력</h3>
+            <div className="doctorField">
+              <span className="doctorField__label">생년월일 (입력 그대로)</span>
+              <span className="doctorField__value">{r.birth_info.birth_date ?? '—'}</span>
             </div>
-            <div className="doctor__pillar">
-              <span>월주</span>
-              <strong>{saju.pillars.month}</strong>
-            </div>
-            <div className="doctor__pillar">
-              <span>일주</span>
-              <strong>{saju.pillars.day}</strong>
-            </div>
-            <div className="doctor__pillar">
-              <span>시주</span>
-              <strong>{saju.pillars.hour ?? '미상'}</strong>
-            </div>
+            <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
+            <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
+            <Field qid="BIRTH_03" label="출생시간대" value={r.birth_info.birth_time_branch} />
+            <Field qid="BIRTH_03A" label="시간 확신도" value={r.birth_info.birth_time_confidence} />
           </div>
-        )}
 
-        {saju.policy.pending_approval.length > 0 && (
-          <p className="doctor__warning">
-            주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이 값이
-            바뀔 수 있습니다. (대기 항목: {saju.policy.pending_approval.join(', ')},
-            자세한 내용은 docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고)
-          </p>
-        )}
+          <div className="judgment__reviewCol">
+            <h3>계산된 사실 — 시스템이 계산한 것</h3>
+
+            {saju.status !== 'resolved' && (
+              <p className="doctor__warning">
+                상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
+                {saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+              </p>
+            )}
+            {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
+
+            {saju.pillars && (
+              <div className="doctor__pillars">
+                <div className="doctor__pillar">
+                  <span>연주</span>
+                  <strong>{saju.pillars.year}</strong>
+                </div>
+                <div className="doctor__pillar">
+                  <span>월주</span>
+                  <strong>{saju.pillars.month}</strong>
+                </div>
+                <div className="doctor__pillar">
+                  <span>일주</span>
+                  <strong>{saju.pillars.day}</strong>
+                </div>
+                <div className="doctor__pillar">
+                  <span>시주</span>
+                  <strong>{saju.pillars.hour ?? '미상'}</strong>
+                </div>
+              </div>
+            )}
+
+            {saju.normalized && (
+              <p className="doctor__derivedNote">
+                정규화된 양력 날짜: {saju.normalized.solarDate.year}-
+                {String(saju.normalized.solarDate.month).padStart(2, '0')}-
+                {String(saju.normalized.solarDate.day).padStart(2, '0')} / 상태: {saju.status}
+              </p>
+            )}
+
+            {saju.policy.pending_approval.length > 0 && (
+              <p className="doctor__warning">
+                주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
+                값이 바뀔 수 있습니다. 대기 항목: {saju.policy.pending_approval.join(', ')}.
+                원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
+                docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
+              </p>
+            )}
+          </div>
+
+          <div className="judgment__reviewCol">
+            <h3>현재 문진 요약</h3>
+            <div className="doctorField">
+              <span className="doctorField__label">주호소</span>
+              <span className="doctorField__value">{primaryConcernLabel(r)}</span>
+            </div>
+            <Field qid="VISIT_03_SYMPTOM_DURATION" label="기간" value={r.visit_goal.chief_duration} />
+            <Field qid="VISIT_04_SYMPTOM_IMPACT" label="일상 영향" value={r.visit_goal.chief_impact} />
+            {primaryModuleFields(routing.primary_module, r.modules)
+              .slice(0, 3)
+              .map((f) => (
+                <Field key={f.qid} qid={f.qid} value={f.value} />
+              ))}
+          </div>
+        </div>
       </section>
+
+      <JudgmentPanel
+        key={payload.session_id}
+        source={{
+          session_id: payload.session_id,
+          questionnaire_version: payload.questionnaire_version,
+          myungri_algorithm_version: saju.policy.algorithm_version,
+          myungri_library_version: saju.engine.library_version,
+          myungri_status: saju.status,
+          myungri_pending_approval: saju.policy.pending_approval,
+        }}
+      />
 
       <details className="doctor__raw">
         <summary>원본 응답 보기 (JSON)</summary>

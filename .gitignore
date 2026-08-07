@@ -11,3 +11,7 @@ dist
 .claude/queue/state.json
 .claude/queue/reports/*
 !.claude/queue/reports/.gitkeep
+
+# local queue loop-fix scratch artifacts (user-generated, not source)
+*.bak-before-loopfix
+fix-samindang-queue-loop.ps1

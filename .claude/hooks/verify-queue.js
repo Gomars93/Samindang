@@ -1,17 +1,17 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * Stop hook for the local task queue (.claude/queue).
  *
  * No-ops completely when the queue is inactive (state.active === false) or
- * when there is no current_task — existing Claude Code behavior is
+ * when there is no current_task ??existing Claude Code behavior is
  * untouched in that case.
  *
  * This hook only ever does state bookkeeping (verify, report,
  * retry/circuit-break, optional OpenAI supervisor review, checkpoint
- * commit, pick next task). It never spawns `claude` itself — that is
+ * commit, pick next task). It never spawns `claude` itself ??that is
  * deliberately left to queue/run-next.js so a Stop hook can never block on
  * (or recursively trigger) a long-running child Claude session. See
- * .claude/queue/README.md "Stop hook과 auto-advance 연결" for the reasoning.
+ * .claude/queue/README.md "Stop hook怨?auto-advance ?곌껐" for the reasoning.
  *
  * Flow once active + current_task is set:
  *   1. `tsc -b` then `vite build` (via node against node_modules/*, not
@@ -22,7 +22,7 @@
  *      - fail, retries >= max_retries -> deactivates the queue, allows Stop
  *      - pass but task file still has unchecked `- [ ]` items -> exit 2
  *   2. Local verify fully passed. If state.supervisor_enabled is false:
- *      exactly the previous behavior — checkpoint commit, record
+ *      exactly the previous behavior ??checkpoint commit, record
  *      completion, (if auto_advance) pick next task, allow Stop.
  *   3. If state.supervisor_enabled is true: call the OpenAI supervisor
  *      (supervisor.js) with a capped context bundle. PASS -> same as step
@@ -97,8 +97,7 @@ function countUnchecked(taskBody) {
 }
 
 /**
- * Best-effort checkpoint commit after a task fully passes. Never throws —
- * a commit failure is logged to state.last_error but does not block Stop.
+ * Best-effort checkpoint commit after a task fully passes. Never throws ?? * a commit failure is logged to state.last_error but does not block Stop.
  * Stages the whole working tree (`git add -A`); .gitignore already keeps
  * node_modules, dist, env files, and the queue's own state.json / reports
  * out, so this never commits secrets or runtime queue state.
@@ -157,9 +156,12 @@ async function main() {
   // Queue not turned on -> do not touch normal Claude Code behavior.
   if (!state.active) allow()
 
-  // Claude Code already re-invoked us once this turn after a block;
-  // never block twice in a row (hard infinite-loop guard).
-  if (input.stop_hook_active) allow()
+  // Claude Code may re-invoke the Stop hook after this hook blocked once.
+  // Do NOT immediately allow here: the second invocation is exactly when
+  // Claude may have completed the remaining checklist items. We still need
+  // to verify, run the supervisor, checkpoint, and advance the queue.
+  // We only prohibit a *second block* below.
+  const stopHookAlreadyBlocked = Boolean(input.stop_hook_active)
 
   // Active but nothing queued -> nothing to verify.
   if (!state.current_task) allow()
@@ -229,6 +231,17 @@ async function main() {
       )
     }
     saveState(state)
+    if (stopHookAlreadyBlocked) {
+      state.active = false
+      state.last_error =
+        `task ${taskFile} still failed local verification after the Stop hook already blocked once; ` +
+        `queue deactivated to avoid an infinite Stop-hook loop.`
+      saveState(state)
+      allow(
+        `queue: ${taskFile} still fails local verification after one in-session retry. ` +
+          `Queue deactivated for manual review. Report: .claude/queue/reports/${reportName}`,
+      )
+    }
     block(
       `Task queue verification FAILED (attempt ${attempt}/${state.max_retries}) for ${taskFile}.\n` +
         `tsc: ${tsc.ok ? 'PASS' : 'FAIL'} / build: ${build.ok ? 'PASS' : 'FAIL'}\n` +
@@ -239,7 +252,7 @@ async function main() {
   }
 
   // Local verify passed. NOTE: retries[taskFile] is intentionally NOT
-  // cleared yet — a supervisor REVISE below still counts as "this attempt
+  // cleared yet ??a supervisor REVISE below still counts as "this attempt
   // didn't fully succeed", sharing the same max_retries budget as a local
   // tsc/build failure. It is only cleared at the true end states below.
   state.last_error = null
@@ -248,6 +261,17 @@ async function main() {
   const unchecked = countUnchecked(taskBody)
   if (unchecked > 0) {
     saveState(state)
+    if (stopHookAlreadyBlocked) {
+      state.active = false
+      state.last_error =
+        `task ${taskFile} still has ${unchecked} unchecked checklist item(s) after one in-session retry; ` +
+        `queue deactivated to avoid an infinite Stop-hook loop.`
+      saveState(state)
+      allow(
+        `queue: ${taskFile} still has ${unchecked} unchecked checklist item(s) after one in-session retry. ` +
+          `Queue deactivated for manual review.`,
+      )
+    }
     block(
       `Task queue verification passed for ${taskFile}, but ${unchecked} checklist item(s) ` +
         `are still unchecked ("- [ ]"). Continue working on the remaining items in this task, ` +
@@ -310,6 +334,17 @@ async function main() {
       )
     }
     saveState(state)
+    if (stopHookAlreadyBlocked) {
+      state.active = false
+      state.last_error =
+        `supervisor requested REVISE for ${taskFile} after the Stop hook already blocked once; ` +
+        `queue deactivated so the revision can run in a fresh Claude session.`
+      saveState(state)
+      allow(
+        `queue: supervisor requested REVISE for ${taskFile}. Queue deactivated for a fresh-session retry. ` +
+          `Report: .claude/queue/reports/${supervisorReportName}`,
+      )
+    }
     block(formatRevisionPrompt(decision))
   }
 
@@ -334,3 +369,4 @@ main().catch((err) => {
   process.stderr.write(`verify-queue.js crashed: ${String(err && err.stack ? err.stack : err)}\n`)
   process.exit(2)
 })
+

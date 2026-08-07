@@ -2,6 +2,7 @@
 /**
  * Queue control CLI.
  *   node .claude/queue/control.js status|start|stop|next|reset|list
+ *   node .claude/queue/control.js supervisor-on|supervisor-off
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
@@ -76,11 +77,47 @@ function cmdList() {
   }
 }
 
+function cmdSupervisorOn() {
+  if (!process.env.OPENAI_API_KEY) {
+    console.log(
+      'queue: OPENAI_API_KEY is not set in this environment. Refusing to enable the supervisor.\n' +
+        'Set it for this PowerShell session only (never commit it):\n' +
+        '  $env:OPENAI_API_KEY="..."',
+    )
+    process.exit(1)
+  }
+  const state = loadState()
+  state.supervisor_enabled = true
+  saveState(state)
+  console.log(
+    'queue: supervisor_enabled=true. Task completions will now be reviewed by the OpenAI ' +
+      'supervisor after local tsc/build + checklist pass. (API key value is never logged.)',
+  )
+}
+
+function cmdSupervisorOff() {
+  const state = loadState()
+  state.supervisor_enabled = false
+  saveState(state)
+  console.log('queue: supervisor_enabled=false. Local tsc/build + checklist verification still applies.')
+}
+
 const [, , cmd] = process.argv
-const commands = { status: cmdStatus, start: cmdStart, stop: cmdStop, next: cmdNext, reset: cmdReset, list: cmdList }
+const commands = {
+  status: cmdStatus,
+  start: cmdStart,
+  stop: cmdStop,
+  next: cmdNext,
+  reset: cmdReset,
+  list: cmdList,
+  'supervisor-on': cmdSupervisorOn,
+  'supervisor-off': cmdSupervisorOff,
+}
 
 if (!commands[cmd]) {
-  console.log('usage: node .claude/queue/control.js <status|start|stop|next|reset|list>')
+  console.log(
+    'usage: node .claude/queue/control.js <status|start|stop|next|reset|list|supervisor-on|supervisor-off>',
+  )
   process.exit(1)
 }
 commands[cmd]()

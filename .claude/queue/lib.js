@@ -34,6 +34,11 @@ export function defaultState() {
     completed_tasks: [],
     history: [],
     last_error: null,
+    // OpenAI supervisor integration (off by default; see supervisor.js)
+    supervisor_enabled: false,
+    supervisor_calls: 0,
+    last_supervisor_decision: null,
+    last_supervisor_error: null,
     updated_at: null,
   }
 }

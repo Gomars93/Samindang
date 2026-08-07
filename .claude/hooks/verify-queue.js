@@ -6,25 +6,30 @@
  * when there is no current_task — existing Claude Code behavior is
  * untouched in that case.
  *
- * This hook only ever does synchronous state bookkeeping (verify, report,
- * retry/circuit-break, checkpoint commit, pick next task). It never spawns
- * `claude` itself — that is deliberately left to queue/run-next.js so a
- * Stop hook can never block on (or recursively trigger) a long-running
- * child Claude session. See .claude/queue/README.md "Stop hook과
- * auto-advance 연결" for the reasoning.
+ * This hook only ever does state bookkeeping (verify, report,
+ * retry/circuit-break, optional OpenAI supervisor review, checkpoint
+ * commit, pick next task). It never spawns `claude` itself — that is
+ * deliberately left to queue/run-next.js so a Stop hook can never block on
+ * (or recursively trigger) a long-running child Claude session. See
+ * .claude/queue/README.md "Stop hook과 auto-advance 연결" for the reasoning.
  *
- * When active + a current_task is set: runs `tsc -b` then `vite build`
- * (invoked directly via node against node_modules/*, not `npx`, so it does
- * not depend on PATH), writes a report to .claude/queue/reports/, and:
- *   - verify fails, retries < max_retries  -> exit 2 (blocks Stop, stderr
- *     tells Claude what failed so it can fix the same task)
- *   - verify fails, retries >= max_retries -> deactivates the queue and
- *     allows Stop (circuit breaker, no infinite loop)
- *   - verify passes but the task file still has unchecked `- [ ]` items
- *     -> exit 2 (keep working on the same task)
- *   - verify passes and no unchecked items -> checkpoint-commits, records
- *     completion, and (if auto_advance) picks the next pending task file
- *     into current_task; allows Stop either way
+ * Flow once active + current_task is set:
+ *   1. `tsc -b` then `vite build` (via node against node_modules/*, not
+ *      `npx`, so it does not depend on PATH). Report written to
+ *      .claude/queue/reports/.
+ *      - fail, retries < max_retries  -> exit 2 (blocks Stop, stderr tells
+ *        Claude what failed)
+ *      - fail, retries >= max_retries -> deactivates the queue, allows Stop
+ *      - pass but task file still has unchecked `- [ ]` items -> exit 2
+ *   2. Local verify fully passed. If state.supervisor_enabled is false:
+ *      exactly the previous behavior — checkpoint commit, record
+ *      completion, (if auto_advance) pick next task, allow Stop.
+ *   3. If state.supervisor_enabled is true: call the OpenAI supervisor
+ *      (supervisor.js) with a capped context bundle. PASS -> same as step
+ *      2 plus optional next_task creation. REVISE -> no commit, retries+1
+ *      (shares the same max_retries budget as local failures), block Stop
+ *      with the supervisor's issues as the fix-it prompt. STOP -> queue
+ *      deactivated, current_task kept, allow Stop (no forced continuation).
  *
  * stop_hook_active (set by Claude Code when this hook already blocked once
  * this turn) is always honored as an immediate allow, to prevent recursive
@@ -42,6 +47,13 @@ import {
   loadState,
   saveState,
 } from '../queue/lib.js'
+import {
+  createSupervisorTask,
+  formatRevisionPrompt,
+  gatherSupervisorContext,
+  runSupervisorReview,
+  writeSupervisorReport,
+} from '../queue/supervisor.js'
 
 function readStdinJson() {
   try {
@@ -108,7 +120,37 @@ function gitCheckpointCommit(taskFile, state) {
   }
 }
 
-function main() {
+/** Shared tail for both the supervisor-disabled path and a supervisor PASS. */
+function finishTaskAndAdvance(taskFile, state, extraMessage) {
+  delete state.retries[taskFile]
+  state.last_error = null
+  state.completed_tasks.push({ task: taskFile, at: new Date().toISOString() })
+  gitCheckpointCommit(taskFile, state)
+
+  if (state.auto_advance) {
+    const next = findNextPendingTask(state)
+    state.current_task = next
+    if (!next) state.active = false
+    saveState(state)
+    allow(
+      (next
+        ? `queue: task ${taskFile} verified and complete. auto_advance is on, next task: ${next}. ` +
+          `Run "node .claude/queue/run-next.js" (or "control.js start") to execute it.`
+        : `queue: task ${taskFile} verified and complete. No pending tasks left, queue deactivated.`) +
+        (extraMessage ? ` ${extraMessage}` : ''),
+    )
+  }
+
+  state.current_task = null
+  saveState(state)
+  allow(
+    `queue: task ${taskFile} verified and complete. current_task cleared (auto_advance is off). ` +
+      `Set state.json.current_task to the next task file to continue the queue.` +
+      (extraMessage ? ` ${extraMessage}` : ''),
+  )
+}
+
+async function main() {
   const input = readStdinJson()
   const state = loadState()
 
@@ -196,8 +238,10 @@ function main() {
     )
   }
 
-  // Passed verification. Reset retry counter and any stale error for this task.
-  delete state.retries[taskFile]
+  // Local verify passed. NOTE: retries[taskFile] is intentionally NOT
+  // cleared yet — a supervisor REVISE below still counts as "this attempt
+  // didn't fully succeed", sharing the same max_retries budget as a local
+  // tsc/build failure. It is only cleared at the true end states below.
   state.last_error = null
 
   const taskBody = readFileSync(taskPath, 'utf8')
@@ -211,29 +255,82 @@ function main() {
     )
   }
 
-  // Fully complete: record it, checkpoint-commit, then decide what's next.
-  state.completed_tasks.push({ task: taskFile, at: new Date().toISOString() })
-  gitCheckpointCommit(taskFile, state)
+  // Fully passed locally (build + checklist). Supervisor off -> old behavior.
+  if (!state.supervisor_enabled) {
+    finishTaskAndAdvance(taskFile, state)
+    return
+  }
 
-  if (state.auto_advance) {
-    const next = findNextPendingTask(state)
-    state.current_task = next
-    if (!next) state.active = false
+  // Supervisor on: review before committing/advancing.
+  const ctx = gatherSupervisorContext({
+    taskFile,
+    taskBody,
+    transcriptPath: input.transcript_path,
+    tscOutput: tsc.output,
+    buildOutput: build.output,
+    retryCount: attempt,
+  })
+  const outcome = await runSupervisorReview(ctx, state)
+  saveState(state) // persist supervisor_calls bump regardless of outcome
+  const supervisorReportName = writeSupervisorReport(taskFile, attempt, outcome)
+
+  if (outcome.kind !== 'decision') {
+    // auth/rate-limit/network/parse failure, or cumulative cap hit.
+    state.active = false
+    state.last_supervisor_error = outcome.message
     saveState(state)
     allow(
-      next
-        ? `queue: task ${taskFile} verified and complete. auto_advance is on, next task: ${next}. ` +
-          `Run "node .claude/queue/run-next.js" (or "control.js start") to execute it.`
-        : `queue: task ${taskFile} verified and complete. No pending tasks left, queue deactivated.`,
+      `queue: supervisor call failed (${outcome.message}). Queue deactivated for manual review. ` +
+        `Report: .claude/queue/reports/${supervisorReportName}`,
     )
   }
 
-  state.current_task = null
-  saveState(state)
-  allow(
-    `queue: task ${taskFile} verified and complete. current_task cleared (auto_advance is off). ` +
-      `Set state.json.current_task to the next task file to continue the queue.`,
-  )
+  const decision = outcome.decision
+  state.last_supervisor_decision = decision.decision
+  state.last_supervisor_error = null
+
+  if (decision.decision === 'STOP') {
+    state.active = false
+    saveState(state)
+    allow(
+      `queue: supervisor STOP for ${taskFile}. ${decision.summary} ` +
+        `current_task kept for manual review. Report: .claude/queue/reports/${supervisorReportName}`,
+    )
+  }
+
+  if (decision.decision === 'REVISE') {
+    state.retries[taskFile] = attempt
+    if (attempt >= state.max_retries) {
+      state.active = false
+      state.last_error = `task ${taskFile} hit max_retries (${state.max_retries}) after supervisor REVISE.`
+      saveState(state)
+      allow(
+        `queue: task ${taskFile} exceeded max_retries after supervisor REVISE. Queue deactivated. ` +
+          `Report: .claude/queue/reports/${supervisorReportName}`,
+      )
+    }
+    saveState(state)
+    block(formatRevisionPrompt(decision))
+  }
+
+  // decision.decision === 'PASS'
+  let extraMessage = ''
+  if (decision.next_task && decision.next_task.create) {
+    const createdFile = createSupervisorTask(decision.next_task)
+    extraMessage = `Supervisor created next task: ${createdFile}.`
+  }
+  finishTaskAndAdvance(taskFile, state, extraMessage)
 }
 
-main()
+main().catch((err) => {
+  try {
+    const state = loadState()
+    state.active = false
+    state.last_error = `verify-queue.js crashed: ${String(err && err.message ? err.message : err).slice(0, 500)}`
+    saveState(state)
+  } catch {
+    /* best effort */
+  }
+  process.stderr.write(`verify-queue.js crashed: ${String(err && err.stack ? err.stack : err)}\n`)
+  process.exit(2)
+})

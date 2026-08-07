@@ -89,6 +89,16 @@ function checkCleanTree() {
   }
 }
 
+/**
+ * 사람이 반드시 개입해야 하는 task인지 판단한다.
+ * 실제 장비/네트워크 확인이나 원장의 임상·정책 결정이 필요한 task는 무인
+ * 러너가 건드리면 안 된다. task 파일 본문에 `requires-human: true`가 있으면
+ * 러너는 그 task를 실행하지 않고 멈춘다.
+ */
+function requiresHuman(taskBody) {
+  return /^\s*requires-human:\s*true\s*$/im.test(taskBody)
+}
+
 function runOneTask(taskFile, claudeBin) {
   const taskPath = path.join(TASKS_DIR, taskFile)
   const taskBody = readFileSync(taskPath, 'utf8')
@@ -106,11 +116,14 @@ function runOneTask(taskFile, claudeBin) {
   const logPath = path.join(REPORTS_DIR, `${taskFile.replace(/\.md$/, '')}-run-${stamp}.log`)
 
   log(`launching claude for ${taskFile} via ${claudeBin}`)
+  // 의도적으로 -c(--continue)를 쓰지 않는다. cwd가 이 프로젝트라 -c는 "이
+  // 디렉터리의 가장 최근 대화"를 이어받는데, 그건 보통 사람이 쓰던 긴 세션이다.
+  // task 파일은 그 자체로 완결된 브리프이므로 매 task를 새 세션으로 돌리는 것이
+  // 더 싸고 더 예측 가능하다.
   const result = spawnSync(
     claudeBin,
     [
       '-p', prompt,
-      '-c',
       '--permission-mode', 'acceptEdits',
       '--output-format', 'text',
       '--max-budget-usd', String(MAX_BUDGET_USD_PER_TASK),
@@ -188,6 +201,18 @@ function main() {
 
       if (ranCount >= MAX_CONSECUTIVE_TASKS) {
         state.last_error = `run-next: hit MAX_CONSECUTIVE_TASKS (${MAX_CONSECUTIVE_TASKS}) in this invocation, stopping for manual review.`
+        saveState(state)
+        log(state.last_error)
+        break
+      }
+
+      // 사람이 반드시 개입해야 하는 task는 무인으로 실행하지 않는다.
+      const taskPathForGate = path.join(TASKS_DIR, taskFile)
+      if (existsSync(taskPathForGate) && requiresHuman(readFileSync(taskPathForGate, 'utf8'))) {
+        state.active = false
+        state.last_error =
+          `run-next: ${taskFile}는 사람의 확인이 필요한 task(requires-human)라 자동 실행하지 않고 멈춥니다. ` +
+          `실제 장비/네트워크 확인 또는 원장 정책 결정이 끝난 뒤 사람이 직접 진행하세요.`
         saveState(state)
         log(state.last_error)
         break

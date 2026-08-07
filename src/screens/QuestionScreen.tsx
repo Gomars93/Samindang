@@ -34,7 +34,6 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
           value={Array.isArray(value) ? value : []}
           onChange={(v) => onChange(v)}
           exclusive={question.exclusive}
-          conflictPairs={question.conflictPairs}
           max={question.max}
         />
       )}

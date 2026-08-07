@@ -49,6 +49,4 @@ export type Question = {
   /** numeric 전용 */
   maxLength?: number
   placeholder?: string
-  /** 동시에 선택할 수 없는 값 쌍 */
-  conflictPairs?: [string, string][]
 }

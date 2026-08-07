@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { StepProgress } from './StepProgress'
 
 type Props = {
@@ -29,6 +29,28 @@ export function ScreenShell({
   children,
   footer,
 }: Props) {
+  const mainRef = useRef<HTMLElement>(null)
+  const [hasMore, setHasMore] = useState(false)
+
+  useEffect(() => {
+    const el = mainRef.current
+    if (!el) return
+
+    const recompute = () => {
+      const scrollable = el.scrollHeight > el.clientHeight + 1
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
+      setHasMore(scrollable && !atBottom)
+    }
+
+    recompute()
+    el.addEventListener('scroll', recompute)
+    window.addEventListener('resize', recompute)
+    return () => {
+      el.removeEventListener('scroll', recompute)
+      window.removeEventListener('resize', recompute)
+    }
+  }, [children])
+
   return (
     <div className="shell">
       <header className="shell__top">
@@ -53,8 +75,12 @@ export function ScreenShell({
         </div>
       </header>
 
-      <main className="shell__main">
+      <main
+        className={`shell__main${hasMore ? ' shell__main--hasMore' : ''}`}
+        ref={mainRef}
+      >
         <div className="shell__mainInner">{children}</div>
+        {hasMore && <div className="shell__scrollHint" aria-hidden="true">⌄</div>}
       </main>
 
       <footer className="shell__bottom">

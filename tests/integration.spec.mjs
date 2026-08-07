@@ -12,6 +12,8 @@ import {
   deriveReproductiveStatus,
   SECONDARY_SHORT_SCREENS,
   MODULE_ROUTES,
+  STAFF_CHECK_TRIGGERS,
+  computeFlags,
 } from './.spec-bundle.mjs'
 
 let passCount = 0
@@ -36,6 +38,90 @@ function set(r, patch) {
 
 function visibleIds(r) {
   return new Set(visibleQuestions(r).map((q) => q.id))
+}
+
+/* =========================================================================
+ * Shared helpers for G/H/I: generic auto-answer walker + module-prefix map
+ * ========================================================================= */
+
+// primary-concern-key -> question id prefix for that module's own detail screens.
+const MODULE_PREFIX = {
+  sleep: 'SLEEP_',
+  digestion: 'GI_',
+  bowel: 'BOWEL_',
+  pain: 'PAIN_',
+  urinary: 'URINARY_',
+  fatigue: 'FATIGUE_',
+  stress: 'STRESS_',
+  women: 'WOMEN_',
+  pregnancy: 'PREGNANCY_',
+  postpartum: 'POSTPARTUM_',
+  weight: 'WEIGHT_',
+}
+
+// Which of the 11 primary modules a question id "belongs" to, or null.
+// WOMEN_SAFETY_01 is a general reproductive-safety question, not part of the
+// Women module (it can show up regardless of primary concern), so it is
+// explicitly excluded from the 'women' bucket.
+function moduleOf(id) {
+  if (id === 'WOMEN_SAFETY_01') return null
+  for (const [key, prefix] of Object.entries(MODULE_PREFIX)) {
+    if (id.startsWith(prefix)) return key
+  }
+  return null
+}
+
+function deterministicValue(q, r) {
+  const opts = q.optionsIf ? q.optionsIf(r) : q.options
+  if (q.input === 'multi_choice') return [opts[0].value]
+  if (q.input === 'single_choice') return opts[0].value
+  if (q.input === 'short_text') return 'x'
+  if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+  throw new Error(`deterministicValue: unknown input type ${q.input} for ${q.id}`)
+}
+
+// Repeatedly answers the first unanswered visible question with a
+// deterministic valid value, pruning after each answer, until nothing is
+// left unanswered or a hard iteration cap is hit (proves termination).
+const WALK_CAP = 200
+
+function autoAnswerWalk(initialResponses) {
+  let r = initialResponses
+  const everVisible = new Set()
+  let iterations = 0
+  for (; iterations < WALK_CAP; iterations++) {
+    const visible = visibleQuestions(r)
+    for (const q of visible) everVisible.add(q.id)
+    const next = visible.find((q) => r[q.id] === null || r[q.id] === undefined)
+    if (!next) return { responses: r, everVisible, iterations, terminated: true }
+    r = set(r, { [next.id]: deterministicValue(next, r) })
+  }
+  return { responses: r, everVisible, iterations, terminated: false }
+}
+
+function assertModuleExclusivity(routeKey, everVisible, label) {
+  const leaks = [...everVisible]
+    .map((id) => ({ id, mod: moduleOf(id) }))
+    .filter((x) => x.mod && x.mod !== routeKey)
+  assert(
+    `${label}: no other module's questions appear during the walk (found: ${
+      leaks.map((l) => `${l.id}(${l.mod})`).join(', ') || 'none'
+    })`,
+    leaks.length === 0,
+  )
+}
+
+function assertNoStaleValues(r, label) {
+  const visible = visibleIds(r)
+  const leaks = ALL_QUESTIONS.filter(
+    (q) => !visible.has(q.id) && r[q.id] !== null && r[q.id] !== undefined,
+  )
+  assert(
+    `${label}: no non-visible question holds a value (leaked: ${
+      leaks.map((q) => q.id).join(', ') || 'none'
+    })`,
+    leaks.length === 0,
+  )
 }
 
 /* =========================================================================
@@ -587,6 +673,498 @@ function visibleIds(r) {
   r = set(r, { POSTPARTUM_02A: 'custom' })
   r = set(r, { POSTPARTUM_02: ['fatigue_recovery'] })
   assert('F34: POSTPARTUM_02A null after removing other from POSTPARTUM_02', r['POSTPARTUM_02A'] === null)
+}
+
+/* =========================================================================
+ * G. Full route coverage matrix
+ * ========================================================================= */
+
+// G1
+{
+  const visitQ = ALL_QUESTIONS.find((q) => q.id === 'VISIT_01')
+  const femaleOpts = visitQ.optionsIf({ ID_03: 'female' }).map((o) => o.value)
+  const maleOpts = visitQ.optionsIf({ ID_03: 'male' }).map((o) => o.value)
+  assert('G1: female VISIT_01 options include women', femaleOpts.includes('women'))
+  assert('G1: male VISIT_01 options do not include women', !maleOpts.includes('women'))
+}
+
+// G2: every symptom primary route
+const G2_SETUPS = [
+  { label: 'sleep', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' }, key: 'sleep' },
+  { label: 'digestion', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, key: 'digestion' },
+  { label: 'bowel', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'bowel' }, key: 'bowel' },
+  { label: 'pain', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain' }, key: 'pain' },
+  { label: 'urinary', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'urinary' }, key: 'urinary' },
+  { label: 'fatigue', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'fatigue' }, key: 'fatigue' },
+  { label: 'stress', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'stress' }, key: 'stress' },
+]
+{
+  for (const { label, patch, key } of G2_SETUPS) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', ...patch })
+    const { everVisible, terminated, iterations } = autoAnswerWalk(r)
+    assert(`G2: ${label} walk terminates within the ${WALK_CAP}-iteration cap (used ${iterations})`, terminated)
+    const ownIds = [...everVisible].filter((id) => moduleOf(id) === key)
+    assert(`G2: ${label} route's own module questions appeared`, ownIds.length > 0)
+    assertModuleExclusivity(key, everVisible, `G2: ${label}`)
+  }
+}
+
+// G3: women / pregnancy / postpartum / weight / constitution / tonic
+const G3_SETUPS = [
+  { label: 'women', patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'women' }, key: 'women' },
+  { label: 'pregnancy', patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'pregnancy' }, key: 'pregnancy' },
+  { label: 'postpartum', patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'postpartum' }, key: 'postpartum' },
+  { label: 'weight', patch: { VISIT_01: 'weight' }, key: 'weight' },
+  { label: 'constitution', patch: { VISIT_01: 'constitution', VISIT_02_CONST: 'constitution' }, key: null },
+  { label: 'tonic', patch: { VISIT_01: 'constitution', VISIT_02_CONST: 'tonic' }, key: null },
+]
+{
+  for (const { label, patch, key } of G3_SETUPS) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', ...patch })
+    const { everVisible, terminated, iterations } = autoAnswerWalk(r)
+    assert(`G3: ${label} walk terminates within the ${WALK_CAP}-iteration cap (used ${iterations})`, terminated)
+    if (key) {
+      const ownIds = [...everVisible].filter((id) => moduleOf(id) === key)
+      assert(`G3: ${label} route's own module questions appeared`, ownIds.length > 0)
+    }
+    assertModuleExclusivity(key, everVisible, `G3: ${label}`)
+  }
+}
+
+// G4: secondary max-two
+{
+  const sec01 = ALL_QUESTIONS.find((q) => q.id === 'SECONDARY_01')
+  assert('G4: SECONDARY_01 is a multi_choice question', sec01.input === 'multi_choice')
+  assert('G4: SECONDARY_01.max === 2', sec01.max === 2)
+  assert('G4: SECONDARY_01 offers more than 2 options (max is meaningful)', sec01.options.length > 2)
+}
+
+// G5: representative primary + exactly-two-secondaries combos
+{
+  const combos = [
+    {
+      label: 'sleep+[digestion,pain]',
+      patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' },
+      primaryKey: 'sleep',
+      primaryLabel: 'Sleep',
+      secs: ['digestion', 'pain'],
+    },
+    {
+      label: 'women+[sleep,weight]',
+      patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'women' },
+      primaryKey: 'women',
+      primaryLabel: 'Women',
+      secs: ['sleep', 'weight'],
+    },
+    {
+      label: 'weight+[stress,bowel]',
+      patch: { VISIT_01: 'weight' },
+      primaryKey: 'weight',
+      primaryLabel: 'Weight',
+      secs: ['stress', 'bowel'],
+    },
+    {
+      label: 'pregnancy+[sleep,pain]',
+      patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'pregnancy' },
+      primaryKey: 'pregnancy',
+      primaryLabel: 'Pregnancy',
+      secs: ['sleep', 'pain'],
+    },
+    {
+      label: 'postpartum+[urinary,fatigue]',
+      patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'postpartum' },
+      primaryKey: 'postpartum',
+      primaryLabel: 'Postpartum',
+      secs: ['urinary', 'fatigue'],
+    },
+  ]
+
+  for (const combo of combos) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', ...combo.patch })
+    r = set(r, { SECONDARY_01: combo.secs })
+    const { responses: finalR, everVisible, terminated } = autoAnswerWalk(r)
+    assert(`G5: ${combo.label} walk terminates`, terminated)
+
+    // (a) exactly the primary module's own questions appeared
+    const modulesSeen = new Set([...everVisible].map((id) => moduleOf(id)).filter(Boolean))
+    assert(
+      `G5: ${combo.label} exactly the primary module (${combo.primaryKey}) appeared (found: ${[...modulesSeen].join(', ')})`,
+      modulesSeen.size === 1 && modulesSeen.has(combo.primaryKey),
+    )
+
+    // (b) exactly the two expected SEC_* screens appeared
+    const expectedSecScreens = new Set(combo.secs.map((s) => SECONDARY_SHORT_SCREENS[s]))
+    const secScreensSeen = new Set(
+      [...everVisible].filter((id) => Object.values(SECONDARY_SHORT_SCREENS).includes(id)),
+    )
+    assert(
+      `G5: ${combo.label} shows exactly the expected SEC_* screens (expected: ${[...expectedSecScreens].join(
+        ', ',
+      )}, got: ${[...secScreensSeen].join(', ')})`,
+      secScreensSeen.size === expectedSecScreens.size &&
+        [...expectedSecScreens].every((id) => secScreensSeen.has(id)),
+    )
+
+    // (c) buildRoutingPayload().all_targets equals [primary, sec1, sec2] (fixed
+    // SECONDARY_SHORT_SCREENS declaration order, not selection order)
+    const expectedSecondaryTargets = Object.keys(SECONDARY_SHORT_SCREENS)
+      .filter((k) => combo.secs.includes(k))
+      .map((k) => MODULE_ROUTES[k])
+    const expectedAllTargets = [combo.primaryLabel, ...expectedSecondaryTargets]
+    const rp = buildRoutingPayload(finalR)
+    assert(
+      `G5: ${combo.label} all_targets === ${JSON.stringify(expectedAllTargets)} (got ${JSON.stringify(rp.all_targets)})`,
+      JSON.stringify(rp.all_targets) === JSON.stringify(expectedAllTargets),
+    )
+
+    // (d) modules_activated contains only the primary module
+    assert(
+      `G5: ${combo.label} modules_activated === [${combo.primaryLabel}]`,
+      JSON.stringify(rp.modules_activated) === JSON.stringify([combo.primaryLabel]),
+    )
+  }
+}
+
+/* =========================================================================
+ * H. Deep stale-cleanup sweep
+ * ========================================================================= */
+
+const H1_MODULES = [
+  { key: 'sleep', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' } },
+  { key: 'digestion', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' } },
+  { key: 'bowel', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'bowel' } },
+  { key: 'pain', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain' } },
+  { key: 'urinary', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'urinary' } },
+  { key: 'fatigue', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'fatigue' } },
+  { key: 'stress', patch: { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'stress' } },
+  { key: 'women', patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'women' } },
+  { key: 'pregnancy', patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'pregnancy' } },
+  { key: 'postpartum', patch: { VISIT_01: 'women', VISIT_02_WOMEN: 'postpartum' } },
+  { key: 'weight', patch: { VISIT_01: 'weight' } },
+]
+
+// H1
+{
+  for (const mod of H1_MODULES) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', ...mod.patch })
+    const { responses: filled, terminated } = autoAnswerWalk(r)
+    assert(`H1: ${mod.key} full walk terminates`, terminated)
+
+    // Switch primary concern to a fixed different route (weight, unless we're
+    // already on weight, in which case switch to sleep).
+    const switchTarget =
+      mod.key === 'weight'
+        ? { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' }
+        : { VISIT_01: 'weight' }
+    const switched = set(filled, switchTarget)
+
+    const staleIds = ALL_QUESTIONS.filter((q) => moduleOf(q.id) === mod.key).map((q) => q.id)
+    const leftover = staleIds.filter((id) => switched[id] !== null)
+    assert(
+      `H1: ${mod.key} module fully cleared after switching primary away (leftover: ${leftover.join(', ') || 'none'})`,
+      leftover.length === 0,
+    )
+  }
+}
+
+// H2: conditional branch cleanup, each asserted explicitly
+{
+  // URINARY_01 nocturia -> URINARY_03
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'urinary', URINARY_01: ['nocturia'] })
+  assert('H2: URINARY_03 visible when URINARY_01 includes nocturia', visibleIds(r).has('URINARY_03'))
+  r = set(r, { URINARY_01: ['frequency'] })
+  assert('H2: URINARY_03 null after removing nocturia from URINARY_01', r['URINARY_03'] === null)
+}
+{
+  // URINARY_01 incontinence -> URINARY_04
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'urinary', URINARY_01: ['incontinence'] })
+  assert('H2: URINARY_04 visible when URINARY_01 includes incontinence', visibleIds(r).has('URINARY_04'))
+  r = set(r, { URINARY_01: ['frequency'] })
+  assert('H2: URINARY_04 null after removing incontinence from URINARY_01', r['URINARY_04'] === null)
+}
+{
+  // PAIN_04 other -> PAIN_04A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', PAIN_04: 'other' })
+  assert('H2: PAIN_04A visible when PAIN_04=other', visibleIds(r).has('PAIN_04A'))
+  r = set(r, { PAIN_04: 'none' })
+  assert('H2: PAIN_04A null after PAIN_04 changed away from other', r['PAIN_04A'] === null)
+}
+{
+  // PAIN_01 other -> PAIN_01A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', PAIN_01: 'other' })
+  assert('H2: PAIN_01A visible when PAIN_01=other', visibleIds(r).has('PAIN_01A'))
+  r = set(r, { PAIN_01: 'knee' })
+  assert('H2: PAIN_01A null after PAIN_01 changed away from other', r['PAIN_01A'] === null)
+}
+{
+  // SLEEP_01 night_awakenings -> SLEEP_03
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep', SLEEP_01: ['night_awakenings'] })
+  assert('H2: SLEEP_03 visible when SLEEP_01 includes night_awakenings', visibleIds(r).has('SLEEP_03'))
+  r = set(r, { SLEEP_01: ['sleep_onset'] })
+  assert('H2: SLEEP_03 null after removing night_awakenings from SLEEP_01', r['SLEEP_03'] === null)
+}
+{
+  // SLEEP_03 other -> SLEEP_03A
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+    SLEEP_01: ['night_awakenings'],
+    SLEEP_03: ['other'],
+  })
+  assert('H2: SLEEP_03A visible when SLEEP_03 includes other', visibleIds(r).has('SLEEP_03A'))
+  r = set(r, { SLEEP_03: ['urination'] })
+  assert('H2: SLEEP_03A null after removing other from SLEEP_03', r['SLEEP_03A'] === null)
+}
+{
+  // BOWEL_01 constipation -> BOWEL_04
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'bowel', BOWEL_01: ['constipation'] })
+  assert('H2: BOWEL_04 visible when BOWEL_01 includes constipation', visibleIds(r).has('BOWEL_04'))
+  r = set(r, { BOWEL_01: ['diarrhea'] })
+  assert('H2: BOWEL_04 null after removing constipation from BOWEL_01', r['BOWEL_04'] === null)
+}
+// GI has no conditional branch (GI_01/02/03 are all unconditional within the GI module) -- nothing to assert.
+{
+  // WOMEN_01 other -> WOMEN_01A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'women', WOMEN_01: ['other'] })
+  assert('H2: WOMEN_01A visible when WOMEN_01 includes other', visibleIds(r).has('WOMEN_01A'))
+  r = set(r, { WOMEN_01: ['discharge_discomfort'] })
+  assert('H2: WOMEN_01A null after removing other from WOMEN_01', r['WOMEN_01A'] === null)
+}
+{
+  // WOMEN_01 menopause_symptoms -> WOMEN_03
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'women', WOMEN_01: ['menopause_symptoms'] })
+  assert('H2: WOMEN_03 visible when WOMEN_01 includes menopause_symptoms', visibleIds(r).has('WOMEN_03'))
+  r = set(r, { WOMEN_01: ['discharge_discomfort'] })
+  assert('H2: WOMEN_03 null after removing menopause_symptoms from WOMEN_01', r['WOMEN_03'] === null)
+}
+{
+  // WOMEN_01 menstrual trigger (e.g. dysmenorrhea) -> WOMEN_02
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'women', WOMEN_01: ['dysmenorrhea'] })
+  assert('H2: WOMEN_02 visible when WOMEN_01 includes a menstrual trigger', visibleIds(r).has('WOMEN_02'))
+  r = set(r, { WOMEN_01: ['discharge_discomfort'] })
+  assert('H2: WOMEN_02 null after removing menstrual trigger from WOMEN_01', r['WOMEN_02'] === null)
+}
+{
+  // PREGNANCY_01 pregnant -> PREGNANCY_02
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'pregnancy', PREGNANCY_01: 'pregnant' })
+  assert('H2: PREGNANCY_02 visible when PREGNANCY_01=pregnant', visibleIds(r).has('PREGNANCY_02'))
+  r = set(r, { PREGNANCY_01: 'possible' })
+  assert('H2: PREGNANCY_02 null after PREGNANCY_01 changed away from pregnant', r['PREGNANCY_02'] === null)
+}
+{
+  // PREGNANCY_03 other -> PREGNANCY_03A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'pregnancy', PREGNANCY_03: ['other'] })
+  assert('H2: PREGNANCY_03A visible when PREGNANCY_03 includes other', visibleIds(r).has('PREGNANCY_03A'))
+  r = set(r, { PREGNANCY_03: ['nausea'] })
+  assert('H2: PREGNANCY_03A null after removing other from PREGNANCY_03', r['PREGNANCY_03A'] === null)
+}
+{
+  // POSTPARTUM_02 other -> POSTPARTUM_02A
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'postpartum', POSTPARTUM_02: ['other'] })
+  assert('H2: POSTPARTUM_02A visible when POSTPARTUM_02 includes other', visibleIds(r).has('POSTPARTUM_02A'))
+  r = set(r, { POSTPARTUM_02: ['fatigue_recovery'] })
+  assert('H2: POSTPARTUM_02A null after removing other from POSTPARTUM_02', r['POSTPARTUM_02A'] === null)
+}
+{
+  // MED_USE yes -> MED_TYPES
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', MED_USE: 'yes' })
+  assert('H2: MED_TYPES visible when MED_USE=yes', visibleIds(r).has('MED_TYPES'))
+  r = set(r, { MED_USE: 'none' })
+  assert('H2: MED_TYPES null after MED_USE changed away from yes', r['MED_TYPES'] === null)
+}
+{
+  // ALLERGY_01 yes -> ALLERGY_02
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', ALLERGY_01: 'yes' })
+  assert('H2: ALLERGY_02 visible when ALLERGY_01=yes', visibleIds(r).has('ALLERGY_02'))
+  r = set(r, { ALLERGY_01: 'none' })
+  assert('H2: ALLERGY_02 null after ALLERGY_01 changed away from yes', r['ALLERGY_02'] === null)
+}
+{
+  // SURGERY_01 yes -> SURGERY_02
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', SURGERY_01: 'yes' })
+  assert('H2: SURGERY_02 visible when SURGERY_01=yes', visibleIds(r).has('SURGERY_02'))
+  r = set(r, { SURGERY_01: 'none' })
+  assert('H2: SURGERY_02 null after SURGERY_01 changed away from yes', r['SURGERY_02'] === null)
+}
+{
+  // BIRTH_03 exact/approximate -> BIRTH_04
+  for (const v of ['exact', 'approximate']) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', BIRTH_03: v })
+    assert(`H2: BIRTH_04 visible when BIRTH_03=${v}`, visibleIds(r).has('BIRTH_04'))
+    r = set(r, { BIRTH_03: 'unknown' })
+    assert(`H2: BIRTH_04 null after BIRTH_03 changed away from ${v}`, r['BIRTH_04'] === null)
+  }
+}
+{
+  // FREE_01 yes -> FREE_02
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', FREE_01: 'yes' })
+  assert('H2: FREE_02 visible when FREE_01=yes', visibleIds(r).has('FREE_02'))
+  r = set(r, { FREE_01: 'none' })
+  assert('H2: FREE_02 null after FREE_01 changed away from yes', r['FREE_02'] === null)
+}
+
+// H3: global invariant sweep -- after any full walk + prune, no non-visible
+// question holds a non-null value. Sweep every H1 route (both fully-filled
+// and post-switch state) plus every G2/G3 route's final walk state.
+{
+  for (const mod of H1_MODULES) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', ...mod.patch })
+    const { responses: filled } = autoAnswerWalk(r)
+    assertNoStaleValues(filled, `H3: ${mod.key} fully-filled route`)
+
+    const switchTarget =
+      mod.key === 'weight'
+        ? { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' }
+        : { VISIT_01: 'weight' }
+    const switched = set(filled, switchTarget)
+    assertNoStaleValues(switched, `H3: ${mod.key} after switching primary away`)
+  }
+  for (const { label, patch } of [...G2_SETUPS, ...G3_SETUPS]) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', ...patch })
+    const { responses: finalR } = autoAnswerWalk(r)
+    assertNoStaleValues(finalR, `H3: ${label} full walk`)
+  }
+}
+
+/* =========================================================================
+ * I. Safety consistency
+ * ========================================================================= */
+
+// I1
+{
+  const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
+  assert(
+    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03',
+    JSON.stringify(keys) === JSON.stringify(['BOWEL_03', 'GI_03', 'SAFETY_01']),
+  )
+}
+
+// I2
+{
+  const safetyQ = ALL_QUESTIONS.find((q) => q.id === 'SAFETY_01')
+  const redFlags = safetyQ.options.map((o) => o.value).filter((v) => v !== 'none')
+  for (const v of redFlags) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', SAFETY_01: [v] })
+    assert(`I2: SAFETY_01=[${v}] sets requires_staff_check true`, computeFlags(r).requires_staff_check === true)
+  }
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', SAFETY_01: ['none'] })
+  assert('I2: SAFETY_01=[none] does not set requires_staff_check', computeFlags(r).requires_staff_check === false)
+}
+
+// I3
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion', GI_03: 'yes' })
+  assert('I3: GI_03=yes triggers requires_staff_check', computeFlags(r).requires_staff_check === true)
+  r = set(r, { GI_03: 'no' })
+  assert('I3: GI_03=no does not trigger requires_staff_check', computeFlags(r).requires_staff_check === false)
+
+  let r2 = emptyResponses()
+  r2 = set(r2, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'bowel', BOWEL_03: 'yes' })
+  assert('I3: BOWEL_03=yes triggers requires_staff_check', computeFlags(r2).requires_staff_check === true)
+  for (const v of ['no', 'not_sure']) {
+    r2 = set(r2, { BOWEL_03: v })
+    assert(`I3: BOWEL_03=${v} does not trigger requires_staff_check`, computeFlags(r2).requires_staff_check === false)
+  }
+}
+
+// I4
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'digestion',
+    SAFETY_01: ['none'],
+    GI_03: 'no',
+  })
+  assert(
+    'I4: requires_staff_check false when all safety answers are benign (digestion)',
+    computeFlags(r).requires_staff_check === false,
+  )
+
+  let r2 = emptyResponses()
+  r2 = set(r2, {
+    ID_03: 'female',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'bowel',
+    SAFETY_01: ['none'],
+    BOWEL_03: 'not_sure',
+  })
+  assert(
+    'I4: requires_staff_check false when all safety answers are benign (bowel, not_sure)',
+    computeFlags(r2).requires_staff_check === false,
+  )
+}
+
+// I5: no developer terminology leaks into patient-facing Korean text
+{
+  const FORBIDDEN_TERMS = [
+    'module',
+    'router',
+    'red flag',
+    'redflag',
+    'staffcheck',
+    'stale',
+    'payload',
+    'null',
+    'enum',
+    'debug',
+  ]
+  const violations = []
+
+  const checkText = (id, text) => {
+    if (!text) return
+    const lower = text.toLowerCase()
+    for (const term of FORBIDDEN_TERMS) {
+      if (lower.includes(term)) violations.push(`${id}: "${text}" contains "${term}"`)
+    }
+  }
+
+  for (const q of ALL_QUESTIONS) {
+    checkText(q.id, q.question)
+    checkText(q.id, q.helper)
+    for (const o of q.options ?? []) checkText(`${q.id}.${o.value}`, o.label)
+  }
+
+  // Dynamic helperIf text (MED_USE, TEST_01) -- evaluate with the triggering state.
+  let hr = emptyResponses()
+  hr = set(hr, { ID_03: 'female', MED_USE: 'yes', TEST_01: 'yes' })
+  for (const q of ALL_QUESTIONS) {
+    if (q.helperIf) checkText(`${q.id} (dynamic helper)`, q.helperIf(hr))
+  }
+
+  assert(
+    `I5: no question/option text contains developer terminology (violations: ${violations.join(' | ') || 'none'})`,
+    violations.length === 0,
+  )
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

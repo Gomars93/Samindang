@@ -139,6 +139,25 @@ input {
   padding: 40px var(--gutter) 16px;
 }
 
+/* 스크롤 가능한데 하단에 도달하지 않았을 때만 표시되는 시각적 안내(스펙 무관, 순수 UI) */
+.shell__scrollHint {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  margin-top: -56px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 70%);
+  color: var(--primary);
+  font-size: 24px;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .shell__bottom {
   flex: 0 0 auto;
   padding: 16px var(--gutter) 28px;

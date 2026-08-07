@@ -70,6 +70,19 @@ stage label은 "상담 내용"으로, 상세 증상 Module(Sleep 등) 구간은 
 화면(예: 11개 선택지)에서만 그 내부 스크롤이 나타난다. 버튼/글자 크기는
 변경하지 않았다.
 
+**스크롤 안내(scroll affordance)**: 800×1280 기준 고정 영역(header 102px +
+footer 186px + main padding 56px)을 뺀 콘텐츠 예산은 936px이다. 전체 86개
+화면 중 84개는 이 안에 들어가고, `SECONDARY_01`(동반문제, 11지선다 +
+보조문구, 약 1084px)과 `HISTORY_01`(중요 병력, 11지선다, 약 1030px) 2개만
+내부 스크롤이 필요하다. 두 화면 모두 `없음` 선택지가 목록 맨 아래에 있어,
+동반문제가 없거나 병력이 없는 환자가 스크롤하지 않으면 진행 수단을 못 찾을
+위험이 있었다. 이를 막기 위해 `.shell__main`이 스크롤 가능하고 아직 하단에
+도달하지 않았을 때만 하단 그라데이션 + `⌄` 표시(`.shell__scrollHint`,
+`aria-hidden`, `pointer-events: none`)를 띄운다. 선택지 순서·문구·버튼
+크기·글자 크기는 일절 바꾸지 않았다. 이 예산 계산은
+`tests/layout-budget.spec.mjs`가 매 실행마다 자동 검증하며, 새로 예산을
+넘기는 화면이 생기면 실패한다.
+
 ## 3. 전체 환자 흐름
 
 ```
@@ -1212,7 +1225,7 @@ Router는 `primary_concern` 하나만을 유일한 정보원으로 쓰지 않도
 분리해서 표기한다. `all_targets`는 primary를 먼저 넣고 그다음
 `secondary_screens`를 순서대로 추가하되, 이미 들어있는 이름은 다시 넣지
 않는다(예: 이론상 primary와 secondary target이 같은 이름을 가리키는 경우
-방어). Dev JSON에서는 `responses.routing`으로 노출된다(`src/App.tsx`).
+방어). Dev JSON에서는 `responses`와 형제 필드인 최상위 `routing`으로 노출된다(`src/App.tsx`).
 
 ## 9. 다음 Sprint 연결점
 

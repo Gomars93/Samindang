@@ -38,6 +38,7 @@ export const PATIENT_QUESTIONS: Question[] = [
     question: '성함을 입력해주세요',
     required: true,
     step: '환자 확인',
+    maxLength: 20,
     placeholder: '성함',
   },
   {
@@ -1611,6 +1612,7 @@ const BIRTH_QUESTIONS: Question[] = [
     question: '태어난 시간을 적어주세요.',
     required: true,
     step: '출생정보',
+    maxLength: 20,
     placeholder: '예: 오전 7시경',
     showIf: (r) => r['BIRTH_03'] === 'exact' || r['BIRTH_03'] === 'approximate',
   },

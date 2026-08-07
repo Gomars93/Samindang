@@ -107,6 +107,10 @@ SAFETY_01 (공통 Red Flag) → 양성이면 StaffCheckScreen
   ↓
 [primary concern === weight인 경우만] WEIGHT_01 → WEIGHT_02 → WEIGHT_03 → WEIGHT_04
   ↓
+[동반문제 짧은 화면 — 각각 secondary_concerns에 포함 && primary가 같은 카테고리가 아닐 때만]
+  SEC_SLEEP_01 / SEC_GI_01 / SEC_BOWEL_01 / SEC_PAIN_01 / SEC_URINARY_01 /
+  SEC_FATIGUE_01 / SEC_STRESS_01 / SEC_WOMEN_01 / SEC_WEIGHT_01
+  ↓
 [visit_goal === constitution인 경우만] CONST_ENERGY / CONST_SLEEP / CONST_DIGESTION / CONST_BOWEL
   ↓
 HERB_APPETITE / HERB_THERMAL / HERB_THIRST / HERB_SWEAT (전원 공통)
@@ -119,7 +123,7 @@ ALLERGY_01 → (yes면 ALLERGY_02)
   ↓
 SURGERY_01 → (yes면 SURGERY_02)
   ↓
-[여성만] WOMEN_SAFETY_01
+[여성이면서, 산후 주호소가 아니고, 임신 주호소에서 pregnant로 확정되지 않은 경우만] WOMEN_SAFETY_01
   ↓
 TEST_01 (검사자료)
   ↓
@@ -231,7 +235,8 @@ Dev JSON 완료 화면
   예: primary concern이 sleep이면 목록에서 "잠"이 사라진다. visit_goal이
   women(생리·갱년기/임신/산후 어느 쪽이든)이면 "여성 건강"이 사라진다.
 - `patient_sex === male`이면 "여성 건강" 선택지도 목록에서 숨긴다.
-- 동반문제 때문에 전체 상세 Module을 반복 실행하지 않는다(9장).
+- 동반문제 때문에 전체 상세 Module을 반복 실행하지 않는다 — 대신 4.15의
+  짧은 화면(카테고리당 1문항)으로 대신한다.
 
 **SECONDARY_01A** `secondary_other_text` — short_text(50자) — 필수 — show_if `secondary_concerns includes other`
 질문: "가장 불편한 그 밖의 증상을 짧게 적어주세요."
@@ -258,10 +263,10 @@ Dev JSON 완료 화면
 
 **진입 조건**: `primary_concern.key === 'sleep'`, 즉 `visit_goal === symptom` &&
 `primary_symptom === sleep`인 경우에만 Sleep 상세모듈 전체(SLEEP_01~SLEEP_03A)를
-실행한다. 동반문제(`secondary_concerns`)로 sleep을 선택한 경우는 이번
-Sprint에서 Sleep 전체 Module을 실행하지 않는다 — router target(`Sleep`)만
-`secondary_concerns.router_targets`에 유지되고, 실제 문항은 다음 Sprint의
-secondary short screen에서 붙인다. stage label은 "상세 증상"이다.
+실행한다. 동반문제(`secondary_concerns`)로 sleep을 선택한 경우는 Sleep 전체
+Module을 실행하지 않는다 — router target(`Sleep`)만
+`secondary_concerns.router_targets`에 유지되고, 실제 문항은 4.15의 짧은 화면
+(SEC_SLEEP_01) 1문항으로 대신한다. stage label은 "상세 증상"이다.
 
 **SLEEP_01** `sleep_problems` — multi_choice — 필수 — show_if `primary_concern === sleep`
 질문: "잠에서 불편한 점이 있나요?"
@@ -277,9 +282,9 @@ secondary short screen에서 붙인다. stage label은 "상세 증상"이다.
 규칙: 복수선택 가능. "여러 가지가 함께 있어요"(v0.2 `multiple`)는 사용하지
 않는다. "특별히 없어요" 옵션은 이 화면에서 의도적으로 제외했다 — Sleep
 Module은 이미 주호소가 sleep으로 확정된 뒤에만 진입하므로 "특별히 없어요"는
-논리적으로 모순된다. 향후 동반문제(secondary) sleep short screen을 별도로
-구현할 때는 그 화면에 한해 "특별히 없어요"를 포함할 수 있다(공용
-`Question`/`MultiChoice` 컴포넌트는 그대로 재사용 가능). "선택 완료" 버튼으로
+논리적으로 모순된다. 이 절에서 예고했던 "동반문제 sleep short screen에 한해
+'특별히 없어요'를 포함"은 4.15에서 SEC_SLEEP_01로 구현이 끝났다(공용
+`Question`/`MultiChoice` 컴포넌트를 그대로 재사용). "선택 완료" 버튼으로
 확정하며 자동 이동은 없다.
 
 **SLEEP_02** `sleep_frequency_per_week` — single_choice — 필수 — show_if `primary_concern === sleep`
@@ -336,9 +341,10 @@ sleep일 때만 `['Sleep']`, 그 외에는 빈 배열이다.
 
 **진입 조건**: `primary_concern.key === 'digestion'`, 즉 `visit_goal === symptom`
 && `primary_symptom === digestion`인 경우에만 GI 상세모듈 전체(GI_01~GI_03)를
-실행한다. 동반문제로 속·소화(digestion)를 선택한 경우는 이번 Sprint에서 GI
-전체 Module을 실행하지 않는다 — router target(`GI`)만
-`secondary_concerns.router_targets`에 유지된다. Dev JSON/Router 표기는
+실행한다. 동반문제로 속·소화(digestion)를 선택한 경우는 GI 전체 Module을
+실행하지 않는다 — router target(`GI`)만 `secondary_concerns.router_targets`에
+유지되고, 실제 문항은 4.15의 짧은 화면(SEC_GI_01) 1문항으로 대신한다. Dev
+JSON/Router 표기는
 `GI`, primary concern의 실제 enum 값은 기존 naming convention을 따라 그대로
 `digestion`이다(변경하지 않음).
 
@@ -395,8 +401,8 @@ digestion일 때만 `['GI']`.
 
 **진입 조건**: `primary_concern.key === 'bowel'`인 경우에만 Bowel 상세모듈
 전체(BOWEL_01~BOWEL_04)를 실행한다. 동반문제로 대변(bowel)을 선택한 경우는
-이번 Sprint에서 Bowel 전체 Module을 실행하지 않는다 — router target(`Bowel`)만
-유지된다.
+Bowel 전체 Module을 실행하지 않는다 — router target(`Bowel`)만 유지되고,
+실제 문항은 4.15의 짧은 화면(SEC_BOWEL_01) 1문항으로 대신한다.
 
 **BOWEL_01** `bowel_problems` — multi_choice — 필수 — show_if `primary_concern === bowel`
 질문: "대변에서 어떤 점이 가장 불편한가요?"
@@ -454,8 +460,8 @@ concern이 bowel일 때만 `['Bowel']`.
 
 **진입 조건**: `primary_concern.key === 'urinary'`인 경우에만 Urinary 상세모듈
 전체(URINARY_01~URINARY_04)를 실행한다. 동반문제로 소변·방광(urinary)을
-선택한 경우는 이번 Sprint에서 전체 Module을 실행하지 않는다 — router
-target(`Urinary`)만 유지된다.
+선택한 경우는 전체 Module을 실행하지 않는다 — router target(`Urinary`)만
+유지되고, 실제 문항은 4.15의 짧은 화면(SEC_URINARY_01) 1문항으로 대신한다.
 
 **URINARY_01** `urinary_problems` — multi_choice — 필수 — show_if `primary_concern === urinary`
 질문: "소변이나 방광에서 어떤 점이 불편한가요?"
@@ -508,8 +514,8 @@ concern이 urinary일 때만 `['Urinary']`.
 
 **진입 조건**: `primary_concern.key === 'pain'`인 경우에만 Pain 상세모듈
 전체(PAIN_01~PAIN_04A)를 실행한다. 동반문제로 통증(pain)을 선택한 경우는
-이번 Sprint에서 전체 Module을 실행하지 않는다 — router target(`Pain`)만
-유지된다.
+전체 Module을 실행하지 않는다 — router target(`Pain`)만 유지되고, 실제
+문항은 4.15의 짧은 화면(SEC_PAIN_01) 1문항으로 대신한다.
 
 **PAIN_01** `primary_location` — single_choice — 필수 — show_if `primary_concern === pain`
 질문: "어디가 가장 불편한가요?"
@@ -561,7 +567,8 @@ pain_qualities, radiation, radiation_other }`(공통 duration/severity는 기존
 
 **진입 조건**: `primary_concern.key === 'fatigue'`인 경우에만 전체
 실행(FATIGUE_01~03). 동반문제로 피로·기력(fatigue)을 선택한 경우는 router
-target(`Fatigue`)만 유지, 전체 Module 미실행.
+target(`Fatigue`)만 유지, 전체 Module 미실행. 실제 문항은 4.15의 짧은
+화면(SEC_FATIGUE_01) 1문항으로 대신한다.
 
 **FATIGUE_01** `fatigue_patterns` — multi_choice — 필수 — show_if `primary_concern === fatigue`
 질문: "피로가 주로 어떻게 느껴지나요?" / 보조: "해당되는 것을 모두 선택해주세요."
@@ -592,7 +599,8 @@ recovery_after_rest }`. `routing.modules_activated`는 fatigue일 때만
 
 **진입 조건**: `primary_concern.key === 'stress'`인 경우에만 전체
 실행(STRESS_01, STRESS_03). 동반문제로 스트레스·마음(stress)을 선택한 경우는
-router target(`Stress`)만 유지, 전체 Module 미실행.
+router target(`Stress`)만 유지, 전체 Module 미실행. 실제 문항은 4.15의 짧은
+화면(SEC_STRESS_01) 1문항으로 대신한다.
 
 **STRESS_01** `stress_problems` — multi_choice — 필수 — show_if `primary_concern === stress`
 질문: "요즘 가장 힘든 점은 무엇인가요?" / 보조: "해당되는 것을 모두
@@ -633,7 +641,7 @@ stress일 때만 `['Stress']`.
 실행(WOMEN_01~03). 새 top-level route key를 만들지 않고 기존
 `primaryConcernKey`/`VISIT_02_WOMEN` 값을 그대로 사용했다. 동반문제로 여성
 건강(women)을 선택한 경우는 router target(`Women`)만 유지, 전체 Module
-미실행.
+미실행. 실제 문항은 4.15의 짧은 화면(SEC_WOMEN_01) 1문항으로 대신한다.
 
 **WOMEN_01** `women_problems` — multi_choice — 필수 — show_if `primary_concern === women`
 질문: "어떤 점이 가장 불편한가요?" / 보조: "해당되는 것을 모두 선택해주세요."
@@ -662,8 +670,9 @@ unknown(잘 모르겠어요)
 genitourinary_discomfort(건조감이나 비뇨·생식기 불편감이 있어요)
 
 **safety**: 공통 WOMEN_SAFETY_01(reproductive_status)과 문항 내용이 겹치지
-않도록 새 질문을 만들지 않았다. WOMEN_SAFETY_01 신규 중복 skip
-architecture는 이번 Sprint에서 해결하지 않는다(9장 TODO).
+않도록 새 질문을 만들지 않았다. WOMEN_SAFETY_01 중복 skip은 4.18에서
+구현이 끝났다(임신·산후 경로에서만 조건부로 skip, 생리·갱년기 women 경로는
+WOMEN_SAFETY_01이 계속 유일한 안전정보원이므로 그대로 노출된다).
 
 **stale cleanup**: `other` 해제 → `women_other_text` null. 생리 관련 트리거
 (irregular_cycle/dysmenorrhea/flow_change/premenstrual)가 모두 해제되면
@@ -747,11 +756,13 @@ exclusive 없음
 선택지: yes(네) / no(아니요) / mixed(혼합수유 중이에요)
 
 > 공통 WOMEN_SAFETY_01(reproductive_status)에도 `postpartum_1y`/
-> `breastfeeding` 항목이 있어 POSTPARTUM_01/03과 의미가 겹칠 수 있다. 이번
-> Sprint에서는 두 화면을 통합하지 않고 그대로 두었다 — WOMEN_SAFETY_01은
-> "현재 안전상태" 확인용 공통 문항이고 POSTPARTUM_01/03은 Module 진입 후
-> 상담에 필요한 상세 정보라는 역할 차이가 있기 때문이다. 통합/자동 skip
-> 여부는 9장 TODO로 남긴다.
+> `breastfeeding` 항목이 있어 POSTPARTUM_01/03과 의미가 겹쳤다. 4.18에서
+> 자동 skip을 구현했다 — 산후(postpartum) 주호소에서는 WOMEN_SAFETY_01 화면
+> 자체를 더 이상 보여주지 않고, `deriveReproductiveStatus(r)`가
+> POSTPARTUM_01(경과)+POSTPARTUM_03(수유) 값에서 같은 사실을 파생시킨다.
+> 두 화면을 하나로 합치지는 않았다 — WOMEN_SAFETY_01은 다른 주호소
+> 경로에서는 여전히 유일한 안전정보원이라 화면 자체는 남겨두고 산후 경로에서만
+> 조건부로 뺐다.
 
 **safety**: 심한 출혈·고열·호흡곤란 등은 공통 SAFETY_01 우선, Postpartum
 전용 Red Flag architecture는 만들지 않았다.
@@ -769,7 +780,8 @@ postpartum일 때만 `['Postpartum']`.
 weight`인 경우에만 전체 실행(WEIGHT_01~04). weight는 v1.0에서 애초에 하위
 분기 화면이 없으므로(3.2, "추가 대분류 없음") 기존 route를 그대로 사용했다.
 동반문제로 체중 관리(weight)를 선택한 경우는 router target(`Weight`)만
-유지, 전체 Module 미실행.
+유지, 전체 Module 미실행. 실제 문항은 4.15의 짧은 화면(SEC_WEIGHT_01)
+1문항으로 대신한다.
 
 **WEIGHT_01** `weight_goal` — single_choice — 필수 — show_if `primary_concern === weight`
 질문: "체중 관리에서 가장 원하는 것은 무엇인가요?"
@@ -809,7 +821,121 @@ herbal_supplement(한약이나 보조제를 써봤어요) / medical(병원 처�
 recent_weight_change, previous_attempts }`. `routing.modules_activated`는
 weight일 때만 `['Weight']`.
 
-### 4.15 체질·보약 추가 문항 (visit_goal === constitution 인 경우만)
+### 4.15 동반문제(secondary_concerns) 짧은 화면
+
+이번 Sprint에서 새로 구현했다. 9장에서 남겨두었던 마지막 큰 항목이다.
+
+**진입 조건**: 화면마다 `has(SECONDARY_01, <key>) && primaryConcernKey(r) !==
+<key>`(예: SEC_SLEEP_01은 `secondary_concerns includes sleep &&
+primary_concern !== sleep`)다. `primaryConcernKey(r) !== <key>` 조건은
+방어적으로 추가했다 — `SECONDARY_01.optionsIf`가 이미 주호소와 같은 항목을
+선택지에서 제외하므로 정상 흐름에서는 항상 참이지만, 두 조건을 각 show_if에
+모두 남겨 UI 변경 없이도 안전하게 유지되도록 했다. 여성 건강만 예외로
+`SEC_WOMEN_01`은 주호소가 women/pregnancy/postpartum 중 어느 것도 아닐 때만
+보인다(임신·산후 경로도 동반문제 화면에서는 women으로 정규화되기 때문).
+
+**설계 규칙**: 짧은 화면은 각 primary Module의 1번 문항(가장 넓은
+multi_choice)의 선택지를 그대로 재사용하고, `exclusive: 'none'`인 "특별히
+없어요" 옵션 하나만 추가한다. 이것이 4.4에서 예고했던 것 — SLEEP_01에는
+의도적으로 "특별히 없어요"를 넣지 않았는데, 그 이유가 바로 이 절의 짧은
+화면(SEC_SLEEP_01)에서 쓰기 위해서였다. 자유입력이 늘어나는 것을 막기 위해
+SEC_PAIN_01(원본 PAIN_01의 `other`)과 SEC_WOMEN_01(원본 WOMEN_01의
+`other`)은 원본의 "그 밖의 …" 옵션을 빼고 가져왔다 — 짧은 화면에는
+PAIN_01A/WOMEN_01A 같은 하위 자유입력 문항이 없다. SEC_WEIGHT_01만
+예외적으로 원본 WEIGHT_01처럼 `single_choice`를 유지했다(목표는 한 번에
+하나만 고르는 게 자연스러워서 원본부터 single_choice였다) — 그래서
+`exclusive`도 없고 "없어요" 옵션도 없다.
+
+| screen_id | variable | 원본 문항 | input |
+|---|---|---|---|
+| SEC_SLEEP_01 | sec_sleep_problems | 잠에 대해서는 어떤 점이 불편한가요? | multi_choice, exclusive: none |
+| SEC_GI_01 | sec_gi_problems | 속이나 소화에 대해서는 어떤 점이 불편한가요? | multi_choice, exclusive: none |
+| SEC_BOWEL_01 | sec_bowel_problems | 대변에 대해서는 어떤 점이 불편한가요? | multi_choice, exclusive: none |
+| SEC_PAIN_01 | sec_pain_locations | 아픈 곳은 어디인가요? | multi_choice, exclusive: none |
+| SEC_URINARY_01 | sec_urinary_problems | 소변이나 방광에 대해서는 어떤 점이 불편한가요? | multi_choice, exclusive: none |
+| SEC_FATIGUE_01 | sec_fatigue_patterns | 피로에 대해서는 어떤 점이 불편한가요? | multi_choice, exclusive: none |
+| SEC_STRESS_01 | sec_stress_problems | 스트레스나 마음에 대해서는 어떤 점이 힘든가요? | multi_choice, exclusive: none |
+| SEC_WOMEN_01 | sec_women_problems | 여성 건강에 대해서는 어떤 점이 불편한가요? | multi_choice, exclusive: none |
+| SEC_WEIGHT_01 | sec_weight_goal | 체중 관리에서는 무엇을 가장 원하시나요? | single_choice |
+
+모두 helper "해당되는 것을 모두 선택해주세요."(SEC_WEIGHT_01 제외, single_choice라
+helper 없음), 필수, step은 "상세 증상"이다.
+
+**SEC_SLEEP_01** — 옵션: sleep_onset(잠들기 어려워요) /
+night_awakenings(자다가 자주 깨요) / early_waking(너무 일찍 깨요) /
+nonrestorative(충분히 자도 개운하지 않아요) / none(특별히 없어요,
+exclusive). SLEEP_01과 동일한 4개 + none.
+
+**SEC_GI_01** — 옵션: indigestion(소화가 잘 안 되고 더부룩해요) /
+epigastric_discomfort(명치나 윗배가 답답하거나 아파요) / reflux(속이
+쓰리거나 신물이 올라와요) / nausea(메스껍거나 구역감이 있어요) /
+poor_appetite(입맛이 없어요) / none(특별히 없어요, exclusive). GI_01과 동일.
+
+**SEC_BOWEL_01** — 옵션: constipation(변이 잘 안 나오거나 딱딱해요) /
+diarrhea(묽은 변이나 설사가 잦아요) / alternating(변비와 설사가 번갈아
+있어요) / incomplete_emptying(보고 나도 덜 본 느낌이 있어요) /
+abdominal_discomfort(배가 아프거나 불편하면서 대변 문제가 있어요) /
+none(특별히 없어요, exclusive). BOWEL_01과 동일.
+
+**SEC_PAIN_01** — 옵션: neck_shoulder(목·어깨) / low_back_pelvis(허리·골반) /
+arm_hand(팔·손) / leg_foot(다리·발) / knee(무릎) / head_face_jaw(머리·얼굴·턱) /
+chest_rib(가슴·갈비뼈 주변) / abdomen(배 주변) / none(특별히 없어요,
+exclusive). PAIN_01과 동일하되 `other`는 뺐다. 원본은 single_choice였지만
+이 화면은 여러 부위를 동시에 짚을 수 있어야 하므로 multi_choice로 바꿨다.
+
+**SEC_URINARY_01** — 옵션: frequency(소변을 자주 봐요) / urgency(갑자기
+소변이 마려워 참기 어려워요) / nocturia(밤에 자다가 소변 때문에 깨요) /
+voiding_difficulty(소변이 잘 나오지 않거나 약해요) /
+incomplete_emptying(소변을 봐도 덜 본 느낌이 있어요) / dysuria(소변 볼 때
+아프거나 불편해요) / incontinence(소변이 새는 경우가 있어요) / none(특별히
+없어요, exclusive). URINARY_01과 동일.
+
+**SEC_FATIGUE_01** — 옵션: morning_fatigue(아침부터 기운이 없어요) /
+exertional_fatigue(조금만 움직여도 쉽게 지쳐요) / later_day_fatigue(오후나
+저녁에 더 처져요) / poor_recovery(쉬어도 회복이 잘 안 돼요) /
+heaviness(몸이 무겁고 늘어져요) / sleepiness(졸리고 잠이 쏟아져요) /
+none(특별히 없어요, exclusive). FATIGUE_01과 동일.
+
+**SEC_STRESS_01** — 옵션: worry(걱정이나 생각이 많아요) / tension(긴장되고
+예민해요) / irritability(짜증이나 화가 자주 나요) / low_mood(마음이
+가라앉고 의욕이 없어요) / palpitation_tightness(가슴이 두근거리거나
+답답할 때가 있어요) / somatic_worsening(스트레스를 받으면 몸 증상이
+심해져요) / none(특별히 없어요, exclusive). STRESS_01과 동일.
+
+**SEC_WOMEN_01** — 옵션: irregular_cycle(생리 주기가 불규칙해요) /
+dysmenorrhea(생리통이 심해요) / flow_change(생리양이 너무 많거나 적어요) /
+premenstrual(생리 전후 몸이나 기분 변화가 심해요) /
+discharge_discomfort(냉·분비물이나 질 불편감이 있어요) /
+menopause_symptoms(갱년기 증상이 있어요) / none(특별히 없어요, exclusive).
+WOMEN_01과 동일하되 `other`는 뺐다.
+
+**SEC_WEIGHT_01** — 옵션: weight_loss(체중을 줄이고 싶어요) /
+fat_loss(체지방을 줄이고 싶어요) / appetite_control(식욕 조절이 가장
+어려워요) / maintenance(요요 없이 유지하고 싶어요) /
+health_management(전반적인 건강 관리를 함께 하고 싶어요). WEIGHT_01과
+동일 5개, none 없음.
+
+**짧은 화면에서 더 묻지 않는 것**: 원본 primary Module의 2번 문항 이후
+(빈도/기간/조건부 세부 문항 등)는 짧은 화면에 없다. 동반문제는 진료
+우선순위가 아니므로 1문항 스크리닝까지만 하고, 필요하면 원장 진료에서
+추가로 확인한다.
+
+**stale cleanup**: `SECONDARY_01`에서 해당 카테고리를 해제하면(예: sleep을
+빼면) `SEC_SLEEP_01`이 show_if를 잃고 `null`로 정리된다(기존
+`pruneStaleResponses` 그대로 재사용, 새 로직 추가 없음). 반대로 주호소가
+바뀌어 짧은 화면 카테고리와 같아지면(예: 주호소가 sleep으로 바뀌었는데
+동반문제에 여전히 sleep이 남아있던 경우) `SECONDARY_01.optionsIf`가 화면에서
+sleep을 감추고, 5장에서 새로 다루는 `optionsIf` 필터링으로 저장된
+`secondary_concerns` 배열에서도 sleep이 제거되며 `SEC_SLEEP_01`도 함께
+정리된다.
+
+**Dev JSON**: `responses.secondary_modules = { sleep: { problems }, gi: {
+problems }, bowel: { problems }, pain: { locations }, urinary: { problems },
+fatigue: { patterns }, stress: { problems }, women: { problems }, weight: {
+goal } }`(primary Module과 겹치지 않도록 `modules` 그룹과 분리 저장). 각
+값은 primary Module과 마찬가지로 화면이 안 보이면 `null`이다.
+
+### 4.16 체질·보약 추가 문항 (visit_goal === constitution 인 경우만)
 
 | screen_id | variable | 질문 | 선택지 |
 |---|---|---|---|
@@ -818,9 +944,9 @@ weight일 때만 `['Weight']`.
 | CONST_DIGESTION | digestion_basic | 속이나 소화는 어떠신가요? | normal(특별히 불편하지 않아요) / occasional(가끔 불편해요) / frequent(자주 불편해요) / severe(식사가 부담스러울 정도예요) |
 | CONST_BOWEL | bowel_basic | 대변은 어떠신가요? | regular(규칙적이고 편해요) / constipation(변비가 있어요) / loose(묽거나 설사를 자주 해요) / alternating(변비와 설사가 번갈아 있어요) |
 
-모두 single_choice, 필수. 이 문항들 다음에 4.5의 한약 참고용 공통정보로 이어진다.
+모두 single_choice, 필수. 이 문항들 다음에 4.17의 한약 참고용 공통정보로 이어진다.
 
-### 4.16 한약 처방 참고용 최소 공통정보 (전원 공통)
+### 4.17 한약 처방 참고용 최소 공통정보 (전원 공통)
 
 | screen_id | variable | 질문 | 선택지 |
 |---|---|---|---|
@@ -832,7 +958,7 @@ weight일 때만 `['Weight']`.
 모두 single_choice, 필수, always 표시. v0.2의 "찬물/따뜻한 물 선호"
 (`drink_temp_preference`, CORE_12A)는 삭제했다.
 
-### 4.17 약물 · 병력 · 알레르기 · 수술 · 여성 안전 · 검사자료
+### 4.18 약물 · 병력 · 알레르기 · 수술 · 여성 안전 · 검사자료
 
 | screen_id | variable | input | 필수 | show_if |
 |---|---|---|---|---|
@@ -843,7 +969,7 @@ weight일 때만 `['Weight']`.
 | ALLERGY_02 | allergy_detail | short_text(50자) | 필수 | `allergy_yn === yes` |
 | SURGERY_01 | surgery_yn | single_choice | 필수 | always |
 | SURGERY_02 | surgery_detail | short_text(50자) | 필수 | `surgery_yn === yes` |
-| WOMEN_SAFETY_01 | reproductive_status | multi_choice (exclusive: none) | 필수 | `patient_sex === female` |
+| WOMEN_SAFETY_01 | reproductive_status | multi_choice (exclusive: none) | 필수 | `patient_sex === female && primary !== postpartum && !(primary === pregnancy && PREGNANCY_01 === 'pregnant')` |
 | TEST_01 | recent_test_flag | single_choice | 필수 | always |
 
 **MED_USE** 질문: "현재 복용하거나 사용하는 약·주사·건강기능식품이 있나요?"
@@ -873,16 +999,63 @@ other(기타) / none(없음, exclusive)
 postpartum_1y(출산 후 1년 이내예요) / breastfeeding(모유수유 중이에요) /
 menopause(폐경했어요) / none(해당 없음, exclusive) / unknown(잘 모르겠어요)
 
-임신/산후 상세 경로(VISIT_02_WOMEN)와 정보가 겹치더라도, 이 화면은 "현재
-안전상태"를 확인하는 별도 역할을 유지한다. 동일 응답의 중복 질문이 느껴지는
-경우 향후 Router에서 자동 skip하도록 설계할 수 있다(9장 참고).
+**show_if (이번 Sprint에서 조건부 skip 추가)**: `patient_sex === female`은
+그대로 유지하되, 다음 두 경우에는 화면 자체를 보여주지 않는다.
+
+- 주호소가 postpartum(출산 후 회복 상담)인 경우 — 산후 경로는
+  POSTPARTUM_01(경과)+POSTPARTUM_03(수유)가 이미 WOMEN_SAFETY_01의
+  `postpartum_1y`/`breastfeeding`과 같은 사실을 더 자세히 묻는다.
+- 주호소가 pregnancy이면서 `PREGNANCY_01 === 'pregnant'`로 확정된 경우 —
+  한약 안전성상 가장 중요한 사실("임신 중")이 이미 확보됐다. 반대로
+  `possible`/`trying`/`fertility`/`unknown`이거나 아직 PREGNANCY_01에
+  답하지 않은 경우는 수유·산후 여부가 전혀 확인되지 않으므로
+  WOMEN_SAFETY_01을 그대로 유지해서 계속 묻는다.
+
+임신/산후 상세 경로(VISIT_02_WOMEN)와 정보가 겹치더라도, 이 화면은 위 두
+경우를 제외하면 여전히 "현재 안전상태"를 확인하는 별도 역할을 유지한다.
+생리·갱년기(women) 주호소, 동반문제로만 여성 건강을 선택한 경우, symptom/
+weight/constitution 주호소인 여성 환자는 모두 기존과 동일하게 이 화면을
+본다.
+
+**`deriveReproductiveStatus(r)`** (`src/spec/coreSpec.ts`) — 임신/산후 관련
+사실 하나를 WOMEN_SAFETY_01, Pregnancy Module, Postpartum Module 중 어느
+화면 답을 근거로 확정할지 정리하는 파생 함수. 반환 타입 `ReproductiveStatus`는
+어느 화면에서 확정했는지 나타내는
+`source: 'postpartum_module' | 'pregnancy_module' | 'WOMEN_SAFETY_01' | null`,
+그 근거가 된 원본 응답 배열 `raw: string[] | null`, 그리고 `pregnant` /
+`pregnancy_possible` / `postpartum_1y` / `breastfeeding` 4개
+`boolean | null` 필드로 구성된다.
+
+- 주호소가 postpartum이면 `source: 'postpartum_module'`. `postpartum_1y`는
+  POSTPARTUM_01이 `within_6_weeks`/`6w_to_3m`/`3_to_6m`/`6_to_12m` 중
+  하나면 true, `over_1y`면 false, 미응답이면 null. `breastfeeding`은
+  POSTPARTUM_03이 `yes`/`mixed`면 true, `no`면 false, 미응답이면 null.
+  `pregnant`/`pregnancy_possible`은 이 경로에서 물은 적이 없으므로 항상
+  null이다.
+- 주호소가 pregnancy이고 `PREGNANCY_01 === 'pregnant'`면
+  `source: 'pregnancy_module'`, `pregnant: true`,
+  `pregnancy_possible: false`, `postpartum_1y`/`breastfeeding`은 이 경로에서
+  물은 적이 없으므로 null.
+- 그 외에는 `source: 'WOMEN_SAFETY_01'`이고 그 화면 응답 배열에서 각 값의
+  포함 여부를 그대로 boolean으로 옮긴다. 단 두 가지 보정이 있다:
+  - 응답이 정확히 `['unknown']`이면 4개 값 모두 null(확인되지 않은 사실은
+    `none`/`unknown`과 구분해 반드시 null로 둔다).
+  - 임신 주호소에서 `PREGNANCY_01 === 'possible'`인데 WOMEN_SAFETY_01
+    응답에 `pregnancy_possible`이 빠져 있으면(두 화면 모두 노출되는
+    구간이므로 발생 가능) 그 사실을 잃지 않도록 `pregnancy_possible`을
+    true로 보정한다.
+- WOMEN_SAFETY_01에 아직 응답하지 않았고 위 두 우선 경로에도 해당하지
+  않으면 `source: null`, `raw: null`, 4개 값 모두 null.
+
+**Dev JSON**: `responses.reproductive_status = { reproductive_status:
+r['WOMEN_SAFETY_01'], derived: deriveReproductiveStatus(r) }`.
 
 **TEST_01** 질문: "최근 건강검진이나 검사에서 이상이 있다고 들은 내용이 있나요?"
 선택지: none(없어요) / yes(있어요) / unknown(잘 모르겠어요)
 `yes` 선택 시 안내 문구: "검사 결과지가 있으면 진료 때 보여주세요."
 이번 Sprint에서는 검사수치를 환자에게 직접 입력시키지 않는다.
 
-### 4.18 생년·출생정보
+### 4.19 생년·출생정보
 
 | screen_id | variable | input | 필수 | show_if |
 |---|---|---|---|---|
@@ -899,7 +1072,7 @@ menopause(폐경했어요) / none(해당 없음, exclusive) / unknown(잘 모르
 이 정보는 Dev JSON에서 `birth_info` 그룹으로 증상·검사·병력 정보와 분리 저장한다.
 임상 진단값처럼 자동 해석하지 않는다.
 
-### 4.19 마지막 자유입력
+### 4.20 마지막 자유입력
 
 | screen_id | variable | input | 필수 | show_if |
 |---|---|---|---|---|
@@ -915,17 +1088,37 @@ menopause(폐경했어요) / none(해당 없음, exclusive) / unknown(잘 모르
 
 ## 5. Stale Response 원칙 (재사용, 확장)
 
-`pruneStaleResponses`는 변경 없이 그대로 재사용한다. 매 응답 저장 시
-`visibleQuestions(responses)`를 다시 계산하고, 더 이상 show_if를 만족하지 않는
-screen_id의 응답을 반복적으로(연쇄 의존까지) `null`로 되돌린다.
+`pruneStaleResponses`의 기본 동작(show_if 기반 null 정리)은 변경 없이 그대로
+재사용한다. 매 응답 저장 시 `visibleQuestions(responses)`를 다시 계산하고,
+더 이상 show_if를 만족하지 않는 screen_id의 응답을 반복적으로(연쇄 의존까지)
+`null`로 되돌린다.
 
 예:
 - 불편한 증상(symptom) → sleep 선택 → 뒤로가기 → 체질·보약(constitution)으로 변경
   → `primary_symptom`/`chief_duration`/`chief_impact` 등 symptom 경로 응답은
   현재 payload에서 제거된다.
 - 여성(women) → pregnancy 선택 → 뒤로가기 → women(생리·갱년기)으로 변경
-  → pregnancy 전용 응답은 없지만(v1.0은 상세 Module 미구현), 향후 Pregnancy
-  Module이 붙었을 때도 동일 메커니즘으로 제거되도록 설계되어 있다.
+  → pregnancy 전용 응답은 즉시 제거된다.
+
+**이번 Sprint에서 추가한 동작 — `optionsIf` 배열 값 필터링**: `optionsIf`를
+가진 `multi_choice` 질문은 화면이 계속 보이더라도, 저장된 배열 값 중 현재
+`optionsIf(r)`가 허용하지 않는 옵션이 남아있으면 걸러낸다(화면 자체를
+`null`로 지우는 게 아니라 배열의 일부 원소만 제거). 계기는
+`SECONDARY_01`이다 — 이 문항의 `optionsIf`는 주호소와 같은 카테고리를 화면
+선택지에서 숨기지만, 뒤로가기 없이 주호소만 바뀐 경우 이전에 이미 저장된
+`secondary_concerns` 배열 값은 그대로 남아 주호소와 동반문제가 중복될 수
+있었다. 예: 주호소가 digestion이고 동반문제로 `[sleep, pain]`을 선택한
+상태에서, 뒤로 가서 주호소를 sleep으로 바꾸면(동반문제 화면을 다시 거치지
+않아도) 저장된 `secondary_concerns`에는 여전히 sleep이 남아 주호소·동반문제
+양쪽에 sleep이 중복됐다. 이제 매 정리 주기마다 현재 허용된 옵션 집합과
+교집합만 남긴다(위 예시라면 `[pain]`만 남는다). 값이 전부 걸러지면 빈
+배열(`[]`)로 두고 `null`이나 `'none'`으로 바꾸지 않는다 — "아직 응답하지
+않음"과 "전부 제거된 배열"은 다른 상태이기 때문이다.
+
+**종료 보장**: `pruneStaleResponses`는 한 번의 저장마다 변화가 없을 때까지
+반복한다. 매 반복에서 (a) 새로 `null`이 되는 응답 개수, 또는 (b) 필터링되는
+배열들의 총 길이 중 최소 하나가 단조 감소하고, 둘 다 더 줄어들지 않는
+시점에 반복이 멈추므로 무한루프가 없다.
 
 `meta`(audit)에는 `discarded: true`로 표시만 남기고, `current` clinical
 responses(`Responses` state) 자체에는 stale value가 남지 않는다.
@@ -933,7 +1126,11 @@ responses(`Responses` state) 자체에는 stale value가 남지 않는다.
 ## 6. Red Flag / 안전정보 요약
 
 - SAFETY_01(공통 Red Flag): 전원 대상, 6개 항목 + 해당 없음(exclusive).
-- WOMEN_SAFETY_01(여성 안전상태): 여성만 대상, 7개 항목 + 해당 없음(exclusive).
+- WOMEN_SAFETY_01(여성 안전상태): 여성 대상, 7개 항목 + 해당 없음(exclusive).
+  단 산후 주호소이거나 임신 주호소에서 `PREGNANCY_01 === 'pregnant'`로
+  확정된 경우는 4.18에서 설명한 이유로 이 화면을 건너뛴다 — 그 두 경로는
+  `deriveReproductiveStatus(r)`가 POSTPARTUM_01/03 또는 PREGNANCY_01에서
+  같은 안전정보를 파생시킨다.
 - GI_03(`gi_needs_review`) / BOWEL_03(`bowel_needs_review`): 각 Module
   primary 경로에서만 등장하는 module-level safety flag 후보. "네"만 양성으로
   본다(BOWEL_03의 "잘 모르겠어요"는 양성으로 자동 간주하지 않는다).
@@ -956,7 +1153,7 @@ responses(`Responses` state) 자체에는 stale value가 남지 않는다.
 - CORE_02/03(주호소 기간·영향)을 증상 경로 전용으로 유지하되 위치를 VISIT_03/04로 이동, 선택지 문구 재정의(주 단위 세분화)
 - CORE_15(reproductive_status)의 conflictPairs 구조는 폐기하고 옵션 자체를 v1.0 문구·세트로 재정의(WOMEN_SAFETY_01)
 - 동일 증상 기간을 Module 내부에서 재질문하지 않는다(9장 Module이 아직 없으므로 이번 Sprint는 해당 없음, 다음 Sprint 설계 원칙으로 명시)
-- 다수의 중복 자유입력 폐기 → 마지막 자유입력(FREE_01/02) 1개로 통합, 예외 3개만 유지(4.19 참고)
+- 다수의 중복 자유입력 폐기 → 마지막 자유입력(FREE_01/02) 1개로 통합, 예외 3개만 유지(4.20 참고)
 - SingleChoice 300ms auto-next 폐기 → "계속" 버튼 방식으로 전환
 
 ## 8. 상세 Module 구현 상태 (9장 router target)
@@ -974,38 +1171,67 @@ responses(`Responses` state) 자체에는 stale value가 남지 않는다.
 | pregnancy | Pregnancy | **구현 완료** (PREGNANCY_01~03A, 4.12 참고) |
 | postpartum | Postpartum | **구현 완료** (POSTPARTUM_01~03, 4.13 참고) |
 | weight | Weight | **구현 완료** (WEIGHT_01~04, 4.14 참고) |
+| (동반문제) sleep/digestion/bowel/pain/urinary/fatigue/stress/women/weight | 짧은 화면 9개 | **구현 완료** (SEC_*, 4.15 참고) |
 
 `primaryModuleTarget(r)` / `secondaryModuleTargets(r)` (`src/spec/coreSpec.ts`)가
 현재 응답 기준으로 연결될 Module 이름만 계산해서 Dev JSON에 노출한다.
 `primary_concern`이 지원하는 11개 key(sleep/digestion/bowel/pain/urinary/
 fatigue/stress/women/pregnancy/postpartum/weight) 전부 상세 Module 문항까지
-구현이 끝났다. `routing.modules_activated`(`modulesActivated(r)`)는 그
-11개 key에 각각 대응하는 Module 이름 1개짜리 배열을 반환하고, 그 외에는(예:
-체질·보약 경로) 빈 배열이다. 동반문제로 이 값들을 선택한 경우는
-`secondary_concerns.router_targets`에 해당 이름만 남고 `modules_activated`에는
-포함되지 않는다(전체 Module 미실행 — secondary short screen은 아직 없음).
+구현이 끝났고, 동반문제 9개 카테고리(women/pregnancy/postpartum은 짧은
+화면에서 women 하나로 합쳐짐)도 짧은 화면까지 구현이 끝났다(4.15).
+`routing.modules_activated`(`modulesActivated(r)`)는 여전히 primary 11개
+key에 각각 대응하는 Module 이름 1개짜리 배열만 반환하고, 그 외에는(예:
+체질·보약 경로) 빈 배열이다 — **동반문제 짧은 화면은 절대 포함하지 않는다**.
+동반문제로 이 값들을 선택한 경우는 `secondary_concerns.router_targets`에
+해당 이름만 남고 `modules_activated`에는 포함되지 않는다(전체 Module 미실행,
+짧은 화면 1문항만 실행).
 
 Router는 `primary_concern` 하나만을 유일한 정보원으로 쓰지 않도록 설계했다.
 `primary_concern.key` / `secondary_concerns.router_targets`를 Dev JSON에 함께
-남겨, 다음 Sprint에서 "주호소 + 동반문제 + Module 결과"를 함께 쓰는 Router로
-확장할 수 있게 했다.
+남겨두었고, 아래 8.1에서 이번 Sprint에 실제로 통합한 `buildRoutingPayload(r)`을
+설명한다.
+
+### 8.1 Router 통합 (`buildRoutingPayload`)
+
+`buildRoutingPayload(r)`(`src/spec/coreSpec.ts`)가 Dev JSON 최상위
+`routing` 필드를 채운다. 예전에는 App.tsx가 `{ modules_activated }` 하나만
+직접 만들어 넣었는데, 이제 이 함수가 그 자리를 대체하며 "주호소 + 동반문제 +
+실제로 보인 화면"을 한 덩어리로 묶는다. 반환 필드:
+
+| 필드 | 값 |
+|---|---|
+| `primary_concern` | `primaryConcernKey(r)` |
+| `primary_module` | `primaryModuleTarget(r)` |
+| `modules_activated` | `modulesActivated(r)` — primary 상세 Module만, 짧은 화면 절대 미포함 |
+| `secondary_concerns` | `r['SECONDARY_01']`(원본 응답 배열) |
+| `secondary_screens` | `secondaryScreensActivated(r)` — 현재 실제로 보이는 짧은 화면들의 router target 이름 목록 |
+| `all_targets` | primary 먼저, 그다음 secondary_screens 순서로 중복 없이 합친 목록 |
+
+규칙: `modules_activated`는 "실제로 실행된 primary 상세 Module"만 의미하고
+짧은 화면은 절대 포함하지 않는다 — 짧은 화면은 항상 `secondary_screens`로만
+분리해서 표기한다. `all_targets`는 primary를 먼저 넣고 그다음
+`secondary_screens`를 순서대로 추가하되, 이미 들어있는 이름은 다시 넣지
+않는다(예: 이론상 primary와 secondary target이 같은 이름을 가리키는 경우
+방어). Dev JSON에서는 `responses.routing`으로 노출된다(`src/App.tsx`).
 
 ## 9. 다음 Sprint 연결점
 
 이번 Sprint로 11개 상세 Module(Sleep/GI/Bowel/Urinary/Pain/Fatigue/Stress/
-Women/Pregnancy/Postpartum/Weight) 문항 구현이 모두 끝났다. 남은 항목:
+Women/Pregnancy/Postpartum/Weight) 문항 구현과, 동반문제 짧은 화면 9개
+(4.15), WOMEN_SAFETY_01 중복 skip(4.18), Router 통합(8.1)까지 모두 끝났다.
+남은 항목:
 
-- 동반문제(SECONDARY_01)로 각 카테고리를 선택한 경우를 위한 secondary short
-  screen 구현 — SLEEP_01의 "특별히 없어요" 옵션은 이 short screen에서만 사용
-- Router가 `primary_concern.key` + `secondary_concerns` + Module 결과를 함께
-  참고하도록 확장(전체 integration)
-- WOMEN_SAFETY_01과 임신/산후 상세 Module, POSTPARTUM_01/03 간 중복 응답
-  자동 skip 설계
 - GI_03/BOWEL_03 module-level safety flag를 공통 Red Flag(SAFETY_01)와 함께
   진료 요약 화면 등에서 어떻게 보여줄지 UX 설계(현재는 Dev JSON `flags`에만 노출)
 - Stress Module에 자살사고/자해 선별 질문 추가 여부 검토(이번 Sprint에서는
   범위 밖으로 보고 추가하지 않음)
 - Weight Module에 비의도적 체중 감소 여부 질문 추가 여부 검토
+
+**테스트**: `tests/integration.spec.mjs`에 자동 로직 테스트가 추가됐다.
+`npm run test:integration`으로 실행하며(esbuild로 `coreSpec.ts`를 번들해
+Node에서 바로 실행), 동반문제 짧은 화면, primary/secondary 중복 방지,
+reproductive-status 파생, routing payload, payload null 무결성, 11개
+primary Module 전체 회귀까지 201개 assertion으로 검증한다.
 
 ## 10. 이번 Sprint 범위 밖 (금지)
 

@@ -15,8 +15,8 @@ import {
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
+  buildRoutingPayload,
   computeFlags,
-  modulesActivated,
   pruneStaleResponses,
   visibleQuestions,
 } from './spec/coreSpec'
@@ -185,10 +185,7 @@ export default function App() {
       session_id: sessionId,
       responses: buildResponsePayload(responses),
       flags,
-      routing: {
-        // 문항까지 구현된 Module만 나열한다(현재: Sleep / GI / Bowel).
-        modules_activated: modulesActivated(responses),
-      },
+      routing: buildRoutingPayload(responses),
       metadata: {
         session_started_at: startedAt,
         answers: meta,

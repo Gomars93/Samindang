@@ -1006,6 +1006,194 @@ const WEIGHT_QUESTIONS: Question[] = [
   },
 ]
 
+/* ---------- 동반문제(secondary_concerns) 짧은 화면. 각 카테고리당 1문항. ---------- */
+
+/** primary와 동일한 카테고리면 짧은 화면을 또 보여주지 않는다(방어적으로 두 조건 모두 확인). */
+const SEC_NOT_PRIMARY = (key: string) => (r: Responses) => primaryConcernKey(r) !== key
+
+const SEC_NOT_PRIMARY_WOMEN = (r: Responses) => {
+  const key = primaryConcernKey(r)
+  return key !== 'women' && key !== 'pregnancy' && key !== 'postpartum'
+}
+
+const SECONDARY_SHORT_QUESTIONS: Question[] = [
+  {
+    id: 'SEC_SLEEP_01',
+    variable: 'sec_sleep_problems',
+    input: 'multi_choice',
+    question: '잠에 대해서는 어떤 점이 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'sleep') && SEC_NOT_PRIMARY('sleep')(r),
+    options: [
+      { value: 'sleep_onset', label: '잠들기 어려워요' },
+      { value: 'night_awakenings', label: '자다가 자주 깨요' },
+      { value: 'early_waking', label: '너무 일찍 깨요' },
+      { value: 'nonrestorative', label: '충분히 자도 개운하지 않아요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_GI_01',
+    variable: 'sec_gi_problems',
+    input: 'multi_choice',
+    question: '속이나 소화에 대해서는 어떤 점이 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'digestion') && SEC_NOT_PRIMARY('digestion')(r),
+    options: [
+      { value: 'indigestion', label: '소화가 잘 안 되고 더부룩해요' },
+      { value: 'epigastric_discomfort', label: '명치나 윗배가 답답하거나 아파요' },
+      { value: 'reflux', label: '속이 쓰리거나 신물이 올라와요' },
+      { value: 'nausea', label: '메스껍거나 구역감이 있어요' },
+      { value: 'poor_appetite', label: '입맛이 없어요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_BOWEL_01',
+    variable: 'sec_bowel_problems',
+    input: 'multi_choice',
+    question: '대변에 대해서는 어떤 점이 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'bowel') && SEC_NOT_PRIMARY('bowel')(r),
+    options: [
+      { value: 'constipation', label: '변이 잘 안 나오거나 딱딱해요' },
+      { value: 'diarrhea', label: '묽은 변이나 설사가 잦아요' },
+      { value: 'alternating', label: '변비와 설사가 번갈아 있어요' },
+      { value: 'incomplete_emptying', label: '보고 나도 덜 본 느낌이 있어요' },
+      { value: 'abdominal_discomfort', label: '배가 아프거나 불편하면서 대변 문제가 있어요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_PAIN_01',
+    variable: 'sec_pain_locations',
+    input: 'multi_choice',
+    question: '아픈 곳은 어디인가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'pain') && SEC_NOT_PRIMARY('pain')(r),
+    options: [
+      { value: 'neck_shoulder', label: '목·어깨' },
+      { value: 'low_back_pelvis', label: '허리·골반' },
+      { value: 'arm_hand', label: '팔·손' },
+      { value: 'leg_foot', label: '다리·발' },
+      { value: 'knee', label: '무릎' },
+      { value: 'head_face_jaw', label: '머리·얼굴·턱' },
+      { value: 'chest_rib', label: '가슴·갈비뼈 주변' },
+      { value: 'abdomen', label: '배 주변' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_URINARY_01',
+    variable: 'sec_urinary_problems',
+    input: 'multi_choice',
+    question: '소변이나 방광에 대해서는 어떤 점이 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'urinary') && SEC_NOT_PRIMARY('urinary')(r),
+    options: [
+      { value: 'frequency', label: '소변을 자주 봐요' },
+      { value: 'urgency', label: '갑자기 소변이 마려워 참기 어려워요' },
+      { value: 'nocturia', label: '밤에 자다가 소변 때문에 깨요' },
+      { value: 'voiding_difficulty', label: '소변이 잘 나오지 않거나 약해요' },
+      { value: 'incomplete_emptying', label: '소변을 봐도 덜 본 느낌이 있어요' },
+      { value: 'dysuria', label: '소변 볼 때 아프거나 불편해요' },
+      { value: 'incontinence', label: '소변이 새는 경우가 있어요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_FATIGUE_01',
+    variable: 'sec_fatigue_patterns',
+    input: 'multi_choice',
+    question: '피로에 대해서는 어떤 점이 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'fatigue') && SEC_NOT_PRIMARY('fatigue')(r),
+    options: [
+      { value: 'morning_fatigue', label: '아침부터 기운이 없어요' },
+      { value: 'exertional_fatigue', label: '조금만 움직여도 쉽게 지쳐요' },
+      { value: 'later_day_fatigue', label: '오후나 저녁에 더 처져요' },
+      { value: 'poor_recovery', label: '쉬어도 회복이 잘 안 돼요' },
+      { value: 'heaviness', label: '몸이 무겁고 늘어져요' },
+      { value: 'sleepiness', label: '졸리고 잠이 쏟아져요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_STRESS_01',
+    variable: 'sec_stress_problems',
+    input: 'multi_choice',
+    question: '스트레스나 마음에 대해서는 어떤 점이 힘든가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'stress') && SEC_NOT_PRIMARY('stress')(r),
+    options: [
+      { value: 'worry', label: '걱정이나 생각이 많아요' },
+      { value: 'tension', label: '긴장되고 예민해요' },
+      { value: 'irritability', label: '짜증이나 화가 자주 나요' },
+      { value: 'low_mood', label: '마음이 가라앉고 의욕이 없어요' },
+      { value: 'palpitation_tightness', label: '가슴이 두근거리거나 답답할 때가 있어요' },
+      { value: 'somatic_worsening', label: '스트레스를 받으면 몸 증상이 심해져요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_WOMEN_01',
+    variable: 'sec_women_problems',
+    input: 'multi_choice',
+    question: '여성 건강에 대해서는 어떤 점이 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    exclusive: 'none',
+    showIf: (r) => has(r, 'SECONDARY_01', 'women') && SEC_NOT_PRIMARY_WOMEN(r),
+    options: [
+      { value: 'irregular_cycle', label: '생리 주기가 불규칙해요' },
+      { value: 'dysmenorrhea', label: '생리통이 심해요' },
+      { value: 'flow_change', label: '생리양이 너무 많거나 적어요' },
+      { value: 'premenstrual', label: '생리 전후 몸이나 기분 변화가 심해요' },
+      { value: 'discharge_discomfort', label: '냉·분비물이나 질 불편감이 있어요' },
+      { value: 'menopause_symptoms', label: '갱년기 증상이 있어요' },
+      { value: 'none', label: '특별히 없어요' },
+    ],
+  },
+  {
+    id: 'SEC_WEIGHT_01',
+    variable: 'sec_weight_goal',
+    input: 'single_choice',
+    question: '체중 관리에서는 무엇을 가장 원하시나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => has(r, 'SECONDARY_01', 'weight') && SEC_NOT_PRIMARY('weight')(r),
+    options: [
+      { value: 'weight_loss', label: '체중을 줄이고 싶어요' },
+      { value: 'fat_loss', label: '체지방을 줄이고 싶어요' },
+      { value: 'appetite_control', label: '식욕 조절이 가장 어려워요' },
+      { value: 'maintenance', label: '요요 없이 유지하고 싶어요' },
+      { value: 'health_management', label: '전반적인 건강 관리를 함께 하고 싶어요' },
+    ],
+  },
+]
+
 /* ---------- 11. 체질·보약 추가 문항 ---------- */
 
 const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
@@ -1251,7 +1439,17 @@ const HISTORY_QUESTIONS: Question[] = [
     required: true,
     step: '병력정보',
     exclusive: 'none',
-    showIf: (r) => r['ID_03'] === 'female',
+    // 산후 주호소는 POSTPARTUM_01(경과)+POSTPARTUM_03(수유)이 이미 충분히 묻는다.
+    // 임신 주호소는 PREGNANCY_01이 'pregnant'로 확정된 경우만 충분하고,
+    // possible/trying/fertility/unknown/미응답인 경우는 수유·산후 여부가 전혀
+    // 확인되지 않으므로 그대로 물어야 한다(난임·임신 준비 상담에서 안전 정보 누락 방지).
+    showIf: (r) => {
+      const key = primaryConcernKey(r)
+      if (r['ID_03'] !== 'female') return false
+      if (key === 'postpartum') return false
+      if (key === 'pregnancy' && r['PREGNANCY_01'] === 'pregnant') return false
+      return true
+    },
     options: [
       { value: 'pregnant', label: '임신 중이에요' },
       { value: 'pregnancy_possible', label: '임신 가능성이 있어요' },
@@ -1278,6 +1476,95 @@ const HISTORY_QUESTIONS: Question[] = [
     ],
   },
 ]
+
+export type ReproductiveStatus = {
+  source: 'WOMEN_SAFETY_01' | 'pregnancy_module' | 'postpartum_module' | null
+  raw: string[] | null
+  pregnant: boolean | null
+  pregnancy_possible: boolean | null
+  postpartum_1y: boolean | null
+  breastfeeding: boolean | null
+}
+
+const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m']
+
+/**
+ * 임신/산후 사실 하나를 여러 화면(WOMEN_SAFETY_01, Pregnancy/Postpartum Module)이
+ * 중복으로 물을 수 있어 실제로 어느 화면 답을 근거로 쓸지 정리한다.
+ * null ≠ none ≠ unknown: 확인되지 않은 사실은 반드시 null로 둔다.
+ */
+export const deriveReproductiveStatus = (r: Responses): ReproductiveStatus => {
+  const key = primaryConcernKey(r)
+
+  if (key === 'postpartum') {
+    const since = r['POSTPARTUM_01']
+    const feeding = r['POSTPARTUM_03']
+    const raw: string[] = []
+    if (typeof since === 'string') raw.push(since)
+    if (typeof feeding === 'string') raw.push(feeding)
+    return {
+      source: 'postpartum_module',
+      raw: raw.length > 0 ? raw : null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y:
+        typeof since === 'string' ? POSTPARTUM_WITHIN_1Y.includes(since) : null,
+      breastfeeding:
+        typeof feeding === 'string' ? feeding === 'yes' || feeding === 'mixed' : null,
+    }
+  }
+
+  // 임신 주호소에서 PREGNANCY_01이 'pregnant'로 확정되면 한약 안전성상
+  // 가장 중요한 사실이 이미 확보된 것이므로 이를 우선한다.
+  if (key === 'pregnancy' && r['PREGNANCY_01'] === 'pregnant') {
+    return {
+      source: 'pregnancy_module',
+      raw: ['pregnant'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+  }
+
+  const answer = r['WOMEN_SAFETY_01']
+  if (Array.isArray(answer)) {
+    // 임신 주호소에서 WOMEN_SAFETY_01도 함께 응답된 경우가 있을 수 있다(예: PREGNANCY_01
+    // 'possible' 상태에서 안전 문진에도 답함). 이때는 WOMEN_SAFETY_01을
+    // source로 유지하되, PREGNANCY_01에서 밝힌 'possible' 사실이 WOMEN_SAFETY_01
+    // 응답에 반영되지 않았다면 그 사실을 잃지 않도록 보정한다.
+    const pregnancyPossibleFromModule =
+      key === 'pregnancy' && r['PREGNANCY_01'] === 'possible'
+
+    if (answer.length === 1 && answer[0] === 'unknown') {
+      return {
+        source: 'WOMEN_SAFETY_01',
+        raw: answer,
+        pregnant: null,
+        pregnancy_possible: pregnancyPossibleFromModule ? true : null,
+        postpartum_1y: null,
+        breastfeeding: null,
+      }
+    }
+    return {
+      source: 'WOMEN_SAFETY_01',
+      raw: answer,
+      pregnant: answer.includes('pregnant'),
+      pregnancy_possible: answer.includes('pregnancy_possible') || pregnancyPossibleFromModule,
+      postpartum_1y: answer.includes('postpartum_1y'),
+      breastfeeding: answer.includes('breastfeeding'),
+    }
+  }
+
+  return {
+    source: null,
+    raw: null,
+    pregnant: null,
+    pregnancy_possible: null,
+    postpartum_1y: null,
+    breastfeeding: null,
+  }
+}
 
 const BIRTH_QUESTIONS: Question[] = [
   {
@@ -1369,6 +1656,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...PREGNANCY_QUESTIONS,
   ...POSTPARTUM_QUESTIONS,
   ...WEIGHT_QUESTIONS,
+  ...SECONDARY_SHORT_QUESTIONS,
   ...CONSTITUTION_BASIC_QUESTIONS,
   ...HERBAL_REFERENCE_QUESTIONS,
   ...HISTORY_QUESTIONS,
@@ -1447,6 +1735,27 @@ export const secondaryModuleTargets = (r: Responses): string[] => {
     .map((x) => MODULE_ROUTES[x])
 }
 
+/** 동반문제 카테고리 -> 짧은 화면 screen_id. other/none은 짧은 화면이 없다. */
+export const SECONDARY_SHORT_SCREENS: Record<string, string> = {
+  sleep: 'SEC_SLEEP_01',
+  digestion: 'SEC_GI_01',
+  bowel: 'SEC_BOWEL_01',
+  pain: 'SEC_PAIN_01',
+  urinary: 'SEC_URINARY_01',
+  fatigue: 'SEC_FATIGUE_01',
+  stress: 'SEC_STRESS_01',
+  women: 'SEC_WOMEN_01',
+  weight: 'SEC_WEIGHT_01',
+}
+
+/** 동반문제 중 현재 짧은 화면이 실제로 보이는 카테고리의 router target 목록. */
+export const secondaryScreensActivated = (r: Responses): string[] => {
+  const visible = new Set(visibleQuestions(r).map((q) => q.id))
+  return Object.entries(SECONDARY_SHORT_SCREENS)
+    .filter(([, screenId]) => visible.has(screenId))
+    .map(([key]) => MODULE_ROUTES[key])
+}
+
 /** 이번 Sprint 기준 실제로 문항까지 구현된 Module. 나머지는 router target만 존재한다. */
 export const modulesActivated = (r: Responses): string[] => {
   const key = primaryConcernKey(r)
@@ -1464,6 +1773,26 @@ export const modulesActivated = (r: Responses): string[] => {
   return []
 }
 
+/** Router가 참고할 라우팅 정보 한 덩어리(주호소 + 동반문제 + 실제로 보인 화면 목록). */
+export const buildRoutingPayload = (r: Responses) => {
+  const primaryTarget = primaryModuleTarget(r)
+  const secondaryScreens = secondaryScreensActivated(r)
+  const allTargets: string[] = []
+  if (primaryTarget) allTargets.push(primaryTarget)
+  for (const t of secondaryScreens) {
+    if (!allTargets.includes(t)) allTargets.push(t)
+  }
+
+  return {
+    primary_concern: primaryConcernKey(r),
+    primary_module: primaryTarget,
+    modules_activated: modulesActivated(r),
+    secondary_concerns: r['SECONDARY_01'],
+    secondary_screens: secondaryScreens,
+    all_targets: allTargets,
+  }
+}
+
 export const visibleQuestions = (r: Responses): Question[] =>
   ALL_QUESTIONS.filter((q) => !q.showIf || q.showIf(r))
 
@@ -1479,16 +1808,37 @@ export const pruneStaleResponses = (
   const removed: string[] = []
 
   for (;;) {
-    const visible = new Set(visibleQuestions(cur).map((q) => q.id))
+    const visibleQs = visibleQuestions(cur)
+    const visible = new Set(visibleQs.map((q) => q.id))
     const stale = ALL_QUESTIONS.filter(
       (q) => !visible.has(q.id) && cur[q.id] !== null && cur[q.id] !== undefined,
     )
-    if (stale.length === 0) break
+
+    // optionsIf가 있는 multi_choice는 화면이 보이는 상태에서도 저장된 값에
+    // 더 이상 허용되지 않는 옵션이 남아있을 수 있다(예: SECONDARY_01에서
+    // 주호소로 바뀐 값). 현재 허용된 옵션과 교집합만 남긴다.
+    const leaked: { id: string; values: string[] }[] = []
+    for (const q of visibleQs) {
+      if (q.input !== 'multi_choice' || !q.optionsIf) continue
+      const stored = cur[q.id]
+      if (!Array.isArray(stored)) continue
+      const allowed = new Set(q.optionsIf(cur).map((o) => o.value))
+      const filtered = stored.filter((v) => allowed.has(v))
+      if (filtered.length !== stored.length) {
+        leaked.push({ id: q.id, values: filtered })
+      }
+    }
+
+    if (stale.length === 0 && leaked.length === 0) break
 
     const next: Responses = { ...cur }
     for (const q of stale) {
       next[q.id] = null
       removed.push(q.id)
+    }
+    for (const l of leaked) {
+      next[l.id] = l.values
+      removed.push(l.id)
     }
     cur = next
   }
@@ -1591,6 +1941,17 @@ export const buildResponsePayload = (r: Responses) => ({
       previous_attempts: r['WEIGHT_04'],
     },
   },
+  secondary_modules: {
+    sleep: { problems: r['SEC_SLEEP_01'] },
+    gi: { problems: r['SEC_GI_01'] },
+    bowel: { problems: r['SEC_BOWEL_01'] },
+    pain: { locations: r['SEC_PAIN_01'] },
+    urinary: { problems: r['SEC_URINARY_01'] },
+    fatigue: { patterns: r['SEC_FATIGUE_01'] },
+    stress: { problems: r['SEC_STRESS_01'] },
+    women: { problems: r['SEC_WOMEN_01'] },
+    weight: { goal: r['SEC_WEIGHT_01'] },
+  },
   constitution_basics: {
     energy_recovery: r['CONST_ENERGY'],
     sleep_basic: r['CONST_SLEEP'],
@@ -1618,6 +1979,7 @@ export const buildResponsePayload = (r: Responses) => ({
   },
   reproductive_status: {
     reproductive_status: r['WOMEN_SAFETY_01'],
+    derived: deriveReproductiveStatus(r),
   },
   recent_tests: {
     recent_test_flag: r['TEST_01'],

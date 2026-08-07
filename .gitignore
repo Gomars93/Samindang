@@ -15,3 +15,6 @@ dist
 # local queue loop-fix scratch artifacts (user-generated, not source)
 *.bak-before-loopfix
 fix-samindang-queue-loop.ps1
+
+# esbuild bundle used by tests/integration.spec.mjs (regenerated, not source)
+tests/.spec-bundle.mjs

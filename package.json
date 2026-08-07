@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host"
+    "preview": "vite preview --host",
+    "test:integration": "esbuild src/spec/coreSpec.ts --bundle --format=esm --outfile=tests/.spec-bundle.mjs --platform=neutral && node tests/integration.spec.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

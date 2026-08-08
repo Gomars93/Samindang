@@ -8,6 +8,7 @@
 import React from 'react'
 import { renderToString } from 'react-dom/server'
 import { PatientCompleteScreen } from './.patient-complete-bundle.cjs'
+import { IdleWarningModal } from './.idle-warning-bundle.cjs'
 
 let passCount = 0
 function assert(name, cond) {
@@ -164,6 +165,58 @@ const STEP_LABELS = ['접수 완료', '상세문진 완료', '체질분석 준�
       )
     }
   }
+}
+
+/* ---------------------------------------------------------------------
+ * 9. devMode=false success screen (real-world shaped payload): patient
+ *    name, phone digits, and the raw payload marker never reach the DOM —
+ *    App.tsx's post-success wipe + the devMode gate are what make this true.
+ * ------------------------------------------------------------------- */
+
+{
+  const html = render({
+    submitState: 'success',
+    submitId: 'abc123',
+    payload: {
+      responses: { patient: { patient_name: '홍길동', phone_last4: '1234' } },
+      secret_marker: 'PATIENT_PAYLOAD_MARKER',
+    },
+    devMode: false,
+  })
+  assert('devMode=false success screen has no patient name', !html.includes('홍길동'))
+  assert('devMode=false success screen has no phone digits', !html.includes('1234'))
+  assert(
+    'devMode=false success screen has no raw payload marker string',
+    !html.includes('PATIENT_PAYLOAD_MARKER'),
+  )
+}
+
+/* ---------------------------------------------------------------------
+ * 10. Completion screen never renders the '이전' (back) control — patients
+ *     cannot navigate back into the filled questionnaire from here.
+ * ------------------------------------------------------------------- */
+
+{
+  for (const submitState of ['success', 'error', 'unconfigured']) {
+    const html = render({ submitState, submitId: 'abc123', errorReason: '서버에 연결할 수 없습니다.' })
+    assert(`${submitState} screen has no "이전" back control`, !html.includes('이전'))
+  }
+}
+
+/* ---------------------------------------------------------------------
+ * 11. Idle-warning modal: elderly-friendly Korean copy + a 계속하기
+ *     control. Tested directly with props — no real timers here, App.tsx
+ *     owns the timing logic (see src/App.tsx idle-timeout effect).
+ * ------------------------------------------------------------------- */
+
+{
+  const html = renderToString(React.createElement(IdleWarningModal, { onContinue: () => {} }))
+  assert('idle warning modal shows "아직 계신가요?"', html.includes('아직 계신가요?'))
+  assert('idle warning modal has a 계속하기 control', html.includes('계속하기'))
+  assert(
+    'idle warning modal 계속하기 is a real button element',
+    /<button[^>]*>[\s\S]*?계속하기[\s\S]*?<\/button>/.test(html),
+  )
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

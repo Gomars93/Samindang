@@ -87,6 +87,9 @@ export function createStore(dataDir) {
       const id = randomUUID()
       const now = new Date().toISOString()
       const record = {
+        // 저장된 레코드 "포장"(wrapper) 자체의 shape 버전. submission/myungri/judgment
+        // 내부의 각 버전 필드와는 별개다 — 그 필드들은 각자의 스펙/엔진/스키마를 가리킨다.
+        record_schema_version: '1.0.0',
         id,
         created_at: now,
         updated_at: now,

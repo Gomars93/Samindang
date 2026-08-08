@@ -8,6 +8,11 @@ interface ImportMetaEnv {
    * 말 것 — 미설정 시 기본값(순서대로 안내 문구) 사용.
    */
   readonly VITE_SAMINDANG_WAIT_MESSAGE?: string
+  /**
+   * 문진 화면(question phase) 유휴 타임아웃(분). 미설정 시 기본 10분.
+   * 완료 화면/원장 화면에서는 절대 동작하지 않는다.
+   */
+  readonly VITE_SAMINDANG_IDLE_MINUTES?: string
 }
 
 interface ImportMeta {

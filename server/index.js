@@ -9,6 +9,7 @@
 import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { createStore } from './store.js'
+import { createAuditLog } from './audit.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 
 const VERSION = '0.1.0'
@@ -22,7 +23,9 @@ function parseAllowedOrigins(raw) {
 }
 
 export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays } = {}) {
-  const store = createStore(dataDir ?? process.env.SAMINDANG_DATA_DIR ?? './.data/submissions')
+  const resolvedDataDir = dataDir ?? process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
+  const store = createStore(resolvedDataDir)
+  const audit = createAuditLog(resolvedDataDir)
   const configuredToken = doctorToken !== undefined ? doctorToken : process.env.SAMINDANG_DOCTOR_TOKEN
   const doctorAllowedOrigins = allowedOrigins ?? parseAllowedOrigins(process.env.SAMINDANG_ALLOWED_ORIGINS)
   const configuredRetentionDays =
@@ -33,6 +36,19 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
     console.log(
       `${new Date().toISOString()} ${method} ${url} ${status} id=${id ?? '-'} bytes=${bytes ?? '-'}${extra ? ` ${extra}` : ''}`,
     )
+  }
+
+  // 응답을 보내기 전에 audit 한 줄을 반드시 먼저 기록한다(순서 보장 —
+  // 클라이언트가 응답을 받은 시점엔 이미 로그가 디스크에 있다). audit 기록
+  // 자체가 실패해도 본 요청은 실패시키지 않는다 — id와 에러 클래스만 남긴다.
+  async function safeAudit(fields) {
+    try {
+      await audit.logEvent(fields)
+    } catch (err) {
+      console.error(
+        `${new Date().toISOString()} audit log write failed id=${fields.submission_id ?? '-'} err=${err.constructor.name}`,
+      )
+    }
   }
 
   // 보존기한 자동 삭제. SAMINDANG_RETENTION_DAYS=0(또는 음수)이면 비활성화.
@@ -176,9 +192,11 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
           id = record.id
           if (record.duplicate) {
             status = 200
+            await safeAudit({ event: 'submission_duplicate', submission_id: record.id, actor: 'patient' })
             bytes = sendJson(req, res, 200, { id: record.id, created_at: record.created_at, duplicate: true }, cors)
           } else {
             status = 201
+            await safeAudit({ event: 'submission_created', submission_id: record.id, actor: 'patient' })
             bytes = sendJson(req, res, 201, { id: record.id, created_at: record.created_at }, cors)
           }
         }
@@ -203,6 +221,7 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
+            await safeAudit({ event: 'submission_viewed', submission_id: id, actor: 'doctor' })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -218,6 +237,7 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
+            await safeAudit({ event: 'status_changed', submission_id: id, status: record.status, actor: 'doctor' })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -233,6 +253,7 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
+            await safeAudit({ event: 'judgment_saved', submission_id: id, actor: 'doctor' })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -242,6 +263,8 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
       }
     } catch (err) {
       status = err.statusCode ?? 500
+      // 요청 본문은 절대 로그로 남기지 않는다 — id와 에러 클래스만.
+      console.error(`${new Date().toISOString()} error id=${id ?? '-'} err=${err.constructor.name}`)
       bytes = sendJson(req, res, status, { error: status === 413 ? 'payload too large' : status === 400 ? 'bad request' : 'server error' }, cors)
     }
 

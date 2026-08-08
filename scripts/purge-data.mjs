@@ -5,6 +5,7 @@
 // 사용: npm run purge:data  (또는  node scripts/purge-data.mjs --yes)
 import { createInterface } from 'node:readline/promises'
 import { createStore } from '../server/store.js'
+import { purgeAuditLog } from '../server/audit.js'
 
 const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
 const yes = process.argv.includes('--yes')
@@ -33,7 +34,8 @@ async function main() {
 
   const store = createStore(dataDir)
   const count = await store.purgeAll()
-  console.log(`Purged ${count} submission file(s) from "${dataDir}".`)
+  await purgeAuditLog(dataDir)
+  console.log(`Purged ${count} submission file(s) from "${dataDir}" and cleared the audit log.`)
 }
 
 main().catch((err) => {

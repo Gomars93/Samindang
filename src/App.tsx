@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
+import { IdleWarningModal } from './components/IdleWarningModal'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
@@ -45,6 +46,11 @@ const newSessionId = () =>
     ? crypto.randomUUID()
     : `sess-${Date.now()}`
 
+/** 문진(question phase) 전용 유휴 타임아웃. 완료 화면/원장 화면에는 절대 적용하지 않는다. */
+const IDLE_MINUTES = Number(import.meta.env.VITE_SAMINDANG_IDLE_MINUTES) || 10
+const IDLE_MS = IDLE_MINUTES * 60_000
+const IDLE_WARNING_BEFORE_MS = 60_000
+
 export default function App() {
   const [isDoctorView, setIsDoctorView] = useState(
     () => typeof window !== 'undefined' && window.location.hash.startsWith('#doctor'),
@@ -81,30 +87,21 @@ export default function App() {
   const [submitId, setSubmitId] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const submittingRef = useRef(false)
-
-  const donePayload = useMemo(
-    () => ({
-      questionnaire_version: '1.0',
-      session_id: sessionId,
-      responses: buildResponsePayload(responses),
-      // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
-      myungri_calculation: computeSaju(buildSajuInput(responses)),
-      flags,
-      routing: buildRoutingPayload(responses),
-      metadata: {
-        session_started_at: startedAt,
-        answers: meta,
-      },
-    }),
-    [sessionId, responses, flags, startedAt, meta],
-  )
+  // 전송용 payload 스냅샷. phase가 'done'이 되는 순간 한 번만 만들어 ref에
+  // 담는다 — 이후 프라이버시 wipe로 responses/meta가 비워져도 재전송(dosSubmit
+  // retry)이 옛 스냅샷을 그대로 쓸 수 있게 하기 위함이다.
+  const donePayloadRef = useRef<unknown>(null)
+  // 완료 화면의 dev 전용 JSON 뷰어에 넘길 값. 프로덕션(devMode=false)에서는
+  // success/unconfigured 도달 즉시 비운다 — dev 모드에서는 개발자가 명시적으로
+  // 확인해야 하므로 유지한다(아래 wipe 이펙트 참고).
+  const [devPayload, setDevPayload] = useState<unknown>(null)
 
   const doSubmit = () => {
     if (submittingRef.current) return
     submittingRef.current = true
     setSubmitState('submitting')
     setSubmitError(null)
-    submitQuestionnaire(donePayload).then((result) => {
+    submitQuestionnaire(donePayloadRef.current).then((result) => {
       if (result.ok) {
         setSubmitId(result.data.id)
         setSubmitState('success')
@@ -118,12 +115,98 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'done') return
+    // responses/meta가 아직 비워지기 전에 딱 한 번 payload를 스냅샷한다.
+    donePayloadRef.current = {
+      questionnaire_version: '1.0',
+      session_id: sessionId,
+      responses: buildResponsePayload(responses),
+      // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
+      myungri_calculation: computeSaju(buildSajuInput(responses)),
+      flags,
+      routing: buildRoutingPayload(responses),
+      metadata: {
+        session_started_at: startedAt,
+        answers: meta,
+      },
+    }
+    setDevPayload(donePayloadRef.current)
     if (!isServerConfigured()) {
       // dev/standalone: 전송을 시도하지 않는다 — 완료 화면은 "전송됨"을 주장하지 않는다.
       setSubmitState('unconfigured')
       return
     }
     doSubmit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
+
+  // 공유 태블릿 프라이버시: 제출이 끝났다고 확정되는 순간(성공 또는 서버
+  // 미구성으로 더 이상 아무것도 보내지 않음) 환자 식별 정보를 담은 state를
+  // 즉시 비운다. 다음 환자가 태블릿을 넘겨받기 전에 화면에 남지 않게 한다.
+  useEffect(() => {
+    if (submitState !== 'success' && submitState !== 'unconfigured') return
+    setResponses(emptyResponses())
+    setMeta({})
+    setVisited([])
+    setStartedAt(null)
+    donePayloadRef.current = null
+    // 프로덕션 빌드에는 dev JSON 뷰어 자체가 없으므로 payload도 메모리에서
+    // 지운다. dev 모드는 개발자가 명시적으로 확인해야 하므로 유지한다.
+    if (!import.meta.env.DEV) setDevPayload(null)
+  }, [submitState])
+
+  // 완료 화면 도달 후 뒤로가기(브라우저 Back / 태블릿 뒤로가기 제스처)가
+  // 채워진 문진 화면으로 되돌아가지 못하게 막는다. #doctor 해시 라우팅은
+  // hashchange로만 판단하므로 여기서 건드리지 않는다.
+  const phaseRef = useRef(phase)
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== 'done') return
+    window.history.pushState({ samindangDone: true }, '', window.location.href)
+  }, [phase])
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (phaseRef.current === 'done') {
+        window.history.pushState({ samindangDone: true }, '', window.location.href)
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  // 유휴 타임아웃: question phase에서만 동작한다(완료 화면/원장 화면 절대
+  // 아님). 만료 60초 전 안내 모달을 띄우고, 그래도 조작이 없으면 restart().
+  const [idleWarning, setIdleWarning] = useState(false)
+
+  useEffect(() => {
+    if (phase !== 'question') {
+      setIdleWarning(false)
+      return
+    }
+    let warnTimer: ReturnType<typeof setTimeout>
+    let expireTimer: ReturnType<typeof setTimeout>
+
+    const arm = () => {
+      clearTimeout(warnTimer)
+      clearTimeout(expireTimer)
+      setIdleWarning(false)
+      const warnDelay = Math.max(IDLE_MS - IDLE_WARNING_BEFORE_MS, 0)
+      warnTimer = setTimeout(() => setIdleWarning(true), warnDelay)
+      expireTimer = setTimeout(() => restart(), IDLE_MS)
+    }
+
+    arm()
+    window.addEventListener('pointerdown', arm)
+    window.addEventListener('keydown', arm)
+    return () => {
+      clearTimeout(warnTimer)
+      clearTimeout(expireTimer)
+      window.removeEventListener('pointerdown', arm)
+      window.removeEventListener('keydown', arm)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
@@ -256,7 +339,7 @@ export default function App() {
         submitId={submitId}
         errorReason={submitError}
         onRetry={doSubmit}
-        payload={donePayload}
+        payload={devPayload}
         devMode={import.meta.env.DEV}
         onStaffReset={restart}
       />
@@ -301,6 +384,7 @@ export default function App() {
       </ScreenShell>
 
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {idleWarning && <IdleWarningModal onContinue={() => setIdleWarning(false)} />}
     </>
   )
 }

@@ -46,7 +46,12 @@ function stopServer(server) {
 }
 
 async function main() {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'samindang-test-'))
+  // audit.log lives at dataDir/../audit.log (server/audit.js) — nest dataDir
+  // one level under the mkdtemp root so the audit log stays isolated to this
+  // test run instead of landing directly in the shared OS temp dir.
+  const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-test-'))
+  const dataDir = path.join(tmpRoot, 'submissions')
+  const auditLogPath = path.join(tmpRoot, 'audit.log')
   let { server, base } = await startServer(dataDir)
 
   try {
@@ -458,9 +463,148 @@ async function main() {
       assert('judgment saved on submission A appears on A', recA.judgment?.innate_features[0] === 'only-on-a')
       assert('judgment saved on submission A does NOT appear on B', recB.judgment === null)
     }
+
+    /* ---------------- record shape: version traceability ---------------- */
+    {
+      const versionedPayload = validPayload({
+        session_id: 'sess-versions',
+        myungri_calculation: {
+          status: 'resolved',
+          policy: { algorithm_version: '1.0.0' },
+          engine: { library_version: '2.0.0' },
+        },
+      })
+      const created = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(versionedPayload),
+        })
+      ).json()
+
+      const judgment = {
+        schema_version: '1.0.0',
+        recorded_at: new Date().toISOString(),
+        source: { session_id: 'sess-versions', questionnaire_version: '1.0' },
+        innate_features: [],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      }
+      await fetch(`${base}/api/submissions/${created.id}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(judgment),
+      })
+
+      const record = await (await fetch(`${base}/api/submissions/${created.id}`)).json()
+      assert('stored record has record_schema_version', record.record_schema_version === '1.0.0')
+      assert(
+        'stored record has submission.questionnaire_version',
+        typeof record.submission.questionnaire_version === 'string' && record.submission.questionnaire_version !== '',
+      )
+      assert(
+        'stored record has myungri.policy.algorithm_version',
+        typeof record.myungri.policy.algorithm_version === 'string',
+      )
+      assert(
+        'stored record has myungri.engine.library_version',
+        typeof record.myungri.engine.library_version === 'string',
+      )
+      assert('stored record has judgment.schema_version', record.judgment.schema_version === '1.0.0')
+    }
+
+    /* ---------------- audit log: one line per event, minimal fields, no payload leakage ---------------- */
+    {
+      const canaryPayload = validPayload({
+        session_id: 'sess-audit-canary',
+        responses: {
+          patient: { patient_name: 'PRIVACY_CANARY', phone_last4: '9999' },
+        },
+      })
+      const created = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(canaryPayload),
+        })
+      ).json()
+      const auditId = created.id
+
+      await fetch(`${base}/api/submissions/${auditId}`) // doctor view
+      await fetch(`${base}/api/submissions/${auditId}/status`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'viewed' }),
+      })
+      await fetch(`${base}/api/submissions/${auditId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          schema_version: '1.0.0',
+          recorded_at: new Date().toISOString(),
+          source: { session_id: 'sess-audit-canary', questionnaire_version: '1.0' },
+          innate_features: [],
+          symptom_links: [],
+          saju_only_prediction: '',
+          revised_after_exam: '',
+          final_treatment_axis: '',
+          prescription_direction: '',
+          learning_case: false,
+          debrief: null,
+          transcript_import: null,
+        }),
+      })
+
+      const auditRaw = await readFile(auditLogPath, 'utf8')
+      const allLines = auditRaw.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      const forThisId = allLines.filter((l) => l.submission_id === auditId)
+
+      assert(
+        'audit log: exactly one submission_created line',
+        forThisId.filter((l) => l.event === 'submission_created').length === 1,
+      )
+      assert(
+        'audit log: exactly one submission_viewed line',
+        forThisId.filter((l) => l.event === 'submission_viewed').length === 1,
+      )
+      assert(
+        'audit log: exactly one status_changed line',
+        forThisId.filter((l) => l.event === 'status_changed').length === 1,
+      )
+      assert(
+        'audit log: exactly one judgment_saved line',
+        forThisId.filter((l) => l.event === 'judgment_saved').length === 1,
+      )
+
+      const allowedKeys = new Set(['ts', 'event', 'submission_id', 'status', 'actor'])
+      assert(
+        'audit log: every line for this submission has ONLY the allowed keys',
+        forThisId.length > 0 && forThisId.every((l) => Object.keys(l).every((k) => allowedKeys.has(k))),
+      )
+      assert(
+        'audit log: submission_created actor is patient, everything else is doctor',
+        forThisId.find((l) => l.event === 'submission_created')?.actor === 'patient' &&
+          forThisId.filter((l) => l.event !== 'submission_created').every((l) => l.actor === 'doctor'),
+      )
+      assert(
+        'audit log: status_changed line carries the status value',
+        forThisId.find((l) => l.event === 'status_changed')?.status === 'viewed',
+      )
+      assert(
+        'audit log: the planted PRIVACY_CANARY marker never appears anywhere in the file',
+        !auditRaw.includes('PRIVACY_CANARY'),
+      )
+      assert('audit log: no phone digits from the canary submission leak in', !auditRaw.includes('9999'))
+    }
   } finally {
     await stopServer(server)
-    await rm(dataDir, { recursive: true, force: true })
+    await rm(tmpRoot, { recursive: true, force: true })
   }
 
   /* ---------------- retention cleanup (store-level, no HTTP) ---------------- */
@@ -518,6 +662,15 @@ async function main() {
       'git tracks no .env files',
       tracked.filter((f) => f === '.env' || f.startsWith('.env.')).length === 0,
     )
+
+    let auditLogIgnored = false
+    try {
+      execSync('git check-ignore .data/audit.log', { cwd: repoRoot, stdio: 'pipe' })
+      auditLogIgnored = true
+    } catch {
+      auditLogIgnored = false
+    }
+    assert('default audit log path (.data/audit.log) is gitignored', auditLogIgnored)
   }
 
   /* ---------------- doctor-endpoint guard (unit-level, fake remoteAddress) ---------------- */

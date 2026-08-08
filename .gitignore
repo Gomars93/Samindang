@@ -28,12 +28,16 @@ tests/.doctor-labels-bundle.mjs
 tests/.doctor-judgment-bundle.mjs
 tests/.doctor-sectionorder-bundle.mjs
 
-# esbuild bundle used by tests/patient-flow.spec.mjs (regenerated, not source)
+# esbuild bundles used by tests/patient-flow.spec.mjs (regenerated, not source)
 tests/.patient-complete-bundle.cjs
+tests/.idle-warning-bundle.cjs
 
 # TypeScript incremental build artifacts
 *.tsbuildinfo
 
 # runtime patient data written by server/index.js (SAMINDANG_DATA_DIR default) —
-# never commit real submissions
+# never commit real submissions. This also covers .data/audit.log (the
+# operational audit log, see server/audit.js) — already caught by the
+# directory rule below, listed explicitly for clarity.
 .data/
+.data/audit.log

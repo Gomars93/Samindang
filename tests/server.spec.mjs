@@ -335,6 +335,43 @@ async function main() {
           rec.myungri.marker === r.myungri_calculation.marker,
         )
       }
+
+      // simulated multiple-patient submissions: each of the 5 distinct patients
+      // also gets its own clinician judgment saved, and reloading confirms it
+      // stayed attached to the right patient (not leaked across submissions).
+      await Promise.all(
+        results.map((r) =>
+          fetch(`${base}/api/submissions/${r.id}/judgment`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              schema_version: '1.0.0',
+              recorded_at: new Date().toISOString(),
+              source: { session_id: r.session_id, questionnaire_version: '1.0' },
+              innate_features: [`feature-${r.session_id}`],
+              symptom_links: [],
+              saju_only_prediction: '',
+              revised_after_exam: '',
+              final_treatment_axis: '',
+              prescription_direction: '',
+              learning_case: false,
+              debrief: null,
+              transcript_import: null,
+            }),
+          }),
+        ),
+      )
+      for (const r of results) {
+        const rec = await (await fetch(`${base}/api/submissions/${r.id}`)).json()
+        assert(
+          `record for ${r.session_id} judgment matches its own submission, not another one`,
+          rec.judgment.innate_features[0] === `feature-${r.session_id}`,
+        )
+        assert(
+          `record for ${r.session_id} judgment.source.session_id matches`,
+          rec.judgment.source.session_id === r.session_id,
+        )
+      }
     }
 
     /* ---------------- concurrency: status + judgment writes on the SAME id stay well-formed ---------------- */

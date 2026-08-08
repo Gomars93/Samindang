@@ -10,7 +10,8 @@ import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { createStore } from './store.js'
 import { createAuditLog } from './audit.js'
-import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
+import { isDoctorRequestAllowed, isOriginAllowedForDoctor, isLocalOnly } from './auth.js'
+import { activateVisit, clearActiveVisit, getActiveVisit } from './activeVisit.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1024 * 1024 // 1MB
@@ -135,10 +136,18 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost')
     const parts = url.pathname.split('/').filter(Boolean) // ['api','submissions',':id',...]
-    // 모든 /api/submissions 라우트가 원장용이다 — 예외는 patient POST(생성) 한 건뿐.
-    const doctorRoute =
-      parts[0] === 'api' && parts[1] === 'submissions' && !(parts.length === 2 && req.method === 'POST')
-    const cors = corsHeaders(req, { doctorRoute })
+    // 모든 /api/submissions, /api/visits 라우트와 /api/current-visit/clear가
+    // 원장용이다 — 예외는 patient POST(제출 생성) 한 건뿐.
+    const isSubmissionsRoute =
+      parts[1] === 'submissions' && !(parts.length === 2 && req.method === 'POST')
+    const isVisitsRoute = parts[1] === 'visits'
+    const isCurrentVisitClear = parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear'
+    const doctorRoute = parts[0] === 'api' && (isSubmissionsRoute || isVisitsRoute || isCurrentVisitClear)
+    // GET /api/current-visit는 원장 라우트가 아니다 — 더 엄격한 별도 가드
+    // (isLocalOnly)를 쓰고, 브라우저 cross-origin 용도가 아니므로 CORS
+    // 헤더를 아예 붙이지 않는다(access-control-allow-origin 없음).
+    const isCurrentVisitRead = parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2
+    const cors = isCurrentVisitRead ? {} : corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, cors)
@@ -197,6 +206,14 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
           } else {
             status = 201
             await safeAudit({ event: 'submission_created', submission_id: record.id, actor: 'patient' })
+            // 진짜 새 제출일 때만 새 방문이 만들어진다(store.createSubmission
+            // 참고) — 멱등 중복 경로는 여기 안 온다.
+            await safeAudit({
+              event: 'visit_created',
+              submission_id: record.id,
+              visit_id: record.visit_id,
+              actor: 'patient',
+            })
             bytes = sendJson(req, res, 201, { id: record.id, created_at: record.created_at }, cors)
           }
         }
@@ -256,6 +273,121 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             await safeAudit({ event: 'judgment_saved', submission_id: id, actor: 'doctor' })
             bytes = sendJson(req, res, 200, record, cors)
           }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 2 && req.method === 'POST') {
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const requestedPatientId =
+            typeof body?.patient_id === 'string' && body.patient_id.trim() !== '' ? body.patient_id.trim() : undefined
+          if (requestedPatientId !== undefined && !(await store.visitExistsForPatient(requestedPatientId))) {
+            // 실존하지 않는 patient_id를 임의로 신뢰해서 새 visit을 붙이지
+            // 않는다 — 이게 재진(같은 patient_id)을 원장의 명시적 행동으로만
+            // 만들도록 하는 가드다(자동 매칭도 아니고, 잘못된 문자열을
+            // 조용히 받아주지도 않는다).
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
+          } else {
+            const visit = await store.createVisit({ patient_id: requestedPatientId, submission_id: null })
+            status = 201
+            await safeAudit({ event: 'visit_created', visit_id: visit.id, actor: 'doctor' })
+            bytes = sendJson(req, res, 201, visit, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 2 && req.method === 'GET') {
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const list = await store.listVisits()
+          bytes = sendJson(req, res, 200, list, cors)
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'activate' &&
+        req.method === 'POST'
+      ) {
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const active = activateVisit(visit)
+            await safeAudit({
+              event: 'visit_activated',
+              visit_id: active.visit_id,
+              submission_id: active.submission_id ?? undefined,
+              actor: 'doctor',
+            })
+            bytes = sendJson(
+              req,
+              res,
+              200,
+              {
+                active: true,
+                patient_id: active.patient_id,
+                visit_id: active.visit_id,
+                submission_id: active.submission_id,
+                active_since: active.active_since,
+              },
+              cors,
+            )
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 3 && req.method === 'GET') {
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            bytes = sendJson(req, res, 200, visit, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear' && req.method === 'POST') {
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const prev = getActiveVisit()
+          clearActiveVisit()
+          await safeAudit({ event: 'visit_cleared', visit_id: prev?.visit_id ?? undefined, actor: 'doctor' })
+          bytes = sendJson(req, res, 200, { ok: true }, cors)
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2 && req.method === 'GET') {
+        // ClinicAI 연결점. 원장 라우트보다 엄격한 별도 가드(loopback만,
+        // 토큰/Origin 예외 없음) — audit 로그도 남기지 않는다(읽기라서;
+        // audit는 상태변경만 기록한다). 응답에 patient_id/visit_id/
+        // submission_id/active_since 외 어떤 필드도(성함/전화번호 등) 절대
+        // 포함하지 않는다.
+        if (!isLocalOnly(remoteAddress(req))) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const active = getActiveVisit()
+          const body = active
+            ? {
+                active: true,
+                patient_id: active.patient_id,
+                visit_id: active.visit_id,
+                submission_id: active.submission_id,
+                active_since: active.active_since,
+              }
+            : { active: false }
+          bytes = sendJson(req, res, 200, body, cors)
         }
       } else {
         status = 404

@@ -71,6 +71,10 @@ export type SubmissionRecord = {
   updated_at: string
   status: SubmissionSummary['status']
   patient_label: string
+  // 이번 스프린트 이전에 저장된 레코드에는 없을 수 있다(하위 호환) — 그런
+  // 경우 원장 화면은 방문 활성화를 건너뛰고 배지도 띄우지 않는다.
+  patient_id?: string
+  visit_id?: string
   submission: Record<string, unknown>
   myungri: unknown
   judgment: ClinicianJudgment | null
@@ -98,4 +102,24 @@ export function saveJudgment(
     method: 'PUT',
     body: JSON.stringify(judgment),
   })
+}
+
+// ClinicAI 연결점(server/activeVisit.js)의 원장 화면 쪽 절반. "지금 이
+// 방문을 진료 중으로 표시한다/표시를 지운다"만 한다 — 녹음/전사는 이 서버
+// 어디에도 없다.
+export type ActiveVisit = {
+  active: true
+  patient_id: string
+  visit_id: string
+  submission_id: string | null
+  active_since: string
+}
+export type CurrentVisitResult = ActiveVisit | { active: false }
+
+export function activateVisit(visitId: string): Promise<ServerResult<CurrentVisitResult>> {
+  return request(`/api/visits/${visitId}/activate`, { method: 'POST' })
+}
+
+export function clearActiveVisit(): Promise<ServerResult<{ ok: true }>> {
+  return request('/api/current-visit/clear', { method: 'POST' })
 }

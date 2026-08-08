@@ -3,6 +3,8 @@
 // src/doctor/labels.ts with esbuild first, same style as the other suites).
 // Plain node, no test framework: assert() prints "OK: <name>" and throws on failure.
 
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
 import { DOCTOR_FIXTURES } from './.doctor-fixtures-bundle.mjs'
@@ -413,6 +415,34 @@ function detailsRange(html, classMarker) {
   const durationLabel = optionLabel('VISIT_03_SYMPTOM_DURATION', '1_3m')
   const count = html.split(durationLabel).length - 1
   assert('duplication audit: duration label renders exactly 3 times (summary + 주호소 + myungri column)', count === 3)
+}
+
+/* ---------------------------------------------------------------------
+ * 14. ClinicAI 연결점 배지("현재 진료 중으로 표시됨"): fixtures 모드에서는
+ *     실제 서버 방문이 없으므로 어떤 fixture를 렌더해도 절대 나타나지
+ *     않는다. 서버 모드에서 열린 레코드에 visit_id가 있을 때만 렌더하는
+ *     조건은 effect가 실행되지 않는 SSR(renderToString)로는 직접 재현할
+ *     수 없으므로(fetch가 필요한 useEffect라 fixtures-only 렌더 경로에는
+ *     아예 존재하지 않는다), 소스 코드에 그 조건이 실제로 존재하는지도
+ *     같이 확인한다.
+ * ------------------------------------------------------------------- */
+
+{
+  const BADGE_TEXT = '현재 진료 중으로 표시됨'
+  for (const f of DOCTOR_FIXTURES) {
+    const html = renderDoctorView(f.name)
+    assert(`fixtures mode ("${f.name}"): activation badge never renders`, !html.includes(BADGE_TEXT))
+  }
+
+  const doctorViewSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'DoctorView source: activation badge is gated on server mode + selectedRecord.visit_id (not just fixtures)',
+    doctorViewSrc.includes("mode === 'server' && selectedRecord?.visit_id") &&
+      doctorViewSrc.includes(BADGE_TEXT),
+  )
 }
 
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

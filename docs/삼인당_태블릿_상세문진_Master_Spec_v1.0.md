@@ -1702,11 +1702,16 @@ calcVsInterpret`)를 두어, 아래 "원장 판단 기록"을 가리킨다. 계�
 
 ```
 { id, created_at, updated_at, status, patient_label,
+  patient_id, visit_id,
   submission: { questionnaire_version, session_id, responses, flags,
                 routing, metadata },
   myungri: <myungri_calculation>,
   judgment: <ClinicianJudgment | null> }
 ```
+
+`patient_id`/`visit_id`는 13.7절의 방문 계층이 붙인 것이다 — 이 스프린트
+이전에 저장된 레코드에는 없을 수 있고(하위 호환), 그런 레코드는 원장
+화면에서 방문 활성화를 그냥 건너뛴다(13.7.4).
 
 `submission`과 `myungri`는 절대 하나의 blob으로 합치지 않으며, 상태 전이
 (`POST /:id/status`)와 판단 저장(`PUT /:id/judgment`)은 그 두 필드를 건드릴
@@ -1736,6 +1741,12 @@ calcVsInterpret`)를 두어, 아래 "원장 판단 기록"을 가리킨다. 계�
 | POST | `/api/submissions/:id/status` | 원장 | `{ status }`, `new\|viewed\|in_consultation\|completed`. |
 | PUT | `/api/submissions/:id/judgment` | 원장 | `ClinicianJudgment` 저장. |
 | GET | `/api/health` | 공개 | `{ ok, version }`. |
+| POST | `/api/visits` | 원장 | 방문 생성. `{ patient_id? }`. 13.7절 참고. |
+| GET | `/api/visits` | 원장 | 방문 요약 목록(`id, patient_id, created_at, submission_id`). |
+| GET | `/api/visits/:id` | 원장 | 방문 전체 레코드. |
+| POST | `/api/visits/:id/activate` | 원장 | 해당 방문을 "진료 중"으로 표시(활성 방문 교체). |
+| POST | `/api/current-visit/clear` | 원장 | 활성 방문 표시를 지운다. |
+| GET | `/api/current-visit` | **loopback 전용**(원장 라우트보다 엄격, 13.7.3) | ClinicAI 등 로컬 프로세스가 폴링하는 연결점. |
 
 ### 13.4 보안 모델 (파일럿 등급 — 실제 인증 아님)
 
@@ -1803,6 +1814,100 @@ CORS 응답에서 요청 Origin을 무조건 반사하면 그 결과(환자 목�
 `days=0`일 때는 아무것도 지우지 않고 지정 일수보다 오래된 레코드는
 지우는지, 환자 경로(`src/App.tsx`)가 목록/상세 조회 함수를 전혀
 참조하지 않는지, `git ls-files`에 `.data/`나 `.env*`가 없는지.
+
+### 13.7 방문/환자 데이터 계층 — 미래 ClinicAI 연동의 연결점
+
+이번 스프린트는 **연결점만** 만든다. 녹음/전사(ClinicAI) 코드는 이
+저장소 어디에도 없고, 이번 스프린트에서도 추가하지 않는다.
+
+#### 13.7.1 신원 규칙 (절대 원칙)
+
+`patient_id`는 **절대** 이름/전화번호로 자동 매칭하지 않는다. 태블릿
+제출은 항상 새 `patient_id` + 새 `visit_id`를 만든다 — 동명이인이 같은
+`patient_id`로 잘못 묶이는 사고를 방지하는 안전한 기본값이다. 같은
+환자의 재진(같은 `patient_id`로 새 `visit`)은 **원장이 명시적으로
+기존 `patient_id`를 지정**해야만 만들어진다(`POST /api/visits`) — 문자열
+매칭이 아니라 사람의 판단이 유일한 연결 방법이다.
+
+#### 13.7.2 데이터 모델
+
+방문(visit) 1건 = 파일 1개(JSON), `SAMINDANG_DATA_DIR`의 형제 경로
+(기본 `../visits`)에 저장한다(`server/visitStore.js`). 저장 패턴(atomic
+write, id별 락)은 `server/store.js`와 동일하다.
+
+```
+{ id, patient_id, created_at, updated_at,
+  submission_id: string | null,
+  recording_id: null,   // 미래 ClinicAI 자리표시자 — 지금은 항상 null
+  transcript_id: null,  // 미래 ClinicAI 자리표시자 — 지금은 항상 null
+  judgment_ref: 'submission' | null,
+  emr_summary: null }   // 미래 EMR 자리표시자 — 지금은 항상 null
+```
+
+- `submission_id`가 있으면(`judgment_ref: 'submission'`) — 임상 판단은
+  **그 submission의 기존** `PUT /api/submissions/:id/judgment`에 그대로
+  산다. 별도 저장소를 만들지 않는다(중복 저장 금지).
+- `submission_id`가 없으면(`judgment_ref: null`) — 문진 없는 재진이다.
+  지금은 이 경우 판단을 기록할 UI가 없다 — **의도적으로 남겨둔 다음
+  스프린트의 갭**이며, 이번 스프린트에서 채우지 않는다.
+
+태블릿 제출(`store.createSubmission`)은 진짜 새 제출일 때만(멱등
+중복 경로는 아님) 새 `patient_id` + `visit_id`를 만들고, 제출 레코드에
+`patient_id`/`visit_id`를 스탬프한다(13.2절).
+
+#### 13.7.3 활성 방문(active visit) — ClinicAI 연결점
+
+서버는 "지금 진료 중인 방문"을 **메모리에만** 들고 있는다
+(`server/activeVisit.js`) — 디스크에 절대 저장하지 않는다. 서버
+재시작은 항상 이 값을 비운다(재부팅 후 예전 활성 방문이 되살아나는
+코드 경로 자체가 없다 — `activeVisit.js`는 `node:fs`를 아예 import하지
+않는다).
+
+- `POST /api/visits/:id/activate` — 그 방문을 활성 방문으로 설정한다
+  (기존 활성 방문을 원자적으로 교체 — 누적되지 않는다).
+- `POST /api/current-visit/clear` — 활성 방문을 비운다.
+- **만료(TTL)**: `SAMINDANG_ACTIVE_VISIT_TTL_MINUTES`(기본 **30**분).
+  읽을 때마다(lazy) 확인한다 — 별도 타이머 없음. 활성화 이후 TTL 안에
+  다시 읽히지 않으면(또는 그냥 TTL이 지나면) 다음 읽기에서 만료로
+  처리되고 비워진다. 읽기가 TTL을 연장하지 않는다(진료가 30분보다
+  길어지면 만료된다 — 필요해지면 heartbeat 엔드포인트를 나중에 추가).
+- `GET /api/current-visit` — **ClinicAI가 로컬에서 폴링할 연결점.** 다른
+  원장 라우트보다 **더 엄격한 별도 가드**를 쓴다(`isLocalOnly`,
+  `server/auth.js`):
+
+  | | 원장 라우트(`isDoctorRequestAllowed`) | `GET /api/current-visit`(`isLocalOnly`) |
+  |---|---|---|
+  | loopback | 허용 | 허용 |
+  | `x-doctor-token` 헤더로 비-loopback 우회 | 허용(토큰 일치 시) | **없음 — 항상 거부** |
+  | Origin 허용목록(`isOriginAllowedForDoctor`) | 적용 | **적용 안 함(라우트 자체가 브라우저 대상이 아님)** |
+  | 응답에 `access-control-allow-origin` | 허용된 Origin이면 반사 | **절대 설정 안 함** |
+
+  응답은 활성 상태일 때 `{ active: true, patient_id, visit_id,
+  submission_id, active_since }`, 아니면(비활성/만료/한 번도 활성화된
+  적 없음) `{ active: false }` **뿐**이다 — 성함/전화번호/생년월일 등
+  다른 어떤 필드도 절대 포함하지 않는다(의도적 최소화). 이 라우트는
+  **읽기 전용 폴링**이므로 audit 로그를 남기지 않는다 — audit는
+  상태변경(생성/활성화/해제)만 기록한다(`visit_created`/
+  `visit_activated`/`visit_cleared`, `server/audit.js`).
+
+#### 13.7.4 원장 화면 연동
+
+`DoctorView`가 서버 모드에서 제출건을 열면(그리고 그 레코드에
+`visit_id`가 있으면 — 이 스프린트 이전 레코드는 없을 수 있고, 그 경우
+조용히 건너뛴다) 그 방문을 자동으로 활성화한다(`activateVisit`,
+`src/lib/serverClient.ts`). 목록으로 돌아가거나 다른 건으로 전환하거나
+컴포넌트가 언마운트되면 활성 표시를 지운다(`clearActiveVisit`). 실제로
+활성화된 경우에만 "현재 진료 중으로 표시됨" 배지를 보여준다 —
+fixtures 모드에서는 실제 서버 방문이 없으므로 활성화를 아예 호출하지
+않고 배지도 절대 나타나지 않는다.
+
+#### 13.7.5 다음 단계
+
+이번 스프린트는 **연결점만** 만든다. `GET /api/current-visit`을 로컬에서
+폴링하면 "지금 이 patient_id/visit_id/submission_id의 진료가 진행
+중"이라는 사실을 알 수 있다는 것 — 그게 전부다. 녹음/전사(ClinicAI),
+`recording_id`/`transcript_id`/`emr_summary` 채우기, 문진 없는 재진의
+판단 기록 UI는 전부 이후 스프린트의 몫이며 이번에는 손대지 않았다.
 
 ## 14. 환자용 완료/대기 화면 (운영 상태 흐름)
 

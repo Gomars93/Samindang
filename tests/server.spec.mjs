@@ -9,7 +9,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../server/index.js'
 import { createStore } from '../server/store.js'
-import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from '../server/auth.js'
+import { isDoctorRequestAllowed, isOriginAllowedForDoctor, isLocalOnly } from '../server/auth.js'
+import { __setLastTouchedForTest } from '../server/activeVisit.js'
 
 let passCount = 0
 
@@ -619,15 +620,27 @@ async function main() {
         forThisId.filter((l) => l.event === 'judgment_saved').length === 1,
       )
 
-      const allowedKeys = new Set(['ts', 'event', 'submission_id', 'status', 'actor'])
+      // visit_id는 이번 스프린트에서 추가된 선택 키다(visit_created/
+      // visit_activated/visit_cleared에서만 쓰임) — 그 외 키는 여전히 없다.
+      const allowedKeys = new Set(['ts', 'event', 'submission_id', 'status', 'actor', 'visit_id'])
       assert(
         'audit log: every line for this submission has ONLY the allowed keys',
         forThisId.length > 0 && forThisId.every((l) => Object.keys(l).every((k) => allowedKeys.has(k))),
       )
+      // 제출 하나를 만들면 submission_created뿐 아니라 visit_created도 같은
+      // 요청 흐름 안에서(patient가 트리거) 생기므로 둘 다 patient, 나머지
+      // (조회/상태변경/판단저장)는 전부 doctor.
       assert(
-        'audit log: submission_created actor is patient, everything else is doctor',
+        'audit log: submission_created + visit_created(tablet flow) actor is patient, everything else is doctor',
         forThisId.find((l) => l.event === 'submission_created')?.actor === 'patient' &&
-          forThisId.filter((l) => l.event !== 'submission_created').every((l) => l.actor === 'doctor'),
+          forThisId.find((l) => l.event === 'visit_created')?.actor === 'patient' &&
+          forThisId
+            .filter((l) => l.event !== 'submission_created' && l.event !== 'visit_created')
+            .every((l) => l.actor === 'doctor'),
+      )
+      assert(
+        'audit log: exactly one visit_created line for this submission',
+        forThisId.filter((l) => l.event === 'visit_created').length === 1,
       )
       assert(
         'audit log: status_changed line carries the status value',
@@ -639,6 +652,274 @@ async function main() {
       )
       assert('audit log: no phone digits from the canary submission leak in', !auditRaw.includes('9999'))
     }
+
+    /* ---------------- visit layer: submitting creates a visit tied to the submission ---------------- */
+    let visitTestPatientId
+    {
+      const created = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-visit-basic' })),
+        })
+      ).json()
+      const record = await (await fetch(`${base}/api/submissions/${created.id}`)).json()
+      assert('submission record has patient_id (string)', typeof record.patient_id === 'string' && record.patient_id !== '')
+      assert('submission record has visit_id (string)', typeof record.visit_id === 'string' && record.visit_id !== '')
+      visitTestPatientId = record.patient_id
+
+      const visitRes = await fetch(`${base}/api/visits/${record.visit_id}`)
+      const visit = await visitRes.json()
+      assert('GET /api/visits/:id -> 200', visitRes.status === 200)
+      assert('visit.submission_id matches the submission that created it', visit.submission_id === record.id)
+      assert('visit.patient_id matches the submission record', visit.patient_id === record.patient_id)
+      assert('visit.judgment_ref is "submission" (judgment lives on the submission)', visit.judgment_ref === 'submission')
+      assert(
+        'visit has null placeholders for future ClinicAI/EMR fields',
+        visit.recording_id === null && visit.transcript_id === null && visit.emr_summary === null,
+      )
+    }
+
+    /* ---------------- visit layer: no name-based matching — same name/phone, different session -> different patient_id ---------------- */
+    {
+      const samePersonPayload = (sessionId) =>
+        validPayload({
+          session_id: sessionId,
+          responses: { patient: { patient_name: '김철수', phone_last4: '5555' } },
+        })
+      const a = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(samePersonPayload('sess-samename-a')),
+        })
+      ).json()
+      const b = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(samePersonPayload('sess-samename-b')),
+        })
+      ).json()
+      const recA = await (await fetch(`${base}/api/submissions/${a.id}`)).json()
+      const recB = await (await fetch(`${base}/api/submissions/${b.id}`)).json()
+      assert(
+        'two different tablet submissions with identical patient_name/phone_last4 get DIFFERENT patient_id',
+        recA.patient_id !== recB.patient_id,
+      )
+      assert('...and different visit_id too', recA.visit_id !== recB.visit_id)
+    }
+
+    /* ---------------- visit layer: idempotent resubmit does NOT create a second visit ---------------- */
+    {
+      const sid = 'sess-idem-visit'
+      const first = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: sid })),
+        })
+      ).json()
+      const firstRecord = await (await fetch(`${base}/api/submissions/${first.id}`)).json()
+
+      const dup = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: sid })),
+        })
+      ).json()
+      assert('idempotent resubmit -> duplicate:true, same id', dup.duplicate === true && dup.id === first.id)
+
+      const allVisits = await (await fetch(`${base}/api/visits`)).json()
+      const visitsForPatient = allVisits.filter((v) => v.patient_id === firstRecord.patient_id)
+      assert(
+        'idempotent resubmit: exactly one visit file exists for that patient_id/submission chain',
+        visitsForPatient.length === 1 && visitsForPatient[0].id === firstRecord.visit_id,
+      )
+    }
+
+    /* ---------------- visit layer: POST /api/visits with an existing patient_id -> "재진" (2nd visit, same patient, no submission) ---------------- */
+    let revisitId
+    {
+      const res = await fetch(`${base}/api/visits`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patient_id: visitTestPatientId }),
+      })
+      const visit = await res.json()
+      assert('POST /api/visits with existing patient_id -> 201', res.status === 201)
+      assert('re-visit keeps the SAME patient_id', visit.patient_id === visitTestPatientId)
+      assert('re-visit gets a DIFFERENT visit_id from the original', typeof visit.id === 'string' && visit.id !== '')
+      assert('re-visit has submission_id: null (no questionnaire this time)', visit.submission_id === null)
+      assert('re-visit has judgment_ref: null (documented gap — no submission to hang judgment on)', visit.judgment_ref === null)
+      revisitId = visit.id
+
+      const allVisits = await (await fetch(`${base}/api/visits`)).json()
+      const visitsForPatient = allVisits.filter((v) => v.patient_id === visitTestPatientId)
+      assert('patient now has 2 visits on file', visitsForPatient.length === 2)
+    }
+
+    /* ---------------- visit layer: POST /api/visits with an unknown patient_id -> 400 ---------------- */
+    {
+      const res = await fetch(`${base}/api/visits`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patient_id: 'no-such-patient-ever-existed' }),
+      })
+      assert('POST /api/visits with unknown patient_id -> 400', res.status === 400)
+    }
+
+    /* ---------------- visit layer: POST /api/visits with no patient_id -> mints a fresh patient_id ---------------- */
+    let freshVisit
+    {
+      const res = await fetch(`${base}/api/visits`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      freshVisit = await res.json()
+      assert('POST /api/visits with no patient_id -> 201', res.status === 201)
+      assert('a visit with no linked patient still gets a fresh patient_id', typeof freshVisit.patient_id === 'string' && freshVisit.patient_id !== '')
+      assert('fresh visit submission_id is null', freshVisit.submission_id === null)
+    }
+
+    /* ---------------- active visit: activate/replace/clear/expiry via GET /api/current-visit (ClinicAI-facing) ---------------- */
+    {
+      // visit A: the original submission-linked visit from the "basic" test above.
+      const basic = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-active-a' })),
+        })
+      ).json()
+      const recA = await (await fetch(`${base}/api/submissions/${basic.id}`)).json()
+
+      const actA = await (await fetch(`${base}/api/visits/${recA.visit_id}/activate`, { method: 'POST' })).json()
+      assert('activate visit A returns active:true with matching ids', actA.active === true && actA.visit_id === recA.visit_id)
+
+      const curA = await (await fetch(`${base}/api/current-visit`)).json()
+      assert('GET /api/current-visit reflects visit A', curA.active === true && curA.visit_id === recA.visit_id)
+      assert(
+        'GET /api/current-visit response has EXACTLY the documented key set (active variant)',
+        Object.keys(curA).sort().join(',') === 'active,active_since,patient_id,submission_id,visit_id',
+      )
+
+      // activate visit B (the re-visit created earlier) -> replaces A, does not accumulate.
+      const actB = await (await fetch(`${base}/api/visits/${revisitId}/activate`, { method: 'POST' })).json()
+      assert('activate visit B succeeds', actB.active === true && actB.visit_id === revisitId)
+
+      const curB = await (await fetch(`${base}/api/current-visit`)).json()
+      assert('GET /api/current-visit now reflects B, not A (replacement, not accumulation)', curB.visit_id === revisitId)
+      assert('current-visit submission_id is null for the re-visit (no questionnaire)', curB.submission_id === null)
+
+      // clear -> {active:false} only.
+      const clearRes = await fetch(`${base}/api/current-visit/clear`, { method: 'POST' })
+      assert('POST /api/current-visit/clear -> 200', clearRes.status === 200)
+      const curCleared = await (await fetch(`${base}/api/current-visit`)).json()
+      assert('after clear, GET /api/current-visit -> {active:false} only', curCleared.active === false)
+      assert(
+        'cleared response has EXACTLY {active:false} — no other keys',
+        Object.keys(curCleared).sort().join(',') === 'active',
+      )
+
+      // expiry: activate again, then simulate TTL having passed via the test-only hook.
+      const actC = await (await fetch(`${base}/api/visits/${recA.visit_id}/activate`, { method: 'POST' })).json()
+      assert('re-activate visit A for expiry test', actC.active === true)
+      __setLastTouchedForTest(new Date(Date.now() - 31 * 60 * 1000).toISOString())
+      const curExpired = await (await fetch(`${base}/api/current-visit`)).json()
+      assert('expired active visit (TTL passed) -> {active:false}', curExpired.active === false)
+      assert(
+        'expired response also has exactly {active:false}',
+        Object.keys(curExpired).sort().join(',') === 'active',
+      )
+
+      // Never leaks patient name/phone: plant a canary, activate its visit, check the response text.
+      const canary = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(
+            validPayload({
+              session_id: 'sess-current-visit-canary',
+              responses: { patient: { patient_name: 'CURRENT_VISIT_NAME_CANARY', phone_last4: '4242' } },
+            }),
+          ),
+        })
+      ).json()
+      const canaryRecord = await (await fetch(`${base}/api/submissions/${canary.id}`)).json()
+      await fetch(`${base}/api/visits/${canaryRecord.visit_id}/activate`, { method: 'POST' })
+      const curCanaryRes = await fetch(`${base}/api/current-visit`)
+      const curCanaryText = await curCanaryRes.text()
+      assert('GET /api/current-visit never contains the planted patient name', !curCanaryText.includes('CURRENT_VISIT_NAME_CANARY'))
+      assert('GET /api/current-visit never contains the planted phone digits', !curCanaryText.includes('4242'))
+      const curCanary = JSON.parse(curCanaryText)
+      assert(
+        'GET /api/current-visit (active) has EXACTLY the documented key set — no name/phone fields sneak in',
+        Object.keys(curCanary).sort().join(',') === 'active,active_since,patient_id,submission_id,visit_id',
+      )
+
+      /* ---------------- GET /api/current-visit guard is isLocalOnly, stricter than doctor routes ---------------- */
+      // Doctor routes reject an evil Origin even from loopback. current-visit doesn't
+      // apply the Origin allowlist at all (it isn't a browser-facing route) — that's
+      // the concrete behavioral proof that a *different*, not-just-differently-named,
+      // guard function is wired in.
+      const evilOriginDoctorRoute = await fetch(`${base}/api/submissions`, {
+        headers: { origin: 'https://evil.example.com' },
+      })
+      assert('doctor route (loopback + evil Origin) -> 403 (Origin allowlist applies)', evilOriginDoctorRoute.status === 403)
+
+      const evilOriginCurrentVisit = await fetch(`${base}/api/current-visit`, {
+        headers: { origin: 'https://evil.example.com' },
+      })
+      assert(
+        'GET /api/current-visit (loopback + evil Origin) -> 200 (no Origin allowlist — proves it is NOT isDoctorRequestAllowed/isOriginAllowedForDoctor)',
+        evilOriginCurrentVisit.status === 200,
+      )
+      assert(
+        'GET /api/current-visit never sets access-control-allow-origin, even with an Origin header present',
+        evilOriginCurrentVisit.headers.get('access-control-allow-origin') === null,
+      )
+    }
+
+    /* ---------------- GET /api/current-visit guard (unit-level, fake remoteAddress) ---------------- */
+    assert('isLocalOnly: non-loopback -> denied', isLocalOnly('192.168.0.55') === false)
+    assert('isLocalOnly: 127.0.0.1 -> allowed', isLocalOnly('127.0.0.1') === true)
+    assert('isLocalOnly: ::1 -> allowed', isLocalOnly('::1') === true)
+    assert(
+      'isLocalOnly has no token-bypass parameter at all (arity proves it: remoteAddress only)',
+      isLocalOnly.length === 1,
+    )
+
+    /* ---------------- restart: active visit is NEVER restored, even though visit files persist ---------------- */
+    {
+      // "재시작 시 활성 방문을 다시 불러오지 않는다"는 전제를 정적으로도
+      // 확인한다 — activeVisit.js는 파일시스템을 아예 건드리지 않는다(디스크에서
+      // 다시 읽어올 코드 경로 자체가 없다).
+      const activeVisitSrc = await readFile(fileURLToPath(new URL('../server/activeVisit.js', import.meta.url)), 'utf8')
+      assert(
+        'server/activeVisit.js never imports node:fs (in-memory only, nothing to restore on boot)',
+        !activeVisitSrc.includes("from 'node:fs"),
+      )
+
+      // Explicitly clear (end-of-shift equivalent) before restart, then confirm the
+      // restarted process still starts with no active visit while visit files persist.
+      await fetch(`${base}/api/current-visit/clear`, { method: 'POST' })
+      await stopServer(server)
+      const restarted = await startServer(dataDir)
+      server = restarted.server
+      base = restarted.base
+
+      const curAfterRestart = await (await fetch(`${base}/api/current-visit`)).json()
+      assert('restart: GET /api/current-visit -> {active:false}', curAfterRestart.active === false)
+
+      const visitsAfterRestart = await (await fetch(`${base}/api/visits`)).json()
+      assert(
+        'restart: visit files persisted and are still listable via GET /api/visits',
+        visitsAfterRestart.some((v) => v.patient_id === visitTestPatientId),
+      )
+    }
   } finally {
     await stopServer(server)
     await rm(tmpRoot, { recursive: true, force: true })
@@ -646,7 +927,11 @@ async function main() {
 
   /* ---------------- retention cleanup (store-level, no HTTP) ---------------- */
   {
-    const retDir = await mkdtemp(path.join(tmpdir(), 'samindang-retention-'))
+    // 별도 루트 아래 nest한다(retDir/../visits가 곧바로 OS 임시 루트에
+    // 생기는 걸 막기 위해) — store.createSubmission이 이제 방문 파일도
+    // 만들기 때문에, 정리 시 그 파일도 함께 지워지도록 한다.
+    const retRoot = await mkdtemp(path.join(tmpdir(), 'samindang-retention-'))
+    const retDir = path.join(retRoot, 'submissions')
     try {
       const store = createStore(retDir)
       const rec = await store.createSubmission({
@@ -670,7 +955,7 @@ async function main() {
       assert('retention: 1-day window deletes the 40-day-old record', deleted === 1)
       assert('retention: record actually removed from disk', (await store.getSubmission(rec.id)) === null)
     } finally {
-      await rm(retDir, { recursive: true, force: true })
+      await rm(retRoot, { recursive: true, force: true })
     }
   }
 
@@ -684,9 +969,17 @@ async function main() {
 
     const serverIndexSrc = await readFile(fileURLToPath(new URL('../server/index.js', import.meta.url)), 'utf8')
     const requireDoctorCalls = (serverIndexSrc.match(/!requireDoctor\(req\)/g) ?? []).length
+    // 기존 4개(submissions list/get/status/judgment) + 이번 스프린트에서 추가된
+    // 5개(visits create/list/get/activate, current-visit/clear) = 9개.
+    // GET /api/current-visit는 이 목록에 없다 — requireDoctor가 아니라 더
+    // 엄격한 isLocalOnly를 쓴다(아래 별도 assert).
     assert(
-      'server has exactly the 4 doctor-guarded routes calling requireDoctor (list/get/status/judgment)',
-      requireDoctorCalls === 4,
+      'server has exactly the 9 doctor-guarded routes calling requireDoctor (submissions x4 + visits x4 + current-visit/clear)',
+      requireDoctorCalls === 9,
+    )
+    assert(
+      'GET /api/current-visit uses isLocalOnly, not requireDoctor/isDoctorRequestAllowed/isOriginAllowedForDoctor',
+      serverIndexSrc.includes('isLocalOnly(remoteAddress(req))'),
     )
   }
 

@@ -14,6 +14,11 @@ const ALLOWED_EVENTS = new Set([
   'submission_viewed',
   'status_changed',
   'judgment_saved',
+  // 방문(visit) 상태변경 이벤트. GET /api/current-visit(ClinicAI 폴링용)는
+  // 읽기라서 로그하지 않는다 — audit는 상태변경만 남긴다.
+  'visit_created',
+  'visit_activated',
+  'visit_cleared',
 ])
 const ALLOWED_ACTORS = new Set(['patient', 'doctor'])
 
@@ -24,16 +29,20 @@ export function auditLogPath(dataDir) {
 export function createAuditLog(dataDir) {
   const logPath = auditLogPath(dataDir)
 
-  async function logEvent({ event, submission_id, status, actor }) {
+  async function logEvent({ event, submission_id, status, actor, visit_id }) {
     if (!ALLOWED_EVENTS.has(event)) {
       throw new Error(`invalid audit event: ${event}`)
     }
     if (!ALLOWED_ACTORS.has(actor)) {
       throw new Error(`invalid audit actor: ${actor}`)
     }
-    // 딱 이 5개 키만 — 그 외 어떤 필드도(특히 payload 조각) 절대 추가하지 않는다.
+    // 딱 이 6개 키만(운영 메타데이터뿐) — 그 외 어떤 필드도(특히 payload
+    // 조각이나 patient_id) 절대 추가하지 않는다. patient_id는 그 자체로
+    // 민감정보는 아니지만, audit 로그는 "무슨 일이 있었는지"만 남기는
+    // 최소화 원칙을 유지한다 — 어떤 환자인지는 남기지 않는다.
     const entry = { ts: new Date().toISOString(), event, submission_id, actor }
     if (status !== undefined) entry.status = status
+    if (visit_id !== undefined) entry.visit_id = visit_id
     await mkdir(path.dirname(logPath), { recursive: true })
     await appendFile(logPath, `${JSON.stringify(entry)}\n`, 'utf8')
   }

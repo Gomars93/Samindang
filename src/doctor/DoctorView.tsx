@@ -8,6 +8,8 @@ import type { ClinicianJudgment } from './judgment'
 import type { DoctorPayload } from './types'
 import type { AnswerValue } from '../types'
 import {
+  activateVisit,
+  clearActiveVisit,
   getSubmission,
   listSubmissions,
   saveJudgment as saveJudgmentToServer,
@@ -582,6 +584,19 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     }
   }, [mode, selectedId])
 
+  // ClinicAI 연결점: 서버 모드에서 제출건을 열면(그리고 visit_id가 있으면)
+  // 그 방문을 "진료 중"으로 표시한다. 닫거나(목록으로/다른 건 선택) 컴포넌트가
+  // unmount되면 표시를 지운다(effect cleanup 하나로 두 상황을 다 처리).
+  // fixtures 모드에서는 실제 서버 방문이 없으므로 아예 호출하지 않는다.
+  useEffect(() => {
+    if (mode !== 'server' || !selectedRecord?.visit_id) return
+    activateVisit(selectedRecord.visit_id)
+    return () => {
+      // fire-and-forget: unmount/전환을 막지 않는다.
+      clearActiveVisit()
+    }
+  }, [mode, selectedRecord?.visit_id])
+
   const fixture = DOCTOR_FIXTURES[fixtureIndex]
   const payload = mode === 'server' && selectedRecord ? recordToPayload(selectedRecord) : fixture.payload
   const r = payload.responses
@@ -636,6 +651,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <button type="button" className="judgment__recordBtn" onClick={() => setSelectedId(null)}>
             목록으로
           </button>
+        )}
+        {mode === 'server' && selectedRecord?.visit_id && (
+          <span className="doctor__activeVisitBadge">현재 진료 중으로 표시됨</span>
         )}
       </header>
 

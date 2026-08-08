@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { createVisitStore } from './visitStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
@@ -40,6 +41,10 @@ function withLock(key, fn) {
 }
 
 export function createStore(dataDir) {
+  // visits/는 submissions/의 형제 경로다(audit.log와 같은 패턴) — 별도
+  // 데이터 디렉터리 설정이 필요 없다.
+  const visits = createVisitStore(path.join(dataDir, '..', 'visits'))
+
   async function ensureDir() {
     await mkdir(dataDir, { recursive: true })
   }
@@ -86,6 +91,11 @@ export function createStore(dataDir) {
 
       const id = randomUUID()
       const now = new Date().toISOString()
+      // 새 제출 = 항상 새 환자 + 새 방문. patient_id를 이름/전화번호로
+      // 자동 매칭하지 않는다(동명이인이 같은 patient_id로 잘못 묶이는
+      // 사고를 방지하는 절대 원칙) — 같은 환자의 재진은 원장이 명시적으로
+      // POST /api/visits에 기존 patient_id를 지정해야만 만들어진다.
+      const visit = await visits.createVisit({ submission_id: id })
       const record = {
         // 저장된 레코드 "포장"(wrapper) 자체의 shape 버전. submission/myungri/judgment
         // 내부의 각 버전 필드와는 별개다 — 그 필드들은 각자의 스펙/엔진/스키마를 가리킨다.
@@ -95,6 +105,8 @@ export function createStore(dataDir) {
         updated_at: now,
         status: 'new',
         patient_label,
+        patient_id: visit.patient_id,
+        visit_id: visit.id,
         submission,
         myungri,
         judgment: null,
@@ -210,5 +222,9 @@ export function createStore(dataDir) {
     saveJudgment,
     cleanupOlderThan,
     purgeAll,
+    createVisit: visits.createVisit,
+    getVisit: visits.getVisit,
+    listVisits: visits.listVisits,
+    visitExistsForPatient: visits.visitExistsForPatient,
   }
 }

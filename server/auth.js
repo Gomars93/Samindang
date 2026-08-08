@@ -34,3 +34,12 @@ export function isOriginAllowedForDoctor(origin, allowedOrigins = []) {
   if (LOCALHOST_ORIGIN_RE.test(origin)) return true
   return allowedOrigins.some((allowed) => allowed.toLowerCase() === origin.toLowerCase())
 }
+
+// GET /api/current-visit는 ClinicAI 같은 미래의 로컬 프로세스/스크립트 전용
+// 연결점이다 — 원장 라우트보다 더 엄격하게 막는다: token bypass 없음, Origin
+// 허용목록 예외 없음, loopback이 아니면 무조건 거부. isDoctorRequestAllowed를
+// 재사용/완화하지 않고 별도 함수로 둔 이유이기도 하다(이 라우트는 절대
+// 약해지면 안 되고, 다른 원장 라우트를 실수로 강화하지도 않는다).
+export function isLocalOnly(remoteAddress) {
+  return isLoopback(remoteAddress)
+}

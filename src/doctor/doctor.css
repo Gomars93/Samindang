@@ -289,6 +289,17 @@
   margin: 0;
 }
 
+.doctor__activeVisitBadge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface-muted, #eef2f7);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .doctor__newBadge {
   display: inline-block;
   margin-left: 10px;

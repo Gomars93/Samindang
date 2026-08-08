@@ -26,6 +26,11 @@ PC 화면까지 도착하도록 하는 최소 서버(`server/index.js`)의 운�
   payload 내용은 절대 없음 (7.1a절).
 - **환자 문진 화면 유휴 타임아웃**: 기본 10분, `VITE_SAMINDANG_IDLE_MINUTES`
   로 조정 (5절).
+- **방문(visit)/환자(patient) 데이터 계층**: 제출마다 새 `patient_id`+
+  `visit_id`를 만든다(이름/전화번호로 자동 매칭하지 않음). 같은 환자의
+  재진은 원장이 명시적으로 만든다. `GET /api/current-visit`은 미래의
+  ClinicAI 같은 로컬 프로세스가 "지금 진료 중인 환자"를 폴링하는
+  연결점이다 — loopback 전용의 더 엄격한 가드를 쓴다 (12절).
 
 ## 1. 전체 흐름
 
@@ -87,6 +92,7 @@ npm run server
 | `SAMINDANG_DOCTOR_TOKEN` | (없음) | 설정하면, loopback이 아닌 원장 요청도 이 토큰으로 허용한다. 3절 참고. |
 | `SAMINDANG_ALLOWED_ORIGINS` | (빈 목록) | 원장 엔드포인트를 브라우저에서 호출할 수 있는 origin을 쉼표로 구분해 지정한다(예: `http://localhost:5173,http://192.168.0.10:4317`). `http://localhost:<포트>`/`http://127.0.0.1:<포트>`는 항상 허용되므로 일반적인 단일 PC 구성에서는 이 값을 설정할 필요가 없다. 3절 참고. |
 | `SAMINDANG_RETENTION_DAYS` | `30` | 이 일수보다 오래된 제출을 서버 시작 시 1회, 이후 6시간마다 자동 삭제한다. `0`으로 설정하면 자동삭제를 완전히 끈다. 7절 참고. |
+| `SAMINDANG_ACTIVE_VISIT_TTL_MINUTES` | `30` | "진료 중" 표시(활성 방문)가 자동으로 만료되기까지의 분(分). 읽을 때마다 확인하며(별도 타이머 없음), 활성화 이후 갱신되지 않는다. 12절 참고. |
 
 PowerShell 예시:
 
@@ -283,7 +289,11 @@ append-only 감사 로그가 쌓인다. 한 줄 = JSON 객체 1개(JSON Lines), 
 ```
 
 - `event`: `submission_created` / `submission_duplicate` / `submission_viewed`
-  / `status_changed`(이때만 `status` 키 추가) / `judgment_saved`.
+  / `status_changed`(이때만 `status` 키 추가) / `judgment_saved` /
+  `visit_created` / `visit_activated` / `visit_cleared`(이 셋은 `visit_id`
+  키가 추가로 붙는다 — patient_id는 붙지 않는다, 12절 참고). `GET
+  /api/current-visit`은 읽기 전용 폴링이라 로그하지 않는다 — audit는
+  상태변경만 남긴다.
 - `actor`: 환자용 쓰기 전용 엔드포인트에서 온 이벤트는 `patient`, 원장
   가드를 통과한 이벤트는 전부 `doctor`.
 - **성함/전화번호/생년월일/약물·병력/토큰 등 어떤 payload 내용도 절대
@@ -420,3 +430,61 @@ epoch 숫자를 쓰는 곳은 없다.
   해당 터미널에서 Ctrl+C.
 - 데이터는 파일 시스템에 남아있으므로(7절) 서버를 꺼도 잃지 않는다 —
   다음 날 다시 켜면 이어서 쌓인다.
+- **"진료 중" 표시(활성 방문)는 메모리에만 있어서 서버를 끄면 자동으로
+  지워진다** — 다음 날 다시 켜면 항상 "진료 중인 환자 없음"으로
+  시작한다(12절). 이건 의도된 동작이다.
+
+## 12. 방문(visit)/환자(patient) 데이터 계층 — 미래 ClinicAI 연동의 연결점
+
+이번 스프린트는 **연결점만** 만들었다. 녹음/전사(ClinicAI) 코드는 이
+저장소 어디에도 없다 — 별도 시스템(이 저장소 밖)의 일이며, 아직 아무
+연동도 구현되지 않았다.
+
+### 12.1 신원 규칙 (절대 원칙)
+
+`patient_id`는 **절대** 이름/전화번호로 자동 매칭하지 않는다. 태블릿
+제출은 항상 새 `patient_id` + 새 `visit_id`를 만든다 — 동명이인이 같은
+`patient_id`로 잘못 묶이는 사고를 방지하는 안전한 기본값이다. 같은
+환자의 재진(같은 `patient_id`로 새 방문)은 **원장이 원장 대시보드에서
+명시적으로 기존 patient_id를 지정**해야만 만들어진다
+(`POST /api/visits`) — 자동 매칭 경로는 없다.
+
+### 12.2 데이터 위치
+
+방문 1건 = 파일 1개(JSON), `SAMINDANG_DATA_DIR`의 형제 경로(기본
+`.data/visits/`)에 저장된다 — 제출 데이터(`.data/submissions/`)와 같은
+전제(git에 커밋되지 않음, 파일 시스템이 곧 저장소)를 그대로 따른다.
+
+### 12.3 `GET /api/current-visit` — ClinicAI가 폴링할 연결점
+
+**다른 원장 엔드포인트보다 더 엄격하게 막는다**: loopback(그 PC
+자신)이 아니면 무조건 거부한다. `x-doctor-token`으로도 우회할 수
+없고, `SAMINDANG_ALLOWED_ORIGINS` 허용목록도 적용되지 않는다(3절의
+원장 라우트 보안 모델과 의도적으로 다르다 — 이 라우트는 브라우저가
+아니라 로컬 프로세스/스크립트를 대상으로 하므로 CORS 반사 응답도
+아예 없다).
+
+응답은 다음 둘 중 하나뿐이다:
+
+```json
+{ "active": true, "patient_id": "...", "visit_id": "...", "submission_id": "...", "active_since": "..." }
+```
+```json
+{ "active": false }
+```
+
+성함/전화번호/생년월일 등은 **절대** 포함하지 않는다. "진료 중" 표시는
+`SAMINDANG_ACTIVE_VISIT_TTL_MINUTES`(기본 30분) 뒤에 자동으로 만료되며,
+읽을 때마다 확인한다(별도 타이머 없음). 서버를 재시작하면 항상
+`{"active": false}`부터 다시 시작한다(위 11절 참고) — 방문 파일 자체는
+남아있고 `GET /api/visits`로 여전히 조회할 수 있지만, "지금 누가 진료
+중인지"는 절대 되살아나지 않는다.
+
+### 12.4 다음 단계
+
+**여기까지가 이번 스프린트다.** `GET /api/current-visit`을 로컬에서
+폴링하면 "지금 이 환자/방문의 진료가 진행 중"이라는 사실 하나만 알 수
+있다. 녹음/전사(ClinicAI), 그 결과를 방문 레코드의 `recording_id`/
+`transcript_id`에 채우는 것, EMR 연동(`emr_summary`), 문진 없는 재진의
+판단 기록 화면은 전부 **아직 구현되지 않았고 이번 스프린트 범위 밖**
+이다.

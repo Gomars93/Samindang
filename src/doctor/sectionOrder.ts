@@ -6,7 +6,9 @@
  * 반드시 일치시킬 것 — DoctorView.tsx가 이 배열을 그대로 import해서 쓴다.
  */
 export const DOCTOR_SECTION_ORDER = [
+  'ten_second_summary',
   'safety_banner',
+  'safety_glance',
   'patient_basic',
   'chief_complaint',
   'secondary_concerns',

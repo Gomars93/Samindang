@@ -130,28 +130,31 @@ export function JudgmentPanel({
         />
       </div>
 
-      <div className="judgment__grid">
-        <LabeledTextarea
-          label="사주만 보고 예상한 임상 문제 (원장 입력)"
-          value={judgment.saju_only_prediction}
-          onChange={(v) => setJudgment((j) => ({ ...j, saju_only_prediction: v }))}
-        />
-        <LabeledTextarea
-          label="문진·맥·설·복진 후 수정된 판단 (원장 입력)"
-          value={judgment.revised_after_exam}
-          onChange={(v) => setJudgment((j) => ({ ...j, revised_after_exam: v }))}
-        />
-        <LabeledTextarea
-          label="최종 치료축 (원장 입력)"
-          value={judgment.final_treatment_axis}
-          onChange={(v) => setJudgment((j) => ({ ...j, final_treatment_axis: v }))}
-        />
-        <LabeledTextarea
-          label="처방 방향 (원장 입력, 방향만 — 자동 처방 아님)"
-          value={judgment.prescription_direction}
-          onChange={(v) => setJudgment((j) => ({ ...j, prescription_direction: v }))}
-        />
-      </div>
+      <details className="judgment__secondaryFields">
+        <summary>사주 예상 → 수정 판단 → 치료축·처방 방향 (펼쳐서 입력)</summary>
+        <div className="judgment__grid">
+          <LabeledTextarea
+            label="사주만 보고 예상한 임상 문제 (원장 입력)"
+            value={judgment.saju_only_prediction}
+            onChange={(v) => setJudgment((j) => ({ ...j, saju_only_prediction: v }))}
+          />
+          <LabeledTextarea
+            label="문진·맥·설·복진 후 수정된 판단 (원장 입력)"
+            value={judgment.revised_after_exam}
+            onChange={(v) => setJudgment((j) => ({ ...j, revised_after_exam: v }))}
+          />
+          <LabeledTextarea
+            label="최종 치료축 (원장 입력)"
+            value={judgment.final_treatment_axis}
+            onChange={(v) => setJudgment((j) => ({ ...j, final_treatment_axis: v }))}
+          />
+          <LabeledTextarea
+            label="처방 방향 (원장 입력, 방향만 — 자동 처방 아님)"
+            value={judgment.prescription_direction}
+            onChange={(v) => setJudgment((j) => ({ ...j, prescription_direction: v }))}
+          />
+        </div>
+      </details>
 
       <label className="judgment__toggle">
         <input

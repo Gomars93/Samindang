@@ -154,6 +154,32 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     CONST_BOWEL: 'regular',
   }),
 
+  // MENOPAUSE_SLEEP v0.2 Compact: Gate=yes + maintenance/early_waking 최악
+  // branch + 우선 확인 필요 sleep disorder flag 동시 발생 케이스.
+  buildFixture('여성 수면 주호소 + 갱년기 연동', {
+    ID_01: '강수정',
+    ID_03: 'female',
+    BIRTH_01: '19740612',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+    VISIT_03_SYMPTOM_DURATION: '1_3m',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    SLEEP_01: ['night_awakenings', 'early_waking'],
+    SLEEP_02: '5_plus_days',
+    SLEEP_03: ['heat_sweat'],
+    MS_GATE_01: 'yes',
+    MS_01: 'cycle_changing',
+    MS_02: 'several_week',
+    MS_03: 'frequent',
+    MS_04: '5_6h',
+    MS_05: ['witnessed_apnea'],
+    MS_06: 'two_three',
+    MS_07: '30_60m',
+    WOMEN_SAFETY_01: ['none'],
+  }),
+
   // SAFETY_01 red flag + BOWEL_03='yes' 동시 발생 -> requires_staff_check true.
   // 자시(23:00~00:59) 출생 -> policy.pending_approval에 day_boundary 포함.
   buildFixture('안전 확인 필요', {

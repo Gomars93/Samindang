@@ -70,6 +70,12 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false)
   const [sessionId, setSessionId] = useState(newSessionId)
   const [startedAt, setStartedAt] = useState<string | null>(null)
+  // MENOPAUSE_SLEEP v0.2 Compact UX telemetry (delta 9장) — PII 없음, 이 패널
+  // 화면(MS_ prefix)에서만 계측한다. 다른 패널로 확장하지 않는다.
+  const [panelStartedAt, setPanelStartedAt] = useState<string | null>(null)
+  const [panelScreens, setPanelScreens] = useState<string[]>([])
+  const [panelBackCount, setPanelBackCount] = useState(0)
+  const [panelHelpCount, setPanelHelpCount] = useState(0)
   /** 화면별 직원 확인 안내는 한 번씩만 노출 (SAFETY_01 / GI_03 / BOWEL_03) */
   const [staffNoticeShownFor, setStaffNoticeShownFor] = useState<Set<string>>(
     () => new Set(),
@@ -80,6 +86,12 @@ export default function App() {
     visible.find((q) => q.id === currentId) ?? visible[0]
 
   const flags = useMemo(() => computeFlags(responses), [responses])
+
+  useEffect(() => {
+    if (!current || !current.id.startsWith('MS_')) return
+    setPanelStartedAt((s) => s ?? new Date().toISOString())
+    setPanelScreens((s) => (s.includes(current.id) ? s : [...s, current.id]))
+  }, [current])
 
   /* ---------- server handoff (optional) ---------- */
 
@@ -128,6 +140,20 @@ export default function App() {
         session_started_at: startedAt,
         answers: meta,
       },
+      // MENOPAUSE_SLEEP v0.2 Compact UX telemetry (delta 9장). PII 없음 —
+      // panelStartedAt이 null이면(Gate까지 도달하지 않음) 아예 만들지 않는다.
+      panelTelemetry: panelStartedAt
+        ? {
+            panel_id: 'menopause_sleep_v0_2',
+            started_at: panelStartedAt,
+            completed_at: new Date().toISOString(),
+            duration_ms: Date.now() - new Date(panelStartedAt).getTime(),
+            screens_shown: panelScreens.length,
+            back_count: panelBackCount,
+            help_count: panelHelpCount,
+            completed: responses['MS_GATE_01'] === 'yes' || responses['MS_GATE_01'] === 'unsure',
+          }
+        : null,
     }
     setDevPayload(donePayloadRef.current)
     if (!isServerConfigured()) {
@@ -148,6 +174,10 @@ export default function App() {
     setMeta({})
     setVisited([])
     setStartedAt(null)
+    setPanelStartedAt(null)
+    setPanelScreens([])
+    setPanelBackCount(0)
+    setPanelHelpCount(0)
     donePayloadRef.current = null
     // 프로덕션 빌드에는 dev JSON 뷰어 자체가 없으므로 payload도 메모리에서
     // 지운다. dev 모드는 개발자가 명시적으로 확인해야 하므로 유지한다.
@@ -236,6 +266,7 @@ export default function App() {
   }
 
   const goBack = () => {
+    if (current && current.id.startsWith('MS_')) setPanelBackCount((c) => c + 1)
     // show_if 변경으로 더 이상 표시되지 않는 화면은 건너뛴다
     const stack = [...visited]
     while (stack.length > 0) {
@@ -281,6 +312,10 @@ export default function App() {
     setCurrentId(ALL_QUESTIONS[0].id)
     setStaffNoticeShownFor(new Set())
     setStartedAt(null)
+    setPanelStartedAt(null)
+    setPanelScreens([])
+    setPanelBackCount(0)
+    setPanelHelpCount(0)
     setSessionId(newSessionId())
     setPhase('start')
   }
@@ -360,7 +395,10 @@ export default function App() {
         stepProgress={stepInfo.progress}
         canGoBack={visited.length > 0}
         onBack={goBack}
-        onHelp={() => setHelpOpen(true)}
+        onHelp={() => {
+          if (current.id.startsWith('MS_')) setPanelHelpCount((c) => c + 1)
+          setHelpOpen(true)
+        }}
         footer={
           showConfirm ? (
             <button

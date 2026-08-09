@@ -336,6 +336,14 @@ Module은 이미 주호소가 sleep으로 확정된 뒤에만 진입하므로 "�
 수면무호흡 선별, 수면제 종류, 수면 문제 기간(이미 공통 VISIT_03에서 확인함).
 필요하면 원장 진료에서 추가 확인한다.
 
+> **[변경 이력 — MENOPAUSE_SLEEP v0.2 Compact delta]** 위 목록의 밤중 각성
+> 횟수/총 수면시간/코골이·수면무호흡·하지불안 선별은 **모든 sleep 환자에게
+> 묻지 않는다는 원칙은 유지**하면서, "여성 + primary sleep + Gate(MS_GATE_01)
+> yes/unsure"인 경우에만 4.4A MENOPAUSE_SLEEP v0.2 Compact 하위 패널에서
+> 조건부로 확인하도록 delta로 추가되었다. 자세한 내용은 4.4A 참고
+> (`docs/ClaudeCode_MENOPAUSE_SLEEP_v0.2_Compact_Delta.md`가 이 변경의
+> source of truth).
+
 **stale cleanup** (기존 `pruneStaleResponses` 그대로 재사용, 로직 변경 없음):
 - SLEEP_01에서 `night_awakenings`를 해제하면 SLEEP_03/SLEEP_03A가 show_if를
   잃고 `null`로 정리된다. 다른 sleep_problems 선택은 그대로 유지된다.
@@ -346,9 +354,116 @@ Module은 이미 주호소가 sleep으로 확정된 뒤에만 진입하므로 "�
   `none`이 아니라 `null`이다(Dev JSON `modules.sleep.awakening_reasons`).
 
 **Dev JSON**: `responses.modules.sleep = { problems, frequency_per_week,
-awakening_reasons, awakening_other }`. `problems`는 배열(`sleep_problems`
+awakening_reasons, awakening_other, menopause }`. `problems`는 배열(`sleep_problems`
 multi_choice 그대로). `routing.modules_activated`는 primary concern이
-sleep일 때만 `['Sleep']`, 그 외에는 빈 배열이다.
+sleep일 때만 `['Sleep']`, 그 외에는 빈 배열이다. `menopause`는 4.4A
+MENOPAUSE_SLEEP v0.2 Compact 하위 패널의 답변(gate_context/stage/... 8개
+필드)이며, 여성이 아니거나 Gate를 통과하지 못한 환자는 전부 `null`이다.
+
+### 4.4A MENOPAUSE_SLEEP v0.2 Compact
+**[변경 이력 — delta, source: `docs/ClaudeCode_MENOPAUSE_SLEEP_v0.2_Compact_Delta.md`]**
+
+`primary_concern === sleep && patient_sex === female`인 경우에만 Sleep 상세
+Module(4.4) 끝(`SLEEP_03A` 다음)에 이어 노출되는 하위 패널이다. 남성이거나
+primary가 sleep이 아니면(동반문제로 sleep을 고른 경우 포함) 전혀 노출되지
+않는다 — 1장 routing 원칙(`patient_sex === female && primary_concern ===
+sleep`)을 그대로 따른다.
+
+**설계 원칙 (8문항 심화안 폐기 → 기본 5 + 조건부 최대 2)**:
+- 기본 추가 화면 ≤ 5, maintenance/early_waking을 모두 포함한 최악 branch도
+  ≤ 7 (Gate 자체는 이 예산에 포함하지 않는다 — Gate는 기존 sleep 문진의
+  일부로 취급).
+- 새 문항은 8장 Panel Question Budget v1.0의 A/B/C 중 최소 1개를
+  충족해야 추가할 수 있다(실제 임상 판단 변경 / 안전성·주요 감별 / 추적평가
+  재사용). 셋 다 아니면 추가하지 않는다.
+
+**MS_GATE_01** `ms_gate_context` — single_choice — 필수 — show_if
+`primary_concern === sleep && patient_sex === female`
+질문: "최근 생리 주기가 달라졌거나, 1년 이상 생리가 없거나, 밤에 갑자기
+덥거나 땀이 나는 일이 있나요?" 옵션: yes(네) / no(아니요) / unsure(잘
+모르겠어요). `yes`/`unsure` → 아래 MS_01~MS_05 노출. `no` → 기존 SLEEP
+문진 그대로 종료(하위 패널 전체 skip). Gate는 "불면이 갱년기 때문인가"라는
+인과판단을 요구하지 않는다 — 갱년기 맥락의 존재 여부만 screen한다.
+
+**MS_01** `ms_stage` — single_choice — 필수 — show_if `ms_gate_context in
+[yes, unsure]`
+질문: "현재 생리 상태는 어느 쪽에 가까우신가요?" 옵션:
+cycle_changing/amenorrhea_12m_plus/induced_or_treatment_related/
+still_regular/unsure. 폐경 진단을 자동 확정하지 않으며, `still_regular`여도
+패널을 즉시 종료하지 않는다.
+
+**MS_02** `ms_night_vms_frequency` — single_choice — 필수 — show_if 동일
+질문: "밤에 갑자기 덥거나 땀이 나는 일은 얼마나 자주 있나요?" 옵션:
+none/occasional/several_week/almost_nightly. Gate는 존재 여부만 screen하고
+MS_02는 빈도를 quantify하므로 같은 사실을 두 번 묻는 것이 아니다
+(screen → quantify).
+
+**MS_03** `ms_rumination_frequency` — single_choice — 필수 — show_if 동일
+질문: "잠이 깨거나 누워 있을 때 생각이 계속 이어지는 편인가요?" 옵션:
+rare/sometimes/frequent/almost_always. "과각성"/"간울"/"심비허" 등 한의학
+용어를 환자 화면에 노출하지 않는다.
+
+**MS_04** `ms_total_sleep_time` — single_choice — 필수 — show_if 동일
+질문: "실제로 자는 시간은 하루에 대략 얼마나 되나요?" 옵션:
+7h_plus/6_7h/5_6h/under_5h/unknown. 초기 임상 판단·치료 목표·2주 추적평가·
+환자 설명에 재사용하는 값이다(Budget v1.0 C).
+
+**MS_05** `ms_sleep_disorder_screen` — multi_choice — 필수 — show_if 동일 —
+exclusive: `[none, unknown]` (둘 다 다른 positive 옵션과 동시선택 불가,
+`MultiChoice` 컴포넌트의 `exclusive`가 이제 배열도 받는다)
+질문: "잠을 방해할 수 있어 확인이 필요한 증상이 있나요?" 옵션:
+loud_snoring/witnessed_apnea/choking_gasping/restless_legs_pattern/none/
+unknown. 기존 v1.0의 별도 수면무호흡 Quick Screen + 하지불안 Quick Screen
+2화면을 이 1화면으로 통합한 것이 이번 delta의 핵심 축소분이다. flags:
+`loud_snoring` 또는 `restless_legs_pattern` → `flags.sleep_disorder_review`,
+`witnessed_apnea` 또는 `choking_gasping` →
+`flags.sleep_disorder_priority_review`. **StaffCheckScreen 자동 이동 없음**
+(`STAFF_CHECK_TRIGGERS`에 포함하지 않음), 환자 화면에 OSA/RLS 진단명을
+노출하지 않는다 — 원장 확인용 flag만 생성한다.
+
+**MS_06** `ms_awakenings` — single_choice — 필수 — show_if
+`ms_gate_context in [yes, unsure] && sleep_problems includes
+night_awakenings`
+질문: "자는 동안 보통 몇 번 정도 깨시나요?" 옵션:
+once/two_three/four_plus/varies/unknown.
+
+**MS_07** `ms_return_to_sleep` — single_choice — 필수 — show_if
+`ms_gate_context in [yes, unsure] && (sleep_problems includes
+night_awakenings || sleep_problems includes early_waking)`
+질문: "깬 뒤 다시 잠들기까지 보통 얼마나 걸리나요?" 옵션:
+within_15m/15_30m/30_60m/over_60m/cannot_return/unknown.
+
+**reproductive safety dedup**: MS_01 답변으로 뒤쪽 `WOMEN_SAFETY_01`(7장)
+값을 자동 추론하지 않는다 — `deriveReproductiveStatus`는 MS_01/MS_0x 값을
+전혀 참조하지 않으며, WOMEN_SAFETY_01은 sleep 주호소 여성에게도 그대로
+독립적으로 노출된다. `MS_01 === amenorrhea_12m_plus`인데
+`WOMEN_SAFETY_01`에 `pregnant`/`pregnancy_possible`이 함께 있거나,
+`MS_01 === still_regular`인데 `WOMEN_SAFETY_01`에 `menopause`가 있는 등
+모순되는 경우 `flags.response_consistency_review = true`만 표시하고
+자동 수정하지 않는다.
+
+**stale cleanup** (기존 `pruneStaleResponses`가 show_if 기반으로 그대로
+처리 — 별도 로직 불필요):
+- `ms_gate_context`가 `yes`/`unsure`에서 `no`로 바뀌면 MS_01~MS_07 전체가
+  `null`로 정리된다.
+- 주호소가 sleep에서 다른 항목으로 바뀌면 MS_GATE_01~MS_07 전체가 `null`로
+  정리된다(4.4의 SLEEP_01~03A와 동일).
+- `sleep_problems`에서 `night_awakenings`가 빠지면 MS_06이 정리된다.
+  MS_07은 `night_awakenings` 또는 `early_waking` 중 하나라도 남아있으면
+  유지되고, 둘 다 없으면 정리된다.
+
+**Question Budget 실측**: Gate 제외 기본 5화면(MS_01~05), maintenance +
+early_waking이 모두 있는 최악 branch 7화면(MS_01~07). 기존 8문항 심화
+구조는 더 이상 존재하지 않는다.
+
+**UX telemetry**: `App.tsx`가 `MS_` prefix 화면에 한해서만 계측한다 —
+`panel_id: 'menopause_sleep_v0_2'`, `started_at`/`completed_at`/
+`duration_ms`, `screens_shown`(방문한 고유 MS_ 화면 수), `back_count`,
+`help_count`, `completed`(제출 시점 `ms_gate_context`가 `yes`/`unsure`인지).
+이름/전화번호/생년월일/주소/자유입력/진단명/약명/상세 임상답변은 telemetry
+객체에 절대 포함하지 않는다. 새 backend 없이 기존 제출 payload
+(`panelTelemetry` 필드)에만 실어 보낸다. 사설 개인정보 방지를 위해 매
+제출/재시작 시 클라이언트 state를 초기화한다.
 
 ### 4.5 GI 상세 Module (primary concern === digestion 인 경우만)
 
@@ -2009,3 +2124,68 @@ id/직원 안내 표시 여부를 전부 새로 만든다 — 이전 환자의 �
 전부 노출, 분 단위 약속 부재, 실패 상태의 "완료" 미주장·직원 안내·재시도
 버튼 존재·3단계 미도달, 성공 화면에 재제출/재시작 버튼 부재,
 `devMode={false}`일 때 원본 JSON 부재.
+
+## 15. 상위 설계원칙 — Panel Question Budget v1.0 (delta, 이후 모든 강화패널에 적용)
+
+**[변경 이력 — source: `docs/ClaudeCode_MENOPAUSE_SLEEP_v0.2_Compact_Delta.md`,
+첫 적용 사례: 4.4A MENOPAUSE_SLEEP v0.2 Compact]**
+
+MENOPAUSE_SLEEP을 8문항에서 5+2로 축소하며 확정된 원칙으로, 이번 delta
+이후 새로 추가되는 모든 강화패널(deep-dive panel)에 적용되는 프로젝트
+헌법이다. 기존 4장 문항 정의나 5~14장의 기존 규칙을 대체하지 않는다 —
+새 패널을 설계할 때 지켜야 하는 추가 상한선이다.
+
+### 15.1 예산
+
+```
+기본 추가 화면 ≤ 5
+최악 branch ≤ 7
+목표 추가시간 ≤ 90초
+```
+
+Gate 화면 자체(해당 패널을 열지 말지 screen하는 단일 질문)는 이 예산에
+포함하지 않는다 — 기존 문진 흐름의 연장으로 취급한다.
+
+### 15.2 신규 문항 추가 기준
+
+새 문항은 아래 중 최소 1개를 충족해야 추가할 수 있다.
+
+- A. 이 답이 실제 임상 판단을 바꾼다.
+- B. 안전성 또는 주요 감별에 필요하다.
+- C. 추적평가에서 다시 사용할 값이다.
+
+셋 다 아니면 추가하지 않는다. 8번째 질문을 추가하려면 기존 질문 1개를
+삭제하거나 조건부로 전환하는 안을 함께 제안해야 한다.
+
+### 15.3 same fact twice 금지
+
+이미 확보한 사실(증상 기간, 생활 영향, 복용약, 중요 병력, 알레르기, 공통
+한열/갈증/땀, 이미 확보된 waking reason 등)을 deep panel에서 다시 묻지
+않는다. "screen(존재 여부 확인) → quantify(빈도/정도 확인)"처럼 확보하는
+정보의 층위가 다르면 같은 사실을 두 번 묻는 것으로 보지 않는다(4.4A
+MS_GATE_01 → MS_02 참고).
+
+### 15.4 reproductive safety dedup
+
+한 패널의 답변(예: 생리 상태)으로 다른 화면의 안전 확인 항목(예: 임신/
+수유 여부)을 자동으로 채우지 않는다. 아직 확인되지 않은 안전 사실만
+별도로 묻는다. 두 값이 서로 모순되면 자동 수정하지 말고
+`flags.response_consistency_review`류 확인용 flag만 남긴다(4.4A 참고,
+7장 `deriveReproductiveStatus`와 같은 기존 dedup 메커니즘이 있다면 그것을
+우선 재사용한다).
+
+### 15.5 PII 없는 UX telemetry
+
+패널이 실제로 60~90초 수준인지 운영 데이터로 검증하기 위해, 패널
+스코프의 최소 telemetry를 남길 수 있다: `panel_id`, `started_at`,
+`completed_at`, `duration_ms`, `screens_shown`, `back_count`, `help_count`,
+`completed`. 이름/전화번호/생년월일/주소/환자 자유입력/진단명/약명/상세
+임상답변은 telemetry 객체에 절대 포함하지 않는다. 새 backend를 만들지
+않고 기존 제출 payload/이벤트 구조만 활용한다.
+
+### 15.6 stale cleanup
+
+새 패널의 문항도 기존 `pruneStaleResponses`(5장) 원칙을 그대로 따른다 —
+show_if가 올바르게 정의되어 있으면 Gate 변경/주호소 변경/조건부 하위
+문항 해제 시 관련 응답이 자동으로 `null`로 정리되며, 패널마다 별도의
+cleanup 로직을 새로 작성할 필요가 없다.

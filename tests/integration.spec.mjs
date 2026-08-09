@@ -66,6 +66,7 @@ const MODULE_PREFIX = {
 // explicitly excluded from the 'women' bucket.
 function moduleOf(id) {
   if (id === 'WOMEN_SAFETY_01') return null
+  if (id.startsWith('MS_')) return 'sleep'
   for (const [key, prefix] of Object.entries(MODULE_PREFIX)) {
     if (id.startsWith(prefix)) return key
   }
@@ -1335,6 +1336,304 @@ const H1_MODULES = [
   assert('J9: birth_info.birth_time_branch correct', payload.birth_info.birth_time_branch === 'sa')
   assert('J9: birth_info.birth_time_confidence correct', payload.birth_info.birth_time_confidence === 'exact')
   assert('J9: birth_info does not have birth_time_detail', !('birth_time_detail' in payload.birth_info))
+}
+
+/* =========================================================================
+ * K. MENOPAUSE_SLEEP v0.2 Compact
+ * (docs/ClaudeCode_MENOPAUSE_SLEEP_v0.2_Compact_Delta.md)
+ * ========================================================================= */
+
+const MS_IDS = ['MS_01', 'MS_02', 'MS_03', 'MS_04', 'MS_05', 'MS_06', 'MS_07']
+
+// K1: Gate visibility routing
+{
+  let male = emptyResponses()
+  male = set(male, { ID_03: 'male', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  assert('K1: male + primary sleep does not show MS_GATE_01', !visibleIds(male).has('MS_GATE_01'))
+
+  let female = emptyResponses()
+  female = set(female, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  assert('K1: female + primary sleep shows MS_GATE_01', visibleIds(female).has('MS_GATE_01'))
+
+  let femaleOther = emptyResponses()
+  femaleOther = set(femaleOther, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' })
+  assert(
+    'K1: female + primary digestion does not show MS_GATE_01',
+    !visibleIds(femaleOther).has('MS_GATE_01'),
+  )
+}
+
+// K2: secondary=sleep (not primary) does not auto-run the panel
+{
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'digestion',
+    SECONDARY_01: ['sleep'],
+  })
+  assert('K2: secondary sleep does not show MS_GATE_01', !visibleIds(r).has('MS_GATE_01'))
+}
+
+// K3: Gate=no ends MENOPAUSE_SLEEP, existing SLEEP module unaffected
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, { MS_GATE_01: 'no' })
+  const v = visibleIds(r)
+  for (const id of MS_IDS) assert(`K3: Gate=no hides ${id}`, !v.has(id))
+  assert('K3: Gate=no still shows SLEEP_01', v.has('SLEEP_01'))
+}
+
+// K4/K5: Gate=yes or unsure shows the 5 base MS questions
+for (const gateValue of ['yes', 'unsure']) {
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, { MS_GATE_01: gateValue, SLEEP_01: ['sleep_onset'] })
+  const v = visibleIds(r)
+  for (const id of ['MS_01', 'MS_02', 'MS_03', 'MS_04', 'MS_05']) {
+    assert(`K4/K5: Gate=${gateValue} shows ${id}`, v.has(id))
+  }
+  assert(`K4/K5: Gate=${gateValue} hides MS_06 (no maintenance)`, !v.has('MS_06'))
+  assert(`K4/K5: Gate=${gateValue} hides MS_07 (no maintenance/early_waking)`, !v.has('MS_07'))
+}
+
+// K6: base question budget === 5 (excluding Gate) when no maintenance/early_waking
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, { MS_GATE_01: 'yes', SLEEP_01: ['sleep_onset'] })
+  const shown = MS_IDS.filter((id) => visibleIds(r).has(id))
+  assert(`K6: base MS screens === 5 (got ${shown.length}: ${shown.join(', ')})`, shown.length === 5)
+}
+
+// K7: worst-case question budget === 7 (excluding Gate) with maintenance + early_waking
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, {
+    MS_GATE_01: 'yes',
+    SLEEP_01: ['night_awakenings', 'early_waking'],
+  })
+  const shown = MS_IDS.filter((id) => visibleIds(r).has(id))
+  assert(`K7: worst-case MS screens === 7 (got ${shown.length}: ${shown.join(', ')})`, shown.length === 7)
+}
+
+// K8: MS_06 only for maintenance (night_awakenings); MS_07 for maintenance OR early_waking
+{
+  let onlyEarly = emptyResponses()
+  onlyEarly = set(onlyEarly, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  onlyEarly = set(onlyEarly, { MS_GATE_01: 'yes', SLEEP_01: ['early_waking'] })
+  assert('K8: early_waking only hides MS_06', !visibleIds(onlyEarly).has('MS_06'))
+  assert('K8: early_waking only shows MS_07', visibleIds(onlyEarly).has('MS_07'))
+
+  let onlyMaintenance = emptyResponses()
+  onlyMaintenance = set(onlyMaintenance, {
+    ID_03: 'female',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+  })
+  onlyMaintenance = set(onlyMaintenance, { MS_GATE_01: 'yes', SLEEP_01: ['night_awakenings'] })
+  assert('K8: maintenance only shows MS_06', visibleIds(onlyMaintenance).has('MS_06'))
+  assert('K8: maintenance only shows MS_07', visibleIds(onlyMaintenance).has('MS_07'))
+}
+
+// K9: 8-question v1.0 structure no longer exists (only MS_01..MS_07 + Gate remain)
+{
+  const msIdsInSpec = ALL_QUESTIONS.filter((q) => q.id.startsWith('MS_')).map((q) => q.id)
+  assert(
+    'K9: exactly MS_GATE_01 + MS_01..MS_07 exist (8 ids total)',
+    JSON.stringify(msIdsInSpec.sort()) ===
+      JSON.stringify(['MS_01', 'MS_02', 'MS_03', 'MS_04', 'MS_05', 'MS_06', 'MS_07', 'MS_GATE_01'].sort()),
+  )
+}
+
+// K10: stale cleanup -- flipping Gate from yes to no nulls all MS_ responses
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, {
+    MS_GATE_01: 'yes',
+    SLEEP_01: ['night_awakenings'],
+    MS_01: 'still_regular',
+    MS_02: 'none',
+    MS_03: 'rare',
+    MS_04: '7h_plus',
+    MS_05: ['none'],
+    MS_06: 'once',
+    MS_07: 'within_15m',
+  })
+  for (const id of MS_IDS) assert(`K10: ${id} answered before Gate flips to no`, r[id] !== null)
+  r = set(r, { MS_GATE_01: 'no' })
+  for (const id of MS_IDS) assert(`K10: ${id} null after Gate flips to no`, r[id] === null)
+}
+
+// K11: stale cleanup -- deselecting maintenance nulls MS_06 but keeps MS_07 (early_waking remains)
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, {
+    MS_GATE_01: 'yes',
+    SLEEP_01: ['night_awakenings', 'early_waking'],
+    MS_06: 'once',
+    MS_07: 'within_15m',
+  })
+  r = set(r, { SLEEP_01: ['early_waking'] })
+  assert('K11: MS_06 null after maintenance dropped', r['MS_06'] === null)
+  assert('K11: MS_07 kept (early_waking still present)', r['MS_07'] === 'within_15m')
+}
+
+// K12: primary change away from sleep clears the whole MENOPAUSE_SLEEP branch
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, { MS_GATE_01: 'yes', SLEEP_01: ['sleep_onset'], MS_01: 'still_regular' })
+  r = set(r, { VISIT_02_SYMPTOM_MAIN: 'digestion' })
+  assert('K12: MS_GATE_01 null after primary leaves sleep', r['MS_GATE_01'] === null)
+  assert('K12: MS_01 null after primary leaves sleep', r['MS_01'] === null)
+  assert('K12: SLEEP_01 null after primary leaves sleep', r['SLEEP_01'] === null)
+}
+
+// K13: MS_05 is exclusive on both none and unknown (spec 3: neither combines with positives)
+{
+  const ms05 = ALL_QUESTIONS.find((q) => q.id === 'MS_05')
+  assert(
+    'K13: MS_05.exclusive === [none, unknown]',
+    JSON.stringify(ms05.exclusive) === JSON.stringify(['none', 'unknown']),
+  )
+}
+
+// K14/K15: sleep disorder screen flags -- doctor-review only, no immediate StaffCheck trigger
+{
+  const reviewOnly = ['loud_snoring', 'restless_legs_pattern']
+  for (const v of reviewOnly) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+    r = set(r, { MS_GATE_01: 'yes', MS_05: [v] })
+    const flags = computeFlags(r)
+    assert(`K14: MS_05=[${v}] sets sleep_disorder_review`, flags.sleep_disorder_review === true)
+    assert(`K14: MS_05=[${v}] does not set sleep_disorder_priority_review`, flags.sleep_disorder_priority_review === false)
+    assert(`K14: MS_05=[${v}] does not force requires_staff_check`, flags.requires_staff_check === false)
+  }
+
+  const priority = ['witnessed_apnea', 'choking_gasping']
+  for (const v of priority) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+    r = set(r, { MS_GATE_01: 'yes', MS_05: [v] })
+    const flags = computeFlags(r)
+    assert(`K15: MS_05=[${v}] sets sleep_disorder_priority_review`, flags.sleep_disorder_priority_review === true)
+  }
+
+  let none = emptyResponses()
+  none = set(none, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  none = set(none, { MS_GATE_01: 'yes', MS_05: ['none'] })
+  const noneFlags = computeFlags(none)
+  assert('K14: MS_05=[none] sets neither sleep disorder flag', !noneFlags.sleep_disorder_review && !noneFlags.sleep_disorder_priority_review)
+
+  assert(
+    'K16: STAFF_CHECK_TRIGGERS does not include MS_05 (no auto navigation, spec 3)',
+    !('MS_05' in STAFF_CHECK_TRIGGERS),
+  )
+}
+
+// K17: MS_01 never auto-fills reproductive safety -- deriveReproductiveStatus ignores it
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, { MS_GATE_01: 'yes', MS_01: 'amenorrhea_12m_plus' })
+  const derived = deriveReproductiveStatus(r)
+  assert(
+    'K17: MS_01=amenorrhea_12m_plus alone leaves reproductive status unset (source null)',
+    derived.source === null && derived.pregnant === null && derived.breastfeeding === null,
+  )
+  assert('K17: WOMEN_SAFETY_01 is still required/visible for a sleep-primary female', visibleIds(r).has('WOMEN_SAFETY_01'))
+}
+
+// K18: response_consistency_review flags contradictions without auto-correcting
+{
+  let contradictA = emptyResponses()
+  contradictA = set(contradictA, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  contradictA = set(contradictA, {
+    MS_GATE_01: 'yes',
+    MS_01: 'amenorrhea_12m_plus',
+    WOMEN_SAFETY_01: ['pregnant'],
+  })
+  assert(
+    'K18: amenorrhea_12m_plus + WOMEN_SAFETY_01=pregnant sets response_consistency_review',
+    computeFlags(contradictA).response_consistency_review === true,
+  )
+  assert(
+    'K18: response_consistency_review does not overwrite MS_01 or WOMEN_SAFETY_01',
+    contradictA['MS_01'] === 'amenorrhea_12m_plus' &&
+      JSON.stringify(contradictA['WOMEN_SAFETY_01']) === JSON.stringify(['pregnant']),
+  )
+
+  let contradictB = emptyResponses()
+  contradictB = set(contradictB, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  contradictB = set(contradictB, {
+    MS_GATE_01: 'yes',
+    MS_01: 'still_regular',
+    WOMEN_SAFETY_01: ['menopause'],
+  })
+  assert(
+    'K18: still_regular + WOMEN_SAFETY_01=menopause sets response_consistency_review',
+    computeFlags(contradictB).response_consistency_review === true,
+  )
+
+  let consistent = emptyResponses()
+  consistent = set(consistent, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  consistent = set(consistent, {
+    MS_GATE_01: 'yes',
+    MS_01: 'amenorrhea_12m_plus',
+    WOMEN_SAFETY_01: ['menopause'],
+  })
+  assert(
+    'K18: amenorrhea_12m_plus + WOMEN_SAFETY_01=menopause is consistent (no flag)',
+    computeFlags(consistent).response_consistency_review === false,
+  )
+}
+
+// K19: buildResponsePayload exposes the MENOPAUSE_SLEEP block under modules.sleep.menopause
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  r = set(r, {
+    MS_GATE_01: 'yes',
+    SLEEP_01: ['night_awakenings'],
+    MS_01: 'cycle_changing',
+    MS_02: 'occasional',
+    MS_03: 'sometimes',
+    MS_04: '6_7h',
+    MS_05: ['loud_snoring'],
+    MS_06: 'two_three',
+    MS_07: '15_30m',
+  })
+  const payload = buildResponsePayload(r)
+  assert(
+    'K19: modules.sleep.menopause has exactly the 8 expected fields',
+    JSON.stringify(Object.keys(payload.modules.sleep.menopause).sort()) ===
+      JSON.stringify(
+        [
+          'gate_context',
+          'stage',
+          'night_vms_frequency',
+          'rumination_frequency',
+          'total_sleep_time',
+          'sleep_disorder_screen',
+          'awakenings',
+          'return_to_sleep',
+        ].sort(),
+      ),
+  )
+  assert('K19: gate_context correct', payload.modules.sleep.menopause.gate_context === 'yes')
+  assert('K19: stage correct', payload.modules.sleep.menopause.stage === 'cycle_changing')
+  assert(
+    'K19: sleep_disorder_screen correct',
+    JSON.stringify(payload.modules.sleep.menopause.sleep_disorder_screen) === JSON.stringify(['loud_snoring']),
+  )
+  assert('K19: awakenings correct', payload.modules.sleep.menopause.awakenings === 'two_three')
+  assert('K19: return_to_sleep correct', payload.modules.sleep.menopause.return_to_sleep === '15_30m')
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

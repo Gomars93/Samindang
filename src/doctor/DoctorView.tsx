@@ -307,6 +307,29 @@ function safetyGlanceItems(
     items.push({ key: 'redflag', label: '위험신호', text: '있음 — 위 안전 확인 배너 참고' })
   }
 
+  // MENOPAUSE_SLEEP MS_05: 진단명 노출 없이 원장 확인용으로만 표시한다(delta 3장).
+  if (flags.sleep_disorder_priority_review) {
+    items.push({
+      key: 'sleep_disorder_priority',
+      label: '수면장애 선별',
+      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
+    })
+  } else if (flags.sleep_disorder_review) {
+    items.push({
+      key: 'sleep_disorder',
+      label: '수면장애 선별',
+      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
+    })
+  }
+
+  if (flags.response_consistency_review) {
+    items.push({
+      key: 'response_consistency',
+      label: '응답 확인 필요',
+      text: '생리 상태(MS_01)와 임신/폐경 관련 응답이 서로 다릅니다 — 자동 수정하지 않음',
+    })
+  }
+
   return items
 }
 
@@ -392,6 +415,14 @@ function primaryModuleFields(primaryModule: string | null, m: Responses['modules
         { qid: 'SLEEP_02', value: m.sleep.frequency_per_week },
         { qid: 'SLEEP_03', value: m.sleep.awakening_reasons },
         { qid: 'SLEEP_03A', value: m.sleep.awakening_other },
+        { qid: 'MS_GATE_01', value: m.sleep.menopause.gate_context },
+        { qid: 'MS_01', value: m.sleep.menopause.stage },
+        { qid: 'MS_02', value: m.sleep.menopause.night_vms_frequency },
+        { qid: 'MS_03', value: m.sleep.menopause.rumination_frequency },
+        { qid: 'MS_04', value: m.sleep.menopause.total_sleep_time },
+        { qid: 'MS_05', value: m.sleep.menopause.sleep_disorder_screen },
+        { qid: 'MS_06', value: m.sleep.menopause.awakenings },
+        { qid: 'MS_07', value: m.sleep.menopause.return_to_sleep },
       ]
     case 'GI':
       return [

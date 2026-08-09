@@ -279,6 +279,154 @@ const SAFETY_QUESTIONS: Question[] = [
 
 const IS_PRIMARY_SLEEP = (r: Responses) => primaryConcernKey(r) === 'sleep'
 
+/* ---------- MENOPAUSE_SLEEP v0.2 Compact (여성 + primary sleep 인 경우만) ----------
+ * (docs/ClaudeCode_MENOPAUSE_SLEEP_v0.2_Compact_Delta.md)
+ * 8문항 심화안을 폐기하고 기본 5 + 조건부 최대 2로 축소한 delta.
+ * Gate는 인과판단("불면이 갱년기 때문인가")을 요구하지 않고 맥락 존재 여부만 screen한다.
+ * MS_01 답변으로 reproductive safety(WOMEN_SAFETY_01)를 자동 추론하지 않는다 —
+ * deriveReproductiveStatus는 이 블록의 어떤 값도 참조하지 않는다(delta 7장).
+ */
+const IS_PRIMARY_SLEEP_FEMALE = (r: Responses) => IS_PRIMARY_SLEEP(r) && r['ID_03'] === 'female'
+
+const MS_GATE_YES_OR_UNSURE = (r: Responses) =>
+  IS_PRIMARY_SLEEP_FEMALE(r) && (r['MS_GATE_01'] === 'yes' || r['MS_GATE_01'] === 'unsure')
+
+const MENOPAUSE_SLEEP_QUESTIONS: Question[] = [
+  {
+    id: 'MS_GATE_01',
+    variable: 'ms_gate_context',
+    input: 'single_choice',
+    question:
+      '최근 생리 주기가 달라졌거나, 1년 이상 생리가 없거나, 밤에 갑자기 덥거나 땀이 나는 일이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_SLEEP_FEMALE,
+    options: [
+      { value: 'yes', label: '네' },
+      { value: 'no', label: '아니요' },
+      { value: 'unsure', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'MS_01',
+    variable: 'ms_stage',
+    input: 'single_choice',
+    question: '현재 생리 상태는 어느 쪽에 가까우신가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: MS_GATE_YES_OR_UNSURE,
+    options: [
+      { value: 'cycle_changing', label: '생리 주기가 전과 달라지고 있어요' },
+      { value: 'amenorrhea_12m_plus', label: '1년 이상 생리가 없어요' },
+      { value: 'induced_or_treatment_related', label: '수술이나 치료 후 생리가 멈췄어요' },
+      { value: 'still_regular', label: '아직 규칙적으로 하고 있어요' },
+      { value: 'unsure', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'MS_02',
+    variable: 'ms_night_vms_frequency',
+    input: 'single_choice',
+    question: '밤에 갑자기 덥거나 땀이 나는 일은 얼마나 자주 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: MS_GATE_YES_OR_UNSURE,
+    options: [
+      { value: 'none', label: '거의 없어요' },
+      { value: 'occasional', label: '가끔 있어요' },
+      { value: 'several_week', label: '일주일에 여러 번 있어요' },
+      { value: 'almost_nightly', label: '거의 매일 밤 있어요' },
+    ],
+  },
+  {
+    id: 'MS_03',
+    variable: 'ms_rumination_frequency',
+    input: 'single_choice',
+    question: '잠이 깨거나 누워 있을 때 생각이 계속 이어지는 편인가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: MS_GATE_YES_OR_UNSURE,
+    options: [
+      { value: 'rare', label: '거의 그렇지 않아요' },
+      { value: 'sometimes', label: '가끔 그래요' },
+      { value: 'frequent', label: '자주 그래요' },
+      { value: 'almost_always', label: '거의 항상 그래요' },
+    ],
+  },
+  {
+    id: 'MS_04',
+    variable: 'ms_total_sleep_time',
+    input: 'single_choice',
+    question: '실제로 자는 시간은 하루에 대략 얼마나 되나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: MS_GATE_YES_OR_UNSURE,
+    options: [
+      { value: '7h_plus', label: '7시간 이상' },
+      { value: '6_7h', label: '6~7시간' },
+      { value: '5_6h', label: '5~6시간' },
+      { value: 'under_5h', label: '5시간 미만' },
+      { value: 'unknown', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'MS_05',
+    variable: 'ms_sleep_disorder_screen',
+    input: 'multi_choice',
+    question: '잠을 방해할 수 있어 확인이 필요한 증상이 있나요?',
+    required: true,
+    step: '상세 증상',
+    exclusive: ['none', 'unknown'],
+    showIf: MS_GATE_YES_OR_UNSURE,
+    options: [
+      { value: 'loud_snoring', label: '코를 심하게 곤다고 들어요' },
+      { value: 'witnessed_apnea', label: '자다가 숨이 멈춘다고 들은 적이 있어요' },
+      { value: 'choking_gasping', label: '숨이 막히거나 헐떡이며 깬 적이 있어요' },
+      {
+        value: 'restless_legs_pattern',
+        label: '밤에 다리가 불편해 움직이고 싶고, 움직이면 좀 편해져요',
+      },
+      { value: 'none', label: '해당 없음' },
+      { value: 'unknown', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'MS_06',
+    variable: 'ms_awakenings',
+    input: 'single_choice',
+    question: '자는 동안 보통 몇 번 정도 깨시나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => MS_GATE_YES_OR_UNSURE(r) && has(r, 'SLEEP_01', 'night_awakenings'),
+    options: [
+      { value: 'once', label: '1번 정도' },
+      { value: 'two_three', label: '2~3번' },
+      { value: 'four_plus', label: '4번 이상' },
+      { value: 'varies', label: '날마다 달라요' },
+      { value: 'unknown', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'MS_07',
+    variable: 'ms_return_to_sleep',
+    input: 'single_choice',
+    question: '깬 뒤 다시 잠들기까지 보통 얼마나 걸리나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) =>
+      MS_GATE_YES_OR_UNSURE(r) &&
+      (has(r, 'SLEEP_01', 'night_awakenings') || has(r, 'SLEEP_01', 'early_waking')),
+    options: [
+      { value: 'within_15m', label: '15분 이내' },
+      { value: '15_30m', label: '15~30분' },
+      { value: '30_60m', label: '30~60분' },
+      { value: 'over_60m', label: '1시간 이상' },
+      { value: 'cannot_return', label: '다시 잠들지 못할 때가 많아요' },
+      { value: 'unknown', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
 const SLEEP_QUESTIONS: Question[] = [
   {
     id: 'SLEEP_01',
@@ -340,6 +488,7 @@ const SLEEP_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_SLEEP(r) && has(r, 'SLEEP_03', 'other'),
     placeholder: '짧게 적어주세요',
   },
+  ...MENOPAUSE_SLEEP_QUESTIONS,
 ]
 
 /* ---------- GI 상세 Module (primary concern === digestion 인 경우만) ---------- */
@@ -1713,10 +1862,29 @@ export const computeFlags = (r: Responses) => {
   const giNeedsReview = r['GI_03'] === 'yes'
   const bowelNeedsReview = r['BOWEL_03'] === 'yes'
 
+  // MENOPAUSE_SLEEP MS_05 통합 screen: 진단하지 않고 원장 확인용 flag만 생성한다.
+  // StaffCheckScreen 자동 이동은 하지 않는다(delta 3장) — STAFF_CHECK_TRIGGERS에 넣지 않음.
+  const sleepDisorderReview =
+    has(r, 'MS_05', 'loud_snoring') || has(r, 'MS_05', 'restless_legs_pattern')
+  const sleepDisorderPriorityReview =
+    has(r, 'MS_05', 'witnessed_apnea') || has(r, 'MS_05', 'choking_gasping')
+
+  // MS_01(생리 상태)로 reproductive safety(WOMEN_SAFETY_01)를 자동 추론하지 않는다
+  // (delta 7장) — 모순되는 경우 자동 수정 없이 확인 필요 flag만 남긴다.
+  const womenSafety = r['WOMEN_SAFETY_01']
+  const womenSafetyHas = (v: string) => Array.isArray(womenSafety) && womenSafety.includes(v)
+  const responseConsistencyReview =
+    (r['MS_01'] === 'amenorrhea_12m_plus' &&
+      (womenSafetyHas('pregnant') || womenSafetyHas('pregnancy_possible'))) ||
+    (r['MS_01'] === 'still_regular' && womenSafetyHas('menopause'))
+
   return {
     general_red: generalRed,
     gi_needs_review: giNeedsReview,
     bowel_needs_review: bowelNeedsReview,
+    sleep_disorder_review: sleepDisorderReview,
+    sleep_disorder_priority_review: sleepDisorderPriorityReview,
+    response_consistency_review: responseConsistencyReview,
     requires_staff_check: generalRed || giNeedsReview || bowelNeedsReview,
   }
 }
@@ -1935,6 +2103,16 @@ export const buildResponsePayload = (r: Responses) => ({
       frequency_per_week: r['SLEEP_02'],
       awakening_reasons: r['SLEEP_03'],
       awakening_other: r['SLEEP_03A'],
+      menopause: {
+        gate_context: r['MS_GATE_01'],
+        stage: r['MS_01'],
+        night_vms_frequency: r['MS_02'],
+        rumination_frequency: r['MS_03'],
+        total_sleep_time: r['MS_04'],
+        sleep_disorder_screen: r['MS_05'],
+        awakenings: r['MS_06'],
+        return_to_sleep: r['MS_07'],
+      },
     },
     gi: {
       problems: r['GI_01'],

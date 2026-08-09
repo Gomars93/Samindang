@@ -37,8 +37,8 @@ export type Question = {
   options?: Option[]
   /** 옵션을 응답에 따라 동적으로 필터링할 때 사용 (예: 동반문제에서 주호소 항목 제외) */
   optionsIf?: (r: Responses) => Option[]
-  /** 다중선택에서 exclusive로 동작하는 값 (스펙 2.4) */
-  exclusive?: string
+  /** 다중선택에서 exclusive로 동작하는 값(들) (스펙 2.4). 배열이면 각각 독립적으로 exclusive. */
+  exclusive?: string | string[]
   /** 다중선택 최대 선택 개수 */
   max?: number
   required: boolean

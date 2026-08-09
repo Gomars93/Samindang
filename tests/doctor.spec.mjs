@@ -61,6 +61,26 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2b. MENOPAUSE_SLEEP v0.2 Compact fixture: doctor-facing flags render,
+ *     no diagnosis label leaks, no immediate StaffCheck coupling.
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('여성 수면 주호소 + 갱년기 연동')
+  assert('MS fixture: sleep_disorder_priority_review flag set (witnessed_apnea)', f.payload.flags.sleep_disorder_priority_review === true)
+  assert('MS fixture: requires_staff_check stays false (no auto navigation)', f.payload.flags.requires_staff_check === false)
+  assert(
+    'MS fixture: modules.sleep.menopause.stage recorded',
+    f.payload.responses.modules.sleep.menopause.stage === 'cycle_changing',
+  )
+
+  const html = renderDoctorView('여성 수면 주호소 + 갱년기 연동')
+  assert('MS fixture: DoctorView renders 수면장애 선별 chip', html.includes('수면장애 선별'))
+  assert('MS fixture: chip shows priority wording', html.includes('우선 확인 필요'))
+  assert('MS fixture: no OSA/무호흡증/하지불안증후군 diagnosis label leaks', !/무호흡증|하지불안증후군|OSA|RLS/.test(html))
+}
+
+/* ---------------------------------------------------------------------
  * 3. Pregnancy fixture: myungri present + reproductive status derived
  *    from the pregnancy module (not the general safety question).
  * ------------------------------------------------------------------- */

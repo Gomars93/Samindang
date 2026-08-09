@@ -4,11 +4,14 @@ type Props = {
   options: Option[]
   value: string[]
   onChange: (value: string[]) => void
-  /** `없음 / 해당 없음` 등 exclusive 값 (스펙 2.4) */
-  exclusive?: string
+  /** `없음 / 해당 없음` 등 exclusive 값 (스펙 2.4). 배열이면 각 값이 독립적으로 exclusive로 동작한다. */
+  exclusive?: string | string[]
   /** 최대 선택 개수 (스펙 7장: 동반문제 최대 2개) */
   max?: number
 }
+
+const exclusiveSet = (exclusive?: string | string[]): Set<string> =>
+  new Set(exclusive === undefined ? [] : Array.isArray(exclusive) ? exclusive : [exclusive])
 
 /**
  * 다중선택.
@@ -24,10 +27,11 @@ export function MultiChoice({
   exclusive,
   max,
 }: Props) {
-  const nonExclusiveCount = exclusive ? value.filter((x) => x !== exclusive).length : value.length
+  const exclusives = exclusiveSet(exclusive)
+  const nonExclusiveCount = value.filter((x) => !exclusives.has(x)).length
 
   const toggle = (v: string) => {
-    if (exclusive && v === exclusive) {
+    if (exclusives.has(v)) {
       onChange(value.includes(v) ? [] : [v])
       return
     }
@@ -37,7 +41,7 @@ export function MultiChoice({
 
     let next = isRemoving ? value.filter((x) => x !== v) : [...value, v]
 
-    if (exclusive) next = next.filter((x) => x !== exclusive)
+    if (exclusives.size > 0) next = next.filter((x) => !exclusives.has(x))
 
     onChange(next)
   }
@@ -46,7 +50,7 @@ export function MultiChoice({
     <div className="optionList">
       {options.map((opt) => {
         const isSelected = value.includes(opt.value)
-        const disabled = !isSelected && max !== undefined && nonExclusiveCount >= max && opt.value !== exclusive
+        const disabled = !isSelected && max !== undefined && nonExclusiveCount >= max && !exclusives.has(opt.value)
         return (
           <button
             key={opt.value}

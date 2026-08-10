@@ -78,6 +78,45 @@ for (const f of DOCTOR_FIXTURES) {
   assert('MS fixture: DoctorView renders 수면장애 선별 chip', html.includes('수면장애 선별'))
   assert('MS fixture: chip shows priority wording', html.includes('우선 확인 필요'))
   assert('MS fixture: no OSA/무호흡증/하지불안증후군 diagnosis label leaks', !/무호흡증|하지불안증후군|OSA|RLS/.test(html))
+
+  // 10-second summary danger chip surfaces the priority sleep-disorder review too.
+  assert('MS fixture: 10초 요약 안전이슈 chip shows 수면장애 우선확인', html.includes('수면장애 우선확인'))
+
+  // Clinician-readable MENOPAUSE_SLEEP narrative summary (raw dump 대신).
+  assert('MS fixture: renders 갱년기 수면 narrative summary block', html.includes('doctor__msSummary--sleep'))
+  assert('MS fixture: narrative mentions 생리 상태', html.includes('생리: 생리 주기가 전과 달라지고 있어요'))
+  assert('MS fixture: narrative mentions 야간 열감/발한', html.includes('야간 열감/발한: 일주일에 여러 번 있어요'))
+  assert('MS fixture: narrative combines sleep time/awakenings/return-to-sleep on one line', /수면: 5~6시간 \/ 각성 2~3번 \/ 재입면 30~60분/.test(html))
+}
+
+// Male sleep-primary patient (no menopause gate) must not render the narrative block.
+{
+  const f = byName('수면 주호소 + 동반 소화/통증')
+  assert('male sleep fixture: menopause gate never answered', f.payload.responses.modules.sleep.menopause.gate_context === null)
+  const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  assert('male sleep fixture: no 갱년기 수면 narrative block rendered', !html.includes('doctor__msSummary--sleep'))
+}
+
+// 명리 핵심요약 compact card: pure re-arrangement of already-computed saju
+// fields, no invented 오행/한열조습 interpretation (delta task 3).
+{
+  const f = byName('여성 수면 주호소 + 갱년기 연동')
+  const html = renderDoctorView('여성 수면 주호소 + 갱년기 연동')
+  assert('myungri compact card: renders', html.includes('doctor__msSummary--myungri'))
+  assert('myungri compact card: shows 명리 핵심 title', html.includes('명리 핵심'))
+  assert(
+    '오행/한열조습 marked as undetermined, not computed',
+    (html.match(/해석 규칙 미확정/g) || []).length >= 2,
+  )
+  const dayStemPattern = new RegExp(`일간: (<!--\\s*-->)?${f.payload.myungri_calculation.pillars.day.charAt(0)}`)
+  assert('day stem shown matches first char of day pillar', dayStemPattern.test(html))
+
+  const partial = byName('체중 관리') // birth time unknown fixture
+  const partialHtml = renderDoctorView('체중 관리')
+  assert(
+    'time-unknown fixture: compact card says 3주 6자 (no fabricated hour pillar)',
+    partialHtml.includes('3주 6자')
+  )
 }
 
 /* ---------------------------------------------------------------------

@@ -342,6 +342,30 @@
   gap: 10px 24px;
 }
 
+.doctor__msSummary {
+  background: var(--bg-subtle, #f6f6f8);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.doctor__msSummary__title {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.doctor__msSummary__line {
+  font-size: 14px;
+  margin: 2px 0;
+}
+
+.doctor__msSummary--myungri {
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
 .doctorField {
   display: flex;
   flex-direction: column;

@@ -127,33 +127,44 @@ export default function App() {
 
   useEffect(() => {
     if (phase !== 'done') return
-    // responses/meta가 아직 비워지기 전에 딱 한 번 payload를 스냅샷한다.
-    donePayloadRef.current = {
-      questionnaire_version: '1.0',
-      session_id: sessionId,
-      responses: buildResponsePayload(responses),
-      // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
-      myungri_calculation: computeSaju(buildSajuInput(responses)),
-      flags,
-      routing: buildRoutingPayload(responses),
-      metadata: {
-        session_started_at: startedAt,
-        answers: meta,
-      },
-      // MENOPAUSE_SLEEP v0.2 Compact UX telemetry (delta 9장). PII 없음 —
-      // panelStartedAt이 null이면(Gate까지 도달하지 않음) 아예 만들지 않는다.
-      panelTelemetry: panelStartedAt
-        ? {
-            panel_id: 'menopause_sleep_v0_2',
-            started_at: panelStartedAt,
-            completed_at: new Date().toISOString(),
-            duration_ms: Date.now() - new Date(panelStartedAt).getTime(),
-            screens_shown: panelScreens.length,
-            back_count: panelBackCount,
-            help_count: panelHelpCount,
-            completed: responses['MS_GATE_01'] === 'yes' || responses['MS_GATE_01'] === 'unsure',
-          }
-        : null,
+    // 계산 단계(특히 computeSaju)가 던지면 useEffect 밖으로 예외가 나가 트리가
+    // 통째로 unmount되어 화면이 하얗게 멈춘다(직원이 새로고침해야 하고, 그동안
+    // 응답도 잃는다) — payload 조립을 통째로 감싸서 실패해도 항상 완료 화면의
+    // 기존 error 경로("다시 시도"/직원 안내)로 떨어지게 한다.
+    try {
+      // responses/meta가 아직 비워지기 전에 딱 한 번 payload를 스냅샷한다.
+      donePayloadRef.current = {
+        questionnaire_version: '1.0',
+        session_id: sessionId,
+        responses: buildResponsePayload(responses),
+        // 계산된 사실(derived)과 환자가 답한 문진(responses)을 데이터상 분리한다.
+        myungri_calculation: computeSaju(buildSajuInput(responses)),
+        flags,
+        routing: buildRoutingPayload(responses),
+        metadata: {
+          session_started_at: startedAt,
+          answers: meta,
+        },
+        // MENOPAUSE_SLEEP v0.2 Compact UX telemetry (delta 9장). PII 없음 —
+        // panelStartedAt이 null이면(Gate까지 도달하지 않음) 아예 만들지 않는다.
+        panelTelemetry: panelStartedAt
+          ? {
+              panel_id: 'menopause_sleep_v0_2',
+              started_at: panelStartedAt,
+              completed_at: new Date().toISOString(),
+              duration_ms: Date.now() - new Date(panelStartedAt).getTime(),
+              screens_shown: panelScreens.length,
+              back_count: panelBackCount,
+              help_count: panelHelpCount,
+              completed: responses['MS_GATE_01'] === 'yes' || responses['MS_GATE_01'] === 'unsure',
+            }
+          : null,
+      }
+    } catch {
+      donePayloadRef.current = null
+      setSubmitState('error')
+      setSubmitError('문진 결과를 처리하는 중 오류가 발생했습니다.')
+      return
     }
     setDevPayload(donePayloadRef.current)
     if (!isServerConfigured()) {

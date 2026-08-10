@@ -169,6 +169,11 @@ function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
   if (flags.general_red) cats.push('공통 위험신호')
   if (flags.gi_needs_review) cats.push('소화 문진')
   if (flags.bowel_needs_review) cats.push('대변 문진')
+  // sleep_disorder_review(선별)/response_consistency_review는 진단이 아니라
+  // 확인 요청 수준이므로 여기(위험이슈 danger chip)에는 올리지 않는다 —
+  // SafetyGlance("안전정보 한눈에")에서 이미 노출된다. witnessed_apnea/
+  // choking_gasping 목격 보고만 우선순위가 높아 여기 포함한다.
+  if (flags.sleep_disorder_priority_review) cats.push('수면장애 우선확인')
   return cats
 }
 
@@ -186,6 +191,53 @@ function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
     text: `계산 불가${saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}`,
     tone: 'unresolved',
   }
+}
+
+const PENDING_APPROVAL_LABELS: Record<string, string> = {
+  day_boundary: '야자시/조자시 경계',
+  true_solar_time: '진태양시',
+}
+
+/**
+ * 명리 핵심요약 — 상세 계산 영역(judgment__reviewGrid) 위에 얹는 compact card.
+ * 여기 값은 전부 saju 엔진이 이미 계산해서 내려준 값(pillars/flags/policy)의
+ * 재배열일 뿐이다. 오행 분포·한열조습처럼 엔진이 계산하지 않는 값은 절대
+ * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
+ */
+function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
+  if (!saju.pillars) {
+    return (
+      <div className="doctor__msSummary doctor__msSummary--myungri">
+        <strong className="doctor__msSummary__title">명리 핵심</strong>
+        <p className="doctor__msSummary__line">
+          계산 불가{saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+        </p>
+      </div>
+    )
+  }
+
+  const dayStem = saju.pillars.day.charAt(0)
+  const birthInfoLine = saju.flags.hour_unknown
+    ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
+    : '출생시간 확인됨 · 4주 8자'
+  const pendingLabels = saju.policy.pending_approval.map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
+
+  return (
+    <div className="doctor__msSummary doctor__msSummary--myungri">
+      <strong className="doctor__msSummary__title">명리 핵심</strong>
+      <p className="doctor__msSummary__line">
+        원국: 연{saju.pillars.year} 월{saju.pillars.month} 일{saju.pillars.day} 시
+        {saju.pillars.hour ?? '미상'}
+      </p>
+      <p className="doctor__msSummary__line">일간: {dayStem}</p>
+      <p className="doctor__msSummary__line">출생정보: {birthInfoLine}</p>
+      <p className="doctor__msSummary__line">오행 분포: 해석 규칙 미확정 · 원장 판단 영역</p>
+      <p className="doctor__msSummary__line">한열조습: 해석 규칙 미확정 · 원장 판단 영역</p>
+      <p className="doctor__msSummary__line">
+        계산주의: {pendingLabels.length > 0 ? `${pendingLabels.join(', ')} 정책 승인 대기` : '없음'}
+      </p>
+    </div>
+  )
 }
 
 /**
@@ -404,6 +456,41 @@ function constitutionFields(r: Responses) {
     { qid: 'HERB_THIRST', value: r.constitution_basics.thirst_level },
     { qid: 'HERB_SWEAT', value: r.constitution_basics.sweat_pattern },
   ]
+}
+
+/**
+ * MENOPAUSE_SLEEP v0.2 Compact 요약을 raw enum 나열이 아니라 진료용 문장으로 보여준다.
+ * Gate를 통과하지 못했으면(남성, 또는 여성이라도 gate_context가 null/'no') null —
+ * 이 경우 원래 Sleep Field 목록만 보이고 이 블록 자체가 생기지 않는다.
+ */
+function menopauseSleepSummaryLines(sleep: Responses['modules']['sleep']): string[] | null {
+  const ms = sleep.menopause
+  if (ms.gate_context !== 'yes' && ms.gate_context !== 'unsure') return null
+
+  const lines: string[] = []
+  if (!isEmptyValue(ms.stage)) lines.push(`생리: ${answerLabel('MS_01', ms.stage)}`)
+  if (!isEmptyValue(ms.night_vms_frequency)) {
+    lines.push(`야간 열감/발한: ${answerLabel('MS_02', ms.night_vms_frequency)}`)
+  }
+  if (!isEmptyValue(ms.rumination_frequency)) {
+    lines.push(`밤중 생각: ${answerLabel('MS_03', ms.rumination_frequency)}`)
+  }
+
+  const sleepParts = [
+    !isEmptyValue(ms.total_sleep_time) ? answerLabel('MS_04', ms.total_sleep_time) : null,
+    !isEmptyValue(ms.awakenings) ? `각성 ${answerLabel('MS_06', ms.awakenings)}` : null,
+    !isEmptyValue(ms.return_to_sleep) ? `재입면 ${answerLabel('MS_07', ms.return_to_sleep)}` : null,
+  ].filter((v): v is string => Boolean(v))
+  if (sleepParts.length > 0) lines.push(`수면: ${sleepParts.join(' / ')}`)
+
+  const disorderScreen = ms.sleep_disorder_screen
+  if (!isEmptyValue(disorderScreen)) {
+    const isNoneOnly =
+      Array.isArray(disorderScreen) && disorderScreen.length === 1 && disorderScreen[0] === 'none'
+    lines.push(`수면 감별: ${isNoneOnly ? '특이사항 없음' : answerLabel('MS_05', disorderScreen)}`)
+  }
+
+  return lines.length > 0 ? lines : null
 }
 
 /** routing.primary_module(예: 'Sleep') -> 해당 모듈 상세 문항 목록. */
@@ -836,6 +923,21 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         <h2 className="doctor__section__h2--sub">
           상세 증상{routing.primary_module ? ` — ${routing.primary_module}` : ''}
         </h2>
+        {routing.primary_module === 'Sleep' &&
+          (() => {
+            const lines = menopauseSleepSummaryLines(r.modules.sleep)
+            if (!lines) return null
+            return (
+              <div className="doctor__msSummary doctor__msSummary--sleep">
+                <strong className="doctor__msSummary__title">갱년기 수면</strong>
+                {lines.map((line) => (
+                  <p key={line} className="doctor__msSummary__line">
+                    {line}
+                  </p>
+                ))}
+              </div>
+            )
+          })()}
         <div className="doctor__grid">
           {primaryModuleFields(routing.primary_module, r.modules).map((f) => (
             <Field key={f.qid} qid={f.qid} value={f.value} />
@@ -915,6 +1017,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <Field qid="FREE_02" value={r.free_text.free_text_detail} />
         </div>
       </section>
+
+      <MyungriCompactCard saju={saju} />
 
       <section className="doctor__section doctor__section--myungri">
         <h2>명리 검토</h2>

@@ -17,6 +17,8 @@ import {
   type SubmissionRecord,
   type SubmissionSummary,
 } from '../lib/serverClient'
+import { WorkstationSetup } from './WorkstationSetup'
+import { getStoredWorkstationId } from './workstation'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -650,6 +652,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
   const viewedRef = useRef<Set<string>>(new Set())
+  const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
 
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
@@ -703,17 +706,19 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   }, [mode, selectedId])
 
   // ClinicAI 연결점: 서버 모드에서 제출건을 열면(그리고 visit_id가 있으면)
-  // 그 방문을 "진료 중"으로 표시한다. 닫거나(목록으로/다른 건 선택) 컴포넌트가
-  // unmount되면 표시를 지운다(effect cleanup 하나로 두 상황을 다 처리).
-  // fixtures 모드에서는 실제 서버 방문이 없으므로 아예 호출하지 않는다.
+  // 그 방문을 "이 workstation에서 진료 중"으로 표시한다. 닫거나(목록으로/
+  // 다른 건 선택) 컴포넌트가 unmount되면 표시를 지운다(effect cleanup 하나로
+  // 두 상황을 다 처리). fixtures 모드에서는 실제 서버 방문이 없으므로 아예
+  // 호출하지 않는다. workstationId가 아직 없으면(설정 전) 절대 activate를
+  // 호출하지 않는다 — 잘못 default 키에 반영되는 것을 막기 위함.
   useEffect(() => {
-    if (mode !== 'server' || !selectedRecord?.visit_id) return
-    activateVisit(selectedRecord.visit_id)
+    if (mode !== 'server' || !selectedRecord?.visit_id || !workstationId) return
+    activateVisit(selectedRecord.visit_id, workstationId)
     return () => {
       // fire-and-forget: unmount/전환을 막지 않는다.
-      clearActiveVisit()
+      clearActiveVisit(workstationId)
     }
-  }, [mode, selectedRecord?.visit_id])
+  }, [mode, selectedRecord?.visit_id, workstationId])
 
   const fixture = DOCTOR_FIXTURES[fixtureIndex]
   const payload = mode === 'server' && selectedRecord ? recordToPayload(selectedRecord) : fixture.payload
@@ -733,6 +738,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     <div className="doctor">
       <header className="doctor__header">
         <h1 className="doctor__title">진료 전 요약</h1>
+        <span className="doctor__workstationBadge">
+          {workstationId ? `진료 워크스테이션: ${workstationId}` : '워크스테이션 설정 필요'}
+        </span>
         <div className="doctor__pickerRow">
           <label htmlFor="doctor-source-select">데이터 소스</label>
           <select
@@ -774,6 +782,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <span className="doctor__activeVisitBadge">현재 진료 중으로 표시됨</span>
         )}
       </header>
+
+      {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
 
       {mode === 'server' && serverError && (
         <div className="doctor__banner doctor__banner--danger">

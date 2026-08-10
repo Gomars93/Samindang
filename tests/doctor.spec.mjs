@@ -504,4 +504,10 @@ function detailsRange(html, classMarker) {
   )
 }
 
+{
+  const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  assert('SSR (no localStorage): workstation badge shows "설정 필요", not a stale id', html.includes('워크스테이션 설정 필요'))
+  assert('SSR (no localStorage): workstation setup banner renders (localStorage absence handled safely, no throw)', html.includes('워크스테이션 설정 필요'))
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

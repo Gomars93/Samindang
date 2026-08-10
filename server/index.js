@@ -10,8 +10,14 @@ import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { createStore } from './store.js'
 import { createAuditLog } from './audit.js'
-import { isDoctorRequestAllowed, isOriginAllowedForDoctor, isLocalOnly } from './auth.js'
-import { activateVisit, clearActiveVisit, getActiveVisit } from './activeVisit.js'
+import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
+import {
+  activateVisit,
+  clearActiveVisit,
+  getActiveVisit,
+  isValidWorkstationId,
+  DEFAULT_WORKSTATION_ID,
+} from './activeVisit.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1024 * 1024 // 1MB
@@ -133,21 +139,31 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
     return isDoctorRequestAllowed(remoteAddress(req), req.headers['x-doctor-token'], configuredToken)
   }
 
+  // workstation_id가 없으면 undefined를 돌려준다(activeVisit.js가 이를
+  // DEFAULT_WORKSTATION_ID로 취급) — 값이 있는데 형식이 틀리면 null을 돌려줘
+  // 호출부가 400으로 거부하게 한다.
+  function parseWorkstationId(raw) {
+    if (raw === undefined || raw === null || raw === '') return undefined
+    return isValidWorkstationId(raw) ? raw : null
+  }
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost')
     const parts = url.pathname.split('/').filter(Boolean) // ['api','submissions',':id',...]
-    // 모든 /api/submissions, /api/visits 라우트와 /api/current-visit/clear가
-    // 원장용이다 — 예외는 patient POST(제출 생성) 한 건뿐.
+    // 모든 /api/submissions, /api/visits, /api/current-visit(GET/clear
+    // 둘 다) 라우트가 원장용이다 — 예외는 patient POST(제출 생성) 한 건뿐.
+    // GET /api/current-visit는 과거 별도의 더 엄격한 가드를 썼지만, 다른
+    // workstation의 Doctor 화면이 LAN으로 읽어야 하므로 다른 원장 라우트와
+    // 동일한 requireDoctor()+origin allowlist 모델로 통합했다.
     const isSubmissionsRoute =
       parts[1] === 'submissions' && !(parts.length === 2 && req.method === 'POST')
     const isVisitsRoute = parts[1] === 'visits'
     const isCurrentVisitClear = parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear'
-    const doctorRoute = parts[0] === 'api' && (isSubmissionsRoute || isVisitsRoute || isCurrentVisitClear)
-    // GET /api/current-visit는 원장 라우트가 아니다 — 더 엄격한 별도 가드
-    // (isLocalOnly)를 쓰고, 브라우저 cross-origin 용도가 아니므로 CORS
-    // 헤더를 아예 붙이지 않는다(access-control-allow-origin 없음).
-    const isCurrentVisitRead = parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2
-    const cors = isCurrentVisitRead ? {} : corsHeaders(req, { doctorRoute })
+    const isCurrentVisitRead =
+      parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2 && req.method === 'GET'
+    const doctorRoute =
+      parts[0] === 'api' && (isSubmissionsRoute || isVisitsRoute || isCurrentVisitClear || isCurrentVisitRead)
+    const cors = corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, cors)
@@ -316,31 +332,39 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
-          const visit = await store.getVisit(id)
-          if (!visit) {
-            status = 404
-            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          const body = await readBody(req)
+          const workstationId = parseWorkstationId(body?.workstation_id)
+          if (workstationId === null) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'invalid workstation_id' }, cors)
           } else {
-            const active = activateVisit(visit)
-            await safeAudit({
-              event: 'visit_activated',
-              visit_id: active.visit_id,
-              submission_id: active.submission_id ?? undefined,
-              actor: 'doctor',
-            })
-            bytes = sendJson(
-              req,
-              res,
-              200,
-              {
-                active: true,
-                patient_id: active.patient_id,
+            const visit = await store.getVisit(id)
+            if (!visit) {
+              status = 404
+              bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+            } else {
+              const active = activateVisit(visit, workstationId)
+              await safeAudit({
+                event: 'visit_activated',
                 visit_id: active.visit_id,
-                submission_id: active.submission_id,
-                active_since: active.active_since,
-              },
-              cors,
-            )
+                submission_id: active.submission_id ?? undefined,
+                actor: 'doctor',
+              })
+              bytes = sendJson(
+                req,
+                res,
+                200,
+                {
+                  active: true,
+                  workstation_id: workstationId ?? DEFAULT_WORKSTATION_ID,
+                  patient_id: active.patient_id,
+                  visit_id: active.visit_id,
+                  submission_id: active.submission_id,
+                  active_since: active.active_since,
+                },
+                cors,
+              )
+            }
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 3 && req.method === 'GET') {
@@ -362,32 +386,48 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
-          const prev = getActiveVisit()
-          clearActiveVisit()
-          await safeAudit({ event: 'visit_cleared', visit_id: prev?.visit_id ?? undefined, actor: 'doctor' })
-          bytes = sendJson(req, res, 200, { ok: true }, cors)
+          const body = await readBody(req)
+          const workstationId = parseWorkstationId(body?.workstation_id)
+          if (workstationId === null) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'invalid workstation_id' }, cors)
+          } else {
+            const prev = getActiveVisit(workstationId)
+            clearActiveVisit(workstationId)
+            await safeAudit({ event: 'visit_cleared', visit_id: prev?.visit_id ?? undefined, actor: 'doctor' })
+            bytes = sendJson(req, res, 200, { ok: true, workstation_id: workstationId ?? DEFAULT_WORKSTATION_ID }, cors)
+          }
         }
       } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2 && req.method === 'GET') {
-        // ClinicAI 연결점. 원장 라우트보다 엄격한 별도 가드(loopback만,
-        // 토큰/Origin 예외 없음) — audit 로그도 남기지 않는다(읽기라서;
-        // audit는 상태변경만 기록한다). 응답에 patient_id/visit_id/
-        // submission_id/active_since 외 어떤 필드도(성함/전화번호 등) 절대
-        // 포함하지 않는다.
-        if (!isLocalOnly(remoteAddress(req))) {
+        // ClinicAI 연결점이자, 다른 원장 workstation의 Doctor 화면이 자기
+        // workstation_id의 활성 방문을 폴링하는 경로다. 다른 원장 라우트와
+        // 동일한 requireDoctor()+origin allowlist를 쓴다(위 doctorRoute
+        // 분기에서 이미 origin 검사를 마쳤다). audit 로그는 남기지 않는다
+        // (읽기라서; audit는 상태변경만 기록한다). 응답에 patient_id/
+        // visit_id/submission_id/active_since 외 어떤 필드도(성함/전화번호
+        // 등) 절대 포함하지 않는다.
+        if (!requireDoctor(req)) {
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
-          const active = getActiveVisit()
-          const body = active
-            ? {
-                active: true,
-                patient_id: active.patient_id,
-                visit_id: active.visit_id,
-                submission_id: active.submission_id,
-                active_since: active.active_since,
-              }
-            : { active: false }
-          bytes = sendJson(req, res, 200, body, cors)
+          const workstationId = parseWorkstationId(url.searchParams.get('workstation_id'))
+          if (workstationId === null) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'invalid workstation_id' }, cors)
+          } else {
+            const active = getActiveVisit(workstationId)
+            const body = active
+              ? {
+                  active: true,
+                  workstation_id: workstationId ?? DEFAULT_WORKSTATION_ID,
+                  patient_id: active.patient_id,
+                  visit_id: active.visit_id,
+                  submission_id: active.submission_id,
+                  active_since: active.active_since,
+                }
+              : { active: false, workstation_id: workstationId ?? DEFAULT_WORKSTATION_ID }
+            bytes = sendJson(req, res, 200, body, cors)
+          }
         }
       } else {
         status = 404

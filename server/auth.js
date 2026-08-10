@@ -2,6 +2,12 @@
 // 그래서 loopback(127.0.0.1/::1)이 진짜 경계다. 토큰은 원장이 다른 기기(예: 같은
 // 진료실의 다른 PC)에서 볼 때만 필요한 보조 수단이며, 실제 인증이 아니다.
 // (파일럿 등급 — 클리닉 LAN 내부에서만 쓴다. 인터넷에 노출하지 말 것.)
+//
+// GET /api/current-visit는 과거 loopback 전용 별도 가드(isLocalOnly)를 썼지만,
+// multi-workstation 지원을 위해 다른 원장 라우트와 동일한 requireDoctor() +
+// origin allowlist 모델로 통합했다(2026-08 설계 변경,
+// docs/superpowers/specs/2026-08-10-multi-workstation-doctor-foundation-design.md
+// 참고).
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 export function isLoopback(remoteAddress) {
@@ -33,13 +39,4 @@ export function isOriginAllowedForDoctor(origin, allowedOrigins = []) {
   if (!origin) return true
   if (LOCALHOST_ORIGIN_RE.test(origin)) return true
   return allowedOrigins.some((allowed) => allowed.toLowerCase() === origin.toLowerCase())
-}
-
-// GET /api/current-visit는 ClinicAI 같은 미래의 로컬 프로세스/스크립트 전용
-// 연결점이다 — 원장 라우트보다 더 엄격하게 막는다: token bypass 없음, Origin
-// 허용목록 예외 없음, loopback이 아니면 무조건 거부. isDoctorRequestAllowed를
-// 재사용/완화하지 않고 별도 함수로 둔 이유이기도 하다(이 라우트는 절대
-// 약해지면 안 되고, 다른 원장 라우트를 실수로 강화하지도 않는다).
-export function isLocalOnly(remoteAddress) {
-  return isLoopback(remoteAddress)
 }

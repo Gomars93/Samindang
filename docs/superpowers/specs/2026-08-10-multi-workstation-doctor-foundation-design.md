@@ -67,6 +67,18 @@ F. unknown visit_id → 기존 정책대로 거부
 G. **서버 재시작(모듈 재로드) 후 모든 workstation inactive로 시작** — 명시 테스트
 H. 기존 single-workstation(=default key) regression — 기존 테스트 그대로 PASS
 
+## 6b. LAN Doctor smoke test (수동 or 자동화, A PC ↔ B PC)
+
+A PC 브라우저 → B PC Doctor View 실제 LAN 접속 기준, PASS 조건:
+
+- submissions 목록 조회 성공
+- visit 상세 조회 성공
+- visit activate 성공
+- workstation별 current-visit 조회 성공 (DOCTOR-A로 조회)
+- clear 성공
+- DOCTOR-A 상태 변경이 DOCTOR-B에 영향 없음 (교차 확인)
+- 허용 안 된 origin 또는 토큰 없는 요청은 거부됨
+
 ## 7. Doctor UI
 
 - 상단 작게 "진료 워크스테이션: DOCTOR-A" 표시.

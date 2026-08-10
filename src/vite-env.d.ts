@@ -13,6 +13,18 @@ interface ImportMetaEnv {
    * 완료 화면/원장 화면에서는 절대 동작하지 않는다.
    */
   readonly VITE_SAMINDANG_IDLE_MINUTES?: string
+  /**
+   * 원장 화면이 LAN으로 다른 workstation의 서버에 접근할 때 보낼
+   * x-doctor-token. loopback에서는 필요 없다(서버가 loopback을 이미
+   * 허용하므로). 미설정 시 헤더를 아예 보내지 않는다.
+   */
+  readonly VITE_SAMINDANG_DOCTOR_TOKEN?: string
+  /**
+   * 워크스테이션 설정 화면에 보여줄 프리셋 목록, 쉼표로 구분(예:
+   * "DOCTOR-A,DOCTOR-B"). 미설정 시 기본값 DOCTOR-A,DOCTOR-B 사용. 오타
+   * 방지를 위해 선택형 UI에 쓰인다 — 자유 입력도 별도로 가능하다.
+   */
+  readonly VITE_SAMINDANG_WORKSTATIONS?: string
 }
 
 interface ImportMeta {

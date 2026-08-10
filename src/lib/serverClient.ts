@@ -6,6 +6,11 @@
 import type { ClinicianJudgment } from '../doctor/judgment'
 
 const BASE_URL = import.meta.env.VITE_SAMINDANG_SERVER_URL as string | undefined
+// LAN Doctor access (e.g. A PC's browser reaching B PC's server): loopback
+// has no token requirement, but a cross-machine request needs the same
+// x-doctor-token the server checks in requireDoctor(). Harmless to send on
+// every request — the server only inspects this header on doctor routes.
+const DOCTOR_TOKEN = import.meta.env.VITE_SAMINDANG_DOCTOR_TOKEN as string | undefined
 const TIMEOUT_MS = 8000
 
 export function isServerConfigured(): boolean {
@@ -26,7 +31,11 @@ async function request<T>(
     const res = await fetch(`${BASE_URL}${path}`, {
       ...init,
       signal: controller.signal,
-      headers: { 'content-type': 'application/json', ...init.headers },
+      headers: {
+        'content-type': 'application/json',
+        ...(DOCTOR_TOKEN ? { 'x-doctor-token': DOCTOR_TOKEN } : {}),
+        ...init.headers,
+      },
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
@@ -106,20 +115,34 @@ export function saveJudgment(
 
 // ClinicAI 연결점(server/activeVisit.js)의 원장 화면 쪽 절반. "지금 이
 // 방문을 진료 중으로 표시한다/표시를 지운다"만 한다 — 녹음/전사는 이 서버
-// 어디에도 없다.
+// 어디에도 없다. workstation_id는 이 브라우저/PC의 진료 워크스테이션 id
+// (src/doctor/workstation.ts)이며, 생략하면 서버가 "default" 키로 취급한다
+// (단일 workstation 하위호환).
 export type ActiveVisit = {
   active: true
+  workstation_id: string
   patient_id: string
   visit_id: string
   submission_id: string | null
   active_since: string
 }
-export type CurrentVisitResult = ActiveVisit | { active: false }
+export type CurrentVisitResult = ActiveVisit | { active: false; workstation_id: string }
 
-export function activateVisit(visitId: string): Promise<ServerResult<CurrentVisitResult>> {
-  return request(`/api/visits/${visitId}/activate`, { method: 'POST' })
+export function activateVisit(visitId: string, workstationId?: string): Promise<ServerResult<CurrentVisitResult>> {
+  return request(`/api/visits/${visitId}/activate`, {
+    method: 'POST',
+    body: JSON.stringify({ workstation_id: workstationId }),
+  })
 }
 
-export function clearActiveVisit(): Promise<ServerResult<{ ok: true }>> {
-  return request('/api/current-visit/clear', { method: 'POST' })
+export function clearActiveVisit(workstationId?: string): Promise<ServerResult<{ ok: true; workstation_id: string }>> {
+  return request('/api/current-visit/clear', {
+    method: 'POST',
+    body: JSON.stringify({ workstation_id: workstationId }),
+  })
+}
+
+export function getCurrentVisit(workstationId?: string): Promise<ServerResult<CurrentVisitResult>> {
+  const qs = workstationId ? `?workstation_id=${encodeURIComponent(workstationId)}` : ''
+  return request(`/api/current-visit${qs}`)
 }

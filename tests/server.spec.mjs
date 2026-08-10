@@ -9,8 +9,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../server/index.js'
 import { createStore } from '../server/store.js'
-import { isDoctorRequestAllowed, isOriginAllowedForDoctor, isLocalOnly } from '../server/auth.js'
-import { __setLastTouchedForTest } from '../server/activeVisit.js'
+import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from '../server/auth.js'
+import { __setLastTouchedForTest, isValidWorkstationId } from '../server/activeVisit.js'
 
 let passCount = 0
 
@@ -784,9 +784,11 @@ async function main() {
       assert('fresh visit submission_id is null', freshVisit.submission_id === null)
     }
 
-    /* ---------------- active visit: activate/replace/clear/expiry via GET /api/current-visit (ClinicAI-facing) ---------------- */
+    /* ---------------- active visit: activate/replace/clear/expiry via GET /api/current-visit, default workstation (backward compat) ---------------- */
     {
-      // visit A: the original submission-linked visit from the "basic" test above.
+      // No workstation_id passed anywhere in this block -> resolves to the
+      // "default" key, proving single-workstation callers behave exactly as
+      // before multi-workstation support existed.
       const basic = await (
         await fetch(`${base}/api/submissions`, {
           method: 'POST',
@@ -798,15 +800,17 @@ async function main() {
 
       const actA = await (await fetch(`${base}/api/visits/${recA.visit_id}/activate`, { method: 'POST' })).json()
       assert('activate visit A returns active:true with matching ids', actA.active === true && actA.visit_id === recA.visit_id)
+      assert('activate with no workstation_id -> resolves to "default"', actA.workstation_id === 'default')
 
       const curA = await (await fetch(`${base}/api/current-visit`)).json()
-      assert('GET /api/current-visit reflects visit A', curA.active === true && curA.visit_id === recA.visit_id)
+      assert('GET /api/current-visit (no workstation_id) reflects visit A', curA.active === true && curA.visit_id === recA.visit_id)
       assert(
         'GET /api/current-visit response has EXACTLY the documented key set (active variant)',
-        Object.keys(curA).sort().join(',') === 'active,active_since,patient_id,submission_id,visit_id',
+        Object.keys(curA).sort().join(',') === 'active,active_since,patient_id,submission_id,visit_id,workstation_id',
       )
 
-      // activate visit B (the re-visit created earlier) -> replaces A, does not accumulate.
+      // activate visit B (the re-visit created earlier) on the same (default)
+      // workstation -> replaces A, does not accumulate.
       const actB = await (await fetch(`${base}/api/visits/${revisitId}/activate`, { method: 'POST' })).json()
       assert('activate visit B succeeds', actB.active === true && actB.visit_id === revisitId)
 
@@ -814,14 +818,14 @@ async function main() {
       assert('GET /api/current-visit now reflects B, not A (replacement, not accumulation)', curB.visit_id === revisitId)
       assert('current-visit submission_id is null for the re-visit (no questionnaire)', curB.submission_id === null)
 
-      // clear -> {active:false} only.
+      // clear -> {active:false, workstation_id} only.
       const clearRes = await fetch(`${base}/api/current-visit/clear`, { method: 'POST' })
       assert('POST /api/current-visit/clear -> 200', clearRes.status === 200)
       const curCleared = await (await fetch(`${base}/api/current-visit`)).json()
-      assert('after clear, GET /api/current-visit -> {active:false} only', curCleared.active === false)
+      assert('after clear, GET /api/current-visit -> active:false', curCleared.active === false)
       assert(
-        'cleared response has EXACTLY {active:false} — no other keys',
-        Object.keys(curCleared).sort().join(',') === 'active',
+        'cleared response has EXACTLY {active,workstation_id} — no other keys',
+        Object.keys(curCleared).sort().join(',') === 'active,workstation_id',
       )
 
       // expiry: activate again, then simulate TTL having passed via the test-only hook.
@@ -829,11 +833,7 @@ async function main() {
       assert('re-activate visit A for expiry test', actC.active === true)
       __setLastTouchedForTest(new Date(Date.now() - 31 * 60 * 1000).toISOString())
       const curExpired = await (await fetch(`${base}/api/current-visit`)).json()
-      assert('expired active visit (TTL passed) -> {active:false}', curExpired.active === false)
-      assert(
-        'expired response also has exactly {active:false}',
-        Object.keys(curExpired).sort().join(',') === 'active',
-      )
+      assert('expired active visit (TTL passed) -> active:false', curExpired.active === false)
 
       // Never leaks patient name/phone: plant a canary, activate its visit, check the response text.
       const canary = await (
@@ -857,40 +857,123 @@ async function main() {
       const curCanary = JSON.parse(curCanaryText)
       assert(
         'GET /api/current-visit (active) has EXACTLY the documented key set — no name/phone fields sneak in',
-        Object.keys(curCanary).sort().join(',') === 'active,active_since,patient_id,submission_id,visit_id',
+        Object.keys(curCanary).sort().join(',') === 'active,active_since,patient_id,submission_id,visit_id,workstation_id',
       )
+      await fetch(`${base}/api/current-visit/clear`, { method: 'POST' })
 
-      /* ---------------- GET /api/current-visit guard is isLocalOnly, stricter than doctor routes ---------------- */
-      // Doctor routes reject an evil Origin even from loopback. current-visit doesn't
-      // apply the Origin allowlist at all (it isn't a browser-facing route) — that's
-      // the concrete behavioral proof that a *different*, not-just-differently-named,
-      // guard function is wired in.
+      /* ---------------- GET /api/current-visit now shares the doctor Origin allowlist ---------------- */
+      // Before multi-workstation support, this route deliberately ignored the
+      // Origin allowlist (it was loopback-only, non-browser-facing). Now that
+      // another workstation's Doctor browser must reach it over LAN, it uses
+      // the exact same requireDoctor()+origin-allowlist guard as every other
+      // doctor route — proven here by an evil Origin now getting 403, same as
+      // /api/submissions.
       const evilOriginDoctorRoute = await fetch(`${base}/api/submissions`, {
         headers: { origin: 'https://evil.example.com' },
       })
-      assert('doctor route (loopback + evil Origin) -> 403 (Origin allowlist applies)', evilOriginDoctorRoute.status === 403)
+      assert('doctor route (loopback + evil Origin) -> 403', evilOriginDoctorRoute.status === 403)
 
       const evilOriginCurrentVisit = await fetch(`${base}/api/current-visit`, {
         headers: { origin: 'https://evil.example.com' },
       })
       assert(
-        'GET /api/current-visit (loopback + evil Origin) -> 200 (no Origin allowlist — proves it is NOT isDoctorRequestAllowed/isOriginAllowedForDoctor)',
-        evilOriginCurrentVisit.status === 200,
+        'GET /api/current-visit (loopback + evil Origin) -> 403, same as other doctor routes now',
+        evilOriginCurrentVisit.status === 403,
       )
+
+      const goodOriginCurrentVisit = await fetch(`${base}/api/current-visit`, {
+        headers: { origin: 'http://localhost:5173' },
+      })
       assert(
-        'GET /api/current-visit never sets access-control-allow-origin, even with an Origin header present',
-        evilOriginCurrentVisit.headers.get('access-control-allow-origin') === null,
+        'GET /api/current-visit (loopback + localhost Origin) -> 200 and reflects that origin in CORS header',
+        goodOriginCurrentVisit.status === 200 &&
+          goodOriginCurrentVisit.headers.get('access-control-allow-origin') === 'http://localhost:5173',
       )
     }
 
-    /* ---------------- GET /api/current-visit guard (unit-level, fake remoteAddress) ---------------- */
-    assert('isLocalOnly: non-loopback -> denied', isLocalOnly('192.168.0.55') === false)
-    assert('isLocalOnly: 127.0.0.1 -> allowed', isLocalOnly('127.0.0.1') === true)
-    assert('isLocalOnly: ::1 -> allowed', isLocalOnly('::1') === true)
-    assert(
-      'isLocalOnly has no token-bypass parameter at all (arity proves it: remoteAddress only)',
-      isLocalOnly.length === 1,
-    )
+    /* ---------------- invalid workstation_id -> 400, on all three current-visit endpoints ---------------- */
+    {
+      const getRes = await fetch(`${base}/api/current-visit?workstation_id=${encodeURIComponent('bad id!')}`)
+      assert('GET /api/current-visit with invalid workstation_id -> 400', getRes.status === 400)
+
+      const activateRes = await fetch(`${base}/api/visits/${revisitId}/activate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'bad id!' }),
+      })
+      assert('POST activate with invalid workstation_id -> 400', activateRes.status === 400)
+
+      const clearRes2 = await fetch(`${base}/api/current-visit/clear`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'bad id!' }),
+      })
+      assert('POST clear with invalid workstation_id -> 400', clearRes2.status === 400)
+    }
+
+    /* ---------------- multi-workstation isolation: DOCTOR-A and DOCTOR-B never affect each other ---------------- */
+    {
+      // Two fresh visits, minted directly (no questionnaire needed) so this
+      // block is self-contained regardless of what earlier blocks activated.
+      const visitA = await (await fetch(`${base}/api/visits`, { method: 'POST' })).json()
+      const visitB = await (await fetch(`${base}/api/visits`, { method: 'POST' })).json()
+      const visitA2 = await (await fetch(`${base}/api/visits`, { method: 'POST' })).json()
+
+      // A. DOCTOR-A -> visitA, DOCTOR-B -> visitB; each GET reflects only its own.
+      await fetch(`${base}/api/visits/${visitA.id}/activate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'DOCTOR-A' }),
+      })
+      await fetch(`${base}/api/visits/${visitB.id}/activate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'DOCTOR-B' }),
+      })
+      const getA1 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-A`)).json()
+      const getB1 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-B`)).json()
+      assert('A. GET DOCTOR-A reflects visitA', getA1.active === true && getA1.visit_id === visitA.id)
+      assert('A. GET DOCTOR-B reflects visitB', getB1.active === true && getB1.visit_id === visitB.id)
+
+      // B. Changing DOCTOR-A to a new visit leaves DOCTOR-B untouched.
+      await fetch(`${base}/api/visits/${visitA2.id}/activate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'DOCTOR-A' }),
+      })
+      const getA2 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-A`)).json()
+      const getB2 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-B`)).json()
+      assert('B. DOCTOR-A now reflects visitA2', getA2.visit_id === visitA2.id)
+      assert('B. DOCTOR-B still reflects visitB, unaffected by A changing', getB2.visit_id === visitB.id)
+
+      // C. Clearing DOCTOR-A leaves DOCTOR-B untouched.
+      await fetch(`${base}/api/current-visit/clear`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'DOCTOR-A' }),
+      })
+      const getA3 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-A`)).json()
+      const getB3 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-B`)).json()
+      assert('C. DOCTOR-A is inactive after its own clear', getA3.active === false)
+      assert('C. DOCTOR-B is still active, unaffected by A clearing', getB3.active === true && getB3.visit_id === visitB.id)
+
+      // D. TTL expiry on DOCTOR-B alone leaves any other workstation untouched.
+      __setLastTouchedForTest(new Date(Date.now() - 31 * 60 * 1000).toISOString(), 'DOCTOR-B')
+      const getB4 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-B`)).json()
+      assert('D. DOCTOR-B expired via TTL -> inactive', getB4.active === false)
+      const getA4 = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-A`)).json()
+      assert('D. DOCTOR-A (already inactive from C) is still inactive, not resurrected by B expiring', getA4.active === false)
+
+      // E. invalid workstation_id already covered above (400).
+
+      // F. unknown visit_id -> 404, regardless of workstation_id.
+      const unknownActivate = await fetch(`${base}/api/visits/00000000-0000-0000-0000-000000000000/activate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workstation_id: 'DOCTOR-A' }),
+      })
+      assert('F. activate with unknown visit_id -> 404 (workstation_id present)', unknownActivate.status === 404)
+    }
 
     /* ---------------- restart: active visit is NEVER restored, even though visit files persist ---------------- */
     {
@@ -913,6 +996,11 @@ async function main() {
 
       const curAfterRestart = await (await fetch(`${base}/api/current-visit`)).json()
       assert('restart: GET /api/current-visit -> {active:false}', curAfterRestart.active === false)
+
+      const doctorAAfterRestart = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-A`)).json()
+      const doctorBAfterRestart = await (await fetch(`${base}/api/current-visit?workstation_id=DOCTOR-B`)).json()
+      assert('G. restart: DOCTOR-A starts inactive', doctorAAfterRestart.active === false)
+      assert('G. restart: DOCTOR-B starts inactive', doctorBAfterRestart.active === false)
 
       const visitsAfterRestart = await (await fetch(`${base}/api/visits`)).json()
       assert(
@@ -969,17 +1057,16 @@ async function main() {
 
     const serverIndexSrc = await readFile(fileURLToPath(new URL('../server/index.js', import.meta.url)), 'utf8')
     const requireDoctorCalls = (serverIndexSrc.match(/!requireDoctor\(req\)/g) ?? []).length
-    // 기존 4개(submissions list/get/status/judgment) + 이번 스프린트에서 추가된
-    // 5개(visits create/list/get/activate, current-visit/clear) = 9개.
-    // GET /api/current-visit는 이 목록에 없다 — requireDoctor가 아니라 더
-    // 엄격한 isLocalOnly를 쓴다(아래 별도 assert).
+    // 기존 9개(submissions x4 + visits x4 + current-visit/clear) + 이번
+    // multi-workstation 작업에서 GET /api/current-visit도 requireDoctor로
+    // 통합되어 10개가 됐다. isLocalOnly는 완전히 제거됐다(server/auth.js).
     assert(
-      'server has exactly the 9 doctor-guarded routes calling requireDoctor (submissions x4 + visits x4 + current-visit/clear)',
-      requireDoctorCalls === 9,
+      'server has exactly the 10 doctor-guarded routes calling requireDoctor (submissions x4 + visits x4 + current-visit GET + current-visit/clear)',
+      requireDoctorCalls === 10,
     )
     assert(
-      'GET /api/current-visit uses isLocalOnly, not requireDoctor/isDoctorRequestAllowed/isOriginAllowedForDoctor',
-      serverIndexSrc.includes('isLocalOnly(remoteAddress(req))'),
+      'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',
+      !serverIndexSrc.includes('isLocalOnly'),
     )
   }
 
@@ -1024,6 +1111,10 @@ async function main() {
     'guard: loopback (::1) + no token -> allowed',
     isDoctorRequestAllowed('::1', undefined, undefined) === true,
   )
+  assert(
+    'guard: this is the exact mechanism GET /api/current-visit now shares (non-loopback + correct token -> allowed)',
+    isDoctorRequestAllowed('192.168.1.50', 'secret', 'secret') === true,
+  )
 
   /* ---------------- isOriginAllowedForDoctor (unit-level) ---------------- */
   assert('origin guard: undefined origin -> allowed (non-browser)', isOriginAllowedForDoctor(undefined, []) === true)
@@ -1038,6 +1129,18 @@ async function main() {
     'origin guard: allowedOrigins match is case-insensitive',
     isOriginAllowedForDoctor('HTTPS://EVIL.EXAMPLE.COM', ['https://evil.example.com']) === true,
   )
+
+  /* ---------------- isValidWorkstationId (unit-level) ---------------- */
+  assert('workstation id guard: simple id -> valid', isValidWorkstationId('DOCTOR-A') === true)
+  assert('workstation id guard: underscore/digits -> valid', isValidWorkstationId('doctor_2') === true)
+  assert('workstation id guard: empty string -> invalid', isValidWorkstationId('') === false)
+  assert('workstation id guard: contains space -> invalid', isValidWorkstationId('DOCTOR A') === false)
+  assert('workstation id guard: contains slash (path-traversal-ish) -> invalid', isValidWorkstationId('a/b') === false)
+  assert('workstation id guard: contains dot-dot -> invalid', isValidWorkstationId('..') === false)
+  assert('workstation id guard: 33 chars (over limit) -> invalid', isValidWorkstationId('a'.repeat(33)) === false)
+  assert('workstation id guard: 32 chars (at limit) -> valid', isValidWorkstationId('a'.repeat(32)) === true)
+  assert('workstation id guard: non-string -> invalid', isValidWorkstationId(123) === false)
+  assert('workstation id guard: undefined -> invalid', isValidWorkstationId(undefined) === false)
 
   console.log(`\n${passCount} assertions passed.`)
 }

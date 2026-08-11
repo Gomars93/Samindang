@@ -636,3 +636,37 @@
   width: 100%;
   margin-top: 6px;
 }
+
+/* -------------------------------------------------------------------
+ * 진료 녹취·요약 (Recorder -> EMR 복사)
+ * ----------------------------------------------------------------- */
+
+.doctor__recorderLineage {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.doctor__recorderTranscript {
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: var(--bg-subtle, #f6f6f8);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.doctor__recorderEmrField {
+  margin-top: 12px;
+}
+
+.doctor__recorderCopyFeedback {
+  margin-left: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}

@@ -97,6 +97,16 @@ for (const f of DOCTOR_FIXTURES) {
   assert('male sleep fixture: no 갱년기 수면 narrative block rendered', !html.includes('doctor__msSummary--sleep'))
 }
 
+/* ---------------------------------------------------------------------
+ * Recorder/EMR section only renders in server mode (fixtures mode has no
+ * real visit_id to poll recorder-results for) — must not appear/crash here.
+ * ------------------------------------------------------------------- */
+
+{
+  const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  assert('fixtures mode: no 진료 녹취·요약 section (no real visit_id to poll)', !html.includes('진료 녹취·요약'))
+}
+
 // 명리 핵심요약 compact card: pure re-arrangement of already-computed saju
 // fields, no invented 오행/한열조습 interpretation (delta task 3).
 {

@@ -3,6 +3,7 @@ import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, optionLabels, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
+import { buildEmrSummary } from './emrSummary'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import type { ClinicianJudgment } from './judgment'
 import type { DoctorPayload } from './types'
@@ -10,10 +11,12 @@ import type { AnswerValue } from '../types'
 import {
   activateVisit,
   clearActiveVisit,
+  getRecorderResults,
   getSubmission,
   listSubmissions,
   saveJudgment as saveJudgmentToServer,
   setSubmissionStatus,
+  type RecorderResult,
   type SubmissionRecord,
   type SubmissionSummary,
 } from '../lib/serverClient'
@@ -654,6 +657,16 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
 
+  const [recorderResults, setRecorderResults] = useState<RecorderResult[] | null>(null)
+  const [recorderResultsError, setRecorderResultsError] = useState<string | null>(null)
+  const [emrText, setEmrText] = useState('')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+  // 원장이 EMR 텍스트박스를 이미 편집했다면, 같은 recording_id로 폴링이
+  // 다시 돌아와도 그 편집을 덮어쓰지 않는다(v0.1 작업지시서 4번, 수정
+  // 내용이 자동으로 원문을 덮어쓰지 않아야 한다는 원칙의 UI 쪽 적용).
+  const emrSeedRecordingIdRef = useRef<string | null>(null)
+  const emrEditedRef = useRef(false)
+
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
   useEffect(() => {
@@ -725,6 +738,84 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const r = payload.responses
   const { flags, routing } = payload
   const saju = payload.myungri_calculation
+
+  // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
+  // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
+  useEffect(() => {
+    if (mode !== 'server' || !selectedRecord?.visit_id) {
+      setRecorderResults(null)
+      setRecorderResultsError(null)
+      emrSeedRecordingIdRef.current = null
+      emrEditedRef.current = false
+      return
+    }
+    const visitId = selectedRecord.visit_id
+    let cancelled = false
+
+    async function poll() {
+      const result = await getRecorderResults(visitId)
+      if (cancelled) return
+      if (result.ok) {
+        setRecorderResults(result.data.results)
+        setRecorderResultsError(null)
+      } else {
+        setRecorderResultsError(result.error)
+      }
+    }
+
+    poll()
+    const timer = setInterval(poll, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [mode, selectedRecord?.visit_id])
+
+  // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
+  useEffect(() => {
+    const latest = recorderResults?.[0] ?? null
+    if (!latest) return
+    if (emrSeedRecordingIdRef.current === latest.recording_id) return
+    emrSeedRecordingIdRef.current = latest.recording_id
+    emrEditedRef.current = false
+    setEmrText(
+      buildEmrSummary({
+        primaryConcern: primaryConcernLabel(r),
+        structuredNote: latest.structured_note,
+        judgment: selectedRecord?.judgment ?? null,
+      }),
+    )
+  }, [recorderResults, selectedRecord?.judgment])
+
+  useEffect(() => {
+    if (copyStatus === 'idle') return
+    const t = setTimeout(() => setCopyStatus('idle'), 2000)
+    return () => clearTimeout(t)
+  }, [copyStatus])
+
+  async function handleCopyEmr() {
+    try {
+      if (!navigator.clipboard) throw new Error('no clipboard api')
+      await navigator.clipboard.writeText(emrText)
+      setCopyStatus('copied')
+      return
+    } catch {
+      // fall through to the manual-select fallback below
+    }
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = emrText
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('error')
+    }
+  }
 
   const generalFlagLabels = optionLabels(
     'SAFETY_01',
@@ -1128,6 +1219,60 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           기록&rdquo;에 원장이 직접 기록합니다.
         </p>
       </section>
+
+      {mode === 'server' && selectedRecord?.visit_id && (
+        <section className="doctor__section">
+          <h2>진료 녹취·요약</h2>
+          {recorderResultsError ? (
+            <p className="doctor__warning">녹취 결과를 불러오지 못했습니다: {recorderResultsError}</p>
+          ) : !recorderResults || recorderResults.length === 0 ? (
+            <p className="doctor__empty">아직 결과 없음</p>
+          ) : (
+            <>
+              <p className="doctor__derivedLabel">
+                결과 있음 — 녹음 {recorderResults.length}건 (최신 갱신: {relativeTime(recorderResults[0].updated_at)})
+              </p>
+              {recorderResults.length > 1 && (
+                <ul className="doctor__recorderLineage">
+                  {recorderResults.map((res) => (
+                    <li key={res.recording_id}>
+                      {res.recording_id} · {relativeTime(res.updated_at)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <details className="doctor__secDetails">
+                <summary>Transcript 원문</summary>
+                <pre className="doctor__recorderTranscript">{recorderResults[0].transcript ?? '(없음)'}</pre>
+              </details>
+              <div className="judgment__field doctor__recorderEmrField">
+                <label className="judgment__label" htmlFor="emrSummaryText">
+                  EMR용 요약 (plain text, 직접 수정 가능)
+                </label>
+                <textarea
+                  id="emrSummaryText"
+                  className="judgment__textarea"
+                  rows={8}
+                  value={emrText}
+                  onChange={(e) => {
+                    emrEditedRef.current = true
+                    setEmrText(e.target.value)
+                  }}
+                />
+              </div>
+              <div className="judgment__actions">
+                <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
+                  EMR용 복사
+                </button>
+                {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
+                {copyStatus === 'error' && (
+                  <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       <JudgmentPanel
         key={payload.session_id}

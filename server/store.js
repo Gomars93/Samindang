@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createVisitStore } from './visitStore.js'
+import { createRecorderResultStore } from './recorderResultStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
@@ -44,6 +45,8 @@ export function createStore(dataDir) {
   // visits/는 submissions/의 형제 경로다(audit.log와 같은 패턴) — 별도
   // 데이터 디렉터리 설정이 필요 없다.
   const visits = createVisitStore(path.join(dataDir, '..', 'visits'))
+  // recorder-results/는 submissions/의 또다른 형제 경로다(visits/와 같은 패턴).
+  const recorderResults = createRecorderResultStore(path.join(dataDir, '..', 'recorder-results'))
 
   async function ensureDir() {
     await mkdir(dataDir, { recursive: true })
@@ -226,5 +229,8 @@ export function createStore(dataDir) {
     getVisit: visits.getVisit,
     listVisits: visits.listVisits,
     visitExistsForPatient: visits.visitExistsForPatient,
+    saveRecorderResult: recorderResults.saveResult,
+    listRecorderResults: recorderResults.listResults,
+    setVisitRecorderPointer: visits.setRecorderPointer,
   }
 }

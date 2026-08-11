@@ -115,6 +115,22 @@ export function createVisitStore(visitsDir) {
     return readVisit(id)
   }
 
+  // recorder-results POST가 성공할 때마다 이 visit이 "가장 최근에 가리키는"
+  // recording_id를 갱신한다 — 전체 lineage는 recorderResultStore가 따로
+  // 가지고 있고, 이 필드는 그중 최신 것을 가리키는 포인터일 뿐이다.
+  // transcript_id는 이번 스프린트에서 별도 개념으로 정의하지 않는다
+  // (recorder-results 계약에 recording_id 하나만 있다) — null로 남겨둔다.
+  async function setRecorderPointer(id, recording_id) {
+    return withLock(id, async () => {
+      const record = await readVisit(id)
+      if (!record) return null
+      record.recording_id = recording_id
+      record.updated_at = new Date().toISOString()
+      await atomicWrite(visitPath(visitsDir, id), record)
+      return record
+    })
+  }
+
   async function listVisits() {
     const files = await listFiles()
     const records = []
@@ -130,5 +146,5 @@ export function createVisitStore(visitsDir) {
     return records
   }
 
-  return { createVisit, getVisit, listVisits, visitExistsForPatient }
+  return { createVisit, getVisit, listVisits, visitExistsForPatient, setRecorderPointer }
 }

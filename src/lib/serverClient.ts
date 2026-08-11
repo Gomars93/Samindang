@@ -146,3 +146,29 @@ export function getCurrentVisit(workstationId?: string): Promise<ServerResult<Cu
   const qs = workstationId ? `?workstation_id=${encodeURIComponent(workstationId)}` : ''
   return request(`/api/current-visit${qs}`)
 }
+
+// Recorder(A PC) -> B 서버로 전달된 전사/구조화 노트. B는 이 값을 절대
+// 생성하지 않는다 — POST는 A(또는 그 downstream)가 직접 호출하고, Doctor
+// 화면은 GET으로 읽기만 한다.
+export type RecorderStructuredNote = {
+  chief_complaint: string | null
+  history: string | null
+  key_findings: string | null
+  assessment: string | null
+  treatment: string | null
+  plan: string | null
+}
+
+export type RecorderResult = {
+  visit_id: string
+  recording_id: string
+  transcript: string | null
+  structured_note: RecorderStructuredNote | null
+  source: { workstation_id: string | null } | null
+  created_at: string
+  updated_at: string
+}
+
+export function getRecorderResults(visitId: string): Promise<ServerResult<{ results: RecorderResult[] }>> {
+  return request(`/api/visits/${visitId}/recorder-results`)
+}

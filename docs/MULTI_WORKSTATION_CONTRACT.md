@@ -39,7 +39,15 @@ doctor origin allowlist를 쓴다. `GET /api/current-visit`는 과거
 loopback-only 별도 가드를 썼지만, 다른 workstation이 LAN으로 읽어야
 하므로 다른 원장 라우트와 동일한 모델로 통합했다(2026-08 변경).
 
-## Recorder 연동 규칙 (향후 작업, 이번엔 미구현)
+## Recorder 연동 규칙
+
+`GET /api/current-visit`(폴링, 읽기 전용)는 이미 구현되어 있었다. 이번
+스프린트(Recorder 결과 → Doctor → EMR 복사 v0.1)에서
+`POST /api/visits/:visit_id/recorder-results`와
+`GET /api/visits/:visit_id/recorder-results`를 추가해 Recorder(A PC)가
+전사/구조화 결과를 이 workstation의 활성 `visit_id`로 되돌려보낼 수
+있게 했다 — 자세한 계약은 이 파일이 아니라 `server/index.js`의 두
+라우트와 `server/recorderResultStore.js`가 source of truth다.
 
 - Recorder A는 `WORKSTATION_ID=DOCTOR-A` 환경변수를 가지고,
   `GET /api/current-visit?workstation_id=DOCTOR-A`만 조회한다.

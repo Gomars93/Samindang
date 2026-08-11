@@ -1057,12 +1057,12 @@ async function main() {
 
     const serverIndexSrc = await readFile(fileURLToPath(new URL('../server/index.js', import.meta.url)), 'utf8')
     const requireDoctorCalls = (serverIndexSrc.match(/!requireDoctor\(req\)/g) ?? []).length
-    // 기존 9개(submissions x4 + visits x4 + current-visit/clear) + 이번
-    // multi-workstation 작업에서 GET /api/current-visit도 requireDoctor로
-    // 통합되어 10개가 됐다. isLocalOnly는 완전히 제거됐다(server/auth.js).
+    // 기존 10개(submissions x4 + visits x4 + current-visit GET + current-visit/clear) +
+    // Task 2에서 POST/GET /api/visits/:id/recorder-results 2개 추가되어 12개가 됐다.
+    // isLocalOnly는 완전히 제거됐다(server/auth.js).
     assert(
-      'server has exactly the 10 doctor-guarded routes calling requireDoctor (submissions x4 + visits x4 + current-visit GET + current-visit/clear)',
-      requireDoctorCalls === 10,
+      'server has exactly the 12 doctor-guarded routes calling requireDoctor (submissions x4 + visits x6 + current-visit GET + current-visit/clear)',
+      requireDoctorCalls === 12,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

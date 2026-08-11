@@ -381,6 +381,84 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             bytes = sendJson(req, res, 200, visit, cors)
           }
         }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'recorder-results' &&
+        req.method === 'POST'
+      ) {
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const body = await readBody(req)
+            const recordingId =
+              typeof body?.recording_id === 'string' && body.recording_id.trim() !== ''
+                ? body.recording_id.trim()
+                : null
+            if (!recordingId || !/^[A-Za-z0-9_-]{1,128}$/.test(recordingId)) {
+              status = 400
+              bytes = sendJson(req, res, 400, { error: 'invalid recording_id' }, cors)
+            } else {
+              const transcript = typeof body?.transcript === 'string' ? body.transcript : null
+              const rawNote = body?.structured_note
+              const structuredNote =
+                rawNote && typeof rawNote === 'object' && !Array.isArray(rawNote)
+                  ? {
+                      chief_complaint: typeof rawNote.chief_complaint === 'string' ? rawNote.chief_complaint : null,
+                      history: typeof rawNote.history === 'string' ? rawNote.history : null,
+                      key_findings: typeof rawNote.key_findings === 'string' ? rawNote.key_findings : null,
+                      assessment: typeof rawNote.assessment === 'string' ? rawNote.assessment : null,
+                      treatment: typeof rawNote.treatment === 'string' ? rawNote.treatment : null,
+                      plan: typeof rawNote.plan === 'string' ? rawNote.plan : null,
+                    }
+                  : null
+              const source =
+                body?.source && typeof body.source === 'object' && !Array.isArray(body.source)
+                  ? { workstation_id: typeof body.source.workstation_id === 'string' ? body.source.workstation_id : null }
+                  : null
+              const result = await store.saveRecorderResult({
+                visit_id: id,
+                recording_id: recordingId,
+                transcript,
+                structured_note: structuredNote,
+                source,
+              })
+              await store.setVisitRecorderPointer(id, recordingId)
+              status = 201
+              await safeAudit({ event: 'recorder_result_saved', visit_id: id, recording_id: recordingId, actor: 'recorder' })
+              bytes = sendJson(req, res, 201, result, cors)
+            }
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'recorder-results' &&
+        req.method === 'GET'
+      ) {
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const results = await store.listRecorderResults(id)
+            bytes = sendJson(req, res, 200, { results }, cors)
+          }
+        }
       } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear' && req.method === 'POST') {
         if (!requireDoctor(req)) {
           status = 403

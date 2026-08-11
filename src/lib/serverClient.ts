@@ -170,5 +170,5 @@ export type RecorderResult = {
 }
 
 export function getRecorderResults(visitId: string): Promise<ServerResult<{ results: RecorderResult[] }>> {
-  return request(`/api/visits/${visitId}/recorder-results`)
+  return request(`/api/visits/${encodeURIComponent(visitId)}/recorder-results`)
 }

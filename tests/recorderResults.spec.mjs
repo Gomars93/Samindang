@@ -1,10 +1,11 @@
 // Recorder-results route suite. Plain node, no test framework: assert()
 // prints "OK: <name>" and throws on failure. Starts the real server on an
 // ephemeral port with a temp data dir and exercises real HTTP end to end.
-import { mkdtemp } from 'node:fs/promises'
+import { access, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createApp } from '../server/index.js'
+import { createStore } from '../server/store.js'
 
 let passCount = 0
 
@@ -110,7 +111,11 @@ async function main() {
       const res = await fetch(`${base}/api/visits/${visit.id}/recorder-results`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ recording_id: 'rec-1', transcript: 'updated transcript' }),
+        body: JSON.stringify({
+          recording_id: 'rec-1',
+          transcript: 'updated transcript',
+          structured_note: { chief_complaint: '두통', history: '3일 전부터', key_findings: null, assessment: null, treatment: null, plan: null },
+        }),
       })
       assert('duplicate recording_id -> still 201 (idempotent upsert)', res.status === 201)
 
@@ -138,7 +143,7 @@ async function main() {
       const getRes = await fetch(`${base}/api/visits/${visit.id}/recorder-results`)
       const getBody = await getRes.json()
       const rec1 = getBody.results.find((r) => r.recording_id === 'rec-1')
-      assert('structured_note lineage preserved on the record (not judgment)', rec1.structured_note === null || typeof rec1.structured_note === 'object')
+      assert('structured_note lineage preserved on the record (not judgment)', rec1.structured_note?.chief_complaint === '두통')
     }
 
     /* ---------------- auth: no token/loopback still required (regression) ---------------- */
@@ -150,6 +155,21 @@ async function main() {
       const { isDoctorRequestAllowed } = await import('../server/auth.js')
       assert('non-loopback without token is rejected', isDoctorRequestAllowed('203.0.113.5', undefined, 'secret') === false)
       assert('non-loopback with correct token is allowed', isDoctorRequestAllowed('203.0.113.5', 'secret', 'secret') === true)
+    }
+    /* ---------------- purgeAll deletes recorder-results/ too, not just submissions/ ---------------- */
+    {
+      const resultsDir = path.join(tmpRoot, 'recorder-results')
+      const savedFile = path.join(resultsDir, visit.id, 'rec-1.json')
+      await access(savedFile) // sanity check: the file exists before purge
+      const store = createStore(dataDir)
+      await store.purgeAll()
+      let stillExists = true
+      try {
+        await access(savedFile)
+      } catch {
+        stillExists = false
+      }
+      assert('purgeAll deletes recorder-results/ transcripts', stillExists === false)
     }
   } finally {
     await stopServer(server)

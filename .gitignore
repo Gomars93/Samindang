@@ -33,6 +33,9 @@ tests/.doctor-view-bundle.cjs
 tests/.patient-complete-bundle.cjs
 tests/.idle-warning-bundle.cjs
 
+# esbuild bundle used by tests/emrSummary.spec.mjs (regenerated, not source)
+tests/.emr-summary-bundle.mjs
+
 # TypeScript incremental build artifacts
 *.tsbuildinfo
 

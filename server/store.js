@@ -204,16 +204,22 @@ export function createStore(dataDir) {
         // 손상되거나 쓰는 중인 파일은 건드리지 않는다
       }
     }
+    // recorder-results/(전사/구조화 노트)도 같은 보존기한을 적용한다 — 가장
+    // 민감한 데이터가 submissions/보다 더 오래 남아있으면 안 된다.
+    deleted += await recorderResults.cleanupOlderThan(days)
     return deleted
   }
 
   // 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 파일 개수만 반환한다.
+  // recorder-results/(전사/구조화 노트)도 함께 지운다 — 여기서 빠지면
+  // "전체 삭제"라는 스크립트의 약속이 거짓이 된다.
   async function purgeAll() {
     let deleted = 0
     for (const f of await listFiles()) {
       await unlink(path.join(dataDir, f)).catch(() => {})
       deleted++
     }
+    deleted += await recorderResults.purgeAll()
     return deleted
   }
 

@@ -744,6 +744,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     if (mode !== 'server' || !selectedRecord?.visit_id) {
       setRecorderResults(null)
       setRecorderResultsError(null)
+      setEmrText('')
       emrSeedRecordingIdRef.current = null
       return
     }
@@ -790,6 +791,26 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     const t = setTimeout(() => setCopyStatus('idle'), 2000)
     return () => clearTimeout(t)
   }, [copyStatus])
+
+  // 수동 escape hatch: 원장이 진료 판단(JudgmentPanel)을 recorder 결과가 이미
+  // seed된 뒤에 저장하면, 위 seed effect는 같은 recording_id에 대해 다시
+  // 돌지 않으므로(의도된 동작 — 편집 중 텍스트 보존) Assessment/치료·처방/계획
+  // 줄이 자동으로는 채워지지 않는다. 이 버튼은 현재 화면이 들고 있는
+  // selectedRecord.judgment(클라이언트 상태)로 즉시 다시 조립한다.
+  // ponytail: selectedRecord 자체를 강제로 재조회하지는 않는다 — 별도 refetch
+  // nonce를 새로 만드는 건 이 fix 범위에는 과하다. 값이 서버에는 저장됐지만
+  // 이 화면의 selectedRecord가 아직 그 값을 모른다면(다른 창에서 저장한 경우
+  // 등) 버튼을 다시 눌러도 반영되지 않는다 — 그 경우 패널을 닫았다 열면 된다.
+  function handleRebuildEmrSummary() {
+    if (!recorderResults?.[0]) return
+    setEmrText(
+      buildEmrSummary({
+        primaryConcern: primaryConcernLabel(r),
+        structuredNote: recorderResults[0].structured_note,
+        judgment: selectedRecord?.judgment ?? null,
+      }),
+    )
+  }
 
   async function handleCopyEmr() {
     try {
@@ -1258,6 +1279,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               <div className="judgment__actions">
                 <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
                   EMR용 복사
+                </button>
+                <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
+                  요약 다시 만들기
                 </button>
                 {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
                 {copyStatus === 'error' && (

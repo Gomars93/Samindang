@@ -59,6 +59,10 @@ loopback-only 별도 가드를 썼지만, 다른 workstation이 LAN으로 읽어
 - Recorder는 자기 workstation_id의 current-visit만 읽는다 — 다른
   workstation의 current-visit을 조회하거나 수정할 수 없다(권한이 아니라
   애초에 다른 workstation_id를 모른다는 설계).
+- loopback이 아닌 POST(예: A PC → B 서버, LAN 너머)는 다른 doctor
+  라우트와 동일하게 `x-doctor-token` 헤더가 필요하다 — 없으면 403.
+- `recording_id`는 `/^[A-Za-z0-9_-]{1,128}$/`(영문/숫자/밑줄/하이픈,
+  1~128자)만 허용한다 — 그 외 문자(경로 순회 시도 포함)는 400으로 거부된다.
 
 ## Privacy
 

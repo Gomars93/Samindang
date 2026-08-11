@@ -58,6 +58,16 @@ async function main() {
       assert('POST missing recording_id -> 400', res.status === 400)
     }
 
+    /* ---------------- POST recording_id with disallowed characters (path traversal attempt) -> 400 ---------------- */
+    {
+      const res = await fetch(`${base}/api/visits/${visit.id}/recorder-results`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recording_id: '../evil' }),
+      })
+      assert('POST recording_id with disallowed characters (path traversal attempt) -> 400', res.status === 400)
+    }
+
     /* ---------------- POST malformed JSON -> 400 ---------------- */
     {
       const res = await fetch(`${base}/api/visits/${visit.id}/recorder-results`, {

@@ -661,11 +661,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [recorderResultsError, setRecorderResultsError] = useState<string | null>(null)
   const [emrText, setEmrText] = useState('')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
-  // 원장이 EMR 텍스트박스를 이미 편집했다면, 같은 recording_id로 폴링이
-  // 다시 돌아와도 그 편집을 덮어쓰지 않는다(v0.1 작업지시서 4번, 수정
-  // 내용이 자동으로 원문을 덮어쓰지 않아야 한다는 원칙의 UI 쪽 적용).
+  // 같은 recording_id로 폴링이 다시 돌아와도 EMR 텍스트를 다시 만들지
+  // 않기 위한 최신 seed 기준점(새 recording_id가 오면 편집 중이어도
+  // 갱신됨 — 아래 seed effect 주석 참고).
   const emrSeedRecordingIdRef = useRef<string | null>(null)
-  const emrEditedRef = useRef(false)
 
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
@@ -746,7 +745,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       setRecorderResults(null)
       setRecorderResultsError(null)
       emrSeedRecordingIdRef.current = null
-      emrEditedRef.current = false
       return
     }
     const visitId = selectedRecord.visit_id
@@ -772,12 +770,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   }, [mode, selectedRecord?.visit_id])
 
   // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
+  // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
   useEffect(() => {
     const latest = recorderResults?.[0] ?? null
     if (!latest) return
     if (emrSeedRecordingIdRef.current === latest.recording_id) return
     emrSeedRecordingIdRef.current = latest.recording_id
-    emrEditedRef.current = false
     setEmrText(
       buildEmrSummary({
         primaryConcern: primaryConcernLabel(r),
@@ -1254,10 +1252,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                   className="judgment__textarea"
                   rows={8}
                   value={emrText}
-                  onChange={(e) => {
-                    emrEditedRef.current = true
-                    setEmrText(e.target.value)
-                  }}
+                  onChange={(e) => setEmrText(e.target.value)}
                 />
               </div>
               <div className="judgment__actions">

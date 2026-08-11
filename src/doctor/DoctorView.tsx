@@ -1306,8 +1306,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
         onSave={
           mode === 'server' && selectedId
-            ? (judgment: ClinicianJudgment) => {
-                saveJudgmentToServer(selectedId, judgment)
+            ? async (judgment: ClinicianJudgment) => {
+                // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
+                // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
+                // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
+                const result = await saveJudgmentToServer(selectedId, judgment)
+                if (result.ok) setSelectedRecord(result.data)
               }
             : undefined
         }

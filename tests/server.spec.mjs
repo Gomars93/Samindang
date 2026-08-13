@@ -1008,6 +1008,34 @@ async function main() {
         visitsAfterRestart.some((v) => v.patient_id === visitTestPatientId),
       )
     }
+
+    /* ---------------- 병목 7/8: same submission reselected (with an API restart in between) -> same persistent visit_id ---------------- */
+    {
+      const created = await (
+        await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-reselect-same-visit' })),
+        })
+      ).json()
+      const firstSelect = await (await fetch(`${base}/api/submissions/${created.id}`)).json()
+      const v1 = firstSelect.visit_id
+      assert('reselect: first select has a visit_id', typeof v1 === 'string' && v1 !== '')
+
+      // Reselect without restarting -> same visit_id.
+      const reselectNoRestart = await (await fetch(`${base}/api/submissions/${created.id}`)).json()
+      assert('reselect: same visit_id without restart', reselectNoRestart.visit_id === v1)
+
+      // Restart the API, then reselect the same submission -> still the same visit_id
+      // (current-visit pointer resets on restart, but the persistent visit does not).
+      await stopServer(server)
+      const restartedAgain = await startServer(dataDir)
+      server = restartedAgain.server
+      base = restartedAgain.base
+
+      const reselectAfterRestart = await (await fetch(`${base}/api/submissions/${created.id}`)).json()
+      assert('reselect: same visit_id after API restart', reselectAfterRestart.visit_id === v1)
+    }
   } finally {
     await stopServer(server)
     await rm(tmpRoot, { recursive: true, force: true })

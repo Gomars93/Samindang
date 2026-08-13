@@ -23,6 +23,15 @@
   flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 24px;
+  /* 병목 10: 상세화면이 길어도 "목록으로" 등 상단 주요 액션에 다시
+     스크롤해 올라가지 않고 닿을 수 있게 한다(최소 수정, 레이아웃 재설계
+     아님). --bg로 불투명 배경을 줘서 아래 내용이 비쳐 보이지 않게 한다. */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding-top: 12px;
+  padding-bottom: 8px;
 }
 
 .doctor__title {
@@ -344,6 +353,35 @@
   border-radius: 50%;
   background: var(--danger);
   margin-right: 6px;
+}
+
+.doctor__newDot--ready {
+  background: #2e7d4f;
+}
+
+.doctor__emrReadyBadge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e4f3ea;
+  color: #2e7d4f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.doctor__toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 50;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #2e7d4f;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
 .doctor__grid {

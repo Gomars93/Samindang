@@ -126,6 +126,12 @@ export function createStore(dataDir) {
       try {
         const raw = await readFile(path.join(dataDir, f), 'utf8')
         const r = JSON.parse(raw)
+        // recorder_ready: visit.recording_id는 recorder-results POST가 성공할
+        // 때마다 갱신되는 실제 포인터다(visitStore.setRecorderPointer) — 즉
+        // "적어도 하나의 녹취 결과가 도착했다"는 근거 있는 사실이지, 추정이
+        // 아니다. "전사중"/"전달오류" 같은 A PC 파이프라인 중간 상태는 B가
+        // 알 방법이 없으므로(근거 없는 추정 금지) 이 필드를 만들지 않는다.
+        const visit = r.visit_id ? await visits.getVisit(r.visit_id) : null
         records.push({
           id: r.id,
           created_at: r.created_at,
@@ -134,6 +140,7 @@ export function createStore(dataDir) {
           patient_label: r.patient_label,
           primary_concern: r.submission?.metadata?.primary_concern ?? null,
           requires_staff_check: r.submission?.flags?.requires_staff_check ?? false,
+          recorder_ready: Boolean(visit?.recording_id),
         })
       } catch {
         // 손상되거나 쓰는 중(.tmp 아님)인 파일은 목록에서 건너뛴다

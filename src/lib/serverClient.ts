@@ -4,48 +4,54 @@
  * 시도하지 않는다(오늘까지의 동작 그대로).
  */
 import type { ClinicianJudgment } from '../doctor/judgment'
+import { getStoredDoctorToken } from '../doctor/doctorToken'
 
 const BASE_URL = import.meta.env.VITE_SAMINDANG_SERVER_URL as string | undefined
-// LAN Doctor access (e.g. A PC's browser reaching B PC's server): loopback
-// has no token requirement, but a cross-machine request needs the same
-// x-doctor-token the server checks in requireDoctor(). Harmless to send on
-// every request — the server only inspects this header on doctor routes.
-const DOCTOR_TOKEN = import.meta.env.VITE_SAMINDANG_DOCTOR_TOKEN as string | undefined
 const TIMEOUT_MS = 8000
 
 export function isServerConfigured(): boolean {
   return typeof BASE_URL === 'string' && BASE_URL.trim() !== ''
 }
 
-export type ServerResult<T> = { ok: true; data: T } | { ok: false; error: string }
+export type ServerResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; kind: 'auth' | 'network' | 'other' }
 
 async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<ServerResult<T>> {
-  if (!isServerConfigured()) return { ok: false, error: '서버가 설정되지 않았습니다.' }
+  if (!isServerConfigured()) return { ok: false, error: '서버가 설정되지 않았습니다.', kind: 'other' }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  // LAN Doctor access (e.g. A PC's browser reaching B PC's server): loopback
+  // has no token requirement, but a cross-machine request needs the same
+  // x-doctor-token the server checks in requireDoctor(). Read at request time
+  // (not module load) so a token set/cleared mid-session takes effect
+  // immediately. Harmless to send on every request — the server only
+  // inspects this header on doctor routes.
+  const token = getStoredDoctorToken()
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
         'content-type': 'application/json',
-        ...(DOCTOR_TOKEN ? { 'x-doctor-token': DOCTOR_TOKEN } : {}),
+        ...(token ? { 'x-doctor-token': token } : {}),
         ...init.headers,
       },
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
-      return { ok: false, error: body?.error ?? `서버 오류 (${res.status})` }
+      const kind = res.status === 401 || res.status === 403 ? 'auth' : 'other'
+      return { ok: false, error: body?.error ?? `서버 오류 (${res.status})`, kind }
     }
     const data = (await res.json()) as T
     return { ok: true, data }
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError' ? '요청 시간 초과' : '서버에 연결할 수 없습니다.'
-    return { ok: false, error: msg }
+    return { ok: false, error: msg, kind: 'network' }
   } finally {
     clearTimeout(timer)
   }
@@ -68,6 +74,8 @@ export type SubmissionSummary = {
   patient_label: string
   primary_concern: string | null
   requires_staff_check: boolean
+  // recorder-results가 이 방문에 적어도 하나 도착했다는 실제 서버 상태(추정 아님).
+  recorder_ready: boolean
 }
 
 export function listSubmissions(): Promise<ServerResult<SubmissionSummary[]>> {

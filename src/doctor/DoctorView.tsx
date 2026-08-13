@@ -22,6 +22,8 @@ import {
 } from '../lib/serverClient'
 import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
+import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
+import { getStoredDoctorToken } from './doctorToken'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -649,13 +651,30 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [fixtureIndex, setFixtureIndex] = useState(initialFixtureIndex)
 
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>([])
-  const [serverError, setServerError] = useState<string | null>(null)
+  const [serverError, setServerError] = useState<{ message: string; kind: 'auth' | 'network' | 'other' } | null>(
+    null,
+  )
   const [listLoading, setListLoading] = useState(true)
   const [retryNonce, setRetryNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
+  // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
+  // from this screen, forcing a re-render (poll effect below depends on it
+  // too, so a fresh/cleared token retries immediately).
+  const [tokenVersion, setTokenVersion] = useState(0)
+  const hasDoctorToken = getStoredDoctorToken() !== null
+
+  // 병목 9: 제출목록 카드의 EMR 준비 배지/미확인 dot/토스트. recorder_ready는
+  // 서버가 실제 방문 데이터로 계산해 내려주는 값이라(store.js), 여기서는
+  // "이전 폴링과 비교해 새로 true가 된 id"만 판정한다 — 클라이언트가
+  // 스스로 processing 상태를 추정하지 않는다. 첫 폴링 결과는 기준점으로만
+  // 쓰고 토스트를 띄우지 않는다(마운트 시점에 이미 준비된 건들이 전부
+  // "새 도착"으로 잘못 뜨는 것을 막기 위함).
+  const knownReadyIdsRef = useRef<Set<string> | null>(null)
+  const [unreadReadyIds, setUnreadReadyIds] = useState<Set<string>>(new Set())
+  const [readyToast, setReadyToast] = useState<{ id: string; patientLabel: string } | null>(null)
 
   const [recorderResults, setRecorderResults] = useState<RecorderResult[] | null>(null)
   const [recorderResultsError, setRecorderResultsError] = useState<string | null>(null)
@@ -679,8 +698,32 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       if (result.ok) {
         setSubmissions(result.data)
         setServerError(null)
+
+        const readyIds = new Set(result.data.filter((s) => s.recorder_ready).map((s) => s.id))
+        if (knownReadyIdsRef.current === null) {
+          knownReadyIdsRef.current = readyIds
+        } else {
+          const known = knownReadyIdsRef.current
+          const newlyReady = [...readyIds].filter((id) => !known.has(id))
+          if (newlyReady.length > 0) {
+            setUnreadReadyIds((prev) => {
+              const next = new Set(prev)
+              newlyReady.forEach((id) => next.add(id))
+              return next
+            })
+            const firstId = newlyReady[0]
+            setReadyToast({
+              id: firstId,
+              patientLabel:
+                newlyReady.length === 1
+                  ? (result.data.find((s) => s.id === firstId)?.patient_label ?? '')
+                  : `${newlyReady.length}건`,
+            })
+          }
+          knownReadyIdsRef.current = readyIds
+        }
       } else {
-        setServerError(result.error)
+        setServerError({ message: result.error, kind: result.kind })
       }
       setListLoading(false)
     }
@@ -691,7 +734,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       cancelled = true
       clearInterval(timer)
     }
-  }, [mode, retryNonce])
+  }, [mode, retryNonce, tokenVersion])
 
   // 서버 모드: 선택한 제출건 상세를 불러오고, 처음 열 때만 'viewed'로 표시한다.
   useEffect(() => {
@@ -700,6 +743,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       return
     }
     let cancelled = false
+    setUnreadReadyIds((prev) => {
+      if (!prev.has(selectedId)) return prev
+      const next = new Set(prev)
+      next.delete(selectedId)
+      return next
+    })
     getSubmission(selectedId).then((result) => {
       if (cancelled) return
       if (result.ok) {
@@ -709,7 +758,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           setSubmissionStatus(selectedId, 'viewed')
         }
       } else {
-        setServerError(result.error)
+        setServerError({ message: result.error, kind: result.kind })
       }
     })
     return () => {
@@ -769,6 +818,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       clearInterval(timer)
     }
   }, [mode, selectedRecord?.visit_id])
+
+  // 비차단 토스트 1회: 몇 초 뒤 스스로 사라진다(닫기 버튼 없이도 화면을 막지 않음).
+  useEffect(() => {
+    if (!readyToast) return
+    const t = setTimeout(() => setReadyToast(null), 6000)
+    return () => clearTimeout(t)
+  }, [readyToast])
 
   // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
   // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
@@ -846,11 +902,24 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
   return (
     <div className="doctor">
+      {readyToast && (
+        <div className="doctor__toast" role="status">
+          {readyToast.patientLabel} — EMR 복사 준비됨
+        </div>
+      )}
       <header className="doctor__header">
         <h1 className="doctor__title">진료 전 요약</h1>
         <span className="doctor__workstationBadge">
           {workstationId ? `진료 워크스테이션: ${workstationId}` : '워크스테이션 설정 필요'}
         </span>
+        {mode === 'server' && hasDoctorToken && (
+          <DoctorTokenClearButton
+            onClear={() => {
+              setTokenVersion((n) => n + 1)
+              setRetryNonce((n) => n + 1)
+            }}
+          />
+        )}
         <div className="doctor__pickerRow">
           <label htmlFor="doctor-source-select">데이터 소스</label>
           <select
@@ -895,11 +964,21 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
 
-      {mode === 'server' && serverError && (
+      {mode === 'server' && serverError?.kind === 'auth' && (
+        <DoctorTokenSetup
+          authFailed
+          onSet={() => {
+            setTokenVersion((n) => n + 1)
+            setRetryNonce((n) => n + 1)
+          }}
+        />
+      )}
+
+      {mode === 'server' && serverError && serverError.kind !== 'auth' && (
         <div className="doctor__banner doctor__banner--danger">
           <strong>서버에 연결할 수 없습니다</strong>
           <p>
-            {serverError} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
+            {serverError.message} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
             VITE_SAMINDANG_SERVER_URL 설정이 맞는지 확인하세요. 그동안 예시
             데이터로 화면을 확인할 수 있습니다.
           </p>
@@ -930,10 +1009,14 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                 >
                   <span className="doctorField__label">
                     {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
+                    {unreadReadyIds.has(s.id) && (
+                      <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
+                    )}
                     {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
                   </span>
                   <span className="doctorField__value">
                     {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
+                    {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
                   </span>
                 </button>
               ))}

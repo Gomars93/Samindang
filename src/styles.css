@@ -43,7 +43,15 @@ html.doctor-mode,
 html.doctor-mode body,
 html.doctor-mode #root {
   height: auto;
-  overflow: auto;
+  /* overflow:auto였을 때 이 세 요소 모두 height:auto라 스스로는 절대
+     스크롤바가 생기지 않고, 실제 스크롤은 뷰포트(document)가 담당한다 —
+     그런데 sticky는 "가장 가까운 스크롤 가능한 조상"을 기준으로 붙는데,
+     이 auto 값들이 그 조상 체인을 스크롤 컨테이너로 오인시켜 .doctor__header의
+     position: sticky를 무력화시켰다(병목 10). visible로 바꿔도 태블릿 쪽
+     overflow: hidden(위 html/body/#root 규칙)을 덮어쓰는 원래 목적은 그대로
+     유지된다 — 이 클래스는 .doctor-mode 스코프라 태블릿 문진 화면에는 영향 없다.
+  */
+  overflow: visible;
 }
 
 body {

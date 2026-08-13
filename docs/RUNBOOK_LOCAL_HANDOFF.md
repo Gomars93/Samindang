@@ -113,6 +113,33 @@ npm run server
 처리한다(환자에게 오류로 보이지 않는다). 서버 콘솔 로그에는 "duplicate
 submission detected" 한 줄만 남고, 제출 내용은 로그에 남지 않는다.
 
+### 2.5 자동 시작 + 죽으면 자동 복구 (Task Scheduler, 권장)
+
+매번 콘솔 창을 열어 서버를 띄우지 않으려면, 로그온 시 자동 시작 +
+비정상 종료 시 자동 재시작을 Windows 작업 스케줄러에 등록한다:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register-doctor-api-task.ps1
+```
+
+`SamindangDoctorAPI`라는 이름으로 등록되며, `scripts\start-doctor-api.bat`을
+로그온 시 실행하고 죽으면(비정상 종료) 최대 999회까지 1분 간격으로
+재시작한다(재시작 로직은 Task Scheduler 자체 기능 — 별도 supervisor
+프로세스를 만들지 않는다).
+
+상태/헬스 확인:
+
+```powershell
+Get-ScheduledTask -TaskName SamindangDoctorAPI | Get-ScheduledTaskInfo
+curl http://localhost:4317/api/health   # {"ok":true,"service":"doctor-api",...}
+```
+
+해제:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\unregister-doctor-api-task.ps1
+```
+
 ## 3. 보안 모델 (반드시 이해하고 운영할 것)
 
 - **환자 엔드포인트(`POST /api/submissions`)는 쓰기 전용**이다. 태블릿은

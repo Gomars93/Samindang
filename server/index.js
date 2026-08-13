@@ -8,6 +8,8 @@
 // docs/RUNBOOK_LOCAL_HANDOFF.md 참고.
 import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { createStore } from './store.js'
 import { createAuditLog } from './audit.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
@@ -187,7 +189,7 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
 
     try {
       if (parts[0] === 'api' && parts[1] === 'health' && req.method === 'GET') {
-        bytes = sendJson(req, res, 200, { ok: true, version: VERSION }, cors)
+        bytes = sendJson(req, res, 200, { ok: true, service: 'doctor-api', version: VERSION }, cors)
       } else if (parts[0] === 'api' && parts[1] === 'submissions' && parts.length === 2 && req.method === 'POST') {
         const body = await readBody(req)
         if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.questionnaire_version !== 'string' || !body.responses) {
@@ -545,15 +547,47 @@ function isMain() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 }
 
+// 병목 6 대응: 상대경로 로그가 "실제로 어느 디스크 경로에 쓰고 있는지"
+// 혼동을 일으켰다(운영자가 다른 작업 디렉터리에서 실행하면 같은
+// './.data/submissions'가 다른 곳을 가리킨다). 부팅 시 절대경로로 못박고,
+// 그 경로들이 실제로 쓰기 가능한지 즉시 확인해 안 되면 fatal로 죽는다 —
+// 나중에 첫 요청에서야 조용히 실패하는 것보다 낫다.
+async function checkDataDirsWritable(dataDir) {
+  const dirs = {
+    submissions_dir: path.resolve(dataDir),
+    visits_dir: path.resolve(dataDir, '..', 'visits'),
+    recorder_results_dir: path.resolve(dataDir, '..', 'recorder-results'),
+  }
+  for (const [label, dir] of Object.entries(dirs)) {
+    const probe = path.join(dir, '.write-probe')
+    try {
+      await mkdir(dir, { recursive: true })
+      await writeFile(probe, '')
+      await rm(probe)
+    } catch (err) {
+      throw new Error(`${label} (${dir}) not writable: ${err.message}`)
+    }
+  }
+  return dirs
+}
+
 if (isMain()) {
   const host = process.env.SAMINDANG_HOST ?? '0.0.0.0'
   const port = Number(process.env.SAMINDANG_PORT ?? '4317')
   const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
+
+  const dirs = await checkDataDirsWritable(dataDir).catch((err) => {
+    console.error(`fatal: data directory self-check failed — ${err.message}`)
+    process.exit(1)
+  })
+
   const server = createApp({ dataDir })
   server.listen(port, host, () => {
     const retentionDays = Number(process.env.SAMINDANG_RETENTION_DAYS ?? '30')
     console.log(`samindang handoff server listening on http://${host}:${port}`)
-    console.log(`data dir: ${dataDir}`)
+    console.log(`submissions_dir: ${dirs.submissions_dir}`)
+    console.log(`visits_dir: ${dirs.visits_dir}`)
+    console.log(`recorder_results_dir: ${dirs.recorder_results_dir}`)
     console.log(`doctor token: ${process.env.SAMINDANG_DOCTOR_TOKEN ? 'set' : 'not set (loopback-only for doctor endpoints)'}`)
     console.log(
       `retention: ${retentionDays > 0 ? `auto-delete submissions older than ${retentionDays}d (every 6h)` : 'disabled (SAMINDANG_RETENTION_DAYS=0)'}`,

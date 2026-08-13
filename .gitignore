@@ -45,3 +45,10 @@ tests/.emr-summary-bundle.mjs
 # directory rule below, listed explicitly for clarity.
 .data/
 .data/audit.log
+
+# personal Claude Code settings + ntfy long-task-notify state (not source)
+.claude/settings.local.json
+.claude/.ntfy-start.tmp
+
+# esbuild bundle used by tests/doctorToken.spec.mjs (regenerated, not source)
+tests/.doctor-token-bundle.mjs

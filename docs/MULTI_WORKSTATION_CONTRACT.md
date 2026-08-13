@@ -82,9 +82,9 @@ loopback-only 별도 가드를 썼지만, 다른 workstation이 LAN으로 읽어
 
 자동화된 단일 프로세스 테스트로는 실제 두 PC 간 네트워크 경로를 재현할
 수 없다 — 아래를 A PC 브라우저에서 B PC 서버를 대상으로 실제로 실행해서
-확인한다. `SAMINDANG_DOCTOR_TOKEN`을 B 서버에 설정하고,
-`VITE_SAMINDANG_DOCTOR_TOKEN`을 A의 클라이언트 빌드/설정에 동일하게
-맞춘 뒤:
+확인한다. `SAMINDANG_DOCTOR_TOKEN`을 B 서버에 설정하고, A의 Doctor UI에서
+같은 값을 런타임에 입력(탭의 sessionStorage에만 저장, 빌드에 넣지 않음)한
+뒤:
 
 - [ ] A 브라우저 → B Doctor View에서 제출목록 조회 성공
 - [ ] visit 상세 조회 성공

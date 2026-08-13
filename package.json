@@ -15,7 +15,8 @@
     "test:recorderResults": "node tests/recorderResults.spec.mjs",
     "test:patient": "esbuild src/screens/PatientCompleteScreen.tsx --bundle --format=cjs --platform=node --loader:.css=empty --jsx=automatic --external:react --external:react-dom --outfile=tests/.patient-complete-bundle.cjs && esbuild src/components/IdleWarningModal.tsx --bundle --format=cjs --platform=node --loader:.css=empty --jsx=automatic --external:react --external:react-dom --outfile=tests/.idle-warning-bundle.cjs && node tests/patient-flow.spec.mjs",
     "test:emrSummary": "esbuild src/doctor/emrSummary.ts --bundle --format=esm --outfile=tests/.emr-summary-bundle.mjs --platform=neutral && node tests/emrSummary.spec.mjs",
-    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju && npm run test:doctor && npm run test:server && npm run test:recorderResults && npm run test:patient && npm run test:emrSummary",
+    "test:doctorToken": "esbuild src/doctor/doctorToken.ts --bundle --format=esm --outfile=tests/.doctor-token-bundle.mjs --platform=neutral && node tests/doctorToken.spec.mjs",
+    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju && npm run test:doctor && npm run test:server && npm run test:recorderResults && npm run test:patient && npm run test:emrSummary && npm run test:doctorToken",
     "server": "node server/index.js",
     "purge:data": "node scripts/purge-data.mjs"
   },

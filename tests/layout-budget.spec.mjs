@@ -173,7 +173,9 @@ function estimateScreenHeight(q) {
 // BIRTH_03 (12시진 + 잘 모르겠어요, 13 options) also genuinely exceeds the
 // budget and is mitigated the same way -- the screen scrolls internally via
 // .shell__main's overflow-y: auto, so no content is unreachable.
-const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'HISTORY_01', 'BIRTH_03'])
+// LBP_11(염증성 선별, 9지선다 + helper 없음이지만 다지선다라 길다)도 같은 이유로 허용 —
+// LBP_INTEGRATION_PLAN_DRAFT.md §12.4.
+const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'HISTORY_01', 'BIRTH_03', 'LBP_11'])
 
 const estimates = ALL_QUESTIONS.map((q) => ({
   id: q.id,

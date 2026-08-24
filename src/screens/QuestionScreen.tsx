@@ -1,6 +1,7 @@
 import { MultiChoice } from '../components/MultiChoice'
 import { SingleChoice } from '../components/SingleChoice'
 import { TextInputField } from '../components/TextInputField'
+import { NumericScale } from '../components/NumericScale'
 import type { AnswerValue, Question, Responses } from '../types'
 
 type Props = {
@@ -45,6 +46,17 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
           onChange={(v) => onChange(v)}
           maxLength={question.maxLength}
           placeholder={question.placeholder}
+        />
+      )}
+
+      {question.input === 'numeric_scale' && question.scale && (
+        <NumericScale
+          min={question.scale.min}
+          max={question.scale.max}
+          minLabel={question.scale.minLabel}
+          maxLabel={question.scale.maxLabel}
+          value={typeof value === 'number' ? value : null}
+          onSelect={(v) => onChange(v)}
         />
       )}
     </>

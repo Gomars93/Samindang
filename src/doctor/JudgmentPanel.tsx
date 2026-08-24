@@ -71,16 +71,32 @@ function LabeledTextarea({
 
 const emptyDebrief: DebriefAnswers = { q1: '', q2: '', q3: '', q4: '' }
 
+const LBP_MOTOR_DEFICIT_OPTIONS: { value: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'; label: string }[] = [
+  { value: 'NONE', label: '없음' },
+  { value: 'SEVERE_OR_PROGRESSIVE', label: '심하거나 빠르게 진행함' },
+  { value: 'UNKNOWN', label: '아직 확인 못함' },
+]
+
 export function JudgmentPanel({
   source,
   initialJudgment,
   onSave,
+  showLbpExam = false,
 }: {
   source: JudgmentSourcePayload
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
   initialJudgment?: ClinicianJudgment | null
   /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
   onSave?: (judgment: ClinicianJudgment) => void
+  /**
+   * LBP_V1: 이번 방문의 주호소가 허리(LBP)일 때만 true — 객관적 하지
+   * 근력저하 소견 입력 컨트롤을 보여준다. 결정 §1-2: 이 값이
+   * SEVERE_OR_PROGRESSIVE면 환자 자가보고 CES 문항과 무관하게
+   * URGENT_REVIEW를 발생시킨다(src/spec/lbpLogic.ts). 기존 judgment 저장
+   * 경로(onSave)를 그대로 재사용한다 — 별도 저장 메커니즘을 새로 만들지
+   * 않는다.
+   */
+  showLbpExam?: boolean
 }) {
   const [judgment, setJudgment] = useState<ClinicianJudgment>(
     () => initialJudgment ?? createEmptyJudgment(source),
@@ -129,6 +145,33 @@ export function JudgmentPanel({
           onChange={(next) => setJudgment((j) => ({ ...j, symptom_links: next }))}
         />
       </div>
+
+      {showLbpExam && (
+        <div className="judgment__field judgment__lbpExam">
+          <span className="judgment__label">
+            객관적 하지 근력저하 소견 (원장 진찰, LBP)
+          </span>
+          <p className="doctor__derivedNote">
+            심하거나 빠르게 진행하는 소견이면 환자 자가보고(CES 문항)와 무관하게
+            긴급 확인이 표시됩니다. 아직 진찰 전이면 선택하지 않아도 됩니다.
+          </p>
+          <div className="judgment__radioRow">
+            {LBP_MOTOR_DEFICIT_OPTIONS.map((opt) => (
+              <label key={opt.value} className="judgment__radioOption">
+                <input
+                  type="radio"
+                  name="lbp_objective_motor_deficit"
+                  checked={judgment.lbp_objective_motor_deficit === opt.value}
+                  onChange={() =>
+                    setJudgment((j) => ({ ...j, lbp_objective_motor_deficit: opt.value }))
+                  }
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <details className="judgment__secondaryFields">
         <summary>사주 예상 → 수정 판단 → 치료축·처방 방향 (펼쳐서 입력)</summary>

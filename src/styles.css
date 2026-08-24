@@ -262,6 +262,33 @@ input {
   font-weight: 700;
 }
 
+/* numeric_scale (LBP_V1) — 0~10 큰 버튼 행. 작은 슬라이더/체크박스 금지 규칙(2.4)을
+   그대로 지키면서 optionList/option 스타일을 재사용한다. */
+.optionList--scale {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.option--scale {
+  width: auto;
+  min-width: var(--btn-min-h);
+  flex: 1 1 auto;
+  justify-content: center;
+  padding: 16px 8px;
+  font-size: var(--fs-question);
+  font-weight: 700;
+}
+
+.numericScale__labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  font-size: var(--fs-helper);
+  color: var(--text-muted);
+}
+
 .option__mark {
   flex: 0 0 auto;
   width: 32px;

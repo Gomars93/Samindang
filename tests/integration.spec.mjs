@@ -1064,11 +1064,14 @@ const H1_MODULES = [
  * ========================================================================= */
 
 // I1
+// LBP_V1: LBP_04(CES 응급값)를 사용자 확정 결정(2026-08-24)에 따라
+// SAFETY_01/GI_03/BOWEL_03과 동일한 즉시 인터럽트 트리거로 추가했다 —
+// LBP_INTEGRATION_PLAN_DRAFT.md 개정 로그 항목 7 참고.
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03',
-    JSON.stringify(keys) === JSON.stringify(['BOWEL_03', 'GI_03', 'SAFETY_01']),
+    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04',
+    JSON.stringify(keys) === JSON.stringify(['BOWEL_03', 'GI_03', 'LBP_04', 'SAFETY_01']),
   )
 }
 

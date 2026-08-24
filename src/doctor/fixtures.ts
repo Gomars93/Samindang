@@ -198,4 +198,36 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     BOWEL_03: 'yes',
     BOWEL_04: 'often',
   }),
+
+  // LBP_V1: 양쪽 다리 + 구체적 신경 증상(NUMBNESS) -> lbp_safety_status
+  // REVIEW_REQUIRED (결정 §2, checklist item 5). primary_module은 'Pain'
+  // 그대로, primary_module_detail만 'LBP' — 이전까지 primary-pain fixture가
+  // 하나도 없었다(Opus review S9).
+  buildFixture('허리 통증 주호소 (LBP, 확인 필요)', {
+    ID_01: '조현우',
+    ID_03: 'male',
+    BIRTH_01: '19700615',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'lower_limb',
+    LBP_01: 'BUTTOCK',
+    LBP_02: ['NUMBNESS'],
+    LBP_03: 'BILATERAL',
+    LBP_04: ['NONE'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'YES',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 6,
+    LBP_13: 'SOMEWHAT',
+    LBP_14: 'SOME',
+  }),
 ]

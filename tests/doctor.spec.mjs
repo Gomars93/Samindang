@@ -98,6 +98,46 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2c. LBP_V1 primary-pain fixture: safety panel renders, primary_module
+ *     stays 'Pain' (never repurposed, Opus review S9), Suggested Exam
+ *     card renders, no patient-facing diagnosis/probability leaks.
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('LBP fixture: primary_module stays Pain', f.payload.routing.primary_module === 'Pain')
+  assert('LBP fixture: primary_module_detail is LBP', f.payload.routing.primary_module_detail === 'LBP')
+  assert(
+    'LBP fixture: lbp_safety_status is REVIEW_REQUIRED (bilateral + NUMBNESS)',
+    f.payload.responses.safety_flags.lbp?.lbp_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert(
+    'LBP fixture: leg_symptom_present is YES',
+    f.payload.responses.safety_flags.lbp?.leg_symptom_present === 'YES',
+  )
+  assert(
+    'LBP fixture: does NOT trigger requires_staff_check (LBP_04=NONE, non-urgent review only)',
+    f.payload.flags.requires_staff_check === false,
+  )
+
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('LBP fixture: renders 안전 확인 — 허리 panel title', html.includes('안전 확인 — 허리'))
+  assert('LBP fixture: shows 확인 필요 status', html.includes('확인 필요'))
+  assert('LBP fixture: renders 신경근성 증상 가능성 chip', html.includes('신경근성 증상 가능성'))
+  assert('LBP fixture: renders 추가 권장 검사 card', html.includes('추가 권장 검사'))
+  assert(
+    'LBP fixture: checklist item 17/18 — REVIEW_REQUIRED locks routine recommendation UI note',
+    html.includes('안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다'),
+  )
+  assert('LBP fixture: PAIN_01 question text renders (module detail includes LBP fields)', html.includes('어디가 가장 불편한가요'))
+  assert('LBP fixture: LBP_01 question text renders', html.includes('허리 통증이나 불편감이 가장 멀리'))
+  assert(
+    'LBP fixture: no patient-facing diagnosis/probability language (예: 추간판탈출증/디스크/확률)',
+    !/추간판탈출증|디스크\s*진단|확률\s*\d/.test(html),
+  )
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

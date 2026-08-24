@@ -24,6 +24,8 @@ import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
+import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
+import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -411,6 +413,135 @@ function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'
   )
 }
 
+const LBP_SAFETY_STATUS_LABEL: Record<LbpComputedFields['lbp_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+  URGENT_REVIEW: '긴급 확인 필요',
+}
+
+const LBP_TREATMENT_SAFETY_LABEL: Record<LbpComputedFields['treatment_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+}
+
+const LBP_EXAM_LABELS: Record<string, string> = {
+  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
+  LUMBAR_ACTIVE_MOVEMENT_RESPONSE: '요추 능동 움직임 반응 검사',
+  LOWER_EXTREMITY_MOTOR_MYOTOME: '하지 근절(myotome) 근력 검사',
+  SENSORY_SCREEN: '감각 검사',
+  REFLEX_SCREEN: '반사 검사',
+  NEURODYNAMIC_TEST_AS_INDICATED: '신경역동학 검사(필요시)',
+  GAIT_AND_WALKING_TOLERANCE: '보행 및 보행 내구성 검사',
+  NEUROLOGIC_EXAM: '신경학적 검사',
+  HIP_SCREEN_AS_INDICATED: '고관절 검사(필요시)',
+  VASCULAR_SCREEN_AS_INDICATED: '혈관 검사(필요시)',
+}
+
+/**
+ * lbp_v1.0.yaml의 clinician_exam_selector.rules를 그대로 옮긴다. SIJ/hip
+ * cluster 제안처럼 "원장이 의심할 때만" 해당하는 항목은 데이터로 판단할 수
+ * 없어 제외한다(그 부분까지 자동 제안하면 클리니션 판단을 대신하는 것이 됨).
+ */
+function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: AnswerValue): string[] {
+  const codes: string[] = []
+  if (flags.lbp_safety_status === 'CLEAR') {
+    codes.push('TARGET_FUNCTION_REPRODUCTION', 'LUMBAR_ACTIVE_MOVEMENT_RESPONSE')
+  }
+  if (flags.leg_symptom_present === 'YES' || flags.leg_symptom_present === 'UNKNOWN' || flags.lbp_neuro_baseline_required) {
+    for (const c of ['LOWER_EXTREMITY_MOTOR_MYOTOME', 'SENSORY_SCREEN', 'REFLEX_SCREEN']) {
+      if (!codes.includes(c)) codes.push(c)
+    }
+  }
+  if (flags.leg_symptom_present === 'YES' || flags.leg_symptom_present === 'UNKNOWN') {
+    codes.push('NEURODYNAMIC_TEST_AS_INDICATED')
+  }
+  if (claudicationWalking === 'YES') {
+    codes.push('GAIT_AND_WALKING_TOLERANCE', 'NEUROLOGIC_EXAM', 'HIP_SCREEN_AS_INDICATED', 'VASCULAR_SCREEN_AS_INDICATED')
+  }
+  return codes
+}
+
+/**
+ * LBP_V1 안전 확인 패널. SafetyGlance(일반 red flag)와 별개 — 인터럽트하지
+ * 않는다(LBP_04 URGENT 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트, coreSpec.ts
+ * 참고). `payload.routing.primary_module_detail !== 'LBP'`면 아무것도
+ * 렌더링하지 않는다.
+ *
+ * clinician_objective_motor_deficit은 이 화면이 아니라 JudgmentPanel에서
+ * 입력·저장되므로(기존 judgment 저장 경로 재사용, 별도 저장 메커니즘 없음)
+ * 여기서는 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
+ * (fixtures) 항상 "아직 진찰 전"으로 취급한다.
+ */
+function LbpSafetyPanel({
+  payload,
+  lbpObjectiveMotorDeficit,
+}: {
+  payload: DoctorPayload
+  lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
+}) {
+  if (payload.routing.primary_module_detail !== 'LBP') return null
+
+  const age = ageFromDoctorPayload(payload.responses)
+  const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
+  const flags = computeLbpFlags(state)
+  const locked = diseaseSafetyLocked(flags)
+  const treatmentLocked = treatmentSafetyLocked(flags)
+  const legSymptomLabel =
+    flags.leg_symptom_present === 'YES' ? '있음' : flags.leg_symptom_present === 'NO' ? '없음' : '확인 필요'
+  const examCodes = suggestedExamCodes(flags, payload.responses.modules.lbp.claudication_walking)
+
+  return (
+    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.lbp_safety_status.toLowerCase()}`}>
+      <span className="doctor__safetyGlance__title">안전 확인 — 허리(LBP)</span>
+      <div className="doctor__safetyGlance__items">
+        <span className="doctor__safetyChip">
+          <strong>안전 확인</strong> {LBP_SAFETY_STATUS_LABEL[flags.lbp_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>치료 안전</strong> {LBP_TREATMENT_SAFETY_LABEL[flags.treatment_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신경근성 증상 가능성</strong> {legSymptomLabel}
+        </span>
+        {flags.lbp_neuro_baseline_required && (
+          <span className="doctor__safetyChip">
+            <strong>신경학적 기저검사</strong> 필요(양쪽 다리 통증만, 자동 긴급 아님)
+          </span>
+        )}
+        {flags.lbp_inflammatory_pattern_consider && (
+          <span className="doctor__safetyChip">
+            <strong>염증성 패턴</strong> 고려(진단 아님)
+          </span>
+        )}
+      </div>
+      {locked && (
+        <p className="doctor__derivedNote">
+          안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
+        </p>
+      )}
+      {treatmentLocked && !locked && (
+        <p className="doctor__derivedNote">
+          치료 안전(임신 등) 확인 전까지 금기 민감 치료/운동은 원장 승인 없이 확정하지 않습니다.
+        </p>
+      )}
+      {examCodes.length > 0 && (
+        <div className="doctor__lbpExam">
+          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
+          <ul>
+            {examCodes.map((c) => (
+              <li key={c}>{LBP_EXAM_LABELS[c] ?? c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* TODO(LBP_V2): exercise_recommender_contract(순위 매긴 운동 추천 + 원장 승인)는
+          아직 구현하지 않음 — required_before_ranking의 원장 입력(irritability/
+          movement_response/neuro_status)이 없고, target_function 대리 지표(chief_impact)로는
+          계약을 충실히 만족시키지 못해 v1 범위에서 제외 (LBP_INTEGRATION_PLAN_DRAFT.md §4/Scope). */}
+    </div>
+  )
+}
+
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
   sleep: (sm) => sm.sleep.problems,
@@ -501,7 +632,17 @@ function menopauseSleepSummaryLines(sleep: Responses['modules']['sleep']): strin
 }
 
 /** routing.primary_module(예: 'Sleep') -> 해당 모듈 상세 문항 목록. */
-function primaryModuleFields(primaryModule: string | null, m: Responses['modules']) {
+/**
+ * `primaryModuleDetail`은 오늘은 'LBP' | null만 존재한다 (routing.primary_module_detail,
+ * coreSpec.ts). `primaryModule`은 여전히 'Pain'으로 고정 -- DoctorView는
+ * 'Pain' 리터럴로 여러 곳을 분기하므로 절대 재사용하지 않는다
+ * (LBP_INTEGRATION_PLAN_DRAFT.md §9/S9).
+ */
+function primaryModuleFields(
+  primaryModule: string | null,
+  m: Responses['modules'],
+  primaryModuleDetail: string | null = null,
+) {
   switch (primaryModule) {
     case 'Sleep':
       return [
@@ -545,6 +686,24 @@ function primaryModuleFields(primaryModule: string | null, m: Responses['modules
         { qid: 'PAIN_02', value: m.pain.pain_qualities },
         { qid: 'PAIN_04', value: m.pain.radiation },
         { qid: 'PAIN_04A', value: m.pain.radiation_other },
+        ...(primaryModuleDetail === 'LBP'
+          ? [
+              { qid: 'LBP_01', value: m.lbp.distal_extent },
+              { qid: 'LBP_02', value: m.lbp.leg_neuro_symptoms },
+              { qid: 'LBP_03', value: m.lbp.leg_side },
+              { qid: 'LBP_04', value: m.lbp.ces_screen },
+              { qid: 'LBP_05', value: m.lbp.current_redflag_screen },
+              { qid: 'LBP_06', value: m.lbp.trauma_safety },
+              { qid: 'LBP_07', value: m.lbp.recurrence },
+              { qid: 'LBP_08', value: m.lbp.claudication_walking },
+              { qid: 'LBP_09', value: m.lbp.claudication_relief },
+              { qid: 'LBP_10', value: m.lbp.onset_before_45 },
+              { qid: 'LBP_11', value: m.lbp.inflammatory_screen },
+              { qid: 'LBP_12', value: m.lbp.recovery_expectation },
+              { qid: 'LBP_13', value: m.lbp.fear_avoidance },
+              { qid: 'LBP_14', value: m.lbp.work_impact },
+            ]
+          : []),
       ]
     case 'Fatigue':
       return [
@@ -1058,6 +1217,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       <SafetyGlance r={r} flags={flags} />
 
+      <LbpSafetyPanel
+        payload={payload}
+        lbpObjectiveMotorDeficit={
+          mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
+        }
+      />
+
       <section className="doctor__section">
         <h2>환자 기본</h2>
         <div className="doctor__grid">
@@ -1142,10 +1308,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             )
           })()}
         <div className="doctor__grid">
-          {primaryModuleFields(routing.primary_module, r.modules).map((f) => (
+          {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).map((f) => (
             <Field key={f.qid} qid={f.qid} value={f.value} />
           ))}
-          {primaryModuleFields(routing.primary_module, r.modules).length === 0 && (
+          {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).length === 0 && (
             <p className="doctor__empty">이번 방문에는 해당 상세 Module이 없습니다.</p>
           )}
         </div>
@@ -1306,7 +1472,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             </div>
             <Field qid="VISIT_03_SYMPTOM_DURATION" label="기간" value={r.visit_goal.chief_duration} />
             <Field qid="VISIT_04_SYMPTOM_IMPACT" label="일상 영향" value={r.visit_goal.chief_impact} />
-            {primaryModuleFields(routing.primary_module, r.modules)
+            {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail)
               .slice(0, 3)
               .map((f) => (
                 <Field key={f.qid} qid={f.qid} value={f.value} />
@@ -1387,6 +1553,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           myungri_pending_approval: saju.policy.pending_approval,
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
+        showLbpExam={routing.primary_module_detail === 'LBP'}
         onSave={
           mode === 'server' && selectedId
             ? async (judgment: ClinicianJudgment) => {

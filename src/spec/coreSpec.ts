@@ -14,6 +14,9 @@
  */
 import type { Option, Question, Responses } from '../types'
 import type { SajuInput, TimeBranchKey } from '../saju/types'
+import { ageFromBirthDate } from '../lib/age'
+import { toLbpState } from './lbpAdapter'
+import { computeLbpFlags, URGENT_CES_VALUES } from './lbpLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -688,6 +691,16 @@ const URINARY_QUESTIONS: Question[] = [
 
 const IS_PRIMARY_PAIN = (r: Responses) => primaryConcernKey(r) === 'pain'
 
+/**
+ * LBP_V1 entry gate. There is no MSK domain/region routing layer in this
+ * app (unlike tablet-core's `route_lbp`/`primary_complaint_detail` split) --
+ * PAIN_01's `low_back_pelvis` choice is the closest existing signal and is
+ * used directly, per LBP_INTEGRATION_PLAN_DRAFT.md §2. This conflates
+ * low-back and pelvis complaints under one trigger; that's a deliberate,
+ * documented minimal-change scope boundary, not an oversight.
+ */
+export const IS_PRIMARY_LBP = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'low_back_pelvis'
+
 const PAIN_QUESTIONS: Question[] = [
   {
     id: 'PAIN_01',
@@ -765,6 +778,261 @@ const PAIN_QUESTIONS: Question[] = [
     maxLength: 50,
     showIf: (r) => IS_PRIMARY_PAIN(r) && r['PAIN_04'] === 'other',
     placeholder: '짧게 적어주세요',
+  },
+]
+
+/**
+ * ---------- LBP_V1 (허리 통증) — primary concern === pain && PAIN_01 ===
+ * 'low_back_pelvis'인 경우만. 문항 문구/값/exclusive는
+ * tablet-core/lbp_v1.0.yaml 원문 그대로이며 임의로 수정하지 않는다 (LBP_V1
+ * clinical decision closure, LBP_v1.4_임상결정_마감본.md). LBP_04(CES)의
+ * 응급 값은 STAFF_CHECK_TRIGGERS에 등록되어 SAFETY_01/GI_03/BOWEL_03과
+ * 동일하게 즉시 StaffCheckScreen으로 인터럽트한다 — 문진 내내 흐름을
+ * 막지는 않고(non-terminating interstitial), 확인 후 이어서 진행한다.
+ *
+ * onset_bucket(M3_PLUS 여부)은 tablet-core Core에 있는 별도 필드가 아니라
+ * 기존 VISIT_03_SYMPTOM_DURATION(언제부터 불편하셨나요?)에서 유도한다 —
+ * LBP_INTEGRATION_PLAN_DRAFT.md §3.
+ *
+ * patient_age(BIRTH_01/02)는 이 Module보다 뒤(출생정보 단계)에서만
+ * 수집되므로, LBP_10/11의 show_if에서 나이 조건은 뺀다 — 문진 중에는 나이를
+ * 알 수 없어 어차피 항상 UNKNOWN으로 귀결되는 조건이라, 조금 더 넓게(만성
+ * 통증이면 나이 무관하게) 보여주는 쪽이 안전하고 단순하다. 최종
+ * lbp_safety_status/treatment_safety_status/lbp_inflammatory_eligible 등은
+ * 제출된 전체 Responses + 원장 소견을 기준으로 별도 계산한다(App.tsx
+ * 제출 시점 / DoctorView) — plan revision-log item 6 참고.
+ */
+const IS_LBP_CHRONIC_ONSET = (r: Responses) =>
+  r['VISIT_03_SYMPTOM_DURATION'] === '3m_1y' || r['VISIT_03_SYMPTOM_DURATION'] === 'over_1y'
+
+const LBP_QUESTIONS: Question[] = [
+  {
+    id: 'LBP_01',
+    variable: 'lbp_distal_extent',
+    input: 'single_choice',
+    question: '허리 통증이나 불편감이 가장 멀리 어디까지 내려가나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'BACK_ONLY', label: '허리만' },
+      { value: 'BUTTOCK', label: '엉덩이까지' },
+      { value: 'THIGH', label: '허벅지까지' },
+      { value: 'BELOW_KNEE', label: '무릎 아래·종아리까지' },
+      { value: 'FOOT', label: '발까지' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_02',
+    variable: 'lbp_leg_neuro_symptoms',
+    input: 'multi_choice',
+    question: '다리에 다음과 같은 느낌이 있나요? 해당되는 것을 모두 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'PARESTHESIA', label: '저리거나 찌릿함' },
+      { value: 'NUMBNESS', label: '감각이 둔함' },
+      { value: 'SUBJECTIVE_WEAKNESS', label: '힘이 빠지는 느낌' },
+      { value: 'NONE', label: '없어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_03',
+    variable: 'lbp_leg_side',
+    input: 'single_choice',
+    question: '다리 증상이 있다면 어느 쪽인가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'NONE', label: '다리 증상 없음' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_04',
+    variable: 'lbp_ces_screen',
+    input: 'multi_choice',
+    question: '허리·다리 증상과 함께 최근 새로 생긴 변화가 있나요? 해당되는 것을 모두 골라주세요.',
+    helper: '해당하는 내용을 골라주시면 직원이 바로 확인합니다.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'URINARY_RETENTION', label: '소변이 잘 나오지 않거나 시작하기 어려워짐' },
+      { value: 'BLADDER_BOWEL_CONTROL', label: '소변이나 대변을 조절하기 어려워짐' },
+      { value: 'SADDLE_SENSORY_CHANGE', label: '항문·회음부 주변 감각이 둔해짐' },
+      { value: 'RAPID_PROGRESSIVE_WEAKNESS', label: '다리 힘이 빠르게 약해짐' },
+      { value: 'SUDDEN_SEXUAL_FUNCTION_CHANGE', label: '성기능에 갑작스러운 변화가 생김' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_05',
+    variable: 'lbp_current_redflag_screen',
+    input: 'multi_choice',
+    question: '최근 다음 중 해당되는 것이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'FEVER_CHILLS_OR_SERIOUS_INFECTION', label: '원인 모를 발열·오한 또는 최근 심한 감염' },
+      { value: 'LONG_TERM_STEROID_OR_IMMUNOSUPPRESSIVE', label: '장기간 스테로이드 또는 면역억제 치료' },
+      { value: 'RECENT_SPINAL_PROCEDURE_OR_INJECTION', label: '최근 허리·척추 주사, 시술, 또는 수술' },
+      { value: 'UNEXPLAINED_WEIGHT_LOSS', label: '최근 설명되지 않는 체중 감소' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_06',
+    variable: 'lbp_trauma_safety',
+    input: 'single_choice',
+    question: '최근 넘어지거나 부딪히는 등 허리에 큰 충격이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_07',
+    variable: 'lbp_recurrence',
+    input: 'single_choice',
+    question: '이번과 비슷한 허리통증이 이전에도 있었나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'NO', label: '처음이에요' },
+      { value: 'YES', label: '이전에도 있었어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_08',
+    variable: 'lbp_claudication_walking',
+    input: 'single_choice',
+    question: '서 있거나 걸을수록 엉덩이·다리 증상이 더 심해지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) =>
+      IS_PRIMARY_LBP(r) &&
+      (['RIGHT', 'LEFT', 'BILATERAL', 'UNKNOWN'].includes(r['LBP_03'] as string) ||
+        ['BUTTOCK', 'THIGH', 'BELOW_KNEE', 'FOOT', 'UNKNOWN'].includes(r['LBP_01'] as string)),
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_09',
+    variable: 'lbp_claudication_relief',
+    input: 'single_choice',
+    question: '그 증상이 앉거나 허리를 조금 숙이면 줄어드나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && r['LBP_08'] === 'YES',
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_10',
+    variable: 'lbp_onset_before_45',
+    input: 'single_choice',
+    question: '이 허리통증이 처음 시작된 것은 45세 이전인가요?',
+    required: false,
+    step: '상세 증상',
+    // 원본 YAML은 patient_age 45-120 조건도 요구하지만, 이 Module 시점에는
+    // 나이를 아직 모른다 — 위 파일 상단 주석 참고.
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_11',
+    variable: 'lbp_inflammatory_screen',
+    input: 'multi_choice',
+    question: '오래된 허리통증과 관련해 다음 중 해당되는 것이 있나요?',
+    required: false,
+    step: '상세 증상',
+    // lbp_inflammatory_eligible이 YES가 되려면 나이<45가 필요한데 이 시점엔
+    // 나이를 모르므로(항상 UNKNOWN으로 귀결) show 조건이 사실상
+    // IS_LBP_CHRONIC_ONSET과 동일하다 — 위 파일 상단 주석 참고.
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'SECOND_HALF_NIGHT_WAKING', label: '밤 후반부에 허리 때문에 잠에서 깸' },
+      { value: 'BUTTOCK_PAIN', label: '엉덩이 통증이 반복됨' },
+      { value: 'IMPROVES_WITH_MOVEMENT', label: '움직이면 오히려 좋아짐' },
+      { value: 'NSAID_RAPID_RESPONSE', label: '소염진통제를 먹으면 48시간 안에 뚜렷이 좋아짐' },
+      { value: 'FIRST_DEGREE_FAMILY_SPA', label: '가족 중 척추관절염이 있음' },
+      { value: 'PAST_OR_CURRENT_ARTHRITIS', label: '관절염 진단이나 관절이 붓는 증상이 있었음' },
+      { value: 'PAST_OR_CURRENT_ENTHESITIS', label: '발뒤꿈치 등 힘줄이 뼈에 붙는 부위 통증이 반복됨' },
+      { value: 'PAST_OR_CURRENT_PSORIASIS', label: '건선 진단을 받았거나 의심되는 피부병변이 있음' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_12',
+    variable: 'lbp_recovery_expectation',
+    input: 'numeric_scale',
+    question: '이번 허리 상태가 좋아질 가능성을 어느 정도로 생각하시나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    scale: { min: 0, max: 10, minLabel: '전혀 좋아지지 않을 것 같음', maxLabel: '충분히 좋아질 것 같음' },
+  },
+  {
+    id: 'LBP_13',
+    variable: 'lbp_fear_avoidance',
+    input: 'single_choice',
+    question: '움직이거나 운동하면 허리를 더 상하게 할까 봐 피하는 편인가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'SOMEWHAT', label: '조금 그래요' },
+      { value: 'YES', label: '많이 그래요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_14',
+    variable: 'lbp_work_impact',
+    input: 'single_choice',
+    question: '허리 때문에 일·집안일·일상생활에 얼마나 지장이 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    options: [
+      { value: 'NONE', label: '거의 없음' },
+      { value: 'SOME', label: '일부 지장 있음' },
+      { value: 'MAJOR', label: '매우 큼' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
   },
 ]
 
@@ -1531,6 +1799,10 @@ const HISTORY_QUESTIONS: Question[] = [
       { value: 'cancer', label: '암' },
       { value: 'bleeding_disorder', label: '출혈 관련 질환' },
       { value: 'mental_health', label: '정신건강 관련 질환' },
+      // LBP_V1 clinical decision closure §3-4: 골다공증 병력은 fracture-risk
+      // red flag로 쓰인다(신규 질문 대신 기존 병력 문항 재사용). 순수
+      // 추가이며 기존 선택지는 건드리지 않는다.
+      { value: 'osteoporosis', label: '골다공증' },
       { value: 'other', label: '기타' },
       { value: 'none', label: '없음' },
     ],
@@ -1830,6 +2102,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...BOWEL_QUESTIONS,
   ...URINARY_QUESTIONS,
   ...PAIN_QUESTIONS,
+  ...LBP_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -1898,6 +2171,20 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   SAFETY_01: (r) => computeFlags(r).general_red,
   GI_03: (r) => r['GI_03'] === 'yes',
   BOWEL_03: (r) => r['BOWEL_03'] === 'yes',
+  /**
+   * LBP_V1 CES(마미증후군) 응급 값 즉시 인터럽트 — 사용자 확정 결정
+   * (2026-08-24): 요폐/대소변 조절장애/안장부 감각이상/급속 진행 마비/성기능
+   * 급변 중 하나라도 선택되면 SAFETY_01/GI_03/BOWEL_03과 동일하게 즉시
+   * StaffCheckScreen으로 인터럽트한다. 비응급 red-flag(LBP_05)·외상(LBP_06)
+   * 양성은 MS_05(sleep_disorder_priority_review)와 동일하게 인터럽트 없이
+   * flag만 남기고, 제출 후 lbp_safety_status를 통해 Doctor View에서
+   * REVIEW_REQUIRED로 확인한다.
+   */
+  LBP_04: (r) => {
+    const v = r['LBP_04']
+    const vals = Array.isArray(v) ? v : typeof v === 'string' ? [v] : []
+    return vals.some((x) => URGENT_CES_VALUES.has(x))
+  },
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -1985,6 +2272,14 @@ export const buildRoutingPayload = (r: Responses) => {
   return {
     primary_concern: primaryConcernKey(r),
     primary_module: primaryTarget,
+    /**
+     * `primary_module` stays `'Pain'` unchanged (never repurposed to
+     * something like `'pain_lbp'` -- DoctorView.tsx switches on the literal
+     * `'Pain'` string in several places and has no LBP-aware fallback, see
+     * LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely additive
+     * sibling field for LBP-specific UI to key off instead.
+     */
+    primary_module_detail: IS_PRIMARY_LBP(r) ? 'LBP' : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -2046,6 +2341,21 @@ export const pruneStaleResponses = (
 }
 
 /**
+ * BIRTH_01(YYYYMMDD)/BIRTH_02(양력·음력·모름)에서 나이(세)를 계산한다.
+ * LBP_V1 computed fields(fracture/malignancy risk modifier,
+ * inflammatory_eligible, treatment_safety_status 10-55 age band)가 사용한다
+ * -- src/lib/age.ts의 알려진 한계(음력 미변환) 참고. buildResponsePayload와
+ * DoctorView 양쪽에서 동일하게 재사용한다.
+ */
+export const ageFromResponses = (r: Responses): number | undefined =>
+  ageFromBirthDate(
+    typeof r['BIRTH_01'] === 'string' ? r['BIRTH_01'] : undefined,
+    r['BIRTH_02'] === 'solar' || r['BIRTH_02'] === 'lunar' || r['BIRTH_02'] === 'unknown'
+      ? (r['BIRTH_02'] as 'solar' | 'lunar' | 'unknown')
+      : undefined,
+  )
+
+/**
  * 문진 응답 -> Saju 계산 엔진 입력 어댑터.
  * 엔진(src/saju)은 타입만 참조하고, 런타임 계산 호출은 App.tsx에서 한다.
  */
@@ -2096,6 +2406,17 @@ export const buildResponsePayload = (r: Responses) => ({
   safety_flags: {
     red_flag_general: r['SAFETY_01'],
     ...computeFlags(r),
+    /**
+     * Only computed for LBP patients -- calling computeLbpFlags on a
+     * non-LBP patient's (all-null) LBP_* fields would fail closed to
+     * REVIEW_REQUIRED for every patient, which is meaningless noise, not a
+     * real safety signal, since they were never asked these questions.
+     * `clinicianObjectiveMotorDeficit` is always `undefined` here --
+     * nothing has examined the patient yet at submission time; Doctor View
+     * recomputes this fresh once a clinician enters that field (plan
+     * revision-log item 6).
+     */
+    lbp: IS_PRIMARY_LBP(r) ? computeLbpFlags(toLbpState(r, deriveReproductiveStatus(r), undefined, ageFromResponses(r))) : null,
   },
   modules: {
     sleep: {
@@ -2137,6 +2458,22 @@ export const buildResponsePayload = (r: Responses) => ({
       pain_qualities: r['PAIN_02'],
       radiation: r['PAIN_04'],
       radiation_other: r['PAIN_04A'],
+    },
+    lbp: {
+      distal_extent: r['LBP_01'],
+      leg_neuro_symptoms: r['LBP_02'],
+      leg_side: r['LBP_03'],
+      ces_screen: r['LBP_04'],
+      current_redflag_screen: r['LBP_05'],
+      trauma_safety: r['LBP_06'],
+      recurrence: r['LBP_07'],
+      claudication_walking: r['LBP_08'],
+      claudication_relief: r['LBP_09'],
+      onset_before_45: r['LBP_10'],
+      inflammatory_screen: r['LBP_11'],
+      recovery_expectation: r['LBP_12'],
+      fear_avoidance: r['LBP_13'],
+      work_impact: r['LBP_14'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

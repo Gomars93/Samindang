@@ -26,6 +26,13 @@ import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
 import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
+import {
+  computeNeckFlags,
+  neckDiseaseSafetyLocked,
+  neckManipulationLocked,
+  type NeckComputedFields,
+} from '../spec/neckLogic'
+import { toNeckStateFromDoctorPayload } from '../spec/neckAdapter'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -542,6 +549,183 @@ function LbpSafetyPanel({
   )
 }
 
+const NECK_SAFETY_STATUS_LABEL: Record<NeckComputedFields['neck_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+  URGENT_REVIEW: '긴급 확인 필요',
+}
+
+const NECK_TREATMENT_SAFETY_LABEL: Record<NeckComputedFields['neck_treatment_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+}
+
+const NECK_RADICULAR_LABEL: Record<NeckComputedFields['radicular_support'], string> = {
+  HIGHER_SUPPORT: '가능성 높음(임상 확인 필요)',
+  CONSIDER: '고려 대상',
+  LOWER_SUPPORT: '가능성 낮음',
+  UNDETERMINED: '미분류(추가 확인 필요)',
+}
+
+const NECK_EXAM_LABELS: Record<string, string> = {
+  CERVICAL_AROM: '경추 능동 관절가동범위 검사',
+  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
+  C5_T1_MOTOR: 'C5-T1 근절 근력 검사',
+  DERMATOMAL_SENSORY: '피부분절 감각 검사',
+  REFLEX_SCREEN: '반사 검사(이두근/상완요골근/삼두근)',
+  SPURLING_TEST: 'Spurling 검사',
+  DISTRACTION_TEST: '견인 검사(distraction)',
+  ULNT_AS_INDICATED: '상지 신경역동학 검사(필요시)',
+  GAIT_TANDEM: '보행/일자보행 검사',
+  UE_LE_MOTOR_SENSORY: '상하지 근력·감각 검사',
+  HYPERREFLEXIA_SCREEN: '반사항진 검사',
+  HOFFMANN_TEST: 'Hoffmann 검사',
+  BABINSKI_CLONUS_AS_INDICATED: 'Babinski/clonus 검사(필요시)',
+  HAND_DEXTERITY: '손 정교운동 검사',
+  UPPER_CERVICAL_EXAM: '상부 경추 검사',
+  CFRT_CANDIDATE: '두개경부 굴곡회전 검사(CFRT) 후보',
+  SHOULDER_AROM_PROM_RESISTED: '어깨 관절가동범위·저항 검사',
+  CERVICAL_VS_SHOULDER_REPRODUCTION: '경추 vs 어깨 증상 재현 검사',
+  DEEP_NECK_FLEXOR_ENDURANCE: '심부 목굴곡근 조절·지구력 검사',
+  SCAPULAR_CONTROL_ENDURANCE: '견갑골 조절·지구력 검사',
+  FUNCTIONAL_POSTURE_TOLERANCE: '기능적 자세 내구성 검사',
+}
+
+/**
+ * v0.2.1 §8 Suggested Exam Selector의 firing 조건을 그대로 옮긴다. §8이
+ * 명시한 발화 조건(NB6에서 지적된 미기술을 구현 시점에 확정한 것) 그대로:
+ * uncomplicated는 safety CLEAR일 때만(LBP_V1과 동일한 선택), distal
+ * arm/neuro는 N07 원위부 또는 N09 concrete positive, cord concern은 N02
+ * concrete positive 또는 N02A WORSENING, headache는 N10 YES,
+ * shoulder-dominant는 SHOULDER_UPPER_ARM + N09 NONE, sustained posture는
+ * N12 YES.
+ */
+function suggestedNeckExamCodes(
+  flags: NeckComputedFields,
+  neck: DoctorPayload['responses']['modules']['neck'],
+): string[] {
+  const codes: string[] = []
+  if (flags.neck_safety_status === 'CLEAR') {
+    codes.push('CERVICAL_AROM', 'TARGET_FUNCTION_REPRODUCTION')
+  }
+
+  const extent = neck.distal_extent
+  const neuro = neck.arm_neuro_symptoms
+  const hasConcreteNeuro =
+    Array.isArray(neuro) && neuro.some((v) => v === 'PARESTHESIA' || v === 'NUMBNESS' || v === 'SUBJECTIVE_WEAKNESS')
+  const isNeuroNoneOnly = Array.isArray(neuro) && neuro.length === 1 && neuro[0] === 'NONE'
+
+  if (extent === 'FOREARM' || extent === 'HAND_FINGERS' || hasConcreteNeuro) {
+    for (const c of ['C5_T1_MOTOR', 'DERMATOMAL_SENSORY', 'REFLEX_SCREEN', 'SPURLING_TEST', 'DISTRACTION_TEST', 'ULNT_AS_INDICATED']) {
+      if (!codes.includes(c)) codes.push(c)
+    }
+  }
+
+  const cord = neck.cord_concern_screen
+  const hasCordConcrete =
+    Array.isArray(cord) &&
+    cord.some((v) =>
+      ['HAND_CLUMSINESS', 'GAIT_BALANCE_CHANGE', 'BILATERAL_OR_MULTI_LIMB_NEURO', 'RAPIDLY_WORSENING_LIMB_WEAKNESS', 'NEW_BLADDER_BOWEL_CHANGE'].includes(v),
+    )
+  if (hasCordConcrete || neck.cord_symptom_course === 'WORSENING') {
+    for (const c of ['GAIT_TANDEM', 'UE_LE_MOTOR_SENSORY', 'HYPERREFLEXIA_SCREEN', 'HOFFMANN_TEST', 'BABINSKI_CLONUS_AS_INDICATED', 'HAND_DEXTERITY']) {
+      if (!codes.includes(c)) codes.push(c)
+    }
+  }
+
+  if (neck.headache_present === 'YES') {
+    codes.push('UPPER_CERVICAL_EXAM', 'CFRT_CANDIDATE')
+    if (!codes.includes('CERVICAL_AROM')) codes.push('CERVICAL_AROM')
+  }
+
+  if (extent === 'SHOULDER_UPPER_ARM' && isNeuroNoneOnly) {
+    codes.push('SHOULDER_AROM_PROM_RESISTED', 'CERVICAL_VS_SHOULDER_REPRODUCTION')
+  }
+
+  if (neck.sustained_posture_aggravation === 'YES') {
+    codes.push('DEEP_NECK_FLEXOR_ENDURANCE', 'SCAPULAR_CONTROL_ENDURANCE', 'FUNCTIONAL_POSTURE_TOLERANCE')
+  }
+
+  return codes
+}
+
+/**
+ * NECK_V1 안전 확인 패널. LbpSafetyPanel과 동일한 원칙 — 인터럽트하지
+ * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
+ * coreSpec.ts 참고). `payload.routing.primary_module_detail !== 'NECK'`면
+ * 아무것도 렌더링하지 않는다.
+ *
+ * LBP와 달리 disease safety 계산에 원장 입력(clinician judgment)이 필요
+ * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
+ * JudgmentPanel에 대응 필드를 추가하지 않았다.
+ */
+function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  if (payload.routing.primary_module_detail !== 'NECK') return null
+
+  const state = toNeckStateFromDoctorPayload(payload.responses)
+  const flags = computeNeckFlags(state)
+  const locked = neckDiseaseSafetyLocked(flags)
+  const manipulationLocked = neckManipulationLocked(flags)
+  const examCodes = suggestedNeckExamCodes(flags, payload.responses.modules.neck)
+
+  return (
+    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.neck_safety_status.toLowerCase()}`}>
+      <span className="doctor__safetyGlance__title">안전 확인 — 목(NECK)</span>
+      <div className="doctor__safetyGlance__items">
+        <span className="doctor__safetyChip">
+          <strong>안전 확인</strong> {NECK_SAFETY_STATUS_LABEL[flags.neck_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>치료 안전</strong> {NECK_TREATMENT_SAFETY_LABEL[flags.neck_treatment_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신경근성 증상(방사통) 지지도</strong> {NECK_RADICULAR_LABEL[flags.radicular_support]}
+        </span>
+        {flags.neck_neuro_baseline_required && (
+          <span className="doctor__safetyChip">
+            <strong>신경학적 기저검사</strong> 필요
+          </span>
+        )}
+        {flags.cervicogenic_headache_pattern_consider && (
+          <span className="doctor__safetyChip">
+            <strong>경인성 두통 패턴</strong> 고려(진단 아님, CFRT 등 추가 검사 필요)
+          </span>
+        )}
+        {flags.movement_coordination_deficit_consider && (
+          <span className="doctor__safetyChip">
+            <strong>자세 조절 저하</strong> 고려(진단 아님)
+          </span>
+        )}
+      </div>
+      {locked && (
+        <p className="doctor__derivedNote">
+          안전 확인 전까지 일상적인 운동 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
+        </p>
+      )}
+      {manipulationLocked && (
+        <p className="doctor__derivedNote">
+          {locked
+            ? '안전 확인 전까지 경추 HVLA/추나 조작·견인 제안도 함께 잠깁니다.'
+            : '치료 안전(항응고제·골다공증·출혈질환·임신 등) 확인 전까지 경추 HVLA/추나 조작·견인·침습적 치료는 원장 승인 없이 확정하지 않습니다.'}
+        </p>
+      )}
+      {examCodes.length > 0 && (
+        <div className="doctor__lbpExam">
+          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
+          <ul>
+            {examCodes.map((c) => (
+              <li key={c}>{NECK_EXAM_LABELS[c] ?? c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* TODO(NECK_V2): exercise_recommender_contract(순위 매긴 운동 추천 + 원장 승인)는
+          LBP_V1과 동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현
+          (v0.2.1 §11, D6/checklist item 17-18과 동일한 판단). */}
+    </div>
+  )
+}
+
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
   sleep: (sm) => sm.sleep.problems,
@@ -702,6 +886,25 @@ function primaryModuleFields(
               { qid: 'LBP_12', value: m.lbp.recovery_expectation },
               { qid: 'LBP_13', value: m.lbp.fear_avoidance },
               { qid: 'LBP_14', value: m.lbp.work_impact },
+            ]
+          : []),
+        ...(primaryModuleDetail === 'NECK'
+          ? [
+              { qid: 'NECK_01', value: m.neck.recent_significant_trauma },
+              { qid: 'NECK_02', value: m.neck.cord_concern_screen },
+              { qid: 'NECK_02A', value: m.neck.cord_symptom_course },
+              { qid: 'NECK_03A', value: m.neck.sudden_unusual_severe_neck_pain },
+              { qid: 'NECK_03B', value: m.neck.thunderclap_headache_screen },
+              { qid: 'NECK_04', value: m.neck.vascular_associated_screen },
+              { qid: 'NECK_05', value: m.neck.systemic_redflag_screen },
+              { qid: 'NECK_06', value: m.neck.primary_side },
+              { qid: 'NECK_07', value: m.neck.distal_extent },
+              { qid: 'NECK_08', value: m.neck.arm_symptom_side },
+              { qid: 'NECK_09', value: m.neck.arm_neuro_symptoms },
+              { qid: 'NECK_10', value: m.neck.headache_present },
+              { qid: 'NECK_10A', value: m.neck.new_or_changed_headache },
+              { qid: 'NECK_11', value: m.neck.headache_neck_link },
+              { qid: 'NECK_12', value: m.neck.sustained_posture_aggravation },
             ]
           : []),
       ]
@@ -1223,6 +1426,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
         }
       />
+
+      <NeckSafetyPanel payload={payload} />
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

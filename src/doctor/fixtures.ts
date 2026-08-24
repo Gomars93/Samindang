@@ -230,4 +230,41 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     LBP_13: 'SOMEWHAT',
     LBP_14: 'SOME',
   }),
+
+  // NECK_V1: N02(HAND_CLUMSINESS, non-urgent concrete positive) + N02A
+  // STABLE -> neck_safety_status REVIEW_REQUIRED (not urgent). N07=
+  // HAND_FINGERS + N09 concrete neuro(PARESTHESIA) -> radicular_support
+  // HIGHER_SUPPORT. N10=YES/N10A=NO/N11=YES -> headache present but not
+  // new/changed, cervicogenic pattern considered. primary_module stays
+  // 'Pain', primary_module_detail becomes 'NECK' (v0.2.1 §9, mirrors the
+  // LBP fixture's primary_module_detail pattern above).
+  buildFixture('목 통증 주호소 (NECK, 확인 필요)', {
+    ID_01: '박서준',
+    ID_03: 'male',
+    BIRTH_01: '19800101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'upper_limb',
+    NECK_01: 'NO',
+    NECK_02: ['HAND_CLUMSINESS'],
+    NECK_02A: 'STABLE',
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_06: 'RIGHT',
+    NECK_07: 'HAND_FINGERS',
+    NECK_08: 'RIGHT',
+    NECK_09: ['PARESTHESIA'],
+    NECK_10: 'YES',
+    NECK_10A: 'NO',
+    NECK_11: 'YES',
+    NECK_12: 'YES',
+  }),
 ]

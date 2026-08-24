@@ -17,6 +17,8 @@ import type { SajuInput, TimeBranchKey } from '../saju/types'
 import { ageFromBirthDate } from '../lib/age'
 import { toLbpState } from './lbpAdapter'
 import { computeLbpFlags, URGENT_CES_VALUES } from './lbpLogic'
+import { toNeckState } from './neckAdapter'
+import { computeNeckFlags, hasNeckCordConcretePositive } from './neckLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1031,6 +1033,277 @@ const LBP_QUESTIONS: Question[] = [
       { value: 'NONE', label: '거의 없음' },
       { value: 'SOME', label: '일부 지장 있음' },
       { value: 'MAJOR', label: '매우 큼' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
+/**
+ * NECK_V1 entry gate. Same minimal-change pattern as IS_PRIMARY_LBP:
+ * PAIN_01's `neck_shoulder` choice is the closest existing signal, used
+ * directly (no separate MSK region-routing layer in this app). Conflates
+ * neck and shoulder complaints under one trigger -- a deliberate,
+ * documented minimal-change scope boundary, matching how IS_PRIMARY_LBP
+ * conflates low-back and pelvis.
+ */
+export const IS_PRIMARY_NECK = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'neck_shoulder'
+
+/**
+ * ---------- NECK_V1 (목 통증) — primary concern === pain && PAIN_01 ===
+ * 'neck_shoulder'인 경우만. 문항 문구/값/branching은
+ * NECK_V1_Tablet_Question_Set_v0.2.1_CLOSED.md(CLINICAL DECISIONS CLOSED,
+ * Opus 재검수 PASS + erratum E1/E2 반영) 원문 그대로이며 임의로 수정하지
+ * 않는다.
+ *
+ * onset_bucket(M3_PLUS 여부)은 LBP_V1과 동일하게 VISIT_03_SYMPTOM_DURATION에서
+ * 유도한다(v0.2.1 §12 binding note). N12(지속자세 민감도)의 show_when이 이
+ * 값을 쓴다.
+ *
+ * v0.2.1 §3 N01의 age/osteoporosis modifier는 stem이 이미 강도 무관하게
+ * 낙상을 수집하므로 실질 분기를 만들지 않는다(NB4) -- 여기서는 중복
+ * 구현하지 않는다.
+ */
+const IS_NECK_CHRONIC_ONSET = (r: Responses) =>
+  r['VISIT_03_SYMPTOM_DURATION'] === '3m_1y' || r['VISIT_03_SYMPTOM_DURATION'] === 'over_1y'
+
+const NECK_QUESTIONS: Question[] = [
+  {
+    id: 'NECK_01',
+    variable: 'neck_recent_significant_trauma',
+    input: 'single_choice',
+    question: '최근 3개월 이내 교통사고, 낙상(서서 넘어짐 포함), 또는 머리·목에 충격을 받은 적이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_02',
+    variable: 'neck_cord_concern_screen',
+    input: 'multi_choice',
+    question: '다음 증상이 있나요? 최근 새로 생긴 것뿐 아니라, 이전부터 있었더라도 현재 있으면 모두 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'HAND_CLUMSINESS', label: '손이 서툴러 단추 잠그기, 젓가락질, 글씨 쓰기 등이 어렵거나 물건을 자주 떨어뜨림' },
+      { value: 'GAIT_BALANCE_CHANGE', label: '걸을 때 휘청거리거나 균형 잡기가 어려움' },
+      { value: 'BILATERAL_OR_MULTI_LIMB_NEURO', label: '양쪽 팔·손 또는 팔과 다리에 동시에 저림·감각이상·힘빠짐이 있음' },
+      { value: 'RAPIDLY_WORSENING_LIMB_WEAKNESS', label: '팔이나 다리 힘이 빠르게 약해지고 있음' },
+      { value: 'NEW_BLADDER_BOWEL_CHANGE', label: '최근 소변·대변 조절에 뚜렷한 변화가 생김' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_02A',
+    variable: 'neck_cord_symptom_course',
+    input: 'single_choice',
+    question: '방금 선택한 증상은 최근 어떻게 변하고 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && hasNeckCordConcretePositive(r['NECK_02'] as string[] | undefined),
+    options: [
+      { value: 'WORSENING', label: '점점 심해지고 있음' },
+      { value: 'STABLE', label: '비슷하게 유지됨' },
+      { value: 'IMPROVING', label: '좋아지고 있음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_03A',
+    variable: 'neck_sudden_unusual_severe_neck_pain',
+    input: 'single_choice',
+    question: '이번 목 통증이 평소와 다르게 갑자기 매우 심하게 시작했나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_03B',
+    variable: 'neck_thunderclap_headache_screen',
+    input: 'single_choice',
+    question: '두통이 갑자기 시작해 아주 짧은 시간 안에 매우 심해졌거나, 평소와 전혀 다른 극심한 두통이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_04',
+    variable: 'neck_vascular_associated_screen',
+    input: 'multi_choice',
+    question: '최근 다음 증상이 새로 생긴 적이 있나요? 해당되는 것을 모두 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_VISUAL_DISTURBANCE', label: '물체가 둘로 보이거나 시야가 갑자기 이상해짐' },
+      { value: 'NEW_SPEECH_OR_SWALLOWING_DIFFICULTY', label: '말이 어눌해지거나 삼키기 어려워짐' },
+      { value: 'NEW_FACE_OR_EYELID_CHANGE', label: '얼굴 또는 한쪽 눈꺼풀에 갑작스러운 변화가 생김' },
+      { value: 'NEW_ONE_SIDED_WEAKNESS_OR_NUMBNESS', label: '몸 한쪽에 갑자기 힘빠짐이나 감각이상이 생김' },
+      { value: 'NEW_SEVERE_BALANCE_OR_COORDINATION_CHANGE', label: '갑자기 심하게 휘청거리거나 몸을 가누기 어려움' },
+      { value: 'NEW_SEVERE_DIZZINESS_OR_FAINTNESS', label: '이전과 다른 심한 어지럼 또는 쓰러질 것 같은 느낌이 생김' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_05',
+    variable: 'neck_systemic_redflag_screen',
+    input: 'multi_choice',
+    question: '다음 중 해당되는 내용이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'PRIOR_CANCER', label: '암을 진단받거나 치료받은 적이 있음' },
+      { value: 'FEVER_OR_RECENT_SERIOUS_INFECTION', label: '원인 모를 발열·오한이 있거나 최근 심한 감염으로 치료받음' },
+      { value: 'IMMUNOSUPPRESSION', label: '면역을 크게 떨어뜨리는 질환 또는 치료가 있음' },
+      { value: 'RECENT_CERVICAL_PROCEDURE_OR_SURGERY', label: '최근 목 부위 수술·주사·침습적 시술을 받음' },
+      { value: 'UNEXPLAINED_WEIGHT_LOSS', label: '특별한 이유 없이 최근 체중이 눈에 띄게 감소함' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_06',
+    variable: 'neck_primary_side',
+    input: 'single_choice',
+    question: '목은 어느 쪽이 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'MIDLINE', label: '가운데' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_07',
+    variable: 'neck_distal_extent',
+    input: 'single_choice',
+    question: '목에서 이어지거나 함께 느껴지는 통증·불편감이 있다면 가장 멀리 어디까지 내려가나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'NECK_ONLY', label: '목에만 있음' },
+      { value: 'SHOULDER_UPPER_ARM', label: '어깨 또는 위팔까지' },
+      { value: 'FOREARM', label: '팔꿈치 아래·전완까지' },
+      { value: 'HAND_FINGERS', label: '손 또는 손가락까지' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_08',
+    variable: 'neck_arm_symptom_side',
+    input: 'single_choice',
+    question: '팔 증상은 어느 쪽인가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) =>
+      IS_PRIMARY_NECK(r) &&
+      ['SHOULDER_UPPER_ARM', 'FOREARM', 'HAND_FINGERS'].includes(r['NECK_07'] as string),
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_09',
+    variable: 'neck_arm_neuro_symptoms',
+    input: 'multi_choice',
+    question: '목에서 이어지는 것이든 따로 생긴 것이든, 팔이나 손에 다음 증상이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'PARESTHESIA', label: '찌릿하거나 저림' },
+      { value: 'NUMBNESS', label: '감각이 둔하거나 무딤' },
+      { value: 'SUBJECTIVE_WEAKNESS', label: '힘이 빠지는 느낌' },
+      { value: 'NONE', label: '없어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_10',
+    variable: 'neck_headache_present',
+    input: 'single_choice',
+    question: '목이 불편할 때 두통도 같이 생기거나 심해지나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_10A',
+    variable: 'neck_new_or_changed_headache',
+    input: 'single_choice',
+    question: '이 두통이 최근 새로 생겼거나, 평소 두통과 양상이 뚜렷이 달라졌나요?',
+    required: true,
+    step: '상세 증상',
+    // E1: v0.2에서는 == 'YES'였다 -- N10이 UNKNOWN인 채로 CLEAR에 도달할 수
+    // 있던 fail-open을 막기 위해 [YES, UNKNOWN]로 확대(Opus 재검수 v0.2 erratum).
+    showIf: (r) => IS_PRIMARY_NECK(r) && (r['NECK_10'] === 'YES' || r['NECK_10'] === 'UNKNOWN'),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_11',
+    variable: 'neck_headache_neck_link',
+    input: 'single_choice',
+    question: '목을 움직이거나 오래 같은 자세를 유지하면 두통도 함께 변하나요?',
+    required: false,
+    step: '상세 증상',
+    // N11은 phenotype 전용(CFRT 후보 flag)이라 v0.2.1에서도 == 'YES' 그대로 유지.
+    showIf: (r) => IS_PRIMARY_NECK(r) && r['NECK_10'] === 'YES',
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_12',
+    variable: 'neck_sustained_posture_aggravation',
+    input: 'single_choice',
+    question: '오래 앉기, 컴퓨터, 운전처럼 같은 자세를 유지할 때 목이 더 불편해지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && IS_NECK_CHRONIC_ONSET(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2103,6 +2376,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...URINARY_QUESTIONS,
   ...PAIN_QUESTIONS,
   ...LBP_QUESTIONS,
+  ...NECK_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -2185,6 +2459,20 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
     const vals = Array.isArray(v) ? v : typeof v === 'string' ? [v] : []
     return vals.some((x) => URGENT_CES_VALUES.has(x))
   },
+  /**
+   * NECK_V1 URGENT_REVIEW 즉시 인터럽트 — v0.2.1 §5. URGENT는 4개 지점 중
+   * 어디서든 확정될 수 있으므로(N02 urgent 값 / N02A WORSENING / N03B YES /
+   * N04 hard 양성 또는 soft 양성+N03A not-valid-negative), 각 화면 제출
+   * 직후 전체 neck_safety_status를 재계산해 URGENT_REVIEW일 때만
+   * interrupt한다 — 부분 재구현으로 각 조건을 따로 손으로 맞추는 대신
+   * computeNeckFlags 자체를 그대로 재사용해 엔진과의 drift를 구조적으로
+   * 차단한다. REVIEW_REQUIRED(비응급)는 LBP_05/LBP_06과 동일하게 flag만
+   * 남기고 인터럽트하지 않는다.
+   */
+  NECK_02: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  NECK_02A: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  NECK_03B: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  NECK_04: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -2275,11 +2563,13 @@ export const buildRoutingPayload = (r: Responses) => {
     /**
      * `primary_module` stays `'Pain'` unchanged (never repurposed to
      * something like `'pain_lbp'` -- DoctorView.tsx switches on the literal
-     * `'Pain'` string in several places and has no LBP-aware fallback, see
-     * LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely additive
-     * sibling field for LBP-specific UI to key off instead.
+     * `'Pain'` string in several places and has no LBP/NECK-aware fallback,
+     * see LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely additive
+     * sibling field for LBP/NECK-specific UI to key off instead.
+     * IS_PRIMARY_LBP and IS_PRIMARY_NECK are mutually exclusive (PAIN_01
+     * is single_choice), so this is never ambiguous.
      */
-    primary_module_detail: IS_PRIMARY_LBP(r) ? 'LBP' : null,
+    primary_module_detail: IS_PRIMARY_LBP(r) ? 'LBP' : IS_PRIMARY_NECK(r) ? 'NECK' : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -2417,6 +2707,13 @@ export const buildResponsePayload = (r: Responses) => ({
      * revision-log item 6).
      */
     lbp: IS_PRIMARY_LBP(r) ? computeLbpFlags(toLbpState(r, deriveReproductiveStatus(r), undefined, ageFromResponses(r))) : null,
+    /**
+     * NECK_V1: same reasoning as `lbp` above -- only computed for NECK
+     * patients, since running computeNeckFlags on an all-null NECK_* state
+     * would fail closed to REVIEW_REQUIRED for every non-NECK patient
+     * (meaningless noise, not a real signal).
+     */
+    neck: IS_PRIMARY_NECK(r) ? computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))) : null,
   },
   modules: {
     sleep: {
@@ -2474,6 +2771,23 @@ export const buildResponsePayload = (r: Responses) => ({
       recovery_expectation: r['LBP_12'],
       fear_avoidance: r['LBP_13'],
       work_impact: r['LBP_14'],
+    },
+    neck: {
+      recent_significant_trauma: r['NECK_01'],
+      cord_concern_screen: r['NECK_02'],
+      cord_symptom_course: r['NECK_02A'],
+      sudden_unusual_severe_neck_pain: r['NECK_03A'],
+      thunderclap_headache_screen: r['NECK_03B'],
+      vascular_associated_screen: r['NECK_04'],
+      systemic_redflag_screen: r['NECK_05'],
+      primary_side: r['NECK_06'],
+      distal_extent: r['NECK_07'],
+      arm_symptom_side: r['NECK_08'],
+      arm_neuro_symptoms: r['NECK_09'],
+      headache_present: r['NECK_10'],
+      new_or_changed_headache: r['NECK_10A'],
+      headache_neck_link: r['NECK_11'],
+      sustained_posture_aggravation: r['NECK_12'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

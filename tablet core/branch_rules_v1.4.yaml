@@ -1,0 +1,405 @@
+version: "1.4"
+project: "Samindang Clinical OS - Tablet Branch Rules"
+frozen: true
+frozen_note: >
+  v1.3 + LBP_V1 real question-set integration (see decision_log.md for the
+  v1.3->v1.4 diff, including a provenance note: the externally-supplied
+  LBP_V1 candidate package's own copies of survey_core_v1.3.yaml /
+  branch_rules_v1.3.yaml were NOT used as-is — they diverged from this
+  repo's actual frozen v1.3 in field names and reintroduced an already-fixed
+  YAML boolean-coercion bug. Only the clinical module content
+  (lbp_v1.0.yaml) and select branch-rules ideas were ported, rewritten
+  against this file's real field names.
+  Items touching clinical judgment are NOT decided here — see
+  unresolved_clinical_decisions.md; this file implements only the most
+  conservative provisional behavior for those, clearly marked inline.
+
+field_semantics_ref: "survey_core_v1.4.yaml:value_semantics"
+
+routing_model:
+  strategy: "primary_route_then_module_extensions"
+  rationale:
+    - "Core에서 생성되지 않은 menopause_screen/sleep_problem_present로 1차 route를 결정하지 않는다."
+    - "SLEEP은 먼저 SLEEP_V1로 진입한 뒤 module output으로 MENOPAUSE_SLEEP extension 여부를 결정한다."
+    - "WOMENS/MENOPAUSE는 MENOPAUSE_V1로 진입한 뒤 sleep_problem_present에 따라 extension을 추가한다."
+
+module_contracts:
+
+  LBP_V1:
+    type: primary_micro_module
+    status: question_set_candidate_integrated
+    question_set_file: lbp_v1.0.yaml
+    evidence_file: evidence_matrix_lbp_v1.md
+    outputs:
+      - lbp_safety_status
+      - leg_symptom_present
+    output_domains:
+      lbp_safety_status: [CLEAR, REVIEW_REQUIRED, URGENT_REVIEW]
+      leg_symptom_present: ["YES", "NO", UNKNOWN]
+    # primary_micro_module_complete is engine_state-owned (survey_core_v1.4.yaml), not a module output
+
+  NECK_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  SHOULDER_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  KNEE_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  ELBOW_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  WRIST_HAND_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  GENERIC_MSK_V1:
+    type: primary_micro_module
+    status: planned_later
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  SLEEP_V1:
+    type: primary_micro_module
+    status: planned
+    outputs:
+      - menopause_screen
+    # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+    output_domains:
+      menopause_screen: ["YES", "NO", "UNKNOWN", "NOT_APPLICABLE"]
+
+  MENOPAUSE_V1:
+    type: primary_micro_module
+    status: planned
+    outputs:
+      - sleep_problem_present
+    # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+    output_domains:
+      sleep_problem_present: [true, false]
+
+  DIGESTION_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  FATIGUE_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  HEAD_DIZZY_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  WOMENS_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  URINARY_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  SKIN_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  RESP_ENT_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  GENERIC_OTHER_V1:
+    type: primary_micro_module
+    status: planned
+    outputs: []  # primary_micro_module_complete is engine_state-owned (survey_core_v1.3.yaml), not a module output
+
+  MENOPAUSE_SLEEP:
+    type: extension_module
+    status: existing_design_to_migrate
+    outputs: []
+
+primary_routes:
+
+  - id: route_lbp
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: eq, value: LBP}
+    safety_gate: LBP_SAFETY
+    micro_module: LBP_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_LBP
+
+  - id: route_neck
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: eq, value: NECK}
+    safety_gate: NECK_SAFETY
+    micro_module: NECK_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_NECK
+
+  - id: route_shoulder
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: eq, value: SHOULDER}
+    safety_gate: SHOULDER_SAFETY
+    micro_module: SHOULDER_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_SHOULDER
+
+  - id: route_knee
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: eq, value: KNEE}
+    safety_gate: KNEE_SAFETY
+    micro_module: KNEE_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_KNEE
+
+  - id: route_elbow
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: eq, value: ELBOW}
+    safety_gate: ELBOW_SAFETY
+    micro_module: ELBOW_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_ELBOW
+
+  - id: route_wrist_hand
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: eq, value: WRIST_HAND}
+    safety_gate: WRIST_HAND_SAFETY
+    micro_module: WRIST_HAND_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_WRIST_HAND
+
+  - id: route_other_msk
+    priority: 50
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_detail, op: in, value: [HIP, ANKLE_FOOT, MULTISITE]}
+    safety_gate: GENERIC_MSK_SAFETY
+    micro_module: GENERIC_MSK_V1
+    timing_class: simple_msk
+    clinician_panel: MSK_GENERIC
+
+  - id: route_sleep
+    priority: 100
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: SLEEP}
+    safety_gate: SLEEP_SAFETY
+    micro_module: SLEEP_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_SLEEP
+
+  - id: route_menopause
+    priority: 120
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: WOMENS}
+        - {field: primary_complaint_detail, op: eq, value: MENOPAUSE}
+    safety_gate: WOMENS_SAFETY
+    micro_module: MENOPAUSE_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_MENOPAUSE
+
+  - id: route_digestion
+    priority: 100
+    when: {all: [{field: primary_complaint_domain, op: eq, value: DIGESTION}]}
+    safety_gate: DIGESTION_SAFETY
+    micro_module: DIGESTION_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_GENERAL
+
+  - id: route_fatigue
+    priority: 100
+    when: {all: [{field: primary_complaint_domain, op: eq, value: FATIGUE}]}
+    safety_gate: FATIGUE_SAFETY
+    micro_module: FATIGUE_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_GENERAL
+
+  - id: route_head_dizzy
+    priority: 100
+    when: {all: [{field: primary_complaint_domain, op: eq, value: HEAD_DIZZY}]}
+    safety_gate: HEAD_DIZZY_SAFETY
+    micro_module: HEAD_DIZZY_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_GENERAL
+
+  - id: route_womens_other
+    priority: 80
+    when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: WOMENS}
+        - {field: primary_complaint_detail, op: neq, value: MENOPAUSE}
+    safety_gate: WOMENS_SAFETY
+    micro_module: WOMENS_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_WOMENS
+
+  - id: route_urinary
+    priority: 100
+    when: {all: [{field: primary_complaint_domain, op: eq, value: URINARY}]}
+    safety_gate: URINARY_SAFETY
+    micro_module: URINARY_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_URINARY
+
+  - id: route_skin
+    priority: 100
+    when: {all: [{field: primary_complaint_domain, op: eq, value: SKIN}]}
+    safety_gate: SKIN_SAFETY
+    micro_module: SKIN_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_GENERAL
+
+  - id: route_resp_ent
+    priority: 100
+    when: {all: [{field: primary_complaint_domain, op: eq, value: RESP_ENT}]}
+    safety_gate: RESP_ENT_SAFETY
+    micro_module: RESP_ENT_V1
+    timing_class: simple_herbal
+    clinician_panel: HERBAL_GENERAL
+
+  - id: route_other
+    priority: 10
+    when: {all: [{field: primary_complaint_domain, op: eq, value: OTHER}]}
+    safety_gate: GENERIC_SAFETY
+    micro_module: GENERIC_OTHER_V1
+    timing_class: simple_herbal
+    clinician_panel: GENERAL
+
+  # Structural safety net (N-6): per value_semantics, a MISSING
+  # primary_complaint_detail no-matches both eq and neq, so an MSK or WOMENS
+  # profile that reaches routing without a detail answer would otherwise
+  # match zero primary_routes. required:true on core_msk_region/
+  # core_nonmsk_detail should make this unreachable through normal patient
+  # flow, but routing must not silently produce no route if the engine ever
+  # reaches this state (e.g. a resumed/corrupted session). Lowest priority
+  # so it can only ever win when nothing else matched.
+  - id: route_fallback_no_detail
+    priority: -10
+    when:
+      all:
+        - {field: primary_complaint_domain, op: exists}
+        - {field: primary_complaint_detail, op: not_exists}
+    safety_gate: GENERIC_SAFETY
+    micro_module: GENERIC_OTHER_V1
+    timing_class: simple_herbal
+    clinician_panel: GENERAL
+    note: "structural fallback only — flags for clinician review, does not represent a real primary complaint category"
+
+module_extensions:
+
+  # Each extension sets engine_state.pending_extension_present=true when
+  # attached and false at its own terminal state (N-7 fix). This is what
+  # core_second_complaint.show_when now also checks, so the second-complaint
+  # prompt cannot interleave with an in-progress extension.
+  - id: ext_sleep_to_menopause_sleep
+    after_module: SLEEP_V1
+    when:
+      all:
+        - {field: menopause_screen, op: in, value: ["YES", "UNKNOWN"]}
+    attach_module: MENOPAUSE_SLEEP
+    sets_pending_extension: true
+
+  - id: ext_menopause_to_menopause_sleep
+    after_module: MENOPAUSE_V1
+    when:
+      all:
+        - {field: sleep_problem_present, op: eq, value: true}
+    attach_module: MENOPAUSE_SLEEP
+    sets_pending_extension: true
+
+second_complaint_policy:
+  enabled: true
+  max_additional_complaints_in_tablet: 1
+  # N-2/N-7 fix: the prompt fires only once BOTH the primary module AND any
+  # attached extension have reached terminal state. This label is
+  # descriptive only — the authoritative, machine-checked gate is
+  # core_second_complaint.show_when in survey_core_v1.3.yaml (which requires
+  # primary_micro_module_complete == true AND pending_extension_present ==
+  # false). Do not re-implement the condition here; one source of truth.
+  prompt_after: "primary_micro_module_complete AND NOT pending_extension_present (see survey_core_v1.3.yaml:core_second_complaint.show_when)"
+  runtime_counter: additional_complaint_count
+  # N-2 fix: bound to a real, always-present core event instead of an
+  # undefined "second complaint module is opened". core_second_complaint_domain
+  # is the only concrete artifact that exists today for a second complaint;
+  # answering it is the moment a second complaint is actually captured, on
+  # BOTH the if_budget_available and if_budget_low paths below — so the cap
+  # engages even when detail is deferred to the clinician, closing the
+  # "counter never increments on the low-budget path" gap.
+  counter_increment_when:
+    type: question_answered
+    question_id: core_second_complaint_domain
+  second_module_can_reopen_prompt: false
+  if_budget_available: "open short second-module intake"
+  if_budget_low: "capture second_complaint_domain only and defer detail to clinician"
+  clinician_flag_template: "추가 주호소: {second_complaint_domain} — 세부 문진은 진료실 확인"
+
+safety_scope:
+  named_safety_gates:
+    fatigue_suppressible: false
+  core_questions:
+    protected_when:
+      - "safety_level == critical"
+      - "required == true"
+  treatment_recommendation:
+    if_safety_positive_or_uncertain:
+      - "mark clinician review"
+      - "do not auto-generate treatment recommendation"
+      - "do not display diagnosis to patient"
+
+sigma_mapping:
+  tablet_structured_output:
+    destination: external_data.samindang_intake
+    write_mode: merge
+  final_clinical_note:
+    destination: external_note
+    write_mode: replace
+    clinician_action: "Sigma UI에서 삽입 후 저장"
+  raw_audio_transcript:
+    destination: local_clinical_os_storage
+    send_to_sigma: false
+
+simulation_policy:
+  structural_simulation:
+    purpose: "branch/safety/schema 검증"
+    sampling: "stratified or exhaustive where feasible"
+    prevalence_interpretation: false
+  timing_simulation:
+    purpose: "설계상 예상 시간 비교"
+    prior_source: "illustrative unless real clinic data supplied"
+    must_label_non_prevalence: true
+  total_path_timing:
+    computable_only_when: "referenced micro-module question sets are present"
+    otherwise: not_computable

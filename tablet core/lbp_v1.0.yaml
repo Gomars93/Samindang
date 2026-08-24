@@ -1,0 +1,700 @@
+version: 1.2-samindang
+module_id: LBP_V1
+project: Samindang Clinical OS - Low Back Pain Tablet Micro-Module
+locale: ko-KR
+module_type: primary_micro_module
+status: clinical_signoff_closed_pending_repo_implementation
+clinical_source_of_truth: LBP_v1.4_임상결정_마감본.md
+revision_note: >
+  v1.2: implements LBP_v1.4_임상결정_마감본.md (clinical decision closure).
+  Question wording changes: none to existing questions. One new choice
+  added (lbp_current_redflag_screen: RECENT_SPINAL_PROCEDURE_OR_INJECTION,
+  decision doc section 3-1B). hypothesis_model's undefined "criteria count"
+  language removed per section 5 (formal NG65 count not applied to this
+  simplified screen). New computed fields (lbp_neuro_baseline_required,
+  lbp_inflammatory_pattern_consider, lbp_fracture_risk_age_modifier,
+  lbp_malignancy_risk_age_modifier, treatment_safety_status) and one new
+  clinician-entered input (clinician_objective_motor_deficit) added — see
+  computed_fields/clinician_inputs below and lbp_logic.py. Decisions
+  explicitly NOT implemented as new questions (section 3-2/3-3/3-4): a
+  standalone age question (age is read from Core), a universal night-pain
+  red flag, a standalone bisphosphonate question — existing fields cover
+  these per the decision doc.
+
+  v1.1: lbp_trauma_safety.show_when widened (was fallback-only when
+  onset_pattern was UNKNOWN/unanswered) to always ask within the module —
+  see decision_log.md. Computed-field logic reimplemented in lbp_logic.py,
+  not this file, after an Opus clinical review found real bugs in the
+  1.0-candidate reference implementation.
+entry_when:
+  all:
+  - field: primary_complaint_domain
+    op: eq
+    value: MSK
+  - field: primary_complaint_detail
+    op: eq
+    value: LBP
+metadata:
+  purpose: Core에서 확보한 공통 초진정보를 반복하지 않고, LBP에서 환자가 직접 제공할 수 있는 안전·하지증상·경과 정보를 최소 화면으로 구조화한다.
+  design_principles:
+  - 태블릿은 진단을 확정하지 않는다.
+  - 환자 보고 weakness와 객관적 motor deficit을 구분한다.
+  - 단일 red flag 또는 단일 이학검사로 질환을 확정하지 않는다.
+  - UNKNOWN을 NO로 취급하지 않는다.
+  - safety critical 문항은 fatigue suppression/defer 대상이 아니다.
+  - 질환명에서 운동을 직접 매칭하지 않는다. 운동은 기능·irritability·검사반응·목표를 사용해 추천하고 원장이 승인한다.
+  question_budget:
+    simple_base_screens_target_max: 6
+    simple_base_estimated_seconds_target_max: 45
+    route_p90_seconds_target: 180
+    patient_forced_end: false
+  evidence_version: LBP_EVIDENCE_2026-08-24_v1
+inputs:
+  required_from_core:
+  - patient_age
+  - onset_bucket
+  - symptom_nrs
+  - target_function
+  - target_function_score
+  - major_history_present
+  optional_from_core:
+  - onset_pattern
+  - major_history_categories
+  - medication_present
+  - medication_categories
+  - pregnancy_status
+  - patient_sex
+clinician_inputs:
+  # Not asked on the patient tablet — entered by 원장 in Doctor View after
+  # exam. Decision doc section 1-2: objective neurologic deterioration is
+  # independent of and can override the patient-reported CES screen.
+  clinician_objective_motor_deficit:
+    type: enum
+    values: [NONE, SEVERE_OR_PROGRESSIVE, UNKNOWN]
+    default: not_yet_assessed  # absent/unanswered means "not examined yet", not a safety gap — see lbp_logic.py
+    rule: SEVERE_OR_PROGRESSIVE -> lbp_safety_status = URGENT_REVIEW, independent of lbp_ces_screen.
+      Distinct from patient-reported lbp_leg_neuro_symptoms.SUBJECTIVE_WEAKNESS — never conflated.
+computed_fields:
+  leg_symptom_present:
+    type: enum
+    values:
+    - 'YES'
+    - 'NO'
+    - UNKNOWN
+    rule: YES if any concrete leg feature is present; NO only if distal_extent=BACK_ONLY AND leg_side=NONE AND neuro_symptoms=[NONE];
+      otherwise UNKNOWN.
+  lbp_inflammatory_eligible:
+    type: enum
+    values:
+    - 'YES'
+    - 'NO'
+    - UNKNOWN
+    rule: If onset_bucket!=M3_PLUS -> NO. If patient_age<45 and chronic -> YES. If age>=45 and chronic -> use lbp_onset_before_45.
+      UNKNOWN remains UNKNOWN.
+  lbp_safety_status:
+    type: enum
+    values:
+    - CLEAR
+    - REVIEW_REQUIRED
+    - URGENT_REVIEW
+    rule: >
+      Disease safety only (see treatment_safety_status below for pregnancy —
+      the two are never merged, decision doc section 6).
+      URGENT_REVIEW for any positive CES item, OR
+      clinician_objective_motor_deficit == SEVERE_OR_PROGRESSIVE.
+      REVIEW_REQUIRED (minimum) for: CES UNKNOWN/missing/empty/malformed/any
+      exclusivity violation (NONE+UNKNOWN, NONE+positive, etc. — never
+      CLEAR); current-redflag-screen positive/UNKNOWN; trauma positive/
+      UNKNOWN; core cancer/osteoporosis history; bilateral leg symptoms
+      WITH a concrete neuro feature (paresthesia/numbness/subjective
+      weakness) present — decision doc section 2, Samindang's own
+      conservative clinician-review policy, not a direct NICE NG127 citation.
+      Bilateral leg PAIN ALONE (no neuro feature) does NOT force review —
+      it sets lbp_neuro_baseline_required=true instead (decision doc
+      section 2 proviso). Age alone (fracture/malignancy risk modifiers)
+      never raises this status on its own — see
+      lbp_fracture_risk_age_modifier / lbp_malignancy_risk_age_modifier.
+      CLEAR only when every required safety input is concretely negative
+      and no review trigger above is present. Fail closed: any MISSING
+      required safety input is never treated as CLEAR.
+  lbp_neuro_baseline_required:
+    type: boolean
+    rule: leg_side==BILATERAL AND no concrete neuro feature selected -> true.
+      Clinician-facing flag requesting a baseline neuro exam; does not by
+      itself change lbp_safety_status. Decision doc section 2.
+  lbp_inflammatory_pattern_consider:
+    type: boolean
+    rule: lbp_inflammatory_eligible==YES AND lbp_inflammatory_screen has at
+      least one concrete supporting feature (not NONE/UNKNOWN-only) -> true.
+      Clinician-facing CONSIDER signal only — no formal NG65 criteria count
+      is computed in this simplified v1 screen (decision doc section 5).
+      Never displayed to the patient as a diagnosis or probability.
+  lbp_fracture_risk_age_modifier:
+    type: boolean
+    rule: patient_age >= 75 -> true. Clinician-facing context only; never
+      raises lbp_safety_status by itself (decision doc section 3-2).
+  lbp_malignancy_risk_age_modifier:
+    type: boolean
+    rule: patient_age > 50 -> true. Clinician-facing context only; never
+      raises lbp_safety_status by itself (decision doc section 3-2).
+  treatment_safety_status:
+    type: enum
+    values: [CLEAR, REVIEW_REQUIRED]
+    rule: >
+      A SEPARATE dimension from lbp_safety_status (decision doc section 6)
+      — pregnancy affects what treatment/exercise can be finalized, not
+      whether the underlying LBP presentation needs disease-safety review.
+      pregnancy_status in [YES, POSSIBLE, UNKNOWN] -> REVIEW_REQUIRED.
+      pregnancy_status == NO -> CLEAR.
+      pregnancy_status MISSING: REVIEW_REQUIRED if the question was
+      applicable (patient_sex in [F,OTHER,UNKNOWN] and patient_age between
+      [10,55]) but unanswered (fail closed); CLEAR if inapplicable (e.g.
+      male patient — this is the expected, non-gap MISSING state).
+      Does not stop the questionnaire; gates only contraindication-
+      sensitive treatment/exercise finalization pending clinician approval.
+outputs:
+  patient_reported:
+  - lbp_distal_extent
+  - lbp_leg_neuro_symptoms
+  - lbp_leg_side
+  - lbp_ces_screen
+  - lbp_current_redflag_screen
+  - lbp_trauma_safety
+  - lbp_recurrence
+  - lbp_claudication_walking
+  - lbp_claudication_relief
+  - lbp_onset_before_45
+  - lbp_inflammatory_screen
+  - lbp_recovery_expectation
+  - lbp_fear_avoidance
+  - lbp_work_impact
+  computed:
+  - leg_symptom_present
+  - lbp_inflammatory_eligible
+  - lbp_safety_status
+  - lbp_neuro_baseline_required
+  - lbp_inflammatory_pattern_consider
+  - lbp_fracture_risk_age_modifier
+  - lbp_malignancy_risk_age_modifier
+  - treatment_safety_status
+  clinician_flags:
+  - lbp_urgent_safety_review
+  - lbp_specific_pathology_review
+  - lbp_inflammatory_pattern_review
+  - lbp_radicular_pattern_consider
+  - lbp_claudication_pattern_consider
+questions:
+- id: lbp_distal_extent
+  order: 110
+  text: 허리 통증이나 불편감이 가장 멀리 어디까지 내려가나요?
+  type: single_choice
+  required: true
+  estimated_seconds: 5
+  fatigue_priority: required
+  safety_level: none
+  output_field: lbp_distal_extent
+  choices:
+  - value: BACK_ONLY
+    label: 허리만
+  - value: BUTTOCK
+    label: 엉덩이까지
+  - value: THIGH
+    label: 허벅지까지
+  - value: BELOW_KNEE
+    label: 무릎 아래·종아리까지
+  - value: FOOT
+    label: 발까지
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_leg_neuro_symptoms
+  order: 120
+  text: 다리에 다음과 같은 느낌이 있나요? 해당되는 것을 모두 골라주세요.
+  type: multi_choice
+  required: true
+  estimated_seconds: 7
+  fatigue_priority: required
+  safety_level: none
+  output_field: lbp_leg_neuro_symptoms
+  exclusive_values:
+  - NONE
+  - UNKNOWN
+  choices:
+  - value: PARESTHESIA
+    label: 저리거나 찌릿함
+  - value: NUMBNESS
+    label: 감각이 둔함
+  - value: SUBJECTIVE_WEAKNESS
+    label: 힘이 빠지는 느낌
+  - value: NONE
+    label: 없어요
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_leg_side
+  order: 130
+  text: 다리 증상이 있다면 어느 쪽인가요?
+  type: single_choice
+  required: true
+  estimated_seconds: 4
+  fatigue_priority: required
+  safety_level: none
+  output_field: lbp_leg_side
+  choices:
+  - value: NONE
+    label: 다리 증상 없음
+  - value: RIGHT
+    label: 오른쪽
+  - value: LEFT
+    label: 왼쪽
+  - value: BILATERAL
+    label: 양쪽
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_ces_screen
+  order: 140
+  text: 허리·다리 증상과 함께 최근 새로 생긴 변화가 있나요? 해당되는 것을 모두 골라주세요.
+  type: multi_choice
+  required: true
+  estimated_seconds: 9
+  fatigue_priority: safety
+  safety_level: critical
+  output_field: lbp_ces_screen
+  exclusive_values:
+  - NONE
+  - UNKNOWN
+  choices:
+  - value: URINARY_RETENTION
+    label: 소변이 잘 나오지 않거나 시작하기 어려워짐
+  - value: BLADDER_BOWEL_CONTROL
+    label: 소변이나 대변을 조절하기 어려워짐
+  - value: SADDLE_SENSORY_CHANGE
+    label: 항문·회음부 주변 감각이 둔해짐
+  - value: RAPID_PROGRESSIVE_WEAKNESS
+    label: 다리 힘이 빠르게 약해짐
+  - value: SUDDEN_SEXUAL_FUNCTION_CHANGE
+    label: 성기능에 갑작스러운 변화가 생김
+  - value: NONE
+    label: 해당 없음
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_current_redflag_screen
+  order: 150
+  text: 최근 다음 중 해당되는 것이 있나요?
+  type: multi_choice
+  required: true
+  estimated_seconds: 8
+  fatigue_priority: safety
+  safety_level: critical
+  output_field: lbp_current_redflag_screen
+  exclusive_values:
+  - NONE
+  - UNKNOWN
+  choices:
+  - value: FEVER_CHILLS_OR_SERIOUS_INFECTION
+    label: 원인 모를 발열·오한 또는 최근 심한 감염
+  - value: LONG_TERM_STEROID_OR_IMMUNOSUPPRESSIVE
+    label: 장기간 스테로이드 또는 면역억제 치료
+  - value: RECENT_SPINAL_PROCEDURE_OR_INJECTION
+    label: 최근 허리·척추 주사, 시술, 또는 수술
+  - value: UNEXPLAINED_WEIGHT_LOSS
+    label: 최근 설명되지 않는 체중 감소
+  - value: NONE
+    label: 해당 없음
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_trauma_safety
+  order: 155
+  text: 최근 넘어지거나 부딪히는 등 허리에 큰 충격이 있었나요?
+  type: single_choice
+  required: true
+  estimated_seconds: 4
+  fatigue_priority: safety
+  safety_level: critical
+  output_field: lbp_trauma_safety
+  # Widened from a fallback-only gate (onset_pattern not_exists/UNKNOWN) to
+  # unconditional within the module — see revision_note above. The prior
+  # gate meant a patient who picked SUDDEN/GRADUAL/REPETITIVE_USE for
+  # onset_pattern (an optional, safety_level:none Core question) never saw
+  # this safety_level:critical trauma screen at all, even if a real fall
+  # happened alongside a gradually-worsening pain course.
+  choices:
+  - value: 'NO'
+    label: 아니요
+  - value: 'YES'
+    label: 네
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_recurrence
+  order: 160
+  text: 이번과 비슷한 허리통증이 이전에도 있었나요?
+  type: single_choice
+  required: false
+  estimated_seconds: 4
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_recurrence
+  choices:
+  - value: 'NO'
+    label: 처음이에요
+  - value: 'YES'
+    label: 이전에도 있었어요
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_claudication_walking
+  order: 170
+  text: 서 있거나 걸을수록 엉덩이·다리 증상이 더 심해지나요?
+  type: single_choice
+  required: false
+  estimated_seconds: 5
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_claudication_walking
+  show_when:
+    any:
+    - field: lbp_leg_side
+      op: in
+      value:
+      - RIGHT
+      - LEFT
+      - BILATERAL
+      - UNKNOWN
+    - field: lbp_distal_extent
+      op: in
+      value:
+      - BUTTOCK
+      - THIGH
+      - BELOW_KNEE
+      - FOOT
+      - UNKNOWN
+  choices:
+  - value: 'NO'
+    label: 아니요
+  - value: 'YES'
+    label: 네
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_claudication_relief
+  order: 171
+  text: 그 증상이 앉거나 허리를 조금 숙이면 줄어드나요?
+  type: single_choice
+  required: false
+  estimated_seconds: 4
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_claudication_relief
+  show_when:
+    all:
+    - field: lbp_claudication_walking
+      op: eq
+      value: 'YES'
+  choices:
+  - value: 'NO'
+    label: 아니요
+  - value: 'YES'
+    label: 네
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_onset_before_45
+  order: 180
+  text: 이 허리통증이 처음 시작된 것은 45세 이전인가요?
+  type: single_choice
+  required: false
+  estimated_seconds: 4
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_onset_before_45
+  show_when:
+    all:
+    - field: onset_bucket
+      op: eq
+      value: M3_PLUS
+    - field: patient_age
+      op: between
+      value:
+      - 45
+      - 120
+  choices:
+  - value: 'NO'
+    label: 아니요
+  - value: 'YES'
+    label: 네
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_inflammatory_screen
+  order: 181
+  text: 오래된 허리통증과 관련해 다음 중 해당되는 것이 있나요?
+  type: multi_choice
+  required: false
+  estimated_seconds: 9
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_inflammatory_screen
+  show_when:
+    all:
+    - field: lbp_inflammatory_eligible
+      op: in
+      value:
+      - 'YES'
+      - UNKNOWN
+  exclusive_values:
+  - NONE
+  - UNKNOWN
+  choices:
+  - value: SECOND_HALF_NIGHT_WAKING
+    label: 밤 후반부에 허리 때문에 잠에서 깸
+  - value: BUTTOCK_PAIN
+    label: 엉덩이 통증이 반복됨
+  - value: IMPROVES_WITH_MOVEMENT
+    label: 움직이면 오히려 좋아짐
+  - value: NSAID_RAPID_RESPONSE
+    label: 소염진통제를 먹으면 48시간 안에 뚜렷이 좋아짐
+  - value: FIRST_DEGREE_FAMILY_SPA
+    label: 가족 중 척추관절염이 있음
+  - value: PAST_OR_CURRENT_ARTHRITIS
+    label: 관절염 진단이나 관절이 붓는 증상이 있었음
+  - value: PAST_OR_CURRENT_ENTHESITIS
+    label: 발뒤꿈치 등 힘줄이 뼈에 붙는 부위 통증이 반복됨
+  - value: PAST_OR_CURRENT_PSORIASIS
+    label: 건선 진단을 받았거나 의심되는 피부병변이 있음
+  - value: NONE
+    label: 해당 없음
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_recovery_expectation
+  order: 190
+  text: 이번 허리 상태가 좋아질 가능성을 어느 정도로 생각하시나요?
+  type: numeric_scale
+  required: false
+  estimated_seconds: 5
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_recovery_expectation
+  show_when:
+    all:
+    - field: onset_bucket
+      op: eq
+      value: M3_PLUS
+  scale:
+    min: 0
+    max: 10
+    min_label: 전혀 좋아지지 않을 것 같음
+    max_label: 충분히 좋아질 것 같음
+- id: lbp_fear_avoidance
+  order: 191
+  text: 움직이거나 운동하면 허리를 더 상하게 할까 봐 피하는 편인가요?
+  type: single_choice
+  required: false
+  estimated_seconds: 4
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_fear_avoidance
+  show_when:
+    all:
+    - field: onset_bucket
+      op: eq
+      value: M3_PLUS
+  choices:
+  - value: 'NO'
+    label: 아니요
+  - value: SOMEWHAT
+    label: 조금 그래요
+  - value: 'YES'
+    label: 많이 그래요
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+- id: lbp_work_impact
+  order: 192
+  text: 허리 때문에 일·집안일·일상생활에 얼마나 지장이 있나요?
+  type: single_choice
+  required: false
+  estimated_seconds: 4
+  fatigue_priority: high_value
+  safety_level: none
+  output_field: lbp_work_impact
+  show_when:
+    all:
+    - field: onset_bucket
+      op: eq
+      value: M3_PLUS
+  choices:
+  - value: NONE
+    label: 거의 없음
+  - value: SOME
+    label: 일부 지장 있음
+  - value: MAJOR
+    label: 매우 큼
+  - value: UNKNOWN
+    label: 잘 모르겠어요
+safety_logic:
+  bilateral_neuro_policy_note: >
+    The BILATERAL+neuro-feature -> REVIEW_REQUIRED rule (and the
+    bilateral-pain-alone -> lbp_neuro_baseline_required rule) is Samindang's
+    own conservative clinician-review policy, adopted because this module's
+    CES screen alone does not separately ask about bilateral leg
+    involvement. It is NOT presented as "NICE NG127 requires immediate
+    referral for bilateral sciatica alone" — decision doc section 2.
+  age_modifier_policy_note: >
+    patient_age is read from Core, never asked again here. age>=75
+    (fracture-risk) and age>50 (malignancy-risk) are clinician-facing
+    context modifiers only (lbp_fracture_risk_age_modifier /
+    lbp_malignancy_risk_age_modifier) — age alone never changes
+    lbp_safety_status. Decision doc section 3-2.
+  urgent_ces_values:
+  - URINARY_RETENTION
+  - BLADDER_BOWEL_CONTROL
+  - SADDLE_SENSORY_CHANGE
+  - RAPID_PROGRESSIVE_WEAKNESS
+  - SUDDEN_SEXUAL_FUNCTION_CHANGE
+  review_core_history_values:
+  - CANCER
+  - OSTEOPOROSIS
+  behavior:
+    URGENT_REVIEW:
+    - stop routine MSK recommendation
+    - show clinician urgent review
+    - do not auto-recommend exercise/treatment
+    - triggered by any positive CES item OR clinician_objective_motor_deficit==SEVERE_OR_PROGRESSIVE
+    REVIEW_REQUIRED:
+    - show clinician review
+    - do not auto-recommend exercise/treatment until reviewed
+    CLEAR:
+    - routine pathway may continue
+  treatment_safety_behavior:
+    # Separate from the disease-safety behavior above — decision doc section 6/9.
+    REVIEW_REQUIRED:
+    - do not finalize contraindication-sensitive treatment/exercise without clinician approval
+    - questionnaire itself continues normally
+    CLEAR:
+    - no treatment-safety restriction beyond normal clinician review
+clinician_exam_selector:
+  global_lock: If lbp_safety_status != CLEAR, routine exam/treatment/exercise recommendation is locked until clinician review.
+    Fail closed — a MISSING/not-yet-computed lbp_safety_status locks, it does not unlock.
+  rules:
+  - when: lbp_safety_status == CLEAR
+    suggest:
+    - TARGET_FUNCTION_REPRODUCTION
+    - LUMBAR_ACTIVE_MOVEMENT_RESPONSE
+  - when: leg_symptom_present in [YES, UNKNOWN]
+    suggest:
+    - LOWER_EXTREMITY_MOTOR_MYOTOME
+    - SENSORY_SCREEN
+    - REFLEX_SCREEN
+    - NEURODYNAMIC_TEST_AS_INDICATED
+  - when: lbp_neuro_baseline_required == true
+    suggest:
+    - LOWER_EXTREMITY_MOTOR_MYOTOME
+    - SENSORY_SCREEN
+    - REFLEX_SCREEN
+    guard: Bilateral leg pain alone does not confirm a neurologic finding; this establishes a baseline exam, not a diagnosis.
+  - when: lbp_claudication_walking == YES
+    suggest:
+    - GAIT_AND_WALKING_TOLERANCE
+    - NEUROLOGIC_EXAM
+    - HIP_SCREEN_AS_INDICATED
+    - VASCULAR_SCREEN_AS_INDICATED
+  - when: buttock-dominant local pattern and clinician suspects SIJ contribution
+    suggest:
+    - SIJ_PROVOCATION_CLUSTER_AS_A_CLUSTER
+    guard: A positive cluster does not confirm SIJ pain; interpret as contribution hypothesis only.
+  - when: groin/anterior hip pattern on clinician history/exam
+    suggest:
+    - HIP_ROM_FLEXION_INTERNAL_ROTATION
+    - SELECTIVE_HIP_PROVOCATION
+hypothesis_model:
+  states:
+  - MUST_EXCLUDE
+  - HIGHER_SUPPORT
+  - CONSIDER
+  - LOWER_SUPPORT
+  rules:
+  - hypothesis: SERIOUS_PATHOLOGY
+    state_rule: MUST_EXCLUDE when safety status is REVIEW_REQUIRED or URGENT_REVIEW.
+  - hypothesis: RADICULAR_INVOLVEMENT
+    state_rule: Patient-reported distal/neurologic features may set CONSIDER. Upgrade only with clinician objective neurologic/neurodynamic
+      findings; never from SLR alone.
+  - hypothesis: NEUROGENIC_CLAUDICATION_PATTERN
+    state_rule: Walking/standing aggravation plus relief with sitting/flexion raises support; remains a clinical hypothesis,
+      not a tablet diagnosis.
+  - hypothesis: INFLAMMATORY_BACK_PAIN_PATTERN
+    state_rule: >
+      Only evaluate when lbp_inflammatory_eligible==YES. If
+      lbp_inflammatory_pattern_consider==true, state=CONSIDER (surfaced to
+      clinician, never as a patient-facing diagnosis or probability). This
+      simplified tablet screen does NOT collect NICE NG65's 9 criteria
+      1:1, so no formal NG65 referral count (>=4 criteria, or exactly 3 +
+      HLA-B27) is computed here — decision doc section 5. A future module
+      may implement the formal count separately if needed.
+  - hypothesis: SIJ_CONTRIBUTION
+    state_rule: Only clinician-facing and never confirmed by one provocation test or even a positive cluster alone.
+  - hypothesis: HIP_CONTRIBUTION
+    state_rule: Consider when clinician history/exam supports hip pattern; do not infer solely from LBP tablet responses.
+exercise_recommender_contract:
+  mode: ranked_suggestions_with_clinician_approval
+  suggestion_count_max: 3
+  patient_final_count_recommended:
+  - 1
+  - 2
+  lock_when:
+  - lbp_safety_status != CLEAR
+  - treatment_safety_status != CLEAR  # pregnancy etc. — decision doc section 6/9, separate dimension from disease safety
+  required_before_ranking:
+  - target_function
+  - target_function_score
+  - clinician_irritability
+  - clinician_movement_response
+  - clinician_neuro_status
+  optional_features:
+  - lbp_recovery_expectation
+  - lbp_fear_avoidance
+  - lbp_work_impact
+  - hip_contribution
+  - walking_tolerance
+  candidate_domains:
+  - ACTIVITY_WALKING
+  - LUMBAR_MOBILITY
+  - DIRECTIONAL_RESPONSE
+  - TRUNK_ACTIVATION
+  - MOVEMENT_CONTROL
+  - TRUNK_STRENGTH_ENDURANCE
+  - HIP_MOBILITY
+  - HIP_STRENGTH
+  - HINGE_SIT_TO_STAND
+  - LOAD_CAPACITY
+  - NEURAL_MOBILITY
+  - GRADED_EXPOSURE
+  prohibited_logic:
+  - diagnosis_name_to_exercise_direct_mapping
+  - auto_send_without_clinician_approval
+stale_response_policy:
+  principle: If a prior answer changes and a conditional question becomes hidden, remove that hidden answer from the current
+    clinical payload.
+  examples:
+  - leg symptoms removed -> prune claudication branch
+  - chronic -> nonchronic -> prune inflammatory/prognostic branch
+  - walking aggravation YES -> NO -> prune relief answer
+
+# Decision doc section 10 — captured here for whoever builds the real
+# repo/UI (no such repo exists in this environment; this pass is spec +
+# simulation only). Internal enum/field names stay English ASCII regardless.
+doctor_view_ui_labels:
+  locale: ko-KR
+  labels:
+    Safety: 안전 확인
+    Target Function: 목표 기능
+    Radicular involvement: 신경근성 증상 가능성
+    Suggested Exam: 추가 권장 검사
+sigma_note_soap_template:
+  sections:
+  - code: C/C
+    label: 주호소
+  - code: O/S
+    label: 발병 및 경과
+  - code: S
+    label: 주관적 소견
+  - code: O
+    label: 객관적 소견
+  - code: A
+    label: 평가
+  - code: P
+    label: 계획
+  note: Backend/YAML/analytics fields stay English ASCII enums regardless of
+    this display template.

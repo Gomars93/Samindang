@@ -1,0 +1,606 @@
+version: "1.3"
+project: "Samindang Clinical OS - New Patient Tablet Core"
+locale: "ko-KR"
+frozen: true
+frozen_note: >
+  Repaired via autonomous specification repair pass over v1.2's re-validation
+  findings (see decision_log.md). All structural/technical blockers closed.
+  patient_sex gating on core_pregnancy_status is a provisional, most-
+  conservative behavior pending clinical sign-off — see
+  unresolved_clinical_decisions.md.
+
+metadata:
+  purpose: >
+    모든 초진 환자에게 공통 적용하는 최소 태블릿 문진 Core.
+    환자가 답할 수 있는 사실정보를 먼저 구조화하고, 이후 MSK/한약 micro-module로 분기한다.
+  design_principles:
+    - "환자를 시간 기준으로 강제 종료하지 않는다."
+    - "피로도가 높으면 optional 또는 미시작 high_value 문항을 defer할 수 있다."
+    - "required 또는 safety_level=critical 문항은 절대 suppress/defer하지 않는다."
+    - "missing, null, false, UNKNOWN을 서로 다른 값으로 취급한다."
+    - "환자에게 진단명/변증명을 자동 제시하지 않는다."
+    - "임상 판단은 clinician-facing 단계에서만 수행한다."
+
+value_semantics:
+  missing:
+    definition: "필드가 아직 생성되지 않음"
+    comparison_rule: "exists/not_exists 외의 모든 비교 연산에서 no-match"
+  null:
+    definition: "필드는 생성되었으나 값이 없음"
+    comparison_rule: "명시적으로 null과 비교할 때만 match"
+  false:
+    definition: "환자가 명시적으로 아니오를 선택한 boolean false"
+    comparison_rule: "일반 boolean 값으로서 eq/neq/in에서 정상 비교된다 (missing과 구분됨)"
+  UNKNOWN:
+    definition: "환자가 '잘 모르겠음'을 명시적으로 선택한 값"
+    serialization: "ASCII 토큰 'UNKNOWN'으로 통일 (라벨은 한국어 '잘 모르겠음')"
+  supported_operators:
+    - eq
+    - neq
+    - in
+    - between
+    - regex
+    - exists
+    - not_exists
+  missing_with_neq_rule: "missing은 neq에서도 match하지 않는다"
+
+selector_semantics:
+  first_matching_field: >
+    selector_fields 목록을 순서대로 순회하며, 그 값이 choice_sets의 실제 key로
+    존재하는 첫 번째 field를 선택한다 (값이 존재하지만 choice_sets key가 아닌
+    field는 건너뛴다). 일치하는 field가 없으면 fallback_choice_set을 사용한다.
+
+runtime_context_contract:
+  external_fields:
+    patient_id:
+      type: "string_or_int"
+      source: "Sigma/Clinical OS patient context"
+      required_before_questionnaire: true
+    patient_age:
+      type: "integer"
+      domain: [0, 120]
+      source: "Sigma/Clinical OS patient context"
+      required_before_questionnaire: true
+    patient_sex:
+      type: "enum"
+      values: ["M", "F", "OTHER", "UNKNOWN"]
+      source: "Sigma/Clinical OS patient context"
+      required_before_questionnaire: true
+
+  engine_state:
+    primary_micro_module_complete:
+      type: "boolean"
+      producer: "questionnaire_engine"
+      initial: false
+      set_true_when: "active primary micro-module reaches terminal state"
+    additional_complaint_count:
+      type: "integer"
+      producer: "questionnaire_engine"
+      initial: 0
+      max: 1
+    elapsed_seconds:
+      type: "number"
+      producer: "questionnaire_engine"
+    answered_question_count:
+      type: "integer"
+      producer: "questionnaire_engine"
+    estimated_remaining_seconds:
+      type: "number_or_null"
+      producer: "questionnaire_engine"
+    active_module:
+      type: "string"
+      producer: "questionnaire_engine"
+    pending_extension_present:
+      type: "boolean"
+      producer: "questionnaire_engine"
+      initial: false
+      set_true_when: "a branch_rules.module_extensions entry attaches (sets_pending_extension: true)"
+      set_false_when: "the attached extension module reaches terminal state"
+
+fatigue_policy:
+  hard_stop_patient_session: false
+  targets:
+    core_p50_seconds: 60
+    core_p90_seconds: 90
+    simple_msk_p90_seconds: 180
+    simple_herbal_p90_seconds: 240
+    complex_herbal_p90_seconds: 300
+  priority_order:
+    - safety
+    - required
+    - high_value
+    - optional
+  never_defer_if:
+    - "required == true"
+    - "safety_level == critical"
+  # defer_candidates lists fatigue_priority values only (must be members of
+  # priority_order above). The "not yet started" condition on high_value
+  # questions is enforced by overflow_behavior below, not encoded into the
+  # vocabulary string (that was the v1.2 bug: 'high_value_if_not_started'
+  # matched no question's fatigue_priority field).
+  defer_candidates:
+    - "optional"
+    - "high_value"
+  budget_definition:
+    projected_total_seconds: "elapsed_seconds + estimated_remaining_seconds"
+    # route_target_seconds resolution (N-4a fix): every primary_routes entry
+    # in branch_rules_v1.3.yaml now declares timing_class (simple_msk |
+    # simple_herbal | complex_herbal); route_target_seconds is
+    # fatigue_policy.targets[f"{active_route.timing_class}_p90_seconds"].
+    # No route is currently classified complex_herbal — see
+    # unresolved_clinical_decisions.md (which herbal presentations count as
+    # "complex" is a clinical judgment, not decided here).
+    route_target_seconds:
+      resolution: "fatigue_policy.targets[active_route.timing_class + '_p90_seconds']"
+    budget_low_when:
+      - "estimated_remaining_seconds is known AND projected_total_seconds > route_target_seconds"
+      - "elapsed_seconds >= core_p90_seconds"
+    if_estimate_unknown: "do not infer low budget from missing estimate alone"
+  overflow_behavior:
+    - "suppress optional not-yet-started questions first"
+    - "then defer noncritical high_value not-yet-started questions"
+    - "retain all required and critical safety questions"
+    - "record deferred items for clinician review"
+
+outputs:
+  common:
+    - primary_complaint_domain
+    - primary_complaint_detail
+    - primary_complaint_detail_text
+    - onset_bucket
+    - onset_pattern
+    - symptom_nrs
+    - target_function
+    - target_function_custom_text
+    - target_function_score
+    - medication_present
+    - medication_categories
+    - medication_name_text
+    - severe_allergy_history
+    - major_history_present
+    - major_history_categories
+    - pregnancy_status
+    - second_complaint_present
+    - second_complaint_domain
+
+questions:
+
+  - id: core_primary_domain
+    order: 10
+    text: "오늘 가장 치료받고 싶은 문제는 무엇인가요?"
+    type: single_choice
+    required: true
+    estimated_seconds: 6
+    fatigue_priority: required
+    safety_level: none
+    output_field: primary_complaint_domain
+    choices:
+      - {value: MSK, label: "통증·관절·근육"}
+      - {value: SLEEP, label: "수면"}
+      - {value: DIGESTION, label: "소화·식욕"}
+      - {value: FATIGUE, label: "피로·기력저하"}
+      - {value: HEAD_DIZZY, label: "두통·어지럼"}
+      - {value: WOMENS, label: "여성·갱년기·산후"}
+      - {value: URINARY, label: "소변·배뇨"}
+      - {value: SKIN, label: "피부"}
+      - {value: RESP_ENT, label: "코·호흡기"}
+      - {value: OTHER, label: "기타"}
+
+  - id: core_msk_region
+    order: 20
+    text: "가장 불편한 부위는 어디인가요?"
+    type: single_choice
+    required: true
+    estimated_seconds: 6
+    fatigue_priority: required
+    safety_level: none
+    output_field: primary_complaint_detail
+    show_when:
+      all:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+    choices:
+      - {value: LBP, label: "허리"}
+      - {value: NECK, label: "목"}
+      - {value: SHOULDER, label: "어깨"}
+      - {value: KNEE, label: "무릎"}
+      - {value: ELBOW, label: "팔꿈치"}
+      - {value: WRIST_HAND, label: "손·손목"}
+      - {value: HIP, label: "고관절"}
+      - {value: ANKLE_FOOT, label: "발·발목"}
+      - {value: MULTISITE, label: "여러 부위"}
+
+  - id: core_nonmsk_detail
+    order: 21
+    text: "가장 가까운 증상을 골라주세요."
+    type: single_choice_dynamic
+    required: true
+    estimated_seconds: 7
+    fatigue_priority: required
+    safety_level: none
+    output_field: primary_complaint_detail
+    selector_fields:
+      - primary_complaint_domain
+    selector_precedence: "first_matching_field"
+    fallback_choice_set: OTHER
+    show_when:
+      all:
+        - {field: primary_complaint_domain, op: neq, value: MSK}
+    choice_sets:
+      SLEEP:
+        - {value: SLEEP_ONSET, label: "잠들기 어려움"}
+        - {value: SLEEP_MAINTENANCE, label: "자주 깸"}
+        - {value: EARLY_AWAKENING, label: "너무 일찍 깸"}
+        - {value: NONRESTORATIVE_SLEEP, label: "자도 개운하지 않음"}
+      DIGESTION:
+        - {value: DYSPEPSIA, label: "더부룩함·소화불량"}
+        - {value: POOR_APPETITE, label: "식욕저하"}
+        - {value: REFLUX, label: "속쓰림·역류"}
+        - {value: EASY_INDIGESTION, label: "쉽게 체함"}
+        - {value: OTHER_DIGESTION, label: "기타"}
+      FATIGUE:
+        - {value: GENERAL_FATIGUE, label: "쉽게 피곤함"}
+        - {value: LOW_STAMINA, label: "기력이 떨어짐"}
+        - {value: POST_ILLNESS_RECOVERY, label: "병후 회복이 더딤"}
+        - {value: OTHER_FATIGUE, label: "기타"}
+      HEAD_DIZZY:
+        - {value: HEADACHE, label: "두통"}
+        - {value: DIZZINESS, label: "어지럼"}
+        - {value: BOTH_HEAD_DIZZY, label: "두통과 어지럼 모두"}
+      WOMENS:
+        - {value: MENOPAUSE, label: "갱년기·폐경 관련"}
+        - {value: MENSTRUAL, label: "월경 관련"}
+        - {value: POSTPARTUM, label: "산후"}
+        - {value: FERTILITY, label: "임신 준비·난임"}
+        - {value: OTHER_WOMENS, label: "기타"}
+      URINARY:
+        - {value: FREQUENCY_URGENCY, label: "빈뇨·급뇨"}
+        - {value: NOCTURIA, label: "야간뇨"}
+        - {value: INCONTINENCE, label: "요실금"}
+        - {value: BLADDER_PAIN, label: "방광·아랫배 통증"}
+        - {value: OTHER_URINARY, label: "기타"}
+      SKIN:
+        - {value: ITCH, label: "가려움"}
+        - {value: RASH, label: "발진·두드러기"}
+        - {value: DRYNESS, label: "건조"}
+        - {value: OTHER_SKIN, label: "기타"}
+      RESP_ENT:
+        - {value: NASAL, label: "코막힘·콧물"}
+        - {value: SINUS, label: "부비동·얼굴 통증"}
+        - {value: COUGH_PHLEGM, label: "기침·가래"}
+        - {value: OTHER_RESP, label: "기타"}
+      OTHER:
+        - {value: OTHER_FREE, label: "직접 입력"}
+
+  - id: core_other_free_text
+    order: 22
+    text: "가장 불편한 증상을 짧게 적어주세요."
+    type: short_text
+    required: true
+    estimated_seconds: 12
+    fatigue_priority: required
+    safety_level: none
+    output_field: primary_complaint_detail_text
+    show_when:
+      any:
+        - {field: primary_complaint_detail, op: eq, value: OTHER_FREE}
+        - {field: primary_complaint_detail, op: regex, value: "^OTHER_"}
+
+  - id: core_onset_bucket
+    order: 30
+    text: "언제부터 불편했나요?"
+    type: single_choice
+    required: true
+    estimated_seconds: 5
+    fatigue_priority: required
+    safety_level: none
+    output_field: onset_bucket
+    choices:
+      - {value: D0_3, label: "3일 이내"}
+      - {value: D4_14, label: "4일~2주"}
+      - {value: W2_M3, label: "2주~3개월"}
+      - {value: M3_PLUS, label: "3개월 이상"}
+      - {value: UNKNOWN, label: "잘 모르겠음"}
+
+  - id: core_onset_pattern
+    order: 31
+    text: "어떻게 시작됐나요?"
+    type: single_choice
+    required: false
+    estimated_seconds: 5
+    fatigue_priority: high_value
+    safety_level: none
+    output_field: onset_pattern
+    show_when:
+      any:
+        - {field: primary_complaint_domain, op: eq, value: MSK}
+        - {field: primary_complaint_domain, op: eq, value: HEAD_DIZZY}
+    choices:
+      - {value: SUDDEN, label: "갑자기"}
+      - {value: GRADUAL, label: "서서히"}
+      - {value: TRAUMA, label: "다친 뒤"}
+      - {value: REPETITIVE_USE, label: "반복 사용 후"}
+      - {value: UNKNOWN, label: "잘 모르겠음"}
+
+  - id: core_symptom_nrs
+    order: 40
+    text: "현재 이 증상은 얼마나 불편한가요?"
+    type: numeric_scale
+    required: true
+    estimated_seconds: 5
+    fatigue_priority: required
+    safety_level: none
+    output_field: symptom_nrs
+    scale:
+      min: 0
+      max: 10
+      min_label: "전혀 불편하지 않음"
+      max_label: "견디기 매우 힘듦"
+
+  - id: core_target_function
+    order: 50
+    text: "이 문제 때문에 생활에서 가장 불편한 것은 무엇인가요?"
+    type: single_choice_dynamic
+    required: true
+    estimated_seconds: 8
+    fatigue_priority: required
+    safety_level: none
+    output_field: target_function
+    selector_fields:
+      - primary_complaint_detail
+      - primary_complaint_domain
+    selector_precedence: "first_matching_field"
+    fallback_choice_set: DEFAULT
+    choice_sets:
+      LBP:
+        - {value: FLEXION, label: "허리 숙이기"}
+        - {value: SIT_TO_STAND, label: "앉았다 일어나기"}
+        - {value: SITTING, label: "오래 앉기"}
+        - {value: WALKING, label: "걷기"}
+        - {value: SLEEP, label: "잠자기"}
+        - {value: WORK, label: "일하기"}
+        - {value: CUSTOM, label: "기타"}
+      NECK:
+        - {value: TURN_HEAD, label: "고개 돌리기"}
+        - {value: LOOK_DOWN, label: "고개 숙이기"}
+        - {value: DESK_WORK, label: "컴퓨터·책상 작업"}
+        - {value: DRIVING, label: "운전"}
+        - {value: SLEEP, label: "잠자기"}
+        - {value: CUSTOM, label: "기타"}
+      SHOULDER:
+        - {value: OVERHEAD, label: "팔 위로 들기"}
+        - {value: BEHIND_BACK, label: "등 뒤로 손 보내기"}
+        - {value: DRESSING, label: "옷 입기"}
+        - {value: SLEEP, label: "옆으로 누워 자기"}
+        - {value: LIFTING, label: "물건 들기"}
+        - {value: CUSTOM, label: "기타"}
+      KNEE:
+        - {value: STAIRS, label: "계단"}
+        - {value: SQUAT, label: "쪼그려 앉기"}
+        - {value: SIT_TO_STAND, label: "앉았다 일어나기"}
+        - {value: WALKING, label: "걷기"}
+        - {value: PROLONGED_SIT, label: "오래 앉기"}
+        - {value: CUSTOM, label: "기타"}
+      ELBOW:
+        - {value: GRIP, label: "물건 쥐기"}
+        - {value: LIFTING, label: "물건 들기"}
+        - {value: WRIST_USE, label: "손목을 반복해서 쓰기"}
+        - {value: WORK, label: "일하기"}
+        - {value: CUSTOM, label: "기타"}
+      WRIST_HAND:
+        - {value: GRIP, label: "물건 쥐기"}
+        - {value: PINCH, label: "집기·병뚜껑 열기"}
+        - {value: TYPING, label: "키보드·휴대폰"}
+        - {value: SLEEP, label: "밤에 자기"}
+        - {value: CUSTOM, label: "기타"}
+      SLEEP:
+        - {value: FALL_ASLEEP, label: "잠들기"}
+        - {value: STAY_ASLEEP, label: "밤중에 깨지 않고 자기"}
+        - {value: MORNING_FUNCTION, label: "아침에 개운하게 일어나기"}
+        - {value: DAY_ACTIVITY, label: "낮 활동"}
+        - {value: CONCENTRATION, label: "집중하기"}
+        - {value: CUSTOM, label: "기타"}
+      DEFAULT:
+        - {value: DAILY_ACTIVITY, label: "일상생활"}
+        - {value: WORK, label: "일하기"}
+        - {value: SLEEP, label: "잠자기"}
+        - {value: EXERCISE, label: "운동하기"}
+        - {value: CUSTOM, label: "기타"}
+
+  - id: core_target_function_custom
+    order: 51
+    text: "가장 불편한 활동을 짧게 적어주세요."
+    type: short_text
+    required: true
+    estimated_seconds: 10
+    fatigue_priority: required
+    safety_level: none
+    output_field: target_function_custom_text
+    show_when:
+      all:
+        - {field: target_function, op: eq, value: CUSTOM}
+
+  - id: core_target_function_score
+    order: 52
+    text: "그 활동을 지금 평소처럼 어느 정도 할 수 있나요?"
+    type: numeric_scale
+    required: true
+    estimated_seconds: 5
+    fatigue_priority: required
+    safety_level: none
+    output_field: target_function_score
+    scale:
+      min: 0
+      max: 10
+      min_label: "전혀 못함"
+      max_label: "평소처럼 가능"
+
+  - id: core_safety_profile
+    order: 60
+    text: "진료할 때 꼭 참고해야 할 내용이 있나요?"
+    type: multi_toggle_group
+    required: true
+    estimated_seconds: 10
+    fatigue_priority: safety
+    safety_level: critical
+    outputs:
+      medication_present: medication_present
+      severe_allergy_history: severe_allergy_history
+      major_history_present: major_history_present
+    # N3 fix: values are now ASCII enum codes with separate Korean labels,
+    # consistent with every other question in this file (was raw Korean
+    # literal strings used directly as match values).
+    items:
+      - id: medication_present
+        label: "꾸준히 먹는 약"
+        choices:
+          - {value: "NO", label: "없음"}
+          - {value: "YES", label: "있음"}
+      - id: severe_allergy_history
+        label: "약·주사로 심한 알레르기"
+        choices:
+          - {value: "NO", label: "없음"}
+          - {value: "YES", label: "있음"}
+          - {value: UNKNOWN, label: "잘 모르겠음"}
+      - id: major_history_present
+        label: "중요한 질환 또는 수술"
+        choices:
+          - {value: "NO", label: "없음"}
+          - {value: "YES", label: "있음"}
+
+  - id: core_medication_categories
+    order: 61
+    text: "어떤 약을 꾸준히 복용하고 있나요?"
+    type: multi_choice
+    required: true
+    estimated_seconds: 7
+    fatigue_priority: safety
+    safety_level: critical
+    output_field: medication_categories
+    show_when:
+      all:
+        - {field: medication_present, op: eq, value: "YES"}
+    choices:
+      - {value: CARDIO_BP, label: "혈압·심장"}
+      - {value: ANTICOAG, label: "혈액응고 관련"}
+      - {value: DIABETES, label: "당뇨"}
+      - {value: NSAID_ANALGESIC, label: "진통·소염"}
+      - {value: PSYCH_SLEEP, label: "수면·정신건강"}
+      - {value: HORMONE, label: "호르몬"}
+      - {value: OTHER, label: "기타"}
+      - {value: UNKNOWN, label: "잘 모르겠음"}
+
+  - id: core_medication_name_optional
+    order: 62
+    text: "약 이름을 알면 적어주세요. 몰라도 괜찮습니다."
+    type: short_text
+    required: false
+    estimated_seconds: 12
+    fatigue_priority: optional
+    safety_level: none
+    output_field: medication_name_text
+    show_when:
+      all:
+        - {field: medication_present, op: eq, value: "YES"}
+
+  - id: core_major_history_categories
+    order: 63
+    text: "해당되는 내용을 골라주세요."
+    type: multi_choice
+    required: true
+    estimated_seconds: 7
+    fatigue_priority: safety
+    safety_level: critical
+    output_field: major_history_categories
+    show_when:
+      all:
+        - {field: major_history_present, op: eq, value: "YES"}
+    choices:
+      - {value: CARDIOVASCULAR, label: "심혈관질환"}
+      - {value: DIABETES, label: "당뇨"}
+      - {value: CANCER, label: "암 치료력"}
+      - {value: OSTEOPOROSIS, label: "골다공증"}
+      - {value: BLEEDING, label: "출혈질환"}
+      - {value: MAJOR_SURGERY, label: "큰 수술력"}
+      - {value: OTHER, label: "기타"}
+
+  - id: core_pregnancy_status
+    order: 64
+    text: "현재 임신 중이거나 임신 가능성이 있나요?"
+    type: single_choice
+    required: true
+    estimated_seconds: 5
+    fatigue_priority: safety
+    safety_level: critical
+    output_field: pregnancy_status
+    # CLINICAL_DECISION_REQUIRED (N-3): runtime_context_contract declares
+    # patient_sex in [M,F,OTHER,UNKNOWN], but v1.2 only gated this
+    # safety_level=critical question on F. Provisional, most-conservative
+    # behavior adopted here: widen to F/OTHER/UNKNOWN so a possibly-pregnant
+    # patient is never silently skipped. Alternatives and rationale in
+    # unresolved_clinical_decisions.md — this is a clinical/product call
+    # (what's appropriate to ask OTHER/UNKNOWN-sex patients), not a pure
+    # engineering fix, and should get clinician sign-off before UI ships.
+    show_when:
+      all:
+        - {field: patient_sex, op: in, value: [F, OTHER, UNKNOWN]}
+        - {field: patient_age, op: between, value: [10, 55]}
+    choices:
+      - {value: "NO", label: "아니요"}
+      - {value: "YES", label: "예"}
+      - {value: POSSIBLE, label: "가능성이 있어요"}
+      - {value: UNKNOWN, label: "잘 모르겠어요"}
+
+  - id: core_second_complaint
+    order: 90
+    text: "오늘 함께 상담하고 싶은 다른 문제가 있나요?"
+    type: single_choice
+    required: false
+    estimated_seconds: 4
+    fatigue_priority: high_value
+    safety_level: none
+    output_field: second_complaint_present
+    # N-7 fix: pending_extension_present==false added so this prompt cannot
+    # interleave with an in-progress module_extension (e.g. MENOPAUSE_SLEEP
+    # attached after SLEEP_V1/MENOPAUSE_V1) — see engine_state above.
+    show_when:
+      all:
+        - {field: primary_micro_module_complete, op: eq, value: true}
+        - {field: pending_extension_present, op: eq, value: false}
+        - {field: additional_complaint_count, op: eq, value: 0}
+    choices:
+      - {value: false, label: "없음"}
+      - {value: true, label: "있음"}
+
+  - id: core_second_complaint_domain
+    order: 91
+    text: "두 번째로 상담하고 싶은 문제는 무엇인가요?"
+    type: single_choice
+    required: true
+    estimated_seconds: 6
+    fatigue_priority: required
+    safety_level: none
+    output_field: second_complaint_domain
+    show_when:
+      all:
+        - {field: second_complaint_present, op: eq, value: true}
+        - {field: additional_complaint_count, op: eq, value: 0}
+    choices:
+      - {value: MSK, label: "통증·관절·근육"}
+      - {value: SLEEP, label: "수면"}
+      - {value: DIGESTION, label: "소화·식욕"}
+      - {value: FATIGUE, label: "피로·기력저하"}
+      - {value: HEAD_DIZZY, label: "두통·어지럼"}
+      - {value: WOMENS, label: "여성·갱년기·산후"}
+      - {value: URINARY, label: "소변·배뇨"}
+      - {value: SKIN, label: "피부"}
+      - {value: RESP_ENT, label: "코·호흡기"}
+      - {value: OTHER, label: "기타"}
+
+validation:
+  invariants:
+    - "no duplicate question ids"
+    - "every referenced field is declared by question output, runtime context, or module contract"
+    - "required and critical safety questions are never suppressible or deferable"
+    - "missing never matches neq/in/UNKNOWN implicitly"
+    - "second complaint prompt appears at most once"
+    - "branch graph is acyclic"

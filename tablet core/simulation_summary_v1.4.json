@@ -1,0 +1,338 @@
+{
+  "core_spec_status": "PASS",
+  "quality_gate": {
+    "duplicate_ids": 0,
+    "unknown_referenced_fields": 0,
+    "branch_cycles": 0,
+    "ambiguous_highest_priority_route": 0,
+    "unavailable_field_reference": 0,
+    "dynamic_selector_ambiguity": 0,
+    "serialization_inconsistency": 0,
+    "protected_question_suppression": 0,
+    "undefined_budget_terms": 0,
+    "state_machine_failures": 0,
+    "extension_ordering_failures": 0,
+    "completed_core_without_route": 0,
+    "incomplete_core_without_guard": 0,
+    "module_contract_inconsistency": 0,
+    "core_p50_within_target": true,
+    "core_p90_within_target": true,
+    "safety_critical_omission": 0
+  },
+  "quality_gate_pass": true,
+  "validation": {
+    "findings": [
+      {
+        "severity": "ambiguous",
+        "check": "timing_class_with_no_route",
+        "message": "fatigue_policy.targets declares target(s) for ['complex_herbal'], but no primary_routes entry is classified that way. For 'complex_herbal' specifically this is a CLOSED clinical decision (LBP_v1.4_임상결정_마감본.md section 7: case-level, not route-level — 2+ herbal modules, or second complaint opens another herbal module, or medication_present AND major_history_present) whose dynamic engine is deferred as an engineering task (see complex_herbal_dynamic_classification_engine in unresolved_design_decisions) — no herbal micro-modules exist yet to test a dynamic classifier against",
+        "timing_classes": [
+          "complex_herbal"
+        ]
+      }
+    ],
+    "counts_by_severity": {
+      "blocking": 0,
+      "ambiguous": 1,
+      "minor": 0
+    },
+    "unresolved_design_decisions": [
+      {
+        "id": "null_category_no_producer",
+        "summary": "value_semantics.null is fully specified but no question or engine_state field ever actually produces an explicit null. Harmless (missing is the only absence state reachable today) but untestable until something produces null.",
+        "action": "Not simulated; every profile only ever has missing or concrete values."
+      },
+      {
+        "id": "micro_module_question_sets_absent",
+        "summary": "Per branch_rules_v1.4.yaml:simulation_policy.total_path_timing, this remains not_computable until real module question sets exist — expected, not a defect. LBP_V1's route (route_lbp/simple_msk) is now the exception — computable.",
+        "action": "simulation_summary_v1.4.json reports simple_herbal/complex_herbal total_*_p90 overflow as 'not_computable' (no herbal module question sets exist yet); simple_msk is computable."
+      },
+      {
+        "id": "complex_herbal_dynamic_classification_engine",
+        "summary": "LBP_v1.4_임상결정_마감본.md section 7 decided complex_herbal is case-level (2+ herbal modules entered, OR second complaint opens another herbal module, OR medication_present AND major_history_present) — a runtime/dynamic condition, not a static per-route property. This is now a closed clinical decision (see RESOLVED_CLINICAL_DECISIONS), but implementing the dynamic classification engine is deferred: two of the three conditions require multiple herbal micro-modules to exist, and none do yet.",
+        "action": "Not implemented. When herbal modules exist, the engine must classify timing_class at runtime per the decided rule rather than reading a static per-route value."
+      },
+      {
+        "id": "lbp_recommendation_lock_ui_wiring",
+        "summary": "lbp_logic.disease_safety_locked() and treatment_safety_locked() are fully specified (LBP_v1.4_임상결정_마감본.md section 9) and tested, but nothing in any real UI/exercise-recommender calls them yet — no such repo exists in this environment (claude_code_task_lbp_v1.md's React/TypeScript integration scope is out of scope for this spec/simulation pass).",
+        "action": "Handoff item for whoever builds the real repo integration — see final_validation_report.md's next-steps."
+      }
+    ],
+    "resolved_clinical_decisions": [
+      {
+        "id": "pregnancy_gate_patient_sex_scope",
+        "resolution": "Confirmed as-is (decision doc section 6): core_pregnancy_status stays gated on patient_sex in [F,OTHER,UNKNOWN], age 10-55. New: a SEPARATE treatment_safety_status dimension (pregnancy affects treatment finalization, not disease-safety review) — never merged with lbp_safety_status. See lbp_logic.compute_treatment_safety_status."
+      },
+      {
+        "id": "complex_herbal_route_classification",
+        "resolution": "Definition decided (doc section 7): case-level, not route-level — 2+ herbal micro-modules entered, OR a second complaint opens another herbal module, OR (medication_present AND major_history_present). complex_herbal_p90_seconds=300s is a fatigue-budget cap, not a target time. Dynamic engine implementation deferred (no herbal question sets exist yet to test against) — tracked as a non-blocking engineering task in UNRESOLVED_DESIGN_DECISIONS, not a clinical question anymore."
+      },
+      {
+        "id": "lbp_bilateral_neuro_escalation_threshold",
+        "resolution": "Confirmed (doc section 2): BILATERAL + a concrete neuro feature (paresthesia/numbness/subjective weakness) -> REVIEW_REQUIRED. Bilateral leg PAIN ALONE does NOT auto-escalate — sets lbp_neuro_baseline_required instead, requiring a clinician neuro exam. Explicitly framed as Samindang's own conservative policy, not a direct NICE NG127 citation."
+      },
+      {
+        "id": "lbp_red_flag_coverage_gaps",
+        "resolution": "Decided per-item (doc section 3), not uniformly filled: (A) unexplained weight loss — already covered by the existing lbp_current_redflag_screen choice, confirmed sufficient. (B) infection/procedure risk — ONE new choice added (RECENT_SPINAL_PROCEDURE_OR_INJECTION) to the same existing screen, not a separate question. Age — explicitly NOT asked as a question; read from Core as a clinician-facing modifier only (lbp_fracture_risk_age_modifier / lbp_malignancy_risk_age_modifier), never alone raising safety status. Night/rest pain — explicitly NOT added as a universal red flag; stays an inflammatory-branch supporting feature. Bisphosphonate — explicitly NOT added as a separate question; existing osteoporosis history + corticosteroid context covers it. pregnancy_status — now wired to treatment_safety_status."
+      },
+      {
+        "id": "lbp_inflammatory_criteria_count_threshold",
+        "resolution": "v1 policy decided (doc section 5): NO formal NG65 count is computed — this simplified screen doesn't collect all 9 NG65 criteria 1:1. Replaced with a simple boolean lbp_inflammatory_pattern_consider (eligible + >=1 supporting feature -> clinician-facing CONSIDER, never a patient-facing diagnosis/probability). hypothesis_model's ambiguous 'criteria count' language removed."
+      },
+      {
+        "id": "lbp_evidence_citation_verification",
+        "resolution": "Citations confirmed against primary-source recollection (doc section 8), with specific corrections identified: NG127's CES paraphrase should not be read as mandating referral for bilateral sciatica alone (the bilateral rule above is Samindang policy, not a NICE citation) — the miscitation risk was in this codebase's own prior rationale comment (now corrected), not in evidence_matrix_lbp_v1.md itself. Suri 2010's older-adults-with-leg-pain population scope noted for future evidence_matrix edits. NG65 formal count confirmed not applicable to this simplified screen (see lbp_inflammatory_criteria_count_threshold above)."
+      },
+      {
+        "id": "lbp_exercise_recommender_lock_enforcement",
+        "resolution": "Contract specified in full (doc section 9): disease_safety_locked() gates routine exercise/treatment/Suggested-Exam on lbp_safety_status != CLEAR; a separate treatment_safety_locked() gates contraindication-sensitive treatment finalization on treatment_safety_status != CLEAR without stopping the questionnaire; both fail closed on a missing/uncomputed status. Both functions implemented and tested. Wiring them into an actual UI/exercise-recommender (no such repo exists in this environment) remains an engineering task, tracked in UNRESOLVED_DESIGN_DECISIONS — no longer a clinical question."
+      }
+    ],
+    "clinical_decision_required": [],
+    "quality_gate": {
+      "duplicate_ids": 0,
+      "unknown_referenced_fields": 0,
+      "branch_cycles": 0,
+      "ambiguous_highest_priority_route": 0,
+      "unavailable_field_reference": 0,
+      "dynamic_selector_ambiguity": 0,
+      "serialization_inconsistency": 0,
+      "protected_question_suppression": 0,
+      "undefined_budget_terms": 0,
+      "state_machine_failures": 0,
+      "extension_ordering_failures": 0,
+      "completed_core_without_route": 0,
+      "incomplete_core_without_guard": 0,
+      "module_contract_inconsistency": 0,
+      "core_p50_within_target": true,
+      "core_p90_within_target": true,
+      "safety_critical_omission": 0
+    },
+    "quality_gate_pass": true
+  },
+  "structural_coverage": {
+    "n_combinations": 21120,
+    "note": "counts below are structural coverage, NOT prevalence (branch_rules_v1.4.yaml:simulation_policy.structural_simulation.prevalence_interpretation: false)",
+    "questions_never_shown_in_any_combination": [
+      "core_second_complaint",
+      "core_second_complaint_domain"
+    ],
+    "primary_routes_never_matched": [],
+    "question_coverage": {
+      "core_primary_domain": 21120,
+      "core_msk_region": 4320,
+      "core_nonmsk_detail": 16800,
+      "core_other_free_text": 3360,
+      "core_onset_bucket": 21120,
+      "core_onset_pattern": 5760,
+      "core_symptom_nrs": 21120,
+      "core_target_function": 21120,
+      "core_target_function_custom": 10560,
+      "core_target_function_score": 21120,
+      "core_safety_profile": 21120,
+      "core_medication_categories": 10560,
+      "core_medication_name_optional": 10560,
+      "core_major_history_categories": 10560,
+      "core_pregnancy_status": 9504,
+      "core_second_complaint": 0,
+      "core_second_complaint_domain": 0
+    },
+    "route_coverage": {
+      "route_lbp": 480,
+      "route_neck": 480,
+      "route_shoulder": 480,
+      "route_knee": 480,
+      "route_elbow": 480,
+      "route_wrist_hand": 480,
+      "route_other_msk": 1440,
+      "route_sleep": 1920,
+      "route_menopause": 480,
+      "route_digestion": 2400,
+      "route_fatigue": 1920,
+      "route_head_dizzy": 1440,
+      "route_womens_other": 1920,
+      "route_urinary": 2400,
+      "route_skin": 1920,
+      "route_resp_ent": 1920,
+      "route_other": 480,
+      "route_fallback_no_detail": 0
+    }
+  },
+  "timing_simulation": {
+    "n_profiles": 5000,
+    "seed": 1958,
+    "prior_label": "illustrative uniform prior, NOT clinic prevalence data (branch_rules_v1.4.yaml:simulation_policy.timing_simulation.prior_source)",
+    "core_seconds_p50": 58.0,
+    "core_seconds_p90": 77.0,
+    "core_question_count_p50": 9.0,
+    "core_question_count_p90": 11.0,
+    "core_p50_target_seconds": 60,
+    "core_p90_target_seconds": 90,
+    "core_p50_within_target": true,
+    "core_p90_within_target": true,
+    "total_path_overflow_rates": {
+      "simple_msk_p90_seconds": {
+        "target_seconds": 180,
+        "overflow_count": 0,
+        "overflow_rate": 0.0,
+        "n": 60,
+        "note": "computable — LBP_V1 is the first micro-module with a real question set bound"
+      },
+      "simple_herbal_p90_seconds": "not_computable: micro-module question set absent from this bundle",
+      "complex_herbal_p90_seconds": "not_computable: micro-module question set absent from this bundle"
+    },
+    "route_distribution": {
+      "route_skin": {
+        "n": 525,
+        "total_seconds_p50": 58.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 8.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_sleep": {
+        "n": 513,
+        "total_seconds_p50": 53.0,
+        "total_seconds_p90": 70.0,
+        "question_count_p50": 8.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_womens_other": {
+        "n": 403,
+        "total_seconds_p50": 58.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_urinary": {
+        "n": 474,
+        "total_seconds_p50": 58.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 8.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_digestion": {
+        "n": 466,
+        "total_seconds_p50": 56.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 8.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_fatigue": {
+        "n": 502,
+        "total_seconds_p50": 58.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_lbp": {
+        "n": 60,
+        "total_seconds_p50": 112.0,
+        "total_seconds_p90": 133.1,
+        "question_count_p50": 18.0,
+        "question_count_p90": 21.1,
+        "total_path_timing": "computable (module question set present)"
+      },
+      "route_head_dizzy": {
+        "n": 501,
+        "total_seconds_p50": 58.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_other": {
+        "n": 508,
+        "total_seconds_p50": 65.0,
+        "total_seconds_p90": 82.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_resp_ent": {
+        "n": 513,
+        "total_seconds_p50": 58.0,
+        "total_seconds_p90": 77.0,
+        "question_count_p50": 8.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_other_msk": {
+        "n": 160,
+        "total_seconds_p50": 57.0,
+        "total_seconds_p90": 74.19999999999999,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_wrist_hand": {
+        "n": 46,
+        "total_seconds_p50": 62.0,
+        "total_seconds_p90": 74.0,
+        "question_count_p50": 10.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_shoulder": {
+        "n": 61,
+        "total_seconds_p50": 55.0,
+        "total_seconds_p90": 74.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_elbow": {
+        "n": 48,
+        "total_seconds_p50": 60.0,
+        "total_seconds_p90": 74.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_menopause": {
+        "n": 114,
+        "total_seconds_p50": 53.0,
+        "total_seconds_p90": 70.0,
+        "question_count_p50": 8.0,
+        "question_count_p90": 10.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_knee": {
+        "n": 46,
+        "total_seconds_p50": 57.0,
+        "total_seconds_p90": 76.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      },
+      "route_neck": {
+        "n": 60,
+        "total_seconds_p50": 58.5,
+        "total_seconds_p90": 74.0,
+        "question_count_p50": 9.0,
+        "question_count_p90": 11.0,
+        "total_path_timing": "not_computable: micro-module question set absent from this bundle"
+      }
+    },
+    "questions_never_shown": {
+      "core_second_complaint": 5000,
+      "core_second_complaint_domain": 5000
+    },
+    "lbp_questions_never_shown_among_lbp_route_profiles": {},
+    "missing_safety_critical_question_instances": 0,
+    "assumptions": [
+      "primary_complaint_domain and patient_sex sampled uniformly — labeled illustrative per simulation_policy.timing_simulation.prior_source, not clinic prevalence.",
+      "medication_present='YES' w.p. 0.3, major_history_present='YES' w.p. 0.2, severe_allergy_history 85/10/5 — illustrative.",
+      "core_target_function selector resolved via the canonical first_matching_field rule declared in survey_core_v1.4.yaml:selector_semantics (N-1 fix).",
+      "estimated_seconds is deterministic per question (no response-time noise model).",
+      "LBP module answers use illustrative priors (see sample_lbp_answer) — NOT clinic prevalence, and NOT the same thing as the module's own safety-state coverage (see tests/test_lbp_logic.py for that).",
+      "route_lbp profiles now get real end-to-end timing (core + LBP module + second-complaint prompt, with primary_micro_module_complete/pending_extension_present set true after the module completes) — the first route where total_path_timing is computable rather than not_computable.",
+      "core_second_complaint / core_second_complaint_domain are shown only for route_lbp profiles (the only route with a bound module that can complete and set primary_micro_module_complete=true); every other route still correctly shows them as never-reached, per decision_log.md."
+    ]
+  }
+}

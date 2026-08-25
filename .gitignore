@@ -82,3 +82,7 @@ tests/.ankle-foot-logic-bundle.mjs
 tests/.ankle-foot-adapter-bundle.mjs
 tests/.ankle-foot-doctor-panel-bundle.cjs
 tests/.ankle-foot-fixtures-bundle.mjs
+
+# esbuild bundles used by tests/hip.spec.mjs and tests/hip-malformed.spec.mjs (regenerated, not source)
+tests/.hip-logic-bundle.mjs
+tests/.hip-adapter-bundle.mjs

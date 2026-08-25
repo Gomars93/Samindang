@@ -599,6 +599,172 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2j. HIP_V1: 15 fixtures covering H1-H8. HIP shares the `low_back_pelvis`
+ *     population with FROZEN LBP by design (H1/H7) -- the critical
+ *     regression boundary here is that both LbpSafetyPanel and
+ *     HipSafetyPanel must render simultaneously for a HIP-route patient
+ *     without either suppressing the other, and HipSafetyPanel must NOT
+ *     render for a LOW_BACK_DOMINANT patient (H1) or any non-low_back_pelvis
+ *     patient. Payload-level checks for all 15; HTML render checks for the
+ *     clinically critical subset (urgent tiers, stress-fracture lock,
+ *     LBP+HIP coexistence, and the LOW_BACK_DOMINANT exclusion).
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 안전 확인 완료)')
+  assert('HIP clear fixture: hip_safety_status is CLEAR', f.payload.responses.safety_flags.hip?.hip_safety_status === 'CLEAR')
+  assert('HIP clear fixture: does NOT trigger requires_staff_check', f.payload.flags.requires_staff_check === false)
+
+  const html = renderDoctorView('고관절 통증 주호소 (HIP, 안전 확인 완료)')
+  assert('HIP clear fixture: renders 안전 확인 — 고관절/사타구니 panel title', html.includes('안전 확인 — 고관절/사타구니'))
+  assert('HIP clear fixture: status chip shows CLEAR label (안전)', /<strong>안전 확인<\/strong> (?:<!-- -->)?안전(?:<!-- -->)?<\/span>/.test(html))
+  assert('HIP clear fixture: also renders 안전 확인 — 허리 (LBP panel) simultaneously', html.includes('안전 확인 — 허리'))
+  assert('HIP clear fixture: HIP_00 question text renders', html.includes('허리·골반 부위 중 지금 가장 불편한 곳은 어디에 가깝나요'))
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 최근 외상 여부 미상)')
+  assert('H8: HIP_01 UNKNOWN fails closed to REVIEW_REQUIRED (never a valid negative)', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 관절 변형 응급)')
+  assert('H2 CRITICAL: HIP_02 gross deformity is URGENT_REVIEW', f.payload.responses.safety_flags.hip?.hip_safety_status === 'URGENT_REVIEW')
+  // Note: module-level hip_safety_status URGENT is independent of Core's
+  // requires_staff_check (SAFETY_01/GI_03/BOWEL_03 only, see computeFlags in
+  // coreSpec.ts) -- the real-time interrupt for a module urgent fires via
+  // STAFF_CHECK_TRIGGERS.HIP_02(r) at answer-time (verified in
+  // tests/integration.spec.mjs R-D1), not via a persistent submitted-payload
+  // flag. Same pattern already established for TMJ/ELBOW/KNEE/WRIST_HAND.
+
+  const html = renderDoctorView('고관절 통증 주호소 (HIP, 관절 변형 응급)')
+  assert('HIP deformity fixture: status chip shows 긴급 확인 필요', /<strong>안전 확인<\/strong> (?:<!-- -->)?긴급 확인 필요/.test(html))
+  assert('HIP deformity fixture: routine-treatment lock note renders', html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'))
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 외상 후 다리 신경 손상 응급)')
+  assert('H2 CRITICAL: traumatic major distal neuro deficit is standalone URGENT_REVIEW', f.payload.responses.safety_flags.hip?.hip_safety_status === 'URGENT_REVIEW')
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 외상 없는 다리 신경 증상)')
+  assert('H2: same major neuro finding WITHOUT trauma is REVIEW, not URGENT', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert('H2: neuro_assessment_required is true', f.payload.responses.safety_flags.hip?.neuro_assessment_required === true)
+  assert('H2: expedited_referral_consider is true', f.payload.responses.safety_flags.hip?.expedited_referral_consider === true)
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 외상 후 보행 곤란 + 이전 X-ray 정상)')
+  assert('H3 CRITICAL: post-traumatic marked walking difficulty is REVIEW, not URGENT', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert('H3: fracture_imaging_consider is true', f.payload.responses.safety_flags.hip?.fracture_imaging_consider === true)
+  assert('H3: expedited_referral_consider is true', f.payload.responses.safety_flags.hip?.expedited_referral_consider === true)
+  assert(
+    'H4 CRITICAL: prior "told normal" X-ray context does NOT lower safety or suppress fracture_imaging_consider',
+    f.payload.responses.safety_flags.hip?.fracture_imaging_consider === true && f.payload.responses.safety_flags.hip?.hip_safety_status !== 'CLEAR',
+  )
+
+  const html = renderDoctorView('고관절 통증 주호소 (HIP, 외상 후 보행 곤란 + 이전 X-ray 정상)')
+  assert('HIP walking-difficulty fixture: renders 골절 영상검사 고려 chip with 예', /골절 영상검사 고려<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'H4: prior-imaging-context derived note renders (context only, never objective imaging data)',
+    html.includes('환자보고 이전 X-ray 결과는 참고 맥락일 뿐이며'),
+  )
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 피로골절 의심 패턴)')
+  assert('H5 CRITICAL: full stress-fracture compatible pattern is REVIEW, not URGENT', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert('H5: stress_fracture_assessment_required is true', f.payload.responses.safety_flags.hip?.stress_fracture_assessment_required === true)
+  assert('H5: fracture_imaging_consider is true', f.payload.responses.safety_flags.hip?.fracture_imaging_consider === true)
+  assert('H5: loading_exercise_lock is true', f.payload.responses.safety_flags.hip?.loading_exercise_lock === true)
+
+  const html = renderDoctorView('고관절 통증 주호소 (HIP, 피로골절 의심 패턴)')
+  assert('HIP stress-fracture fixture: renders 피로골절 평가 필요 chip with 예', /피로골절 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+  assert('HIP stress-fracture fixture: renders 부하운동 잠금 chip with 예', /부하운동 잠금<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'HIP stress-fracture fixture: no patient-facing stress-fracture diagnosis language',
+    !/피로골절(?:으로|이라고)?\s*확진(?!이\s*아니)|피로골절\s*진단|확률\s*\d/.test(html),
+  )
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 부분 피로골절 패턴/자동 진단 아님)')
+  assert('H5 CRITICAL: partial pattern does NOT auto-diagnose a stress fracture', f.payload.responses.safety_flags.hip?.stress_fracture_assessment_required === false)
+  assert('H5: partial pattern remains a protected non-negative history (still REVIEW)', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 국소 감염 의심)')
+  assert('H6: localized/stable infection concern is REVIEW, not URGENT', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert('H6: infection_assessment_required is true', f.payload.responses.safety_flags.hip?.infection_assessment_required === true)
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 전신 증상 동반 감염 응급)')
+  assert('H6 CRITICAL: systemic/rapidly worsening (opaque OR enum) is URGENT_REVIEW', f.payload.responses.safety_flags.hip?.hip_safety_status === 'URGENT_REVIEW')
+  assert('H6: infection_assessment_required is true', f.payload.responses.safety_flags.hip?.infection_assessment_required === true)
+
+  const html = renderDoctorView('고관절 통증 주호소 (HIP, 전신 증상 동반 감염 응급)')
+  assert('HIP infection fixture: renders 감염 평가 필요 chip with 예', /감염 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'HIP infection fixture: no patient-facing infection diagnosis language, fever absence never framed as a rule-out',
+    !/감염\s*진단|발열이\s*없으므로/.test(html),
+  )
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, 비외상성 진행성 신경 증상)')
+  assert('H2: non-traumatic progressive distal numbness/weakness (HIP_06) is REVIEW, not URGENT', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert('H2: neuro_assessment_required is true', f.payload.responses.safety_flags.hip?.neuro_assessment_required === true)
+  assert('H2: expedited_referral_consider is true', f.payload.responses.safety_flags.hip?.expedited_referral_consider === true)
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP+LBP 동시 노출)')
+  assert('H1/H7 CRITICAL: LBP+HIP simultaneous -- safety_flags.lbp !== null', f.payload.responses.safety_flags.lbp !== null)
+  assert('H1/H7 CRITICAL: LBP+HIP simultaneous -- safety_flags.hip !== null', f.payload.responses.safety_flags.hip !== null)
+  assert('H1/H7: LBP finding not suppressed by HIP -- lbp_safety_status REVIEW_REQUIRED', f.payload.responses.safety_flags.lbp?.lbp_safety_status === 'REVIEW_REQUIRED')
+  assert('H1/H7: HIP finding not suppressed by LBP -- hip_safety_status REVIEW_REQUIRED', f.payload.responses.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert("H7 CRITICAL: primary_module_detail stays 'LBP' even with HIP-specific safety simultaneously active", f.payload.routing.primary_module_detail === 'LBP')
+
+  const html = renderDoctorView('고관절 통증 주호소 (HIP+LBP 동시 노출)')
+  assert('H1/H7 CRITICAL: both 안전 확인 — 허리 and 안전 확인 — 고관절/사타구니 panels render simultaneously', html.includes('안전 확인 — 허리') && html.includes('안전 확인 — 고관절/사타구니'))
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, Core 전신 응급 동시)')
+  assert('Core urgent dominates: general_red alone drives hip_safety_status URGENT_REVIEW via passthrough', f.payload.responses.safety_flags.hip?.hip_safety_status === 'URGENT_REVIEW')
+  assert('Core urgent also independently sets requires_staff_check', f.payload.flags.requires_staff_check === true)
+}
+
+{
+  const f = byName('허리 통증 주호소 (HIP population, LOW_BACK_DOMINANT 제외)')
+  assert('H1 CRITICAL: LOW_BACK_DOMINANT -> safety_flags.hip === null (no invented HIP safety)', f.payload.responses.safety_flags.hip === null)
+  assert('H1: FROZEN safety_flags.lbp stays non-null/unaffected', f.payload.responses.safety_flags.lbp !== null)
+  assert("H7 CRITICAL: primary_module_detail stays 'LBP' (never repurposed for HIP tagging)", f.payload.routing.primary_module_detail === 'LBP')
+
+  const html = renderDoctorView('허리 통증 주호소 (HIP population, LOW_BACK_DOMINANT 제외)')
+  assert('H1 CRITICAL: LOW_BACK_DOMINANT fixture does NOT render any HIP safety panel', !html.includes('안전 확인 — 고관절/사타구니'))
+  assert('H1: 안전 확인 — 허리 (LBP panel) still renders normally, unaffected', html.includes('안전 확인 — 허리'))
+  assert('H1: HIP_00 question text still renders (routing question itself is always shown)', html.includes('허리·골반 부위 중 지금 가장 불편한 곳은 어디에 가깝나요'))
+}
+
+{
+  const f = byName('고관절 통증 주호소 (HIP, malformed 응답 회귀)')
+  assert(
+    'H8 CRITICAL: malformed HIP_02 (NONE mixed with an out-of-allowlist value) fails closed, never CLEAR',
+    f.payload.responses.safety_flags.hip?.hip_safety_status !== 'CLEAR',
+  )
+}
+
+{
+  // Unrelated patient (non-low_back_pelvis) must never show a HIP panel.
+  const html = renderDoctorView('팔꿈치 통증 주호소 (ELBOW, 신속 의뢰 고려)')
+  assert('HIP panel does NOT render for an unrelated (ELBOW) patient', !html.includes('안전 확인 — 고관절/사타구니'))
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

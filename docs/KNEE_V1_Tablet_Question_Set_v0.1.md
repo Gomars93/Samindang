@@ -1,14 +1,15 @@
 # KNEE_V1 — Tablet Question Set v0.1
 
 작성일: 2026-08-25  
-상태: **DRAFT — Opus v0.1 decisions incorporated / Opus re-review required before CLOSED**  
+상태: **SUPERSEDED FOR FINAL CLOSURE BY v0.1.1 AMENDMENT — see `KNEE_V1_Tablet_Question_Set_v0.1.1_Amendment_CLOSED_CANDIDATE.md`**  
 대상: 삼인당 Clinical OS — MSK Knee module
 
 상위 근거:
 - `KNEE_V1_Evidence_Matrix_v0.1_HANDOFF.md`
 - `KNEE_V1_Opus_Clinical_Review_v0.1.md`
+- `KNEE_V1_Opus_Clinical_Review_v0.2.md`
 
-이 문서는 Opus 검수의 K1–K9, C1–C2를 Tablet 문항과 safety semantics로 옮긴 v0.1 초안이다.
+이 문서는 Opus 검수의 K1–K9, C1–C2를 Tablet 문항과 safety semantics로 옮긴 v0.1 초안이다. Opus v0.2에서 남은 3개 수정(K5 DVT calibration, K9 hip-fracture referred discriminator, KNEE_03/04 required hardening)은 별도 v0.1.1 Amendment CLOSED CANDIDATE가 규범적으로 덮어쓴다.
 
 ---
 
@@ -40,6 +41,8 @@ Evidence Matrix
 → Opus review
 → Tablet Question Set v0.1
 → Opus re-review
+→ v0.1.1 Amendment CLOSED CANDIDATE
+→ final Opus verification
 → Clinical decisions CLOSED
 → Fable integration
 → Sonnet implementation
@@ -606,12 +609,13 @@ SHOULDER_V1  PASS / FROZEN
 
 KNEE Evidence Matrix v0.1      COMPLETE
 Opus clinical review v0.1      COMPLETE — CLINICAL DECISION REQUIRED
-K2/K5/K9/C1 decisions          INCORPORATED
-Tablet Question Set v0.1       COMPLETE
-Clinical decisions             OPEN — Opus re-review required
-Code implementation            NOT STARTED
+Tablet Question Set v0.1       COMPLETE — superseded for final closure by v0.1.1 Amendment
+Opus re-review v0.2            COMPLETE — 3 blocking fixes
+v0.1.1 Amendment candidate     COMPLETE — final Opus verification required
+Clinical decisions             OPEN
+Code implementation            NOT STARTED / BLOCKED
 ```
 
 다음 단일 과제:
 
-> **Opus re-review of KNEE_V1 Tablet Question Set v0.1**
+> **Final Opus verification of KNEE_V1 v0.1.1 Amendment CLOSED CANDIDATE**

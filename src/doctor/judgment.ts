@@ -43,6 +43,16 @@ export type ClinicianJudgment = {
   learning_case: boolean
   debrief: DebriefAnswers | null
   transcript_import: null
+  /**
+   * LBP_V1: 원장이 진찰 후 입력하는 객관적 하지 근력저하 소견. 환자 태블릿
+   * 문진에는 없는 항목 — 결정 §1-2: 환자 자가보고(LBP_02의
+   * SUBJECTIVE_WEAKNESS)와는 별개로, CES 문항과 무관하게 URGENT_REVIEW를
+   * 발생시킬 수 있다(src/spec/lbpLogic.ts의 lbpSafetyStatus 참고).
+   * `undefined`(미입력)는 "아직 진찰 안 함"을 뜻하며 그 자체로 안전 문제가
+   * 아니다 — lbp_v1.0.yaml의 clinician_objective_motor_deficit.default:
+   * not_yet_assessed와 동일한 의미. LBP 주호소가 아닌 환자는 항상 undefined.
+   */
+  lbp_objective_motor_deficit?: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'
 }
 
 /** createEmptyJudgment 입력 — 어떤 계산/문진 스냅샷을 참조하는지에 대한 provenance만. */

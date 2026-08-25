@@ -14,6 +14,11 @@
  */
 import type { Option, Question, Responses } from '../types'
 import type { SajuInput, TimeBranchKey } from '../saju/types'
+import { ageFromBirthDate } from '../lib/age'
+import { toLbpState } from './lbpAdapter'
+import { computeLbpFlags, URGENT_CES_VALUES } from './lbpLogic'
+import { toNeckState } from './neckAdapter'
+import { computeNeckFlags, hasNeckCordConcretePositive } from './neckLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -688,6 +693,16 @@ const URINARY_QUESTIONS: Question[] = [
 
 const IS_PRIMARY_PAIN = (r: Responses) => primaryConcernKey(r) === 'pain'
 
+/**
+ * LBP_V1 entry gate. There is no MSK domain/region routing layer in this
+ * app (unlike tablet-core's `route_lbp`/`primary_complaint_detail` split) --
+ * PAIN_01's `low_back_pelvis` choice is the closest existing signal and is
+ * used directly, per LBP_INTEGRATION_PLAN_DRAFT.md §2. This conflates
+ * low-back and pelvis complaints under one trigger; that's a deliberate,
+ * documented minimal-change scope boundary, not an oversight.
+ */
+export const IS_PRIMARY_LBP = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'low_back_pelvis'
+
 const PAIN_QUESTIONS: Question[] = [
   {
     id: 'PAIN_01',
@@ -765,6 +780,532 @@ const PAIN_QUESTIONS: Question[] = [
     maxLength: 50,
     showIf: (r) => IS_PRIMARY_PAIN(r) && r['PAIN_04'] === 'other',
     placeholder: '짧게 적어주세요',
+  },
+]
+
+/**
+ * ---------- LBP_V1 (허리 통증) — primary concern === pain && PAIN_01 ===
+ * 'low_back_pelvis'인 경우만. 문항 문구/값/exclusive는
+ * tablet-core/lbp_v1.0.yaml 원문 그대로이며 임의로 수정하지 않는다 (LBP_V1
+ * clinical decision closure, LBP_v1.4_임상결정_마감본.md). LBP_04(CES)의
+ * 응급 값은 STAFF_CHECK_TRIGGERS에 등록되어 SAFETY_01/GI_03/BOWEL_03과
+ * 동일하게 즉시 StaffCheckScreen으로 인터럽트한다 — 문진 내내 흐름을
+ * 막지는 않고(non-terminating interstitial), 확인 후 이어서 진행한다.
+ *
+ * onset_bucket(M3_PLUS 여부)은 tablet-core Core에 있는 별도 필드가 아니라
+ * 기존 VISIT_03_SYMPTOM_DURATION(언제부터 불편하셨나요?)에서 유도한다 —
+ * LBP_INTEGRATION_PLAN_DRAFT.md §3.
+ *
+ * patient_age(BIRTH_01/02)는 이 Module보다 뒤(출생정보 단계)에서만
+ * 수집되므로, LBP_10/11의 show_if에서 나이 조건은 뺀다 — 문진 중에는 나이를
+ * 알 수 없어 어차피 항상 UNKNOWN으로 귀결되는 조건이라, 조금 더 넓게(만성
+ * 통증이면 나이 무관하게) 보여주는 쪽이 안전하고 단순하다. 최종
+ * lbp_safety_status/treatment_safety_status/lbp_inflammatory_eligible 등은
+ * 제출된 전체 Responses + 원장 소견을 기준으로 별도 계산한다(App.tsx
+ * 제출 시점 / DoctorView) — plan revision-log item 6 참고.
+ */
+const IS_LBP_CHRONIC_ONSET = (r: Responses) =>
+  r['VISIT_03_SYMPTOM_DURATION'] === '3m_1y' || r['VISIT_03_SYMPTOM_DURATION'] === 'over_1y'
+
+const LBP_QUESTIONS: Question[] = [
+  {
+    id: 'LBP_01',
+    variable: 'lbp_distal_extent',
+    input: 'single_choice',
+    question: '허리 통증이나 불편감이 가장 멀리 어디까지 내려가나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'BACK_ONLY', label: '허리만' },
+      { value: 'BUTTOCK', label: '엉덩이까지' },
+      { value: 'THIGH', label: '허벅지까지' },
+      { value: 'BELOW_KNEE', label: '무릎 아래·종아리까지' },
+      { value: 'FOOT', label: '발까지' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_02',
+    variable: 'lbp_leg_neuro_symptoms',
+    input: 'multi_choice',
+    question: '다리에 다음과 같은 느낌이 있나요? 해당되는 것을 모두 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'PARESTHESIA', label: '저리거나 찌릿함' },
+      { value: 'NUMBNESS', label: '감각이 둔함' },
+      { value: 'SUBJECTIVE_WEAKNESS', label: '힘이 빠지는 느낌' },
+      { value: 'NONE', label: '없어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_03',
+    variable: 'lbp_leg_side',
+    input: 'single_choice',
+    question: '다리 증상이 있다면 어느 쪽인가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'NONE', label: '다리 증상 없음' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_04',
+    variable: 'lbp_ces_screen',
+    input: 'multi_choice',
+    question: '허리·다리 증상과 함께 최근 새로 생긴 변화가 있나요? 해당되는 것을 모두 골라주세요.',
+    helper: '해당하는 내용을 골라주시면 직원이 바로 확인합니다.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'URINARY_RETENTION', label: '소변이 잘 나오지 않거나 시작하기 어려워짐' },
+      { value: 'BLADDER_BOWEL_CONTROL', label: '소변이나 대변을 조절하기 어려워짐' },
+      { value: 'SADDLE_SENSORY_CHANGE', label: '항문·회음부 주변 감각이 둔해짐' },
+      { value: 'RAPID_PROGRESSIVE_WEAKNESS', label: '다리 힘이 빠르게 약해짐' },
+      { value: 'SUDDEN_SEXUAL_FUNCTION_CHANGE', label: '성기능에 갑작스러운 변화가 생김' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_05',
+    variable: 'lbp_current_redflag_screen',
+    input: 'multi_choice',
+    question: '최근 다음 중 해당되는 것이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'FEVER_CHILLS_OR_SERIOUS_INFECTION', label: '원인 모를 발열·오한 또는 최근 심한 감염' },
+      { value: 'LONG_TERM_STEROID_OR_IMMUNOSUPPRESSIVE', label: '장기간 스테로이드 또는 면역억제 치료' },
+      { value: 'RECENT_SPINAL_PROCEDURE_OR_INJECTION', label: '최근 허리·척추 주사, 시술, 또는 수술' },
+      { value: 'UNEXPLAINED_WEIGHT_LOSS', label: '최근 설명되지 않는 체중 감소' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_06',
+    variable: 'lbp_trauma_safety',
+    input: 'single_choice',
+    question: '최근 넘어지거나 부딪히는 등 허리에 큰 충격이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_07',
+    variable: 'lbp_recurrence',
+    input: 'single_choice',
+    question: '이번과 비슷한 허리통증이 이전에도 있었나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_LBP,
+    options: [
+      { value: 'NO', label: '처음이에요' },
+      { value: 'YES', label: '이전에도 있었어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_08',
+    variable: 'lbp_claudication_walking',
+    input: 'single_choice',
+    question: '서 있거나 걸을수록 엉덩이·다리 증상이 더 심해지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) =>
+      IS_PRIMARY_LBP(r) &&
+      (['RIGHT', 'LEFT', 'BILATERAL', 'UNKNOWN'].includes(r['LBP_03'] as string) ||
+        ['BUTTOCK', 'THIGH', 'BELOW_KNEE', 'FOOT', 'UNKNOWN'].includes(r['LBP_01'] as string)),
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_09',
+    variable: 'lbp_claudication_relief',
+    input: 'single_choice',
+    question: '그 증상이 앉거나 허리를 조금 숙이면 줄어드나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && r['LBP_08'] === 'YES',
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_10',
+    variable: 'lbp_onset_before_45',
+    input: 'single_choice',
+    question: '이 허리통증이 처음 시작된 것은 45세 이전인가요?',
+    required: false,
+    step: '상세 증상',
+    // 원본 YAML은 patient_age 45-120 조건도 요구하지만, 이 Module 시점에는
+    // 나이를 아직 모른다 — 위 파일 상단 주석 참고.
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'YES', label: '네' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_11',
+    variable: 'lbp_inflammatory_screen',
+    input: 'multi_choice',
+    question: '오래된 허리통증과 관련해 다음 중 해당되는 것이 있나요?',
+    required: false,
+    step: '상세 증상',
+    // lbp_inflammatory_eligible이 YES가 되려면 나이<45가 필요한데 이 시점엔
+    // 나이를 모르므로(항상 UNKNOWN으로 귀결) show 조건이 사실상
+    // IS_LBP_CHRONIC_ONSET과 동일하다 — 위 파일 상단 주석 참고.
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'SECOND_HALF_NIGHT_WAKING', label: '밤 후반부에 허리 때문에 잠에서 깸' },
+      { value: 'BUTTOCK_PAIN', label: '엉덩이 통증이 반복됨' },
+      { value: 'IMPROVES_WITH_MOVEMENT', label: '움직이면 오히려 좋아짐' },
+      { value: 'NSAID_RAPID_RESPONSE', label: '소염진통제를 먹으면 48시간 안에 뚜렷이 좋아짐' },
+      { value: 'FIRST_DEGREE_FAMILY_SPA', label: '가족 중 척추관절염이 있음' },
+      { value: 'PAST_OR_CURRENT_ARTHRITIS', label: '관절염 진단이나 관절이 붓는 증상이 있었음' },
+      { value: 'PAST_OR_CURRENT_ENTHESITIS', label: '발뒤꿈치 등 힘줄이 뼈에 붙는 부위 통증이 반복됨' },
+      { value: 'PAST_OR_CURRENT_PSORIASIS', label: '건선 진단을 받았거나 의심되는 피부병변이 있음' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_12',
+    variable: 'lbp_recovery_expectation',
+    input: 'numeric_scale',
+    question: '이번 허리 상태가 좋아질 가능성을 어느 정도로 생각하시나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    scale: { min: 0, max: 10, minLabel: '전혀 좋아지지 않을 것 같음', maxLabel: '충분히 좋아질 것 같음' },
+  },
+  {
+    id: 'LBP_13',
+    variable: 'lbp_fear_avoidance',
+    input: 'single_choice',
+    question: '움직이거나 운동하면 허리를 더 상하게 할까 봐 피하는 편인가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    options: [
+      { value: 'NO', label: '아니요' },
+      { value: 'SOMEWHAT', label: '조금 그래요' },
+      { value: 'YES', label: '많이 그래요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'LBP_14',
+    variable: 'lbp_work_impact',
+    input: 'single_choice',
+    question: '허리 때문에 일·집안일·일상생활에 얼마나 지장이 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    options: [
+      { value: 'NONE', label: '거의 없음' },
+      { value: 'SOME', label: '일부 지장 있음' },
+      { value: 'MAJOR', label: '매우 큼' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
+/**
+ * NECK_V1 entry gate. Same minimal-change pattern as IS_PRIMARY_LBP:
+ * PAIN_01's `neck_shoulder` choice is the closest existing signal, used
+ * directly (no separate MSK region-routing layer in this app). Conflates
+ * neck and shoulder complaints under one trigger -- a deliberate,
+ * documented minimal-change scope boundary, matching how IS_PRIMARY_LBP
+ * conflates low-back and pelvis.
+ */
+export const IS_PRIMARY_NECK = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'neck_shoulder'
+
+/**
+ * ---------- NECK_V1 (목 통증) — primary concern === pain && PAIN_01 ===
+ * 'neck_shoulder'인 경우만. 문항 문구/값/branching은
+ * NECK_V1_Tablet_Question_Set_v0.2.1_CLOSED.md(CLINICAL DECISIONS CLOSED,
+ * Opus 재검수 PASS + erratum E1/E2 반영) 원문 그대로이며 임의로 수정하지
+ * 않는다.
+ *
+ * onset_bucket(M3_PLUS 여부)은 LBP_V1과 동일하게 VISIT_03_SYMPTOM_DURATION에서
+ * 유도한다(v0.2.1 §12 binding note). N12(지속자세 민감도)의 show_when이 이
+ * 값을 쓴다.
+ *
+ * v0.2.1 §3 N01의 age/osteoporosis modifier는 stem이 이미 강도 무관하게
+ * 낙상을 수집하므로 실질 분기를 만들지 않는다(NB4) -- 여기서는 중복
+ * 구현하지 않는다.
+ */
+const IS_NECK_CHRONIC_ONSET = (r: Responses) =>
+  r['VISIT_03_SYMPTOM_DURATION'] === '3m_1y' || r['VISIT_03_SYMPTOM_DURATION'] === 'over_1y'
+
+const NECK_QUESTIONS: Question[] = [
+  {
+    id: 'NECK_01',
+    variable: 'neck_recent_significant_trauma',
+    input: 'single_choice',
+    question: '최근 3개월 이내 교통사고, 낙상(서서 넘어짐 포함), 또는 머리·목에 충격을 받은 적이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_02',
+    variable: 'neck_cord_concern_screen',
+    input: 'multi_choice',
+    question: '다음 증상이 있나요? 최근 새로 생긴 것뿐 아니라, 이전부터 있었더라도 현재 있으면 모두 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'HAND_CLUMSINESS', label: '손이 서툴러 단추 잠그기, 젓가락질, 글씨 쓰기 등이 어렵거나 물건을 자주 떨어뜨림' },
+      { value: 'GAIT_BALANCE_CHANGE', label: '걸을 때 휘청거리거나 균형 잡기가 어려움' },
+      { value: 'BILATERAL_OR_MULTI_LIMB_NEURO', label: '양쪽 팔·손 또는 팔과 다리에 동시에 저림·감각이상·힘빠짐이 있음' },
+      { value: 'RAPIDLY_WORSENING_LIMB_WEAKNESS', label: '팔이나 다리 힘이 빠르게 약해지고 있음' },
+      { value: 'NEW_BLADDER_BOWEL_CHANGE', label: '최근 소변·대변 조절에 뚜렷한 변화가 생김' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_02A',
+    variable: 'neck_cord_symptom_course',
+    input: 'single_choice',
+    question: '방금 선택한 증상은 최근 어떻게 변하고 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && hasNeckCordConcretePositive(r['NECK_02'] as string[] | undefined),
+    options: [
+      { value: 'WORSENING', label: '점점 심해지고 있음' },
+      { value: 'STABLE', label: '비슷하게 유지됨' },
+      { value: 'IMPROVING', label: '좋아지고 있음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_03A',
+    variable: 'neck_sudden_unusual_severe_neck_pain',
+    input: 'single_choice',
+    question: '이번 목 통증이 평소와 다르게 갑자기 매우 심하게 시작했나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_03B',
+    variable: 'neck_thunderclap_headache_screen',
+    input: 'single_choice',
+    question: '두통이 갑자기 시작해 아주 짧은 시간 안에 매우 심해졌거나, 평소와 전혀 다른 극심한 두통이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_04',
+    variable: 'neck_vascular_associated_screen',
+    input: 'multi_choice',
+    question: '최근 다음 증상이 새로 생긴 적이 있나요? 해당되는 것을 모두 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_VISUAL_DISTURBANCE', label: '물체가 둘로 보이거나 시야가 갑자기 이상해짐' },
+      { value: 'NEW_SPEECH_OR_SWALLOWING_DIFFICULTY', label: '말이 어눌해지거나 삼키기 어려워짐' },
+      { value: 'NEW_FACE_OR_EYELID_CHANGE', label: '얼굴 또는 한쪽 눈꺼풀에 갑작스러운 변화가 생김' },
+      { value: 'NEW_ONE_SIDED_WEAKNESS_OR_NUMBNESS', label: '몸 한쪽에 갑자기 힘빠짐이나 감각이상이 생김' },
+      { value: 'NEW_SEVERE_BALANCE_OR_COORDINATION_CHANGE', label: '갑자기 심하게 휘청거리거나 몸을 가누기 어려움' },
+      { value: 'NEW_SEVERE_DIZZINESS_OR_FAINTNESS', label: '이전과 다른 심한 어지럼 또는 쓰러질 것 같은 느낌이 생김' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_05',
+    variable: 'neck_systemic_redflag_screen',
+    input: 'multi_choice',
+    question: '다음 중 해당되는 내용이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'PRIOR_CANCER', label: '암을 진단받거나 치료받은 적이 있음' },
+      { value: 'FEVER_OR_RECENT_SERIOUS_INFECTION', label: '원인 모를 발열·오한이 있거나 최근 심한 감염으로 치료받음' },
+      { value: 'IMMUNOSUPPRESSION', label: '면역을 크게 떨어뜨리는 질환 또는 치료가 있음' },
+      { value: 'RECENT_CERVICAL_PROCEDURE_OR_SURGERY', label: '최근 목 부위 수술·주사·침습적 시술을 받음' },
+      { value: 'UNEXPLAINED_WEIGHT_LOSS', label: '특별한 이유 없이 최근 체중이 눈에 띄게 감소함' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_06',
+    variable: 'neck_primary_side',
+    input: 'single_choice',
+    question: '목은 어느 쪽이 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'MIDLINE', label: '가운데' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_07',
+    variable: 'neck_distal_extent',
+    input: 'single_choice',
+    question: '목에서 이어지거나 함께 느껴지는 통증·불편감이 있다면 가장 멀리 어디까지 내려가나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'NECK_ONLY', label: '목에만 있음' },
+      { value: 'SHOULDER_UPPER_ARM', label: '어깨 또는 위팔까지' },
+      { value: 'FOREARM', label: '팔꿈치 아래·전완까지' },
+      { value: 'HAND_FINGERS', label: '손 또는 손가락까지' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_08',
+    variable: 'neck_arm_symptom_side',
+    input: 'single_choice',
+    question: '팔 증상은 어느 쪽인가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) =>
+      IS_PRIMARY_NECK(r) &&
+      ['SHOULDER_UPPER_ARM', 'FOREARM', 'HAND_FINGERS'].includes(r['NECK_07'] as string),
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_09',
+    variable: 'neck_arm_neuro_symptoms',
+    input: 'multi_choice',
+    question: '목에서 이어지는 것이든 따로 생긴 것이든, 팔이나 손에 다음 증상이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'PARESTHESIA', label: '찌릿하거나 저림' },
+      { value: 'NUMBNESS', label: '감각이 둔하거나 무딤' },
+      { value: 'SUBJECTIVE_WEAKNESS', label: '힘이 빠지는 느낌' },
+      { value: 'NONE', label: '없어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_10',
+    variable: 'neck_headache_present',
+    input: 'single_choice',
+    question: '목이 불편할 때 두통도 같이 생기거나 심해지나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_10A',
+    variable: 'neck_new_or_changed_headache',
+    input: 'single_choice',
+    question: '이 두통이 최근 새로 생겼거나, 평소 두통과 양상이 뚜렷이 달라졌나요?',
+    required: true,
+    step: '상세 증상',
+    // E1: v0.2에서는 == 'YES'였다 -- N10이 UNKNOWN인 채로 CLEAR에 도달할 수
+    // 있던 fail-open을 막기 위해 [YES, UNKNOWN]로 확대(Opus 재검수 v0.2 erratum).
+    showIf: (r) => IS_PRIMARY_NECK(r) && (r['NECK_10'] === 'YES' || r['NECK_10'] === 'UNKNOWN'),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_11',
+    variable: 'neck_headache_neck_link',
+    input: 'single_choice',
+    question: '목을 움직이거나 오래 같은 자세를 유지하면 두통도 함께 변하나요?',
+    required: false,
+    step: '상세 증상',
+    // N11은 phenotype 전용(CFRT 후보 flag)이라 v0.2.1에서도 == 'YES' 그대로 유지.
+    showIf: (r) => IS_PRIMARY_NECK(r) && r['NECK_10'] === 'YES',
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'NECK_12',
+    variable: 'neck_sustained_posture_aggravation',
+    input: 'single_choice',
+    question: '오래 앉기, 컴퓨터, 운전처럼 같은 자세를 유지할 때 목이 더 불편해지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && IS_NECK_CHRONIC_ONSET(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
   },
 ]
 
@@ -1531,6 +2072,10 @@ const HISTORY_QUESTIONS: Question[] = [
       { value: 'cancer', label: '암' },
       { value: 'bleeding_disorder', label: '출혈 관련 질환' },
       { value: 'mental_health', label: '정신건강 관련 질환' },
+      // LBP_V1 clinical decision closure §3-4: 골다공증 병력은 fracture-risk
+      // red flag로 쓰인다(신규 질문 대신 기존 병력 문항 재사용). 순수
+      // 추가이며 기존 선택지는 건드리지 않는다.
+      { value: 'osteoporosis', label: '골다공증' },
       { value: 'other', label: '기타' },
       { value: 'none', label: '없음' },
     ],
@@ -1830,6 +2375,8 @@ export const CORE_QUESTIONS: Question[] = [
   ...BOWEL_QUESTIONS,
   ...URINARY_QUESTIONS,
   ...PAIN_QUESTIONS,
+  ...LBP_QUESTIONS,
+  ...NECK_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -1898,6 +2445,34 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   SAFETY_01: (r) => computeFlags(r).general_red,
   GI_03: (r) => r['GI_03'] === 'yes',
   BOWEL_03: (r) => r['BOWEL_03'] === 'yes',
+  /**
+   * LBP_V1 CES(마미증후군) 응급 값 즉시 인터럽트 — 사용자 확정 결정
+   * (2026-08-24): 요폐/대소변 조절장애/안장부 감각이상/급속 진행 마비/성기능
+   * 급변 중 하나라도 선택되면 SAFETY_01/GI_03/BOWEL_03과 동일하게 즉시
+   * StaffCheckScreen으로 인터럽트한다. 비응급 red-flag(LBP_05)·외상(LBP_06)
+   * 양성은 MS_05(sleep_disorder_priority_review)와 동일하게 인터럽트 없이
+   * flag만 남기고, 제출 후 lbp_safety_status를 통해 Doctor View에서
+   * REVIEW_REQUIRED로 확인한다.
+   */
+  LBP_04: (r) => {
+    const v = r['LBP_04']
+    const vals = Array.isArray(v) ? v : typeof v === 'string' ? [v] : []
+    return vals.some((x) => URGENT_CES_VALUES.has(x))
+  },
+  /**
+   * NECK_V1 URGENT_REVIEW 즉시 인터럽트 — v0.2.1 §5. URGENT는 4개 지점 중
+   * 어디서든 확정될 수 있으므로(N02 urgent 값 / N02A WORSENING / N03B YES /
+   * N04 hard 양성 또는 soft 양성+N03A not-valid-negative), 각 화면 제출
+   * 직후 전체 neck_safety_status를 재계산해 URGENT_REVIEW일 때만
+   * interrupt한다 — 부분 재구현으로 각 조건을 따로 손으로 맞추는 대신
+   * computeNeckFlags 자체를 그대로 재사용해 엔진과의 drift를 구조적으로
+   * 차단한다. REVIEW_REQUIRED(비응급)는 LBP_05/LBP_06과 동일하게 flag만
+   * 남기고 인터럽트하지 않는다.
+   */
+  NECK_02: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  NECK_02A: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  NECK_03B: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  NECK_04: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -1985,6 +2560,16 @@ export const buildRoutingPayload = (r: Responses) => {
   return {
     primary_concern: primaryConcernKey(r),
     primary_module: primaryTarget,
+    /**
+     * `primary_module` stays `'Pain'` unchanged (never repurposed to
+     * something like `'pain_lbp'` -- DoctorView.tsx switches on the literal
+     * `'Pain'` string in several places and has no LBP/NECK-aware fallback,
+     * see LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely additive
+     * sibling field for LBP/NECK-specific UI to key off instead.
+     * IS_PRIMARY_LBP and IS_PRIMARY_NECK are mutually exclusive (PAIN_01
+     * is single_choice), so this is never ambiguous.
+     */
+    primary_module_detail: IS_PRIMARY_LBP(r) ? 'LBP' : IS_PRIMARY_NECK(r) ? 'NECK' : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -2046,6 +2631,21 @@ export const pruneStaleResponses = (
 }
 
 /**
+ * BIRTH_01(YYYYMMDD)/BIRTH_02(양력·음력·모름)에서 나이(세)를 계산한다.
+ * LBP_V1 computed fields(fracture/malignancy risk modifier,
+ * inflammatory_eligible, treatment_safety_status 10-55 age band)가 사용한다
+ * -- src/lib/age.ts의 알려진 한계(음력 미변환) 참고. buildResponsePayload와
+ * DoctorView 양쪽에서 동일하게 재사용한다.
+ */
+export const ageFromResponses = (r: Responses): number | undefined =>
+  ageFromBirthDate(
+    typeof r['BIRTH_01'] === 'string' ? r['BIRTH_01'] : undefined,
+    r['BIRTH_02'] === 'solar' || r['BIRTH_02'] === 'lunar' || r['BIRTH_02'] === 'unknown'
+      ? (r['BIRTH_02'] as 'solar' | 'lunar' | 'unknown')
+      : undefined,
+  )
+
+/**
  * 문진 응답 -> Saju 계산 엔진 입력 어댑터.
  * 엔진(src/saju)은 타입만 참조하고, 런타임 계산 호출은 App.tsx에서 한다.
  */
@@ -2096,6 +2696,24 @@ export const buildResponsePayload = (r: Responses) => ({
   safety_flags: {
     red_flag_general: r['SAFETY_01'],
     ...computeFlags(r),
+    /**
+     * Only computed for LBP patients -- calling computeLbpFlags on a
+     * non-LBP patient's (all-null) LBP_* fields would fail closed to
+     * REVIEW_REQUIRED for every patient, which is meaningless noise, not a
+     * real safety signal, since they were never asked these questions.
+     * `clinicianObjectiveMotorDeficit` is always `undefined` here --
+     * nothing has examined the patient yet at submission time; Doctor View
+     * recomputes this fresh once a clinician enters that field (plan
+     * revision-log item 6).
+     */
+    lbp: IS_PRIMARY_LBP(r) ? computeLbpFlags(toLbpState(r, deriveReproductiveStatus(r), undefined, ageFromResponses(r))) : null,
+    /**
+     * NECK_V1: same reasoning as `lbp` above -- only computed for NECK
+     * patients, since running computeNeckFlags on an all-null NECK_* state
+     * would fail closed to REVIEW_REQUIRED for every non-NECK patient
+     * (meaningless noise, not a real signal).
+     */
+    neck: IS_PRIMARY_NECK(r) ? computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))) : null,
   },
   modules: {
     sleep: {
@@ -2137,6 +2755,39 @@ export const buildResponsePayload = (r: Responses) => ({
       pain_qualities: r['PAIN_02'],
       radiation: r['PAIN_04'],
       radiation_other: r['PAIN_04A'],
+    },
+    lbp: {
+      distal_extent: r['LBP_01'],
+      leg_neuro_symptoms: r['LBP_02'],
+      leg_side: r['LBP_03'],
+      ces_screen: r['LBP_04'],
+      current_redflag_screen: r['LBP_05'],
+      trauma_safety: r['LBP_06'],
+      recurrence: r['LBP_07'],
+      claudication_walking: r['LBP_08'],
+      claudication_relief: r['LBP_09'],
+      onset_before_45: r['LBP_10'],
+      inflammatory_screen: r['LBP_11'],
+      recovery_expectation: r['LBP_12'],
+      fear_avoidance: r['LBP_13'],
+      work_impact: r['LBP_14'],
+    },
+    neck: {
+      recent_significant_trauma: r['NECK_01'],
+      cord_concern_screen: r['NECK_02'],
+      cord_symptom_course: r['NECK_02A'],
+      sudden_unusual_severe_neck_pain: r['NECK_03A'],
+      thunderclap_headache_screen: r['NECK_03B'],
+      vascular_associated_screen: r['NECK_04'],
+      systemic_redflag_screen: r['NECK_05'],
+      primary_side: r['NECK_06'],
+      distal_extent: r['NECK_07'],
+      arm_symptom_side: r['NECK_08'],
+      arm_neuro_symptoms: r['NECK_09'],
+      headache_present: r['NECK_10'],
+      new_or_changed_headache: r['NECK_10A'],
+      headache_neck_link: r['NECK_11'],
+      sustained_posture_aggravation: r['NECK_12'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

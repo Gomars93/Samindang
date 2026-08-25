@@ -52,3 +52,11 @@ tests/.emr-summary-bundle.mjs
 
 # esbuild bundle used by tests/doctorToken.spec.mjs (regenerated, not source)
 tests/.doctor-token-bundle.mjs
+
+# esbuild bundles used by tests/lbp.spec.mjs (regenerated, not source)
+tests/.lbp-logic-bundle.mjs
+tests/.lbp-adapter-bundle.mjs
+
+# esbuild bundles used by tests/neck.spec.mjs (regenerated, not source)
+tests/.neck-logic-bundle.mjs
+tests/.neck-adapter-bundle.mjs

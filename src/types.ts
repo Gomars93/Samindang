@@ -23,6 +23,11 @@ export type QuestionInput =
   | 'multi_choice'
   | 'numeric'
   | 'short_text'
+  /**
+   * 0~10 라벨형 스케일(예: LBP_12 회복 기대). 'numeric'(자유 숫자 입력, 예:
+   * 전화번호 뒷자리)과는 별개 — LBP_V1에서 새로 추가.
+   */
+  | 'numeric_scale'
 
 export type Question = {
   /** Master Spec의 screen_id */
@@ -49,4 +54,6 @@ export type Question = {
   /** numeric 전용 */
   maxLength?: number
   placeholder?: string
+  /** numeric_scale 전용 */
+  scale?: { min: number; max: number; minLabel: string; maxLabel: string }
 }

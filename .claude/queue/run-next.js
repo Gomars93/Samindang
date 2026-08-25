@@ -90,6 +90,38 @@ function checkCleanTree() {
 }
 
 /**
+ * `main`/`master`에서는 큐를 절대 실행하지 않는다. 이 프로젝트의 Git 워크플로는
+ * main을 보호 브랜치(Single Source of Truth)로 취급하며, 모든 변경은 별도
+ * feature 브랜치 + PR을 통해서만 들어온다 (CLAUDE.md 참고). 큐가 실수로 main에서
+ * 실행되면 커밋이 보호 브랜치에 바로 쌓이게 되므로, 실행 전에 현재 브랜치를 확인해
+ * main/master면 즉시 거부한다.
+ *
+ * 현재 브랜치를 확인할 수 없는 경우(detached HEAD, git 명령 실패 등)에도 이름을
+ * 알 수 없는 것뿐이지 main이 아니라는 보장이 없으므로 안전하게 실행을 거부한다.
+ */
+function checkNotOnProtectedBranch() {
+  let branch
+  try {
+    branch = execFileSync('git', ['branch', '--show-current'], {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+    }).trim()
+  } catch (err) {
+    log(`git branch --show-current failed: ${err.message}`)
+    return { ok: false, branch: null }
+  }
+
+  if (!branch) {
+    // detached HEAD 등 — 이름을 알 수 없다.
+    return { ok: false, branch: null }
+  }
+  if (branch === 'main' || branch === 'master') {
+    return { ok: false, branch }
+  }
+  return { ok: true, branch }
+}
+
+/**
  * 사람이 반드시 개입해야 하는 task인지 판단한다.
  * 실제 장비/네트워크 확인이나 원장의 임상·정책 결정이 필요한 task는 무인
  * 러너가 건드리면 안 된다. task 파일 본문에 `requires-human: true`가 있으면
@@ -159,6 +191,19 @@ function main() {
   }
   if (state.runner_active) {
     log('another runner already active (state.runner_active=true) — refusing to run concurrently.')
+    process.exit(1)
+  }
+
+  const branchCheck = checkNotOnProtectedBranch()
+  if (!branchCheck.ok) {
+    state.active = false
+    state.last_error = branchCheck.branch
+      ? `run-next: aborted before starting, current branch is '${branchCheck.branch}' (protected). ` +
+        `큐는 main/master에서 실행되지 않습니다. feature 브랜치(예: claude/fix-xxx)로 checkout한 뒤 다시 활성화하세요.`
+      : 'run-next: aborted before starting, could not determine the current branch (e.g. detached HEAD). ' +
+        'checkout a named feature branch, then re-activate the queue.'
+    saveState(state)
+    log(state.last_error)
     process.exit(1)
   }
 

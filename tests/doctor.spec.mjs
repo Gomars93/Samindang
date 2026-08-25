@@ -250,6 +250,66 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2f. KNEE_V1 primary-pain fixture: primary_module_detail is 'KNEE',
+ *     demonstrates both closed decisions in one fixture -- K5 DVT
+ *     de-escalation (KNEE_06=YES + KNEE_06A=[NONE] alone does NOT create
+ *     REVIEW_REQUIRED/dvt_assessment_required) and K9's occult
+ *     hip-fracture referred option (the sole positive finding here,
+ *     REVIEW_REQUIRED + fracture_imaging_consider, no new tier).
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('무릎 통증 주호소 (KNEE, 고관절 연관통 의심)')
+  assert('KNEE fixture: primary_module stays Pain', f.payload.routing.primary_module === 'Pain')
+  assert('KNEE fixture: primary_module_detail is KNEE', f.payload.routing.primary_module_detail === 'KNEE')
+  assert(
+    'KNEE fixture: knee_safety_status is REVIEW_REQUIRED (KNEE_08 hip/groin option, not urgent)',
+    f.payload.responses.safety_flags.knee?.knee_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert(
+    'KNEE fixture: knee_safety_status is NOT URGENT_REVIEW',
+    f.payload.responses.safety_flags.knee?.knee_safety_status !== 'URGENT_REVIEW',
+  )
+  assert(
+    'K5 CRITICAL: dvt_assessment_required is false (KNEE_06=YES + KNEE_06A=[NONE] alone does not trigger it)',
+    f.payload.responses.safety_flags.knee?.dvt_assessment_required === false,
+  )
+  assert(
+    'K9: fracture_imaging_consider is true (KNEE_08 hip/groin/weight-bearing option)',
+    f.payload.responses.safety_flags.knee?.fracture_imaging_consider === true,
+  )
+  assert(
+    'KNEE fixture: expedited_referral_consider is false (KNEE_04/05 both NO)',
+    f.payload.responses.safety_flags.knee?.expedited_referral_consider === false,
+  )
+  assert(
+    'KNEE fixture: does NOT trigger requires_staff_check (REVIEW_REQUIRED only, no URGENT interrupt condition met)',
+    f.payload.flags.requires_staff_check === false,
+  )
+
+  const html = renderDoctorView('무릎 통증 주호소 (KNEE, 고관절 연관통 의심)')
+  assert('KNEE fixture: renders 안전 확인 — 무릎 panel title', html.includes('안전 확인 — 무릎'))
+  assert('KNEE fixture: shows 확인 필요 status', html.includes('확인 필요'))
+  assert('KNEE fixture: renders 골절·영상 평가 고려 chip with 예', /골절·영상 평가 고려<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'KNEE fixture: renders DVT 평가 필요 chip with 아니요 (K5 de-escalation)',
+    /DVT 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html),
+  )
+  assert(
+    'KNEE fixture: disease-safety lock note renders',
+    html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
+  )
+  assert('KNEE fixture: renders 추가 권장 검사 card', html.includes('추가 권장 검사'))
+  assert('KNEE fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('KNEE fixture: KNEE_02A question text renders', html.includes('저절로 제자리로 돌아온 적이 있나요'))
+  assert('KNEE fixture: KNEE_08 hip/groin option label renders', html.includes('엉덩이·사타구니 통증'))
+  assert(
+    'KNEE fixture: no patient-facing diagnosis/probability language (예: 고관절 골절 진단/확률)',
+    !/고관절\s*골절\s*진단|확률\s*\d/.test(html),
+  )
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

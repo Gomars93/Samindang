@@ -21,6 +21,8 @@ import { toNeckState } from './neckAdapter'
 import { computeNeckFlags, hasNeckCordConcretePositive } from './neckLogic'
 import { toShoulderState } from './shoulderAdapter'
 import { computeShoulderFlags } from './shoulderLogic'
+import { toKneeState } from './kneeAdapter'
+import { computeKneeFlags } from './kneeLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1051,6 +1053,14 @@ const LBP_QUESTIONS: Question[] = [
 export const IS_PRIMARY_NECK = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'neck_shoulder'
 
 /**
+ * KNEE_V1 entry gate. `PAIN_01`'s `knee` choice is mutually exclusive with
+ * `low_back_pelvis`/`neck_shoulder` (single_choice) -- unlike NECK/SHOULDER,
+ * there is no shared-population design here (Opus v0.2 K9 finding), so this
+ * gate is fully independent of IS_PRIMARY_LBP/IS_PRIMARY_NECK.
+ */
+export const IS_PRIMARY_KNEE = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'knee'
+
+/**
  * ---------- NECK_V1 (목 통증) — primary concern === pain && PAIN_01 ===
  * 'neck_shoulder'인 경우만. 문항 문구/값/branching은
  * NECK_V1_Tablet_Question_Set_v0.2.1_CLOSED.md(CLINICAL DECISIONS CLOSED,
@@ -1504,6 +1514,317 @@ const SHOULDER_QUESTIONS: Question[] = [
     options: [
       { value: 'TRAUMATIC', label: '넘어짐·충돌·팔이 강하게 꺾임 등 외상 후' },
       { value: 'ATRAUMATIC', label: '뚜렷한 외상 없이' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
+/**
+ * ---------- KNEE_V1 (무릎 통증) — primary concern === pain && PAIN_01 ===
+ * 'knee'인 경우만. 문항 문구/값/branching은
+ * KNEE_V1_Tablet_Question_Set_v0.1.md(§3/§9-13)와
+ * KNEE_V1_Tablet_Question_Set_v0.1.1_Amendment_CLOSED_CANDIDATE.md
+ * (§A1-A4, CLINICAL DECISIONS CLOSED — Opus final verification PASS) 원문
+ * 그대로이며 임의로 수정하지 않는다.
+ *
+ * KNEE는 LBP/NECK/SHOULDER와 달리 다른 모듈의 canonical safety를 재사용하지
+ * 않는다 — `PAIN_01`의 `low_back_pelvis`/`neck_shoulder`/`knee`는 서로
+ * 배타적인 single_choice 값이라 애초에 공유되는 환자군이 없다(Opus v0.2
+ * K9 결론). KNEE_08은 그래서 LBP_QUESTIONS를 호출하는 게 아니라 독립된
+ * 신규 최소 red-flag screen이다.
+ *
+ * KNEE_02A는 K2 결정에 따라 KNEE_01(외상 인지 여부)과 무관하게 모든
+ * knee-primary 환자에게 무조건 노출된다 — 이미 저절로 정복된 무릎 탈구가
+ * "외상 인지 없음"으로 걸러지지 않게 하기 위함.
+ */
+const IS_KNEE_01_SHOWN = (r: Responses) => r['KNEE_01'] === 'YES' || r['KNEE_01'] === 'UNKNOWN'
+const IS_KNEE_06_SHOWN = (r: Responses) => r['KNEE_06'] === 'YES' || r['KNEE_06'] === 'UNKNOWN'
+
+const KNEE_QUESTIONS: Question[] = [
+  {
+    id: 'KNEE_01',
+    variable: 'knee_recent_trauma_or_sudden_load',
+    input: 'single_choice',
+    question: '최근 3개월 이내 넘어지거나 부딪히거나 무릎이 크게 비틀렸거나, 갑자기 강하게 힘을 준 뒤 증상이 시작되거나 뚜렷하게 심해졌나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_02',
+    variable: 'knee_deformity_neurovascular_screen',
+    input: 'multi_choice',
+    question: '지금 무릎이나 다리에 다음 변화가 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '무릎 모양이 확연히 달라졌거나 빠진 채 제자리로 돌아오지 않은 느낌' },
+      { value: 'COLD_PALE_BLUE_FOOT', label: '발이나 발목이 갑자기 매우 차갑거나 창백·푸르게 변함' },
+      { value: 'MAJOR_NEW_DISTAL_NEURO_CHANGE', label: '발·다리 감각이나 힘이 갑자기 크게 떨어짐' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_02A',
+    variable: 'knee_spontaneously_reduced_dislocation_screen',
+    input: 'single_choice',
+    question: '무릎이 크게 틀어지거나 빠진 느낌이 들었다가 저절로 제자리로 돌아온 적이 있나요?',
+    required: true,
+    step: '상세 증상',
+    // K2: KNEE_01과 무관하게 무조건 노출 -- 자연정복 탈구 fail-open 방지.
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_03',
+    variable: 'knee_post_trauma_weight_bearing_failure',
+    input: 'single_choice',
+    question: '외상이나 갑작스러운 손상 이후, 서거나 걷기 위해 무릎에 체중을 싣기가 매우 어렵나요?',
+    // Amendment A3: shown되면 required.
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_04',
+    variable: 'knee_extensor_mechanism_concern',
+    input: 'single_choice',
+    question: '손상 이후, 무릎을 스스로 끝까지 펴거나 다리를 편 채 들어 올리기가 갑자기 현저히 어려워졌나요?',
+    // Amendment A3: shown되면 required.
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_05',
+    variable: 'knee_true_locked_extension_block',
+    input: 'single_choice',
+    question: '단순히 아파서 펴기 어려운 것이 아니라, 무릎이 실제로 걸린 느낌 때문에 끝까지 펴지지 않나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_06',
+    variable: 'knee_unilateral_leg_dvt_symptom_screen',
+    input: 'single_choice',
+    question: '한쪽 종아리나 다리가 평소와 다르게 새로 붓거나 아픈가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_06A',
+    variable: 'knee_dvt_risk_context',
+    input: 'multi_choice',
+    question: '최근 다음에 해당되는 내용이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_06_SHOWN(r),
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'RECENT_SURGERY_HOSPITALIZATION_OR_IMMOBILITY', label: '최근 수술을 받았거나 입원했거나, 오래 움직이지 못했음' },
+      { value: 'PRIOR_DVT_OR_PE', label: '이전에 다리 혈전(DVT)이나 폐색전증(PE)을 진단받은 적이 있음' },
+      { value: 'ACTIVE_CANCER', label: '현재 암을 진단받았거나 치료 중임' },
+      { value: 'PREGNANCY_PUERPERIUM_OR_HORMONAL_CONTEXT', label: '임신 중이거나 출산 직후이거나, 호르몬제(피임약 등)를 복용 중임' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_06B',
+    variable: 'knee_dvt_pe_associated_screen',
+    input: 'multi_choice',
+    question: '이 다리 증상과 함께 최근 다음 증상이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    // C2: 움직임/자세와 무관함 같은 추가 AND 조건 없음 -- 단일조건 gate.
+    // Core SAFETY_01에서 general_red가 이미 확인됐으면 중복 질문하지 않는다
+    // (SH05와 동일한 원칙) -- knee_safety_status 자체는 core_safety_already_urgent
+    // 경유로 이미 URGENT이므로 이 생략이 fail-open을 만들지 않는다.
+    showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_06_SHOWN(r) && !computeFlags(r).general_red,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'CHEST_PAIN_OR_TIGHTNESS', label: '가슴 통증이나 답답함' },
+      { value: 'SHORTNESS_OF_BREATH', label: '숨이 차거나 숨쉬기 어려움' },
+      { value: 'HEMOPTYSIS', label: '피가 섞인 기침' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_07',
+    variable: 'knee_septic_joint_emergency_screen',
+    input: 'single_choice',
+    question: '무릎이 붉거나 뜨겁게 붓고 심하게 아프면서, 열·오한 또는 몸 상태가 매우 좋지 않은 증상이 함께 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_08',
+    variable: 'knee_referred_non_knee_redflag_screen',
+    input: 'multi_choice',
+    question: '이 무릎 증상과 함께 엉덩이·허리·다리에 최근 새로 생긴 변화가 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_SENSORY_CHANGE', label: '새로 생긴 저림·감각 둔화/이상감각' },
+      { value: 'NEW_WEAKNESS', label: '새로 생긴 뚜렷한 힘빠짐' },
+      { value: 'NEW_BLADDER_BOWEL_CONTROL_CHANGE', label: '새로 생긴 소변·대변 조절 변화' },
+      {
+        value: 'NEW_HIP_GROIN_PAIN_OR_WEIGHT_BEARING_DIFFICULTY_NOT_EXPLAINED_BY_KNEE',
+        label: '무릎 증상과 함께 새로 생긴 엉덩이·사타구니 통증이 있거나, 무릎만으로 설명하기 어려울 정도로 다리에 체중을 싣기 힘듦',
+      },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_09',
+    variable: 'knee_primary_side',
+    input: 'single_choice',
+    question: '무릎은 어느 쪽이 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_10',
+    variable: 'knee_pain_location_pattern',
+    input: 'single_choice',
+    question: '무릎 통증이 주로 어느 부위에서 느껴지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'ANTERIOR', label: '앞쪽' },
+      { value: 'MEDIAL', label: '안쪽' },
+      { value: 'LATERAL', label: '바깥쪽' },
+      { value: 'POSTERIOR', label: '뒤쪽' },
+      { value: 'DIFFUSE', label: '전체적으로 퍼져 있음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_11',
+    variable: 'knee_load_provocation_pattern',
+    input: 'multi_choice',
+    question: '어떤 활동에서 무릎이 더 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'WALKING_OR_STANDING', label: '걷거나 서 있을 때' },
+      { value: 'STAIRS', label: '계단을 오르내릴 때' },
+      { value: 'SQUAT_OR_CHAIR_RISE', label: '쪼그려 앉거나 의자에서 일어날 때' },
+      { value: 'RUNNING_OR_JUMPING', label: '뛰거나 점프할 때' },
+      { value: 'PROLONGED_SITTING', label: '오래 앉아 있을 때' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_12',
+    variable: 'knee_morning_stiffness_duration',
+    input: 'single_choice',
+    question: '아침에 일어나 처음 움직일 때 무릎이 뻣뻣하다면 보통 얼마나 지속되나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'NONE', label: '뻣뻣하지 않음' },
+      { value: 'UP_TO_30_MIN', label: '30분 이내' },
+      { value: 'OVER_30_MIN', label: '30분 이상' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_13',
+    variable: 'knee_giving_way_instability',
+    input: 'single_choice',
+    question: '걷거나 방향을 바꿀 때 무릎이 휘청하거나 빠질 것 같은 느낌이 반복되나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_14',
+    variable: 'knee_patellar_instability_history',
+    input: 'single_choice',
+    question: '무릎 앞쪽 뼈(슬개골)가 옆으로 빠지거나 밀린 적이 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_KNEE,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'KNEE_15',
+    variable: 'knee_rapid_post_trauma_effusion',
+    input: 'single_choice',
+    question: '손상 뒤 비교적 빠르게 무릎이 눈에 띄게 부었나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2578,6 +2899,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...LBP_QUESTIONS,
   ...SHOULDER_QUESTIONS,
   ...NECK_QUESTIONS,
+  ...KNEE_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -2693,6 +3015,20 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   SH05: (r) =>
     computeShoulderFlags(toShoulderState(r, deriveReproductiveStatus(r), computeFlags(r).general_red, undefined))
       .shoulder_safety_status === 'URGENT_REVIEW',
+  /**
+   * KNEE_V1 URGENT_REVIEW 즉시 인터럽트 -- Fable Integration Plan §4.5.
+   * URGENT은 KNEE_02(변형/신경혈관)/KNEE_02A(자연정복 탈구)/KNEE_06B(PE
+   * 동반증상)/KNEE_07(패혈성 관절염) 네 지점에서만 확정될 수 있으므로 이
+   * 넷만 등록한다 -- KNEE_03/04/05/06/06A/08은 CLOSED semantics상
+   * REVIEW/expedited/flag 계층이지 urgent interrupt source가 아니다(Amendment
+   * A4). NECK_02/SH02와 동일하게 개별 조건을 손으로 재구현하지 않고
+   * computeKneeFlags 전체를 재계산해 URGENT_REVIEW인지만 확인한다 -- 엔진과의
+   * drift를 구조적으로 차단한다.
+   */
+  KNEE_02: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
+  KNEE_02A: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
+  KNEE_06B: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
+  KNEE_07: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -2806,7 +3142,9 @@ export const buildRoutingPayload = (r: Responses) => {
         ? r['NS01'] === 'SHOULDER_DOMINANT'
           ? 'SHOULDER'
           : 'NECK'
-        : null,
+        : IS_PRIMARY_KNEE(r)
+          ? 'KNEE'
+          : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -2966,6 +3304,13 @@ export const buildResponsePayload = (r: Responses) => ({
     shoulder: IS_PRIMARY_NECK(r)
       ? computeShoulderFlags(toShoulderState(r, deriveReproductiveStatus(r), computeFlags(r).general_red, undefined))
       : null,
+    /**
+     * KNEE_V1: same `IS_PRIMARY_KNEE`-gated pattern as `lbp`/`neck`/`shoulder`
+     * above -- computing computeKneeFlags on a non-KNEE patient's all-null
+     * KNEE_* state would fail closed to REVIEW_REQUIRED for every patient,
+     * which is meaningless noise, not a real safety signal.
+     */
+    knee: IS_PRIMARY_KNEE(r) ? computeKneeFlags(toKneeState(r, computeFlags(r).general_red)) : null,
   },
   modules: {
     sleep: {
@@ -3053,6 +3398,26 @@ export const buildResponsePayload = (r: Responses) => ({
       load_related_pattern: r['SH08'],
       instability_present: r['SH09'],
       instability_onset_type: r['SH09A'],
+    },
+    knee: {
+      recent_trauma_or_sudden_load: r['KNEE_01'],
+      deformity_neurovascular_screen: r['KNEE_02'],
+      spontaneously_reduced_dislocation_screen: r['KNEE_02A'],
+      post_trauma_weight_bearing_failure: r['KNEE_03'],
+      extensor_mechanism_concern: r['KNEE_04'],
+      true_locked_extension_block: r['KNEE_05'],
+      unilateral_leg_dvt_symptom_screen: r['KNEE_06'],
+      dvt_risk_context: r['KNEE_06A'],
+      dvt_pe_associated_screen: r['KNEE_06B'],
+      septic_joint_emergency_screen: r['KNEE_07'],
+      referred_non_knee_redflag_screen: r['KNEE_08'],
+      primary_side: r['KNEE_09'],
+      pain_location_pattern: r['KNEE_10'],
+      load_provocation_pattern: r['KNEE_11'],
+      morning_stiffness_duration: r['KNEE_12'],
+      giving_way_instability: r['KNEE_13'],
+      patellar_instability_history: r['KNEE_14'],
+      rapid_post_trauma_effusion: r['KNEE_15'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

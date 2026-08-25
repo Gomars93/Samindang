@@ -1073,14 +1073,21 @@ const H1_MODULES = [
 // SHOULDER_V1: URGENT_REVIEW는 SH02/SH04/SH05 세 지점에서만 확정될 수 있어
 // (v0.1.1 §10 -- SH01/SH03/SH06-09는 URGENT를 발생시키지 않음) 셋만
 // 등록했다 -- coreSpec.ts의 STAFF_CHECK_TRIGGERS 주석 참고.
+// KNEE_V1: URGENT_REVIEW는 KNEE_02/KNEE_02A/KNEE_06B/KNEE_07 네 지점에서만
+// 확정될 수 있어(Amendment A4 -- KNEE_03/04/05/06/06A/08은 REVIEW/expedited/
+// flag 계층) 넷만 등록했다 -- coreSpec.ts의 STAFF_CHECK_TRIGGERS 주석 참고.
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05',
+    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05, KNEE_02, KNEE_02A, KNEE_06B, KNEE_07',
     JSON.stringify(keys) ===
       JSON.stringify([
         'BOWEL_03',
         'GI_03',
+        'KNEE_02',
+        'KNEE_02A',
+        'KNEE_06B',
+        'KNEE_07',
         'LBP_04',
         'NECK_02',
         'NECK_02A',
@@ -1852,6 +1859,147 @@ function neckShoulderBaseResponses() {
 {
   const r = neckShoulderBaseResponses() // fully clean
   assert('M5: STAFF_CHECK_TRIGGERS.SH02/SH04/SH05 all stay false on a fully-clean shoulder+neck baseline', STAFF_CHECK_TRIGGERS.SH02(r) === false && STAFF_CHECK_TRIGGERS.SH04(r) === false && STAFF_CHECK_TRIGGERS.SH05(r) === false)
+}
+
+/* =========================================================================
+ * N. KNEE_V1 -- question visibility (Fable plan §8.C), staff interrupt
+ * (§8.D), payload/routing (§8.E). KNEE_V1 has no shared-population reuse
+ * with LBP/NECK/SHOULDER (Opus v0.2 K9), so there is no cross-module
+ * tag-hiding regression to prove here the way L/M prove it for SHOULDER --
+ * IS_PRIMARY_KNEE is fully independent of IS_PRIMARY_LBP/IS_PRIMARY_NECK.
+ * ========================================================================= */
+
+function kneeBaseResponses() {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'knee',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    KNEE_01: 'NO',
+    KNEE_02: ['NONE'],
+    KNEE_02A: 'NO',
+    KNEE_05: 'NO',
+    KNEE_06: 'NO',
+    KNEE_07: 'NO',
+    KNEE_08: ['NONE'],
+  })
+}
+
+// --- N-C: question visibility ---------------------------------------------
+
+{
+  const r = neckShoulderBaseResponses()
+  const visible = visibleIds(r)
+  assert('N-C1: non-knee (neck_shoulder) pain patient sees no KNEE_* questions', ![...visible].some((id) => id.startsWith('KNEE_')))
+}
+{
+  const r = kneeBaseResponses()
+  const visible = visibleIds(r)
+  assert(
+    'N-C2: knee-primary patient sees all protected KNEE safety screens',
+    ['KNEE_01', 'KNEE_02', 'KNEE_02A', 'KNEE_05', 'KNEE_06', 'KNEE_07', 'KNEE_08'].every((id) => visible.has(id)),
+  )
+}
+{
+  const r = set(kneeBaseResponses(), { KNEE_01: 'NO' })
+  assert('N-C3: KNEE_02A stays visible even when KNEE_01=NO (K2 unconditional exposure)', visibleIds(r).has('KNEE_02A'))
+}
+{
+  const rYes = set(kneeBaseResponses(), { KNEE_01: 'YES' })
+  const rUnknown = set(kneeBaseResponses(), { KNEE_01: 'UNKNOWN' })
+  const rNo = set(kneeBaseResponses(), { KNEE_01: 'NO' })
+  assert('N-C4: KNEE_03/04/15 appear when KNEE_01=YES', ['KNEE_03', 'KNEE_04', 'KNEE_15'].every((id) => visibleIds(rYes).has(id)))
+  assert('N-C4: KNEE_03/04/15 appear when KNEE_01=UNKNOWN', ['KNEE_03', 'KNEE_04', 'KNEE_15'].every((id) => visibleIds(rUnknown).has(id)))
+  assert('N-C4: KNEE_03/04/15 do NOT appear when KNEE_01=NO', !['KNEE_03', 'KNEE_04', 'KNEE_15'].some((id) => visibleIds(rNo).has(id)))
+}
+{
+  const rYes = set(kneeBaseResponses(), { KNEE_06: 'YES' })
+  const rUnknown = set(kneeBaseResponses(), { KNEE_06: 'UNKNOWN' })
+  const rNo = set(kneeBaseResponses(), { KNEE_06: 'NO' })
+  assert('N-C5: KNEE_06A/06B appear when KNEE_06=YES', ['KNEE_06A', 'KNEE_06B'].every((id) => visibleIds(rYes).has(id)))
+  assert('N-C5: KNEE_06A/06B appear when KNEE_06=UNKNOWN', ['KNEE_06A', 'KNEE_06B'].every((id) => visibleIds(rUnknown).has(id)))
+  assert('N-C5: KNEE_06A/06B do NOT appear when KNEE_06=NO', !['KNEE_06A', 'KNEE_06B'].some((id) => visibleIds(rNo).has(id)))
+}
+{
+  const q3 = ALL_QUESTIONS.find((q) => q.id === 'KNEE_03')
+  const q4 = ALL_QUESTIONS.find((q) => q.id === 'KNEE_04')
+  assert('N-C6: KNEE_03 is required: true (fail-closed hard block once shown)', q3.required === true)
+  assert('N-C6: KNEE_04 is required: true (fail-closed hard block once shown)', q4.required === true)
+}
+{
+  // stale prune: KNEE_* answers must be cleared once PAIN_01 switches away from 'knee'.
+  const r = set(kneeBaseResponses(), { KNEE_01: 'YES', KNEE_03: 'YES', KNEE_04: 'NO', KNEE_15: 'YES' })
+  const switched = set(r, { PAIN_01: 'low_back_pelvis' })
+  assert(
+    'N-C7: switching PAIN_01 away from knee prunes all KNEE_* responses to null',
+    ['KNEE_01', 'KNEE_02', 'KNEE_02A', 'KNEE_03', 'KNEE_04', 'KNEE_05', 'KNEE_06', 'KNEE_07', 'KNEE_08', 'KNEE_15'].every(
+      (id) => switched[id] === null,
+    ),
+  )
+}
+
+// --- N-D: staff interrupt ---------------------------------------------------
+
+{
+  const r = set(kneeBaseResponses(), { KNEE_02: ['GROSS_DEFORMITY_OR_STILL_OUT'] })
+  assert('N-D1: KNEE_02 urgent answer -> StaffCheck', STAFF_CHECK_TRIGGERS.KNEE_02(r) === true)
+}
+{
+  const r = set(kneeBaseResponses(), { KNEE_02A: 'YES' })
+  assert('N-D2: KNEE_02A YES -> StaffCheck', STAFF_CHECK_TRIGGERS.KNEE_02A(r) === true)
+}
+{
+  const r = set(kneeBaseResponses(), { KNEE_06: 'YES', KNEE_06A: ['NONE'], KNEE_06B: ['SHORTNESS_OF_BREATH'] })
+  assert('N-D3: KNEE_06B PE positive -> StaffCheck', STAFF_CHECK_TRIGGERS.KNEE_06B(r) === true)
+}
+{
+  const r = set(kneeBaseResponses(), { KNEE_07: 'YES' })
+  assert('N-D4: KNEE_07 YES -> StaffCheck', STAFF_CHECK_TRIGGERS.KNEE_07(r) === true)
+}
+{
+  // KNEE_03/04/05/08 positive must NOT interrupt -- REVIEW/expedited/flag only, no urgent trigger registered for them.
+  assert('N-D5: KNEE_03/04/05/08 have no StaffCheck trigger registered', !('KNEE_03' in STAFF_CHECK_TRIGGERS) && !('KNEE_04' in STAFF_CHECK_TRIGGERS) && !('KNEE_05' in STAFF_CHECK_TRIGGERS) && !('KNEE_08' in STAFF_CHECK_TRIGGERS))
+}
+{
+  const r = kneeBaseResponses() // fully clean
+  assert(
+    'N-D6: KNEE_02/KNEE_02A/KNEE_06B/KNEE_07 all stay false on a fully-clean knee baseline',
+    STAFF_CHECK_TRIGGERS.KNEE_02(r) === false &&
+      STAFF_CHECK_TRIGGERS.KNEE_02A(r) === false &&
+      STAFF_CHECK_TRIGGERS.KNEE_06B(r) === false &&
+      STAFF_CHECK_TRIGGERS.KNEE_07(r) === false,
+  )
+}
+
+// --- N-E: payload/routing ---------------------------------------------------
+
+{
+  const r = kneeBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('N-E1: knee patient -> safety_flags.knee !== null', payload.safety_flags.knee !== null)
+  assert('N-E2: all KNEE responses land under modules.knee', payload.modules.knee.recent_trauma_or_sudden_load === 'NO')
+  const routing = buildRoutingPayload(r)
+  assert("N-E3: primary_module_detail === 'KNEE' for knee-primary", routing.primary_module_detail === 'KNEE')
+}
+{
+  const r = neckShoulderBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('N-E4: non-knee (neck_shoulder) patient -> safety_flags.knee === null', payload.safety_flags.knee === null)
+  const routing = buildRoutingPayload(r)
+  assert(
+    "N-E5: existing NECK/SHOULDER routing unchanged by KNEE addition -- primary_module_detail still 'SHOULDER'",
+    routing.primary_module_detail === 'SHOULDER',
+  )
+}
+{
+  // LBP routing must also stay unaffected by the KNEE addition.
+  let r = emptyResponses()
+  r = set(r, { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'low_back_pelvis', PAIN_02: ['aching'], PAIN_04: 'none' })
+  const routing = buildRoutingPayload(r)
+  assert("N-E6: LBP routing unaffected by KNEE addition -- primary_module_detail still 'LBP'", routing.primary_module_detail === 'LBP')
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

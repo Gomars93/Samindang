@@ -316,4 +316,43 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     SH08: 'YES',
     SH09: 'NO',
   }),
+
+  // KNEE_V1: demonstrates both closed decisions in one fixture --
+  // (1) K5 DVT de-escalation: KNEE_06=YES (leg swelling reported) +
+  //     KNEE_06A=[NONE] (no concrete DVT risk factor) must NOT by itself
+  //     create REVIEW_REQUIRED/dvt_assessment_required (Amendment A1's
+  //     critical negative regression).
+  // (2) K9 occult hip-fracture referred option: KNEE_08's new
+  //     NEW_HIP_GROIN_PAIN_OR_WEIGHT_BEARING_DIFFICULTY_NOT_EXPLAINED_BY_KNEE
+  //     is the sole positive safety finding here -> REVIEW_REQUIRED +
+  //     fracture_imaging_consider (reusing the existing flag, no new tier).
+  buildFixture('무릎 통증 주호소 (KNEE, 고관절 연관통 의심)', {
+    ID_01: '최지훈',
+    ID_03: 'male',
+    BIRTH_01: '19600101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '1_3m',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'knee',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'none',
+    KNEE_01: 'NO',
+    KNEE_02: ['NONE'],
+    KNEE_02A: 'NO',
+    KNEE_05: 'NO',
+    KNEE_06: 'YES',
+    KNEE_06A: ['NONE'],
+    KNEE_06B: ['NONE'],
+    KNEE_07: 'NO',
+    KNEE_08: ['NEW_HIP_GROIN_PAIN_OR_WEIGHT_BEARING_DIFFICULTY_NOT_EXPLAINED_BY_KNEE'],
+    KNEE_09: 'RIGHT',
+    KNEE_10: 'ANTERIOR',
+    KNEE_11: ['STAIRS'],
+    KNEE_12: 'UP_TO_30_MIN',
+    KNEE_13: 'NO',
+    KNEE_14: 'NO',
+  }),
 ]

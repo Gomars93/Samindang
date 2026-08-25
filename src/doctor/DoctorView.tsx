@@ -35,6 +35,8 @@ import {
 import { toNeckStateFromDoctorPayload } from '../spec/neckAdapter'
 import { computeShoulderFlags, shoulderSafetyLocked, type ShoulderComputedFields } from '../spec/shoulderLogic'
 import { toShoulderStateFromDoctorPayload } from '../spec/shoulderAdapter'
+import { computeKneeFlags, kneeSafetyLocked, KNEE08_HIP_FRACTURE_OPTION, type KneeComputedFields } from '../spec/kneeLogic'
+import { toKneeStateFromDoctorPayload } from '../spec/kneeAdapter'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -869,6 +871,146 @@ function ShoulderSafetyPanel({
   )
 }
 
+const KNEE_SAFETY_STATUS_LABEL: Record<KneeComputedFields['knee_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+  URGENT_REVIEW: '긴급 확인 필요',
+}
+
+const KNEE_EXAM_LABELS: Record<string, string> = {
+  GAIT_WEIGHT_BEARING: '보행/체중부하 검사',
+  KNEE_AROM_PROM_EXTENSION: '능동/수동 관절가동범위 검사(신전 포함)',
+  EFFUSION_ASSESSMENT: '삼출(effusion) 평가',
+  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
+  DISTAL_NEUROVASCULAR_EXAM: '원위부 신경혈관 검사',
+  DEFORMITY_BONY_TENDERNESS: '변형·골압통 확인',
+  FOCAL_BONY_TENDERNESS: '국소 골압통 확인',
+  RADIOGRAPH_INDICATION_REVIEW: '방사선 촬영 필요성 검토',
+  STRAIGHT_LEG_RAISE: '다리 들어올리기 검사(SLR)',
+  ACTIVE_EXTENSION_EXTENSOR_LAG: '능동 신전/extensor lag 검사',
+  EXTENSOR_MECHANISM_PALPATION: '신전기전 촉진',
+  TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM: '실제 기계적 차단 vs 통증성 ROM 제한 감별',
+  JOINT_LINE_EXAM: '관절선 압통 검사',
+  CLINICIAN_DVT_ASSESSMENT_WELLS: '원장 DVT 평가(Wells)',
+  HIP_GROIN_EXAM: '고관절/서혜부 검사',
+  WEIGHT_BEARING_ASSESSMENT: '체중부하 평가',
+}
+
+/**
+ * Fable Integration Plan §5.4 Suggested Exam -- minimal mechanical mapping
+ * only, CLOSED 문서가 직접 연결한 경우만 추천한다(SHOULDER의
+ * suggestedShoulderExamCodes와 동일한 성격 -- 정확한 firing 조건은 구현
+ * 시점에 확정). Meniscus/ligament/PF special test 목록은 raw pattern과
+ * clinician judgment로 선택하는 영역이라 여기서 자동 제안하지 않는다(§6).
+ */
+function suggestedKneeExamCodes(
+  flags: KneeComputedFields,
+  knee: DoctorPayload['responses']['modules']['knee'],
+): string[] {
+  const codes: string[] = []
+  if (flags.knee_safety_status === 'CLEAR') {
+    codes.push('GAIT_WEIGHT_BEARING', 'KNEE_AROM_PROM_EXTENSION', 'EFFUSION_ASSESSMENT', 'TARGET_FUNCTION_REPRODUCTION')
+  }
+
+  const deformityNvConcern =
+    (Array.isArray(knee.deformity_neurovascular_screen) &&
+      knee.deformity_neurovascular_screen.some(
+        (v) => v === 'GROSS_DEFORMITY_OR_STILL_OUT' || v === 'COLD_PALE_BLUE_FOOT' || v === 'MAJOR_NEW_DISTAL_NEURO_CHANGE',
+      )) ||
+    knee.spontaneously_reduced_dislocation_screen === 'YES'
+  if (deformityNvConcern) {
+    codes.push('DISTAL_NEUROVASCULAR_EXAM', 'DEFORMITY_BONY_TENDERNESS')
+  }
+
+  if (flags.fracture_imaging_consider) {
+    codes.push('FOCAL_BONY_TENDERNESS', 'RADIOGRAPH_INDICATION_REVIEW')
+  }
+
+  if (knee.extensor_mechanism_concern === 'YES' || knee.extensor_mechanism_concern === 'UNKNOWN') {
+    codes.push('STRAIGHT_LEG_RAISE', 'ACTIVE_EXTENSION_EXTENSOR_LAG', 'EXTENSOR_MECHANISM_PALPATION')
+  }
+
+  if (knee.true_locked_extension_block === 'YES' || knee.true_locked_extension_block === 'UNKNOWN') {
+    codes.push('TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM', 'JOINT_LINE_EXAM')
+  }
+
+  if (flags.dvt_assessment_required) {
+    codes.push('CLINICIAN_DVT_ASSESSMENT_WELLS')
+  }
+
+  const hipGroinConcern =
+    Array.isArray(knee.referred_non_knee_redflag_screen) &&
+    knee.referred_non_knee_redflag_screen.includes(KNEE08_HIP_FRACTURE_OPTION)
+  if (hipGroinConcern) {
+    codes.push('HIP_GROIN_EXAM', 'WEIGHT_BEARING_ASSESSMENT')
+  }
+
+  return [...new Set(codes)]
+}
+
+/**
+ * KNEE_V1 안전 확인 패널. NeckSafetyPanel/ShoulderSafetyPanel과 동일한 원칙
+ * -- 인터럽트하지 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도
+ * 인터럽트, coreSpec.ts 참고). KNEE_V1은 다른 모듈 재사용이 없으므로 게이트는
+ * 단순히 `safety_flags.knee !== null`이다 -- LBP/NECK/SHOULDER처럼
+ * primary-tag와 safety-population이 어긋날 여지 자체가 없다(IS_PRIMARY_KNEE는
+ * IS_PRIMARY_LBP/IS_PRIMARY_NECK와 완전히 독립).
+ *
+ * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
+ * plan §3.2/§5.5) -- Wells/SLR/신경혈관 결과의 persistence schema는 아직
+ * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
+ */
+function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  if (payload.responses.safety_flags.knee === null) return null
+
+  const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
+  const flags = computeKneeFlags(state)
+  const locked = kneeSafetyLocked(flags)
+  const examCodes = suggestedKneeExamCodes(flags, payload.responses.modules.knee)
+
+  return (
+    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.knee_safety_status.toLowerCase()}`}>
+      <span className="doctor__safetyGlance__title">안전 확인 — 무릎(KNEE)</span>
+      <div className="doctor__safetyGlance__items">
+        <span className="doctor__safetyChip">
+          <strong>안전 확인</strong> {KNEE_SAFETY_STATUS_LABEL[flags.knee_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신속 의뢰 고려</strong> {flags.expedited_referral_consider ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>골절·영상 평가 고려</strong> {flags.fracture_imaging_consider ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>DVT 평가 필요</strong> {flags.dvt_assessment_required ? '예' : '아니요'}
+        </span>
+      </div>
+      {flags.dvt_assessment_required && (
+        <p className="doctor__derivedNote">
+          DVT 가능성을 확정한 것이 아니라 clinician-side 평가/Wells 확인이 필요합니다.
+        </p>
+      )}
+      {locked && (
+        <p className="doctor__derivedNote">
+          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
+        </p>
+      )}
+      {examCodes.length > 0 && (
+        <div className="doctor__lbpExam">
+          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
+          <ul>
+            {examCodes.map((c) => (
+              <li key={c}>{KNEE_EXAM_LABELS[c] ?? c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* TODO(KNEE_V2): exercise_recommender_contract는 LBP_V1/NECK_V1/SHOULDER_V1과
+          동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현(§13). */}
+    </div>
+  )
+}
+
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
   sleep: (sm) => sm.sleep.problems,
@@ -1076,6 +1218,35 @@ function primaryModuleFields(
               { qid: 'SH08', value: m.shoulder.load_related_pattern },
               { qid: 'SH09', value: m.shoulder.instability_present },
               { qid: 'SH09A', value: m.shoulder.instability_onset_type },
+            ]
+          : []),
+        /**
+         * KNEE_V1: `PAIN_01`의 `knee`는 `low_back_pelvis`/`neck_shoulder`와
+         * 상호 배타적인 single_choice 값이라(공유 population 없음, Opus v0.2
+         * K9), `primaryModuleDetail === 'KNEE'` 게이트와
+         * `m.pain.primary_location === 'knee'` 게이트가 항상 동일한 결과를
+         * 낸다 -- LBP/NECK/SHOULDER처럼 두 게이트가 어긋날 여지가 없다.
+         */
+        ...(m.pain.primary_location === 'knee'
+          ? [
+              { qid: 'KNEE_01', value: m.knee.recent_trauma_or_sudden_load },
+              { qid: 'KNEE_02', value: m.knee.deformity_neurovascular_screen },
+              { qid: 'KNEE_02A', value: m.knee.spontaneously_reduced_dislocation_screen },
+              { qid: 'KNEE_03', value: m.knee.post_trauma_weight_bearing_failure },
+              { qid: 'KNEE_04', value: m.knee.extensor_mechanism_concern },
+              { qid: 'KNEE_05', value: m.knee.true_locked_extension_block },
+              { qid: 'KNEE_06', value: m.knee.unilateral_leg_dvt_symptom_screen },
+              { qid: 'KNEE_06A', value: m.knee.dvt_risk_context },
+              { qid: 'KNEE_06B', value: m.knee.dvt_pe_associated_screen },
+              { qid: 'KNEE_07', value: m.knee.septic_joint_emergency_screen },
+              { qid: 'KNEE_08', value: m.knee.referred_non_knee_redflag_screen },
+              { qid: 'KNEE_09', value: m.knee.primary_side },
+              { qid: 'KNEE_10', value: m.knee.pain_location_pattern },
+              { qid: 'KNEE_11', value: m.knee.load_provocation_pattern },
+              { qid: 'KNEE_12', value: m.knee.morning_stiffness_duration },
+              { qid: 'KNEE_13', value: m.knee.giving_way_instability },
+              { qid: 'KNEE_14', value: m.knee.patellar_instability_history },
+              { qid: 'KNEE_15', value: m.knee.rapid_post_trauma_effusion },
             ]
           : []),
       ]
@@ -1606,6 +1777,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
         }
       />
+
+      <KneeSafetyPanel payload={payload} />
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

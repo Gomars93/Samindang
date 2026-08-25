@@ -1079,10 +1079,13 @@ const H1_MODULES = [
 // ELBOW_V1: URGENT_REVIEW는 ELBOW_02/ELBOW_02A/ELBOW_07/ELBOW_08/ELBOW_11
 // 다섯 지점에서만 확정될 수 있어(Tablet v0.1.1 §10 -- ELBOW_03/04/05/06/09/
 // 09A/10은 REVIEW/expedited/flag 계층) 다섯만 등록했다.
+// HIP_V1: URGENT_REVIEW는 HIP_02(limb-threatening)/HIP_05(systemic/rapidly
+// worsening infection) 두 지점에서만 확정될 수 있어(H2/H3/H5/H6 CLOSED
+// semantics -- HIP_01/03/04/06은 REVIEW/expedited/flag 계층) 둘만 등록했다.
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys include TMJ urgent TMJ_01/02/03 plus all existing frozen triggers',
+    'I1: STAFF_CHECK_TRIGGERS keys include TMJ urgent TMJ_01/02/03, HIP urgent HIP_02/05, plus all existing frozen triggers',
     JSON.stringify(keys) ===
       JSON.stringify([
         'AF_02',
@@ -1094,6 +1097,8 @@ const H1_MODULES = [
         'ELBOW_08',
         'ELBOW_11',
         'GI_03',
+        'HIP_02',
+        'HIP_05',
         'KNEE_02',
         'KNEE_02A',
         'KNEE_06B',
@@ -2726,6 +2731,227 @@ function tmjBaseResponses() {
   const payload = buildResponsePayload(r)
   assert('Q-E12: Core general_red alone -> tmj_safety_status URGENT_REVIEW via passthrough', payload.safety_flags.tmj?.tmj_safety_status === 'URGENT_REVIEW')
   assert('Q-E12b: Core general_red also sets requires_staff_check independent of TMJ', computeFlags(r).requires_staff_check === true)
+}
+
+/* =========================================================================
+ * R. HIP_V1 -- question visibility incl. the LOW_BACK_DOMINANT exclusion
+ * (H1), staff interrupt, payload/routing. HIP_V1 is the first module to
+ * share its entry population (`low_back_pelvis`) with an existing FROZEN
+ * module (LBP_V1) rather than get its own PAIN_01 value or routing
+ * discriminator population -- the critical regression boundary here is H7
+ * LBP zero-regression: `IS_PRIMARY_LBP`/LBP questions/`safety_flags.lbp`/
+ * `primary_module_detail === 'LBP'` must stay byte-identical whether or not
+ * HIP_00 exposes HIP-specific safety, and both `safety_flags.lbp` and
+ * `safety_flags.hip` must be simultaneously non-null and independently
+ * computed for a HIP_GROIN_DOMINANT patient (no suppression either way).
+ * ========================================================================= */
+
+function hipBaseResponses() {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    HIP_00: 'HIP_GROIN_DOMINANT',
+    HIP_01: 'NO',
+    HIP_02: ['NONE'],
+    HIP_04: ['NONE'],
+    HIP_05: 'NO_CONCERN',
+    HIP_06: 'NO',
+  })
+}
+
+// --- R-C: question visibility (routing incl. H1 LOW_BACK_DOMINANT exclusion) -
+
+{
+  const r = kneeBaseResponses()
+  const visible = visibleIds(r)
+  assert('R-C1: non-low_back_pelvis pain patient sees no HIP_00/HIP_* questions', !['HIP_00', 'HIP_01', 'HIP_02', 'HIP_03', 'HIP_03A', 'HIP_04', 'HIP_05', 'HIP_06'].some((id) => visible.has(id)))
+}
+{
+  let r = emptyResponses()
+  r = set(r, { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'low_back_pelvis', PAIN_02: ['aching'], PAIN_04: 'none' })
+  assert('R-C2: low_back_pelvis patient sees HIP_00 but no HIP_01 yet (before HIP_00 answered)', visibleIds(r).has('HIP_00'))
+  assert('R-C2: HIP_01 not visible before HIP_00 is answered', !visibleIds(r).has('HIP_01'))
+  assert('R-C2b: FROZEN LBP questions stay visible for the whole low_back_pelvis population regardless of HIP_00', visibleIds(r).has('LBP_01'))
+}
+{
+  const r = hipBaseResponses()
+  const visible = visibleIds(r)
+  assert(
+    'R-C3: HIP_00=HIP_GROIN_DOMINANT exposes all protected HIP safety screens',
+    ['HIP_01', 'HIP_02', 'HIP_04', 'HIP_05', 'HIP_06'].every((id) => visible.has(id)),
+  )
+}
+{
+  for (const v of ['BUTTOCK_PELVIS_DOMINANT', 'SIMILAR_OR_MULTIPLE', 'UNKNOWN']) {
+    const r = set(hipBaseResponses(), { HIP_00: v })
+    assert(`R-C4: HIP_00=${v} also exposes HIP protected safety`, visibleIds(r).has('HIP_01'))
+  }
+}
+{
+  // H1 CRITICAL: LOW_BACK_DOMINANT is the only excluded value -- HIP_00 itself never creates a safety tier.
+  const r = set(hipBaseResponses(), { HIP_00: 'LOW_BACK_DOMINANT' })
+  const visible = visibleIds(r)
+  assert(
+    'R-C5 CRITICAL: HIP_00=LOW_BACK_DOMINANT excludes ALL HIP protected safety screens',
+    !['HIP_01', 'HIP_02', 'HIP_03', 'HIP_03A', 'HIP_04', 'HIP_05', 'HIP_06'].some((id) => visible.has(id)),
+  )
+  assert('R-C5b CRITICAL: FROZEN LBP questions remain visible even when HIP_00=LOW_BACK_DOMINANT', visible.has('LBP_01'))
+}
+{
+  const r = set(hipBaseResponses(), { HIP_01: 'YES' })
+  assert('R-C6: HIP_03 visible only when HIP_01=YES', visibleIds(r).has('HIP_03'))
+  const r2 = hipBaseResponses() // HIP_01: 'NO'
+  assert('R-C6b: HIP_03 not visible when HIP_01=NO', !visibleIds(r2).has('HIP_03'))
+}
+{
+  const r = set(hipBaseResponses(), { HIP_01: 'YES', HIP_03: 'MARKED_WEIGHT_BEARING_OR_WALKING_DIFFICULTY' })
+  assert('R-C7: HIP_03A (optional prior imaging context) visible when HIP_03 is a marked-difficulty positive', visibleIds(r).has('HIP_03A'))
+  const r2 = set(hipBaseResponses(), { HIP_01: 'YES', HIP_03: 'NO_MARKED_WALKING_DIFFICULTY' })
+  assert('R-C7b: HIP_03A not visible when HIP_03 is the negative answer', !visibleIds(r2).has('HIP_03A'))
+}
+{
+  const q00 = ALL_QUESTIONS.find((q) => q.id === 'HIP_00')
+  const q01 = ALL_QUESTIONS.find((q) => q.id === 'HIP_01')
+  const q02 = ALL_QUESTIONS.find((q) => q.id === 'HIP_02')
+  const q03a = ALL_QUESTIONS.find((q) => q.id === 'HIP_03A')
+  const q04 = ALL_QUESTIONS.find((q) => q.id === 'HIP_04')
+  const q05 = ALL_QUESTIONS.find((q) => q.id === 'HIP_05')
+  const q06 = ALL_QUESTIONS.find((q) => q.id === 'HIP_06')
+  assert('R-C8: HIP_00 is required: true (routing gate must be hard-blocked)', q00.required === true)
+  assert('R-C8: HIP_01 is required: true', q01.required === true)
+  assert('R-C8: HIP_02 is required: true', q02.required === true)
+  assert('R-C8: HIP_04 is required: true', q04.required === true)
+  assert('R-C8: HIP_05 is required: true', q05.required === true)
+  assert('R-C8: HIP_06 is required: true', q06.required === true)
+  assert('R-C8b: HIP_03A is required: false (optional context only, H4)', q03a.required === false)
+}
+{
+  // stale prune: HIP_00/HIP_* answers must be cleared once PAIN_01 switches away from 'low_back_pelvis'.
+  const r = set(hipBaseResponses(), { HIP_01: 'YES', HIP_03: 'MARKED_WEIGHT_BEARING_OR_WALKING_DIFFICULTY' })
+  const switched = set(r, { PAIN_01: 'knee' })
+  assert(
+    'R-C9: switching PAIN_01 away from low_back_pelvis prunes all HIP_00/HIP_* responses to null',
+    ['HIP_00', 'HIP_01', 'HIP_02', 'HIP_03', 'HIP_04', 'HIP_05', 'HIP_06'].every((id) => switched[id] === null),
+  )
+}
+{
+  // switching HIP_00 to LOW_BACK_DOMINANT must prune the now-hidden HIP_01-06 answers too.
+  const r = set(hipBaseResponses(), { HIP_01: 'YES', HIP_03: 'MARKED_WEIGHT_BEARING_OR_WALKING_DIFFICULTY' })
+  const switched = set(r, { HIP_00: 'LOW_BACK_DOMINANT' })
+  assert(
+    'R-C10: switching HIP_00 to LOW_BACK_DOMINANT prunes the now-hidden HIP_01/03 responses',
+    switched['HIP_01'] === null && switched['HIP_03'] === null,
+  )
+}
+{
+  // switching HIP_01 from YES to NO must prune the now-hidden HIP_03/HIP_03A answers.
+  const r = set(hipBaseResponses(), { HIP_01: 'YES', HIP_03: 'MARKED_WEIGHT_BEARING_OR_WALKING_DIFFICULTY', HIP_03A: 'DONE_TOLD_NORMAL' })
+  const switched = set(r, { HIP_01: 'NO' })
+  assert(
+    'R-C11: switching HIP_01 to NO prunes the now-hidden HIP_03/HIP_03A responses',
+    switched['HIP_03'] === null && switched['HIP_03A'] === null,
+  )
+}
+
+// --- R-D: staff interrupt ----------------------------------------------------
+
+{
+  for (const v of ['GROSS_DEFORMITY_OR_JOINT_STUCK_OUT_OF_POSITION', 'SEVERE_OPEN_INJURY_OR_HEAVY_BLEEDING', 'FOOT_COLD_PALE_BLUE_OR_SEVERE_CIRCULATION_CHANGE']) {
+    const r = set(hipBaseResponses(), { HIP_02: [v] })
+    assert(`R-D1: HIP_02 ${v} -> StaffCheck`, STAFF_CHECK_TRIGGERS.HIP_02(r) === true)
+  }
+}
+{
+  const r = set(hipBaseResponses(), { HIP_01: 'YES', HIP_02: ['NEW_MAJOR_DISTAL_NUMBNESS_OR_WEAKNESS_AFTER_TRAUMA'], HIP_03: 'NO_MARKED_WALKING_DIFFICULTY' })
+  assert('R-D1b: HIP_02 major neuro WITH trauma (HIP_01=YES) -> StaffCheck', STAFF_CHECK_TRIGGERS.HIP_02(r) === true)
+}
+{
+  const r = set(hipBaseResponses(), { HIP_02: ['NEW_MAJOR_DISTAL_NUMBNESS_OR_WEAKNESS_AFTER_TRAUMA'] })
+  assert('R-D1c: HIP_02 major neuro WITHOUT trauma (HIP_01=NO) does NOT StaffCheck (review-tier, not urgent)', STAFF_CHECK_TRIGGERS.HIP_02(r) === false)
+}
+{
+  const r = set(hipBaseResponses(), { HIP_05: 'SYSTEMIC_OR_RAPIDLY_WORSENING' })
+  assert('R-D2: HIP_05 SYSTEMIC_OR_RAPIDLY_WORSENING -> StaffCheck', STAFF_CHECK_TRIGGERS.HIP_05(r) === true)
+}
+{
+  const r = set(hipBaseResponses(), { HIP_05: 'LOCALIZED_STABLE_CONCERN' })
+  assert('R-D2b: HIP_05 localized/stable (review-tier) does NOT StaffCheck', STAFF_CHECK_TRIGGERS.HIP_05(r) === false)
+}
+{
+  assert(
+    'R-D3: HIP_01/HIP_03/HIP_04/HIP_06 have no StaffCheck trigger registered',
+    !('HIP_01' in STAFF_CHECK_TRIGGERS) && !('HIP_03' in STAFF_CHECK_TRIGGERS) && !('HIP_04' in STAFF_CHECK_TRIGGERS) && !('HIP_06' in STAFF_CHECK_TRIGGERS),
+  )
+}
+{
+  const r = hipBaseResponses() // fully clean
+  assert('R-D4: HIP_02/HIP_05 both stay false on a fully-clean hip baseline', STAFF_CHECK_TRIGGERS.HIP_02(r) === false && STAFF_CHECK_TRIGGERS.HIP_05(r) === false)
+}
+
+// --- R-E: payload/routing incl. H7 LBP zero-regression + coexistence --------
+
+{
+  const r = hipBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('R-E1: hip patient -> safety_flags.hip !== null', payload.safety_flags.hip !== null)
+  assert('R-E1b: hip patient -> hip_safety_status is CLEAR on the valid-negative baseline', payload.safety_flags.hip?.hip_safety_status === 'CLEAR')
+  assert('R-E2: HIP responses land under modules.hip', payload.modules.hip.limb_threatening_screen[0] === 'NONE')
+  assert('R-E2b: modules.hip.region_discriminator records HIP_00', payload.modules.hip.region_discriminator === 'HIP_GROIN_DOMINANT')
+}
+{
+  // H1 CRITICAL: LOW_BACK_DOMINANT -> safety_flags.hip === null (no invented HIP safety), but LBP stays fully active.
+  const r = set(hipBaseResponses(), { HIP_00: 'LOW_BACK_DOMINANT', LBP_01: 'BACK_ONLY', LBP_02: ['NONE'], LBP_03: 'NONE', LBP_04: ['NONE'], LBP_05: ['NONE'], LBP_06: 'NO', LBP_07: 'NO', LBP_08: 'NO', LBP_10: 'NO', LBP_11: ['NONE'], LBP_12: 8, LBP_13: 'NO', LBP_14: 'NONE' })
+  const payload = buildResponsePayload(r)
+  assert('R-E3 CRITICAL: HIP_00=LOW_BACK_DOMINANT -> safety_flags.hip === null', payload.safety_flags.hip === null)
+  assert('R-E3b CRITICAL: FROZEN LBP safety_flags.lbp stays non-null/computed regardless of HIP_00', payload.safety_flags.lbp !== null)
+  const routing = buildRoutingPayload(r)
+  assert("R-E3c CRITICAL: primary_module_detail stays 'LBP' (never repurposed for HIP tagging, H7)", routing.primary_module_detail === 'LBP')
+}
+{
+  const r = kneeBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('R-E4: non-low_back_pelvis (knee) patient -> safety_flags.hip === null', payload.safety_flags.hip === null)
+  const routing = buildRoutingPayload(r)
+  assert("R-E5: existing KNEE routing unchanged by HIP addition -- primary_module_detail still 'KNEE'", routing.primary_module_detail === 'KNEE')
+}
+{
+  const r = elbowBaseResponses()
+  const routing = buildRoutingPayload(r)
+  assert("R-E6: existing ELBOW routing unchanged by HIP addition -- primary_module_detail still 'ELBOW'", routing.primary_module_detail === 'ELBOW')
+}
+{
+  const r = tmjBaseResponses()
+  const routing = buildRoutingPayload(r)
+  assert("R-E7: existing TMJ routing unchanged by HIP addition -- primary_module_detail still 'TMJ'", routing.primary_module_detail === 'TMJ')
+}
+{
+  // H1/H7 CRITICAL coexistence: HIP_GROIN_DOMINANT patient with a positive LBP finding (CES screen concrete
+  // value) AND a positive HIP finding (full stress-fracture pattern) simultaneously -- neither may suppress
+  // or null the other, and `primary_module_detail` stays 'LBP' throughout (checked first, unconditional).
+  const r = set(hipBaseResponses(), {
+    LBP_01: 'BUTTOCK', LBP_02: ['NUMBNESS'], LBP_03: 'BILATERAL', LBP_04: ['NONE'], LBP_05: ['NONE'], LBP_06: 'NO', LBP_07: 'YES', LBP_08: 'NO', LBP_10: 'NO', LBP_11: ['NONE'], LBP_12: 6, LBP_13: 'SOMEWHAT', LBP_14: 'SOME',
+    HIP_04: ['ATRAUMATIC_OR_INSIDIOUS_DEEP_HIP_OR_GROIN_PAIN', 'RECENT_REPETITIVE_LOAD_RUNNING_JUMPING_MARCH_OR_LOAD_INCREASE', 'PROGRESSIVE_WEIGHT_BEARING_PAIN_OR_WORSENING_WALKING_TOLERANCE'],
+  })
+  const payload = buildResponsePayload(r)
+  assert('R-E8 CRITICAL: LBP+HIP simultaneous -- safety_flags.lbp !== null', payload.safety_flags.lbp !== null)
+  assert('R-E8b CRITICAL: LBP+HIP simultaneous -- safety_flags.hip !== null', payload.safety_flags.hip !== null)
+  assert('R-E8c: LBP finding (LBP_02 NUMBNESS concrete) -> lbp_safety_status REVIEW_REQUIRED, not suppressed by HIP', payload.safety_flags.lbp?.lbp_safety_status === 'REVIEW_REQUIRED')
+  assert('R-E8d: HIP finding (full stress pattern) -> hip_safety_status REVIEW_REQUIRED, not suppressed by LBP', payload.safety_flags.hip?.hip_safety_status === 'REVIEW_REQUIRED')
+  assert('R-E8e: HIP stress-fracture flags intact alongside LBP', payload.safety_flags.hip?.stress_fracture_assessment_required === true)
+  const routing = buildRoutingPayload(r)
+  assert("R-E8f CRITICAL: primary_module_detail stays 'LBP' even with HIP-specific safety simultaneously active", routing.primary_module_detail === 'LBP')
+}
+{
+  // Core urgent + HIP urgent coexistence: Core general_red must independently drive hip_safety_status urgent too (passthrough).
+  const r = set(hipBaseResponses(), { SAFETY_01: ['chest_breathing'] })
+  const payload = buildResponsePayload(r)
+  assert('R-E9: Core general_red alone -> hip_safety_status URGENT_REVIEW via passthrough', payload.safety_flags.hip?.hip_safety_status === 'URGENT_REVIEW')
+  assert('R-E9b: Core general_red also sets requires_staff_check independent of HIP', computeFlags(r).requires_staff_check === true)
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

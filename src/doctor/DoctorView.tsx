@@ -43,6 +43,7 @@ import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFie
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'
 import { TmjSafetyPanel } from './TmjSafetyPanel'
+import { HipSafetyPanel } from './HipSafetyPanel'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -1476,6 +1477,26 @@ function primaryModuleFields(
             ]
           : []),
         /**
+         * HIP_V1: HIP shares the `low_back_pelvis` population with LBP by
+         * design (H1/H7) -- gated on `m.pain.primary_location ===
+         * 'low_back_pelvis'` (same population test as the LBP block above),
+         * NOT on `primaryModuleDetail` alone, since a HIP_GROIN_DOMINANT
+         * patient's HIP_00-06 raw answers must stay visible alongside LBP's
+         * regardless of the (unchanged, LBP-only) `primaryModuleDetail` tag.
+         */
+        ...(m.pain.primary_location === 'low_back_pelvis'
+          ? [
+              { qid: 'HIP_00', value: m.hip.region_discriminator },
+              { qid: 'HIP_01', value: m.hip.recent_trauma },
+              { qid: 'HIP_02', value: m.hip.limb_threatening_screen },
+              { qid: 'HIP_03', value: m.hip.post_trauma_walking },
+              { qid: 'HIP_03A', value: m.hip.prior_imaging_context },
+              { qid: 'HIP_04', value: m.hip.stress_fracture_pattern },
+              { qid: 'HIP_05', value: m.hip.infection_screen },
+              { qid: 'HIP_06', value: m.hip.progressive_neuro_screen },
+            ]
+          : []),
+        /**
          * SHOULDER_V1 통합 후: `primaryModuleDetail === 'NECK'` 대신
          * `m.pain.primary_location === 'neck_shoulder'`로 게이트한다. NS01이
          * SHOULDER_DOMINANT로 태깅해도 canonical NECK_01-05는 여전히
@@ -2151,6 +2172,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
         }
       />
+
+      <HipSafetyPanel payload={payload} />
 
       <NeckSafetyPanel payload={payload} />
 

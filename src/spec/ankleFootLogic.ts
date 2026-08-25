@@ -49,14 +49,6 @@ export interface AnkleFootComputedFields {
 }
 
 const exact = (a: string[] | undefined, v: string): boolean => Array.isArray(a) && a.length === 1 && a[0] === v
-const invalidProtectedMulti = (a: string[] | undefined): boolean => !Array.isArray(a) || a.length === 0
-
-function multiReviewUnlessNone(v: string[] | undefined, shown: boolean): boolean {
-  if (!shown) return false
-  if (invalidProtectedMulti(v)) return true
-  if (exact(v, 'NONE')) return false
-  return true // UNKNOWN, concrete positive, or malformed (adapter normally converts malformed to undefined)
-}
 
 export function computeAnkleFootFlags(s: AnkleFootState): AnkleFootComputedFields {
   let urgent = s.core_safety_already_urgent
@@ -74,7 +66,7 @@ export function computeAnkleFootFlags(s: AnkleFootState): AnkleFootComputedField
 
   // AF_02 is always shown and protected.
   const af02 = s.limb_threatening_screen
-  if (invalidProtectedMulti(af02)) review = true
+  if (!af02 || af02.length === 0) review = true
   else {
     if (af02.some((v) => AF02_URGENT_ALWAYS.has(v))) urgent = true
     if (af02.includes(AF02_TRAUMA_NEURO)) {
@@ -100,36 +92,38 @@ export function computeAnkleFootFlags(s: AnkleFootState): AnkleFootComputedField
 
   // AF_04: plantar bruising alone is supportive only. Marked dysfunction is REVIEW + imaging.
   if (s.af04_shown) {
-    if (invalidProtectedMulti(s.midfoot_supportive_screen)) review = true
+    const af04 = s.midfoot_supportive_screen
+    if (!af04 || af04.length === 0) review = true
     else {
-      if (s.midfoot_supportive_screen.includes(AF04_REVIEW)) {
+      if (af04.includes(AF04_REVIEW)) {
         review = true
         fracture = true
       }
-      if (s.midfoot_supportive_screen.includes('UNKNOWN')) review = true
+      if (af04.includes('UNKNOWN')) review = true
       // NEW_PLANTAR_MIDFOOT_BRUISING_NOTICED alone deliberately does not escalate.
-      if (!exact(s.midfoot_supportive_screen, 'NONE') &&
-          !exact(s.midfoot_supportive_screen, 'NEW_PLANTAR_MIDFOOT_BRUISING_NOTICED') &&
-          !s.midfoot_supportive_screen.includes(AF04_REVIEW) &&
-          !s.midfoot_supportive_screen.includes('UNKNOWN')) review = true
+      if (!exact(af04, 'NONE') &&
+          !exact(af04, 'NEW_PLANTAR_MIDFOOT_BRUISING_NOTICED') &&
+          !af04.includes(AF04_REVIEW) &&
+          !af04.includes('UNKNOWN')) review = true
     }
   }
 
   // AF_05: either Achilles item alone is enough (OR semantics); never automatic URGENT.
   if (s.af05_shown) {
-    if (invalidProtectedMulti(s.achilles_rupture_screen)) {
+    const af05 = s.achilles_rupture_screen
+    if (!af05 || af05.length === 0) {
       review = true
       achilles = true
       expedited = true
-    } else if (s.achilles_rupture_screen.some((v) => AF05_REVIEW.has(v))) {
+    } else if (af05.some((v) => AF05_REVIEW.has(v))) {
       review = true
       achilles = true
       expedited = true
-    } else if (s.achilles_rupture_screen.includes('UNKNOWN')) {
+    } else if (af05.includes('UNKNOWN')) {
       review = true
       achilles = true
       expedited = true
-    } else if (!exact(s.achilles_rupture_screen, 'NONE')) {
+    } else if (!exact(af05, 'NONE')) {
       review = true
       achilles = true
       expedited = true

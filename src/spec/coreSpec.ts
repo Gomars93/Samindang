@@ -29,6 +29,9 @@ import { toWristHandState } from './wristHandAdapter'
 import { computeWristHandFlags, isWh06WoundShown, isWh07aShown } from './wristHandLogic'
 import { toAnkleFootState } from './ankleFootAdapter'
 import { computeAnkleFootFlags } from './ankleFootLogic'
+import { toTmjState } from './tmjAdapter'
+import { computeTmjFlags } from './tmjLogic'
+import { IS_PRIMARY_TMJ_SAFETY, TMJ_ROUTING_QUESTIONS, TMJ_QUESTIONS } from './tmjQuestions'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -3613,6 +3616,8 @@ export const CORE_QUESTIONS: Question[] = [
   ...WRIST_HAND_QUESTIONS,
   ...ANKLE_FOOT_ROUTING_QUESTIONS,
   ...ANKLE_FOOT_QUESTIONS,
+  ...TMJ_ROUTING_QUESTIONS,
+  ...TMJ_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -3773,6 +3778,27 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   WH_07A: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
   AF_02: (r) => IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && computeAnkleFootFlags(toAnkleFootState(r, computeFlags(r).general_red, { af04_shown: IS_AF_04_SHOWN(r), af05_shown: IS_AF_05_SHOWN(r), af07_shown: IS_AF_07_SHOWN(r) })).ankle_foot_safety_status === 'URGENT_REVIEW',
   AF_06: (r) => IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && computeAnkleFootFlags(toAnkleFootState(r, computeFlags(r).general_red, { af04_shown: IS_AF_04_SHOWN(r), af05_shown: IS_AF_05_SHOWN(r), af07_shown: IS_AF_07_SHOWN(r) })).ankle_foot_safety_status === 'URGENT_REVIEW',
+  /**
+   * TMJ_V1 URGENT_REVIEW 즉시 인터럽트 -- Fable Integration Plan.
+   * URGENT는 TMJ_01(고정된 비정상 위치/심한 외상/구강출혈/기도-연하 위협)/
+   * TMJ_02(광범위/기도-연하-안구 침범 치과 응급)/TMJ_03(GCA-compatible +
+   * 시각증상, age>=50) 세 지점에서만 확정될 수 있으므로 이 셋만 등록한다 --
+   * TMJ_04/05는 REVIEW/flag 계층이지 urgent interrupt source가 아니다
+   * (Tablet v0.1 §2). NECK_02/SH02/KNEE_02/ELBOW_02/WH_02/AF_02와 동일하게
+   * 개별 조건을 손으로 재구현하지 않고 computeTmjFlags 전체를 재계산해
+   * URGENT_REVIEW인지만 확인한다 -- 엔진과의 drift를 구조적으로 차단한다.
+   * ageFromResponses(r)는 LBP_V1이 이미 쓰는 기존 authoritative age
+   * convention을 그대로 재사용한다(새 나이 계산 규칙 없음).
+   */
+  TMJ_01: (r) =>
+    IS_PRIMARY_TMJ_SAFETY(r) &&
+    computeTmjFlags(toTmjState(r, computeFlags(r).general_red, ageFromResponses(r))).tmj_safety_status === 'URGENT_REVIEW',
+  TMJ_02: (r) =>
+    IS_PRIMARY_TMJ_SAFETY(r) &&
+    computeTmjFlags(toTmjState(r, computeFlags(r).general_red, ageFromResponses(r))).tmj_safety_status === 'URGENT_REVIEW',
+  TMJ_03: (r) =>
+    IS_PRIMARY_TMJ_SAFETY(r) &&
+    computeTmjFlags(toTmjState(r, computeFlags(r).general_red, ageFromResponses(r))).tmj_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -3911,7 +3937,9 @@ export const buildRoutingPayload = (r: Responses) => {
                 : null
             : IS_PRIMARY_ANKLE_FOOT_SAFETY(r)
               ? 'ANKLE_FOOT'
-              : null,
+              : IS_PRIMARY_TMJ_SAFETY(r)
+                ? 'TMJ'
+                : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -4102,6 +4130,17 @@ export const buildResponsePayload = (r: Responses) => ({
     ankle_foot: IS_PRIMARY_ANKLE_FOOT_SAFETY(r)
       ? computeAnkleFootFlags(toAnkleFootState(r, computeFlags(r).general_red, { af04_shown: IS_AF_04_SHOWN(r), af05_shown: IS_AF_05_SHOWN(r), af07_shown: IS_AF_07_SHOWN(r) }))
       : null,
+    /**
+     * TMJ_V1: same `IS_PRIMARY_TMJ_SAFETY`-gated pattern as `ankle_foot`
+     * above -- NOT `IS_PRIMARY_HFJ_POPULATION` alone. A HEADACHE_CRANIAL
+     * patient is `IS_PRIMARY_HFJ_POPULATION` but never saw TMJ_01-05
+     * (T2/Tablet §1), so computing computeTmjFlags on their all-null TMJ_*
+     * state would fail closed to REVIEW_REQUIRED for every such patient --
+     * meaningless noise, not a real safety signal, since they were never
+     * asked. `ageFromResponses(r)` is the same authoritative age
+     * convention LBP_V1 already uses (src/lib/age.ts).
+     */
+    tmj: IS_PRIMARY_TMJ_SAFETY(r) ? computeTmjFlags(toTmjState(r, computeFlags(r).general_red, ageFromResponses(r))) : null,
   },
   modules: {
     sleep: {
@@ -4262,6 +4301,14 @@ export const buildResponsePayload = (r: Responses) => ({
       region_discriminator: r['AF_00'], recent_trauma: r['AF_01'], limb_threatening_screen: r['AF_02'],
       post_trauma_walking: r['AF_03'], midfoot_supportive_screen: r['AF_04'], achilles_rupture_screen: r['AF_05'],
       infection_screen: r['AF_06'], dvt_pattern: r['AF_07'], progressive_neuro_screen: r['AF_08'],
+    },
+    tmj: {
+      region_discriminator: r['HFJ_00'],
+      trauma_dislocation_screen: r['TMJ_01'],
+      dental_infection_screen: r['TMJ_02'],
+      gca_history_screen: r['TMJ_03'],
+      facial_neuro_screen: r['TMJ_04'],
+      current_lock_screen: r['TMJ_05'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

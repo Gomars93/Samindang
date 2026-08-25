@@ -42,6 +42,7 @@ import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'
+import { TmjSafetyPanel } from './TmjSafetyPanel'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -1614,6 +1615,23 @@ function primaryModuleFields(
               { qid: 'WH_14', value: m.wrist_hand.primary_side },
             ]
           : []),
+        /**
+         * TMJ_V1: same `m.pain.primary_location === 'head_face_jaw'` gate
+         * pattern as ELBOW/WRIST_HAND above (NOT `primaryModuleDetail`) --
+         * a HEADACHE_CRANIAL-tagged patient shares this `head_face_jaw`
+         * tag but never saw TMJ_01-05 (T2), so those fields render safely
+         * as raw-null.
+         */
+        ...(m.pain.primary_location === 'head_face_jaw'
+          ? [
+              { qid: 'HFJ_00', value: m.tmj.region_discriminator },
+              { qid: 'TMJ_01', value: m.tmj.trauma_dislocation_screen },
+              { qid: 'TMJ_02', value: m.tmj.dental_infection_screen },
+              { qid: 'TMJ_03', value: m.tmj.gca_history_screen },
+              { qid: 'TMJ_04', value: m.tmj.facial_neuro_screen },
+              { qid: 'TMJ_05', value: m.tmj.current_lock_screen },
+            ]
+          : []),
       ]
     case 'Fatigue':
       return [
@@ -2148,6 +2166,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       <ElbowSafetyPanel payload={payload} />
       <WristHandSafetyPanel payload={payload} />
       <AnkleFootSafetyPanel payload={payload} />
+      <TmjSafetyPanel payload={payload} />
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

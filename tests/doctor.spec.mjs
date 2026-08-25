@@ -372,6 +372,92 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2h. WRIST_HAND_V1: two fixtures.
+ *
+ * (1) WRIST_HAND-only, stable sensory-only (WH_08=MEDIAN_DISTRIBUTION +
+ *     WH_08A=[NONE]) with everything else valid-negative -- the carve-out
+ *     is the ONLY thing standing between this fixture and REVIEW_REQUIRED,
+ *     so a bugged carve-out would flip the overall tier here (not just a
+ *     flag), a stronger regression signal than isolating the flag alone.
+ * (2) FOREARM overlap -- this repo's first case where two protected-safety
+ *     modules are simultaneously non-null for one patient. WH_04=YES
+ *     (occult fracture pattern) is the fixture's only positive finding;
+ *     WH_04A=DONE_TOLD_NORMAL demonstrates the non-gating X-ray context
+ *     (Fable plan §9) end-to-end through the real payload and UI.
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('손목 통증 주호소 (WRIST_HAND, 안정형 감각이상)')
+  assert('WRIST_HAND fixture: primary_module stays Pain', f.payload.routing.primary_module === 'Pain')
+  assert('WRIST_HAND fixture: primary_module_detail is WRIST_HAND', f.payload.routing.primary_module_detail === 'WRIST_HAND')
+  assert('WRIST_HAND fixture: safety_flags.elbow is null (ELBOW_00=WRIST_HAND excludes ELBOW safety)', f.payload.responses.safety_flags.elbow === null)
+  assert(
+    'E5-analog CRITICAL: wrist_hand_safety_status is CLEAR (WH_08=MEDIAN_DISTRIBUTION + WH_08A=[NONE] stable sensory-only, no other positive finding)',
+    f.payload.responses.safety_flags.wrist_hand?.wrist_hand_safety_status === 'CLEAR',
+  )
+  assert(
+    'E5-analog CRITICAL: neuro_assessment_required is false (stable sensory-only de-escalation)',
+    f.payload.responses.safety_flags.wrist_hand?.neuro_assessment_required === false,
+  )
+  assert(
+    'WRIST_HAND fixture: expedited_referral_consider is false',
+    f.payload.responses.safety_flags.wrist_hand?.expedited_referral_consider === false,
+  )
+  assert(
+    'WRIST_HAND fixture: does NOT trigger requires_staff_check',
+    f.payload.flags.requires_staff_check === false,
+  )
+
+  const html = renderDoctorView('손목 통증 주호소 (WRIST_HAND, 안정형 감각이상)')
+  assert('WRIST_HAND fixture: renders 안전 확인 — 손목/손 panel title', html.includes('안전 확인 — 손목/손'))
+  assert('WRIST_HAND fixture: status chip shows CLEAR label (안전)', /<strong>안전 확인<\/strong> (?:<!-- -->)?안전(?:<!-- -->)?<\/span>/.test(html))
+  assert('WRIST_HAND fixture: renders 신경학적 평가 필요 chip with 아니요 (stable sensory-only)', /신경학적 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html))
+  assert('WRIST_HAND fixture: does NOT render 안전 확인 — 팔꿈치 panel (ELBOW safety is null)', !html.includes('안전 확인 — 팔꿈치'))
+  assert('WRIST_HAND fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('WRIST_HAND fixture: WH_08 question text renders', html.includes('손가락 저림이나 감각이상이 있다면'))
+  assert(
+    'WRIST_HAND fixture: no patient-facing diagnosis/probability language (예: 수근관증후군 진단/확률)',
+    !/수근관증후군\s*진단|확률\s*\d/.test(html),
+  )
+}
+
+{
+  const f = byName('전완 통증 주호소 (FOREARM, 팔꿈치+손목 동시 노출)')
+  assert('FOREARM fixture: primary_module_detail is ELBOW (priority order, display-only)', f.payload.routing.primary_module_detail === 'ELBOW')
+  assert(
+    'FOREARM CRITICAL: safety_flags.elbow !== null AND safety_flags.wrist_hand !== null simultaneously',
+    f.payload.responses.safety_flags.elbow !== null && f.payload.responses.safety_flags.wrist_hand !== null,
+  )
+  assert('FOREARM fixture: elbow_safety_status is CLEAR (all ELBOW_* valid-negative)', f.payload.responses.safety_flags.elbow?.elbow_safety_status === 'CLEAR')
+  assert(
+    'FOREARM fixture: wrist_hand_safety_status is REVIEW_REQUIRED (WH_04=YES occult fracture pattern)',
+    f.payload.responses.safety_flags.wrist_hand?.wrist_hand_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert(
+    'FOREARM fixture: fracture_imaging_consider is true (WH_04=YES)',
+    f.payload.responses.safety_flags.wrist_hand?.fracture_imaging_consider === true,
+  )
+  assert(
+    'FOREARM fixture: does NOT trigger requires_staff_check (REVIEW_REQUIRED only)',
+    f.payload.flags.requires_staff_check === false,
+  )
+
+  const html = renderDoctorView('전완 통증 주호소 (FOREARM, 팔꿈치+손목 동시 노출)')
+  assert('FOREARM CRITICAL: renders BOTH 안전 확인 — 팔꿈치 AND 안전 확인 — 손목/손 panels', html.includes('안전 확인 — 팔꿈치') && html.includes('안전 확인 — 손목/손'))
+  assert('FOREARM fixture: renders 골절·영상 평가 고려 chip with 예', /골절·영상 평가 고려<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'FOREARM fixture: WH_04A non-gating X-ray context renders as a patient-reported note',
+    html.includes('X-ray 촬영, 정상이라고 들었음(환자 보고)') && html.includes('안전 판정에는 영향을 주지 않는 환자 보고 정보입니다'),
+  )
+  assert(
+    'FOREARM CRITICAL: WH_04A DONE_TOLD_NORMAL does not suppress the REVIEW_REQUIRED status or fracture flag',
+    html.includes('확인 필요') && /골절·영상 평가 고려<\/strong> (?:<!-- -->)?예/.test(html),
+  )
+  assert('FOREARM fixture: ELBOW_00 question text renders', html.includes('지금 가장 불편한 부위는 어디에 가장 가깝나요'))
+  assert('FOREARM fixture: WH_04 question text renders', html.includes('엄지손가락 뿌리 가까운 부위가 계속 아픈가요'))
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

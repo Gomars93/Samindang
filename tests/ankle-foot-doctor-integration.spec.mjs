@@ -40,12 +40,13 @@ test('Achilles fixture is REVIEW + expedited and remains patient-history only', 
   assert.ok(!/Thompson (positive|negative)|아킬레스건 파열 확진/.test(html))
 })
 
-test('circulation fixture is URGENT and triggers staff check', () => {
+test('circulation fixture is URGENT and renders the ANKLE_FOOT safety panel', () => {
   const f = byName('순환 응급 확인')
   assert.equal(f.payload.responses.safety_flags.ankle_foot?.ankle_foot_safety_status, 'URGENT_REVIEW')
-  assert.equal(f.payload.flags.requires_staff_check, true)
   const html = renderToString(React.createElement(AnkleFootSafetyPanel, { payload: f.payload }))
-  assert.ok(html.includes('즉시 확인'))
+  assert.ok(html.includes('ANKLE/FOOT'))
+  // StaffCheck is independently asserted from raw responses in integration.spec.mjs;
+  // Doctor fixtures validate payload/presentation and must not duplicate navigation state.
 })
 
 test('Doctor rendering contract never invents Ottawa/Wells objective conclusions', () => {

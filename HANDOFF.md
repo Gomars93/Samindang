@@ -31,9 +31,17 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
   하드 가드**는 코드 작성 완료, 커밋(`7484a1f`), push 완료, **PR #4**로 올라가
   있다. 단 아직 merge되지 않아 `main`의 실제 파일에는 반영되지 않은 상태다 —
   merge 전까지는 큐가 여전히 무방비 상태이니 주의.
-- PR #1(`claude/chore-collab-setup`)에는 ChatGPT 검수 반영 문서 수정 커밋
-  (`120a4ec`)이 이미 push되어 있다. **아직 ChatGPT에게 재검수를 요청하지
-  않았다** — 다음 세션의 최우선 작업.
+- **ChatGPT가 PR #1을 재검수했다** (2026-08-25, 기준 커밋 `9491f98`): 판정은
+  "APPROVE에 가까움, 그러나 아직 HOLD". 1차 검수 지적사항은 모두 반영됐으나,
+  merge 전에 남은 것 3가지 — (1) 아래 Last Commit 섹션 참고: 이 파일이 자기
+  자신의 tip SHA를 하드코딩하면 그 문구를 고치는 커밋이 다시 새 tip을 만들어
+  영원히 한 커밋 뒤처지는 구조적 문제가 있어 표기 방식을 바꿈, (2) PR #1의
+  GitHub 본문(description) 자체가 최초 상태 그대로 stale — 최신화 필요, (3)
+  병합 순서: `main` branch protection이 `build-and-test` status check를
+  필수로 요구하는데 CI workflow는 아직 PR #3에만 있고 main에 merge되지 않아
+  PR #1에는 check run이 0개다 — 그래서 **PR #3(CI)을 먼저 merge → PR #1
+  브랜치를 main과 동기화해 CI가 실제로 돌게 함 → PR #1 merge** 순서가 맞다
+  (기존 "PR #1 먼저" 순서는 틀렸음, 아래 Next Recommended Action 참고).
 
 ## Completed
 - GitHub 저장소 default branch를 `main`으로 정정.
@@ -56,13 +64,19 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
 - (없음 — 다음 액션은 ChatGPT 재검수 요청, 아래 Next Recommended Action 참고)
 
 ## Remaining
-- PR #1에 ChatGPT 재검수 요청 → 승인되면 사용자가 최종 merge.
-- PR #4(큐 main-guard)도 ChatGPT 검수 대상에 포함할지 결정하고 검수/merge.
-- PR #2(NECK/LBP)를 언제 merge할지 사용자 결정 필요 (build/test green,
-  기능적으로 완결 상태).
-- PR #3(CI)을 언제 merge할지 사용자 결정 필요 (CI 자체는 이미 Success 확인됨,
-  단 PR #3이 merge되어야 branch protection의 status check가 이후 PR에도
-  일관되게 요구된다).
+- PR #1의 GitHub description(본문)이 최초 상태 그대로 stale하다 — 최신화 필요
+  (ChatGPT 재검수 지적사항 2번). 코드/문서 파일 내용과는 무관, PR 본문 텍스트만
+  해당.
+- **병합 순서(ChatGPT 재검수 지적사항 3번, 기존 권장 순서에서 변경됨):**
+  1. **PR #3(CI)을 먼저 merge** — `main` branch protection이 이미
+     `build-and-test`를 필수 status check로 요구하는데, CI workflow 자체가
+     아직 PR #3에만 있고 main에는 없어서 PR #1에 check run이 0개 뜨는 상태.
+  2. PR #3 merge 후 PR #1 브랜치를 main과 동기화(rebase 또는 merge)해서
+     CI가 실제로 돌게 한다.
+  3. CI green 확인 후 PR #1 merge.
+  4. PR #4(큐 main-guard) merge.
+  5. PR #2(NECK/LBP) — merge 전 최신 tip(`f8a4892`) 기준으로 build/test
+     재검증 필요.
 - Python 쪽 의존성 고정 파일(`requirements.txt` 등) 부재 — 재현 가능한 환경을
   위해 추가 검토 필요 (아래 Known Risks 참고).
 
@@ -96,13 +110,21 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
 `claude/chore-collab-setup` (PR #1 — HANDOFF.md 갱신 중, 코드 변경 없음)
 
 ## Last Commit
+**주의(ChatGPT 재검수 지적사항):** PR #1(`claude/chore-collab-setup`)의 현재
+head SHA는 여기 하드코딩하지 않는다 — 이 문서를 고치는 커밋 자체가 새 tip을
+만들기 때문에, 하드코딩하는 순간 그 값은 항상 한 커밋 뒤처진 stale한 값이
+된다. 실제 head는 항상 `git rev-parse origin/claude/chore-collab-setup` 또는
+GitHub PR #1 페이지에서 직접 확인한다.
+
 - `main` tip: `405293d`
-- PR #1(`claude/chore-collab-setup`) tip: `120a4ec` (ChatGPT 검수 반영, 재검수 대기 중)
-- PR #2(`claude/google-drive-samindang-access-bm2327`) tip: `f8a4892` (이 세션이
-  마지막으로 검증한 `3e53a7f` 이후 로컬 큐가 SHOULDER_V1 관련 커밋을 추가함 —
-  merge 전 재검증 필요)
-- PR #3(`claude/chore-ci-workflow`) tip: `0ae4ace`
-- PR #4(`claude/fix-queue-main-guard`) tip: `7484a1f` (신규, 큐 main-guard)
+- PR #1(`claude/chore-collab-setup`): **마지막으로 ChatGPT가 검수한 기준
+  커밋 = `9491f98`** (2026-08-25, 판정: APPROVE에 가까움/HOLD — 남은 조건은
+  위 Current State 참고). 실제 최신 head는 위 명령으로 재확인.
+- PR #2(`claude/google-drive-samindang-access-bm2327`) tip(참고용, merge 전
+  git으로 재확인): `f8a4892` (이 세션이 마지막으로 검증한 `3e53a7f` 이후
+  로컬 큐가 SHOULDER_V1 관련 커밋을 추가함 — merge 전 재검증 필요)
+- PR #3(`claude/chore-ci-workflow`) tip(참고용): `0ae4ace`
+- PR #4(`claude/fix-queue-main-guard`) tip(참고용): `7484a1f` (신규, 큐 main-guard)
 
 ## Known Risks
 - `tablet core/` Python 의존성이 문서화/고정되어 있지 않음 (requirements.txt 부재).
@@ -122,8 +144,14 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
   최신 tip 기준으로 build/test 재검증 필요.
 
 ## Next Recommended Action
-ChatGPT에게 PR #1(tip `120a4ec`) 재검수를 요청한다. 승인되면 사용자가
-PR #1 → PR #3(CI) → PR #4(큐 main-guard) → PR #2(NECK/LBP) 순서로 병합하는
-것을 권장한다(문서/CI/큐 안전장치가 먼저 자리잡아야 이후 PR들이 그 규칙 아래
-에서 검수되기 때문). PR #2는 merge 전 최신 tip(`f8a4892`) 기준 재검증이
-선행되어야 한다.
+1. PR #1의 GitHub description을 현재 상태(파일 4개, +448 lines, ChatGPT 접근/
+   재검수 완료, Known risks에 Public repo 항목 등)로 최신화한다.
+2. **PR #3(CI)을 먼저 merge**한다.
+3. PR #1 브랜치를 main과 동기화해 CI(`build-and-test`)가 실제로 통과하는 것을
+   확인한다.
+4. PR #1을 merge한다.
+5. PR #4(큐 main-guard) → PR #2(NECK/LBP, merge 전 `f8a4892` 기준 재검증)
+   순서로 진행한다.
+
+(기존에 "PR #1 → PR #3 → PR #4 → PR #2" 순서로 적혀 있었으나, ChatGPT
+재검수에서 CI 부재 문제가 지적되어 PR #3을 최우선으로 변경함.)

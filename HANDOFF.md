@@ -27,9 +27,13 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
   임상/보안 체크리스트 추가, public repo 결정 기록)을 반영한 것이다.
 - `main`에는 아직 NECK_V1/LBP_V1 임상 안전 모듈이 없다 — PR #2로 올라가 있고
   build/test green이지만 아직 병합되지 않았다.
-- 로컬 `.claude/queue/run-next.js`가 `main`/`master` 브랜치에서 실행되는 것을
-  막는 하드 가드가 아직 없다는 것이 ChatGPT 검수에서 지적되었다 — 별도 PR로
-  바로 뒤이어 처리 중(진행 상황은 아래 In Progress 참고).
+- ChatGPT 검수에서 지적된 **로컬 큐(`run-next.js`) main/master 실행 차단
+  하드 가드**는 코드 작성 완료, 커밋(`7484a1f`), push 완료, **PR #4**로 올라가
+  있다. 단 아직 merge되지 않아 `main`의 실제 파일에는 반영되지 않은 상태다 —
+  merge 전까지는 큐가 여전히 무방비 상태이니 주의.
+- PR #1(`claude/chore-collab-setup`)에는 ChatGPT 검수 반영 문서 수정 커밋
+  (`120a4ec`)이 이미 push되어 있다. **아직 ChatGPT에게 재검수를 요청하지
+  않았다** — 다음 세션의 최우선 작업.
 
 ## Completed
 - GitHub 저장소 default branch를 `main`으로 정정.
@@ -44,22 +48,21 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
   force push/삭제 금지, 승인 요건은 의도적으로 미설정).
 - ChatGPT GitHub 연동 완료 및 실제 PR 읽기 검증 완료.
 - ChatGPT의 PR #1 첫 독립 검수 완료(REQUEST CHANGES) 및 지적사항 중 문서
-  관련 항목 반영(이 커밋).
+  관련 항목 반영, push 완료(`120a4ec`).
+- 로컬 큐(`run-next.js`)에 main/master 실행 거부 하드 가드 추가 완료, push
+  완료(`7484a1f`), **PR #4**로 올라가 있음.
 
 ## In Progress
-- ChatGPT가 PR #1 검수에서 지적한 나머지 항목 처리 중:
-  - 로컬 큐(`run-next.js`)에 main/master 실행 거부 하드 가드 추가 — 별도
-    branch/PR로 진행 (문서 PR과 코드 PR을 분리하는 Git Workflow 원칙 유지).
-  - 반영 완료 후 ChatGPT에게 PR #1 재검수 요청 예정.
+- (없음 — 다음 액션은 ChatGPT 재검수 요청, 아래 Next Recommended Action 참고)
 
 ## Remaining
-- PR #1 수정 커밋을 push하고 ChatGPT 재검수 → 승인되면 사용자가 최종 merge.
+- PR #1에 ChatGPT 재검수 요청 → 승인되면 사용자가 최종 merge.
+- PR #4(큐 main-guard)도 ChatGPT 검수 대상에 포함할지 결정하고 검수/merge.
 - PR #2(NECK/LBP)를 언제 merge할지 사용자 결정 필요 (build/test green,
   기능적으로 완결 상태).
 - PR #3(CI)을 언제 merge할지 사용자 결정 필요 (CI 자체는 이미 Success 확인됨,
   단 PR #3이 merge되어야 branch protection의 status check가 이후 PR에도
   일관되게 요구된다).
-- 로컬 큐 main-guard PR 완료 후 별도 검수/merge.
 - Python 쪽 의존성 고정 파일(`requirements.txt` 등) 부재 — 재현 가능한 환경을
   위해 추가 검토 필요 (아래 Known Risks 참고).
 
@@ -90,13 +93,16 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
 - PR #3의 CI 실행 결과: GitHub Actions에서 Success, 35초 — 직접 확인.
 
 ## Current Branch
-`claude/chore-collab-setup` (PR #1, ChatGPT 검수 반영 커밋 추가 중)
+`claude/chore-collab-setup` (PR #1 — HANDOFF.md 갱신 중, 코드 변경 없음)
 
 ## Last Commit
 - `main` tip: `405293d`
-- PR #1(`claude/chore-collab-setup`) tip: 이 커밋(ChatGPT 검수 반영)
-- PR #2(`claude/google-drive-samindang-access-bm2327`) tip: `3e53a7f`
+- PR #1(`claude/chore-collab-setup`) tip: `120a4ec` (ChatGPT 검수 반영, 재검수 대기 중)
+- PR #2(`claude/google-drive-samindang-access-bm2327`) tip: `f8a4892` (이 세션이
+  마지막으로 검증한 `3e53a7f` 이후 로컬 큐가 SHOULDER_V1 관련 커밋을 추가함 —
+  merge 전 재검증 필요)
 - PR #3(`claude/chore-ci-workflow`) tip: `0ae4ace`
+- PR #4(`claude/fix-queue-main-guard`) tip: `7484a1f` (신규, 큐 main-guard)
 
 ## Known Risks
 - `tablet core/` Python 의존성이 문서화/고정되어 있지 않음 (requirements.txt 부재).
@@ -106,12 +112,18 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
 - 저장소가 Public이다 (의도된 결정, `DECISIONS.md` 참고) — 실제 환자
   데이터/시크릿을 실수로 커밋하면 즉시 공개된다는 점을 매 PR에서 재확인해야
   한다 (PR 템플릿의 Patient-data/PHI impact 항목).
-- 로컬 큐가 아직 main에서 실행되는 것을 코드 레벨로 막지 못한다 (수정 진행 중).
+- 로컬 큐 main-guard 코드는 PR #4에만 존재하고 아직 `main`에 merge되지
+  않았다 — merge 전까지는 큐가 여전히 main에서 실행 가능한 상태이니, 그
+  사이에는 큐를 수동으로 활성화하지 않도록 주의.
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다 —
   `CLAUDE.md` "역할은 선언만으로 실행되지 않는다" 참고.
+- PR #2 브랜치에 이 세션이 마지막으로 검증한 커밋(`3e53a7f`) 이후 로컬 큐가
+  추가 커밋(`f8a4892`, SHOULDER_V1 관련으로 추정)을 쌓았다 — merge 전 반드시
+  최신 tip 기준으로 build/test 재검증 필요.
 
 ## Next Recommended Action
-로컬 큐 main-guard 수정을 완료해 별도 PR로 올리고, 그 다음 이 PR(#1)의 수정
-커밋을 push한 뒤 ChatGPT에게 재검수를 요청한다. ChatGPT가 승인하면 사용자가
-PR #1 → PR #3(CI) → PR #2(NECK/LBP) 순서로 병합하는 것을 권장한다(문서/CI가
-먼저 자리잡아야 이후 PR들이 그 규칙 아래에서 검수되기 때문).
+ChatGPT에게 PR #1(tip `120a4ec`) 재검수를 요청한다. 승인되면 사용자가
+PR #1 → PR #3(CI) → PR #4(큐 main-guard) → PR #2(NECK/LBP) 순서로 병합하는
+것을 권장한다(문서/CI/큐 안전장치가 먼저 자리잡아야 이후 PR들이 그 규칙 아래
+에서 검수되기 때문). PR #2는 merge 전 최신 tip(`f8a4892`) 기준 재검증이
+선행되어야 한다.

@@ -1082,9 +1082,11 @@ const H1_MODULES = [
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05, KNEE_02, KNEE_02A, KNEE_06B, KNEE_07, ELBOW_02, ELBOW_02A, ELBOW_07, ELBOW_08, ELBOW_11, WH_02, WH_07, WH_07A',
+    'I1: STAFF_CHECK_TRIGGERS keys include ANKLE_FOOT urgent AF_02/AF_06 plus all existing frozen triggers',
     JSON.stringify(keys) ===
       JSON.stringify([
+        'AF_02',
+        'AF_06',
         'BOWEL_03',
         'ELBOW_02',
         'ELBOW_02A',
@@ -2484,3 +2486,25 @@ function wristHandBaseResponses() {
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)
+
+
+/* ANKLE_FOOT_V1 CORE INTEGRATION */
+{
+  let r = emptyResponses()
+  r = { ...r, VISIT_01:'symptom', VISIT_02_SYMPTOM_MAIN:'pain', PAIN_01:'leg_foot', AF_00:'ANKLE', AF_01:'NO', AF_02:['NONE'], AF_06:'NO_CONCERN', AF_08:'NO' }
+  const ids = visibleIds(r)
+  assert('AF core: leg_foot shows AF_00', ids.has('AF_00'))
+  assert('AF core: valid AF_00 shows protected AF_01/02/06/08', ['AF_01','AF_02','AF_06','AF_08'].every((id)=>ids.has(id)))
+  const payload = buildResponsePayload(r)
+  assert('AF core: safety payload exists', payload.safety_flags.ankle_foot?.ankle_foot_safety_status === 'CLEAR')
+  assert('AF core: raw module preserves AF_00', payload.modules.ankle_foot.region_discriminator === 'ANKLE')
+  assert('AF core: routing detail labels ANKLE_FOOT', buildRoutingPayload(r).primary_module_detail === 'ANKLE_FOOT')
+
+  const urgent = { ...r, AF_02:['UNCONTROLLED_HEAVY_BLEEDING'] }
+  assert('AF core: urgent engine reaches payload', buildResponsePayload(urgent).safety_flags.ankle_foot?.ankle_foot_safety_status === 'URGENT_REVIEW')
+  assert('AF core: AF_02 urgent triggers StaffCheck', STAFF_CHECK_TRIGGERS.AF_02(urgent) === true)
+
+  const calf = { ...r, AF_00:'LOWER_LEG_CALF', AF_07:'NEW_UNILATERAL_CALF_OR_LOWER_LEG_SWELLING_PAIN' }
+  assert('AF core: calf exposes AF_07', visibleIds(calf).has('AF_07'))
+  assert('AF core: DVT pattern only REVIEW', buildResponsePayload(calf).safety_flags.ankle_foot?.ankle_foot_safety_status === 'REVIEW_REQUIRED')
+}

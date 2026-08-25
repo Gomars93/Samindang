@@ -41,6 +41,7 @@ import { computeElbowFlags, elbowSafetyLocked, type ElbowComputedFields } from '
 import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
+import { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -2146,6 +2147,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       <ElbowSafetyPanel payload={payload} />
       <WristHandSafetyPanel payload={payload} />
+      <AnkleFootSafetyPanel payload={payload} />
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

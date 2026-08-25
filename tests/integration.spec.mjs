@@ -1082,7 +1082,7 @@ const H1_MODULES = [
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys include ANKLE_FOOT urgent AF_02/AF_06 plus all existing frozen triggers',
+    'I1: STAFF_CHECK_TRIGGERS keys include TMJ urgent TMJ_01/02/03 plus all existing frozen triggers',
     JSON.stringify(keys) ===
       JSON.stringify([
         'AF_02',
@@ -1107,6 +1107,9 @@ const H1_MODULES = [
         'SH02',
         'SH04',
         'SH05',
+        'TMJ_01',
+        'TMJ_02',
+        'TMJ_03',
         'WH_02',
         'WH_07',
         'WH_07A',
@@ -2485,9 +2488,6 @@ function wristHandBaseResponses() {
   assert("P-E10: existing KNEE routing unchanged by WRIST_HAND addition -- primary_module_detail still 'KNEE'", routing.primary_module_detail === 'KNEE')
 }
 
-console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)
-
-
 /* ANKLE_FOOT_V1 CORE INTEGRATION */
 {
   let r = emptyResponses()
@@ -2508,3 +2508,224 @@ console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCo
   assert('AF core: calf exposes AF_07', visibleIds(calf).has('AF_07'))
   assert('AF core: DVT pattern only REVIEW', buildResponsePayload(calf).safety_flags.ankle_foot?.ankle_foot_safety_status === 'REVIEW_REQUIRED')
 }
+
+/* =========================================================================
+ * Q. TMJ_V1 -- question visibility incl. HEADACHE_CRANIAL exclusion (T2),
+ * staff interrupt, payload/routing incl. the GCA age modifier (T5). TMJ_V1
+ * is a fresh `head_face_jaw` population with no overlap with any other
+ * module (unlike WRIST_HAND_V1's FOREARM overlap with ELBOW_V1) -- HFJ_00
+ * is the one genuinely new routing mechanism this module introduces, so
+ * its HEADACHE_CRANIAL-exclusion behavior gets the most scrutiny here.
+ * ========================================================================= */
+
+function tmjBaseResponses() {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'head_face_jaw',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    HFJ_00: 'JAW_TMJ_MASTICATORY',
+    TMJ_01: ['NONE'],
+    TMJ_02: 'NO_CONCERN',
+    TMJ_03: ['NONE'],
+    TMJ_04: 'NO',
+    TMJ_05: 'NO_CURRENT_FIXED_LOCK',
+  })
+}
+
+// --- Q-C: question visibility (routing incl.) -------------------------------
+
+{
+  const r = neckShoulderBaseResponses()
+  const visible = visibleIds(r)
+  assert('Q-C1: non-head_face_jaw pain patient sees no HFJ_00/TMJ_* questions', !['HFJ_00', 'TMJ_01', 'TMJ_02', 'TMJ_03', 'TMJ_04', 'TMJ_05'].some((id) => visible.has(id)))
+}
+{
+  let r = emptyResponses()
+  r = set(r, { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'head_face_jaw', PAIN_02: ['aching'], PAIN_04: 'none' })
+  assert('Q-C2: head_face_jaw patient sees HFJ_00 but no TMJ_* yet (before HFJ_00 answered)', visibleIds(r).has('HFJ_00'))
+  assert('Q-C2: TMJ_01 not visible before HFJ_00 is answered', !visibleIds(r).has('TMJ_01'))
+}
+{
+  const r = tmjBaseResponses()
+  const visible = visibleIds(r)
+  assert(
+    'Q-C3: HFJ_00=JAW_TMJ_MASTICATORY exposes all protected TMJ safety screens',
+    ['TMJ_01', 'TMJ_02', 'TMJ_03', 'TMJ_04', 'TMJ_05'].every((id) => visible.has(id)),
+  )
+}
+{
+  for (const v of ['FACIAL_NEURALGIC', 'DENTAL_OR_ORAL', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN']) {
+    const r = set(tmjBaseResponses(), { HFJ_00: v })
+    assert(`Q-C4: HFJ_00=${v} also exposes TMJ protected safety`, visibleIds(r).has('TMJ_01'))
+  }
+}
+{
+  // Most important routing regression in this module: HEADACHE_CRANIAL must be the ONLY excluded value (T2).
+  const r = set(tmjBaseResponses(), { HFJ_00: 'HEADACHE_CRANIAL' })
+  const visible = visibleIds(r)
+  assert(
+    'Q-C5 CRITICAL: HFJ_00=HEADACHE_CRANIAL excludes ALL TMJ protected safety screens',
+    !['TMJ_01', 'TMJ_02', 'TMJ_03', 'TMJ_04', 'TMJ_05'].some((id) => visible.has(id)),
+  )
+}
+{
+  const q00 = ALL_QUESTIONS.find((q) => q.id === 'HFJ_00')
+  const q01 = ALL_QUESTIONS.find((q) => q.id === 'TMJ_01')
+  const q02 = ALL_QUESTIONS.find((q) => q.id === 'TMJ_02')
+  const q03 = ALL_QUESTIONS.find((q) => q.id === 'TMJ_03')
+  const q04 = ALL_QUESTIONS.find((q) => q.id === 'TMJ_04')
+  const q05 = ALL_QUESTIONS.find((q) => q.id === 'TMJ_05')
+  assert('Q-C6: HFJ_00 is required: true (routing gate must be hard-blocked)', q00.required === true)
+  assert('Q-C6: TMJ_01 is required: true', q01.required === true)
+  assert('Q-C6: TMJ_02 is required: true', q02.required === true)
+  assert('Q-C6: TMJ_03 is required: true', q03.required === true)
+  assert('Q-C6: TMJ_04 is required: true', q04.required === true)
+  assert('Q-C6: TMJ_05 is required: true', q05.required === true)
+}
+{
+  // stale prune: HFJ_00/TMJ_* answers must be cleared once PAIN_01 switches away from 'head_face_jaw'.
+  const r = set(tmjBaseResponses(), { TMJ_01: ['TRAUMA_WITH_NEW_BITE_CHANGE_OR_MARKED_FUNCTION_LOSS'], TMJ_04: 'NEW_OR_PERSISTENT_FACIAL_NUMBNESS_OR_FOCAL_NEURO_CHANGE' })
+  const switched = set(r, { PAIN_01: 'knee' })
+  assert(
+    'Q-C7: switching PAIN_01 away from head_face_jaw prunes all HFJ_00/TMJ_* responses to null',
+    ['HFJ_00', 'TMJ_01', 'TMJ_02', 'TMJ_03', 'TMJ_04', 'TMJ_05'].every((id) => switched[id] === null),
+  )
+}
+{
+  // switching the region discriminator to HEADACHE_CRANIAL must prune the now-hidden TMJ_* answers too.
+  const r = set(tmjBaseResponses(), { TMJ_01: ['TRAUMA_WITH_NEW_BITE_CHANGE_OR_MARKED_FUNCTION_LOSS'], TMJ_04: 'NEW_OR_PERSISTENT_FACIAL_NUMBNESS_OR_FOCAL_NEURO_CHANGE' })
+  const switched = set(r, { HFJ_00: 'HEADACHE_CRANIAL' })
+  assert(
+    'Q-C8: switching HFJ_00 to HEADACHE_CRANIAL prunes the now-hidden TMJ_01/04 responses',
+    switched['TMJ_01'] === null && switched['TMJ_04'] === null,
+  )
+}
+
+// --- Q-D: staff interrupt ----------------------------------------------------
+
+{
+  for (const v of [
+    'JAW_CURRENTLY_STUCK_OPEN_OR_ABNORMAL_POSITION',
+    'SEVERE_FACIAL_OR_JAW_TRAUMA_WITH_GROSS_DEFORMITY',
+    'UNCONTROLLED_HEAVY_ORAL_BLEEDING',
+    'BREATHING_OR_SWALLOWING_COMPROMISE_WITH_SWELLING_OR_INJURY',
+  ]) {
+    const r = set(tmjBaseResponses(), { TMJ_01: [v] })
+    assert(`Q-D1: TMJ_01 ${v} -> StaffCheck`, STAFF_CHECK_TRIGGERS.TMJ_01(r) === true)
+  }
+}
+{
+  const r = set(tmjBaseResponses(), { TMJ_01: ['TRAUMA_WITH_NEW_BITE_CHANGE_OR_MARKED_FUNCTION_LOSS'] })
+  assert('Q-D1b: TMJ_01 bite/function-only does NOT StaffCheck (review-tier, not urgent)', STAFF_CHECK_TRIGGERS.TMJ_01(r) === false)
+}
+{
+  for (const v of ['LARGE_OR_SPREADING_SWELLING_OR_SEVERE_SYSTEMIC_ILLNESS', 'EYE_AIRWAY_OR_SWALLOW_COMPROMISE']) {
+    const r = set(tmjBaseResponses(), { TMJ_02: v })
+    assert(`Q-D2: TMJ_02 ${v} -> StaffCheck`, STAFF_CHECK_TRIGGERS.TMJ_02(r) === true)
+  }
+}
+{
+  const r = set(tmjBaseResponses(), { TMJ_02: 'LOCALIZED_TOOTH_OR_GUM_PAIN_SWELLING_OR_PUS_TASTE' })
+  assert('Q-D2b: TMJ_02 localized dental (review-tier) does NOT StaffCheck', STAFF_CHECK_TRIGGERS.TMJ_02(r) === false)
+}
+{
+  // TMJ_03 GCA urgent requires age>=50 (final-payload modifier) + compatible pattern + visual disturbance.
+  const r = set(tmjBaseResponses(), {
+    BIRTH_01: '19600101',
+    BIRTH_02: 'solar',
+    TMJ_03: ['NEW_JAW_CLAUDICATION_WITH_CHEWING', 'NEW_TRANSIENT_VISUAL_DISTURBANCE_DIPLOPIA_OR_VISUAL_LOSS'],
+  })
+  assert('Q-D3 CRITICAL: TMJ_03 GCA-compatible + visual, age>=50 -> StaffCheck', STAFF_CHECK_TRIGGERS.TMJ_03(r) === true)
+}
+{
+  // Same pattern, age unknown -- must NOT reach urgent (fails closed to REVIEW only, per T5/tmjLogic.ts CLOSED semantics).
+  const r = set(tmjBaseResponses(), {
+    TMJ_03: ['NEW_JAW_CLAUDICATION_WITH_CHEWING', 'NEW_TRANSIENT_VISUAL_DISTURBANCE_DIPLOPIA_OR_VISUAL_LOSS'],
+  })
+  assert('Q-D3b: TMJ_03 GCA-compatible + visual, age unknown -> does NOT StaffCheck (REVIEW only, CLOSED semantics)', STAFF_CHECK_TRIGGERS.TMJ_03(r) === false)
+}
+{
+  // TMJ_04/TMJ_05 positive must NOT interrupt -- REVIEW/expedited/flag only, no urgent trigger registered for them.
+  assert(
+    'Q-D4: TMJ_04/TMJ_05 have no StaffCheck trigger registered',
+    !('TMJ_04' in STAFF_CHECK_TRIGGERS) && !('TMJ_05' in STAFF_CHECK_TRIGGERS),
+  )
+}
+{
+  const r = tmjBaseResponses() // fully clean
+  assert(
+    'Q-D5: TMJ_01/TMJ_02/TMJ_03 all stay false on a fully-clean tmj baseline',
+    STAFF_CHECK_TRIGGERS.TMJ_01(r) === false && STAFF_CHECK_TRIGGERS.TMJ_02(r) === false && STAFF_CHECK_TRIGGERS.TMJ_03(r) === false,
+  )
+}
+
+// --- Q-E: payload/routing ----------------------------------------------------
+
+{
+  const r = tmjBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('Q-E1: tmj patient -> safety_flags.tmj !== null', payload.safety_flags.tmj !== null)
+  assert('Q-E1b: tmj patient -> tmj_safety_status is CLEAR on the valid-negative baseline', payload.safety_flags.tmj?.tmj_safety_status === 'CLEAR')
+  assert('Q-E2: all TMJ responses land under modules.tmj', payload.modules.tmj.trauma_dislocation_screen[0] === 'NONE')
+  assert('Q-E2b: modules.tmj.region_discriminator records HFJ_00', payload.modules.tmj.region_discriminator === 'JAW_TMJ_MASTICATORY')
+  const routing = buildRoutingPayload(r)
+  assert("Q-E3: primary_module_detail === 'TMJ' for tmj-safety-exposed patient", routing.primary_module_detail === 'TMJ')
+}
+{
+  // HEADACHE_CRANIAL: safety_flags.tmj must be null and primary_module_detail must be null (no invented panel, T2).
+  const r = set(tmjBaseResponses(), { HFJ_00: 'HEADACHE_CRANIAL' })
+  const payload = buildResponsePayload(r)
+  assert('Q-E4 CRITICAL: HEADACHE_CRANIAL patient -> safety_flags.tmj === null', payload.safety_flags.tmj === null)
+  const routing = buildRoutingPayload(r)
+  assert("Q-E5 CRITICAL: HEADACHE_CRANIAL patient -> primary_module_detail === null (not 'TMJ', no invented HEADACHE_V1 threshold)", routing.primary_module_detail === null)
+}
+{
+  const r = neckShoulderBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('Q-E6: non-head_face_jaw (neck_shoulder) patient -> safety_flags.tmj === null', payload.safety_flags.tmj === null)
+  const routing = buildRoutingPayload(r)
+  assert(
+    "Q-E7: existing NECK/SHOULDER routing unchanged by TMJ addition -- primary_module_detail still 'SHOULDER'",
+    routing.primary_module_detail === 'SHOULDER',
+  )
+}
+{
+  const r = kneeBaseResponses()
+  const routing = buildRoutingPayload(r)
+  assert("Q-E8: existing KNEE routing unchanged by TMJ addition -- primary_module_detail still 'KNEE'", routing.primary_module_detail === 'KNEE')
+}
+{
+  const r = elbowBaseResponses()
+  const routing = buildRoutingPayload(r)
+  assert("Q-E9: existing ELBOW routing unchanged by TMJ addition -- primary_module_detail still 'ELBOW'", routing.primary_module_detail === 'ELBOW')
+}
+{
+  // Age modifier end-to-end via the real payload's birth data (T5).
+  const r = set(tmjBaseResponses(), { BIRTH_01: '19600101', BIRTH_02: 'solar', TMJ_03: ['NEW_SCALP_OR_TEMPORAL_PAIN_TENDERNESS_PATTERN'] })
+  const payload = buildResponsePayload(r)
+  assert('Q-E10: age>=50 + GCA-compatible pattern -> REVIEW_REQUIRED + gca_assessment_required + expedited', payload.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED')
+  assert('Q-E10b: gca_assessment_required true', payload.safety_flags.tmj?.gca_assessment_required === true)
+  assert('Q-E10c: expedited_referral_consider true', payload.safety_flags.tmj?.expedited_referral_consider === true)
+}
+{
+  const r = set(tmjBaseResponses(), {
+    BIRTH_01: '19600101',
+    BIRTH_02: 'solar',
+    TMJ_03: ['NEW_SCALP_OR_TEMPORAL_PAIN_TENDERNESS_PATTERN', 'NEW_TRANSIENT_VISUAL_DISTURBANCE_DIPLOPIA_OR_VISUAL_LOSS'],
+  })
+  const payload = buildResponsePayload(r)
+  assert('Q-E11: age>=50 + GCA-compatible pattern + visual disturbance -> URGENT_REVIEW', payload.safety_flags.tmj?.tmj_safety_status === 'URGENT_REVIEW')
+}
+{
+  // Core urgent + TMJ urgent coexistence: Core general_red must independently drive tmj_safety_status urgent too (passthrough).
+  const r = set(tmjBaseResponses(), { SAFETY_01: ['chest_breathing'] })
+  const payload = buildResponsePayload(r)
+  assert('Q-E12: Core general_red alone -> tmj_safety_status URGENT_REVIEW via passthrough', payload.safety_flags.tmj?.tmj_safety_status === 'URGENT_REVIEW')
+  assert('Q-E12b: Core general_red also sets requires_staff_check independent of TMJ', computeFlags(r).requires_staff_check === true)
+}
+
+console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

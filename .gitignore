@@ -70,3 +70,15 @@ tests/.elbow-logic-bundle.mjs
 tests/.elbow-adapter-bundle.mjs
 tests/.wrist-hand-logic-bundle.mjs
 tests/.wrist-hand-adapter-bundle.mjs
+
+# esbuild bundles used by tests/tmj.spec.mjs and tests/tmj-malformed.spec.mjs (regenerated, not source)
+tests/.tmj-logic-bundle.mjs
+tests/.tmj-adapter-bundle.mjs
+
+# esbuild bundles used by tests/ankle-foot*.spec.mjs (regenerated, not source --
+# pre-existing omission from the ANKLE_FOOT_V1 PR, completed here to match every
+# other module's pattern)
+tests/.ankle-foot-logic-bundle.mjs
+tests/.ankle-foot-adapter-bundle.mjs
+tests/.ankle-foot-doctor-panel-bundle.cjs
+tests/.ankle-foot-fixtures-bundle.mjs

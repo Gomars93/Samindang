@@ -5,7 +5,7 @@
 **대상 문서**: `KNEE_V1_Tablet_Question_Set_v0.1.md`
 **판정**: **CLINICAL DECISION REQUIRED**
 
-이 문서는 원래 Opus v0.2 재검수 결과를 보존하는 기록이다. 이후 남은 3개 차단항목은 `KNEE_V1_Tablet_Question_Set_v0.1.1_Amendment_CLOSED_CANDIDATE.md`에 규범적으로 반영되었다. 최종 PASS/CLOSED 판정 전까지 production code 구현은 계속 금지한다.
+이 문서는 Opus v0.2 재검수 결과를 보존하는 기록이다. 이후 남은 3개 차단항목은 `KNEE_V1_Tablet_Question_Set_v0.1.1_Amendment_CLOSED_CANDIDATE.md`에 규범적으로 반영되었다. 최종 PASS/CLOSED 판정 전까지 production code 구현은 계속 금지한다.
 
 ## 남은 차단항목(당시 판정)
 

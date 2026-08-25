@@ -310,6 +310,68 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2g. ELBOW_V1 primary-pain fixture: primary_module_detail is 'ELBOW',
+ *     demonstrates both a genuine positive tier (ELBOW_04 distal biceps
+ *     concern -> REVIEW_REQUIRED + expedited_referral_consider) and E5's
+ *     stable sensory-only de-escalation (ELBOW_09=YES + ELBOW_09A=[NONE]
+ *     must not independently add REVIEW_REQUIRED or
+ *     neuro_assessment_required -- the fixture's only safety contribution
+ *     comes from ELBOW_04).
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('팔꿈치 통증 주호소 (ELBOW, 신속 의뢰 고려)')
+  assert('ELBOW fixture: primary_module stays Pain', f.payload.routing.primary_module === 'Pain')
+  assert('ELBOW fixture: primary_module_detail is ELBOW', f.payload.routing.primary_module_detail === 'ELBOW')
+  assert(
+    'ELBOW fixture: elbow_safety_status is REVIEW_REQUIRED (ELBOW_04 distal biceps concern, not urgent)',
+    f.payload.responses.safety_flags.elbow?.elbow_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert(
+    'ELBOW fixture: elbow_safety_status is NOT URGENT_REVIEW',
+    f.payload.responses.safety_flags.elbow?.elbow_safety_status !== 'URGENT_REVIEW',
+  )
+  assert(
+    'ELBOW fixture: expedited_referral_consider is true (ELBOW_04=YES)',
+    f.payload.responses.safety_flags.elbow?.expedited_referral_consider === true,
+  )
+  assert(
+    'E5 CRITICAL: neuro_assessment_required is false (ELBOW_09=YES + ELBOW_09A=[NONE] alone does not trigger it)',
+    f.payload.responses.safety_flags.elbow?.neuro_assessment_required === false,
+  )
+  assert(
+    'ELBOW fixture: fracture_imaging_consider is false (ELBOW_03=NO)',
+    f.payload.responses.safety_flags.elbow?.fracture_imaging_consider === false,
+  )
+  assert(
+    'ELBOW fixture: infection_assessment_required is false (ELBOW_07=NO, ELBOW_08=NONE)',
+    f.payload.responses.safety_flags.elbow?.infection_assessment_required === false,
+  )
+  assert(
+    'ELBOW fixture: does NOT trigger requires_staff_check (REVIEW_REQUIRED only, no URGENT interrupt condition met)',
+    f.payload.flags.requires_staff_check === false,
+  )
+
+  const html = renderDoctorView('팔꿈치 통증 주호소 (ELBOW, 신속 의뢰 고려)')
+  assert('ELBOW fixture: renders 안전 확인 — 팔꿈치 panel title', html.includes('안전 확인 — 팔꿈치'))
+  assert('ELBOW fixture: shows 확인 필요 status', html.includes('확인 필요'))
+  assert('ELBOW fixture: renders 신속 의뢰 고려 chip with 예', /신속 의뢰 고려<\/strong> (?:<!-- -->)?예/.test(html))
+  assert('ELBOW fixture: renders 신경학적 평가 필요 chip with 아니요 (E5 de-escalation)', /신경학적 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html))
+  assert(
+    'ELBOW fixture: disease-safety lock note renders',
+    html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
+  )
+  assert('ELBOW fixture: renders 추가 권장 검사 card', html.includes('추가 권장 검사'))
+  assert('ELBOW fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('ELBOW fixture: ELBOW_00 question text renders', html.includes('지금 가장 불편한 부위는 어디에 가장 가깝나요'))
+  assert('ELBOW fixture: ELBOW_02A question text renders', html.includes('저절로 제자리로 돌아온 적이 있나요'))
+  assert(
+    'ELBOW fixture: no patient-facing diagnosis/probability language (예: 이두근 파열 진단/확률)',
+    !/이두근\s*파열\s*진단|확률\s*\d/.test(html),
+  )
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

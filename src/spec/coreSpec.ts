@@ -23,6 +23,8 @@ import { toShoulderState } from './shoulderAdapter'
 import { computeShoulderFlags } from './shoulderLogic'
 import { toKneeState } from './kneeAdapter'
 import { computeKneeFlags } from './kneeLogic'
+import { toElbowState } from './elbowAdapter'
+import { computeElbowFlags } from './elbowLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1061,6 +1063,23 @@ export const IS_PRIMARY_NECK = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_0
 export const IS_PRIMARY_KNEE = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'knee'
 
 /**
+ * ELBOW_V1 entry gates. Unlike LBP/NECK/SHOULDER/KNEE, `PAIN_01` has no
+ * dedicated `elbow` value -- elbow/forearm/wrist/hand all share `arm_hand`
+ * (Evidence Matrix §1, Opus E9). `IS_PRIMARY_ARM_HAND` is the raw
+ * population gate (shared with a future WRIST/HAND_V1); `IS_PRIMARY_ELBOW_
+ * SAFETY` additionally requires the region discriminator (`ELBOW_00`, see
+ * `ARM_HAND_ROUTING_QUESTIONS`) to be anything other than `WRIST_HAND` --
+ * ELBOW/FOREARM/DIFFUSE_OR_MULTIPLE/UNKNOWN all expose ELBOW protected
+ * safety (Opus v0.1 E9 decision, Fable plan §2). `ELBOW_00` itself never
+ * feeds `elbowLogic.ts`'s safety computation -- see elbowAdapter.ts's top
+ * comment.
+ */
+export const IS_PRIMARY_ARM_HAND = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'arm_hand'
+
+export const IS_PRIMARY_ELBOW_SAFETY = (r: Responses) =>
+  IS_PRIMARY_ARM_HAND(r) && ['ELBOW', 'FOREARM', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN'].includes(r['ELBOW_00'] as string)
+
+/**
  * ---------- NECK_V1 (목 통증) — primary concern === pain && PAIN_01 ===
  * 'neck_shoulder'인 경우만. 문항 문구/값/branching은
  * NECK_V1_Tablet_Question_Set_v0.2.1_CLOSED.md(CLINICAL DECISIONS CLOSED,
@@ -1822,6 +1841,312 @@ const KNEE_QUESTIONS: Question[] = [
     required: false,
     step: '상세 증상',
     showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
+/**
+ * ---------- ELBOW_V1 (팔꿈치 통증) — primary concern === pain && PAIN_01 ===
+ * 'arm_hand'인 경우만. 문항 문구/값/branching은
+ * ELBOW_V1_Tablet_Question_Set_v0.1.1.md(CLINICAL DECISIONS CLOSED —
+ * Opus v0.1 review -> Tablet v0.1 -> Opus v0.2 review[2건] -> Tablet v0.1.1
+ * -> Opus final verification PASS) 원문 그대로이며 임의로 수정하지 않는다.
+ *
+ * `arm_hand`는 elbow/forearm/wrist/hand가 섞인 값이라(Evidence Matrix §1,
+ * Opus E9), KNEE처럼 PAIN_01 단일 값으로 바로 게이트할 수 없다.
+ * `ARM_HAND_ROUTING_QUESTIONS`(ELBOW_00, region discriminator)는
+ * `IS_PRIMARY_ARM_HAND` 하나로만 게이트되는 별도 배열이다 -- ELBOW_QUESTIONS
+ * 안에 두면 "ELBOW_QUESTIONS의 노출 조건이 ELBOW_00 값을 필요로 하는데
+ * ELBOW_00 자신도 그 조건 안에 있는" 순환이 생긴다(Fable plan §2.1).
+ * ELBOW_00은 `elbowLogic.ts`/`elbowAdapter.ts` 어디에도 들어가지 않는다 --
+ * routing/tagging 전용이며 safety 계산 입력이 아니다(F1류 invariant).
+ */
+const ARM_HAND_ROUTING_QUESTIONS: Question[] = [
+  {
+    id: 'ELBOW_00',
+    variable: 'arm_hand_region_discriminator',
+    input: 'single_choice',
+    question: '지금 가장 불편한 부위는 어디에 가장 가깝나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ARM_HAND,
+    options: [
+      { value: 'ELBOW', label: '팔꿈치' },
+      { value: 'FOREARM', label: '팔꿈치와 손목 사이(전완)' },
+      { value: 'WRIST_HAND', label: '손목이나 손' },
+      { value: 'DIFFUSE_OR_MULTIPLE', label: '여러 부위 또는 전체적으로' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
+const IS_ELBOW_01_SHOWN = (r: Responses) => r['ELBOW_01'] === 'YES' || r['ELBOW_01'] === 'UNKNOWN'
+const IS_ELBOW_09_SHOWN = (r: Responses) => r['ELBOW_09'] === 'YES' || r['ELBOW_09'] === 'UNKNOWN'
+
+const ELBOW_QUESTIONS: Question[] = [
+  {
+    id: 'ELBOW_01',
+    variable: 'elbow_recent_trauma_or_sudden_load',
+    input: 'single_choice',
+    question: '최근 3개월 이내 넘어지거나 부딪히거나 팔꿈치가 크게 꺾이거나 비틀렸거나, 갑자기 강하게 힘을 준 뒤 증상이 시작되거나 뚜렷하게 심해졌나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_02',
+    variable: 'elbow_deformity_neurovascular_screen',
+    input: 'multi_choice',
+    question: '지금 팔꿈치나 팔에 다음 변화가 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '팔꿈치 모양이 확연히 달라졌거나 빠진 채 제자리로 돌아오지 않은 느낌' },
+      { value: 'COLD_PALE_BLUE_HAND', label: '손이나 손목이 갑자기 매우 차갑거나 창백·푸르게 변함' },
+      { value: 'MAJOR_NEW_DISTAL_NEURO_CHANGE', label: '손·손가락 감각이나 힘이 갑자기 크게 떨어짐' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_02A',
+    variable: 'elbow_spontaneously_reduced_dislocation_screen',
+    input: 'single_choice',
+    question: '팔꿈치가 크게 틀어지거나 빠진 느낌이 들었다가 저절로 제자리로 돌아온 적이 있나요?',
+    required: true,
+    step: '상세 증상',
+    // E2: ELBOW_01과 무관하게 무조건 노출 -- 자연정복 탈구 fail-open 방지.
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_03',
+    variable: 'elbow_post_trauma_functional_loss',
+    input: 'single_choice',
+    question: '외상이나 갑작스러운 손상 이후, 그 팔로 짚거나 팔꿈치를 사용하기가 매우 어렵나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && IS_ELBOW_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_04',
+    variable: 'elbow_distal_biceps_concern',
+    input: 'single_choice',
+    question: '손상 이후, 팔꿈치를 굽히거나 손바닥을 위로 돌리는 힘이 갑자기 뚜렷하게 약해졌나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && IS_ELBOW_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_05',
+    variable: 'elbow_distal_triceps_concern',
+    input: 'single_choice',
+    question: '손상 이후, 팔꿈치를 스스로 끝까지 펴는 힘이 갑자기 뚜렷하게 약해졌나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && IS_ELBOW_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_06',
+    variable: 'elbow_true_locked_rom_block',
+    input: 'single_choice',
+    question: '단순히 아파서 펴거나 굽히기 어려운 것이 아니라, 팔꿈치가 실제로 걸린 느낌 때문에 끝까지 펴지지 않거나 굽혀지지 않나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_07',
+    variable: 'elbow_septic_joint_emergency_screen',
+    input: 'single_choice',
+    question: '팔꿈치가 붉거나 뜨겁게 붓고 심하게 아프면서, 열·오한 또는 몸 상태가 매우 좋지 않은 증상이 함께 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_08',
+    variable: 'elbow_posterior_bursal_screen',
+    input: 'single_choice',
+    question: '팔꿈치 뒤쪽 뾰족한 뼈 부위(점액낭)가 붓거나 빨갛게 변했다면, 다음 중 가장 가까운 것을 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'NONE', label: '해당 없음(붓거나 빨갛지 않음)' },
+      { value: 'LOCALIZED_STABLE', label: '그 부위만 국소적으로 붓거나 빨갛고, 열·오한 등 전신 증상은 없으며 빠르게 커지지도 않음' },
+      { value: 'SYSTEMIC_OR_RAPIDLY_SPREADING', label: '열·오한이나 몸 상태가 매우 안 좋음이 함께 있거나, 발적·부기가 몇 시간~하루 사이 눈에 띄게 커지고 있음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_09',
+    variable: 'elbow_ulnar_sensory_screen',
+    input: 'single_choice',
+    question: '4번째(약지)·5번째(새끼) 손가락에 저림이나 감각이상이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_09A',
+    variable: 'elbow_ulnar_motor_progression_screen',
+    input: 'multi_choice',
+    question: '위 손저림과 함께 다음에 해당하는 것이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && IS_ELBOW_09_SHOWN(r),
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_OR_WORSENING_HAND_WEAKNESS', label: '손의 힘이 새로 빠지거나 점점 심해짐(물건을 자주 떨어뜨리는 것 포함)' },
+      { value: 'VISIBLE_MUSCLE_WASTING', label: '손의 근육이 눈에 띄게 마르거나 홀쭉해짐' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_10',
+    variable: 'elbow_referred_proximal_screen',
+    input: 'multi_choice',
+    question: '이 팔꿈치 증상과 함께 목·어깨나 팔 전체에 새로 생긴 변화가 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_NECK_SHOULDER_SYMPTOM', label: '목이나 어깨에 새로 생긴 통증·뻣뻣함이 함께 있음' },
+      { value: 'MULTI_LEVEL_OR_BILATERAL_SENSORY_CHANGE', label: '양팔 또는 여러 부위에 동시에 저림·감각이상이 있음' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_11',
+    variable: 'elbow_cardiac_associated_screen',
+    input: 'multi_choice',
+    question: '이 팔꿈치·팔 증상과 함께 최근 다음 증상이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    // C2/§6: 움직임/자세와 무관함 같은 AND 조건 없음. Core SAFETY_01에서
+    // general_red가 이미 확인됐으면 중복 질문하지 않는다(SH05/KNEE_06B와
+    // 동일 원칙) -- elbow_safety_status 자체는 core_safety_already_urgent
+    // 경유로 이미 URGENT이므로 이 생략이 fail-open을 만들지 않는다.
+    showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && !computeFlags(r).general_red,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'CHEST_PAIN_OR_TIGHTNESS', label: '가슴 통증이나 답답함' },
+      { value: 'SHORTNESS_OF_BREATH', label: '숨이 차거나 숨쉬기 어려움' },
+      { value: 'COLD_SWEAT', label: '식은땀' },
+      { value: 'NAUSEA', label: '메스꺼움' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_12',
+    variable: 'elbow_pain_location_pattern',
+    input: 'single_choice',
+    question: '팔꿈치 통증이 주로 어느 부위에서 느껴지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'LATERAL', label: '바깥쪽' },
+      { value: 'MEDIAL', label: '안쪽' },
+      { value: 'POSTERIOR', label: '뒤쪽' },
+      { value: 'ANTERIOR', label: '앞쪽' },
+      { value: 'DIFFUSE', label: '전체적으로 퍼져 있음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_13',
+    variable: 'elbow_primary_side',
+    input: 'single_choice',
+    question: '팔꿈치는 어느 쪽이 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_14',
+    variable: 'elbow_load_activity_pattern',
+    input: 'multi_choice',
+    question: '어떤 동작에서 팔꿈치가 더 불편한가요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_ELBOW_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'GRIPPING', label: '물건을 쥘 때' },
+      { value: 'LIFTING_CARRYING', label: '들거나 나를 때' },
+      { value: 'PUSHING', label: '밀 때' },
+      { value: 'PULLING', label: '당길 때' },
+      { value: 'ROTATION', label: '손목을 돌릴 때(회내/회외)' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'ELBOW_15',
+    variable: 'elbow_rapid_post_trauma_swelling',
+    input: 'single_choice',
+    question: '손상 뒤 비교적 빠르게 팔꿈치가 눈에 띄게 부었나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && IS_ELBOW_01_SHOWN(r),
     options: [
       { value: 'YES', label: '네' },
       { value: 'NO', label: '아니요' },
@@ -2900,6 +3225,8 @@ export const CORE_QUESTIONS: Question[] = [
   ...SHOULDER_QUESTIONS,
   ...NECK_QUESTIONS,
   ...KNEE_QUESTIONS,
+  ...ARM_HAND_ROUTING_QUESTIONS,
+  ...ELBOW_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -3029,6 +3356,22 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   KNEE_02A: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
   KNEE_06B: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
   KNEE_07: (r) => computeKneeFlags(toKneeState(r, computeFlags(r).general_red)).knee_safety_status === 'URGENT_REVIEW',
+  /**
+   * ELBOW_V1 URGENT_REVIEW 즉시 인터럽트 -- Fable Integration Plan §4.5.
+   * URGENT은 ELBOW_02(변형/신경혈관)/ELBOW_02A(자연정복 탈구)/ELBOW_07(패혈성
+   * 관절염)/ELBOW_08(SYSTEMIC_OR_RAPIDLY_SPREADING 점액낭염)/ELBOW_11(심장
+   * 동반증상) 다섯 지점에서만 확정될 수 있으므로 이 다섯만 등록한다 --
+   * ELBOW_03/04/05/06/09/09A/10은 REVIEW/expedited/flag 계층이지 urgent
+   * interrupt source가 아니다(Tablet v0.1.1 §10). NECK_02/SH02/KNEE_02와
+   * 동일하게 개별 조건을 손으로 재구현하지 않고 computeElbowFlags 전체를
+   * 재계산해 URGENT_REVIEW인지만 확인한다 -- 엔진과의 drift를 구조적으로
+   * 차단한다.
+   */
+  ELBOW_02: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
+  ELBOW_02A: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
+  ELBOW_07: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
+  ELBOW_08: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
+  ELBOW_11: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -3144,7 +3487,9 @@ export const buildRoutingPayload = (r: Responses) => {
           : 'NECK'
         : IS_PRIMARY_KNEE(r)
           ? 'KNEE'
-          : null,
+          : IS_PRIMARY_ARM_HAND(r)
+            ? (IS_PRIMARY_ELBOW_SAFETY(r) ? 'ELBOW' : null)
+            : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -3311,6 +3656,15 @@ export const buildResponsePayload = (r: Responses) => ({
      * which is meaningless noise, not a real safety signal.
      */
     knee: IS_PRIMARY_KNEE(r) ? computeKneeFlags(toKneeState(r, computeFlags(r).general_red)) : null,
+    /**
+     * ELBOW_V1: same `IS_PRIMARY_ELBOW_SAFETY`-gated pattern as `knee`
+     * above -- NOT `IS_PRIMARY_ARM_HAND` alone. A WRIST_HAND-only patient
+     * is `IS_PRIMARY_ARM_HAND` but never saw ELBOW_01-15 (Fable plan §2),
+     * so computing computeElbowFlags on their all-null ELBOW_* state would
+     * fail closed to REVIEW_REQUIRED for every such patient -- meaningless
+     * noise, not a real safety signal, since they were never asked.
+     */
+    elbow: IS_PRIMARY_ELBOW_SAFETY(r) ? computeElbowFlags(toElbowState(r, computeFlags(r).general_red)) : null,
   },
   modules: {
     sleep: {
@@ -3418,6 +3772,26 @@ export const buildResponsePayload = (r: Responses) => ({
       giving_way_instability: r['KNEE_13'],
       patellar_instability_history: r['KNEE_14'],
       rapid_post_trauma_effusion: r['KNEE_15'],
+    },
+    elbow: {
+      region_discriminator: r['ELBOW_00'],
+      recent_trauma_or_sudden_load: r['ELBOW_01'],
+      deformity_neurovascular_screen: r['ELBOW_02'],
+      spontaneously_reduced_dislocation_screen: r['ELBOW_02A'],
+      post_trauma_functional_loss: r['ELBOW_03'],
+      distal_biceps_concern: r['ELBOW_04'],
+      distal_triceps_concern: r['ELBOW_05'],
+      true_locked_rom_block: r['ELBOW_06'],
+      septic_joint_emergency_screen: r['ELBOW_07'],
+      posterior_bursal_screen: r['ELBOW_08'],
+      ulnar_sensory_screen: r['ELBOW_09'],
+      ulnar_motor_progression_screen: r['ELBOW_09A'],
+      referred_proximal_screen: r['ELBOW_10'],
+      cardiac_associated_screen: r['ELBOW_11'],
+      pain_location_pattern: r['ELBOW_12'],
+      primary_side: r['ELBOW_13'],
+      load_activity_pattern: r['ELBOW_14'],
+      rapid_post_trauma_swelling: r['ELBOW_15'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

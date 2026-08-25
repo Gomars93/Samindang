@@ -66,3 +66,5 @@ tests/.shoulder-logic-bundle.mjs
 tests/.shoulder-adapter-bundle.mjs
 tests/.knee-logic-bundle.mjs
 tests/.knee-adapter-bundle.mjs
+tests/.elbow-logic-bundle.mjs
+tests/.elbow-adapter-bundle.mjs

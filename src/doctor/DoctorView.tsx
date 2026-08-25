@@ -37,6 +37,8 @@ import { computeShoulderFlags, shoulderSafetyLocked, type ShoulderComputedFields
 import { toShoulderStateFromDoctorPayload } from '../spec/shoulderAdapter'
 import { computeKneeFlags, kneeSafetyLocked, KNEE08_HIP_FRACTURE_OPTION, type KneeComputedFields } from '../spec/kneeLogic'
 import { toKneeStateFromDoctorPayload } from '../spec/kneeAdapter'
+import { computeElbowFlags, elbowSafetyLocked, type ElbowComputedFields } from '../spec/elbowLogic'
+import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -1011,6 +1013,143 @@ function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
   )
 }
 
+const ELBOW_SAFETY_STATUS_LABEL: Record<ElbowComputedFields['elbow_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+  URGENT_REVIEW: '긴급 확인 필요',
+}
+
+const ELBOW_EXAM_LABELS: Record<string, string> = {
+  ELBOW_AROM_PROM_FLEXION_EXTENSION: '능동/수동 관절가동범위 검사(굴곡-신전)',
+  FOREARM_PRONATION_SUPINATION: '전완 회내/회외 검사',
+  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
+  GRIP_FUNCTIONAL_LOAD: '악력/기능적 부하 검사',
+  DEFORMITY_BONY_TENDERNESS: '변형·골압통 확인',
+  DISTAL_NEUROVASCULAR_EXAM: '원위부 신경혈관 검사',
+  RADIOGRAPH_INDICATION_REVIEW: '방사선 촬영 필요성 검토',
+  HOOK_TEST: 'Hook test',
+  RESISTED_SUPINATION_FLEXION: '저항 회외/굴곡 검사',
+  TENDON_CONTOUR_GAP: '건 윤곽/결손 촉진',
+  ACTIVE_EXTENSION_AGAINST_RESISTANCE: '저항 능동 신전 검사',
+  EXTENSOR_LAG_PALPABLE_DEFECT: 'Extensor lag/촉지 가능한 결손 확인',
+  TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM: '실제 기계적 차단 vs 통증성 ROM 제한 감별',
+  EFFUSION_ASSESSMENT: '삼출(effusion) 평가',
+  ULNAR_SENSORY_DISTRIBUTION: '척골신경 감각분포 검사',
+  INTRINSIC_HAND_STRENGTH_COORDINATION: '수내재근 근력/협조 검사',
+}
+
+/**
+ * Fable Integration Plan §5.4 Suggested Exam -- minimal mechanical mapping
+ * only, CLOSED 문서(§8)가 직접 연결한 경우만 추천한다(KNEE/SHOULDER의
+ * suggested*ExamCodes와 동일한 성격 -- 정확한 트리거는 구현 시점에 확정해도
+ * 되는 non-clinical 세부). ELBOW_11(심장 연관통)은 clinician physical exam
+ * 항목이 아니라 응급 의뢰 신호이므로 여기 추천 목록에 넣지 않는다.
+ */
+function suggestedElbowExamCodes(
+  flags: ElbowComputedFields,
+  elbow: DoctorPayload['responses']['modules']['elbow'],
+): string[] {
+  const codes: string[] = []
+  if (flags.elbow_safety_status === 'CLEAR') {
+    codes.push('ELBOW_AROM_PROM_FLEXION_EXTENSION', 'FOREARM_PRONATION_SUPINATION', 'TARGET_FUNCTION_REPRODUCTION', 'GRIP_FUNCTIONAL_LOAD')
+  }
+
+  const deformityNvConcern =
+    (Array.isArray(elbow.deformity_neurovascular_screen) &&
+      elbow.deformity_neurovascular_screen.some(
+        (v) => v === 'GROSS_DEFORMITY_OR_STILL_OUT' || v === 'COLD_PALE_BLUE_HAND' || v === 'MAJOR_NEW_DISTAL_NEURO_CHANGE',
+      )) ||
+    elbow.spontaneously_reduced_dislocation_screen === 'YES'
+  if (deformityNvConcern) {
+    codes.push('DEFORMITY_BONY_TENDERNESS', 'DISTAL_NEUROVASCULAR_EXAM')
+  }
+
+  if (flags.fracture_imaging_consider) {
+    codes.push('RADIOGRAPH_INDICATION_REVIEW')
+  }
+
+  if (elbow.distal_biceps_concern === 'YES' || elbow.distal_biceps_concern === 'UNKNOWN') {
+    codes.push('HOOK_TEST', 'RESISTED_SUPINATION_FLEXION', 'TENDON_CONTOUR_GAP')
+  }
+
+  if (elbow.distal_triceps_concern === 'YES' || elbow.distal_triceps_concern === 'UNKNOWN') {
+    codes.push('ACTIVE_EXTENSION_AGAINST_RESISTANCE', 'EXTENSOR_LAG_PALPABLE_DEFECT')
+  }
+
+  if (elbow.true_locked_rom_block === 'YES' || elbow.true_locked_rom_block === 'UNKNOWN') {
+    codes.push('TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM', 'EFFUSION_ASSESSMENT')
+  }
+
+  if (flags.neuro_assessment_required) {
+    codes.push('ULNAR_SENSORY_DISTRIBUTION', 'INTRINSIC_HAND_STRENGTH_COORDINATION')
+  }
+
+  return [...new Set(codes)]
+}
+
+/**
+ * ELBOW_V1 안전 확인 패널. KneeSafetyPanel과 동일한 원칙 -- 인터럽트하지
+ * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
+ * coreSpec.ts 참고). ELBOW_V1은 다른 모듈 재사용이 없으므로 게이트는 단순히
+ * `safety_flags.elbow !== null`이다 -- WRIST_HAND-only 환자는 ELBOW_01-15를
+ * 본 적이 없어 이 값이 항상 null이므로, 이 패널이 그 환자에게 렌더되지
+ * 않는 것이 정확한 동작이다(F1류 게이트가 아니라 진짜 "이 모듈이 이
+ * 환자에게 적용되지 않음"이다 -- LBP/NECK/SHOULDER의 primary-tag-vs-
+ * population 어긋남 문제와는 다른 종류).
+ *
+ * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
+ * plan §3.2/§5.6) -- Wells류의 persistence schema가 아직 CLOSED되지
+ * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
+ */
+function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  if (payload.responses.safety_flags.elbow === null) return null
+
+  const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
+  const flags = computeElbowFlags(state)
+  const locked = elbowSafetyLocked(flags)
+  const examCodes = suggestedElbowExamCodes(flags, payload.responses.modules.elbow)
+
+  return (
+    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.elbow_safety_status.toLowerCase()}`}>
+      <span className="doctor__safetyGlance__title">안전 확인 — 팔꿈치(ELBOW)</span>
+      <div className="doctor__safetyGlance__items">
+        <span className="doctor__safetyChip">
+          <strong>안전 확인</strong> {ELBOW_SAFETY_STATUS_LABEL[flags.elbow_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신속 의뢰 고려</strong> {flags.expedited_referral_consider ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>골절·영상 평가 고려</strong> {flags.fracture_imaging_consider ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신경학적 평가 필요</strong> {flags.neuro_assessment_required ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>감염 평가 필요</strong> {flags.infection_assessment_required ? '예' : '아니요'}
+        </span>
+      </div>
+      {locked && (
+        <p className="doctor__derivedNote">
+          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
+        </p>
+      )}
+      {examCodes.length > 0 && (
+        <div className="doctor__lbpExam">
+          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
+          <ul>
+            {examCodes.map((c) => (
+              <li key={c}>{ELBOW_EXAM_LABELS[c] ?? c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* TODO(ELBOW_V2): exercise_recommender_contract는 LBP_V1/NECK_V1/SHOULDER_V1/KNEE_V1과
+          동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현(§12). */}
+    </div>
+  )
+}
+
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
   sleep: (sm) => sm.sleep.problems,
@@ -1247,6 +1386,38 @@ function primaryModuleFields(
               { qid: 'KNEE_13', value: m.knee.giving_way_instability },
               { qid: 'KNEE_14', value: m.knee.patellar_instability_history },
               { qid: 'KNEE_15', value: m.knee.rapid_post_trauma_effusion },
+            ]
+          : []),
+        /**
+         * ELBOW_V1: unlike LBP/NECK/SHOULDER/KNEE, `m.pain.primary_location
+         * === 'arm_hand'`는 `primaryModuleDetail === 'ELBOW'`와 항상
+         * 일치하지 않는다 -- `arm_hand`는 elbow/forearm/wrist/hand를 모두
+         * 포함하고, `ELBOW_00 === 'WRIST_HAND'`인 환자는 ELBOW_01-15를 본
+         * 적이 없어 `primaryModuleDetail`이 `null`이다(Fable plan §2.2).
+         * 그런 환자는 아래 필드가 전부 raw-null로 렌더되므로(질문 자체를
+         * 못 봤으니 응답이 없다) 안전하다 -- KNEE류의 F1 primary-tag 어긋남
+         * 문제와는 다른 종류이며, 별도 게이트가 필요하지 않다.
+         */
+        ...(m.pain.primary_location === 'arm_hand'
+          ? [
+              { qid: 'ELBOW_00', value: m.elbow.region_discriminator },
+              { qid: 'ELBOW_01', value: m.elbow.recent_trauma_or_sudden_load },
+              { qid: 'ELBOW_02', value: m.elbow.deformity_neurovascular_screen },
+              { qid: 'ELBOW_02A', value: m.elbow.spontaneously_reduced_dislocation_screen },
+              { qid: 'ELBOW_03', value: m.elbow.post_trauma_functional_loss },
+              { qid: 'ELBOW_04', value: m.elbow.distal_biceps_concern },
+              { qid: 'ELBOW_05', value: m.elbow.distal_triceps_concern },
+              { qid: 'ELBOW_06', value: m.elbow.true_locked_rom_block },
+              { qid: 'ELBOW_07', value: m.elbow.septic_joint_emergency_screen },
+              { qid: 'ELBOW_08', value: m.elbow.posterior_bursal_screen },
+              { qid: 'ELBOW_09', value: m.elbow.ulnar_sensory_screen },
+              { qid: 'ELBOW_09A', value: m.elbow.ulnar_motor_progression_screen },
+              { qid: 'ELBOW_10', value: m.elbow.referred_proximal_screen },
+              { qid: 'ELBOW_11', value: m.elbow.cardiac_associated_screen },
+              { qid: 'ELBOW_12', value: m.elbow.pain_location_pattern },
+              { qid: 'ELBOW_13', value: m.elbow.primary_side },
+              { qid: 'ELBOW_14', value: m.elbow.load_activity_pattern },
+              { qid: 'ELBOW_15', value: m.elbow.rapid_post_trauma_swelling },
             ]
           : []),
       ]
@@ -1779,6 +1950,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       />
 
       <KneeSafetyPanel payload={payload} />
+
+      <ElbowSafetyPanel payload={payload} />
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

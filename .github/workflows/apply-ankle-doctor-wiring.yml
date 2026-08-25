@@ -1,0 +1,51 @@
+name: Apply ANKLE_FOOT DoctorView wiring
+
+on:
+  push:
+    branches:
+      - clinical/ankle-foot-v1-review
+    paths:
+      - .github/workflows/apply-ankle-doctor-wiring.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: clinical/ankle-foot-v1-review
+          fetch-depth: 0
+      - name: Apply minimal DoctorView wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/doctor/DoctorView.tsx')
+          s = p.read_text()
+          import_anchor = "import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'\nimport './doctor.css'"
+          import_repl = "import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'\nimport { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'\nimport './doctor.css'"
+          render_anchor = "      <ElbowSafetyPanel payload={payload} />\n      <WristHandSafetyPanel payload={payload} />"
+          render_repl = "      <ElbowSafetyPanel payload={payload} />\n      <WristHandSafetyPanel payload={payload} />\n      <AnkleFootSafetyPanel payload={payload} />"
+          if "AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'" not in s:
+              if import_anchor not in s:
+                  raise SystemExit('DoctorView import anchor not found; refusing broad edit')
+              s = s.replace(import_anchor, import_repl, 1)
+          if '<AnkleFootSafetyPanel payload={payload} />' not in s:
+              if render_anchor not in s:
+                  raise SystemExit('DoctorView render anchor not found; refusing broad edit')
+              s = s.replace(render_anchor, render_repl, 1)
+          p.write_text(s)
+          PY
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- src/doctor/DoctorView.tsx; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/doctor/DoctorView.tsx
+          git commit -m "feat(clinical): wire ANKLE_FOOT safety panel into DoctorView"
+          git push origin HEAD:clinical/ankle-foot-v1-review

@@ -59,15 +59,15 @@ protection, ChatGPT 연동까지 마쳤고 지금은 ChatGPT의 첫 독립 검�
   관련 항목 반영, push 완료(`120a4ec`).
 - 로컬 큐(`run-next.js`)에 main/master 실행 거부 하드 가드 추가 완료, push
   완료(`7484a1f`), **PR #4**로 올라가 있음.
+- ChatGPT의 PR #1 2차 재검수 완료 (기준 `83cb26f`): "PR 설계/문서 내용 자체는
+  APPROVE, 다만 merge 조건(PR #3 CI 선행) 미충족으로 실제 merge는 HOLD".
+  PR #1 GitHub description도 이 시점에 최신화 완료.
 
 ## In Progress
-- (없음 — 다음 액션은 ChatGPT 재검수 요청, 아래 Next Recommended Action 참고)
+- (없음 — 다음 액션은 PR #3(CI) merge, 아래 Next Recommended Action 참고)
 
 ## Remaining
-- PR #1의 GitHub description(본문)이 최초 상태 그대로 stale하다 — 최신화 필요
-  (ChatGPT 재검수 지적사항 2번). 코드/문서 파일 내용과는 무관, PR 본문 텍스트만
-  해당.
-- **병합 순서(ChatGPT 재검수 지적사항 3번, 기존 권장 순서에서 변경됨):**
+- **병합 순서(ChatGPT 재검수 지적사항, 기존 권장 순서에서 변경됨):**
   1. **PR #3(CI)을 먼저 merge** — `main` branch protection이 이미
      `build-and-test`를 필수 status check로 요구하는데, CI workflow 자체가
      아직 PR #3에만 있고 main에는 없어서 PR #1에 check run이 0개 뜨는 상태.
@@ -144,14 +144,18 @@ GitHub PR #1 페이지에서 직접 확인한다.
   최신 tip 기준으로 build/test 재검증 필요.
 
 ## Next Recommended Action
-1. PR #1의 GitHub description을 현재 상태(파일 4개, +448 lines, ChatGPT 접근/
-   재검수 완료, Known risks에 Public repo 항목 등)로 최신화한다.
-2. **PR #3(CI)을 먼저 merge**한다.
-3. PR #1 브랜치를 main과 동기화해 CI(`build-and-test`)가 실제로 통과하는 것을
+PR #1의 description 최신화는 완료됐다 (2차 재검수 시점 기준). 남은 것은:
+
+1. **PR #3(CI)을 먼저 merge**한다. (실제 merge 여부는 사용자(Product Owner)
+   결정 사항.)
+2. PR #1 브랜치를 main과 동기화해 CI(`build-and-test`)가 실제로 통과하는 것을
    확인한다.
-4. PR #1을 merge한다.
-5. PR #4(큐 main-guard) → PR #2(NECK/LBP, merge 전 `f8a4892` 기준 재검증)
+3. PR #1을 merge한다.
+4. PR #4(큐 main-guard) → PR #2(NECK/LBP, merge 전 `f8a4892` 기준 재검증)
    순서로 진행한다.
+
+(참고: PR 본문/HANDOFF에 파일 diff의 정확한 line 수를 하드코딩하지 않는다 —
+커밋이 늘어날 때마다 stale해지므로 "파일 N개, docs only" 식으로만 서술한다.)
 
 (기존에 "PR #1 → PR #3 → PR #4 → PR #2" 순서로 적혀 있었으나, ChatGPT
 재검수에서 CI 부재 문제가 지적되어 PR #3을 최우선으로 변경함.)

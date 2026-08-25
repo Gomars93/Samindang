@@ -39,6 +39,8 @@ import { computeKneeFlags, kneeSafetyLocked, KNEE08_HIP_FRACTURE_OPTION, type Kn
 import { toKneeStateFromDoctorPayload } from '../spec/kneeAdapter'
 import { computeElbowFlags, elbowSafetyLocked, type ElbowComputedFields } from '../spec/elbowLogic'
 import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
+import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
+import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -1150,6 +1152,165 @@ function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
   )
 }
 
+const WRIST_HAND_SAFETY_STATUS_LABEL: Record<WristHandComputedFields['wrist_hand_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+  URGENT_REVIEW: '긴급 확인 필요',
+}
+
+const WRIST_HAND_EXAM_LABELS: Record<string, string> = {
+  WRIST_HAND_AROM_PROM: '손목/손가락 능동·수동 관절가동범위 검사',
+  GRIP_PINCH_FUNCTIONAL: '악력/집는 힘 기능 평가',
+  DEFORMITY_BONY_TENDERNESS: '변형·골압통 확인',
+  DISTAL_NEUROVASCULAR_EXAM: '원위부 신경혈관 검사',
+  RADIOGRAPH_INDICATION_REVIEW: '방사선 촬영 필요성 검토',
+  SCAPHOID_SNUFFBOX_TENDERNESS: '주상골/스너프박스 압통 평가',
+  FLEXOR_EXTENSOR_TENDON_INTEGRITY: '굴곡/신전건 기능 검사',
+  WOUND_ERYTHEMA_SPREAD_ASSESSMENT: '상처/발적 확산 평가',
+  FLEXOR_SHEATH_PALPATION: 'Flexor sheath(굴건막) 촉진',
+  MEDIAN_ULNAR_SENSORY_DISTRIBUTION: '정중/척골신경 감각분포 검사',
+  THENAR_INTRINSIC_STRENGTH: '무지대립근/수내재근 근력 검사',
+}
+
+const WRIST_HAND_XRAY_CONTEXT_LABEL: Record<string, string> = {
+  NOT_DONE: '아직 X-ray를 찍지 않음(환자 보고)',
+  DONE_TOLD_NORMAL: 'X-ray 촬영, 정상이라고 들었음(환자 보고)',
+  DONE_TOLD_ABNORMAL: 'X-ray 촬영, 이상이 있다고 들었음(환자 보고)',
+  DONE_RESULT_UNKNOWN: 'X-ray 촬영, 결과를 모름(환자 보고)',
+  UNKNOWN: 'X-ray 여부 잘 모르겠다고 답변(환자 보고)',
+}
+
+/**
+ * Fable Integration Plan §11 Suggested Exam -- minimal mechanical mapping
+ * only, CLOSED 문서가 직접 연결한 경우만 추천한다(ELBOW/KNEE/SHOULDER의
+ * suggested*ExamCodes와 동일한 성격 -- 정확한 트리거는 구현 시점에 확정해도
+ * 되는 non-clinical 세부).
+ */
+function suggestedWristHandExamCodes(
+  flags: WristHandComputedFields,
+  wristHand: DoctorPayload['responses']['modules']['wrist_hand'],
+): string[] {
+  const codes: string[] = []
+  if (flags.wrist_hand_safety_status === 'CLEAR') {
+    codes.push('WRIST_HAND_AROM_PROM', 'GRIP_PINCH_FUNCTIONAL')
+  }
+
+  const deformityNvConcern =
+    Array.isArray(wristHand.deformity_neurovascular_open_injury_screen) &&
+    wristHand.deformity_neurovascular_open_injury_screen.some(
+      (v) =>
+        v === 'GROSS_DEFORMITY_OR_STILL_OUT' ||
+        v === 'COLD_PALE_BLUE_DIGITS' ||
+        v === 'MAJOR_NEW_DISTAL_NEURO_CHANGE' ||
+        v === 'UNCONTROLLED_HEAVY_BLEEDING' ||
+        v === 'SEVERE_OPEN_WOUND_WITH_DEEP_EXPOSURE',
+    )
+  if (deformityNvConcern) {
+    codes.push('DEFORMITY_BONY_TENDERNESS', 'DISTAL_NEUROVASCULAR_EXAM')
+  }
+
+  if (flags.fracture_imaging_consider) {
+    codes.push('RADIOGRAPH_INDICATION_REVIEW', 'SCAPHOID_SNUFFBOX_TENDERNESS')
+  }
+
+  if (flags.tendon_injury_assessment_required) {
+    codes.push('FLEXOR_EXTENSOR_TENDON_INTEGRITY')
+  }
+
+  if (flags.infection_assessment_required) {
+    codes.push('WOUND_ERYTHEMA_SPREAD_ASSESSMENT', 'FLEXOR_SHEATH_PALPATION')
+  }
+
+  if (flags.neuro_assessment_required) {
+    codes.push('MEDIAN_ULNAR_SENSORY_DISTRIBUTION', 'THENAR_INTRINSIC_STRENGTH')
+  }
+
+  return [...new Set(codes)]
+}
+
+/**
+ * WRIST_HAND_V1 안전 확인 패널. ElbowSafetyPanel과 동일한 원칙 -- 인터럽트하지
+ * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
+ * coreSpec.ts 참고). 게이트는 `safety_flags.wrist_hand !== null`이다 --
+ * ELBOW-only 환자는 WH_01-14를 본 적이 없어 이 값이 항상 null이므로, 이
+ * 패널이 그 환자에게 렌더되지 않는 것이 정확한 동작이다. FOREARM 환자는
+ * ElbowSafetyPanel과 이 패널이 둘 다 렌더된다(의도된 overlap, Fable plan
+ * §11).
+ *
+ * `region_discriminator`(ELBOW_00)는 `modules.elbow`에서만 읽는다 --
+ * `modules.wrist_hand`에 중복 저장하지 않는다(같은 공유 router 값이므로).
+ *
+ * WH_04A(X-ray 이력)는 참고 정보로만 표시하고, 안전 판정에 영향을 주지
+ * 않는다는 문구를 항상 함께 노출한다(Tablet §3/Fable plan §9 -- adapter가
+ * 이 필드를 아예 읽지 않으므로 이 UI 문구는 실제 계산과 구조적으로
+ * 일치한다).
+ *
+ * stable sensory-only(WH_08 concrete + WH_08A=[NONE])는 별도 UI 없이
+ * neuro_assessment_required/expedited_referral_consider가 false인 정상
+ * 결과로만 나타난다.
+ *
+ * 이번 iteration에서는 clinician-entered objective field가 필요 없다
+ * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
+ */
+function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  if (payload.responses.safety_flags.wrist_hand === null) return null
+
+  const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)
+  const flags = computeWristHandFlags(state)
+  const locked = wristHandSafetyLocked(flags)
+  const wristHand = payload.responses.modules.wrist_hand
+  const examCodes = suggestedWristHandExamCodes(flags, wristHand)
+  const xrayContext = typeof wristHand.prior_xray_context === 'string' ? wristHand.prior_xray_context : null
+
+  return (
+    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.wrist_hand_safety_status.toLowerCase()}`}>
+      <span className="doctor__safetyGlance__title">안전 확인 — 손목/손(WRIST/HAND)</span>
+      <div className="doctor__safetyGlance__items">
+        <span className="doctor__safetyChip">
+          <strong>안전 확인</strong> {WRIST_HAND_SAFETY_STATUS_LABEL[flags.wrist_hand_safety_status]}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신속 의뢰 고려</strong> {flags.expedited_referral_consider ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>골절·영상 평가 고려</strong> {flags.fracture_imaging_consider ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>힘줄 손상 평가 필요</strong> {flags.tendon_injury_assessment_required ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>감염 평가 필요</strong> {flags.infection_assessment_required ? '예' : '아니요'}
+        </span>
+        <span className="doctor__safetyChip">
+          <strong>신경학적 평가 필요</strong> {flags.neuro_assessment_required ? '예' : '아니요'}
+        </span>
+      </div>
+      {locked && (
+        <p className="doctor__derivedNote">
+          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
+        </p>
+      )}
+      {xrayContext && (
+        <p className="doctor__derivedNote">
+          {WRIST_HAND_XRAY_CONTEXT_LABEL[xrayContext] ?? xrayContext} — 안전 판정에는 영향을 주지 않는 환자 보고 정보입니다.
+        </p>
+      )}
+      {examCodes.length > 0 && (
+        <div className="doctor__lbpExam">
+          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
+          <ul>
+            {examCodes.map((c) => (
+              <li key={c}>{WRIST_HAND_EXAM_LABELS[c] ?? c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* TODO(WRIST_HAND_V2): exercise_recommender_contract는 LBP_V1/NECK_V1/SHOULDER_V1/KNEE_V1/
+          ELBOW_V1과 동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현. */}
+    </div>
+  )
+}
+
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
   sleep: (sm) => sm.sleep.problems,
@@ -1418,6 +1579,38 @@ function primaryModuleFields(
               { qid: 'ELBOW_13', value: m.elbow.primary_side },
               { qid: 'ELBOW_14', value: m.elbow.load_activity_pattern },
               { qid: 'ELBOW_15', value: m.elbow.rapid_post_trauma_swelling },
+            ]
+          : []),
+        /**
+         * WRIST_HAND_V1: same `m.pain.primary_location === 'arm_hand'` gate
+         * as ELBOW above (NOT `primaryModuleDetail`) -- for the same
+         * reason: an ELBOW-only patient (`ELBOW_00 === 'ELBOW'`) shares
+         * this `arm_hand` tag but never saw WH_01-14, so those fields
+         * render safely as raw-null. `region_discriminator` is
+         * deliberately NOT repeated here -- it already appears once in the
+         * ELBOW block above (`ELBOW_00`), reading the same shared router
+         * value from `m.elbow.region_discriminator` (Fable plan §11).
+         */
+        ...(m.pain.primary_location === 'arm_hand'
+          ? [
+              { qid: 'WH_01', value: m.wrist_hand.recent_trauma },
+              { qid: 'WH_02', value: m.wrist_hand.deformity_neurovascular_open_injury_screen },
+              { qid: 'WH_03', value: m.wrist_hand.post_trauma_major_function_loss },
+              { qid: 'WH_04', value: m.wrist_hand.post_trauma_radial_thumb_base_pain },
+              { qid: 'WH_04A', value: m.wrist_hand.prior_xray_context },
+              { qid: 'WH_05', value: m.wrist_hand.post_trauma_fixed_motion_block },
+              { qid: 'WH_06', value: m.wrist_hand.wound_exposure },
+              { qid: 'WH_06A', value: m.wrist_hand.post_wound_active_motion_loss },
+              { qid: 'WH_07', value: m.wrist_hand.infection_broad_screen },
+              { qid: 'WH_07A', value: m.wrist_hand.flexor_sheath_followup },
+              { qid: 'WH_08', value: m.wrist_hand.distal_sensory_pattern },
+              { qid: 'WH_08A', value: m.wrist_hand.motor_progression_screen },
+              { qid: 'WH_09', value: m.wrist_hand.pain_location_pattern },
+              { qid: 'WH_10', value: m.wrist_hand.load_activity_pattern },
+              { qid: 'WH_11', value: m.wrist_hand.trigger_catching_pattern },
+              { qid: 'WH_12', value: m.wrist_hand.localized_mass_pattern },
+              { qid: 'WH_13', value: m.wrist_hand.referred_systemic_pattern },
+              { qid: 'WH_14', value: m.wrist_hand.primary_side },
             ]
           : []),
       ]
@@ -1952,6 +2145,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       <KneeSafetyPanel payload={payload} />
 
       <ElbowSafetyPanel payload={payload} />
+      <WristHandSafetyPanel payload={payload} />
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

@@ -25,6 +25,8 @@ import { toKneeState } from './kneeAdapter'
 import { computeKneeFlags } from './kneeLogic'
 import { toElbowState } from './elbowAdapter'
 import { computeElbowFlags } from './elbowLogic'
+import { toWristHandState } from './wristHandAdapter'
+import { computeWristHandFlags, isWh06WoundShown, isWh07aShown } from './wristHandLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1078,6 +1080,21 @@ export const IS_PRIMARY_ARM_HAND = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PA
 
 export const IS_PRIMARY_ELBOW_SAFETY = (r: Responses) =>
   IS_PRIMARY_ARM_HAND(r) && ['ELBOW', 'FOREARM', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN'].includes(r['ELBOW_00'] as string)
+
+/**
+ * WRIST_HAND_V1 entry gate -- same shared router as `IS_PRIMARY_ELBOW_
+ * SAFETY` above (Opus W1 Option B, `WRIST_HAND_V1_Fable_Integration_Plan_
+ * v0.1.md` §2). Excludes only `ELBOW`. `FOREARM`/`DIFFUSE_OR_MULTIPLE`/
+ * `UNKNOWN` deliberately overlap with `IS_PRIMARY_ELBOW_SAFETY` -- a
+ * `FOREARM`-tagged patient is `IS_PRIMARY_ELBOW_SAFETY === true` AND
+ * `IS_PRIMARY_WRIST_HAND_SAFETY === true` simultaneously, to avoid a
+ * fail-open boundary gap for distal radius/wrist trauma perceived as
+ * forearm pain (Opus v0.1 W1 rationale). `ELBOW_00` itself never feeds
+ * `wristHandLogic.ts`'s safety computation -- see wristHandAdapter.ts's
+ * top comment.
+ */
+export const IS_PRIMARY_WRIST_HAND_SAFETY = (r: Responses) =>
+  IS_PRIMARY_ARM_HAND(r) && ['FOREARM', 'WRIST_HAND', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN'].includes(r['ELBOW_00'] as string)
 
 /**
  * ---------- NECK_V1 (목 통증) — primary concern === pain && PAIN_01 ===
@@ -2155,6 +2172,333 @@ const ELBOW_QUESTIONS: Question[] = [
   },
 ]
 
+/**
+ * ---------- WRIST_HAND_V1 (손목/손 통증) — `IS_PRIMARY_WRIST_HAND_SAFETY`로
+ * 게이트. 문항 문구/값/branching은 WRIST_HAND_V1_Tablet_Question_Set_v0.1.md
+ * 본문 + v0.1.1 delta(§6 infection_assessment_required WH_07A `/empty`,
+ * wristHandLogic.ts에서만 반영, 문항 자체는 변경 없음) 원문 그대로이며
+ * 임의로 수정하지 않는다(CLINICAL DECISIONS CLOSED,
+ * WRIST_HAND_V1_Opus_Final_Verification_v1.0_CLOSED.md).
+ *
+ * 새 router는 만들지 않는다 -- `ELBOW_00`/`ARM_HAND_ROUTING_QUESTIONS`를
+ * 그대로 재사용한다(Fable plan §2). `IS_PRIMARY_WRIST_HAND_SAFETY`는
+ * `IS_PRIMARY_ELBOW_SAFETY`와 `FOREARM`/`DIFFUSE_OR_MULTIPLE`/`UNKNOWN`에서
+ * 의도적으로 겹친다 -- 이는 이 저장소 최초의 "두 protected safety 모듈이
+ * 동시에 노출되는" 케이스다.
+ */
+const IS_WH_01_SHOWN = (r: Responses) => r['WH_01'] === 'YES' || r['WH_01'] === 'UNKNOWN'
+
+/**
+ * WH_08A show_when: WH_08 != NONE(Tablet §3)의 실질적 구현. WH_08이 아직
+ * 미응답(undefined)이면 이 후속 질문을 조기 노출하지 않는다 --
+ * IS_ELBOW_09_SHOWN이 명시적 허용값 목록을 쓰는 것과 동일한 이유(스텝형
+ * UI에서 부모 질문 답 전에 후속 질문이 먼저 뜨는 것을 막는다). 임상
+ * threshold 변경이 아니라 순수 구현 디테일이다(Fable plan §4.3).
+ */
+const IS_WH_08_SHOWN = (r: Responses) =>
+  r['WH_08'] === 'MEDIAN_DISTRIBUTION' ||
+  r['WH_08'] === 'ULNAR_DISTRIBUTION' ||
+  r['WH_08'] === 'MULTIPLE_OR_BOTH' ||
+  r['WH_08'] === 'UNKNOWN'
+
+const WRIST_HAND_QUESTIONS: Question[] = [
+  {
+    id: 'WH_01',
+    variable: 'wrist_hand_recent_trauma',
+    input: 'single_choice',
+    question: '최근 3개월 이내 넘어지면서 손을 짚었거나, 손목·손·손가락을 부딪히거나 비틀거나 눌렸거나, 갑자기 강한 힘이 가해진 뒤 증상이 시작되거나 뚜렷하게 심해졌나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_02',
+    variable: 'wrist_hand_deformity_neurovascular_open_injury_screen',
+    input: 'multi_choice',
+    question: '지금 손목·손·손가락에 다음 변화가 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '손목·손·손가락 모양이 확연히 달라졌거나 관절이 빠진 채 제자리로 돌아오지 않은 느낌' },
+      { value: 'COLD_PALE_BLUE_DIGITS', label: '손이나 손가락이 갑자기 매우 차갑거나 창백·푸르게 변함' },
+      { value: 'MAJOR_NEW_DISTAL_NEURO_CHANGE', label: '손·손가락 감각이나 힘이 갑자기 크게 떨어짐' },
+      { value: 'UNCONTROLLED_HEAVY_BLEEDING', label: '눌러도 잘 멈추지 않는 심한 출혈이 있음' },
+      { value: 'SEVERE_OPEN_WOUND_WITH_DEEP_EXPOSURE', label: '상처 사이로 뼈·힘줄·관절처럼 깊은 조직이 드러나 보임' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_03',
+    variable: 'wrist_hand_post_trauma_major_function_loss',
+    input: 'single_choice',
+    question: '손상 이후 그 손으로 물건을 쥐거나 손목·손가락을 사용하는 것이 매우 어렵나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && IS_WH_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_04',
+    variable: 'wrist_hand_post_trauma_radial_thumb_base_pain',
+    input: 'single_choice',
+    question: '손상 뒤 손목의 엄지손가락 쪽이나 엄지손가락 뿌리 가까운 부위가 계속 아픈가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && IS_WH_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_04A',
+    variable: 'wrist_hand_prior_xray_context',
+    input: 'single_choice',
+    question: '이 손상 때문에 X-ray를 찍어본 적이 있나요?',
+    // Fable plan §9: 순수 non-gating context. wristHandLogic.ts/wristHandAdapter.ts
+    // 어디에도 이 질문의 답이 들어가지 않는다 -- 어떤 답도 WH_03/WH_04의
+    // REVIEW나 fracture_imaging_consider를 끄지 못한다는 것을 타입 레벨로
+    // 보장한다.
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && IS_WH_01_SHOWN(r),
+    options: [
+      { value: 'NOT_DONE', label: '아직 찍지 않았어요' },
+      { value: 'DONE_TOLD_NORMAL', label: '찍었고 특별한 이상이 없다고 들었어요' },
+      { value: 'DONE_TOLD_ABNORMAL', label: '찍었고 이상이 있다고 들었어요' },
+      { value: 'DONE_RESULT_UNKNOWN', label: '찍었지만 결과를 잘 모르겠어요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_05',
+    variable: 'wrist_hand_post_trauma_fixed_motion_block',
+    input: 'single_choice',
+    question: '손상 이후 단순히 아파서가 아니라, 손목이나 손가락 관절이 실제로 걸린 채 풀리지 않아 움직임이 막혀 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && IS_WH_01_SHOWN(r),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_06',
+    variable: 'wrist_hand_wound_exposure',
+    input: 'multi_choice',
+    question: '최근 손목·손·손가락에 다음과 같은 상처가 있었나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'CUT_OR_PENETRATING_WOUND', label: '베이거나 찔리거나 뾰족한 물체에 관통된 상처' },
+      { value: 'HUMAN_OR_ANIMAL_BITE', label: '사람 또는 동물에게 물린 상처(주먹을 치다가 상대 치아에 손등이 찢어진 경우 포함)' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_06A',
+    variable: 'wrist_hand_post_wound_active_motion_loss',
+    input: 'single_choice',
+    question: '그 상처 이후 손가락이나 엄지손가락을 스스로 굽히거나 펴는 동작이 갑자기 제대로 되지 않나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && isWh06WoundShown(r['WH_06'] as string[] | undefined),
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_07',
+    variable: 'wrist_hand_infection_broad_screen',
+    input: 'single_choice',
+    question: '손목·손·손가락의 붓기나 발적이 있다면, 지금 상태는 다음 중 어디에 가장 가깝나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'NONE', label: '붓거나 빨갛게 변한 부위가 없음' },
+      { value: 'LOCALIZED_STABLE', label: '국소적으로 붓거나 빨갛지만 열·오한 등 전신 증상은 없고 빠르게 번지지도 않음' },
+      { value: 'FINGER_LOCALIZED_SWOLLEN_PAINFUL', label: '한 손가락이 특히 많이 붓고 아프거나 움직이기 매우 불편함' },
+      { value: 'SYSTEMIC_OR_RAPIDLY_SPREADING', label: '열·오한이나 몸 상태가 매우 안 좋음이 함께 있거나, 발적·부기가 몇 시간~하루 사이 눈에 띄게 번지거나 커지고 있음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_07A',
+    variable: 'wrist_hand_flexor_sheath_followup',
+    input: 'multi_choice',
+    question: '붓고 아픈 손가락에 다음과 같은 특징이 있나요?',
+    required: true,
+    step: '상세 증상',
+    // Fable plan §10: 노출 조건(showIf, 이 자리)과 독립 urgent trigger 여부
+    // (wristHandLogic.ts의 wh07aStatus)를 혼동하지 않는다. WH_07 값과
+    // 무관하게 isWh07aShown 하나로만 노출을 결정한다.
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && isWh07aShown(r['WH_06'] as string[] | undefined, r['WH_07'] as string | undefined),
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'SEVERE_PAIN_WHEN_STRAIGHTENING', label: '손가락을 펴려고 하면 통증이 매우 심함' },
+      { value: 'TENDS_TO_STAY_FLEXED', label: '아픈 손가락을 자꾸 굽힌 채로 두게 됨' },
+      { value: 'DIFFUSE_FUSIFORM_SWELLING', label: '손가락 전체가 소시지처럼 두루 붓는 느낌' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_08',
+    variable: 'wrist_hand_distal_sensory_pattern',
+    input: 'single_choice',
+    question: '손가락 저림이나 감각이상이 있다면 어느 쪽이 가장 가깝나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'MEDIAN_DISTRIBUTION', label: '엄지·검지·중지 쪽이 주로 저리거나 감각이 이상함' },
+      { value: 'ULNAR_DISTRIBUTION', label: '약지·새끼손가락 쪽이 주로 저리거나 감각이 이상함' },
+      { value: 'MULTIPLE_OR_BOTH', label: '여러 손가락 또는 두 분포가 함께 불편함' },
+      { value: 'NONE', label: '손가락 저림이나 감각이상은 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_08A',
+    variable: 'wrist_hand_motor_progression_screen',
+    input: 'multi_choice',
+    question: '손저림이나 감각이상과 함께 다음 변화가 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && IS_WH_08_SHOWN(r),
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_OR_WORSENING_GRIP_PINCH_WEAKNESS', label: '손의 쥐는 힘이나 집는 힘이 새로 약해지거나 점점 심해짐' },
+      { value: 'DROPPING_OBJECTS', label: '예전보다 물건을 자주 떨어뜨림' },
+      { value: 'VISIBLE_THENAR_OR_INTRINSIC_WASTING', label: '엄지두덩이나 손가락 사이 근육이 눈에 띄게 마르거나 홀쭉해짐' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_09',
+    variable: 'wrist_hand_pain_location_pattern',
+    input: 'single_choice',
+    question: '손목·손 통증은 주로 어디에서 느껴지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'RADIAL_WRIST_THUMB_SIDE', label: '손목의 엄지손가락 쪽' },
+      { value: 'ULNAR_WRIST_SMALL_FINGER_SIDE', label: '손목의 새끼손가락 쪽' },
+      { value: 'THUMB_BASE', label: '엄지손가락 뿌리 부위' },
+      { value: 'PALM', label: '손바닥' },
+      { value: 'DORSAL_HAND_WRIST', label: '손등 또는 손목 뒤쪽' },
+      { value: 'FINGER', label: '손가락' },
+      { value: 'DIFFUSE', label: '여러 부위 또는 전체적으로' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_10',
+    variable: 'wrist_hand_load_activity_pattern',
+    input: 'multi_choice',
+    question: '어떤 동작에서 손목·손이 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'GRIPPING', label: '물건을 쥘 때' },
+      { value: 'PINCHING', label: '엄지와 손가락으로 집을 때' },
+      { value: 'THUMB_MOTION', label: '엄지손가락을 움직일 때' },
+      { value: 'WRIST_ROTATION', label: '손목·전완을 돌릴 때' },
+      { value: 'WEIGHT_BEARING_THROUGH_HAND', label: '손으로 바닥이나 의자를 짚을 때' },
+      { value: 'REPETITIVE_HAND_USE', label: '손을 반복해서 오래 사용할 때' },
+      { value: 'NONE', label: '특별히 악화되는 동작 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_11',
+    variable: 'wrist_hand_trigger_catching_pattern',
+    input: 'single_choice',
+    question: '손가락이나 엄지가 굽혔다 펼 때 딸깍거리거나 걸렸다가 다시 풀리는 일이 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_12',
+    variable: 'wrist_hand_localized_mass_pattern',
+    input: 'single_choice',
+    question: '손목이나 손에 동그랗게 만져지거나 눈에 보이는 혹이 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'YES_STABLE', label: '있고 크기가 크게 변하지 않음' },
+      { value: 'YES_CHANGES_SIZE', label: '있고 크기가 커졌다 작아졌다 함' },
+      { value: 'NO', label: '없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_13',
+    variable: 'wrist_hand_referred_systemic_pattern',
+    input: 'multi_choice',
+    question: '손목·손 증상과 함께 다음 변화가 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'NEW_NECK_SHOULDER_SYMPTOM', label: '목이나 어깨에 새로 생긴 통증·뻣뻣함이 함께 있음' },
+      { value: 'BILATERAL_OR_MULTIPLE_SENSORY', label: '양손 또는 여러 부위에 동시에 저림·감각이상이 있음' },
+      { value: 'MULTIPLE_SWOLLEN_JOINTS', label: '손가락 여러 관절 또는 다른 관절도 함께 붓고 아픔' },
+      { value: 'PROLONGED_MORNING_STIFFNESS', label: '여러 관절이 아침에 오래 뻣뻣한 편임' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'WH_14',
+    variable: 'wrist_hand_primary_side',
+    input: 'single_choice',
+    question: '어느 쪽 손목·손이 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
 /* ---------- Fatigue 상세 Module (primary concern === fatigue 인 경우만) ---------- */
 
 const IS_PRIMARY_FATIGUE = (r: Responses) => primaryConcernKey(r) === 'fatigue'
@@ -3227,6 +3571,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...KNEE_QUESTIONS,
   ...ARM_HAND_ROUTING_QUESTIONS,
   ...ELBOW_QUESTIONS,
+  ...WRIST_HAND_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -3372,6 +3717,19 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   ELBOW_07: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
   ELBOW_08: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
   ELBOW_11: (r) => computeElbowFlags(toElbowState(r, computeFlags(r).general_red)).elbow_safety_status === 'URGENT_REVIEW',
+  /**
+   * WRIST_HAND_V1 URGENT_REVIEW 즉시 인터럽트 -- Fable Integration Plan §11.
+   * URGENT는 WH_02(변형/신경혈관/개방손상)/WH_07(광범위 감염 게이트)/WH_07A
+   * (flexor-sheath 독립 trigger) 세 지점에서만 확정될 수 있으므로 이 셋만
+   * 등록한다 -- WH_01/03/04/05/06/06A/08/08A는 REVIEW/flag 계층이지
+   * urgent interrupt source가 아니다(Tablet v0.1 §5.1). NECK_02/SH02/
+   * KNEE_02/ELBOW_02와 동일하게 개별 조건을 손으로 재구현하지 않고
+   * computeWristHandFlags 전체를 재계산해 URGENT_REVIEW인지만 확인한다 --
+   * 엔진과의 drift를 구조적으로 차단한다.
+   */
+  WH_02: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
+  WH_07: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
+  WH_07A: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -3488,7 +3846,26 @@ export const buildRoutingPayload = (r: Responses) => {
         : IS_PRIMARY_KNEE(r)
           ? 'KNEE'
           : IS_PRIMARY_ARM_HAND(r)
-            ? (IS_PRIMARY_ELBOW_SAFETY(r) ? 'ELBOW' : null)
+            ? /**
+               * WRIST_HAND_V1: `IS_PRIMARY_ELBOW_SAFETY` is checked before
+               * `IS_PRIMARY_WRIST_HAND_SAFETY` -- for `FOREARM`/
+               * `DIFFUSE_OR_MULTIPLE`/`UNKNOWN`, both are simultaneously
+               * true (Fable plan §2), and this order preserves ELBOW_V1's
+               * existing FROZEN behavior for those three values exactly
+               * (label stays `'ELBOW'`, zero regression on any existing
+               * ELBOW fixture/test). `'WRIST_HAND'` is a pure addition for
+               * the previously-null `ELBOW_00 === 'WRIST_HAND'` case. This
+               * ordering is display/Suggested-Exam-priority only --
+               * `safety_flags.elbow`/`safety_flags.wrist_hand` are each
+               * computed independently below via their own
+               * `IS_PRIMARY_*_SAFETY` gate regardless of this label
+               * (both non-null simultaneously for a FOREARM patient).
+               */
+              IS_PRIMARY_ELBOW_SAFETY(r)
+              ? 'ELBOW'
+              : IS_PRIMARY_WRIST_HAND_SAFETY(r)
+                ? 'WRIST_HAND'
+                : null
             : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
@@ -3665,6 +4042,18 @@ export const buildResponsePayload = (r: Responses) => ({
      * noise, not a real safety signal, since they were never asked.
      */
     elbow: IS_PRIMARY_ELBOW_SAFETY(r) ? computeElbowFlags(toElbowState(r, computeFlags(r).general_red)) : null,
+    /**
+     * WRIST_HAND_V1: same `IS_PRIMARY_WRIST_HAND_SAFETY`-gated pattern as
+     * `elbow` above -- NOT `IS_PRIMARY_ARM_HAND` alone. An ELBOW-only
+     * patient (`ELBOW_00 === 'ELBOW'`) is `IS_PRIMARY_ARM_HAND` but never
+     * saw WH_01-14 (Fable plan §2), so computing computeWristHandFlags on
+     * their all-null WH_* state would fail closed to REVIEW_REQUIRED for
+     * every such patient -- meaningless noise, not a real safety signal.
+     * For a `FOREARM` patient both `elbow` and `wrist_hand` are non-null
+     * simultaneously -- the deliberate overlap documented at
+     * `IS_PRIMARY_WRIST_HAND_SAFETY`'s definition.
+     */
+    wrist_hand: IS_PRIMARY_WRIST_HAND_SAFETY(r) ? computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)) : null,
   },
   modules: {
     sleep: {
@@ -3792,6 +4181,34 @@ export const buildResponsePayload = (r: Responses) => ({
       primary_side: r['ELBOW_13'],
       load_activity_pattern: r['ELBOW_14'],
       rapid_post_trauma_swelling: r['ELBOW_15'],
+    },
+    /**
+     * WRIST_HAND_V1 raw block. `region_discriminator` (`ELBOW_00`) is
+     * deliberately NOT duplicated here -- it already lives in `modules.
+     * elbow.region_discriminator` above (the same shared router value),
+     * and Doctor View reads it from there for both panels (Fable plan
+     * §11). `prior_xray_context` (WH_04A) is preserved here for display
+     * only -- it never enters `WristHandState`/safety computation.
+     */
+    wrist_hand: {
+      recent_trauma: r['WH_01'],
+      deformity_neurovascular_open_injury_screen: r['WH_02'],
+      post_trauma_major_function_loss: r['WH_03'],
+      post_trauma_radial_thumb_base_pain: r['WH_04'],
+      prior_xray_context: r['WH_04A'],
+      post_trauma_fixed_motion_block: r['WH_05'],
+      wound_exposure: r['WH_06'],
+      post_wound_active_motion_loss: r['WH_06A'],
+      infection_broad_screen: r['WH_07'],
+      flexor_sheath_followup: r['WH_07A'],
+      distal_sensory_pattern: r['WH_08'],
+      motor_progression_screen: r['WH_08A'],
+      pain_location_pattern: r['WH_09'],
+      load_activity_pattern: r['WH_10'],
+      trigger_catching_pattern: r['WH_11'],
+      localized_mass_pattern: r['WH_12'],
+      referred_systemic_pattern: r['WH_13'],
+      primary_side: r['WH_14'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

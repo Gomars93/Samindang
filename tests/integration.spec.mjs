@@ -1082,7 +1082,7 @@ const H1_MODULES = [
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05, KNEE_02, KNEE_02A, KNEE_06B, KNEE_07, ELBOW_02, ELBOW_02A, ELBOW_07, ELBOW_08, ELBOW_11',
+    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05, KNEE_02, KNEE_02A, KNEE_06B, KNEE_07, ELBOW_02, ELBOW_02A, ELBOW_07, ELBOW_08, ELBOW_11, WH_02, WH_07, WH_07A',
     JSON.stringify(keys) ===
       JSON.stringify([
         'BOWEL_03',
@@ -1105,6 +1105,9 @@ const H1_MODULES = [
         'SH02',
         'SH04',
         'SH05',
+        'WH_02',
+        'WH_07',
+        'WH_07A',
       ]),
   )
 }
@@ -2195,12 +2198,15 @@ function elbowBaseResponses() {
   assert("O-E3: primary_module_detail === 'ELBOW' for elbow-safety-exposed patient", routing.primary_module_detail === 'ELBOW')
 }
 {
-  // WRIST_HAND-only: safety_flags.elbow must be null and primary_module_detail must be null (no module exists yet for that region).
+  // WRIST_HAND-only: safety_flags.elbow must be null (ELBOW_01-15 never shown). As of
+  // WRIST_HAND_V1, safety_flags.wrist_hand is now non-null and primary_module_detail is
+  // 'WRIST_HAND' -- updated from the pre-WRIST_HAND_V1 "null, no module exists yet" behavior
+  // (see P-E4/P-E5 below for the WRIST_HAND_V1-side assertions of this same case).
   const r = set(elbowBaseResponses(), { ELBOW_00: 'WRIST_HAND' })
   const payload = buildResponsePayload(r)
   assert('O-E4 CRITICAL: WRIST_HAND-only patient -> safety_flags.elbow === null', payload.safety_flags.elbow === null)
   const routing = buildRoutingPayload(r)
-  assert("O-E5 CRITICAL: WRIST_HAND-only patient -> primary_module_detail === null (not 'ELBOW')", routing.primary_module_detail === null)
+  assert("O-E5 CRITICAL: WRIST_HAND-only patient -> primary_module_detail === 'WRIST_HAND' (not 'ELBOW')", routing.primary_module_detail === 'WRIST_HAND')
 }
 {
   const r = neckShoulderBaseResponses()
@@ -2216,6 +2222,265 @@ function elbowBaseResponses() {
   const r = kneeBaseResponses()
   const routing = buildRoutingPayload(r)
   assert("O-E8: existing KNEE routing unchanged by ELBOW addition -- primary_module_detail still 'KNEE'", routing.primary_module_detail === 'KNEE')
+}
+
+/* =========================================================================
+ * P. WRIST_HAND_V1 -- question visibility incl. routing (Fable plan §15),
+ * staff interrupt, payload/routing incl. the FOREARM double-exposure case
+ * (the first case across all six modules where two protected-safety
+ * modules are simultaneously non-null for one patient). WRIST_HAND_V1
+ * reuses the existing ELBOW_00/arm_hand_region_discriminator shared router
+ * -- no new router is introduced -- so its exclusive-boundary behavior
+ * (ELBOW-only excludes WRIST_HAND safety) gets the same scrutiny O gave
+ * the WRIST_HAND-exclusion side of the same router.
+ * ========================================================================= */
+
+function wristHandBaseResponses() {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'arm_hand',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    ELBOW_00: 'WRIST_HAND',
+    WH_01: 'NO',
+    WH_02: ['NONE'],
+    WH_06: ['NONE'],
+    WH_07: 'NONE',
+    WH_08: 'NONE',
+  })
+}
+
+// --- P-C: question visibility (routing incl.) ------------------------------
+
+{
+  const r = neckShoulderBaseResponses()
+  const visible = visibleIds(r)
+  assert('P-C1: non-arm_hand pain patient sees no WH_* questions', ![...visible].some((id) => id.startsWith('WH_')))
+}
+{
+  const r = set(elbowBaseResponses(), { ELBOW_00: 'ELBOW' })
+  const visible = visibleIds(r)
+  assert(
+    'P-C2 CRITICAL: ELBOW_00=ELBOW excludes ALL WRIST_HAND protected safety screens',
+    !['WH_01', 'WH_02', 'WH_06', 'WH_07', 'WH_08'].some((id) => visible.has(id)),
+  )
+}
+{
+  const r = wristHandBaseResponses()
+  const visible = visibleIds(r)
+  assert(
+    'P-C3: ELBOW_00=WRIST_HAND exposes all protected WRIST_HAND safety screens',
+    ['WH_01', 'WH_02', 'WH_06', 'WH_07', 'WH_08'].every((id) => visible.has(id)),
+  )
+}
+{
+  // Most important routing case in this module: FOREARM must expose BOTH ELBOW and WRIST_HAND safety.
+  const r = set(wristHandBaseResponses(), {
+    ELBOW_00: 'FOREARM',
+    ELBOW_01: 'NO',
+    ELBOW_02: ['NONE'],
+    ELBOW_02A: 'NO',
+    ELBOW_06: 'NO',
+    ELBOW_07: 'NO',
+    ELBOW_08: 'NONE',
+    ELBOW_09: 'NO',
+    ELBOW_10: ['NONE'],
+    ELBOW_11: ['NONE'],
+  })
+  const visible = visibleIds(r)
+  assert('P-C4 CRITICAL: ELBOW_00=FOREARM exposes ELBOW protected safety', ['ELBOW_01', 'ELBOW_02', 'ELBOW_07', 'ELBOW_08'].every((id) => visible.has(id)))
+  assert('P-C4 CRITICAL: ELBOW_00=FOREARM ALSO exposes WRIST_HAND protected safety (deliberate overlap)', ['WH_01', 'WH_02', 'WH_06', 'WH_07', 'WH_08'].every((id) => visible.has(id)))
+}
+{
+  const rDiffuse = set(wristHandBaseResponses(), { ELBOW_00: 'DIFFUSE_OR_MULTIPLE' })
+  const rUnknown = set(wristHandBaseResponses(), { ELBOW_00: 'UNKNOWN' })
+  for (const [label, r] of [['DIFFUSE_OR_MULTIPLE', rDiffuse], ['UNKNOWN', rUnknown]]) {
+    assert(`P-C5: ELBOW_00=${label} also exposes WRIST_HAND protected safety`, visibleIds(r).has('WH_02'))
+  }
+}
+{
+  const rYes = set(wristHandBaseResponses(), { WH_01: 'YES' })
+  const rUnknown = set(wristHandBaseResponses(), { WH_01: 'UNKNOWN' })
+  const rNo = set(wristHandBaseResponses(), { WH_01: 'NO' })
+  assert('P-C6: WH_03/04/04A/05 appear when WH_01=YES', ['WH_03', 'WH_04', 'WH_04A', 'WH_05'].every((id) => visibleIds(rYes).has(id)))
+  assert('P-C6: WH_03/04/04A/05 appear when WH_01=UNKNOWN', ['WH_03', 'WH_04', 'WH_04A', 'WH_05'].every((id) => visibleIds(rUnknown).has(id)))
+  assert('P-C6: WH_03/04/04A/05 do NOT appear when WH_01=NO', !['WH_03', 'WH_04', 'WH_04A', 'WH_05'].some((id) => visibleIds(rNo).has(id)))
+}
+{
+  const rCut = set(wristHandBaseResponses(), { WH_06: ['CUT_OR_PENETRATING_WOUND'] })
+  const rBite = set(wristHandBaseResponses(), { WH_06: ['HUMAN_OR_ANIMAL_BITE'] })
+  const rUnknown = set(wristHandBaseResponses(), { WH_06: ['UNKNOWN'] })
+  const rNone = wristHandBaseResponses()
+  assert('P-C7: WH_06A appears when WH_06 contains CUT_OR_PENETRATING_WOUND', visibleIds(rCut).has('WH_06A'))
+  assert('P-C7: WH_06A appears when WH_06 contains HUMAN_OR_ANIMAL_BITE', visibleIds(rBite).has('WH_06A'))
+  assert('P-C7: WH_06A appears when WH_06 contains UNKNOWN', visibleIds(rUnknown).has('WH_06A'))
+  assert('P-C7: WH_06A does NOT appear when WH_06=[NONE]', !visibleIds(rNone).has('WH_06A'))
+}
+{
+  const rWound = set(wristHandBaseResponses(), { WH_06: ['CUT_OR_PENETRATING_WOUND'] })
+  const rFinger = set(wristHandBaseResponses(), { WH_07: 'FINGER_LOCALIZED_SWOLLEN_PAINFUL' })
+  const rUnknown = set(wristHandBaseResponses(), { WH_07: 'UNKNOWN' })
+  const rNeither = wristHandBaseResponses()
+  assert('P-C8: WH_07A appears via WH_06 wound route', visibleIds(rWound).has('WH_07A'))
+  assert('P-C8: WH_07A appears via WH_07=FINGER_LOCALIZED_SWOLLEN_PAINFUL route', visibleIds(rFinger).has('WH_07A'))
+  assert('P-C8: WH_07A appears via WH_07=UNKNOWN route', visibleIds(rUnknown).has('WH_07A'))
+  assert('P-C8: WH_07A does NOT appear when neither route is satisfied', !visibleIds(rNeither).has('WH_07A'))
+}
+{
+  const rMedian = set(wristHandBaseResponses(), { WH_08: 'MEDIAN_DISTRIBUTION' })
+  const rUlnar = set(wristHandBaseResponses(), { WH_08: 'ULNAR_DISTRIBUTION' })
+  const rUnknown = set(wristHandBaseResponses(), { WH_08: 'UNKNOWN' })
+  const rNone = wristHandBaseResponses()
+  assert('P-C9: WH_08A appears when WH_08=MEDIAN_DISTRIBUTION', visibleIds(rMedian).has('WH_08A'))
+  assert('P-C9: WH_08A appears when WH_08=ULNAR_DISTRIBUTION', visibleIds(rUlnar).has('WH_08A'))
+  assert('P-C9: WH_08A appears when WH_08=UNKNOWN', visibleIds(rUnknown).has('WH_08A'))
+  assert('P-C9: WH_08A does NOT appear when WH_08=NONE', !visibleIds(rNone).has('WH_08A'))
+  assert('P-C9: WH_08A does NOT appear when WH_08 unanswered', !visibleIds(set(wristHandBaseResponses(), { WH_08: null })).has('WH_08A'))
+}
+{
+  const q01 = ALL_QUESTIONS.find((q) => q.id === 'WH_01')
+  const q02 = ALL_QUESTIONS.find((q) => q.id === 'WH_02')
+  const q04a = ALL_QUESTIONS.find((q) => q.id === 'WH_04A')
+  const q07a = ALL_QUESTIONS.find((q) => q.id === 'WH_07A')
+  const q08a = ALL_QUESTIONS.find((q) => q.id === 'WH_08A')
+  const q09 = ALL_QUESTIONS.find((q) => q.id === 'WH_09')
+  assert('P-C10: WH_01 is required: true', q01.required === true)
+  assert('P-C10: WH_02 is required: true', q02.required === true)
+  assert('P-C10: WH_04A is required: false (optional non-gating context)', q04a.required === false)
+  assert('P-C10: WH_07A is required: true (fail-closed once shown)', q07a.required === true)
+  assert('P-C10: WH_08A is required: true (fail-closed once shown)', q08a.required === true)
+  assert('P-C10: WH_09 is required: false (optional phenotype)', q09.required === false)
+}
+{
+  // stale prune: WH_* answers must be cleared once PAIN_01 switches away from 'arm_hand'.
+  const r = set(wristHandBaseResponses(), { WH_01: 'YES', WH_03: 'YES', WH_04: 'NO', WH_08: 'MEDIAN_DISTRIBUTION', WH_08A: ['NONE'] })
+  const switched = set(r, { PAIN_01: 'knee' })
+  assert(
+    'P-C11: switching PAIN_01 away from arm_hand prunes all WH_* responses to null (ELBOW_00 too, shared router)',
+    ['ELBOW_00', 'WH_01', 'WH_02', 'WH_03', 'WH_04', 'WH_08', 'WH_08A'].every((id) => switched[id] === null),
+  )
+}
+{
+  // switching the region discriminator away from WRIST_HAND to ELBOW must prune the now-hidden WH_* answers too.
+  const r = set(wristHandBaseResponses(), { WH_01: 'YES', WH_04: 'YES' })
+  const switched = set(r, {
+    ELBOW_00: 'ELBOW',
+    ELBOW_01: 'NO',
+    ELBOW_02: ['NONE'],
+    ELBOW_02A: 'NO',
+    ELBOW_06: 'NO',
+    ELBOW_07: 'NO',
+    ELBOW_08: 'NONE',
+    ELBOW_09: 'NO',
+    ELBOW_10: ['NONE'],
+    ELBOW_11: ['NONE'],
+  })
+  assert('P-C12: switching ELBOW_00 to ELBOW prunes the now-hidden WH_01/04 responses', switched['WH_01'] === null && switched['WH_04'] === null)
+}
+
+// --- P-D: staff interrupt ---------------------------------------------------
+
+{
+  const r = set(wristHandBaseResponses(), { WH_02: ['UNCONTROLLED_HEAVY_BLEEDING'] })
+  assert('P-D1: WH_02 UNCONTROLLED_HEAVY_BLEEDING -> StaffCheck', STAFF_CHECK_TRIGGERS.WH_02(r) === true)
+}
+{
+  const r = set(wristHandBaseResponses(), { WH_02: ['SEVERE_OPEN_WOUND_WITH_DEEP_EXPOSURE'] })
+  assert('P-D2: WH_02 SEVERE_OPEN_WOUND_WITH_DEEP_EXPOSURE -> StaffCheck', STAFF_CHECK_TRIGGERS.WH_02(r) === true)
+}
+{
+  const r = set(wristHandBaseResponses(), { WH_07: 'SYSTEMIC_OR_RAPIDLY_SPREADING' })
+  assert('P-D3: WH_07 SYSTEMIC_OR_RAPIDLY_SPREADING -> StaffCheck', STAFF_CHECK_TRIGGERS.WH_07(r) === true)
+}
+{
+  const r = set(wristHandBaseResponses(), { WH_07: 'LOCALIZED_STABLE' })
+  assert('P-D3b: WH_07 LOCALIZED_STABLE does NOT StaffCheck (review-tier, not urgent)', STAFF_CHECK_TRIGGERS.WH_07(r) === false)
+}
+{
+  const r = set(wristHandBaseResponses(), { WH_06: ['CUT_OR_PENETRATING_WOUND'], WH_07A: ['SEVERE_PAIN_WHEN_STRAIGHTENING'] })
+  assert('P-D4 CRITICAL: WH_07A concrete positive -> StaffCheck even when WH_07=NONE', STAFF_CHECK_TRIGGERS.WH_07A(r) === true)
+}
+{
+  const r = set(wristHandBaseResponses(), { WH_06: ['HUMAN_OR_ANIMAL_BITE'] })
+  assert('P-D5: WH_06 bite alone (REVIEW-tier) does NOT StaffCheck via WH_02/WH_07/WH_07A', STAFF_CHECK_TRIGGERS.WH_02(r) === false && STAFF_CHECK_TRIGGERS.WH_07(r) === false)
+}
+{
+  // WH_01/03/04/05/06/06A/08/08A positive must NOT interrupt -- REVIEW/expedited/flag only, no urgent trigger registered for them.
+  assert(
+    'P-D6: WH_01/03/04/05/06/06A/08/08A have no StaffCheck trigger registered',
+    !('WH_01' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_03' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_04' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_05' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_06' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_06A' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_08' in STAFF_CHECK_TRIGGERS) &&
+      !('WH_08A' in STAFF_CHECK_TRIGGERS),
+  )
+}
+{
+  const r = wristHandBaseResponses() // fully clean
+  assert(
+    'P-D7: WH_02/WH_07/WH_07A all stay false on a fully-clean wrist_hand baseline',
+    STAFF_CHECK_TRIGGERS.WH_02(r) === false && STAFF_CHECK_TRIGGERS.WH_07(r) === false && STAFF_CHECK_TRIGGERS.WH_07A(r) === false,
+  )
+}
+
+// --- P-E: payload/routing ---------------------------------------------------
+
+{
+  const r = wristHandBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('P-E1: wrist_hand patient -> safety_flags.wrist_hand !== null', payload.safety_flags.wrist_hand !== null)
+  assert('P-E2: all WH responses land under modules.wrist_hand', payload.modules.wrist_hand.recent_trauma === 'NO')
+  assert('P-E2b: modules.wrist_hand.prior_xray_context preserves WH_04A raw value', set(r, { WH_01: 'YES', WH_04A: 'DONE_TOLD_NORMAL' }).WH_04A === 'DONE_TOLD_NORMAL' && buildResponsePayload(set(r, { WH_01: 'YES', WH_04A: 'DONE_TOLD_NORMAL' })).modules.wrist_hand.prior_xray_context === 'DONE_TOLD_NORMAL')
+  const routing = buildRoutingPayload(r)
+  assert("P-E3: primary_module_detail === 'WRIST_HAND' for wrist_hand-safety-exposed patient", routing.primary_module_detail === 'WRIST_HAND')
+}
+{
+  // ELBOW-only: safety_flags.wrist_hand must be null, and ELBOW's own existing behavior (E3 in O above) stays 'ELBOW'.
+  const r = set(elbowBaseResponses(), { ELBOW_00: 'ELBOW' })
+  const payload = buildResponsePayload(r)
+  assert('P-E4 CRITICAL: ELBOW-only patient -> safety_flags.wrist_hand === null', payload.safety_flags.wrist_hand === null)
+  const routing = buildRoutingPayload(r)
+  assert("P-E5 CRITICAL: ELBOW-only patient -> primary_module_detail still 'ELBOW' (unchanged, zero regression)", routing.primary_module_detail === 'ELBOW')
+}
+{
+  // FOREARM: both safety_flags.elbow and safety_flags.wrist_hand must be non-null simultaneously -- the deliberate overlap.
+  const r = set(wristHandBaseResponses(), {
+    ELBOW_00: 'FOREARM',
+    ELBOW_01: 'NO',
+    ELBOW_02: ['NONE'],
+    ELBOW_02A: 'NO',
+    ELBOW_06: 'NO',
+    ELBOW_07: 'NO',
+    ELBOW_08: 'NONE',
+    ELBOW_09: 'NO',
+    ELBOW_10: ['NONE'],
+    ELBOW_11: ['NONE'],
+  })
+  const payload = buildResponsePayload(r)
+  assert('P-E6 CRITICAL: FOREARM patient -> safety_flags.elbow !== null AND safety_flags.wrist_hand !== null simultaneously', payload.safety_flags.elbow !== null && payload.safety_flags.wrist_hand !== null)
+  const routing = buildRoutingPayload(r)
+  assert("P-E7: FOREARM patient -> primary_module_detail === 'ELBOW' (priority order, display-only label)", routing.primary_module_detail === 'ELBOW')
+}
+{
+  const r = neckShoulderBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('P-E8: non-arm_hand (neck_shoulder) patient -> safety_flags.wrist_hand === null', payload.safety_flags.wrist_hand === null)
+  const routing = buildRoutingPayload(r)
+  assert(
+    "P-E9: existing NECK/SHOULDER routing unchanged by WRIST_HAND addition -- primary_module_detail still 'SHOULDER'",
+    routing.primary_module_detail === 'SHOULDER',
+  )
+}
+{
+  const r = kneeBaseResponses()
+  const routing = buildRoutingPayload(r)
+  assert("P-E10: existing KNEE routing unchanged by WRIST_HAND addition -- primary_module_detail still 'KNEE'", routing.primary_module_detail === 'KNEE')
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

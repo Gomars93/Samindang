@@ -86,3 +86,9 @@ tests/.ankle-foot-fixtures-bundle.mjs
 # esbuild bundles used by tests/hip.spec.mjs and tests/hip-malformed.spec.mjs (regenerated, not source)
 tests/.hip-logic-bundle.mjs
 tests/.hip-adapter-bundle.mjs
+
+# esbuild bundles used by tests/patient-ux.spec.mjs (regenerated, not source)
+tests/.patient-error-boundary-bundle.cjs
+tests/.staff-check-screen-bundle.cjs
+tests/.single-choice-bundle.cjs
+tests/.multi-choice-bundle.cjs

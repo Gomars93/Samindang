@@ -458,6 +458,147 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2i. TMJ_V1: 14 fixtures covering T1-T8. Payload-level checks for all
+ *     14; HTML render checks for the clinically critical subset (urgent
+ *     tiers, GCA age modifier, dental/infection distinction, and the
+ *     HEADACHE_CRANIAL exclusion -- T2's "no invented TMJ panel"
+ *     guarantee).
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 안전 확인 완료)')
+  assert('TMJ clear fixture: primary_module_detail is TMJ', f.payload.routing.primary_module_detail === 'TMJ')
+  assert('TMJ clear fixture: tmj_safety_status is CLEAR', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'CLEAR')
+  assert('TMJ clear fixture: does NOT trigger requires_staff_check', f.payload.flags.requires_staff_check === false)
+
+  const html = renderDoctorView('턱관절 통증 주호소 (TMJ, 안전 확인 완료)')
+  assert('TMJ clear fixture: renders 안전 확인 — 턱관절/얼굴 panel title', html.includes('안전 확인 — 턱관절/얼굴'))
+  assert('TMJ clear fixture: status chip shows CLEAR label (안전)', /<strong>안전 확인<\/strong> (?:<!-- -->)?안전(?:<!-- -->)?<\/span>/.test(html))
+  assert('TMJ clear fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('TMJ clear fixture: HFJ_00 question text renders', html.includes('머리·얼굴·턱 중 지금 가장 불편한 부위나 양상은 어디에 가깝나요'))
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 안정형 기계적 표현형/무통 클릭)')
+  assert('T7 CRITICAL: stable mechanical phenotype (protected negative) is CLEAR', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'CLEAR')
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 현재 고정된 잠김)')
+  assert('TMJ current-lock fixture: tmj_safety_status is REVIEW_REQUIRED', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED')
+  assert('TMJ current-lock fixture: trauma_or_dislocation_assessment_required is true', f.payload.responses.safety_flags.tmj?.trauma_or_dislocation_assessment_required === true)
+  assert('TMJ current-lock fixture: does NOT trigger requires_staff_check (review only)', f.payload.flags.requires_staff_check === false)
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 외상 후 교합 변화)')
+  assert('T3 CRITICAL: trauma+bite-change alone is REVIEW, not URGENT', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED')
+  assert('T3: trauma_or_dislocation_assessment_required is true', f.payload.responses.safety_flags.tmj?.trauma_or_dislocation_assessment_required === true)
+
+  const html = renderDoctorView('턱관절 통증 주호소 (TMJ, 외상 후 교합 변화)')
+  assert('TMJ bite-change fixture: renders 외상·탈구 평가 필요 chip with 예', /외상·탈구 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 턱 고정 비정상 위치 응급)')
+  assert('T3 CRITICAL: jaw stuck open is URGENT_REVIEW (standalone)', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'URGENT_REVIEW')
+  // Note: module-level tmj_safety_status URGENT is independent of Core's
+  // requires_staff_check (SAFETY_01/GI_03/BOWEL_03 only, see computeFlags in
+  // coreSpec.ts) -- the real-time interrupt for a module urgent fires via
+  // STAFF_CHECK_TRIGGERS.TMJ_01(r) at answer-time (verified in
+  // tests/integration.spec.mjs Q-D1), not via a persistent submitted-payload
+  // flag. Same pattern already established for ELBOW/KNEE/WRIST_HAND.
+
+  const html = renderDoctorView('턱관절 통증 주호소 (TMJ, 턱 고정 비정상 위치 응급)')
+  assert('TMJ jaw-stuck-open fixture: status chip shows 긴급 확인 필요', /<strong>안전 확인<\/strong> (?:<!-- -->)?긴급 확인 필요/.test(html))
+  assert('TMJ jaw-stuck-open fixture: routine-treatment lock note renders', html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'))
+}
+
+{
+  const f = byName('치아·구강 통증 주호소 (TMJ, 국소 치아 감염 의심)')
+  assert('T4 CRITICAL: localized dental concern is REVIEW, not URGENT', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED')
+  assert('T4: dental_or_oral_assessment_required is true', f.payload.responses.safety_flags.tmj?.dental_or_oral_assessment_required === true)
+  assert('T4: infection_assessment_required is true', f.payload.responses.safety_flags.tmj?.infection_assessment_required === true)
+
+  const html = renderDoctorView('치아·구강 통증 주호소 (TMJ, 국소 치아 감염 의심)')
+  assert('TMJ localized-dental fixture: renders 치과·구강 평가 필요 chip with 예', /치과·구강 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+  assert('TMJ localized-dental fixture: renders 감염 평가 필요 chip with 예', /감염 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'TMJ localized-dental fixture: no patient-facing abscess diagnosis language',
+    !/농양\s*진단|농양(?:으로|이라고)?\s*확진|확률\s*\d/.test(html),
+  )
+}
+
+{
+  const f = byName('치아·구강 통증 주호소 (TMJ, 확산성 치과 응급)')
+  assert('T4 CRITICAL: spreading dental/oral emergency is URGENT_REVIEW', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'URGENT_REVIEW')
+  assert('T4: infection_assessment_required is true', f.payload.responses.safety_flags.tmj?.infection_assessment_required === true)
+}
+
+{
+  const f = byName('얼굴 감각 이상 주호소 (TMJ, 국소 신경학적 변화)')
+  assert('T6: facial numbness is REVIEW, not URGENT', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED')
+  assert('T6: neuro_assessment_required is true', f.payload.responses.safety_flags.tmj?.neuro_assessment_required === true)
+  assert('T6: expedited_referral_consider is true', f.payload.responses.safety_flags.tmj?.expedited_referral_consider === true)
+
+  const html = renderDoctorView('얼굴 감각 이상 주호소 (TMJ, 국소 신경학적 변화)')
+  assert('TMJ facial-numbness fixture: renders 신경학적 평가 필요 chip with 예', /신경학적 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+  assert('TMJ facial-numbness fixture: renders 신속 의뢰 고려 chip with 예', /신속 의뢰 고려<\/strong> (?:<!-- -->)?예/.test(html))
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 50세 이상 GCA 의심 패턴)')
+  assert('T5 CRITICAL: age>=50 GCA-compatible pattern alone is REVIEW, not URGENT', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED')
+  assert('T5: gca_assessment_required is true', f.payload.responses.safety_flags.tmj?.gca_assessment_required === true)
+  assert('T5: expedited_referral_consider is true', f.payload.responses.safety_flags.tmj?.expedited_referral_consider === true)
+
+  const html = renderDoctorView('턱관절 통증 주호소 (TMJ, 50세 이상 GCA 의심 패턴)')
+  assert('TMJ GCA fixture: renders 측두동맥염(GCA) 평가 필요 chip with 예', /측두동맥염\(GCA\) 평가 필요<\/strong> (?:<!-- -->)?예/.test(html))
+  assert(
+    'TMJ GCA fixture: no patient-facing GCA diagnosis language',
+    !/측두동맥염\s*진단|측두동맥염(?:으로|이라고)?\s*확진(?!이\s*아니)|확률\s*\d/.test(html),
+  )
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, GCA 의심+시야 증상 응급)')
+  assert('T5 CRITICAL: GCA-compatible pattern + visual disturbance, age>=50 -> URGENT_REVIEW', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'URGENT_REVIEW')
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, 나이 미상 GCA 의심 패턴)')
+  assert(
+    'T5 CRITICAL: age unknown + GCA-compatible pattern fails closed to REVIEW (not negative, not URGENT)',
+    f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert('T5: age-unknown gca_assessment_required is still true (not treated as negative)', f.payload.responses.safety_flags.tmj?.gca_assessment_required === true)
+}
+
+{
+  const f = byName('두통 주호소 (TMJ population, HEADACHE_CRANIAL 제외)')
+  assert('T2 CRITICAL: HEADACHE_CRANIAL -> safety_flags.tmj === null', f.payload.responses.safety_flags.tmj === null)
+  assert("T2 CRITICAL: HEADACHE_CRANIAL -> primary_module_detail === null (not 'TMJ', no invented HEADACHE_V1 threshold)", f.payload.routing.primary_module_detail === null)
+
+  const html = renderDoctorView('두통 주호소 (TMJ population, HEADACHE_CRANIAL 제외)')
+  assert('T2 CRITICAL: HEADACHE_CRANIAL fixture does NOT render any TMJ safety panel', !html.includes('안전 확인 — 턱관절/얼굴'))
+  assert('T2: HFJ_00 question text still renders (routing question itself is always shown)', html.includes('머리·얼굴·턱 중 지금 가장 불편한 부위나 양상은 어디에 가깝나요'))
+}
+
+{
+  const f = byName('머리·얼굴·턱 통증 주호소 (TMJ, HFJ 부위 미상 라우팅)')
+  assert('T1: HFJ_00=UNKNOWN still exposes TMJ protected safety -- primary_module_detail is TMJ', f.payload.routing.primary_module_detail === 'TMJ')
+  assert('T1: HFJ_00=UNKNOWN, protected negative -> CLEAR', f.payload.responses.safety_flags.tmj?.tmj_safety_status === 'CLEAR')
+}
+
+{
+  const f = byName('턱관절 통증 주호소 (TMJ, malformed 응답 회귀)')
+  assert(
+    'T8 CRITICAL: malformed TMJ_01 (NONE mixed with an out-of-allowlist value) fails closed, never CLEAR',
+    f.payload.responses.safety_flags.tmj?.tmj_safety_status !== 'CLEAR',
+  )
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

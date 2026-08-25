@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
 import { IdleWarningModal } from './components/IdleWarningModal'
+import { PatientErrorBoundary } from './components/PatientErrorBoundary'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
@@ -51,7 +52,24 @@ const IDLE_MINUTES = Number(import.meta.env.VITE_SAMINDANG_IDLE_MINUTES) || 10
 const IDLE_MS = IDLE_MINUTES * 60_000
 const IDLE_WARNING_BEFORE_MS = 60_000
 
+/**
+ * 최상위 export. AppContent 트리 어딘가에서 처리되지 않은 렌더링 예외가
+ * 나도(흰 화면 대신) PatientErrorBoundary가 안내 화면을 보여주고, "처음
+ * 화면으로"를 누르면 `resetKey`를 바꿔 AppContent를 통째로 새 key로
+ * remount한다 -- 무엇이 깨졌는지와 무관하게 모든 state(useState 초기값)가
+ * 확실히 새로 시작되는, 가장 안전한 복구 방법이다(깨진 트리 내부의 개별
+ * setState 핸들러에 의존하지 않는다).
+ */
 export default function App() {
+  const [resetKey, setResetKey] = useState(0)
+  return (
+    <PatientErrorBoundary onReset={() => setResetKey((k) => k + 1)}>
+      <AppContent key={resetKey} />
+    </PatientErrorBoundary>
+  )
+}
+
+function AppContent() {
   const [isDoctorView, setIsDoctorView] = useState(
     () => typeof window !== 'undefined' && window.location.hash.startsWith('#doctor'),
   )
@@ -404,6 +422,7 @@ export default function App() {
         steps={STEPS}
         currentStep={stepInfo.step}
         stepProgress={stepInfo.progress}
+        questionId={current.id}
         canGoBack={visited.length > 0}
         onBack={goBack}
         onHelp={() => {

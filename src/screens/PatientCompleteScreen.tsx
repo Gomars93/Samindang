@@ -88,7 +88,7 @@ export function PatientCompleteScreen({
         <main className="shell__main complete">
           <div className="complete__inner">
             <h1 className="title">아직 전송되지 않았습니다</h1>
-            <p className="notice">{errorReason ?? '알 수 없는 오류가 발생했습니다.'}</p>
+            <p className="notice" role="alert">{errorReason ?? '알 수 없는 오류가 발생했습니다.'}</p>
             <p className="helper helper--strong">
               직원에게 태블릿 화면을 보여주세요.
             </p>

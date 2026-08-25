@@ -27,6 +27,8 @@ import { toElbowState } from './elbowAdapter'
 import { computeElbowFlags } from './elbowLogic'
 import { toWristHandState } from './wristHandAdapter'
 import { computeWristHandFlags, isWh06WoundShown, isWh07aShown } from './wristHandLogic'
+import { toAnkleFootState } from './ankleFootAdapter'
+import { computeAnkleFootFlags } from './ankleFootLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1095,6 +1097,18 @@ export const IS_PRIMARY_ELBOW_SAFETY = (r: Responses) =>
  */
 export const IS_PRIMARY_WRIST_HAND_SAFETY = (r: Responses) =>
   IS_PRIMARY_ARM_HAND(r) && ['FOREARM', 'WRIST_HAND', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN'].includes(r['ELBOW_00'] as string)
+
+/** ANKLE_FOOT_V1: leg_foot downstream router. AF_00 is visibility/tagging only. */
+export const IS_PRIMARY_ANKLE_FOOT = (r: Responses) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'leg_foot'
+const AF_VALID_REGIONS = ['LOWER_LEG_CALF','ANKLE','HEEL_POSTERIOR_ANKLE','FOOT_TOES','DIFFUSE_OR_MULTIPLE','UNKNOWN']
+export const IS_PRIMARY_ANKLE_FOOT_SAFETY = (r: Responses) =>
+  IS_PRIMARY_ANKLE_FOOT(r) && AF_VALID_REGIONS.includes(r['AF_00'] as string)
+const IS_AF_04_SHOWN = (r: Responses) =>
+  IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && r['AF_01'] === 'YES' && ['FOOT_TOES','DIFFUSE_OR_MULTIPLE','UNKNOWN'].includes(r['AF_00'] as string)
+const IS_AF_05_SHOWN = (r: Responses) =>
+  IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && r['AF_01'] === 'YES' && ['LOWER_LEG_CALF','ANKLE','HEEL_POSTERIOR_ANKLE','DIFFUSE_OR_MULTIPLE','UNKNOWN'].includes(r['AF_00'] as string)
+const IS_AF_07_SHOWN = (r: Responses) =>
+  IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && ['LOWER_LEG_CALF','DIFFUSE_OR_MULTIPLE','UNKNOWN'].includes(r['AF_00'] as string)
 
 /**
  * ---------- NECK_V1 (목 통증) — primary concern === pain && PAIN_01 ===
@@ -2499,6 +2513,31 @@ const WRIST_HAND_QUESTIONS: Question[] = [
   },
 ]
 
+const ANKLE_FOOT_ROUTING_QUESTIONS: Question[] = [
+  {
+    id: 'AF_00', variable: 'ankle_foot_region_discriminator', input: 'single_choice',
+    question: '지금 가장 불편한 부위는 어디에 가장 가깝나요?', required: true, step: '상세 증상',
+    showIf: IS_PRIMARY_ANKLE_FOOT,
+    options: [
+      { value: 'LOWER_LEG_CALF', label: '종아리·아래다리' }, { value: 'ANKLE', label: '발목' },
+      { value: 'HEEL_POSTERIOR_ANKLE', label: '뒤꿈치·발목 뒤쪽' }, { value: 'FOOT_TOES', label: '발·발가락' },
+      { value: 'DIFFUSE_OR_MULTIPLE', label: '여러 부위가 비슷하게 불편함' }, { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
+const ANKLE_FOOT_QUESTIONS: Question[] = [
+  { id:'AF_01', variable:'ankle_foot_recent_trauma', input:'single_choice', question:'최근 넘어지거나 접질리거나 부딪히는 등 이 부위에 다친 일이 있었나요?', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, options:[{value:'YES',label:'네'},{value:'NO',label:'아니요'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_02', variable:'ankle_foot_limb_threatening_screen', input:'multi_choice', question:'지금 이 부위나 발에 다음과 같은 변화가 있나요?', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, exclusive:['NONE','UNKNOWN'], options:[
+    {value:'SEVERE_OPEN_INJURY_OR_BONE_EXPOSURE',label:'심한 열린 상처가 있거나 뼈가 보임'}, {value:'UNCONTROLLED_HEAVY_BLEEDING',label:'피가 많이 나고 잘 멎지 않음'}, {value:'FOOT_COLD_PALE_BLUE_OR_SEVERE_CIRCULATION_CHANGE',label:'발이 갑자기 매우 차갑거나 창백·푸르게 변함'}, {value:'NEW_MAJOR_NUMBNESS_OR_WEAKNESS_AFTER_TRAUMA',label:'다친 뒤 발·발가락 감각이나 힘이 갑자기 크게 떨어짐'}, {value:'NONE',label:'해당 없음'}, {value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_03', variable:'ankle_foot_post_trauma_walking', input:'single_choice', question:'다친 뒤 지금 체중을 싣거나 걸을 때 어느 정도인가요?', required:true, step:'상세 증상', showIf:(r)=>IS_PRIMARY_ANKLE_FOOT_SAFETY(r)&&r['AF_01']==='YES', options:[{value:'CAN_WALK_NORMALLY',label:'평소처럼 걸을 수 있음'},{value:'CAN_WALK_BUT_MARKED_DIFFICULTY',label:'걸을 수 있지만 많이 불편함'},{value:'CANNOT_BEAR_WEIGHT_OR_TAKE_4_STEPS',label:'체중을 싣기 어렵거나 4걸음을 걷기 어려움'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_04', variable:'ankle_foot_midfoot_supportive_screen', input:'multi_choice', question:'다친 뒤 발 중간 부위와 관련해 다음 중 해당되는 것이 있나요?', required:true, step:'상세 증상', showIf:IS_AF_04_SHOWN, exclusive:['NONE','UNKNOWN'], options:[{value:'NEW_PLANTAR_MIDFOOT_BRUISING_NOTICED',label:'발바닥 중간에 새 멍이 생긴 것을 봄'},{value:'MARKED_MIDFOOT_FUNCTION_OR_WEIGHT_BEARING_DIFFICULTY',label:'발 중간 통증 때문에 체중을 싣거나 걷기가 매우 어려움'},{value:'NONE',label:'해당 없음'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_05', variable:'ankle_foot_achilles_rupture_screen', input:'multi_choice', question:'다친 뒤 발목 뒤쪽이나 종아리와 관련해 다음 중 해당되는 것이 있나요?', required:true, step:'상세 증상', showIf:IS_AF_05_SHOWN, exclusive:['NONE','UNKNOWN'], options:[{value:'SUDDEN_POP_OR_SNAP_BEHIND_ANKLE_OR_CALF',label:'발목 뒤나 종아리에서 갑자기 뚝/퍽 하는 느낌이나 소리가 남'},{value:'NEW_MARKED_LOSS_OF_PUSH_OFF_OR_TOE_RISE',label:'발로 밀어내거나 까치발 서는 힘이 갑자기 크게 떨어짐'},{value:'NONE',label:'해당 없음'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_06', variable:'ankle_foot_infection_screen', input:'single_choice', question:'현재 발이나 발목에 붉음·열감·붓기·상처와 관련해 가장 가까운 상태를 골라주세요.', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, options:[{value:'NO_CONCERN',label:'해당 없음'},{value:'LOCALIZED_STABLE_RED_HOT_SWOLLEN_OR_WOUND',label:'국소적으로 붉거나 뜨겁고 붓거나 상처가 있지만 빠르게 심해지지는 않음'},{value:'SYSTEMIC_OR_RAPIDLY_WORSENING',label:'몸 상태가 많이 안 좋거나 붓기·통증이 빠르게 심해지고 있음'},{value:'SEVERE_ISCHAEMIA_DEEP_INFECTION_OR_GANGRENE_CONCERN',label:'검게 변함·심한 순환장애·깊은 감염이 걱정될 정도의 변화가 있음'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_07', variable:'ankle_foot_dvt_pattern', input:'single_choice', question:'최근 한쪽 종아리나 아래다리가 새로 붓고 아픈가요?', required:true, step:'상세 증상', showIf:IS_AF_07_SHOWN, options:[{value:'NO',label:'아니요'},{value:'NEW_UNILATERAL_CALF_OR_LOWER_LEG_SWELLING_PAIN',label:'네, 한쪽이 새로 붓고 아파요'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_08', variable:'ankle_foot_progressive_neuro_screen', input:'single_choice', question:'외상과 별개로 발이나 발가락의 감각 저하 또는 힘 빠짐이 새로 생기거나 진행하고 있나요?', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, options:[{value:'NO',label:'아니요'},{value:'NEW_OR_PROGRESSIVE_DISTAL_NUMBNESS_OR_WEAKNESS',label:'네, 새로 생기거나 점점 심해지고 있어요'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+]
+
 /* ---------- Fatigue 상세 Module (primary concern === fatigue 인 경우만) ---------- */
 
 const IS_PRIMARY_FATIGUE = (r: Responses) => primaryConcernKey(r) === 'fatigue'
@@ -3572,6 +3611,8 @@ export const CORE_QUESTIONS: Question[] = [
   ...ARM_HAND_ROUTING_QUESTIONS,
   ...ELBOW_QUESTIONS,
   ...WRIST_HAND_QUESTIONS,
+  ...ANKLE_FOOT_ROUTING_QUESTIONS,
+  ...ANKLE_FOOT_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
@@ -3730,6 +3771,8 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   WH_02: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
   WH_07: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
   WH_07A: (r) => computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)).wrist_hand_safety_status === 'URGENT_REVIEW',
+  AF_02: (r) => IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && computeAnkleFootFlags(toAnkleFootState(r, computeFlags(r).general_red, { af04_shown: IS_AF_04_SHOWN(r), af05_shown: IS_AF_05_SHOWN(r), af07_shown: IS_AF_07_SHOWN(r) })).ankle_foot_safety_status === 'URGENT_REVIEW',
+  AF_06: (r) => IS_PRIMARY_ANKLE_FOOT_SAFETY(r) && computeAnkleFootFlags(toAnkleFootState(r, computeFlags(r).general_red, { af04_shown: IS_AF_04_SHOWN(r), af05_shown: IS_AF_05_SHOWN(r), af07_shown: IS_AF_07_SHOWN(r) })).ankle_foot_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -3866,7 +3909,9 @@ export const buildRoutingPayload = (r: Responses) => {
               : IS_PRIMARY_WRIST_HAND_SAFETY(r)
                 ? 'WRIST_HAND'
                 : null
-            : null,
+            : IS_PRIMARY_ANKLE_FOOT_SAFETY(r)
+              ? 'ANKLE_FOOT'
+              : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -4054,6 +4099,9 @@ export const buildResponsePayload = (r: Responses) => ({
      * `IS_PRIMARY_WRIST_HAND_SAFETY`'s definition.
      */
     wrist_hand: IS_PRIMARY_WRIST_HAND_SAFETY(r) ? computeWristHandFlags(toWristHandState(r, computeFlags(r).general_red)) : null,
+    ankle_foot: IS_PRIMARY_ANKLE_FOOT_SAFETY(r)
+      ? computeAnkleFootFlags(toAnkleFootState(r, computeFlags(r).general_red, { af04_shown: IS_AF_04_SHOWN(r), af05_shown: IS_AF_05_SHOWN(r), af07_shown: IS_AF_07_SHOWN(r) }))
+      : null,
   },
   modules: {
     sleep: {
@@ -4209,6 +4257,11 @@ export const buildResponsePayload = (r: Responses) => ({
       localized_mass_pattern: r['WH_12'],
       referred_systemic_pattern: r['WH_13'],
       primary_side: r['WH_14'],
+    },
+    ankle_foot: {
+      region_discriminator: r['AF_00'], recent_trauma: r['AF_01'], limb_threatening_screen: r['AF_02'],
+      post_trauma_walking: r['AF_03'], midfoot_supportive_screen: r['AF_04'], achilles_rupture_screen: r['AF_05'],
+      infection_screen: r['AF_06'], dvt_pattern: r['AF_07'], progressive_neuro_screen: r['AF_08'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

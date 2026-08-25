@@ -1,5 +1,6 @@
 import type { AnswerValue, Responses } from '../types'
 import type { AnkleFootState } from './ankleFootLogic'
+import type { DoctorPayload } from '../doctor/types'
 
 const YES_NO_UNKNOWN = new Set(['YES', 'NO', 'UNKNOWN'])
 const WALK = new Set(['CAN_WALK_NORMALLY', 'CAN_WALK_BUT_MARKED_DIFFICULTY', 'CANNOT_BEAR_WEIGHT_OR_TAKE_4_STEPS', 'UNKNOWN'])
@@ -74,4 +75,20 @@ export function toAnkleFootState(
     af07_shown: shown.af07_shown,
     core_safety_already_urgent: coreGeneralRed,
   }
+}
+
+
+export function toAnkleFootStateFromDoctorPayload(r: DoctorPayload['responses'], coreGeneralRed: boolean): AnkleFootState {
+  const m = r.modules.ankle_foot
+  const raw: Responses = {
+    AF_01: m.recent_trauma, AF_02: m.limb_threatening_screen, AF_03: m.post_trauma_walking,
+    AF_04: m.midfoot_supportive_screen, AF_05: m.achilles_rupture_screen, AF_06: m.infection_screen,
+    AF_07: m.dvt_pattern, AF_08: m.progressive_neuro_screen,
+  }
+  const region = m.region_discriminator
+  return toAnkleFootState(raw, coreGeneralRed, {
+    af04_shown: raw.AF_01 === 'YES' && ['FOOT_TOES','DIFFUSE_OR_MULTIPLE','UNKNOWN'].includes(region as string),
+    af05_shown: raw.AF_01 === 'YES' && ['LOWER_LEG_CALF','ANKLE','HEEL_POSTERIOR_ANKLE','DIFFUSE_OR_MULTIPLE','UNKNOWN'].includes(region as string),
+    af07_shown: ['LOWER_LEG_CALF','DIFFUSE_OR_MULTIPLE','UNKNOWN'].includes(region as string),
+  })
 }

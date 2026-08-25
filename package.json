@@ -18,7 +18,8 @@
     "test:doctorToken": "esbuild src/doctor/doctorToken.ts --bundle --format=esm --outfile=tests/.doctor-token-bundle.mjs --platform=neutral && node tests/doctorToken.spec.mjs",
     "test:lbp": "esbuild src/spec/lbpLogic.ts --bundle --format=esm --outfile=tests/.lbp-logic-bundle.mjs --platform=neutral && esbuild src/spec/lbpAdapter.ts --bundle --format=esm --outfile=tests/.lbp-adapter-bundle.mjs --platform=neutral && node tests/lbp.spec.mjs",
     "test:neck": "esbuild src/spec/neckLogic.ts --bundle --format=esm --outfile=tests/.neck-logic-bundle.mjs --platform=neutral && esbuild src/spec/neckAdapter.ts --bundle --format=esm --outfile=tests/.neck-adapter-bundle.mjs --platform=neutral && node tests/neck.spec.mjs",
-    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju && npm run test:doctor && npm run test:server && npm run test:recorderResults && npm run test:patient && npm run test:emrSummary && npm run test:doctorToken && npm run test:lbp && npm run test:neck",
+    "test:shoulder": "esbuild src/spec/shoulderLogic.ts --bundle --format=esm --outfile=tests/.shoulder-logic-bundle.mjs --platform=neutral && esbuild src/spec/shoulderAdapter.ts --bundle --format=esm --outfile=tests/.shoulder-adapter-bundle.mjs --platform=neutral && node tests/shoulder.spec.mjs",
+    "test:all": "npm run test:integration && npm run test:layout && npm run test:saju && npm run test:doctor && npm run test:server && npm run test:recorderResults && npm run test:patient && npm run test:emrSummary && npm run test:doctorToken && npm run test:lbp && npm run test:neck && npm run test:shoulder",
     "server": "node server/index.js",
     "purge:data": "node scripts/purge-data.mjs"
   },

@@ -33,6 +33,8 @@ import {
   type NeckComputedFields,
 } from '../spec/neckLogic'
 import { toNeckStateFromDoctorPayload } from '../spec/neckAdapter'
+import { computeShoulderFlags, shoulderSafetyLocked, type ShoulderComputedFields } from '../spec/shoulderLogic'
+import { toShoulderStateFromDoctorPayload } from '../spec/shoulderAdapter'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -652,15 +654,27 @@ function suggestedNeckExamCodes(
 /**
  * NECK_V1 안전 확인 패널. LbpSafetyPanel과 동일한 원칙 — 인터럽트하지
  * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
- * coreSpec.ts 참고). `payload.routing.primary_module_detail !== 'NECK'`면
- * 아무것도 렌더링하지 않는다.
+ * coreSpec.ts 참고).
+ *
+ * 게이트를 `payload.responses.safety_flags.neck !== null`로 판정한다
+ * (SHOULDER_V1 통합 전에는 `primary_module_detail !== 'NECK'`였음).
+ * SHOULDER_V1이 도입되면서 `primary_module_detail`이 같은 `neck_shoulder`
+ * 환자군에서도 `'SHOULDER'`가 될 수 있게 됐다 — 그 리터럴로 계속
+ * 게이트했다면 SHOULDER_DOMINANT로 태깅된 환자의 canonical NECK safety
+ * (양성이었을 수도 있는)가 이 패널에서 안 보이는, 바로 그 F1이 막으려던
+ * 종류의 결함이 생겼을 것이다. `safety_flags.neck`은 NS01 값과 무관하게
+ * `PAIN_01 === 'neck_shoulder'`인 모든 환자에게 항상 계산되므로(coreSpec.ts
+ * buildResponsePayload 참고), 이 게이트는 기존 NECK-only 시나리오에서는
+ * 완전히 동일하게 동작하고(그때는 safety_flags.neck !== null ⟺
+ * primary_module_detail === 'NECK'였음) SHOULDER_DOMINANT 환자에서만
+ * 추가로 렌더링된다 — 순수 additive, 회귀 없음.
  *
  * LBP와 달리 disease safety 계산에 원장 입력(clinician judgment)이 필요
  * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
  * JudgmentPanel에 대응 필드를 추가하지 않았다.
  */
 function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.routing.primary_module_detail !== 'NECK') return null
+  if (payload.responses.safety_flags.neck === null) return null
 
   const state = toNeckStateFromDoctorPayload(payload.responses)
   const flags = computeNeckFlags(state)
@@ -722,6 +736,135 @@ function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
       {/* TODO(NECK_V2): exercise_recommender_contract(순위 매긴 운동 추천 + 원장 승인)는
           LBP_V1과 동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현
           (v0.2.1 §11, D6/checklist item 17-18과 동일한 판단). */}
+    </div>
+  )
+}
+
+const SHOULDER_SAFETY_STATUS_LABEL: Record<ShoulderComputedFields['shoulder_safety_status'], string> = {
+  CLEAR: '안전',
+  REVIEW_REQUIRED: '확인 필요',
+  URGENT_REVIEW: '긴급 확인 필요',
+}
+
+const SHOULDER_EXAM_LABELS: Record<string, string> = {
+  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
+  AROM_FLEXION_ABDUCTION_ER: '능동 관절가동범위 검사(굴곡/외전/외회전)',
+  PROM_ELEVATION_ER_IR: '수동 관절가동범위 검사(거상/외회전/내회전)',
+  CUFF_STRENGTH_ER_ABDUCTION_IR: '회전근개 근력 검사(외회전/외전-scaption/내회전)',
+  DEFORMITY_NEUROVASCULAR_FIRST: '변형·신경혈관 우선 확인',
+  ACTIVE_VS_PASSIVE_ELEVATION: '능동 vs 수동 거상 비교 검사',
+  LAG_DROP_ARM_ADJUNCT: 'Lag/drop-arm 검사(보조)',
+  APPREHENSION_RELOCATION_IF_SAFE: '불안정성 유발 검사(안전 확인 후에만)',
+  MOVEMENT_CONTROL_ASSESSMENT: '움직임 조절 평가',
+}
+
+/**
+ * v0.1.1 §7 Suggested Exam Selector의 firing 조건을 구현 시점에 확정한다
+ * (NECK_V1의 NB6와 동일한 성격 — 스펙이 "무엇을 검사할지" 목록은 주지만
+ * 정확한 트리거는 남겨둠). "Global passive restriction"(frozen
+ * shoulder/OA 감별)과 "focal AC/local"은 태블릿에서 계산 가능한 명확한
+ * trigger가 v0.1.1에 정의되어 있지 않아 자동 제안하지 않는다 — 원장
+ * 판단에 맡긴다(§6이 이미 이 두 항목을 "Tablet에서 묻지 않음"으로
+ * 분류). "Distal neuro / neck-linked"는 NeckSafetyPanel이 canonical NECK
+ * 데이터로 이미 자체 권장 검사를 제공하므로 여기서 중복하지 않는다.
+ */
+function suggestedShoulderExamCodes(
+  flags: ShoulderComputedFields,
+  shoulder: DoctorPayload['responses']['modules']['shoulder'],
+): string[] {
+  const codes: string[] = []
+  if (flags.shoulder_safety_status === 'CLEAR') {
+    codes.push('TARGET_FUNCTION_REPRODUCTION', 'AROM_FLEXION_ABDUCTION_ER', 'PROM_ELEVATION_ER_IR', 'CUFF_STRENGTH_ER_ABDUCTION_IR')
+  }
+
+  const hadTrauma = shoulder.recent_trauma === 'YES'
+  const hardTraumaPositive =
+    Array.isArray(shoulder.trauma_emergency_screen) &&
+    shoulder.trauma_emergency_screen.some((v) => v === 'DEFORMITY_OR_STILL_OUT' || v === 'NEW_NEUROVASCULAR_CHANGE')
+  const acuteCuffConcern =
+    shoulder.acute_traumatic_cuff_concern === 'YES' || shoulder.acute_traumatic_cuff_concern === 'UNKNOWN'
+  if (hadTrauma && (hardTraumaPositive || acuteCuffConcern)) {
+    codes.push('DEFORMITY_NEUROVASCULAR_FIRST', 'ACTIVE_VS_PASSIVE_ELEVATION', 'CUFF_STRENGTH_ER_ABDUCTION_IR', 'LAG_DROP_ARM_ADJUNCT')
+  }
+
+  if (shoulder.instability_present === 'YES') {
+    codes.push('APPREHENSION_RELOCATION_IF_SAFE', 'MOVEMENT_CONTROL_ASSESSMENT')
+  }
+
+  return [...new Set(codes)]
+}
+
+/**
+ * SHOULDER_V1 안전 확인 패널. NeckSafetyPanel과 동일한 원칙 — 인터럽트하지
+ * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
+ * coreSpec.ts 참고).
+ *
+ * 게이트는 `payload.responses.safety_flags.shoulder !== null`이다 —
+ * `primary_module_detail === 'SHOULDER'`가 **아니다**. F1 invariant: SH01-05는
+ * NS01 값과 무관하게 모든 `neck_shoulder` 환자에게 항상 노출/계산되므로,
+ * 이 패널도 NS01이 `NECK_DOMINANT`/`SIMILAR`/`UNKNOWN`이어도 shoulder
+ * safety가 양성이면 반드시 렌더링되어야 한다 — primary 태그로 게이트하면
+ * F1이 막으려던 바로 그 결함(안전 정보가 태깅 때문에 숨겨짐)이 Doctor
+ * View 레벨에서 재발한다.
+ *
+ * disease safety 계산에 원장 입력이 필요 없다(NECK과 동일) — 단
+ * expedited_referral_consider의 세 번째 조건(원장 진찰에서 확인된 새
+ * 회전근개 약화)만 JudgmentPanel의 `shoulder_objective_cuff_weakness`를
+ * 읽어 반영한다(§11).
+ */
+function ShoulderSafetyPanel({
+  payload,
+  shoulderObjectiveCuffWeakness,
+}: {
+  payload: DoctorPayload
+  shoulderObjectiveCuffWeakness: ClinicianJudgment['shoulder_objective_cuff_weakness']
+}) {
+  if (payload.responses.safety_flags.shoulder === null) return null
+
+  const state = toShoulderStateFromDoctorPayload(
+    payload.responses,
+    payload.flags.general_red,
+    shoulderObjectiveCuffWeakness,
+  )
+  const flags = computeShoulderFlags(state)
+  const locked = shoulderSafetyLocked(flags)
+  const examCodes = suggestedShoulderExamCodes(flags, payload.responses.modules.shoulder)
+
+  return (
+    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.shoulder_safety_status.toLowerCase()}`}>
+      <span className="doctor__safetyGlance__title">안전 확인 — 어깨(SHOULDER)</span>
+      <div className="doctor__safetyGlance__items">
+        <span className="doctor__safetyChip">
+          <strong>안전 확인</strong> {SHOULDER_SAFETY_STATUS_LABEL[flags.shoulder_safety_status]}
+        </span>
+        {flags.expedited_referral_consider && (
+          <span className="doctor__safetyChip">
+            <strong>신속 전문의 평가/의뢰 고려</strong> 급성 외상 후 회전근개 파열 가능성 평가 필요
+          </span>
+        )}
+        {flags.pmr_or_systemic_inflammatory_pattern_consider && (
+          <span className="doctor__safetyChip">
+            <strong>양측성 염증 패턴</strong> 고려(진단 아님, PMR 등 전신질환 감별 필요)
+          </span>
+        )}
+      </div>
+      {locked && (
+        <p className="doctor__derivedNote">
+          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
+        </p>
+      )}
+      {examCodes.length > 0 && (
+        <div className="doctor__lbpExam">
+          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
+          <ul>
+            {examCodes.map((c) => (
+              <li key={c}>{SHOULDER_EXAM_LABELS[c] ?? c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* TODO(SHOULDER_V2): exercise_recommender_contract는 LBP_V1/NECK_V1과
+          동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현(§15). */}
     </div>
   )
 }
@@ -888,7 +1031,15 @@ function primaryModuleFields(
               { qid: 'LBP_14', value: m.lbp.work_impact },
             ]
           : []),
-        ...(primaryModuleDetail === 'NECK'
+        /**
+         * SHOULDER_V1 통합 후: `primaryModuleDetail === 'NECK'` 대신
+         * `m.pain.primary_location === 'neck_shoulder'`로 게이트한다. NS01이
+         * SHOULDER_DOMINANT로 태깅해도 canonical NECK_01-05는 여전히
+         * 응답되어 있으므로(F1), primary 태그로만 게이트하면 그 환자의
+         * NECK 원시 응답이 이 필드 목록에서 사라진다 — NeckSafetyPanel과
+         * 동일한 이유의 동일한 수정.
+         */
+        ...(m.pain.primary_location === 'neck_shoulder'
           ? [
               { qid: 'NECK_01', value: m.neck.recent_significant_trauma },
               { qid: 'NECK_02', value: m.neck.cord_concern_screen },
@@ -905,6 +1056,26 @@ function primaryModuleFields(
               { qid: 'NECK_10A', value: m.neck.new_or_changed_headache },
               { qid: 'NECK_11', value: m.neck.headache_neck_link },
               { qid: 'NECK_12', value: m.neck.sustained_posture_aggravation },
+            ]
+          : []),
+        /**
+         * SHOULDER_V1: 같은 이유로 `primaryModuleDetail`이 아니라
+         * `m.pain.primary_location === 'neck_shoulder'`로 게이트 -- SH01-05는
+         * NS01이 NECK_DOMINANT여도 항상 응답되어 있다(F1).
+         */
+        ...(m.pain.primary_location === 'neck_shoulder'
+          ? [
+              { qid: 'NS01', value: m.shoulder.primary_focus },
+              { qid: 'SH01', value: m.shoulder.recent_trauma },
+              { qid: 'SH02', value: m.shoulder.trauma_emergency_screen },
+              { qid: 'SH03', value: m.shoulder.acute_traumatic_cuff_concern },
+              { qid: 'SH04', value: m.shoulder.infection_emergency_screen },
+              { qid: 'SH05', value: m.shoulder.nonmechanical_cardiac_gap_screen },
+              { qid: 'SH06', value: m.shoulder.bilateral_similar_stiff_pain },
+              { qid: 'SH07', value: m.shoulder.primary_side },
+              { qid: 'SH08', value: m.shoulder.load_related_pattern },
+              { qid: 'SH09', value: m.shoulder.instability_present },
+              { qid: 'SH09A', value: m.shoulder.instability_onset_type },
             ]
           : []),
       ]
@@ -1429,6 +1600,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       <NeckSafetyPanel payload={payload} />
 
+      <ShoulderSafetyPanel
+        payload={payload}
+        shoulderObjectiveCuffWeakness={
+          mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
+        }
+      />
+
       <section className="doctor__section">
         <h2>환자 기본</h2>
         <div className="doctor__grid">
@@ -1759,6 +1937,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
         showLbpExam={routing.primary_module_detail === 'LBP'}
+        showShoulderExam={payload.responses.safety_flags.shoulder !== null}
         onSave={
           mode === 'server' && selectedId
             ? async (judgment: ClinicianJudgment) => {

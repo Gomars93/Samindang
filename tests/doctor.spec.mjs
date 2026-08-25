@@ -188,6 +188,68 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2e. SHOULDER_V1 primary-pain fixture: primary_module_detail is
+ *     'SHOULDER' (NS01=SHOULDER_DOMINANT), shoulder_safety_status is
+ *     REVIEW_REQUIRED (not URGENT -- F3/decision §11: SH03 acute cuff
+ *     concern alone never auto-escalates), expedited_referral_consider
+ *     renders with its distinct wording, canonical NECK safety is
+ *     CLEAR(this fixture's safety issue is shoulder-only -- the mirror
+ *     image of the NECK fixture above, which is neck-only), and NECK's
+ *     own safety panel/fields do NOT spuriously appear for a
+ *     shoulder-only safety issue.
+ * ------------------------------------------------------------------- */
+
+{
+  const f = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+  assert('SHOULDER fixture: primary_module stays Pain', f.payload.routing.primary_module === 'Pain')
+  assert('SHOULDER fixture: primary_module_detail is SHOULDER', f.payload.routing.primary_module_detail === 'SHOULDER')
+  assert(
+    'SHOULDER fixture: shoulder_safety_status is REVIEW_REQUIRED (SH03 acute cuff concern, not urgent)',
+    f.payload.responses.safety_flags.shoulder?.shoulder_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert(
+    'SHOULDER fixture: shoulder_safety_status is NOT URGENT_REVIEW (F3/decision §11)',
+    f.payload.responses.safety_flags.shoulder?.shoulder_safety_status !== 'URGENT_REVIEW',
+  )
+  assert(
+    'SHOULDER fixture: expedited_referral_consider is true (SH03=YES)',
+    f.payload.responses.safety_flags.shoulder?.expedited_referral_consider === true,
+  )
+  assert(
+    'SHOULDER fixture: canonical neck_safety_status is CLEAR (this fixture is a shoulder-only safety issue)',
+    f.payload.responses.safety_flags.neck?.neck_safety_status === 'CLEAR',
+  )
+  assert(
+    'SHOULDER fixture: does NOT trigger requires_staff_check (REVIEW_REQUIRED only, no URGENT interrupt condition met)',
+    f.payload.flags.requires_staff_check === false,
+  )
+
+  const html = renderDoctorView('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+  assert('SHOULDER fixture: renders 안전 확인 — 어깨 panel title', html.includes('안전 확인 — 어깨'))
+  assert('SHOULDER fixture: shows 확인 필요 status', html.includes('확인 필요'))
+  assert(
+    'SHOULDER fixture: renders 신속 전문의 평가/의뢰 고려 chip (expedited_referral_consider)',
+    html.includes('신속 전문의 평가/의뢰 고려'),
+  )
+  assert('SHOULDER fixture: renders 추가 권장 검사 card', html.includes('추가 권장 검사'))
+  assert(
+    'SHOULDER fixture: disease-safety lock note renders',
+    html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
+  )
+  assert('SHOULDER fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('SHOULDER fixture: NS01 question text renders', html.includes('현재 가장 주된 불편은 어디인가요'))
+  assert('SHOULDER fixture: SH01 question text renders', html.includes('어깨에 외상이 있었나요'))
+  assert(
+    'SHOULDER fixture: F1 -- NeckSafetyPanel STILL renders (canonical NECK safety is computed unconditionally, gated on safety_flags.neck, not on primary_module_detail) and correctly shows CLEAR for this shoulder-only issue',
+    html.includes('안전 확인 — 목(NECK)'),
+  )
+  assert(
+    'SHOULDER fixture: no patient-facing diagnosis/probability language (예: 회전근개파열 진단/확률)',
+    !/회전근개\s*파열\s*진단|확률\s*\d/.test(html),
+  )
+}
+
+/* ---------------------------------------------------------------------
  * Recorder/EMR section only renders in server mode (fixtures mode has no
  * real visit_id to poll recorder-results for) — must not appear/crash here.
  * ------------------------------------------------------------------- */

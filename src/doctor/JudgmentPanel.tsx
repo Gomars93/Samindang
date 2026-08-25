@@ -77,11 +77,18 @@ const LBP_MOTOR_DEFICIT_OPTIONS: { value: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UN
   { value: 'UNKNOWN', label: '아직 확인 못함' },
 ]
 
+const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'; label: string }[] = [
+  { value: 'NONE', label: '없음' },
+  { value: 'NEW_WEAKNESS_AFTER_TRAUMA', label: '외상 후 새로 생긴 근력저하 확인됨' },
+  { value: 'UNKNOWN', label: '아직 확인 못함' },
+]
+
 export function JudgmentPanel({
   source,
   initialJudgment,
   onSave,
   showLbpExam = false,
+  showShoulderExam = false,
 }: {
   source: JudgmentSourcePayload
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
@@ -97,6 +104,15 @@ export function JudgmentPanel({
    * 않는다.
    */
   showLbpExam?: boolean
+  /**
+   * SHOULDER_V1: `PAIN_01 === 'neck_shoulder'`인 환자 전체에서 true —
+   * `primary_module_detail === 'SHOULDER'`가 아니다(F1: NS01은 이 컨트롤
+   * 노출도 게이트하지 않는다 — NECK_DOMINANT로 태깅된 환자도 어깨 외상
+   * 후 진찰 소견을 입력할 수 있어야 한다). 이 값이
+   * NEW_WEAKNESS_AFTER_TRAUMA면 SH03 자가보고와 무관하게
+   * expedited_referral_consider를 올린다(src/spec/shoulderLogic.ts).
+   */
+  showShoulderExam?: boolean
 }) {
   const [judgment, setJudgment] = useState<ClinicianJudgment>(
     () => initialJudgment ?? createEmptyJudgment(source),
@@ -164,6 +180,34 @@ export function JudgmentPanel({
                   checked={judgment.lbp_objective_motor_deficit === opt.value}
                   onChange={() =>
                     setJudgment((j) => ({ ...j, lbp_objective_motor_deficit: opt.value }))
+                  }
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showShoulderExam && (
+        <div className="judgment__field judgment__lbpExam">
+          <span className="judgment__label">
+            객관적 회전근개 근력저하 소견 (원장 진찰, SHOULDER)
+          </span>
+          <p className="doctor__derivedNote">
+            외상 후 새로 생긴 근력저하가 확인되면 환자 자가보고(SH03)와
+            무관하게 신속 전문의 평가/의뢰 고려가 표시됩니다. 아직 진찰
+            전이면 선택하지 않아도 됩니다.
+          </p>
+          <div className="judgment__radioRow">
+            {SHOULDER_CUFF_WEAKNESS_OPTIONS.map((opt) => (
+              <label key={opt.value} className="judgment__radioOption">
+                <input
+                  type="radio"
+                  name="shoulder_objective_cuff_weakness"
+                  checked={judgment.shoulder_objective_cuff_weakness === opt.value}
+                  onChange={() =>
+                    setJudgment((j) => ({ ...j, shoulder_objective_cuff_weakness: opt.value }))
                   }
                 />
                 <span>{opt.label}</span>

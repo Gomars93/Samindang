@@ -60,3 +60,7 @@ tests/.lbp-adapter-bundle.mjs
 # esbuild bundles used by tests/neck.spec.mjs (regenerated, not source)
 tests/.neck-logic-bundle.mjs
 tests/.neck-adapter-bundle.mjs
+
+# esbuild bundles used by tests/shoulder.spec.mjs (regenerated, not source)
+tests/.shoulder-logic-bundle.mjs
+tests/.shoulder-adapter-bundle.mjs

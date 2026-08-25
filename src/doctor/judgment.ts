@@ -53,6 +53,17 @@ export type ClinicianJudgment = {
    * not_yet_assessed와 동일한 의미. LBP 주호소가 아닌 환자는 항상 undefined.
    */
   lbp_objective_motor_deficit?: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'
+  /**
+   * SHOULDER_V1: 원장이 진찰 후 입력하는 객관적 회전근개 근력저하 소견.
+   * v0.1.1 §11 expedited_referral_consider의 세 번째 트리거 —
+   * SH03(환자 자가보고 급성 팔 들기/힘 저하)와 무관하게, 외상 후 진찰에서
+   * 새로운 객관적 근력저하가 확인되면 신속 의뢰 고려 flag를 올릴 수 있다
+   * (src/spec/shoulderLogic.ts의 expeditedReferralConsider 참고).
+   * `undefined`(미입력)는 "아직 진찰 안 함"을 뜻하며 그 자체로 안전 문제가
+   * 아니다 — lbp_objective_motor_deficit과 동일한 의미. SHOULDER 주호소가
+   * 아닌 환자는 항상 undefined.
+   */
+  shoulder_objective_cuff_weakness?: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'
 }
 
 /** createEmptyJudgment 입력 — 어떤 계산/문진 스냅샷을 참조하는지에 대한 provenance만. */

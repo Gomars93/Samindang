@@ -19,6 +19,8 @@ import { toLbpState } from './lbpAdapter'
 import { computeLbpFlags, URGENT_CES_VALUES } from './lbpLogic'
 import { toNeckState } from './neckAdapter'
 import { computeNeckFlags, hasNeckCordConcretePositive } from './neckLogic'
+import { toShoulderState } from './shoulderAdapter'
+import { computeShoulderFlags } from './shoulderLogic'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -1309,6 +1311,204 @@ const NECK_QUESTIONS: Question[] = [
   },
 ]
 
+/**
+ * ---------- SHOULDER_V1 (어깨 통증) — primary concern === pain && PAIN_01 ===
+ * 'neck_shoulder'인 경우만. 문항 문구/값/branching은
+ * SHOULDER_V1_Tablet_Question_Set_v0.1.1_CLOSED.md(CLINICAL DECISIONS
+ * CLOSED) 원문 그대로이며 임의로 수정하지 않는다.
+ *
+ * *** F1 invariant (v0.1.1 §1) ***
+ * NS01(neck_shoulder_primary_focus)은 safety 문항 노출을 절대 결정하지
+ * 않는다. 아래 SHOULDER_QUESTIONS 전부(NS01 포함, SH01-SH09)가
+ * `IS_PRIMARY_NECK` 하나로만 게이트된다 — NECK_QUESTIONS(canonical NECK
+ * safety, coreSpec.ts 위쪽)와 정확히 동일한 gate 함수를 그대로 재사용한다.
+ * 이는 우연이 아니라 F1을 코드 레벨에서 구조적으로 보장하는 방법이다:
+ * SH01-05(shoulder protected safety)와 NECK_01-05(canonical safety)가
+ * 서로 다른 조건으로 게이트될 여지 자체가 없다 — 둘 다 정확히
+ * `PAIN_01 === 'neck_shoulder'`인 모든 환자에게 무조건 노출된다. NS01의
+ * 값(NECK_DOMINANT/SHOULDER_DOMINANT/SIMILAR/UNKNOWN)은 오직
+ * `primary_module_detail` 태깅과 Suggested Exam 우선순위에만 쓰인다
+ * (buildRoutingPayload 참고) — 어떤 문항이 보이는지에는 전혀 영향을
+ * 주지 않는다.
+ *
+ * SH05(비기계적 심장/전신 동반증상 gate)의 "required unless Core global
+ * safety already urgent"는 `computeFlags(r).general_red`가 이미 true이면
+ * (즉 SAFETY_01에서 이미 응급 red flag가 확인됐으면) 이 문항 자체를
+ * skip하는 것으로 구현한다 — 중복 질문 방지(F2 원칙 문서의 Core reuse
+ * note). SAFETY_01은 SH05보다 항상 먼저 답해지므로(Core가 Pain/Shoulder
+ * Module보다 앞섬) 순서상 문제가 없다.
+ *
+ * SHOULDER는 자체 treatment safety engine을 두지 않는다(v0.1.1 §12:
+ * "필요한 treatment safety는 기존 공통 치료안전 계층에서 처리한다") —
+ * shoulderLogic.ts에 pregnancy/medication 매핑이 없는 것은 누락이 아니라
+ * CLOSED 스펙 자체의 v1 범위 결정이다.
+ */
+const SHOULDER_QUESTIONS: Question[] = [
+  {
+    id: 'NS01',
+    variable: 'neck_shoulder_primary_focus',
+    input: 'single_choice',
+    question: '현재 가장 주된 불편은 어디인가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'NECK_DOMINANT', label: '목이 더 불편함' },
+      { value: 'SHOULDER_DOMINANT', label: '어깨가 더 불편함' },
+      { value: 'SIMILAR', label: '둘 다 비슷함' },
+      { value: 'UNKNOWN', label: '잘 모르겠음' },
+    ],
+  },
+  {
+    id: 'SH01',
+    variable: 'shoulder_recent_trauma',
+    input: 'single_choice',
+    question: '최근 3개월 이내 넘어짐, 부딪힘, 팔이 꺾이거나 강하게 당겨지는 등 어깨에 외상이 있었나요?',
+    required: true,
+    step: '상세 증상',
+    // F1: NS01 값과 무관하게 IS_PRIMARY_NECK 하나로만 게이트.
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH02',
+    variable: 'shoulder_trauma_emergency_screen',
+    input: 'multi_choice',
+    question: '외상 후 다음 중 해당되는 것이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && r['SH01'] === 'YES',
+    exclusive: ['NONE', 'UNKNOWN'],
+    options: [
+      { value: 'DEFORMITY_OR_STILL_OUT', label: '어깨 모양이 평소와 확연히 다르거나, 빠진 뒤 아직 제자리로 돌아오지 않은 느낌' },
+      { value: 'NEW_NEUROVASCULAR_CHANGE', label: '손이나 팔이 갑자기 매우 차갑거나 창백·푸르게 변했거나, 감각·힘이 크게 떨어짐' },
+      { value: 'SEVERE_SWELLING_OR_CANNOT_MOVE', label: '심하게 붓거나 멍이 들면서 팔을 거의 움직일 수 없음' },
+      { value: 'NONE', label: '해당 없음' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH03',
+    variable: 'shoulder_acute_traumatic_cuff_concern',
+    input: 'single_choice',
+    question: '외상 직후부터, 이전에는 가능하던 팔 들기나 팔에 힘주기가 갑자기 현저히 어려워졌나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && r['SH01'] === 'YES',
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH04',
+    variable: 'shoulder_infection_emergency_screen',
+    input: 'single_choice',
+    question: '어깨가 붉거나 뜨겁게 붓고 심하게 아프면서, 열·오한 또는 심한 몸살 같은 증상이 함께 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH05',
+    variable: 'shoulder_nonmechanical_cardiac_gap_screen',
+    input: 'single_choice',
+    question: '최근 어깨나 팔이 불편할 때, 가슴 답답함·숨참·식은땀·메스꺼움 같은 증상이 함께 있었나요?',
+    required: true,
+    step: '상세 증상',
+    // v0.1.1 §3 SH05 F2 원칙: "움직임/자세와 무관함" AND 조건 없음.
+    // "required unless Core global safety already urgent" -- 이미
+    // SAFETY_01에서 general_red가 확인됐으면 중복 질문하지 않는다.
+    showIf: (r) => IS_PRIMARY_NECK(r) && !computeFlags(r).general_red,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH06',
+    variable: 'shoulder_bilateral_similar_stiff_pain',
+    input: 'single_choice',
+    question: '양쪽 어깨가 비슷한 시기에 함께 아프거나 뻣뻣한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH07',
+    variable: 'shoulder_primary_side',
+    input: 'single_choice',
+    question: '어느 쪽 어깨가 더 불편한가요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'LEFT', label: '왼쪽' },
+      { value: 'RIGHT', label: '오른쪽' },
+      { value: 'BILATERAL', label: '양쪽' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH08',
+    variable: 'shoulder_load_related_pattern',
+    input: 'single_choice',
+    question: '팔을 들거나, 물건을 들거나, 어깨에 힘을 줄 때 통증이 더 뚜렷해지나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH09',
+    variable: 'shoulder_instability_present',
+    input: 'single_choice',
+    question: '어깨가 실제로 빠졌거나, 부분적으로 빠지는 느낌 또는 빠질 것 같은 불안감이 반복되나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_NECK,
+    options: [
+      { value: 'YES', label: '네' },
+      { value: 'NO', label: '아니요' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    id: 'SH09A',
+    variable: 'shoulder_instability_onset_type',
+    input: 'single_choice',
+    question: '처음 이런 증상이 생긴 계기는 무엇이었나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_NECK(r) && r['SH09'] === 'YES',
+    options: [
+      { value: 'TRAUMATIC', label: '넘어짐·충돌·팔이 강하게 꺾임 등 외상 후' },
+      { value: 'ATRAUMATIC', label: '뚜렷한 외상 없이' },
+      { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+]
+
 /* ---------- Fatigue 상세 Module (primary concern === fatigue 인 경우만) ---------- */
 
 const IS_PRIMARY_FATIGUE = (r: Responses) => primaryConcernKey(r) === 'fatigue'
@@ -2376,6 +2576,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...URINARY_QUESTIONS,
   ...PAIN_QUESTIONS,
   ...LBP_QUESTIONS,
+  ...SHOULDER_QUESTIONS,
   ...NECK_QUESTIONS,
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
@@ -2473,6 +2674,25 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   NECK_02A: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
   NECK_03B: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
   NECK_04: (r) => computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))).neck_safety_status === 'URGENT_REVIEW',
+  /**
+   * SHOULDER_V1 URGENT_REVIEW 즉시 인터럽트 — v0.1.1 §10. SH01/SH03/SH06-09는
+   * URGENT를 발생시키지 않으므로(SH03은 F3 결정에 따라 REVIEW_REQUIRED +
+   * expedited_referral_consider까지만) 등록하지 않는다. SH02/SH04/SH05만
+   * 각 화면 제출 직후 shoulder_safety_status 전체를 재계산해
+   * URGENT_REVIEW일 때만 interrupt한다 — NECK_02/02A/03B/04와 동일한
+   * "부분 재구현 대신 엔진 재사용" 원칙(구조적으로 drift 불가능).
+   * clinicianObjectiveCuffWeakness는 이 시점(환자 태블릿 제출 전)에는
+   * 항상 undefined -- 원장 판단은 아직 없다.
+   */
+  SH02: (r) =>
+    computeShoulderFlags(toShoulderState(r, deriveReproductiveStatus(r), computeFlags(r).general_red, undefined))
+      .shoulder_safety_status === 'URGENT_REVIEW',
+  SH04: (r) =>
+    computeShoulderFlags(toShoulderState(r, deriveReproductiveStatus(r), computeFlags(r).general_red, undefined))
+      .shoulder_safety_status === 'URGENT_REVIEW',
+  SH05: (r) =>
+    computeShoulderFlags(toShoulderState(r, deriveReproductiveStatus(r), computeFlags(r).general_red, undefined))
+      .shoulder_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -2563,13 +2783,30 @@ export const buildRoutingPayload = (r: Responses) => {
     /**
      * `primary_module` stays `'Pain'` unchanged (never repurposed to
      * something like `'pain_lbp'` -- DoctorView.tsx switches on the literal
-     * `'Pain'` string in several places and has no LBP/NECK-aware fallback,
-     * see LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely additive
-     * sibling field for LBP/NECK-specific UI to key off instead.
-     * IS_PRIMARY_LBP and IS_PRIMARY_NECK are mutually exclusive (PAIN_01
-     * is single_choice), so this is never ambiguous.
+     * `'Pain'` string in several places and has no LBP/NECK/SHOULDER-aware
+     * fallback, see LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely
+     * additive sibling field for LBP/NECK/SHOULDER-specific UI to key off
+     * instead. IS_PRIMARY_LBP and IS_PRIMARY_NECK are mutually exclusive
+     * (PAIN_01 is single_choice), so LBP vs NECK-or-SHOULDER is never
+     * ambiguous.
+     *
+     * NS01 decides NECK vs SHOULDER *tagging* only (v0.1.1 §1 F1 invariant
+     * -- this is display/hypothesis-weighting metadata, never a safety
+     * gate: both NECK_01-05 and SH01-05 are already unconditionally
+     * computed above regardless of this value, see `safety_flags.neck`/
+     * `safety_flags.shoulder` below). `SIMILAR`/`UNKNOWN`/not-yet-answered
+     * all default to `'NECK'` -- the pre-SHOULDER_V1 behavior for every
+     * `neck_shoulder` patient -- so this stays a strict superset: no
+     * existing NECK-only fixture or test can observe any difference unless
+     * a patient explicitly answers `SHOULDER_DOMINANT`.
      */
-    primary_module_detail: IS_PRIMARY_LBP(r) ? 'LBP' : IS_PRIMARY_NECK(r) ? 'NECK' : null,
+    primary_module_detail: IS_PRIMARY_LBP(r)
+      ? 'LBP'
+      : IS_PRIMARY_NECK(r)
+        ? r['NS01'] === 'SHOULDER_DOMINANT'
+          ? 'SHOULDER'
+          : 'NECK'
+        : null,
     modules_activated: modulesActivated(r),
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
@@ -2714,6 +2951,21 @@ export const buildResponsePayload = (r: Responses) => ({
      * (meaningless noise, not a real signal).
      */
     neck: IS_PRIMARY_NECK(r) ? computeNeckFlags(toNeckState(r, deriveReproductiveStatus(r))) : null,
+    /**
+     * SHOULDER_V1: same `IS_PRIMARY_NECK` gate as `neck` above -- NOT
+     * `primary_module_detail === 'SHOULDER'`. F1 requires SH01-05 to be
+     * answered (and therefore their computed status to exist) for every
+     * `neck_shoulder` patient regardless of NS01/tagging, so gating this
+     * computation on the tag itself would silently drop shoulder safety
+     * for e.g. a NECK_DOMINANT-tagged patient who actually has a positive
+     * SH02 (dislocation/deformity) -- exactly the fail-open F1 exists to
+     * prevent. `clinicianObjectiveCuffWeakness` is always `undefined` here,
+     * same reasoning as `lbp`/`neck` above (nothing has examined the
+     * patient yet at submission time).
+     */
+    shoulder: IS_PRIMARY_NECK(r)
+      ? computeShoulderFlags(toShoulderState(r, deriveReproductiveStatus(r), computeFlags(r).general_red, undefined))
+      : null,
   },
   modules: {
     sleep: {
@@ -2788,6 +3040,19 @@ export const buildResponsePayload = (r: Responses) => ({
       new_or_changed_headache: r['NECK_10A'],
       headache_neck_link: r['NECK_11'],
       sustained_posture_aggravation: r['NECK_12'],
+    },
+    shoulder: {
+      primary_focus: r['NS01'],
+      recent_trauma: r['SH01'],
+      trauma_emergency_screen: r['SH02'],
+      acute_traumatic_cuff_concern: r['SH03'],
+      infection_emergency_screen: r['SH04'],
+      nonmechanical_cardiac_gap_screen: r['SH05'],
+      bilateral_similar_stiff_pain: r['SH06'],
+      primary_side: r['SH07'],
+      load_related_pattern: r['SH08'],
+      instability_present: r['SH09'],
+      instability_onset_type: r['SH09A'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

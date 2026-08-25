@@ -1076,13 +1076,21 @@ const H1_MODULES = [
 // KNEE_V1: URGENT_REVIEW는 KNEE_02/KNEE_02A/KNEE_06B/KNEE_07 네 지점에서만
 // 확정될 수 있어(Amendment A4 -- KNEE_03/04/05/06/06A/08은 REVIEW/expedited/
 // flag 계층) 넷만 등록했다 -- coreSpec.ts의 STAFF_CHECK_TRIGGERS 주석 참고.
+// ELBOW_V1: URGENT_REVIEW는 ELBOW_02/ELBOW_02A/ELBOW_07/ELBOW_08/ELBOW_11
+// 다섯 지점에서만 확정될 수 있어(Tablet v0.1.1 §10 -- ELBOW_03/04/05/06/09/
+// 09A/10은 REVIEW/expedited/flag 계층) 다섯만 등록했다.
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05, KNEE_02, KNEE_02A, KNEE_06B, KNEE_07',
+    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05, KNEE_02, KNEE_02A, KNEE_06B, KNEE_07, ELBOW_02, ELBOW_02A, ELBOW_07, ELBOW_08, ELBOW_11',
     JSON.stringify(keys) ===
       JSON.stringify([
         'BOWEL_03',
+        'ELBOW_02',
+        'ELBOW_02A',
+        'ELBOW_07',
+        'ELBOW_08',
+        'ELBOW_11',
         'GI_03',
         'KNEE_02',
         'KNEE_02A',
@@ -2000,6 +2008,214 @@ function kneeBaseResponses() {
   r = set(r, { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'low_back_pelvis', PAIN_02: ['aching'], PAIN_04: 'none' })
   const routing = buildRoutingPayload(r)
   assert("N-E6: LBP routing unaffected by KNEE addition -- primary_module_detail still 'LBP'", routing.primary_module_detail === 'LBP')
+}
+
+/* =========================================================================
+ * O. ELBOW_V1 -- question visibility incl. routing (Fable plan §10.C),
+ * staff interrupt (§10.D), payload/routing incl. WRIST_HAND exclusion
+ * (§10.E). ELBOW_V1 has no shared-population reuse with LBP/NECK/SHOULDER/
+ * KNEE (Tablet v0.1.1 §6), and `arm_hand` has no dedicated PAIN_01 value --
+ * the region discriminator (ELBOW_00) is the one genuinely new routing
+ * mechanism this session introduces, so its WRIST_HAND-exclusion behavior
+ * gets the most scrutiny here (mirrors L's cross-module rigor for SHOULDER,
+ * adapted to a single-module routing boundary instead).
+ * ========================================================================= */
+
+function elbowBaseResponses() {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'arm_hand',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    ELBOW_00: 'ELBOW',
+    ELBOW_01: 'NO',
+    ELBOW_02: ['NONE'],
+    ELBOW_02A: 'NO',
+    ELBOW_06: 'NO',
+    ELBOW_07: 'NO',
+    ELBOW_08: 'NONE',
+    ELBOW_09: 'NO',
+    ELBOW_10: ['NONE'],
+    ELBOW_11: ['NONE'],
+  })
+}
+
+// --- O-C: question visibility (routing incl.) ------------------------------
+
+{
+  const r = neckShoulderBaseResponses()
+  const visible = visibleIds(r)
+  assert('O-C1: non-arm_hand pain patient sees no ELBOW_* questions', ![...visible].some((id) => id.startsWith('ELBOW_')))
+}
+{
+  let r = emptyResponses()
+  r = set(r, { VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'arm_hand', PAIN_02: ['aching'], PAIN_04: 'none' })
+  assert('O-C2: arm_hand patient sees ELBOW_00 (region discriminator) but no other ELBOW_* yet', visibleIds(r).has('ELBOW_00'))
+  assert('O-C2: ELBOW_01 not visible before ELBOW_00 is answered', !visibleIds(r).has('ELBOW_01'))
+}
+{
+  const r = elbowBaseResponses()
+  const visible = visibleIds(r)
+  assert(
+    'O-C3: ELBOW_00=ELBOW exposes all protected ELBOW safety screens',
+    ['ELBOW_01', 'ELBOW_02', 'ELBOW_02A', 'ELBOW_06', 'ELBOW_07', 'ELBOW_08', 'ELBOW_09', 'ELBOW_10', 'ELBOW_11'].every((id) =>
+      visible.has(id),
+    ),
+  )
+}
+{
+  const rForearm = set(elbowBaseResponses(), { ELBOW_00: 'FOREARM' })
+  const rDiffuse = set(elbowBaseResponses(), { ELBOW_00: 'DIFFUSE_OR_MULTIPLE' })
+  const rUnknown = set(elbowBaseResponses(), { ELBOW_00: 'UNKNOWN' })
+  for (const [label, r] of [['FOREARM', rForearm], ['DIFFUSE_OR_MULTIPLE', rDiffuse], ['UNKNOWN', rUnknown]]) {
+    assert(`O-C4: ELBOW_00=${label} also exposes ELBOW protected safety`, visibleIds(r).has('ELBOW_02'))
+  }
+}
+{
+  // Most important routing regression in this module: WRIST_HAND must be the ONLY excluded value.
+  const r = set(elbowBaseResponses(), { ELBOW_00: 'WRIST_HAND' })
+  const visible = visibleIds(r)
+  assert(
+    'O-C5 CRITICAL: ELBOW_00=WRIST_HAND excludes ALL ELBOW protected safety screens',
+    !['ELBOW_01', 'ELBOW_02', 'ELBOW_02A', 'ELBOW_06', 'ELBOW_07', 'ELBOW_08', 'ELBOW_09', 'ELBOW_10', 'ELBOW_11'].some((id) =>
+      visible.has(id),
+    ),
+  )
+}
+{
+  const rYes = set(elbowBaseResponses(), { ELBOW_01: 'YES' })
+  const rUnknown = set(elbowBaseResponses(), { ELBOW_01: 'UNKNOWN' })
+  const rNo = set(elbowBaseResponses(), { ELBOW_01: 'NO' })
+  assert('O-C6: ELBOW_03/04/05/15 appear when ELBOW_01=YES', ['ELBOW_03', 'ELBOW_04', 'ELBOW_05', 'ELBOW_15'].every((id) => visibleIds(rYes).has(id)))
+  assert('O-C6: ELBOW_03/04/05/15 appear when ELBOW_01=UNKNOWN', ['ELBOW_03', 'ELBOW_04', 'ELBOW_05', 'ELBOW_15'].every((id) => visibleIds(rUnknown).has(id)))
+  assert('O-C6: ELBOW_03/04/05/15 do NOT appear when ELBOW_01=NO', !['ELBOW_03', 'ELBOW_04', 'ELBOW_05', 'ELBOW_15'].some((id) => visibleIds(rNo).has(id)))
+}
+{
+  const rYes = set(elbowBaseResponses(), { ELBOW_09: 'YES' })
+  const rUnknown = set(elbowBaseResponses(), { ELBOW_09: 'UNKNOWN' })
+  const rNo = set(elbowBaseResponses(), { ELBOW_09: 'NO' })
+  assert('O-C7: ELBOW_09A appears when ELBOW_09=YES', visibleIds(rYes).has('ELBOW_09A'))
+  assert('O-C7: ELBOW_09A appears when ELBOW_09=UNKNOWN', visibleIds(rUnknown).has('ELBOW_09A'))
+  assert('O-C7: ELBOW_09A does NOT appear when ELBOW_09=NO', !visibleIds(rNo).has('ELBOW_09A'))
+}
+{
+  const q00 = ALL_QUESTIONS.find((q) => q.id === 'ELBOW_00')
+  const q02a = ALL_QUESTIONS.find((q) => q.id === 'ELBOW_02A')
+  const q03 = ALL_QUESTIONS.find((q) => q.id === 'ELBOW_03')
+  const q09a = ALL_QUESTIONS.find((q) => q.id === 'ELBOW_09A')
+  const q11 = ALL_QUESTIONS.find((q) => q.id === 'ELBOW_11')
+  assert('O-C8: ELBOW_00 is required: true (routing gate must be hard-blocked)', q00.required === true)
+  assert('O-C8: ELBOW_02A is required: true', q02a.required === true)
+  assert('O-C8: ELBOW_03 is required: true (fail-closed once shown)', q03.required === true)
+  assert('O-C8: ELBOW_09A is required: true (fail-closed once shown)', q09a.required === true)
+  assert('O-C8: ELBOW_11 is required: true', q11.required === true)
+}
+{
+  // stale prune: ELBOW_* answers must be cleared once PAIN_01 switches away from 'arm_hand'.
+  const r = set(elbowBaseResponses(), { ELBOW_01: 'YES', ELBOW_03: 'YES', ELBOW_04: 'NO', ELBOW_09: 'YES', ELBOW_09A: ['NONE'] })
+  const switched = set(r, { PAIN_01: 'knee' })
+  assert(
+    'O-C9: switching PAIN_01 away from arm_hand prunes all ELBOW_* responses (incl. ELBOW_00) to null',
+    ['ELBOW_00', 'ELBOW_01', 'ELBOW_02', 'ELBOW_02A', 'ELBOW_03', 'ELBOW_04', 'ELBOW_09', 'ELBOW_09A'].every((id) => switched[id] === null),
+  )
+}
+{
+  // switching the region discriminator away from ELBOW to WRIST_HAND must prune the now-hidden ELBOW_* answers too.
+  const r = set(elbowBaseResponses(), { ELBOW_01: 'YES', ELBOW_04: 'YES' })
+  const switched = set(r, { ELBOW_00: 'WRIST_HAND' })
+  assert(
+    'O-C10: switching ELBOW_00 to WRIST_HAND prunes the now-hidden ELBOW_01/04 responses',
+    switched['ELBOW_01'] === null && switched['ELBOW_04'] === null,
+  )
+}
+
+// --- O-D: staff interrupt ---------------------------------------------------
+
+{
+  const r = set(elbowBaseResponses(), { ELBOW_02: ['GROSS_DEFORMITY_OR_STILL_OUT'] })
+  assert('O-D1: ELBOW_02 urgent answer -> StaffCheck', STAFF_CHECK_TRIGGERS.ELBOW_02(r) === true)
+}
+{
+  const r = set(elbowBaseResponses(), { ELBOW_02A: 'YES' })
+  assert('O-D2: ELBOW_02A YES -> StaffCheck', STAFF_CHECK_TRIGGERS.ELBOW_02A(r) === true)
+}
+{
+  const r = set(elbowBaseResponses(), { ELBOW_07: 'YES' })
+  assert('O-D3: ELBOW_07 YES -> StaffCheck', STAFF_CHECK_TRIGGERS.ELBOW_07(r) === true)
+}
+{
+  const r = set(elbowBaseResponses(), { ELBOW_08: 'SYSTEMIC_OR_RAPIDLY_SPREADING' })
+  assert('O-D4: ELBOW_08 SYSTEMIC_OR_RAPIDLY_SPREADING -> StaffCheck', STAFF_CHECK_TRIGGERS.ELBOW_08(r) === true)
+}
+{
+  const r = set(elbowBaseResponses(), { ELBOW_08: 'LOCALIZED_STABLE' })
+  assert('O-D4b: ELBOW_08 LOCALIZED_STABLE does NOT StaffCheck (review-tier, not urgent)', STAFF_CHECK_TRIGGERS.ELBOW_08(r) === false)
+}
+{
+  const r = set(elbowBaseResponses(), { ELBOW_11: ['SHORTNESS_OF_BREATH'] })
+  assert('O-D5: ELBOW_11 cardiac positive -> StaffCheck', STAFF_CHECK_TRIGGERS.ELBOW_11(r) === true)
+}
+{
+  // ELBOW_03/04/05/06/09/09A/10 positive must NOT interrupt -- REVIEW/expedited/flag only, no urgent trigger registered for them.
+  assert(
+    'O-D6: ELBOW_03/04/05/06/09/09A/10 have no StaffCheck trigger registered',
+    !('ELBOW_03' in STAFF_CHECK_TRIGGERS) &&
+      !('ELBOW_04' in STAFF_CHECK_TRIGGERS) &&
+      !('ELBOW_05' in STAFF_CHECK_TRIGGERS) &&
+      !('ELBOW_06' in STAFF_CHECK_TRIGGERS) &&
+      !('ELBOW_09' in STAFF_CHECK_TRIGGERS) &&
+      !('ELBOW_09A' in STAFF_CHECK_TRIGGERS) &&
+      !('ELBOW_10' in STAFF_CHECK_TRIGGERS),
+  )
+}
+{
+  const r = elbowBaseResponses() // fully clean
+  assert(
+    'O-D7: ELBOW_02/ELBOW_02A/ELBOW_07/ELBOW_08/ELBOW_11 all stay false on a fully-clean elbow baseline',
+    STAFF_CHECK_TRIGGERS.ELBOW_02(r) === false &&
+      STAFF_CHECK_TRIGGERS.ELBOW_02A(r) === false &&
+      STAFF_CHECK_TRIGGERS.ELBOW_07(r) === false &&
+      STAFF_CHECK_TRIGGERS.ELBOW_08(r) === false &&
+      STAFF_CHECK_TRIGGERS.ELBOW_11(r) === false,
+  )
+}
+
+// --- O-E: payload/routing ---------------------------------------------------
+
+{
+  const r = elbowBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('O-E1: elbow patient -> safety_flags.elbow !== null', payload.safety_flags.elbow !== null)
+  assert('O-E2: all ELBOW responses land under modules.elbow', payload.modules.elbow.recent_trauma_or_sudden_load === 'NO')
+  assert('O-E2b: modules.elbow.region_discriminator records ELBOW_00', payload.modules.elbow.region_discriminator === 'ELBOW')
+  const routing = buildRoutingPayload(r)
+  assert("O-E3: primary_module_detail === 'ELBOW' for elbow-safety-exposed patient", routing.primary_module_detail === 'ELBOW')
+}
+{
+  // WRIST_HAND-only: safety_flags.elbow must be null and primary_module_detail must be null (no module exists yet for that region).
+  const r = set(elbowBaseResponses(), { ELBOW_00: 'WRIST_HAND' })
+  const payload = buildResponsePayload(r)
+  assert('O-E4 CRITICAL: WRIST_HAND-only patient -> safety_flags.elbow === null', payload.safety_flags.elbow === null)
+  const routing = buildRoutingPayload(r)
+  assert("O-E5 CRITICAL: WRIST_HAND-only patient -> primary_module_detail === null (not 'ELBOW')", routing.primary_module_detail === null)
+}
+{
+  const r = neckShoulderBaseResponses()
+  const payload = buildResponsePayload(r)
+  assert('O-E6: non-arm_hand (neck_shoulder) patient -> safety_flags.elbow === null', payload.safety_flags.elbow === null)
+  const routing = buildRoutingPayload(r)
+  assert(
+    "O-E7: existing NECK/SHOULDER routing unchanged by ELBOW addition -- primary_module_detail still 'SHOULDER'",
+    routing.primary_module_detail === 'SHOULDER',
+  )
+}
+{
+  const r = kneeBaseResponses()
+  const routing = buildRoutingPayload(r)
+  assert("O-E8: existing KNEE routing unchanged by ELBOW addition -- primary_module_detail still 'KNEE'", routing.primary_module_detail === 'KNEE')
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

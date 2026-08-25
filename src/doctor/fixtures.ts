@@ -355,4 +355,47 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     KNEE_13: 'NO',
     KNEE_14: 'NO',
   }),
+
+  // ELBOW_V1: demonstrates both closed decisions in one fixture --
+  // (1) a genuine positive tier: ELBOW_04=YES (distal biceps concern after
+  //     trauma) -> REVIEW_REQUIRED + expedited_referral_consider.
+  // (2) E5 stable sensory-only de-escalation: ELBOW_09=YES (sensory
+  //     symptoms present) + ELBOW_09A=[NONE] (explicitly no progressive
+  //     weakness/wasting) must NOT independently add REVIEW_REQUIRED or
+  //     neuro_assessment_required -- the only safety contribution in this
+  //     fixture comes from ELBOW_04, proving the sensory-only path stays
+  //     silent (Opus v0.1/v0.2/final verification's critical negative
+  //     regression).
+  buildFixture('팔꿈치 통증 주호소 (ELBOW, 신속 의뢰 고려)', {
+    ID_01: '한도윤',
+    ID_03: 'male',
+    BIRTH_01: '19900101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: 'within_1w',
+    VISIT_04_SYMPTOM_IMPACT: 'severe',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'arm_hand',
+    PAIN_02: ['sharp', 'movement_related'],
+    PAIN_04: 'none',
+    ELBOW_00: 'ELBOW',
+    ELBOW_01: 'YES',
+    ELBOW_02: ['NONE'],
+    ELBOW_02A: 'NO',
+    ELBOW_03: 'NO',
+    ELBOW_04: 'YES',
+    ELBOW_05: 'NO',
+    ELBOW_06: 'NO',
+    ELBOW_07: 'NO',
+    ELBOW_08: 'NONE',
+    ELBOW_09: 'YES',
+    ELBOW_09A: ['NONE'],
+    ELBOW_10: ['NONE'],
+    ELBOW_11: ['NONE'],
+    ELBOW_12: 'ANTERIOR',
+    ELBOW_13: 'RIGHT',
+    ELBOW_14: ['GRIPPING'],
+    ELBOW_15: 'NO',
+  }),
 ]

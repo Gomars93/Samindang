@@ -1,8 +1,22 @@
 # CLAUDE.md — 삼인당 태블릿 문진 프로젝트 운영 규칙
 
 이 문서는 이 저장소에서 작업하는 모든 Claude 세션(Opus/Sonnet, 로컬/클라우드 무관)이
-작업 시작 전에 반드시 읽어야 하는 문서다. `HANDOFF.md`, `DECISIONS.md`와 함께
-프로젝트의 Single Source of Truth 역할을 한다.
+작업 시작 전에 반드시 읽어야 하는 문서다.
+
+### 문서 간 역할 분담 (충돌 시 우선순위)
+
+이 프로젝트에는 "Single Source of Truth"라는 표현이 여러 문서에 등장하는데,
+각자 가리키는 대상이 다르다. 혼동을 막기 위해 역할을 명확히 분리한다.
+
+- **Git/GitHub의 실제 상태(브랜치, PR, commit, CI, branch protection 설정)**가
+  가장 근본적인 진실이다. 아래 세 문서는 모두 그 상태에 대한 *기록*일 뿐이다.
+- `CLAUDE.md`(이 문서) = 운영 규칙 (거의 안 바뀜)
+- `DECISIONS.md` = 승인된 중요 기술적 판단의 이력 (append-only에 가까움)
+- `HANDOFF.md` = 지금 이 순간의 작업 상태 snapshot (자주 바뀜)
+
+`HANDOFF.md`의 기록과 실제 Git/GitHub 상태가 어긋나면 **Git이 항상 맞다** —
+발견 즉시 `HANDOFF.md`를 실제 상태에 맞게 고친다. 오래된 HANDOFF를 방치한 채
+다음 작업을 진행하지 않는다.
 
 ## Project Overview
 
@@ -39,6 +53,15 @@
   `git branch --show-current`로 현재 브랜치를 확인한다.
 - 원격 저장소 설정(branch protection 등)을 변경하는 작업 중에는 큐의
   `auto_advance`를 잠시 꺼둔다(사용자에게 확인 요청).
+- 큐는 `main`/`master` 브랜치에서는 실행을 거부한다(`run-next.js`의 하드
+  가드). main에서 시작하려 하면 즉시 에러로 중단하고 아무 것도 실행하지 않는다.
+
+**"Queue complete" ≠ "Merge ready".** 큐의 Stop hook이 검증하는 것은 기본적으로
+`tsc -b` + `vite build`뿐이다. 이게 통과하고 task 체크리스트가 다 채워졌다고
+해서 이 저장소의 Definition of Done(아래 참고, `npm run test:all` 등 관련
+테스트 전체 통과 포함)을 만족한 것은 아니다. 큐의 checkpoint commit은 "구현
+체크포인트"일 뿐이며, PR을 만들기 전에는 반드시 별도로 관련 테스트 스위트와
+build를 직접 실행해 확인한다.
 
 ## Team Roles
 
@@ -56,6 +79,30 @@
   GitHub에 push된 PR/commit/diff/HANDOFF.md/DECISIONS.md/주요 소스/테스트 결과를
   기준으로 요구사항 누락, regression 위험, architecture 문제, 과도한 변경,
   테스트 부족, edge case, 보안, 유지보수성, 다음 단계를 검토한다.
+
+  **ChatGPT의 검수는 "진행 여부를 결정하는 게이트"이지, GitHub의 "필수 승인
+  (required reviewer approval)"이 아니다.** 이 저장소의 GitHub 연결은 사용자
+  본인 계정에 연결되어 있어, ChatGPT를 GitHub의 required-approval 1표로
+  설정하면 안 된다(같은 계정 기반 승인은 별도 리뷰어로 인정되지 않는다).
+  ChatGPT가 REQUEST CHANGES로 판단하면 Sonnet/Opus가 수정하고, 최종 merge
+  판단은 항상 사용자(Product Owner)가 한다.
+
+### 역할은 선언만으로 실행되지 않는다 (모델 routing은 아직 수동)
+
+Team Roles에 Opus/Sonnet/Fable의 역할이 정의되어 있다고 해서, 어떤 모델이
+어떤 역할을 수행할지가 자동으로 정해지는 것은 아니다. 현재 로컬 큐
+(`.claude/queue/run-next.js`)는 `claude` CLI를 `--model` 지정 없이 실행하며,
+이 저장소에는 "지금 어떤 작업이니 Opus를 부르고, 구현은 Sonnet에게 넘기고,
+막히면 Fable로 escalation"을 자동으로 판단해주는 routing 로직이 아직 없다.
+
+따라서:
+
+- 어떤 세션이 "나는 지금 Opus 역할이다/Sonnet 역할이다"라고 문서에 적더라도,
+  실제로 그 모델이 호출되지 않았다면 해당 역할을 수행한 것으로 간주하지 않는다.
+- Sonnet 구현 → Opus 설계/검수 → Fable escalation은, 사람이 명시적으로 그
+  모델/세션을 선택해 호출했을 때만 성립한다.
+- 자동 routing(어떤 조건에서 어떤 모델을 호출할지 큐가 스스로 판단하는 것)은
+  이 문서의 범위 밖이며, 별도 PR/DECISIONS 항목으로 다룬다.
 
 ## Startup Protocol
 

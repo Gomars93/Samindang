@@ -62,3 +62,35 @@ PR 기반 Git workflow를 프로젝트 운영 규칙으로 명문화했다. 기�
 - (+) ChatGPT가 GitHub 상태만 보고도 독립적으로 검수 가능한 구조 확보.
 - (−) 협업 규칙과 기존 큐 시스템의 checkpoint-commit 동작이 실전에서 충돌하지
   않는지 아직 검증되지 않았다 (`HANDOFF.md` Known Risks 참고).
+
+## 2026-08-25 — GitHub 저장소를 Public으로 유지
+
+### Context
+ChatGPT를 독립 검수자로 연결하는 과정에서(PR #1 검수 중) 저장소
+`Gomars93/Samindang`이 GitHub API 기준 `private:false`(Public)임이 확인되었다.
+환자 문진 데이터를 다루는 시스템의 소스 저장소가 공개 상태인 것이 의도된
+것인지 확인이 필요했다.
+
+### Decision
+저장소를 Public 상태로 유지한다.
+
+### Reason
+`.gitignore`가 `.env`, `.env.*`, `.data/`(환자 제출 데이터가 저장되는
+디렉터리), 운영 audit 로그를 이미 제외하고 있고, 이 세션에서 저장소 전체를
+스캔한 결과 추적된 파일 안에 시크릿이나 실제 환자 데이터가 커밋된 적이
+없음을 확인했다. 소스코드/임상 로직/기획 문서 자체는 비공개로 유지해야 할
+이유가 없다고 판단했다.
+
+### Alternatives Considered
+- Private로 전환 — GitHub 무료 플랜에서도 private 저장소에 Actions/branch
+  protection을 그대로 쓸 수 있어 기술적으로는 가능하지만, 지금 당장 전환해야
+  할 구체적인 이유(실제 유출 사고, 외부 공개 우려 등)가 없어 기각. 필요해지면
+  언제든 전환 가능.
+
+### Consequences
+- (+) 저장소 관리에 추가 제약이 없다 (예: private 저장소의 협업자 수 제한 등).
+- (−) 실제 환자 샘플 데이터, 로그, 스크린샷, fixture 등을 실수로 커밋하면
+  즉시 공개된다 — `.gitignore` 규칙을 유지하고, PR 리뷰 시(특히 `.github/pull_request_template.md`의
+  "Patient-data/PHI impact?" 항목) 이 부분을 매번 확인해야 한다.
+- 향후 실제 환자 데이터, 진짜 API 키, 클리닉 네트워크 정보 등 민감한 자료가
+  이 저장소에 필요해지는 시점이 오면, 이 결정을 재검토한다.

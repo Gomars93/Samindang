@@ -266,5 +266,54 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     NECK_10A: 'NO',
     NECK_11: 'YES',
     NECK_12: 'YES',
+    // SHOULDER_V1 통합 후 추가: 이 fixture는 이미 존재했으므로 NS01/SH01/
+    // SH04/SH05가 원래 없었다 -- 전부 valid-negative로 채워 이 환자가
+    // 실제로는 답했을 값을 반영한다(F1: IS_PRIMARY_NECK 하나로 SH0x도
+    // 게이트되므로, 채우지 않으면 fail-closed 때문에 shoulder_safety_status가
+    // REVIEW_REQUIRED가 되어 이 NECK 전용 fixture의 의도(안전은 목
+    // 문제로만 REVIEW)가 흐려진다). NECK_* 필드는 전혀 건드리지 않았다.
+    NS01: 'NECK_DOMINANT',
+    SH01: 'NO',
+    SH04: 'NO',
+    SH05: 'NO',
+  }),
+
+  // SHOULDER_V1: NS01=SHOULDER_DOMINANT -> primary_module_detail 'SHOULDER'.
+  // SH01=YES(외상) + SH02=[NONE](변형/신경혈관 없음) + SH03=YES(외상 직후
+  // 현저한 팔 들기 저하) -> shoulder_safety_status REVIEW_REQUIRED(URGENT
+  // 아님, F3/결정 §11) + expedited_referral_consider=true. Canonical NECK는
+  // 전부 valid-negative로 CLEAR -- 이 fixture가 "어깨 문제로만 REVIEW"임을
+  // 분명히 한다(F1 대조군: NECK_DOMINANT 시나리오는 위 fixture가 반대로
+  // "목 문제로만 REVIEW"를 보여준다).
+  buildFixture('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)', {
+    ID_01: '이도현',
+    ID_03: 'male',
+    BIRTH_01: '19850615',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: 'within_1w',
+    VISIT_04_SYMPTOM_IMPACT: 'severe',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['sharp', 'movement_related'],
+    PAIN_04: 'none',
+    NS01: 'SHOULDER_DOMINANT',
+    NECK_01: 'NO',
+    NECK_02: ['NONE'],
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_10: 'NO',
+    SH01: 'YES',
+    SH02: ['NONE'],
+    SH03: 'YES',
+    SH04: 'NO',
+    SH05: 'NO',
+    SH06: 'NO',
+    SH07: 'RIGHT',
+    SH08: 'YES',
+    SH09: 'NO',
   }),
 ]

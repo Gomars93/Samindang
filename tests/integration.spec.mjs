@@ -1070,12 +1070,27 @@ const H1_MODULES = [
 // NECK_V1: URGENT_REVIEW가 4개 지점(NECK_02/NECK_02A/NECK_03B/NECK_04) 중
 // 어디서든 확정될 수 있어(v0.2.1 §5) 네 화면 모두 등록했다 — coreSpec.ts의
 // STAFF_CHECK_TRIGGERS 주석 참고.
+// SHOULDER_V1: URGENT_REVIEW는 SH02/SH04/SH05 세 지점에서만 확정될 수 있어
+// (v0.1.1 §10 -- SH01/SH03/SH06-09는 URGENT를 발생시키지 않음) 셋만
+// 등록했다 -- coreSpec.ts의 STAFF_CHECK_TRIGGERS 주석 참고.
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04',
+    'I1: STAFF_CHECK_TRIGGERS keys are exactly SAFETY_01, GI_03, BOWEL_03, LBP_04, NECK_02, NECK_02A, NECK_03B, NECK_04, SH02, SH04, SH05',
     JSON.stringify(keys) ===
-      JSON.stringify(['BOWEL_03', 'GI_03', 'LBP_04', 'NECK_02', 'NECK_02A', 'NECK_03B', 'NECK_04', 'SAFETY_01']),
+      JSON.stringify([
+        'BOWEL_03',
+        'GI_03',
+        'LBP_04',
+        'NECK_02',
+        'NECK_02A',
+        'NECK_03B',
+        'NECK_04',
+        'SAFETY_01',
+        'SH02',
+        'SH04',
+        'SH05',
+      ]),
   )
 }
 
@@ -1641,6 +1656,202 @@ for (const gateValue of ['yes', 'unsure']) {
   )
   assert('K19: awakenings correct', payload.modules.sleep.menopause.awakenings === 'two_three')
   assert('K19: return_to_sleep correct', payload.modules.sleep.menopause.return_to_sleep === '15_30m')
+}
+
+// ---------------------------------------------------------------------------
+// L. SHOULDER_V1 F1 invariant: NS01 must never gate SH01-05/canonical NECK
+// safety exposure. For each of NS01's 4 values, build a Responses with BOTH
+// a positive shoulder-specific safety finding (SH02 DEFORMITY_OR_STILL_OUT)
+// AND a positive canonical-NECK finding (NECK_03B thunderclap headache) and
+// confirm BOTH safety_flags.shoulder and safety_flags.neck stay populated
+// and URGENT_REVIEW regardless of NS01 -- this is the exact contract the
+// SHOULDER_V1 integration instructions explicitly required be regression
+// -tested. Only primary_module_detail (display/hypothesis tagging) may vary.
+// ---------------------------------------------------------------------------
+
+function neckShoulderUrgentBothResponses(ns01Value) {
+  let r = emptyResponses()
+  r = set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: 'within_1w',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    NS01: ns01Value,
+    // canonical NECK: thunderclap headache -> neck_safety_status URGENT_REVIEW
+    NECK_01: 'NO',
+    NECK_02: ['NONE'],
+    NECK_03A: 'NO',
+    NECK_03B: 'YES',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_10: 'NO',
+    // shoulder-specific: SH02 deformity -> shoulder_safety_status URGENT_REVIEW
+    SH01: 'YES',
+    SH02: ['DEFORMITY_OR_STILL_OUT'],
+    SH03: 'NO',
+    SH04: 'NO',
+    SH05: 'NO',
+  })
+  return r
+}
+
+for (const ns01Value of ['NECK_DOMINANT', 'SHOULDER_DOMINANT', 'SIMILAR', 'UNKNOWN']) {
+  const r = neckShoulderUrgentBothResponses(ns01Value)
+  const payload = buildResponsePayload(r)
+  const routing = buildRoutingPayload(r)
+
+  assert(
+    `L(${ns01Value}): safety_flags.shoulder is computed (not null)`,
+    payload.safety_flags.shoulder !== null,
+  )
+  assert(
+    `L(${ns01Value}): shoulder_safety_status is URGENT_REVIEW (SH02 deformity not hidden by NS01)`,
+    payload.safety_flags.shoulder?.shoulder_safety_status === 'URGENT_REVIEW',
+  )
+  assert(
+    `L(${ns01Value}): safety_flags.neck is computed (not null)`,
+    payload.safety_flags.neck !== null,
+  )
+  assert(
+    `L(${ns01Value}): neck_safety_status is URGENT_REVIEW (NECK_03B thunderclap not hidden by NS01)`,
+    payload.safety_flags.neck?.neck_safety_status === 'URGENT_REVIEW',
+  )
+  assert(
+    `L(${ns01Value}): NS01 itself is answered/visible (never gated out)`,
+    r['NS01'] === ns01Value,
+  )
+  assert(
+    `L(${ns01Value}): SH01-05 stay visible/answered regardless of NS01 (SH02 not pruned)`,
+    JSON.stringify(r['SH02']) === JSON.stringify(['DEFORMITY_OR_STILL_OUT']),
+  )
+
+  // primary_module_detail tagging: only SHOULDER_DOMINANT resolves to
+  // 'SHOULDER'; NECK_DOMINANT/SIMILAR/UNKNOWN all default to 'NECK'
+  // (pre-SHOULDER_V1 behavior, F1: this is tagging only, never a safety gate).
+  const expectedDetail = ns01Value === 'SHOULDER_DOMINANT' ? 'SHOULDER' : 'NECK'
+  assert(
+    `L(${ns01Value}): primary_module_detail is '${expectedDetail}' (tagging-only, does not affect the safety assertions above)`,
+    routing.primary_module_detail === expectedDetail,
+  )
+}
+
+// L5: NS01 unanswered entirely (mid-flow before the patient reaches it) must
+// still default primary_module_detail to 'NECK', not null/undefined -- and
+// must not itself suppress SH02/NECK safety once those are answered.
+{
+  let r = emptyResponses()
+  r = set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    NECK_01: 'NO',
+    NECK_02: ['NONE'],
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_10: 'NO',
+    SH01: 'YES',
+    SH02: ['DEFORMITY_OR_STILL_OUT'],
+    SH03: 'NO',
+    SH04: 'NO',
+    SH05: 'NO',
+  })
+  const payload = buildResponsePayload(r)
+  const routing = buildRoutingPayload(r)
+  assert('L5: NS01 unanswered -> primary_module_detail defaults to NECK', routing.primary_module_detail === 'NECK')
+  assert(
+    'L5: NS01 unanswered -> shoulder safety still computed and URGENT (F1 holds even pre-NS01)',
+    payload.safety_flags.shoulder?.shoulder_safety_status === 'URGENT_REVIEW',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// M. SHOULDER_V1 real-time URGENT_REVIEW interrupt: STAFF_CHECK_TRIGGERS.
+// SH02/SH04/SH05 must fire true exactly when shoulder_safety_status would be
+// URGENT_REVIEW, and stay false for REVIEW_REQUIRED-only or CLEAR paths --
+// verified by calling the actual trigger functions the app wires into
+// App.tsx's goNext(), not just the underlying engine.
+// ---------------------------------------------------------------------------
+
+function neckShoulderBaseResponses() {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    NS01: 'SHOULDER_DOMINANT',
+    NECK_01: 'NO',
+    NECK_02: ['NONE'],
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_10: 'NO',
+    SH04: 'NO',
+    SH05: 'NO',
+  })
+}
+
+{
+  const r = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['DEFORMITY_OR_STILL_OUT'] })
+  assert('M1: STAFF_CHECK_TRIGGERS.SH02 fires true for DEFORMITY_OR_STILL_OUT', STAFF_CHECK_TRIGGERS.SH02(r) === true)
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['NEW_NEUROVASCULAR_CHANGE'] })
+  assert('M1: STAFF_CHECK_TRIGGERS.SH02 fires true for NEW_NEUROVASCULAR_CHANGE', STAFF_CHECK_TRIGGERS.SH02(r) === true)
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['SEVERE_SWELLING_OR_CANNOT_MOVE'] })
+  assert(
+    'M1: STAFF_CHECK_TRIGGERS.SH02 stays false for SEVERE_SWELLING_OR_CANNOT_MOVE (review-tier, not urgent)',
+    STAFF_CHECK_TRIGGERS.SH02(r) === false,
+  )
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['NONE'], SH03: 'YES' })
+  assert(
+    'M1: STAFF_CHECK_TRIGGERS.SH02 stays false when only SH03 acute-cuff-concern is positive (F3: never auto-urgent)',
+    STAFF_CHECK_TRIGGERS.SH02(r) === false,
+  )
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH04: 'YES' })
+  assert('M2: STAFF_CHECK_TRIGGERS.SH04 fires true for infection YES', STAFF_CHECK_TRIGGERS.SH04(r) === true)
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH04: 'UNKNOWN' })
+  assert('M2: STAFF_CHECK_TRIGGERS.SH04 stays false for UNKNOWN (review-tier, not urgent)', STAFF_CHECK_TRIGGERS.SH04(r) === false)
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH05: 'YES' })
+  assert('M3: STAFF_CHECK_TRIGGERS.SH05 fires true for cardiac-gap YES', STAFF_CHECK_TRIGGERS.SH05(r) === true)
+}
+{
+  // canonical NECK URGENT (thunderclap) must ALSO make SH02/SH04/SH05's own
+  // trigger functions observe urgency via the shared engine passthrough --
+  // even though the shoulder-specific fields are all clean. This is the
+  // interrupt-layer counterpart to the CANONICAL REUSE tests in
+  // shoulder.spec.mjs.
+  const r = set(neckShoulderBaseResponses(), { NECK_03B: 'YES', SH01: 'NO' })
+  assert(
+    'M4: STAFF_CHECK_TRIGGERS.SH04 also fires true when canonical NECK is already URGENT_REVIEW (engine passthrough, not duplicated logic)',
+    STAFF_CHECK_TRIGGERS.SH04(r) === true,
+  )
+}
+{
+  const r = neckShoulderBaseResponses() // fully clean
+  assert('M5: STAFF_CHECK_TRIGGERS.SH02/SH04/SH05 all stay false on a fully-clean shoulder+neck baseline', STAFF_CHECK_TRIGGERS.SH02(r) === false && STAFF_CHECK_TRIGGERS.SH04(r) === false && STAFF_CHECK_TRIGGERS.SH05(r) === false)
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

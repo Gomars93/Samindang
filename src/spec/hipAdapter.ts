@@ -1,4 +1,5 @@
 import type { AnswerValue, Responses } from '../types'
+import type { DoctorPayload } from '../doctor/types'
 import type { HipState } from './hipLogic'
 
 const YES_NO_UNKNOWN = new Set(['YES', 'NO', 'UNKNOWN'])
@@ -41,6 +42,20 @@ export function toHipState(r: Responses, coreGeneralRed: boolean): HipState {
     stress_fracture_pattern: asProtectedMulti(r['HIP_04'], HIP04),
     infection_screen: asAllowedString(r['HIP_05'], INFECTION) as HipState['infection_screen'],
     progressive_neuro_screen: asAllowedString(r['HIP_06'], NEURO) as HipState['progressive_neuro_screen'],
+    core_safety_already_urgent: coreGeneralRed,
+  }
+}
+
+/** DoctorView panel path -- same allowlists/exclusions as toHipState, sourced from the submitted payload's modules.hip block instead of raw Responses. */
+export function toHipStateFromDoctorPayload(r: DoctorPayload['responses'], coreGeneralRed: boolean): HipState {
+  const m = r.modules.hip
+  return {
+    recent_trauma: asAllowedString(m.recent_trauma, YES_NO_UNKNOWN) as HipState['recent_trauma'],
+    limb_threatening_screen: asProtectedMulti(m.limb_threatening_screen, HIP02),
+    post_trauma_walking: asAllowedString(m.post_trauma_walking, WALKING) as HipState['post_trauma_walking'],
+    stress_fracture_pattern: asProtectedMulti(m.stress_fracture_pattern, HIP04),
+    infection_screen: asAllowedString(m.infection_screen, INFECTION) as HipState['infection_screen'],
+    progressive_neuro_screen: asAllowedString(m.progressive_neuro_screen, NEURO) as HipState['progressive_neuro_screen'],
     core_safety_already_urgent: coreGeneralRed,
   }
 }

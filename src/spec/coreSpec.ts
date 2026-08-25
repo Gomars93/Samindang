@@ -32,6 +32,9 @@ import { computeAnkleFootFlags } from './ankleFootLogic'
 import { toTmjState } from './tmjAdapter'
 import { computeTmjFlags } from './tmjLogic'
 import { IS_PRIMARY_TMJ_SAFETY, TMJ_ROUTING_QUESTIONS, TMJ_QUESTIONS } from './tmjQuestions'
+import { toHipState } from './hipAdapter'
+import { computeHipFlags } from './hipLogic'
+import { IS_PRIMARY_HIP_SAFETY, HIP_ROUTING_QUESTIONS, HIP_QUESTIONS } from './hipQuestions'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -3608,6 +3611,8 @@ export const CORE_QUESTIONS: Question[] = [
   ...URINARY_QUESTIONS,
   ...PAIN_QUESTIONS,
   ...LBP_QUESTIONS,
+  ...HIP_ROUTING_QUESTIONS,
+  ...HIP_QUESTIONS,
   ...SHOULDER_QUESTIONS,
   ...NECK_QUESTIONS,
   ...KNEE_QUESTIONS,
@@ -3799,6 +3804,24 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   TMJ_03: (r) =>
     IS_PRIMARY_TMJ_SAFETY(r) &&
     computeTmjFlags(toTmjState(r, computeFlags(r).general_red, ageFromResponses(r))).tmj_safety_status === 'URGENT_REVIEW',
+  /**
+   * HIP_V1 URGENT_REVIEW 즉시 인터럽트 -- Fable Integration Plan.
+   * URGENT는 HIP_02(관절탈구/개방성손상/외상후신경손상/순환장애)와
+   * HIP_05(SYSTEMIC_OR_RAPIDLY_WORSENING 감염 의심) 두 지점에서만
+   * 확정될 수 있으므로 이 둘만 등록한다 -- HIP_01/03/04/06은
+   * REVIEW/flag 계층이지 urgent interrupt source가 아니다(H2/H3/H5/H6
+   * CLOSED semantics). TMJ_01/AF_02 등과 동일하게 개별 조건을 손으로
+   * 재구현하지 않고 computeHipFlags 전체를 재계산해 URGENT_REVIEW인지만
+   * 확인한다 -- 엔진과의 drift를 구조적으로 차단한다. HIP은 age modifier가
+   * 없으므로(H1-H8에 age 기반 escalation 없음) toHipState는 age 인자를
+   * 받지 않는다.
+   */
+  HIP_02: (r) =>
+    IS_PRIMARY_HIP_SAFETY(r) &&
+    computeHipFlags(toHipState(r, computeFlags(r).general_red)).hip_safety_status === 'URGENT_REVIEW',
+  HIP_05: (r) =>
+    IS_PRIMARY_HIP_SAFETY(r) &&
+    computeHipFlags(toHipState(r, computeFlags(r).general_red)).hip_safety_status === 'URGENT_REVIEW',
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -4141,6 +4164,21 @@ export const buildResponsePayload = (r: Responses) => ({
      * convention LBP_V1 already uses (src/lib/age.ts).
      */
     tmj: IS_PRIMARY_TMJ_SAFETY(r) ? computeTmjFlags(toTmjState(r, computeFlags(r).general_red, ageFromResponses(r))) : null,
+    /**
+     * HIP_V1: same `IS_PRIMARY_*_SAFETY`-gated pattern as the other modules
+     * above -- computing computeHipFlags on a non-HIP-route patient's
+     * all-null HIP_* state would fail closed to REVIEW_REQUIRED for every
+     * such patient, meaningless noise since they were never asked. Gated on
+     * `IS_PRIMARY_HIP_SAFETY` (HIP_00 in BUTTOCK_PELVIS_DOMINANT/
+     * HIP_GROIN_DOMINANT/SIMILAR_OR_MULTIPLE/UNKNOWN), NOT on
+     * `IS_PRIMARY_LBP` alone -- a LOW_BACK_DOMINANT patient is
+     * `IS_PRIMARY_LBP` but never saw HIP_01-06 (H1/Tablet §1). `lbp` above
+     * is computed unconditionally for the entire `IS_PRIMARY_LBP`
+     * population regardless of this gate (H7 LBP zero-regression) -- for a
+     * HIP_GROIN_DOMINANT patient both `lbp` and `hip` are non-null
+     * simultaneously by design (H1/H7 coexistence contract).
+     */
+    hip: IS_PRIMARY_HIP_SAFETY(r) ? computeHipFlags(toHipState(r, computeFlags(r).general_red)) : null,
   },
   modules: {
     sleep: {
@@ -4309,6 +4347,16 @@ export const buildResponsePayload = (r: Responses) => ({
       gca_history_screen: r['TMJ_03'],
       facial_neuro_screen: r['TMJ_04'],
       current_lock_screen: r['TMJ_05'],
+    },
+    hip: {
+      region_discriminator: r['HIP_00'],
+      recent_trauma: r['HIP_01'],
+      limb_threatening_screen: r['HIP_02'],
+      post_trauma_walking: r['HIP_03'],
+      prior_imaging_context: r['HIP_03A'],
+      stress_fracture_pattern: r['HIP_04'],
+      infection_screen: r['HIP_05'],
+      progressive_neuro_screen: r['HIP_06'],
     },
     fatigue: {
       patterns: r['FATIGUE_01'],

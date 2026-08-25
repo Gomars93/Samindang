@@ -64,3 +64,5 @@ tests/.neck-adapter-bundle.mjs
 # esbuild bundles used by tests/shoulder.spec.mjs (regenerated, not source)
 tests/.shoulder-logic-bundle.mjs
 tests/.shoulder-adapter-bundle.mjs
+tests/.knee-logic-bundle.mjs
+tests/.knee-adapter-bundle.mjs

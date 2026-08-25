@@ -26,6 +26,17 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 터치가 기본 입력이지만(:focus-visible은 터치 탭에서 뜨지 않는다), 외장
+   키보드/스위치 접근성 도구로 조작하는 경우를 위해 포커스 상태를 명확히
+   보이게 한다. 접수처의 마우스/트랙패드 조작에도 동일하게 적용된다. */
+button:focus-visible,
+input:focus-visible,
+[role='radio']:focus-visible,
+[role='checkbox']:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
 html,
 body,
 #root {
@@ -260,6 +271,20 @@ input {
   border-color: var(--primary);
   background: var(--primary-soft);
   font-weight: 700;
+}
+
+/* MultiChoice의 max(동반문제 최대 2개 등) 도달 시 나머지 미선택 옵션이
+   disabled가 된다 -- 명시적 스타일이 없으면 브라우저 기본값에 기대게 되어
+   "왜 안 눌리지" 하는 혼동을 줄 수 있다. 선택 가능 여부가 시각적으로
+   분명하도록 흐리게 표시하고 커서를 바꾼다. */
+.option:disabled {
+  opacity: 0.45;
+}
+
+@media (hover: hover) {
+  .option:disabled {
+    cursor: not-allowed;
+  }
 }
 
 /* numeric_scale (LBP_V1) — 0~10 큰 버튼 행. 작은 슬라이더/체크박스 금지 규칙(2.4)을

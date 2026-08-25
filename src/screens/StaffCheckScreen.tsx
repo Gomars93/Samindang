@@ -11,7 +11,7 @@ export function StaffCheckScreen({ onContinue }: Props) {
   return (
     <div className="center">
       <div className="center__inner">
-        <p className="notice">
+        <p className="notice" role="alert">
           먼저 확인이 필요한 내용이 있습니다. 태블릿을 직원에게 보여주세요.
         </p>
         <button type="button" className="primaryBtn" onClick={onContinue}>

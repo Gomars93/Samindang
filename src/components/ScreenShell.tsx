@@ -12,6 +12,15 @@ type Props = {
   children: ReactNode
   /** 하단 고정 영역 (다음 / 선택 완료 버튼 등) */
   footer?: ReactNode
+  /**
+   * 현재 표시 중인 질문 id (App.tsx의 `current.id`). 새 질문으로 전환될
+   * 때만 본문 스크롤을 맨 위로 되돌리기 위한 식별자 -- `children`은 같은
+   * 질문 안에서 선택지를 고를 때마다도 매번 새 객체로 바뀌므로(리렌더마다
+   * 새 JSX 엘리먼트), children 자체를 스크롤 리셋 트리거로 쓰면 안 된다
+   * (긴 목록을 스크롤해 내려간 상태에서 옵션을 누를 때마다 스크롤이
+   * 맨 위로 튀는 회귀가 생긴다).
+   */
+  questionId?: string
 }
 
 /**
@@ -28,9 +37,18 @@ export function ScreenShell({
   onHelp,
   children,
   footer,
+  questionId,
 }: Props) {
   const mainRef = useRef<HTMLElement>(null)
   const [hasMore, setHasMore] = useState(false)
+
+  // 새 질문으로 전환될 때만 본문 스크롤을 맨 위로 되돌린다. 이전 질문에서
+  // 아래로 스크롤해 내려간 상태로 다음/이전 질문으로 넘어가면, 새 질문의
+  // 첫 줄(문항 텍스트)이 아니라 이전 스크롤 위치가 그대로 유지되어 환자가
+  // 새 질문이 시작된 줄 모르고 화면 중간부터 보게 되는 문제를 막는다.
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 })
+  }, [questionId])
 
   useEffect(() => {
     const el = mainRef.current

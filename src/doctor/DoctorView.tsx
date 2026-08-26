@@ -409,6 +409,48 @@ function safetyGlanceItems(
     })
   }
 
+  /**
+   * Routing/UX v2 §20-21: 자유입력을 줄인 대신 clinician confirmation cue를
+   * 강화한다. 환자 선택만으로 진단/객관적 소견을 만들지 않고 "확인
+   * 필요"/"진료 중 확인" 수준으로만 표시한다. 기존 urgent safety
+   * panel/redflag보다 강하게 보이면 안 되므로 이 함수의 기존 항목들
+   * 뒤에(가장 낮은 우선순위로) 추가한다 -- §21 우선순위(1.safety/urgent
+   * 2.medication/allergy 3.surgery/history 4.추가 전달사항 5.기타 상세)
+   * 중 1~2는 위에 이미 있고, 여기서는 3~5만 이 순서로 덧붙인다.
+   */
+  if (r.surgery_history.surgery_yn === 'yes') {
+    items.push({ key: 'surgery', label: '수술·입원력', text: '있음 — 종류/시기 확인' })
+  }
+
+  if (r.free_text.free_text_yn === 'yes') {
+    items.push({ key: 'free_text', label: '추가 전달사항', text: '있음 — 진료 중 확인' })
+  }
+
+  // "기타" 선택 확인 필요 항목들을 하나의 배지로 묶는다 -- 필드마다 따로
+  // 배지를 만들면 노란 배지가 난립한다(§21).
+  const otherDetailFlags: string[] = []
+  if (r.visit_goal.primary_symptom === 'other') otherDetailFlags.push('기타 주호소')
+  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
+    otherDetailFlags.push('기타 동반증상')
+  }
+  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
+    otherDetailFlags.push('기타 수면 원인')
+  }
+  if (r.modules.pain.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
+  if (r.modules.pain.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
+  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
+    otherDetailFlags.push('기타 여성 건강 상담')
+  }
+  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
+    otherDetailFlags.push('기타 임신 상담')
+  }
+  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
+    otherDetailFlags.push('기타 산후 상담')
+  }
+  if (otherDetailFlags.length > 0) {
+    items.push({ key: 'other_detail', label: '기타 확인', text: `${otherDetailFlags.join(', ')} — 진료 중 확인` })
+  }
+
   return items
 }
 
@@ -1421,7 +1463,6 @@ function primaryModuleFields(
         { qid: 'SLEEP_01', value: m.sleep.problems },
         { qid: 'SLEEP_02', value: m.sleep.frequency_per_week },
         { qid: 'SLEEP_03', value: m.sleep.awakening_reasons },
-        { qid: 'SLEEP_03A', value: m.sleep.awakening_other },
         { qid: 'MS_GATE_01', value: m.sleep.menopause.gate_context },
         { qid: 'MS_01', value: m.sleep.menopause.stage },
         { qid: 'MS_02', value: m.sleep.menopause.night_vms_frequency },
@@ -1454,10 +1495,8 @@ function primaryModuleFields(
     case 'Pain':
       return [
         { qid: 'PAIN_01', value: m.pain.primary_location },
-        { qid: 'PAIN_01A', value: m.pain.location_other },
         { qid: 'PAIN_02', value: m.pain.pain_qualities },
         { qid: 'PAIN_04', value: m.pain.radiation },
-        { qid: 'PAIN_04A', value: m.pain.radiation_other },
         ...(primaryModuleDetail === 'LBP'
           ? [
               { qid: 'LBP_01', value: m.lbp.distal_extent },
@@ -1668,7 +1707,6 @@ function primaryModuleFields(
     case 'Women':
       return [
         { qid: 'WOMEN_01', value: m.women.problems },
-        { qid: 'WOMEN_01A', value: m.women.other_text },
         { qid: 'WOMEN_02', value: m.women.menstrual_status },
         { qid: 'WOMEN_03', value: m.women.menopause_symptoms },
       ]
@@ -1677,13 +1715,11 @@ function primaryModuleFields(
         { qid: 'PREGNANCY_01', value: m.pregnancy.status },
         { qid: 'PREGNANCY_02', value: m.pregnancy.trimester },
         { qid: 'PREGNANCY_03', value: m.pregnancy.concerns },
-        { qid: 'PREGNANCY_03A', value: m.pregnancy.other_text },
       ]
     case 'Postpartum':
       return [
         { qid: 'POSTPARTUM_01', value: m.postpartum.time_since_delivery },
         { qid: 'POSTPARTUM_02', value: m.postpartum.problems },
-        { qid: 'POSTPARTUM_02A', value: m.postpartum.other_text },
         { qid: 'POSTPARTUM_03', value: m.postpartum.breastfeeding_status },
       ]
     case 'Weight':
@@ -2226,7 +2262,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             const agg = aggravatingField(routing.primary_module, r.modules)
             return agg ? <Field key={agg.qid} qid={agg.qid} value={agg.value} /> : null
           })()}
-          <Field qid="VISIT_02A_SYMPTOM_OTHER" value={r.visit_goal.primary_symptom_other} />
         </div>
       </section>
 
@@ -2241,7 +2276,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           ))}
           {secondaryChipsData(r).length === 0 && <p className="doctor__empty">동반문제 없음</p>}
         </div>
-        <Field qid="SECONDARY_01A" value={r.secondary_concerns.secondary_other_text} />
         {secondaryModuleFields(r).length > 0 && (
           <details className="doctor__secDetails">
             <summary>자세히</summary>
@@ -2319,7 +2353,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <Field qid="ALLERGY_01" value={r.allergy.allergy_yn} />
           <Field qid="ALLERGY_02" value={r.allergy.allergy_detail} />
           <Field qid="SURGERY_01" value={r.surgery_history.surgery_yn} />
-          <Field qid="SURGERY_02" value={r.surgery_history.surgery_detail} />
         </div>
       </section>
 
@@ -2350,7 +2383,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         <div className="doctor__grid">
           <Field qid="TEST_01" value={r.recent_tests.recent_test_flag} />
           <Field qid="FREE_01" value={r.free_text.free_text_yn} />
-          <Field qid="FREE_02" value={r.free_text.free_text_detail} />
         </div>
       </section>
 

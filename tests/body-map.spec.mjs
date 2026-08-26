@@ -291,26 +291,35 @@ function cssBlock(css, selector) {
 }
 
 {
-  // Tablet UX v2.2.1 §6: a compact "selected region" chip persists near the
-  // CTA (sticky, positioned to clear the scroll-hint pill entirely -- never
-  // overlapping it) once a zone is selected, so scrolling away from the top
-  // label never loses the feedback.
+  // Tablet UX v2.2.1 §6 / v2.3 §11-12: a compact "selected region" chip
+  // persists near the CTA (sticky) once a zone is selected, so scrolling
+  // away from the top label never loses the feedback -- portrait only.
+  // v2.3 removed the old overlay-based scroll-hint entirely (replaced with
+  // a dedicated non-overlapping lane, see ScreenShell.tsx/styles.css), so
+  // this chip no longer needs to coordinate a bottom offset against a pill
+  // height -- `bottom: 0` is correct by construction now (nothing else
+  // renders inside `.shell__main` for it to collide with). In landscape the
+  // chip is hidden entirely (display:none) because ScreenShell's right rail
+  // (fed by App.tsx's railSelection prop) shows the same information
+  // instead, always visible and not scroll-dependent.
   const bodyMapSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
   assert('BodyMap.tsx: renders a selectedChip element', bodyMapSrc.includes('bodyMap__selectedChip'))
   assert('BodyMap.tsx: selectedChip only renders once a value is selected (conditional on `value &&`)', /\{value &&[\s\S]{0,80}bodyMap__selectedChip/.test(bodyMapSrc))
+  assert('BodyMap.tsx CRITICAL: selectedChip uses aria-live="polite", never aria-hidden (must reach assistive tech)', /bodyMap__selectedChip[\s\S]{0,40}aria-live="polite"/.test(bodyMapSrc))
+  assert('BodyMap.tsx: selectedChip export exposes getBodyMapZoneLabel for App.tsx to reuse in the rail', bodyMapSrc.includes('export function getBodyMapZoneLabel'))
 
   const chipCss = cssBlock(CSS, '.bodyMap__selectedChip')
   assert('styles.css: .bodyMap__selectedChip rule exists', Boolean(chipCss))
   assert('styles.css: .bodyMap__selectedChip is sticky (stays visible while scrolling)', /position:\s*sticky/.test(chipCss))
 
-  const hintCssForChip = cssBlock(CSS, '.shell__scrollHint')
-  const hintHeightMatch = hintCssForChip.match(/height:\s*(\d+)px/)
-  const chipBottomMatch = chipCss.match(/bottom:\s*(\d+)px/)
-  assert('styles.css: .bodyMap__selectedChip declares a numeric sticky bottom offset', Boolean(chipBottomMatch))
-  assert(
-    'styles.css CRITICAL: .bodyMap__selectedChip sticky offset sits at or above the scroll-hint pill height (chip never overlaps the pill)',
-    Boolean(chipBottomMatch) && Boolean(hintHeightMatch) && Number(chipBottomMatch[1]) >= Number(hintHeightMatch[1]),
-  )
+  // The old opaque overlay class no longer exists anywhere in the file --
+  // its replacement (.shell__scrollHintLane) is a structurally separate
+  // flex sibling of .shell__main, so it can never overlap scrolled content.
+  assert('styles.css CRITICAL: the old overlay-based .shell__scrollHint class is fully removed (replaced by a non-overlapping lane)', !CSS.includes('.shell__scrollHint {') && !CSS.includes('.shell__scrollHintPill'))
+  assert('styles.css: .shell__scrollHintLane (the new non-overlapping replacement) exists', CSS.includes('.shell__scrollHintLane'))
+
+  const landscapeChipHideMatch = CSS.match(/@media \(orientation: landscape\) and \(min-width: 760px\) \{\s*\.bodyMap__selectedChip \{\s*display:\s*none;/)
+  assert('styles.css CRITICAL: .bodyMap__selectedChip is hidden in wide landscape (right rail shows the same info instead, not a duplicate)', Boolean(landscapeChipHideMatch))
 }
 
 {
@@ -324,22 +333,33 @@ function cssBlock(css, selector) {
 }
 
 {
-  // 9. styles.css: scroll hint no longer risks covering the last option --
-  // .shell__main's bottom padding must be >= the scroll hint pill's own
-  // height (Tablet UX v2.2 §11 fix; see styles.css comment for the math).
+  // 9. Tablet UX v2.3 §9-10: the scroll hint can no longer cover the last
+  // option/CTA/selected-chip AT ALL, in any scroll position -- not just
+  // "the last option specifically" (the old v2.2 §11 padding-coordination
+  // fix this replaces only guarded the very bottom of the list, not content
+  // scrolled past mid-way while an opacity-gradient overlay sat on top of
+  // it). The new .shell__scrollHintLane is a structurally separate flex
+  // sibling of .shell__main (never inside its scrollable box), so this is
+  // a zero-overlap-by-construction guarantee rather than a padding-vs-height
+  // arithmetic coordination that a future edit could silently break.
   const mainCss = cssBlock(CSS, '.shell__main')
   assert('styles.css: .shell__main rule exists', Boolean(mainCss))
   const paddingMatch = mainCss.match(/padding:\s*[\d.]+px\s+[^\s]+\s+(\d+)px/)
   assert('styles.css: .shell__main declares a 3-value padding shorthand ending in a px bottom value', Boolean(paddingMatch))
-  const hintCss = cssBlock(CSS, '.shell__scrollHint')
-  assert('styles.css: .shell__scrollHint rule exists', Boolean(hintCss))
-  const hintHeightMatch = hintCss.match(/height:\s*(\d+)px/)
-  assert('styles.css: .shell__scrollHint declares a height', Boolean(hintHeightMatch))
-  assert(
-    'styles.css: .shell__main bottom padding >= scroll hint height (last option can never sit behind the pill)',
-    Number(paddingMatch[1]) >= Number(hintHeightMatch[1]),
-  )
-  assert('styles.css: .shell__scrollHint keeps pointer-events: none (never intercepts taps)', /pointer-events:\s*none/.test(hintCss))
+
+  const laneCss = cssBlock(CSS, '.shell__scrollHintLane')
+  assert('styles.css: .shell__scrollHintLane rule exists', Boolean(laneCss))
+  assert('styles.css: .shell__scrollHintLane is a normal flex-flow item (flex: 0 0 auto), not position:absolute/sticky/fixed overlaying content', /flex:\s*0 0 auto/.test(laneCss) && !/position:\s*(absolute|sticky|fixed)/.test(laneCss))
+  const laneHeightMatch = laneCss.match(/height:\s*(\d+)px/)
+  assert('styles.css: .shell__scrollHintLane declares a fixed height', Boolean(laneHeightMatch))
+  assert('styles.css: .shell__scrollHintLane height is within the required 32-44px dedicated-lane range (portrait)', Boolean(laneHeightMatch) && Number(laneHeightMatch[1]) >= 32 && Number(laneHeightMatch[1]) <= 44)
+
+  const screenShellSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'ScreenShell.tsx'), 'utf8')
+  const mainCloseIdx = screenShellSrc.indexOf('</main>')
+  const laneOpenIdx = screenShellSrc.indexOf('shell__scrollHintLane')
+  assert('ScreenShell.tsx CRITICAL: the scroll-hint lane markup is a sibling AFTER </main> closes, never inside <main> (cannot overlay scrollable content)', mainCloseIdx !== -1 && laneOpenIdx !== -1 && laneOpenIdx > mainCloseIdx)
+
+  assert('styles.css CRITICAL: no opacity-gradient-over-content technique remains anywhere for the scroll hint (linear-gradient tied to scroll hint removed)', !/shell__scrollHint[\s\S]{0,10}\{[^}]*linear-gradient/.test(CSS))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

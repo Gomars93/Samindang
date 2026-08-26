@@ -88,6 +88,15 @@ const ZONE_LABEL: Record<string, string> = {
 }
 
 /**
+ * Tablet UX v2.3 §11-12: App.tsx가 landscape rail(ScreenShell의
+ * railSelection prop)에 표시할 한글 label을 계산할 때 재사용한다 --
+ * ZONE_LABEL을 여기서만 정의해 두 곳에서 값이 어긋나는 일을 막는다.
+ */
+export function getBodyMapZoneLabel(value: string): string {
+  return ZONE_LABEL[value] ?? value
+}
+
+/**
  * 단순 human silhouette (local inline SVG, Tablet UX v2.1 §8). 해부학적
  * 상세/성별 구분 없음, remote asset 없음. viewBox는 .bodyMap__figure의
  * aspect-ratio(3:5, styles.css)와 동일 비율(60:100)이라 zone 버튼의 %
@@ -228,19 +237,23 @@ export function BodyMap({ options, value, onSelect }: Props) {
         <Figure view="back" zones={backZones} value={value} onSelect={onSelect} />
       </div>
       {/*
-        Tablet UX v2.2.1 §6: 위 label은 그림 위에 있어 스크롤하면 질문
-        제목과 함께 화면 밖으로 사라질 수 있다 -- landscape처럼 세로 공간이
-        좁아 이 화면이 스크롤을 필요로 하는 경우, 환자가 zone을 누른 직후
-        "내가 뭘 선택했는지" 계속 확인 가능해야 한다. 선택된 뒤에만
-        나타나는 sticky compact chip을 추가한다. `.shell__scrollHint`와
-        똑같은 sticky 메커니즘을 재사용하되, bottom:84px로 그 pill 영역
-        바로 위에 고정해 절대 겹치지 않는다(scroll hint 높이가 정확히
-        84px, styles.css 주석 참고) -- 짧은 화면(스크롤이 필요 없는 대부분의
-        viewport)에서는 sticky가 발동하지 않아 그냥 자연스러운 위치(그림
-        바로 아래)에 머문다.
+        Tablet UX v2.2.1 §6 / v2.3 §11-12: 위 label은 그림 위에 있어
+        스크롤하면 질문 제목과 함께 화면 밖으로 사라질 수 있다 -- 세로
+        공간이 좁아 이 화면이 스크롤을 필요로 하는 경우, 환자가 zone을
+        누른 직후 "내가 뭘 선택했는지" 계속 확인 가능해야 한다. 선택된
+        뒤에만 나타나는 sticky compact chip을 portrait 전용으로 유지한다
+        (landscape에서는 ScreenShell의 우측 rail이 App.tsx가 넘긴
+        railSelection으로 같은 정보를 이미 항상 보여주므로, 이 chip은
+        styles.css의 wide-landscape 미디어쿼리에서 숨겨 중복 렌더링을
+        막는다). v2.2.1까지는 scroll hint pill과 겹치지 않도록
+        bottom:84px로 고정했었는데, v2.3에서 scroll hint 자체가 더 이상
+        `.shell__main` 안의 겹침 overlay가 아니게 되어(별도 레인으로
+        분리) 이제 bottom:0이면 충분하다(styles.css 참고). "선택 안 함"이
+        가능한 화면이 아니라 상태 안내이므로 aria-hidden이 아니라
+        aria-live="polite"로 스크린리더에도 변경 사항을 알린다.
       */}
       {value && (
-        <p className="bodyMap__selectedChip" aria-hidden="true">
+        <p className="bodyMap__selectedChip" aria-live="polite">
           <span className="bodyMap__selectedChipMark" aria-hidden="true">✓</span>
           선택한 부위: <strong>{ZONE_LABEL[value] ?? value}</strong>
         </p>

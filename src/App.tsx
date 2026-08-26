@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getBodyMapZoneLabel } from './components/BodyMap'
 import { HelpModal } from './components/HelpModal'
 import { IdleWarningModal } from './components/IdleWarningModal'
 import { PatientErrorBoundary } from './components/PatientErrorBoundary'
@@ -487,6 +488,15 @@ function AppContent() {
   const value = responses[current.id]
   const answered = !current.required || isAnswered(current, value)
   const showConfirm = needsConfirmButton()
+  // Tablet UX v2.3 §11-12: Body Map 화면에서 landscape 우측 rail에 "지금
+  // 뭘 선택했는지"를 항상 보여준다(스크롤과 무관). ScreenShell 자체는
+  // BodyMap 내부를 모르므로, 여기서 미리 계산해 짧은 텍스트만 넘긴다.
+  const railSelection =
+    current.layout === 'body_map' && typeof value === 'string' ? (
+      <>
+        선택한 부위: <strong>{getBodyMapZoneLabel(value)}</strong>
+      </>
+    ) : null
 
   return (
     <>
@@ -500,6 +510,7 @@ function AppContent() {
         // 유지하고, 짧은 카테고리 선택 화면(grid2/compact3/body_map)만
         // 더 넓게 쓴다.
         wideContent={current.layout != null && current.layout !== 'list'}
+        railSelection={railSelection}
         canGoBack={visited.length > 0}
         onBack={goBack}
         onHelp={() => {

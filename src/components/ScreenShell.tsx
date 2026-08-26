@@ -29,6 +29,16 @@ type Props = {
    * semantics와 무관하다(Question.layout과 동일 원칙, styles.css 참고).
    */
   wideContent?: boolean
+  /**
+   * Tablet UX v2.3 §11-12: Body Map처럼 "지금 무엇을 선택했는지"를 항상
+   * 보여줘야 하는 화면이 landscape에서 쓸 우측 rail 전용 슬롯. App.tsx가
+   * 현재 질문/응답으로부터 미리 계산한 짧은 텍스트만 넘긴다(ScreenShell은
+   * 어떤 질문 타입인지 모르고, 그냥 주어진 내용을 rail에 놓을 뿐이다).
+   * portrait에서는 이 슬롯을 렌더링하지 않는다 -- 해당 화면 자체(children)가
+   * 이미 자기 콘텐츠 안에 sticky compact chip으로 같은 정보를 보여준다
+   * (예: BodyMap.tsx의 .bodyMap__selectedChip, landscape에서는 CSS로 숨김).
+   */
+  railSelection?: ReactNode
 }
 
 /**
@@ -47,6 +57,7 @@ export function ScreenShell({
   footer,
   questionId,
   wideContent,
+  railSelection,
 }: Props) {
   const mainRef = useRef<HTMLElement>(null)
   const [hasMore, setHasMore] = useState(false)
@@ -130,15 +141,30 @@ export function ScreenShell({
         ref={mainRef}
       >
         <div className="shell__mainInner">{children}</div>
-        {hasMore && (
-          <div className="shell__scrollHint" aria-hidden="true">
-            <span className="shell__scrollHintPill">
-              아래에 항목이 더 있어요
-              <span className="shell__scrollHintIcon">↓</span>
-            </span>
-          </div>
-        )}
       </main>
+
+      {/*
+        Tablet UX v2.3 §9-10: 이전 버전은 이 안내를 `.shell__main` 안에
+        position:sticky + 음수 margin-top으로 "떠 있는" gradient pill로
+        구현했다 -- pointer-events:none이라 탭은 막지 않지만, 스크롤 중
+        실제 옵션/CTA/선택 chip 위에 시각적으로 겹쳐 보이는 문제가 있었다
+        (opacity-gradient-over-content 금지 규칙 위반). 이제는 `.shell__main`의
+        형제 엘리먼트로, 그 자체의 고정된 32-44px 레인을 항상 예약해 둔다
+        -- 콘텐츠와 절대 같은 공간을 공유하지 않으므로 어떤 스크롤
+        위치에서도 겹칠 수 없다. 필요 없을 때는 opacity/visibility만
+        바꿔 자리를 비워둔다(레이아웃 흔들림 방지). landscape에서는 이
+        레인 자체를 숨기고 우측 rail의 .railScrollHint가 같은 역할을
+        대신한다(아래, styles.css 미디어쿼리).
+      */}
+      <div
+        className={`shell__scrollHintLane${hasMore ? ' shell__scrollHintLane--visible' : ''}`}
+        aria-hidden="true"
+      >
+        <span className="shell__scrollHintText">
+          아래에 항목이 더 있어요
+          <span className="shell__scrollHintIcon">↓</span>
+        </span>
+      </div>
 
       <footer className="shell__bottom">
         <div className="shell__bottomInner">
@@ -150,10 +176,26 @@ export function ScreenShell({
       </footer>
 
       <aside className="shell__railRight">
-        <span className="railStepLabel">{currentStep}</span>
-        <button type="button" className="railHelpBtn" onClick={onHelp}>
-          입력이 어려워요
-        </button>
+        <div className="shell__railTop">
+          {railSelection && (
+            <div className="railSelection" aria-live="polite">
+              {railSelection}
+            </div>
+          )}
+          <span className="railStepLabel">{currentStep}</span>
+        </div>
+        <div className="shell__railBottom">
+          <span
+            className={`railScrollHint${hasMore ? ' railScrollHint--visible' : ''}`}
+            aria-hidden="true"
+          >
+            아래에 항목이 더 있어요
+            <span className="shell__scrollHintIcon">↓</span>
+          </span>
+          <button type="button" className="railHelpBtn" onClick={onHelp}>
+            입력이 어려워요
+          </button>
+        </div>
       </aside>
     </div>
   )

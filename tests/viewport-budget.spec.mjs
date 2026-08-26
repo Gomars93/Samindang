@@ -82,6 +82,14 @@ const HEADER_H_WIDE = 8 + 0 + 6 + 6 // shell__top padding-top + topRow min-h(col
 // it under-estimates available height for every wide viewport.
 const FOOTER_H_WIDE = 10 + 16 + 56 // shell__bottom padding (landscape-trimmed) + primaryBtn (landscape-trimmed) -- helpBtn moved to right rail (display:none)
 
+// Tablet UX v2.3 §9-10: .shell__scrollHintLane is a new fixed-height flex
+// sibling of .shell__main, always reserved in portrait/narrow viewports.
+// It is hidden entirely (display:none) in wide landscape -- the right rail's
+// .railScrollHint takes over there, living in the rail's own already-counted
+// vertical space rather than adding new height cost -- so this only applies
+// when NOT wide.
+const SCROLL_HINT_LANE_H = 40 // .shell__scrollHintLane height (portrait only)
+
 function isWideLandscape(viewportW, viewportH) {
   return viewportW > viewportH && viewportW >= WIDE_LANDSCAPE_MIN_WIDTH
 }
@@ -90,7 +98,8 @@ function budgetFor(viewportW, viewportH) {
   const wide = isWideLandscape(viewportW, viewportH)
   const headerH = wide ? HEADER_H_WIDE : HEADER_H
   const footerH = wide ? FOOTER_H_WIDE : FOOTER_H
-  const availableH = viewportH - headerH - footerH - MAIN_PADDING_H
+  const scrollHintLaneH = wide ? 0 : SCROLL_HINT_LANE_H
+  const availableH = viewportH - headerH - footerH - MAIN_PADDING_H - scrollHintLaneH
   const contentWidth = Math.min(CONTENT_MAX, viewportW - 2 * GUTTER)
 
   const questionLineH = FS_QUESTION * 1.35
@@ -188,16 +197,25 @@ for (const vp of VIEWPORTS) {
 // Computed by running budgetFor(834, 1194) against the current question set
 // (see this file's header comment for the exact command/output) and
 // reviewing which screens genuinely need inner scroll at that viewport's
-// tighter (850px) available height, beyond the 800x1280 allowlist already
-// justified in layout-budget.spec.mjs. POSTPARTUM_02/SEC_PAIN_01 have long
-// multi-select option lists that only overflow once available height drops
-// below ~869px -- they fit fine at the 800x1280 reference viewport.
+// tighter (now 810px, after the v2.3 §9-10 scroll-hint lane reserves an
+// extra fixed 40px -- was 850px before that lane existed) available height,
+// beyond the 800x1280 allowlist already justified in layout-budget.spec.mjs.
+// POSTPARTUM_02/SEC_PAIN_01 have long multi-select option lists that only
+// overflow once available height drops below ~869px -- they fit fine at the
+// 800x1280 reference viewport. PAIN_01/NECK_04/PREGNANCY_03/SEC_URINARY_01/
+// MED_TYPES (815-826px) newly cross the 810px line purely because of the
+// new lane's fixed cost, not because their own content grew -- inner scroll
+// (the app's only scroll container, .shell__main) handles this the same way
+// it already does for the rest of this allowlist; nothing breaks.
 const PORTRAIT_ALLOWLISTS = {
   '834x1194 (portrait)': new Set([
     'BIRTH_03', 'HISTORY_01', 'SECONDARY_01', 'LBP_11', 'POSTPARTUM_02', 'SEC_PAIN_01',
     // Tablet UX v2.1 §11-13: ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01
     // replace SECONDARY_01's old mixed role with two longer grid2 screens.
     'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01',
+    // Tablet UX v2.3 §9-10: newly tight after the scroll-hint lane's fixed
+    // 40px reservation (see comment above).
+    'PAIN_01', 'NECK_04', 'PREGNANCY_03', 'SEC_URINARY_01', 'MED_TYPES',
   ]),
   '1200x1920 (large portrait)': new Set(), // spacious enough that nothing needs inner scroll
 }

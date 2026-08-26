@@ -1,5 +1,6 @@
 import { optionKey } from '../types'
 import type { Option } from '../types'
+import { Icon } from './icons'
 
 type Props = {
   options: Option[]
@@ -31,6 +32,7 @@ export function SingleChoice({ options, value, onSelect, layout = 'list' }: Prop
             <span className="option__mark" aria-hidden="true">
               {isSelected ? '✓' : ''}
             </span>
+            {opt.icon && <Icon name={opt.icon} />}
             <span className="option__labelGroup">
               <span className="option__label">{opt.label}</span>
               {opt.description && <span className="option__description">{opt.description}</span>}

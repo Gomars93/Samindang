@@ -1396,6 +1396,15 @@ function secondaryChipsData(r: Responses) {
   })
 }
 
+/**
+ * Tablet UX v2.1 §18-§19: REFERENCE_SYMPTOMS_01은 "있다는 사실"만 전달되는
+ * flag다 -- 'none'은 표시하지 않는다(선택 안 함과 동일하게 취급).
+ */
+function referenceSymptomKeys(routing: DoctorPayload['routing']): string[] {
+  const raw = (routing.reference_symptoms as string[] | null) ?? []
+  return raw.filter((k) => k !== 'none')
+}
+
 /** §PART5 전신·한약 참고 필드 목록 — 미리보기(요약 2~3개)와 상세 펼치기가 이 목록을 공유한다. */
 function constitutionFields(r: Responses) {
   return [
@@ -2265,8 +2274,61 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
+      {/*
+        Tablet UX v2.1 §11-§24: 문진 구조를 3구역으로 명확히 분리한다 --
+        주호소(위)는 항상 FULL module, 추가 상세상담(아래, 최대 1개)도
+        명시 선택 시 FULL module, 참고 증상(아래, 복수 가능)은 module을
+        절대 열지 않는 "있다는 사실"만 전달되는 flag다(§19 HARD RULE).
+        참고 증상은 절대 진단처럼 보이면 안 되고, 기존 urgent safety
+        panel보다 강조되지 않는다(§23) -- muted/작은 chip으로만 표시한다.
+      */}
+      <section className="doctor__section">
+        <h2>추가 상세상담</h2>
+        {routing.additional_module ? (
+          <>
+            <div className="doctor__chiefPrimary">
+              <span className="doctor__chiefPrimary__label">추가 상세상담</span>
+              <span className="doctor__chiefPrimary__value">
+                {optionLabel('ADDITIONAL_DETAIL_01', routing.additional_detail_concern)}
+              </span>
+            </div>
+            <div className="doctor__grid">
+              {primaryModuleFields(routing.additional_module, r.modules, routing.additional_module_detail).map(
+                (f) => (
+                  <Field key={f.qid} qid={f.qid} value={f.value} />
+                ),
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="doctor__empty">추가 상세상담 없음</p>
+        )}
+      </section>
+
+      <section className="doctor__section">
+        <h2>참고 증상</h2>
+        <p className="doctor__derivedNote">
+          환자가 선택한 참고용 정보입니다 — 진단이나 객관적 소견이 아니며, 필요 시 진료 중 확인하세요.
+        </p>
+        <div className="doctor__secChips">
+          {referenceSymptomKeys(routing).map((k) => (
+            <span key={k} className="doctor__secChip doctor__secChip--reference">
+              <strong>{optionLabel('REFERENCE_SYMPTOMS_01', k)}</strong>
+            </span>
+          ))}
+          {referenceSymptomKeys(routing).length === 0 && <p className="doctor__empty">참고 증상 없음</p>}
+        </div>
+        {referenceSymptomKeys(routing).includes('other') && (
+          <p className="doctor__derivedNote">기타 참고증상 있음 — 진료 중 확인</p>
+        )}
+      </section>
+
       <section className="doctor__section">
         <h2>동반문제</h2>
+        <p className="doctor__derivedNote">
+          이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다. 새 문진은 위 "추가
+          상세상담"/"참고 증상"으로 대체되어 이 구역이 항상 비어 있습니다.
+        </p>
         <div className="doctor__secChips">
           {secondaryChipsData(r).map((c) => (
             <span key={c.key} className="doctor__secChip" title={c.answerText}>

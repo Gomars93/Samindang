@@ -16,9 +16,21 @@ type Props = {
  * onSelect로 넘기는 값은 항상 PAIN_01.options에 실제로 존재하는 value
  * 그대로다(아래 ZONES 테이블 참고, 추측으로 만든 값 없음).
  *
- * 해부학적 상세 그림 대신 단순 무채색 도형(원/둥근사각형)만 사용한다.
+ * 해부학적 상세 없이 단순 무채색 human silhouette(inline SVG)만 사용한다.
  * 각 zone은 실제 <button>이며 aria-label이 있고, 선택 상태는 색상만이
  * 아니라 체크마크 배지로도 표시한다(SingleChoice와 동일한 원칙).
+ *
+ * DOM 구조(Tablet UX v2.1 §7, device QA에서 발견된 렌더링 버그 수정):
+ * zone 버튼은 반드시 .bodyMap__figure(position:relative, aspect-ratio로
+ * 크기가 고정된 coordinate container)의 직계 child여야 한다. 이전 버전은
+ * silhouette와 zone 버튼 목록이 .bodyMap__figureWrap 아래 형제(sibling)로
+ * 나뉘어 있었는데, .bodyMap__figureWrap 자체는 position이 지정되지 않아
+ * (static) zone의 position:absolute가 브라우저에서 더 위쪽의 다른 positioned
+ * ancestor(또는 initial containing block)를 기준으로 계산되어 버렸다 --
+ * 실기기에서 머리 zone이 화면 상단 거대 타원으로, 팔/다리 zone이 화면
+ * 좌우의 거대한 사각형으로 튀는 버그의 root cause였다. 이제 silhouette(svg)와
+ * zone 버튼이 같은 .bodyMap__figure 아래 형제로 렌더링되므로 % 좌표가
+ * 항상 그 작은 고정 크기 박스를 기준으로 계산된다.
  *
  * 환자 기준 좌/우 표기: 화면에 보이는 실루엣은 "환자가 거울을 보는 방향"이
  * 아니라 "환자 자신의 몸"을 기준으로 한다 -- 앞면 실루엣의 왼쪽이 환자의
@@ -33,7 +45,7 @@ type Props = {
 type Zone = {
   value: string
   view: 'front' | 'back'
-  /** 컨테이너 기준 % 위치 (좌상단 기준) */
+  /** .bodyMap__figure 기준 % 위치 (좌상단 기준) */
   top: number
   left: number
   width: number
@@ -75,6 +87,31 @@ const ZONE_LABEL: Record<string, string> = {
   leg_foot: '다리·발',
 }
 
+/**
+ * 단순 human silhouette (local inline SVG, Tablet UX v2.1 §8). 해부학적
+ * 상세/성별 구분 없음, remote asset 없음. viewBox는 .bodyMap__figure의
+ * aspect-ratio(3:5, styles.css)와 동일 비율(60:100)이라 zone 버튼의 %
+ * 좌표계와 그대로 맞아떨어진다.
+ */
+function Silhouette() {
+  return (
+    <svg
+      className="bodyMap__silhouette"
+      viewBox="0 0 60 100"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="30" cy="8" r="7" />
+      <rect x="14.4" y="15" width="31.2" height="44" rx="12" />
+      <rect x="2.4" y="20" width="8.4" height="36" rx="4" />
+      <rect x="49.2" y="20" width="8.4" height="36" rx="4" />
+      <rect x="15.6" y="60" width="13.2" height="38" rx="6" />
+      <rect x="31.2" y="60" width="13.2" height="38" rx="6" />
+    </svg>
+  )
+}
+
 function Figure({
   view,
   zones,
@@ -89,39 +126,34 @@ function Figure({
   return (
     <div className="bodyMap__figureWrap">
       <span className="bodyMap__viewLabel">{view === 'front' ? '앞면' : '뒷면'}</span>
-      <div className="bodyMap__figure" aria-hidden="true">
-        <div className="bodyMap__silhouetteHead" />
-        <div className="bodyMap__silhouetteTorso" />
-        <div className="bodyMap__silhouetteArm bodyMap__silhouetteArm--left" />
-        <div className="bodyMap__silhouetteArm bodyMap__silhouetteArm--right" />
-        <div className="bodyMap__silhouetteLeg bodyMap__silhouetteLeg--left" />
-        <div className="bodyMap__silhouetteLeg bodyMap__silhouetteLeg--right" />
+      <div className="bodyMap__figure">
+        <Silhouette />
+        {zones.map((z, i) => {
+          const isSelected = value === z.value
+          return (
+            <button
+              key={`${view}-${z.value}-${i}`}
+              type="button"
+              className={`bodyMap__zone bodyMap__zone--${z.shape}${isSelected ? ' bodyMap__zone--selected' : ''}`}
+              style={{
+                top: `${z.top}%`,
+                left: `${z.left}%`,
+                width: `${z.width}%`,
+                height: `${z.height}%`,
+              }}
+              aria-label={`${ZONE_LABEL[z.value]} (${view === 'front' ? '앞면' : '뒷면'})`}
+              aria-pressed={isSelected}
+              onClick={() => onSelect(z.value)}
+            >
+              {isSelected && (
+                <span className="bodyMap__zoneMark" aria-hidden="true">
+                  ✓
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
-      {zones.map((z, i) => {
-        const isSelected = value === z.value
-        return (
-          <button
-            key={`${view}-${z.value}-${i}`}
-            type="button"
-            className={`bodyMap__zone bodyMap__zone--${z.shape}${isSelected ? ' bodyMap__zone--selected' : ''}`}
-            style={{
-              top: `${z.top}%`,
-              left: `${z.left}%`,
-              width: `${z.width}%`,
-              height: `${z.height}%`,
-            }}
-            aria-label={`${ZONE_LABEL[z.value]} (${view === 'front' ? '앞면' : '뒷면'})`}
-            aria-pressed={isSelected}
-            onClick={() => onSelect(z.value)}
-          >
-            {isSelected && (
-              <span className="bodyMap__zoneMark" aria-hidden="true">
-                ✓
-              </span>
-            )}
-          </button>
-        )
-      })}
     </div>
   )
 }
@@ -144,7 +176,9 @@ export function BodyMap({ options, value, onSelect }: Props) {
 
   return (
     <div className="bodyMap">
-      <p className="bodyMap__instruction">가장 불편한 한 곳을 눌러주세요</p>
+      {/* 바깥 질문 제목(PAIN_01.question)이 이미 "가장 불편한 한 곳을
+          눌러주세요"이므로 여기서 같은 문장을 다시 보여주지 않는다
+          (Tablet UX v2.1 §9, 중복 instruction 제거). */}
       <div className="bodyMap__figures">
         <Figure view="front" zones={frontZones} value={value} onSelect={onSelect} />
         <Figure view="back" zones={backZones} value={value} onSelect={onSelect} />

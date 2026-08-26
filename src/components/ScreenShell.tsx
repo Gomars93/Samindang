@@ -98,7 +98,14 @@ export function ScreenShell({
         ref={mainRef}
       >
         <div className="shell__mainInner">{children}</div>
-        {hasMore && <div className="shell__scrollHint" aria-hidden="true">⌄</div>}
+        {hasMore && (
+          <div className="shell__scrollHint" aria-hidden="true">
+            <span className="shell__scrollHintPill">
+              아래에 항목이 더 있어요
+              <span className="shell__scrollHintIcon">↓</span>
+            </span>
+          </div>
+        )}
       </main>
 
       <footer className="shell__bottom">

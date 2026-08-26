@@ -138,6 +138,38 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2c-2. Tablet UX v2.1 §11-§24: Primary/Additional Detailed Concern/
+ *       Reference Symptoms render as three distinct DoctorView sections.
+ * ------------------------------------------------------------------- */
+
+{
+  const name = '허리 통증 주호소 + 추가 상세상담(수면) + 참고 증상(소화·기타)'
+  const f = byName(name)
+  assert('v2.1 fixture: routing.additional_module is Sleep', f.payload.routing.additional_module === 'Sleep')
+  assert('v2.1 fixture: routing.additional_detail_concern is sleep', f.payload.routing.additional_detail_concern === 'sleep')
+  assert(
+    'v2.1 fixture: routing.reference_symptoms includes digestion and other',
+    (f.payload.routing.reference_symptoms ?? []).includes('digestion') &&
+      (f.payload.routing.reference_symptoms ?? []).includes('other'),
+  )
+  assert('v2.1 fixture: primary_module_detail stays LBP (primary is pain)', f.payload.routing.primary_module_detail === 'LBP')
+  assert('v2.1 fixture: additional_module_detail is null (additional is sleep, not pain)', f.payload.routing.additional_module_detail === null)
+
+  const html = renderDoctorView(name)
+  assert('v2.1 fixture: renders 추가 상세상담 section heading', html.includes('추가 상세상담'))
+  assert('v2.1 fixture: 추가 상세상담 shows the chosen category label (잠)', /추가 상세상담[\s\S]{0,400}잠/.test(html))
+  assert('v2.1 fixture: renders the additional module\'s full detail (SLEEP_01 question text)', html.includes('잠에서 불편한 점이 있나요'))
+  assert('v2.1 fixture: renders 참고 증상 section heading', html.includes('참고 증상'))
+  assert('v2.1 fixture: 참고 증상 shows the reference category chip (속·소화)', /참고 증상[\s\S]{0,600}속·소화/.test(html))
+  assert('v2.1 fixture: renders the "기타 참고증상 있음" cue', html.includes('기타 참고증상 있음'))
+  assert(
+    'v2.1 fixture: reference symptoms never render as a diagnosis (only the informational note text, no red/danger banner class nearby)',
+    !/doctor__banner--danger[\s\S]{0,50}참고 증상|참고 증상[\s\S]{0,50}doctor__banner--danger/.test(html),
+  )
+  assert('v2.1 fixture: 동반문제 section shows the legacy-compat empty state (동반문제 없음)', /동반문제<\/h2>[\s\S]{0,400}동반문제 없음/.test(html))
+}
+
+/* ---------------------------------------------------------------------
  * 2d. NECK_V1 primary-pain fixture: safety panel renders, primary_module
  *     stays 'Pain', primary_module_detail is 'NECK', manipulation-lock
  *     note is distinct from LBP's exercise/treatment lock note (D8),

@@ -187,26 +187,50 @@ input {
 .shell__main {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 40px var(--gutter) 16px;
+  padding: 40px var(--gutter) 28px;
+  /* 마지막 option이 하단 scroll hint pill에 바짝 붙지 않도록 여유를 둔다
+     (Tablet UX v2.1 §5). CTA(.shell__bottom)는 별도 flex item으로 항상
+     본문 아래 in-flow에 위치하므로 콘텐츠와 절대 겹치지 않는다. */
+  scroll-padding-bottom: 84px;
 }
 
-/* 스크롤 가능한데 하단에 도달하지 않았을 때만 표시되는 시각적 안내(스펙 무관, 순수 UI) */
+/* 스크롤 가능한데 하단에 도달하지 않았을 때만 표시되는 시각적 안내(Tablet UX v2.1
+   §4). 기존 작은 "⌄" 화살표 하나만으로는 실기기에서 "더 있다"는 사실이 거의
+   인지되지 않았다 -- 읽을 수 있는 문구 + 아래방향 아이콘의 알약(pill) 배너로
+   교체한다. 콘텐츠를 가리지 않도록 pointer-events:none, 하단 도달 시 완전히
+   사라진다(ScreenShell.tsx의 hasMore 조건부 렌더). */
 .shell__scrollHint {
   position: sticky;
   bottom: 0;
   left: 0;
   right: 0;
-  height: 56px;
-  margin-top: -56px;
+  height: 84px;
+  margin-top: -84px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding-bottom: 4px;
-  background: linear-gradient(to bottom, transparent, var(--bg) 70%);
-  color: var(--primary);
-  font-size: 24px;
-  line-height: 1;
+  padding-bottom: 14px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 55%);
   pointer-events: none;
+}
+
+.shell__scrollHintPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: var(--fs-helper);
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.shell__scrollHintIcon {
+  font-size: 18px;
+  line-height: 1;
 }
 
 .shell__bottom {
@@ -321,21 +345,29 @@ input {
 .optionList--grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 12px;
 }
 
 .optionList--grid2 .option {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   height: 100%;
   min-height: 104px;
+  padding: 14px 18px;
   text-align: left;
 }
 
 .optionList--grid2 .option__mark {
   align-self: flex-end;
+}
+
+/* pictogram(Tablet UX v2.1 §2) -- 순수 장식, 텍스트가 항상 1차 정보다. */
+.optionIcon {
+  display: block;
+  margin-bottom: 2px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 480px) {
@@ -360,15 +392,13 @@ input {
  * 정밀 통증지도가 아니다 -- PAIN_01 enum을 고르는 visual input일 뿐이다.
  * 해부학적 상세 없이 단순 무채색 도형만 사용한다. */
 
-.bodyMap__instruction {
-  font-size: var(--fs-helper);
-  color: var(--text-muted);
-  margin: 0 0 16px;
-}
-
+/* 전체 body map 폭을 제한해 11-inch portrait 기준 figure 높이가 대략
+   380~440px 범위에 들어오게 한다 (Tablet UX v2.1 §8) -- (520-16)/2*5/3 ≈ 420px. */
 .bodyMap__figures {
   display: flex;
   gap: 16px;
+  margin: 4px auto 0;
+  max-width: 520px;
 }
 
 .bodyMap__figureWrap {
@@ -389,65 +419,23 @@ input {
   position: relative;
   width: 100%;
   /* 3:5 세로 비율 -- 사람 실루엣에 가까운 종횡비를 aspect-ratio로 고정해
-     zone 버튼의 %기반 절대 위치가 어떤 화면 폭에서도 같은 자리를 가리키게 한다. */
+     zone 버튼의 %기반 절대 위치가 어떤 화면 폭에서도 같은 자리를 가리키게 한다.
+     silhouette(svg)와 zone 버튼 모두 이 박스의 직계 child이며, 이 박스만이
+     유일한 positioned coordinate container다 (device QA 버그 수정, §7). */
   aspect-ratio: 3 / 5;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 16px;
+  overflow: hidden;
 }
 
-.bodyMap__silhouetteHead {
+.bodyMap__silhouette {
   position: absolute;
-  top: 2%;
-  left: 38%;
-  width: 24%;
-  height: 12%;
-  border-radius: 50%;
-  background: var(--border);
-}
-
-.bodyMap__silhouetteTorso {
-  position: absolute;
-  top: 15%;
-  left: 24%;
-  width: 52%;
-  height: 44%;
-  border-radius: 20px;
-  background: var(--border);
-}
-
-.bodyMap__silhouetteArm {
-  position: absolute;
-  top: 20%;
-  width: 14%;
-  height: 36%;
-  border-radius: 12px;
-  background: var(--border);
-}
-
-.bodyMap__silhouetteArm--left {
-  left: 4%;
-}
-
-.bodyMap__silhouetteArm--right {
-  right: 4%;
-}
-
-.bodyMap__silhouetteLeg {
-  position: absolute;
-  top: 60%;
-  width: 22%;
-  height: 38%;
-  border-radius: 12px;
-  background: var(--border);
-}
-
-.bodyMap__silhouetteLeg--left {
-  left: 26%;
-}
-
-.bodyMap__silhouetteLeg--right {
-  right: 26%;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: var(--border);
+  pointer-events: none;
 }
 
 /* zone 버튼: 실루엣 위에 겹치는 실제 <button>. 터치 hit area가 작은 점이
@@ -517,6 +505,14 @@ input {
 
   .bodyMap__figure {
     aspect-ratio: 3 / 3.2;
+  }
+}
+
+/* landscape tablet 등 세로 공간이 짧은 viewport에서는 body map을 더
+   압축해 CTA까지의 스크롤 거리를 줄인다 (Tablet UX v2.1 §8). */
+@media (max-height: 700px) {
+  .bodyMap__figures {
+    max-width: 380px;
   }
 }
 
@@ -601,9 +597,16 @@ input {
   background: var(--primary);
   border: none;
   border-radius: 16px;
+  transition: min-height 160ms ease, padding 160ms ease, background 160ms ease, color 160ms ease;
 }
 
+/* 아직 선택 전에는 CTA를 compact하게 접어 카드 영역에 공간을 더 준다
+   (Tablet UX v2.1 §3) -- 자동으로 다음 화면으로 넘어가지 않고, "선택 후
+   계속" 흐름 자체는 그대로다. 선택하면(=answered=true) disabled가 풀리며
+   버튼이 원래 크기/색으로 명확하게 나타난다. */
 .primaryBtn:disabled {
+  min-height: 44px;
+  padding: 10px 24px;
   background: var(--border);
   color: var(--text-muted);
 }

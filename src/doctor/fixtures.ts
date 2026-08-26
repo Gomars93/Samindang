@@ -1328,4 +1328,47 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     HIP_05: 'NO_CONCERN',
     HIP_06: 'NO',
   }),
+
+  // Tablet UX v2.1 §11-§24: Primary(pain, via the new VISIT_00_INTENT
+  // entry point) + Additional Detailed Concern(sleep, FULL module) +
+  // Reference Symptoms(digestion + other, info-only, no module opened).
+  // Exercises all three DoctorView sections rendering simultaneously with
+  // a CLEAR LBP/HIP baseline (LBP fixture pattern above) so the new
+  // sections are the focus, not safety edge cases.
+  buildFixture('허리 통증 주호소 + 추가 상세상담(수면) + 참고 증상(소화·기타)', {
+    ID_01: '한지민',
+    ID_03: 'female',
+    BIRTH_01: '19900512',
+    VISIT_00_INTENT: 'pain_care',
+    VISIT_03_SYMPTOM_DURATION: '1_3m',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    ADDITIONAL_DETAIL_01: 'sleep',
+    REFERENCE_SYMPTOMS_01: ['digestion', 'other'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    LBP_01: 'BACK_ONLY',
+    LBP_02: ['NONE'],
+    LBP_03: 'NONE',
+    LBP_04: ['NONE'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'NO',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 8,
+    LBP_13: 'NO',
+    LBP_14: 'NONE',
+    HIP_00: 'HIP_GROIN_DOMINANT',
+    HIP_01: 'NO',
+    HIP_02: ['NONE'],
+    HIP_04: ['NONE'],
+    HIP_05: 'NO_CONCERN',
+    HIP_06: 'NO',
+    SLEEP_01: ['sleep_onset'],
+    SLEEP_02: '1_2_days',
+    SLEEP_03: ['none'],
+  }),
 ]

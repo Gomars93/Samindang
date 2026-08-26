@@ -67,8 +67,26 @@ const HEADER_H = 20 + 56 + 16 + 10 // shell__top padding-top + topRow min-h + st
 const FOOTER_H = 16 + 28 + BTN_MIN_H + 14 + 56 // shell__bottom padding + primaryBtn + helpBtn margin + helpBtn min-h
 const MAIN_PADDING_H = 40 + 16 // shell__main padding top+bottom
 
+// Tablet UX v2.2.1 §4/§9/§34: wide-landscape (orientation:landscape,
+// min-width:760px, styles.css) collapses backBtn/stepLabel/helpBtn out of
+// the main-column flow entirely (moved to rails, `display:none` in place)
+// and shrinks the remaining chrome's own spacing -- this heuristic must
+// model that reduced chrome for landscape viewports at/above the
+// breakpoint, or it under-estimates available height for every wide
+// viewport (the exact 296px-vs-300px false negative this comment replaced).
+const WIDE_LANDSCAPE_MIN_WIDTH = 760
+const HEADER_H_WIDE = 8 + 0 + 6 + 6 // shell__top padding-top + topRow min-h(collapsed) + steps margin-top + steps height (thinner)
+const FOOTER_H_WIDE = 16 + 28 + BTN_MIN_H // shell__bottom padding + primaryBtn only -- helpBtn moved to right rail (display:none)
+
+function isWideLandscape(viewportW, viewportH) {
+  return viewportW > viewportH && viewportW >= WIDE_LANDSCAPE_MIN_WIDTH
+}
+
 function budgetFor(viewportW, viewportH) {
-  const availableH = viewportH - HEADER_H - FOOTER_H - MAIN_PADDING_H
+  const wide = isWideLandscape(viewportW, viewportH)
+  const headerH = wide ? HEADER_H_WIDE : HEADER_H
+  const footerH = wide ? FOOTER_H_WIDE : FOOTER_H
+  const availableH = viewportH - headerH - footerH - MAIN_PADDING_H
   const contentWidth = Math.min(CONTENT_MAX, viewportW - 2 * GUTTER)
 
   const questionLineH = FS_QUESTION * 1.35
@@ -122,6 +140,15 @@ const VIEWPORTS = [
   // Tablet UX v2.1 §28: a second, larger 11-inch-class tablet landscape
   // size, matching the real device the field QA screenshots came from.
   { label: '1600x900 (large landscape)', w: 1600, h: 900 },
+  // Tablet UX v2.2.1 §2/§34: the min-width:1000px breakpoint never fired on
+  // a real 11" Android tablet -- its landscape CSS viewport (driven by
+  // devicePixelRatio, not raw physical resolution) commonly lands well
+  // below 1000px. These four are the exact real-device-QA viewports named
+  // in the task; every one of them must trigger the wide-landscape rail
+  // layout (now min-width:760px) -- see §7 below.
+  { label: '1024x640 (landscape, real-device QA)', w: 1024, h: 640 },
+  { label: '960x600 (landscape, real-device QA)', w: 960, h: 600 },
+  { label: '800x500 (landscape, real-device QA)', w: 800, h: 500 },
 ]
 
 /* =========================================================================
@@ -226,12 +253,14 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
   const railDefaultMatch = css.match(/\.railBackBtn,\s*\n?\s*\.shell__railRight\s*\{([^}]*)\}/)
   assert('styles.css: rail elements are display:none by default (portrait/narrow unaffected)', !!railDefaultMatch && /display:\s*none/.test(railDefaultMatch[1]))
 
-  const wideMediaBlockMatch = css.match(/@media \(min-width: 1000px\) and \(orientation: landscape\) \{/)
-  assert('styles.css: wide-landscape breakpoint (min-width:1000px, orientation:landscape) exists', !!wideMediaBlockMatch)
+  // Tablet UX v2.2.1 §2: breakpoint lowered from min-width:1000px (never
+  // fired on real 11" Android landscape) to min-width:760px.
+  const wideMediaBlockMatch = css.match(/@media \(orientation: landscape\) and \(min-width: 760px\) \{/)
+  assert('styles.css: wide-landscape breakpoint (orientation:landscape, min-width:760px) exists', !!wideMediaBlockMatch)
 
   // Extract just that media block's body via brace counting (regex alone
   // can't reliably match nested braces).
-  const startIdx = css.indexOf('@media (min-width: 1000px) and (orientation: landscape)')
+  const startIdx = css.indexOf('@media (orientation: landscape) and (min-width: 760px)')
   assert('styles.css: wide-landscape media block start found', startIdx !== -1)
   let depth = 0
   let bodyStart = -1
@@ -254,7 +283,46 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
   assert('wide-landscape block: .railBackBtn is shown (display:flex)', /\.railBackBtn\s*\{[^}]*display:\s*flex/.test(wideBody))
   assert('wide-landscape block: .shell__railRight is shown (display:flex)', /\.shell__railRight\s*\{[^}]*display:\s*flex/.test(wideBody))
   assert('wide-landscape block: original topRow backBtn/stepLabel and bottom helpBtn are hidden (moved to rails, not duplicated)', /display:\s*none/.test(wideBody) && wideBody.includes('.shell__topRow .backBtn'))
-  assert('wide-landscape block: wideContent class widens --content-max beyond the base 680px for grid/category screens', /shell--wideContent[\s\S]*max-width:\s*900px/.test(wideBody))
+  // Tablet UX v2.2.1 §3: bumped from 900px into the requested 880-1000px
+  // range so the rail actually reclaims usable width, not just adds
+  // side-columns while leaving the center column unchanged.
+  assert('wide-landscape block: wideContent class widens --content-max into the 880-1000px range for grid/category screens', /shell--wideContent[\s\S]*max-width:\s*96\dpx/.test(wideBody))
+
+  // Tablet UX v2.2.1 §4: with backBtn/stepLabel moved to rails, .shell__topRow
+  // must not keep reserving its old 56px min-height -- otherwise wide
+  // landscape saves zero vertical chrome despite the content being hidden.
+  assert('wide-landscape block: .shell__topRow min-height is collapsed (no reserved empty chrome once backBtn/stepLabel move to rails)', /\.shell__topRow\s*\{[^}]*min-height:\s*0/.test(wideBody))
+  // §9: progress bar thickness itself (not font-size) is reduced.
+  assert('wide-landscape block: .steps__item bar is thinner than the base 10px (spacing-only footprint reduction, not font-size)', /\.steps__item\s*\{[^}]*height:\s*[1-9]px/.test(wideBody))
+}
+
+/* =========================================================================
+ * 7. Tablet UX v2.2.1 §2/§34: every real-device-QA landscape viewport named
+ *    in the task must actually satisfy the CSS breakpoint's own condition
+ *    (min-width extracted from the stylesheet itself, not re-hardcoded --
+ *    this test breaks loudly if the two ever drift apart again).
+ * ========================================================================= */
+
+{
+  const minWidthMatch = css.match(/@media \(orientation: landscape\) and \(min-width: (\d+)px\)/)
+  assert('styles.css: wide-landscape min-width threshold is extractable', !!minWidthMatch)
+  const threshold = Number(minWidthMatch[1])
+
+  const REQUIRED_REAL_DEVICE_LANDSCAPE_VIEWPORTS = [
+    '1280x800 (landscape)',
+    '1024x640 (landscape, real-device QA)',
+    '960x600 (landscape, real-device QA)',
+    '800x500 (landscape, real-device QA)',
+  ]
+  for (const label of REQUIRED_REAL_DEVICE_LANDSCAPE_VIEWPORTS) {
+    const vp = VIEWPORTS.find((v) => v.label === label)
+    assert(`${label}: is present in the tested viewport matrix`, !!vp)
+    assert(`${label}: is genuinely landscape (width > height)`, vp.w > vp.h)
+    assert(
+      `${label}: width (${vp.w}px) meets the wide-landscape breakpoint's own min-width (${threshold}px) -- rail layout WILL activate here`,
+      vp.w >= threshold,
+    )
+  }
 }
 
 {
@@ -263,10 +331,21 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
   // screens (layout unset, default 'list') must NOT get the wider column.
   const appSrc = readFileSync(join(__dirname, '..', 'src', 'App.tsx'), 'utf8')
   assert('App.tsx: wideContent is derived from current.layout, excluding the default list layout', /wideContent=\{current\.layout != null && current\.layout !== 'list'\}/.test(appSrc))
+
+  // Tablet UX v2.2.1 §12: HERBAL_ADDON_FIELD must be explicitly nulled by
+  // emptyResponses() (called on every fresh session AND every privacy-wipe/
+  // restart), and every reset path must call emptyResponses() itself --
+  // never spread a previous Responses object -- so a stale 'yes' can never
+  // survive into the next patient's session on a shared tablet.
+  assert('App.tsx: emptyResponses() explicitly nulls HERBAL_ADDON_FIELD', /\[HERBAL_ADDON_FIELD\]:\s*null/.test(appSrc))
+  const setResponsesCalls = [...appSrc.matchAll(/setResponses\(([^)]*)\)/g)].map((m) => m[1].trim())
+  assert('App.tsx: setResponses(...) is called at least at the wipe + restart + normal-answer + addon-activate sites', setResponsesCalls.length >= 4)
+  const resetCalls = setResponsesCalls.filter((arg) => arg.startsWith('emptyResponses('))
+  assert('App.tsx: at least 2 setResponses(...) call sites reset via emptyResponses() (privacy wipe + restart), never a spread of the previous object', resetCalls.length >= 2)
 }
 
 /* =========================================================================
- * 6. Summary
+ * 8. Summary
  * ========================================================================= */
 
 console.log('\nPer-viewport summary:')

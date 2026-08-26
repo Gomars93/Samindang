@@ -93,13 +93,16 @@ const ZONE_LABEL: Record<string, string> = {
  * aspect-ratio(3:5, styles.css)와 동일 비율(60:100)이라 zone 버튼의 %
  * 좌표계와 그대로 맞아떨어진다.
  *
- * Tablet UX v2.2 §2: 실기기 QA에서 앞/뒤 실루엣이 서로 너무 비슷해
- * "앞면/뒷면" 글자를 읽어야만 구분할 수 있었다. 최소한의 시각적 cue만
- * 추가한다 -- 성별화하지 않고, 과도한 해부학 디테일도 넣지 않는다(같은
- * monochrome/단순 도형 원칙 유지):
- *   - front: 얼굴 방향을 알려주는 눈 두 점 + 가슴 중심선(세로 1획)
- *   - back: 등 중심선(척추, 세로 1획) + 어깨뼈(견갑) 위치를 암시하는
- *     좌우 대칭 곡선 두 개
+ * Tablet UX v2.2.1 §5: v2.2에서 넣은 첫 cue(stroke-width 0.6, 눈 두 점 +
+ * 얇은 중심선)는 실기기(11" 태블릿)에서 거의 보이지 않는다는 QA 피드백을
+ * 받았다. "글자를 안 읽어도 즉시 구분"이 목표이므로 훨씬 굵고 명확한
+ * cue로 교체한다 -- 여전히 성별화하지 않고, 과도한 해부학 디테일도 넣지
+ * 않는다(monochrome/단순 도형 원칙 유지, stroke는 --text 색상으로
+ * --text-muted보다 대비를 높인다):
+ *   - front: 눈(채워진 원, 확대) + 입(곡선) = 명확한 얼굴 cue, 그리고
+ *     가슴/복부 경계를 암시하는 전면 contour 곡선 1개
+ *   - back: 얼굴 cue 없음, 굵은 척추 중심선, 좌우 견갑골 곡선(더 굵고
+ *     또렷하게), 그리고 하부 등/둔부 경계를 암시하는 후면 contour 곡선
  * 이 cue들은 순수 장식(fill/stroke만, 클릭 불가, pointer-events 없음)이며
  * zone 버튼의 %좌표계나 PAIN_01 enum과는 전혀 무관하다.
  */
@@ -120,15 +123,17 @@ function Silhouette({ view }: { view: 'front' | 'back' }) {
       <rect x="31.2" y="60" width="13.2" height="38" rx="6" />
       {view === 'front' ? (
         <g className="bodyMap__frontCue">
-          <circle cx="26" cy="7" r="1.1" />
-          <circle cx="34" cy="7" r="1.1" />
-          <line x1="30" y1="17" x2="30" y2="40" />
+          <circle cx="26" cy="6.5" r="1.7" />
+          <circle cx="34" cy="6.5" r="1.7" />
+          <path d="M26 11.5 Q30 13.5 34 11.5" />
+          <path d="M18 30 Q30 35 42 30" />
         </g>
       ) : (
         <g className="bodyMap__backCue">
-          <line x1="30" y1="17" x2="30" y2="57" />
-          <path d="M20 22 Q26 30 22 40" />
-          <path d="M40 22 Q34 30 38 40" />
+          <line x1="30" y1="17" x2="30" y2="58" />
+          <path d="M19 21 Q27 29 21 41" />
+          <path d="M41 21 Q33 29 39 41" />
+          <path d="M17 55 Q30 62 43 55" />
         </g>
       )}
     </svg>
@@ -222,6 +227,24 @@ export function BodyMap({ options, value, onSelect }: Props) {
         <Figure view="front" zones={frontZones} value={value} onSelect={onSelect} />
         <Figure view="back" zones={backZones} value={value} onSelect={onSelect} />
       </div>
+      {/*
+        Tablet UX v2.2.1 §6: 위 label은 그림 위에 있어 스크롤하면 질문
+        제목과 함께 화면 밖으로 사라질 수 있다 -- landscape처럼 세로 공간이
+        좁아 이 화면이 스크롤을 필요로 하는 경우, 환자가 zone을 누른 직후
+        "내가 뭘 선택했는지" 계속 확인 가능해야 한다. 선택된 뒤에만
+        나타나는 sticky compact chip을 추가한다. `.shell__scrollHint`와
+        똑같은 sticky 메커니즘을 재사용하되, bottom:84px로 그 pill 영역
+        바로 위에 고정해 절대 겹치지 않는다(scroll hint 높이가 정확히
+        84px, styles.css 주석 참고) -- 짧은 화면(스크롤이 필요 없는 대부분의
+        viewport)에서는 sticky가 발동하지 않아 그냥 자연스러운 위치(그림
+        바로 아래)에 머문다.
+      */}
+      {value && (
+        <p className="bodyMap__selectedChip" aria-hidden="true">
+          <span className="bodyMap__selectedChipMark" aria-hidden="true">✓</span>
+          선택한 부위: <strong>{ZONE_LABEL[value] ?? value}</strong>
+        </p>
+      )}
       <button type="button" className="bodyMap__toggleBtn" onClick={() => setShowList(true)}>
         그림에서 선택하기 어려워요 → 목록으로 보기
       </button>

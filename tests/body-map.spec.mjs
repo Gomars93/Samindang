@@ -251,6 +251,79 @@ function cssBlock(css, selector) {
 }
 
 {
+  // Tablet UX v2.2.1 §5: v2.2's front/back cue (stroke-width 0.6,
+  // --text-muted) was reported as barely visible on a real 11" tablet.
+  // Assert the strengthened version directly from source: bold stroke
+  // (>=2, well above the old 0.6) and high-contrast --text color (not the
+  // lighter --text-muted).
+  const cueCss = cssBlock(CSS, '.bodyMap__frontCue path,\n.bodyMap__backCue line,\n.bodyMap__backCue path')
+  assert('styles.css: front/back cue rule exists', Boolean(cueCss))
+  const strokeWidthMatch = cueCss.match(/stroke-width:\s*([\d.]+)/)
+  assert('styles.css: front/back cue declares a stroke-width', Boolean(strokeWidthMatch))
+  assert(
+    `styles.css CRITICAL: front/back cue stroke-width (${strokeWidthMatch?.[1]}) is bold enough to be visible on a real device (>= 2, was 0.6)`,
+    Boolean(strokeWidthMatch) && Number(strokeWidthMatch[1]) >= 2,
+  )
+  assert('styles.css: front/back cue uses --text (high contrast), not --text-muted', /stroke:\s*var\(--text\)/.test(cueCss) && !/stroke:\s*var\(--text-muted\)/.test(cueCss))
+
+  const frontCueCircleCss = cssBlock(CSS, '.bodyMap__frontCue circle')
+  assert('styles.css: front cue eye circles use --text (high contrast), not --text-muted', /fill:\s*var\(--text\)/.test(frontCueCircleCss) && !/fill:\s*var\(--text-muted\)/.test(frontCueCircleCss))
+}
+
+{
+  // Tablet UX v2.2.1 §5: front adds an explicit mouth (2nd path in the
+  // front cue group) and a chest/abdomen contour; back adds a lower
+  // back/glute contour on top of the existing spine+scapula cues. Source
+  // assertion on BodyMap.tsx (not just CSS) since these are new SVG
+  // elements, not just style changes.
+  const bodyMapSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
+  const frontCueMatch = bodyMapSrc.match(/bodyMap__frontCue">([\s\S]*?)<\/g>/)
+  assert('BodyMap.tsx: front cue group exists', Boolean(frontCueMatch))
+  const frontCueBody = frontCueMatch?.[1] ?? ''
+  assert('BodyMap.tsx: front cue has two eyes (2 <circle> elements)', (frontCueBody.match(/<circle/g) ?? []).length === 2)
+  assert('BodyMap.tsx: front cue has a mouth + chest/abdomen contour (2 <path> elements)', (frontCueBody.match(/<path/g) ?? []).length === 2)
+
+  const backCueMatch = bodyMapSrc.match(/bodyMap__backCue">([\s\S]*?)<\/g>/)
+  assert('BodyMap.tsx: back cue group exists', Boolean(backCueMatch))
+  const backCueBody = backCueMatch?.[1] ?? ''
+  assert('BodyMap.tsx: back cue has no face elements (no <circle>)', !backCueBody.includes('<circle'))
+  assert('BodyMap.tsx: back cue has spine line + scapula curves + lower-back/glute contour (3 <path> elements)', (backCueBody.match(/<path/g) ?? []).length === 3)
+}
+
+{
+  // Tablet UX v2.2.1 §6: a compact "selected region" chip persists near the
+  // CTA (sticky, positioned to clear the scroll-hint pill entirely -- never
+  // overlapping it) once a zone is selected, so scrolling away from the top
+  // label never loses the feedback.
+  const bodyMapSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
+  assert('BodyMap.tsx: renders a selectedChip element', bodyMapSrc.includes('bodyMap__selectedChip'))
+  assert('BodyMap.tsx: selectedChip only renders once a value is selected (conditional on `value &&`)', /\{value &&[\s\S]{0,80}bodyMap__selectedChip/.test(bodyMapSrc))
+
+  const chipCss = cssBlock(CSS, '.bodyMap__selectedChip')
+  assert('styles.css: .bodyMap__selectedChip rule exists', Boolean(chipCss))
+  assert('styles.css: .bodyMap__selectedChip is sticky (stays visible while scrolling)', /position:\s*sticky/.test(chipCss))
+
+  const hintCssForChip = cssBlock(CSS, '.shell__scrollHint')
+  const hintHeightMatch = hintCssForChip.match(/height:\s*(\d+)px/)
+  const chipBottomMatch = chipCss.match(/bottom:\s*(\d+)px/)
+  assert('styles.css: .bodyMap__selectedChip declares a numeric sticky bottom offset', Boolean(chipBottomMatch))
+  assert(
+    'styles.css CRITICAL: .bodyMap__selectedChip sticky offset sits at or above the scroll-hint pill height (chip never overlaps the pill)',
+    Boolean(chipBottomMatch) && Boolean(hintHeightMatch) && Number(chipBottomMatch[1]) >= Number(hintHeightMatch[1]),
+  )
+}
+
+{
+  // Tablet UX v2.2.1 §7: selected zone indicator is a thin outline + light
+  // tint (not a large solid-filled box) -- background alpha kept low so the
+  // silhouette shape reads through, touch hit-area (button size) unchanged.
+  const selectedCss = cssBlock(CSS, '.bodyMap__zone--selected')
+  assert('styles.css: .bodyMap__zone--selected rule exists', Boolean(selectedCss))
+  assert('styles.css: .bodyMap__zone--selected keeps a visible border outline', /border-color:\s*var\(--primary\)/.test(selectedCss))
+  assert('styles.css: .bodyMap__zone--selected does NOT use a large solid fill (no --primary-soft background)', !/background:\s*var\(--primary-soft\)/.test(selectedCss))
+}
+
+{
   // 9. styles.css: scroll hint no longer risks covering the last option --
   // .shell__main's bottom padding must be >= the scroll hint pill's own
   // height (Tablet UX v2.2 §11 fix; see styles.css comment for the math).

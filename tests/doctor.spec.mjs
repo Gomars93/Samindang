@@ -129,7 +129,7 @@ for (const f of DOCTOR_FIXTURES) {
     'LBP fixture: checklist item 17/18 — REVIEW_REQUIRED locks routine recommendation UI note',
     html.includes('안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다'),
   )
-  assert('LBP fixture: PAIN_01 question text renders (module detail includes LBP fields)', html.includes('어디가 가장 불편한가요'))
+  assert('LBP fixture: PAIN_01 question text renders (module detail includes LBP fields)', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('LBP fixture: LBP_01 question text renders', html.includes('허리 통증이나 불편감이 가장 멀리'))
   assert(
     'LBP fixture: no patient-facing diagnosis/probability language (예: 추간판탈출증/디스크/확률)',
@@ -179,7 +179,7 @@ for (const f of DOCTOR_FIXTURES) {
     'D8: disease-safety non-CLEAR also locks manipulation, distinct wording from LBP exercise/treatment note',
     html.includes('안전 확인 전까지 경추 HVLA/추나 조작·견인 제안도 함께 잠깁니다'),
   )
-  assert('NECK fixture: PAIN_01 question text renders (module detail includes NECK fields)', html.includes('어디가 가장 불편한가요'))
+  assert('NECK fixture: PAIN_01 question text renders (module detail includes NECK fields)', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('NECK fixture: NECK_02 question text renders', html.includes('다음 증상이 있나요? 최근 새로 생긴 것뿐 아니라'))
   assert(
     'NECK fixture: no patient-facing diagnosis/probability language (예: 경추디스크/척수병증 진단/확률)',
@@ -236,7 +236,7 @@ for (const f of DOCTOR_FIXTURES) {
     'SHOULDER fixture: disease-safety lock note renders',
     html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
   )
-  assert('SHOULDER fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('SHOULDER fixture: PAIN_01 question text renders', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('SHOULDER fixture: NS01 question text renders', html.includes('현재 가장 주된 불편은 어디인가요'))
   assert('SHOULDER fixture: SH01 question text renders', html.includes('어깨에 외상이 있었나요'))
   assert(
@@ -300,7 +300,7 @@ for (const f of DOCTOR_FIXTURES) {
     html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
   )
   assert('KNEE fixture: renders 추가 권장 검사 card', html.includes('추가 권장 검사'))
-  assert('KNEE fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('KNEE fixture: PAIN_01 question text renders', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('KNEE fixture: KNEE_02A question text renders', html.includes('저절로 제자리로 돌아온 적이 있나요'))
   assert('KNEE fixture: KNEE_08 hip/groin option label renders', html.includes('엉덩이·사타구니 통증'))
   assert(
@@ -362,7 +362,7 @@ for (const f of DOCTOR_FIXTURES) {
     html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
   )
   assert('ELBOW fixture: renders 추가 권장 검사 card', html.includes('추가 권장 검사'))
-  assert('ELBOW fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('ELBOW fixture: PAIN_01 question text renders', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('ELBOW fixture: ELBOW_00 question text renders', html.includes('지금 가장 불편한 부위는 어디에 가장 가깝나요'))
   assert('ELBOW fixture: ELBOW_02A question text renders', html.includes('저절로 제자리로 돌아온 적이 있나요'))
   assert(
@@ -413,7 +413,7 @@ for (const f of DOCTOR_FIXTURES) {
   assert('WRIST_HAND fixture: status chip shows CLEAR label (안전)', /<strong>안전 확인<\/strong> (?:<!-- -->)?안전(?:<!-- -->)?<\/span>/.test(html))
   assert('WRIST_HAND fixture: renders 신경학적 평가 필요 chip with 아니요 (stable sensory-only)', /신경학적 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html))
   assert('WRIST_HAND fixture: does NOT render 안전 확인 — 팔꿈치 panel (ELBOW safety is null)', !html.includes('안전 확인 — 팔꿈치'))
-  assert('WRIST_HAND fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('WRIST_HAND fixture: PAIN_01 question text renders', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('WRIST_HAND fixture: WH_08 question text renders', html.includes('손가락 저림이나 감각이상이 있다면'))
   assert(
     'WRIST_HAND fixture: no patient-facing diagnosis/probability language (예: 수근관증후군 진단/확률)',
@@ -474,7 +474,7 @@ for (const f of DOCTOR_FIXTURES) {
   const html = renderDoctorView('턱관절 통증 주호소 (TMJ, 안전 확인 완료)')
   assert('TMJ clear fixture: renders 안전 확인 — 턱관절/얼굴 panel title', html.includes('안전 확인 — 턱관절/얼굴'))
   assert('TMJ clear fixture: status chip shows CLEAR label (안전)', /<strong>안전 확인<\/strong> (?:<!-- -->)?안전(?:<!-- -->)?<\/span>/.test(html))
-  assert('TMJ clear fixture: PAIN_01 question text renders', html.includes('어디가 가장 불편한가요'))
+  assert('TMJ clear fixture: PAIN_01 question text renders', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('TMJ clear fixture: HFJ_00 question text renders', html.includes('머리·얼굴·턱 중 지금 가장 불편한 부위나 양상은 어디에 가깝나요'))
 }
 

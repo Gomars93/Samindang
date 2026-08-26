@@ -22,6 +22,9 @@ tests/.spec-bundle.mjs
 # esbuild bundle used by tests/saju.spec.mjs (regenerated, not source)
 tests/.saju-bundle.mjs
 
+# esbuild bundle used by tests/body-map.spec.mjs (regenerated, not source)
+tests/.body-map-bundle.cjs
+
 # esbuild bundles used by tests/doctor.spec.mjs (regenerated, not source)
 tests/.doctor-fixtures-bundle.mjs
 tests/.doctor-labels-bundle.mjs

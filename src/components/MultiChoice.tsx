@@ -8,6 +8,11 @@ type Props = {
   exclusive?: string | string[]
   /** 최대 선택 개수 (스펙 7장: 동반문제 최대 2개) */
   max?: number
+  /**
+   * 순수 presentation 힌트 (Routing/UX v2, Question.layout과 동일 값).
+   * 선택 로직/저장값은 전혀 바뀌지 않는다 -- CSS 배치만 바뀐다.
+   */
+  layout?: 'list' | 'grid2' | 'compact3' | 'body_map'
 }
 
 const exclusiveSet = (exclusive?: string | string[]): Set<string> =>
@@ -26,6 +31,7 @@ export function MultiChoice({
   onChange,
   exclusive,
   max,
+  layout = 'list',
 }: Props) {
   const exclusives = exclusiveSet(exclusive)
   const nonExclusiveCount = value.filter((x) => !exclusives.has(x)).length
@@ -47,7 +53,7 @@ export function MultiChoice({
   }
 
   return (
-    <div className="optionList">
+    <div className={`optionList optionList--${layout}`}>
       {options.map((opt) => {
         const isSelected = value.includes(opt.value)
         const disabled = !isSelected && max !== undefined && nonExclusiveCount >= max && !exclusives.has(opt.value)
@@ -64,7 +70,10 @@ export function MultiChoice({
             <span className="option__mark" aria-hidden="true">
               {isSelected ? '✓' : ''}
             </span>
-            <span>{opt.label}</span>
+            <span className="option__labelGroup">
+              <span className="option__label">{opt.label}</span>
+              {opt.description && <span className="option__description">{opt.description}</span>}
+            </span>
           </button>
         )
       })}

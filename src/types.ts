@@ -13,6 +13,12 @@ export type Option = {
    * (예: v0.2 CORE_01C의 `임신 중 건강 상담` / `산후 회복 상담` → 둘 다 pregnancy_postpartum)
    */
   id?: string
+  /**
+   * 카드 레이아웃(`layout: 'grid2'`)에서 제목 아래 보조 설명 1~2줄
+   * (Routing/UX v2). 순수 presentation metadata -- clinical 의미와 무관하며
+   * `value`/`id`에는 전혀 영향을 주지 않는다.
+   */
+  description?: string
 }
 
 /** 화면에 저장되는 선택 키 (Option.id ?? Option.value) */
@@ -56,4 +62,15 @@ export type Question = {
   placeholder?: string
   /** numeric_scale 전용 */
   scale?: { min: number; max: number; minLabel: string; maxLabel: string }
+  /**
+   * 순수 presentation 힌트 (Routing/UX v2). `showIf`/`required`/`value`/
+   * `exclusive`/`max` 등 clinical/validation 필드와 완전히 분리되어 있다 --
+   * 이 값을 바꿔도 어떤 답이 유효한지, 어떤 안전 tier가 계산되는지는 전혀
+   * 바뀌지 않는다. 미지정 시 기존과 동일하게 1열 리스트로 렌더링된다.
+   *  - 'list'    : 1열 (기본값, safety/protected/긴 문장 질문은 반드시 이것)
+   *  - 'grid2'   : 2열 카드 (짧은 카테고리 선택 화면)
+   *  - 'compact3': 짧은 3지선다("네/아니요/모름" 류) 가로 배치
+   *  - 'body_map': 주 통증부위 전용, PAIN_01에만 사용
+   */
+  layout?: 'list' | 'grid2' | 'compact3' | 'body_map'
 }

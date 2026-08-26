@@ -188,7 +188,10 @@ function assertNoStaleValues(r, label) {
   }
 }
 
-// A5: secondary 'other' shows SECONDARY_01A, no SEC_* screen; deselect nulls it
+// A5: secondary 'other' shows no SEC_* screen and no free-text screen
+// (Routing/UX v2 §12: SECONDARY_01A retired -- "other" is now a flag only,
+// surfaced to the clinician via DoctorView's 기타 확인 cue instead of a
+// patient free-text field).
 {
   let r = emptyResponses()
   r = set(r, {
@@ -198,13 +201,10 @@ function assertNoStaleValues(r, label) {
     SECONDARY_01: ['other'],
   })
   const v = visibleIds(r)
-  assert('A5: SECONDARY_01A visible for secondary=other', v.has('SECONDARY_01A'))
+  assert('A5: SECONDARY_01A no longer exists as a question', !ALL_QUESTIONS.some((q) => q.id === 'SECONDARY_01A'))
   for (const screenId of Object.values(SECONDARY_SHORT_SCREENS)) {
     assert(`A5: ${screenId} not visible for secondary=other`, !v.has(screenId))
   }
-  r = set(r, { SECONDARY_01A: 'some text' })
-  r = set(r, { SECONDARY_01: [] })
-  assert('A5: SECONDARY_01A null after deselecting other', r['SECONDARY_01A'] === null)
 }
 
 // A6: SEC_* screen can be answered with ['none']
@@ -633,48 +633,19 @@ function assertNoStaleValues(r, label) {
   assert('F33: SLEEP_02 null after switching primary away from sleep', r['SLEEP_02'] === null)
 }
 
-// F34
+// F34 (Routing/UX v2 §13: PAIN_01A/WOMEN_01A/PREGNANCY_03A/POSTPARTUM_02A
+// retired -- "other" location/symptom is now a flag only, no patient
+// free-text screen exists for it anymore).
+{
+  const retiredOtherTextIds = ['PAIN_01A', 'WOMEN_01A', 'PREGNANCY_03A', 'POSTPARTUM_02A']
+  for (const id of retiredOtherTextIds) {
+    assert(`F34: ${id} no longer exists as a question`, !ALL_QUESTIONS.some((q) => q.id === id))
+  }
+}
 {
   let r = emptyResponses()
   r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', PAIN_01: 'other' })
-  assert('F34: PAIN_01A visible when PAIN_01=other', visibleIds(r).has('PAIN_01A'))
-  r = set(r, { PAIN_01A: 'custom spot' })
-  r = set(r, { PAIN_01: 'knee' })
-  assert('F34: PAIN_01A null after switching PAIN_01 away from other', r['PAIN_01A'] === null)
-}
-{
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'women', WOMEN_01: ['other'] })
-  assert('F34: WOMEN_01A visible when WOMEN_01 includes other', visibleIds(r).has('WOMEN_01A'))
-  r = set(r, { WOMEN_01A: 'custom' })
-  r = set(r, { WOMEN_01: ['dysmenorrhea'] })
-  assert('F34: WOMEN_01A null after removing other from WOMEN_01', r['WOMEN_01A'] === null)
-}
-{
-  let r = emptyResponses()
-  r = set(r, {
-    ID_03: 'female',
-    VISIT_01: 'women',
-    VISIT_02_WOMEN: 'pregnancy',
-    PREGNANCY_03: ['other'],
-  })
-  assert('F34: PREGNANCY_03A visible when PREGNANCY_03 includes other', visibleIds(r).has('PREGNANCY_03A'))
-  r = set(r, { PREGNANCY_03A: 'custom' })
-  r = set(r, { PREGNANCY_03: ['nausea'] })
-  assert('F34: PREGNANCY_03A null after removing other from PREGNANCY_03', r['PREGNANCY_03A'] === null)
-}
-{
-  let r = emptyResponses()
-  r = set(r, {
-    ID_03: 'female',
-    VISIT_01: 'women',
-    VISIT_02_WOMEN: 'postpartum',
-    POSTPARTUM_02: ['other'],
-  })
-  assert('F34: POSTPARTUM_02A visible when POSTPARTUM_02 includes other', visibleIds(r).has('POSTPARTUM_02A'))
-  r = set(r, { POSTPARTUM_02A: 'custom' })
-  r = set(r, { POSTPARTUM_02: ['fatigue_recovery'] })
-  assert('F34: POSTPARTUM_02A null after removing other from POSTPARTUM_02', r['POSTPARTUM_02A'] === null)
+  assert('F34: PAIN_01=other payload flag reachable', r['PAIN_01'] === 'other')
 }
 
 /* =========================================================================
@@ -891,42 +862,12 @@ const H1_MODULES = [
   assert('H2: URINARY_04 null after removing incontinence from URINARY_01', r['URINARY_04'] === null)
 }
 {
-  // PAIN_04 other -> PAIN_04A
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', PAIN_04: 'other' })
-  assert('H2: PAIN_04A visible when PAIN_04=other', visibleIds(r).has('PAIN_04A'))
-  r = set(r, { PAIN_04: 'none' })
-  assert('H2: PAIN_04A null after PAIN_04 changed away from other', r['PAIN_04A'] === null)
-}
-{
-  // PAIN_01 other -> PAIN_01A
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', PAIN_01: 'other' })
-  assert('H2: PAIN_01A visible when PAIN_01=other', visibleIds(r).has('PAIN_01A'))
-  r = set(r, { PAIN_01: 'knee' })
-  assert('H2: PAIN_01A null after PAIN_01 changed away from other', r['PAIN_01A'] === null)
-}
-{
   // SLEEP_01 night_awakenings -> SLEEP_03
   let r = emptyResponses()
   r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'sleep', SLEEP_01: ['night_awakenings'] })
   assert('H2: SLEEP_03 visible when SLEEP_01 includes night_awakenings', visibleIds(r).has('SLEEP_03'))
   r = set(r, { SLEEP_01: ['sleep_onset'] })
   assert('H2: SLEEP_03 null after removing night_awakenings from SLEEP_01', r['SLEEP_03'] === null)
-}
-{
-  // SLEEP_03 other -> SLEEP_03A
-  let r = emptyResponses()
-  r = set(r, {
-    ID_03: 'female',
-    VISIT_01: 'symptom',
-    VISIT_02_SYMPTOM_MAIN: 'sleep',
-    SLEEP_01: ['night_awakenings'],
-    SLEEP_03: ['other'],
-  })
-  assert('H2: SLEEP_03A visible when SLEEP_03 includes other', visibleIds(r).has('SLEEP_03A'))
-  r = set(r, { SLEEP_03: ['urination'] })
-  assert('H2: SLEEP_03A null after removing other from SLEEP_03', r['SLEEP_03A'] === null)
 }
 {
   // BOWEL_01 constipation -> BOWEL_04
@@ -937,14 +878,8 @@ const H1_MODULES = [
   assert('H2: BOWEL_04 null after removing constipation from BOWEL_01', r['BOWEL_04'] === null)
 }
 // GI has no conditional branch (GI_01/02/03 are all unconditional within the GI module) -- nothing to assert.
-{
-  // WOMEN_01 other -> WOMEN_01A
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'women', WOMEN_01: ['other'] })
-  assert('H2: WOMEN_01A visible when WOMEN_01 includes other', visibleIds(r).has('WOMEN_01A'))
-  r = set(r, { WOMEN_01: ['discharge_discomfort'] })
-  assert('H2: WOMEN_01A null after removing other from WOMEN_01', r['WOMEN_01A'] === null)
-}
+// (Routing/UX v2 §13: WOMEN_01A retired -- "other" is a flag only, no patient
+// free-text screen; see DoctorView's 기타 확인 cue instead.)
 {
   // WOMEN_01 menopause_symptoms -> WOMEN_03
   let r = emptyResponses()
@@ -969,22 +904,8 @@ const H1_MODULES = [
   r = set(r, { PREGNANCY_01: 'possible' })
   assert('H2: PREGNANCY_02 null after PREGNANCY_01 changed away from pregnant', r['PREGNANCY_02'] === null)
 }
-{
-  // PREGNANCY_03 other -> PREGNANCY_03A
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'pregnancy', PREGNANCY_03: ['other'] })
-  assert('H2: PREGNANCY_03A visible when PREGNANCY_03 includes other', visibleIds(r).has('PREGNANCY_03A'))
-  r = set(r, { PREGNANCY_03: ['nausea'] })
-  assert('H2: PREGNANCY_03A null after removing other from PREGNANCY_03', r['PREGNANCY_03A'] === null)
-}
-{
-  // POSTPARTUM_02 other -> POSTPARTUM_02A
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_01: 'women', VISIT_02_WOMEN: 'postpartum', POSTPARTUM_02: ['other'] })
-  assert('H2: POSTPARTUM_02A visible when POSTPARTUM_02 includes other', visibleIds(r).has('POSTPARTUM_02A'))
-  r = set(r, { POSTPARTUM_02: ['fatigue_recovery'] })
-  assert('H2: POSTPARTUM_02A null after removing other from POSTPARTUM_02', r['POSTPARTUM_02A'] === null)
-}
+// (Routing/UX v2 §13: PREGNANCY_03A and POSTPARTUM_02A retired -- "other" is a
+// flag only, no patient free-text screen; see DoctorView's 기타 확인 cue.)
 {
   // MED_USE yes -> MED_TYPES
   let r = emptyResponses()
@@ -1001,13 +922,14 @@ const H1_MODULES = [
   r = set(r, { ALLERGY_01: 'none' })
   assert('H2: ALLERGY_02 null after ALLERGY_01 changed away from yes', r['ALLERGY_02'] === null)
 }
+// (Routing/UX v2 §12: SURGERY_02 retired -- patient only sees
+// yes/no/unknown via SURGERY_01; DoctorView shows a 수술·입원력 있음 cue
+// instead of collecting free text.)
 {
-  // SURGERY_01 yes -> SURGERY_02
+  // SURGERY_01 new 'unknown' option (compact3 layout, §12/§28)
   let r = emptyResponses()
-  r = set(r, { ID_03: 'female', SURGERY_01: 'yes' })
-  assert('H2: SURGERY_02 visible when SURGERY_01=yes', visibleIds(r).has('SURGERY_02'))
-  r = set(r, { SURGERY_01: 'none' })
-  assert('H2: SURGERY_02 null after SURGERY_01 changed away from yes', r['SURGERY_02'] === null)
+  r = set(r, { ID_03: 'female', SURGERY_01: 'unknown' })
+  assert('H2: SURGERY_01=unknown is a valid stored value', r['SURGERY_01'] === 'unknown')
 }
 {
   // BIRTH_02 lunar -> BIRTH_02A
@@ -1025,14 +947,8 @@ const H1_MODULES = [
   r = set(r, { BIRTH_03: 'unknown' })
   assert('H2: BIRTH_03A null after BIRTH_03 changed to unknown', r['BIRTH_03A'] === null)
 }
-{
-  // FREE_01 yes -> FREE_02
-  let r = emptyResponses()
-  r = set(r, { ID_03: 'female', FREE_01: 'yes' })
-  assert('H2: FREE_02 visible when FREE_01=yes', visibleIds(r).has('FREE_02'))
-  r = set(r, { FREE_01: 'none' })
-  assert('H2: FREE_02 null after FREE_01 changed away from yes', r['FREE_02'] === null)
-}
+// (Routing/UX v2 §12: FREE_02 retired -- patient only sees yes/no via
+// FREE_01; DoctorView shows a 추가로 전달할 내용 있음 cue instead.)
 
 // H3: global invariant sweep -- after any full walk + prune, no non-visible
 // question holds a non-null value. Sweep every H1 route (both fully-filled
@@ -2952,6 +2868,218 @@ function hipBaseResponses() {
   const payload = buildResponsePayload(r)
   assert('R-E9: Core general_red alone -> hip_safety_status URGENT_REVIEW via passthrough', payload.safety_flags.hip?.hip_safety_status === 'URGENT_REVIEW')
   assert('R-E9b: Core general_red also sets requires_staff_check independent of HIP', computeFlags(r).requires_staff_check === true)
+}
+
+/* =========================================================================
+ * S. Tablet Questionnaire Routing/UX v2 regression suite (§28/§29)
+ * ========================================================================= */
+
+// S1: routing fast-paths
+{
+  // pain_care -> immediate pain flow, no repeated "symptom -> pain" step
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care' })
+  let v = visibleIds(r)
+  assert('S1: pain_care hides VISIT_02_SYMPTOM_MAIN (no repeated symptom-category step)', !v.has('VISIT_02_SYMPTOM_MAIN'))
+  assert('S1: pain_care hides legacy VISIT_01', !v.has('VISIT_01'))
+  assert('S1: pain_care goes straight to PAIN_01', v.has('PAIN_01'))
+  assert('S1: pain_care still runs global safety screening (SAFETY_01 visible)', v.has('SAFETY_01'))
+}
+{
+  // symptom_consult -> symptom categories screen
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'symptom_consult' })
+  const v = visibleIds(r)
+  assert('S1: symptom_consult shows VISIT_02_SYMPTOM_MAIN (symptom category screen)', v.has('VISIT_02_SYMPTOM_MAIN'))
+  assert('S1: symptom_consult does not jump straight to PAIN_01', !v.has('PAIN_01'))
+}
+{
+  // herbal + symptom purpose -> correct clinical module (symptom bucket)
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'herbal' })
+  assert('S1: herbal shows VISIT_00B_HERBAL_PURPOSE', visibleIds(r).has('VISIT_00B_HERBAL_PURPOSE'))
+  r = set(r, { VISIT_00B_HERBAL_PURPOSE: 'symptom' })
+  const v = visibleIds(r)
+  assert('S1: herbal+symptom routes to VISIT_02_SYMPTOM_MAIN (symptom bucket, not constitution)', v.has('VISIT_02_SYMPTOM_MAIN'))
+  assert('S1: herbal+symptom does not show VISIT_02_CONST', !v.has('VISIT_02_CONST'))
+  r = set(r, { VISIT_02_SYMPTOM_MAIN: 'sleep' })
+  assert('S1: herbal+symptom+sleep activates the Sleep module', visibleIds(r).has('SLEEP_01'))
+}
+{
+  // herbal + tonic/overall_check/undecided -> constitution route, never blocks safety
+  for (const purpose of ['tonic', 'overall_check', 'undecided']) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: purpose })
+    const v = visibleIds(r)
+    assert(`S1: herbal+${purpose} does not show VISIT_02_SYMPTOM_MAIN`, !v.has('VISIT_02_SYMPTOM_MAIN'))
+    assert(`S1: herbal+${purpose} still runs global safety screening (SAFETY_01 visible)`, v.has('SAFETY_01'))
+  }
+}
+{
+  // consultation-undecided ("상담 후 결정") -> minimum symptom-category route, never a safety bypass
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'undecided' })
+  const v = visibleIds(r)
+  assert('S1: undecided shows a minimum symptom-category screen (VISIT_02_SYMPTOM_MAIN)', v.has('VISIT_02_SYMPTOM_MAIN'))
+  assert('S1: undecided still runs global safety screening (SAFETY_01 visible)', v.has('SAFETY_01'))
+  assert('S1: undecided does not force a specific module before global safety', !v.has('SLEEP_01') && !v.has('PAIN_01'))
+}
+{
+  // women route
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'women' })
+  assert('S1: women intent shows VISIT_02_WOMEN', visibleIds(r).has('VISIT_02_WOMEN'))
+  r = set(r, { VISIT_02_WOMEN: 'pregnancy' })
+  assert('S1: women+pregnancy activates the Pregnancy module', visibleIds(r).has('PREGNANCY_01'))
+}
+{
+  // weight route
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'weight' })
+  assert('S1: weight intent activates the Weight module directly', visibleIds(r).has('WEIGHT_01'))
+}
+{
+  // male patients never see the women option on the new intent screen either
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'male' })
+  const intentQ = ALL_QUESTIONS.find((q) => q.id === 'VISIT_00_INTENT')
+  const opts = intentQ.optionsIf(r).map((o) => o.value)
+  assert('S1: male patients do not see the women option on VISIT_00_INTENT', !opts.includes('women'))
+}
+
+// S2: layout metadata
+{
+  const gridIds = ['VISIT_00_INTENT', 'VISIT_00B_HERBAL_PURPOSE', 'VISIT_02_SYMPTOM_MAIN', 'VISIT_03_SYMPTOM_DURATION', 'VISIT_02_WOMEN']
+  for (const id of gridIds) {
+    const q = ALL_QUESTIONS.find((x) => x.id === id)
+    assert(`S2: ${id} has layout grid2`, q && q.layout === 'grid2')
+  }
+  const pain01 = ALL_QUESTIONS.find((q) => q.id === 'PAIN_01')
+  assert('S2: PAIN_01 has layout body_map', pain01.layout === 'body_map')
+  const surgery01 = ALL_QUESTIONS.find((q) => q.id === 'SURGERY_01')
+  assert('S2: SURGERY_01 has layout compact3', surgery01.layout === 'compact3')
+
+  // CLOSED safety inputs across every FROZEN regional module stay 'list'
+  // (no layout field at all) regardless of option brevity.
+  const mustStayListIds = [
+    'SAFETY_01', 'WOMEN_SAFETY_01', 'BOWEL_03',
+    'LBP_01', 'LBP_02', 'LBP_04', 'LBP_11',
+    'NECK_01', 'NECK_02', 'NECK_04',
+    'NS01', 'SH01', 'SH09',
+    'KNEE_01', 'KNEE_02A', 'KNEE_08',
+    'ELBOW_00', 'ELBOW_02A',
+    'WH_01', 'WH_08', 'WH_09',
+    'AF_01', 'AF_08',
+    'HFJ_00', 'TMJ_01', 'TMJ_05',
+    'HIP_00', 'HIP_02', 'HIP_05',
+  ]
+  for (const id of mustStayListIds) {
+    const q = ALL_QUESTIONS.find((x) => x.id === id)
+    assert(`S2: CLOSED safety input ${id} exists`, Boolean(q))
+    assert(`S2: CLOSED safety input ${id} has no layout override (stays 'list')`, q.layout === undefined)
+  }
+}
+
+// S3: text-minimization -- removed screens gone, payload stays safe
+{
+  const retired = [
+    'VISIT_02A_SYMPTOM_OTHER', 'SECONDARY_01A', 'SLEEP_03A', 'PAIN_01A', 'PAIN_04A',
+    'WOMEN_01A', 'PREGNANCY_03A', 'POSTPARTUM_02A', 'SURGERY_02', 'FREE_02',
+  ]
+  for (const id of retired) {
+    assert(`S3: retired free-text screen ${id} no longer exists`, !ALL_QUESTIONS.some((q) => q.id === id))
+  }
+
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    VISIT_00_INTENT: 'symptom_consult',
+    VISIT_02_SYMPTOM_MAIN: 'other',
+    SECONDARY_01: ['other'],
+    SURGERY_01: 'yes',
+    FREE_01: 'yes',
+    ALLERGY_01: 'yes',
+    ALLERGY_02: ['medication'],
+  })
+  const payload = buildResponsePayload(r)
+  const payloadStr = JSON.stringify(payload)
+  assert('S3: payload never contains a primary_symptom_other key', !('primary_symptom_other' in payload.visit_goal))
+  assert('S3: payload never contains a secondary_other_text key', !('secondary_other_text' in payload.secondary_concerns))
+  assert('S3: payload never contains a surgery_detail key', !('surgery_detail' in payload.surgery_history))
+  assert('S3: payload never contains a free_text_detail key', !('free_text_detail' in payload.free_text))
+  assert('S3: payload preserves the primary_symptom=other flag (triage signal kept)', payload.visit_goal.primary_symptom === 'other')
+  assert('S3: payload preserves surgery_yn=yes (triage signal kept)', payload.surgery_history.surgery_yn === 'yes')
+  assert('S3: payload preserves free_text_yn=yes (triage signal kept)', payload.free_text.free_text_yn === 'yes')
+  assert('S3: payload preserves the structured allergy category selection', Array.isArray(payload.allergy.allergy_detail) && payload.allergy.allergy_detail.includes('medication'))
+  assert('S3: no stray raw question id text leaks into the payload (no "짧게 적어주세요" placeholder artifact)', !payloadStr.includes('짧게 적어주세요'))
+}
+
+// S4: sleep dedup -- no duplicate question once sleep info was already collected
+{
+  // secondary=sleep answers SEC_SLEEP_01 first; later landing on the
+  // constitution route must NOT re-ask CONST_SLEEP.
+  let r = emptyResponses()
+  r = set(r, {
+    ID_03: 'female',
+    VISIT_00_INTENT: 'herbal',
+    VISIT_00B_HERBAL_PURPOSE: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'digestion',
+    SECONDARY_01: ['sleep'],
+  })
+  r = set(r, { SEC_SLEEP_01: ['sleep_onset'] })
+  assert('S4: SEC_SLEEP_01 answered once', Array.isArray(r['SEC_SLEEP_01']))
+  // Switch to a route that would otherwise ask CONST_SLEEP.
+  r = set(r, { VISIT_00B_HERBAL_PURPOSE: 'tonic', VISIT_02_SYMPTOM_MAIN: null })
+  assert('S4: CONST_SLEEP is not shown again -- sleep info was already collected via SEC_SLEEP_01', !visibleIds(r).has('CONST_SLEEP'))
+}
+{
+  // Baseline: constitution route WITHOUT any prior sleep answer still asks once.
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'tonic' })
+  assert('S4: CONST_SLEEP is shown when sleep was never asked before', visibleIds(r).has('CONST_SLEEP'))
+}
+
+// S5: copy change -- "정확해요" present, old "정확히 알아요" gone from patient UI
+{
+  const birth03a = ALL_QUESTIONS.find((q) => q.id === 'BIRTH_03A')
+  const labels = birth03a.options.map((o) => o.label)
+  assert('S5: BIRTH_03A shows "정확해요"', labels.includes('정확해요'))
+  assert('S5: BIRTH_03A no longer shows "정확히 알아요"', !labels.includes('정확히 알아요'))
+  const exactOpt = birth03a.options.find((o) => o.label === '정확해요')
+  assert('S5: "정확해요" option value stays "exact" (no payload meaning change)', exactOpt.value === 'exact')
+  const anyOldCopy = ALL_QUESTIONS.some((q) => (q.options || []).some((o) => o.label === '정확히 알아요'))
+  assert('S5: old copy "정확히 알아요" does not appear anywhere in patient-facing options', !anyOldCopy)
+}
+
+// S6: malformed-input fail-safe (§29) -- new intent/layout/body-map input
+// must never crash and must never be misread as a clinical positive/negative.
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'not_a_real_intent_value' })
+  assert('S6: malformed VISIT_00_INTENT does not crash visibleQuestions', Array.isArray([...visibleQuestions(r)]))
+  assert('S6: malformed VISIT_00_INTENT does not crash buildResponsePayload', (() => { buildResponsePayload(r); return true })())
+  const payload = buildResponsePayload(r)
+  assert('S6: malformed VISIT_00_INTENT resolves to no visit_goal (fails closed, not a false module activation)', payload.visit_goal.visit_goal === null)
+  assert('S6: malformed VISIT_00_INTENT does not activate any clinical module', modulesActivated(r).length === 0)
+}
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'not_a_real_purpose' })
+  assert('S6: malformed VISIT_00B_HERBAL_PURPOSE does not crash buildResponsePayload', (() => { buildResponsePayload(r); return true })())
+  const payload = buildResponsePayload(r)
+  assert('S6: malformed VISIT_00B_HERBAL_PURPOSE resolves constitution_goal to null (fails closed)', payload.visit_goal.constitution_goal === null)
+}
+{
+  // A garbage PAIN_01 value (as could only reach the payload via a body-map
+  // wiring bug, never via the UI itself) must never be misread as any
+  // specific regional enum -- no CLOSED module may activate on it.
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care', PAIN_01: 'not_a_real_zone_value' })
+  assert('S6: malformed PAIN_01 does not crash buildResponsePayload', (() => { buildResponsePayload(r); return true })())
+  const payload = buildResponsePayload(r)
+  assert('S6: malformed PAIN_01 does not activate LBP', payload.safety_flags.lbp == null)
+  assert('S6: malformed PAIN_01 does not activate HIP', payload.safety_flags.hip == null)
+  assert('S6: malformed PAIN_01 does not activate TMJ', payload.safety_flags.tmj == null)
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

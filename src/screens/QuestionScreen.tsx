@@ -1,3 +1,4 @@
+import { BodyMap } from '../components/BodyMap'
 import { MultiChoice } from '../components/MultiChoice'
 import { SingleChoice } from '../components/SingleChoice'
 import { TextInputField } from '../components/TextInputField'
@@ -21,11 +22,20 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
       <h1 className="question">{question.question}</h1>
       {helper && <p className="helper">{helper}</p>}
 
-      {question.input === 'single_choice' && options && (
+      {question.input === 'single_choice' && options && question.layout === 'body_map' && (
+        <BodyMap
+          options={options}
+          value={typeof value === 'string' ? value : null}
+          onSelect={(v) => onChange(v)}
+        />
+      )}
+
+      {question.input === 'single_choice' && options && question.layout !== 'body_map' && (
         <SingleChoice
           options={options}
           value={typeof value === 'string' ? value : null}
           onSelect={(v) => onChange(v)}
+          layout={question.layout}
         />
       )}
 
@@ -36,6 +46,7 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
           onChange={(v) => onChange(v)}
           exclusive={question.exclusive}
           max={question.max}
+          layout={question.layout}
         />
       )}
 

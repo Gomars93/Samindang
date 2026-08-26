@@ -107,13 +107,15 @@ export const PATIENT_QUESTIONS: Question[] = [
  * 없으므로 우선순위가 실제로 충돌하지 않는다.
  */
 
+// icon: src/components/icons.tsx registry key -- 순수 presentation, clinical
+// 의미와 무관(Tablet UX v2.1 §2). 라벨 텍스트가 항상 1차 정보다.
 const VISIT_00_INTENT_OPTIONS: Option[] = [
-  { value: 'pain_care', label: '아픈 곳 치료', description: '허리·목·관절 등' },
-  { value: 'symptom_consult', label: '몸의 증상 상담', description: '수면·소화·피로 등' },
-  { value: 'herbal', label: '한약·보약 상담', description: '증상·기력·건강관리' },
-  { value: 'women', label: '여성 건강', description: '생리·갱년기·임신·산후' },
-  { value: 'weight', label: '체중 관리' },
-  { value: 'undecided', label: '상담 후 결정', description: '무엇이 필요한지 잘 모르겠어요' },
+  { value: 'pain_care', label: '아픈 곳 치료', description: '허리·목·관절 등', icon: 'pain_care' },
+  { value: 'symptom_consult', label: '몸의 증상 상담', description: '수면·소화·피로 등', icon: 'symptom_consult' },
+  { value: 'herbal', label: '한약·보약 상담', description: '증상·기력·건강관리', icon: 'herbal' },
+  { value: 'women', label: '여성 건강', description: '생리·갱년기·임신·산후', icon: 'women' },
+  { value: 'weight', label: '체중 관리', icon: 'weight' },
+  { value: 'undecided', label: '상담 후 결정', description: '무엇이 필요한지 잘 모르겠어요', icon: 'undecided' },
 ]
 
 const VISIT_01_OPTIONS: Option[] = [
@@ -369,6 +371,16 @@ const SAFETY_QUESTIONS: Question[] = [
       if (r['ID_03'] === 'male') exclude.add('women')
       return SECONDARY_OPTIONS.filter((o) => !exclude.has(o.value))
     },
+    // Tablet UX v2.1 §11/§21: 이 "동반문제" 개념은 "함께 있는 증상"과
+    // "오늘 자세히 상담하고 싶은 두 번째 문제"가 섞여 있었다. 새 UI에서는
+    // ADDITIONAL_DETAIL_01(추가 상세상담, 최대 1개, full module)과
+    // REFERENCE_SYMPTOMS_01(참고 증상, 여러 개, 상세문진 없음)로 명확히
+    // 분리한다 -- 이 화면은 새 흐름에서 완전히 숨긴다. VISIT_00_INTENT/
+    // VISIT_01과 동일한 상호배타 패턴(서로 다른 필드를 보고 숨으므로
+    // 자기 자신의 답으로 스스로를 지우는 문제 없음)으로, 기존 raw
+    // Responses를 직접 구성하는 테스트/fixture 경로에서는 여전히 그대로
+    // 동작한다(하위호환).
+    showIf: (r) => r['ADDITIONAL_DETAIL_01'] == null,
   },
   {
     id: 'SAFETY_01',
@@ -390,9 +402,114 @@ const SAFETY_QUESTIONS: Question[] = [
   },
 ]
 
+/**
+ * Tablet UX v2.1 §11-§21: 문진 구조를 명시적으로 3단으로 분리한다.
+ *   A. PRIMARY DETAILED CONCERN -- VISIT_00_INTENT/VISIT_02_* 라우팅으로
+ *      정한 주호소. 항상 FULL module을 탄다(기존 IS_PRIMARY_* 그대로).
+ *   B. ADDITIONAL DETAILED CONCERN (최대 1개) -- 명시적으로 "이것도 자세히
+ *      상담받고 싶다"고 고른 경우에만 그 category의 FULL module을 추가로
+ *      연다. 기존 module question set/safety engine을 그대로 재사용하고
+ *      (복제 없음), `hasDetailedConcern()`으로 각 IS_PRIMARY_* gate를
+ *      "primary === X" OR "additional concern === X"로 확장한다.
+ *   C. REFERENCE SYMPTOMS (복수 가능) -- "그 밖에 알아두면 좋을 불편함"
+ *      수준의 flag일 뿐이다. 절대 detailed/short/menopause/MSK/추가
+ *      safety-specific module을 열지 않는다(§19 HARD RULE). global safety는
+ *      전체 환자 공통이므로 그대로 유지된다.
+ *
+ * 엔진 제약: `App.tsx`의 `nextQuestion()`은 `visibleQuestions(r)` 배열에서
+ * 현재 질문의 다음 index로만 이동하는 순방향 전용 walk다(임의의 화면으로
+ * "점프"하지 않는다) -- 그래서 ADDITIONAL_DETAIL_01은 반드시 모든 개별
+ * full-module 질문 블록(SLEEP_QUESTIONS, GI_QUESTIONS, PAIN_QUESTIONS...)
+ * 보다 배열상 앞에 위치해야, 나중에 고른 category의 module 블록이 실제로
+ * "다음 화면"으로 순방향 도달 가능하다. 기존 SECONDARY_01도 정확히 이
+ * 위치(SAFETY_QUESTIONS, 모든 module 블록보다 앞)에 있었으므로 동일한
+ * 자리를 대체한다 -- Primary 자신의 full detail 화면(예: PAIN_01 Body map)
+ * 도 이 질문보다 배열상 뒤에 있어, 화면 순서는 "방문목적 → 주호소 카테고리
+ * → 추가 상세상담/참고 증상 선택 → (Primary/Additional 각자의 full
+ * module, 고정된 module 순서대로) → ..." 가 된다. 두 module 모두 반드시
+ * 등장한다는 기능적 요구는 이 순서와 무관하게 항상 만족된다(§20 Case
+ * A-D 어디에도 화면 순서 자체를 규정하지 않는다) -- 자세한 내용은
+ * docs/TABLET_V2_1_DEVICE_QA_AND_ROUTING_REPORT.md 참고.
+ */
+const hasDetailedConcern = (r: Responses, key: string): boolean => r['ADDITIONAL_DETAIL_01'] === key
+
+// '없음'을 맨 앞에 둔다 -- 대부분의 환자가 고를 값을 빠르게 찾게 하는
+// UX 선택인 동시에(§38 위임 범위: layout/카드 순서), 이 필드 하나가
+// hasDetailedConcern()을 통해 실제로 module을 여는 유일한 스위치이므로
+// 순서 자체가 malformed-input과 같은 "값이 없거나 무해한 기본값" 방향의
+// fail-safe 성격도 겸한다.
+const ADDITIONAL_DETAIL_OPTIONS: Option[] = [
+  { value: 'none', label: '없음' },
+  { value: 'sleep', label: '잠' },
+  { value: 'digestion', label: '속·소화' },
+  { value: 'bowel', label: '대변' },
+  { value: 'pain', label: '통증' },
+  { value: 'urinary', label: '소변·방광' },
+  { value: 'fatigue', label: '피로·기력' },
+  { value: 'stress', label: '스트레스·마음' },
+  { value: 'women', label: '여성 건강' },
+  { value: 'weight', label: '체중 관리' },
+]
+
+const DETAIL_ROUTING_QUESTIONS: Question[] = [
+  {
+    id: 'ADDITIONAL_DETAIL_01',
+    variable: 'additional_detail_concern',
+    input: 'single_choice',
+    question: '오늘 이것과 함께 자세히 상담받고 싶은 문제가 또 있나요?',
+    helper: '선택한 문제는 오늘 함께 자세히 확인합니다. 최대 1개까지 고를 수 있어요.',
+    required: true,
+    step: '상담 내용',
+    layout: 'grid2',
+    // SECONDARY_01과 서로 다른 필드를 보고 숨는 상호배타 관계 -- 자기
+    // 자신의 답으로 스스로를 지우는 chicken-and-egg 문제 없음(위 파일
+    // 헤더 하위호환 설명과 동일 원칙).
+    showIf: (r) => r['SECONDARY_01'] == null,
+    options: ADDITIONAL_DETAIL_OPTIONS,
+    // 이미 Primary인 category, 남성의 "여성 건강"은 제외한다(§13).
+    optionsIf: (r) => {
+      const exclude = new Set<string>()
+      const primary = primaryConcernSecondaryKey(r)
+      if (primary) exclude.add(primary)
+      if (r['ID_03'] === 'male') exclude.add('women')
+      return ADDITIONAL_DETAIL_OPTIONS.filter((o) => !exclude.has(o.value))
+    },
+  },
+  {
+    id: 'REFERENCE_SYMPTOMS_01',
+    variable: 'reference_symptoms',
+    input: 'multi_choice',
+    question: '그 밖에 원장님이 알아두면 좋을 불편함이 있나요?',
+    helper: '있다는 사실만 원장님께 전달됩니다. 여러 개를 고를 수 있어요.',
+    required: true,
+    step: '상담 내용',
+    layout: 'grid2',
+    exclusive: 'none',
+    options: SECONDARY_OPTIONS,
+    // Primary와 Additional detail로 이미 선택된 category는 중복 방지를 위해
+    // 가능하면 목록에서 제외한다(§18). 남성의 "여성 건강"도 제외.
+    optionsIf: (r) => {
+      const exclude = new Set<string>()
+      const primary = primaryConcernSecondaryKey(r)
+      if (primary) exclude.add(primary)
+      const additional = r['ADDITIONAL_DETAIL_01']
+      if (typeof additional === 'string' && additional !== 'none') exclude.add(additional)
+      if (r['ID_03'] === 'male') exclude.add('women')
+      return SECONDARY_OPTIONS.filter((o) => !exclude.has(o.value))
+    },
+    // ADDITIONAL_DETAIL_01이 답변된(=null이 아닌) 다음에만 노출된다 --
+    // ADDITIONAL_DETAIL_01이 SECONDARY_01==null일 때만 보이므로, 이 필드가
+    // 채워졌다는 것 자체가 이미 새 흐름(비-legacy) 경로에 있다는 신호다.
+    showIf: (r) => r['ADDITIONAL_DETAIL_01'] != null,
+  },
+]
+
 /* ---------- Sleep 상세 Module (primary concern === sleep 인 경우만) ---------- */
 
-const IS_PRIMARY_SLEEP = (r: Responses) => primaryConcernKey(r) === 'sleep'
+// Tablet UX v2.1 §14-15: Additional Detailed Concern으로 명시 선택한
+// 경우에도 기존 module question set/safety engine을 그대로 재사용해 FULL
+// detail을 연다(복제 없음, clinical threshold 변경 없음).
+const IS_PRIMARY_SLEEP = (r: Responses) => primaryConcernKey(r) === 'sleep' || hasDetailedConcern(r, 'sleep')
 
 /* ---------- MENOPAUSE_SLEEP v0.2 Compact (여성 + primary sleep 인 경우만) ----------
  * (docs/ClaudeCode_MENOPAUSE_SLEEP_v0.2_Compact_Delta.md)
@@ -597,7 +714,7 @@ const SLEEP_QUESTIONS: Question[] = [
 
 /* ---------- GI 상세 Module (primary concern === digestion 인 경우만) ---------- */
 
-const IS_PRIMARY_GI = (r: Responses) => primaryConcernKey(r) === 'digestion'
+const IS_PRIMARY_GI = (r: Responses) => primaryConcernKey(r) === 'digestion' || hasDetailedConcern(r, 'digestion')
 
 const GI_QUESTIONS: Question[] = [
   {
@@ -650,7 +767,7 @@ const GI_QUESTIONS: Question[] = [
 
 /* ---------- Bowel 상세 Module (primary concern === bowel 인 경우만) ---------- */
 
-const IS_PRIMARY_BOWEL = (r: Responses) => primaryConcernKey(r) === 'bowel'
+const IS_PRIMARY_BOWEL = (r: Responses) => primaryConcernKey(r) === 'bowel' || hasDetailedConcern(r, 'bowel')
 
 const BOWEL_QUESTIONS: Question[] = [
   {
@@ -718,7 +835,7 @@ const BOWEL_QUESTIONS: Question[] = [
 
 /* ---------- Urinary 상세 Module (primary concern === urinary 인 경우만) ---------- */
 
-const IS_PRIMARY_URINARY = (r: Responses) => primaryConcernKey(r) === 'urinary'
+const IS_PRIMARY_URINARY = (r: Responses) => primaryConcernKey(r) === 'urinary' || hasDetailedConcern(r, 'urinary')
 
 const URINARY_QUESTIONS: Question[] = [
   {
@@ -790,7 +907,12 @@ const URINARY_QUESTIONS: Question[] = [
 
 /* ---------- Pain 상세 Module (primary concern === pain 인 경우만) ---------- */
 
-const IS_PRIMARY_PAIN = (r: Responses) => primaryConcernKey(r) === 'pain'
+// Tablet UX v2.1 §16: Primary가 pain이 아니어도 Additional detailed로
+// pain을 명시 선택하면 기존 PAIN_01 Body Map -> 기존 regional router(LBP/
+// NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ/HIP) -> 기존 MSK
+// safety module을 그대로 탄다 -- 이 값들은 모두 IS_PRIMARY_PAIN에서
+// 파생되므로 이 한 곳만 확장하면 전부 일관되게 적용된다.
+const IS_PRIMARY_PAIN = (r: Responses) => primaryConcernKey(r) === 'pain' || hasDetailedConcern(r, 'pain')
 
 /**
  * LBP_V1 entry gate. There is no MSK domain/region routing layer in this
@@ -2611,7 +2733,7 @@ const ANKLE_FOOT_QUESTIONS: Question[] = [
 
 /* ---------- Fatigue 상세 Module (primary concern === fatigue 인 경우만) ---------- */
 
-const IS_PRIMARY_FATIGUE = (r: Responses) => primaryConcernKey(r) === 'fatigue'
+const IS_PRIMARY_FATIGUE = (r: Responses) => primaryConcernKey(r) === 'fatigue' || hasDetailedConcern(r, 'fatigue')
 
 const FATIGUE_QUESTIONS: Question[] = [
   {
@@ -2668,7 +2790,7 @@ const FATIGUE_QUESTIONS: Question[] = [
 
 /* ---------- Stress 상세 Module (primary concern === stress 인 경우만) ---------- */
 
-const IS_PRIMARY_STRESS = (r: Responses) => primaryConcernKey(r) === 'stress'
+const IS_PRIMARY_STRESS = (r: Responses) => primaryConcernKey(r) === 'stress' || hasDetailedConcern(r, 'stress')
 
 const STRESS_QUESTIONS: Question[] = [
   {
@@ -2712,7 +2834,11 @@ const STRESS_QUESTIONS: Question[] = [
 
 /* ---------- Women 상세 Module (women_goal === women 인 경우만) ---------- */
 
-const IS_PRIMARY_WOMEN = (r: Responses) => primaryConcernKey(r) === 'women'
+// 'pregnancy'/'postpartum' 세부 목표는 Additional Detail 목록에 없다(§13
+// 옵션은 "여성 건강" 한 버킷뿐 -- 기존 SECONDARY_01과 동일한 스코프
+// 경계, 파일 헤더 주석 참고). 그래서 IS_PRIMARY_PREGNANCY/POSTPARTUM은
+// 확장하지 않고 IS_PRIMARY_WOMEN만 확장한다.
+const IS_PRIMARY_WOMEN = (r: Responses) => primaryConcernKey(r) === 'women' || hasDetailedConcern(r, 'women')
 
 const WOMEN_MENSTRUAL_TRIGGERS = ['irregular_cycle', 'flow_change', 'dysmenorrhea', 'premenstrual']
 
@@ -2892,7 +3018,7 @@ const POSTPARTUM_QUESTIONS: Question[] = [
 
 /* ---------- Weight 상세 Module (visit_goal === weight 인 경우만) ---------- */
 
-const IS_PRIMARY_WEIGHT = (r: Responses) => primaryConcernKey(r) === 'weight'
+const IS_PRIMARY_WEIGHT = (r: Responses) => primaryConcernKey(r) === 'weight' || hasDetailedConcern(r, 'weight')
 
 const WEIGHT_QUESTIONS: Question[] = [
   {
@@ -3631,6 +3757,12 @@ const FREE_TEXT_QUESTIONS: Question[] = [
 
 export const CORE_QUESTIONS: Question[] = [
   ...VISIT_QUESTIONS,
+  // DETAIL_ROUTING_QUESTIONS는 SAFETY_QUESTIONS(SECONDARY_01)보다 배열상
+  // 앞에 있어야 한다 -- VISIT_00_INTENT/VISIT_01과 동일한 이유로, 실제
+  // 신규 UI 사용자에게는 배열에서 먼저 나오는 쪽이 먼저 보이고 답해지며,
+  // 그 답이 뒤에 나오는 legacy 질문(SECONDARY_01)의 showIf를 꺼서 다시는
+  // 노출되지 않게 한다(아래 DETAIL_ROUTING_QUESTIONS 헤더 주석 참고).
+  ...DETAIL_ROUTING_QUESTIONS,
   ...SAFETY_QUESTIONS,
   ...SLEEP_QUESTIONS,
   ...GI_QUESTIONS,
@@ -3906,91 +4038,136 @@ export const secondaryScreensActivated = (r: Responses): string[] => {
     .map(([key]) => MODULE_ROUTES[key])
 }
 
-/** 이번 Sprint 기준 실제로 문항까지 구현된 Module. 나머지는 router target만 존재한다. */
+/**
+ * 이번 Sprint 기준 실제로 문항까지 구현된 Module. 나머지는 router target만
+ * 존재한다. Tablet UX v2.1 §14: Additional Detailed Concern으로 명시
+ * 선택한 module도 FULL로 열리므로 함께 포함한다(Primary와 겹치면 중복
+ * 없이 하나만). MODULE_ROUTES가 primary(11개 key)든 additional(9개 key,
+ * pregnancy/postpartum 제외)이든 동일한 key->표시명 매핑을 쓰므로 그대로
+ * 재사용한다 -- 기존 if-사다리와 동일한 11개 분기를 그대로 낸다(zero-diff
+ * for primary-only responses).
+ */
 export const modulesActivated = (r: Responses): string[] => {
-  const key = primaryConcernKey(r)
-  if (key === 'sleep') return ['Sleep']
-  if (key === 'digestion') return ['GI']
-  if (key === 'bowel') return ['Bowel']
-  if (key === 'urinary') return ['Urinary']
-  if (key === 'pain') return ['Pain']
-  if (key === 'fatigue') return ['Fatigue']
-  if (key === 'stress') return ['Stress']
-  if (key === 'women') return ['Women']
-  if (key === 'pregnancy') return ['Pregnancy']
-  if (key === 'postpartum') return ['Postpartum']
-  if (key === 'weight') return ['Weight']
-  return []
+  const modules: string[] = []
+  const primaryKey = primaryConcernKey(r)
+  if (primaryKey && MODULE_ROUTES[primaryKey]) modules.push(MODULE_ROUTES[primaryKey])
+
+  const additionalKey = r['ADDITIONAL_DETAIL_01']
+  if (typeof additionalKey === 'string' && MODULE_ROUTES[additionalKey]) {
+    const additionalModule = MODULE_ROUTES[additionalKey]
+    if (!modules.includes(additionalModule)) modules.push(additionalModule)
+  }
+
+  return modules
 }
 
 /** Router가 참고할 라우팅 정보 한 덩어리(주호소 + 동반문제 + 실제로 보인 화면 목록). */
+/**
+ * `primary_module` stays `'Pain'` unchanged (never repurposed to something
+ * like `'pain_lbp'` -- DoctorView.tsx switches on the literal `'Pain'`
+ * string in several places and has no LBP/NECK/SHOULDER-aware fallback,
+ * see LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This computes the purely
+ * additive sibling label for LBP/NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/
+ * ANKLE_FOOT/TMJ-specific UI to key off instead. IS_PRIMARY_LBP and
+ * IS_PRIMARY_NECK are mutually exclusive (PAIN_01 is single_choice), so
+ * LBP vs NECK-or-SHOULDER is never ambiguous.
+ *
+ * NS01 decides NECK vs SHOULDER *tagging* only (v0.1.1 §1 F1 invariant --
+ * this is display/hypothesis-weighting metadata, never a safety gate: both
+ * NECK_01-05 and SH01-05 are already unconditionally computed regardless
+ * of this value, see `safety_flags.neck`/`safety_flags.shoulder`).
+ * `SIMILAR`/`UNKNOWN`/not-yet-answered all default to `'NECK'` -- the
+ * pre-SHOULDER_V1 behavior for every `neck_shoulder` patient -- so this
+ * stays a strict superset: no existing NECK-only fixture/test can observe
+ * any difference unless a patient explicitly answers `SHOULDER_DOMINANT`.
+ *
+ * Tablet UX v2.1 §16: this returns the regional label purely based on
+ * whether the pain-cascade IS_PRIMARY_* gates are currently true (primary
+ * OR additional-detail pain, per hasDetailedConcern) -- callers decide
+ * which of `primary_module_detail`/`additional_module_detail` this belongs
+ * under.
+ */
+const painRegionalDetailLabel = (r: Responses): string | null =>
+  IS_PRIMARY_LBP(r)
+    ? 'LBP'
+    : IS_PRIMARY_NECK(r)
+      ? r['NS01'] === 'SHOULDER_DOMINANT'
+        ? 'SHOULDER'
+        : 'NECK'
+      : IS_PRIMARY_KNEE(r)
+        ? 'KNEE'
+        : IS_PRIMARY_ARM_HAND(r)
+          ? /**
+             * WRIST_HAND_V1: `IS_PRIMARY_ELBOW_SAFETY` is checked before
+             * `IS_PRIMARY_WRIST_HAND_SAFETY` -- for `FOREARM`/
+             * `DIFFUSE_OR_MULTIPLE`/`UNKNOWN`, both are simultaneously true
+             * (Fable plan §2), and this order preserves ELBOW_V1's existing
+             * FROZEN behavior for those three values exactly (label stays
+             * `'ELBOW'`, zero regression on any existing ELBOW
+             * fixture/test). `'WRIST_HAND'` is a pure addition for the
+             * previously-null `ELBOW_00 === 'WRIST_HAND'` case. This
+             * ordering is display/Suggested-Exam-priority only --
+             * `safety_flags.elbow`/`safety_flags.wrist_hand` are each
+             * computed independently via their own `IS_PRIMARY_*_SAFETY`
+             * gate regardless of this label (both non-null simultaneously
+             * for a FOREARM patient).
+             */
+            IS_PRIMARY_ELBOW_SAFETY(r)
+            ? 'ELBOW'
+            : IS_PRIMARY_WRIST_HAND_SAFETY(r)
+              ? 'WRIST_HAND'
+              : null
+          : IS_PRIMARY_ANKLE_FOOT_SAFETY(r)
+            ? 'ANKLE_FOOT'
+            : IS_PRIMARY_TMJ_SAFETY(r)
+              ? 'TMJ'
+              : null
+
 export const buildRoutingPayload = (r: Responses) => {
   const primaryTarget = primaryModuleTarget(r)
   const secondaryScreens = secondaryScreensActivated(r)
+  // Tablet UX v2.1 §14/§21: Additional Detailed Concern -- 명시적으로
+  // "이것도 자세히" 고른 category만 담는다(참고 증상은 여기 포함하지
+  // 않는다, §19 HARD RULE -- REFERENCE_SYMPTOMS_01은 별도 필드로만 노출).
+  const additionalDetailKey =
+    typeof r['ADDITIONAL_DETAIL_01'] === 'string' && r['ADDITIONAL_DETAIL_01'] !== 'none'
+      ? (r['ADDITIONAL_DETAIL_01'] as string)
+      : null
+  const additionalTarget = additionalDetailKey ? MODULE_ROUTES[additionalDetailKey] ?? null : null
+  const referenceSymptoms = Array.isArray(r['REFERENCE_SYMPTOMS_01']) ? r['REFERENCE_SYMPTOMS_01'] : null
+
   const allTargets: string[] = []
   if (primaryTarget) allTargets.push(primaryTarget)
+  if (additionalTarget && !allTargets.includes(additionalTarget)) allTargets.push(additionalTarget)
   for (const t of secondaryScreens) {
     if (!allTargets.includes(t)) allTargets.push(t)
   }
 
+  // Tablet UX v2.1 §16: PAIN_01의 지역 라벨(LBP/NECK/...)은 primary와
+  // additional detail 중 "실제로 pain을 활성화한 쪽"에만 붙는다 -- 주호소가
+  // pain이 아닌데 additional detail로 pain을 골랐다고 primary_module_detail이
+  // 바뀌면 안 되고, 그 반대(주호소가 이미 pain인데 additional에 또 붙는
+  // 경우)도 없어야 한다(§16 "같은 category를 두 번 full-detail하지 않는다"와
+  // 일관).
+  const isPrimaryPain = primaryConcernKey(r) === 'pain'
+  const isAdditionalPain = !isPrimaryPain && r['ADDITIONAL_DETAIL_01'] === 'pain'
+
   return {
     primary_concern: primaryConcernKey(r),
     primary_module: primaryTarget,
-    /**
-     * `primary_module` stays `'Pain'` unchanged (never repurposed to
-     * something like `'pain_lbp'` -- DoctorView.tsx switches on the literal
-     * `'Pain'` string in several places and has no LBP/NECK/SHOULDER-aware
-     * fallback, see LBP_INTEGRATION_PLAN_DRAFT.md §9/S9). This is a purely
-     * additive sibling field for LBP/NECK/SHOULDER-specific UI to key off
-     * instead. IS_PRIMARY_LBP and IS_PRIMARY_NECK are mutually exclusive
-     * (PAIN_01 is single_choice), so LBP vs NECK-or-SHOULDER is never
-     * ambiguous.
-     *
-     * NS01 decides NECK vs SHOULDER *tagging* only (v0.1.1 §1 F1 invariant
-     * -- this is display/hypothesis-weighting metadata, never a safety
-     * gate: both NECK_01-05 and SH01-05 are already unconditionally
-     * computed above regardless of this value, see `safety_flags.neck`/
-     * `safety_flags.shoulder` below). `SIMILAR`/`UNKNOWN`/not-yet-answered
-     * all default to `'NECK'` -- the pre-SHOULDER_V1 behavior for every
-     * `neck_shoulder` patient -- so this stays a strict superset: no
-     * existing NECK-only fixture or test can observe any difference unless
-     * a patient explicitly answers `SHOULDER_DOMINANT`.
-     */
-    primary_module_detail: IS_PRIMARY_LBP(r)
-      ? 'LBP'
-      : IS_PRIMARY_NECK(r)
-        ? r['NS01'] === 'SHOULDER_DOMINANT'
-          ? 'SHOULDER'
-          : 'NECK'
-        : IS_PRIMARY_KNEE(r)
-          ? 'KNEE'
-          : IS_PRIMARY_ARM_HAND(r)
-            ? /**
-               * WRIST_HAND_V1: `IS_PRIMARY_ELBOW_SAFETY` is checked before
-               * `IS_PRIMARY_WRIST_HAND_SAFETY` -- for `FOREARM`/
-               * `DIFFUSE_OR_MULTIPLE`/`UNKNOWN`, both are simultaneously
-               * true (Fable plan §2), and this order preserves ELBOW_V1's
-               * existing FROZEN behavior for those three values exactly
-               * (label stays `'ELBOW'`, zero regression on any existing
-               * ELBOW fixture/test). `'WRIST_HAND'` is a pure addition for
-               * the previously-null `ELBOW_00 === 'WRIST_HAND'` case. This
-               * ordering is display/Suggested-Exam-priority only --
-               * `safety_flags.elbow`/`safety_flags.wrist_hand` are each
-               * computed independently below via their own
-               * `IS_PRIMARY_*_SAFETY` gate regardless of this label
-               * (both non-null simultaneously for a FOREARM patient).
-               */
-              IS_PRIMARY_ELBOW_SAFETY(r)
-              ? 'ELBOW'
-              : IS_PRIMARY_WRIST_HAND_SAFETY(r)
-                ? 'WRIST_HAND'
-                : null
-            : IS_PRIMARY_ANKLE_FOOT_SAFETY(r)
-              ? 'ANKLE_FOOT'
-              : IS_PRIMARY_TMJ_SAFETY(r)
-                ? 'TMJ'
-                : null,
+    primary_module_detail: isPrimaryPain ? painRegionalDetailLabel(r) : null,
     modules_activated: modulesActivated(r),
+    // Tablet UX v2.1 §11-§21: 명확히 3구역으로 분리 -- Primary(위 필드들),
+    // Additional Detailed Concern(최대 1개, FULL module), Reference
+    // Symptoms(복수 가능, module 없음, DoctorView 참고용 flag만).
+    additional_detail_concern: additionalDetailKey,
+    additional_module: additionalTarget,
+    // primary_module_detail과 동일한 원칙(위 참고), additional 쪽으로만
+    // 계산된다.
+    additional_module_detail: isAdditionalPain ? painRegionalDetailLabel(r) : null,
+    reference_symptoms: referenceSymptoms,
+    // secondary_concerns/secondary_screens: 하위호환 -- 새 흐름에서는
+    // SECONDARY_01이 노출되지 않아 항상 null/빈 배열이다(§21 migration).
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
     all_targets: allTargets,
@@ -4115,6 +4292,30 @@ export const buildResponsePayload = (r: Responses) => ({
     key: primaryConcernKey(r),
     router_target: primaryModuleTarget(r),
   },
+  /**
+   * Tablet UX v2.1 §11-§21: 문진 구조를 3구역으로 명확히 분리한다.
+   *   - primary_concern (위): 항상 FULL module.
+   *   - additional_detail_concern (아래): 최대 1개, 명시 선택 시에만
+   *     FULL module(기존 module question set/safety engine 재사용, 새
+   *     clinical logic 복제 없음).
+   *   - reference_symptoms (아래): 복수 가능, "있다는 사실"만 전달되는
+   *     flag -- 절대 detailed/short/menopause/MSK/추가 safety-specific
+   *     module을 열지 않는다(§19 HARD RULE).
+   */
+  additional_detail_concern: {
+    key: typeof r['ADDITIONAL_DETAIL_01'] === 'string' && r['ADDITIONAL_DETAIL_01'] !== 'none'
+      ? r['ADDITIONAL_DETAIL_01']
+      : null,
+    router_target:
+      typeof r['ADDITIONAL_DETAIL_01'] === 'string' && r['ADDITIONAL_DETAIL_01'] !== 'none'
+        ? MODULE_ROUTES[r['ADDITIONAL_DETAIL_01'] as string] ?? null
+        : null,
+  },
+  reference_symptoms: {
+    reference_symptoms: Array.isArray(r['REFERENCE_SYMPTOMS_01']) ? r['REFERENCE_SYMPTOMS_01'] : null,
+  },
+  // 하위호환: 새 흐름에서는 SECONDARY_01이 노출되지 않아 항상 null이다
+  // (§21 migration -- 기존 raw fixture/테스트 경로에서만 값이 남는다).
   secondary_concerns: {
     secondary_concerns: r['SECONDARY_01'],
     router_targets: secondaryModuleTargets(r),

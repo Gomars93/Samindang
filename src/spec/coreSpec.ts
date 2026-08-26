@@ -337,7 +337,12 @@ const primaryConcernSecondaryKey = (r: Responses): string | null => {
   return key
 }
 
+// Tablet UX v2.3 §17: SECONDARY_01/REFERENCE_SYMPTOMS_01은 둘 다 안전문항이
+// 아닌 정보용 선택 질문(§18 참고)이라 "없음"을 목록 맨 앞으로 옮긴다 --
+// SAFETY_01/CES/응급 체크리스트류 안전문항에는 이 재배치를 절대 적용하지
+// 않는다(그런 화면들의 옵션 배열은 이 상수를 전혀 참조하지 않음).
 const SECONDARY_OPTIONS: Option[] = [
+  { value: 'none', label: '없음' },
   { value: 'sleep', label: '잠' },
   { value: 'digestion', label: '속·소화' },
   { value: 'bowel', label: '대변' },
@@ -348,7 +353,6 @@ const SECONDARY_OPTIONS: Option[] = [
   { value: 'women', label: '여성 건강' },
   { value: 'weight', label: '체중 관리' },
   { value: 'other', label: '그 밖의 증상' },
-  { value: 'none', label: '없음' },
 ]
 
 const SAFETY_QUESTIONS: Question[] = [

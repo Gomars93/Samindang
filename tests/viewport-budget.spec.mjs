@@ -76,7 +76,11 @@ const MAIN_PADDING_H = 40 + 16 // shell__main padding top+bottom
 // viewport (the exact 296px-vs-300px false negative this comment replaced).
 const WIDE_LANDSCAPE_MIN_WIDTH = 760
 const HEADER_H_WIDE = 8 + 0 + 6 + 6 // shell__top padding-top + topRow min-h(collapsed) + steps margin-top + steps height (thinner)
-const FOOTER_H_WIDE = 16 + 28 + BTN_MIN_H // shell__bottom padding + primaryBtn only -- helpBtn moved to right rail (display:none)
+// Tablet UX v2.3 §16: the wide-landscape .shell__bottom/.primaryBtn rules
+// were further trimmed (10px/16px padding, 56px min-height, font-size
+// untouched) to reveal one more option row -- this must track that trim or
+// it under-estimates available height for every wide viewport.
+const FOOTER_H_WIDE = 10 + 16 + 56 // shell__bottom padding (landscape-trimmed) + primaryBtn (landscape-trimmed) -- helpBtn moved to right rail (display:none)
 
 function isWideLandscape(viewportW, viewportH) {
   return viewportW > viewportH && viewportW >= WIDE_LANDSCAPE_MIN_WIDTH

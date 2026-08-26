@@ -2,6 +2,7 @@
 // Run via `npm run test:integration` (bundles coreSpec.ts with esbuild first).
 // Plain node, no test framework: assert() prints "OK: <name>" and throws on failure.
 
+import { readFileSync } from 'node:fs'
 import {
   ALL_QUESTIONS,
   visibleQuestions,
@@ -3899,6 +3900,64 @@ function applyLbp01Change(prevResponses, newValue) {
   const acute = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: '1_3m' })
   assert('W7: LBP_10A_ONSET_AGE hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10A_ONSET_AGE'))
   assert('W7: LBP_10 also hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10'))
+}
+
+// W8: "없음" first-position reorder (v2.3 §17) -- non-safety optional
+// pickers only. SECONDARY_01/REFERENCE_SYMPTOMS_01 share SECONDARY_OPTIONS
+// and are both info-only/optional, so "없음" moves to index 0 for both.
+// SAFETY_01 (a real safety checklist) has its own separate options array
+// and must be completely untouched by this change.
+{
+  const sec01 = ALL_QUESTIONS.find((q) => q.id === 'SECONDARY_01')
+  const ref01 = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
+  const safety01 = ALL_QUESTIONS.find((q) => q.id === 'SAFETY_01')
+  assert('W8: SECONDARY_01 options[0] is "없음" (none)', sec01.options[0].value === 'none')
+  assert('W8: REFERENCE_SYMPTOMS_01 options[0] is "없음" (none)', ref01.options[0].value === 'none')
+  assert('W8 CRITICAL: SAFETY_01 (a real safety checklist) keeps "해당 없음" LAST, untouched', safety01.options[safety01.options.length - 1].value === 'none' && safety01.options[0].value !== 'none')
+  // optionsIf (used at render time, e.g. excluding the already-chosen
+  // primary/additional category) must also keep 'none' first -- it's a
+  // filter over the same reordered array, not a fresh unordered one.
+  const filteredRef = ref01.optionsIf(withPainCare({ PAIN_01: 'low_back_pelvis' }))
+  assert('W8: REFERENCE_SYMPTOMS_01 optionsIf() output also keeps "없음" first', filteredRef[0].value === 'none')
+}
+
+// W9: numeric_scale equal-cell-size CSS (v2.3 §16) -- source-level check
+// only (this repo has no headless-browser layout measurement tooling, see
+// tests/layout-budget.spec.mjs's own documented limitation). Confirms the
+// old flex-grow/flex-wrap approach (which stretched the last incomplete
+// row's cells to fill remaining space) is gone, replaced by a fixed-column
+// CSS Grid where every cell in every row is structurally the same size.
+{
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const scaleListMatch = css.match(/\.optionList--scale\s*\{([^}]*)\}/)
+  assert('W9: .optionList--scale rule exists', !!scaleListMatch)
+  assert('W9: .optionList--scale uses CSS Grid (not flexbox)', /display:\s*grid/.test(scaleListMatch[1]))
+  assert('W9: .optionList--scale sets a FIXED grid-template-columns (not auto-fit/auto-fill)', /grid-template-columns:\s*repeat\(\d+,\s*1fr\)/.test(scaleListMatch[1]))
+  assert('W9 CRITICAL: .optionList--scale never uses auto-fit/auto-fill (would re-introduce last-row stretch)', !/auto-fit|auto-fill/.test(css.match(/\.optionList--scale[\s\S]*?(?=\n\/\*|\n\.[a-zA-Z])/)[0]))
+  const scaleOptionMatch = css.match(/\.option--scale\s*\{([^}]*)\}/)
+  assert('W9: .option--scale rule exists', !!scaleOptionMatch)
+  assert('W9: .option--scale no longer uses flex-grow (flex: 1 1 auto) that caused uneven last-row cells', !/flex:\s*1\s*1\s*auto/.test(scaleOptionMatch[1]))
+  assert('W9: .option--scale is full-width within its fixed grid cell', /width:\s*100%/.test(scaleOptionMatch[1]))
+}
+
+// W10: CTA height/padding trim in wide landscape (v2.3 §16) -- source-level
+// check. Must shrink height/padding inside the wide-landscape media query
+// without ever touching font-size (readability/touch-target rule).
+{
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const landscapeBlockMatch = css.match(/@media \(orientation: landscape\) and \(min-width: 760px\) \{([\s\S]*)\n\}\n/)
+  assert('W10: wide-landscape media block exists', !!landscapeBlockMatch)
+  const block = landscapeBlockMatch[1]
+  // .shell__bottom is overridden twice in this block (grid placement earlier,
+  // padding trim later) -- collect every occurrence rather than assuming the
+  // first match is the one that matters.
+  const bottomBlocks = [...block.matchAll(/\.shell__bottom\s*\{([^}]*)\}/g)].map((m) => m[1])
+  assert('W10: .shell__bottom is overridden inside the wide-landscape block', bottomBlocks.length > 0)
+  assert('W10: .shell__bottom padding is trimmed in landscape (below the 16px/28px portrait base)', bottomBlocks.some((b) => /padding:\s*10px/.test(b)))
+  const primaryBtnInBlock = block.match(/\.primaryBtn\s*\{([^}]*)\}/)
+  assert('W10: .primaryBtn is overridden inside the wide-landscape block', !!primaryBtnInBlock)
+  assert('W10: .primaryBtn min-height is trimmed in landscape (below the 72px portrait --btn-min-h)', /min-height:\s*56px/.test(primaryBtnInBlock[1]))
+  assert('W10 CRITICAL: the landscape .primaryBtn override never sets font-size (readability rule)', !/font-size/.test(primaryBtnInBlock[1]))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

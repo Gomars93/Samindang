@@ -407,6 +407,19 @@ input {
   .shell--wideContent .shell__bottomInner {
     max-width: 960px;
   }
+
+  /* Tablet UX v2.3 §16: CTA 자체의 세로 footprint를 줄여 한 옵션 행을 더
+     보이게 한다 -- font-size는 절대 줄이지 않고(가독성/터치 타깃 규칙
+     유지) height/padding만 좁힌다. .primaryBtn:disabled(선택 전 compact
+     상태, 위 §3 규칙)는 이미 landscape보다 더 작아서 그대로 둔다. */
+  .shell__bottom {
+    padding: 10px var(--gutter) 16px;
+  }
+
+  .primaryBtn {
+    min-height: 56px;
+    padding: 12px 24px;
+  }
 }
 
 /* ---------- question ---------- */
@@ -765,19 +778,35 @@ input {
 }
 
 /* numeric_scale (LBP_V1) — 0~10 큰 버튼 행. 작은 슬라이더/체크박스 금지 규칙(2.4)을
-   그대로 지키면서 optionList/option 스타일을 재사용한다. */
+   그대로 지키면서 optionList/option 스타일을 재사용한다.
+   Tablet UX v2.3 §16: 이전 flex-wrap 방식은 11개 값이 마지막 줄에서
+   나머지 칸 수만큼 늘어나(flex-grow) 줄마다 셀 크기가 달라 보이는 문제가
+   있었다 — 고정 열 개수의 CSS Grid로 바꿔 모든 셀이 항상 같은 크기가
+   되도록 한다(auto-fit/fr 기반의 가변 열 개수는 여전히 마지막 줄 늘어남을
+   유발하므로 사용하지 않고, 열 개수 자체를 breakpoint별로 고정한다). */
 .optionList--scale {
-  flex-direction: row;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
+@media (min-width: 480px) {
+  .optionList--scale {
+    grid-template-columns: repeat(6, 1fr);
+  }
+}
+
+@media (min-width: 700px) {
+  .optionList--scale {
+    grid-template-columns: repeat(11, 1fr);
+  }
+}
+
 .option--scale {
-  width: auto;
-  min-width: var(--btn-min-h);
-  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   justify-content: center;
-  padding: 16px 8px;
+  padding: 16px 4px;
   font-size: var(--fs-question);
   font-weight: 700;
 }

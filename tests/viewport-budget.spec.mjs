@@ -377,4 +377,27 @@ for (const vp of VIEWPORTS) {
   console.log(`  ${vp.label}: available=${availableH}px contentWidth=${contentWidth}px screensNeedingInnerScroll=${overflowCount}/${estimates.length}`)
 }
 
+/* =========================================================================
+ * 6. Tablet UX v2.3 §10: wide-landscape center content column sits in the
+ *    900-1050px range (not just "wider than before"), and the right rail
+ *    carries all four utility items the task spec names: step label,
+ *    selected-region feedback (railSelection), scroll hint
+ *    (railScrollHint), and help button -- not a subset.
+ * ========================================================================= */
+
+{
+  const wideContentMatch = css.match(/\.shell--wideContent[\s\S]{0,200}?max-width:\s*(\d+)px/)
+  assert('styles.css: .shell--wideContent declares a max-width', Boolean(wideContentMatch))
+  const wideContentMax = Number(wideContentMatch[1])
+  assert(
+    `styles.css: wide-landscape center content max-width (${wideContentMax}px) sits within the required 900-1050px range`,
+    wideContentMax >= 900 && wideContentMax <= 1050,
+  )
+
+  assert('ScreenShell.tsx: right rail carries a step-label item', screenShellSrc.includes('railStepLabel'))
+  assert('ScreenShell.tsx: right rail carries a selected-region feedback slot (railSelection)', screenShellSrc.includes('railSelection'))
+  assert('ScreenShell.tsx: right rail carries a scroll-hint item (railScrollHint)', screenShellSrc.includes('railScrollHint'))
+  assert('ScreenShell.tsx: right rail carries a help-button item (railHelpBtn)', screenShellSrc.includes('railHelpBtn'))
+}
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

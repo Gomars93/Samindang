@@ -108,6 +108,37 @@ assert("'other' is not a body map zone (fallback-list-only by design)", !BODY_MA
   )
 }
 
+{
+  // Tablet UX v2.3 §11: values that exist in BOTH front and back (e.g.
+  // 'neck_shoulder') previously showed a strong checkmark (✓ badge) on both
+  // views simultaneously once selected -- confusing, reads like two
+  // different regions were chosen. Only one view (the "strong" one) should
+  // carry the ✓ badge at a time; the other matching zone keeps its
+  // border/tint highlight (aria-pressed=true, .bodyMap__zone--selected) but
+  // not the badge. On a fresh render (no click ever simulated -- this is
+  // static SSR, there's no event loop to click through) the component
+  // defaults to the front view being strong, since ZONES lists front
+  // entries first for every ambiguous value.
+  const html = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: 'neck_shoulder', onSelect: () => {} }),
+  )
+  const pressedCount = (html.match(/aria-pressed="true"/g) || []).length
+  assert('neck_shoulder (exists in both front and back): both zones are aria-pressed (still selected)', pressedCount === 2)
+  const checkmarkCount = (html.match(/bodyMap__zoneMark/g) || []).length
+  assert('neck_shoulder CRITICAL: exactly one checkmark badge renders, never two, even though the value exists on both views', checkmarkCount === 1)
+}
+
+{
+  // Sanity: a value that exists on only ONE view (front-only, e.g.
+  // 'abdomen') must still show its checkmark -- the ambiguous-value
+  // tie-break must never suppress the only zone a single-view value has.
+  const html = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: 'abdomen', onSelect: () => {} }),
+  )
+  const checkmarkCount = (html.match(/bodyMap__zoneMark/g) || []).length
+  assert('single-view-only value (abdomen, front-only) still shows exactly one checkmark', checkmarkCount === 1)
+}
+
 /* =========================================================================
  * DOM/CSS structure regression (Tablet UX v2.1 §7/§29).
  *

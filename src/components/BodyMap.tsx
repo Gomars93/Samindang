@@ -76,6 +76,18 @@ const ZONES: Zone[] = [
   { value: 'leg_foot', view: 'back', top: 81, left: 52, width: 26, height: 19, shape: 'rect' },
 ]
 
+// Tablet UX v2.3 §11: values that have zone buttons in BOTH front and back
+// (neck_shoulder/arm_hand/knee/leg_foot) are exactly the ones where "which
+// view gets the strong ✓" is ambiguous and needs the strongView tie-break
+// below. Values that exist in only one view (e.g. low_back_pelvis, back
+// only) are never ambiguous -- that one zone always shows its checkmark
+// once selected, regardless of strongView's default.
+const AMBIGUOUS_VIEW_VALUES = new Set(
+  [...new Set(ZONES.map((z) => z.value))].filter(
+    (v) => ZONES.some((z) => z.value === v && z.view === 'front') && ZONES.some((z) => z.value === v && z.view === 'back'),
+  ),
+)
+
 const ZONE_LABEL: Record<string, string> = {
   head_face_jaw: '머리·얼굴·턱',
   neck_shoulder: '목·어깨',
@@ -153,12 +165,23 @@ function Figure({
   view,
   zones,
   value,
+  strongView,
   onSelect,
 }: {
   view: 'front' | 'back'
   zones: Zone[]
   value: string | null
-  onSelect: (v: string) => void
+  /**
+   * Tablet UX v2.3 §11: 어떤 값(예: 'neck_shoulder')은 ZONES에 front/back
+   * 두 view 모두 존재한다 -- 이전에는 두 Figure가 각자 독립적으로
+   * `value === z.value`만 확인해 앞/뒤 두 곳에 동시에 강한 체크(✓ 배지)가
+   * 나타나 "두 군데를 골랐나?" 하는 혼동을 줬다. 이제는 어느 view가 마지막
+   * 탭인지(strongView, 부모 BodyMap의 state)를 기준으로 그 view의 zone만
+   * ✓ 배지를 받고, 나머지 view는 테두리/틴트(bodyMap__zone--selected)만
+   * 유지해 "선택은 됐지만 지금 강조된 곳은 여기가 아니다"를 표시한다.
+   */
+  strongView: 'front' | 'back'
+  onSelect: (v: string, view: 'front' | 'back') => void
 }) {
   return (
     <div className="bodyMap__figureWrap">
@@ -167,6 +190,7 @@ function Figure({
         <Silhouette view={view} />
         {zones.map((z, i) => {
           const isSelected = value === z.value
+          const isStrong = isSelected && (!AMBIGUOUS_VIEW_VALUES.has(z.value) || view === strongView)
           return (
             <button
               key={`${view}-${z.value}-${i}`}
@@ -180,9 +204,9 @@ function Figure({
               }}
               aria-label={`${ZONE_LABEL[z.value]} (${view === 'front' ? '앞면' : '뒷면'})`}
               aria-pressed={isSelected}
-              onClick={() => onSelect(z.value)}
+              onClick={() => onSelect(z.value, view)}
             >
-              {isSelected && (
+              {isStrong && (
                 <span className="bodyMap__zoneMark" aria-hidden="true">
                   ✓
                 </span>
@@ -197,6 +221,16 @@ function Figure({
 
 export function BodyMap({ options, value, onSelect }: Props) {
   const [showList, setShowList] = useState(false)
+  // Tablet UX v2.3 §11: 앞/뒤 모두에 존재하는 값(neck_shoulder/arm_hand/
+  // knee/leg_foot)을 처음 볼 때(아직 아무 zone도 직접 탭한 적 없는, 이전
+  // 세션 응답을 그대로 이어받은 상태)는 ZONES 배열 순서상 항상 front가
+  // 먼저 나오므로 기본값 'front'가 자연스럽다 -- 실제로 어느 쪽을 탭했는지
+  // 알게 되는 즉시(handleSelect) 그 view로 갱신된다.
+  const [strongView, setStrongView] = useState<'front' | 'back'>('front')
+  const handleSelect = (v: string, view: 'front' | 'back') => {
+    setStrongView(view)
+    onSelect(v)
+  }
   const frontZones = ZONES.filter((z) => z.view === 'front')
   const backZones = ZONES.filter((z) => z.view === 'back')
 
@@ -233,8 +267,8 @@ export function BodyMap({ options, value, onSelect }: Props) {
         )}
       </p>
       <div className="bodyMap__figures">
-        <Figure view="front" zones={frontZones} value={value} onSelect={onSelect} />
-        <Figure view="back" zones={backZones} value={value} onSelect={onSelect} />
+        <Figure view="front" zones={frontZones} value={value} strongView={strongView} onSelect={handleSelect} />
+        <Figure view="back" zones={backZones} value={value} strongView={strongView} onSelect={handleSelect} />
       </div>
       {/*
         Tablet UX v2.2.1 §6 / v2.3 §11-12: 위 label은 그림 위에 있어

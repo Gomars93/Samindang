@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
 import { IdleWarningModal } from './components/IdleWarningModal'
 import { PatientErrorBoundary } from './components/PatientErrorBoundary'
+import { PreviewBanner } from './components/PreviewBanner'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
@@ -63,9 +64,12 @@ const IDLE_WARNING_BEFORE_MS = 60_000
 export default function App() {
   const [resetKey, setResetKey] = useState(0)
   return (
-    <PatientErrorBoundary onReset={() => setResetKey((k) => k + 1)}>
-      <AppContent key={resetKey} />
-    </PatientErrorBoundary>
+    <>
+      <PreviewBanner />
+      <PatientErrorBoundary onReset={() => setResetKey((k) => k + 1)}>
+        <AppContent key={resetKey} />
+      </PatientErrorBoundary>
+    </>
   )
 }
 

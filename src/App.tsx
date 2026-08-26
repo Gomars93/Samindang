@@ -43,9 +43,20 @@ type AnswerMeta = {
   discarded?: true
 }
 
-const emptyResponses = (): Responses =>
+const emptyResponses = (): Responses => ({
   // 스펙 3.3: 보지 않은 질문은 null. none/unknown과 구분한다.
-  Object.fromEntries(ALL_QUESTIONS.map((q) => [q.id, null]))
+  ...Object.fromEntries(ALL_QUESTIONS.map((q) => [q.id, null])),
+  // Tablet UX v2.2.1 §12: HERBAL_ADDON_FIELD는 ALL_QUESTIONS에 속하지 않는
+  // non-question 내부 플래그라 위 Object.fromEntries가 자동으로 초기화하지
+  // 않는다 -- 매 새 세션(첫 로드/제출 후 privacy wipe/직원 restart 전부
+  // 이 함수를 다시 호출한다)마다 명시적으로 null로 되돌려, 이전 환자
+  // session에서 'yes'가 stale하게 남아 다음 pain_care 환자를 herbal_addon
+  // 모드처럼 보이게 만드는 일이 구조적으로 불가능하게 한다(실제로 기존
+  // 스프레드 경로에서도 이미 안전했다 -- 이 함수는 항상 완전히 새 객체를
+  // 만들 뿐 이전 Responses를 절대 스프레드하지 않는다 -- 이 줄은 그
+  // 보장을 명시적으로 코드에 남겨 감사 가능하게 하기 위함이다).
+  [HERBAL_ADDON_FIELD]: null,
+})
 
 const newSessionId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto

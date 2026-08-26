@@ -3640,4 +3640,148 @@ for (const purpose of ['tonic', 'overall_check', 'undecided', 'symptom']) {
   assert('V-ModeAgnosticToVisitType: an unrelated extra response key never changes questionnaireMode', questionnaireMode(withUnrelatedKey) === baseline)
 }
 
+/* =========================================================================
+ * §W: Tablet UX v2.2.1 -- real-device correction. §8-9 of the task requires
+ * a genuine, un-seeded, screen-by-screen patient walk (responses = {} at
+ * the very start, exactly what App.tsx's emptyResponses()/useState produces
+ * on a fresh page load) reproducing the exact real-device route reported:
+ * ID -> VISIT_00_INTENT=pain_care -> duration/impact -> SAFETY ->
+ * PAIN_01=low_back_pelvis -> all LBP required questions (benign answers) ->
+ * ADDITIONAL_DETAIL_01=none -> REFERENCE_SYMPTOMS_01=[none] -> finish.
+ * "코드상 gate가 있으니 정상"이라고 결론내리지 않는다 -- this walks the
+ * actual App.tsx-shaped state machine (visibleQuestions/nextQuestion
+ * semantics via `set`+`autoAnswerWalk`, not a pre-seeded Responses object.
+ * ========================================================================= */
+
+const SYSTEMIC_IDS = SYSTEMIC_BLOCK_QUESTION_IDS
+
+// Walks from a completely blank Responses object, answering the FIRST
+// unanswered visible question every step with a caller-supplied strategy
+// (never pre-seeding anything), exactly mirroring App.tsx's nextQuestion
+// forward-only semantics.
+function realPatientWalk(pickOption) {
+  let r = emptyResponses()
+  const order = []
+  let iterations = 0
+  for (; iterations < WALK_CAP; iterations++) {
+    const visible = visibleQuestions(r)
+    const next = visible.find((q) => r[q.id] === null || r[q.id] === undefined)
+    if (!next) return { order, responses: r, iterations, terminated: true }
+    order.push(next.id)
+    const value = pickOption(next, r)
+    r = set(r, { [next.id]: value })
+  }
+  return { order, responses: r, iterations, terminated: false }
+}
+
+// The exact "benign pain_care / low_back_pelvis / additional=none /
+// reference=none" route named in §9, forcing the specific answers the
+// task specifies and picking the first available option for everything
+// else the walk happens to require along the way (e.g. LBP required
+// sub-questions, minimum-history questions).
+function benignPainFastPick(sex) {
+  const FORCED = {
+    VISIT_00_INTENT: 'pain_care',
+    PAIN_01: 'low_back_pelvis',
+    ADDITIONAL_DETAIL_01: 'none',
+    REFERENCE_SYMPTOMS_01: ['none'],
+    ID_03: sex,
+  }
+  return (q, r) => {
+    if (Object.prototype.hasOwnProperty.call(FORCED, q.id)) return FORCED[q.id]
+    return deterministicValue(q, r)
+  }
+}
+
+for (const sex of ['male', 'female']) {
+  const { order, responses: r, terminated } = realPatientWalk(benignPainFastPick(sex))
+  assert(`W1 (${sex}): un-seeded real walk terminates (finish reachable)`, terminated)
+  assert(`W1 (${sex}): walk actually answered VISIT_00_INTENT=pain_care (not skipped)`, r['VISIT_00_INTENT'] === 'pain_care')
+  assert(`W1 (${sex}): walk actually answered PAIN_01=low_back_pelvis (not skipped)`, r['PAIN_01'] === 'low_back_pelvis')
+  assert(`W1 (${sex}): walk actually reached ADDITIONAL_DETAIL_01=none (not skipped)`, r['ADDITIONAL_DETAIL_01'] === 'none')
+  assert(`W1 (${sex}): walk actually reached REFERENCE_SYMPTOMS_01=[none]`, Array.isArray(r['REFERENCE_SYMPTOMS_01']) && r['REFERENCE_SYMPTOMS_01'].includes('none'))
+  assert(`W1 (${sex}) CRITICAL: no systemic/herbal question ever appears in the walk order`, SYSTEMIC_IDS.every((id) => !order.includes(id)))
+  assert(`W1 (${sex}) CRITICAL: no systemic/herbal question ever gets answered`, SYSTEMIC_IDS.every((id) => r[id] === null || r[id] === undefined))
+  const step전신정보Count = order.filter((id) => {
+    const q = ALL_QUESTIONS.find((qq) => qq.id === id)
+    return q?.step === '전신 정보'
+  }).length
+  assert(`W1 (${sex}) CRITICAL: step==='전신 정보' question count in the walk is exactly 0`, step전신정보Count === 0)
+  assert(`W1 (${sex}): final questionnaireMode is pain_fast throughout (checked at completion)`, questionnaireMode(r) === 'pain_fast')
+}
+
+// W2: broaden coverage -- same exact forced route, but every OTHER
+// required question along the way (LBP sub-questions, minimum history,
+// birth info) picked via the LAST option instead of the first, in case
+// some non-default answer value opens a different branch that the
+// first-option walk above didn't traverse.
+function benignPainFastPickLast(sex) {
+  const FORCED = {
+    VISIT_00_INTENT: 'pain_care',
+    PAIN_01: 'low_back_pelvis',
+    ADDITIONAL_DETAIL_01: 'none',
+    REFERENCE_SYMPTOMS_01: ['none'],
+    ID_03: sex,
+  }
+  return (q, r) => {
+    if (Object.prototype.hasOwnProperty.call(FORCED, q.id)) return FORCED[q.id]
+    if (q.input === 'short_text') return 'x'
+    if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+    const opts = q.optionsIf ? q.optionsIf(r) : q.options
+    const pick = opts[opts.length - 1]
+    return q.input === 'multi_choice' ? [pick.value] : pick.value
+  }
+}
+
+for (const sex of ['male', 'female']) {
+  const { order, responses: r, terminated } = realPatientWalk(benignPainFastPickLast(sex))
+  assert(`W2 (${sex}, last-option strategy): walk terminates`, terminated)
+  assert(`W2 (${sex}, last-option strategy) CRITICAL: no systemic/herbal question ever appears`, SYSTEMIC_IDS.every((id) => !order.includes(id)))
+  assert(`W2 (${sex}, last-option strategy) CRITICAL: step==='전신 정보' question count is exactly 0`, order.filter((id) => ALL_QUESTIONS.find((qq) => qq.id === id)?.step === '전신 정보').length === 0)
+}
+
+// W3: same route, but Additional Detail is a real non-pain symptom
+// (sleep) instead of 'none' -- Case B from the original task spec, walked
+// for real (not just visibility-checked) to prove the Additional module
+// itself never drags the systemic block in as a side effect.
+{
+  const { order, responses: r, terminated } = realPatientWalk((q, rr) => {
+    if (q.id === 'VISIT_00_INTENT') return 'pain_care'
+    if (q.id === 'PAIN_01') return 'low_back_pelvis'
+    if (q.id === 'ADDITIONAL_DETAIL_01') return 'sleep'
+    if (q.id === 'REFERENCE_SYMPTOMS_01') return ['none']
+    return deterministicValue(q, rr)
+  })
+  assert('W3 (Additional=sleep): walk terminates', terminated)
+  assert('W3 (Additional=sleep): Sleep module was actually walked (SLEEP_01 answered)', order.includes('SLEEP_01'))
+  assert('W3 (Additional=sleep) CRITICAL: no systemic/herbal question ever appears', SYSTEMIC_IDS.every((id) => !order.includes(id)))
+  assert('W3 (Additional=sleep): final mode is pain_fast', questionnaireMode(r) === 'pain_fast')
+}
+
+// W4: LBP_10 wording fix (§13) -- pure copy change, everything else
+// byte-identical. Exact-string assertion so a future edit can't silently
+// drift the wording again without this test catching it.
+{
+  const lbp10 = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
+  assert('W4: LBP_10 exists', !!lbp10)
+  assert('W4: LBP_10 question text is the corrected natural-Korean wording', lbp10.question === '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?')
+  assert('W4: LBP_10 old awkward wording is gone', lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
+  assert('W4: LBP_10 variable unchanged', lbp10.variable === 'lbp_onset_before_45')
+  assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)
+  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+}
+
+// W5: HERBAL_ADDON_FIELD stale-reset (§12) -- a brand-new blank Responses
+// object (what App.tsx's emptyResponses() produces on every fresh
+// session/privacy-wipe/restart) must never carry a stale 'yes' forward.
+// This is a coreSpec-level sanity check; the App.tsx-level source assertion
+// (emptyResponses always explicitly nulls it, restart/wipe never spread an
+// old object) lives in tests/viewport-budget.spec.mjs alongside its other
+// App.tsx source checks.
+{
+  const fresh = emptyResponses()
+  assert('W5: a brand-new blank Responses object never has HERBAL_ADDON_FIELD set to yes', fresh['HERBAL_ADDON_ACTIVE'] !== 'yes')
+  assert('W5: questionnaireMode on a truly blank Responses object is never herbal_addon', questionnaireMode(fresh) !== 'herbal_addon')
+}
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

@@ -275,7 +275,22 @@ input {
   display: none;
 }
 
-@media (min-width: 1000px) and (orientation: landscape) {
+/* Tablet UX v2.2.1 §2-3: 실기기(11" Android landscape) QA에서 이 breakpoint가
+   전혀 발동하지 않는 문제가 발견됐다. index.html의 viewport meta는 이미
+   `width=device-width, initial-scale=1.0`로 올바르게 설정돼 있어 "virtual
+   980px desktop viewport" 종류의 버그는 아니다 -- 실제 원인은 min-width
+   기준값(1000px) 자체가 실기기의 CSS px 기준 landscape 폭보다 높았던
+   것이다. 11" Android tablet은 물리 해상도가 커도 devicePixelRatio가
+   1.5~2.6 범위로 다양해, landscape CSS viewport 폭이 800~1280px 사이
+   어딘가로 떨어지는 경우가 흔하다(예: 1920x1200 physical @ DPR 2 ->
+   960x600 CSS px). min-width를 760px로 낮춰 1280x800/1024x640/960x600/
+   800x500(모두 실기기 QA 필수 viewport, tests/viewport-budget.spec.mjs
+   §5 참고) 전부에서 확실히 발동하게 한다. `orientation: landscape`가
+   먼저 판정되므로(너비>높이인 실제 뷰포트만 통과) 기존 portrait 테스트
+   viewport(800x1280 등)에는 폭 기준을 낮춰도 절대 영향이 없다 -- 이
+   media feature는 폭 숫자가 아니라 실제 뷰포트의 가로/세로 관계로
+   브라우저가 스스로 판정한다. */
+@media (orientation: landscape) and (min-width: 760px) {
   .shell {
     display: grid;
     grid-template-columns: minmax(72px, 104px) minmax(0, 1fr) minmax(72px, 104px);
@@ -286,13 +301,26 @@ input {
   .shell__top {
     grid-column: 2;
     grid-row: 1;
-    /* §9: progress bar의 세로 footprint를 줄인다 -- font-size는 그대로,
+    /* §4/§9: progress bar의 세로 footprint를 줄인다 -- font-size는 그대로,
        padding/margin만 좁힌다. */
-    padding-top: 12px;
+    padding-top: 8px;
+  }
+
+  /* §4: backBtn/stepLabel이 rail로 옮겨가 topRow 내부가 비었는데도
+     기본 min-height:56px가 그대로 남아 빈 공간을 차지하고 있었다 --
+     wide landscape에서는 이 예약 높이 자체를 제거한다(첫 화면에서
+     선택지가 1~2개 더 보이는 게 목표, §4 acceptance criterion). */
+  .shell__top .shell__topInner .shell__topRow {
+    min-height: 0;
   }
 
   .shell__top .shell__topInner .steps {
-    margin-top: 10px;
+    margin-top: 6px;
+  }
+
+  /* §9: "얇게" -- font-size가 아니라 막대 두께 자체를 줄인다. */
+  .shell__top .shell__topInner .steps__item {
+    height: 6px;
   }
 
   .shell__main {
@@ -369,13 +397,15 @@ input {
     text-align: center;
   }
 
-  /* §10: 일반 grid/category 질문은 더 넓게, safety/protected/긴 문장
-     질문(layout 기본값 'list', wideContent=false)은 기존 --content-max
-     그대로 유지한다. */
+  /* Tablet UX v2.2.1 §3: rail만 추가하고 중앙 max-width를 그대로 두면
+     "실질적으로 선택지 노출량이 거의 늘지 않는" 문제가 있었다(880-1000px
+     권장 범위). 일반 grid/category 질문은 더 넓게, safety/protected/긴
+     문장 질문(layout 기본값 'list', wideContent=false)은 기존
+     --content-max(680px) 그대로 유지한다. */
   .shell--wideContent .shell__topInner,
   .shell--wideContent .shell__mainInner,
   .shell--wideContent .shell__bottomInner {
-    max-width: 900px;
+    max-width: 960px;
   }
 }
 
@@ -579,18 +609,20 @@ input {
   pointer-events: none;
 }
 
-/* Tablet UX v2.2 §2: 앞/뒤 실루엣 최소 구분 cue -- 순수 장식, 클릭 불가.
-   실루엣 자체(fill: var(--border))보다 살짝 진한 색으로 은은하게만 보이게 한다. */
+/* Tablet UX v2.2.1 §5: 앞/뒤 실루엣 구분 cue -- 순수 장식, 클릭 불가.
+   v2.2의 stroke-width:0.6/--text-muted는 실기기에서 거의 안 보인다는 QA
+   피드백을 받아 --text(고대비)로, stroke는 확실히 굵게 바꿨다("실제 11"
+   화면에서 즉시 구분 가능한 수준" acceptance criterion). */
 .bodyMap__frontCue circle {
-  fill: var(--text-muted);
+  fill: var(--text);
 }
 
-.bodyMap__frontCue line,
+.bodyMap__frontCue path,
 .bodyMap__backCue line,
 .bodyMap__backCue path {
   fill: none;
-  stroke: var(--text-muted);
-  stroke-width: 0.6;
+  stroke: var(--text);
+  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -608,13 +640,59 @@ input {
   font-weight: 700;
 }
 
-/* zone 버튼: 실루엣 위에 겹치는 실제 <button>. 터치 hit area가 작은 점이
-   아니라 신체 부위 크기만큼 충분히 크다. 선택 상태는 색상만이 아니라
-   체크마크 배지(.bodyMap__zoneMark)로도 표시한다. */
+/* Tablet UX v2.2.1 §6: 선택 후 항상 인지 가능한 sticky compact chip --
+   `.shell__scrollHint`(84px 높이, pointer-events:none)와 정확히 같은 sticky
+   메커니즘을 재사용하되 그 바로 위(bottom: 84px)에 고정해 절대 겹치지
+   않는다. 짧은 화면(스크롤 불필요)에서는 sticky가 발동하지 않아 그림 바로
+   아래 자연스러운 위치에 머문다. */
+.bodyMap__selectedChip {
+  position: sticky;
+  bottom: 84px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin: 12px auto 0;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  color: var(--text);
+  font-size: var(--fs-helper);
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
+
+.bodyMap__selectedChip strong {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.bodyMap__selectedChipMark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+/* zone 버튼: 실루엣 위에 겹치는 실제 <button>. 터치 hit area(이 버튼 자체의
+   크기)는 신체 부위 크기만큼 그대로 넓게 유지하되(Tablet UX v2.1),
+   Tablet UX v2.2.1 §7: 시각적 selected indicator는 hit-area 전체를 채우는
+   진한 사각형 대신 얇은 outline + 체크 배지 위주로 가볍게 표시해
+   "박스 선택"보다 "신체 부위 강조"처럼 보이게 한다 -- 터치 hit-area와
+   visual overlay 크기는 여전히 같지만(별도 DOM 분리 없이 border/background
+   투명도만 조절), 실루엣 형태를 덜 가린다. */
 .bodyMap__zone {
   position: absolute;
   border: 2px solid transparent;
-  background: rgba(44, 62, 53, 0.12);
+  background: rgba(44, 62, 53, 0.06);
   padding: 0;
   display: grid;
   place-items: center;
@@ -629,12 +707,12 @@ input {
 }
 
 .bodyMap__zone:active {
-  background: rgba(44, 62, 53, 0.24);
+  background: rgba(44, 62, 53, 0.16);
 }
 
 .bodyMap__zone--selected {
   border-color: var(--primary);
-  background: var(--primary-soft);
+  background: rgba(44, 62, 53, 0.1);
 }
 
 .bodyMap__zoneMark {

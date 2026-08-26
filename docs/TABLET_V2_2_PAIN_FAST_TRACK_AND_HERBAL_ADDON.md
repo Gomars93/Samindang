@@ -470,3 +470,183 @@ return object.
   `tests/integration.spec.mjs` §T6/§V-ModeAgnosticToVisitType confirm mode
   routing is not bypassed by any visit-type concept (none exists in the
   question set today).
+
+## 15. v2.2.1 addendum — real-device correction (branch `ux/tablet-v2-2-1-real-device-correction`)
+
+Real 11" Android tablet landscape screenshots after this PR merged showed
+the wide-landscape rail layout never activating and (reportedly) the
+systemic-block spillover bug still occurring. This addendum documents the
+root-cause investigation and fixes, base `main` @ `784a9bd`.
+
+### 15.1 Landscape breakpoint — root cause: threshold, not viewport-meta bug
+
+`index.html`'s viewport meta tag was already correct
+(`width=device-width, initial-scale=1.0`), ruling out the common "virtual
+980px desktop viewport" class of bug. The actual cause: `@media
+(min-width: 1000px) and (orientation: landscape)` was simply higher than
+the real CSS-px landscape width of the tested device. An 11" Android
+tablet's landscape **CSS viewport** (what media queries evaluate against)
+is driven by `devicePixelRatio`, not raw physical resolution — a common
+1920×1200-physical panel at DPR 2 renders a 960×600 CSS-px viewport, well
+under 1000px. Fixed by lowering the breakpoint to `@media (orientation:
+landscape) and (min-width: 760px)`, matching the four real-device-QA
+viewports the task named (1280×800, 1024×640, 960×600, 800×500 — all now
+verified structurally in `tests/viewport-budget.spec.mjs` §7, which
+extracts the threshold from `styles.css` itself rather than re-hardcoding
+it, so the two can never silently drift apart again). `orientation:
+landscape` is evaluated by the browser from the viewport's own
+width-vs-height relationship, not from the width number — lowering the
+threshold carries zero risk of misfiring on any portrait viewport.
+
+### 15.2 Rails weren't actually reclaiming space — two compounding causes
+
+1. **Center column width unchanged.** `wideContent` capped at 900px, only
+   marginally more than the base 680px. Raised to 960px (§10's requested
+   880-1000px range).
+2. **Vertical chrome not actually removed.** `.shell__topRow` kept its
+   default `min-height: 56px` even after `backBtn`/`stepLabel` moved to
+   rails and were hidden — the *space* stayed reserved, only the *content*
+   disappeared. Fixed by explicitly collapsing `.shell__topRow`'s
+   min-height inside the wide-landscape block, trimming `.shell__top`'s
+   padding-top (12px→8px) and `.steps`'s margin-top (10px→6px), and
+   thinning the progress bar itself (`.steps__item` 10px→6px — spacing/
+   size, never font-size, per the explicit instruction).
+
+`tests/viewport-budget.spec.mjs`'s `budgetFor()` heuristic was updated to
+model the wide-landscape chrome reduction (previously it only knew the
+default/portrait chrome constants, which understated available height for
+every landscape viewport). Measured, before vs. after, at the reference
+1280×800 real-device-QA viewport:
+
+| | v2.2.1 estimate before this fix | after this fix |
+|---|---|---|
+| Header chrome height | 102px | 20px |
+| Footer chrome height (helpBtn moved to rail) | 186px | 116px |
+| **Available question-viewport height** | **456px** | **608px** |
+
+A **152px** recovery at 1280×800 (and proportionally more at the smaller
+real-device viewports — e.g. 1024×640 goes from a heuristic-estimated
+296px, which was actually *below* this test file's own 300px "usable
+screen" floor, to 448px). This is the §35/§15 "actual CSS/viewport
+measurement, not 'looks wider'" acceptance criterion, captured as a
+permanent regression (`tests/viewport-budget.spec.mjs`'s per-viewport
+summary output).
+
+### 15.3 Systemic-block spillover — investigated, NOT reproduced on this baseline
+
+This was treated as the highest-priority item and investigated by actually
+walking the patient flow — never by re-reading the `showIf` gate and
+declaring it sufficient. `tests/integration.spec.mjs` §W1-W3 (12 new
+assertion groups) start from a completely blank `Responses` object
+(`emptyResponses()`, matching `App.tsx`'s real `useState` initializer) and
+answer one screen at a time via the actual `visibleQuestions`/forward-only-
+walk semantics — never a pre-seeded final state — covering: the exact
+route named in the task (ID → `VISIT_00_INTENT=pain_care` → duration/
+impact → `SAFETY_01` → `PAIN_01=low_back_pelvis` → every required LBP
+sub-question → `ADDITIONAL_DETAIL_01=none` → `REFERENCE_SYMPTOMS_01=[none]`
+→ finish) for both `male`/`female`, both "always pick the first option"
+and "always pick the last option" strategies for every LBP/history/birth
+question the walk encounters along the way (broadening branch coverage
+beyond the one route named), and a parallel walk with
+`ADDITIONAL_DETAIL_01=sleep` (Case B, walked for real rather than only
+visibility-checked).
+
+**Result: in every one of these walks, on `main` @ `784a9bd`, zero
+systemic/herbal questions (`CONST_*`/`HERB_*`) ever appear in the visible
+list or get answered, and the `step === '전신 정보'` question count is
+exactly 0.** `questionnaireMode(r)` stays `'pain_fast'` throughout.
+
+All seven hypotheses in the task's §10 were checked directly against
+source, not assumed:
+
+- `questionnaireMode` flipping mid-flow: its implementation only reads
+  `VISIT_00_INTENT`/`VISIT_01`/`HERBAL_ADDON_FIELD` — none of which change
+  as a side effect of anything else in the walk (`ADDITIONAL_DETAIL_01`/
+  `REFERENCE_SYMPTOMS_01` values have zero effect on it, confirmed by
+  Case B/§V-CaseB and the new §W3).
+- `HERBAL_ADDON_ACTIVE` becoming accidentally 'yes': the only write site is
+  `App.tsx`'s `activateHerbalAddon()`, gated behind the staff-only 2-second
+  hold control; nothing else in the codebase ever sets it.
+- Back-navigation prune mishandling the internal field: already covered by
+  §V-BackSwitch (pain_care↔herbal round-trip) — expanded-only answers
+  (including the field itself) are pruned exactly like any other
+  now-invisible question, no special-casing needed.
+- `reorderForDetailPhases` reinserting a systemic question: structurally
+  impossible for `pain_fast` — it only ever reorders items already present
+  in the showIf-filtered `list`, and systemic questions never pass that
+  filter when `showsExpandedSystemicBlock(r)` is false in the first place.
+- The dev/preview-only QA simulation touching production state: re-read —
+  it only renders static `ALL_QUESTIONS` labels, never calls `setResponses`
+  or reads any live session value.
+- Stale local/session state surviving a new questionnaire: `App.tsx` has no
+  `localStorage`/`sessionStorage` use at all (confirmed again this pass);
+  every reset path (`emptyResponses()`, called by both the automatic
+  privacy-wipe effect and `restart()`) constructs a brand-new object via
+  `Object.fromEntries` and never spreads a previous `Responses` — this is
+  now also asserted directly against `App.tsx`'s source
+  (`tests/viewport-budget.spec.mjs`).
+- `nextQuestion` fallback on a hidden `current.id`: would jump to
+  `list[0]` (the very first question), not into a hidden systemic block —
+  doesn't match the reported symptom and isn't reachable from any state a
+  `pain_care` patient can produce.
+
+**No code defect was found or fixed on this baseline** — per the explicit
+instruction not to add a duplicate/redundant `showIf` patch when none is
+needed, none was added. The most plausible explanation for the original
+real-device screenshot is that the tested device was running a build that
+predates this fix landing on `main` (either an out-of-date deployment or a
+cached bundle) rather than a defect in the current code. What *was* added
+is permanent, exhaustive regression coverage (§W1-W5) that will catch this
+exact class of regression immediately if it is ever reintroduced by a
+future change — a stronger outcome than a speculative patch would have
+been.
+
+### 15.4 Body Map: stronger front/back cue, persistent selection chip, lighter zone fill
+
+- **Front/back cue**: v2.2's cue (`stroke-width: 0.6`, `--text-muted`) was
+  confirmed too faint for real-device visibility. Replaced with
+  `stroke-width: 2.2` and the higher-contrast `--text` color; front gained
+  a mouth (making the face cue unambiguous, not just two dots) and a
+  chest/abdomen contour curve; back gained a lower-back/glute contour on
+  top of the existing spine + scapula curves. Still gender-neutral,
+  monochrome, local inline SVG only — no new anatomy beyond these
+  additions.
+- **Persistent selected-region feedback**: the existing top label (shown
+  above the figures) is retained, but a second compact chip
+  (`.bodyMap__selectedChip`, "✓ 선택한 부위: <label>") now renders once a
+  zone is selected, `position: sticky; bottom: 84px` — pinned exactly at
+  the scroll-hint pill's own height, so on a short screen it just sits in
+  normal flow near the figures, and on a scrollable (landscape) screen it
+  stays visible while scrolling without ever entering the scroll-hint
+  pill's 84px zone (verified: `tests/body-map.spec.mjs` asserts the chip's
+  sticky offset is `>=` the pill's height, reading both values from
+  source).
+- **Zone highlight**: the selected-state fill was changed from the solid
+  `--primary-soft` background (which read as "a big translucent box") to a
+  much lower-alpha tint plus the existing border outline + checkmark
+  badge, so the underlying silhouette shape remains visible through the
+  selection. Touch hit-area (the `<button>`'s own size) is completely
+  unchanged — only the visual fill/opacity changed.
+
+### 15.5 LBP_10 wording (pure copy change)
+
+"이 허리통증이 처음 시작된 것은 45세 이전인가요?" →
+"허리통증이 처음 시작된 나이가 만 45세 이전이었나요?" — `id`, `variable`,
+`options` (`NO`/`YES`/`UNKNOWN`), `required`, `showIf` all byte-identical.
+No CLOSED clinical semantics, threshold, or `LBP_*` FROZEN adapter/logic
+touched. LBP's recovery-expectation questions (`LBP_12`+) were **not**
+removed or shortened — per §14 of the task, still deferred to a separate
+clinical decision.
+
+### 15.6 HERBAL_ADDON_FIELD stale-reset hardening
+
+No actual leak was found (every reset path already constructed a fresh
+object), but `App.tsx`'s `emptyResponses()` now explicitly sets
+`[HERBAL_ADDON_FIELD]: null` rather than relying implicitly on the key
+simply being absent — makes the guarantee auditable directly in the
+source, and is now asserted by both a coreSpec-level test
+(`tests/integration.spec.mjs` §W5: a blank `Responses` object is never
+`herbal_addon`) and an `App.tsx` source-level test
+(`tests/viewport-budget.spec.mjs`: `emptyResponses()` explicitly nulls the
+field, and every reset call site uses `emptyResponses()` rather than
+spreading a previous session's object).

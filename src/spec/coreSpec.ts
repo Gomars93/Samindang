@@ -1213,7 +1213,10 @@ const LBP_QUESTIONS: Question[] = [
     id: 'LBP_10',
     variable: 'lbp_onset_before_45',
     input: 'single_choice',
-    question: '이 허리통증이 처음 시작된 것은 45세 이전인가요?',
+    // Tablet UX v2.2.1 §13: 순수 copy change -- id/variable/options/
+    // required/showIf/threshold/logic 전부 그대로, 어색한 한국어 문구만
+    // 자연스럽게 다듬었다.
+    question: '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?',
     required: false,
     step: '상세 증상',
     // 원본 YAML은 patient_age 45-120 조건도 요구하지만, 이 Module 시점에는

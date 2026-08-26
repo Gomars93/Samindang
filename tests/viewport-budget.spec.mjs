@@ -364,6 +364,31 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
   assert('App.tsx: setResponses(...) is called at least at the wipe + restart + normal-answer + addon-activate sites', setResponsesCalls.length >= 4)
   const resetCalls = setResponsesCalls.filter((arg) => arg.startsWith('emptyResponses('))
   assert('App.tsx: at least 2 setResponses(...) call sites reset via emptyResponses() (privacy wipe + restart), never a spread of the previous object', resetCalls.length >= 2)
+
+  // PR #23 follow-up correction (v2.3 §8-9/§13): LBP_LEG_AUTOFILL_FIELD
+  // must also be explicitly nulled by emptyResponses(), same pattern as
+  // HERBAL_ADDON_FIELD/LBP_RAW_AGE_FIELD -- otherwise a stale 'yes' could
+  // survive into the next patient's session and wrongly navigation-skip
+  // LBP_02/LBP_03 for someone who never answered LBP_01B_LEG_SCREEN.
+  assert('App.tsx: emptyResponses() explicitly nulls LBP_LEG_AUTOFILL_FIELD', /\[LBP_LEG_AUTOFILL_FIELD\]:\s*null/.test(appSrc))
+
+  // The navigation-layer auto-skip itself (tests/integration.spec.mjs
+  // sections W6/W7/W11 verify the underlying shouldAutoAdvancePast
+  // predicate and mirror-simulate the walk against it in detail -- this
+  // block instead confirms the ACTUAL App.tsx nextQuestion()/goBack()
+  // functions really call that predicate, so a future edit that silently
+  // removes the skip loop from the real functions (while the test file's
+  // own mirror still has it) would be caught here.
+  const nextQuestionMatch = appSrc.match(/const nextQuestion = \(from: string, r: Responses\): Question \| undefined => \{[\s\S]*?\n  \}/)
+  assert('App.tsx: nextQuestion() function exists', Boolean(nextQuestionMatch))
+  assert('App.tsx CRITICAL: nextQuestion() calls shouldAutoAdvancePast (navigation-layer skip is real, not just simulated in tests)', /shouldAutoAdvancePast/.test(nextQuestionMatch[0]))
+  assert('App.tsx CRITICAL: nextQuestion() loops (while) rather than checking only once -- consecutive auto-skip screens (LBP_02 then LBP_03) must both be skipped in one hop', /while\s*\(/.test(nextQuestionMatch[0]))
+
+  const goBackMatch = appSrc.match(/const goBack = \(\) => \{[\s\S]*?\n  \}/)
+  assert('App.tsx: goBack() function exists', Boolean(goBackMatch))
+  assert('App.tsx CRITICAL: goBack() also calls shouldAutoAdvancePast (back-navigation mirrors the same skip, never lands on an auto-filled screen)', /shouldAutoAdvancePast/.test(goBackMatch[0]))
+
+  assert('App.tsx: imports shouldAutoAdvancePast from spec/coreSpec', /shouldAutoAdvancePast/.test(appSrc.slice(0, appSrc.indexOf("from './spec/coreSpec'"))))
 }
 
 /* =========================================================================

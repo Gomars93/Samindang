@@ -1086,6 +1086,59 @@ export function mapLbpOnsetAgeToBefore45(raw: AnswerValue): 'YES' | 'NO' | 'UNKN
   return age < 45 ? 'YES' : 'NO'
 }
 
+/**
+ * Tablet UX v2.3 §8-9/§13 (PR #23 follow-up correction): 환자가 명시적으로
+ * "없어요"(LBP_01B_LEG_SCREEN)를 선택한 뒤/발병 나이를 입력한 뒤에도
+ * LBP_02/LBP_03/LBP_10 화면이 다시 나타나는 것은 실제 UX상 중복이라는
+ * 지적을 반영한다. FROZEN 계약(showIf/required/computeLegState/
+ * computeInflammatoryEligible의 45세 threshold)은 절대 바꾸지 않으면서
+ * "환자에게 보여주지 않는다"를 만들려면, `showIf`를 false로 만드는 방식은
+ * 쓸 수 없다 -- pruneStaleResponses가 "보이지 않는 답"으로 판단해 같은
+ * 호출 안에서 즉시 값을 null로 되돌려 버리기 때문이다(엔진 불변식,
+ * 아래 파일 헤더의 "왜 hide+silently prefill이 안 되는가" 설명 참고).
+ *
+ * 대신 별도의 **navigation-layer skip**을 둔다: `visibleQuestions`/showIf는
+ * 전혀 건드리지 않아 pruneStaleResponses는 이 화면들을 계속 "정상적으로
+ * 보이는, 값이 있는 화면"으로 취급하고(FROZEN adapter가 읽는 값은
+ * 그대로 안전하게 유지), App.tsx의 `nextQuestion`/`goBack`만 이 화면들을
+ * 건너뛰고 지나간다(shouldAutoAdvancePast, 아래). 즉 "논리적으로는
+ * 보이지만, 실제 환자 화면 흐름에서는 렌더링되지 않는다."
+ *
+ * LBP_02/LBP_03는 조건부로만 건너뛴다 -- LBP_01B_LEG_SCREEN='no'가 정확히
+ * 그 shim의 auto-fill 값(LBP_02=[NONE], LBP_03=NONE)을 그대로 갖고 있을
+ * 때만. LBP_01B_LEG_SCREEN을 'yes'/'unknown'으로 바꾸면(App.tsx
+ * setAnswer) 그 즉시 auto-fill 값과 이 provenance 플래그를 함께 지우므로,
+ * 그 뒤로는 두 화면이 다시 정상적으로(건너뛰지 않고) 보인다 -- 환자가
+ * 직접 답한 값과 auto-fill 값이 섞일 수 없다.
+ *
+ * LBP_10는 조건 없이 항상 건너뛴다 -- LBP_10A_ONSET_AGE가 배열에서 항상
+ * 먼저 오고(walk order), 그 답변이 setAnswer에서 즉시 LBP_10을 채우므로
+ * LBP_10 자체는 이제 순수 내부 저장 필드일 뿐이다(§13 참고).
+ */
+export const LBP_LEG_AUTOFILL_FIELD = 'LBP_LEG_AUTOFILL_ACTIVE'
+
+export function isLbpLegAutofillActive(r: Responses): boolean {
+  return (
+    r[LBP_LEG_AUTOFILL_FIELD] === 'yes' &&
+    Array.isArray(r['LBP_02']) &&
+    r['LBP_02'].length === 1 &&
+    r['LBP_02'][0] === 'NONE' &&
+    r['LBP_03'] === 'NONE'
+  )
+}
+
+/**
+ * App.tsx의 nextQuestion()/goBack()이 사용하는 navigation-layer skip
+ * 목록. `visibleQuestions`/showIf는 전혀 바꾸지 않는다 -- 이 함수는
+ * "화면에 실제로 보여줄지"만 결정하고, "논리적으로 존재/응답
+ * 완료했는지"는 기존 엔진(pruneStaleResponses 등)이 그대로 판단한다.
+ */
+export function shouldAutoAdvancePast(q: Question, r: Responses): boolean {
+  if (q.id === 'LBP_02' || q.id === 'LBP_03') return isLbpLegAutofillActive(r)
+  if (q.id === 'LBP_10') return true
+  return false
+}
+
 const LBP_QUESTIONS: Question[] = [
   {
     id: 'LBP_01',
@@ -1105,26 +1158,25 @@ const LBP_QUESTIONS: Question[] = [
     ],
   },
   {
-    // Tablet UX v2.3 §8-9: LBP_01==='BACK_ONLY'인 환자가 다리 관련
-    // 질문을 "같은 내용을 반복해서 묻는다"고 느끼는 문제의 완화책.
-    // computeLegState(FROZEN lbpLogic.ts)는 leg_symptom_present='NO'가
-    // 되려면 LBP_02=['NONE']이고 LBP_03='NONE'인 것을 "동시에" 요구한다
-    // -- 둘 중 하나만 없애면 fail-closed로 인해 'UNKNOWN'이 되어 버린다.
-    // 이 화면은 그 두 필드를 대신 채우는 게 아니라, "다리 증상이 있는지"를
-    // 하나의 명확한 문장으로 먼저 물어 이후 LBP_02/LBP_03에 무엇을
-    // 미리 선택해 둘지 결정하는 라우팅 전용 질문이다(payload/adapter에는
-    // 노출되지 않음, 아래 App.tsx setAnswer 참고).
+    // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP_01==='BACK_ONLY'인
+    // 환자가 다리 관련 질문을 "같은 내용을 반복해서 묻는다"고 느끼는
+    // 문제의 해결책. computeLegState(FROZEN lbpLogic.ts)는
+    // leg_symptom_present='NO'가 되려면 LBP_02=['NONE']이고 LBP_03='NONE'인
+    // 것을 "동시에" 요구한다 -- 둘 중 하나만 없애면 fail-closed로 인해
+    // 'UNKNOWN'이 되어 버린다. 이 화면은 그 두 필드를 대신 채우는 게
+    // 아니라, "다리 증상이 있는지"를 하나의 명확한 문장으로 먼저 물어
+    // 이후 LBP_02/LBP_03에 무엇을 미리 선택해 둘지 결정하는 라우팅
+    // 전용 질문이다(payload/adapter에는 노출되지 않음, App.tsx setAnswer
+    // 참고).
     //
     // 안전 검토: LBP_02/LBP_03의 required:true/showIf/fail-closed 의미는
-    // 전혀 바뀌지 않는다 -- "없어요"를 선택해도 그 두 화면 자체를
-    // 건너뛰지 않고(엔진의 showIf→visibleQuestions→pruneStaleResponses
-    // invariant를 건드리지 않기 위해 의도적으로 그렇게 설계했다 -- 숨긴
-    // 채로 값만 채우면 pruneStaleResponses가 "보이지 않는 답"으로 판단해
-    // 같은 호출 안에서 즉시 null로 되돌린다), 대신 두 화면에 정답을
-    // 미리 선택해 두어 환자는 확인 후 "다음"만 누르면 된다. 완전한
-    // 화면 스킵은 이 엔진 불변식과 정면으로 충돌해 이번 PR 범위에서
-    // 안전하게 구현할 수 없었다 -- 최종 보고의 CLINICAL DECISION
-    // REQUIRED 항목 참고.
+    // 전혀 바뀌지 않는다(FROZEN 계약 그대로) -- "없어요"를 선택하면
+    // 정답을 두 필드에 미리 채우고, **App.tsx의 nextQuestion/goBack이
+    // navigation-layer에서 이 두 화면을 건너뛴다**(shouldAutoAdvancePast,
+    // 이 파일 상단 참고) -- showIf를 false로 만드는 방식이 아니므로
+    // pruneStaleResponses 불변식과 전혀 충돌하지 않는다. "있어요"/"잘
+    // 모르겠어요"를 선택하면 auto-fill과 provenance 플래그를 모두
+    // 지우고 두 화면을 정상적으로(건너뛰지 않고) 보여준다.
     id: 'LBP_01B_LEG_SCREEN',
     variable: 'lbp_leg_screen_confirm',
     input: 'single_choice',
@@ -1269,12 +1321,15 @@ const LBP_QUESTIONS: Question[] = [
     ],
   },
   {
-    // Tablet UX v2.3 §13: 환자에게 "45세" 자체를 노출하는 대신 발병
-    // 나이를 직접 물어 내부적으로 LBP_10에 YES/NO/UNKNOWN으로
-    // 매핑한다(아래 LBP_10 참고). raw age는 임상 계산에 쓰이지 않는
-    // non-clinical 참고용 metadata로만 별도 보관한다(App.tsx
-    // setAnswer, LBP_10_RAW_AGE_FIELD) -- lbpLogic.ts/lbpAdapter.ts는
-    // 전혀 건드리지 않는다.
+    // Tablet UX v2.3 §13 (PR #23 follow-up correction): 환자에게 "45세"
+    // 자체를 노출하는 대신 발병 나이를 딱 한 번만 직접 물어 내부적으로
+    // LBP_10에 YES/NO/UNKNOWN으로 매핑한다(아래 LBP_10 참고). 이 화면
+    // 다음에는 확인 화면(구 LBP_10)이 더 이상 patient-facing으로 뜨지
+    // 않는다 -- App.tsx의 nextQuestion/goBack이 LBP_10을 navigation-layer에서
+    // 항상 건너뛴다(shouldAutoAdvancePast, 이 파일 상단 참고). raw age는
+    // 임상 계산에 쓰이지 않는 non-clinical 참고용 metadata로만 별도
+    // 보관한다(App.tsx setAnswer, LBP_RAW_AGE_FIELD) -- lbpLogic.ts/
+    // lbpAdapter.ts는 전혀 건드리지 않는다.
     id: 'LBP_10A_ONSET_AGE',
     variable: 'lbp_onset_age_raw',
     input: 'numeric',
@@ -1289,12 +1344,15 @@ const LBP_QUESTIONS: Question[] = [
     id: 'LBP_10',
     variable: 'lbp_onset_before_45',
     input: 'single_choice',
-    // Tablet UX v2.3 §13: LBP_10A(위)에서 입력한 나이를 바탕으로 App.tsx가
-    // 이 필드를 자동으로 YES/NO/UNKNOWN 중 하나로 미리 채운다(45세
-    // threshold는 여기서도 여전히 화면 문구에 노출하지 않는다) --
-    // required:false라 그대로 "다음"을 눌러 확인하거나, 필요하면 직접
-    // 바꿀 수 있다. id/variable/options/required/showIf/threshold/logic은
-    // v2.2.1과 완전히 동일 -- 문항 문구만 확인용으로 다시 다듬었다.
+    // Tablet UX v2.3 §13 (PR #23 follow-up correction): LBP_10A(위)에서
+    // 입력한 나이를 바탕으로 App.tsx가 이 필드를 자동으로 YES/NO/UNKNOWN
+    // 중 하나로 채운다(45세 threshold는 여전히 어떤 화면 문구에도
+    // 노출하지 않는다). 이 화면 자체는 이제 patient navigation에서
+    // 절대 렌더링되지 않는다 -- App.tsx의 nextQuestion/goBack이 항상
+    // 건너뛴다(shouldAutoAdvancePast, coreSpec.ts 상단). id/variable/
+    // options/required/showIf/threshold/logic은 이전과 완전히 동일하게
+    // 유지한다(FROZEN adapter 계약 불변) -- 문항 문구는 이제 환자에게
+    // 보이지 않으므로 그대로 둔다(내부 저장용 라벨 역할만).
     question: '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.',
     required: false,
     step: '상세 증상',

@@ -292,3 +292,44 @@ Ground truth: `tmjLogic.ts` (literal port of the "T1-T8" CLOSED contract).
 - **ANKLE_FOOT's test coverage** was materially thinner than every other module reviewed here at the time this audit was written; closed as a same-PR follow-up (section Z, `tests/integration.spec.mjs`) rather than deferred — see the ANKLE_FOOT findings above.
 
 **Cross-region leak audit (same-PR follow-up, section AA):** for every one of the 9 regional modules, activating that module's own `PAIN_01`/routing value was swept against all 8 other modules' question prefixes (`regionOf()` helper, `tests/integration.spec.mjs`). **No leak was found in any of the 9 sweeps** (AA-1 through AA-9) — LBP/KNEE/ANKLE_FOOT/TMJ each expose only their own questions; NECK+SHOULDER's shared population (the F1 invariant) and HIP+LBP's shared population (the R-section invariant) are confirmed intentional design, not leaks; ELBOW vs WRIST_HAND stay mutually exclusive through the `ELBOW_00` router; and KNEE vs ANKLE_FOOT are mutually exclusive by construction (distinct `PAIN_01` enum values), not a shared secondary router.
+
+---
+
+## Appendix: LBP onset-age / 45-year threshold — clinical meaning (PR #23 follow-up correction)
+
+LBP (`LBP_QUESTIONS`) is out of scope for the 8-module table above (audited
+and shipped in an earlier session of this same PR), but this note documents
+the clinical meaning of the one LBP threshold that Part A's patient-facing
+UX explicitly avoids exposing, per an explicit follow-up correction request
+on this PR.
+
+`LBP_10` (`lbp_onset_before_45`, FROZEN `lbpLogic.ts`/`lbpAdapter.ts`) asks
+whether the patient's low-back pain first began before age 45. This is the
+**onset-age eligibility/context signal used for axial spondyloarthritis
+(axSpA) / inflammatory back pain screening**, not a standalone diagnostic
+criterion:
+
+- It is one input among several (duration, morning stiffness, improvement
+  with exercise, etc. — see `LBP_11`'s inflammatory-pattern screen) that
+  together inform `computeInflammatoryEligible`'s eligibility gate for
+  further inflammatory-pattern consideration. It does not, by itself,
+  diagnose or rule out any condition.
+- **Onset at or after 45 does NOT exclude inflammatory back pain or axSpA.**
+  It only means the specific "before-45" eligibility signal this screen
+  captures does not apply — a patient with atypical-onset inflammatory back
+  pain is not automatically written off by this one data point, and no
+  FROZEN logic anywhere treats age ≥45 as ruling anything out.
+- Because the number itself carries no meaning to a layperson and can read
+  as an arbitrary or alarming cutoff out of clinical context, patient-facing
+  UI never displays "45" or the words "45세" in any screen. The patient is
+  instead asked their actual onset age in plain language
+  (`LBP_10A_ONSET_AGE`, "허리 통증을 처음 겪은 건 대략 몇 살 무렵이었나요?"),
+  and the age-to-threshold comparison happens purely internally
+  (`mapLbpOnsetAgeToBefore45` in `coreSpec.ts`) to populate the existing
+  FROZEN `LBP_10` field. The threshold itself is never redefined,
+  reinterpreted, or exposed outside of that one internal comparison — it
+  still lives entirely inside FROZEN `lbpLogic.ts`/`computeInflammatoryEligible`.
+
+This is a UX-copy/exposure decision only. No clinical guideline
+interpretation was used to change what the threshold means or how it's
+computed — only whether the raw number 45 appears on a patient's screen.

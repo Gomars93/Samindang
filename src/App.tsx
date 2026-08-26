@@ -20,12 +20,14 @@ import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
   HERBAL_ADDON_FIELD,
+  LBP_RAW_AGE_FIELD,
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
   buildSajuInput,
   computeFlags,
+  mapLbpOnsetAgeToBefore45,
   primaryConcernKey,
   pruneStaleResponses,
   questionnaireMode,
@@ -56,6 +58,9 @@ const emptyResponses = (): Responses => ({
   // 만들 뿐 이전 Responses를 절대 스프레드하지 않는다 -- 이 줄은 그
   // 보장을 명시적으로 코드에 남겨 감사 가능하게 하기 위함이다).
   [HERBAL_ADDON_FIELD]: null,
+  // Tablet UX v2.3 §13: LBP_RAW_AGE_FIELD도 같은 이유로 non-question
+  // metadata라 자동 초기화되지 않는다 -- 동일하게 명시적으로 null 처리.
+  [LBP_RAW_AGE_FIELD]: null,
 })
 
 const newSessionId = () =>
@@ -329,11 +334,40 @@ function AppContent() {
   }
 
   const setAnswer = (q: Question, value: AnswerValue) => {
+    let patch: Responses = { ...responses, [q.id]: value }
+
+    // Tablet UX v2.3 §8-9: LBP leg-symptom compact-confirm presentation
+    // shim. LBP_02/LBP_03 stay unconditionally visible (showIf unchanged)
+    // so pruneStaleResponses never nulls this write -- see the LBP_01B_LEG_SCREEN
+    // question definition in coreSpec.ts for the full safety writeup.
+    // "없어요" pre-fills the exact FROZEN-required NONE/NONE pair;
+    // "있어요"/"잘 모르겠어요" clears any leftover pre-fill so the patient
+    // answers LBP_02/LBP_03 fresh.
+    if (q.id === 'LBP_01B_LEG_SCREEN') {
+      patch = value === 'no' ? { ...patch, LBP_02: ['NONE'], LBP_03: 'NONE' } : { ...patch, LBP_02: null, LBP_03: null }
+    }
+    // Changing LBP_01 away from 'BACK_ONLY' after the leg-symptom shim
+    // auto-filled LBP_02/LBP_03 (shim answered 'no') leaves those two
+    // fields stale -- LBP_02/LBP_03's own showIf never depends on LBP_01,
+    // so pruneStaleResponses can't catch this on its own. Only clears the
+    // shim's own auto-fill (checked against the OLD, pre-patch state) --
+    // genuinely patient-answered LBP_02/LBP_03 (shim was 'yes'/'unknown',
+    // or a non-BACK_ONLY route) are never touched here.
+    if (q.id === 'LBP_01' && responses['LBP_01'] === 'BACK_ONLY' && responses['LBP_01B_LEG_SCREEN'] === 'no' && value !== 'BACK_ONLY') {
+      patch = { ...patch, LBP_02: null, LBP_03: null }
+    }
+
+    // Tablet UX v2.3 §13: LBP onset-age -> existing LBP_10 YES/NO/UNKNOWN
+    // compatibility mapping (see mapLbpOnsetAgeToBefore45's own comment in
+    // coreSpec.ts for the FROZEN-threshold safety reasoning). LBP_10 stays
+    // unconditionally visible alongside LBP_10A (same showIf), so this
+    // pre-fill also survives pruneStaleResponses.
+    if (q.id === 'LBP_10A_ONSET_AGE') {
+      patch = { ...patch, LBP_10: mapLbpOnsetAgeToBefore45(value), [LBP_RAW_AGE_FIELD]: value }
+    }
+
     // 상위 선택이 바뀌면 더 이상 표시되지 않는 화면의 응답을 즉시 정리한다.
-    const { responses: pruned, removed } = pruneStaleResponses({
-      ...responses,
-      [q.id]: value,
-    })
+    const { responses: pruned, removed } = pruneStaleResponses(patch)
 
     setResponses(pruned)
     setMeta((m) => {

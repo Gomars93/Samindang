@@ -833,6 +833,31 @@ input {
   font-size: 34px;
 }
 
+/* Tablet UX v2.3 §13: 명시적 "잘 모르겠어요" 버튼(numeric/short_text 전용,
+   Question.unknownOption 지정 시에만 렌더링) -- 기존 .option 선택 버튼과
+   같은 시각 언어를 공유해 "이것도 하나의 선택지"로 읽히게 한다. */
+.textField__unknownBtn {
+  display: block;
+  width: 100%;
+  min-height: var(--btn-min-h);
+  margin-top: 14px;
+  padding: 16px 24px;
+  text-align: center;
+  font-size: var(--fs-answer);
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 16px;
+}
+
+.textField__unknownBtn--selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  font-weight: 700;
+  color: var(--primary);
+}
+
 /* ---------- primary / secondary buttons ---------- */
 
 .primaryBtn {

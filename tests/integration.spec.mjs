@@ -19,6 +19,9 @@ import {
   questionnaireMode,
   HERBAL_ADDON_FIELD,
   SYSTEMIC_BLOCK_QUESTION_IDS,
+  LBP_RAW_AGE_FIELD,
+  LBP_ONSET_AGE_UNKNOWN_SENTINEL,
+  mapLbpOnsetAgeToBefore45,
 } from './.spec-bundle.mjs'
 
 let passCount = 0
@@ -3758,17 +3761,27 @@ for (const sex of ['male', 'female']) {
   assert('W3 (Additional=sleep): final mode is pain_fast', questionnaireMode(r) === 'pain_fast')
 }
 
-// W4: LBP_10 wording fix (§13) -- pure copy change, everything else
-// byte-identical. Exact-string assertion so a future edit can't silently
-// drift the wording again without this test catching it.
+// W4: LBP_10 wording (v2.2.1 §16, superseded by v2.3 §13 onset-age redesign).
+// v2.2.1 rewrote LBP_10 to directly ask the 45-year threshold in natural
+// Korean. v2.3 §13 goes further: the 45-year number is no longer shown to
+// the patient at all. A new LBP_10A_ONSET_AGE numeric question asks for the
+// actual onset age (or "잘 모르겠어요"), and LBP_10 becomes a lightweight
+// auto-confirm screen whose value is pre-filled by App.tsx's
+// mapLbpOnsetAgeToBefore45() before the patient ever sees it. The FROZEN
+// lbpLogic.ts/lbpAdapter.ts still read LBP_10 exactly as before (variable/
+// options/required all unchanged) -- only how the value gets there changed.
 {
   const lbp10 = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
+  const lbp10a = ALL_QUESTIONS.find((q) => q.id === 'LBP_10A_ONSET_AGE')
   assert('W4: LBP_10 exists', !!lbp10)
-  assert('W4: LBP_10 question text is the corrected natural-Korean wording', lbp10.question === '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?')
-  assert('W4: LBP_10 old awkward wording is gone', lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
-  assert('W4: LBP_10 variable unchanged', lbp10.variable === 'lbp_onset_before_45')
+  assert('W4: LBP_10A_ONSET_AGE exists (new v2.3 §13 pre-question)', !!lbp10a)
+  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.')
+  assert('W4: LBP_10 old direct 45-year wording is gone from patient-facing text', lbp10.question !== '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?' && lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
+  assert('W4: LBP_10 variable unchanged (FROZEN adapter still reads this)', lbp10.variable === 'lbp_onset_before_45')
   assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)
-  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values, FROZEN contract)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+  assert('W4: LBP_10 showIf unchanged (same visibility gate as before)', typeof lbp10.showIf === 'function')
+  assert('W4: LBP_10A_ONSET_AGE has an explicit unknownOption ("잘 모르겠어요")', lbp10a.unknownOption && lbp10a.unknownOption.value === 'UNKNOWN_AGE')
 }
 
 // W5: HERBAL_ADDON_FIELD stale-reset (§12) -- a brand-new blank Responses
@@ -3782,6 +3795,110 @@ for (const sex of ['male', 'female']) {
   const fresh = emptyResponses()
   assert('W5: a brand-new blank Responses object never has HERBAL_ADDON_FIELD set to yes', fresh['HERBAL_ADDON_ACTIVE'] !== 'yes')
   assert('W5: questionnaireMode on a truly blank Responses object is never herbal_addon', questionnaireMode(fresh) !== 'herbal_addon')
+}
+
+// W6: LBP_01B_LEG_SCREEN presentation shim (v2.3 §8-9). These tests mirror
+// App.tsx's setAnswer() patch logic exactly (same technique as V-AddonFull
+// above mirrors activateHerbalAddon) so they exercise the *actual* patch
+// shape the shim produces, not a hand-picked substitute.
+function applyLbp01bShim(r, value) {
+  let patch = { ...r, LBP_01B_LEG_SCREEN: value }
+  if (value === 'no') {
+    patch = { ...patch, LBP_02: ['NONE'], LBP_03: 'NONE' }
+  } else {
+    patch = { ...patch, LBP_02: null, LBP_03: null }
+  }
+  return pruneStaleResponses(patch).responses
+}
+function applyLbp01Change(prevResponses, newValue) {
+  let patch = { ...prevResponses, LBP_01: newValue }
+  if (prevResponses['LBP_01'] === 'BACK_ONLY' && prevResponses['LBP_01B_LEG_SCREEN'] === 'no' && newValue !== 'BACK_ONLY') {
+    patch = { ...patch, LBP_02: null, LBP_03: null }
+  }
+  return pruneStaleResponses(patch).responses
+}
+{
+  const base = withPainCare({ PAIN_01: 'low_back_pelvis', LBP_01: 'BACK_ONLY' })
+  assert('W6: LBP_01B_LEG_SCREEN is reachable once LBP_01=BACK_ONLY', visibleIds(base).has('LBP_01B_LEG_SCREEN'))
+  assert('W6: LBP_01B_LEG_SCREEN is not shown for non-BACK_ONLY extents', !visibleIds(set(base, { LBP_01: 'THIGH' })).has('LBP_01B_LEG_SCREEN'))
+
+  // "없어요" -> LBP_02=['NONE'] and LBP_03='NONE' simultaneously, which is
+  // exactly the FROZEN computeLegState contract for leg_symptom_present='NO'.
+  const no = applyLbp01bShim(base, 'no')
+  assert('W6 CRITICAL: "없어요" fills LBP_02 to [NONE]', JSON.stringify(no['LBP_02']) === JSON.stringify(['NONE']))
+  assert('W6 CRITICAL: "없어요" fills LBP_03 to NONE', no['LBP_03'] === 'NONE')
+  assert('W6: LBP_02/LBP_03 remain visible screens after "없어요" (not skipped)', visibleIds(no).has('LBP_02') && visibleIds(no).has('LBP_03'))
+
+  // "있어요" / "잘 모르겠어요" -> must NOT silently pre-fill a leg-negative
+  // answer; the patient still answers LBP_02/LBP_03 themselves.
+  const yes = applyLbp01bShim(base, 'yes')
+  assert('W6: "있어요" leaves LBP_02 unanswered (patient answers directly)', yes['LBP_02'] === null)
+  assert('W6: "있어요" leaves LBP_03 unanswered (patient answers directly)', yes['LBP_03'] === null)
+  const unknown = applyLbp01bShim(base, 'unknown')
+  assert('W6: "잘 모르겠어요" leaves LBP_02 unanswered', unknown['LBP_02'] === null)
+  assert('W6: "잘 모르겠어요" leaves LBP_03 unanswered', unknown['LBP_03'] === null)
+
+  // Guard: going back and changing LBP_01 away from BACK_ONLY after the
+  // shim auto-filled LBP_02/LBP_03 must clear that stale auto-fill so
+  // DoctorView never displays a leg-negative answer the patient never gave
+  // for their new (non-BACK_ONLY) extent.
+  const afterBackToThigh = applyLbp01Change(no, 'THIGH')
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the shim-filled LBP_02', afterBackToThigh['LBP_02'] === null)
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the shim-filled LBP_03', afterBackToThigh['LBP_03'] === null)
+
+  // Guard must NOT fire when LBP_02/LBP_03 were genuinely patient-answered
+  // (not the shim's own auto-fill) -- e.g. patient said "있어요" and then
+  // separately answered LBP_02/LBP_03 themselves before going back to
+  // change LBP_01. That real answer must survive.
+  const realAnswer = set(yes, { LBP_02: ['PARESTHESIA'], LBP_03: 'RIGHT' })
+  const afterChangeWithRealAnswer = applyLbp01Change(realAnswer, 'THIGH')
+  assert('W6: genuinely patient-answered LBP_02 is not clobbered by the guard', JSON.stringify(afterChangeWithRealAnswer['LBP_02']) === JSON.stringify(['PARESTHESIA']))
+  assert('W6: genuinely patient-answered LBP_03 is not clobbered by the guard', afterChangeWithRealAnswer['LBP_03'] === 'RIGHT')
+
+  // Guard must not fire when the shim's answer was NOT "no" (LBP_01B_LEG_SCREEN
+  // !== 'no' means LBP_02/LBP_03 were never auto-filled in the first place).
+  const afterYesThenExtentChange = applyLbp01Change(yes, 'THIGH')
+  assert('W6: no spurious clear when shim answer was "있어요" (nothing to clear)', afterYesThenExtentChange['LBP_02'] === null && afterYesThenExtentChange['LBP_03'] === null)
+}
+
+// W7: LBP_10A_ONSET_AGE presentation shim (v2.3 §13) -- mapLbpOnsetAgeToBefore45
+// boundary/malformed-input coverage, plus the App.tsx setAnswer patch shape
+// that writes LBP_10 + LBP_RAW_AGE_FIELD together.
+{
+  assert('W7: age 44 (just under 45) maps to YES', mapLbpOnsetAgeToBefore45('44') === 'YES')
+  assert('W7: age 45 (the threshold itself) maps to NO', mapLbpOnsetAgeToBefore45('45') === 'NO')
+  assert('W7: age 46 maps to NO', mapLbpOnsetAgeToBefore45('46') === 'NO')
+  assert('W7: age 0 maps to YES', mapLbpOnsetAgeToBefore45('0') === 'YES')
+  assert('W7: negative age fails closed to UNKNOWN (malformed)', mapLbpOnsetAgeToBefore45('-5') === 'UNKNOWN')
+  assert('W7: age above 130 fails closed to UNKNOWN (malformed)', mapLbpOnsetAgeToBefore45('999') === 'UNKNOWN')
+  assert('W7: non-numeric text fails closed to UNKNOWN (malformed)', mapLbpOnsetAgeToBefore45('abc') === 'UNKNOWN')
+  assert('W7: empty string fails closed to UNKNOWN', mapLbpOnsetAgeToBefore45('') === 'UNKNOWN')
+  assert('W7: null fails closed to UNKNOWN', mapLbpOnsetAgeToBefore45(null) === 'UNKNOWN')
+  assert('W7: the explicit "잘 모르겠어요" sentinel maps to UNKNOWN', mapLbpOnsetAgeToBefore45(LBP_ONSET_AGE_UNKNOWN_SENTINEL) === 'UNKNOWN')
+
+  const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  assert('W7: LBP_10A_ONSET_AGE is reachable for chronic-onset LBP patients', visibleIds(chronic).has('LBP_10A_ONSET_AGE'))
+  assert('W7: LBP_10 is reachable alongside it (auto-confirm screen, same showIf)', visibleIds(chronic).has('LBP_10'))
+
+  function applyLbp10aShim(r, rawAge) {
+    const patch = { ...r, LBP_10A_ONSET_AGE: rawAge, LBP_10: mapLbpOnsetAgeToBefore45(rawAge), [LBP_RAW_AGE_FIELD]: rawAge }
+    return pruneStaleResponses(patch).responses
+  }
+  const filled = applyLbp10aShim(chronic, '40')
+  assert('W7 CRITICAL: entering age 40 pre-fills LBP_10 to YES (FROZEN adapter contract)', filled['LBP_10'] === 'YES')
+  assert('W7: the raw age is preserved in the non-clinical metadata field', filled[LBP_RAW_AGE_FIELD] === '40')
+  assert('W7: LBP_10 stays visible/answerable as the confirming screen', visibleIds(filled).has('LBP_10'))
+
+  const filledOlder = applyLbp10aShim(chronic, '50')
+  assert('W7 CRITICAL: entering age 50 pre-fills LBP_10 to NO', filledOlder['LBP_10'] === 'NO')
+
+  const filledUnknown = applyLbp10aShim(chronic, LBP_ONSET_AGE_UNKNOWN_SENTINEL)
+  assert('W7 CRITICAL: "잘 모르겠어요" pre-fills LBP_10 to UNKNOWN (fail-closed, no guess)', filledUnknown['LBP_10'] === 'UNKNOWN')
+
+  // Non-chronic-onset patients never see either screen (existing gate unchanged).
+  const acute = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: '1_3m' })
+  assert('W7: LBP_10A_ONSET_AGE hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10A_ONSET_AGE'))
+  assert('W7: LBP_10 also hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10'))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

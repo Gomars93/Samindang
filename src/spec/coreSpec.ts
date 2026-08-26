@@ -12,7 +12,7 @@
  * 질문 문구 / value / show_if는 Master Spec v1.0 원문 그대로이며 임의로
  * 추가·수정하지 않는다.
  */
-import type { Option, Question, Responses } from '../types'
+import type { AnswerValue, Option, Question, Responses } from '../types'
 import type { SajuInput, TimeBranchKey } from '../saju/types'
 import { ageFromBirthDate } from '../lib/age'
 import { toLbpState } from './lbpAdapter'
@@ -1061,6 +1061,27 @@ const PAIN_QUESTIONS: Question[] = [
 const IS_LBP_CHRONIC_ONSET = (r: Responses) =>
   r['VISIT_03_SYMPTOM_DURATION'] === '3m_1y' || r['VISIT_03_SYMPTOM_DURATION'] === 'over_1y'
 
+/**
+ * Tablet UX v2.3 §13: LBP_10A_ONSET_AGE(환자에게 실제 나이를 묻는 새 질문)의
+ * 답을 FROZEN lbpAdapter.ts가 그대로 읽는 기존 LBP_10 값(YES/NO/UNKNOWN)으로
+ * 매핑한다. lbpLogic.ts의 45세 threshold는 이 함수에서도 절대 재해석하지
+ * 않는다 -- 그 threshold는 이미 `computeInflammatoryEligible`(FROZEN)에
+ * 있고, 여기서는 "45 미만이면 YES, 아니면 NO"라는 동일한 대소 비교를
+ * UI 입력값 변환 목적으로만 한 번 더 적용할 뿐이다(threshold 자체를
+ * 바꾸거나 새로 정의하지 않음). 파싱 불가/범위 밖 나이는 fail-closed로
+ * UNKNOWN -- malformed-input이 조용히 YES/NO 중 하나로 잘못 귀결되지 않는다.
+ */
+export const LBP_ONSET_AGE_UNKNOWN_SENTINEL = 'UNKNOWN_AGE'
+/** non-clinical 참고용 metadata -- ALL_QUESTIONS에 속하지 않아 pruneStaleResponses가 건드리지 않는다(HERBAL_ADDON_FIELD와 동일 패턴). lbpLogic.ts/lbpAdapter.ts는 이 필드를 전혀 읽지 않는다. */
+export const LBP_RAW_AGE_FIELD = 'LBP_10_RAW_AGE'
+
+export function mapLbpOnsetAgeToBefore45(raw: AnswerValue): 'YES' | 'NO' | 'UNKNOWN' {
+  if (typeof raw !== 'string' || raw === '' || raw === LBP_ONSET_AGE_UNKNOWN_SENTINEL) return 'UNKNOWN'
+  const age = Number(raw)
+  if (!Number.isFinite(age) || age < 0 || age > 130) return 'UNKNOWN'
+  return age < 45 ? 'YES' : 'NO'
+}
+
 const LBP_QUESTIONS: Question[] = [
   {
     id: 'LBP_01',
@@ -1077,6 +1098,40 @@ const LBP_QUESTIONS: Question[] = [
       { value: 'BELOW_KNEE', label: '무릎 아래·종아리까지' },
       { value: 'FOOT', label: '발까지' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    // Tablet UX v2.3 §8-9: LBP_01==='BACK_ONLY'인 환자가 다리 관련
+    // 질문을 "같은 내용을 반복해서 묻는다"고 느끼는 문제의 완화책.
+    // computeLegState(FROZEN lbpLogic.ts)는 leg_symptom_present='NO'가
+    // 되려면 LBP_02=['NONE']이고 LBP_03='NONE'인 것을 "동시에" 요구한다
+    // -- 둘 중 하나만 없애면 fail-closed로 인해 'UNKNOWN'이 되어 버린다.
+    // 이 화면은 그 두 필드를 대신 채우는 게 아니라, "다리 증상이 있는지"를
+    // 하나의 명확한 문장으로 먼저 물어 이후 LBP_02/LBP_03에 무엇을
+    // 미리 선택해 둘지 결정하는 라우팅 전용 질문이다(payload/adapter에는
+    // 노출되지 않음, 아래 App.tsx setAnswer 참고).
+    //
+    // 안전 검토: LBP_02/LBP_03의 required:true/showIf/fail-closed 의미는
+    // 전혀 바뀌지 않는다 -- "없어요"를 선택해도 그 두 화면 자체를
+    // 건너뛰지 않고(엔진의 showIf→visibleQuestions→pruneStaleResponses
+    // invariant를 건드리지 않기 위해 의도적으로 그렇게 설계했다 -- 숨긴
+    // 채로 값만 채우면 pruneStaleResponses가 "보이지 않는 답"으로 판단해
+    // 같은 호출 안에서 즉시 null로 되돌린다), 대신 두 화면에 정답을
+    // 미리 선택해 두어 환자는 확인 후 "다음"만 누르면 된다. 완전한
+    // 화면 스킵은 이 엔진 불변식과 정면으로 충돌해 이번 PR 범위에서
+    // 안전하게 구현할 수 없었다 -- 최종 보고의 CLINICAL DECISION
+    // REQUIRED 항목 참고.
+    id: 'LBP_01B_LEG_SCREEN',
+    variable: 'lbp_leg_screen_confirm',
+    input: 'single_choice',
+    question: '허리와 별개로 다리에 저림·감각저하·힘 빠짐 같은 증상이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && r['LBP_01'] === 'BACK_ONLY',
+    options: [
+      { value: 'no', label: '없어요' },
+      { value: 'yes', label: '있어요' },
+      { value: 'unknown', label: '잘 모르겠어요' },
     ],
   },
   {
@@ -1210,13 +1265,33 @@ const LBP_QUESTIONS: Question[] = [
     ],
   },
   {
+    // Tablet UX v2.3 §13: 환자에게 "45세" 자체를 노출하는 대신 발병
+    // 나이를 직접 물어 내부적으로 LBP_10에 YES/NO/UNKNOWN으로
+    // 매핑한다(아래 LBP_10 참고). raw age는 임상 계산에 쓰이지 않는
+    // non-clinical 참고용 metadata로만 별도 보관한다(App.tsx
+    // setAnswer, LBP_10_RAW_AGE_FIELD) -- lbpLogic.ts/lbpAdapter.ts는
+    // 전혀 건드리지 않는다.
+    id: 'LBP_10A_ONSET_AGE',
+    variable: 'lbp_onset_age_raw',
+    input: 'numeric',
+    question: '허리통증이 처음 생긴 나이는 대략 몇 살이었나요?',
+    helper: '정확하지 않아도 괜찮아요. 기억나는 정도로 입력해주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    unknownOption: { value: 'UNKNOWN_AGE', label: '잘 모르겠어요' },
+  },
+  {
     id: 'LBP_10',
     variable: 'lbp_onset_before_45',
     input: 'single_choice',
-    // Tablet UX v2.2.1 §13: 순수 copy change -- id/variable/options/
-    // required/showIf/threshold/logic 전부 그대로, 어색한 한국어 문구만
-    // 자연스럽게 다듬었다.
-    question: '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?',
+    // Tablet UX v2.3 §13: LBP_10A(위)에서 입력한 나이를 바탕으로 App.tsx가
+    // 이 필드를 자동으로 YES/NO/UNKNOWN 중 하나로 미리 채운다(45세
+    // threshold는 여기서도 여전히 화면 문구에 노출하지 않는다) --
+    // required:false라 그대로 "다음"을 눌러 확인하거나, 필요하면 직접
+    // 바꿀 수 있다. id/variable/options/required/showIf/threshold/logic은
+    // v2.2.1과 완전히 동일 -- 문항 문구만 확인용으로 다시 다듬었다.
+    question: '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.',
     required: false,
     step: '상세 증상',
     // 원본 YAML은 patient_age 45-120 조건도 요구하지만, 이 Module 시점에는

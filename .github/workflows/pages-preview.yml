@@ -1,0 +1,60 @@
+name: Deploy Tablet Preview to GitHub Pages
+
+# UI-only demo deployment of the patient-facing tablet questionnaire.
+# NO-PHI / READ-ONLY-DEMO: VITE_SAMINDANG_SERVER_URL is intentionally left
+# unset (isServerConfigured() → false) so the built app never attempts to
+# reach any real submission endpoint, and VITE_PREVIEW_MODE=true renders a
+# small on-screen banner so this build is never mistaken for the real
+# production app. See docs/TABLET_PREVIEW_DEPLOYMENT.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; do not cancel one that's already
+# publishing mid-way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build preview (no server URL configured, preview banner on)
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

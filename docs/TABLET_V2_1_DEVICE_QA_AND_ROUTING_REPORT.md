@@ -116,51 +116,82 @@ today." This is now split into three explicit, separately-named stages.
 | **B. Additional Detailed Concern** | `ADDITIONAL_DETAIL_01` (new) | 0 or 1 | Opens the FULL module for that one category, reusing the exact same module question set and safety engine as Primary (no clinical logic duplicated). |
 | **C. Reference Symptoms** | `REFERENCE_SYMPTOMS_01` (new) | 0 or many | Never opens any module. Purely "the patient flagged this exists" — surfaced to the clinician as a low-emphasis chip, never a diagnosis. |
 
-### Why Additional Detail is positioned *before* the individual full-module
-question blocks in `coreSpec.ts`'s question array
+### Screen order: Primary FULL → Additional Detail question → Additional
+FULL → Reference Symptoms question (ordering fix, PR #20 follow-up)
 
-`App.tsx`'s `nextQuestion()` walks `visibleQuestions(r)` strictly forward
-(`list[idx + 1]`) — it never jumps to an arbitrary screen. For a category
-chosen via Additional Detail to actually be reachable as "the next screen,"
-`ADDITIONAL_DETAIL_01` must be positioned in the array *before* every
-individual full-module block (`SLEEP_QUESTIONS`, `GI_QUESTIONS`,
-`PAIN_QUESTIONS`, …). It occupies the same array slot the old
-`SECONDARY_01` used to (right after `VISIT_QUESTIONS`, before every module
-block) — for exactly the same structural reason `SECONDARY_01` was already
-there.
+**Original implementation problem**: `App.tsx`'s `nextQuestion()` walks
+`visibleQuestions(r)` strictly forward (`list[idx + 1]`) through a *static*
+question array — it never jumps to an arbitrary screen. The first version
+of this feature positioned `ADDITIONAL_DETAIL_01` once, at a single fixed
+array slot (right after `VISIT_QUESTIONS`, before every individual
+full-module block), because that was the only way for a category chosen
+via Additional Detail to ever become reachable as "the next screen" at
+all. But a static array can only ever place one module block "before" or
+"after" a given position — never both, depending on which category is
+Primary this time. The practical effect was that whichever module
+happened to sit earlier in the fixed declaration order (Sleep → GI → Bowel
+→ ... → Pain → ...) was shown to the patient first regardless of whether
+it was Primary or Additional — e.g. Primary = pain, Additional = sleep
+would show Sleep's full detail *before* Pain's, even though Pain was the
+patient's actual primary complaint. This was called out as a known
+limitation when this PR first opened.
 
-**Screen-order consequence**: the practical effect is that whichever
-module is positioned earlier in the fixed array order (Sleep → GI → Bowel
-→ Urinary → Pain → …) is shown to the patient first, regardless of whether
-it was chosen as Primary or Additional. E.g. Primary = pain, Additional =
-sleep → the patient sees Sleep's full detail screens *before* reaching
-Pain's Body Map, even though Pain was the "first" thing they picked. Both
-modules are always fully asked either way — this is a screen-*order*
-nuance only, not a functional gap; §20's Case A–D requirements (which
-module opens, not what order) are all met and covered by
-`tests/integration.spec.mjs`'s `T-CaseA`–`T-CaseD` block. Reordering the
-core traversal engine itself to support arbitrary jumps was judged out of
-this task's low-risk scope (it is shared by all ~200 screens in the app);
-this is flagged in Known Limitations below.
+**Fix — phase-aware dynamic reordering**: `visibleQuestions(r)` in
+`coreSpec.ts` now reorders its already-showIf-filtered output based on the
+current responses, via `reorderForDetailPhases(r, list)`. The static array
+still decides *whether* each question is eligible at all (`showIf` is
+completely unchanged); the reordering only decides *when*, among the
+currently-eligible questions, each one is presented:
+
+1. Patient identity + visit intent/category + global safety (unchanged
+   relative order).
+2. **Primary's own full module** — every question id belonging to
+   whichever category `primaryConcernKey(r)` resolves to, sourced from
+   `MODULE_QUESTION_IDS` (built directly from the same arrays
+   `CORE_QUESTIONS` splices in, so it can never drift out of sync with
+   what's actually in the array — e.g. `pain` includes `PAIN_QUESTIONS`
+   plus every regional sub-block: LBP/HIP/SHOULDER/NECK/KNEE/ELBOW/
+   WRIST_HAND/ANKLE_FOOT/TMJ).
+3. `ADDITIONAL_DETAIL_01`.
+4. **Additional's own full module** (if a category was chosen) — same
+   `MODULE_QUESTION_IDS` lookup, keyed by `ADDITIONAL_DETAIL_01`'s value.
+5. `REFERENCE_SYMPTOMS_01`.
+6. Everything else (legacy `SEC_*` short screens, constitution/herbal
+   reference, history, birth, free text) — unchanged relative order.
+
+This is a pure reorder, never an add/remove: `pruneStaleResponses` only
+ever reads the result as a `Set` (order-independent), so stale-answer
+pruning is completely unaffected. For a patient with no Additional Detail
+concern at all — or the legacy `SECONDARY_01` path, where
+`ADDITIONAL_DETAIL_01` never becomes eligible — this reduces to a strict
+no-op: the module region comes out in exactly the same order the static
+array already had it in, which is why the entire pre-existing
+raw-`Responses` test suite (G2/G3/H1/H2/H3, hundreds of assertions) needed
+*zero* changes for this fix.
 
 ### Compatibility (§21 migration)
 
 `SECONDARY_01`/`SEC_*` short screens are **not deleted** — they still exist
 verbatim for backward compatibility with the pre-existing raw-`Responses`
 test-fixture suite (hundreds of assertions construct `Responses` objects
-directly, bypassing the UI). The two questions use the same mutual-exclusion
-`showIf` pattern already established for `VISIT_00_INTENT`/`VISIT_01` in
-Routing/UX v2:
+directly, bypassing the UI). Rather than a mutual `showIf` dependency
+between the two new questions and `SECONDARY_01` (fragile once
+`ADDITIONAL_DETAIL_01` no longer sits at a fixed early array position —
+`SECONDARY_01` could otherwise become reachable again while
+`ADDITIONAL_DETAIL_01` sits unanswered later in the walk), all three now
+key off `VISIT_00_INTENT` directly, the one field that unambiguously means
+"this patient is going through the new flow":
 
-- `ADDITIONAL_DETAIL_01.showIf = SECONDARY_01 == null`
-- `SECONDARY_01.showIf = ADDITIONAL_DETAIL_01 == null`
+- `SECONDARY_01.showIf = VISIT_00_INTENT == null`
+- `ADDITIONAL_DETAIL_01.showIf = VISIT_00_INTENT != null`
+- `REFERENCE_SYMPTOMS_01.showIf = VISIT_00_INTENT != null && ADDITIONAL_DETAIL_01 != null`
 
-Both start `null`, so a real fresh patient reaches `ADDITIONAL_DETAIL_01`
-first (it's earlier in array order) and answering it permanently hides
-`SECONDARY_01`. A raw-fixture test that sets `SECONDARY_01` directly (the
-old style, never touching `ADDITIONAL_DETAIL_01`) keeps working exactly as
-before — confirmed by the full existing ~700-assertion suite passing
-unmodified.
+`VISIT_00_INTENT` is always the very first screen a real new-flow patient
+answers, so `SECONDARY_01` is excluded from then on — permanently, from
+screen 2 onward, independent of *when* `ADDITIONAL_DETAIL_01` is actually
+presented by the phase-aware reordering above. A raw-fixture test that
+never touches `VISIT_00_INTENT` (the old style, setting `SECONDARY_01`
+directly) keeps working exactly as before.
 
 `ADDITIONAL_DETAIL_01`'s option list puts `'없음'` **first** (not last, the
 usual convention) as a deliberate fail-safe: it is the one field that
@@ -251,14 +282,27 @@ sit strictly below and visually quieter than the existing safety panels.
   zone-is-position-absolute, figures-max-width-bounds-size-within-content-
   column, and a live-render check that every rendered `.bodyMap__figure`
   is immediately followed by its own zone buttons in the HTML.
-- `tests/integration.spec.mjs` §T: fresh-flow ordering
-  (`ADDITIONAL_DETAIL_01` before legacy `SECONDARY_01`), legacy-fixture
+- `tests/integration.spec.mjs` §T: fresh-flow eligibility (`SECONDARY_01`
+  excluded the instant `VISIT_00_INTENT` is set), legacy-fixture
   compatibility, Cases A–D exactly as specified (§20), duplicate-category
   exclusion, `exclusive:'none'` reuse, male women-option exclusion,
   back-navigation stale-answer pruning for both Additional Detail changes
   (removes the now-hidden module's answers) and Reference Symptoms changes
   (never touches any module's visibility), malformed-input fail-safe for
   both new fields, and the visit-type-agnostic static guard.
+- `tests/integration.spec.mjs` §U (ordering fix, PR #20 follow-up): full
+  ordered screen-by-screen walks (`autoAnswerWalkOrdered`, using the
+  authoritative `MODULE_QUESTION_IDS` exported from `coreSpec.ts` rather
+  than re-deriving id-prefix knowledge) proving Primary=pain/Additional=
+  sleep visits every Pain screen (including all regional sub-blocks)
+  strictly before `ADDITIONAL_DETAIL_01`, and every Sleep screen strictly
+  before `REFERENCE_SYMPTOMS_01` (U2); the exact reverse category pairing,
+  Primary=sleep/Additional=pain (U3); Additional=none going straight from
+  Primary's last screen to `REFERENCE_SYMPTOMS_01` with nothing in between
+  (U1); Reference Symptoms never answering a single Sleep/GI-module screen
+  even when chosen (U4); and that switching Additional away from a chosen
+  category removes that category's screens from the visible order
+  entirely, not just nulls their answers (U5).
 - `tests/doctor.spec.mjs`: a new fixture
   ("허리 통증 주호소 + 추가 상세상담(수면) + 참고 증상(소화·기타)") built
   through the same real `buildResponsePayload`/`buildRoutingPayload`
@@ -279,13 +323,16 @@ remain zero-diff against `origin/main`.
 
 ## 6. Known limitations
 
-- **Screen order for Additional Detail is fixed-array-order, not
-  selection-order** (see §2 above) — e.g. Primary=pain/Additional=sleep
-  shows Sleep's screens before Pain's. Both always appear in full; only
-  the *order* differs from a literal "primary first, then additional"
-  reading. Fixing this would require changing the shared forward-only
-  traversal engine (`App.tsx`'s `nextQuestion`), which is used by every
-  screen in the app — judged out of this task's low-risk, additive scope.
+- ~~Screen order for Additional Detail was fixed-array-order, not
+  selection-order~~ — **fixed** (see §2 above, "Screen order" section):
+  `visibleQuestions(r)` now reorders its output based on current
+  responses (`reorderForDetailPhases`), so Primary's own full module is
+  always presented before `ADDITIONAL_DETAIL_01`, which is always before
+  Additional's own full module (if any), which is always before
+  `REFERENCE_SYMPTOMS_01` — regardless of which category is Primary vs.
+  Additional, or of either category's fixed position in the underlying
+  static array. Verified by `tests/integration.spec.mjs` §U (ordered
+  screen-by-screen walks for both category-pairing directions).
 - **Body map "peek" effect** (partially showing the next card at the
   bottom edge to hint at more content) was intentionally not implemented.
   The task instructions explicitly warn against "억지 CSS clipping"

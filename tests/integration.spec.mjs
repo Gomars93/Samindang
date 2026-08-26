@@ -15,6 +15,7 @@ import {
   MODULE_ROUTES,
   STAFF_CHECK_TRIGGERS,
   computeFlags,
+  MODULE_QUESTION_IDS,
 } from './.spec-bundle.mjs'
 
 let passCount = 0
@@ -3017,25 +3018,30 @@ function hipBaseResponses() {
 // S4: sleep dedup -- no duplicate question once sleep info was already collected
 {
   // secondary=sleep answers SEC_SLEEP_01 first; later landing on the
-  // constitution route must NOT re-ask CONST_SLEEP.
+  // constitution route must NOT re-ask CONST_SLEEP. This exercises the pure
+  // legacy path (raw VISIT_01/VISIT_02_CONST, no VISIT_00_INTENT) -- since
+  // the ordering fix, SECONDARY_01/SEC_SLEEP_01 are only ever reachable
+  // when VISIT_00_INTENT stays null (see coreSpec.ts's SECONDARY_01 showIf
+  // header comment), so this dedup case is legacy-path-only by
+  // construction; the new-flow equivalent is covered by T-CaseB (Additional
+  // Detail = sleep reaches the same SLEEP_QUESTIONS/menopause gate).
   let r = emptyResponses()
   r = set(r, {
     ID_03: 'female',
-    VISIT_00_INTENT: 'herbal',
-    VISIT_00B_HERBAL_PURPOSE: 'symptom',
+    VISIT_01: 'symptom',
     VISIT_02_SYMPTOM_MAIN: 'digestion',
     SECONDARY_01: ['sleep'],
   })
   r = set(r, { SEC_SLEEP_01: ['sleep_onset'] })
   assert('S4: SEC_SLEEP_01 answered once', Array.isArray(r['SEC_SLEEP_01']))
   // Switch to a route that would otherwise ask CONST_SLEEP.
-  r = set(r, { VISIT_00B_HERBAL_PURPOSE: 'tonic', VISIT_02_SYMPTOM_MAIN: null })
+  r = set(r, { VISIT_01: 'constitution', VISIT_02_CONST: 'tonic', VISIT_02_SYMPTOM_MAIN: null })
   assert('S4: CONST_SLEEP is not shown again -- sleep info was already collected via SEC_SLEEP_01', !visibleIds(r).has('CONST_SLEEP'))
 }
 {
   // Baseline: constitution route WITHOUT any prior sleep answer still asks once.
   let r = emptyResponses()
-  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'tonic' })
+  r = set(r, { ID_03: 'female', VISIT_01: 'constitution', VISIT_02_CONST: 'tonic' })
   assert('S4: CONST_SLEEP is shown when sleep was never asked before', visibleIds(r).has('CONST_SLEEP'))
 }
 
@@ -3088,22 +3094,21 @@ function hipBaseResponses() {
  * ========================================================================= */
 
 // T0: real fresh-flow ordering -- a genuinely new patient sees
-// ADDITIONAL_DETAIL_01 (not the legacy SECONDARY_01), and once it's
-// answered SECONDARY_01 never becomes visible again (mirrors the
-// VISIT_00_INTENT/VISIT_01 mutual-exclusion pattern, but for this pair).
+// ADDITIONAL_DETAIL_01 (not the legacy SECONDARY_01). SECONDARY_01's
+// showIf keys off VISIT_00_INTENT alone (not ADDITIONAL_DETAIL_01's
+// answered-ness), so it is excluded the instant VISIT_00_INTENT is
+// answered (screen 1) -- stronger and simpler than a walk-order race,
+// and immune to the phase-aware reordering that now delays
+// ADDITIONAL_DETAIL_01 until after Primary's own full module (see T-CaseA
+// through T-CaseD below).
 {
   let r = emptyResponses()
   r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care' })
-  // Both start "visible" simultaneously (same transitional state as
-  // VISIT_00_INTENT/VISIT_01, see that pair's header comment) -- what
-  // actually determines which one a real user sees first is array order,
-  // since App.tsx's nextQuestion() walks visibleQuestions() strictly
-  // forward. ADDITIONAL_DETAIL_01 must come first so a fresh patient
-  // reaches it (and answers it) before ever reaching SECONDARY_01.
-  const orderedIds = [...visibleQuestions(r)].map((q) => q.id)
-  assert('T0: fresh flow reaches ADDITIONAL_DETAIL_01 before legacy SECONDARY_01 in walk order', orderedIds.indexOf('ADDITIONAL_DETAIL_01') < orderedIds.indexOf('SECONDARY_01'))
-  r = set(r, { ADDITIONAL_DETAIL_01: 'none' })
   let v = visibleIds(r)
+  assert('T0: fresh flow hides legacy SECONDARY_01 immediately once VISIT_00_INTENT is set', !v.has('SECONDARY_01'))
+  assert('T0: fresh flow makes ADDITIONAL_DETAIL_01 eligible (VISIT_00_INTENT is set)', v.has('ADDITIONAL_DETAIL_01'))
+  r = set(r, { PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  v = visibleIds(r)
   assert('T0: after answering ADDITIONAL_DETAIL_01, SECONDARY_01 stays hidden', !v.has('SECONDARY_01'))
   assert('T0: after answering ADDITIONAL_DETAIL_01, REFERENCE_SYMPTOMS_01 becomes visible', v.has('REFERENCE_SYMPTOMS_01'))
 }
@@ -3270,6 +3275,171 @@ function withSymptomConsult(mainCategory, patch) {
 {
   const suspicious = ALL_QUESTIONS.filter((q) => /visit_type|revisit|재진|초진/i.test(q.id) || /visit_type|revisit|재진|초진/i.test(q.variable))
   assert('T6: no visit-type/initial-vs-revisit field exists anywhere in the question set', suspicious.length === 0)
+}
+
+/* =========================================================================
+ * U. Screen-order fix (PR #20 follow-up): Primary's own full module must
+ *    always be completed before Additional Detail's question is ever
+ *    presented, Additional's full module (if any) before Reference
+ *    Symptoms, regardless of each category's fixed position in the
+ *    underlying question array (visibleQuestions() phase-aware reordering,
+ *    see coreSpec.ts's reorderForDetailPhases).
+ * ========================================================================= */
+
+/**
+ * Like autoAnswerWalk, but records the ORDER questions were actually
+ * answered in (not just the set of everything that was ever visible) --
+ * this is what actually proves screen-by-screen presentation order, not
+ * just eventual reachability.
+ */
+function autoAnswerWalkOrdered(initialResponses) {
+  let r = initialResponses
+  const answeredOrder = []
+  let iterations = 0
+  for (; iterations < WALK_CAP; iterations++) {
+    const visible = visibleQuestions(r)
+    const next = visible.find((q) => r[q.id] === null || r[q.id] === undefined)
+    if (!next) return { responses: r, answeredOrder, iterations, terminated: true }
+    answeredOrder.push(next.id)
+    r = set(r, { [next.id]: deterministicValue(next, r) })
+  }
+  return { responses: r, answeredOrder, iterations, terminated: false }
+}
+
+// Category -> full id set, straight from coreSpec.ts's own
+// MODULE_QUESTION_IDS (the exact same mapping reorderForDetailPhases uses)
+// -- unlike the coarse prefix-only moduleOf() above (which only recognizes
+// e.g. literal "PAIN_" and misses the regional sub-blocks LBP_*/HIP_*/
+// NECK_*/SH*/KNEE_*/ELBOW_*/WH_*/AF_*/TMJ_*/HFJ_*/NS01 that "pain" also
+// covers), this is authoritative and can never drift out of sync with the
+// production reordering logic.
+const PAIN_MODULE_ID_SET = new Set(MODULE_QUESTION_IDS.pain)
+const SLEEP_MODULE_ID_SET = new Set(MODULE_QUESTION_IDS.sleep)
+const GI_MODULE_ID_SET = new Set(MODULE_QUESTION_IDS.digestion)
+
+// U1: Primary=pain, Additional=sleep -> every Pain-module screen answered
+// strictly before ADDITIONAL_DETAIL_01, which is strictly before every
+// Sleep-module screen, which is strictly before REFERENCE_SYMPTOMS_01.
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care' })
+  const { answeredOrder, terminated } = autoAnswerWalkOrdered(r)
+  assert('U1: walk terminates within the iteration cap', terminated)
+
+  const additionalDetailIdx = answeredOrder.indexOf('ADDITIONAL_DETAIL_01')
+  const referenceIdx = answeredOrder.indexOf('REFERENCE_SYMPTOMS_01')
+  assert('U1: ADDITIONAL_DETAIL_01 is answered', additionalDetailIdx !== -1)
+  assert('U1: REFERENCE_SYMPTOMS_01 is answered', referenceIdx !== -1)
+
+  const painModuleIds = answeredOrder.filter((id) => PAIN_MODULE_ID_SET.has(id))
+  assert('U1: at least one pain-module screen was answered', painModuleIds.length > 0)
+  const lastPainIdx = Math.max(...painModuleIds.map((id) => answeredOrder.indexOf(id)))
+  assert('U1 CRITICAL: every Pain-module screen (incl. regional sub-blocks) is answered before ADDITIONAL_DETAIL_01', lastPainIdx < additionalDetailIdx)
+
+  // deterministicValue picks ADDITIONAL_DETAIL_OPTIONS[0] = 'none' (the
+  // fail-safe first option), so no Additional module opens on this walk --
+  // confirm nothing but REFERENCE_SYMPTOMS_01 follows ADDITIONAL_DETAIL_01
+  // (this is also the "Additional none -> Primary FULL then straight to
+  // Reference" case).
+  const betweenAdditionalAndReference = answeredOrder.slice(additionalDetailIdx + 1, referenceIdx)
+  assert('U1: Additional=none -> nothing but REFERENCE_SYMPTOMS_01 follows ADDITIONAL_DETAIL_01 (straight to Reference)', betweenAdditionalAndReference.length === 0)
+}
+
+// U2: Primary=pain, Additional=sleep (forced, not the auto-walk default) ->
+// Pain FULL, then ADDITIONAL_DETAIL_01, then Sleep FULL, then
+// REFERENCE_SYMPTOMS_01 -- in that exact order.
+{
+  // Walk the *entire* real screen sequence (identity, visit intent/category,
+  // global safety, Primary's own full module -- whatever order the app
+  // actually presents) generically, one screen at a time, stopping the
+  // instant ADDITIONAL_DETAIL_01 becomes "next". This directly proves it
+  // never gets reached early, without hand-picking which ids belong to
+  // "the phase before it" (fragile) -- it simply IS whatever a real user
+  // walks through first.
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis' })
+  for (let i = 0; i < WALK_CAP; i++) {
+    const visible = visibleQuestions(r)
+    const next = visible.find((q) => r[q.id] === null || r[q.id] === undefined)
+    if (!next || next.id === 'ADDITIONAL_DETAIL_01') break
+    r = set(r, { [next.id]: deterministicValue(next, r) })
+  }
+  assert('U2: Pain module fully answered before Additional Detail', !visibleQuestions(r).some((q) => PAIN_MODULE_ID_SET.has(q.id) && (r[q.id] === null || r[q.id] === undefined)))
+  assert('U2: ADDITIONAL_DETAIL_01 is now the next question', visibleQuestions(r).find((q) => r[q.id] === null || r[q.id] === undefined)?.id === 'ADDITIONAL_DETAIL_01')
+
+  r = set(r, { ADDITIONAL_DETAIL_01: 'sleep' })
+  const { answeredOrder, terminated } = autoAnswerWalkOrdered(r)
+  assert('U2: walk terminates within the iteration cap', terminated)
+  const sleepIds = answeredOrder.filter((id) => SLEEP_MODULE_ID_SET.has(id))
+  assert('U2 CRITICAL: Additional=sleep opens the Sleep module after ADDITIONAL_DETAIL_01', sleepIds.length > 0)
+  const referenceIdx = answeredOrder.indexOf('REFERENCE_SYMPTOMS_01')
+  const lastSleepIdx = Math.max(...sleepIds.map((id) => answeredOrder.indexOf(id)))
+  assert('U2 CRITICAL: every Sleep-module screen is answered before REFERENCE_SYMPTOMS_01', lastSleepIdx < referenceIdx)
+  assert('U2: no Pain-module screen reappears after ADDITIONAL_DETAIL_01 (already fully answered)', !answeredOrder.some((id) => PAIN_MODULE_ID_SET.has(id)))
+}
+
+// U3: Primary=sleep, Additional=pain -> Sleep FULL, then
+// ADDITIONAL_DETAIL_01, then Pain FULL (Body Map + regional safety), then
+// REFERENCE_SYMPTOMS_01 -- the exact reverse-category case of U2, proving
+// this is not order-of-declaration in the array but genuinely
+// primary-first regardless of which category is primary.
+{
+  let r = withSymptomConsult('sleep', {})
+  for (let i = 0; i < WALK_CAP; i++) {
+    const visible = visibleQuestions(r)
+    const next = visible.find((q) => r[q.id] === null || r[q.id] === undefined)
+    if (!next || next.id === 'ADDITIONAL_DETAIL_01') break
+    r = set(r, { [next.id]: deterministicValue(next, r) })
+  }
+  assert('U3: Sleep module fully answered before Additional Detail', !visibleQuestions(r).some((q) => SLEEP_MODULE_ID_SET.has(q.id) && (r[q.id] === null || r[q.id] === undefined)))
+  assert('U3: ADDITIONAL_DETAIL_01 is now the next question', visibleQuestions(r).find((q) => r[q.id] === null || r[q.id] === undefined)?.id === 'ADDITIONAL_DETAIL_01')
+
+  r = set(r, { ADDITIONAL_DETAIL_01: 'pain' })
+  const { answeredOrder, terminated } = autoAnswerWalkOrdered(r)
+  assert('U3: walk terminates within the iteration cap', terminated)
+  const painIds = answeredOrder.filter((id) => PAIN_MODULE_ID_SET.has(id))
+  assert('U3 CRITICAL: Additional=pain opens the Pain module (Body Map + regional safety) after ADDITIONAL_DETAIL_01', painIds.length > 0)
+  assert('U3: PAIN_01 (Body Map) itself is among the answered pain-module screens', answeredOrder.includes('PAIN_01'))
+  const referenceIdx = answeredOrder.indexOf('REFERENCE_SYMPTOMS_01')
+  const lastPainIdx = Math.max(...painIds.map((id) => answeredOrder.indexOf(id)))
+  assert('U3 CRITICAL: every Pain-module screen is answered before REFERENCE_SYMPTOMS_01', lastPainIdx < referenceIdx)
+  assert('U3: no Sleep-module screen reappears after ADDITIONAL_DETAIL_01 (already fully answered)', !answeredOrder.some((id) => SLEEP_MODULE_ID_SET.has(id)))
+}
+
+// U4: Reference Symptoms never opens any detailed module, confirmed via a
+// full ordered walk (not just visibility) -- picking sleep/digestion as
+// reference (with primary=pain, additional=none) never answers a single
+// Sleep/GI-module screen.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['sleep', 'digestion'] })
+  const { answeredOrder, terminated } = autoAnswerWalkOrdered(r)
+  assert('U4: walk terminates within the iteration cap', terminated)
+  assert('U4 CRITICAL: Reference Symptoms never opens the Sleep module', !answeredOrder.some((id) => SLEEP_MODULE_ID_SET.has(id)))
+  assert('U4 CRITICAL: Reference Symptoms never opens the GI module', !answeredOrder.some((id) => GI_MODULE_ID_SET.has(id)))
+  // REFERENCE_SYMPTOMS_01 was set directly above (before the walk), so it
+  // is already answered going in and never appears in answeredOrder (the
+  // walk only records fields it fills itself) -- check the value directly.
+  assert('U4: REFERENCE_SYMPTOMS_01 itself is answered', Array.isArray(r['REFERENCE_SYMPTOMS_01']) && r['REFERENCE_SYMPTOMS_01'].includes('sleep'))
+}
+
+// U5: back-navigation reorder -- changing Additional Detail away from
+// sleep (after having answered some of Sleep's own module) both prunes the
+// stale Sleep answers (already covered in T4) AND updates the *order* --
+// Sleep-module screens no longer sit between ADDITIONAL_DETAIL_01 and
+// REFERENCE_SYMPTOMS_01 once Additional is switched to 'none'.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' })
+  r = set(r, { SLEEP_01: ['sleep_onset'] })
+  assert('U5: SLEEP_01 answered while additional=sleep', Array.isArray(r['SLEEP_01']))
+  const orderedIdsBefore = [...visibleQuestions(r)].map((q) => q.id)
+  const addIdxBefore = orderedIdsBefore.indexOf('ADDITIONAL_DETAIL_01')
+  const refIdxBefore = orderedIdsBefore.indexOf('REFERENCE_SYMPTOMS_01')
+  assert('U5: before switching away, SLEEP_01 sits between ADDITIONAL_DETAIL_01 and REFERENCE_SYMPTOMS_01', orderedIdsBefore.indexOf('SLEEP_01') > addIdxBefore && orderedIdsBefore.indexOf('SLEEP_01') < refIdxBefore)
+
+  r = set(r, { ADDITIONAL_DETAIL_01: 'none' })
+  assert('U5: SLEEP_01 pruned to null after switching Additional away from sleep', r['SLEEP_01'] === null)
+  const orderedIdsAfter = [...visibleQuestions(r)].map((q) => q.id)
+  assert('U5: SLEEP_01 no longer appears anywhere in the visible order', !orderedIdsAfter.includes('SLEEP_01'))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

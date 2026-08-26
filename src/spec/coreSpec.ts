@@ -375,12 +375,19 @@ const SAFETY_QUESTIONS: Question[] = [
     // "오늘 자세히 상담하고 싶은 두 번째 문제"가 섞여 있었다. 새 UI에서는
     // ADDITIONAL_DETAIL_01(추가 상세상담, 최대 1개, full module)과
     // REFERENCE_SYMPTOMS_01(참고 증상, 여러 개, 상세문진 없음)로 명확히
-    // 분리한다 -- 이 화면은 새 흐름에서 완전히 숨긴다. VISIT_00_INTENT/
-    // VISIT_01과 동일한 상호배타 패턴(서로 다른 필드를 보고 숨으므로
-    // 자기 자신의 답으로 스스로를 지우는 문제 없음)으로, 기존 raw
-    // Responses를 직접 구성하는 테스트/fixture 경로에서는 여전히 그대로
-    // 동작한다(하위호환).
-    showIf: (r) => r['ADDITIONAL_DETAIL_01'] == null,
+    // 분리한다 -- 이 화면은 새 흐름에서 완전히 숨긴다.
+    //
+    // (ordering fix) VISIT_00_INTENT는 새 흐름의 진짜 첫 화면이고 항상
+    // 화면 1에서 답해진다 -- ADDITIONAL_DETAIL_01은 이제 phase-aware
+    // reordering(visibleQuestions 하단 참고) 때문에 Primary의 full
+    // module이 끝난 뒤에야 "다음 화면"으로 실제 제시되지만, 그와
+    // 무관하게 SECONDARY_01은 VISIT_00_INTENT 하나만 보고 화면 1
+    // 직후부터 영구히 숨어야 한다(그렇지 않으면 아직 답해지지 않은
+    // ADDITIONAL_DETAIL_01==null 상태를 틈타 legacy 질문이 먼저
+    // 노출될 수 있다). raw Responses를 직접 구성하는 legacy
+    // 테스트/fixture 경로(VISIT_00_INTENT를 전혀 건드리지 않는 경로)는
+    // 여전히 그대로 동작한다(하위호환).
+    showIf: (r) => r['VISIT_00_INTENT'] == null,
   },
   {
     id: 'SAFETY_01',
@@ -416,20 +423,19 @@ const SAFETY_QUESTIONS: Question[] = [
  *      safety-specific module을 열지 않는다(§19 HARD RULE). global safety는
  *      전체 환자 공통이므로 그대로 유지된다.
  *
- * 엔진 제약: `App.tsx`의 `nextQuestion()`은 `visibleQuestions(r)` 배열에서
- * 현재 질문의 다음 index로만 이동하는 순방향 전용 walk다(임의의 화면으로
- * "점프"하지 않는다) -- 그래서 ADDITIONAL_DETAIL_01은 반드시 모든 개별
- * full-module 질문 블록(SLEEP_QUESTIONS, GI_QUESTIONS, PAIN_QUESTIONS...)
- * 보다 배열상 앞에 위치해야, 나중에 고른 category의 module 블록이 실제로
- * "다음 화면"으로 순방향 도달 가능하다. 기존 SECONDARY_01도 정확히 이
- * 위치(SAFETY_QUESTIONS, 모든 module 블록보다 앞)에 있었으므로 동일한
- * 자리를 대체한다 -- Primary 자신의 full detail 화면(예: PAIN_01 Body map)
- * 도 이 질문보다 배열상 뒤에 있어, 화면 순서는 "방문목적 → 주호소 카테고리
- * → 추가 상세상담/참고 증상 선택 → (Primary/Additional 각자의 full
- * module, 고정된 module 순서대로) → ..." 가 된다. 두 module 모두 반드시
- * 등장한다는 기능적 요구는 이 순서와 무관하게 항상 만족된다(§20 Case
- * A-D 어디에도 화면 순서 자체를 규정하지 않는다) -- 자세한 내용은
- * docs/TABLET_V2_1_DEVICE_QA_AND_ROUTING_REPORT.md 참고.
+ * 엔진 제약과 화면 순서(ordering fix, PR #20 후속): `App.tsx`의
+ * `nextQuestion()`은 `visibleQuestions(r)` 배열에서 현재 질문의 다음
+ * index로만 이동하는 순방향 전용 walk다(임의의 화면으로 "점프"하지
+ * 않는다). 이 두 질문의 `showIf`는 "이 새 흐름에서 이 필드가 유효한가"만
+ * 결정하고(VISIT_00_INTENT가 답해진 화면 1 직후부터 계속 true다), 실제로
+ * *언제* 이 질문이 "다음 화면"으로 제시되는지는 `visibleQuestions`의
+ * phase-aware 재정렬(아래 `reorderForDetailPhases`)이 별도로 결정한다 --
+ * Primary의 full module 문항들을 이 두 질문보다 항상 앞에 배치하므로,
+ * 정적 배열 순서와 무관하게 실제 화면 순서는 "방문목적 → 주호소 카테고리
+ * → Primary 자신의 full module → 추가 상세상담 선택 → (선택했다면)
+ * Additional의 full module → 참고 증상 선택 → ..." 가 정확히 지켜진다.
+ * 즉 이 두 질문 자체는 이제 어느 module 블록보다 정적으로 앞에 있을
+ * 필요가 없다 -- 재정렬이 순서를 온전히 책임진다.
  */
 const hasDetailedConcern = (r: Responses, key: string): boolean => r['ADDITIONAL_DETAIL_01'] === key
 
@@ -461,10 +467,11 @@ const DETAIL_ROUTING_QUESTIONS: Question[] = [
     required: true,
     step: '상담 내용',
     layout: 'grid2',
-    // SECONDARY_01과 서로 다른 필드를 보고 숨는 상호배타 관계 -- 자기
-    // 자신의 답으로 스스로를 지우는 chicken-and-egg 문제 없음(위 파일
-    // 헤더 하위호환 설명과 동일 원칙).
-    showIf: (r) => r['SECONDARY_01'] == null,
+    // (ordering fix) VISIT_00_INTENT 하나만 보고 "새 흐름인가"를 판단한다
+    // -- SECONDARY_01의 답변 여부와는 무관하다(위 파일 헤더 설명 참고).
+    // 실제로 이 질문이 화면에 뜨는 시점은 phase-aware reordering이
+    // 결정한다(Primary의 full module 완료 후).
+    showIf: (r) => r['VISIT_00_INTENT'] != null,
     options: ADDITIONAL_DETAIL_OPTIONS,
     // 이미 Primary인 category, 남성의 "여성 건강"은 제외한다(§13).
     optionsIf: (r) => {
@@ -498,8 +505,11 @@ const DETAIL_ROUTING_QUESTIONS: Question[] = [
       return SECONDARY_OPTIONS.filter((o) => !exclude.has(o.value))
     },
     // ADDITIONAL_DETAIL_01이 답변된(=null이 아닌) 다음에만 노출된다 --
-    // ADDITIONAL_DETAIL_01이 SECONDARY_01==null일 때만 보이므로, 이 필드가
-    // 채워졌다는 것 자체가 이미 새 흐름(비-legacy) 경로에 있다는 신호다.
+    // ADDITIONAL_DETAIL_01은 VISIT_00_INTENT != null일 때만 보이므로, 이
+    // 필드가 채워졌다는 것 자체가 이미 새 흐름(비-legacy) 경로에 있다는
+    // 신호다. 실제로 이 질문이 화면에 뜨는 시점(Primary와, 선택했다면
+    // Additional의 full module이 모두 끝난 뒤)은 phase-aware reordering이
+    // 결정한다.
     showIf: (r) => r['ADDITIONAL_DETAIL_01'] != null,
   },
 ]
@@ -4174,8 +4184,121 @@ export const buildRoutingPayload = (r: Responses) => {
   }
 }
 
+/**
+ * Tablet UX v2.1 §(ordering fix): phase-aware dynamic traversal.
+ *
+ * The static `ALL_QUESTIONS` array declares each regional module's question
+ * block at one fixed position (Sleep before GI before ... before Weight).
+ * A purely static array cannot express "Primary's module always comes
+ * before Additional's module" when the *same* module block must sometimes
+ * play the Primary role and sometimes the Additional role -- its fixed
+ * position can only ever be "before" or "after" a given other module, not
+ * both depending on `r`. So `visibleQuestions` reorders its output based on
+ * current responses, on top of the existing static-array showIf filter
+ * (which alone still decides *whether* a question is eligible at all).
+ *
+ * PATIENT_QUESTIONS/VISIT_QUESTIONS/SAFETY_QUESTIONS (identity, visit
+ * intent+category, global safety, legacy SECONDARY_01) always come first,
+ * unchanged. Then: Primary's own full module block, then
+ * ADDITIONAL_DETAIL_01, then Additional's own full module block (if any),
+ * then REFERENCE_SYMPTOMS_01. Everything else (legacy SEC_* short screens,
+ * constitution/herbal reference, history, birth, free text) keeps its
+ * existing relative position after the module region -- unchanged.
+ *
+ * This only ever *reorders* an already-showIf-filtered list; it never adds
+ * or removes a question. `pruneStaleResponses` only reads the resulting
+ * list as a Set (order-independent), so stale-answer pruning is unaffected.
+ * For any patient with no Additional Detail concern (or the legacy
+ * SECONDARY_01 path, where ADDITIONAL_DETAIL_01 never becomes visible),
+ * this reduces to a strict no-op -- the module region is emitted in the
+ * exact same order the static array already had, which is why the entire
+ * pre-existing raw-`Responses` test suite (G2/G3/H1/H2/H3, hundreds of
+ * assertions) needed zero changes for this fix.
+ */
+const PRE_MODULE_PHASE_IDS = new Set([
+  ...PATIENT_QUESTIONS.map((q) => q.id),
+  ...VISIT_QUESTIONS.map((q) => q.id),
+  ...SAFETY_QUESTIONS.map((q) => q.id),
+])
+
+/**
+ * category key (matches `primaryConcernKey`/`ADDITIONAL_DETAIL_01` values)
+ * -> every question id belonging to that category's full detail flow.
+ * Built directly from the same arrays `CORE_QUESTIONS` splices in, so this
+ * can never drift out of sync with what's actually spliced into the array,
+ * and captures each region's routing sub-screens (e.g. LBP/HIP/NECK/
+ * SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ, all reached only via
+ * `pain`) plus the menopause-sleep block already nested inside
+ * `SLEEP_QUESTIONS`.
+ */
+/** Exported for test consumption (single source of truth, no drift risk --
+ * see reorderForDetailPhases below for how this is actually used). */
+export const MODULE_QUESTION_IDS: Record<string, string[]> = {
+  sleep: SLEEP_QUESTIONS.map((q) => q.id),
+  digestion: GI_QUESTIONS.map((q) => q.id),
+  bowel: BOWEL_QUESTIONS.map((q) => q.id),
+  urinary: URINARY_QUESTIONS.map((q) => q.id),
+  pain: [
+    ...PAIN_QUESTIONS,
+    ...LBP_QUESTIONS,
+    ...HIP_ROUTING_QUESTIONS,
+    ...HIP_QUESTIONS,
+    ...SHOULDER_QUESTIONS,
+    ...NECK_QUESTIONS,
+    ...KNEE_QUESTIONS,
+    ...ARM_HAND_ROUTING_QUESTIONS,
+    ...ELBOW_QUESTIONS,
+    ...WRIST_HAND_QUESTIONS,
+    ...ANKLE_FOOT_ROUTING_QUESTIONS,
+    ...ANKLE_FOOT_QUESTIONS,
+    ...TMJ_ROUTING_QUESTIONS,
+    ...TMJ_QUESTIONS,
+  ].map((q) => q.id),
+  fatigue: FATIGUE_QUESTIONS.map((q) => q.id),
+  stress: STRESS_QUESTIONS.map((q) => q.id),
+  women: WOMEN_QUESTIONS.map((q) => q.id),
+  pregnancy: PREGNANCY_QUESTIONS.map((q) => q.id),
+  postpartum: POSTPARTUM_QUESTIONS.map((q) => q.id),
+  weight: WEIGHT_QUESTIONS.map((q) => q.id),
+}
+
+function reorderForDetailPhases(r: Responses, list: Question[]): Question[] {
+  const primaryKey = primaryConcernKey(r)
+  const rawAdditional = r['ADDITIONAL_DETAIL_01']
+  // 'none'/malformed/same-as-primary(구조상 optionsIf가 막지만 fail-safe로
+  // 한 번 더 방어) 값은 additional module이 없는 것으로 취급한다.
+  const additionalKey =
+    typeof rawAdditional === 'string' && rawAdditional !== 'none' && rawAdditional !== primaryKey
+      ? rawAdditional
+      : null
+
+  const primaryModuleIds = new Set(primaryKey ? MODULE_QUESTION_IDS[primaryKey] ?? [] : [])
+  const additionalModuleIds = new Set(additionalKey ? MODULE_QUESTION_IDS[additionalKey] ?? [] : [])
+
+  const preList: Question[] = []
+  const primaryModuleItems: Question[] = []
+  const additionalDetailQ: Question[] = []
+  const additionalModuleItems: Question[] = []
+  const referenceQ: Question[] = []
+  const postList: Question[] = []
+
+  for (const q of list) {
+    if (q.id === 'ADDITIONAL_DETAIL_01') additionalDetailQ.push(q)
+    else if (q.id === 'REFERENCE_SYMPTOMS_01') referenceQ.push(q)
+    else if (primaryModuleIds.has(q.id)) primaryModuleItems.push(q)
+    else if (additionalModuleIds.has(q.id)) additionalModuleItems.push(q)
+    else if (PRE_MODULE_PHASE_IDS.has(q.id)) preList.push(q)
+    else postList.push(q)
+  }
+
+  return [...preList, ...primaryModuleItems, ...additionalDetailQ, ...additionalModuleItems, ...referenceQ, ...postList]
+}
+
 export const visibleQuestions = (r: Responses): Question[] =>
-  ALL_QUESTIONS.filter((q) => !q.showIf || q.showIf(r))
+  reorderForDetailPhases(
+    r,
+    ALL_QUESTIONS.filter((q) => !q.showIf || q.showIf(r)),
+  )
 
 /**
  * stale branch cleanup.

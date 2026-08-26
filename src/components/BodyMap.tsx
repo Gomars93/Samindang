@@ -126,6 +126,18 @@ export function getBodyMapZoneLabel(value: string): string {
  *     또렷하게), 그리고 하부 등/둔부 경계를 암시하는 후면 contour 곡선
  * 이 cue들은 순수 장식(fill/stroke만, 클릭 불가, pointer-events 없음)이며
  * zone 버튼의 %좌표계나 PAIN_01 enum과는 전혀 무관하다.
+ *
+ * Tablet UX v2.3 §7: 몸통/팔/다리를 각진 rounded-rect(캡슐) 5개로 그리던
+ * 이전 방식은 "덜 박스처럼 보이게" 하라는 요구를 충족하지 못했다 --
+ * 아무리 border-radius를 키워도 여전히 직사각형의 골격이 드러난다. 이제
+ * 몸통/팔/다리 각각을 (머리는 원 그대로 유지하되) 부드러운 cubic-bezier
+ * 곡선으로 이어진 <path>로 다시 그린다: 어깨가 자연스럽게 좁아지는
+ * 목선, 허리 쪽으로 살짝 좁아지는 몸통, 손목 쪽으로 가늘어지는 팔,
+ * 발목/발 쪽으로 둥글게 마무리되는 다리 -- 실루엣만으로도 사람처럼
+ * 읽히도록 하는 것이 목표다(해부학적 정밀도가 아니라 순수 형태 인지).
+ * 각 zone 버튼의 %좌표계(ZONES 테이블)는 이 시각적 변경과 완전히
+ * 독립적이며 전혀 건드리지 않는다 -- 실루엣은 순수 장식(aria-hidden,
+ * pointer-events 없음)이고, 실제 탭 가능한 zone 버튼은 별도 엘리먼트다.
  */
 function Silhouette({ view }: { view: 'front' | 'back' }) {
   return (
@@ -137,11 +149,32 @@ function Silhouette({ view }: { view: 'front' | 'back' }) {
       focusable="false"
     >
       <circle cx="30" cy="8" r="7" />
-      <rect x="14.4" y="15" width="31.2" height="44" rx="12" />
-      <rect x="2.4" y="20" width="8.4" height="36" rx="4" />
-      <rect x="49.2" y="20" width="8.4" height="36" rx="4" />
-      <rect x="15.6" y="60" width="13.2" height="38" rx="6" />
-      <rect x="31.2" y="60" width="13.2" height="38" rx="6" />
+      <path
+        className="bodyMap__silhouetteTorso"
+        d="M14.4 15 C12 15 13 25 15 32 C17 40 16 48 15 55 C15 58 17 59 14.4 59
+           L45.6 59 C43 59 41 58 42 55 C43 48 44 40 45 32 C47 25 48 15 45.6 15
+           C40 13.5 20 13.5 14.4 15 Z"
+      />
+      <path
+        className="bodyMap__silhouetteArm"
+        d="M10.8 20 C6 20 2.4 22 2.4 28 C2.4 36 4 44 6 50 C7 54 10 56 13 56
+           C15 56 16 52 15 48 C13 40 13 30 14 24 C14 21 12.5 20 10.8 20 Z"
+      />
+      <path
+        className="bodyMap__silhouetteArm"
+        d="M49.2 20 C54 20 57.6 22 57.6 28 C57.6 36 56 44 54 50 C53 54 50 56 47 56
+           C45 56 44 52 45 48 C47 40 47 30 46 24 C46 21 47.5 20 49.2 20 Z"
+      />
+      <path
+        className="bodyMap__silhouetteLeg"
+        d="M22 60 C18 60 17 62 18 66 C19 74 19 84 18 92 C17.5 96 18 98 22 98
+           L27 98 C29.5 98 30 96 29.5 92 C29 84 29 74 29 66 C29 62 28 60 24 60 Z"
+      />
+      <path
+        className="bodyMap__silhouetteLeg"
+        d="M38 60 C34 60 33 62 33 66 C33 74 33 84 32.5 92 C32 96 32.5 98 35 98
+           L40 98 C44 98 44.5 96 44 92 C43 84 43 74 44 66 C45 62 44 60 40 60 Z"
+      />
       {view === 'front' ? (
         <g className="bodyMap__frontCue">
           <circle cx="26" cy="6.5" r="1.7" />

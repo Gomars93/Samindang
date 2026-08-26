@@ -393,4 +393,39 @@ function cssBlock(css, selector) {
   assert('styles.css CRITICAL: no opacity-gradient-over-content technique remains anywhere for the scroll hint (linear-gradient tied to scroll hint removed)', !/shell__scrollHint[\s\S]{0,10}\{[^}]*linear-gradient/.test(CSS))
 }
 
+{
+  // Tablet UX v2.3 §7: the silhouette's torso/arms/legs must be smooth
+  // <path> curves, not the old rect/capsule shapes (rounded rects still
+  // read as boxy no matter how large border-radius gets). Head stays a
+  // <circle> (already smooth, never the complaint). The zone buttons'
+  // %-coordinate system (ZONES table) is a separate, unrelated concern --
+  // this only checks the purely decorative silhouette drawing.
+  const bodyMapSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
+  const silhouetteMatch = bodyMapSrc.match(/function Silhouette[\s\S]*?\n}\n/)
+  assert('BodyMap.tsx: Silhouette() function exists', Boolean(silhouetteMatch))
+  const silhouetteBody = silhouetteMatch[0]
+  assert('BodyMap.tsx: Silhouette() keeps the head as a <circle> (already smooth)', /<circle cx="30" cy="8" r="7"/.test(silhouetteBody))
+  assert('BodyMap.tsx CRITICAL: Silhouette() no longer renders any <rect> (torso/arms/legs are no longer box-shaped)', !/<rect/.test(silhouetteBody))
+  assert('BodyMap.tsx: Silhouette() draws the torso as a smooth <path> (bodyMap__silhouetteTorso)', /bodyMap__silhouetteTorso/.test(silhouetteBody))
+  assert('BodyMap.tsx: Silhouette() draws both arms as smooth <path> curves (bodyMap__silhouetteArm, 2 occurrences)', (silhouetteBody.match(/bodyMap__silhouetteArm/g) || []).length === 2)
+  assert('BodyMap.tsx: Silhouette() draws both legs as smooth <path> curves (bodyMap__silhouetteLeg, 2 occurrences)', (silhouetteBody.match(/bodyMap__silhouetteLeg/g) || []).length === 2)
+  // Every new torso/arm/leg path must use cubic-bezier curve commands (C),
+  // not just straight lines -- otherwise it would just be a
+  // differently-drawn rectangle/polygon, not an actually smooth silhouette.
+  // Scoped to only the 5 silhouette shape paths (className
+  // bodyMap__silhouetteTorso/Arm/Leg) -- deliberately excludes the front/
+  // back decorative cue <path> elements (which legitimately use Q curves,
+  // not C, and are a separate concern already covered by earlier tests).
+  const shapePathMatches = [...silhouetteBody.matchAll(/className="bodyMap__silhouette(?:Torso|Arm|Leg)"\s*\n?\s*d="([^"]+)"/g)].map((m) => m[1])
+  assert('BodyMap.tsx: exactly 5 silhouette shape paths defined (torso + 2 arms + 2 legs)', shapePathMatches.length === 5)
+  assert('BodyMap.tsx CRITICAL: every silhouette shape path uses cubic-bezier curves (C), not straight-line-only polygons', shapePathMatches.every((d) => /C/.test(d)))
+
+  // The silhouette shapes must still inherit their fill from the shared
+  // .bodyMap__silhouette rule (SVG fill is inherited by path/circle
+  // children automatically) -- no per-shape fill override was introduced
+  // that would need new CSS.
+  const silhouetteCss = cssBlock(CSS, '.bodyMap__silhouette')
+  assert('styles.css: .bodyMap__silhouette still declares a fill (inherited by the new path shapes)', /fill:/.test(silhouetteCss))
+}
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

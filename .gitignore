@@ -98,3 +98,6 @@ tests/.multi-choice-bundle.cjs
 
 # esbuild bundle used by tests/preview-build.spec.mjs (regenerated, not source)
 tests/.preview-server-client-bundle.mjs
+
+# Python bytecode cache from running "tablet core"'s pytest suite (regenerated, not source)
+__pycache__/

@@ -3082,4 +3082,194 @@ function hipBaseResponses() {
   assert('S6: malformed PAIN_01 does not activate TMJ', payload.safety_flags.tmj == null)
 }
 
+/* =========================================================================
+ * T. Tablet UX v2.1 -- Primary / Additional Detailed Concern / Reference
+ *    Symptoms structure (§11-§32).
+ * ========================================================================= */
+
+// T0: real fresh-flow ordering -- a genuinely new patient sees
+// ADDITIONAL_DETAIL_01 (not the legacy SECONDARY_01), and once it's
+// answered SECONDARY_01 never becomes visible again (mirrors the
+// VISIT_00_INTENT/VISIT_01 mutual-exclusion pattern, but for this pair).
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care' })
+  // Both start "visible" simultaneously (same transitional state as
+  // VISIT_00_INTENT/VISIT_01, see that pair's header comment) -- what
+  // actually determines which one a real user sees first is array order,
+  // since App.tsx's nextQuestion() walks visibleQuestions() strictly
+  // forward. ADDITIONAL_DETAIL_01 must come first so a fresh patient
+  // reaches it (and answers it) before ever reaching SECONDARY_01.
+  const orderedIds = [...visibleQuestions(r)].map((q) => q.id)
+  assert('T0: fresh flow reaches ADDITIONAL_DETAIL_01 before legacy SECONDARY_01 in walk order', orderedIds.indexOf('ADDITIONAL_DETAIL_01') < orderedIds.indexOf('SECONDARY_01'))
+  r = set(r, { ADDITIONAL_DETAIL_01: 'none' })
+  let v = visibleIds(r)
+  assert('T0: after answering ADDITIONAL_DETAIL_01, SECONDARY_01 stays hidden', !v.has('SECONDARY_01'))
+  assert('T0: after answering ADDITIONAL_DETAIL_01, REFERENCE_SYMPTOMS_01 becomes visible', v.has('REFERENCE_SYMPTOMS_01'))
+}
+{
+  // Raw-fixture/legacy compatibility: setting SECONDARY_01 directly (old
+  // style, never touching ADDITIONAL_DETAIL_01) keeps it visible/valid and
+  // ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01 stay hidden -- exact mirror
+  // of the VISIT_00_INTENT/VISIT_01 compatibility guarantee.
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion', SECONDARY_01: ['sleep'] })
+  const v = visibleIds(r)
+  assert('T0: legacy fixture setting SECONDARY_01 directly keeps it visible', v.has('SECONDARY_01'))
+  assert('T0: legacy fixture path hides ADDITIONAL_DETAIL_01', !v.has('ADDITIONAL_DETAIL_01'))
+  assert('T0: legacy fixture path hides REFERENCE_SYMPTOMS_01', !v.has('REFERENCE_SYMPTOMS_01'))
+  assert('T0: legacy SEC_SLEEP_01 short screen still works exactly as before', v.has('SEC_SLEEP_01'))
+}
+
+function withPainCare(patch) {
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care', ...patch })
+  return r
+}
+function withSymptomConsult(mainCategory, patch) {
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: mainCategory, ...patch })
+  return r
+}
+
+// T-CaseA: Primary=pain, Reference=sleep -> pain full O, sleep full X,
+// SEC_SLEEP_01 X, MENOPAUSE_SLEEP(MS_*) X.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['sleep'] })
+  const v = visibleIds(r)
+  assert('T-CaseA: pain full module visible (LBP_01 reachable)', v.has('LBP_01'))
+  assert('T-CaseA: sleep full module NOT visible', !v.has('SLEEP_01'))
+  assert('T-CaseA: legacy SEC_SLEEP_01 short screen NOT visible', !v.has('SEC_SLEEP_01'))
+  assert('T-CaseA: MENOPAUSE_SLEEP (MS_GATE_01) NOT visible', !v.has('MS_GATE_01'))
+  const routing = buildRoutingPayload(r)
+  assert('T-CaseA: routing.reference_symptoms includes sleep', (routing.reference_symptoms ?? []).includes('sleep'))
+  assert('T-CaseA: routing.additional_module is null', routing.additional_module === null)
+}
+
+// T-CaseB: Primary=pain, Additional=sleep -> pain full O, sleep full O,
+// female + menopause gate reachable.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' })
+  const v = visibleIds(r)
+  assert('T-CaseB: pain full module visible (LBP_01 reachable)', v.has('LBP_01'))
+  assert('T-CaseB: sleep full module visible (SLEEP_01 reachable)', v.has('SLEEP_01'))
+  assert('T-CaseB: female + additional=sleep reaches the menopause sleep gate (MS_GATE_01)', v.has('MS_GATE_01'))
+  const routing = buildRoutingPayload(r)
+  assert('T-CaseB: routing.additional_module is Sleep', routing.additional_module === 'Sleep')
+  assert('T-CaseB: routing.additional_detail_concern is sleep', routing.additional_detail_concern === 'sleep')
+  assert('T-CaseB: routing.primary_module_detail is LBP (primary is still pain, unaffected)', routing.primary_module_detail === 'LBP')
+}
+
+// T-CaseC: Primary=sleep, Reference=pain -> sleep full O, Pain full X.
+{
+  let r = withSymptomConsult('sleep', { ADDITIONAL_DETAIL_01: 'none' })
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['pain'] })
+  const v = visibleIds(r)
+  assert('T-CaseC: sleep full module visible', v.has('SLEEP_01'))
+  assert('T-CaseC: pain full module (PAIN_01) NOT visible', !v.has('PAIN_01'))
+  const routing = buildRoutingPayload(r)
+  assert('T-CaseC: routing.reference_symptoms includes pain', (routing.reference_symptoms ?? []).includes('pain'))
+  assert('T-CaseC: routing.additional_module is null', routing.additional_module === null)
+}
+
+// T-CaseD: Primary=sleep, Additional=pain -> sleep full O, Pain Body Map +
+// existing regional safety O (never mislabels primary_module_detail).
+{
+  let r = withSymptomConsult('sleep', { ADDITIONAL_DETAIL_01: 'pain' })
+  r = set(r, { PAIN_01: 'low_back_pelvis' })
+  const v = visibleIds(r)
+  assert('T-CaseD: sleep full module visible', v.has('SLEEP_01'))
+  assert('T-CaseD: pain Body Map (PAIN_01) reachable', v.has('PAIN_01'))
+  assert('T-CaseD: LBP regional safety module reachable', v.has('LBP_01'))
+  const payload = buildResponsePayload(r)
+  assert('T-CaseD: safety_flags.lbp is computed', payload.safety_flags.lbp !== null)
+  const routing = buildRoutingPayload(r)
+  assert('T-CaseD CRITICAL: primary_module_detail stays null (primary is sleep, not pain)', routing.primary_module_detail === null)
+  assert('T-CaseD CRITICAL: additional_module_detail is LBP (additional is pain, correctly labeled there)', routing.additional_module_detail === 'LBP')
+  assert('T-CaseD: routing.primary_module stays Sleep', routing.primary_module === 'Sleep')
+}
+
+// T1: duplicate-category exclusion -- Additional list excludes Primary's
+// own category; Reference list excludes both Primary and Additional.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis' })
+  const additionalQ = ALL_QUESTIONS.find((q) => q.id === 'ADDITIONAL_DETAIL_01')
+  const additionalOpts = additionalQ.optionsIf(r).map((o) => o.value)
+  assert('T1: Additional Detail options exclude the primary category (pain)', !additionalOpts.includes('pain'))
+
+  r = set(r, { ADDITIONAL_DETAIL_01: 'sleep' })
+  const referenceQ = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
+  const referenceOpts = referenceQ.optionsIf(r).map((o) => o.value)
+  assert('T1: Reference Symptoms options exclude the primary category (pain)', !referenceOpts.includes('pain'))
+  assert('T1: Reference Symptoms options exclude the already-chosen additional category (sleep)', !referenceOpts.includes('sleep'))
+}
+
+// T2: 'none' exclusivity for REFERENCE_SYMPTOMS_01 (multi_choice,
+// exclusive:'none' -- reuses the same generic mechanism as SECONDARY_01).
+{
+  const referenceQ = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
+  assert('T2: REFERENCE_SYMPTOMS_01 is exclusive:none', referenceQ.exclusive === 'none')
+  assert('T2: ADDITIONAL_DETAIL_01 is single_choice (max 1 implicit)', ALL_QUESTIONS.find((q) => q.id === 'ADDITIONAL_DETAIL_01').input === 'single_choice')
+}
+
+// T3: male patients never see the women option on either new question.
+{
+  let r = withPainCare({ ID_03: 'male', PAIN_01: 'low_back_pelvis' })
+  const additionalQ = ALL_QUESTIONS.find((q) => q.id === 'ADDITIONAL_DETAIL_01')
+  assert('T3: male excludes women from Additional Detail options', !additionalQ.optionsIf(r).map((o) => o.value).includes('women'))
+  r = set(r, { ADDITIONAL_DETAIL_01: 'sleep' })
+  const referenceQ = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
+  assert('T3: male excludes women from Reference Symptoms options', !referenceQ.optionsIf(r).map((o) => o.value).includes('women'))
+}
+
+// T4: back-navigation stale-answer pruning -- changing Additional detail
+// away removes the now-hidden module's answers; changing Reference
+// Symptoms never touches any detailed-module visibility.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' })
+  r = set(r, { SLEEP_01: ['sleep_onset'] })
+  assert('T4: SLEEP_01 answered while additional=sleep', Array.isArray(r['SLEEP_01']))
+  r = set(r, { ADDITIONAL_DETAIL_01: 'none' })
+  assert('T4: SLEEP_01 pruned to null after switching Additional away from sleep', r['SLEEP_01'] === null)
+  assert('T4: SLEEP_01 no longer visible', !visibleIds(r).has('SLEEP_01'))
+}
+{
+  // Reference Symptoms changes never affect any detailed-module visibility.
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  const beforeVisible = visibleIds(r)
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['sleep', 'digestion'] })
+  const afterVisible = visibleIds(r)
+  assert('T4: adding Reference Symptoms does not newly expose SLEEP_01', !afterVisible.has('SLEEP_01'))
+  assert('T4: adding Reference Symptoms does not newly expose GI_01', !afterVisible.has('GI_01'))
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['digestion'] })
+  assert('T4: changing Reference Symptoms selection never exposes any new detailed module', !visibleIds(r).has('GI_01') && !visibleIds(r).has('SLEEP_01'))
+  assert('T4: LBP module visibility is unaffected by Reference Symptoms changes throughout', beforeVisible.has('LBP_01') === visibleIds(r).has('LBP_01'))
+}
+
+// T5: malformed-input fail-safe for the new fields.
+{
+  let r = withPainCare({ ADDITIONAL_DETAIL_01: 'not_a_real_category' })
+  assert('T5: malformed ADDITIONAL_DETAIL_01 does not crash visibleQuestions', Array.isArray([...visibleQuestions(r)]))
+  const payload = (() => { try { return buildResponsePayload(r) } catch { return null } })()
+  assert('T5: malformed ADDITIONAL_DETAIL_01 does not crash buildResponsePayload', payload !== null)
+  assert('T5: malformed ADDITIONAL_DETAIL_01 does not activate any module via hasDetailedConcern', !visibleIds(r).has('SLEEP_01') && !visibleIds(r).has('GI_01') && !visibleIds(r).has('LBP_01'))
+  const routing = buildRoutingPayload(r)
+  assert('T5: malformed ADDITIONAL_DETAIL_01 resolves additional_module to null (fails closed)', routing.additional_module === null)
+}
+{
+  let r = withPainCare({ ADDITIONAL_DETAIL_01: 'none', REFERENCE_SYMPTOMS_01: ['not_a_real_value'] })
+  const payload = (() => { try { return buildResponsePayload(r) } catch { return null } })()
+  assert('T5: malformed REFERENCE_SYMPTOMS_01 value does not crash buildResponsePayload', payload !== null)
+}
+
+// T6: visit-type agnostic -- no visit-type/initial-vs-revisit concept
+// exists anywhere in the question set that could gate the new routing
+// (Tablet UX v2.1 §22: initial AND repeat-initial visits both use this
+// same flow; there is no such branching to accidentally skip).
+{
+  const suspicious = ALL_QUESTIONS.filter((q) => /visit_type|revisit|재진|초진/i.test(q.id) || /visit_type|revisit|재진|초진/i.test(q.variable))
+  assert('T6: no visit-type/initial-vs-revisit field exists anywhere in the question set', suspicious.length === 0)
+}
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

@@ -16,6 +16,9 @@
 
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { BodyMap, BODY_MAP_ZONE_VALUES } from './.body-map-bundle.cjs'
 import { ALL_QUESTIONS } from './.spec-bundle.mjs'
 
@@ -103,6 +106,112 @@ assert("'other' is not a body map zone (fallback-list-only by design)", !BODY_MA
     "multi-zone value (knee) presses exactly its own zone count, never a different value's zone",
     pressedCount === kneeZoneTotal,
   )
+}
+
+/* =========================================================================
+ * DOM/CSS structure regression (Tablet UX v2.1 §7/§29).
+ *
+ * Root cause of the real-device rendering bug: zone buttons were rendered
+ * as SIBLINGS of .bodyMap__figure inside .bodyMap__figureWrap, but only
+ * .bodyMap__figure had `position: relative` -- .bodyMap__figureWrap did
+ * not. A sibling with `position: absolute` resolves its %-based top/left/
+ * width/height against the nearest *positioned* ancestor, so with no
+ * positioned parent immediately available the browser kept walking up the
+ * DOM past .bodyMap__figureWrap looking for one -- on the real device this
+ * landed on a much larger ancestor, producing a giant head oval at the top
+ * of the screen and giant arm/leg rectangles on the screen edges.
+ *
+ * Static source-code guards (matching this repo's existing pattern of
+ * avoiding a jsdom dependency, see tests/patient-ux.spec.mjs's header
+ * comment) plus one live-render structural check.
+ * ========================================================================= */
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const BODY_MAP_SRC = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
+const CSS = readFileSync(join(__dirname, '..', 'src', 'styles.css'), 'utf8')
+
+function cssBlock(css, selector) {
+  const idx = css.indexOf(`${selector} {`)
+  if (idx === -1) return null
+  const end = css.indexOf('}', idx)
+  return css.slice(idx, end + 1)
+}
+
+{
+  // 1. Zone buttons are rendered as descendants of .bodyMap__figure, not as
+  // siblings after it closes -- the exact regression that caused the bug.
+  // Guard: no closing </div> appears between the figure container opening
+  // and the zones.map(...) call that renders the zone buttons.
+  const figureOpenIdx = BODY_MAP_SRC.indexOf('<div className="bodyMap__figure">')
+  assert('BodyMap.tsx: .bodyMap__figure container exists', figureOpenIdx !== -1)
+  const zonesMapIdx = BODY_MAP_SRC.indexOf('{zones.map(', figureOpenIdx)
+  assert('BodyMap.tsx: zones.map(...) appears after the figure container opens', zonesMapIdx > figureOpenIdx)
+  const between = BODY_MAP_SRC.slice(figureOpenIdx, zonesMapIdx)
+  assert(
+    'BodyMap.tsx: no closing </div> between .bodyMap__figure opening and zones.map(...) (zone buttons are its descendants, not siblings -- regression guard for the device DOM bug)',
+    !between.includes('</div>'),
+  )
+}
+{
+  // 2. .bodyMap__figure is the (only) positioned coordinate container.
+  const figureCss = cssBlock(CSS, '.bodyMap__figure')
+  assert('styles.css: .bodyMap__figure rule exists', Boolean(figureCss))
+  assert('styles.css: .bodyMap__figure is position: relative', /position:\s*relative/.test(figureCss))
+
+  // .bodyMap__figureWrap (the old, buggy positioned-ancestor candidate)
+  // must NOT declare its own position -- it must stay a plain flex item so
+  // .bodyMap__figure is unambiguously the nearest positioned ancestor for
+  // any absolutely-positioned descendant.
+  const wrapCss = cssBlock(CSS, '.bodyMap__figureWrap')
+  assert('styles.css: .bodyMap__figureWrap rule exists', Boolean(wrapCss))
+  assert('styles.css: .bodyMap__figureWrap does NOT declare position (stays a plain flex item, not a second positioned ancestor)', !/position:/.test(wrapCss))
+}
+{
+  // 3. .bodyMap__zone zones are position: absolute (resolved against
+  // .bodyMap__figure per #2, never against the viewport/page).
+  const zoneCss = cssBlock(CSS, '.bodyMap__zone')
+  assert('styles.css: .bodyMap__zone rule exists', Boolean(zoneCss))
+  assert('styles.css: .bodyMap__zone is position: absolute', /position:\s*absolute/.test(zoneCss))
+}
+{
+  // 4. Zone buttons are not a direct child of the outer .bodyMap wrapper --
+  // BodyMap's top-level return must not itself contain a zones.map call;
+  // it only exists inside the Figure() sub-component, two levels deeper
+  // (.bodyMap > .bodyMap__figures > .bodyMap__figureWrap > .bodyMap__figure > zone).
+  const bodyMapReturnIdx = BODY_MAP_SRC.indexOf('export function BodyMap(')
+  const figureFnIdx = BODY_MAP_SRC.indexOf('function Figure(')
+  assert('BodyMap.tsx: Figure() sub-component is defined before the top-level BodyMap() export', figureFnIdx !== -1 && figureFnIdx < bodyMapReturnIdx)
+  const topLevelSrc = BODY_MAP_SRC.slice(bodyMapReturnIdx)
+  assert('BodyMap.tsx: the top-level BodyMap() component does not itself map over zones (zone buttons only ever render inside Figure())', !topLevelSrc.includes('zones.map('))
+}
+{
+  // 5. A size constraint bounds body-map height (via width, given the
+  // aspect-ratio-locked figure box) so it can never grow unbounded and push
+  // the CTA far off-screen -- and stays within the page's own content
+  // column width (Tablet UX v2.1 §8).
+  const figuresCss = cssBlock(CSS, '.bodyMap__figures')
+  assert('styles.css: .bodyMap__figures rule exists', Boolean(figuresCss))
+  const maxWidthMatch = figuresCss.match(/max-width:\s*(\d+)px/)
+  assert('styles.css: .bodyMap__figures declares a max-width (bounds body-map size)', Boolean(maxWidthMatch))
+  const contentMaxMatch = CSS.match(/--content-max:\s*(\d+)px/)
+  assert('styles.css: --content-max token exists', Boolean(contentMaxMatch))
+  assert(
+    'styles.css: .bodyMap__figures max-width stays within the page content column (--content-max)',
+    Number(maxWidthMatch[1]) <= Number(contentMaxMatch[1]),
+  )
+}
+{
+  // 6. Live-render structural check: every zone button's markup appears
+  // between one .bodyMap__figure open tag and its own close in the
+  // rendered HTML (i.e. genuinely nested, not just adjacent in source).
+  const html = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: null, onSelect: () => {} }),
+  )
+  const figureChunks = html.split('class="bodyMap__figure"').slice(1)
+  assert('rendered HTML: at least one .bodyMap__figure element present (front + back)', figureChunks.length === 2)
+  for (const chunk of figureChunks) {
+    assert('rendered HTML: each .bodyMap__figure element is immediately followed by zone button markup (svg silhouette + <button class="bodyMap__zone...)', /<button[^>]*class="bodyMap__zone/.test(chunk.slice(0, 4000)))
+  }
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

@@ -119,6 +119,9 @@ const VIEWPORTS = [
   { label: '834x1194 (portrait)', w: 834, h: 1194 },
   { label: '1200x1920 (large portrait)', w: 1200, h: 1920 },
   { label: '1280x800 (landscape)', w: 1280, h: 800 },
+  // Tablet UX v2.1 §28: a second, larger 11-inch-class tablet landscape
+  // size, matching the real device the field QA screenshots came from.
+  { label: '1600x900 (large landscape)', w: 1600, h: 900 },
 ]
 
 /* =========================================================================
@@ -159,7 +162,12 @@ for (const vp of VIEWPORTS) {
 // multi-select option lists that only overflow once available height drops
 // below ~869px -- they fit fine at the 800x1280 reference viewport.
 const PORTRAIT_ALLOWLISTS = {
-  '834x1194 (portrait)': new Set(['BIRTH_03', 'HISTORY_01', 'SECONDARY_01', 'LBP_11', 'POSTPARTUM_02', 'SEC_PAIN_01']),
+  '834x1194 (portrait)': new Set([
+    'BIRTH_03', 'HISTORY_01', 'SECONDARY_01', 'LBP_11', 'POSTPARTUM_02', 'SEC_PAIN_01',
+    // Tablet UX v2.1 §11-13: ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01
+    // replace SECONDARY_01's old mixed role with two longer grid2 screens.
+    'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01',
+  ]),
   '1200x1920 (large portrait)': new Set(), // spacious enough that nothing needs inner scroll
 }
 

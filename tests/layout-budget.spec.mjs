@@ -175,7 +175,10 @@ function estimateScreenHeight(q) {
 // .shell__main's overflow-y: auto, so no content is unreachable.
 // LBP_11(염증성 선별, 9지선다 + helper 없음이지만 다지선다라 길다)도 같은 이유로 허용 —
 // LBP_INTEGRATION_PLAN_DRAFT.md §12.4.
-const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'HISTORY_01', 'BIRTH_03', 'LBP_11'])
+// ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01 (Tablet UX v2.1 §11-13) replace
+// SECONDARY_01's old mixed role with two longer, clearer grid2 screens --
+// same reasoning as SECONDARY_01 was already allowlisted for.
+const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01', 'HISTORY_01', 'BIRTH_03', 'LBP_11'])
 
 const estimates = ALL_QUESTIONS.map((q) => ({
   id: q.id,

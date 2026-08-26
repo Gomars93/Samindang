@@ -92,3 +92,6 @@ tests/.patient-error-boundary-bundle.cjs
 tests/.staff-check-screen-bundle.cjs
 tests/.single-choice-bundle.cjs
 tests/.multi-choice-bundle.cjs
+
+# esbuild bundle used by tests/preview-build.spec.mjs (regenerated, not source)
+tests/.preview-server-client-bundle.mjs

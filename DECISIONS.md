@@ -94,3 +94,63 @@ ChatGPT를 독립 검수자로 연결하는 과정에서(PR #1 검수 중) 저�
   "Patient-data/PHI impact?" 항목) 이 부분을 매번 확인해야 한다.
 - 향후 실제 환자 데이터, 진짜 API 키, 클리닉 네트워크 정보 등 민감한 자료가
   이 저장소에 필요해지는 시점이 오면, 이 결정을 재검토한다.
+
+## 2026-08-26 — Questionnaire Depth Mode 도입 + Herbal Add-on을 same-session-only로 제한
+
+### Context
+Tablet UX v2.2 작업 중, 통증 치료(`pain_care`) 목적 환자에게 한약/체질
+systemic block(`HERB_APPETITE` 등, `CONSTITUTION_BASIC_QUESTIONS`/
+`HERBAL_REFERENCE_QUESTIONS`)이 `showIf` 없이 무조건 노출되던 버그를 발견
+(실기기 스크린샷에서 확인). 이를 고치려면 "이 환자에게 지금 systemic block을
+보여줄지"를 결정하는 새로운 개념이 필요했고, 동시에 "진료 중 한약으로
+전환된 환자는 처음부터 다시 묻지 않는다"는 Herbal Add-on 요구사항도 함께
+설계해야 했다.
+
+### Decision
+1. `src/spec/coreSpec.ts`에 `questionnaireMode(r): 'pain_fast' | 'expanded'
+   | 'herbal_addon'`을 도입한다. `pain_fast`는 모든 비-한약 intent의 기본값,
+   `expanded`는 `VISIT_00_INTENT === 'herbal'`(purpose 무관), `herbal_addon`은
+   새 non-question 내부 플래그(`HERBAL_ADDON_FIELD`)로만 켜진다.
+2. Herbal Add-on은 **환자가 아직 제출하지 않은, 같은 브라우저 세션 안에서만**
+   동작하게 제한한다 — 제출이 확정되는 순간(`submitState` success/
+   unconfigured) 발동하는 기존 프라이버시 wipe 이전에만 트리거 가능
+   (`phase === 'question'`일 때만 `StaffHerbalAddonHold` 컨트롤 렌더).
+   제출 후 원장이 DoctorView에서 검토하고 나서 결정하는 cross-device 재개는
+   이번에 구현하지 않는다.
+
+### Reason
+1은 "어떤 questionnaire block을 언제 보여줄지"라는 순수 workflow/routing
+문제이지 임상 판단이 아니므로, `showIf` 확장만으로 FROZEN
+`*Logic.ts`/`*Adapter.ts`를 전혀 건드리지 않고 해결 가능했다(실제로
+`git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`가
+비어 있음을 확인).
+
+2는 저장소 구조를 직접 조사한 결과(`App.tsx`의 `responses`는 React 메모리에만
+존재하고 제출 확정 즉시 wipe됨, 로컬 handoff 서버는 write-once이고 tablet이
+특정 환자의 진행 중 응답을 다시 읽어올 GET/토큰 메커니즘이 전혀 없음)를 근거로
+내린 판단이다. 사용자가 명시적으로 금지한 "insecure query parameter, PHI
+포함 URL, guessable token"을 만들지 않고 안전하게 "이어서 묻기"를 구현할 수
+있는 유일한 지점이 "아직 wipe되지 않은, 같은 세션" 뿐이었다.
+
+### Alternatives Considered
+- 완료 화면(`PatientCompleteScreen`)에 addon 버튼을 두는 방안 — 기각.
+  `phase === 'done'`이 되는 즉시 자동 제출 effect가 실행되고, 제출이
+  확정되는 순간 responses가 wipe되므로 완료 화면에 도달한 시점에는 이미
+  대부분의 경우 메모리에 응답이 남아있지 않다(네트워크 타이밍에 좌우되는
+  레이스 컨디션이라 신뢰할 수 없음).
+- 서버에 새 "continuation token" 엔드포인트를 만들어 cross-device resume을
+  지원 — 기각(이번 스코프 아님). 새 보안 경계를 만드는 결정이라 사용자
+  승인 없이 진행할 수 없다고 판단해 OPERATIONAL INTEGRATION REQUIRED로
+  문서화만 하고 구현하지 않았다(`docs/TABLET_V2_2_PAIN_FAST_TRACK_AND_HERBAL_ADDON.md`
+  §6 참고).
+
+### Consequences
+- (+) 기존 privacy wipe/제출 로직을 한 줄도 바꾸지 않고 Herbal Add-on을
+  구현할 수 있었다 — 회귀 위험이 최소화됨.
+- (+) `questionnaireMode`는 순수 함수이고 FROZEN 파일과 완전히 분리되어
+  있어, 향후 clinical logic 변경과 독립적으로 이 routing 로직을 계속
+  다듬을 수 있다.
+- (−) 원장이 이미 제출된 문진을 DoctorView에서 검토한 **뒤에** 한약
+  추가문진을 시작하고 싶다면(진짜로 "진료 중" 결정하는 흔한 임상 워크플로일
+  수 있음) 이번 구현으로는 지원되지 않는다 — 필요해지면 별도 세션/토큰
+  인프라 설계와 그에 따른 보안 검토가 먼저 필요하다.

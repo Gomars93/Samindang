@@ -214,4 +214,59 @@ function cssBlock(css, selector) {
   }
 }
 
+// ---------- Tablet UX v2.2 §2/§3: front/back cue + selected-region label ----------
+
+{
+  // 7. Selected-region Korean label: shows a prompt when nothing is
+  // selected yet, and the exact zone label once a value is chosen -- text
+  // updates, not just the zone's own checkmark/highlight.
+  const htmlNoSelection = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: null, onSelect: () => {} }),
+  )
+  assert('rendered HTML: no selection -> prompts "부위를 선택해주세요"', htmlNoSelection.includes('부위를 선택해주세요'))
+  assert('rendered HTML: no selection -> does not claim a region is selected', !htmlNoSelection.includes('선택한 부위'))
+
+  const htmlSelected = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: 'low_back_pelvis', onSelect: () => {} }),
+  )
+  assert('rendered HTML: low_back_pelvis selected -> shows "선택한 부위: 허리·골반"', htmlSelected.includes('선택한 부위') && htmlSelected.includes('허리·골반'))
+
+  const htmlOther = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: 'chest_rib', onSelect: () => {} }),
+  )
+  assert('rendered HTML: chest_rib selected -> label updates to 가슴·갈비뼈 주변', htmlOther.includes('가슴·갈비뼈 주변'))
+}
+
+{
+  // 8. Front/back visual cue: front and back silhouettes render distinct
+  // decorative markup (bodyMap__frontCue vs bodyMap__backCue) so the two
+  // views are distinguishable without reading the "앞면"/"뒷면" text label
+  // (Tablet UX v2.2 §2). Purely decorative -- no PAIN_01 value semantics.
+  const html = renderToStaticMarkup(
+    React.createElement(BodyMap, { options: PAIN_01.options, value: null, onSelect: () => {} }),
+  )
+  assert('rendered HTML: front silhouette has a distinct front cue group', html.includes('bodyMap__frontCue'))
+  assert('rendered HTML: back silhouette has a distinct back cue group', html.includes('bodyMap__backCue'))
+  assert('rendered HTML: "앞면"/"뒷면" text labels are still present (cue is additive, not a replacement)', html.includes('앞면') && html.includes('뒷면'))
+}
+
+{
+  // 9. styles.css: scroll hint no longer risks covering the last option --
+  // .shell__main's bottom padding must be >= the scroll hint pill's own
+  // height (Tablet UX v2.2 §11 fix; see styles.css comment for the math).
+  const mainCss = cssBlock(CSS, '.shell__main')
+  assert('styles.css: .shell__main rule exists', Boolean(mainCss))
+  const paddingMatch = mainCss.match(/padding:\s*[\d.]+px\s+[^\s]+\s+(\d+)px/)
+  assert('styles.css: .shell__main declares a 3-value padding shorthand ending in a px bottom value', Boolean(paddingMatch))
+  const hintCss = cssBlock(CSS, '.shell__scrollHint')
+  assert('styles.css: .shell__scrollHint rule exists', Boolean(hintCss))
+  const hintHeightMatch = hintCss.match(/height:\s*(\d+)px/)
+  assert('styles.css: .shell__scrollHint declares a height', Boolean(hintHeightMatch))
+  assert(
+    'styles.css: .shell__main bottom padding >= scroll hint height (last option can never sit behind the pill)',
+    Number(paddingMatch[1]) >= Number(hintHeightMatch[1]),
+  )
+  assert('styles.css: .shell__scrollHint keeps pointer-events: none (never intercepts taps)', /pointer-events:\s*none/.test(hintCss))
+}
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

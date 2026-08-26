@@ -78,6 +78,10 @@ const ROOT = join(__dirname, '..')
     'preview build bundle CRITICAL: no hardcoded http(s) API/server URL anywhere in the bundle (only w3.org/react namespace URLs, which are expected)',
     (bundled.match(/https?:\/\/[a-zA-Z0-9.\/:_-]*/g) ?? []).every((u) => /w3\.org|reactjs\.org/.test(u)),
   )
+  // Tablet UX v2.2 §24: the herbal add-on QA simulation is dev/preview-only
+  // and NO-PHI by construction (it only lists static question labels baked
+  // into the source at build time, never a live patient response).
+  assert('preview build bundle: herbal add-on QA preview button text is present (dev/preview-only feature compiled in)', bundled.includes('한약 추가문진 미리보기'))
 }
 
 {
@@ -87,6 +91,11 @@ const ROOT = join(__dirname, '..')
   const jsFiles = execSync("find dist/assets -name '*.js'", { cwd: ROOT }).toString().trim().split('\n')
   const bundled = jsFiles.map((f) => readFileSync(join(ROOT, f), 'utf8')).join('\n')
   assert('normal production build CRITICAL: preview banner text is not present anywhere in the bundle (compiled out, not just hidden)', !bundled.includes('미리보기 환경'))
+  // Tablet UX v2.2 §24: "단 production patient UI에는 staff-only 기능이
+  // 노출되지 않게 한다" -- a real production build (DEV=false,
+  // VITE_PREVIEW_MODE unset) must never ship the QA-only herbal add-on
+  // preview text either, same guarantee as the preview banner above.
+  assert('normal production build CRITICAL: herbal add-on QA preview button text is not present (staff-only QA feature never reaches production patient UI)', !bundled.includes('한약 추가문진 미리보기'))
 }
 
 /* =========================================================================

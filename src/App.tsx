@@ -13,18 +13,22 @@ import {
   needsConfirmButton,
 } from './screens/QuestionScreen'
 import { StaffCheckScreen } from './screens/StaffCheckScreen'
+import { StaffHerbalAddonHold } from './screens/StaffHerbalAddonHold'
 import { StartScreen } from './screens/StartScreen'
 import { isServerConfigured, submitQuestionnaire } from './lib/serverClient'
 import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
+  HERBAL_ADDON_FIELD,
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
   buildSajuInput,
   computeFlags,
+  primaryConcernKey,
   pruneStaleResponses,
+  questionnaireMode,
   visibleQuestions,
 } from './spec/coreSpec'
 import type { AnswerValue, Question, Responses } from './types'
@@ -337,6 +341,25 @@ function AppContent() {
     })
   }
 
+  /**
+   * Tablet UX v2.2 §20-23: 통증 Fast Track 진료 도중 한약 추가문진으로
+   * 전환한다 -- 처음부터 다시 묻지 않고, 이미 답한 응답은 그대로 둔 채
+   * HERBAL_ADDON_FIELD만 켠다. 이 필드는 ALL_QUESTIONS에 속하지 않는
+   * non-question 내부 플래그라 pruneStaleResponses가 절대 지우지 않는다
+   * (coreSpec.ts questionnaireMode 주석 참고). 이후 다시 계산되는
+   * visibleQuestions가 HERB_* / CONST_* systemic block을 새로 노출시키고,
+   * reorderForDetailPhases가 그 블록을 "아직 답하지 않은 첫 지점" 바로
+   * 앞으로 재배치하므로 기존 forward-only walk(nextQuestion)로도 반드시
+   * 도달한다.
+   */
+  const activateHerbalAddon = () => {
+    const { responses: pruned } = pruneStaleResponses({
+      ...responses,
+      [HERBAL_ADDON_FIELD]: 'yes',
+    })
+    setResponses(pruned)
+  }
+
   const restart = () => {
     // 세션 종료 시 환자 식별 정보를 포함한 client state를 모두 비운다
     setResponses(emptyResponses())
@@ -427,6 +450,11 @@ function AppContent() {
         currentStep={stepInfo.step}
         stepProgress={stepInfo.progress}
         questionId={current.id}
+        // Tablet UX v2.2 §10: safety/protected/긴 문장 질문(layout 미지정,
+        // 기본값 'list')은 wide landscape에서도 좁은 --content-max를
+        // 유지하고, 짧은 카테고리 선택 화면(grid2/compact3/body_map)만
+        // 더 넓게 쓴다.
+        wideContent={current.layout != null && current.layout !== 'list'}
         canGoBack={visited.length > 0}
         onBack={goBack}
         onHelp={() => {
@@ -457,6 +485,9 @@ function AppContent() {
 
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       {idleWarning && <IdleWarningModal onContinue={() => setIdleWarning(false)} />}
+      {questionnaireMode(responses) === 'pain_fast' && primaryConcernKey(responses) === 'pain' && (
+        <StaffHerbalAddonHold onActivate={activateHerbalAddon} />
+      )}
     </>
   )
 }

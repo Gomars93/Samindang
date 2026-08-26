@@ -1405,6 +1405,21 @@ function referenceSymptomKeys(routing: DoctorPayload['routing']): string[] {
   return raw.filter((k) => k !== 'none')
 }
 
+/**
+ * Tablet UX v2.2 §33: questionnaire_mode 배지 라벨. 요청에 나온 3개 문구만
+ * 정확히 쓴다 -- pain_fast는 primary_concern이 실제로 'pain'일 때만
+ * "통증 Fast Track"으로 표시하고(symptom_consult/women/weight 등 비-통증
+ * pain_fast 케이스는 "통증"이 부정확하므로 배지를 아예 표시하지 않는다),
+ * expanded/herbal_addon은 항상 표시한다.
+ */
+function questionnaireModeLabel(routing: DoctorPayload['routing']): string | null {
+  const mode = routing.questionnaire_mode
+  if (mode === 'expanded') return '한약 Expanded'
+  if (mode === 'herbal_addon') return '한약 추가문진 완료'
+  if (mode === 'pain_fast' && routing.primary_concern === 'pain') return '통증 Fast Track'
+  return null
+}
+
 /** §PART5 전신·한약 참고 필드 목록 — 미리보기(요약 2~3개)와 상세 펼치기가 이 목록을 공유한다. */
 function constitutionFields(r: Responses) {
   return [
@@ -2235,6 +2250,18 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       <WristHandSafetyPanel payload={payload} />
       <AnkleFootSafetyPanel payload={payload} />
       <TmjSafetyPanel payload={payload} />
+
+      {/*
+        Tablet UX v2.2 §33: 현재 questionnaire mode를 작게 표시한다 --
+        진단/임상 판단이 아닌 운영 참고 메타데이터이며, 위 safety
+        panel/banner들보다 절대 강조되지 않는다(순서상으로도 그 아래,
+        스타일상으로도 muted). §33 예시 3개 라벨만 정확히 쓴다 --
+        symptom_consult/women/weight 등 pain이 아닌 pain_fast 케이스는
+        "통증"이라는 단어가 부정확하므로 아예 배지를 표시하지 않는다.
+      */}
+      {questionnaireModeLabel(routing) && (
+        <p className="doctor__modeBadge">진료 문진 — {questionnaireModeLabel(routing)}</p>
+      )}
 
       <section className="doctor__section">
         <h2>환자 기본</h2>

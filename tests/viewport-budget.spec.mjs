@@ -212,7 +212,61 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
 }
 
 /* =========================================================================
- * 5. Summary
+ * 5. Wide landscape 3-zone rail layout (Tablet UX v2.2 §5-10).
+ *    portrait/narrow viewports must render byte-identical to before -- the
+ *    rail elements exist in the DOM (for accessibility: display:none is
+ *    excluded from the tab order/a11y tree automatically) but are hidden by
+ *    default, only shown inside the wide-landscape media query.
+ * ========================================================================= */
+
+{
+  assert('ScreenShell.tsx: renders a dedicated left-rail back button (railBackBtn)', screenShellSrc.includes('railBackBtn'))
+  assert('ScreenShell.tsx: renders a dedicated right rail (shell__railRight) with step label + help button', screenShellSrc.includes('shell__railRight') && screenShellSrc.includes('railStepLabel') && screenShellSrc.includes('railHelpBtn'))
+
+  const railDefaultMatch = css.match(/\.railBackBtn,\s*\n?\s*\.shell__railRight\s*\{([^}]*)\}/)
+  assert('styles.css: rail elements are display:none by default (portrait/narrow unaffected)', !!railDefaultMatch && /display:\s*none/.test(railDefaultMatch[1]))
+
+  const wideMediaBlockMatch = css.match(/@media \(min-width: 1000px\) and \(orientation: landscape\) \{/)
+  assert('styles.css: wide-landscape breakpoint (min-width:1000px, orientation:landscape) exists', !!wideMediaBlockMatch)
+
+  // Extract just that media block's body via brace counting (regex alone
+  // can't reliably match nested braces).
+  const startIdx = css.indexOf('@media (min-width: 1000px) and (orientation: landscape)')
+  assert('styles.css: wide-landscape media block start found', startIdx !== -1)
+  let depth = 0
+  let bodyStart = -1
+  let bodyEnd = -1
+  for (let i = startIdx; i < css.length; i++) {
+    if (css[i] === '{') {
+      depth++
+      if (depth === 1) bodyStart = i + 1
+    } else if (css[i] === '}') {
+      depth--
+      if (depth === 0) {
+        bodyEnd = i
+        break
+      }
+    }
+  }
+  const wideBody = css.slice(bodyStart, bodyEnd)
+  assert('wide-landscape block: .shell becomes a 3-column grid', /\.shell\s*\{[^}]*display:\s*grid/.test(wideBody))
+  assert('wide-landscape block: grid-template-columns declares a narrow rail width (72px-104px range)', /grid-template-columns:\s*minmax\(72px,\s*104px\)/.test(wideBody))
+  assert('wide-landscape block: .railBackBtn is shown (display:flex)', /\.railBackBtn\s*\{[^}]*display:\s*flex/.test(wideBody))
+  assert('wide-landscape block: .shell__railRight is shown (display:flex)', /\.shell__railRight\s*\{[^}]*display:\s*flex/.test(wideBody))
+  assert('wide-landscape block: original topRow backBtn/stepLabel and bottom helpBtn are hidden (moved to rails, not duplicated)', /display:\s*none/.test(wideBody) && wideBody.includes('.shell__topRow .backBtn'))
+  assert('wide-landscape block: wideContent class widens --content-max beyond the base 680px for grid/category screens', /shell--wideContent[\s\S]*max-width:\s*900px/.test(wideBody))
+}
+
+{
+  // ScreenShell wideContent prop is presentation-only (Question.layout
+  // metadata), decided in App.tsx from current.layout -- safety/protected
+  // screens (layout unset, default 'list') must NOT get the wider column.
+  const appSrc = readFileSync(join(__dirname, '..', 'src', 'App.tsx'), 'utf8')
+  assert('App.tsx: wideContent is derived from current.layout, excluding the default list layout', /wideContent=\{current\.layout != null && current\.layout !== 'list'\}/.test(appSrc))
+}
+
+/* =========================================================================
+ * 6. Summary
  * ========================================================================= */
 
 console.log('\nPer-viewport summary:')

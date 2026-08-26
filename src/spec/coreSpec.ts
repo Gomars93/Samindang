@@ -439,6 +439,47 @@ const SAFETY_QUESTIONS: Question[] = [
  */
 const hasDetailedConcern = (r: Responses, key: string): boolean => r['ADDITIONAL_DETAIL_01'] === key
 
+/**
+ * Tablet UX v2.2 §12-21: Questionnaire Depth Mode.
+ *
+ * 통증 치료가 목적인 환자는 "통증 핵심 상세 + 안전 + 최소 병력"까지만
+ * 하고 끝낼 수 있어야 한다(pain_fast) -- 한약/체질 상담용 systemic
+ * block(HERBAL_REFERENCE_QUESTIONS/CONSTITUTION_BASIC_QUESTIONS)이 자동으로
+ * 이어지면 안 된다. 한약 상담이 처음부터 목적이면(VISIT_00_INTENT==='herbal',
+ * 또는 하위호환 raw 경로의 기존 constitution/tonic route) expanded로 그
+ * systemic block을 그대로 탄다. herbal_addon은 pain_fast로 이미 완료(또는
+ * 진행 중)된 환자에게 "진료 중" 결정으로 그 systemic block만 추가로 여는
+ * 세 번째 상태다(§20-23) -- 아래 HERBAL_ADDON_FIELD 참고.
+ *
+ * '이름은 바꿔도 되지만 의미는 분리'(§12) 원칙에 따라 pain_care 이외의
+ * 모든 비-한약 intent(symptom_consult/women/weight/undecided, 그리고
+ * 하위호환 raw 경로에서 visitGoal이 constitution이 아닌 모든 경우)도
+ * 이 함수에서는 'pain_fast'로 취급한다 -- 실제 동작(systemic block
+ * 숨김)은 pain_care와 동일해야 하기 때문이다(§19: "증상 상담 ≠ 자동
+ * 한약문진"도 같은 원칙). DoctorView 배지 라벨은 이 값과 별개로
+ * primary_concern이 'pain'일 때만 "통증 Fast Track"으로 표시한다(§33).
+ */
+export type QuestionnaireMode = 'pain_fast' | 'expanded' | 'herbal_addon'
+
+/** 진료 중 "한약 추가문진 시작"으로만 설정되는 non-question 내부 플래그 (§20-23). */
+export const HERBAL_ADDON_FIELD = 'HERBAL_ADDON_ACTIVE'
+
+export const questionnaireMode = (r: Responses): QuestionnaireMode => {
+  if (r[HERBAL_ADDON_FIELD] === 'yes') return 'herbal_addon'
+  const intent = r['VISIT_00_INTENT']
+  if (intent === 'herbal') return 'expanded'
+  if (intent != null) return 'pain_fast'
+  // 하위호환: VISIT_00_INTENT를 거치지 않은 raw fixture/legacy 경로 --
+  // 기존 constitution/tonic route(visitGoal==='constitution')만 expanded.
+  return visitGoal(r) === 'constitution' ? 'expanded' : 'pain_fast'
+}
+
+/** 한약/체질 systemic block(HERBAL_REFERENCE_QUESTIONS + CONSTITUTION_BASIC_QUESTIONS)을 보여줄지. */
+const showsExpandedSystemicBlock = (r: Responses): boolean => {
+  const mode = questionnaireMode(r)
+  return mode === 'expanded' || mode === 'herbal_addon'
+}
+
 // '없음'을 맨 앞에 둔다 -- 대부분의 환자가 고를 값을 빠르게 찾게 하는
 // UX 선택인 동시에(§38 위임 범위: layout/카드 순서), 이 필드 하나가
 // hasDetailedConcern()을 통해 실제로 module을 여는 유일한 스위치이므로
@@ -3299,7 +3340,11 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
     question: '평소 기운과 회복력은 어떠신가요?',
     required: true,
     step: '전신 정보',
-    showIf: (r) => visitGoal(r) === 'constitution',
+    // Tablet UX v2.2 §13-19: pain_fast 환자에게 systemic block이 자동으로
+    // 이어지지 않게 한다 -- visitGoal(r)==='constitution' 대신
+    // showsExpandedSystemicBlock을 쓴다(herbal intent가 purpose와 무관하게
+    // 항상 expanded를 타도록, 그리고 herbal_addon도 포함하도록).
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'sufficient', label: '충분한 편이에요' },
       { value: 'tired_recovers', label: '쉽게 피곤하지만 쉬면 회복돼요' },
@@ -3318,7 +3363,7 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
     // 고른 체질·보약 환자)에서 이미 수면 정보를 얻었다면 여기서 다시
     // 묻지 않는다. 기존 clinical branching 의미는 그대로다 -- SEC_SLEEP_01이
     // 없는 절대다수의 체질·보약 환자에게는 이전과 동일하게 보인다.
-    showIf: (r) => visitGoal(r) === 'constitution' && r['SEC_SLEEP_01'] == null,
+    showIf: (r) => showsExpandedSystemicBlock(r) && r['SEC_SLEEP_01'] == null,
     options: [
       { value: 'normal', label: '특별히 불편하지 않아요' },
       { value: 'onset_difficulty', label: '잠들기 어려워요' },
@@ -3333,7 +3378,7 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
     question: '속이나 소화는 어떠신가요?',
     required: true,
     step: '전신 정보',
-    showIf: (r) => r['VISIT_01'] === 'constitution',
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'normal', label: '특별히 불편하지 않아요' },
       { value: 'occasional', label: '가끔 불편해요' },
@@ -3348,7 +3393,7 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
     question: '대변은 어떠신가요?',
     required: true,
     step: '전신 정보',
-    showIf: (r) => r['VISIT_01'] === 'constitution',
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'regular', label: '규칙적이고 편해요' },
       { value: 'constipation', label: '변비가 있어요' },
@@ -3360,6 +3405,13 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
 
 /* ---------- 10. 한약 처방 참고용 최소 공통정보 ---------- */
 
+// Tablet UX v2.2 §13-19 버그 수정: 이 4문항은 이전까지 showIf가 전혀 없어
+// intent와 무관하게 "모든" 환자에게 노출되고 있었다(순수 통증 환자에게도
+// "평소 식욕은 어떠신가요?"가 자동으로 이어짐, 사용자가 실기기에서 발견한
+// 문제). 한약/체질 상담이 목적인 경우(expanded)와 진료 중 한약 추가문진을
+// 시작한 경우(herbal_addon)에만 보이게 한다 -- 이 4문항은 어떤
+// regional/global safety 계산에도 쓰이지 않는다(§37 audit 문서 표 참고,
+// 이 파일 밖 어디에서도 참조되지 않음 -- grep으로 확인).
 const HERBAL_REFERENCE_QUESTIONS: Question[] = [
   {
     id: 'HERB_APPETITE',
@@ -3368,6 +3420,7 @@ const HERBAL_REFERENCE_QUESTIONS: Question[] = [
     question: '평소 식욕은 어떠신가요?',
     required: true,
     step: '전신 정보',
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'low', label: '적은 편이에요' },
       { value: 'normal', label: '보통이에요' },
@@ -3383,6 +3436,7 @@ const HERBAL_REFERENCE_QUESTIONS: Question[] = [
     question: '평소 추위와 더위는 어떠신가요?',
     required: true,
     step: '전신 정보',
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'cold_sensitive', label: '추위를 많이 타요' },
       { value: 'heat_sensitive', label: '더위를 많이 타요' },
@@ -3397,6 +3451,7 @@ const HERBAL_REFERENCE_QUESTIONS: Question[] = [
     question: '평소 갈증은 어떠신가요?',
     required: true,
     step: '전신 정보',
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'minimal', label: '갈증이 거의 없어요' },
       { value: 'normal', label: '보통이에요' },
@@ -3411,6 +3466,7 @@ const HERBAL_REFERENCE_QUESTIONS: Question[] = [
     question: '평소 땀은 어떤 편인가요?',
     required: true,
     step: '전신 정보',
+    showIf: showsExpandedSystemicBlock,
     options: [
       { value: 'normal', label: '특별하지 않아요' },
       { value: 'low', label: '적은 편이에요' },
@@ -4181,6 +4237,9 @@ export const buildRoutingPayload = (r: Responses) => {
     secondary_concerns: r['SECONDARY_01'],
     secondary_screens: secondaryScreens,
     all_targets: allTargets,
+    // Tablet UX v2.2 §33: DoctorView operational metadata badge -- safety
+    // banner보다 강조되지 않는 작은 참고 표시용(진단/임상 판단 아님).
+    questionnaire_mode: questionnaireMode(r),
   }
 }
 
@@ -4262,6 +4321,20 @@ export const MODULE_QUESTION_IDS: Record<string, string[]> = {
   weight: WEIGHT_QUESTIONS.map((q) => q.id),
 }
 
+/**
+ * 한약/체질 systemic block(§13-21) id 목록. `CONSTITUTION_BASIC_QUESTIONS`/
+ * `HERBAL_REFERENCE_QUESTIONS`와 동일한 배열에서 직접 뽑아 drift risk가 없다.
+ * 기존 정적 순서(HISTORY_QUESTIONS 바로 앞)만으로는 herbal_addon이 "진료
+ * 중"(이미 History/Birth/Free-text 일부를 지나간 뒤) 시작될 때 이 질문들이
+ * 현재 위치보다 배열상 앞에 있어 forward-only walk(App.tsx nextQuestion)로
+ * 다시는 도달할 수 없는 문제가 생긴다 -- 아래 reorderForDetailPhases의
+ * "첫 미응답 postList 항목 바로 앞" 삽입 규칙이 이를 해결한다.
+ */
+export const SYSTEMIC_BLOCK_QUESTION_IDS: string[] = [
+  ...CONSTITUTION_BASIC_QUESTIONS.map((q) => q.id),
+  ...HERBAL_REFERENCE_QUESTIONS.map((q) => q.id),
+]
+
 function reorderForDetailPhases(r: Responses, list: Question[]): Question[] {
   const primaryKey = primaryConcernKey(r)
   const rawAdditional = r['ADDITIONAL_DETAIL_01']
@@ -4274,12 +4347,14 @@ function reorderForDetailPhases(r: Responses, list: Question[]): Question[] {
 
   const primaryModuleIds = new Set(primaryKey ? MODULE_QUESTION_IDS[primaryKey] ?? [] : [])
   const additionalModuleIds = new Set(additionalKey ? MODULE_QUESTION_IDS[additionalKey] ?? [] : [])
+  const systemicIds = new Set(SYSTEMIC_BLOCK_QUESTION_IDS)
 
   const preList: Question[] = []
   const primaryModuleItems: Question[] = []
   const additionalDetailQ: Question[] = []
   const additionalModuleItems: Question[] = []
   const referenceQ: Question[] = []
+  const systemicItems: Question[] = []
   const postList: Question[] = []
 
   for (const q of list) {
@@ -4287,11 +4362,35 @@ function reorderForDetailPhases(r: Responses, list: Question[]): Question[] {
     else if (q.id === 'REFERENCE_SYMPTOMS_01') referenceQ.push(q)
     else if (primaryModuleIds.has(q.id)) primaryModuleItems.push(q)
     else if (additionalModuleIds.has(q.id)) additionalModuleItems.push(q)
+    else if (systemicIds.has(q.id)) systemicItems.push(q)
     else if (PRE_MODULE_PHASE_IDS.has(q.id)) preList.push(q)
     else postList.push(q)
   }
 
-  return [...preList, ...primaryModuleItems, ...additionalDetailQ, ...additionalModuleItems, ...referenceQ, ...postList]
+  // Tablet UX v2.2 §20-23 (herbal add-on): systemicItems를 postList의 "첫
+  // 미응답" 항목 바로 앞에 끼워 넣는다 -- 고정된 그룹 경계가 아니라 실제
+  // 진행 상태 기준이다. 이 삽입점은 두 가지 경우 모두를 하나의 규칙으로
+  // 처리한다:
+  //  1. expanded 모드(한약 intent로 처음부터 시작): 이 시점에는 postList의
+  //     History/Birth/Free-text가 전부 미응답이므로 firstUnanswered는
+  //     postList[0]이 되어, systemicItems가 postList 맨 앞에 삽입된다 --
+  //     기존 정적 배열 순서(HISTORY_QUESTIONS 바로 앞)와 완전히 동일한
+  //     결과라 순수 no-op이다(기존 raw-Responses 테스트 회귀 없음).
+  //  2. herbal_addon 모드(진료 중 나중에 활성화): 이미 History/Birth/
+  //     Free-text 중 일부가 답해진 뒤이므로, 그 답해진 항목들 "다음"(아직
+  //     안 답해진 첫 지점) 바로 앞에 삽입된다 -- App.tsx의 forward-only
+  //     nextQuestion walk가 현재 위치에서 반드시 이 새 질문들을 거쳐가게
+  //     보장한다(뒤에 남아 영원히 도달 불가능해지는 문제 방지).
+  const firstUnansweredPostIdx = postList.findIndex(
+    (q) => r[q.id] === null || r[q.id] === undefined,
+  )
+  const insertAt = firstUnansweredPostIdx === -1 ? postList.length : firstUnansweredPostIdx
+  const post =
+    systemicItems.length === 0
+      ? postList
+      : [...postList.slice(0, insertAt), ...systemicItems, ...postList.slice(insertAt)]
+
+  return [...preList, ...primaryModuleItems, ...additionalDetailQ, ...additionalModuleItems, ...referenceQ, ...post]
 }
 
 export const visibleQuestions = (r: Responses): Question[] =>

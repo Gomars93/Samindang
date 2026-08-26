@@ -92,8 +92,18 @@ const ZONE_LABEL: Record<string, string> = {
  * 상세/성별 구분 없음, remote asset 없음. viewBox는 .bodyMap__figure의
  * aspect-ratio(3:5, styles.css)와 동일 비율(60:100)이라 zone 버튼의 %
  * 좌표계와 그대로 맞아떨어진다.
+ *
+ * Tablet UX v2.2 §2: 실기기 QA에서 앞/뒤 실루엣이 서로 너무 비슷해
+ * "앞면/뒷면" 글자를 읽어야만 구분할 수 있었다. 최소한의 시각적 cue만
+ * 추가한다 -- 성별화하지 않고, 과도한 해부학 디테일도 넣지 않는다(같은
+ * monochrome/단순 도형 원칙 유지):
+ *   - front: 얼굴 방향을 알려주는 눈 두 점 + 가슴 중심선(세로 1획)
+ *   - back: 등 중심선(척추, 세로 1획) + 어깨뼈(견갑) 위치를 암시하는
+ *     좌우 대칭 곡선 두 개
+ * 이 cue들은 순수 장식(fill/stroke만, 클릭 불가, pointer-events 없음)이며
+ * zone 버튼의 %좌표계나 PAIN_01 enum과는 전혀 무관하다.
  */
-function Silhouette() {
+function Silhouette({ view }: { view: 'front' | 'back' }) {
   return (
     <svg
       className="bodyMap__silhouette"
@@ -108,6 +118,19 @@ function Silhouette() {
       <rect x="49.2" y="20" width="8.4" height="36" rx="4" />
       <rect x="15.6" y="60" width="13.2" height="38" rx="6" />
       <rect x="31.2" y="60" width="13.2" height="38" rx="6" />
+      {view === 'front' ? (
+        <g className="bodyMap__frontCue">
+          <circle cx="26" cy="7" r="1.1" />
+          <circle cx="34" cy="7" r="1.1" />
+          <line x1="30" y1="17" x2="30" y2="40" />
+        </g>
+      ) : (
+        <g className="bodyMap__backCue">
+          <line x1="30" y1="17" x2="30" y2="57" />
+          <path d="M20 22 Q26 30 22 40" />
+          <path d="M40 22 Q34 30 38 40" />
+        </g>
+      )}
     </svg>
   )
 }
@@ -127,7 +150,7 @@ function Figure({
     <div className="bodyMap__figureWrap">
       <span className="bodyMap__viewLabel">{view === 'front' ? '앞면' : '뒷면'}</span>
       <div className="bodyMap__figure">
-        <Silhouette />
+        <Silhouette view={view} />
         {zones.map((z, i) => {
           const isSelected = value === z.value
           return (
@@ -179,6 +202,22 @@ export function BodyMap({ options, value, onSelect }: Props) {
       {/* 바깥 질문 제목(PAIN_01.question)이 이미 "가장 불편한 한 곳을
           눌러주세요"이므로 여기서 같은 문장을 다시 보여주지 않는다
           (Tablet UX v2.1 §9, 중복 instruction 제거). */}
+      {/*
+        Tablet UX v2.2 §3: 부위를 탭한 직후 "내가 어디를 골랐는지" 글자로
+        즉시 확인할 수 있는 단일 label. zone 위에 텍스트를 겹쳐 지도를
+        지저분하게 만들지 않고, "현재 선택" 하나만 그림 위에 보여준다
+        (기존 zone 자체의 ✓/highlight는 그대로 유지). 선택을 바꾸면 value가
+        바뀌며 이 label도 즉시 갱신된다.
+      */}
+      <p className="bodyMap__selectedLabel" aria-live="polite">
+        {value ? (
+          <>
+            선택한 부위: <strong>{ZONE_LABEL[value] ?? value}</strong>
+          </>
+        ) : (
+          '부위를 선택해주세요'
+        )}
+      </p>
       <div className="bodyMap__figures">
         <Figure view="front" zones={frontZones} value={value} onSelect={onSelect} />
         <Figure view="back" zones={backZones} value={value} onSelect={onSelect} />

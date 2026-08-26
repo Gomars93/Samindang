@@ -16,6 +16,9 @@ import {
   STAFF_CHECK_TRIGGERS,
   computeFlags,
   MODULE_QUESTION_IDS,
+  questionnaireMode,
+  HERBAL_ADDON_FIELD,
+  SYSTEMIC_BLOCK_QUESTION_IDS,
 } from './.spec-bundle.mjs'
 
 let passCount = 0
@@ -3440,6 +3443,201 @@ const GI_MODULE_ID_SET = new Set(MODULE_QUESTION_IDS.digestion)
   assert('U5: SLEEP_01 pruned to null after switching Additional away from sleep', r['SLEEP_01'] === null)
   const orderedIdsAfter = [...visibleQuestions(r)].map((q) => q.id)
   assert('U5: SLEEP_01 no longer appears anywhere in the visible order', !orderedIdsAfter.includes('SLEEP_01'))
+}
+
+/* =========================================================================
+ * §V: Tablet UX v2.2 -- Questionnaire Depth Mode (pain_fast / expanded /
+ * herbal_addon). Cases A-E from the task spec, plus mode-routing edge cases
+ * (symptom_consult, herbal-purpose-agnostic expansion, back-navigation mode
+ * switch, arm_hand coarse routing untouched, herbal add-on mid-walk
+ * reachability).
+ * ========================================================================= */
+
+const SYSTEMIC_ID_SET = new Set(SYSTEMIC_BLOCK_QUESTION_IDS)
+
+function systemicAllHidden(r) {
+  const v = visibleIds(r)
+  return SYSTEMIC_BLOCK_QUESTION_IDS.every((id) => !v.has(id))
+}
+
+function systemicAllNull(r) {
+  return SYSTEMIC_BLOCK_QUESTION_IDS.every((id) => r[id] === null || r[id] === undefined)
+}
+
+// V-CaseA: Primary=pain, Additional=none, Reference=none.
+// Expect: Pain FULL O, global safety O, systemic herbal block X (HERB_*/
+// CONST_* never visible), finish reachable without ever answering them.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['none'] })
+  assert('V-CaseA: mode is pain_fast', questionnaireMode(r) === 'pain_fast')
+  assert('V-CaseA: pain full module visible (LBP_01 reachable)', visibleIds(r).has('LBP_01'))
+  assert('V-CaseA: systemic/herbal block entirely hidden (HERB_*/CONST_*)', systemicAllHidden(r))
+  assert('V-CaseA CRITICAL: global safety (SAFETY_01) still visible', visibleIds(r).has('SAFETY_01'))
+  const { terminated, responses: done } = autoAnswerWalk(r)
+  assert('V-CaseA: full auto-walk terminates (finish reachable)', terminated)
+  assert('V-CaseA CRITICAL: systemic/herbal block never answered by the full walk', systemicAllNull(done))
+}
+
+// V-CaseB: Primary=pain, Additional=sleep, Reference=none.
+// Picking a non-pain Additional Detail must NOT expand into the systemic
+// herbal block -- that is a category error the old (showIf-less) HERB_*
+// questions did not distinguish.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' })
+  assert('V-CaseB: mode is pain_fast (Additional=sleep does not promote to expanded)', questionnaireMode(r) === 'pain_fast')
+  assert('V-CaseB: pain full module visible', visibleIds(r).has('LBP_01'))
+  assert('V-CaseB: sleep full module visible', visibleIds(r).has('SLEEP_01'))
+  assert('V-CaseB CRITICAL: systemic/herbal block still entirely hidden', systemicAllHidden(r))
+  const { terminated, responses: done } = autoAnswerWalk(r)
+  assert('V-CaseB: full auto-walk terminates', terminated)
+  assert('V-CaseB CRITICAL: systemic/herbal block never answered', systemicAllNull(done))
+}
+
+// V-CaseC: Primary=pain, Reference=sleep/fatigue.
+// Reference Symptoms must not promote to expanded either.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['sleep', 'fatigue'] })
+  assert('V-CaseC: mode is pain_fast', questionnaireMode(r) === 'pain_fast')
+  assert('V-CaseC: systemic/herbal block hidden', systemicAllHidden(r))
+  const routing = buildRoutingPayload(r)
+  assert('V-CaseC: routing.reference_symptoms includes sleep and fatigue', (routing.reference_symptoms ?? []).includes('sleep') && routing.reference_symptoms.includes('fatigue'))
+}
+
+// V-CaseD: Primary=herbal. expanded systemic questionnaire O regardless of
+// which VISIT_00B_HERBAL_PURPOSE sub-choice is picked (§18: 처음부터 한약이
+// 목적이면 purpose와 무관하게 expanded -- 'symptom' purpose previously fell
+// through to the generic symptom bucket and never got CONST_*/HERB_*).
+for (const purpose of ['tonic', 'overall_check', 'undecided', 'symptom']) {
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: purpose })
+  assert(`V-CaseD (${purpose}): mode is expanded`, questionnaireMode(r) === 'expanded')
+  assert(`V-CaseD (${purpose}): HERB_APPETITE visible`, visibleIds(r).has('HERB_APPETITE'))
+  assert(`V-CaseD (${purpose}): CONST_ENERGY visible`, visibleIds(r).has('CONST_ENERGY'))
+}
+
+// V-SymptomConsult: VISIT_00_INTENT==='symptom_consult' alone must not
+// auto-expand into the systemic block (§19: 증상 상담 ≠ 자동 한약문진).
+{
+  let r = withSymptomConsult('sleep', {})
+  assert('V-SymptomConsult: mode is pain_fast (not expanded)', questionnaireMode(r) === 'pain_fast')
+  assert('V-SymptomConsult: sleep full module visible (primary symptom module still works)', visibleIds(r).has('SLEEP_01'))
+  assert('V-SymptomConsult CRITICAL: systemic/herbal block hidden', systemicAllHidden(r))
+}
+
+// V-BackSwitch: switching VISIT_00_INTENT mid-flow (pain_care <-> herbal)
+// correctly flips mode, and switching away from herbal prunes the
+// expanded-only systemic answers via the existing pruneStaleResponses
+// mechanism (no new pruning logic needed -- CONST_*/HERB_* are ordinary
+// showIf-gated questions like any other).
+{
+  let r = emptyResponses()
+  r = set(r, { ID_03: 'female', VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' })
+  assert('V-BackSwitch: starts pain_fast', questionnaireMode(r) === 'pain_fast')
+
+  r = set(r, { VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'tonic' })
+  assert('V-BackSwitch: switching to herbal promotes to expanded', questionnaireMode(r) === 'expanded')
+  assert('V-BackSwitch: HERB_APPETITE now reachable', visibleIds(r).has('HERB_APPETITE'))
+  r = set(r, { HERB_APPETITE: 'normal', CONST_ENERGY: 'sufficient' })
+  assert('V-BackSwitch: HERB_APPETITE answered', r['HERB_APPETITE'] === 'normal')
+
+  r = set(r, { VISIT_00_INTENT: 'pain_care' })
+  assert('V-BackSwitch: switching back to pain_care demotes to pain_fast', questionnaireMode(r) === 'pain_fast')
+  assert('V-BackSwitch CRITICAL: expanded-only answers (HERB_APPETITE/CONST_ENERGY) pruned to null', r['HERB_APPETITE'] === null && r['CONST_ENERGY'] === null)
+  // PAIN_01 itself was already pruned to null the moment intent switched to
+  // 'herbal' (IS_PRIMARY_PAIN went false while herbal was selected, same
+  // pre-existing prune mechanism T4 already covers for other modules) -- it
+  // is expected to need re-answering, not to have silently survived the
+  // detour. PAIN_01 is reachable again (pain_fast, mode-gated correctly).
+  assert('V-BackSwitch: PAIN_01 was pruned during the herbal detour (existing prune semantics, not a new mode-specific rule)', r['PAIN_01'] === null)
+  assert('V-BackSwitch: PAIN_01 is reachable again after switching back', visibleIds(r).has('PAIN_01'))
+}
+
+// V-ArmHand: PAIN_01='arm_hand' still reaches the existing coarse
+// sub-router (ELBOW_00) unaffected by mode work -- Body Map only ever
+// selects the coarse region, per-region disambiguation is unchanged (§4).
+{
+  let r = withPainCare({ PAIN_01: 'arm_hand', ADDITIONAL_DETAIL_01: 'none' })
+  assert('V-ArmHand: mode is pain_fast', questionnaireMode(r) === 'pain_fast')
+  assert('V-ArmHand: existing ELBOW_00 sub-router reachable', visibleIds(r).has('ELBOW_00'))
+  r = set(r, { ELBOW_00: 'ELBOW' })
+  assert('V-ArmHand: choosing ELBOW opens ELBOW_01', visibleIds(r).has('ELBOW_01'))
+  assert('V-ArmHand: choosing ELBOW does not open WH_01 (wrist/hand)', !visibleIds(r).has('WH_01'))
+}
+
+// V-AddonFull: Herbal Add-on started only after the patient has already
+// completed the entire pain_fast flow (the worst case for the forward-only
+// walk -- every postList question, including FREE_01, is already answered
+// when HERBAL_ADDON_FIELD flips, so the newly-unlocked systemic questions
+// must be appended after the current end of the walk, not silently
+// stranded behind it).
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  const phase1 = autoAnswerWalk(r)
+  assert('V-AddonFull: pain_fast completes on its own (finish reachable)', phase1.terminated)
+  assert('V-AddonFull CRITICAL: systemic block never answered during pain_fast completion', systemicAllNull(phase1.responses))
+  const idBefore = phase1.responses['ID_01']
+  const painBefore = phase1.responses['LBP_01']
+  const medBefore = phase1.responses['MED_USE']
+
+  const withAddon = set(phase1.responses, { [HERBAL_ADDON_FIELD]: 'yes' })
+  assert('V-AddonFull: mode flips to herbal_addon', questionnaireMode(withAddon) === 'herbal_addon')
+  assert('V-AddonFull CRITICAL: systemic block newly visible after activation', SYSTEMIC_BLOCK_QUESTION_IDS.every((id) => visibleIds(withAddon).has(id)))
+
+  const phase2 = autoAnswerWalk(withAddon)
+  assert('V-AddonFull CRITICAL: newly-unlocked systemic questions are forward-reachable and get answered to completion', phase2.terminated)
+  assert('V-AddonFull: every systemic question answered after phase 2', SYSTEMIC_BLOCK_QUESTION_IDS.every((id) => phase2.responses[id] !== null && phase2.responses[id] !== undefined))
+  assert('V-AddonFull: ID_01 (already answered) is not reset/re-asked', phase2.responses['ID_01'] === idBefore)
+  assert('V-AddonFull: LBP_01 (already answered pain module) is not reset/re-asked', phase2.responses['LBP_01'] === painBefore)
+  assert('V-AddonFull: MED_USE (already answered history) is not reset/re-asked', phase2.responses['MED_USE'] === medBefore)
+
+  const finalPayload = buildResponsePayload(phase2.responses)
+  assert('V-AddonFull: final payload combines original + addon answers (constitution_basics populated)', finalPayload.constitution_basics.appetite_level !== null)
+  assert('V-AddonFull: final payload still carries the original identity answer', finalPayload.patient.patient_name === idBefore)
+}
+
+// V-AddonPartial: Herbal Add-on started mid-way through History (some
+// postList questions answered, most still null) -- the more common real
+// case, and the one that would have been silently unreachable under the
+// old fixed-slot ordering (systemic block sat *before* HISTORY_QUESTIONS in
+// the static array, so once the walk passed that point it could never loop
+// back for a static-position-only reorder).
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  r = set(r, { REFERENCE_SYMPTOMS_01: ['none'] })
+  // Manually walk forward, answering everything up to (and including)
+  // MED_USE, then stop -- HISTORY_01 onward, BIRTH_*, FREE_01 all still null.
+  for (let i = 0; i < WALK_CAP; i++) {
+    const visible = visibleQuestions(r)
+    const next = visible.find((q) => r[q.id] === null || r[q.id] === undefined)
+    if (!next) throw new Error('V-AddonPartial setup: walk finished before reaching MED_USE')
+    r = set(r, { [next.id]: deterministicValue(next, r) })
+    if (next.id === 'MED_USE') break
+  }
+  assert('V-AddonPartial: MED_USE answered, HISTORY_01 still unanswered', r['MED_USE'] !== null && r['HISTORY_01'] === null)
+
+  r = set(r, { [HERBAL_ADDON_FIELD]: 'yes' })
+  const orderedIds = visibleQuestions(r).map((q) => q.id)
+  const historyIdx = orderedIds.indexOf('HISTORY_01')
+  const firstSystemicIdx = SYSTEMIC_BLOCK_QUESTION_IDS.map((id) => orderedIds.indexOf(id)).find((i) => i !== -1)
+  assert('V-AddonPartial CRITICAL: systemic block is reordered to sit before the still-unanswered HISTORY_01 (reachable), not stranded behind it', firstSystemicIdx !== undefined && firstSystemicIdx < historyIdx)
+
+  const { terminated, responses: done } = autoAnswerWalk(r)
+  assert('V-AddonPartial: walk still terminates', terminated)
+  assert('V-AddonPartial: every systemic question eventually answered', SYSTEMIC_BLOCK_QUESTION_IDS.every((id) => done[id] !== null && done[id] !== undefined))
+  assert('V-AddonPartial: HISTORY_01 also still answered afterward (nothing lost)', done['HISTORY_01'] !== null)
+}
+
+// V-ModeAgnosticToVisitType: no field anywhere in ALL_QUESTIONS represents
+// initial-vs-repeat visit (mirrors T6), and questionnaireMode's own
+// implementation only reads VISIT_00_INTENT/VISIT_01/HERBAL_ADDON_FIELD --
+// an unrelated extra key on the Responses bag can never change its result.
+{
+  let r = withPainCare({ PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'none' })
+  const baseline = questionnaireMode(r)
+  const withUnrelatedKey = { ...r, SOME_FUTURE_REVISIT_FLAG: 'repeat' }
+  assert('V-ModeAgnosticToVisitType: an unrelated extra response key never changes questionnaireMode', questionnaireMode(withUnrelatedKey) === baseline)
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

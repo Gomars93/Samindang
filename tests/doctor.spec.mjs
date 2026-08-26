@@ -1150,8 +1150,15 @@ function detailsRange(html, classMarker) {
 }
 
 // 13g. 전신·한약 참고: 값이 있으면 <details>로 감싸고, summary가 비어있지 않다.
+//
+// Tablet UX v2.2 §13-19: HERB_*/CONST_* systemic block이 이제
+// questionnaireMode==='expanded'|'herbal_addon'일 때만 보이므로(그 외에는
+// pruneStaleResponses가 null로 되돌린다), 이 섹션이 "채워진" 케이스를
+// 대표하려면 pain_fast인 '수면 주호소 + 동반 소화/통증'(VISIT_01:'symptom')
+// 대신 실제로 expanded인 '체질·보약'(VISIT_01:'constitution', CONST_*/
+// HERB_* 응답 포함) fixture를 써야 한다.
 {
-  const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  const html = renderDoctorView('체질·보약')
   assert('constitution section: wrapped in doctor__constDetails when populated', html.includes('doctor__constDetails'))
   const [openIdx, closeIdx] = detailsRange(html, 'doctor__constDetails')
   const summaryMatch = html.slice(openIdx, closeIdx).match(/<summary>([^<]*)<\/summary>/)

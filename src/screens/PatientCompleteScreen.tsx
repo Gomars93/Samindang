@@ -1,4 +1,19 @@
 import { useRef, useState } from 'react'
+import { ALL_QUESTIONS, SYSTEMIC_BLOCK_QUESTION_IDS } from '../spec/coreSpec'
+
+/**
+ * Tablet UX v2.2 §24: GitHub Pages NO-PHI preview(및 로컬 dev)에서만 보이는
+ * QA 전용 시뮬레이션 -- 실제 서버 trigger나 세션 재개 없이, herbal_addon
+ * mode가 활성화되면 어떤 질문들이 새로 열리는지만 읽기 전용으로 보여준다.
+ * production 빌드에서는 이 조건이 항상 false라 아예 렌더링되지 않는다
+ * (staff-only 기능이 실제 환자 UI에 노출되지 않게 하라는 §24 단서 준수).
+ */
+const isPreviewOrDevBuild = (): boolean =>
+  import.meta.env.DEV || import.meta.env.VITE_PREVIEW_MODE === 'true'
+
+const SYSTEMIC_BLOCK_LABELS = SYSTEMIC_BLOCK_QUESTION_IDS.map(
+  (id) => ALL_QUESTIONS.find((q) => q.id === id)?.question ?? id,
+)
 
 /**
  * 환자 제출 상태. App.tsx가 실제 전송 흐름(server/index.js 유무, 응답 성공/실패)을
@@ -217,6 +232,8 @@ function DevDoor({
   onToggle: () => void
   onStaffReset: () => void
 }) {
+  const [showAddonPreview, setShowAddonPreview] = useState(false)
+
   return (
     <footer className="shell__bottom">
       <div className="shell__bottomInner">
@@ -229,6 +246,23 @@ function DevDoor({
             <button type="button" className="primaryBtn" onClick={onStaffReset}>
               처음 화면으로 (세션 초기화)
             </button>
+          </>
+        )}
+        {isPreviewOrDevBuild() && (
+          <>
+            <button type="button" className="devToggle" onClick={() => setShowAddonPreview((s) => !s)}>
+              한약 추가문진 미리보기 (QA)
+            </button>
+            {showAddonPreview && (
+              <div className="devJson-pre" aria-label="herbal-addon-preview">
+                <p>실제 서버 전송/세션 재개 없이, 진료 중 "한약 추가문진 시작"을 누르면 아래 질문이 새로 열립니다.</p>
+                <ul>
+                  {SYSTEMIC_BLOCK_LABELS.map((label) => (
+                    <li key={label}>{label}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </>
         )}
       </div>

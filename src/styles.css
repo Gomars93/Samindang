@@ -127,6 +127,28 @@ input {
   background: rgba(0, 0, 0, 0.06);
 }
 
+/* Tablet UX v2.2 §20-23: "한약 추가문진 시작" -- StaffResetHold와 동일한
+   신뢰 모델(물리적 태블릿 소지자 = 직원, 2초 이상 눌러야 발동)이지만
+   반대쪽 구석(좌측 하단)에 둬 완료 화면의 StaffResetHold와 절대 겹치지
+   않는다(질문 진행 중 화면에서만 렌더링되므로 애초에 같은 화면에 동시에
+   존재하지도 않는다). */
+.staffHerbalAddonHold {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.staffHerbalAddonHold--holding {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .shell__topRow {
   display: flex;
   align-items: center;
@@ -187,11 +209,14 @@ input {
 .shell__main {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 40px var(--gutter) 28px;
-  /* 마지막 option이 하단 scroll hint pill에 바짝 붙지 않도록 여유를 둔다
-     (Tablet UX v2.1 §5). CTA(.shell__bottom)는 별도 flex item으로 항상
-     본문 아래 in-flow에 위치하므로 콘텐츠와 절대 겹치지 않는다. */
-  scroll-padding-bottom: 84px;
+  /* Tablet UX v2.2 §11: bottom padding을 scroll hint pill 높이(84px,
+     .shell__scrollHint)보다 크게 잡는다 -- 28px였을 때는 스크롤 중 실제
+     option이 pill의 gradient/텍스트 영역과 겹쳐 가려지는 경우가 있었다
+     (하단에 도달하지 않은 동안 pill이 sticky로 항상 마지막 84px 위에
+     떠 있으므로, 그 아래 실제 콘텐츠가 84px보다 적게 남으면 겹친다).
+     96px로 여유를 둬 마지막 옵션이 pill 영역 밖에서 완전히 보이게 한다. */
+  padding: 40px var(--gutter) 96px;
+  scroll-padding-bottom: 96px;
 }
 
 /* 스크롤 가능한데 하단에 도달하지 않았을 때만 표시되는 시각적 안내(Tablet UX v2.1
@@ -236,6 +261,122 @@ input {
 .shell__bottom {
   flex: 0 0 auto;
   padding: 16px var(--gutter) 28px;
+}
+
+/* ---------- wide landscape 3-zone rail layout (Tablet UX v2.2 §5-10) ----------
+ * portrait/narrow 뷰포트는 위 .shell(flex column)이 그대로다 -- 아래
+ * 미디어쿼리 밖에서는 rail 엘리먼트가 전부 display:none이라 어떤 시각적
+ * 차이도 없다. `display:none` 엘리먼트는 접근성 트리/tab 순서에서 자동
+ * 제외되므로 backBtn/helpBtn/stepLabel이 실제로는 항상 정확히 한 벌만
+ * 상호작용 가능하다(ScreenShell.tsx 상단 주석 참고).
+ */
+.railBackBtn,
+.shell__railRight {
+  display: none;
+}
+
+@media (min-width: 1000px) and (orientation: landscape) {
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(72px, 104px) minmax(0, 1fr) minmax(72px, 104px);
+    grid-template-rows: auto 1fr auto;
+    height: 100%;
+  }
+
+  .shell__top {
+    grid-column: 2;
+    grid-row: 1;
+    /* §9: progress bar의 세로 footprint를 줄인다 -- font-size는 그대로,
+       padding/margin만 좁힌다. */
+    padding-top: 12px;
+  }
+
+  .shell__top .shell__topInner .steps {
+    margin-top: 10px;
+  }
+
+  .shell__main {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .shell__bottom {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  /* topRow의 backBtn/stepLabel, bottom의 helpBtn은 rail로 이동했으므로
+     숨긴다(CTA 버튼 자체는 계속 .shell__bottom에 남는다, §8). */
+  .shell__topRow .backBtn,
+  .shell__topRow .stepLabel,
+  .shell__bottom .helpBtn {
+    display: none;
+  }
+
+  .railBackBtn {
+    display: flex;
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: center;
+    justify-self: center;
+    width: 64px;
+    height: 64px;
+    min-height: 64px;
+    border: none;
+    border-radius: 16px;
+    background: transparent;
+    color: var(--primary);
+    font-size: 30px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .railBackBtn:disabled {
+    visibility: hidden;
+  }
+
+  .railBackBtn:active {
+    background: var(--primary-soft);
+  }
+
+  .shell__railRight {
+    display: flex;
+    grid-column: 3;
+    grid-row: 1 / -1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 24px 8px;
+  }
+
+  .railStepLabel {
+    font-size: var(--fs-helper);
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  .railHelpBtn {
+    min-height: 56px;
+    padding: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+    text-align: center;
+  }
+
+  /* §10: 일반 grid/category 질문은 더 넓게, safety/protected/긴 문장
+     질문(layout 기본값 'list', wideContent=false)은 기존 --content-max
+     그대로 유지한다. */
+  .shell--wideContent .shell__topInner,
+  .shell--wideContent .shell__mainInner,
+  .shell--wideContent .shell__bottomInner {
+    max-width: 900px;
+  }
 }
 
 /* ---------- question ---------- */
@@ -436,6 +577,35 @@ input {
   height: 100%;
   fill: var(--border);
   pointer-events: none;
+}
+
+/* Tablet UX v2.2 §2: 앞/뒤 실루엣 최소 구분 cue -- 순수 장식, 클릭 불가.
+   실루엣 자체(fill: var(--border))보다 살짝 진한 색으로 은은하게만 보이게 한다. */
+.bodyMap__frontCue circle {
+  fill: var(--text-muted);
+}
+
+.bodyMap__frontCue line,
+.bodyMap__backCue line,
+.bodyMap__backCue path {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 0.6;
+  stroke-linecap: round;
+}
+
+/* 선택한 부위 한글 label (Tablet UX v2.2 §3) -- zone 위에 겹치지 않고
+   figure 그림 바로 위, 하나의 "현재 선택"만 보여준다. */
+.bodyMap__selectedLabel {
+  text-align: center;
+  font-size: var(--fs-answer);
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.bodyMap__selectedLabel strong {
+  color: var(--primary);
+  font-weight: 700;
 }
 
 /* zone 버튼: 실루엣 위에 겹치는 실제 <button>. 터치 hit area가 작은 점이

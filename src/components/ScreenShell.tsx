@@ -21,6 +21,14 @@ type Props = {
    * 맨 위로 튀는 회귀가 생긴다).
    */
   questionId?: string
+  /**
+   * Tablet UX v2.2 §10: wide landscape에서 일반 grid/category 질문
+   * (layout: 'grid2'/'compact3'/'body_map')은 더 넓은 max-width를 쓰고,
+   * safety/protected/긴 문장 질문(layout 미지정, 기본값 'list')은 좁은
+   * --content-max를 그대로 유지한다. 순수 presentation 힌트이며 clinical
+   * semantics와 무관하다(Question.layout과 동일 원칙, styles.css 참고).
+   */
+  wideContent?: boolean
 }
 
 /**
@@ -38,6 +46,7 @@ export function ScreenShell({
   children,
   footer,
   questionId,
+  wideContent,
 }: Props) {
   const mainRef = useRef<HTMLElement>(null)
   const [hasMore, setHasMore] = useState(false)
@@ -70,7 +79,30 @@ export function ScreenShell({
   }, [children])
 
   return (
-    <div className="shell">
+    <div className={`shell${wideContent ? ' shell--wideContent' : ''}`}>
+      {/*
+        Tablet UX v2.2 §5-8: wide landscape(넓은 태블릿 가로모드)에서는
+        좌우 여백을 그냥 버리지 않고 뒤로가기(좌측 rail)/단계 표시+"입력이
+        어려워요"(우측 rail)를 옆으로 옮겨 세로 공간을 확보한다. 실제
+        인터랙션 요소를 두 벌 렌더링하는 대신 순수 CSS로만 배치를
+        바꾸면(backBtn이 header 3단계 아래 깊이 중첩돼 있어 CSS Grid로
+        같은 엘리먼트를 다른 칸에 독립 배치할 수 없다), 아래처럼 동일
+        컨트롤을 rail 전용 마크업으로 한 벌 더 두고 styles.css의 wide
+        landscape 미디어쿼리에서만 서로 반대로 display:none을 스위칭한다
+        (하나는 항상 숨김 -> display:none인 엘리먼트는 접근성 트리/tab
+        순서에서 자동 제외되므로 실제로는 항상 정확히 한 벌만 상호작용
+        가능하다). portrait/기본 뷰포트는 완전히 기존 그대로다(§5).
+      */}
+      <button
+        type="button"
+        className="railBackBtn"
+        onClick={onBack}
+        disabled={!canGoBack}
+        aria-label="이전 질문으로"
+      >
+        <span aria-hidden="true">←</span>
+      </button>
+
       <header className="shell__top">
         <div className="shell__topInner">
           <div className="shell__topRow">
@@ -116,6 +148,13 @@ export function ScreenShell({
           </button>
         </div>
       </footer>
+
+      <aside className="shell__railRight">
+        <span className="railStepLabel">{currentStep}</span>
+        <button type="button" className="railHelpBtn" onClick={onHelp}>
+          입력이 어려워요
+        </button>
+      </aside>
     </div>
   )
 }

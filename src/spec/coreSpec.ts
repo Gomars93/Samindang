@@ -86,7 +86,35 @@ export const PATIENT_QUESTIONS: Question[] = [
   },
 ]
 
-/* ---------- 2. 방문 목적 ---------- */
+/* ---------- 2. 방문 목적 (Routing/UX v2) ----------
+ *
+ * VISIT_00_INTENT가 새 첫 질문이다 -- patient intent/workflow routing이지
+ * clinical diagnosis가 아니다. 기존 symptom safety screening을 우회하지
+ *않는다: 어떤 intent를 고르든 궁극적으로 아래 compatibility 함수들을 통해
+ * 기존 VISIT_01 값('symptom'/'women'/'weight'/'constitution') 중 하나로
+ * 귀결되고, 그 값이 이어지는 모든 기존 FROZEN safety 질문(LBP/NECK/...
+ * 등)의 showIf/게이트를 그대로 통과한다 -- 새 안전 예외 경로를 만들지
+ * 않는다.
+ *
+ * 하위호환: 기존 VISIT_01 질문 자체는 삭제하지 않는다(수백 개의 기존
+ * 테스트/fixture가 `set(r, {VISIT_01:'symptom', ...})`처럼 원시
+ * Responses를 직접 구성해 이 필드를 곧바로 채운다). 대신 VISIT_01의
+ * showIf를 `r['VISIT_00_INTENT'] == null`로 바꿔, "새 intent 질문이
+ * 아직 없다면"(즉 원시 raw-response 구성 경로) 원래처럼 보이게 하고,
+ * 새 intent 흐름에서는 완전히 숨긴다(중복 질문 방지). `visitGoal()`은
+ * VISIT_00_INTENT가 설정되어 있으면 그것을 우선 사용하고, 아니면 기존
+ * VISIT_01 raw 값으로 fallback한다 -- 두 경로가 동시에 값을 가질 일은
+ * 없으므로 우선순위가 실제로 충돌하지 않는다.
+ */
+
+const VISIT_00_INTENT_OPTIONS: Option[] = [
+  { value: 'pain_care', label: '아픈 곳 치료', description: '허리·목·관절 등' },
+  { value: 'symptom_consult', label: '몸의 증상 상담', description: '수면·소화·피로 등' },
+  { value: 'herbal', label: '한약·보약 상담', description: '증상·기력·건강관리' },
+  { value: 'women', label: '여성 건강', description: '생리·갱년기·임신·산후' },
+  { value: 'weight', label: '체중 관리' },
+  { value: 'undecided', label: '상담 후 결정', description: '무엇이 필요한지 잘 모르겠어요' },
+]
 
 const VISIT_01_OPTIONS: Option[] = [
   { value: 'symptom', label: '불편한 증상이 있어요' },
@@ -95,7 +123,68 @@ const VISIT_01_OPTIONS: Option[] = [
   { value: 'constitution', label: '체질·보약 상담을 받고 싶어요' },
 ]
 
+/**
+ * VISIT_00_INTENT(신규) + VISIT_00B_HERBAL_PURPOSE(신규, 한약 route 전용)를
+ * 기존 VISIT_01/VISIT_02_SYMPTOM_MAIN/VISIT_02_CONST raw 값으로 매핑한다.
+ * 새 clinical value가 아니라 순수 routing 표현이며, 이 함수들 밖으로는
+ * 절대 새 값이 노출되지 않는다(payload의 visit_goal/primary_symptom/
+ * constitution_goal은 모두 이 함수들이 리턴하는 기존 enum 문자열 그대로다).
+ */
+function visitGoal(r: Responses): string | null {
+  const intent = r['VISIT_00_INTENT']
+  if (intent === 'pain_care' || intent === 'symptom_consult' || intent === 'undecided') return 'symptom'
+  if (intent === 'herbal') {
+    return r['VISIT_00B_HERBAL_PURPOSE'] === 'symptom' ? 'symptom' : 'constitution'
+  }
+  if (intent === 'women') return 'women'
+  if (intent === 'weight') return 'weight'
+  // 하위호환: 새 intent 질문을 거치지 않고 raw Responses를 직접 구성한
+  // 기존 테스트/fixture 경로 -- 기존 VISIT_01 값을 그대로 사용한다.
+  const raw = r['VISIT_01']
+  return typeof raw === 'string' ? raw : null
+}
+
+function effectiveSymptomMain(r: Responses): string | null {
+  // pain_care는 "불편한 증상이 있어요 → 아픈 곳이 있어요" 두 단계를
+  // 반복하지 않고 곧장 Pain module로 연결한다(요청 §4) -- 화면 자체를
+  // 숨기는 대신(showIf) 이 값을 가상으로 'pain'으로 귀결시킨다.
+  if (r['VISIT_00_INTENT'] === 'pain_care') return 'pain'
+  const v = r['VISIT_02_SYMPTOM_MAIN']
+  return typeof v === 'string' ? v : null
+}
+
+function effectiveConstGoal(r: Responses): string | null {
+  if (r['VISIT_00_INTENT'] === 'herbal') {
+    const purpose = r['VISIT_00B_HERBAL_PURPOSE']
+    if (purpose === 'tonic') return 'tonic'
+    if (purpose === 'overall_check') return 'constitution'
+    if (purpose === 'undecided') return 'general'
+    return null // 'symptom' 선택 시 constitution route가 아니라 symptom bucket으로 이어진다.
+  }
+  const raw = r['VISIT_02_CONST']
+  return typeof raw === 'string' ? raw : null
+}
+
 const VISIT_QUESTIONS: Question[] = [
+  {
+    id: 'VISIT_00_INTENT',
+    variable: 'visit_intent',
+    input: 'single_choice',
+    question: '오늘 어떤 도움을 가장 받고 싶으신가요?',
+    required: true,
+    step: '방문 목적',
+    layout: 'grid2',
+    // 기존 VISIT_01을 직접 구성한(raw fixture) 경로에서는 이 새 질문을
+    // 다시 노출하지 않는다 -- VISIT_01과 서로 다른 필드를 보고 숨는 상호
+    // 배타 관계라 자기 자신의 답으로 스스로를 지우는 문제는 없다(파일 헤더
+    // 하위호환 설명 참고). 실제 신규 UI 사용자는 VISIT_01이 항상 null인
+    // 상태로 시작하므로 이 질문이 정상적으로 먼저 노출된다.
+    showIf: (r) => r['VISIT_01'] == null,
+    options: VISIT_00_INTENT_OPTIONS,
+    // 남성 환자에게는 여성 건강 선택지를 표시하지 않는다(기존 VISIT_01과 동일 원칙).
+    optionsIf: (r) =>
+      r['ID_03'] === 'male' ? VISIT_00_INTENT_OPTIONS.filter((o) => o.value !== 'women') : VISIT_00_INTENT_OPTIONS,
+  },
   {
     id: 'VISIT_01',
     variable: 'visit_goal',
@@ -104,12 +193,30 @@ const VISIT_QUESTIONS: Question[] = [
     helper: '가장 중요한 한 가지를 골라주세요. 다른 불편함도 뒤에서 함께 확인합니다.',
     required: true,
     step: '방문 목적',
+    // VISIT_00_INTENT가 이미 이 역할을 대신한다 -- 새 intent 질문을 거친
+    // 흐름에서는 완전히 숨긴다(위 파일 헤더 주석의 하위호환 설명 참고).
+    showIf: (r) => r['VISIT_00_INTENT'] == null,
     options: VISIT_01_OPTIONS,
-    // 남성 환자에게는 여성 건강·임신·산후 선택지를 표시하지 않는다.
     optionsIf: (r) =>
       r['ID_03'] === 'male'
         ? VISIT_01_OPTIONS.filter((o) => o.value !== 'women')
         : VISIT_01_OPTIONS,
+  },
+  {
+    id: 'VISIT_00B_HERBAL_PURPOSE',
+    variable: 'herbal_purpose',
+    input: 'single_choice',
+    question: '한약 상담의 주된 목적은 무엇인가요?',
+    required: true,
+    step: '방문 목적',
+    layout: 'grid2',
+    showIf: (r) => r['VISIT_00_INTENT'] === 'herbal',
+    options: [
+      { value: 'symptom', label: '불편한 증상 치료' },
+      { value: 'tonic', label: '기력·체력 회복' },
+      { value: 'overall_check', label: '전반적인 몸 상태 점검' },
+      { value: 'undecided', label: '상담 후 결정' },
+    ],
   },
   {
     id: 'VISIT_02_SYMPTOM_MAIN',
@@ -118,7 +225,11 @@ const VISIT_QUESTIONS: Question[] = [
     question: '지금 가장 불편한 증상은 무엇인가요?',
     required: true,
     step: '방문 목적',
-    showIf: (r) => r['VISIT_01'] === 'symptom',
+    layout: 'grid2',
+    // pain_care는 이 화면을 건너뛰고 곧장 Pain module로 간다(§4) --
+    // symptom_consult/undecided/한약-증상치료 bridge(§16)는 그대로 이
+    // 화면에서 기존 8개 카테고리 중 골라야 한다.
+    showIf: (r) => visitGoal(r) === 'symptom' && r['VISIT_00_INTENT'] !== 'pain_care',
     options: [
       { value: 'sleep', label: '잠이 불편해요' },
       { value: 'digestion', label: '속이나 소화가 불편해요' },
@@ -131,24 +242,15 @@ const VISIT_QUESTIONS: Question[] = [
     ],
   },
   {
-    id: 'VISIT_02A_SYMPTOM_OTHER',
-    variable: 'primary_symptom_other',
-    input: 'short_text',
-    question: '가장 불편한 증상을 짧게 적어주세요.',
-    required: true,
-    step: '방문 목적',
-    maxLength: 50,
-    showIf: (r) => r['VISIT_02_SYMPTOM_MAIN'] === 'other',
-    placeholder: '짧게 적어주세요',
-  },
-  {
     id: 'VISIT_03_SYMPTOM_DURATION',
     variable: 'chief_duration',
     input: 'single_choice',
     question: '언제부터 불편하셨나요?',
     required: true,
     step: '방문 목적',
-    showIf: (r) => r['VISIT_01'] === 'symptom',
+    // compact3는 3지선다형 전용(§8) -- 이 질문은 6개 선택지라 grid2가 맞다.
+    layout: 'grid2',
+    showIf: (r) => visitGoal(r) === 'symptom',
     options: [
       { value: 'within_1w', label: '1주 이내' },
       { value: '1w_1m', label: '1주~1개월' },
@@ -165,7 +267,7 @@ const VISIT_QUESTIONS: Question[] = [
     question: '일상생활에 얼마나 영향을 주나요?',
     required: true,
     step: '방문 목적',
-    showIf: (r) => r['VISIT_01'] === 'symptom',
+    showIf: (r) => visitGoal(r) === 'symptom',
     options: [
       { value: 'minimal', label: '거의 지장이 없어요' },
       { value: 'mild', label: '조금 불편해요' },
@@ -178,11 +280,13 @@ const VISIT_QUESTIONS: Question[] = [
     variable: 'women_goal',
     input: 'single_choice',
     question: '어떤 상담이 가장 필요하신가요?',
+    helper: '생리·갱년기는 모두 "생리·여성 건강"에서 함께 확인합니다.',
     required: true,
     step: '방문 목적',
-    showIf: (r) => r['VISIT_01'] === 'women',
+    layout: 'grid2',
+    showIf: (r) => visitGoal(r) === 'women',
     options: [
-      { value: 'women', label: '생리·갱년기 등 여성 건강' },
+      { value: 'women', label: '생리·여성 건강', description: '생리·갱년기 등' },
       { value: 'pregnancy', label: '임신 관련 상담' },
       { value: 'postpartum', label: '출산 후 회복 상담' },
     ],
@@ -194,7 +298,8 @@ const VISIT_QUESTIONS: Question[] = [
     question: '어떤 상담을 가장 원하시나요?',
     required: true,
     step: '방문 목적',
-    showIf: (r) => r['VISIT_01'] === 'constitution',
+    // VISIT_00B_HERBAL_PURPOSE가 새 흐름에서 이 역할을 대신한다.
+    showIf: (r) => visitGoal(r) === 'constitution' && r['VISIT_00_INTENT'] !== 'herbal',
     options: [
       { value: 'constitution', label: '체질과 전반적인 몸 상태를 보고 싶어요' },
       { value: 'tonic', label: '기력 보강·보약 상담을 받고 싶어요' },
@@ -211,9 +316,9 @@ const VISIT_QUESTIONS: Question[] = [
  * 체질·보약(visit_goal=constitution)은 동반문제 카테고리가 없으므로 null.
  */
 export const primaryConcernKey = (r: Responses): string | null => {
-  const goal = r['VISIT_01']
+  const goal = visitGoal(r)
   if (goal === 'symptom') {
-    const v = r['VISIT_02_SYMPTOM_MAIN']
+    const v = effectiveSymptomMain(r)
     return typeof v === 'string' ? v : null
   }
   if (goal === 'women') {
@@ -264,17 +369,6 @@ const SAFETY_QUESTIONS: Question[] = [
       if (r['ID_03'] === 'male') exclude.add('women')
       return SECONDARY_OPTIONS.filter((o) => !exclude.has(o.value))
     },
-  },
-  {
-    id: 'SECONDARY_01A',
-    variable: 'secondary_other_text',
-    input: 'short_text',
-    question: '가장 불편한 그 밖의 증상을 짧게 적어주세요.',
-    required: true,
-    step: '상담 내용',
-    maxLength: 50,
-    showIf: (r) => has(r, 'SECONDARY_01', 'other'),
-    placeholder: '짧게 적어주세요',
   },
   {
     id: 'SAFETY_01',
@@ -498,17 +592,6 @@ const SLEEP_QUESTIONS: Question[] = [
       { value: 'other', label: '기타' },
     ],
   },
-  {
-    id: 'SLEEP_03A',
-    variable: 'awakening_other',
-    input: 'short_text',
-    question: '다른 이유가 있다면 짧게 적어주세요.',
-    required: true,
-    step: '상세 증상',
-    maxLength: 50,
-    showIf: (r) => IS_PRIMARY_SLEEP(r) && has(r, 'SLEEP_03', 'other'),
-    placeholder: '짧게 적어주세요',
-  },
   ...MENOPAUSE_SLEEP_QUESTIONS,
 ]
 
@@ -724,10 +807,14 @@ const PAIN_QUESTIONS: Question[] = [
     id: 'PAIN_01',
     variable: 'primary_location',
     input: 'single_choice',
-    question: '어디가 가장 불편한가요?',
+    question: '가장 불편한 한 곳을 눌러주세요',
     required: true,
     step: '상세 증상',
+    layout: 'body_map',
     showIf: IS_PRIMARY_PAIN,
+    // Body map(Routing/UX v2 §5)은 이 options 배열을 그대로 쓴다 -- 새
+    // clinical region enum을 만들지 않는다. 'other'는 실루엣에 자연스러운
+    // 자리가 없어 body map의 "목록으로 보기" fallback에서만 선택 가능하다.
     options: [
       { value: 'neck_shoulder', label: '목·어깨' },
       { value: 'low_back_pelvis', label: '허리·골반' },
@@ -739,17 +826,6 @@ const PAIN_QUESTIONS: Question[] = [
       { value: 'abdomen', label: '배 주변' },
       { value: 'other', label: '그 밖의 부위' },
     ],
-  },
-  {
-    id: 'PAIN_01A',
-    variable: 'location_other',
-    input: 'short_text',
-    question: '어느 부위인지 짧게 적어주세요.',
-    required: true,
-    step: '상세 증상',
-    maxLength: 50,
-    showIf: (r) => IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'other',
-    placeholder: '짧게 적어주세요',
   },
   {
     id: 'PAIN_02',
@@ -785,17 +861,6 @@ const PAIN_QUESTIONS: Question[] = [
       { value: 'other', label: '다른 부위로 퍼져요' },
       { value: 'unknown', label: '잘 모르겠어요' },
     ],
-  },
-  {
-    id: 'PAIN_04A',
-    variable: 'radiation_other',
-    input: 'short_text',
-    question: '어디로 퍼지는지 짧게 적어주세요.',
-    required: true,
-    step: '상세 증상',
-    maxLength: 50,
-    showIf: (r) => IS_PRIMARY_PAIN(r) && r['PAIN_04'] === 'other',
-    placeholder: '짧게 적어주세요',
   },
 ]
 
@@ -2672,17 +2737,6 @@ const WOMEN_QUESTIONS: Question[] = [
     ],
   },
   {
-    id: 'WOMEN_01A',
-    variable: 'women_other_text',
-    input: 'short_text',
-    question: '어떤 내용인지 짧게 적어주세요.',
-    required: true,
-    step: '상세 증상',
-    maxLength: 50,
-    showIf: (r) => IS_PRIMARY_WOMEN(r) && has(r, 'WOMEN_01', 'other'),
-    placeholder: '짧게 적어주세요',
-  },
-  {
     id: 'WOMEN_02',
     variable: 'menstrual_status',
     input: 'single_choice',
@@ -2776,17 +2830,6 @@ const PREGNANCY_QUESTIONS: Question[] = [
       { value: 'other', label: '기타' },
     ],
   },
-  {
-    id: 'PREGNANCY_03A',
-    variable: 'pregnancy_other_text',
-    input: 'short_text',
-    question: '어떤 내용인지 짧게 적어주세요.',
-    required: true,
-    step: '상세 증상',
-    maxLength: 50,
-    showIf: (r) => IS_PRIMARY_PREGNANCY(r) && has(r, 'PREGNANCY_03', 'other'),
-    placeholder: '짧게 적어주세요',
-  },
 ]
 
 /* ---------- Postpartum 상세 Module (women_goal === postpartum 인 경우만) ---------- */
@@ -2830,17 +2873,6 @@ const POSTPARTUM_QUESTIONS: Question[] = [
       { value: 'breastfeeding', label: '수유 관련 상담이 필요해요' },
       { value: 'other', label: '기타' },
     ],
-  },
-  {
-    id: 'POSTPARTUM_02A',
-    variable: 'postpartum_other_text',
-    input: 'short_text',
-    question: '어떤 내용인지 짧게 적어주세요.',
-    required: true,
-    step: '상세 증상',
-    maxLength: 50,
-    showIf: (r) => IS_PRIMARY_POSTPARTUM(r) && has(r, 'POSTPARTUM_02', 'other'),
-    placeholder: '짧게 적어주세요',
   },
   {
     id: 'POSTPARTUM_03',
@@ -3131,7 +3163,7 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
     question: '평소 기운과 회복력은 어떠신가요?',
     required: true,
     step: '전신 정보',
-    showIf: (r) => r['VISIT_01'] === 'constitution',
+    showIf: (r) => visitGoal(r) === 'constitution',
     options: [
       { value: 'sufficient', label: '충분한 편이에요' },
       { value: 'tired_recovers', label: '쉽게 피곤하지만 쉬면 회복돼요' },
@@ -3146,7 +3178,11 @@ const CONSTITUTION_BASIC_QUESTIONS: Question[] = [
     question: '평소 잠은 어떠신가요?',
     required: true,
     step: '전신 정보',
-    showIf: (r) => r['VISIT_01'] === 'constitution',
+    // 수면 질문 중복 제거(Routing/UX v2 §15): SEC_SLEEP_01(동반문제로 "잠"을
+    // 고른 체질·보약 환자)에서 이미 수면 정보를 얻었다면 여기서 다시
+    // 묻지 않는다. 기존 clinical branching 의미는 그대로다 -- SEC_SLEEP_01이
+    // 없는 절대다수의 체질·보약 환자에게는 이전과 동일하게 보인다.
+    showIf: (r) => visitGoal(r) === 'constitution' && r['SEC_SLEEP_01'] == null,
     options: [
       { value: 'normal', label: '특별히 불편하지 않아요' },
       { value: 'onset_difficulty', label: '잠들기 어려워요' },
@@ -3329,15 +3365,26 @@ const HISTORY_QUESTIONS: Question[] = [
     ],
   },
   {
+    // Routing/UX v2 §14: 자유입력 대신 category 선택으로 전환한다 -- 알레르기
+    // 정보 자체가 사라지지 않도록(실제 투약/약침 전 확인 cue) 완전 삭제
+    // 대신 카테고리 multi_choice로 바꾼다. 새 clinical threshold는 만들지
+    // 않는다 -- ALLERGY_01(있음/없음/모름)의 안전 의미는 그대로다.
     id: 'ALLERGY_02',
     variable: 'allergy_detail',
-    input: 'short_text',
-    question: '어떤 알레르기나 이상반응이 있었는지 짧게 적어주세요.',
+    input: 'multi_choice',
+    question: '어떤 종류의 알레르기·이상반응이었나요?',
+    helper: '해당되는 것을 모두 선택해주세요.',
     required: true,
     step: '병력정보',
-    maxLength: 50,
     showIf: (r) => r['ALLERGY_01'] === 'yes',
-    placeholder: '짧게 적어주세요',
+    options: [
+      { value: 'medication', label: '약' },
+      { value: 'food', label: '음식' },
+      { value: 'herbal', label: '한약' },
+      { value: 'injection', label: '주사·약침' },
+      { value: 'other', label: '기타' },
+      { value: 'unknown', label: '잘 모르겠음' },
+    ],
   },
   {
     id: 'SURGERY_01',
@@ -3346,21 +3393,12 @@ const HISTORY_QUESTIONS: Question[] = [
     question: '큰 수술이나 입원 치료를 받은 적이 있나요?',
     required: true,
     step: '병력정보',
+    layout: 'compact3',
     options: [
       { value: 'none', label: '없어요' },
       { value: 'yes', label: '있어요' },
+      { value: 'unknown', label: '잘 모르겠어요' },
     ],
-  },
-  {
-    id: 'SURGERY_02',
-    variable: 'surgery_detail',
-    input: 'short_text',
-    question: '어떤 수술·입원이었는지 중요한 내용만 짧게 적어주세요.',
-    required: true,
-    step: '병력정보',
-    maxLength: 50,
-    showIf: (r) => r['SURGERY_01'] === 'yes',
-    placeholder: '짧게 적어주세요',
   },
   {
     id: 'WOMEN_SAFETY_01',
@@ -3570,7 +3608,7 @@ const BIRTH_QUESTIONS: Question[] = [
     step: '출생정보',
     showIf: (r) => r['BIRTH_03'] !== 'unknown' && r['BIRTH_03'] !== null,
     options: [
-      { value: 'exact', label: '정확히 알아요' },
+      { value: 'exact', label: '정확해요' },
       { value: 'approximate', label: '대략 그 정도예요' },
     ],
   },
@@ -3588,17 +3626,6 @@ const FREE_TEXT_QUESTIONS: Question[] = [
       { value: 'none', label: '없어요' },
       { value: 'yes', label: '있어요' },
     ],
-  },
-  {
-    id: 'FREE_02',
-    variable: 'free_text_detail',
-    input: 'short_text',
-    question: '원장에게 전하고 싶은 내용을 적어주세요.',
-    required: true,
-    step: '마무리',
-    maxLength: 100,
-    showIf: (r) => r['FREE_01'] === 'yes',
-    placeholder: '100자 이내로 적어주세요',
   },
 ]
 
@@ -4069,13 +4096,20 @@ export const buildResponsePayload = (r: Responses) => ({
     patient_sex: r['ID_03'],
   },
   visit_goal: {
-    visit_goal: r['VISIT_01'],
-    primary_symptom: r['VISIT_02_SYMPTOM_MAIN'],
-    primary_symptom_other: r['VISIT_02A_SYMPTOM_OTHER'],
+    // Routing/UX v2: visit_intent/herbal_purpose는 새 첫 화면의 raw 답이고,
+    // visit_goal/primary_symptom/constitution_goal은 그 답을 기존
+    // enum으로 정규화한 값이다(visitGoal/effectiveSymptomMain/
+    // effectiveConstGoal, 위 §2 참고) -- downstream consumer(DoctorView 등)
+    // 는 계속 이 세 필드만 보면 되고, 기존 raw VISIT_01/VISIT_02_* 값을
+    // 직접 구성하는 이전 fixture/테스트에서도 동일한 값을 낸다.
+    visit_intent: r['VISIT_00_INTENT'],
+    herbal_purpose: r['VISIT_00B_HERBAL_PURPOSE'],
+    visit_goal: visitGoal(r),
+    primary_symptom: effectiveSymptomMain(r),
     chief_duration: r['VISIT_03_SYMPTOM_DURATION'],
     chief_impact: r['VISIT_04_SYMPTOM_IMPACT'],
     women_goal: r['VISIT_02_WOMEN'],
-    constitution_goal: r['VISIT_02_CONST'],
+    constitution_goal: effectiveConstGoal(r),
   },
   primary_concern: {
     key: primaryConcernKey(r),
@@ -4083,7 +4117,6 @@ export const buildResponsePayload = (r: Responses) => ({
   },
   secondary_concerns: {
     secondary_concerns: r['SECONDARY_01'],
-    secondary_other_text: r['SECONDARY_01A'],
     router_targets: secondaryModuleTargets(r),
   },
   safety_flags: {
@@ -4185,7 +4218,6 @@ export const buildResponsePayload = (r: Responses) => ({
       problems: r['SLEEP_01'],
       frequency_per_week: r['SLEEP_02'],
       awakening_reasons: r['SLEEP_03'],
-      awakening_other: r['SLEEP_03A'],
       menopause: {
         gate_context: r['MS_GATE_01'],
         stage: r['MS_01'],
@@ -4216,10 +4248,8 @@ export const buildResponsePayload = (r: Responses) => ({
     },
     pain: {
       primary_location: r['PAIN_01'],
-      location_other: r['PAIN_01A'],
       pain_qualities: r['PAIN_02'],
       radiation: r['PAIN_04'],
-      radiation_other: r['PAIN_04A'],
     },
     lbp: {
       distal_extent: r['LBP_01'],
@@ -4369,7 +4399,6 @@ export const buildResponsePayload = (r: Responses) => ({
     },
     women: {
       problems: r['WOMEN_01'],
-      other_text: r['WOMEN_01A'],
       menstrual_status: r['WOMEN_02'],
       menopause_symptoms: r['WOMEN_03'],
     },
@@ -4377,12 +4406,10 @@ export const buildResponsePayload = (r: Responses) => ({
       status: r['PREGNANCY_01'],
       trimester: r['PREGNANCY_02'],
       concerns: r['PREGNANCY_03'],
-      other_text: r['PREGNANCY_03A'],
     },
     postpartum: {
       time_since_delivery: r['POSTPARTUM_01'],
       problems: r['POSTPARTUM_02'],
-      other_text: r['POSTPARTUM_02A'],
       breastfeeding_status: r['POSTPARTUM_03'],
     },
     weight: {
@@ -4426,7 +4453,6 @@ export const buildResponsePayload = (r: Responses) => ({
   },
   surgery_history: {
     surgery_yn: r['SURGERY_01'],
-    surgery_detail: r['SURGERY_02'],
   },
   reproductive_status: {
     reproductive_status: r['WOMEN_SAFETY_01'],
@@ -4444,6 +4470,5 @@ export const buildResponsePayload = (r: Responses) => ({
   },
   free_text: {
     free_text_yn: r['FREE_01'],
-    free_text_detail: r['FREE_02'],
   },
 })

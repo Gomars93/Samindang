@@ -19,6 +19,13 @@ export type Option = {
    * `value`/`id`에는 전혀 영향을 주지 않는다.
    */
   description?: string
+  /**
+   * 카드 레이아웃에서 제목 위/옆에 보이는 pictogram 키(Tablet UX v2.1).
+   * `src/components/icons.tsx`의 registry key만 들어간다 -- 순수 presentation
+   * metadata이며 `value`/`id`/clinical 의미와 전혀 무관하다. 텍스트 라벨이
+   * 항상 1차 정보이고, icon은 시각적 스캔을 돕는 보조 수단일 뿐이다.
+   */
+  icon?: string
 }
 
 /** 화면에 저장되는 선택 키 (Option.id ?? Option.value) */

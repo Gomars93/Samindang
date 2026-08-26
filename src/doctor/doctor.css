@@ -277,6 +277,15 @@
   white-space: nowrap;
 }
 
+/* 참고 증상(Tablet UX v2.1 §18-§23) -- 진단/객관적 소견이 아닌 "환자가
+   선택했다는 사실"만 전달하는 정보이므로, 기본 secChip보다도 더 muted하게
+   표시하고(강조색인 --primary 대신 --text-muted) 절대 urgent safety
+   panel/danger 색을 쓰지 않는다. */
+.doctor__secChip--reference strong {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 .doctor__secDetails summary,
 .doctor__constDetails summary {
   cursor: pointer;

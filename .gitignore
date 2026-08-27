@@ -102,3 +102,7 @@ tests/.multi-choice-bundle.cjs
 
 # esbuild bundle used by tests/preview-build.spec.mjs (regenerated, not source)
 tests/.preview-server-client-bundle.mjs
+
+# esbuild bundles used by tests/doctor-workspace.spec.mjs (regenerated, not source)
+tests/.doctor-workspace-fixtures-bundle.mjs
+tests/.doctor-workspace-bundle.cjs

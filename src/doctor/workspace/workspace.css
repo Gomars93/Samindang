@@ -1,0 +1,810 @@
+/**
+ * Doctor Clinical Workspace styles (PR #24 Phase 10-11). Scoped entirely
+ * under `.workspace` (itself always inside `.doctor`), so nothing here
+ * touches the patient-facing app. Reuses the existing shared tokens
+ * (--primary, --primary-soft, --danger, --border, --surface, --bg, --text,
+ * --text-muted from src/styles.css; --warning/--warning-soft from
+ * src/doctor/doctor.css's `.doctor` scope) rather than inventing a new
+ * palette -- restrained, professional, desktop/tablet-clinic density.
+ */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 20px 0 28px;
+}
+
+/* ---------- Common Safety (rendered by CommonSafetyBanner, but the
+   surrounding spacing/host classes live here since this file owns the
+   overall workspace rhythm) ---------- */
+.doctor__commonSafety {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---------- profile bar ---------- */
+.workspace__profileBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.workspace__profileBar__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.workspace__profileBar__hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.workspace__segmented {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.workspace__segmentedBtn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.workspace__segmentedBtn--active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.workspace__segmentedBtn:focus-visible,
+.workspace__tabBtn:focus-visible,
+.workspace__statusBtn:focus-visible,
+.workspace__lateralityBtn:focus-visible,
+.workspace__followUpChip:focus-visible,
+.workspace__btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ---------- mixed-profile tabs ---------- */
+.workspace__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.workspace__tabBtn {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.workspace__tabBtn--active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* ---------- hero (10-second summary) ---------- */
+.workspace__hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.workspace__hero__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.workspace__hero__head h3 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--primary);
+  letter-spacing: -0.01em;
+}
+
+.workspace__hero__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspace__heroGrid {
+  display: grid;
+  grid-template-columns: 1.3fr repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.workspace__systemicGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.workspace__systemCard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 2px;
+}
+
+.workspace__metric,
+.workspace__systemCard {
+  min-width: 0;
+}
+
+.workspace__metric {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.workspace__metric--primary {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.workspace__metric--danger {
+  background: var(--danger-soft, #fbf0ee);
+  border-color: var(--danger);
+}
+
+.workspace__metric__label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.workspace__metric__value {
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: -0.01em;
+}
+
+.workspace__rawTag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+  vertical-align: 2px;
+}
+
+.workspace__heroRows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+  padding-top: 4px;
+}
+
+.workspace__heroRow {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.workspace__heroRow span:first-child {
+  color: var(--text-muted);
+}
+
+.workspace__heroRow__value--danger {
+  color: var(--danger);
+}
+
+/* ---------- generic block section ---------- */
+.workspace__block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.workspace__block h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: var(--primary);
+}
+
+.workspace__block__hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+.workspace__empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.workspace__provBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+/* ---------- exam suggestions ---------- */
+.workspace__pendingCounter {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 0 0 10px;
+}
+
+.workspace__examGroup {
+  margin-bottom: 14px;
+}
+
+.workspace__examGroup:last-child {
+  margin-bottom: 0;
+}
+
+.workspace__examGroup h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.workspace__examCard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+
+.workspace__examCard--done {
+  background: var(--surface);
+}
+
+.workspace__examCard__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.workspace__examCard__title {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.workspace__priorityChip {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.workspace__priorityChip--must_check {
+  background: var(--danger-soft, #fbf0ee);
+  color: var(--danger);
+}
+
+.workspace__priorityChip--contextual {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.workspace__examCard__reason {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+.workspace__examCard__statusRow,
+.workspace__lateralityRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workspace__statusBtn,
+.workspace__lateralityBtn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.workspace__statusBtn--active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.workspace__lateralityBtn--active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.workspace__examCard__detailRow {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace__noteLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.workspace__noteInput {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  min-height: 36px;
+}
+
+.workspace__noteInput:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* ---------- evidence (support/contradiction/unknown) ---------- */
+.workspace__evidence {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.workspace__evidenceGroup h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.workspace__evidenceGroup ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace__evidenceGroup--support h4 {
+  color: var(--primary);
+}
+
+.workspace__evidenceGroup--contradiction h4 {
+  color: var(--warning);
+}
+
+.workspace__evidenceGroup--unknown h4 {
+  color: var(--text-muted);
+}
+
+/* ---------- pattern candidates ---------- */
+.workspace__candidateCard {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--bg);
+}
+
+.workspace__candidateCard--accepted {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.workspace__candidateCard--rejected {
+  opacity: 0.65;
+}
+
+.workspace__candidateCard__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.workspace__candidateCard__head strong {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.workspace__candidateStatusTag {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__candidateFacts {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.workspace__candidateFacts > span {
+  display: block;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.workspace__candidateFacts ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.workspace__candidateFacts--support > span {
+  color: var(--primary);
+}
+
+.workspace__candidateFacts--contradiction > span {
+  color: var(--warning);
+}
+
+.workspace__candidateCard__actions {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+
+/* ---------- clinician observation checklist ---------- */
+.workspace__observationChecklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace__observationRow {
+  display: grid;
+  grid-template-columns: 90px 140px 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace__observationCategory {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.workspace__observationTitle {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.workspace__checkBadge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.workspace__checkBadge--done {
+  color: var(--primary);
+}
+
+/* ---------- myungri (collapsed) ---------- */
+.workspace__myungri {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.workspace__myungri summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 16px;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.workspace__myungri summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace__myungri summary::after {
+  content: '+';
+  float: right;
+  color: var(--text-muted);
+}
+
+.workspace__myungri[open] summary::after {
+  content: '\2212';
+}
+
+.workspace__myungri__hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- final assessment ---------- */
+.workspace__finalAssessment {
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.workspace__finalAssessment__badge {
+  display: inline-block;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-bottom: 12px;
+}
+
+.workspace__finalAssessment__fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.workspace__finalAssessment__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__finalAssessment__field textarea {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.workspace__finalAssessment__field textarea:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* ---------- follow-up targets ---------- */
+.workspace__followUp {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+
+.workspace__followUp h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.workspace__followUp__hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspace__followUp__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.workspace__followUpChip {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.workspace__followUpChip--active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.workspace__followUpChip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace__followUp__status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- EMR preview ---------- */
+.workspace__emrPreview {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.workspace__emrPreview__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.workspace__emrPreview__head h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.workspace__emrPreview__badge {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.workspace__emrPreview__text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.workspace__emrPreview__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.workspace__btn {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 40px;
+}
+
+.workspace__copyFeedback {
+  font-size: 12px;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.workspace__copyError {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+/* ---------- responsive: tablet landscape/portrait, desktop ---------- */
+@media (max-width: 1100px) {
+  .workspace__heroGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .workspace__systemicGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .workspace__evidence {
+    grid-template-columns: 1fr;
+  }
+  .workspace__finalAssessment__fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .workspace__heroGrid,
+  .workspace__systemicGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .workspace__profileBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .workspace__segmented {
+    justify-content: stretch;
+  }
+  .workspace__segmentedBtn {
+    flex: 1;
+  }
+  .workspace__heroRow {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .workspace__observationRow {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

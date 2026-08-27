@@ -11,6 +11,7 @@
  */
 import { useState } from 'react'
 import { CommonSafetyBanner } from '../CommonSafetyBanner'
+import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment } from '../judgment'
 import { PainWorkspace } from './PainWorkspace'

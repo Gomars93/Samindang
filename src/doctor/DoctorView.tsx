@@ -43,6 +43,7 @@ import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFie
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { DoctorWorkspace } from './workspace/DoctorWorkspace'
 import { deriveViewProfile } from './workspace/viewProfile'
+import { WORKSPACE_SCENARIOS } from './workspace/workspaceFixtures'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -1619,6 +1620,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
   const [mode, setMode] = useState<'fixtures' | 'server'>('fixtures')
   const [fixtureIndex, setFixtureIndex] = useState(initialFixtureIndex)
+  // PR #24 Phase 12: SYNTHETIC/NO-PHI Doctor Workspace scenarios (with
+  // illustrative exam-suggestion/pattern-candidate/evidence/observation
+  // data attached) -- opt-in only, default '' means "off, use the plain
+  // fixture above with no synthetic decision-support data" so production
+  // rendering behavior (no `synthetic` passed to DoctorWorkspace) is
+  // unaffected unless a reviewer explicitly picks one.
+  const [workspaceScenarioId, setWorkspaceScenarioId] = useState('')
 
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>([])
   const [serverError, setServerError] = useState<{ message: string; kind: 'auth' | 'network' | 'other' } | null>(
@@ -1752,7 +1760,11 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   }, [mode, selectedRecord?.visit_id, workstationId])
 
   const fixture = DOCTOR_FIXTURES[fixtureIndex]
-  const payload = mode === 'server' && selectedRecord ? recordToPayload(selectedRecord) : fixture.payload
+  const activeScenario = WORKSPACE_SCENARIOS.find((s) => s.id === workspaceScenarioId) ?? null
+  const payload =
+    mode === 'server' && selectedRecord
+      ? recordToPayload(selectedRecord)
+      : (activeScenario?.payload ?? fixture.payload)
   const r = payload.responses
   const { routing } = payload
   const saju = payload.myungri_calculation
@@ -1918,6 +1930,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             </select>
           </div>
         )}
+        {mode === 'fixtures' && (
+          <div className="doctor__pickerRow">
+            <label htmlFor="doctor-workspace-scenario-select">
+              Doctor Workspace 시나리오 (SYNTHETIC · NO-PHI)
+            </label>
+            <select
+              id="doctor-workspace-scenario-select"
+              value={workspaceScenarioId}
+              onChange={(e) => setWorkspaceScenarioId(e.target.value)}
+            >
+              <option value="">(없음 — 위 fixture 그대로, decision-support 데이터 없음)</option>
+              {WORKSPACE_SCENARIOS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {mode === 'server' && selectedRecord && (
           <button type="button" className="judgment__recordBtn" onClick={() => setSelectedId(null)}>
             목록으로
@@ -2001,6 +2032,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         shoulderObjectiveCuffWeakness={
           mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
         }
+        synthetic={mode === 'fixtures' ? (activeScenario?.synthetic ?? undefined) : undefined}
       />
 
       {/*

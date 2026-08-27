@@ -20,9 +20,9 @@ import {
   questionnaireMode,
   HERBAL_ADDON_FIELD,
   SYSTEMIC_BLOCK_QUESTION_IDS,
-  LBP_RAW_AGE_FIELD,
+  LBP_ONSET_DECADE_FIELD,
   LBP_ONSET_AGE_UNKNOWN_SENTINEL,
-  mapLbpOnsetAgeToBefore45,
+  mapLbpOnsetDecadeToBefore45,
   LBP_LEG_AUTOFILL_FIELD,
   isLbpLegAutofillActive,
   shouldAutoAdvancePast,
@@ -3765,13 +3765,13 @@ for (const sex of ['male', 'female']) {
   assert('W3 (Additional=sleep): final mode is pain_fast', questionnaireMode(r) === 'pain_fast')
 }
 
-// W4: LBP_10 wording (v2.2.1 §16, superseded by v2.3 §13 onset-age redesign).
-// v2.2.1 rewrote LBP_10 to directly ask the 45-year threshold in natural
-// Korean. v2.3 §13 goes further: the 45-year number is no longer shown to
-// the patient at all. A new LBP_10A_ONSET_AGE numeric question asks for the
-// actual onset age (or "잘 모르겠어요"), and LBP_10 becomes a lightweight
-// auto-confirm screen whose value is pre-filled by App.tsx's
-// mapLbpOnsetAgeToBefore45() before the patient ever sees it. The FROZEN
+// W4: LBP_10 wording (v2.2.1 §16, superseded by v2.3 §13 onset-age redesign,
+// then again by the PR #23 real-device QA follow-up §4-5: numeric age input
+// replaced by a decade selector). The 45-year number is never shown to the
+// patient. LBP_10A_ONSET_AGE now asks for a decade bucket (10대/20대/.../
+// 50대 이상/잘 모르겠어요) as a single_choice grid, and LBP_10 becomes a
+// lightweight auto-confirm screen whose value is pre-filled by App.tsx's
+// mapLbpOnsetDecadeToBefore45() before the patient ever sees it. The FROZEN
 // lbpLogic.ts/lbpAdapter.ts still read LBP_10 exactly as before (variable/
 // options/required all unchanged) -- only how the value gets there changed.
 {
@@ -3785,7 +3785,14 @@ for (const sex of ['male', 'female']) {
   assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)
   assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values, FROZEN contract)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
   assert('W4: LBP_10 showIf unchanged (same visibility gate as before)', typeof lbp10.showIf === 'function')
-  assert('W4: LBP_10A_ONSET_AGE has an explicit unknownOption ("잘 모르겠어요")', lbp10a.unknownOption && lbp10a.unknownOption.value === 'UNKNOWN_AGE')
+  assert('W4 (real-device QA follow-up): LBP_10A_ONSET_AGE is now a single_choice decade selector, not numeric', lbp10a.input === 'single_choice')
+  assert('W4: LBP_10A_ONSET_AGE has no leftover unknownOption (that was numeric-only infra)', lbp10a.unknownOption === undefined)
+  assert(
+    'W4: LBP_10A_ONSET_AGE offers exactly the 6 decade buckets in order',
+    JSON.stringify(lbp10a.options.map((o) => o.value)) === JSON.stringify(['10s', '20s', '30s', '40s', '50s_plus', 'UNKNOWN_AGE']),
+  )
+  assert('W4: the 45-year number never appears in the patient-facing question/helper text', !lbp10a.question.includes('45') && !(lbp10a.helper || '').includes('45'))
+  assert('W4: LBP_10A_ONSET_AGE uses the big-card grid layout ("큰 touch card/grid")', lbp10a.layout === 'grid2')
 }
 
 // W5: HERBAL_ADDON_FIELD stale-reset (§12) -- a brand-new blank Responses
@@ -3814,7 +3821,7 @@ const LBP_10_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
 // activateHerbalAddon) so they exercise the *actual* patch shape the shim
 // produces, not a hand-picked substitute. The follow-up correction adds
 // LBP_LEG_AUTOFILL_FIELD (a non-clinical provenance flag, same
-// non-question-metadata pattern as HERBAL_ADDON_FIELD/LBP_RAW_AGE_FIELD)
+// non-question-metadata pattern as HERBAL_ADDON_FIELD/LBP_ONSET_DECADE_FIELD)
 // and a navigation-layer skip (shouldAutoAdvancePast, coreSpec.ts) so the
 // patient is never actually shown LBP_02/LBP_03 once "없어요" auto-fills
 // them -- showIf/visibleQuestions/pruneStaleResponses are completely
@@ -3920,51 +3927,69 @@ function applyLbp02Or03DirectAnswer(r, id, value) {
 }
 
 // W7: LBP_10A_ONSET_AGE presentation shim (v2.3 §13, PR #23 follow-up
-// correction) -- mapLbpOnsetAgeToBefore45 boundary/malformed-input
-// coverage (item F), plus the App.tsx setAnswer patch shape that writes
-// LBP_10 + LBP_RAW_AGE_FIELD together, plus the new navigation-layer skip
-// that means LBP_10 is now NEVER shown to the patient (items C/D/E) --
-// showIf/required/options/variable are all unchanged (FROZEN adapter
-// contract), only what App.tsx's nextQuestion/goBack actually render
-// changes (shouldAutoAdvancePast unconditionally skips LBP_10, coreSpec.ts).
+// correction, then the real-device QA follow-up §4-6: numeric age ->
+// decade selector). mapLbpOnsetDecadeToBefore45 boundary coverage (items
+// C/D/E/F, now decade buckets instead of numeric ages, including the
+// deliberate 40s -> UNKNOWN precision tradeoff), plus the App.tsx
+// setAnswer patch shape that writes LBP_10 + LBP_ONSET_DECADE_FIELD
+// together, plus the navigation-layer skip that means LBP_10 is NEVER
+// shown to the patient -- showIf/required/options/variable are all
+// unchanged (FROZEN adapter contract), only what App.tsx's nextQuestion/
+// goBack actually render changes (shouldAutoAdvancePast unconditionally
+// skips LBP_10, coreSpec.ts).
 {
-  assert('W7: age 44 (just under 45) maps to YES', mapLbpOnsetAgeToBefore45('44') === 'YES')
-  assert('W7: age 45 (the threshold itself) maps to NO', mapLbpOnsetAgeToBefore45('45') === 'NO')
-  assert('W7: age 46 maps to NO', mapLbpOnsetAgeToBefore45('46') === 'NO')
-  assert('W7: age 0 maps to YES', mapLbpOnsetAgeToBefore45('0') === 'YES')
-  assert('W7 (item F): negative age fails closed to UNKNOWN (malformed)', mapLbpOnsetAgeToBefore45('-5') === 'UNKNOWN')
-  assert('W7 (item F): age above 130 fails closed to UNKNOWN (malformed)', mapLbpOnsetAgeToBefore45('999') === 'UNKNOWN')
-  assert('W7 (item F): non-numeric text fails closed to UNKNOWN (malformed)', mapLbpOnsetAgeToBefore45('abc') === 'UNKNOWN')
-  assert('W7 (item F): empty string fails closed to UNKNOWN', mapLbpOnsetAgeToBefore45('') === 'UNKNOWN')
-  assert('W7 (item F): null fails closed to UNKNOWN', mapLbpOnsetAgeToBefore45(null) === 'UNKNOWN')
-  assert('W7: the explicit "잘 모르겠어요" sentinel maps to UNKNOWN', mapLbpOnsetAgeToBefore45(LBP_ONSET_AGE_UNKNOWN_SENTINEL) === 'UNKNOWN')
+  assert('W7: 10대 maps to YES', mapLbpOnsetDecadeToBefore45('10s') === 'YES')
+  assert('W7: 20대 maps to YES', mapLbpOnsetDecadeToBefore45('20s') === 'YES')
+  assert('W7: 30대 maps to YES', mapLbpOnsetDecadeToBefore45('30s') === 'YES')
+  assert('W7 CRITICAL (precision tradeoff): 40대 fails closed to UNKNOWN, never guessed as YES or NO', mapLbpOnsetDecadeToBefore45('40s') === 'UNKNOWN')
+  assert('W7: 50대 이상 maps to NO', mapLbpOnsetDecadeToBefore45('50s_plus') === 'NO')
+  assert('W7: the explicit "잘 모르겠어요" sentinel maps to UNKNOWN', mapLbpOnsetDecadeToBefore45(LBP_ONSET_AGE_UNKNOWN_SENTINEL) === 'UNKNOWN')
+  assert('W7 (item F): an unrecognized/malformed decade value fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45('not-a-decade') === 'UNKNOWN')
+  assert('W7 (item F): empty string fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45('') === 'UNKNOWN')
+  assert('W7 (item F): null fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45(null) === 'UNKNOWN')
 
   const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
   assert('W7: LBP_10A_ONSET_AGE is reachable for chronic-onset LBP patients', visibleIds(chronic).has('LBP_10A_ONSET_AGE'))
   assert('W7: LBP_10 stays engine-visible alongside it (showIf unchanged, FROZEN adapter still reads it)', visibleIds(chronic).has('LBP_10'))
-  assert('W7 CRITICAL: LBP_10 is unconditionally navigation-skipped even before any age is entered (shouldAutoAdvancePast is unconditional for LBP_10)', shouldAutoAdvancePast(LBP_10_Q, chronic))
+  assert('W7 CRITICAL: LBP_10 is unconditionally navigation-skipped even before any decade is chosen (shouldAutoAdvancePast is unconditional for LBP_10)', shouldAutoAdvancePast(LBP_10_Q, chronic))
 
-  function applyLbp10aShim(r, rawAge) {
-    const patch = { ...r, LBP_10A_ONSET_AGE: rawAge, LBP_10: mapLbpOnsetAgeToBefore45(rawAge), [LBP_RAW_AGE_FIELD]: rawAge }
+  function applyLbp10aShim(r, decade) {
+    const patch = { ...r, LBP_10A_ONSET_AGE: decade, LBP_10: mapLbpOnsetDecadeToBefore45(decade), [LBP_ONSET_DECADE_FIELD]: decade }
     return pruneStaleResponses(patch).responses
   }
-  const filled = applyLbp10aShim(chronic, '32')
-  assert('W7 CRITICAL (item C): entering age 32 pre-fills LBP_10 to YES (FROZEN adapter contract)', filled['LBP_10'] === 'YES')
-  assert('W7: the raw age is preserved in the non-clinical metadata field', filled[LBP_RAW_AGE_FIELD] === '32')
-  assert('W7: LBP_10 stays engine-visible/answerable in storage terms', visibleIds(filled).has('LBP_10'))
-  assert('W7 CRITICAL (item C): LBP_10 patient screen is never rendered (navigation-skipped) after age 32', shouldAutoAdvancePast(LBP_10_Q, filled))
+  const filled10s = applyLbp10aShim(chronic, '10s')
+  assert('W7 (item C): choosing 10대 pre-fills LBP_10 to YES', filled10s['LBP_10'] === 'YES')
+  assert('W7: the chosen decade is preserved in the non-clinical metadata field', filled10s[LBP_ONSET_DECADE_FIELD] === '10s')
+  assert('W7: LBP_10 stays engine-visible/answerable in storage terms', visibleIds(filled10s).has('LBP_10'))
+  assert('W7 (item C): LBP_10 patient screen is never rendered (navigation-skipped) after choosing 10대', shouldAutoAdvancePast(LBP_10_Q, filled10s))
 
-  const filledOlder = applyLbp10aShim(chronic, '52')
-  assert('W7 CRITICAL (item D): entering age 52 pre-fills LBP_10 to NO', filledOlder['LBP_10'] === 'NO')
-  assert('W7 CRITICAL (item D): LBP_10 patient screen is never rendered after age 52', shouldAutoAdvancePast(LBP_10_Q, filledOlder))
+  const filled30s = applyLbp10aShim(chronic, '30s')
+  assert('W7 CRITICAL (item C): choosing 30대 pre-fills LBP_10 to YES (FROZEN adapter contract)', filled30s['LBP_10'] === 'YES')
+  assert('W7 (item C): LBP_10 patient screen is never rendered after choosing 30대', shouldAutoAdvancePast(LBP_10_Q, filled30s))
+
+  const filled40s = applyLbp10aShim(chronic, '40s')
+  assert('W7 CRITICAL (item D, precision tradeoff): choosing 40대 pre-fills LBP_10 to UNKNOWN, never YES or NO', filled40s['LBP_10'] === 'UNKNOWN')
+  assert('W7 (item D): LBP_10 patient screen is never rendered after choosing 40대', shouldAutoAdvancePast(LBP_10_Q, filled40s))
+
+  const filledOlder = applyLbp10aShim(chronic, '50s_plus')
+  assert('W7 CRITICAL (item D): choosing 50대 이상 pre-fills LBP_10 to NO', filledOlder['LBP_10'] === 'NO')
+  assert('W7 (item D): LBP_10 patient screen is never rendered after choosing 50대 이상', shouldAutoAdvancePast(LBP_10_Q, filledOlder))
 
   const filledUnknown = applyLbp10aShim(chronic, LBP_ONSET_AGE_UNKNOWN_SENTINEL)
   assert('W7 CRITICAL (item E): "잘 모르겠어요" pre-fills LBP_10 to UNKNOWN (fail-closed, no guess)', filledUnknown['LBP_10'] === 'UNKNOWN')
   assert('W7 CRITICAL (item E): LBP_10 patient screen is never rendered after "잘 모르겠어요"', shouldAutoAdvancePast(LBP_10_Q, filledUnknown))
 
-  const filledMalformed = applyLbp10aShim(chronic, 'not-a-number')
-  assert('W7 (item F): malformed onset age also fails closed to UNKNOWN via the same shim path', filledMalformed['LBP_10'] === 'UNKNOWN')
+  const filledMalformed = applyLbp10aShim(chronic, 'not-a-decade')
+  assert('W7 (item F): malformed decade value also fails closed to UNKNOWN via the same shim path', filledMalformed['LBP_10'] === 'UNKNOWN')
   assert('W7 (item F): LBP_10 patient screen is never rendered after malformed input either', shouldAutoAdvancePast(LBP_10_Q, filledMalformed))
+
+  // Back-navigation restore (item 6): changing the decade answer must
+  // re-derive LBP_10 correctly every time, never leaving a stale value
+  // from a previous choice.
+  const backTo30s = applyLbp10aShim(filled40s, '30s')
+  assert('W7 (back-nav): 40대 -> 30대 correctly re-derives LBP_10 to YES', backTo30s['LBP_10'] === 'YES')
+  const backToUnknownFromOlder = applyLbp10aShim(filledOlder, LBP_ONSET_AGE_UNKNOWN_SENTINEL)
+  assert('W7 (back-nav): 50대 이상 -> 잘 모르겠어요 correctly re-derives LBP_10 to UNKNOWN', backToUnknownFromOlder['LBP_10'] === 'UNKNOWN')
 
   // Non-chronic-onset patients never see either screen (existing gate unchanged).
   const acute = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: '1_3m' })
@@ -3988,7 +4013,7 @@ function simulateNextQuestion(fromId, r) {
 {
   const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
   const afterAgeEntered = (() => {
-    const patch = { ...chronic, LBP_10A_ONSET_AGE: '32', LBP_10: mapLbpOnsetAgeToBefore45('32'), [LBP_RAW_AGE_FIELD]: '32' }
+    const patch = { ...chronic, LBP_10A_ONSET_AGE: '30s', LBP_10: mapLbpOnsetDecadeToBefore45('30s'), [LBP_ONSET_DECADE_FIELD]: '30s' }
     return pruneStaleResponses(patch).responses
   })()
   const nextAfterOnsetAge = simulateNextQuestion('LBP_10A_ONSET_AGE', afterAgeEntered)

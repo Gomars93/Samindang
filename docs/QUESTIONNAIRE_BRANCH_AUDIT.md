@@ -295,7 +295,7 @@ Ground truth: `tmjLogic.ts` (literal port of the "T1-T8" CLOSED contract).
 
 ---
 
-## Appendix: LBP onset-age / 45-year threshold — clinical meaning (PR #23 follow-up correction)
+## Appendix: LBP onset-age / 45-year threshold — clinical meaning (PR #23 follow-up correction, updated for the real-device QA follow-up)
 
 LBP (`LBP_QUESTIONS`) is out of scope for the 8-module table above (audited
 and shipped in an earlier session of this same PR), but this note documents
@@ -322,14 +322,29 @@ criterion:
 - Because the number itself carries no meaning to a layperson and can read
   as an arbitrary or alarming cutoff out of clinical context, patient-facing
   UI never displays "45" or the words "45세" in any screen. The patient is
-  instead asked their actual onset age in plain language
-  (`LBP_10A_ONSET_AGE`, "허리 통증을 처음 겪은 건 대략 몇 살 무렵이었나요?"),
-  and the age-to-threshold comparison happens purely internally
-  (`mapLbpOnsetAgeToBefore45` in `coreSpec.ts`) to populate the existing
+  instead asked which decade their onset falls in
+  (`LBP_10A_ONSET_AGE`, "허리통증이 처음 생긴 시기는 언제쯤인가요?" — a
+  6-option single_choice: 10대/20대/30대/40대/50대 이상/잘 모르겠어요,
+  replacing an earlier numeric-keyboard version per real-device QA
+  feedback that direct age entry felt burdensome), and the
+  decade-to-threshold comparison happens purely internally
+  (`mapLbpOnsetDecadeToBefore45` in `coreSpec.ts`) to populate the existing
   FROZEN `LBP_10` field. The threshold itself is never redefined,
   reinterpreted, or exposed outside of that one internal comparison — it
   still lives entirely inside FROZEN `lbpLogic.ts`/`computeInflammatoryEligible`.
+- **The 40대 bucket is deliberately mapped to `UNKNOWN`, never guessed as
+  YES or NO.** A decade is coarser than the exact age the 45-year threshold
+  needs: someone in their 40s could be on either side of it (40-44 →
+  before-45; 45-49 → on/after-45), and the app has no way to tell which
+  from "40대" alone. Guessing either way would silently fabricate a
+  threshold answer the patient never actually gave, corrupting the FROZEN
+  `computeInflammatoryEligible` input. Failing closed to UNKNOWN for this
+  one bucket is a deliberate precision tradeoff (accepted per this PR's
+  own follow-up request), not a gap — every other decade maps
+  unambiguously (10대/20대/30대 are all before 45; 50대 이상 is always
+  on/after 45).
 
 This is a UX-copy/exposure decision only. No clinical guideline
 interpretation was used to change what the threshold means or how it's
-computed — only whether the raw number 45 appears on a patient's screen.
+computed — only whether the raw number 45 (or a decade ambiguous about it)
+ever resolves to a threshold answer the patient didn't actually give.

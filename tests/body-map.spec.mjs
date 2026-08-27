@@ -287,7 +287,12 @@ function cssBlock(css, selector) {
   // Assert the strengthened version directly from source: bold stroke
   // (>=2, well above the old 0.6) and high-contrast --text color (not the
   // lighter --text-muted).
-  const cueCss = cssBlock(CSS, '.bodyMap__frontCue path,\n.bodyMap__backCue line,\n.bodyMap__backCue path')
+  // PR #23 real-device QA follow-up §2: the front cue now also includes
+  // thin <line> joint-divider ticks (elbow/knee), so .bodyMap__frontCue
+  // line must be styled too (previously only <path> was, which silently
+  // left front-cue <line> ticks unstyled/invisible -- caught via local
+  // screenshot verification, see BodyMap.tsx Silhouette() comment).
+  const cueCss = cssBlock(CSS, '.bodyMap__frontCue path,\n.bodyMap__frontCue line,\n.bodyMap__backCue line,\n.bodyMap__backCue path')
   assert('styles.css: front/back cue rule exists', Boolean(cueCss))
   const strokeWidthMatch = cueCss.match(/stroke-width:\s*([\d.]+)/)
   assert('styles.css: front/back cue declares a stroke-width', Boolean(strokeWidthMatch))
@@ -297,28 +302,35 @@ function cssBlock(css, selector) {
   )
   assert('styles.css: front/back cue uses --text (high contrast), not --text-muted', /stroke:\s*var\(--text\)/.test(cueCss) && !/stroke:\s*var\(--text-muted\)/.test(cueCss))
 
-  const frontCueCircleCss = cssBlock(CSS, '.bodyMap__frontCue circle')
-  assert('styles.css: front cue eye circles use --text (high contrast), not --text-muted', /fill:\s*var\(--text\)/.test(frontCueCircleCss) && !/fill:\s*var\(--text-muted\)/.test(frontCueCircleCss))
 }
 
 {
-  // Tablet UX v2.2.1 §5: front adds an explicit mouth (2nd path in the
-  // front cue group) and a chest/abdomen contour; back adds a lower
-  // back/glute contour on top of the existing spine+scapula cues. Source
-  // assertion on BodyMap.tsx (not just CSS) since these are new SVG
-  // elements, not just style changes.
+  // PR #23 real-device QA follow-up §2: the front cue is no longer a face
+  // (real-device QA described the old two-dot-eyes + smile as a
+  // "block/toy figure", not a medical pictogram). Assert directly from
+  // source that NEITHER view has any <circle> in its cue group (no face
+  // anywhere), and that both views carry the same 4 thin joint-divider
+  // <line> ticks (elbow x2 + knee x2) in addition to their own
+  // distinguishing <path> cue(s) -- front: 1 collar path; back: 2 scapula
+  // + 1 waistband path (3 total, spine itself is a <line>, not a <path>).
   const bodyMapSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
   const frontCueMatch = bodyMapSrc.match(/bodyMap__frontCue">([\s\S]*?)<\/g>/)
   assert('BodyMap.tsx: front cue group exists', Boolean(frontCueMatch))
   const frontCueBody = frontCueMatch?.[1] ?? ''
-  assert('BodyMap.tsx: front cue has two eyes (2 <circle> elements)', (frontCueBody.match(/<circle/g) ?? []).length === 2)
-  assert('BodyMap.tsx: front cue has a mouth + chest/abdomen contour (2 <path> elements)', (frontCueBody.match(/<path/g) ?? []).length === 2)
+  assert('BodyMap.tsx CRITICAL: front cue has no face elements (no <circle> -- real-device QA follow-up, no face on either view)', !frontCueBody.includes('<circle'))
+  assert('BodyMap.tsx: front cue has exactly one collar <path> (neckline only, no mouth)', (frontCueBody.match(/<path/g) ?? []).length === 1)
+  assert('BodyMap.tsx: front cue has 4 thin joint-divider <line> ticks (elbow x2 + knee x2)', (frontCueBody.match(/<line/g) ?? []).length === 4)
 
   const backCueMatch = bodyMapSrc.match(/bodyMap__backCue">([\s\S]*?)<\/g>/)
   assert('BodyMap.tsx: back cue group exists', Boolean(backCueMatch))
   const backCueBody = backCueMatch?.[1] ?? ''
   assert('BodyMap.tsx: back cue has no face elements (no <circle>)', !backCueBody.includes('<circle'))
-  assert('BodyMap.tsx: back cue has spine line + scapula curves + lower-back/glute contour (3 <path> elements)', (backCueBody.match(/<path/g) ?? []).length === 3)
+  assert('BodyMap.tsx: back cue has spine + scapula curves + waistband contour (3 <path> elements: 2 scapula + 1 waistband)', (backCueBody.match(/<path/g) ?? []).length === 3)
+  assert('BodyMap.tsx: back cue has 5 <line> elements (spine + 4 joint-divider ticks)', (backCueBody.match(/<line/g) ?? []).length === 5)
+  assert(
+    'BodyMap.tsx: back cue waistband is a gentle arc, not a downward hip curve that could read as a gluteal cleft (real-device QA follow-up §2)',
+    !backCueBody.includes('Q30 62'),
+  )
 }
 
 {
@@ -349,18 +361,36 @@ function cssBlock(css, selector) {
   assert('styles.css CRITICAL: the old overlay-based .shell__scrollHint class is fully removed (replaced by a non-overlapping lane)', !CSS.includes('.shell__scrollHint {') && !CSS.includes('.shell__scrollHintPill'))
   assert('styles.css: .shell__scrollHintLane (the new non-overlapping replacement) exists', CSS.includes('.shell__scrollHintLane'))
 
-  const landscapeChipHideMatch = CSS.match(/@media \(orientation: landscape\) and \(min-width: 760px\) \{\s*\.bodyMap__selectedChip \{\s*display:\s*none;/)
+  const landscapeChipHideMatch = CSS.match(/@media \(orientation: landscape\) and \(min-width: 760px\) \{\s*\.bodyMap__selectedChip,\s*\.bodyMap__selectedLabel \{\s*display:\s*none;/)
   assert('styles.css CRITICAL: .bodyMap__selectedChip is hidden in wide landscape (right rail shows the same info instead, not a duplicate)', Boolean(landscapeChipHideMatch))
+  // PR #23 real-device QA follow-up §3: real-device QA found the center
+  // .bodyMap__selectedLabel ALSO still visible in landscape at the same
+  // time as the rail's .railSelection -- the chip-only hide above missed
+  // this second duplicate. Both must be hidden together in the same rule.
+  assert(
+    'styles.css CRITICAL: .bodyMap__selectedLabel (center label) is ALSO hidden in wide landscape, not just the chip (fixes the duplicate label real-device QA found)',
+    Boolean(landscapeChipHideMatch),
+  )
 }
 
 {
-  // Tablet UX v2.2.1 §7: selected zone indicator is a thin outline + light
-  // tint (not a large solid-filled box) -- background alpha kept low so the
-  // silhouette shape reads through, touch hit-area (button size) unchanged.
+  // Tablet UX v2.2.1 §7, refined again by the PR #23 real-device QA
+  // follow-up §2 ("동일 enum이 front/back에 모두 존재하면 반대 view에는
+  // soft tint 정도만 허용" / "두 view에 같은 강도의 check를 동시에
+  // 표시하지 말 것"): every selected zone gets a soft, borderless tint
+  // (this rule) -- background alpha kept low so the silhouette shape
+  // reads through, touch hit-area (button size) unchanged. Only the
+  // actually-tapped view additionally gets .bodyMap__zone--strong (next
+  // block) for a visibly stronger border + tint + the ✓ badge, so the two
+  // views are never emphasized identically at once.
   const selectedCss = cssBlock(CSS, '.bodyMap__zone--selected')
   assert('styles.css: .bodyMap__zone--selected rule exists', Boolean(selectedCss))
-  assert('styles.css: .bodyMap__zone--selected keeps a visible border outline', /border-color:\s*var\(--primary\)/.test(selectedCss))
+  assert('styles.css: .bodyMap__zone--selected has no visible border (soft-tint-only baseline)', /border-color:\s*transparent/.test(selectedCss))
   assert('styles.css: .bodyMap__zone--selected does NOT use a large solid fill (no --primary-soft background)', !/background:\s*var\(--primary-soft\)/.test(selectedCss))
+
+  const strongCss = cssBlock(CSS, '.bodyMap__zone--strong')
+  assert('styles.css: .bodyMap__zone--strong rule exists (the tapped-view-only stronger highlight)', Boolean(strongCss))
+  assert('styles.css CRITICAL: .bodyMap__zone--strong has a visible --primary border, unlike the soft baseline', /border-color:\s*var\(--primary\)/.test(strongCss))
 }
 
 {
@@ -404,8 +434,12 @@ function cssBlock(css, selector) {
   const silhouetteMatch = bodyMapSrc.match(/function Silhouette[\s\S]*?\n}\n/)
   assert('BodyMap.tsx: Silhouette() function exists', Boolean(silhouetteMatch))
   const silhouetteBody = silhouetteMatch[0]
-  assert('BodyMap.tsx: Silhouette() keeps the head as a <circle> (already smooth)', /<circle cx="30" cy="8" r="7"/.test(silhouetteBody))
+  assert('BodyMap.tsx: Silhouette() keeps the head as a <circle> (already smooth)', /<circle cx="30" cy="7" r="6\.5"/.test(silhouetteBody))
   assert('BodyMap.tsx CRITICAL: Silhouette() no longer renders any <rect> (torso/arms/legs are no longer box-shaped)', !/<rect/.test(silhouetteBody))
+  assert(
+    'BodyMap.tsx (real-device QA follow-up §2): Silhouette() connects the head to the torso with an explicit neck piece (bodyMap__silhouetteNeck)',
+    /bodyMap__silhouetteNeck/.test(silhouetteBody),
+  )
   assert('BodyMap.tsx: Silhouette() draws the torso as a smooth <path> (bodyMap__silhouetteTorso)', /bodyMap__silhouetteTorso/.test(silhouetteBody))
   assert('BodyMap.tsx: Silhouette() draws both arms as smooth <path> curves (bodyMap__silhouetteArm, 2 occurrences)', (silhouetteBody.match(/bodyMap__silhouetteArm/g) || []).length === 2)
   assert('BodyMap.tsx: Silhouette() draws both legs as smooth <path> curves (bodyMap__silhouetteLeg, 2 occurrences)', (silhouetteBody.match(/bodyMap__silhouetteLeg/g) || []).length === 2)

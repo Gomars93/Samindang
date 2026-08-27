@@ -22,14 +22,14 @@ import {
   ALL_QUESTIONS,
   HERBAL_ADDON_FIELD,
   LBP_LEG_AUTOFILL_FIELD,
-  LBP_RAW_AGE_FIELD,
+  LBP_ONSET_DECADE_FIELD,
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
   buildSajuInput,
   computeFlags,
-  mapLbpOnsetAgeToBefore45,
+  mapLbpOnsetDecadeToBefore45,
   primaryConcernKey,
   pruneStaleResponses,
   questionnaireMode,
@@ -61,9 +61,9 @@ const emptyResponses = (): Responses => ({
   // 만들 뿐 이전 Responses를 절대 스프레드하지 않는다 -- 이 줄은 그
   // 보장을 명시적으로 코드에 남겨 감사 가능하게 하기 위함이다).
   [HERBAL_ADDON_FIELD]: null,
-  // Tablet UX v2.3 §13: LBP_RAW_AGE_FIELD도 같은 이유로 non-question
+  // Tablet UX v2.3 §13: LBP_ONSET_DECADE_FIELD도 같은 이유로 non-question
   // metadata라 자동 초기화되지 않는다 -- 동일하게 명시적으로 null 처리.
-  [LBP_RAW_AGE_FIELD]: null,
+  [LBP_ONSET_DECADE_FIELD]: null,
   // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP_LEG_AUTOFILL_FIELD도
   // 같은 이유로 non-question metadata라 자동 초기화되지 않는다 --
   // 동일하게 명시적으로 null 처리.
@@ -398,13 +398,14 @@ function AppContent() {
       patch = { ...patch, [LBP_LEG_AUTOFILL_FIELD]: null }
     }
 
-    // Tablet UX v2.3 §13: LBP onset-age -> existing LBP_10 YES/NO/UNKNOWN
-    // compatibility mapping (see mapLbpOnsetAgeToBefore45's own comment in
-    // coreSpec.ts for the FROZEN-threshold safety reasoning). LBP_10 stays
-    // unconditionally visible alongside LBP_10A (same showIf), so this
-    // pre-fill also survives pruneStaleResponses.
+    // Tablet UX v2.3 §13 (real-device QA follow-up §4-5): LBP onset-decade
+    // -> existing LBP_10 YES/NO/UNKNOWN compatibility mapping (see
+    // mapLbpOnsetDecadeToBefore45's own comment in coreSpec.ts for the
+    // FROZEN-threshold safety reasoning, incl. why 40s fails closed to
+    // UNKNOWN). LBP_10 stays unconditionally visible alongside LBP_10A
+    // (same showIf), so this pre-fill also survives pruneStaleResponses.
     if (q.id === 'LBP_10A_ONSET_AGE') {
-      patch = { ...patch, LBP_10: mapLbpOnsetAgeToBefore45(value), [LBP_RAW_AGE_FIELD]: value }
+      patch = { ...patch, LBP_10: mapLbpOnsetDecadeToBefore45(value), [LBP_ONSET_DECADE_FIELD]: value }
     }
 
     // 상위 선택이 바뀌면 더 이상 표시되지 않는 화면의 응답을 즉시 정리한다.

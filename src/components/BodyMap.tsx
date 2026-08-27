@@ -127,17 +127,41 @@ export function getBodyMapZoneLabel(value: string): string {
  * 이 cue들은 순수 장식(fill/stroke만, 클릭 불가, pointer-events 없음)이며
  * zone 버튼의 %좌표계나 PAIN_01 enum과는 전혀 무관하다.
  *
- * Tablet UX v2.3 §7: 몸통/팔/다리를 각진 rounded-rect(캡슐) 5개로 그리던
- * 이전 방식은 "덜 박스처럼 보이게" 하라는 요구를 충족하지 못했다 --
- * 아무리 border-radius를 키워도 여전히 직사각형의 골격이 드러난다. 이제
- * 몸통/팔/다리 각각을 (머리는 원 그대로 유지하되) 부드러운 cubic-bezier
- * 곡선으로 이어진 <path>로 다시 그린다: 어깨가 자연스럽게 좁아지는
- * 목선, 허리 쪽으로 살짝 좁아지는 몸통, 손목 쪽으로 가늘어지는 팔,
- * 발목/발 쪽으로 둥글게 마무리되는 다리 -- 실루엣만으로도 사람처럼
- * 읽히도록 하는 것이 목표다(해부학적 정밀도가 아니라 순수 형태 인지).
- * 각 zone 버튼의 %좌표계(ZONES 테이블)는 이 시각적 변경과 완전히
- * 독립적이며 전혀 건드리지 않는다 -- 실루엣은 순수 장식(aria-hidden,
- * pointer-events 없음)이고, 실제 탭 가능한 zone 버튼은 별도 엘리먼트다.
+ * Tablet UX v2.3 §7, redesigned again for the PR #23 real-device QA
+ * follow-up (§2): the previous cubic-bezier torso/arm/leg shapes read as
+ * smoother than the original rounded-rect capsules, but real-device QA
+ * still described the result as a "블록형/장난감형" toy figure -- most
+ * visibly, the front-view face cue (two dot eyes + smile) made it look
+ * like a cartoon character rather than a clinical pictogram, and the
+ * torso's shoulder curve overlapped the arms' shoulder caps so the two
+ * silhouette pieces visually fused into one blob with no visible
+ * shoulder/armpit line.
+ *
+ * This redesign targets a flat vector *medical UI pictogram* of a
+ * gender-neutral clothed mannequin (approved reference image discussed
+ * with the user), reproduced here as local inline SVG paths (not the
+ * reference raster itself):
+ *   - No face on either view (front cue is now a simple rounded collar
+ *     line at the neckline only, implying "clothed" without any facial
+ *     expression).
+ *   - No anatomical/gender detail on either view -- the back view's
+ *     lower-back cue is a single near-horizontal waistband line (not a
+ *     downward-curving hip line that could read as a gluteal cleft).
+ *   - An explicit neck trapezoid connects the head to the torso (the
+ *     previous version had the head circle floating with no neck).
+ *   - The torso's shoulder/underarm edge is pulled in and the arms'
+ *     inner edge curves away from it, leaving a visible armpit notch
+ *     (background shows through) so front/back always read as a torso
+ *     with two separate arms, never a fused blob.
+ *   - Thin decorative divider lines mark segment boundaries (elbow on
+ *     each arm, knee on each leg) per "부위 경계는 가는 선으로 명확히".
+ *   - Front/back are distinguishable by shape/cue alone (collar vs.
+ *     spine+shoulder-blade+waistband), never by a face.
+ * As before, the ZONES %-coordinate table (actual tap targets) is
+ * completely independent of this decorative silhouette and is not
+ * touched by this redesign -- the silhouette is purely decorative
+ * (aria-hidden, pointer-events none via CSS) and the existing PAIN_01
+ * enum/zone positions are unchanged.
  */
 function Silhouette({ view }: { view: 'front' | 'back' }) {
   return (
@@ -148,46 +172,63 @@ function Silhouette({ view }: { view: 'front' | 'back' }) {
       aria-hidden="true"
       focusable="false"
     >
-      <circle cx="30" cy="8" r="7" />
+      <circle cx="30" cy="7" r="6.5" />
+      <path
+        className="bodyMap__silhouetteNeck"
+        d="M26 12 L26 15.5 Q30 18 34 15.5 L34 12 Q30 10.5 26 12 Z"
+      />
       <path
         className="bodyMap__silhouetteTorso"
-        d="M14.4 15 C12 15 13 25 15 32 C17 40 16 48 15 55 C15 58 17 59 14.4 59
-           L45.6 59 C43 59 41 58 42 55 C43 48 44 40 45 32 C47 25 48 15 45.6 15
-           C40 13.5 20 13.5 14.4 15 Z"
+        d="M20 16 C24 14 36 14 40 16 C44 17.5 46 19.5 45.3 23
+           C44.5 26.5 42 27.5 41.5 31 C41 38 41.3 45 42 51
+           C42.4 55 41.5 58 38 59 L22 59 C18.5 58 17.6 55 18 51
+           C18.7 45 19 38 18.5 31 C18 27.5 15.5 26.5 14.7 23
+           C14 19.5 16 17.5 20 16 Z"
       />
       <path
         className="bodyMap__silhouetteArm"
-        d="M10.8 20 C6 20 2.4 22 2.4 28 C2.4 36 4 44 6 50 C7 54 10 56 13 56
-           C15 56 16 52 15 48 C13 40 13 30 14 24 C14 21 12.5 20 10.8 20 Z"
+        d="M19 17.3 C15 18.5 11 21 10 26 C9 32 9.5 39 11 46
+           C11.8 50.5 12.8 54.5 15.5 56.5 C17.3 57.8 18.7 56.8 18.3 54.5
+           C17.3 49 16.7 42 17.2 35 C17.5 30.5 17.6 26.8 15.8 23.3
+           C15.2 22 15.8 19 19 17.3 Z"
       />
       <path
         className="bodyMap__silhouetteArm"
-        d="M49.2 20 C54 20 57.6 22 57.6 28 C57.6 36 56 44 54 50 C53 54 50 56 47 56
-           C45 56 44 52 45 48 C47 40 47 30 46 24 C46 21 47.5 20 49.2 20 Z"
+        d="M41 17.3 C45 18.5 49 21 50 26 C51 32 50.5 39 49 46
+           C48.2 50.5 47.2 54.5 44.5 56.5 C42.7 57.8 41.3 56.8 41.7 54.5
+           C42.7 49 43.3 42 42.8 35 C42.5 30.5 42.4 26.8 44.2 23.3
+           C44.8 22 44.2 19 41 17.3 Z"
       />
       <path
         className="bodyMap__silhouetteLeg"
-        d="M22 60 C18 60 17 62 18 66 C19 74 19 84 18 92 C17.5 96 18 98 22 98
-           L27 98 C29.5 98 30 96 29.5 92 C29 84 29 74 29 66 C29 62 28 60 24 60 Z"
+        d="M23 60 C19 60.5 17.5 63 18 67 C18.6 74 18.6 83 17.8 91
+           C17.4 95.5 18 98 21.5 98 L26.5 98 C29 98 29.5 95.5 29.2 91
+           C28.8 83 28.8 74 29 67 C29.2 63 28 60.5 25 60 Z"
       />
       <path
         className="bodyMap__silhouetteLeg"
-        d="M38 60 C34 60 33 62 33 66 C33 74 33 84 32.5 92 C32 96 32.5 98 35 98
-           L40 98 C44 98 44.5 96 44 92 C43 84 43 74 44 66 C45 62 44 60 40 60 Z"
+        d="M37 60 C33 60.5 31.8 63 32 67 C32.2 74 32.2 83 31.8 91
+           C31.4 95.5 32 98 34.5 98 L39.5 98 C43 98 43.6 95.5 43.2 91
+           C42.4 83 42.4 74 42 67 C41.8 63 41 60.5 37 60 Z"
       />
       {view === 'front' ? (
         <g className="bodyMap__frontCue">
-          <circle cx="26" cy="6.5" r="1.7" />
-          <circle cx="34" cy="6.5" r="1.7" />
-          <path d="M26 11.5 Q30 13.5 34 11.5" />
-          <path d="M18 30 Q30 35 42 30" />
+          <path d="M25.5 17 Q30 20.5 34.5 17" />
+          <line x1="12.5" y1="37" x2="17.5" y2="36.6" />
+          <line x1="47.5" y1="37" x2="42.5" y2="36.6" />
+          <line x1="19.5" y1="77" x2="27.5" y2="77" />
+          <line x1="32.5" y1="77" x2="40.5" y2="77" />
         </g>
       ) : (
         <g className="bodyMap__backCue">
-          <line x1="30" y1="17" x2="30" y2="58" />
-          <path d="M19 21 Q27 29 21 41" />
-          <path d="M41 21 Q33 29 39 41" />
-          <path d="M17 55 Q30 62 43 55" />
+          <line x1="30" y1="19" x2="30" y2="44" />
+          <path d="M23 22 Q28 30 24 39" />
+          <path d="M37 22 Q32 30 36 39" />
+          <path d="M20 44.5 Q30 41 40 44.5" />
+          <line x1="12.5" y1="37" x2="17.5" y2="36.6" />
+          <line x1="47.5" y1="37" x2="42.5" y2="36.6" />
+          <line x1="19.5" y1="77" x2="27.5" y2="77" />
+          <line x1="32.5" y1="77" x2="40.5" y2="77" />
         </g>
       )}
     </svg>
@@ -228,7 +269,7 @@ function Figure({
             <button
               key={`${view}-${z.value}-${i}`}
               type="button"
-              className={`bodyMap__zone bodyMap__zone--${z.shape}${isSelected ? ' bodyMap__zone--selected' : ''}`}
+              className={`bodyMap__zone bodyMap__zone--${z.shape}${isSelected ? ' bodyMap__zone--selected' : ''}${isStrong ? ' bodyMap__zone--strong' : ''}`}
               style={{
                 top: `${z.top}%`,
                 left: `${z.left}%`,

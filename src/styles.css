@@ -1229,6 +1229,13 @@ input {
   background: var(--primary-soft);
   pointer-events: none;
   z-index: 999;
+  /* PR-preview 빌드(pr-23-preview.yml)는 "· PR #23 · <sha>"가 덧붙어 문구가
+     길어진다 -- 좁은 화면에서 줄바꿈되어 두 번째 줄이 헤더 요소와 겹치는
+     일이 없도록 한 줄로 자르고 필요하면 말줄임표만 보여준다. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
 }
 
 /* 좁은 화면(작은 태블릿/폰 미리보기)에서의 축소 */

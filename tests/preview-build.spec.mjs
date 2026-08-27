@@ -33,7 +33,24 @@ const ROOT = join(__dirname, '..')
 
 {
   const src = readFileSync(join(ROOT, 'vite.config.ts'), 'utf8')
-  assert("vite.config.ts: base is a function of `mode`, not a hardcoded value", /base:\s*mode === 'ghpages' \? '\/Samindang\/' : '\/'/.test(src))
+  // The base path is still gated on `mode === 'ghpages'` (the default/dev
+  // build always falls through to '/', regardless of this assertion's
+  // exact right-hand-side text). The '/Samindang/' fallback can now be
+  // overridden by VITE_PAGES_BASE_PATH (used by the PR-23 preview workflow
+  // to build the same app under a sub-path) -- the main pages-preview.yml
+  // workflow never sets that var, so its build is unaffected.
+  assert(
+    "vite.config.ts: base is a function of `mode` (ghpages-only), not a hardcoded value",
+    /base:\s*mode === 'ghpages' \?[\s\S]{0,80}: '\/',/.test(src),
+  )
+  assert(
+    "vite.config.ts: the default (non-ghpages) build path always falls through to '/'",
+    /: '\/',\s*\n\s*server:/.test(src),
+  )
+  assert(
+    "vite.config.ts: the ghpages base path still defaults to '/Samindang/' when no override is set",
+    src.includes("'/Samindang/'"),
+  )
 }
 
 /* =========================================================================
@@ -148,6 +165,38 @@ const ROOT = join(__dirname, '..')
   assert('pages-preview.yml: uploads the dist/ folder as the Pages artifact', /upload-pages-artifact@v\d+[\s\S]{0,40}path:\s*dist/.test(wf))
   assert('pages-preview.yml: uses the official deploy-pages action', /deploy-pages@v\d+/.test(wf))
   assert('pages-preview.yml: grants only the minimum permissions Pages deployment needs', /permissions:[\s\S]{0,120}pages:\s*write/.test(wf))
+}
+
+/* =========================================================================
+ * 6. pr-23-preview.yml: PR #23-specific preview under a sub-path, never
+ *    touching the main site root's served content. Mirrors most of the
+ *    same NO-PHI/build-safety checks as pages-preview.yml above, plus the
+ *    sub-path-specific properties (mirror-then-append, shared concurrency
+ *    group, PR-specific banner env vars) unique to this workflow.
+ * ========================================================================= */
+
+{
+  const wf = readFileSync(join(ROOT, '.github', 'workflows', 'pr-23-preview.yml'), 'utf8')
+  assert('pr-23-preview.yml: supports workflow_dispatch (manual re-run)', /workflow_dispatch:/.test(wf))
+  assert('pr-23-preview.yml: triggers on push to the PR #23 branch (not main)', /push:\s*\n\s*branches:\s*\[fix\/tablet-v2-3-ux-and-routing-audit\]/.test(wf))
+  assert('pr-23-preview.yml: does NOT also trigger on push to main (would be pages-preview.yml\'s job, not this one)', !/branches:\s*\[main\]/.test(wf))
+  assert('pr-23-preview.yml: runs on Node 22', /node-version:\s*'22'/.test(wf))
+  assert('pr-23-preview.yml: uses npm ci', /run:\s*npm ci/.test(wf))
+  assert('pr-23-preview.yml: builds via npm run build:preview (never the plain `npm run build`)', /run:\s*npm run build:preview/.test(wf))
+  assert('pr-23-preview.yml: sets VITE_PREVIEW_MODE=true for the build step', /VITE_PREVIEW_MODE:\s*'true'/.test(wf))
+  assert("pr-23-preview.yml CRITICAL: explicitly sets VITE_SAMINDANG_SERVER_URL to empty (never a real endpoint, no PHI transmission possible)", /VITE_SAMINDANG_SERVER_URL:\s*''/.test(wf))
+  assert('pr-23-preview.yml: builds under the /Samindang/pr-23/ sub-path via VITE_PAGES_BASE_PATH', /VITE_PAGES_BASE_PATH:\s*'\/Samindang\/pr-23\/'/.test(wf))
+  assert('pr-23-preview.yml: sets VITE_PREVIEW_PR so the banner shows which PR this build is', /VITE_PREVIEW_PR:\s*'23'/.test(wf))
+  assert('pr-23-preview.yml: sets VITE_PREVIEW_SHA to the triggering commit (github.sha) so the banner shows the exact HEAD', /VITE_PREVIEW_SHA:\s*\$\{\{\s*github\.sha\s*\}\}/.test(wf))
+  assert('pr-23-preview.yml CRITICAL: mirrors the currently-live site root before deploying (never rebuilds/replaces it from source)', /wget[\s\S]{0,200}gomars93\.github\.io\/Samindang\//.test(wf))
+  assert('pr-23-preview.yml: places the PR build under combined/pr-23/, a sibling of the mirrored root -- not overwriting it', /combined\/pr-23/.test(wf))
+  assert('pr-23-preview.yml: uploads the combined/ folder (root mirror + pr-23/) as the Pages artifact, not dist/ alone', /upload-pages-artifact@v\d+[\s\S]{0,40}path:\s*combined/.test(wf))
+  assert('pr-23-preview.yml: uses the official deploy-pages action', /deploy-pages@v\d+/.test(wf))
+  assert('pr-23-preview.yml: grants only the minimum permissions Pages deployment needs', /permissions:[\s\S]{0,120}pages:\s*write/.test(wf))
+  assert(
+    'pr-23-preview.yml CRITICAL: shares the same concurrency group as pages-preview.yml (serializes deploys, never races/interleaves them)',
+    /concurrency:\s*\n\s*group:\s*pages/.test(wf),
+  )
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

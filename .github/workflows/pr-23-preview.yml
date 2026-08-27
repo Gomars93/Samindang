@@ -1,0 +1,98 @@
+name: Deploy PR #23 Preview to GitHub Pages (sub-path)
+
+# UI-only demo deployment of PR #23's current HEAD, published under a
+# dedicated sub-path (https://gomars93.github.io/Samindang/pr-23/) so it
+# never overwrites the main production preview served at the site root
+# (https://gomars93.github.io/Samindang/, deployed by pages-preview.yml).
+#
+# NO-PHI / READ-ONLY-DEMO: same guarantees as pages-preview.yml --
+# VITE_SAMINDANG_SERVER_URL is left empty (isServerConfigured() -> false),
+# so the built app never attempts to reach any real submission endpoint.
+#
+# How the root address is protected: GitHub Pages (via actions/deploy-pages)
+# replaces the ENTIRE site content on every deploy -- there is no partial/
+# additive update. So this workflow does not rebuild the root content from
+# source; instead it mirrors whatever is CURRENTLY live at the site root
+# byte-for-byte, and only adds the new pr-23/ subfolder alongside it. The
+# root URL's served bytes are therefore left exactly as they were.
+#
+# Known limitation (documented, not a bug): if someone pushes to `main`
+# after this workflow runs, pages-preview.yml's own deploy will replace the
+# whole site with a root-only build again, and this pr-23/ subfolder will
+# disappear until this workflow is re-run (push to this branch again, or
+# manually via "Run workflow" below). This is an accepted tradeoff of
+# GitHub Pages' single-artifact-per-deploy model, not a partial failure.
+
+on:
+  push:
+    branches: [fix/tablet-v2-3-ux-and-routing-audit]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Shares the same concurrency group as pages-preview.yml so the two never
+# race each other -- whichever runs second simply waits, never interleaves.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build PR #23 preview under /Samindang/pr-23/
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+          VITE_PAGES_BASE_PATH: '/Samindang/pr-23/'
+          VITE_PREVIEW_PR: '23'
+          VITE_PREVIEW_SHA: ${{ github.sha }}
+
+      - name: Mirror the currently-live site root (never rebuilt, never overwritten)
+        run: |
+          mkdir -p combined
+          wget --mirror --page-requisites --no-parent -e robots=off \
+            -nH --cut-dirs=1 -P combined \
+            https://gomars93.github.io/Samindang/
+          echo "--- mirrored root contents ---"
+          find combined -maxdepth 2
+
+      - name: Place the PR #23 build under combined/pr-23/
+        run: |
+          mkdir -p combined/pr-23
+          cp -r dist/. combined/pr-23/
+          echo "--- combined/pr-23 contents ---"
+          find combined/pr-23 -maxdepth 2
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: combined
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Print the PR #23 preview URL
+        run: echo "PR #23 preview: ${{ steps.deployment.outputs.page_url }}pr-23/"

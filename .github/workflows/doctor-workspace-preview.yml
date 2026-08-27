@@ -1,9 +1,14 @@
 name: Deploy Doctor Workspace Preview
 
-# Synthetic / NO-PHI design preview for PR B. This workflow never connects
-# to the Samindang submission API and never publishes patient data. It mirrors
-# the currently-live GitHub Pages root and adds only /doctor-pr/ so the main
-# preview remains untouched byte-for-byte.
+# Real (not static-mockup) Doctor Clinical Workspace preview for PR #24.
+# NO-PHI / READ-ONLY-DEMO: identical safety guarantees to the main patient
+# preview (pages-preview.yml) -- VITE_SAMINDANG_SERVER_URL is intentionally
+# left unset (isServerConfigured() -> false), so DoctorView.tsx can only
+# ever run in "fixtures" mode here (server mode is unreachable without a
+# configured URL). VITE_PREVIEW_MODE=true renders the on-screen preview
+# banner. It mirrors the currently-live GitHub Pages root and adds only
+# /doctor-pr/, so the main patient preview remains untouched byte-for-byte
+# (same technique pr-23-preview.yml already established on another branch).
 
 on:
   push:
@@ -20,13 +25,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy-preview:
+  build-and-deploy:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}doctor-pr/
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build preview under /Samindang/doctor-pr/ (no server URL configured, preview banner on)
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+          VITE_PAGES_BASE_PATH: '/Samindang/doctor-pr/'
+
+      - name: Land the app directly on the Doctor Workspace (#doctor route)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'dist/index.html';
+            let html = fs.readFileSync(p, 'utf8');
+            const redirect = '<script>if (!location.hash) location.hash = \"doctor\";</script>';
+            html = html.replace('</head>', redirect + '</head>');
+            fs.writeFileSync(p, html);
+          "
 
       - name: Mirror currently-live site root
         run: |
@@ -37,11 +68,10 @@ jobs:
           echo "--- mirrored root ---"
           find combined -maxdepth 2 -type f | sort | head -100
 
-      - name: Add synthetic Doctor Workspace preview
+      - name: Add real Doctor Workspace build under /doctor-pr/
         run: |
           mkdir -p combined/doctor-pr
-          cp public/doctor-workspace-preview.html combined/doctor-pr/index.html
-          cp public/doctor-workspace-preview.html combined/doctor-pr/doctor-workspace-preview.html
+          cp -r dist/. combined/doctor-pr/
           echo "--- doctor preview ---"
           ls -lh combined/doctor-pr/
 
@@ -56,4 +86,4 @@ jobs:
 
       - name: Print preview URL
         run: |
-          echo "Doctor Workspace preview: ${{ steps.deployment.outputs.page_url }}doctor-pr/"
+          echo "Doctor Workspace preview (real build): ${{ steps.deployment.outputs.page_url }}doctor-pr/"

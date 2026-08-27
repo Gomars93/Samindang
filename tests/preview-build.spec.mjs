@@ -33,7 +33,10 @@ const ROOT = join(__dirname, '..')
 
 {
   const src = readFileSync(join(ROOT, 'vite.config.ts'), 'utf8')
-  assert("vite.config.ts: base is a function of `mode`, not a hardcoded value", /base:\s*mode === 'ghpages' \? '\/Samindang\/' : '\/'/.test(src))
+  assert(
+    "vite.config.ts: base is a function of `mode`, not a hardcoded value (default /Samindang/, overridable via VITE_PAGES_BASE_PATH for a sub-path preview)",
+    /base:\s*mode === 'ghpages' \? \(process\.env\.VITE_PAGES_BASE_PATH \|\| '\/Samindang\/'\) : '\/'/.test(src),
+  )
 }
 
 /* =========================================================================

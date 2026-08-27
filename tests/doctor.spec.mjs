@@ -1083,38 +1083,49 @@ function detailsRange(html, classMarker) {
   return [openIdx, closeIdx]
 }
 
-// 13a. 6개 요약 카테고리가 안전 배너보다 먼저, 그리고 서로 순서대로 나온다.
+// 13a. PR #24 Doctor Clinical Workspace shell: Common Safety renders before
+//      the workspace hero, and the hero renders before the first regular
+//      section (환자 기본). '수면 주호소 + 동반 소화/통증'은 pain 모듈을
+//      전혀 열지 않으므로(primaryConcernKey==='sleep') herbal 프로필로
+//      라우팅된다 -- 이 fixture로 herbal hero의 순서를 검증한다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
-  const labels = ['주호소', '기간/빈도', '핵심 악화·유발요인', '동반문제', '안전이슈', '명리 계산']
-  const idx = labels.map((l) => html.indexOf(l))
-  idx.forEach((i, n) => assert(`10초 요약: category "${labels[n]}" present`, i !== -1))
-  for (let i = 1; i < idx.length; i++) {
-    assert(`10초 요약: "${labels[i - 1]}" before "${labels[i]}"`, idx[i - 1] < idx[i])
-  }
+  const commonSafetyIdx = html.indexOf('doctor__commonSafety')
+  const heroIdx = html.indexOf('workspace__hero')
   const firstSectionIdx = html.indexOf('환자 기본')
-  assert('10초 요약: entire card is before the first regular section (환자 기본)', idx[idx.length - 1] < firstSectionIdx)
+  assert('workspace: Common Safety block present', commonSafetyIdx !== -1)
+  assert('workspace: hero block present', heroIdx !== -1)
+  assert('workspace: Common Safety renders before the hero', commonSafetyIdx < heroIdx)
+  assert('workspace: hero renders before the first regular section (환자 기본)', heroIdx < firstSectionIdx)
+  assert('workspace: herbal hero shows 상담 목적', html.includes('상담 목적'))
+  assert('workspace: herbal hero shows 안전이슈 indicator', html.includes('안전이슈'))
 }
 
-// 13b. requires_staff_check 픽스처: 요약 카드의 안전이슈 줄이 비어있지 않고
-//      상세 안전 배너보다 먼저 나오며, 안전정보 한눈에 블록에 항목이 있다.
+// 13b. requires_staff_check 픽스처: Common Safety(위험 배너 + 안전정보
+//      한눈에)가 워크스페이스 hero보다 먼저 나온다 -- PR #24 Phase 2
+//      invariant("Common Safety는 절대 탭/hero 뒤에 숨지 않는다")가 실제
+//      렌더 순서로 지켜지는지 확인한다.
 {
   const html = renderDoctorView('안전 확인 필요')
-  const summarySafetyIdx = html.indexOf('안전이슈')
   // 픽스처 선택 드롭다운에도 "안전 확인 필요"라는 fixture 이름이 나오므로,
   // 배너 본문에만 있는 고유 문구로 위치를 잡는다.
   const bannerIdx = html.indexOf('환자가 아래 내용을 문진에서 보고했습니다')
-  assert('safety fixture: summary card 안전이슈 present', summarySafetyIdx !== -1)
-  assert('safety fixture: summary card 안전이슈 before detailed danger banner', summarySafetyIdx < bannerIdx)
+  const heroIdx = html.indexOf('workspace__hero')
+  assert('safety fixture: detailed danger banner present', bannerIdx !== -1)
+  assert('safety fixture: danger banner renders before the hero', bannerIdx !== -1 && bannerIdx < heroIdx)
   assert('safety fixture: 안전정보 한눈에 renders at least one item', html.includes('doctor__safetyChip'))
 }
 
-// 13c. 안전 이슈 없는 픽스처: "안전이슈 없음"이 muted로만 표시되고 danger 배너 클래스는 전혀 없다.
+// 13c. 안전 이슈 없는 픽스처: danger 배너 클래스가 전혀 없고, hero의
+//      안전이슈 표시가 "없음"(문진에서 SAFETY_01에 답은 했지만 위험신호
+//      없음)으로 나온다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   assert('benign fixture: no doctor__banner--danger anywhere', !html.includes('doctor__banner--danger'))
-  assert('benign fixture: summary card shows muted 안전이슈 chip', html.includes('doctor__tenSecChip--muted'))
-  assert('benign fixture: summary card 안전이슈 text says 없음', html.includes('안전이슈') && html.includes('없음'))
+  assert('benign fixture: hero 안전이슈 present', html.includes('안전이슈'))
+  const safetyIdx = html.indexOf('안전이슈')
+  const nearby = html.slice(safetyIdx, safetyIdx + 200)
+  assert('benign fixture: nearby hero 안전이슈 value says 없음', nearby.includes('없음'))
 }
 
 // 13d. status === 'partial' 픽스처: 요약 카드 명리 줄에 상태가 드러나고,
@@ -1183,13 +1194,16 @@ function detailsRange(html, classMarker) {
   }
 }
 
-// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 3번 —
-//      새 10초 요약 카드, 기존 주호소 섹션, 기존 명리 검토의 "현재 문진 요약" 열.
+// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 2번 —
+//      기존 주호소 섹션, 명리 검토의 "현재 문진 요약" 열. PR #24부터 herbal
+//      hero는 duration을 별도로 보여주지 않으므로(herbal 프로필의 10초
+//      요약은 전신 증상 우선 -- pain hero만 duration을 보여준다) 예상
+//      횟수가 이전 3회에서 2회로 줄었다 -- 이는 의도된 아키텍처 변경이다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   const durationLabel = optionLabel('VISIT_03_SYMPTOM_DURATION', '1_3m')
   const count = html.split(durationLabel).length - 1
-  assert('duplication audit: duration label renders exactly 3 times (summary + 주호소 + myungri column)', count === 3)
+  assert('duplication audit: duration label renders exactly 2 times (주호소 + myungri column)', count === 2)
 }
 
 /* ---------------------------------------------------------------------

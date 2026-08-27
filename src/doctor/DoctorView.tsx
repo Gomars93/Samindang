@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
-import { answerLabel, optionLabel, optionLabels, questionLabel } from './labels'
+import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
 import { buildEmrSummary } from './emrSummary'
@@ -41,14 +41,13 @@ import { computeElbowFlags, elbowSafetyLocked, type ElbowComputedFields } from '
 import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
-import { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'
-import { TmjSafetyPanel } from './TmjSafetyPanel'
-import { HipSafetyPanel } from './HipSafetyPanel'
+import { DoctorWorkspace } from './workspace/DoctorWorkspace'
+import { deriveViewProfile } from './workspace/viewProfile'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
 
-type Responses = DoctorPayload['responses']
+export type Responses = DoctorPayload['responses']
 
 /**
  * 값 하나를 (질문 id 기준으로) 라벨을 붙여 렌더링한다.
@@ -56,7 +55,7 @@ type Responses = DoctorPayload['responses']
  * - 'none'/'unknown'(환자가 실제로 답한 값)은 흐리게 표시해 "안 물어봄"과
  *   구분한다. 절대 같은 모양으로 보이면 안 된다.
  */
-function Field({
+export function Field({
   qid,
   value,
   label,
@@ -103,7 +102,7 @@ function sourceLabel(source: Responses['reproductive_status']['derived']['source
   }
 }
 
-function primaryConcernLabel(r: Responses): string {
+export function primaryConcernLabel(r: Responses): string {
   const goal = r.visit_goal.visit_goal
   if (goal === 'symptom') return answerLabel('VISIT_02_SYMPTOM_MAIN', r.visit_goal.primary_symptom)
   if (goal === 'women') return answerLabel('VISIT_02_WOMEN', r.visit_goal.women_goal)
@@ -119,7 +118,7 @@ function primaryConcernLabel(r: Responses): string {
  * 유일한 출처다. 여기 없는 모듈(Bowel/Urinary/Women/Pregnancy/Postpartum/
  * constitution 등)은 신뢰할 수 있는 단일 필드가 없어 의도적으로 생략한다.
  */
-function frequencyField(
+export function frequencyField(
   primaryModule: string | null,
   m: Responses['modules'],
 ): { qid: string; value: AnswerValue } | null {
@@ -135,7 +134,7 @@ function frequencyField(
   }
 }
 
-function aggravatingField(
+export function aggravatingField(
   primaryModule: string | null,
   m: Responses['modules'],
 ): { qid: string; value: AnswerValue } | null {
@@ -161,7 +160,7 @@ function aggravatingField(
   }
 }
 
-function isEmptyValue(value: AnswerValue | null | undefined): boolean {
+export function isEmptyValue(value: AnswerValue | null | undefined): boolean {
   if (value === null || value === undefined) return true
   if (Array.isArray(value)) return value.length === 0
   if (typeof value === 'string') return value.trim() === ''
@@ -169,7 +168,7 @@ function isEmptyValue(value: AnswerValue | null | undefined): boolean {
 }
 
 /** 요약 카드용 "기간 · 빈도" 한 줄. 둘 다 없으면 줄 자체를 생략한다. */
-function durationFrequencyText(r: Responses, primaryModule: string | null): string | null {
+export function durationFrequencyText(r: Responses, primaryModule: string | null): string | null {
   const duration = r.visit_goal.chief_duration
   const durText = isEmptyValue(duration) ? null : answerLabel('VISIT_03_SYMPTOM_DURATION', duration)
   const freq = frequencyField(primaryModule, r.modules)
@@ -180,7 +179,7 @@ function durationFrequencyText(r: Responses, primaryModule: string | null): stri
 }
 
 /** Pain은 요약 카드에서만 짧은 고정 문구를 쓴다(스펙 §PART1 rule 3). */
-function aggravatingSummaryText(primaryModule: string | null, m: Responses['modules']): string | null {
+export function aggravatingSummaryText(primaryModule: string | null, m: Responses['modules']): string | null {
   const agg = aggravatingField(primaryModule, m)
   if (!agg) return null
   if (primaryModule === 'Pain') {
@@ -191,7 +190,7 @@ function aggravatingSummaryText(primaryModule: string | null, m: Responses['modu
   return answerLabel(agg.qid, agg.value)
 }
 
-function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
+export function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
   const cats: string[] = []
   if (flags.general_red) cats.push('공통 위험신호')
   if (flags.gi_needs_review) cats.push('소화 문진')
@@ -205,7 +204,7 @@ function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
 }
 
 /** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
-function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
+export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   text: string
   tone: 'neutral' | 'warning' | 'unresolved'
 } {
@@ -231,7 +230,7 @@ const PENDING_APPROVAL_LABELS: Record<string, string> = {
  * 재배열일 뿐이다. 오행 분포·한열조습처럼 엔진이 계산하지 않는 값은 절대
  * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
  */
-function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
+export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
   if (!saju.pillars) {
     return (
       <div className="doctor__msSummary doctor__msSummary--myungri">
@@ -268,210 +267,13 @@ function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation
 }
 
 /**
- * "10초 요약" 카드. §PART1 규칙을 그대로 구현 — 데이터가 없으면 그 줄 자체를
- * 만들지 않는다(해석/보간 없음). payload 안의 값만 조합한다.
+ * 10초 요약/안전정보 카드는 PR #24부터 src/doctor/CommonSafetyBanner.tsx +
+ * src/doctor/workspace/PainWorkspace.tsx / HerbalWorkspace.tsx로 이동했다
+ * (Doctor Clinical Workspace shell). 이 파일에 있던 TenSecondSummary /
+ * safetyGlanceItems / SafetyGlance는 그쪽에서 동일한 계산 입력을 그대로
+ * 재사용해 다시 구현되었으므로 여기서는 삭제한다 -- 계산 로직(위 export된
+ * 헬퍼들)은 하나도 바뀌지 않았고, 렌더링 위치만 옮겨졌다.
  */
-function TenSecondSummary({ payload }: { payload: DoctorPayload }) {
-  const r = payload.responses
-  const { flags, routing } = payload
-  const saju = payload.myungri_calculation
-
-  const durFreq = durationFrequencyText(r, routing.primary_module)
-  const aggravatingText = aggravatingSummaryText(routing.primary_module, r.modules)
-  const secondaryKeys = ((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).filter(
-    (k) => k !== 'none',
-  )
-  const secondaryLabels = optionLabels('SECONDARY_01', secondaryKeys).slice(0, 2)
-  const safetyCats = safetyIssueCategories(flags)
-  const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
-  const sajuLine = sajuStatusLine(saju)
-
-  return (
-    <section className="doctor__tenSec" aria-label="10초 요약">
-      <div className="doctor__tenSec__row">
-        <span className="doctor__tenSecChip">
-          <span className="doctor__tenSecChip__label">주호소</span>
-          <span className="doctor__tenSecChip__value">{primaryConcernLabel(r)}</span>
-        </span>
-
-        {durFreq && (
-          <span className="doctor__tenSecChip">
-            <span className="doctor__tenSecChip__label">기간/빈도</span>
-            <span className="doctor__tenSecChip__value">{durFreq}</span>
-          </span>
-        )}
-
-        {aggravatingText && (
-          <span className="doctor__tenSecChip">
-            <span className="doctor__tenSecChip__label">핵심 악화·유발요인</span>
-            <span className="doctor__tenSecChip__value">{aggravatingText}</span>
-          </span>
-        )}
-
-        {secondaryLabels.length > 0 && (
-          <span className="doctor__tenSecChip">
-            <span className="doctor__tenSecChip__label">동반문제</span>
-            <span className="doctor__tenSecChip__value">{secondaryLabels.join(', ')}</span>
-          </span>
-        )}
-
-        {safetyCats.length > 0 && (
-          <span className="doctor__tenSecChip doctor__tenSecChip--danger">
-            <span className="doctor__tenSecChip__label">안전이슈</span>
-            <span className="doctor__tenSecChip__value">{safetyCats.join(', ')}</span>
-          </span>
-        )}
-        {safetyCats.length === 0 && safetyAnswered && (
-          <span className="doctor__tenSecChip doctor__tenSecChip--muted">
-            <span className="doctor__tenSecChip__label">안전이슈</span>
-            <span className="doctor__tenSecChip__value">없음</span>
-          </span>
-        )}
-
-        <span className={`doctor__tenSecChip doctor__tenSecChip--${sajuLine.tone}`}>
-          <span className="doctor__tenSecChip__label">명리 계산</span>
-          <span className="doctor__tenSecChip__value">{sajuLine.text}</span>
-        </span>
-      </div>
-    </section>
-  )
-}
-
-/** §PART2 "안전정보 한눈에" — 복용약/병력/임신·수유/알레르기 중 실제 값이 있는 것만, 위험신호는 배너를 가리키는 짧은 포인터만. */
-function safetyGlanceItems(
-  r: Responses,
-  flags: DoctorPayload['flags'],
-): { key: string; label: string; text: string }[] {
-  const items: { key: string; label: string; text: string }[] = []
-
-  const medUse = r.medication.medication_use
-  if (medUse === 'yes' || medUse === 'unknown') {
-    const types = answerLabel('MED_TYPES', r.medication.medication_types)
-    items.push({
-      key: 'medication',
-      label: '복용약',
-      text: `${answerLabel('MED_USE', medUse)}${types ? ` — ${types}` : ''}`,
-    })
-  }
-
-  const historyFlags = ((r.medical_history.medical_history_flags as string[] | null) ?? []).filter(
-    (v) => v !== 'none',
-  )
-  if (historyFlags.length > 0) {
-    items.push({ key: 'history', label: '주요 병력', text: optionLabels('HISTORY_01', historyFlags).join(', ') })
-  }
-
-  const derived = r.reproductive_status.derived
-  if (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding) {
-    const parts = [
-      derived.pregnant && '임신 중',
-      derived.pregnancy_possible && '임신 가능성',
-      derived.postpartum_1y && '출산 후 1년 이내',
-      derived.breastfeeding && '모유수유 중',
-    ].filter((v): v is string => Boolean(v))
-    items.push({ key: 'reproductive', label: '임신/수유', text: parts.join(', ') })
-  }
-
-  if (r.allergy.allergy_yn === 'yes') {
-    items.push({
-      key: 'allergy',
-      label: '알레르기',
-      text: answerLabel('ALLERGY_02', r.allergy.allergy_detail) || '있음',
-    })
-  }
-
-  // 위험신호는 배너에서 이미 전체 내용을 보여준다 — 여기서는 같은 문장을
-  // 반복하지 않고, 위에 배너가 있다는 것만 짧게 가리킨다.
-  if (flags.requires_staff_check) {
-    items.push({ key: 'redflag', label: '위험신호', text: '있음 — 위 안전 확인 배너 참고' })
-  }
-
-  // MENOPAUSE_SLEEP MS_05: 진단명 노출 없이 원장 확인용으로만 표시한다(delta 3장).
-  if (flags.sleep_disorder_priority_review) {
-    items.push({
-      key: 'sleep_disorder_priority',
-      label: '수면장애 선별',
-      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
-    })
-  } else if (flags.sleep_disorder_review) {
-    items.push({
-      key: 'sleep_disorder',
-      label: '수면장애 선별',
-      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
-    })
-  }
-
-  if (flags.response_consistency_review) {
-    items.push({
-      key: 'response_consistency',
-      label: '응답 확인 필요',
-      text: '생리 상태(MS_01)와 임신/폐경 관련 응답이 서로 다릅니다 — 자동 수정하지 않음',
-    })
-  }
-
-  /**
-   * Routing/UX v2 §20-21: 자유입력을 줄인 대신 clinician confirmation cue를
-   * 강화한다. 환자 선택만으로 진단/객관적 소견을 만들지 않고 "확인
-   * 필요"/"진료 중 확인" 수준으로만 표시한다. 기존 urgent safety
-   * panel/redflag보다 강하게 보이면 안 되므로 이 함수의 기존 항목들
-   * 뒤에(가장 낮은 우선순위로) 추가한다 -- §21 우선순위(1.safety/urgent
-   * 2.medication/allergy 3.surgery/history 4.추가 전달사항 5.기타 상세)
-   * 중 1~2는 위에 이미 있고, 여기서는 3~5만 이 순서로 덧붙인다.
-   */
-  if (r.surgery_history.surgery_yn === 'yes') {
-    items.push({ key: 'surgery', label: '수술·입원력', text: '있음 — 종류/시기 확인' })
-  }
-
-  if (r.free_text.free_text_yn === 'yes') {
-    items.push({ key: 'free_text', label: '추가 전달사항', text: '있음 — 진료 중 확인' })
-  }
-
-  // "기타" 선택 확인 필요 항목들을 하나의 배지로 묶는다 -- 필드마다 따로
-  // 배지를 만들면 노란 배지가 난립한다(§21).
-  const otherDetailFlags: string[] = []
-  if (r.visit_goal.primary_symptom === 'other') otherDetailFlags.push('기타 주호소')
-  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 동반증상')
-  }
-  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 수면 원인')
-  }
-  if (r.modules.pain.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
-  if (r.modules.pain.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
-  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 여성 건강 상담')
-  }
-  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 임신 상담')
-  }
-  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 산후 상담')
-  }
-  if (otherDetailFlags.length > 0) {
-    items.push({ key: 'other_detail', label: '기타 확인', text: `${otherDetailFlags.join(', ')} — 진료 중 확인` })
-  }
-
-  return items
-}
-
-function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'] }) {
-  const items = safetyGlanceItems(r, flags)
-  if (items.length === 0) {
-    return <p className="doctor__safetyGlance doctor__safetyGlance--empty">특이 안전정보 없음</p>
-  }
-  return (
-    <div className="doctor__safetyGlance">
-      <span className="doctor__safetyGlance__title">안전정보 한눈에</span>
-      <div className="doctor__safetyGlance__items">
-        {items.map((it) => (
-          <span key={it.key} className="doctor__safetyChip">
-            <strong>{it.label}</strong> {it.text}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 const LBP_SAFETY_STATUS_LABEL: Record<LbpComputedFields['lbp_safety_status'], string> = {
   CLEAR: '안전',
@@ -532,7 +334,7 @@ function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: Answe
  * 여기서는 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
  * (fixtures) 항상 "아직 진찰 전"으로 취급한다.
  */
-function LbpSafetyPanel({
+export function LbpSafetyPanel({
   payload,
   lbpObjectiveMotorDeficit,
 }: {
@@ -724,7 +526,7 @@ function suggestedNeckExamCodes(
  * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
  * JudgmentPanel에 대응 필드를 추가하지 않았다.
  */
-function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
+export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
   if (payload.responses.safety_flags.neck === null) return null
 
   const state = toNeckStateFromDoctorPayload(payload.responses)
@@ -863,7 +665,7 @@ function suggestedShoulderExamCodes(
  * 회전근개 약화)만 JudgmentPanel의 `shoulder_objective_cuff_weakness`를
  * 읽어 반영한다(§11).
  */
-function ShoulderSafetyPanel({
+export function ShoulderSafetyPanel({
   payload,
   shoulderObjectiveCuffWeakness,
 }: {
@@ -1009,7 +811,7 @@ function suggestedKneeExamCodes(
  * plan §3.2/§5.5) -- Wells/SLR/신경혈관 결과의 persistence schema는 아직
  * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
-function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
+export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
   if (payload.responses.safety_flags.knee === null) return null
 
   const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
@@ -1148,7 +950,7 @@ function suggestedElbowExamCodes(
  * plan §3.2/§5.6) -- Wells류의 persistence schema가 아직 CLOSED되지
  * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
-function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
+export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
   if (payload.responses.safety_flags.elbow === null) return null
 
   const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
@@ -1297,7 +1099,7 @@ function suggestedWristHandExamCodes(
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다
  * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
  */
-function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
+export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
   if (payload.responses.safety_flags.wrist_hand === null) return null
 
   const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)
@@ -1476,7 +1278,7 @@ function menopauseSleepSummaryLines(sleep: Responses['modules']['sleep']): strin
  * 'Pain' 리터럴로 여러 곳을 분기하므로 절대 재사용하지 않는다
  * (LBP_INTEGRATION_PLAN_DRAFT.md §9/S9).
  */
-function primaryModuleFields(
+export function primaryModuleFields(
   primaryModule: string | null,
   m: Responses['modules'],
   primaryModuleDetail: string | null = null,
@@ -1952,8 +1754,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const fixture = DOCTOR_FIXTURES[fixtureIndex]
   const payload = mode === 'server' && selectedRecord ? recordToPayload(selectedRecord) : fixture.payload
   const r = payload.responses
-  const { flags, routing } = payload
+  const { routing } = payload
   const saju = payload.myungri_calculation
+  const viewProfile = deriveViewProfile(payload).derived
 
   // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
   // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
@@ -2059,11 +1862,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       setCopyStatus('error')
     }
   }
-
-  const generalFlagLabels = optionLabels(
-    'SAFETY_01',
-    ((r.safety_flags.red_flag_general as string[] | null) ?? []).filter((v) => v !== 'none'),
-  )
 
   const showingServerList = mode === 'server' && !selectedRecord
   const newCount = submissions.filter((s) => s.status === 'new').length
@@ -2195,61 +1993,15 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       {(mode === 'fixtures' || selectedRecord) && (
       <>
-      <TenSecondSummary payload={payload} />
-
-      {flags.requires_staff_check && (
-        <div className="doctor__banner doctor__banner--danger">
-          <strong>안전 확인 필요</strong>
-          <p>
-            환자가 아래 내용을 문진에서 보고했습니다. 이는 진단이 아니며, 진료
-            전 직원/원장의 확인이 필요합니다.
-          </p>
-          <ul>
-            {generalFlagLabels.length > 0 && (
-              <li>공통 위험 신호(SAFETY_01): {generalFlagLabels.join(', ')}</li>
-            )}
-            {flags.gi_needs_review && (
-              <li>
-                소화 문진(GI_03) 응답: &ldquo;
-                {answerLabel('GI_03', r.modules.gi.unable_to_eat_or_drink)}&rdquo;
-              </li>
-            )}
-            {flags.bowel_needs_review && (
-              <li>
-                대변 문진(BOWEL_03) 응답: &ldquo;
-                {answerLabel('BOWEL_03', r.modules.bowel.blood_or_black_stool)}&rdquo;
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
-
-      <SafetyGlance r={r} flags={flags} />
-
-      <LbpSafetyPanel
+      <DoctorWorkspace
         payload={payload}
         lbpObjectiveMotorDeficit={
           mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
         }
-      />
-
-      <HipSafetyPanel payload={payload} />
-
-      <NeckSafetyPanel payload={payload} />
-
-      <ShoulderSafetyPanel
-        payload={payload}
         shoulderObjectiveCuffWeakness={
           mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
         }
       />
-
-      <KneeSafetyPanel payload={payload} />
-
-      <ElbowSafetyPanel payload={payload} />
-      <WristHandSafetyPanel payload={payload} />
-      <AnkleFootSafetyPanel payload={payload} />
-      <TmjSafetyPanel payload={payload} />
 
       {/*
         Tablet UX v2.2 §33: 현재 questionnaire mode를 작게 표시한다 --
@@ -2269,11 +2021,20 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <Field qid="ID_01" label="성함" value={r.patient.patient_name} />
           <Field qid="ID_02" label="휴대폰 끝 4자리" value={r.patient.phone_last4} />
           <Field qid="ID_03" label="성별" value={r.patient.patient_sex} />
-          <Field qid="BIRTH_01" label="생년월일" value={r.birth_info.birth_date} />
-          <Field qid="BIRTH_02" value={r.birth_info.birth_calendar_type} />
-          <Field qid="BIRTH_02A" value={r.birth_info.lunar_leap_month} />
-          <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
-          <Field qid="BIRTH_03A" value={r.birth_info.birth_time_confidence} />
+          {/*
+            PR #24 Phase 2 invariant: pain 프로필은 출생시간/명리 관련
+            내용을 노출하지 않는다 -- 출생정보(BIRTH_*)는 herbal/mixed일
+            때만 보인다.
+          */}
+          {viewProfile !== 'pain' && (
+            <>
+              <Field qid="BIRTH_01" label="생년월일" value={r.birth_info.birth_date} />
+              <Field qid="BIRTH_02" value={r.birth_info.birth_calendar_type} />
+              <Field qid="BIRTH_02A" value={r.birth_info.lunar_leap_month} />
+              <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
+              <Field qid="BIRTH_03A" value={r.birth_info.birth_time_confidence} />
+            </>
+          )}
         </div>
       </section>
 
@@ -2407,31 +2168,34 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
-      <section className="doctor__section">
-        <h2 className="doctor__section__h2--sub">전신·한약 참고</h2>
-        {(() => {
-          const fields = constitutionFields(r)
-          const populated = fields.filter((f) => !isEmptyValue(f.value))
-          const body = (
-            <div className="doctor__grid">
-              {fields.map((f) => (
-                <Field key={f.qid} qid={f.qid} value={f.value} />
-              ))}
-            </div>
-          )
-          if (populated.length === 0) return body
-          const preview = populated
-            .slice(0, 3)
-            .map((f) => answerLabel(f.qid, f.value))
-            .join(' · ')
-          return (
-            <details className="doctor__constDetails">
-              <summary>{preview}</summary>
-              {body}
-            </details>
-          )
-        })()}
-      </section>
+      {/* PR #24 Phase 2 invariant: pain 프로필은 herbal 전용 전신 정보를 노출하지 않는다. */}
+      {viewProfile !== 'pain' && (
+        <section className="doctor__section">
+          <h2 className="doctor__section__h2--sub">전신·한약 참고</h2>
+          {(() => {
+            const fields = constitutionFields(r)
+            const populated = fields.filter((f) => !isEmptyValue(f.value))
+            const body = (
+              <div className="doctor__grid">
+                {fields.map((f) => (
+                  <Field key={f.qid} qid={f.qid} value={f.value} />
+                ))}
+              </div>
+            )
+            if (populated.length === 0) return body
+            const preview = populated
+              .slice(0, 3)
+              .map((f) => answerLabel(f.qid, f.value))
+              .join(' · ')
+            return (
+              <details className="doctor__constDetails">
+                <summary>{preview}</summary>
+                {body}
+              </details>
+            )
+          })()}
+        </section>
+      )}
 
       <section className="doctor__section">
         <h2>약물·병력·알레르기·수술</h2>
@@ -2475,6 +2239,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
+      {/* PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지 않는다. */}
+      {viewProfile !== 'pain' && (
+      <>
       <MyungriCompactCard saju={saju} />
 
       <section className="doctor__section doctor__section--myungri">
@@ -2575,6 +2342,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           기록&rdquo;에 원장이 직접 기록합니다.
         </p>
       </section>
+      </>
+      )}
 
       {mode === 'server' && selectedRecord?.visit_id && (
         <section className="doctor__section">

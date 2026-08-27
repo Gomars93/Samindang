@@ -42,6 +42,10 @@ tests/.emr-summary-bundle.mjs
 # TypeScript incremental build artifacts
 *.tsbuildinfo
 
+# Python bytecode cache (tablet core/ pytest suite) — not source
+__pycache__/
+*.pyc
+
 # runtime patient data written by server/index.js (SAMINDANG_DATA_DIR default) —
 # never commit real submissions. This also covers .data/audit.log (the
 # operational audit log, see server/audit.js) — already caught by the

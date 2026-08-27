@@ -4247,6 +4247,51 @@ export const buildRoutingPayload = (r: Responses) => {
 }
 
 /**
+ * Doctor Clinical Workspace (PR #24) — view_profile derivation.
+ *
+ * `view_profile` decides which workspace(s) DoctorView shows: `'pain'`
+ * (pain workspace only, no Myungri/herbal-systemic content), `'herbal'`
+ * (systemic/herbal first, Myungri collapsed), or `'mixed'` (both, as tabs).
+ * This is a UI/product routing decision, not a clinical one -- it never
+ * changes what data exists, only how it is grouped for display.
+ *
+ * `questionnaireMode` alone is NOT a safe signal for this (a `pain_fast`
+ * patient can have a non-pain primary concern, e.g. sleep/urinary/fatigue).
+ * This function instead combines two independently-verified, already-computed
+ * routing signals:
+ *
+ * - `hasPainContent`: `primary_module`/`additional_module` is literally
+ *   `'Pain'` -- i.e. the patient actually answered a Pain-module
+ *   questionnaire (PAIN_01 body map + regional LBP/NECK/SHOULDER/etc.).
+ * - `hasSystemicContent`: `questionnaireMode` is `'expanded'` or
+ *   `'herbal_addon'` -- i.e. the constitution/herbal systemic block
+ *   (HERBAL_REFERENCE_QUESTIONS + CONSTITUTION_BASIC_QUESTIONS) was shown
+ *   (see `showsExpandedSystemicBlock` above).
+ *
+ * Every one of the four (hasPain, hasSystemic) combinations maps to an
+ * unambiguous profile -- including the "neither" case (a pain_fast patient
+ * whose primary concern is e.g. sleep/bowel/urinary/fatigue/stress/women/
+ * weight, not pain): that patient never opened the Pain module, so a Pain
+ * workspace would be empty/wrong. Their real answers are systemic-symptom
+ * content, so `'herbal'` is the profile that actually shows what they
+ * reported -- never `'pain'`, which would silently hide it.
+ *
+ * Regression tests (tests/doctor.spec.mjs) prove this never hides
+ * patient-entered pain content from the pain workspace, and never hides
+ * systemic/herbal content from the herbal workspace.
+ */
+export type DoctorViewProfile = 'pain' | 'herbal' | 'mixed'
+
+export const doctorViewProfile = (r: Responses): DoctorViewProfile => {
+  const routing = buildRoutingPayload(r)
+  const hasPainContent = routing.primary_module === 'Pain' || routing.additional_module === 'Pain'
+  const hasSystemicContent = showsExpandedSystemicBlock(r)
+  if (hasPainContent && hasSystemicContent) return 'mixed'
+  if (hasPainContent) return 'pain'
+  return 'herbal'
+}
+
+/**
  * Tablet UX v2.1 §(ordering fix): phase-aware dynamic traversal.
  *
  * The static `ALL_QUESTIONS` array declares each regional module's question

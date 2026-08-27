@@ -14,8 +14,11 @@ const byName = (needle) => {
   return f
 }
 
-test('DoctorView contains ANKLE_FOOT panel wiring exactly once', () => {
-  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+test('PainWorkspace contains ANKLE_FOOT panel wiring exactly once', () => {
+  // PR #24: the regional SafetyPanels moved from DoctorView.tsx's own render
+  // into src/doctor/workspace/PainWorkspace.tsx (Pain Workspace shell reuses
+  // them unchanged) -- same wiring, new location.
+  const src = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
   const matches = src.match(/<AnkleFootSafetyPanel payload=\{payload\} \/>/g) ?? []
   assert.equal(matches.length, 1)
 })

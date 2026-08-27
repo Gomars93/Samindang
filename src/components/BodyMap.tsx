@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { SingleChoice } from './SingleChoice'
 import type { Option } from '../types'
+import frontArtwork from '../assets/bodymap/front.png'
+import backArtwork from '../assets/bodymap/back.png'
 
 type Props = {
   options: Option[]
@@ -16,9 +18,15 @@ type Props = {
  * onSelect로 넘기는 값은 항상 PAIN_01.options에 실제로 존재하는 value
  * 그대로다(아래 ZONES 테이블 참고, 추측으로 만든 값 없음).
  *
- * 해부학적 상세 없이 단순 무채색 human silhouette(inline SVG)만 사용한다.
- * 각 zone은 실제 <button>이며 aria-label이 있고, 선택 상태는 색상만이
- * 아니라 체크마크 배지로도 표시한다(SingleChoice와 동일한 원칙).
+ * Body Map artwork/interaction 분리 (PR #23 Phase 1): 화면에 그려지는
+ * 그림(artwork)과 실제로 탭 가능한 부위(interaction/hit layer)는 완전히
+ * 독립적인 두 레이어다. artwork는 승인된 PNG(src/assets/bodymap/
+ * front.png, back.png)를 우선 사용하고, 로드 실패 또는 손상이 감지되면
+ * 기존 무채색 inline SVG mannequin(Silhouette)으로 자동 대체한다(Artwork
+ * 컴포넌트, 아래). 선택 표시(하이라이트/체크)는 항상 이 artwork 레이어
+ * 위에 별도로 그려지는 오버레이이며 PNG 안에 구워 넣지 않는다. 각 zone은
+ * 실제 <button>이며 aria-label이 있고, 선택 상태는 색상만이 아니라
+ * 체크마크 배지로도 표시한다(SingleChoice와 동일한 원칙).
  *
  * DOM 구조(Tablet UX v2.1 §7, device QA에서 발견된 렌더링 버그 수정):
  * zone 버튼은 반드시 .bodyMap__figure(position:relative, aspect-ratio로
@@ -76,17 +84,39 @@ const ZONES: Zone[] = [
   { value: 'leg_foot', view: 'back', top: 81, left: 52, width: 26, height: 19, shape: 'rect' },
 ]
 
-// Tablet UX v2.3 §11: values that have zone buttons in BOTH front and back
-// (neck_shoulder/arm_hand/knee/leg_foot) are exactly the ones where "which
-// view gets the strong ✓" is ambiguous and needs the strongView tie-break
-// below. Values that exist in only one view (e.g. low_back_pelvis, back
-// only) are never ambiguous -- that one zone always shows its checkmark
-// once selected, regardless of strongView's default.
-const AMBIGUOUS_VIEW_VALUES = new Set(
-  [...new Set(ZONES.map((z) => z.value))].filter(
-    (v) => ZONES.some((z) => z.value === v && z.view === 'front') && ZONES.some((z) => z.value === v && z.view === 'back'),
-  ),
-)
+/**
+ * PR #23 Phase 3 visual-QA fix: a unique key per ZONES entry, `${view}-
+ * ${value}-${indexWithinView}` -- matches the key React already uses for
+ * each zone <button> in Figure() below. Needed because "which exact zone
+ * was tapped" is a strictly finer question than "which view was tapped":
+ * `knee` alone has two zones on the SAME view (left knee, right knee),
+ * and a real-device screenshot during this task's visual QA caught both
+ * lighting up with a ✓ badge from a single tap on one of them. The
+ * previous state only tracked `strongView: 'front' | 'back'`, so any
+ * zone matching both the selected value AND the tapped view was
+ * "strong" -- correct for disambiguating front vs. back (e.g.
+ * neck_shoulder), but not for disambiguating two same-view zones of the
+ * same value. Tracking the exact key fixes both cases with one
+ * mechanism.
+ */
+function zoneKey(view: 'front' | 'back', value: string, indexWithinView: number): string {
+  return `${view}-${value}-${indexWithinView}`
+}
+
+/**
+ * 부모 BodyMap이 아직 어떤 zone도 직접 탭한 적 없는 상태(예: 이전 세션
+ * 응답을 그대로 이어받아 처음 렌더링하는 경우)일 때, 어떤 zone을 "강조"
+ * 상태로 보여줄지 결정론적으로 고른다 -- ZONES 배열에서 해당 value의
+ * 첫 번째 항목(항상 front가 먼저 옴)을 기본값으로 삼는다.
+ */
+function defaultStrongZoneKey(value: string | null): string | null {
+  if (!value) return null
+  const first = ZONES.find((z) => z.value === value)
+  if (!first) return null
+  const sameViewZones = ZONES.filter((z) => z.view === first.view)
+  const idx = sameViewZones.indexOf(first)
+  return zoneKey(first.view, first.value, idx)
+}
 
 const ZONE_LABEL: Record<string, string> = {
   head_face_jaw: '머리·얼굴·턱',
@@ -162,6 +192,18 @@ export function getBodyMapZoneLabel(value: string): string {
  * touched by this redesign -- the silhouette is purely decorative
  * (aria-hidden, pointer-events none via CSS) and the existing PAIN_01
  * enum/zone positions are unchanged.
+ *
+ * PR #23 Phase 1 update: this is no longer rendered unconditionally.
+ * The approved PNG artwork (front.png/back.png) is now the primary
+ * artwork; this component is kept as Artwork()'s automatic fallback for
+ * when the PNG fails to load or fails its content-integrity check (see
+ * Artwork() below for why a plain onError isn't sufficient). It is
+ * intentionally NOT updated to imitate the approved PNG's own front-view
+ * facial cue -- this fallback only ever activates when that PNG cannot
+ * be shown at all, so there is no case where the two are visible side by
+ * side, and this design has already been validated against real-device
+ * QA feedback on its own terms (no face, no anatomical/gender detail,
+ * armpit gap, joint dividers).
  */
 function Silhouette({ view }: { view: 'front' | 'back' }) {
   return (
@@ -235,39 +277,132 @@ function Silhouette({ view }: { view: 'front' | 'back' }) {
   )
 }
 
+/**
+ * PR #23 Phase 1 (approved PNG base artwork): the artwork layer and the
+ * interaction (hit-target) layer are architecturally decoupled -- this
+ * component owns ONLY what is drawn, never what is clickable. The zone
+ * `<button>` overlay in Figure() below is completely independent and does
+ * not change based on which artwork actually renders here.
+ *
+ * Renders the approved PNG (src/assets/bodymap/front.png|back.png) as the
+ * primary artwork, with the inline-SVG mannequin (Silhouette, kept from
+ * the previous round) as an automatic fallback if the PNG fails to load
+ * OR fails a lightweight content-integrity check.
+ *
+ * Why a content check and not just onError: a truncated/corrupted PNG
+ * (verified byte-level against the two files actually committed for this
+ * task -- their IDAT chunk declares far more compressed data than the
+ * file actually contains) does NOT fire the <img> element's error event
+ * in Chromium/most browsers. The decoder is lenient about a truncated
+ * stream and reports the image as "loaded" at its correct declared
+ * dimensions while painting a flat, content-less rectangle -- confirmed
+ * directly via a local headless-Chromium screenshot before writing this,
+ * not assumed. onError alone would never catch that class of failure, so
+ * once the image fires onLoad we additionally sample it through an
+ * offscreen canvas and check for any real color variance; a canvas that
+ * comes back essentially one flat color is treated the same as a load
+ * failure and triggers the SVG fallback. This is a defensive, generic
+ * check (useful for any future truncated/corrupted asset, not hardcoded
+ * to today's specific files) -- it does not inspect or validate the
+ * artwork's actual content/likeness in any other way.
+ *
+ * This function does not modify the PNG files themselves in any way.
+ */
+function Artwork({ view, src }: { view: 'front' | 'back'; src: string }) {
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [unusable, setUnusable] = useState(false)
+
+  const checkIntegrity = () => {
+    const img = imgRef.current
+    if (!img) return
+    try {
+      const canvas = document.createElement('canvas')
+      const w = 24
+      const h = 24
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.drawImage(img, 0, 0, w, h)
+      const { data } = ctx.getImageData(0, 0, w, h)
+      let minR = 255
+      let maxR = 0
+      let minG = 255
+      let maxG = 0
+      let minB = 255
+      let maxB = 0
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i]
+        const g = data[i + 1]
+        const b = data[i + 2]
+        if (r < minR) minR = r
+        if (r > maxR) maxR = r
+        if (g < minG) minG = g
+        if (g > maxG) maxG = g
+        if (b < minB) minB = b
+        if (b > maxB) maxB = b
+      }
+      const variance = maxR - minR + (maxG - minG) + (maxB - minB)
+      if (variance < 6) setUnusable(true)
+    } catch {
+      // 캔버스 검사 자체가 실패하면(브라우저 제약 등) PNG를 그대로
+      // 신뢰한다 -- fallback을 과도하게 트리거하지 않기 위함.
+    }
+  }
+
+  return (
+    <>
+      <img
+        ref={imgRef}
+        className={`bodyMap__artwork${unusable ? ' bodyMap__artwork--hidden' : ''}`}
+        src={src}
+        alt=""
+        aria-hidden="true"
+        onLoad={checkIntegrity}
+        onError={() => setUnusable(true)}
+      />
+      {unusable && <Silhouette view={view} />}
+    </>
+  )
+}
+
 function Figure({
   view,
   zones,
   value,
-  strongView,
+  strongZoneKey,
   onSelect,
 }: {
   view: 'front' | 'back'
   zones: Zone[]
   value: string | null
   /**
-   * Tablet UX v2.3 §11: 어떤 값(예: 'neck_shoulder')은 ZONES에 front/back
-   * 두 view 모두 존재한다 -- 이전에는 두 Figure가 각자 독립적으로
-   * `value === z.value`만 확인해 앞/뒤 두 곳에 동시에 강한 체크(✓ 배지)가
-   * 나타나 "두 군데를 골랐나?" 하는 혼동을 줬다. 이제는 어느 view가 마지막
-   * 탭인지(strongView, 부모 BodyMap의 state)를 기준으로 그 view의 zone만
-   * ✓ 배지를 받고, 나머지 view는 테두리/틴트(bodyMap__zone--selected)만
-   * 유지해 "선택은 됐지만 지금 강조된 곳은 여기가 아니다"를 표시한다.
+   * PR #23 Phase 3 visual-QA fix: the exact zone key (zoneKey(), above)
+   * that should show the strong highlight + ✓ badge. Replaces the older
+   * `strongView: 'front'|'back'` tie-break, which correctly disambiguated
+   * front vs. back for values like neck_shoulder but NOT two same-view
+   * zones sharing one value (both knees) -- tapping one knee incorrectly
+   * badge-checked both. Comparing the exact key fixes both cases: only
+   * the one specific button that was actually tapped (or the
+   * deterministic default, defaultStrongZoneKey(), before any tap) is
+   * ever "strong"; every other zone matching the same value -- same view
+   * or the opposite view -- stays at the soft baseline tint only.
    */
-  strongView: 'front' | 'back'
-  onSelect: (v: string, view: 'front' | 'back') => void
+  strongZoneKey: string | null
+  onSelect: (v: string, key: string) => void
 }) {
   return (
     <div className="bodyMap__figureWrap">
       <span className="bodyMap__viewLabel">{view === 'front' ? '앞면' : '뒷면'}</span>
       <div className="bodyMap__figure">
-        <Silhouette view={view} />
+        <Artwork view={view} src={view === 'front' ? frontArtwork : backArtwork} />
         {zones.map((z, i) => {
+          const key = zoneKey(view, z.value, i)
           const isSelected = value === z.value
-          const isStrong = isSelected && (!AMBIGUOUS_VIEW_VALUES.has(z.value) || view === strongView)
+          const isStrong = isSelected && key === strongZoneKey
           return (
             <button
-              key={`${view}-${z.value}-${i}`}
+              key={key}
               type="button"
               className={`bodyMap__zone bodyMap__zone--${z.shape}${isSelected ? ' bodyMap__zone--selected' : ''}${isStrong ? ' bodyMap__zone--strong' : ''}`}
               style={{
@@ -278,7 +413,7 @@ function Figure({
               }}
               aria-label={`${ZONE_LABEL[z.value]} (${view === 'front' ? '앞면' : '뒷면'})`}
               aria-pressed={isSelected}
-              onClick={() => onSelect(z.value, view)}
+              onClick={() => onSelect(z.value, key)}
             >
               {isStrong && (
                 <span className="bodyMap__zoneMark" aria-hidden="true">
@@ -295,16 +430,39 @@ function Figure({
 
 export function BodyMap({ options, value, onSelect }: Props) {
   const [showList, setShowList] = useState(false)
-  // Tablet UX v2.3 §11: 앞/뒤 모두에 존재하는 값(neck_shoulder/arm_hand/
-  // knee/leg_foot)을 처음 볼 때(아직 아무 zone도 직접 탭한 적 없는, 이전
-  // 세션 응답을 그대로 이어받은 상태)는 ZONES 배열 순서상 항상 front가
-  // 먼저 나오므로 기본값 'front'가 자연스럽다 -- 실제로 어느 쪽을 탭했는지
-  // 알게 되는 즉시(handleSelect) 그 view로 갱신된다.
-  const [strongView, setStrongView] = useState<'front' | 'back'>('front')
-  const handleSelect = (v: string, view: 'front' | 'back') => {
-    setStrongView(view)
+  // PR #23 Phase 3 visual-QA fix: tracks the exact zone that should show
+  // the strong highlight (see zoneKey()/defaultStrongZoneKey() above) --
+  // initialized from the incoming value so a resumed session (no click
+  // ever happened yet) still deterministically highlights exactly one
+  // zone, not every zone sharing that value. Actually tapping a zone
+  // (handleSelect) immediately updates this to the exact zone tapped.
+  const [strongZoneKey, setStrongZoneKey] = useState<string | null>(() => defaultStrongZoneKey(value))
+  const handleSelect = (v: string, key: string) => {
+    setStrongZoneKey(key)
     onSelect(v)
   }
+  // PR #23 Phase 3 visual-QA fix: value can also change WITHOUT going
+  // through handleSelect -- the "목록으로 보기" list fallback (SingleChoice
+  // below) calls the parent's onSelect directly, bypassing this
+  // component's own key tracking. If the patient picks a new value there
+  // and switches back to the map, strongZoneKey would otherwise still
+  // point at the previous value's zone (or none), leaving every matching
+  // zone at the soft tint with no checkmark anywhere. Re-derive the
+  // default whenever the incoming value no longer matches what
+  // strongZoneKey was tracking (a tap-driven change already carries the
+  // exact matching key from handleSelect, so this is a no-op then).
+  useEffect(() => {
+    setStrongZoneKey((prev) => {
+      if (prev) {
+        // key format is `${view}-${value}-${indexWithinView}`; no PAIN_01
+        // value contains a literal '-', so the middle segment is exactly
+        // the tracked value.
+        const [, prevValue] = prev.split('-')
+        if (prevValue === value) return prev
+      }
+      return defaultStrongZoneKey(value)
+    })
+  }, [value])
   const frontZones = ZONES.filter((z) => z.view === 'front')
   const backZones = ZONES.filter((z) => z.view === 'back')
 
@@ -341,8 +499,8 @@ export function BodyMap({ options, value, onSelect }: Props) {
         )}
       </p>
       <div className="bodyMap__figures">
-        <Figure view="front" zones={frontZones} value={value} strongView={strongView} onSelect={handleSelect} />
-        <Figure view="back" zones={backZones} value={value} strongView={strongView} onSelect={handleSelect} />
+        <Figure view="front" zones={frontZones} value={value} strongZoneKey={strongZoneKey} onSelect={handleSelect} />
+        <Figure view="back" zones={backZones} value={value} strongZoneKey={strongZoneKey} onSelect={handleSelect} />
       </div>
       {/*
         Tablet UX v2.2.1 §6 / v2.3 §11-12: 위 label은 그림 위에 있어

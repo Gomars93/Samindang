@@ -718,15 +718,40 @@ input {
 .bodyMap__figure {
   position: relative;
   width: 100%;
-  /* 3:5 세로 비율 -- 사람 실루엣에 가까운 종횡비를 aspect-ratio로 고정해
-     zone 버튼의 %기반 절대 위치가 어떤 화면 폭에서도 같은 자리를 가리키게 한다.
-     silhouette(svg)와 zone 버튼 모두 이 박스의 직계 child이며, 이 박스만이
-     유일한 positioned coordinate container다 (device QA 버그 수정, §7). */
-  aspect-ratio: 3 / 5;
+  /* PR #23 Phase 1: 승인된 PNG artwork(front.png/back.png)의 실제 픽셀
+     비율(480:853)로 맞춘다 -- 이전에는 hand-drawn SVG 실루엣에 맞춰 고른
+     근사치(3:5)를 썼지만, 이제 실제 원본 치수를 알고 있으므로 그대로
+     쓰는 편이 letterbox/crop 없이 가장 정확하다. zone 버튼의 %기반 절대
+     위치가 어떤 화면 폭에서도 같은 자리를 가리키게 하는 역할은 그대로다.
+     artwork(PNG 또는 fallback SVG)와 zone 버튼 모두 이 박스의 직계
+     child이며, 이 박스만이 유일한 positioned coordinate container다
+     (device QA 버그 수정, §7). */
+  aspect-ratio: 480 / 853;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 16px;
   overflow: hidden;
+}
+
+/* PR #23 Phase 1: 승인된 PNG artwork -- 순수 시각 레이어, 클릭 불가
+   (pointer-events:none, 실제 탭 대상은 항상 별도의 .bodyMap__zone
+   버튼이다). object-fit:contain으로 원본 비율을 절대 왜곡하지 않는다
+   (PNG 파일 자체는 수정하지 않는다는 요구사항과 별개로, CSS 표시 단계에서도
+   늘리기/찌그러뜨리기를 하지 않는다). */
+.bodyMap__artwork {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  pointer-events: none;
+}
+
+/* Artwork()가 PNG 손상을 감지하면 이 클래스를 붙여 숨기고, 같은 자리에
+   fallback Silhouette(SVG)를 대신 그린다 (BodyMap.tsx Artwork 참고). */
+.bodyMap__artwork--hidden {
+  display: none;
 }
 
 .bodyMap__silhouette {
@@ -870,13 +895,15 @@ input {
   background: rgba(44, 62, 53, 0.16);
 }
 
-/* PR #23 real-device QA follow-up §2: any selected zone gets a soft tint
-   (this rule) -- when the same enum value also has a zone on the other
-   view (AMBIGUOUS_VIEW_VALUES, BodyMap.tsx), that other view's zone stays
-   at exactly this soft level ("반대 view에는 soft tint 정도만 허용"). Only
-   the actually-tapped view additionally gets .bodyMap__zone--strong
-   (below) for a visibly stronger highlight + the ✓ badge -- the two
-   views are never emphasized with the same intensity at once. */
+/* PR #23 real-device QA follow-up §2, refined again in Phase 3 (visual QA
+   fix): any selected zone gets a soft tint (this rule) -- when the same
+   enum value also has other matching zones (the other view, e.g.
+   neck_shoulder, AND/OR another zone on the SAME view, e.g. the other
+   knee), every zone except the exact one actually tapped stays at this
+   soft level ("반대 view/같은 view의 다른 zone에는 soft tint 정도만
+   허용" -- BodyMap.tsx's zoneKey()/strongZoneKey). Only that one exact
+   zone additionally gets .bodyMap__zone--strong (below) for a visibly
+   stronger highlight + the ✓ badge. */
 .bodyMap__zone--selected {
   border-color: transparent;
   background: rgba(44, 62, 53, 0.08);

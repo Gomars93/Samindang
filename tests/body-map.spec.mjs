@@ -106,6 +106,34 @@ assert("'other' is not a body map zone (fallback-list-only by design)", !BODY_MA
     "multi-zone value (knee) presses exactly its own zone count, never a different value's zone",
     pressedCount === kneeZoneTotal,
   )
+
+  // PR #23 Phase 3 visual-QA fix regression test: 'knee' has TWO zones on
+  // the SAME view (left knee, right knee, both front -- see ZONES in
+  // BodyMap.tsx). A real-device-style headless-Chromium screenshot taken
+  // during this task caught both zones showing a ✓ checkmark badge
+  // simultaneously from a single tap on one of them -- the old
+  // `strongView: 'front'|'back'` state only disambiguated which VIEW was
+  // strong, not which specific zone within that view. This exact bug is
+  // reproducible in plain SSR with no click needed: BodyMap's initial
+  // strongZoneKey state is computed by defaultStrongZoneKey(value) on
+  // first render, so the very first (uninteracted) render of value='knee'
+  // must already show exactly one checkmark, not two.
+  const kneeCheckmarkCount = (html.match(/bodyMap__zoneMark/g) || []).length
+  assert(
+    'CRITICAL (real-device QA fix): multi-same-view-zone value (knee, 2 zones on the front view alone) shows exactly ONE checkmark badge on first render, never one per zone',
+    kneeCheckmarkCount === 1,
+  )
+}
+{
+  // Same fix, for the other multi-same-view-zone values (arm_hand,
+  // leg_foot also have 2 zones on the SAME view each -- see ZONES).
+  for (const value of ['arm_hand', 'leg_foot']) {
+    const html = renderToStaticMarkup(
+      React.createElement(BodyMap, { options: PAIN_01.options, value, onSelect: () => {} }),
+    )
+    const checkmarkCount = (html.match(/bodyMap__zoneMark/g) || []).length
+    assert(`CRITICAL (real-device QA fix): "${value}" (2 zones on the same view) shows exactly ONE checkmark badge on first render`, checkmarkCount === 1)
+  }
 }
 
 {
@@ -241,7 +269,15 @@ function cssBlock(css, selector) {
   const figureChunks = html.split('class="bodyMap__figure"').slice(1)
   assert('rendered HTML: at least one .bodyMap__figure element present (front + back)', figureChunks.length === 2)
   for (const chunk of figureChunks) {
-    assert('rendered HTML: each .bodyMap__figure element is immediately followed by zone button markup (svg silhouette + <button class="bodyMap__zone...)', /<button[^>]*class="bodyMap__zone/.test(chunk.slice(0, 4000)))
+    // PR #23 Phase 1: the artwork layer now renders a PNG <img> before the
+    // zone buttons (previously an inline SVG silhouette, much shorter).
+    // This test suite bundles BodyMap.tsx with the PNG inlined as a
+    // base64 data: URI (esbuild --loader:.png=dataurl, Node-only test
+    // concern -- the real production Vite build serves it as a short
+    // hashed URL instead, so this larger window is a test-harness
+    // accommodation, not a real-world size regression). Widened
+    // accordingly so the assertion still finds the zone buttons.
+    assert('rendered HTML: each .bodyMap__figure element is immediately followed by artwork + zone button markup (<button class="bodyMap__zone...)', /<button[^>]*class="bodyMap__zone/.test(chunk.slice(0, 60000)))
   }
 }
 
@@ -256,6 +292,8 @@ function cssBlock(css, selector) {
   )
   assert('rendered HTML: no selection -> prompts "부위를 선택해주세요"', htmlNoSelection.includes('부위를 선택해주세요'))
   assert('rendered HTML: no selection -> does not claim a region is selected', !htmlNoSelection.includes('선택한 부위'))
+  assert('rendered HTML: no selection -> no checkmark badge anywhere on the map (neutral state has no highlight)', !htmlNoSelection.includes('bodyMap__zoneMark'))
+  assert('rendered HTML: no selection -> no zone is aria-pressed=true', !htmlNoSelection.includes('aria-pressed="true"'))
 
   const htmlSelected = renderToStaticMarkup(
     React.createElement(BodyMap, { options: PAIN_01.options, value: 'low_back_pelvis', onSelect: () => {} }),
@@ -269,16 +307,19 @@ function cssBlock(css, selector) {
 }
 
 {
-  // 8. Front/back visual cue: front and back silhouettes render distinct
-  // decorative markup (bodyMap__frontCue vs bodyMap__backCue) so the two
-  // views are distinguishable without reading the "앞면"/"뒷면" text label
-  // (Tablet UX v2.2 §2). Purely decorative -- no PAIN_01 value semantics.
+  // 8. Front/back distinction: the "앞면"/"뒷면" text label always renders
+  // regardless of which artwork layer is active (PNG or SVG fallback) --
+  // checked here via live SSR since .bodyMap__viewLabel is unconditional.
+  // The decorative frontCue/backCue *markup* only exists inside the SVG
+  // fallback (Silhouette), which is not part of a default/uninteracted
+  // render now that the PNG artwork is primary (PR #23 Phase 1) -- that
+  // structure is verified at the source level further down this file
+  // instead (Silhouette() cue-group assertions), since SSR alone cannot
+  // force the client-side integrity check that activates the fallback.
   const html = renderToStaticMarkup(
     React.createElement(BodyMap, { options: PAIN_01.options, value: null, onSelect: () => {} }),
   )
-  assert('rendered HTML: front silhouette has a distinct front cue group', html.includes('bodyMap__frontCue'))
-  assert('rendered HTML: back silhouette has a distinct back cue group', html.includes('bodyMap__backCue'))
-  assert('rendered HTML: "앞면"/"뒷면" text labels are still present (cue is additive, not a replacement)', html.includes('앞면') && html.includes('뒷면'))
+  assert('rendered HTML: "앞면"/"뒷면" text labels are present regardless of which artwork layer is active', html.includes('앞면') && html.includes('뒷면'))
 }
 
 {
@@ -460,6 +501,33 @@ function cssBlock(css, selector) {
   // that would need new CSS.
   const silhouetteCss = cssBlock(CSS, '.bodyMap__silhouette')
   assert('styles.css: .bodyMap__silhouette still declares a fill (inherited by the new path shapes)', /fill:/.test(silhouetteCss))
+}
+
+{
+  // PR #23 Phase 1-3: PNG artwork layer + the strongZoneKey highlight fix,
+  // checked at the source level (the click-driven runtime path itself was
+  // verified via local headless-Chromium screenshots, not reproducible in
+  // this plain-SSR test file -- see tests/bodymap-assets.spec.mjs's header
+  // comment and this task's final report for how that was done).
+  const bodyMapSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'BodyMap.tsx'), 'utf8')
+
+  assert('BodyMap.tsx: Artwork() component exists (PNG-primary, SVG-fallback artwork layer)', /function Artwork\(/.test(bodyMapSrc))
+  assert('BodyMap.tsx: zoneKey() helper exists (unique per-zone identifier, not just per-view)', /function zoneKey\(/.test(bodyMapSrc))
+  assert('BodyMap.tsx: defaultStrongZoneKey() helper exists (deterministic default before any tap)', /function defaultStrongZoneKey\(/.test(bodyMapSrc))
+  assert(
+    'BodyMap.tsx CRITICAL: isStrong compares the exact zone key, not just the view -- the real-device QA bug (both knees badge-checked from one tap) was caused by comparing view alone',
+    /const isStrong = isSelected && key === strongZoneKey/.test(bodyMapSrc),
+  )
+  assert('BodyMap.tsx: strongZoneKey state re-derives when value changes externally (list-fallback -> map switch, useEffect)', /useEffect\(\(\) => \{[\s\S]*?setStrongZoneKey/.test(bodyMapSrc))
+
+  // Accessibility (Phase 2E): the decorative PNG/SVG artwork must never
+  // duplicate screen-reader announcements, and every zone button must keep
+  // real semantic button/aria attributes (unchanged by the PNG swap, but
+  // asserted directly since the artwork layer is now more complex).
+  assert('BodyMap.tsx: PNG artwork <img> has alt="" (decorative, no redundant screen-reader text)', /alt=""/.test(bodyMapSrc))
+  assert('BodyMap.tsx: every zone is a real semantic <button type="button"> (native keyboard operability, not a styled <div>)', /<button\s*\n\s*key=\{key\}\s*\n\s*type="button"/.test(bodyMapSrc))
+  assert('BodyMap.tsx: zone buttons expose aria-pressed (selection state is accessible, not color-only)', /aria-pressed=\{isSelected\}/.test(bodyMapSrc))
+  assert('BodyMap.tsx: zone buttons expose a real Korean aria-label per region+view (screen readers get real region names)', /aria-label=\{`\$\{ZONE_LABEL\[z\.value\]\}/.test(bodyMapSrc))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

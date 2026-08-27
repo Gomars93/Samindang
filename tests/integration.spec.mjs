@@ -2,6 +2,7 @@
 // Run via `npm run test:integration` (bundles coreSpec.ts with esbuild first).
 // Plain node, no test framework: assert() prints "OK: <name>" and throws on failure.
 
+import { readFileSync } from 'node:fs'
 import {
   ALL_QUESTIONS,
   visibleQuestions,
@@ -19,6 +20,12 @@ import {
   questionnaireMode,
   HERBAL_ADDON_FIELD,
   SYSTEMIC_BLOCK_QUESTION_IDS,
+  LBP_ONSET_DECADE_FIELD,
+  LBP_ONSET_AGE_UNKNOWN_SENTINEL,
+  mapLbpOnsetDecadeToBefore45,
+  LBP_LEG_AUTOFILL_FIELD,
+  isLbpLegAutofillActive,
+  shouldAutoAdvancePast,
 } from './.spec-bundle.mjs'
 
 let passCount = 0
@@ -3758,17 +3765,34 @@ for (const sex of ['male', 'female']) {
   assert('W3 (Additional=sleep): final mode is pain_fast', questionnaireMode(r) === 'pain_fast')
 }
 
-// W4: LBP_10 wording fix (§13) -- pure copy change, everything else
-// byte-identical. Exact-string assertion so a future edit can't silently
-// drift the wording again without this test catching it.
+// W4: LBP_10 wording (v2.2.1 §16, superseded by v2.3 §13 onset-age redesign,
+// then again by the PR #23 real-device QA follow-up §4-5: numeric age input
+// replaced by a decade selector). The 45-year number is never shown to the
+// patient. LBP_10A_ONSET_AGE now asks for a decade bucket (10대/20대/.../
+// 50대 이상/잘 모르겠어요) as a single_choice grid, and LBP_10 becomes a
+// lightweight auto-confirm screen whose value is pre-filled by App.tsx's
+// mapLbpOnsetDecadeToBefore45() before the patient ever sees it. The FROZEN
+// lbpLogic.ts/lbpAdapter.ts still read LBP_10 exactly as before (variable/
+// options/required all unchanged) -- only how the value gets there changed.
 {
   const lbp10 = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
+  const lbp10a = ALL_QUESTIONS.find((q) => q.id === 'LBP_10A_ONSET_AGE')
   assert('W4: LBP_10 exists', !!lbp10)
-  assert('W4: LBP_10 question text is the corrected natural-Korean wording', lbp10.question === '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?')
-  assert('W4: LBP_10 old awkward wording is gone', lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
-  assert('W4: LBP_10 variable unchanged', lbp10.variable === 'lbp_onset_before_45')
+  assert('W4: LBP_10A_ONSET_AGE exists (new v2.3 §13 pre-question)', !!lbp10a)
+  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.')
+  assert('W4: LBP_10 old direct 45-year wording is gone from patient-facing text', lbp10.question !== '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?' && lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
+  assert('W4: LBP_10 variable unchanged (FROZEN adapter still reads this)', lbp10.variable === 'lbp_onset_before_45')
   assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)
-  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values, FROZEN contract)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+  assert('W4: LBP_10 showIf unchanged (same visibility gate as before)', typeof lbp10.showIf === 'function')
+  assert('W4 (real-device QA follow-up): LBP_10A_ONSET_AGE is now a single_choice decade selector, not numeric', lbp10a.input === 'single_choice')
+  assert('W4: LBP_10A_ONSET_AGE has no leftover unknownOption (that was numeric-only infra)', lbp10a.unknownOption === undefined)
+  assert(
+    'W4: LBP_10A_ONSET_AGE offers exactly the 6 decade buckets in order',
+    JSON.stringify(lbp10a.options.map((o) => o.value)) === JSON.stringify(['10s', '20s', '30s', '40s', '50s_plus', 'UNKNOWN_AGE']),
+  )
+  assert('W4: the 45-year number never appears in the patient-facing question/helper text', !lbp10a.question.includes('45') && !(lbp10a.helper || '').includes('45'))
+  assert('W4: LBP_10A_ONSET_AGE uses the big-card grid layout ("큰 touch card/grid")', lbp10a.layout === 'grid2')
 }
 
 // W5: HERBAL_ADDON_FIELD stale-reset (§12) -- a brand-new blank Responses
@@ -3782,6 +3806,704 @@ for (const sex of ['male', 'female']) {
   const fresh = emptyResponses()
   assert('W5: a brand-new blank Responses object never has HERBAL_ADDON_FIELD set to yes', fresh['HERBAL_ADDON_ACTIVE'] !== 'yes')
   assert('W5: questionnaireMode on a truly blank Responses object is never herbal_addon', questionnaireMode(fresh) !== 'herbal_addon')
+}
+
+// Real Question objects (not mock literals) for the shouldAutoAdvancePast
+// checks below -- W6/W7 exercise the actual exported predicate against the
+// actual LBP module questions.
+const LBP_02_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_02')
+const LBP_03_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_03')
+const LBP_10_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
+
+// W6: LBP_01B_LEG_SCREEN presentation shim (v2.3 §8-9, PR #23 follow-up
+// correction). These tests mirror App.tsx's setAnswer() patch logic
+// exactly (same technique as V-AddonFull above mirrors
+// activateHerbalAddon) so they exercise the *actual* patch shape the shim
+// produces, not a hand-picked substitute. The follow-up correction adds
+// LBP_LEG_AUTOFILL_FIELD (a non-clinical provenance flag, same
+// non-question-metadata pattern as HERBAL_ADDON_FIELD/LBP_ONSET_DECADE_FIELD)
+// and a navigation-layer skip (shouldAutoAdvancePast, coreSpec.ts) so the
+// patient is never actually shown LBP_02/LBP_03 once "없어요" auto-fills
+// them -- showIf/visibleQuestions/pruneStaleResponses are completely
+// unchanged (LBP_02/LBP_03 stay "visible" to the engine), only what
+// App.tsx's nextQuestion/goBack actually render to the patient changes.
+function applyLbp01bShim(r, value) {
+  let patch = { ...r, LBP_01B_LEG_SCREEN: value }
+  if (value === 'no') {
+    patch = { ...patch, LBP_02: ['NONE'], LBP_03: 'NONE', [LBP_LEG_AUTOFILL_FIELD]: 'yes' }
+  } else {
+    patch = { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+  }
+  return pruneStaleResponses(patch).responses
+}
+function applyLbp01Change(prevResponses, newValue) {
+  let patch = { ...prevResponses, LBP_01: newValue }
+  if (prevResponses['LBP_01'] === 'BACK_ONLY' && prevResponses['LBP_01B_LEG_SCREEN'] === 'no' && newValue !== 'BACK_ONLY') {
+    patch = { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+  }
+  return pruneStaleResponses(patch).responses
+}
+// Mirrors App.tsx's setAnswer() guard for direct LBP_02/LBP_03 edits: the
+// provenance flag is cleared the moment either field is answered directly
+// (only reachable when the auto-fill was never active, since an active
+// auto-fill means these screens are skipped in navigation).
+function applyLbp02Or03DirectAnswer(r, id, value) {
+  const patch = { ...r, [id]: value, [LBP_LEG_AUTOFILL_FIELD]: null }
+  return pruneStaleResponses(patch).responses
+}
+{
+  const base = withPainCare({ PAIN_01: 'low_back_pelvis', LBP_01: 'BACK_ONLY' })
+  assert('W6: LBP_01B_LEG_SCREEN is reachable once LBP_01=BACK_ONLY', visibleIds(base).has('LBP_01B_LEG_SCREEN'))
+  assert('W6: LBP_01B_LEG_SCREEN is not shown for non-BACK_ONLY extents', !visibleIds(set(base, { LBP_01: 'THIGH' })).has('LBP_01B_LEG_SCREEN'))
+
+  // "없어요" -> LBP_02=['NONE'] and LBP_03='NONE' simultaneously, which is
+  // exactly the FROZEN computeLegState contract for leg_symptom_present='NO'.
+  const no = applyLbp01bShim(base, 'no')
+  assert('W6 CRITICAL: "없어요" fills LBP_02 to [NONE]', JSON.stringify(no['LBP_02']) === JSON.stringify(['NONE']))
+  assert('W6 CRITICAL: "없어요" fills LBP_03 to NONE', no['LBP_03'] === 'NONE')
+  assert('W6: LBP_02/LBP_03 stay engine-visible after "없어요" (showIf/pruneStaleResponses unchanged)', visibleIds(no).has('LBP_02') && visibleIds(no).has('LBP_03'))
+  assert('W6 CRITICAL (item A): LBP_02 is navigation-skipped from the patient once auto-filled', shouldAutoAdvancePast(LBP_02_Q, no))
+  assert('W6 CRITICAL (item A): LBP_03 is navigation-skipped from the patient once auto-filled', shouldAutoAdvancePast(LBP_03_Q, no))
+  assert('W6: isLbpLegAutofillActive is true for this exact state', isLbpLegAutofillActive(no))
+
+  // "있어요" / "잘 모르겠어요" -> must NOT silently pre-fill a leg-negative
+  // answer; the patient still answers LBP_02/LBP_03 themselves, and neither
+  // screen is navigation-skipped.
+  const yes = applyLbp01bShim(base, 'yes')
+  assert('W6: "있어요" leaves LBP_02 unanswered (patient answers directly)', yes['LBP_02'] === null)
+  assert('W6: "있어요" leaves LBP_03 unanswered (patient answers directly)', yes['LBP_03'] === null)
+  assert('W6: "있어요" never navigation-skips LBP_02', !shouldAutoAdvancePast(LBP_02_Q, yes))
+  assert('W6: "있어요" never navigation-skips LBP_03', !shouldAutoAdvancePast(LBP_03_Q, yes))
+  const unknown = applyLbp01bShim(base, 'unknown')
+  assert('W6: "잘 모르겠어요" leaves LBP_02 unanswered', unknown['LBP_02'] === null)
+  assert('W6: "잘 모르겠어요" leaves LBP_03 unanswered', unknown['LBP_03'] === null)
+  assert('W6: "잘 모르겠어요" never navigation-skips LBP_02', !shouldAutoAdvancePast(LBP_02_Q, unknown))
+
+  // Item B: back-navigation restore. Switching LBP_01B_LEG_SCREEN from
+  // 'no' to 'yes'/'unknown' after the auto-fill was active must clear both
+  // the stored NONE/NONE values AND the navigation skip -- LBP_02 becomes
+  // a normal, patient-facing screen again.
+  const backToYes = applyLbp01bShim(no, 'yes')
+  assert('W6 CRITICAL (item B): switching LBP_01B_LEG_SCREEN back to "있어요" clears the auto-filled LBP_02', backToYes['LBP_02'] === null)
+  assert('W6 CRITICAL (item B): switching LBP_01B_LEG_SCREEN back to "있어요" clears the auto-filled LBP_03', backToYes['LBP_03'] === null)
+  assert('W6 CRITICAL (item B): LBP_02 is no longer navigation-skipped after switching away from "없어요"', !shouldAutoAdvancePast(LBP_02_Q, backToYes))
+  assert('W6 CRITICAL (item B): LBP_03 is no longer navigation-skipped after switching away from "없어요"', !shouldAutoAdvancePast(LBP_03_Q, backToYes))
+  assert('W6 (item B): LBP_02 is still a normal, engine-visible screen the patient can now answer directly', visibleIds(backToYes).has('LBP_02'))
+  const backToUnknown = applyLbp01bShim(no, 'unknown')
+  assert('W6 (item B): switching to "잘 모르겠어요" also clears the navigation skip', !shouldAutoAdvancePast(LBP_02_Q, backToUnknown))
+
+  // Direct-answer provenance guard: once LBP_02 is answered directly (only
+  // reachable after the flow above restores it to a normal screen), the
+  // provenance flag must already be gone -- and even if it somehow
+  // weren't, the value-shape check in isLbpLegAutofillActive would still
+  // refuse to treat a different value as the shim's own auto-fill.
+  const directAnswer = applyLbp02Or03DirectAnswer(backToYes, 'LBP_02', ['PARESTHESIA'])
+  assert('W6: a direct LBP_02 answer is never mistaken for the auto-fill', !shouldAutoAdvancePast(LBP_02_Q, directAnswer))
+  assert('W6: isLbpLegAutofillActive is false once LBP_02 holds a genuine non-NONE answer', !isLbpLegAutofillActive(directAnswer))
+
+  // Guard: going back and changing LBP_01 away from BACK_ONLY after the
+  // shim auto-filled LBP_02/LBP_03 must clear that stale auto-fill (value
+  // AND provenance flag) so DoctorView never displays a leg-negative
+  // answer the patient never gave for their new (non-BACK_ONLY) extent,
+  // and so the navigation skip cannot linger on stale data.
+  const afterBackToThigh = applyLbp01Change(no, 'THIGH')
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the shim-filled LBP_02', afterBackToThigh['LBP_02'] === null)
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the shim-filled LBP_03', afterBackToThigh['LBP_03'] === null)
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the provenance flag', afterBackToThigh[LBP_LEG_AUTOFILL_FIELD] === null)
+
+  // Guard must NOT fire when LBP_02/LBP_03 were genuinely patient-answered
+  // (not the shim's own auto-fill) -- e.g. patient said "있어요" and then
+  // separately answered LBP_02/LBP_03 themselves before going back to
+  // change LBP_01. That real answer must survive.
+  const realAnswer = set(yes, { LBP_02: ['PARESTHESIA'], LBP_03: 'RIGHT' })
+  const afterChangeWithRealAnswer = applyLbp01Change(realAnswer, 'THIGH')
+  assert('W6: genuinely patient-answered LBP_02 is not clobbered by the guard', JSON.stringify(afterChangeWithRealAnswer['LBP_02']) === JSON.stringify(['PARESTHESIA']))
+  assert('W6: genuinely patient-answered LBP_03 is not clobbered by the guard', afterChangeWithRealAnswer['LBP_03'] === 'RIGHT')
+
+  // Guard must not fire when the shim's answer was NOT "no" (LBP_01B_LEG_SCREEN
+  // !== 'no' means LBP_02/LBP_03 were never auto-filled in the first place).
+  const afterYesThenExtentChange = applyLbp01Change(yes, 'THIGH')
+  assert('W6: no spurious clear when shim answer was "있어요" (nothing to clear)', afterYesThenExtentChange['LBP_02'] === null && afterYesThenExtentChange['LBP_03'] === null)
+}
+
+// W7: LBP_10A_ONSET_AGE presentation shim (v2.3 §13, PR #23 follow-up
+// correction, then the real-device QA follow-up §4-6: numeric age ->
+// decade selector). mapLbpOnsetDecadeToBefore45 boundary coverage (items
+// C/D/E/F, now decade buckets instead of numeric ages, including the
+// deliberate 40s -> UNKNOWN precision tradeoff), plus the App.tsx
+// setAnswer patch shape that writes LBP_10 + LBP_ONSET_DECADE_FIELD
+// together, plus the navigation-layer skip that means LBP_10 is NEVER
+// shown to the patient -- showIf/required/options/variable are all
+// unchanged (FROZEN adapter contract), only what App.tsx's nextQuestion/
+// goBack actually render changes (shouldAutoAdvancePast unconditionally
+// skips LBP_10, coreSpec.ts).
+{
+  assert('W7: 10대 maps to YES', mapLbpOnsetDecadeToBefore45('10s') === 'YES')
+  assert('W7: 20대 maps to YES', mapLbpOnsetDecadeToBefore45('20s') === 'YES')
+  assert('W7: 30대 maps to YES', mapLbpOnsetDecadeToBefore45('30s') === 'YES')
+  assert('W7 CRITICAL (precision tradeoff): 40대 fails closed to UNKNOWN, never guessed as YES or NO', mapLbpOnsetDecadeToBefore45('40s') === 'UNKNOWN')
+  assert('W7: 50대 이상 maps to NO', mapLbpOnsetDecadeToBefore45('50s_plus') === 'NO')
+  assert('W7: the explicit "잘 모르겠어요" sentinel maps to UNKNOWN', mapLbpOnsetDecadeToBefore45(LBP_ONSET_AGE_UNKNOWN_SENTINEL) === 'UNKNOWN')
+  assert('W7 (item F): an unrecognized/malformed decade value fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45('not-a-decade') === 'UNKNOWN')
+  assert('W7 (item F): empty string fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45('') === 'UNKNOWN')
+  assert('W7 (item F): null fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45(null) === 'UNKNOWN')
+
+  const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  assert('W7: LBP_10A_ONSET_AGE is reachable for chronic-onset LBP patients', visibleIds(chronic).has('LBP_10A_ONSET_AGE'))
+  assert('W7: LBP_10 stays engine-visible alongside it (showIf unchanged, FROZEN adapter still reads it)', visibleIds(chronic).has('LBP_10'))
+  assert('W7 CRITICAL: LBP_10 is unconditionally navigation-skipped even before any decade is chosen (shouldAutoAdvancePast is unconditional for LBP_10)', shouldAutoAdvancePast(LBP_10_Q, chronic))
+
+  function applyLbp10aShim(r, decade) {
+    const patch = { ...r, LBP_10A_ONSET_AGE: decade, LBP_10: mapLbpOnsetDecadeToBefore45(decade), [LBP_ONSET_DECADE_FIELD]: decade }
+    return pruneStaleResponses(patch).responses
+  }
+  const filled10s = applyLbp10aShim(chronic, '10s')
+  assert('W7 (item C): choosing 10대 pre-fills LBP_10 to YES', filled10s['LBP_10'] === 'YES')
+  assert('W7: the chosen decade is preserved in the non-clinical metadata field', filled10s[LBP_ONSET_DECADE_FIELD] === '10s')
+  assert('W7: LBP_10 stays engine-visible/answerable in storage terms', visibleIds(filled10s).has('LBP_10'))
+  assert('W7 (item C): LBP_10 patient screen is never rendered (navigation-skipped) after choosing 10대', shouldAutoAdvancePast(LBP_10_Q, filled10s))
+
+  const filled30s = applyLbp10aShim(chronic, '30s')
+  assert('W7 CRITICAL (item C): choosing 30대 pre-fills LBP_10 to YES (FROZEN adapter contract)', filled30s['LBP_10'] === 'YES')
+  assert('W7 (item C): LBP_10 patient screen is never rendered after choosing 30대', shouldAutoAdvancePast(LBP_10_Q, filled30s))
+
+  const filled40s = applyLbp10aShim(chronic, '40s')
+  assert('W7 CRITICAL (item D, precision tradeoff): choosing 40대 pre-fills LBP_10 to UNKNOWN, never YES or NO', filled40s['LBP_10'] === 'UNKNOWN')
+  assert('W7 (item D): LBP_10 patient screen is never rendered after choosing 40대', shouldAutoAdvancePast(LBP_10_Q, filled40s))
+
+  const filledOlder = applyLbp10aShim(chronic, '50s_plus')
+  assert('W7 CRITICAL (item D): choosing 50대 이상 pre-fills LBP_10 to NO', filledOlder['LBP_10'] === 'NO')
+  assert('W7 (item D): LBP_10 patient screen is never rendered after choosing 50대 이상', shouldAutoAdvancePast(LBP_10_Q, filledOlder))
+
+  const filledUnknown = applyLbp10aShim(chronic, LBP_ONSET_AGE_UNKNOWN_SENTINEL)
+  assert('W7 CRITICAL (item E): "잘 모르겠어요" pre-fills LBP_10 to UNKNOWN (fail-closed, no guess)', filledUnknown['LBP_10'] === 'UNKNOWN')
+  assert('W7 CRITICAL (item E): LBP_10 patient screen is never rendered after "잘 모르겠어요"', shouldAutoAdvancePast(LBP_10_Q, filledUnknown))
+
+  const filledMalformed = applyLbp10aShim(chronic, 'not-a-decade')
+  assert('W7 (item F): malformed decade value also fails closed to UNKNOWN via the same shim path', filledMalformed['LBP_10'] === 'UNKNOWN')
+  assert('W7 (item F): LBP_10 patient screen is never rendered after malformed input either', shouldAutoAdvancePast(LBP_10_Q, filledMalformed))
+
+  // Back-navigation restore (item 6): changing the decade answer must
+  // re-derive LBP_10 correctly every time, never leaving a stale value
+  // from a previous choice.
+  const backTo30s = applyLbp10aShim(filled40s, '30s')
+  assert('W7 (back-nav): 40대 -> 30대 correctly re-derives LBP_10 to YES', backTo30s['LBP_10'] === 'YES')
+  const backToUnknownFromOlder = applyLbp10aShim(filledOlder, LBP_ONSET_AGE_UNKNOWN_SENTINEL)
+  assert('W7 (back-nav): 50대 이상 -> 잘 모르겠어요 correctly re-derives LBP_10 to UNKNOWN', backToUnknownFromOlder['LBP_10'] === 'UNKNOWN')
+
+  // Non-chronic-onset patients never see either screen (existing gate unchanged).
+  const acute = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: '1_3m' })
+  assert('W7: LBP_10A_ONSET_AGE hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10A_ONSET_AGE'))
+  assert('W7: LBP_10 also hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10'))
+}
+
+// W11 (item C/D/E, forward-walk simulation): mirrors App.tsx's actual
+// nextQuestion() algorithm (visibleQuestions + shouldAutoAdvancePast) to
+// verify the real patient-visible screen SEQUENCE, not just each
+// question's individual skip predicate in isolation -- proves LBP_10A is
+// presented immediately before whatever comes after LBP_10 in the real
+// walk, with LBP_10 itself never appearing in between.
+function simulateNextQuestion(fromId, r) {
+  const list = visibleQuestions(r)
+  const fromIdx = list.findIndex((q) => q.id === fromId)
+  let idx = fromIdx >= 0 ? fromIdx + 1 : 0
+  while (idx < list.length && shouldAutoAdvancePast(list[idx], r)) idx += 1
+  return list[idx]
+}
+{
+  const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  const afterAgeEntered = (() => {
+    const patch = { ...chronic, LBP_10A_ONSET_AGE: '30s', LBP_10: mapLbpOnsetDecadeToBefore45('30s'), [LBP_ONSET_DECADE_FIELD]: '30s' }
+    return pruneStaleResponses(patch).responses
+  })()
+  const nextAfterOnsetAge = simulateNextQuestion('LBP_10A_ONSET_AGE', afterAgeEntered)
+  assert(
+    'W11 CRITICAL: the real forward walk never lands on LBP_10 as the next screen after LBP_10A_ONSET_AGE (it is skipped entirely)',
+    nextAfterOnsetAge !== undefined && nextAfterOnsetAge.id !== 'LBP_10',
+  )
+  assert('W11: a next screen does exist after skipping LBP_10 (walk does not dead-end)', nextAfterOnsetAge !== undefined)
+
+  // Same simulation for the leg-symptom shim: after LBP_01B_LEG_SCREEN='no'
+  // auto-fills LBP_02/LBP_03, the real forward walk must land on whatever
+  // comes after LBP_03, never on LBP_02 or LBP_03 themselves.
+  const backOnlyBase = withPainCare({ PAIN_01: 'low_back_pelvis', LBP_01: 'BACK_ONLY' })
+  const afterLegScreenNo = applyLbp01bShim(backOnlyBase, 'no')
+  const nextAfterLegScreen = simulateNextQuestion('LBP_01B_LEG_SCREEN', afterLegScreenNo)
+  assert(
+    'W11 CRITICAL: the real forward walk never lands on LBP_02 right after LBP_01B_LEG_SCREEN="없어요" (it is skipped)',
+    nextAfterLegScreen !== undefined && nextAfterLegScreen.id !== 'LBP_02',
+  )
+  assert(
+    'W11 CRITICAL: the real forward walk never lands on LBP_03 either (both auto-filled screens are skipped together)',
+    nextAfterLegScreen !== undefined && nextAfterLegScreen.id !== 'LBP_03',
+  )
+
+  // Back-navigation restore: once the shim is switched to "있어요", the
+  // same simulated walk starting from LBP_01B_LEG_SCREEN must land on
+  // LBP_02 next (the screen is no longer skipped).
+  const afterLegScreenYes = applyLbp01bShim(backOnlyBase, 'yes')
+  const nextAfterLegScreenYes = simulateNextQuestion('LBP_01B_LEG_SCREEN', afterLegScreenYes)
+  assert(
+    'W11 CRITICAL (item B, walk-level): after switching to "있어요" the very next screen in the real walk is LBP_02 (no longer skipped)',
+    nextAfterLegScreenYes !== undefined && nextAfterLegScreenYes.id === 'LBP_02',
+  )
+}
+
+// W8: "없음" first-position reorder (v2.3 §17) -- non-safety optional
+// pickers only. SECONDARY_01/REFERENCE_SYMPTOMS_01 share SECONDARY_OPTIONS
+// and are both info-only/optional, so "없음" moves to index 0 for both.
+// SAFETY_01 (a real safety checklist) has its own separate options array
+// and must be completely untouched by this change.
+{
+  const sec01 = ALL_QUESTIONS.find((q) => q.id === 'SECONDARY_01')
+  const ref01 = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
+  const safety01 = ALL_QUESTIONS.find((q) => q.id === 'SAFETY_01')
+  assert('W8: SECONDARY_01 options[0] is "없음" (none)', sec01.options[0].value === 'none')
+  assert('W8: REFERENCE_SYMPTOMS_01 options[0] is "없음" (none)', ref01.options[0].value === 'none')
+  assert('W8 CRITICAL: SAFETY_01 (a real safety checklist) keeps "해당 없음" LAST, untouched', safety01.options[safety01.options.length - 1].value === 'none' && safety01.options[0].value !== 'none')
+  // optionsIf (used at render time, e.g. excluding the already-chosen
+  // primary/additional category) must also keep 'none' first -- it's a
+  // filter over the same reordered array, not a fresh unordered one.
+  const filteredRef = ref01.optionsIf(withPainCare({ PAIN_01: 'low_back_pelvis' }))
+  assert('W8: REFERENCE_SYMPTOMS_01 optionsIf() output also keeps "없음" first', filteredRef[0].value === 'none')
+}
+
+// W9: numeric_scale equal-cell-size CSS (v2.3 §16) -- source-level check
+// only (this repo has no headless-browser layout measurement tooling, see
+// tests/layout-budget.spec.mjs's own documented limitation). Confirms the
+// old flex-grow/flex-wrap approach (which stretched the last incomplete
+// row's cells to fill remaining space) is gone, replaced by a fixed-column
+// CSS Grid where every cell in every row is structurally the same size.
+{
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const scaleListMatch = css.match(/\.optionList--scale\s*\{([^}]*)\}/)
+  assert('W9: .optionList--scale rule exists', !!scaleListMatch)
+  assert('W9: .optionList--scale uses CSS Grid (not flexbox)', /display:\s*grid/.test(scaleListMatch[1]))
+  assert('W9: .optionList--scale sets a FIXED grid-template-columns (not auto-fit/auto-fill)', /grid-template-columns:\s*repeat\(\d+,\s*1fr\)/.test(scaleListMatch[1]))
+  assert('W9 CRITICAL: .optionList--scale never uses auto-fit/auto-fill (would re-introduce last-row stretch)', !/auto-fit|auto-fill/.test(css.match(/\.optionList--scale[\s\S]*?(?=\n\/\*|\n\.[a-zA-Z])/)[0]))
+  const scaleOptionMatch = css.match(/\.option--scale\s*\{([^}]*)\}/)
+  assert('W9: .option--scale rule exists', !!scaleOptionMatch)
+  assert('W9: .option--scale no longer uses flex-grow (flex: 1 1 auto) that caused uneven last-row cells', !/flex:\s*1\s*1\s*auto/.test(scaleOptionMatch[1]))
+  assert('W9: .option--scale is full-width within its fixed grid cell', /width:\s*100%/.test(scaleOptionMatch[1]))
+}
+
+// W10: CTA height/padding trim in wide landscape (v2.3 §16) -- source-level
+// check. Must shrink height/padding inside the wide-landscape media query
+// without ever touching font-size (readability/touch-target rule).
+{
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const landscapeBlockMatch = css.match(/@media \(orientation: landscape\) and \(min-width: 760px\) \{([\s\S]*)\n\}\n/)
+  assert('W10: wide-landscape media block exists', !!landscapeBlockMatch)
+  const block = landscapeBlockMatch[1]
+  // .shell__bottom is overridden twice in this block (grid placement earlier,
+  // padding trim later) -- collect every occurrence rather than assuming the
+  // first match is the one that matters.
+  const bottomBlocks = [...block.matchAll(/\.shell__bottom\s*\{([^}]*)\}/g)].map((m) => m[1])
+  assert('W10: .shell__bottom is overridden inside the wide-landscape block', bottomBlocks.length > 0)
+  assert('W10: .shell__bottom padding is trimmed in landscape (below the 16px/28px portrait base)', bottomBlocks.some((b) => /padding:\s*10px/.test(b)))
+  const primaryBtnInBlock = block.match(/\.primaryBtn\s*\{([^}]*)\}/)
+  assert('W10: .primaryBtn is overridden inside the wide-landscape block', !!primaryBtnInBlock)
+  assert('W10: .primaryBtn min-height is trimmed in landscape (below the 72px portrait --btn-min-h)', /min-height:\s*56px/.test(primaryBtnInBlock[1]))
+  assert('W10 CRITICAL: the landscape .primaryBtn override never sets font-size (readability rule)', !/font-size/.test(primaryBtnInBlock[1]))
+}
+
+/* =========================================================================
+ * X. NECK_V1 -- dedicated branch-visibility matrix for NECK's own
+ * conditional children (docs/QUESTIONNAIRE_BRANCH_AUDIT.md NECK Findings
+ * #3: "no dedicated visibility-branch matrix ... the way KNEE/ELBOW/
+ * WRIST_HAND/HIP/TMJ get in sections N/O/P/Q/R"). Follows the same
+ * visible-when-gate-holds / NOT-visible-and-pruned-when-it-does-not pattern
+ * as those sections, using neckShoulderBaseResponses() (already defined
+ * above, section L/M) as the base.
+ * ========================================================================= */
+
+// --- X-C1: NECK_02A only when NECK_02 has a concrete positive
+// (hasNeckCordConcretePositive, neckLogic.ts) --------------------------------
+{
+  const rUrgentPositive = set(neckShoulderBaseResponses(), { NECK_02: ['RAPIDLY_WORSENING_LIMB_WEAKNESS'] })
+  const rOtherConcretePositive = set(neckShoulderBaseResponses(), { NECK_02: ['HAND_CLUMSINESS'] })
+  const rNone = set(neckShoulderBaseResponses(), { NECK_02: ['NONE'] })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_02: ['UNKNOWN'] })
+  assert('X-C1: NECK_02A visible when NECK_02 has an urgent concrete positive (RAPIDLY_WORSENING_LIMB_WEAKNESS)', visibleIds(rUrgentPositive).has('NECK_02A'))
+  assert('X-C1: NECK_02A visible when NECK_02 has a non-urgent concrete positive (HAND_CLUMSINESS)', visibleIds(rOtherConcretePositive).has('NECK_02A'))
+  assert('X-C1: NECK_02A NOT visible when NECK_02=[NONE]', !visibleIds(rNone).has('NECK_02A'))
+  assert(
+    'X-C1 CRITICAL: NECK_02A NOT visible when NECK_02=[UNKNOWN] -- hasNeckCordConcretePositive excludes UNKNOWN, unlike NECK_10As E1-widened {YES,UNKNOWN} gate below',
+    !visibleIds(rUnknown).has('NECK_02A'),
+  )
+}
+{
+  let r = set(neckShoulderBaseResponses(), { NECK_02: ['HAND_CLUMSINESS'], NECK_02A: 'STABLE' })
+  assert('X-C1b: NECK_02A holds an answer while NECK_02 is concrete-positive', r['NECK_02A'] === 'STABLE')
+  const switched = set(r, { NECK_02: ['NONE'] })
+  assert('X-C1b CRITICAL: switching NECK_02 to [NONE] prunes NECK_02A to null (no stale answer survives hiding)', switched['NECK_02A'] === null)
+  assert('X-C1b: NECK_02A no longer visible after prune', !visibleIds(switched).has('NECK_02A'))
+}
+
+// --- X-C2: NECK_08 only when NECK_07 indicates arm involvement --------------
+{
+  const rShoulder = set(neckShoulderBaseResponses(), { NECK_07: 'SHOULDER_UPPER_ARM' })
+  const rForearm = set(neckShoulderBaseResponses(), { NECK_07: 'FOREARM' })
+  const rHand = set(neckShoulderBaseResponses(), { NECK_07: 'HAND_FINGERS' })
+  const rNeckOnly = set(neckShoulderBaseResponses(), { NECK_07: 'NECK_ONLY' })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_07: 'UNKNOWN' })
+  assert('X-C2: NECK_08 visible when NECK_07=SHOULDER_UPPER_ARM', visibleIds(rShoulder).has('NECK_08'))
+  assert('X-C2: NECK_08 visible when NECK_07=FOREARM', visibleIds(rForearm).has('NECK_08'))
+  assert('X-C2: NECK_08 visible when NECK_07=HAND_FINGERS', visibleIds(rHand).has('NECK_08'))
+  assert('X-C2: NECK_08 NOT visible when NECK_07=NECK_ONLY', !visibleIds(rNeckOnly).has('NECK_08'))
+  assert('X-C2: NECK_08 NOT visible when NECK_07=UNKNOWN', !visibleIds(rUnknown).has('NECK_08'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { NECK_07: 'FOREARM', NECK_08: 'LEFT' })
+  const switched = set(r, { NECK_07: 'NECK_ONLY' })
+  assert('X-C2b CRITICAL: switching NECK_07 to NECK_ONLY prunes NECK_08 to null', switched['NECK_08'] === null)
+}
+
+// --- X-C3: NECK_10A when NECK_10 in {YES, UNKNOWN} (E1 erratum) ------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { NECK_10: 'YES' })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_10: 'UNKNOWN' })
+  const rNo = set(neckShoulderBaseResponses(), { NECK_10: 'NO' })
+  assert('X-C3: NECK_10A visible when NECK_10=YES', visibleIds(rYes).has('NECK_10A'))
+  assert('X-C3: NECK_10A visible when NECK_10=UNKNOWN (E1 erratum widened gate)', visibleIds(rUnknown).has('NECK_10A'))
+  assert('X-C3: NECK_10A NOT visible when NECK_10=NO', !visibleIds(rNo).has('NECK_10A'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { NECK_10: 'UNKNOWN', NECK_10A: 'YES' })
+  const switched = set(r, { NECK_10: 'NO' })
+  assert('X-C3b CRITICAL: switching NECK_10 to NO prunes NECK_10A to null', switched['NECK_10A'] === null)
+}
+
+// --- X-C4: NECK_11 only when NECK_10 === 'YES' exactly (deliberately NOT
+// widened like NECK_10A, per v0.2.1) -----------------------------------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { NECK_10: 'YES' })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_10: 'UNKNOWN' })
+  const rNo = set(neckShoulderBaseResponses(), { NECK_10: 'NO' })
+  assert('X-C4: NECK_11 visible when NECK_10=YES', visibleIds(rYes).has('NECK_11'))
+  assert(
+    'X-C4 CRITICAL: NECK_11 stays hidden when NECK_10=UNKNOWN (deliberately narrower than NECK_10A -- v0.2.1 phenotype-only gate, not a bug)',
+    !visibleIds(rUnknown).has('NECK_11'),
+  )
+  assert('X-C4: NECK_11 NOT visible when NECK_10=NO', !visibleIds(rNo).has('NECK_11'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { NECK_10: 'YES', NECK_11: 'YES' })
+  const switched = set(r, { NECK_10: 'UNKNOWN' })
+  assert('X-C4b CRITICAL: switching NECK_10 from YES to UNKNOWN prunes NECK_11 to null (exact-YES gate, not widened)', switched['NECK_11'] === null)
+}
+
+// --- X-C5: NECK_12 only for chronic onset (VISIT_03_SYMPTOM_DURATION) ------
+{
+  const rChronic1 = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: '3m_1y' })
+  const rChronic2 = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  const rAcute = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: '1_3m' })
+  const rWithin1w = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: 'within_1w' })
+  assert('X-C5: NECK_12 visible for chronic onset (3m_1y)', visibleIds(rChronic1).has('NECK_12'))
+  assert('X-C5: NECK_12 visible for chronic onset (over_1y)', visibleIds(rChronic2).has('NECK_12'))
+  assert('X-C5: NECK_12 NOT visible for acute onset (1_3m)', !visibleIds(rAcute).has('NECK_12'))
+  assert('X-C5: NECK_12 NOT visible for within_1w onset', !visibleIds(rWithin1w).has('NECK_12'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: 'over_1y', NECK_12: 'YES' })
+  const switched = set(r, { VISIT_03_SYMPTOM_DURATION: 'within_1w' })
+  assert('X-C5b CRITICAL: switching VISIT_03_SYMPTOM_DURATION to acute onset prunes NECK_12 to null', switched['NECK_12'] === null)
+}
+
+/* =========================================================================
+ * Y. SHOULDER_V1 -- SH01-dependency of SH02/SH03, SH09-dependency of SH09A
+ * (docs/QUESTIONNAIRE_BRANCH_AUDIT.md SHOULDER Findings #3), plus a
+ * double-check that SH05's already-urgent skip (F2) never drops out of
+ * shoulderSafetyStatus's URGENT OR-chain (the audit doc's M4 cross-ref --
+ * M4 itself only exercises SH04, so this fills the SH05-specific gap).
+ * ========================================================================= */
+
+// --- Y-C1: SH02/SH03 only when SH01 === 'YES' exactly ----------------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['NONE'], SH03: 'NO' })
+  const rNo = set(neckShoulderBaseResponses(), { SH01: 'NO' })
+  const rUnknown = set(neckShoulderBaseResponses(), { SH01: 'UNKNOWN' })
+  assert('Y-C1: SH02 visible when SH01=YES', visibleIds(rYes).has('SH02'))
+  assert('Y-C1: SH02 NOT visible when SH01=NO', !visibleIds(rNo).has('SH02'))
+  assert('Y-C1: SH02 NOT visible when SH01=UNKNOWN (exact-YES gate)', !visibleIds(rUnknown).has('SH02'))
+  assert('Y-C1: SH03 visible when SH01=YES', visibleIds(rYes).has('SH03'))
+  assert('Y-C1: SH03 NOT visible when SH01=NO', !visibleIds(rNo).has('SH03'))
+  assert('Y-C1: SH03 NOT visible when SH01=UNKNOWN (exact-YES gate)', !visibleIds(rUnknown).has('SH03'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['NONE'], SH03: 'NO' })
+  const switched = set(r, { SH01: 'NO' })
+  assert('Y-C1b CRITICAL: switching SH01 to NO prunes SH02 and SH03 to null', switched['SH02'] === null && switched['SH03'] === null)
+}
+
+// --- Y-C2: SH09A only when SH09 === 'YES' exactly ---------------------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { SH09: 'YES' })
+  const rNo = set(neckShoulderBaseResponses(), { SH09: 'NO' })
+  const rUnknown = set(neckShoulderBaseResponses(), { SH09: 'UNKNOWN' })
+  assert('Y-C2: SH09A visible when SH09=YES', visibleIds(rYes).has('SH09A'))
+  assert('Y-C2: SH09A NOT visible when SH09=NO', !visibleIds(rNo).has('SH09A'))
+  assert('Y-C2: SH09A NOT visible when SH09=UNKNOWN', !visibleIds(rUnknown).has('SH09A'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH09: 'YES', SH09A: 'TRAUMATIC' })
+  const switched = set(r, { SH09: 'NO' })
+  assert('Y-C2b CRITICAL: switching SH09 to NO prunes SH09A to null', switched['SH09A'] === null)
+}
+
+// --- Y-C3: SH05 already-urgent skip never drops out of the URGENT OR-chain -
+{
+  const r = set(neckShoulderBaseResponses(), { SAFETY_01: ['chest_breathing'] })
+  assert('Y-C3: SH05 hidden once Core general_red is already true (fail-safe skip, F2)', !visibleIds(r).has('SH05'))
+  const payload = buildResponsePayload(r)
+  assert(
+    'Y-C3 CRITICAL: shoulderSafetyStatus is still URGENT_REVIEW via core_safety_already_urgent passthrough despite SH05 being skipped (the skip cannot create a safety gap)',
+    payload.safety_flags.shoulder?.shoulder_safety_status === 'URGENT_REVIEW',
+  )
+}
+
+/* =========================================================================
+ * Z. ANKLE_FOOT_V1 -- full branch-visibility matrix + dedicated stale-prune
+ * test + a real blank-{} full walk across every AF_00 region
+ * (docs/QUESTIONNAIRE_BRANCH_AUDIT.md ANKLE_FOOT Findings #3: "the
+ * thinnest-tested module ... this is the module most in need of
+ * test-coverage investment"). Mirrors the KNEE(N)/ELBOW(O) pattern.
+ * ========================================================================= */
+
+function ankleFootBaseResponses(region = 'ANKLE') {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'leg_foot',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    AF_00: region,
+    AF_01: 'NO',
+    AF_02: ['NONE'],
+    AF_06: 'NO_CONCERN',
+    AF_08: 'NO',
+  })
+}
+
+// --- Z-C1: AF_03 only when AF_01 === 'YES' exactly (audit doc Category E:
+// diverges from KNEE_03/ELBOW_03/WH_03's {YES,UNKNOWN} convention -- verified
+// here to actually be the current code behavior, not assumed) --------------
+{
+  const rYes = set(ankleFootBaseResponses(), { AF_01: 'YES' })
+  const rUnknown = set(ankleFootBaseResponses(), { AF_01: 'UNKNOWN' })
+  const rNo = ankleFootBaseResponses()
+  assert('Z-C1: AF_03 visible when AF_01=YES (exact-YES gate)', visibleIds(rYes).has('AF_03'))
+  assert(
+    'Z-C1 CRITICAL: AF_03 stays hidden when AF_01=UNKNOWN -- AF_03 does not follow the {YES,UNKNOWN} convention used by KNEE_03/ELBOW_03/WH_03 (confirmed current behavior, audit doc Category E finding)',
+    !visibleIds(rUnknown).has('AF_03'),
+  )
+  assert('Z-C1: AF_03 NOT visible when AF_01=NO', !visibleIds(rNo).has('AF_03'))
+}
+
+// --- Z-C2: AF_04 via IS_AF_04_SHOWN (AF_01=YES AND AF_00 in
+// {FOOT_TOES, DIFFUSE_OR_MULTIPLE, UNKNOWN}) --------------------------------
+{
+  const rFootYes = set(ankleFootBaseResponses('FOOT_TOES'), { AF_01: 'YES' })
+  const rFootNo = ankleFootBaseResponses('FOOT_TOES')
+  const rDiffuseYes = set(ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE'), { AF_01: 'YES' })
+  const rUnknownRegionYes = set(ankleFootBaseResponses('UNKNOWN'), { AF_01: 'YES' })
+  const rAnkleYes = set(ankleFootBaseResponses('ANKLE'), { AF_01: 'YES' })
+  assert('Z-C2: AF_04 visible when AF_01=YES and AF_00=FOOT_TOES', visibleIds(rFootYes).has('AF_04'))
+  assert('Z-C2: AF_04 visible when AF_01=YES and AF_00=DIFFUSE_OR_MULTIPLE', visibleIds(rDiffuseYes).has('AF_04'))
+  assert('Z-C2: AF_04 visible when AF_01=YES and AF_00=UNKNOWN', visibleIds(rUnknownRegionYes).has('AF_04'))
+  assert('Z-C2: AF_04 NOT visible when AF_01=NO even in AF_00=FOOT_TOES', !visibleIds(rFootNo).has('AF_04'))
+  assert('Z-C2: AF_04 NOT visible when AF_00=ANKLE (not midfoot-relevant) even with AF_01=YES', !visibleIds(rAnkleYes).has('AF_04'))
+}
+
+// --- Z-C3: AF_05 via IS_AF_05_SHOWN (AF_01=YES AND AF_00 in
+// {LOWER_LEG_CALF, ANKLE, HEEL_POSTERIOR_ANKLE, DIFFUSE_OR_MULTIPLE,
+// UNKNOWN}) ------------------------------------------------------------------
+{
+  const rAnkleYes = set(ankleFootBaseResponses('ANKLE'), { AF_01: 'YES' })
+  const rCalfYes = set(ankleFootBaseResponses('LOWER_LEG_CALF'), { AF_01: 'YES' })
+  const rHeelYes = set(ankleFootBaseResponses('HEEL_POSTERIOR_ANKLE'), { AF_01: 'YES' })
+  const rFootYes = set(ankleFootBaseResponses('FOOT_TOES'), { AF_01: 'YES' })
+  const rAnkleNo = ankleFootBaseResponses('ANKLE')
+  assert('Z-C3: AF_05 visible when AF_01=YES and AF_00=ANKLE', visibleIds(rAnkleYes).has('AF_05'))
+  assert('Z-C3: AF_05 visible when AF_01=YES and AF_00=LOWER_LEG_CALF', visibleIds(rCalfYes).has('AF_05'))
+  assert('Z-C3: AF_05 visible when AF_01=YES and AF_00=HEEL_POSTERIOR_ANKLE', visibleIds(rHeelYes).has('AF_05'))
+  assert('Z-C3: AF_05 NOT visible when AF_00=FOOT_TOES (not Achilles-relevant) even with AF_01=YES', !visibleIds(rFootYes).has('AF_05'))
+  assert('Z-C3: AF_05 NOT visible when AF_01=NO even in AF_00=ANKLE', !visibleIds(rAnkleNo).has('AF_05'))
+}
+
+// --- Z-C4: AF_07 via IS_AF_07_SHOWN -- region-gated, explicitly NOT
+// trauma-gated (stays visible even when AF_01=NO) ---------------------------
+{
+  const rCalfNoTrauma = ankleFootBaseResponses('LOWER_LEG_CALF')
+  const rDiffuseNoTrauma = ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE')
+  const rUnknownRegionNoTrauma = ankleFootBaseResponses('UNKNOWN')
+  const rAnkleNoTrauma = ankleFootBaseResponses('ANKLE')
+  assert('Z-C4: AF_07 stays visible when AF_00=LOWER_LEG_CALF even with AF_01=NO (region-gated, not trauma-gated)', visibleIds(rCalfNoTrauma).has('AF_07'))
+  assert('Z-C4: AF_07 stays visible when AF_00=DIFFUSE_OR_MULTIPLE even with AF_01=NO', visibleIds(rDiffuseNoTrauma).has('AF_07'))
+  assert('Z-C4: AF_07 stays visible when AF_00=UNKNOWN even with AF_01=NO', visibleIds(rUnknownRegionNoTrauma).has('AF_07'))
+  assert('Z-C4: AF_07 NOT visible when AF_00=ANKLE (region not calf/diffuse/unknown)', !visibleIds(rAnkleNoTrauma).has('AF_07'))
+}
+
+// --- Z-C5: dedicated stale-prune test for the ANKLE_FOOT module (the audit
+// doc explicitly flags this as missing) --------------------------------------
+{
+  const r = set(ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE'), { AF_01: 'YES', AF_03: 'CAN_WALK_NORMALLY', AF_04: ['NONE'], AF_05: ['NONE'] })
+  assert('Z-C5: AF_03/AF_04/AF_05 all visible and answered while AF_01=YES', ['AF_03', 'AF_04', 'AF_05'].every((id) => visibleIds(r).has(id) && r[id] !== null))
+  const switched = set(r, { AF_01: 'NO' })
+  assert(
+    'Z-C5 CRITICAL: switching AF_01 to NO prunes AF_03/AF_04/AF_05 to null (pruneStaleResponses -- no stale hidden value survives)',
+    ['AF_03', 'AF_04', 'AF_05'].every((id) => switched[id] === null),
+  )
+  assert('Z-C5: AF_03/AF_04/AF_05 no longer visible after the prune', !['AF_03', 'AF_04', 'AF_05'].some((id) => visibleIds(switched).has(id)))
+}
+
+// --- Z-D: real blank-{} full walk through a leg_foot primary-pain patient,
+// hitting every ANKLE_FOOT region via AF_00, confirming the walk terminates
+// and every AF_0x question that should be reachable actually gets visited --
+{
+  const regions = ['LOWER_LEG_CALF', 'ANKLE', 'HEEL_POSTERIOR_ANKLE', 'FOOT_TOES', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN']
+  const everVisibleAll = new Set()
+  for (const region of regions) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'leg_foot', PAIN_02: ['aching'], PAIN_04: 'none', AF_00: region })
+    const { everVisible, terminated, iterations } = autoAnswerWalk(r)
+    assert(`Z-D1: leg_foot walk (AF_00=${region}) terminates within the ${WALK_CAP}-iteration cap (used ${iterations})`, terminated)
+    for (const id of everVisible) everVisibleAll.add(id)
+  }
+  const expectedAfIds = ['AF_00', 'AF_01', 'AF_02', 'AF_03', 'AF_04', 'AF_05', 'AF_06', 'AF_07', 'AF_08']
+  assert(
+    `Z-D2 CRITICAL: across all 6 AF_00 regions, every reachable ANKLE_FOOT question was actually visited at least once (missing: ${expectedAfIds.filter((id) => !everVisibleAll.has(id)).join(', ') || 'none'})`,
+    expectedAfIds.every((id) => everVisibleAll.has(id)),
+  )
+}
+
+/* =========================================================================
+ * AA. Cross-region leak audit (docs/QUESTIONNAIRE_BRANCH_AUDIT.md item 4):
+ * for each of the 9 regional MSK modules, activating that module's own
+ * PAIN_01/routing value must never expose another module's questions.
+ * moduleOf()/MODULE_PREFIX (used by G/H above) only recognizes the coarse
+ * top-level "pain" bucket -- this defines a finer regional-prefix map to
+ * check the sub-blocks inside "pain" against each other, which nothing
+ * upstream of this section does.
+ *
+ * HIP-vs-LBP (section R: R-C1/R-C2b/R-C5) and TMJ's HFJ_00 HEADACHE_CRANIAL
+ * exclusion (section Q: Q-C4/Q-C5) already have dedicated, thorough tests
+ * for their specific pairing, so they are not duplicated here -- AA-8/AA-9
+ * below add a complementary "vs every OTHER region" sweep using the shared
+ * regionOf() helper instead of re-proving the same pair a second time.
+ * Likewise ELBOW-vs-WRIST_HAND is already covered by O-C5/P-C2/P-C3/
+ * V-ArmHand; AA-4/AA-5 below re-run it through the same uniform mechanism
+ * for consistency with the rest of this section, not as a fresh finding.
+ * ========================================================================= */
+
+const REGIONAL_PREFIXES = {
+  lbp: ['LBP_'],
+  neck: ['NECK_'],
+  shoulder: ['SH', 'NS01'],
+  knee: ['KNEE_'],
+  elbow: ['ELBOW_'],
+  wrist_hand: ['WH_'],
+  ankle_foot: ['AF_'],
+  hip: ['HIP_'],
+  tmj: ['TMJ_', 'HFJ_'],
+}
+function regionOf(id) {
+  for (const [key, prefixes] of Object.entries(REGIONAL_PREFIXES)) {
+    if (prefixes.some((p) => id.startsWith(p))) return key
+  }
+  return null
+}
+
+// AA-1: LBP-only
+{
+  const r = withPainCare({ PAIN_01: 'low_back_pelvis' })
+  const visible = visibleIds(r)
+  const disallowed = ['neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-1: PAIN_01=low_back_pelvis exposes no NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-2: NECK+SHOULDER shared population (F1 invariant -- intentional, per
+// section L/M) vs every other region
+{
+  const r = neckShoulderBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-2: PAIN_01=neck_shoulder (F1 shared NECK+SHOULDER population) exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-3: KNEE-only
+{
+  const r = kneeBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'elbow', 'wrist_hand', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-3: PAIN_01=knee exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-4: arm_hand routed to ELBOW
+{
+  const r = elbowBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-4: PAIN_01=arm_hand, ELBOW_00=ELBOW exposes no questions outside ELBOW/WRIST_HAND (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+  assert('AA-4b: ELBOW_00=ELBOW never exposes WH_* (re-verifies O-C5/P-C2 via the uniform regionOf mechanism)', ![...visible].some((id) => id.startsWith('WH_')))
+}
+
+// AA-5: arm_hand routed to WRIST_HAND
+{
+  const r = wristHandBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-5: PAIN_01=arm_hand, ELBOW_00=WRIST_HAND exposes no questions outside ELBOW/WRIST_HAND (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+  assert('AA-5b: ELBOW_00=WRIST_HAND never exposes ELBOW_01+ safety screens (re-verifies P-C2)', !['ELBOW_01', 'ELBOW_02', 'ELBOW_07'].some((id) => visible.has(id)))
+}
+
+// AA-6: ANKLE_FOOT-only
+{
+  const r = ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE')
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-6: PAIN_01=leg_foot exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-7: KNEE ('knee') and ANKLE_FOOT ('leg_foot') are distinct PAIN_01
+// single_choice values -- mutually exclusive by construction, not by a
+// shared secondary router the way ELBOW_00 is for ELBOW/WRIST_HAND.
+{
+  const kneeVisible = visibleIds(kneeBaseResponses())
+  const afVisible = visibleIds(ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE'))
+  assert('AA-7: PAIN_01=knee never shows any AF_* question', ![...kneeVisible].some((id) => id.startsWith('AF_')))
+  assert('AA-7b: PAIN_01=leg_foot never shows any KNEE_* question', ![...afVisible].some((id) => id.startsWith('KNEE_')))
+}
+
+// AA-8: HIP (low_back_pelvis, HIP_00 routed to HIP_GROIN_DOMINANT) vs every
+// non-LBP region (LBP itself is expected to stay visible -- shared
+// population, already proven by R-C2b/R-C5b)
+{
+  const r = hipBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(
+    `AA-8: PAIN_01=low_back_pelvis with HIP_00=HIP_GROIN_DOMINANT exposes no NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ questions (leaks: ${leaks.join(', ') || 'none'})`,
+    leaks.length === 0,
+  )
+}
+
+// AA-9: TMJ (head_face_jaw) vs every other region
+{
+  const r = tmjBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'hip']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-9: PAIN_01=head_face_jaw exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

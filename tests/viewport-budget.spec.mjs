@@ -76,7 +76,19 @@ const MAIN_PADDING_H = 40 + 16 // shell__main padding top+bottom
 // viewport (the exact 296px-vs-300px false negative this comment replaced).
 const WIDE_LANDSCAPE_MIN_WIDTH = 760
 const HEADER_H_WIDE = 8 + 0 + 6 + 6 // shell__top padding-top + topRow min-h(collapsed) + steps margin-top + steps height (thinner)
-const FOOTER_H_WIDE = 16 + 28 + BTN_MIN_H // shell__bottom padding + primaryBtn only -- helpBtn moved to right rail (display:none)
+// Tablet UX v2.3 §16: the wide-landscape .shell__bottom/.primaryBtn rules
+// were further trimmed (10px/16px padding, 56px min-height, font-size
+// untouched) to reveal one more option row -- this must track that trim or
+// it under-estimates available height for every wide viewport.
+const FOOTER_H_WIDE = 10 + 16 + 56 // shell__bottom padding (landscape-trimmed) + primaryBtn (landscape-trimmed) -- helpBtn moved to right rail (display:none)
+
+// Tablet UX v2.3 §9-10: .shell__scrollHintLane is a new fixed-height flex
+// sibling of .shell__main, always reserved in portrait/narrow viewports.
+// It is hidden entirely (display:none) in wide landscape -- the right rail's
+// .railScrollHint takes over there, living in the rail's own already-counted
+// vertical space rather than adding new height cost -- so this only applies
+// when NOT wide.
+const SCROLL_HINT_LANE_H = 40 // .shell__scrollHintLane height (portrait only)
 
 function isWideLandscape(viewportW, viewportH) {
   return viewportW > viewportH && viewportW >= WIDE_LANDSCAPE_MIN_WIDTH
@@ -86,7 +98,8 @@ function budgetFor(viewportW, viewportH) {
   const wide = isWideLandscape(viewportW, viewportH)
   const headerH = wide ? HEADER_H_WIDE : HEADER_H
   const footerH = wide ? FOOTER_H_WIDE : FOOTER_H
-  const availableH = viewportH - headerH - footerH - MAIN_PADDING_H
+  const scrollHintLaneH = wide ? 0 : SCROLL_HINT_LANE_H
+  const availableH = viewportH - headerH - footerH - MAIN_PADDING_H - scrollHintLaneH
   const contentWidth = Math.min(CONTENT_MAX, viewportW - 2 * GUTTER)
 
   const questionLineH = FS_QUESTION * 1.35
@@ -184,16 +197,25 @@ for (const vp of VIEWPORTS) {
 // Computed by running budgetFor(834, 1194) against the current question set
 // (see this file's header comment for the exact command/output) and
 // reviewing which screens genuinely need inner scroll at that viewport's
-// tighter (850px) available height, beyond the 800x1280 allowlist already
-// justified in layout-budget.spec.mjs. POSTPARTUM_02/SEC_PAIN_01 have long
-// multi-select option lists that only overflow once available height drops
-// below ~869px -- they fit fine at the 800x1280 reference viewport.
+// tighter (now 810px, after the v2.3 §9-10 scroll-hint lane reserves an
+// extra fixed 40px -- was 850px before that lane existed) available height,
+// beyond the 800x1280 allowlist already justified in layout-budget.spec.mjs.
+// POSTPARTUM_02/SEC_PAIN_01 have long multi-select option lists that only
+// overflow once available height drops below ~869px -- they fit fine at the
+// 800x1280 reference viewport. PAIN_01/NECK_04/PREGNANCY_03/SEC_URINARY_01/
+// MED_TYPES (815-826px) newly cross the 810px line purely because of the
+// new lane's fixed cost, not because their own content grew -- inner scroll
+// (the app's only scroll container, .shell__main) handles this the same way
+// it already does for the rest of this allowlist; nothing breaks.
 const PORTRAIT_ALLOWLISTS = {
   '834x1194 (portrait)': new Set([
     'BIRTH_03', 'HISTORY_01', 'SECONDARY_01', 'LBP_11', 'POSTPARTUM_02', 'SEC_PAIN_01',
     // Tablet UX v2.1 §11-13: ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01
     // replace SECONDARY_01's old mixed role with two longer grid2 screens.
     'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01',
+    // Tablet UX v2.3 §9-10: newly tight after the scroll-hint lane's fixed
+    // 40px reservation (see comment above).
+    'PAIN_01', 'NECK_04', 'PREGNANCY_03', 'SEC_URINARY_01', 'MED_TYPES',
   ]),
   '1200x1920 (large portrait)': new Set(), // spacious enough that nothing needs inner scroll
 }
@@ -342,6 +364,31 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
   assert('App.tsx: setResponses(...) is called at least at the wipe + restart + normal-answer + addon-activate sites', setResponsesCalls.length >= 4)
   const resetCalls = setResponsesCalls.filter((arg) => arg.startsWith('emptyResponses('))
   assert('App.tsx: at least 2 setResponses(...) call sites reset via emptyResponses() (privacy wipe + restart), never a spread of the previous object', resetCalls.length >= 2)
+
+  // PR #23 follow-up correction (v2.3 §8-9/§13): LBP_LEG_AUTOFILL_FIELD
+  // must also be explicitly nulled by emptyResponses(), same pattern as
+  // HERBAL_ADDON_FIELD/LBP_RAW_AGE_FIELD -- otherwise a stale 'yes' could
+  // survive into the next patient's session and wrongly navigation-skip
+  // LBP_02/LBP_03 for someone who never answered LBP_01B_LEG_SCREEN.
+  assert('App.tsx: emptyResponses() explicitly nulls LBP_LEG_AUTOFILL_FIELD', /\[LBP_LEG_AUTOFILL_FIELD\]:\s*null/.test(appSrc))
+
+  // The navigation-layer auto-skip itself (tests/integration.spec.mjs
+  // sections W6/W7/W11 verify the underlying shouldAutoAdvancePast
+  // predicate and mirror-simulate the walk against it in detail -- this
+  // block instead confirms the ACTUAL App.tsx nextQuestion()/goBack()
+  // functions really call that predicate, so a future edit that silently
+  // removes the skip loop from the real functions (while the test file's
+  // own mirror still has it) would be caught here.
+  const nextQuestionMatch = appSrc.match(/const nextQuestion = \(from: string, r: Responses\): Question \| undefined => \{[\s\S]*?\n  \}/)
+  assert('App.tsx: nextQuestion() function exists', Boolean(nextQuestionMatch))
+  assert('App.tsx CRITICAL: nextQuestion() calls shouldAutoAdvancePast (navigation-layer skip is real, not just simulated in tests)', /shouldAutoAdvancePast/.test(nextQuestionMatch[0]))
+  assert('App.tsx CRITICAL: nextQuestion() loops (while) rather than checking only once -- consecutive auto-skip screens (LBP_02 then LBP_03) must both be skipped in one hop', /while\s*\(/.test(nextQuestionMatch[0]))
+
+  const goBackMatch = appSrc.match(/const goBack = \(\) => \{[\s\S]*?\n  \}/)
+  assert('App.tsx: goBack() function exists', Boolean(goBackMatch))
+  assert('App.tsx CRITICAL: goBack() also calls shouldAutoAdvancePast (back-navigation mirrors the same skip, never lands on an auto-filled screen)', /shouldAutoAdvancePast/.test(goBackMatch[0]))
+
+  assert('App.tsx: imports shouldAutoAdvancePast from spec/coreSpec', /shouldAutoAdvancePast/.test(appSrc.slice(0, appSrc.indexOf("from './spec/coreSpec'"))))
 }
 
 /* =========================================================================
@@ -353,6 +400,29 @@ for (const vp of VIEWPORTS) {
   const { availableH, contentWidth, estimates } = budgetFor(vp.w, vp.h)
   const overflowCount = estimates.filter((e) => !e.fits).length
   console.log(`  ${vp.label}: available=${availableH}px contentWidth=${contentWidth}px screensNeedingInnerScroll=${overflowCount}/${estimates.length}`)
+}
+
+/* =========================================================================
+ * 6. Tablet UX v2.3 §10: wide-landscape center content column sits in the
+ *    900-1050px range (not just "wider than before"), and the right rail
+ *    carries all four utility items the task spec names: step label,
+ *    selected-region feedback (railSelection), scroll hint
+ *    (railScrollHint), and help button -- not a subset.
+ * ========================================================================= */
+
+{
+  const wideContentMatch = css.match(/\.shell--wideContent[\s\S]{0,200}?max-width:\s*(\d+)px/)
+  assert('styles.css: .shell--wideContent declares a max-width', Boolean(wideContentMatch))
+  const wideContentMax = Number(wideContentMatch[1])
+  assert(
+    `styles.css: wide-landscape center content max-width (${wideContentMax}px) sits within the required 900-1050px range`,
+    wideContentMax >= 900 && wideContentMax <= 1050,
+  )
+
+  assert('ScreenShell.tsx: right rail carries a step-label item', screenShellSrc.includes('railStepLabel'))
+  assert('ScreenShell.tsx: right rail carries a selected-region feedback slot (railSelection)', screenShellSrc.includes('railSelection'))
+  assert('ScreenShell.tsx: right rail carries a scroll-hint item (railScrollHint)', screenShellSrc.includes('railScrollHint'))
+  assert('ScreenShell.tsx: right rail carries a help-button item (railHelpBtn)', screenShellSrc.includes('railHelpBtn'))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

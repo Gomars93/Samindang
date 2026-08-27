@@ -64,10 +64,19 @@ const SHELL_MAIN_PADDING_TOP = 40
 const SHELL_MAIN_PADDING_BOTTOM = 16
 const MAIN_PADDING_H = SHELL_MAIN_PADDING_TOP + SHELL_MAIN_PADDING_BOTTOM
 
-const AVAILABLE_H = VIEWPORT_H - HEADER_H - FOOTER_H - MAIN_PADDING_H
+// Tablet UX v2.3 §9-10: .shell__scrollHintLane is a new fixed-height flex
+// sibling of .shell__main (always reserved in portrait/narrow viewports,
+// hidden entirely in wide landscape -- see viewport-budget.spec.mjs, which
+// is portrait-vs-landscape-aware). This reference viewport (800x1280) is
+// portrait, so the lane's height must be counted against available content
+// height here or this budget would silently overestimate how much room a
+// screen actually has.
+const SCROLL_HINT_LANE_H = 40 // .shell__scrollHintLane height
+
+const AVAILABLE_H = VIEWPORT_H - HEADER_H - FOOTER_H - MAIN_PADDING_H - SCROLL_HINT_LANE_H
 
 console.log(
-  `Chrome: header=${HEADER_H}px footer=${FOOTER_H}px mainPadding=${MAIN_PADDING_H}px -> available content height=${AVAILABLE_H}px (of ${VIEWPORT_H}px)`,
+  `Chrome: header=${HEADER_H}px footer=${FOOTER_H}px mainPadding=${MAIN_PADDING_H}px scrollHintLane=${SCROLL_HINT_LANE_H}px -> available content height=${AVAILABLE_H}px (of ${VIEWPORT_H}px)`,
 )
 
 // Sanity-check the hardcoded numbers above actually still appear in styles.css,

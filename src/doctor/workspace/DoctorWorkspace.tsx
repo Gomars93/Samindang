@@ -44,12 +44,42 @@ export function DoctorWorkspace({
 }) {
   const basis = deriveViewProfile(payload)
   const [profileOverride, setProfileOverride] = useState<DoctorViewProfile | null>(null)
-  const activeProfile = profileOverride ?? basis.derived
-
   const [mixedTab, setMixedTab] = useState<'pain' | 'herbal'>(basis.hasPainContent ? 'pain' : 'herbal')
 
+  // Reset the manual profile override / mixed-tab choice whenever the
+  // underlying record changes (a different real submission, or a
+  // different SYNTHETIC preview scenario/fixture) -- otherwise a
+  // clinician's earlier "show me the other tab" click on record A would
+  // silently carry over to record B. This is React's documented
+  // "adjusting state when a prop changes" pattern (a plain state update
+  // during render, guarded by comparing against the last-seen id) rather
+  // than a `key`-based remount: keying this component was tried first and
+  // triggered an unrelated React reconciliation issue where the previous
+  // instance was not removed from the DOM (two `.workspace` roots stayed
+  // mounted simultaneously) -- confirmed via headless-browser inspection,
+  // not assumed. This render-time-reset approach does not have that
+  // problem and was verified fixed the same way.
+  const [lastSeenSessionId, setLastSeenSessionId] = useState(payload.session_id)
+  if (payload.session_id !== lastSeenSessionId) {
+    setLastSeenSessionId(payload.session_id)
+    setProfileOverride(null)
+    setMixedTab(basis.hasPainContent ? 'pain' : 'herbal')
+  }
+
+  const activeProfile = profileOverride ?? basis.derived
+
+  // Exam results/pattern-candidate decisions/final assessment text are held
+  // in local useState inside PainWorkspace/HerbalWorkspace, seeded once from
+  // props on mount. useState does NOT re-seed itself when props change on
+  // an already-mounted instance -- so without a key tied to the underlying
+  // record, switching the payload (a different real submission, or a
+  // different SYNTHETIC preview scenario) would silently keep showing the
+  // PREVIOUS record's stale clinician input/exam suggestions. Keying on
+  // session_id forces a clean remount, exactly the pattern already used for
+  // JudgmentPanel below (`key={payload.session_id}`).
   const painNode = (
     <PainWorkspace
+      key={payload.session_id}
       payload={payload}
       lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
       shoulderObjectiveCuffWeakness={shoulderObjectiveCuffWeakness}
@@ -59,6 +89,7 @@ export function DoctorWorkspace({
   )
   const herbalNode = (
     <HerbalWorkspace
+      key={payload.session_id}
       payload={payload}
       patternCandidates={synthetic?.patternCandidates}
       clinicianObservations={synthetic?.clinicianObservations}

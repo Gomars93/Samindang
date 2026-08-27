@@ -2024,6 +2024,16 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       {(mode === 'fixtures' || selectedRecord) && (
       <>
+      {/*
+        key={payload.session_id}: DoctorWorkspace owns its own local state
+        (profile override, mixed-mode active tab) seeded from the payload
+        on mount. Without this key, switching the underlying record (a
+        different real submission, or a different SYNTHETIC preview
+        scenario/fixture) would keep the PREVIOUS record's already-mounted
+        instance and its stale tab/profile choice -- same reasoning as the
+        key on PainWorkspace/HerbalWorkspace inside DoctorWorkspace, and
+        the pre-existing key on JudgmentPanel below.
+      */}
       <DoctorWorkspace
         payload={payload}
         lbpObjectiveMotorDeficit={

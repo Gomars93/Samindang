@@ -236,3 +236,67 @@ PR #24는 DoctorView.tsx를 단순 문진 요약 화면에서, "가능성을 좁
 - (−) 재진 비교는 UI 배선만 되어 있고 실제 자동 비교는 동작하지 않는다 —
   이건 임상 판단이 아니라 별도 인프라(안전한 환자/방문 식별자) 설계가
   필요한 OPERATIONAL 블로커다.
+
+## 2026-08-27 — Doctor Clinical Workspace round 2: 서버 영속화를 기존 judgment 저장 경로와 나란히 추가
+
+### Context
+Round 1에서 원장이 입력하는 워크스페이스 상태(검사 결과, 한약 병기 후보
+검토, 임상 관찰, Final Assessment, 재평가 대상)는 React 로컬 state에만
+존재했다 — 새로고침하거나 다른 제출건으로 이동했다가 돌아오면 사라진다.
+사용자가 이번 라운드에서 "가장 우선순위 높은 엔지니어링 gap"으로 명시.
+
+### Decision
+1. 새 저장소 레이어를 만들지 않고, 기존 `store.js`의 `saveJudgment`
+   read-modify-write-under-lock 패턴을 그대로 복제해 `saveWorkspace`를
+   추가했다. 제출 record에 `judgment`의 형제 필드로 `workspace: null`을
+   추가하고, `PUT /api/submissions/:id/workspace`가 그 필드만 갱신한다
+   (기존 `submission`/`myungri`/`judgment`는 절대 건드리지 않는다는
+   불변식을 `saveJudgment`와 동일하게 코드로 강제).
+2. 영속화 키는 서버가 이미 원장 화면 곳곳(judgment 저장/조회, 방문
+   activate)에 쓰고 있는 record `id`(store.js가 `randomUUID()`로 발급)
+   다 — `session_id`(태블릿이 생성하는 값, 서버가 중복 제출 감지에는
+   쓰지만 API 자체의 primary key는 아님)나 이름/전화/생년월일 같은 약한
+   필드는 절대 쓰지 않는다.
+3. 클라이언트 쪽 state 소유권을 `PainWorkspace`/`HerbalWorkspace`
+   (각자 로컬 `useState`)에서 `DoctorWorkspace`(단일 소유자, controlled
+   children)로 끌어올렸다. 저장 UX는 명시적 "저장" 버튼(JudgmentPanel의
+   기존 패턴) 대신 편집 후 ~900ms debounce 자동저장 + 명시적 저장중/
+   저장됨/실패 상태 노출을 선택했다 — 워크스페이스는 상태 버튼 클릭·
+   텍스트 입력 등 훨씬 잦고 작은 단위의 변경이 많아, 매번 명시적 저장
+   버튼을 누르게 하면 실사용에 방해가 된다고 판단했다(사용자가 명시한
+   "whichever best matches existing architecture / make them fast enough
+   for real clinic use" 기준).
+
+### Reason
+`saveJudgment`가 이미 검증된, 이 저장소의 유일한 "원장이 입력한 값을
+제출건에 저장" 패턴이었으므로, 새 저장 메커니즘(별도 파일, 별도 lock
+전략, 별도 API 스타일)을 발명하는 대신 그 패턴을 그대로 재사용하는 것이
+회귀 위험이 가장 낮았다. 특히 per-id lock을 `saveJudgment`와 공유하게
+한 것은, 같은 제출건에 judgment 저장과 workspace 저장이 동시에 오더라도
+서로 완전히 반영되거나 안 되거나만 일어나게(torn write 방지) 하기
+위함이다.
+
+### Alternatives Considered
+- 완전히 새로운 `workspace.json` 형제 디렉터리(visits/, recorder-results/
+  와 같은 패턴) — 기각. workspace는 judgment와 마찬가지로 "이 제출건
+  하나에 속하는 원장 입력"이므로, 별도 파일로 쪼개면 두 값을 함께 읽어야
+  하는 모든 화면(현재는 없지만 향후 가능)에서 두 번 fetch해야 하고,
+  atomic하게 같이 갱신할 방법도 없어진다.
+- 명시적 "저장" 버튼(JudgmentPanel과 동일한 UX) — 고려했으나 기각.
+  workspace는 판단 하나를 다 채우고 누르는 judgment와 달리, 검사 상태
+  버튼 하나하나·메모 한 글자 한 글자가 다 "편집"이라 매번 버튼을 누르게
+  하면 사용성이 나빠진다고 판단.
+
+### Consequences
+- (+) 기존 `saveJudgment`/`getSubmission`을 검증한 테스트(concurrency,
+  isolation, restart persistence)가 커버하는 것과 동일한 안전성 보장을
+  `saveWorkspace`도 거의 그대로 물려받는다 — 새로 증명해야 할 것이
+  최소화됐다(그래도 `tests/server.spec.mjs`에 workspace 전용 isolation/
+  round-trip 테스트를 별도로 추가해 직접 검증했다).
+- (+) 원장이 검사 결과를 입력한 뒤 새로고침해도, 또는 다른 제출건을 봤다가
+  돌아와도 값이 그대로 남는다 — round 1에서 남아있던 가장 큰 실사용
+  장애물이 해소됐다.
+- (−) `PainFinalAssessment`/`HerbalFinalAssessment`(이 새 워크스페이스의
+  최종 판단)와 `ClinicianJudgment`(명리 감사 기록)는 여전히 서로 다른
+  두 레코드 필드로 남는다 — 하나로 합칠지는 이번 라운드 스코프 밖의
+  별도 설계 결정이다.

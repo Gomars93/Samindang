@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>삼인당 Clinical Workspace — Design Preview</title>
+  <style>
+    :root {
+      --green:#2C3E35; --mint:#A8D5B5; --sage:#E7EFEA; --sage2:#F3F7F4;
+      --bg:#F7F9F7; --surface:#FFFFFF; --text:#202824; --muted:#66736C;
+      --border:#DCE5DF; --danger:#9B3D35; --danger-soft:#FBF0EE;
+      --warning:#7D6426; --warning-soft:#FAF5E7; --shadow:0 8px 30px rgba(44,62,53,.07);
+    }
+    *{box-sizing:border-box} html{background:var(--bg)}
+    body{margin:0;font-family:Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;color:var(--text);background:var(--bg);line-height:1.5}
+    button,summary{font:inherit}.wrap{max-width:1240px;margin:0 auto;padding:28px 32px 72px}
+    .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:18px}
+    h1{margin:0;font-size:27px;letter-spacing:-.03em;color:var(--green)}
+    .subtitle{margin:5px 0 0;color:var(--muted);font-size:14px}
+    .badge{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid #BBD0C2;border-radius:999px;background:var(--sage);color:var(--green);font-size:12px;font-weight:800;white-space:nowrap}
+    .badge::before{content:"";width:7px;height:7px;border-radius:50%;background:#4C8263}
+    .notice{display:flex;gap:12px;align-items:flex-start;padding:12px 15px;border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:18px;color:var(--muted);font-size:13px}
+    .notice strong{color:var(--green)}
+    .profileBar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);margin-bottom:18px}
+    .profileLabel{font-size:12px;font-weight:800;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+    .segmented{display:flex;padding:3px;background:#EEF3EF;border-radius:11px;gap:3px}
+    .segmented button{border:0;background:transparent;color:var(--muted);padding:9px 16px;border-radius:9px;cursor:pointer;font-weight:700;font-size:14px}
+    .segmented button.active{background:var(--surface);color:var(--green);box-shadow:0 1px 6px rgba(44,62,53,.12)}
+    .workspaceShell{display:grid;grid-template-columns:minmax(0,1fr) 276px;gap:18px;align-items:start}
+    .mainColumn{min-width:0}.sideColumn{position:sticky;top:18px}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:15px;box-shadow:var(--shadow)}
+    .safety{padding:16px 18px;margin-bottom:15px;border-left:4px solid var(--green)}
+    .sectionHead{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:11px}
+    .sectionHead h2,.sectionHead h3{margin:0;letter-spacing:-.02em}.sectionHead h2{font-size:17px}.sectionHead h3{font-size:15px}
+    .micro{font-size:12px;color:var(--muted)}
+    .chips{display:flex;flex-wrap:wrap;gap:7px}.chip{padding:6px 9px;border-radius:999px;background:var(--sage2);border:1px solid var(--border);font-size:12px;color:var(--green);font-weight:700}
+    .chip.soft{font-weight:600;color:var(--muted);background:#FAFBFA}.chip.warning{border-color:#E7D9AD;background:var(--warning-soft);color:var(--warning)}
+    .tabs{display:none;gap:5px;padding:5px;margin:0 0 14px;background:#EAF1EC;border-radius:12px;border:1px solid var(--border)}
+    .tabs.visible{display:flex}.tabs button{flex:1;border:0;padding:10px 14px;border-radius:9px;background:transparent;color:var(--muted);font-weight:800;cursor:pointer}
+    .tabs button.active{background:#fff;color:var(--green);box-shadow:0 1px 6px rgba(44,62,53,.11)}
+    .workspace{display:none}.workspace.active{display:block}.hero{padding:18px;margin-bottom:14px}
+    .heroGrid{display:grid;grid-template-columns:1.4fr repeat(3,1fr);gap:10px}.metric{padding:12px;border:1px solid var(--border);border-radius:11px;background:#FBFCFB;min-width:0}
+    .metricLabel{font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px}.metricValue{font-size:18px;font-weight:800;color:var(--green);letter-spacing:-.02em}.metricValue.primary{font-size:21px}.raw{display:inline-block;margin-left:5px;padding:2px 6px;border-radius:999px;background:var(--sage);font-size:10px;font-weight:800;color:var(--green);vertical-align:2px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}.panel{padding:16px 17px}.panel h3{margin:0 0 10px;font-size:15px;color:var(--green)}
+    .rows{display:grid;gap:0}.row{display:grid;grid-template-columns:145px 1fr;gap:12px;padding:8px 0;border-bottom:1px dashed var(--border);font-size:13px}.row:last-child{border-bottom:0}.row span:first-child{color:var(--muted)}.row strong{font-weight:700}
+    .placeholder{padding:13px;border-radius:10px;background:var(--sage2);color:var(--muted);font-size:13px}.placeholder b{color:var(--green)}
+    .systemicGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}.systemCard{padding:14px;border:1px solid var(--border);border-radius:12px;background:#fff}.systemCard span{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}.systemCard strong{font-size:14px;color:var(--text)}
+    details{border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:14px;overflow:hidden}summary{cursor:pointer;list-style:none;padding:14px 16px;font-weight:800;color:var(--green)}summary::-webkit-details-marker{display:none}summary::after{content:"＋";float:right;color:var(--muted)}details[open] summary::after{content:"－"}.detailsBody{padding:0 16px 15px;color:var(--muted);font-size:13px}.detailsBody p{margin:5px 0}
+    .aside{padding:16px}.aside h3{margin:0 0 11px;font-size:14px;color:var(--green)}.rule{padding:10px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}.rule:first-of-type{border-top:0}.rule b{display:block;color:var(--text);margin-bottom:2px;font-size:12px}.status{margin-top:14px;padding:11px;border-radius:10px;background:var(--sage2);font-size:11px;color:var(--muted)}
+    .footer{margin-top:24px;text-align:center;color:var(--muted);font-size:11px}
+    @media(max-width:950px){.workspaceShell{grid-template-columns:1fr}.sideColumn{position:static}.heroGrid{grid-template-columns:1fr 1fr}.systemicGrid{grid-template-columns:1fr 1fr}}
+    @media(max-width:640px){.wrap{padding:18px 14px 48px}.topbar,.profileBar{align-items:stretch;flex-direction:column}.segmented{width:100%}.segmented button{flex:1;padding:9px 7px;font-size:13px}.heroGrid,.grid2,.systemicGrid{grid-template-columns:1fr}.row{grid-template-columns:1fr;gap:2px}.badge{align-self:flex-start}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="topbar">
+      <div><h1>삼인당 Clinical Workspace</h1><p class="subtitle">Doctor workspace information architecture · design preview</p></div>
+      <span class="badge">SYNTHETIC · NO PHI</span>
+    </div>
+
+    <div class="notice"><strong>프리뷰 전용</strong><span>실제 환자 데이터, 서버 연결, 임상 기준 변경 없이 화면 구조만 확인하는 독립 시안입니다. 아래 값은 모두 가상 예시입니다.</span></div>
+
+    <div class="profileBar">
+      <div><div class="profileLabel">View profile preview</div><div class="micro">원장 화면에서 정보가 어떻게 분리되는지 비교</div></div>
+      <div class="segmented" role="group" aria-label="워크스페이스 프로필">
+        <button data-profile="pain" class="active">통증</button>
+        <button data-profile="herbal">한약·전신</button>
+        <button data-profile="mixed">혼합</button>
+      </div>
+    </div>
+
+    <div class="workspaceShell">
+      <section class="mainColumn">
+        <section class="card safety" aria-label="공통 안전 확인">
+          <div class="sectionHead"><h2>안전 확인</h2><span class="micro">모든 프로필에서 탭보다 위에 고정</span></div>
+          <div class="chips">
+            <span class="chip">공통 안전 flag · 예시 정상</span>
+            <span class="chip soft">약물·알레르기 · 기존 응답 표시</span>
+            <span class="chip soft">임신·산후 · 해당 시 기존 결과 표시</span>
+            <span class="chip warning">확인 필요 항목이 있으면 기존 warning 톤 사용</span>
+          </div>
+        </section>
+
+        <nav class="tabs" aria-label="혼합 워크스페이스 탭">
+          <button data-tab="pain" class="active">통증 진료</button>
+          <button data-tab="herbal">한약·전신</button>
+        </nav>
+
+        <div id="painWorkspace" class="workspace active">
+          <section class="card hero">
+            <div class="sectionHead"><h2>통증 진료</h2><span class="micro">통증 환자에게 필요한 정보만 우선</span></div>
+            <div class="heroGrid">
+              <div class="metric"><div class="metricLabel">주호소 · 예시</div><div class="metricValue primary">허리·골반 통증</div></div>
+              <div class="metric"><div class="metricLabel">기간 · 예시</div><div class="metricValue">3개월 이상</div></div>
+              <div class="metric"><div class="metricLabel">통증 강도 · 예시</div><div class="metricValue">6 / 10</div></div>
+              <div class="metric"><div class="metricLabel">회복 기대 · 예시</div><div class="metricValue">4 / 10 <span class="raw">원점수</span></div></div>
+            </div>
+          </section>
+
+          <div class="grid2">
+            <section class="card panel"><h3>기존 통증 모듈 안전패널</h3><div class="placeholder"><b>LBP / NECK / SHOULDER 등 기존 SafetyPanel</b><br>현재 계산된 flag와 안전 잠금 의미를 그대로 표시하고 새 cutoff나 해석을 추가하지 않습니다.</div></section>
+            <section class="card panel"><h3>핵심 기능·증상</h3><div class="rows"><div class="row"><span>주요 악화 동작</span><strong>숙일 때 · 예시</strong></div><div class="row"><span>다리 증상</span><strong>환자 응답 원문 · 예시</strong></div><div class="row"><span>일상 기능</span><strong>기존 문진 값 표시</strong></div></div></section>
+          </div>
+
+          <section class="card panel"><div class="sectionHead"><h3>상세 응답</h3><span class="micro">필요할 때 내려보는 2차 정보</span></div><div class="rows"><div class="row"><span>발병 시기</span><strong>환자가 선택한 원정보 표시</strong></div><div class="row"><span>야간·휴식 관련</span><strong>기존 응답 그대로</strong></div><div class="row"><span>치료 관련 참고</span><strong>기존 계산값 / 환자응답을 구분 표시</strong></div></div></section>
+        </div>
+
+        <div id="herbalWorkspace" class="workspace">
+          <section class="card hero">
+            <div class="sectionHead"><h2>한약·전신</h2><span class="micro">전신 상태와 한약 상담 정보를 먼저</span></div>
+            <div class="systemicGrid">
+              <div class="systemCard"><span>수면 · 예시</span><strong>중간 각성 2회</strong></div>
+              <div class="systemCard"><span>소화 · 예시</span><strong>식후 더부룩함</strong></div>
+              <div class="systemCard"><span>대변 · 예시</span><strong>환자 응답 표시</strong></div>
+              <div class="systemCard"><span>소변 · 예시</span><strong>환자 응답 표시</strong></div>
+              <div class="systemCard"><span>피로·기력 · 예시</span><strong>오후에 더 피곤함</strong></div>
+              <div class="systemCard"><span>식욕·체중 · 예시</span><strong>최근 변화 없음</strong></div>
+            </div>
+          </section>
+
+          <div class="grid2">
+            <section class="card panel"><h3>한약 상담 핵심</h3><div class="rows"><div class="row"><span>상담 목적</span><strong>증상 치료 / 기력 회복 등 기존 선택</strong></div><div class="row"><span>전신 동반문제</span><strong>기존 systemic 응답</strong></div><div class="row"><span>병력·복용정보</span><strong>기존 응답 그대로</strong></div></div></section>
+            <section class="card panel"><h3>여성·생식 정보</h3><div class="placeholder"><b>해당 환자에게만 기존 값 표시</b><br>임신·산후·여성 건강 관련 내용은 새 추론 없이 기존 응답/derived source를 구분합니다.</div></section>
+          </div>
+
+          <details>
+            <summary>명리 참고 <span class="micro">· 보조 정보 · 기본 접힘</span></summary>
+            <div class="detailsBody"><p><strong>원국 / 일간 / 출생정보</strong> — 기존 계산 결과만 재배치</p><p>오행 분포·한열조습처럼 규칙이 확정되지 않은 해석은 새로 만들지 않습니다.</p><p>정책 승인 대기나 출생시간 미상 상태는 기존 계산 상태 그대로 표시합니다.</p></div>
+          </details>
+        </div>
+      </section>
+
+      <aside class="sideColumn">
+        <section class="card aside">
+          <h3>이번 시안의 규칙</h3>
+          <div class="rule"><b>Safety는 항상 위</b>탭 안쪽에 숨기지 않습니다.</div>
+          <div class="rule"><b>통증 프로필</b>명리·출생시간·한약 전용 전신정보를 노출하지 않습니다.</div>
+          <div class="rule"><b>한약 프로필</b>전신정보를 먼저 보고 명리는 보조 정보로 접습니다.</div>
+          <div class="rule"><b>혼합 프로필</b>같은 환자 화면 안에서 통증 / 한약 탭을 분리합니다.</div>
+          <div class="rule"><b>회복 기대점수</b>숫자 원점수만 표시하며 위험군 라벨을 만들지 않습니다.</div>
+          <div class="rule"><b>재진 비교</b>안정적인 환자 연결키가 없으면 구현하지 않습니다.</div>
+          <div class="status">이 페이지는 정보구조와 미감 승인용입니다. 실제 <code>DoctorView</code> 데이터 바인딩과 <code>view_profile</code> 자동 판정은 다음 구현 단계에서 별도 검증합니다.</div>
+        </section>
+      </aside>
+    </div>
+    <div class="footer">Samindang Clinical OS · synthetic design preview · no patient data</div>
+  </main>
+  <script>
+    const profileButtons=[...document.querySelectorAll('[data-profile]')];
+    const tabs=document.querySelector('.tabs');
+    const tabButtons=[...document.querySelectorAll('[data-tab]')];
+    const pain=document.getElementById('painWorkspace');
+    const herbal=document.getElementById('herbalWorkspace');
+    let profile='pain', mixedTab='pain';
+    function render(){
+      profileButtons.forEach(b=>b.classList.toggle('active',b.dataset.profile===profile));
+      tabs.classList.toggle('visible',profile==='mixed');
+      const active=profile==='mixed'?mixedTab:profile;
+      pain.classList.toggle('active',active==='pain'); herbal.classList.toggle('active',active==='herbal');
+      tabButtons.forEach(b=>b.classList.toggle('active',b.dataset.tab===mixedTab));
+    }
+    profileButtons.forEach(b=>b.addEventListener('click',()=>{profile=b.dataset.profile;if(profile!=='mixed')mixedTab=profile;else mixedTab='pain';render()}));
+    tabButtons.forEach(b=>b.addEventListener('click',()=>{mixedTab=b.dataset.tab;render()}));
+    render();
+  </script>
+</body>
+</html>

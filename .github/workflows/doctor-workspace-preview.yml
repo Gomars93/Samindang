@@ -1,0 +1,59 @@
+name: Deploy Doctor Workspace Preview
+
+# Synthetic / NO-PHI design preview for PR B. This workflow never connects
+# to the Samindang submission API and never publishes patient data. It mirrors
+# the currently-live GitHub Pages root and adds only /doctor-pr/ so the main
+# preview remains untouched byte-for-byte.
+
+on:
+  push:
+    branches: [feat/doctor-clinical-workspace]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}doctor-pr/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mirror currently-live site root
+        run: |
+          mkdir -p combined
+          wget --mirror --page-requisites --no-parent -e robots=off \
+            -nH --cut-dirs=1 -P combined \
+            https://gomars93.github.io/Samindang/
+          echo "--- mirrored root ---"
+          find combined -maxdepth 2 -type f | sort | head -100
+
+      - name: Add synthetic Doctor Workspace preview
+        run: |
+          mkdir -p combined/doctor-pr
+          cp public/doctor-workspace-preview.html combined/doctor-pr/index.html
+          cp public/doctor-workspace-preview.html combined/doctor-pr/doctor-workspace-preview.html
+          echo "--- doctor preview ---"
+          ls -lh combined/doctor-pr/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: combined
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Print preview URL
+        run: |
+          echo "Doctor Workspace preview: ${{ steps.deployment.outputs.page_url }}doctor-pr/"

@@ -94,5 +94,6 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Print the PR #23 preview URL
-        run: echo "PR #23 preview: ${{ steps.deployment.outputs.page_url }}pr-23/"
+      - name: "Print the PR #23 preview URL"
+        run: |
+          echo "PR #23 preview: ${{ steps.deployment.outputs.page_url }}pr-23/"

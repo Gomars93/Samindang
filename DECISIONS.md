@@ -154,3 +154,85 @@ systemic block(`HERB_APPETITE` 등, `CONSTITUTION_BASIC_QUESTIONS`/
   추가문진을 시작하고 싶다면(진짜로 "진료 중" 결정하는 흔한 임상 워크플로일
   수 있음) 이번 구현으로는 지원되지 않는다 — 필요해지면 별도 세션/토큰
   인프라 설계와 그에 따른 보안 검토가 먼저 필요하다.
+
+## 2026-08-27 — Doctor Clinical Workspace (PR #24): provenance 아키텍처, 결정지원 스캐폴딩만 구현, 임상 매핑은 미구현
+
+### Context
+PR #24는 DoctorView.tsx를 단순 문진 요약 화면에서, "가능성을 좁혀주고 놓치면
+안 되는 확인점을 보여주는" 실제 진료 워크스페이스로 확장하는 대규모 작업이다.
+사용자가 명시적으로 지시한 범위: 신규 임상 threshold/진단/변증 로직을
+발명하지 않고, 그 외 모든 정보구조·UX·상태모델·테스트·문서·배포 인프라를
+자율적으로 끝까지 구현한다.
+
+### Decision
+1. **Provenance 데이터 모델**(`src/doctor/workspace/provenance.ts`)을
+   신규 도입 — `PATIENT_FACT`/`DERIVED`/`SUGGESTED`/`OBSERVED`/
+   `FINAL_ASSESSMENT`/`PLAN`/`FOLLOW_UP_TARGET` 7종. 시스템 제안이
+   확정된 사실로, 아직 안 한 진찰이 음성 소견으로 둔갑하는 것을 구조적으로
+   막는 것이 유일한 목적이며 임상적 의미는 전혀 규정하지 않는다.
+2. `view_profile`(pain/herbal/mixed)은 `questionnaireMode` 하나에서 바로
+   파생하지 않고, `hasPainContent`(주호소/추가호소가 Pain) ·
+   `hasSystemicContent`(questionnaire_mode가 expanded 또는 herbal_addon)
+   두 개의 이미 검증된 독립 신호를 조합해 계산한다
+   (`src/doctor/workspace/viewProfile.ts`).
+3. **`PhysicalExamSuggestion`/`HerbalPatternCandidate`의 실제
+   `patient_fact → suggestion` 계산 로직은 프로덕션에 구현하지 않았다.**
+   이번 PR은 (a) 두 타입의 스키마와 렌더링/상태 UI, (b) SYNTHETIC 라벨이
+   붙은 미리보기 시나리오 7종, (c) 원장이 직접 rule을 채워 넣을 스키마
+   문서(`docs/clinical-decision-tables/PAIN_EXAM_RECOMMENDATION_TEMPLATE.md`,
+   `HERBAL_PATTERN_CANDIDATE_TEMPLATE.md`, 둘 다 `DRAFT`/`UNAPPROVED`
+   상태이며 example row 1개만 "EXAMPLE ONLY — NOT CLINICAL LOGIC"로 표시)
+   까지만 구현했다. 실제 서버 제출 데이터(`mode !== 'fixtures'`)에는 항상
+   빈 배열이 전달된다 — 이는 테스트로 고정되어 있다
+   (`tests/doctor-workspace.spec.mjs`: "DoctorView.tsx passes no synthetic
+   decision-support data for real submissions").
+4. 재진 자동 비교(reassessment auto-compare)도 구현하지 않았다 — 이
+   저장소에는 안전한 환자/방문 매칭 인프라(name+phone 매칭 등 충돌
+   위험이 있는 방식이 아닌 진짜 안전한 매칭)가 아직 없음을 Phase 0에서
+   확인했고, 재평가 "대상"만 기록하며 UI에 고정 문자열
+   `REPEAT_VISIT_AUTO_COMPARE_STATUS = '재진 자동 비교: OPERATIONAL
+   INTEGRATION REQUIRED'`를 노출한다(`finalAssessment.ts`).
+5. 신규 `PainFinalAssessment`/`HerbalFinalAssessment`(원장 최종 판단/치료
+   계획/재평가 대상)는 기존 `ClinicianJudgment`(명리 shadow-mode 감사
+   기록 + `lbp_objective_motor_deficit`/`shoulder_objective_cuff_weakness`
+   FROZEN 연동 필드, `src/doctor/judgment.ts`)와 완전히 분리된 별도
+   타입이며, 클라이언트 로컬 state로만 존재한다(서버 영속화는 이번 PR
+   스코프 밖).
+
+### Reason
+사용자가 명시적으로 금지한 것은 "새 임상 threshold/진단/변증/처방 로직을
+발명하는 것"이지, 그 결정지원 기능이 들어갈 자리(스키마·UI·데이터
+모델·거버넌스 문서)를 만드는 것이 아니다. 실제 매핑 규칙(어떤 patient_fact
+조합이 어떤 검사/병기 후보를 제안해야 하는가)은 그 자체가 임상 판단이므로,
+엔지니어링 세션이 임의로 채우면 안전성 원칙(FROZEN 파일 불변, 새 cutoff
+발명 금지)을 우회하는 셈이 된다. 대신 "빈 인프라 + 명확한 거버넌스
+문서"까지 완성해 두면, 원장이 문서 스키마에 맞춰 규칙을 승인하는 즉시
+엔지니어링 세션이 그 규칙을 그대로 배선만 하면 되는 상태가 된다.
+
+### Alternatives Considered
+- 흔한 임상 패턴 몇 개를 "starter set"으로 미리 하드코딩 — 기각. 사용자
+  지시(§Phase 4: "SYNTHETIC 예시가 프로덕션 추론으로 배선되면 안 됨")를
+  정면 위반하고, 검증되지 않은 임상 판단을 시스템 제안으로 노출하는 것은
+  이 프로젝트의 근본 안전 원칙과 충돌.
+- view_profile을 `questionnaireMode` 하나로 단순 파생 — 기각. `expanded`
+  모드라도 실제로 Pain 주호소가 없는 순수 전신 상담 케이스가 존재할 수
+  있어, 두 신호를 분리해야 오분류를 줄일 수 있다고 판단.
+
+### Consequences
+- (+) FROZEN 파일(`src/spec/*Logic.ts`/`*Adapter.ts`) 대비 diff가 0이다
+  (`git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+  로 매 세션 재확인 가능).
+- (+) 향후 임상 매핑이 승인되면, `examSuggestion.ts`/`patternCandidate.ts`에
+  `DoctorPayload → PhysicalExamSuggestion[]`/`HerbalPatternCandidate[]`
+  계산 함수 하나만 추가하고 `DoctorView.tsx`의 `synthetic={...}` 전달부만
+  실제 계산 결과로 바꾸면 배선이 끝난다 — 이미 그 지점에 맞춰 인터페이스가
+  설계되어 있다.
+- (−) 이번 PR만으로는 Pain/Herbal 결정지원 워크플로가 **실제 환자
+  데이터에서는 아직 아무 제안도 만들어내지 못한다** — 100점 rubric 기준
+  Pain/Herbal workflow 카테고리 각각 최대 15점 중 10점까지만 엔지니어링
+  으로 도달 가능하고, 나머지 5점씩(총 10점)은 원장이
+  `docs/clinical-decision-tables/*_TEMPLATE.md`를 근거로 규칙을 승인하기
+  전까지는 어떤 세션도 채울 수 없다.
+- (−) 재진 비교는 UI 배선만 되어 있고 실제 자동 비교는 동작하지 않는다 —
+  이건 임상 판단이 아니라 별도 인프라(안전한 환자/방문 식별자) 설계가
+  필요한 OPERATIONAL 블로커다.

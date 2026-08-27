@@ -242,6 +242,104 @@ async function main() {
       )
     }
 
+    /* ---------------- workspace PUT stores + persists, submission/myungri/judgment unchanged (Doctor Clinical Workspace round 2 Phase 2) ---------------- */
+    {
+      const beforeWorkspace = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      assert('record has workspace key (null initially)', beforeWorkspace.workspace === null)
+
+      const workspace = {
+        schema_version: '1.0.0',
+        painExamSuggestions: [
+          {
+            id: 'slr',
+            title: 'SLR',
+            priority: 'MUST_CHECK',
+            reasonFacts: [],
+            source: 'SUGGESTED',
+            result: { status: 'POSITIVE', laterality: 'LEFT', note: 'test note', recordedAt: new Date().toISOString() },
+          },
+        ],
+        painFinalAssessment: {
+          finalWorkingAssessment: 'wk-a',
+          treatmentFocus: '',
+          interventionPerformedOrPlanned: '',
+          immediateRetestTarget: '',
+          recordedAt: new Date().toISOString(),
+        },
+        painFollowUpTargets: [],
+        herbalPatternCandidates: [],
+        herbalClinicianObservations: [],
+        herbalFinalAssessment: {
+          finalPatternOrMechanism: '',
+          treatmentPrinciple: '',
+          prescriptionPlanNote: '',
+          symptomsToTrack: '',
+          recordedAt: null,
+        },
+        herbalFollowUpTargets: [],
+        updated_at: new Date().toISOString(),
+      }
+      const putRes = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(workspace),
+      })
+      assert('PUT workspace -> 200', putRes.status === 200)
+
+      const getRes = await fetch(`${base}/api/submissions/${createdId}`)
+      const record = await getRes.json()
+      assert(
+        'workspace persisted on GET',
+        record.workspace && record.workspace.painFinalAssessment.finalWorkingAssessment === 'wk-a',
+      )
+      assert(
+        'workspace persisted exam result round-trips exactly (status/laterality/note)',
+        record.workspace.painExamSuggestions[0].result.status === 'POSITIVE' &&
+          record.workspace.painExamSuggestions[0].result.laterality === 'LEFT' &&
+          record.workspace.painExamSuggestions[0].result.note === 'test note',
+      )
+      assert(
+        'workspace save leaves submission unchanged',
+        (() => {
+          try {
+            assert2.deepStrictEqual(record.submission, recordBefore.submission)
+            return true
+          } catch {
+            return false
+          }
+        })(),
+      )
+      assert(
+        'workspace save leaves myungri unchanged',
+        (() => {
+          try {
+            assert2.deepStrictEqual(record.myungri, recordBefore.myungri)
+            return true
+          } catch {
+            return false
+          }
+        })(),
+      )
+      assert(
+        'workspace save leaves the previously-saved judgment unchanged',
+        record.judgment && record.judgment.innate_features[0] === 'a',
+      )
+
+      const unauthedRes = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+        body: JSON.stringify(workspace),
+      })
+      assert('PUT workspace without doctor auth -> 403 (same guard as judgment)', unauthedRes.status === 403)
+
+      const missingRes = await fetch(`${base}/api/submissions/00000000-0000-0000-0000-000000000000/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(workspace),
+      })
+      assert('PUT workspace for unknown id -> 404', missingRes.status === 404)
+    }
+
     /* ---------------- restart persistence ---------------- */
     {
       await stopServer(server)
@@ -500,6 +598,50 @@ async function main() {
       const recB = await (await fetch(`${base}/api/submissions/${b.id}`)).json()
       assert('judgment saved on submission A appears on A', recA.judgment?.innate_features[0] === 'only-on-a')
       assert('judgment saved on submission A does NOT appear on B', recB.judgment === null)
+
+      /* -------- workspace isolation across the same two submissions (round 2 Phase 2) -------- */
+      const emptyHerbalFinal = {
+        finalPatternOrMechanism: '',
+        treatmentPrinciple: '',
+        prescriptionPlanNote: '',
+        symptomsToTrack: '',
+        recordedAt: null,
+      }
+      const workspaceFor = (label) => ({
+        schema_version: '1.0.0',
+        painExamSuggestions: [],
+        painFinalAssessment: {
+          finalWorkingAssessment: label,
+          treatmentFocus: '',
+          interventionPerformedOrPlanned: '',
+          immediateRetestTarget: '',
+          recordedAt: new Date().toISOString(),
+        },
+        painFollowUpTargets: [],
+        herbalPatternCandidates: [],
+        herbalClinicianObservations: [],
+        herbalFinalAssessment: emptyHerbalFinal,
+        herbalFollowUpTargets: [],
+        updated_at: new Date().toISOString(),
+      })
+
+      await fetch(`${base}/api/submissions/${a.id}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(workspaceFor('workspace-only-on-a')),
+      })
+
+      const recA2 = await (await fetch(`${base}/api/submissions/${a.id}`)).json()
+      const recB2 = await (await fetch(`${base}/api/submissions/${b.id}`)).json()
+      assert(
+        'workspace saved on submission A appears on A',
+        recA2.workspace?.painFinalAssessment.finalWorkingAssessment === 'workspace-only-on-a',
+      )
+      assert('workspace saved on submission A does NOT appear on B', recB2.workspace === null)
+      assert(
+        "workspace save on A leaves A's earlier judgment (from this same block) untouched",
+        recA2.judgment?.innate_features[0] === 'only-on-a',
+      )
     }
 
     /* ---------------- record shape: version traceability ---------------- */
@@ -1086,11 +1228,13 @@ async function main() {
     const serverIndexSrc = await readFile(fileURLToPath(new URL('../server/index.js', import.meta.url)), 'utf8')
     const requireDoctorCalls = (serverIndexSrc.match(/!requireDoctor\(req\)/g) ?? []).length
     // 기존 10개(submissions x4 + visits x4 + current-visit GET + current-visit/clear) +
-    // Task 2에서 POST/GET /api/visits/:id/recorder-results 2개 추가되어 12개가 됐다.
+    // Task 2에서 POST/GET /api/visits/:id/recorder-results 2개 추가되어 12개가 됐고,
+    // Doctor Clinical Workspace round 2 Phase 2에서 PUT /api/submissions/:id/workspace
+    // 1개가 추가되어 13개가 됐다(judgment 라우트와 동일한 doctor-only 가드 패턴).
     // isLocalOnly는 완전히 제거됐다(server/auth.js).
     assert(
-      'server has exactly the 12 doctor-guarded routes calling requireDoctor (submissions x4 + visits x6 + current-visit GET + current-visit/clear)',
-      requireDoctorCalls === 12,
+      'server has exactly the 13 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear)',
+      requireDoctorCalls === 13,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

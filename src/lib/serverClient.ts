@@ -4,6 +4,7 @@
  * 시도하지 않는다(오늘까지의 동작 그대로).
  */
 import type { ClinicianJudgment } from '../doctor/judgment'
+import type { WorkspaceState } from '../doctor/workspace/persistence'
 import { getStoredDoctorToken } from '../doctor/doctorToken'
 
 const BASE_URL = import.meta.env.VITE_SAMINDANG_SERVER_URL as string | undefined
@@ -95,6 +96,10 @@ export type SubmissionRecord = {
   submission: Record<string, unknown>
   myungri: unknown
   judgment: ClinicianJudgment | null
+  // Doctor Clinical Workspace clinician-entered state (round 2 Phase 2).
+  // Absent/undefined on records saved before this field existed — callers
+  // must treat that identically to null (see deserializeWorkspaceState).
+  workspace?: WorkspaceState | null
 }
 
 export function getSubmission(id: string): Promise<ServerResult<SubmissionRecord>> {
@@ -118,6 +123,16 @@ export function saveJudgment(
   return request(`/api/submissions/${id}/judgment`, {
     method: 'PUT',
     body: JSON.stringify(judgment),
+  })
+}
+
+export function saveWorkspaceState(
+  id: string,
+  workspace: WorkspaceState,
+): Promise<ServerResult<SubmissionRecord>> {
+  return request(`/api/submissions/${id}/workspace`, {
+    method: 'PUT',
+    body: JSON.stringify(workspace),
   })
 }
 

@@ -7,8 +7,19 @@
  *
  * No Myungri/saju/birth-time/herbal-only systemic content anywhere in this
  * component (governing task Phase 2 invariant).
+ *
+ * Round 2 Phase 2: exam results / final assessment / follow-up targets are
+ * now CONTROLLED (owned by DoctorWorkspace, which debounce-saves them to
+ * the server) rather than local useState -- this component only renders
+ * and calls the onChange* callbacks, so there is exactly one place
+ * (DoctorWorkspace) that can ever diverge from what was last persisted.
+ * Round 2 Phase 12: the raw "상세 응답" grid that used to live here was
+ * removed -- DoctorView.tsx already renders the exact same
+ * primaryModuleFields() list immediately below this component as "상세
+ * 증상" (existing, pre-workspace section), so keeping a second copy here
+ * was pure duplication that pushed Final Assessment further down the page
+ * for no benefit (worse for the Phase 13 10-second read test).
  */
-import { useState } from 'react'
 import {
   AnkleFootSafetyPanel,
 } from '../AnkleFootSafetyPanel'
@@ -27,7 +38,6 @@ import {
   frequencyField,
   isEmptyValue,
   primaryConcernLabel,
-  primaryModuleFields,
   safetyIssueCategories,
 } from '../DoctorView'
 import { Field } from '../DoctorView'
@@ -39,7 +49,7 @@ import { PainFinalAssessmentCard } from './FinalAssessmentCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { EmrPreviewCard } from './EmrPreviewCard'
 import { buildPainWorkspaceEmrPreview } from './emrPreview'
-import { emptyPainFinalAssessment, PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget } from './finalAssessment'
+import { PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget, type PainFinalAssessment } from './finalAssessment'
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { EvidenceItem } from './supportEngine'
 
@@ -47,21 +57,27 @@ export function PainWorkspace({
   payload,
   lbpObjectiveMotorDeficit,
   shoulderObjectiveCuffWeakness,
-  examSuggestions = [],
+  examSuggestions,
+  onChangeExamSuggestion,
   evidence = [],
+  finalAssessment,
+  onChangeFinalAssessment,
+  followUpTargets,
+  onChangeFollowUpTargets,
 }: {
   payload: DoctorPayload
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
   shoulderObjectiveCuffWeakness?: ClinicianJudgment['shoulder_objective_cuff_weakness']
-  examSuggestions?: PhysicalExamSuggestion[]
+  examSuggestions: PhysicalExamSuggestion[]
+  onChangeExamSuggestion: (next: PhysicalExamSuggestion) => void
   evidence?: EvidenceItem[]
+  finalAssessment: PainFinalAssessment
+  onChangeFinalAssessment: (next: PainFinalAssessment) => void
+  followUpTargets: FollowUpTarget[]
+  onChangeFollowUpTargets: (next: FollowUpTarget[]) => void
 }) {
   const r = payload.responses
   const { flags, routing } = payload
-
-  const [items, setItems] = useState<PhysicalExamSuggestion[]>(examSuggestions)
-  const [finalAssessment, setFinalAssessment] = useState(emptyPainFinalAssessment)
-  const [followUpTargets, setFollowUpTargets] = useState<FollowUpTarget[]>([])
 
   const durFreq = durationFrequencyText(r, routing.primary_module)
   const aggravatingText = aggravatingSummaryText(routing.primary_module, r.modules)
@@ -76,7 +92,7 @@ export function PainWorkspace({
 
   const emrText = buildPainWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
-    examSuggestions: items,
+    examSuggestions,
     finalAssessment,
     followUpTargets,
   })
@@ -156,10 +172,7 @@ export function PainWorkspace({
 
       <section className="workspace__block">
         <h3>지금 확인할 것</h3>
-        <ExamSuggestionList
-          items={items}
-          onChangeItem={(next) => setItems((prev) => prev.map((i) => (i.id === next.id ? next : i)))}
-        />
+        <ExamSuggestionList items={examSuggestions} onChangeItem={onChangeExamSuggestion} />
       </section>
 
       <section className="workspace__block">
@@ -167,24 +180,13 @@ export function PainWorkspace({
         <SupportContradictionPanel items={evidence} emptyText="현재 확인된 지지/반증/미확인 항목이 없습니다." />
       </section>
 
-      <section className="workspace__block">
-        <h3>상세 응답</h3>
-        <div className="doctor__grid">
-          {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).map((f) => (
-            <Field key={f.qid} qid={f.qid} value={f.value} />
-          ))}
-          {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).length === 0 && (
-            <p className="doctor__empty">이번 방문에는 해당 상세 Module이 없습니다.</p>
-          )}
-        </div>
-      </section>
-
-      <PainFinalAssessmentCard value={finalAssessment} onChange={setFinalAssessment} />
+      <PainFinalAssessmentCard value={finalAssessment} onChange={onChangeFinalAssessment} />
 
       <FollowUpTargetPicker
         options={PAIN_FOLLOW_UP_OPTIONS}
         selected={followUpTargets}
-        onChange={setFollowUpTargets}
+        onChange={onChangeFollowUpTargets}
+        showPostTreatmentField
       />
 
       <EmrPreviewCard text={emrText} />

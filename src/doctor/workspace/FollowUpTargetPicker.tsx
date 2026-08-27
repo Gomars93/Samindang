@@ -15,10 +15,13 @@ export function FollowUpTargetPicker({
   options,
   selected,
   onChange,
+  showPostTreatmentField = false,
 }: {
   options: FollowUpTarget[]
   selected: FollowUpTarget[]
   onChange: (next: FollowUpTarget[]) => void
+  /** Pain workspace records an immediate post-treatment value; herbal does not (mission Phase 10 scope). */
+  showPostTreatmentField?: boolean
 }) {
   const selectedIds = new Set(selected.map((t) => t.id))
   const atMax = selected.length >= MAX_FOLLOW_UP_TARGETS
@@ -30,6 +33,10 @@ export function FollowUpTargetPicker({
     }
     if (atMax) return
     onChange([...selected, target])
+  }
+
+  function updateField(id: string, field: 'baseline' | 'postTreatmentValue', value: string) {
+    onChange(selected.map((t) => (t.id === id ? { ...t, [field]: value } : t)))
   }
 
   return (
@@ -54,6 +61,35 @@ export function FollowUpTargetPicker({
           )
         })}
       </div>
+
+      {selected.length > 0 && (
+        <div className="workspace__followUp__values">
+          {selected.map((t) => (
+            <div key={t.id} className="workspace__followUp__valueRow">
+              <span className="workspace__followUp__valueLabel">{t.label}</span>
+              <input
+                type="text"
+                className="workspace__noteInput"
+                value={t.baseline}
+                onChange={(e) => updateField(t.id, 'baseline', e.target.value)}
+                placeholder="현재(오늘) 기준값 — 선택"
+                aria-label={`${t.label} 오늘 기준값`}
+              />
+              {showPostTreatmentField && (
+                <input
+                  type="text"
+                  className="workspace__noteInput"
+                  value={t.postTreatmentValue}
+                  onChange={(e) => updateField(t.id, 'postTreatmentValue', e.target.value)}
+                  placeholder="치료 직후 값 — 선택"
+                  aria-label={`${t.label} 치료 직후 값`}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <p className="workspace__followUp__status">{REPEAT_VISIT_AUTO_COMPARE_STATUS}</p>
     </section>
   )

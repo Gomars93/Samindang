@@ -28,6 +28,17 @@ import { EXAM_CHECK_STATUS_LABEL, LATERALITY_LABEL } from './provenance'
 
 const CRLF = '\r\n'
 
+function followUpTargetsLine(targets: FollowUpTarget[]): string {
+  return targets
+    .map((t) => {
+      const parts = [t.label]
+      if (t.baseline.trim()) parts.push(`기준 ${t.baseline.trim()}`)
+      if (t.postTreatmentValue.trim()) parts.push(`직후 ${t.postTreatmentValue.trim()}`)
+      return parts.join(' — ')
+    })
+    .join(', ')
+}
+
 function examFindingsLines(items: PhysicalExamSuggestion[]): string[] {
   return items
     .filter((i) => i.result.status !== 'NOT_YET_CHECKED') // rule 2: never render a pending item as a negative
@@ -55,7 +66,7 @@ export function buildPainWorkspaceEmrPreview(input: {
     { label: '치료 초점', value: input.finalAssessment.treatmentFocus },
     { label: '시행/예정 처치', value: input.finalAssessment.interventionPerformedOrPlanned },
     { label: '즉시 재검 대상', value: input.finalAssessment.immediateRetestTarget },
-    { label: '재평가 대상', value: input.followUpTargets.map((t) => t.label).join(', ') },
+    { label: '재평가 대상', value: followUpTargetsLine(input.followUpTargets) },
   ]
   return lines.map(({ label, value }) => (value.trim() ? `${label}: ${value.trim()}` : `${label}:`)).join(CRLF)
 }
@@ -73,7 +84,7 @@ export function buildHerbalWorkspaceEmrPreview(input: {
     { label: '치법', value: input.finalAssessment.treatmentPrinciple },
     { label: '처방/계획 메모', value: input.finalAssessment.prescriptionPlanNote },
     { label: '추적할 증상', value: input.finalAssessment.symptomsToTrack },
-    { label: '재평가 대상', value: input.followUpTargets.map((t) => t.label).join(', ') },
+    { label: '재평가 대상', value: followUpTargetsLine(input.followUpTargets) },
   ]
   return lines.map(({ label, value }) => (value.trim() ? `${label}: ${value.trim()}` : `${label}:`)).join(CRLF)
 }

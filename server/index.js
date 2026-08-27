@@ -292,6 +292,25 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
+      } else if (parts[0] === 'api' && parts[1] === 'submissions' && parts.length === 4 && parts[3] === 'workspace' && req.method === 'PUT') {
+        // Doctor Clinical Workspace clinician-entered state (round 2 Phase 2).
+        // Same shape as the judgment route above -- doctor-only, id-scoped,
+        // last-write-wins under the store's per-id lock.
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const record = await store.saveWorkspace(id, body)
+          if (!record) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            await safeAudit({ event: 'workspace_saved', submission_id: id, actor: 'doctor' })
+            bytes = sendJson(req, res, 200, record, cors)
+          }
+        }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 2 && req.method === 'POST') {
         if (!requireDoctor(req)) {
           status = 403

@@ -67,26 +67,39 @@ export function isHerbalFinalAssessmentRecorded(a: HerbalFinalAssessment): boole
   return a.recordedAt !== null
 }
 
-/** Reassessment target the clinician nominates to track at next visit (Phase 8). Max 3 per workspace. */
+/**
+ * Reassessment target the clinician nominates to track at next visit
+ * (Phase 8). Max 3 per workspace. `baseline`/`postTreatmentValue` are both
+ * optional free-text the clinician may record for THIS visit only — never
+ * an auto-computed number, never an inferred improvement/worsening
+ * judgment (see REPEAT_VISIT_AUTO_COMPARE_STATUS below for why no actual
+ * prior-visit comparison happens here).
+ */
 export type FollowUpTarget = {
   id: string
   label: string
+  baseline: string
+  postTreatmentValue: string
+}
+
+export function followUpTarget(id: string, label: string): FollowUpTarget {
+  return { id, label, baseline: '', postTreatmentValue: '' }
 }
 
 export const MAX_FOLLOW_UP_TARGETS = 3
 
 /** Example option sets from the governing task — clinician picks, does not have to use these exact labels. */
 export const PAIN_FOLLOW_UP_OPTIONS: FollowUpTarget[] = [
-  { id: 'pain_intensity', label: '통증 강도' },
-  { id: 'movement_function', label: '움직임·기능' },
-  { id: 'symptom_reproduction', label: '증상 재현 여부' },
+  followUpTarget('pain_intensity', '통증 강도'),
+  followUpTarget('movement_function', '움직임·기능'),
+  followUpTarget('symptom_reproduction', '증상 재현 여부'),
 ]
 
 export const HERBAL_FOLLOW_UP_OPTIONS: FollowUpTarget[] = [
-  { id: 'sleep', label: '수면' },
-  { id: 'digestion', label: '소화' },
-  { id: 'stool', label: '대변' },
-  { id: 'fatigue', label: '피로·기력' },
+  followUpTarget('sleep', '수면'),
+  followUpTarget('digestion', '소화'),
+  followUpTarget('stool', '대변'),
+  followUpTarget('fatigue', '피로·기력'),
 ]
 
 /**

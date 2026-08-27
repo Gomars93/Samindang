@@ -106,3 +106,6 @@ tests/.preview-server-client-bundle.mjs
 # esbuild bundles used by tests/doctor-workspace.spec.mjs (regenerated, not source)
 tests/.doctor-workspace-fixtures-bundle.mjs
 tests/.doctor-workspace-bundle.cjs
+# esbuild bundles used by tests/doctor-view-profile-matrix.spec.mjs (regenerated, not source)
+tests/.view-profile-matrix-corespec-bundle.mjs
+tests/.view-profile-matrix-viewprofile-bundle.mjs

@@ -7,8 +7,18 @@
  *
  * Systemic/herbal information is prioritized first; Myungri is always the
  * last, collapsed section (governing task Phase 2/4.4 invariant).
+ *
+ * Round 2 Phase 2: pattern candidates / clinician observations / final
+ * assessment / follow-up targets are CONTROLLED (owned by DoctorWorkspace,
+ * which debounce-saves them) rather than local useState.
+ * Round 2 Phase 3: "여성·생식 정보" only renders when
+ * `reproductive_status.derived.source` is non-null — i.e. WOMEN_SAFETY_01
+ * was actually asked/answered, or the postpartum/pregnancy module already
+ * supplied a derived reproductive fact. That single existing DERIVED field
+ * already correctly resolves to null for every case with nothing recorded
+ * (most commonly: male patients, for whom WOMEN_SAFETY_01 is never asked)
+ * — no new sex/age/menopause inference is added here.
  */
-import { useState } from 'react'
 import {
   Field,
   MyungriCompactCard,
@@ -23,33 +33,41 @@ import { HerbalFinalAssessmentCard } from './FinalAssessmentCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { EmrPreviewCard } from './EmrPreviewCard'
 import { buildHerbalWorkspaceEmrPreview } from './emrPreview'
-import { emptyHerbalFinalAssessment, HERBAL_FOLLOW_UP_OPTIONS, type FollowUpTarget } from './finalAssessment'
+import { HERBAL_FOLLOW_UP_OPTIONS, type FollowUpTarget, type HerbalFinalAssessment } from './finalAssessment'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import type { ClinicianObservationItem } from './clinicianObservation'
 
 export function HerbalWorkspace({
   payload,
-  patternCandidates = [],
-  clinicianObservations = [],
+  patternCandidates,
+  onChangePatternCandidate,
+  clinicianObservations,
+  onChangeClinicianObservation,
+  finalAssessment,
+  onChangeFinalAssessment,
+  followUpTargets,
+  onChangeFollowUpTargets,
 }: {
   payload: DoctorPayload
-  patternCandidates?: HerbalPatternCandidate[]
-  clinicianObservations?: ClinicianObservationItem[]
+  patternCandidates: HerbalPatternCandidate[]
+  onChangePatternCandidate: (next: HerbalPatternCandidate) => void
+  clinicianObservations: ClinicianObservationItem[]
+  onChangeClinicianObservation: (next: ClinicianObservationItem) => void
+  finalAssessment: HerbalFinalAssessment
+  onChangeFinalAssessment: (next: HerbalFinalAssessment) => void
+  followUpTargets: FollowUpTarget[]
+  onChangeFollowUpTargets: (next: FollowUpTarget[]) => void
 }) {
   const r = payload.responses
   const { flags } = payload
   const saju = payload.myungri_calculation
   const safetyCats = safetyIssueCategories(flags)
   const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
-
-  const [candidates, setCandidates] = useState<HerbalPatternCandidate[]>(patternCandidates)
-  const [observations, setObservations] = useState<ClinicianObservationItem[]>(clinicianObservations)
-  const [finalAssessment, setFinalAssessment] = useState(emptyHerbalFinalAssessment)
-  const [followUpTargets, setFollowUpTargets] = useState<FollowUpTarget[]>([])
+  const hasReproductiveData = r.reproductive_status.derived.source !== null
 
   const emrText = buildHerbalWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
-    clinicianObservations: observations,
+    clinicianObservations,
     finalAssessment,
     followUpTargets,
   })
@@ -66,6 +84,12 @@ export function HerbalWorkspace({
     { qid: 'HERB_THIRST', label: '갈증', value: r.constitution_basics.thirst_level },
   ]
   const populatedSystemic = systemicFields.filter((f) => !isEmptyValue(f.value as never))
+
+  function handleAdoptToFinal(candidate: HerbalPatternCandidate) {
+    const existing = finalAssessment.finalPatternOrMechanism.trim()
+    const next = existing ? `${existing}\n${candidate.displayName}` : candidate.displayName
+    onChangeFinalAssessment({ ...finalAssessment, finalPatternOrMechanism: next, recordedAt: new Date().toISOString() })
+  }
 
   return (
     <div className="workspace__herbal">
@@ -94,16 +118,18 @@ export function HerbalWorkspace({
         </div>
       </section>
 
-      <section className="workspace__block">
-        <h3>여성·생식 정보</h3>
-        <div className="doctor__grid">
-          <Field
-            qid="WOMEN_SAFETY_01"
-            label="환자가 답한 것"
-            value={r.reproductive_status.reproductive_status as never}
-          />
-        </div>
-      </section>
+      {hasReproductiveData && (
+        <section className="workspace__block">
+          <h3>여성·생식 정보</h3>
+          <div className="doctor__grid">
+            <Field
+              qid="WOMEN_SAFETY_01"
+              label="환자가 답한 것"
+              value={r.reproductive_status.reproductive_status as never}
+            />
+          </div>
+        </section>
+      )}
 
       <section className="workspace__block">
         <h3>약물·병력</h3>
@@ -116,14 +142,15 @@ export function HerbalWorkspace({
 
       <section className="workspace__block">
         <h3>핵심 병기 후보</h3>
-        {candidates.length === 0 ? (
+        {patternCandidates.length === 0 ? (
           <p className="workspace__empty">현재 후보로 제안된 병기가 없습니다.</p>
         ) : (
-          candidates.map((c) => (
+          patternCandidates.map((c) => (
             <PatternCandidateCard
               key={c.id}
               candidate={c}
-              onChange={(next) => setCandidates((prev) => prev.map((p) => (p.id === next.id ? next : p)))}
+              onChange={onChangePatternCandidate}
+              onAdoptToFinal={() => handleAdoptToFinal(c)}
             />
           ))
         )}
@@ -131,10 +158,7 @@ export function HerbalWorkspace({
 
       <section className="workspace__block">
         <h3>오늘 반드시 확인</h3>
-        <ClinicianObservationChecklist
-          items={observations}
-          onChangeItem={(next) => setObservations((prev) => prev.map((o) => (o.id === next.id ? next : o)))}
-        />
+        <ClinicianObservationChecklist items={clinicianObservations} onChangeItem={onChangeClinicianObservation} />
       </section>
 
       <details className="workspace__myungri">
@@ -144,12 +168,12 @@ export function HerbalWorkspace({
         <MyungriCompactCard saju={saju} />
       </details>
 
-      <HerbalFinalAssessmentCard value={finalAssessment} onChange={setFinalAssessment} />
+      <HerbalFinalAssessmentCard value={finalAssessment} onChange={onChangeFinalAssessment} />
 
       <FollowUpTargetPicker
         options={HERBAL_FOLLOW_UP_OPTIONS}
         selected={followUpTargets}
-        onChange={setFollowUpTargets}
+        onChange={onChangeFollowUpTargets}
       />
 
       <EmrPreviewCard text={emrText} />

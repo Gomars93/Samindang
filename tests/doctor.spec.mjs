@@ -1240,4 +1240,20 @@ function detailsRange(html, classMarker) {
   assert('SSR (no localStorage): workstation setup banner renders (localStorage absence handled safely, no throw)', html.includes('워크스테이션 설정 필요'))
 }
 
+// 14. Round 2 Phase 3: DoctorView's own (below-workspace) "여성 안전정보"
+//     section only renders when reproductive_status.derived.source is
+//     non-null -- a male patient (or any patient with nothing reproductive
+//     recorded) must not see an empty "확인되지 않음" card. Same fix/same
+//     signal as HerbalWorkspace's own conditional section, applied here
+//     because this round's visual QA screenshot caught the identical
+//     problem in this separate, pre-existing legacy section.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('male patient fixture: 여성 안전정보 section is absent (nothing reproductive recorded)', !html.includes('여성 안전정보'))
+}
+{
+  const html = renderDoctorView('여성 건강 주호소')
+  assert('female patient fixture with WOMEN_SAFETY_01 answered: 여성 안전정보 section renders', html.includes('여성 안전정보'))
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

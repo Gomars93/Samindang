@@ -113,6 +113,10 @@ export function createStore(dataDir) {
         submission,
         myungri,
         judgment: null,
+        // Doctor Clinical Workspace clinician-entered state (round 2 Phase 2).
+        // Sibling field to judgment, saved through its own route
+        // (saveWorkspace) — never mixed into judgment's read-modify-write.
+        workspace: null,
       }
       await atomicWrite(recordPath(dataDir, id), record)
       return record
@@ -192,6 +196,30 @@ export function createStore(dataDir) {
     })
   }
 
+  // Doctor Clinical Workspace clinician-entered state (round 2 Phase 2).
+  // Same read-modify-write-under-lock shape as saveJudgment, on the same
+  // per-id lock queue (so a judgment save and a workspace save for the
+  // same submission still serialize against each other, never interleave
+  // into a torn read). Never touches submission/myungri/judgment.
+  async function saveWorkspace(id, workspace) {
+    return withLock(id, async () => {
+      const record = await readRecord(id)
+      if (!record) return null
+      const before = { submission: record.submission, myungri: record.myungri, judgment: record.judgment }
+      record.workspace = workspace
+      record.updated_at = new Date().toISOString()
+      if (
+        record.submission !== before.submission ||
+        record.myungri !== before.myungri ||
+        record.judgment !== before.judgment
+      ) {
+        throw new Error('invariant violated: saveWorkspace mutated submission/myungri/judgment')
+      }
+      await atomicWrite(recordPath(dataDir, id), record)
+      return record
+    })
+  }
+
   // 보존기한(retention) 정리. days <= 0(또는 falsy)이면 아무것도 지우지 않는다
   // (SAMINDANG_RETENTION_DAYS=0 = 자동삭제 비활성화). 반환값은 삭제 건수뿐 —
   // 내용은 절대 로그로 남기지 않는다.
@@ -236,6 +264,7 @@ export function createStore(dataDir) {
     getSubmission,
     setStatus,
     saveJudgment,
+    saveWorkspace,
     cleanupOlderThan,
     purgeAll,
     createVisit: visits.createVisit,

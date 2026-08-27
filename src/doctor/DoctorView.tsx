@@ -15,6 +15,7 @@ import {
   getSubmission,
   listSubmissions,
   saveJudgment as saveJudgmentToServer,
+  saveWorkspaceState as saveWorkspaceStateToServer,
   setSubmissionStatus,
   type RecorderResult,
   type SubmissionRecord,
@@ -2043,6 +2044,21 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
         }
         synthetic={mode === 'fixtures' ? (activeScenario?.synthetic ?? undefined) : undefined}
+        submissionId={mode === 'server' ? selectedId ?? undefined : undefined}
+        initialWorkspaceState={mode === 'server' ? selectedRecord?.workspace ?? null : undefined}
+        onSaveWorkspace={
+          mode === 'server' && selectedId
+            ? async (state) => {
+                const result = await saveWorkspaceStateToServer(selectedId, state)
+                // selectedRecord갱신: 재열람 시(같은 세션 안에서 selectedId를 다시
+                // 고를 때) 이미 저장된 workspace를 stale하지 않게 반영한다 — 기존
+                // saveJudgmentToServer onSave 콜백과 동일한 이유(위 judgment 콜백
+                // 주석 참고).
+                if (result.ok) setSelectedRecord(result.data)
+                return { ok: result.ok }
+              }
+            : undefined
+        }
       />
 
       {/*
@@ -2251,27 +2267,37 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
-      <section className="doctor__section">
-        <h2>여성 안전정보</h2>
-        <div className="doctor__grid">
-          <Field
-            qid="WOMEN_SAFETY_01"
-            label="환자가 답한 것 (WOMEN_SAFETY_01)"
-            value={r.reproductive_status.reproductive_status as string[] | null}
-          />
-        </div>
-        <div className="doctor__derivedBox">
-          <p className="doctor__derivedLabel">
-            시스템이 계산한 것 — 출처: {sourceLabel(r.reproductive_status.derived.source)}
-          </p>
-          <ul>
-            <li>임신 중: {boolLabel(r.reproductive_status.derived.pregnant)}</li>
-            <li>임신 가능성: {boolLabel(r.reproductive_status.derived.pregnancy_possible)}</li>
-            <li>출산 후 1년 이내: {boolLabel(r.reproductive_status.derived.postpartum_1y)}</li>
-            <li>모유수유 중: {boolLabel(r.reproductive_status.derived.breastfeeding)}</li>
-          </ul>
-        </div>
-      </section>
+      {/*
+        Round 2 Phase 3 (same fix as HerbalWorkspace's 여성·생식 정보):
+        derived.source is non-null only when WOMEN_SAFETY_01 was actually
+        asked/answered, or the postpartum/pregnancy module already supplied
+        a derived fact -- for a male patient (or any patient where nothing
+        reproductive was ever recorded) this is null, and showing a card
+        full of "확인되지 않음" bullets is pure clutter, not information.
+      */}
+      {r.reproductive_status.derived.source !== null && (
+        <section className="doctor__section">
+          <h2>여성 안전정보</h2>
+          <div className="doctor__grid">
+            <Field
+              qid="WOMEN_SAFETY_01"
+              label="환자가 답한 것 (WOMEN_SAFETY_01)"
+              value={r.reproductive_status.reproductive_status as string[] | null}
+            />
+          </div>
+          <div className="doctor__derivedBox">
+            <p className="doctor__derivedLabel">
+              시스템이 계산한 것 — 출처: {sourceLabel(r.reproductive_status.derived.source)}
+            </p>
+            <ul>
+              <li>임신 중: {boolLabel(r.reproductive_status.derived.pregnant)}</li>
+              <li>임신 가능성: {boolLabel(r.reproductive_status.derived.pregnancy_possible)}</li>
+              <li>출산 후 1년 이내: {boolLabel(r.reproductive_status.derived.postpartum_1y)}</li>
+              <li>모유수유 중: {boolLabel(r.reproductive_status.derived.breastfeeding)}</li>
+            </ul>
+          </div>
+        </section>
+      )}
 
       <section className="doctor__section">
         <h2>검사자료 / 원장에게 하고 싶은 말</h2>

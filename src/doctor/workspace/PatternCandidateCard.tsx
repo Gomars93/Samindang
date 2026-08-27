@@ -10,9 +10,18 @@ const STATUS_OPTIONS: PatternCandidateStatus[] = ['ACCEPTED', 'HELD', 'REJECTED'
 export function PatternCandidateCard({
   candidate,
   onChange,
+  onAdoptToFinal,
 }: {
   candidate: HerbalPatternCandidate
   onChange: (next: HerbalPatternCandidate) => void
+  /**
+   * Optional convenience action, shown only once the clinician has already
+   * marked this candidate ACCEPTED. Never fires automatically — the
+   * clinician must click it, and the destination field stays freely
+   * editable afterward (mission Phase 8: "채택 후보" must not silently
+   * become the final pattern).
+   */
+  onAdoptToFinal?: () => void
 }) {
   return (
     <div className={`workspace__candidateCard workspace__candidateCard--${candidate.status.toLowerCase()}`}>
@@ -79,6 +88,12 @@ export function PatternCandidateCard({
         placeholder="판단 메모(선택)"
         aria-label={`${candidate.displayName} 판단 메모`}
       />
+
+      {candidate.status === 'ACCEPTED' && onAdoptToFinal && (
+        <button type="button" className="workspace__adoptBtn" onClick={onAdoptToFinal}>
+          최종 판단에 가져오기 →
+        </button>
+      )}
     </div>
   )
 }

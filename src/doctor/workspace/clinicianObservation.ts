@@ -41,6 +41,25 @@ export function emptyClinicianObservation(
   return { id, category, title, checked: false, value: '', recordedAt: null }
 }
 
+/**
+ * Standard herbal-visit checklist (round 2 Phase 2/8): 설진/맥진/복진 are
+ * the three exam actions every herbal visit involves, plus a generic
+ * follow-up-question slot. This is NOT a clinical inference — it does not
+ * read any patient fact or branch on anything; it is the same fixed four
+ * checklist items every time, exactly like a paper visit-note template.
+ * Populating it by default (instead of only in SYNTHETIC preview data) is
+ * what makes "오늘 반드시 확인" show real, usable checklist rows for a
+ * real production submission instead of an empty state.
+ */
+export function defaultClinicianObservations(): ClinicianObservationItem[] {
+  return [
+    emptyClinicianObservation('obs_tongue', 'TONGUE', '설진 소견'),
+    emptyClinicianObservation('obs_pulse', 'PULSE', '맥진 소견'),
+    emptyClinicianObservation('obs_abdomen', 'ABDOMEN', '복진 소견'),
+    emptyClinicianObservation('obs_followup', 'FOLLOW_UP_QUESTION', '추가 확인문진'),
+  ]
+}
+
 export function countStillNeedsCheck(items: ClinicianObservationItem[]): number {
   return items.filter((i) => !i.checked).length
 }

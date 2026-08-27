@@ -90,6 +90,38 @@
   outline-offset: 2px;
 }
 
+/* ---------- profile override notice (round 2 Phase 5) ---------- */
+.workspace__overrideNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: -8px 0 0;
+  padding: 8px 14px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workspace__overrideNotice__reset {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.workspace__overrideNotice__reset:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ---------- mixed-profile tabs ---------- */
 .workspace__tabs {
   display: flex;
@@ -519,6 +551,24 @@
   flex-wrap: wrap;
 }
 
+.workspace__adoptBtn {
+  display: inline-block;
+  margin-top: 8px;
+  border: 1px dashed var(--primary);
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.workspace__adoptBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ---------- clinician observation checklist ---------- */
 .workspace__observationChecklist {
   display: flex;
@@ -698,6 +748,48 @@
   color: var(--text-muted);
 }
 
+.workspace__followUp__values {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.workspace__followUp__valueRow {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.6fr) 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.workspace__followUp__valueLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* ---------- save status (round 2 Phase 2) ---------- */
+.workspace__saveStatus {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: right;
+  min-height: 16px;
+}
+
+.workspace__saveStatus[data-status='saving'] {
+  color: var(--text-muted);
+}
+
+.workspace__saveStatus[data-status='saved'] {
+  color: var(--primary);
+}
+
+.workspace__saveStatus[data-status='error'] {
+  color: var(--danger);
+}
+
 /* ---------- EMR preview ---------- */
 .workspace__emrPreview {
   background: var(--surface);
@@ -806,5 +898,13 @@
   .workspace__observationRow {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+  .workspace__followUp__valueRow {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .workspace__overrideNotice {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

@@ -177,6 +177,32 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     })
   }
 
+  // Round 7 review fix (pointer authority): a token record's own `status`
+  // field can be stale if issueToken's phase-3 best-effort invalidation
+  // failed to persist after its phase-2 pointer swap already succeeded --
+  // the OLD record would still say ACTIVE on disk even though a newer
+  // token is now the visit's real active capability. The by-visit pointer
+  // is the single source of truth for "which token is currently active for
+  // this visit" (that is the whole point of phase 2 being the atomic
+  // switch point), so any record read directly by hash -- bypassing the
+  // pointer, as resolveToken/consumeTokenWithAction below both do for
+  // O(1) lookup -- must be checked against the pointer before its ACTIVE
+  // status is trusted. getActiveForVisit/invalidateActiveForVisit above
+  // need no such check: they already resolve the token THROUGH the
+  // pointer, so they can never observe a superseded record in the first
+  // place.
+  async function currentPointerHash(visit_id) {
+    const pointer = await readJson(pointerPath(baseDir, visit_id))
+    return pointer?.active_token_hash ?? null
+  }
+
+  function withPointerAuthority(record, tokenHash, pointerHash) {
+    if (record.status !== 'ACTIVE' || pointerHash === tokenHash) return record
+    // The pointer has already moved on to a different token -- this one is
+    // no longer authoritative regardless of what its own status says.
+    return { ...record, status: 'INVALIDATED', invalidated_at: record.invalidated_at ?? new Date().toISOString() }
+  }
+
   // Doctor-facing status read -- never returns/reconstructs the raw token
   // (impossible; only the hash is stored). Used for "만료까지 남은 시간"/
   // "무효화" UI, not for building a patient link (that only exists at the
@@ -206,11 +232,17 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
 
   // Public-endpoint lookup: format-validate first (fails closed on garbage
   // without ever touching disk), then a single hashed-filename read -- no
-  // scanning, no plaintext-token comparison loop.
+  // scanning, no plaintext-token comparison loop. Read-only (no lock held
+  // here), so any pointer-authority correction is computed for THIS
+  // response only, never persisted -- consumeTokenWithAction below is the
+  // one that self-heals the on-disk record, under its own token lock.
   async function resolveToken(rawToken) {
     if (!isValidTokenFormat(rawToken)) return null
     const tokenHash = hashToken(rawToken)
-    return readJson(tokenPath(baseDir, tokenHash))
+    const record = await readJson(tokenPath(baseDir, tokenHash))
+    if (!record) return null
+    const pointerHash = await currentPointerHash(record.visit_id)
+    return withPointerAuthority(record, tokenHash, pointerHash)
   }
 
   // Round 4 review fix (durability ordering): the primitive underneath
@@ -226,10 +258,18 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     if (!isValidTokenFormat(rawToken)) return { ok: false, reason: 'invalid' }
     const tokenHash = hashToken(rawToken)
     return withLock(`token:${tokenHash}`, async () => {
-      const record = await readJson(tokenPath(baseDir, tokenHash))
-      if (!record) return { ok: false, reason: 'invalid' }
+      const stored = await readJson(tokenPath(baseDir, tokenHash))
+      if (!stored) return { ok: false, reason: 'invalid' }
+      // Pointer-authority check (round 7 review fix): under this same
+      // token lock, so this is also the safe place to self-heal a stale
+      // on-disk ACTIVE status left by a failed phase-3 invalidation.
+      const pointerHash = await currentPointerHash(stored.visit_id)
+      const record = withPointerAuthority(stored, tokenHash, pointerHash)
       if (record.status === 'CONSUMED') return { ok: false, reason: 'consumed', record }
-      if (record.status === 'INVALIDATED') return { ok: false, reason: 'invalidated', record }
+      if (record.status === 'INVALIDATED') {
+        if (record !== stored) await atomicWrite(tokenPath(baseDir, tokenHash), record).catch(() => {})
+        return { ok: false, reason: 'invalidated', record }
+      }
       if (new Date(record.expires_at).getTime() < Date.now()) return { ok: false, reason: 'expired', record }
       const actionResult = await actionFn(record)
       record.status = 'CONSUMED'

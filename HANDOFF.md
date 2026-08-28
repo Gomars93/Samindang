@@ -1,6 +1,20 @@
 # Current Handoff
 
-## Objective (round 6 — round 5 리뷰 2차 엔지니어링 수정, 이번 세션)
+## Objective (round 7 — round 6 리뷰 3차 엔지니어링 수정, 이번 세션)
+PR #24에 대한 세 번째 follow-up review(Gomars93, "Round 6 re-review")가
+"이전 blocker는 크게 개선됐지만 3개 비임상 엔지니어링 이슈가 남아있다"며
+지적한 항목 — (1) 보안/정확성: phase 3(old 토큰 무효화) 쓰기가 실패하면
+old 토큰이 여전히 공개적으로 사용 가능한 상태로 남을 수 있음(pointer는
+전환됐지만 public resolve/consume이 pointer가 아니라 토큰 레코드 자신의
+status만 신뢰), (2) 프라이버시: `FollowUpScreen`이 여전히 자신의 child
+state(`activeToken`)에 평문 토큰을 들고 있음(round 6는 부모 state만
+비웠음), (3) 교차 레코드 stale data: `RevisitWorkspace`가 새
+visitId/patientId 로드 시작 시 이전 레코드의 prior 관련 state를 리셋하지
+않아, 새 prior-detail fetch가 실패하면 이전 환자 데이터가 새 환자
+화면에 남을 수 있음 — 을 수정한다. 새 임상 판단 없음. 상세는 아래
+Completed — Round 7 참고. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (round 6 — round 5 리뷰 2차 엔지니어링 수정, 이전 세션)
 PR #24에 대한 두 번째 follow-up review(Gomars93, "Round 5 follow-up")가
 round 5의 수정이 "prior 6 blockers는 해결됐지만 재검토에서 2차
 엔지니어링 gap을 발견"했다며 지적한 7개 항목 — 재발급 실패 안전성,
@@ -142,10 +156,50 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 6의 리뷰 수정/테스트/QA 전부 완료. Push 후 CI 재확인만
+- (없음 — round 7의 리뷰 수정/테스트/QA 전부 완료. Push 후 CI 재확인만
   남음.)
 
-## Completed — Round 6 (round 5 리뷰 2차 엔지니어링 수정, 이번 세션)
+## Completed — Round 7 (round 6 리뷰 3차 엔지니어링 수정, 이번 세션)
+"Round 6 re-review"가 지적한 3개 항목을 전부 수정했다. 새 임상
+threshold/추론/라우팅은 추가하지 않았다.
+
+1. **pointer 권위(pointer authority) 강제** —
+   `server/followUpSessionStore.js`의 `resolveToken`/
+   `consumeTokenWithAction`이 이제 토큰 레코드를 해시로 직접 읽은 뒤,
+   해당 visit의 by-visit pointer가 실제로 이 토큰 해시를 가리키는지
+   검증한다. `status`가 자신의 파일에 여전히 ACTIVE로 남아있어도(round
+   6의 phase 3 무효화 쓰기가 실패한 경우) pointer가 다른 토큰을 가리키면
+   INVALIDATED로 취급한다. `resolveToken`(읽기전용 공개 GET)은 이
+   보정을 응답에만 반영하고 디스크에 쓰지 않으며, `consumeTokenWithAction`
+   은 이미 보유한 락 안에서 잘못된 on-disk status를 self-heal(보정하여
+   저장)한다. "pointer 전환은 성공, old 토큰 무효화 쓰기만 실패"를
+   정밀 failure injection으로 재현해 old GET/POST가 fail closed(
+   INVALIDATED)되고 new 토큰은 계속 정상 동작함을 검증.
+2. **FollowUpScreen 자신의 state에서도 토큰 제거** — round 6는
+   `App.tsx`(부모)의 `followUpToken`만 비웠고, `FollowUpScreen.tsx`
+   내부의 `const [activeToken] = useState(token)`(마운트 시점에 고정된
+   자신만의 사본)은 완료 화면이 떠 있는 동안 계속 평문 토큰을 들고
+   있었다. `handleSubmit` 성공 직후 `setActiveToken(null)`을 호출해
+   이 사본도 명시적으로 비운다 — 이 시점 이후로는 `activeToken`을 다시
+   읽는 코드가 없으므로(최초 fetch effect는 마운트 시 1회만 실행,
+   submit 호출은 이미 인자로 값을 넘긴 뒤) 완료 화면 렌더링에 영향
+   없음.
+3. **RevisitWorkspace 레코드별 state 리셋** — 새 visitId/patientId
+   로드 effect 시작 시(비동기 fetch 전에) `priorHistory`/
+   `priorSubmission`/`priorVisitWorkspace`/`microFollowUpResponse`를
+   전부 null로 리셋하도록 추가했다. 기존에는 로딩 스피너가 "성공"
+   케이스에서만 이전 값을 가려줬을 뿐, 새 레코드의 prior-detail fetch가
+   실패하면 loading=false 이후 이전 환자의 데이터가 그대로 화면에
+   남을 수 있었다. 실제 헤드리스 브라우저로 재진1→재진2→(재진1의 자체
+   prior-detail fetch를 강제 실패시키며)재진1로 전환해도 재진2의
+   Care Plan 텍스트가 재진1의 "이전 방문 참고" 영역에 새지 않음을
+   확인.
+
+`tests/follow-up-session.spec.mjs` 151 → 158 assertion(pointer 권위
+failure injection 7건 추가). 실제 헤드리스 브라우저 QA 38 → 39
+체크(교차 레코드 stale-data 검증 1건 추가).
+
+## Completed — Round 6 (round 5 리뷰 2차 엔지니어링 수정, 이전 세션)
 "Round 5 follow-up" 리뷰가 지적한 7개 항목을 전부 수정했다. 새 임상
 threshold/추론/라우팅은 추가하지 않았다.
 
@@ -352,6 +406,16 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   판단이라 이 세션이 자체적으로 해소할 수 없는 항목이며, 차단이 아니라
   다음 human action이다.
 
+## Relevant Files (round 7 신규/주요 변경)
+- `server/followUpSessionStore.js`(`currentPointerHash`/
+  `withPointerAuthority` 신규, `resolveToken`/`consumeTokenWithAction`이
+  둘 다 사용).
+- `src/screens/FollowUpScreen.tsx`(`setActiveToken(null)` 추가),
+  `src/doctor/workspace/RevisitWorkspace.tsx`(load effect 시작 시
+  prior 관련 state 전부 리셋).
+- `tests/follow-up-session.spec.mjs`(151 → 158 assertion, pointer 권위
+  Part 2.7 신규).
+
 ## Relevant Files (round 6 신규/주요 변경)
 - `server/followUpSessionStore.js`(`issueToken` 재작성 — 2-phase 안전한
   swap), `server/store.js`(`startRevisit` dedup 캐시,
@@ -443,6 +507,17 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 7 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
+  test:all`(전체 green — `tests/follow-up-session.spec.mjs` 158
+  assertion[round 6의 151에서 pointer 권위 failure injection 7건
+  추가]), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+  passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+  'src/spec/*Adapter.ts'`(empty).
+- **Round 7 실제 헤드리스 브라우저 E2E QA**: 39개 체크 전부 통과(round
+  6의 38개에 교차 레코드 stale-data 검증 1건 추가 — 재진1→재진2→[재진1
+  자체 prior-detail fetch 강제 실패]→재진1 전환 시 재진2의 Care Plan
+  텍스트가 재진1의 "이전 방문 참고" 영역에 새지 않음을 확인).
 - **Round 6 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
   test:all`(전체 green — `tests/follow-up-session.spec.mjs` 151
@@ -535,7 +610,7 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 5 follow-up 리뷰의 7개 항목이 전부 수정되었으니 review
+2. round 6 re-review의 3개 항목이 전부 수정되었으니 review
    author(Gomars93)가 새 HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.

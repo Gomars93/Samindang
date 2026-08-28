@@ -66,15 +66,22 @@ export function FollowUpScreen({
   token: string | null
   onCompleted?: () => void
 }) {
-  // Round 6 review fix (token scrub from React memory): the parent
-  // (App.tsx) nulls its own `token` prop value once `onCompleted` fires
-  // below, so the raw token stops sitting in ANY React state after a
-  // successful submit -- not just the URL/history. This component must
-  // keep working off the value it had at MOUNT time, never a live re-read
-  // of a prop that is intentionally nulled out afterward (a live re-read
-  // would re-run the fetch effect below with token=null and could stomp
-  // the 'done' screen with 'unavailable'/'load_error').
-  const [activeToken] = useState(token)
+  // Round 6 review fix (token scrub from React memory), tightened in round
+  // 7: the parent (App.tsx) nulls its own `token` prop value once
+  // `onCompleted` fires below, but this component must keep working off
+  // the value it had at MOUNT time -- a live re-read of the prop would
+  // re-run the fetch effect below with token=null and could stomp the
+  // 'done' screen with 'unavailable'/'load_error'. That is why `token` is
+  // captured into this component's OWN state via useState(token) instead
+  // of read live. Round 7 review fix: that own copy was still never
+  // cleared, so the plaintext token kept sitting in THIS component's
+  // memory for the whole lifetime of the completion screen even after the
+  // parent's copy was gone. handleSubmit below now explicitly nulls
+  // `activeToken` itself right after a successful submit -- by then every
+  // read of it (the fetch effect ran once at mount; the submit call
+  // already captured it as a function argument) is already done, so
+  // clearing it cannot affect the 'done' screen that renders afterward.
+  const [activeToken, setActiveToken] = useState(token)
   const [screen, setScreen] = useState<Screen>('loading')
   const [unavailableReason, setUnavailableReason] = useState<string>('')
   const [targets, setTargets] = useState<Array<{ id: string; label: string }>>([])
@@ -185,6 +192,13 @@ export function FollowUpScreen({
     setAdverseEffectNote('')
     setSubmitError(null)
     setScreen('done')
+    // Round 7 review fix: release THIS component's own copy of the raw
+    // token too, not just the parent's -- every read of `activeToken` is
+    // already done by this point (the fetch effect only ever runs once at
+    // mount, and the submitFollowUpSession call above already captured it
+    // as a plain argument), so nulling it cannot affect the 'done' screen
+    // rendered by the state updates above.
+    setActiveToken(null)
     // Round 6 review fix: tell the parent to release its own copy of the
     // raw token from React state now that it has served its only purpose.
     onCompleted?.()

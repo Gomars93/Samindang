@@ -744,6 +744,61 @@ async function main() {
   }
 
   /* =====================================================================
+     Part 2.7 (round 7 review fix): pointer authority. A reissue's phase-2
+     pointer swap can succeed while its phase-3 best-effort invalidation of
+     the OLD token then fails -- the old record's own `status` field is
+     left stuck at ACTIVE even though the pointer has already moved on.
+     resolveToken/consumeTokenWithAction must not trust that stale status:
+     the pointer is the single source of truth for which token is really
+     active for a visit.
+     ===================================================================== */
+  {
+    const r7Root = await mkdtemp(path.join(tmpdir(), 'samindang-followup-review7-'))
+    try {
+      const followUpBaseDir = path.join(r7Root, 'follow-up-sessions')
+      const sessions = createFollowUpSessionStore(followUpBaseDir, { ttlMinutes: 30 })
+      const tokensDirPath = path.join(followUpBaseDir, 'tokens')
+
+      const { token: tokenA } = await sessions.issueToken({ visit_id: 'r7-visit', patient_id: 'r7-patient', targets: [] })
+
+      // Force phase 3's write (invalidating tokenA) to fail by blocking
+      // its OWN .tmp write target specifically -- tokenB's own record
+      // write and the pointer switch are both untouched by this, so both
+      // must succeed normally.
+      const tokenAHash = hashToken(tokenA)
+      const tokenATmpPath = path.join(tokensDirPath, `${tokenAHash}.json.tmp`)
+      await mkdir(tokenATmpPath, { recursive: true })
+
+      const { token: tokenB } = await sessions.issueToken({ visit_id: 'r7-visit', patient_id: 'r7-patient', targets: [] })
+
+      await rm(tokenATmpPath, { recursive: true, force: true })
+
+      // The on-disk record for tokenA is still (incorrectly) ACTIVE --
+      // this is the exact stale state phase 3's failure leaves behind.
+      const rawRecordAAfterFailure = JSON.parse(await readFile(path.join(tokensDirPath, `${tokenAHash}.json`), 'utf8'))
+      assert('pointer authority: setup check -- tokenA record is still stuck ACTIVE on disk after the injected phase-3 failure', rawRecordAAfterFailure.status === 'ACTIVE')
+
+      const resolvedA = await sessions.resolveToken(tokenA)
+      assert('pointer authority: resolveToken(oldToken) reports INVALIDATED, not the stale ACTIVE status, once the pointer has moved on', resolvedA.status === 'INVALIDATED')
+
+      const resolvedB = await sessions.resolveToken(tokenB)
+      assert('pointer authority: resolveToken(newToken) is unaffected and still reports ACTIVE', resolvedB.status === 'ACTIVE')
+
+      const consumeA = await sessions.consumeToken(tokenA)
+      assert('pointer authority: consumeToken(oldToken) fails closed with reason invalidated, never succeeds', consumeA.ok === false && consumeA.reason === 'invalidated')
+
+      const rawRecordAAfterConsumeAttempt = JSON.parse(await readFile(path.join(tokensDirPath, `${tokenAHash}.json`), 'utf8'))
+      assert('pointer authority: consumeTokenWithAction self-heals the stale on-disk status to INVALIDATED once it observes the mismatch', rawRecordAAfterConsumeAttempt.status === 'INVALIDATED')
+
+      const consumeB = await sessions.consumeToken(tokenB)
+      assert('pointer authority: consumeToken(newToken) still succeeds normally -- the fix does not affect the actually-active token', consumeB.ok === true)
+      assert('pointer authority: consumeToken(newToken) consumed the correct visit', consumeB.record.visit_id === 'r7-visit')
+    } finally {
+      await rm(r7Root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
      Part 3: HTTP-level -- doctor-route auth guards, public endpoint
      no-identifier-leak, CORS/body-size/rate-limit guards, and the full
      patient-tablet-facing lifecycle end to end.

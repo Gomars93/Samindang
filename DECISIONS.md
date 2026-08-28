@@ -530,3 +530,52 @@ Care Plan/재검 상세를 잃음, (6) URL/history는 스크럽했지만 React �
 - (+) `src/spec/*Logic.ts`/`*Adapter.ts` FROZEN zero-diff 유지, 새 임상
   threshold/추론 없음.
 - (−) 없음 — 전부 엔지니어링 정합성 수정.
+
+## 2026-08-28 — round 6 re-review 3차 엔지니어링 수정 (round 7)
+
+### Context
+round 6 수정에 대한 세 번째 리뷰("Round 6 re-review")가 "이전 blocker는
+크게 개선됐지만 비임상 엔지니어링 이슈 3개가 남아있다"고 지적했다: (1)
+`issueToken`의 phase 2(pointer 전환)는 성공했는데 phase 3(old 토큰
+무효화)만 실패하면, public `resolveToken`/`consumeTokenWithAction`이
+토큰 레코드를 해시로 직접 읽어 자신의 `status` 필드만 신뢰하고
+pointer와 대조하지 않으므로 old 토큰이 여전히 공개적으로 사용 가능한
+상태로 남을 수 있음(round 6의 주석은 "pointer가 안 가리키니 도달
+불가능"이라 주장했지만 실제로는 도달 가능했다), (2)
+`FollowUpScreen.tsx`의 `const [activeToken] = useState(token)`가 완료
+화면이 떠 있는 동안에도 평문 토큰을 계속 들고 있어 round 6의 "ANY
+React state에서 제거됨" 주장이 사실이 아니었음, (3) `RevisitWorkspace`
+가 새 visitId/patientId 로드 시작 시 prior 관련 state(`priorHistory`/
+`priorSubmission`/`priorVisitWorkspace`/`microFollowUpResponse`)를
+리셋하지 않아, 새 레코드의 prior-detail fetch가 실패하면 이전 환자
+데이터가 새 환자 화면에 남을 수 있었음(DoctorView가 `<RevisitWorkspace>`
+를 `key` 없이 렌더링).
+
+### Decision
+3개 전부 수정한다.
+- **pointer 권위**: `resolveToken`/`consumeTokenWithAction`이 토큰의
+  `status`를 신뢰하기 전에 반드시 by-visit pointer가 그 토큰 해시를
+  가리키는지 확인한다. 불일치하면(자신은 ACTIVE라고 해도) INVALIDATED로
+  취급한다. `consumeTokenWithAction`은 이미 보유한 락 안에서 잘못된
+  on-disk 값을 self-heal한다.
+- **FollowUpScreen 자체 state 정리**: `handleSubmit` 성공 직후
+  `setActiveToken(null)`을 명시적으로 호출한다.
+- **RevisitWorkspace state 리셋**: load effect가 비동기 fetch를
+  시작하기 *전에* prior 관련 state 전부를 null로 리셋한다.
+
+### Reason
+pointer 권위 이슈는 round 6 자신의 주석이 근거로 삼은 가정("pointer가
+안 가리키므로 도달 불가능")이 실제 코드 경로(해시로 직접 읽는
+resolveToken/consumeTokenWithAction)와 맞지 않았던 것이 원인이다 —
+공개 조회 경로는 pointer를 거치지 않으므로, "unreachable"이라는 주장은
+그 경로에 대해서는 성립하지 않았다. 이번 수정은 pointer를 실제로
+"단일 진실 공급원"으로 만드는 마지막 단계다.
+
+### Consequences
+- (+) 3개 항목 전부 파일시스템 레벨 failure injection(pointer 권위) 또는
+  실제 헤드리스 브라우저 테스트(교차 레코드 stale-data)로 실증.
+  `tests/follow-up-session.spec.mjs` 151 → 158 assertion, 실제
+  헤드리스 브라우저 QA 38 → 39 체크.
+- (+) `src/spec/*Logic.ts`/`*Adapter.ts` FROZEN zero-diff 유지, 새 임상
+  threshold/추론 없음.
+- (−) 없음 — 전부 엔지니어링 정합성 수정.

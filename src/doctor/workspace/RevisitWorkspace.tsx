@@ -118,6 +118,18 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     let cancelled = false
     setLoading(true)
     skipNextSaveRef.current = true
+    // Round 7 review fix (cross-record stale-data safety): reset every
+    // record-scoped piece of state BEFORE the async load starts, not just
+    // on a successful fetch. Without this, if a NEW visitId/patientId's
+    // getSubmission()/getVisit()/getMicroFollowUpResponse() call fails
+    // after `loading` is set back to false, the PREVIOUS patient's prior-
+    // visit detail/response could still be sitting in state and render
+    // under the new patient -- the loading spinner only hides the window
+    // while everything succeeds, it does not protect a partial failure.
+    setPriorHistory(null)
+    setPriorSubmission(null)
+    setPriorVisitWorkspace(null)
+    setMicroFollowUpResponse(null)
 
     async function load() {
       const [visitResult, historyResult, mfuResult] = await Promise.all([

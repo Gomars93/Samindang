@@ -473,7 +473,11 @@ export function createApp({
           status = 400
           bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
         } else {
-          const { visit, token, session } = await store.startRevisit(patientId)
+          // Round 8: delivery_mode is optional operational metadata; an
+          // absent or unrecognized value normalizes to null in the store
+          // and changes nothing about the session that gets issued.
+          const revisitBody = await readBody(req).catch(() => null)
+          const { visit, token, session } = await store.startRevisit(patientId, revisitBody?.delivery_mode)
           status = 201
           await safeAudit({ event: 'follow_up_session_issued', visit_id: visit.id, actor: 'doctor' })
           await safeAudit({ event: 'visit_created', visit_id: visit.id, actor: 'doctor' })
@@ -486,6 +490,7 @@ export function createApp({
               token,
               expires_at: session.expires_at,
               targets: session.targets,
+              delivery_mode: session.delivery_mode,
             },
             cors,
           )

@@ -16,7 +16,9 @@ import {
 import { StaffCheckScreen } from './screens/StaffCheckScreen'
 import { StaffHerbalAddonHold } from './screens/StaffHerbalAddonHold'
 import { StartScreen } from './screens/StartScreen'
+import { StationScreen } from './screens/StationScreen'
 import { isServerConfigured, submitQuestionnaire } from './lib/serverClient'
+import { setStationCredential } from './lib/stationClient'
 import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
@@ -106,10 +108,45 @@ function parseFollowUpToken(hash: string): string | null {
   }
 }
 
+/**
+ * Round 8: `#station-setup=<credential>` is the ONE-TIME pairing link a
+ * staff member opens on a clinic tablet to bind it to a registered
+ * station. The credential is immediately moved into localStorage and
+ * scrubbed from the URL (the same replaceState hygiene FollowUpScreen
+ * applies to the patient capability token), then the tablet lands on the
+ * plain `#station` kiosk route it will stay on from then on.
+ */
+function parseStationSetupCredential(hash: string): string | null {
+  const match = hash.match(/^#station-setup=(.+)$/)
+  if (!match) return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
+
 function AppContent() {
   const [isDoctorView, setIsDoctorView] = useState(
     () => typeof window !== 'undefined' && window.location.hash.startsWith('#doctor'),
   )
+  // Station kiosk mode. Set once at mount from the URL and never cleared
+  // for this mount's lifetime -- a tablet left on the station route stays
+  // there all day.
+  const [isStationView] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const setupCredential = parseStationSetupCredential(window.location.hash)
+    if (setupCredential) {
+      setStationCredential(setupCredential)
+      // Scrub the credential out of the visible URL/history immediately --
+      // it is a long-lived device secret and must not sit in the address
+      // bar or the tablet's own history.
+      const cleanUrl = `${window.location.pathname}${window.location.search}#station`
+      window.history.replaceState({ samindangStation: true }, '', cleanUrl)
+      return true
+    }
+    return window.location.hash.startsWith('#station')
+  })
   const [followUpToken, setFollowUpToken] = useState<string | null>(() =>
     typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) : null,
   )
@@ -444,6 +481,10 @@ function AppContent() {
   }, [current, visible])
 
   /* ---------- render ---------- */
+
+  if (isStationView) {
+    return <StationScreen />
+  }
 
   if (followUpActive) {
     // token is intentionally NOT part of the key here: nulling it (via

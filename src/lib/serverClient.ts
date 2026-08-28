@@ -7,10 +7,13 @@ import type { ClinicianJudgment } from '../doctor/judgment'
 import type { WorkspaceState } from '../doctor/workspace/persistence'
 import type { VisitWorkspaceState } from '../doctor/workspace/visitWorkspace'
 import type {
+  DeliveryMode,
   FollowUpSessionInfo,
+  InputProvenance,
   IssuedFollowUpSession,
   RevisitQueueItem,
   RevisitStatus,
+  StationInfo,
 } from '../doctor/workspace/followUpSession'
 import { getStoredDoctorToken } from '../doctor/doctorToken'
 
@@ -319,9 +322,11 @@ type StartRevisitWire = {
 
 export function startRevisit(
   patientId: string,
+  deliveryMode?: DeliveryMode,
 ): Promise<ServerResult<{ visit: VisitRecord; session: IssuedFollowUpSession }>> {
   return request<StartRevisitWire>(`/api/patients/${encodeURIComponent(patientId)}/start-revisit`, {
     method: 'POST',
+    body: JSON.stringify({ delivery_mode: deliveryMode ?? null }),
   }).then((result) => {
     if (!result.ok) return result
     return {
@@ -371,6 +376,13 @@ type RevisitQueueWire = Array<{
   updated_at: string
   status: RevisitStatus
   needs_attention: boolean
+  delivery_mode: DeliveryMode | null
+  station_name: string | null
+  input_provenance: InputProvenance | null
+  session_created_at: string | null
+  assigned_at: string | null
+  patient_started_at: string | null
+  submitted_at: string | null
 }>
 
 export function listRevisitQueue(): Promise<ServerResult<RevisitQueueItem[]>> {
@@ -385,7 +397,96 @@ export function listRevisitQueue(): Promise<ServerResult<RevisitQueueItem[]>> {
         updatedAt: r.updated_at,
         status: r.status,
         needsAttention: r.needs_attention,
+        deliveryMode: r.delivery_mode ?? null,
+        stationName: r.station_name ?? null,
+        inputProvenance: r.input_provenance ?? null,
+        sessionCreatedAt: r.session_created_at ?? null,
+        assignedAt: r.assigned_at ?? null,
+        patientStartedAt: r.patient_started_at ?? null,
+        submittedAt: r.submitted_at ?? null,
       })),
     }
   })
+}
+
+/* ---------- Round 8: clinic tablet stations (STAFF side only) ----------
+ * The station's own two endpoints live in src/lib/stationClient.ts, which
+ * deliberately imports nothing from this file -- a station device never
+ * carries a doctor token. These functions are the RECEPTION side: register
+ * a tablet, list tablets, assign a patient to one, reset one.
+ */
+
+type StationWire = {
+  station_id: string
+  name: string
+  created_at: string
+  assignment: { visit_id: string; delivery_mode: string; status: string; assigned_at: string } | null
+}
+
+function mapStation(s: StationWire): StationInfo {
+  return {
+    stationId: s.station_id,
+    name: s.name,
+    createdAt: s.created_at,
+    assignment: s.assignment
+      ? {
+          visitId: s.assignment.visit_id,
+          deliveryMode: s.assignment.delivery_mode,
+          status: s.assignment.status,
+          assignedAt: s.assignment.assigned_at,
+        }
+      : null,
+  }
+}
+
+export function listStations(): Promise<ServerResult<StationInfo[]>> {
+  return request<{ stations: StationWire[] }>('/api/stations').then((result) => {
+    if (!result.ok) return result
+    return { ok: true, data: result.data.stations.map(mapStation) }
+  })
+}
+
+/**
+ * Registers a clinic tablet. The returned `credential` is the ONLY time
+ * this device secret is ever available -- the caller must immediately turn
+ * it into the one-time `#station-setup=` pairing link and never store it.
+ */
+export function registerStation(
+  name: string,
+): Promise<ServerResult<{ credential: string; stationId: string; name: string }>> {
+  return request<{ credential: string; station: { station_id: string; name: string } }>('/api/stations', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  }).then((result) => {
+    if (!result.ok) return result
+    return {
+      ok: true,
+      data: { credential: result.data.credential, stationId: result.data.station.station_id, name: result.data.station.name },
+    }
+  })
+}
+
+/**
+ * THE reception action: start a revisit for an explicitly-selected existing
+ * patient and hand it to a specific tablet. Deliberately returns no raw
+ * token -- the tablet fetches its own capability through its device-
+ * credentialed poll, so staff never handle the patient's capability at all.
+ */
+export function assignRevisitToStation(
+  stationId: string,
+  patientId: string,
+  deliveryMode: DeliveryMode = 'CLINIC_TABLET',
+): Promise<ServerResult<{ visit: VisitRecord; stationName: string }>> {
+  return request<{ visit: VisitRecord; station: { station_id: string; name: string } }>(
+    `/api/stations/${encodeURIComponent(stationId)}/assign`,
+    { method: 'POST', body: JSON.stringify({ patient_id: patientId, delivery_mode: deliveryMode }) },
+  ).then((result) => {
+    if (!result.ok) return result
+    return { ok: true, data: { visit: result.data.visit, stationName: result.data.station.name } }
+  })
+}
+
+/** Staff manually returns a tablet to its waiting screen. */
+export function resetStation(stationId: string): Promise<ServerResult<{ ok: true }>> {
+  return request(`/api/stations/${encodeURIComponent(stationId)}/reset`, { method: 'POST' })
 }

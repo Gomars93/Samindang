@@ -427,6 +427,57 @@
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Round 8: delivery mode + clinic tablet station management. */
+.doctor__revisitSession__modes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.doctor__revisitSession__qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.doctor__revisitSession__qr img {
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+}
+
+.doctor__revisitSession__stations {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.doctor__revisitSession__stations summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.doctor__revisitSession__stationList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.doctor__revisitSession__stationRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
 }
 
 .doctor__revisitSession__error {

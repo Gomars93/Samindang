@@ -987,6 +987,25 @@ input {
   margin-top: 10px;
 }
 
+/*
+ * Round 8: clinic tablet STATION kiosk (StationScreen.tsx). The waiting and
+ * thank-you screens are read across a room by an elderly patient who was
+ * just handed the tablet, so they are deliberately larger and calmer than
+ * any other screen in the app -- big text, generous spacing, nothing to
+ * read closely and nothing to act on.
+ */
+.station__waiting .title,
+.station__done .title {
+  font-size: clamp(32px, 6vw, 52px);
+  margin-bottom: 16px;
+}
+
+.station__waiting .helper,
+.station__done .helper {
+  font-size: clamp(18px, 3vw, 26px);
+  line-height: 1.6;
+}
+
 .helper--strong {
   font-weight: 700;
   color: var(--text);

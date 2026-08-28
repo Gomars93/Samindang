@@ -15,10 +15,14 @@ import {
   getPatientHistory,
   getRecorderResults,
   getSubmission,
+  assignRevisitToStation,
   invalidateFollowUpSession,
   listRevisitQueue,
+  listStations,
   listSubmissions,
+  registerStation,
   reissueFollowUpSession,
+  resetStation,
   saveJudgment as saveJudgmentToServer,
   saveWorkspaceState as saveWorkspaceStateToServer,
   setSubmissionStatus,
@@ -29,8 +33,9 @@ import {
 } from '../lib/serverClient'
 import type { PatientHistoryResult } from './workspace/longitudinal'
 import type { MicroFollowUpResponse } from './workspace/microFollowUp'
-import type { RevisitQueueItem } from './workspace/followUpSession'
-import { REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
+import { DELIVERY_MODE_LABEL, INPUT_PROVENANCE_LABEL, REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+import { FollowUpQrCode } from './workspace/FollowUpQrCode'
 import { RevisitWorkspace } from './workspace/RevisitWorkspace'
 import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
@@ -1674,6 +1679,22 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   // server also now dedupes a rapid repeat call itself (server/store.js's
   // startRevisit), so this is defense in depth, not the only guard.
   const [startRevisitPending, setStartRevisitPending] = useState(false)
+  // Round 8 (delivery-channel-agnostic Micro Follow-up): how staff intends
+  // this session's link to reach the patient. CLINIC_TABLET is the default
+  // because it is the elderly-friendly in-clinic path the clinic actually
+  // runs on -- QR is the smartphone-capable fallback, not the primary.
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('CLINIC_TABLET')
+  const [stations, setStations] = useState<StationInfo[]>([])
+  const [selectedStationId, setSelectedStationId] = useState<string>('')
+  const [assignPending, setAssignPending] = useState(false)
+  const [assignedStationName, setAssignedStationName] = useState<string | null>(null)
+  // The one-time station pairing link, held ONLY in memory from the moment
+  // registration returns it -- the server never returns this device
+  // credential again (only its hash is stored), exactly like the patient
+  // capability token.
+  const [newStationPairing, setNewStationPairing] = useState<{ name: string; link: string } | null>(null)
+  const [newStationName, setNewStationName] = useState('')
+  const [stationError, setStationError] = useState<string | null>(null)
   // Local-only: the one-time patient link, held ONLY in this component's
   // memory from the moment "재진 간단 문진 시작"/"재발급" returns it. The
   // server never returns the raw token again after that single response
@@ -1772,6 +1793,14 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       const result = await listRevisitQueue()
       if (cancelled) return
       if (result.ok) setRevisits(result.data)
+      // Round 8: stations poll on the same cadence so an assigned tablet's
+      // row reflects reality (assigned / freed) without a manual refresh.
+      const stationResult = await listStations()
+      if (cancelled) return
+      if (stationResult.ok) {
+        setStations(stationResult.data)
+        setSelectedStationId((current) => current || stationResult.data[0]?.stationId || '')
+      }
     }
     poll()
     const timer = setInterval(poll, POLL_MS)
@@ -1994,7 +2023,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     setStartRevisitPending(true)
     setRevisitActionError(null)
     try {
-      const result = await startRevisit(selectedRecord.patient_id)
+      const result = await startRevisit(selectedRecord.patient_id, deliveryMode)
       if (result.ok) {
         setIssuedSession({
           visitId: result.data.visit.id,
@@ -2041,6 +2070,71 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
   function patientFollowUpLink(token: string): string {
     return `${window.location.origin}${window.location.pathname}#follow-up=${token}`
+  }
+
+  /* ---------- Round 8: clinic tablet stations (reception surface) ---------- */
+
+  function stationPairingLink(credential: string): string {
+    return `${window.location.origin}${window.location.pathname}#station-setup=${credential}`
+  }
+
+  async function refreshStations() {
+    const result = await listStations()
+    if (result.ok) {
+      setStations(result.data)
+      // Keep a sensible default selected so the common case is one click.
+      setSelectedStationId((current) => current || result.data[0]?.stationId || '')
+    }
+  }
+
+  async function handleRegisterStation() {
+    const name = newStationName.trim()
+    if (!name) return
+    setStationError(null)
+    const result = await registerStation(name)
+    if (!result.ok) {
+      setStationError(result.error)
+      return
+    }
+    // Shown exactly once. Staff opens this on the tablet itself; the tablet
+    // stores the credential and scrubs it from its own URL (see App.tsx).
+    setNewStationPairing({ name: result.data.name, link: stationPairingLink(result.data.credential) })
+    setNewStationName('')
+    await refreshStations()
+  }
+
+  // THE front-desk action: assign this already-open patient's new revisit to
+  // a specific tablet. patient_id comes from the record already on screen --
+  // never matched from a name/phone/DOB, and the tablet never picks a
+  // patient itself.
+  async function handleAssignToStation() {
+    if (!selectedRecord?.patient_id || !selectedStationId || assignPending) return
+    setAssignPending(true)
+    setRevisitActionError(null)
+    try {
+      const result = await assignRevisitToStation(selectedStationId, selectedRecord.patient_id, 'CLINIC_TABLET')
+      if (result.ok) {
+        setAssignedStationName(result.data.stationName)
+        setIssuedSession(null)
+        setRetryNonce((n) => n + 1)
+        await refreshStations()
+      } else {
+        setRevisitActionError(result.error)
+      }
+    } finally {
+      setAssignPending(false)
+    }
+  }
+
+  async function handleResetStation(stationId: string) {
+    setStationError(null)
+    const result = await resetStation(stationId)
+    if (!result.ok) {
+      setStationError(result.error)
+      return
+    }
+    setAssignedStationName(null)
+    await refreshStations()
   }
 
   async function handleCopyPatientLink() {
@@ -2248,7 +2342,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                   {REVISIT_STATUS_LABEL[rv.status]}
                   {rv.needsAttention && ' · 추가 확인 필요'}
                 </span>
-                <span className="doctorField__value">{relativeTime(rv.createdAt)} ({new Date(rv.createdAt).toLocaleString('ko-KR')})</span>
+                <span className="doctorField__value">
+                  {relativeTime(rv.createdAt)} ({new Date(rv.createdAt).toLocaleString('ko-KR')})
+                  {/* Round 8 operational metadata -- never clinical. */}
+                  {rv.deliveryMode && ` · ${DELIVERY_MODE_LABEL[rv.deliveryMode]}`}
+                  {rv.stationName && ` · ${rv.stationName}`}
+                  {rv.inputProvenance === 'STAFF_ASSISTED' && ` · ${INPUT_PROVENANCE_LABEL.STAFF_ASSISTED}`}
+                </span>
               </button>
             ))}
           </div>
@@ -2287,7 +2387,77 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       {mode === 'server' && selectedRecord?.patient_id && (
         <section className="doctor__section doctor__revisitSession">
           <h2>재진 간단 문진 (Micro Follow-up)</h2>
-          {!issuedSession ? (
+
+          {/*
+            Round 8: delivery mode is chosen FIRST, because it decides what
+            the rest of this panel does -- assign a clinic tablet, show a
+            QR, or (staff-assisted / pre-visit) just issue the link. It is
+            operational metadata only: the questions, the Follow-up Targets,
+            and everything clinical are identical down every channel.
+          */}
+          <div className="doctor__revisitSession__modes" role="group" aria-label="전달 방식">
+            {(Object.keys(DELIVERY_MODE_LABEL) as DeliveryMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={deliveryMode === m}
+                className={`workspace__followUpChip${deliveryMode === m ? ' workspace__followUpChip--active' : ''}`}
+                onClick={() => {
+                  setDeliveryMode(m)
+                  setAssignedStationName(null)
+                }}
+              >
+                {DELIVERY_MODE_LABEL[m]}
+              </button>
+            ))}
+          </div>
+
+          {deliveryMode === 'CLINIC_TABLET' ? (
+            <div className="doctor__revisitSession__issued">
+              {stations.length === 0 ? (
+                <p className="doctor__revisitSession__hint">
+                  등록된 원내 태블릿이 없습니다 — 아래 "원내 태블릿 관리"에서 먼저 등록해 주세요.
+                </p>
+              ) : (
+                <>
+                  <label className="doctorField__label" htmlFor="doctor-station-select">
+                    배정할 태블릿
+                  </label>
+                  <select
+                    id="doctor-station-select"
+                    value={selectedStationId}
+                    onChange={(e) => setSelectedStationId(e.target.value)}
+                  >
+                    {stations.map((s) => (
+                      <option key={s.stationId} value={s.stationId}>
+                        {s.name}
+                        {s.assignment ? ' (사용 중)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="doctor__revisitSession__actions">
+                    <button
+                      type="button"
+                      className="judgment__recordBtn"
+                      onClick={handleAssignToStation}
+                      disabled={assignPending || !selectedStationId}
+                    >
+                      {assignPending ? '배정 중…' : '이 태블릿에 배정'}
+                    </button>
+                  </div>
+                  {assignedStationName && (
+                    <p className="doctor__revisitSession__hint">
+                      「{assignedStationName}」에 배정되었습니다 — 환자에게 그 태블릿을 건네주세요. 환자는 이름·전화번호를
+                      입력하지 않습니다.
+                    </p>
+                  )}
+                  <p className="doctor__revisitSession__hint">
+                    이미 다른 환자가 배정된 태블릿에 새로 배정하면 이전 링크는 자동으로 무효화됩니다.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : !issuedSession ? (
             <>
               <button
                 type="button"
@@ -2306,11 +2476,24 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               <p>
                 환자용 링크 (만료: {new Date(issuedSession.expiresAt).toLocaleString('ko-KR')})
               </p>
+              {deliveryMode === 'PERSONAL_QR' && <FollowUpQrCode url={patientFollowUpLink(issuedSession.token)} />}
               <code className="doctor__revisitSession__link">{patientFollowUpLink(issuedSession.token)}</code>
               {issuedSession.targetCount === 0 && (
                 <p className="doctor__revisitSession__hint">
                   이 환자는 이전 방문에 기록된 추적 항목이 없습니다 — 재확인 항목 없이 전반적 변화 · 새로운 증상 ·
                   이상반응만 묻는 링크가 발급되었습니다.
+                </p>
+              )}
+              {deliveryMode === 'STAFF_ASSISTED' && (
+                <p className="doctor__revisitSession__hint">
+                  환자가 기기를 쓰기 어려운 경우, 직원이 이 링크를 열어 같은 질문을 읽어드리고 환자가 말한 답을 그대로
+                  입력합니다. 답변은 여전히 <strong>환자가 보고한 사실</strong>이며, 원장이 관찰한 소견이 아닙니다.
+                </p>
+              )}
+              {deliveryMode === 'PREVISIT_LINK' && (
+                <p className="doctor__revisitSession__hint">
+                  내원 전 전달용 링크입니다. 문자/카카오 자동 발송은 아직 연동되지 않았습니다 — 현재는 이 링크를 직접
+                  복사해 전달해 주세요.
                 </p>
               )}
               <div className="doctor__revisitSession__actions">
@@ -2327,6 +2510,52 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             </div>
           )}
           {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}
+
+          {/*
+            Round 8: station management. Registration hands back a device
+            credential exactly once, rendered as a one-time pairing link
+            that staff opens ON the tablet -- never stored anywhere here.
+          */}
+          <details className="doctor__revisitSession__stations">
+            <summary>원내 태블릿 관리 ({stations.length})</summary>
+            <div className="doctor__revisitSession__stationList">
+              {stations.map((s) => (
+                <div key={s.stationId} className="doctor__revisitSession__stationRow">
+                  <span>
+                    {s.name} — {s.assignment ? '환자 배정됨' : '대기 중'}
+                  </span>
+                  {s.assignment && (
+                    <button type="button" className="judgment__recordBtn" onClick={() => handleResetStation(s.stationId)}>
+                      대기 화면으로 되돌리기
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="doctor__revisitSession__actions">
+                <input
+                  type="text"
+                  className="workspace__noteInput"
+                  value={newStationName}
+                  onChange={(e) => setNewStationName(e.target.value)}
+                  placeholder="예: 접수 태블릿 1"
+                  aria-label="새 태블릿 이름"
+                />
+                <button type="button" className="judgment__recordBtn" onClick={handleRegisterStation}>
+                  태블릿 등록
+                </button>
+              </div>
+              {newStationPairing && (
+                <div className="doctor__revisitSession__issued">
+                  <p>
+                    「{newStationPairing.name}」 등록 링크 — <strong>이 화면을 벗어나면 다시 볼 수 없습니다.</strong> 해당
+                    태블릿에서 이 주소를 한 번만 열어주세요.
+                  </p>
+                  <code className="doctor__revisitSession__link">{newStationPairing.link}</code>
+                </div>
+              )}
+              {stationError && <p className="doctor__revisitSession__error">{stationError}</p>}
+            </div>
+          </details>
         </section>
       )}
       {/*

@@ -166,7 +166,76 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 9의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+- (없음 — round 10의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+
+## Completed — Round 10 (round 9 re-review 5차 수정, 이번 세션)
+
+리뷰가 지적한 3건. 모두 비임상 정확성/provenance 문제다.
+
+### 1. 스테이션 간 "이동"은 물리적으로 단일 스테이션이 아니었다
+round 9는 같은 visit을 들고 있는 다른 스테이션을 **해제한 뒤** 대상
+스테이션에 같은 visit/token을 설치했다. 그러나 옛 태블릿이 이미 폴링으로
+raw token을 가져간 뒤에는 폴링을 멈추므로, **서버 레코드를 지워도 그
+물리적 화면에 남아있는 capability는 회수되지 않는다.** 즉 "성공한 이동"이
+같은 살아있는 토큰을 두 화면에 남길 수 있었다. 게다가 대상 스테이션 쓰기가
+해제 이후 실패하면, 재사용(reused) 세션은 롤백 대상이 아니므로 어느
+스테이션에도 배정되지 않은 채 살아남았다.
+
+수정: **이동을 수행하지 않고 거절한다** (`visit_assigned_elsewhere`, 409).
+직원이 옛 스테이션을 먼저 초기화해야 하고, 초기화는 capability를 실제로
+회수하므로 다음 배정은 새 capability를 발급한다. 거절은 보상 트랜잭션이
+필요 없다 — 성공할 것이 아니면 아무것도 건드리지 않는다.
+
+테스트: (a) 옛 태블릿이 이미 토큰을 가져간 상태에서의 이동 → 409이고 옛
+태블릿이 그대로 유지된다, 초기화 후 배정하면 **회수된 토큰의 재생이 아니라
+새 토큰**을 받는다. (b) 재사용 세션 재핸드 중 대상 스테이션 쓰기 실패 →
+원래 배정과 capability가 그대로 남고 두 번째 재진이 생기지 않는다.
+
+### 2. 초기화 vs 제출 경합 — 취소가 배정 해제보다 먼저여야 한다
+round 9의 `resetStation`은 배정을 먼저 지우고 스테이션 락을 놓은 뒤
+best-effort로 토큰을 무효화했다. 그 사이 stale 태블릿이 POST를 보내 visit
+락을 먼저 잡으면, **직원이 이미 초기화를 누른 뒤에 답변이 수락**될 수 있었다.
+
+수정: **취소를 먼저, 배정 해제를 나중에.** 두 실패 모양의 비대칭이 이유다 —
+"바쁜 스테이션에 죽은 토큰"은 눈에 보이고 재시도하면 되지만, "초기화 후
+수락된 응답"은 조용한 기록 오염이다. 배정 해제는 `clearAssignment(stationId,
+expectedVisitId)`로 조건부가 되어, 취소가 visit 락을 기다리는 동안 정당하게
+들어온 새 세션을 실수로 지우지 않는다.
+
+역방향도 같은 순서가 처리한다: 제출이 이미 visit 락을 쥐고 있으면
+`invalidateActiveForVisit`가 기다렸다가 CONSUMED를 발견하고 건드리지 않는다 —
+이미 수락된 답변은 경합에서 진 초기화에 의해 절대 되돌려지지 않는다.
+
+테스트: 스테이션 쓰기 실패를 주입해 **순서를 결정적으로 고정**했다(벽시계
+경합 없음). 취소-우선이면 "죽은 토큰 + 여전히 바쁜 스테이션"이 관측되고,
+해제-우선이었다면 "살아있는 토큰 + 해제된 스테이션"이 관측된다. 이 테스트가
+구(舊) 순서에 대해 실제로 실패하는 것을 확인했다. 더해서 (i) 초기화가 권한을
+잡은 뒤 stale 토큰은 절대 201을 받지 못하고 응답도 저장되지 않는다,
+(ii) 이미 수락된 제출은 이후 초기화가 삭제·변경하지 않고 CONSUMED를
+INVALIDATED로 덮어쓰지도 않는다, (iii) 진짜 동시 실행에 대해서는 **순서에
+무관한 불변식**("거절된 제출이 저장된 응답을 남기는 일은 없다")으로 검증한다.
+
+### 3. carry-forward 라벨과 실제 기록 대상이 어긋났다
+`이전 판단 유지` 버튼이 이전 `finalAssessment` 전체를 복사해
+`interventionPerformedOrPlanned`(시행/예정 처치)와 `immediateRetestTarget`
+(즉시 재검 대상)까지 채웠다. 판단을 확인하는 것처럼 보이는 클릭 하나로
+**오늘의 처치 기록이 생성될 수 있었다.** 임계값 문제가 아니라 provenance
+문제다.
+
+수정: 라벨이 긋는 선을 따라 소스를 분리했다.
+- `이전 판단 유지` → 최종 임상 판단 + 치료 초점. 그 외 아무것도 쓰지 않는다.
+- `이전 처치·관리계획 유지` → 시행/예정 처치 + 즉시 재검 대상 + 관리 계획
+  전체. 두 필드가 `finalAssessment`에, 나머지가 `carePlan`에 저장되지만
+  이 액션은 **저장 위치가 아니라 의미**를 따라간다.
+치료-계획 액션의 blank 가드는 두 객체 전부를 확인하므로 절반만 덮어쓰는 일이
+없다. 버튼 title에 각각이 채우는 필드를 명시했다.
+
+테스트: 소스 분리·적용 결과·소스 레벨 가드(판단 함수 본문이
+`interventionPerformedOrPlanned`/`immediateRetestTarget`/`carePlan`을
+언급조차 하지 않음)까지 고정했고, 브라우저 E2E에도 "이전 방문에 처치 텍스트가
+실제로 있는 상태에서 판단 버튼을 눌러도 오늘의 시행/예정 처치·즉시 재검
+대상이 비어 있다"를 추가했다. (기존 E2E fixture는 이전 처치 텍스트가 비어
+있어 이 검사가 공허했기 때문에, fixture에 처치/관리목표를 채워 넣었다.)
 
 ## Completed — Round 9 (round 8 re-review 4차 수정, 이번 세션)
 
@@ -671,6 +740,17 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 10 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(둘 다 성공),
+  `npm run test:all`(전체 green — `tests/station.spec.mjs` 100 assertion,
+  `tests/follow-up-session.spec.mjs` 167, `tests/workspace-round3.spec.mjs`
+  97, `tests/server.spec.mjs` 213), `cd "tablet core" && python3 -m pytest
+  tests/ -q`(80 passed), FROZEN diff empty.
+- **Round 10 실제 헤드리스 브라우저 E2E QA 2종**: 재진 흐름 49개 체크 +
+  스테이션 흐름 30개 체크 전부 통과.
+- **비공허성 확인**: round 10의 초기화 순서 테스트가 구(舊) clear-first
+  순서에 대해 실제로 실패하는 것을 확인했다(round 9의 TOCTOU 테스트와
+  같은 방식).
 - **Round 9 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공),
   `npm run test:all`(전체 green — `tests/station.spec.mjs` 75 assertion,
@@ -807,8 +887,8 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 9(포인터 권한 TOCTOU + 스테이션 경합/유일성 + 배정 롤백 +
-   일상 재진 UI 압축)가 구현되었으니 review author(Gomars93)가 새
+2. round 10(스테이션 간 이동 거절 + 초기화 취소-우선 순서 + carry-forward
+   라벨/기록 대상 정합)이 구현되었으니 review author(Gomars93)가 새
    HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.

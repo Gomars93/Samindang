@@ -549,12 +549,13 @@ export function createStore(
   // unrelated assignment attempt failed would destroy working state. Only
   // a revisit this very call created is ours to undo.
   //
-  // Station uniqueness (one station per visit, busy stations refused) is
-  // enforced inside stations.assignSession itself -- see its doc comment.
-  // There is no longer a "displaced" session to invalidate here: a busy
-  // station is refused outright rather than silently taken over, and a
-  // station released because it held THIS SAME visit keeps its token
-  // (it is the very session being handed to the new station).
+  // Station uniqueness is enforced inside stations.assignSession itself --
+  // see its doc comment. Nothing is ever displaced: a station already
+  // serving someone else is refused ('station_busy'), and a visit already
+  // assigned to another station is refused too ('visit_assigned_elsewhere')
+  // rather than moved, because a move cannot retract the capability the old
+  // tablet already holds. So there is no displaced session to invalidate
+  // here, and no compensating transaction to get wrong.
   async function assignRevisitToStation(patientId, stationId, deliveryMode = 'CLINIC_TABLET') {
     const station = await stations.getStation(stationId)
     if (!station) return { ok: false, reason: 'station_not_found' }
@@ -586,28 +587,53 @@ export function createStore(
     return stations.clearAssignment(stationId)
   }
 
-  // Round 9 review fix: STAFF's manual reset is not the same act as the
-  // station reporting a completed submission. Complete happens after the
-  // patient submitted, so that visit's token is already CONSUMED and
-  // clearing the assignment is the whole job. A reset happens while a
-  // session may still be OPEN ON THE PHYSICAL TABLET -- and that screen has
-  // stopped polling, so nothing the server does can make it navigate away.
-  // Clearing the assignment alone would leave that abandoned screen able to
-  // submit into a session staff has already taken back. Invalidating the
-  // cleared visit's capability makes the revocation real: the stale screen
-  // fails closed on submit instead of writing an answer nobody is expecting.
-  // Best-effort -- a failure here must not stop the tablet being freed for
-  // the next patient (the token still ages out on its own short TTL).
+  // STAFF's manual reset is not the same act as the station reporting a
+  // completed submission. Complete happens after the patient submitted, so
+  // that visit's token is already CONSUMED and clearing the assignment is
+  // the whole job. A reset happens while a session may still be OPEN ON THE
+  // PHYSICAL TABLET -- and that screen has stopped polling, so nothing the
+  // server does can make it navigate away. Clearing the assignment alone
+  // would leave that abandoned screen able to submit into a session staff
+  // has already taken back, so the reset must also revoke the capability.
+  //
+  // Round 10 review fix -- ORDER MATTERS, and it used to be backwards.
+  // Clearing first, releasing the station lock, then invalidating left a
+  // window in which the station already looked free while the token was
+  // still live: a stale tablet could POST in that gap, win the visit lock,
+  // and have its answer accepted after staff had already clicked reset.
+  // Revoking FIRST closes it. The two orderings fail very differently:
+  //   - revoke fails, station stays busy  -> a dead token on a busy
+  //     station. Visible, harmless, and staff can just press reset again.
+  //   - clear fails after revoke          -> same thing. Also retryable.
+  //   - (old order) accept a response after reset -> silent, unrecoverable
+  //     corruption of the record.
+  // So revocation is the step that must take authority first, and the
+  // clear is made conditional on the visit it was told to reset (see
+  // stationStore.clearAssignment) so a session that legitimately landed on
+  // the station while revocation waited for the visit lock is not
+  // discarded by accident.
+  //
+  // The inverse race is handled by the same ordering rather than against
+  // it: if the patient's submission already holds the visit lock when the
+  // reset arrives, invalidateActiveForVisit waits, then finds the token
+  // CONSUMED and leaves it alone -- an accepted answer is never rolled
+  // back by a reset that lost the race.
   async function resetStation(stationId) {
-    const result = await stations.clearAssignment(stationId)
-    if (result.ok && result.cleared?.visit_id) {
-      await followUpSessions.invalidateActiveForVisit(result.cleared.visit_id).catch(() => {})
-      // ...and forget the dedup cache entry for that session, so the next
+    const current = await stations.getStation(stationId)
+    if (!current) return { ok: false, reason: 'not_found' }
+    const assignment = current.assignment ?? null
+
+    if (assignment?.visit_id) {
+      await followUpSessions.invalidateActiveForVisit(assignment.visit_id).catch(() => {})
+    }
+
+    const result = await stations.clearAssignment(stationId, assignment ? assignment.visit_id : null)
+
+    if (assignment?.patient_id) {
+      // Forget the dedup cache entry for that session, so the next
       // assignment for this patient mints a FRESH capability instead of
       // replaying the one this reset just revoked.
-      if (result.cleared.patient_id) {
-        await forgetStartRevisitCache(result.cleared.patient_id, result.cleared.visit_id)
-      }
+      await forgetStartRevisitCache(assignment.patient_id, assignment.visit_id)
     }
     return result
   }

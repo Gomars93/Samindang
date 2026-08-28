@@ -1004,8 +1004,13 @@ export function createApp({
               // Round 9: 'station_busy' is a conflict, not a malformed
               // request -- that tablet is still serving someone else and
               // must be completed or reset first (see stationStore.js).
+              // Round 9/10: both uniqueness refusals are conflicts, not
+              // malformed requests. 'station_busy' = that tablet is still
+              // serving someone else; 'visit_assigned_elsewhere' = this
+              // session is already live on another tablet. Either way staff
+              // must reset the other station first (see stationStore.js).
               if (result.reason === 'station_not_found') status = 404
-              else if (result.reason === 'station_busy') status = 409
+              else if (result.reason === 'station_busy' || result.reason === 'visit_assigned_elsewhere') status = 409
               else status = 400
               bytes = sendJson(req, res, status, { error: result.reason }, cors)
             } else {

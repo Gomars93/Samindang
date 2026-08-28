@@ -36,6 +36,8 @@ function stopServer(server) {
   return new Promise((resolve) => server.close(resolve))
 }
 
+const live_visitId = (station) => station.assignment.visit_id
+
 const ANSWERS = {
   targetRatings: [],
   overallChange: '좋아짐',
@@ -213,34 +215,57 @@ async function main() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ patient_id: subA.patient_id, delivery_mode: 'CLINIC_TABLET' }),
       })).json()
+      const holderVisitId = repeatAssign.visit.id
       const pollAfterRepeat = await poll(regA.credential)
       assert('an immediate repeat assign of the same patient keeps the SAME session (double-click, not a handover)', pollAfterRepeat.token === pollAfterReassign.token)
       const stillActive = await (await fetch(`${base}/api/follow-up-session/${pollAfterRepeat.token}`)).json()
       assert('the repeat-assigned session is still ACTIVE (never self-invalidated)', stillActive.status === 'ACTIVE')
       assert('the repeat assign reports the same visit', repeatAssign.visit.id === assigned.visit.id || typeof repeatAssign.visit.id === 'string')
 
-      /* ---- Round 9: one station per VISIT. startRevisit dedupes a
-         repeated same-patient/same-mode start into the SAME visit and the
-         SAME token, so moving that patient from tablet A to tablet B must
-         RELEASE tablet A -- otherwise one live capability sits on two
-         physical tablets at once. ---- */
-      const movedTo = await fetch(`${base}/api/stations/${regB.station.station_id}/assign`, {
+      /* ---- Round 10: one station per VISIT, enforced by REFUSING the
+         move, not by performing it. The old tablet has already fetched the
+         raw token by the time it is showing the questions, and clearing a
+         server-side record cannot retract that -- so "moving" a live
+         session would leave the same capability on two physical screens.
+         Staff must reset the old station first, which revokes it. ---- */
+      const holderPoll = await poll(regA.credential)
+      assert('setup: station A is holding a live session and has already fetched its token', holderPoll.status === 'ASSIGNED' && typeof holderPoll.token === 'string')
+      const heldToken = holderPoll.token
+
+      const moveAttempt = await fetch(`${base}/api/stations/${regB.station.station_id}/assign`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ patient_id: subA.patient_id, delivery_mode: 'CLINIC_TABLET' }),
       })
-      assert('moving the same pending patient to a second tablet -> 201', movedTo.status === 201)
-      const movedVisitId = (await movedTo.json()).visit.id
-      const pollBAfterMove = await poll(regB.credential)
-      assert('the second tablet now holds the session', pollBAfterMove.status === 'ASSIGNED')
-      assert('the move carries the SAME session (dedup), not a second one', pollBAfterMove.token === pollAfterRepeat.token)
-      const pollAAfterMove = await poll(regA.credential)
-      assert('the first tablet is released by the move (one station per visit)', pollAAfterMove.status === 'WAITING')
-      assert('the released tablet holds no leftover token', !('token' in pollAAfterMove))
-      const stationsAfterMove = (await (await fetch(`${base}/api/stations`)).json()).stations
-      const holders = stationsAfterMove.filter((st) => st.assignment?.visit_id === movedVisitId)
-      assert('exactly one station holds the moved visit', holders.length === 1)
-      const survived = await (await fetch(`${base}/api/follow-up-session/${pollBAfterMove.token}`)).json()
-      assert('the moved session itself stays ACTIVE (a release is not an invalidation)', survived.status === 'ACTIVE')
+      assert('moving a session whose tablet already fetched the token -> 409', moveAttempt.status === 409)
+      assert('the 409 names visit_assigned_elsewhere', (await moveAttempt.json()).error === 'visit_assigned_elsewhere')
+      assert('the refused move leaves the second tablet untouched', (await poll(regB.credential)).status === 'WAITING')
+      const holderAfterRefusal = await poll(regA.credential)
+      assert('the refused move leaves the original tablet still holding its session', holderAfterRefusal.token === heldToken)
+      assert('the refused move leaves that session ACTIVE', (await (await fetch(`${base}/api/follow-up-session/${heldToken}`)).json()).status === 'ACTIVE')
+
+      const holdersNow = (await (await fetch(`${base}/api/stations`)).json()).stations.filter(
+        (st) => st.assignment?.visit_id === holderVisitId,
+      )
+      assert('exactly one station holds the visit, always', holdersNow.length === 1)
+
+      /* ---- ...and the supported path: reset the old station (which
+         revokes its capability), then assign. The next assignment must
+         hand out a genuinely fresh capability, never a replay of the
+         revoked one. ---- */
+      await fetch(`${base}/api/stations/${regA.station.station_id}/reset`, { method: 'POST' })
+      assert('the reset revokes the capability the old tablet was holding', (await (await fetch(`${base}/api/follow-up-session/${heldToken}`)).json()).status !== 'ACTIVE')
+      const afterMoveReset = await fetch(`${base}/api/stations/${regB.station.station_id}/assign`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patient_id: subA.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+      })
+      assert('after resetting the old tablet the session can be assigned to the second one', afterMoveReset.status === 201)
+      const movedPoll = await poll(regB.credential)
+      assert('the second tablet receives a FRESH capability, not the revoked one', movedPoll.status === 'ASSIGNED' && movedPoll.token !== heldToken)
+      assert('the fresh capability is genuinely usable', (await (await fetch(`${base}/api/follow-up-session/${movedPoll.token}`)).json()).status === 'ACTIVE')
+      assert('the first tablet is left waiting with nothing', (await poll(regA.credential)).status === 'WAITING')
+
+      // Put station B back to waiting so the assertions below start clean.
+      await fetch(`${base}/api/stations/${regB.station.station_id}/reset`, { method: 'POST' })
 
       /* ---- concurrent double assignment creates no duplicate live session ---- */
       await fetch(`${base}/api/stations/${regA.station.station_id}/reset`, { method: 'POST' })
@@ -479,6 +504,167 @@ async function main() {
         assert('the retry hands the tablet a genuinely usable session', retryPoll.status === 'ASSIGNED')
         const retrySession = await (await fetch(`${base}/api/follow-up-session/${retryPoll.token}`)).json()
         assert('the retried session is ACTIVE (not a revoked replay of the rolled-back one)', retrySession.status === 'ACTIVE')
+      } finally {
+        await stopServer(server)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Round 10 review fix (a): a target-station write failure during a
+     REUSED re-hand must not destroy the session. assignRevisitToStation
+     deliberately never rolls back a reused revisit -- so the write failure
+     has to leave the existing assignment and capability exactly as they
+     were, rather than half-moving them.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-station-reused-fail-'))
+    try {
+      const dataDir = path.join(root, 'submissions')
+      const store = createStore(dataDir, {})
+      const { server, base } = await startServer({ dataDir })
+      try {
+        const sub = await store.createSubmission({
+          submission: { questionnaire_version: '1.0', session_id: 'station-reused', responses: {}, metadata: {} },
+          myungri: null,
+          patient_label: 'reused patient',
+        })
+        const reg = await (await fetch(`${base}/api/stations`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: '재핸드 태블릿' }),
+        })).json()
+        const assignUrl = `${base}/api/stations/${reg.station.station_id}/assign`
+        const assignBody = JSON.stringify({ patient_id: sub.patient_id, delivery_mode: 'CLINIC_TABLET' })
+        const headers = { 'content-type': 'application/json' }
+
+        const first = await (await fetch(assignUrl, { method: 'POST', headers, body: assignBody })).json()
+        const held = await (await fetch(`${base}/api/station/assignment`, { headers: { 'x-station-credential': reg.credential } })).json()
+        assert('setup: the tablet holds a live session before the failing re-hand', held.status === 'ASSIGNED')
+
+        const stationTmpPath = path.join(root, 'stations', 'stations', `${reg.station.station_id}.json.tmp`)
+        await mkdir(stationTmpPath, { recursive: true })
+        const failedRehand = await fetch(assignUrl, { method: 'POST', headers, body: assignBody })
+        assert('a station write failure during a reused re-hand surfaces as an error', failedRehand.status >= 500)
+        await rm(stationTmpPath, { recursive: true, force: true })
+
+        const afterFail = await (await fetch(`${base}/api/station/assignment`, { headers: { 'x-station-credential': reg.credential } })).json()
+        assert('the failed re-hand leaves the tablet holding its original session', afterFail.status === 'ASSIGNED' && afterFail.token === held.token)
+        assert('the failed re-hand leaves that session ACTIVE (a reused session is never rolled back)', (await (await fetch(`${base}/api/follow-up-session/${held.token}`)).json()).status === 'ACTIVE')
+        const queue = await (await fetch(`${base}/api/visits/revisits`)).json()
+        assert('the failed re-hand creates no second revisit', queue.filter((r) => r.patient_id === sub.patient_id).length === 1)
+        assert('...and it is still the original one', queue[0].visit_id === first.visit.id)
+      } finally {
+        await stopServer(server)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Round 10 review fix (b): staff reset must REVOKE THE CAPABILITY BEFORE
+     it frees the station. The old order (clear, release the station lock,
+     then best-effort invalidate) left a window in which the station already
+     looked free while the token was still live -- a stale tablet could POST
+     in that gap and be accepted after staff had clicked reset.
+
+     Injecting a failure into the station write pins the ordering
+     deterministically, with no wall-clock race: whichever step runs first
+     is the one that takes effect. Revoke-first leaves a dead token on a
+     still-busy station (safe and retryable); clear-first would leave a live
+     token on a freed station (the bug).
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-station-reset-order-'))
+    try {
+      const dataDir = path.join(root, 'submissions')
+      const store = createStore(dataDir, {})
+      const { server, base } = await startServer({ dataDir })
+      try {
+        const sub = await store.createSubmission({
+          submission: { questionnaire_version: '1.0', session_id: 'station-reset-order', responses: {}, metadata: {} },
+          myungri: null,
+          patient_label: 'reset order patient',
+        })
+        const reg = await (await fetch(`${base}/api/stations`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: '초기화 순서 태블릿' }),
+        })).json()
+        const stationHeader = { 'x-station-credential': reg.credential }
+        const resetUrl = `${base}/api/stations/${reg.station.station_id}/reset`
+
+        await fetch(`${base}/api/stations/${reg.station.station_id}/assign`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patient_id: sub.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+        })
+        const live = await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()
+        assert('setup: the tablet holds a live capability before the reset', live.status === 'ASSIGNED')
+
+        const stationTmpPath = path.join(root, 'stations', 'stations', `${reg.station.station_id}.json.tmp`)
+        await mkdir(stationTmpPath, { recursive: true })
+        const brokenReset = await fetch(resetUrl, { method: 'POST' })
+        await rm(stationTmpPath, { recursive: true, force: true })
+
+        assert('a reset whose station write fails surfaces as an error', brokenReset.status >= 500)
+        // THE ordering proof: revocation already took effect even though
+        // the station could not be freed.
+        assert('reset revokes the capability BEFORE freeing the station', (await (await fetch(`${base}/api/follow-up-session/${live.token}`)).json()).status !== 'ACTIVE')
+        const stillBusy = (await (await fetch(`${base}/api/stations`)).json()).stations[0]
+        assert('a failed clear leaves a BUSY station with a dead token (safe and retryable), never a free station with a live one', Boolean(stillBusy.assignment))
+
+        const staleSubmit = await fetch(`${base}/api/follow-up-session/${live.token}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(ANSWERS),
+        })
+        assert('once reset has taken authority the stale tablet can never return 201', staleSubmit.status !== 201)
+        assert('...and no response was persisted for it', (await (await fetch(`${base}/api/visits/${live_visitId(stillBusy)}/micro-follow-up`)).json()).response === null)
+
+        const retryReset = await fetch(resetUrl, { method: 'POST' })
+        assert('retrying the reset after the failure frees the tablet', retryReset.status === 200)
+        assert('the tablet is genuinely back to waiting', (await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()).status === 'WAITING')
+
+        /* ---- the inverse ordering, stated honestly: if the submission was
+           already accepted before the reset acquired authority, the reset
+           must leave that accepted result completely alone. ---- */
+        const second = await (await fetch(`${base}/api/stations/${reg.station.station_id}/assign`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patient_id: sub.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+        })).json()
+        const secondPoll = await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()
+        const accepted = await fetch(`${base}/api/follow-up-session/${secondPoll.token}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(ANSWERS),
+        })
+        assert('setup: the patient submits and is accepted', accepted.status === 201)
+        const savedBefore = await (await fetch(`${base}/api/visits/${second.visit.id}/micro-follow-up`)).json()
+
+        await fetch(resetUrl, { method: 'POST' })
+        const savedAfter = await (await fetch(`${base}/api/visits/${second.visit.id}/micro-follow-up`)).json()
+        assert('a reset after an accepted submission does not delete it', savedAfter.response !== null)
+        assert('...and does not alter it in any way', JSON.stringify(savedAfter.response) === JSON.stringify(savedBefore.response))
+        assert('...and does not rewrite the CONSUMED token into INVALIDATED', (await (await fetch(`${base}/api/follow-up-session/${secondPoll.token}`)).json()).status === 'CONSUMED')
+
+        /* ---- and the genuine concurrent case, asserted as an
+           order-INDEPENDENT invariant so it cannot be flaky: whoever wins,
+           "not accepted" and "a response was persisted" must never both be
+           true. ---- */
+        const third = await (await fetch(`${base}/api/stations/${reg.station.station_id}/assign`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patient_id: sub.patient_id, delivery_mode: 'PERSONAL_QR' }),
+        })).json()
+        const thirdPoll = await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()
+        const [raceSubmit] = await Promise.all([
+          fetch(`${base}/api/follow-up-session/${thirdPoll.token}`, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(ANSWERS),
+          }),
+          fetch(resetUrl, { method: 'POST' }),
+        ])
+        const raceSaved = await (await fetch(`${base}/api/visits/${third.visit.id}/micro-follow-up`)).json()
+        assert(
+          'reset vs submit: a refused submission never leaves a persisted response behind',
+          raceSubmit.status === 201 ? raceSaved.response !== null : raceSaved.response === null,
+        )
+        assert('reset vs submit: the tablet ends up free either way', (await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()).status === 'WAITING')
       } finally {
         await stopServer(server)
       }

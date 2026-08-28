@@ -1,5 +1,5 @@
 /**
- * Routine-revisit carry-forward (round 9 review follow-up).
+ * Routine-revisit carry-forward (round 9, split by provenance in round 10).
  *
  * A routine revisit is supposed to take a clinician seconds, not a full
  * re-typing of yesterday's judgment. This module turns the LATEST prior
@@ -7,14 +7,28 @@
  * revisit workspace can adopt -- but only when the clinician explicitly
  * clicks to adopt it.
  *
- * Three hard rules, all enforced here rather than left to the UI:
+ * Four hard rules, all enforced here rather than left to the UI:
  *
  * 1. NOTHING is auto-applied. Every function below is pure: it takes the
  *    current state and returns a new one. RevisitWorkspace calls them from
  *    a button handler and nowhere else, so a carried-forward value only
  *    ever exists because a clinician chose it.
  *
- * 2. OBJECTIVE FINDINGS ARE NEVER CARRIED. Structured Reassessment items,
+ * 2. EACH ACTION WRITES EXACTLY WHAT ITS LABEL SAYS (round 10 review fix).
+ *    The first version carried the WHOLE prior `PainFinalAssessment` under
+ *    a button labelled 이전 판단 유지 -- which also authored today's
+ *    "시행/예정 처치" and "즉시 재검 대상". A clinician could therefore
+ *    create a treatment record by clicking something that reads as
+ *    affirming a judgment. The source is now split along the same line the
+ *    labels draw:
+ *      - `judgment`       -> 이전 판단 유지        (최종 임상 판단, 치료 초점)
+ *      - `treatmentPlan`  -> 이전 처치·관리계획 유지 (시행/예정 처치,
+ *                            즉시 재검 대상, and the whole Care Plan)
+ *    The two field groups live in different objects on disk
+ *    (`finalAssessment` vs `carePlan`), which is why `treatmentPlan`
+ *    reaches into both -- it follows the meaning, not the storage shape.
+ *
+ * 3. OBJECTIVE FINDINGS ARE NEVER CARRIED. Structured Reassessment items,
  *    exam results, and a Follow-up Target's prior `baseline`/
  *    `postTreatmentValue` measurements are all deliberately absent from
  *    every function here. Those describe what was true at a previous
@@ -23,7 +37,7 @@
  *    Carrying a Follow-up Target forward carries only "keep tracking this
  *    thing" (id + label) -- today's values start empty.
  *
- * 3. NO CLINICAL INFERENCE. Nothing here scores, ranks, thresholds, or
+ * 4. NO CLINICAL INFERENCE. Nothing here scores, ranks, thresholds, or
  *    reinterprets. The only transformation is a field-name mapping needed
  *    because a submission-backed visit stores Pain and Herbal judgments in
  *    two parallel field sets, while a revisit has ONE generic set (see
@@ -33,54 +47,68 @@
  *    text is ever silently dropped on the way across.
  */
 import type { FollowUpTarget, PainFinalAssessment } from './finalAssessment'
-import { emptyPainFinalAssessment, MAX_FOLLOW_UP_TARGETS } from './finalAssessment'
+import { MAX_FOLLOW_UP_TARGETS } from './finalAssessment'
 import type { PainCarePlan } from './carePlan'
 import { emptyPainCarePlan } from './carePlan'
 import type { SubmissionRecord } from '../../lib/serverClient'
 import type { VisitWorkspaceState } from './visitWorkspace'
 
+/** What 이전 판단 유지 writes, and nothing else. */
+export type CarryForwardJudgment = {
+  finalWorkingAssessment: string
+  treatmentFocus: string
+}
+
+/** What 이전 처치·관리계획 유지 writes, and nothing else. */
+export type CarryForwardTreatmentPlan = {
+  interventionPerformedOrPlanned: string
+  immediateRetestTarget: string
+  carePlan: PainCarePlan
+}
+
 /**
  * What the latest prior visit offers to carry forward. A null member means
- * "that prior visit recorded nothing here" -- the UI disables the
- * corresponding action rather than offering an empty carry-forward.
+ * "that prior visit recorded nothing under that heading" -- the UI disables
+ * the corresponding action rather than offering an empty carry-forward.
  */
 export type RevisitCarryForwardSource = {
-  finalAssessment: PainFinalAssessment | null
-  carePlan: PainCarePlan | null
+  judgment: CarryForwardJudgment | null
+  treatmentPlan: CarryForwardTreatmentPlan | null
   followUpTargets: FollowUpTarget[]
 }
 
 export function emptyCarryForwardSource(): RevisitCarryForwardSource {
-  return { finalAssessment: null, carePlan: null, followUpTargets: [] }
+  return { judgment: null, treatmentPlan: null, followUpTargets: [] }
 }
 
 function joinNonEmpty(parts: (string | null | undefined)[]): string {
   return parts.map((p) => (p ?? '').trim()).filter((p) => p !== '').join('\n')
 }
 
-function hasAnyText(values: string[]): boolean {
-  return values.some((v) => v.trim() !== '')
+function hasAnyText(values: (string | null | undefined)[]): boolean {
+  return values.some((v) => (v ?? '').trim() !== '')
 }
 
-/** True when the clinician has not yet written anything into today's assessment. */
-export function isFinalAssessmentBlank(value: PainFinalAssessment): boolean {
+/** True when the clinician has not yet written a judgment today. */
+export function isJudgmentBlank(value: PainFinalAssessment): boolean {
+  return !hasAnyText([value.finalWorkingAssessment, value.treatmentFocus])
+}
+
+/**
+ * True when the clinician has not yet written anything today under the
+ * treatment/plan heading -- checked across BOTH objects the treatment-plan
+ * action writes into, so it can never half-overwrite.
+ */
+export function isTreatmentPlanBlank(value: PainFinalAssessment, carePlan: PainCarePlan): boolean {
   return !hasAnyText([
-    value.finalWorkingAssessment,
-    value.treatmentFocus,
     value.interventionPerformedOrPlanned,
     value.immediateRetestTarget,
-  ])
-}
-
-/** True when the clinician has not yet written anything into today's care plan. */
-export function isCarePlanBlank(value: PainCarePlan): boolean {
-  return !hasAnyText([
-    value.currentTreatmentGoal,
-    value.rehabilitationGoal,
-    value.homeActionPlan,
-    value.activityPrecaution,
-    value.patientInstruction,
-    value.nextVisitCheckItem,
+    carePlan.currentTreatmentGoal,
+    carePlan.rehabilitationGoal,
+    carePlan.homeActionPlan,
+    carePlan.activityPrecaution,
+    carePlan.patientInstruction,
+    carePlan.nextVisitCheckItem,
   ])
 }
 
@@ -96,62 +124,87 @@ export function carryForwardSourceFromSubmission(prior: SubmissionRecord | null)
 
   const pain = ws.painFinalAssessment
   const herbal = ws.herbalFinalAssessment
-  const finalAssessment: PainFinalAssessment = {
-    ...emptyPainFinalAssessment(),
+
+  const judgment: CarryForwardJudgment = {
     finalWorkingAssessment: joinNonEmpty([pain?.finalWorkingAssessment, herbal?.finalPatternOrMechanism]),
     treatmentFocus: joinNonEmpty([pain?.treatmentFocus, herbal?.treatmentPrinciple]),
-    interventionPerformedOrPlanned: joinNonEmpty([pain?.interventionPerformedOrPlanned, herbal?.prescriptionPlanNote]),
-    // Deliberately Pain-only: the Herbal side's `symptomsToTrack` is a
-    // list of things to watch over time, not an immediate retest target,
-    // so it belongs on the care plan's next-visit check instead.
-    immediateRetestTarget: joinNonEmpty([pain?.immediateRetestTarget]),
   }
 
   const painPlan = ws.painCarePlan
   const herbalPlan = ws.herbalCarePlan
-  const carePlan: PainCarePlan = {
-    ...emptyPainCarePlan(),
-    currentTreatmentGoal: joinNonEmpty([painPlan?.currentTreatmentGoal, herbalPlan?.currentManagementGoal]),
-    rehabilitationGoal: joinNonEmpty([painPlan?.rehabilitationGoal]),
-    homeActionPlan: joinNonEmpty([painPlan?.homeActionPlan, herbalPlan?.homeLifestyleManagement]),
-    activityPrecaution: joinNonEmpty([painPlan?.activityPrecaution]),
-    // Both Herbal fields here are things the patient is told, which is
-    // exactly what this generic field means -- keeping them preserves
-    // clinician-authored text that has no closer counterpart.
-    patientInstruction: joinNonEmpty([
-      painPlan?.patientInstruction,
-      herbalPlan?.medicationPlanNote,
-      herbalPlan?.adverseEffectContactInstruction,
+  const treatmentPlan: CarryForwardTreatmentPlan = {
+    interventionPerformedOrPlanned: joinNonEmpty([
+      pain?.interventionPerformedOrPlanned,
+      herbal?.prescriptionPlanNote,
     ]),
-    nextVisitCheckItem: joinNonEmpty([
-      painPlan?.nextVisitCheckItem,
-      herbal?.symptomsToTrack,
-      herbalPlan?.symptomsToObserve,
-      herbalPlan?.nextVisitCheckItem,
-    ]),
+    // Deliberately Pain-only: the Herbal side's `symptomsToTrack` is a
+    // list of things to watch over time, not an immediate retest target,
+    // so it goes to the care plan's next-visit check instead.
+    immediateRetestTarget: joinNonEmpty([pain?.immediateRetestTarget]),
+    carePlan: {
+      ...emptyPainCarePlan(),
+      currentTreatmentGoal: joinNonEmpty([painPlan?.currentTreatmentGoal, herbalPlan?.currentManagementGoal]),
+      rehabilitationGoal: joinNonEmpty([painPlan?.rehabilitationGoal]),
+      homeActionPlan: joinNonEmpty([painPlan?.homeActionPlan, herbalPlan?.homeLifestyleManagement]),
+      activityPrecaution: joinNonEmpty([painPlan?.activityPrecaution]),
+      // Both Herbal fields here are things the patient is told, which is
+      // exactly what this generic field means -- keeping them preserves
+      // clinician-authored text that has no closer counterpart.
+      patientInstruction: joinNonEmpty([
+        painPlan?.patientInstruction,
+        herbalPlan?.medicationPlanNote,
+        herbalPlan?.adverseEffectContactInstruction,
+      ]),
+      nextVisitCheckItem: joinNonEmpty([
+        painPlan?.nextVisitCheckItem,
+        herbal?.symptomsToTrack,
+        herbalPlan?.symptomsToObserve,
+        herbalPlan?.nextVisitCheckItem,
+      ]),
+    },
   }
 
   return {
-    finalAssessment: isFinalAssessmentBlank(finalAssessment) ? null : finalAssessment,
-    carePlan: isCarePlanBlank(carePlan) ? null : carePlan,
+    judgment: hasAnyText([judgment.finalWorkingAssessment, judgment.treatmentFocus]) ? judgment : null,
+    treatmentPlan: treatmentPlanHasText(treatmentPlan) ? treatmentPlan : null,
     followUpTargets: trackingOnly([...(ws.painFollowUpTargets ?? []), ...(ws.herbalFollowUpTargets ?? [])]),
   }
 }
 
 /**
  * Source built from a prior visit that is itself a no-submission revisit.
- * Its workspace is already the same generic shape, so this is a direct
- * read with no mapping at all.
+ * Its workspace is already the same generic shape, so this only has to
+ * split the same fields along the same line.
  */
 export function carryForwardSourceFromVisitWorkspace(prior: VisitWorkspaceState | null): RevisitCarryForwardSource {
   if (!prior) return emptyCarryForwardSource()
+  const judgment: CarryForwardJudgment = {
+    finalWorkingAssessment: prior.finalAssessment.finalWorkingAssessment,
+    treatmentFocus: prior.finalAssessment.treatmentFocus,
+  }
+  const treatmentPlan: CarryForwardTreatmentPlan = {
+    interventionPerformedOrPlanned: prior.finalAssessment.interventionPerformedOrPlanned,
+    immediateRetestTarget: prior.finalAssessment.immediateRetestTarget,
+    carePlan: { ...prior.carePlan, recordedAt: null },
+  }
   return {
-    finalAssessment: isFinalAssessmentBlank(prior.finalAssessment)
-      ? null
-      : { ...prior.finalAssessment, recordedAt: null },
-    carePlan: isCarePlanBlank(prior.carePlan) ? null : { ...prior.carePlan, recordedAt: null },
+    judgment: hasAnyText([judgment.finalWorkingAssessment, judgment.treatmentFocus]) ? judgment : null,
+    treatmentPlan: treatmentPlanHasText(treatmentPlan) ? treatmentPlan : null,
     followUpTargets: trackingOnly(prior.followUpTargets ?? []),
   }
+}
+
+function treatmentPlanHasText(value: CarryForwardTreatmentPlan): boolean {
+  return hasAnyText([
+    value.interventionPerformedOrPlanned,
+    value.immediateRetestTarget,
+    value.carePlan.currentTreatmentGoal,
+    value.carePlan.rehabilitationGoal,
+    value.carePlan.homeActionPlan,
+    value.carePlan.activityPrecaution,
+    value.carePlan.patientInstruction,
+    value.carePlan.nextVisitCheckItem,
+  ])
 }
 
 /**
@@ -175,34 +228,63 @@ function trackingOnly(targets: FollowUpTarget[]): FollowUpTarget[] {
 }
 
 /**
- * Adopt the prior visit's judgment as today's, stamped with today's time
- * because the clinician is affirming it now. Never overwrites text the
- * clinician has already written today -- the UI disables the action in
- * that case, and this guard makes that a property of the operation rather
- * than of one call site.
+ * 이전 판단 유지 -- adopt the prior visit's JUDGMENT as today's, stamped
+ * with today's time because the clinician is affirming it now. Writes
+ * `finalWorkingAssessment` and `treatmentFocus` and nothing else: it can
+ * never author today's 시행/예정 처치 or 즉시 재검 대상 (round 10 review
+ * fix). Never overwrites text the clinician has already written today --
+ * the UI disables the action in that case, and this guard makes that a
+ * property of the operation rather than of one call site.
  */
-export function applyFinalAssessmentCarryForward(
+export function applyJudgmentCarryForward(
   state: VisitWorkspaceState,
   source: RevisitCarryForwardSource,
   now: string,
 ): VisitWorkspaceState {
-  if (!source.finalAssessment || !isFinalAssessmentBlank(state.finalAssessment)) return state
-  return { ...state, finalAssessment: { ...source.finalAssessment, recordedAt: now } }
-}
-
-/** Same contract as applyFinalAssessmentCarryForward, for the care plan. */
-export function applyCarePlanCarryForward(
-  state: VisitWorkspaceState,
-  source: RevisitCarryForwardSource,
-  now: string,
-): VisitWorkspaceState {
-  if (!source.carePlan || !isCarePlanBlank(state.carePlan)) return state
-  return { ...state, carePlan: { ...source.carePlan, recordedAt: now } }
+  if (!source.judgment || !isJudgmentBlank(state.finalAssessment)) return state
+  return {
+    ...state,
+    finalAssessment: {
+      ...state.finalAssessment,
+      finalWorkingAssessment: source.judgment.finalWorkingAssessment,
+      treatmentFocus: source.judgment.treatmentFocus,
+      recordedAt: now,
+    },
+  }
 }
 
 /**
- * Keep tracking the same things. Only applies when today has no targets
- * selected yet, so it can never silently replace a clinician's own choice.
+ * 이전 처치·관리계획 유지 -- adopt the prior visit's treatment record and
+ * management plan. This is the ONLY action that can write today's
+ * 시행/예정 처치 / 즉시 재검 대상, alongside the Care Plan they belong
+ * with. Both cards get today's timestamp, matching exactly what typing
+ * into those same fields does (FinalAssessmentCard/CarePlanCard stamp
+ * `recordedAt` on every edit), so a carried value and a typed value are
+ * indistinguishable in status terms -- which is the honest outcome, since
+ * either way the clinician committed the content by an explicit action.
+ */
+export function applyTreatmentPlanCarryForward(
+  state: VisitWorkspaceState,
+  source: RevisitCarryForwardSource,
+  now: string,
+): VisitWorkspaceState {
+  if (!source.treatmentPlan || !isTreatmentPlanBlank(state.finalAssessment, state.carePlan)) return state
+  return {
+    ...state,
+    finalAssessment: {
+      ...state.finalAssessment,
+      interventionPerformedOrPlanned: source.treatmentPlan.interventionPerformedOrPlanned,
+      immediateRetestTarget: source.treatmentPlan.immediateRetestTarget,
+      recordedAt: now,
+    },
+    carePlan: { ...source.treatmentPlan.carePlan, recordedAt: now },
+  }
+}
+
+/**
+ * 기존 Follow-up Target 유지 -- keep tracking the same things. Only
+ * applies when today has no targets selected yet, so it can never silently
+ * replace a clinician's own choice.
  */
 export function applyFollowUpTargetsCarryForward(
   state: VisitWorkspaceState,

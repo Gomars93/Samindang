@@ -25,15 +25,26 @@
 //   matching the existing rule that a follow-up token's plaintext exists
 //   only in the single issuance response.
 // - at most ONE active assignment per station, AND at most one station per
-//   visit/session (round 9 review fix). A station that is already serving a
-//   different patient is not assignable at all until it is completed or
-//   explicitly reset by staff: the tablet stops polling once a patient has
-//   the questions open, so a staff-side "reassignment" could not actually
-//   replace what is on that physical screen -- the tablet would be handed
-//   to the next patient still showing the previous one's session. Refusing
-//   the assignment (reason 'station_busy') is the honest, safe behavior for
-//   the pilot; a generation/heartbeat protocol that can revoke an
-//   in-progress screen is the alternative if this ever proves too rigid.
+//   visit/session. BOTH are enforced by refusing, never by displacing
+//   (round 9 introduced these; round 10's review fixed the half that still
+//   displaced). The reason is the same in both directions: the tablet stops
+//   polling the moment a patient has the questions open, so nothing the
+//   server does can change what is on that physical screen.
+//     * target station already serving a DIFFERENT visit -> 'station_busy'.
+//       Handing that tablet to the next patient would show them the
+//       previous patient's session.
+//     * this visit already assigned to ANOTHER station ->
+//       'visit_assigned_elsewhere'. Round 9 "moved" the session by clearing
+//       the old station's server-side assignment, but clearing a server
+//       record cannot retract a raw capability the old tablet has already
+//       fetched -- so a "successful" move could leave the SAME live token on
+//       two physical screens while the server listed only one.
+//   In both cases staff must reset the old station first. Reset revokes the
+//   capability (see server/store.js's resetStation), so the next assignment
+//   hands out a genuinely fresh one. A generation/heartbeat protocol that
+//   can revoke an in-progress screen remotely is the alternative if
+//   refusing ever proves too rigid; it would need a real compensating
+//   transaction, which refusing does not.
 import { randomBytes, createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -186,23 +197,24 @@ export function createStationStore(baseDir) {
     return stations
   }
 
-  // Installs a new assignment. Round 9 review fix -- three guarantees, in
-  // this order:
+  // Installs a new assignment. Three guarantees, in this order:
   //
-  // 1. A station already serving a DIFFERENT visit is refused outright
-  //    ('station_busy'). Staff must complete or reset it first. See the
-  //    module doc comment for why silently taking it over is unsafe.
-  //    Re-assigning the SAME visit to the same station is allowed and
-  //    simply refreshes the handoff (an idempotent re-hand, not a
-  //    conflict).
+  // 1. A station already serving a DIFFERENT visit is refused
+  //    ('station_busy'). Re-assigning the SAME visit to the same station is
+  //    allowed and simply refreshes the handoff -- an idempotent re-hand,
+  //    not a conflict.
   //
-  // 2. At most one station per visit. `startRevisit` deliberately dedupes
-  //    a repeated same-patient/same-mode start into the SAME visit and
-  //    token, so assigning that patient to station B shortly after station
-  //    A would otherwise leave one live token sitting on two tablets. Any
-  //    OTHER station currently holding this visit is released first, which
-  //    is a plain clear (never a token invalidation -- it is the very
-  //    session we are about to hand to this station).
+  // 2. A visit already assigned to ANOTHER station is refused
+  //    ('visit_assigned_elsewhere') rather than moved. Round 10 review fix:
+  //    the previous version released the old station and installed the same
+  //    visit+token here, but releasing a server-side record cannot retract
+  //    a capability the old tablet already fetched, so the same live token
+  //    could end up on two physical screens. Worse, if this station's write
+  //    then failed, the reused session was left assigned to nobody with no
+  //    rollback (assignRevisitToStation deliberately never rolls back a
+  //    reused session). Refusing has neither failure mode: nothing is
+  //    touched unless the assignment is going to succeed. See the module
+  //    doc comment.
   //
   // 3. The whole thing is serialized twice over: a store-wide assign lock
   //    makes the cross-station uniqueness check-and-act atomic against
@@ -216,19 +228,17 @@ export function createStationStore(baseDir) {
     return withLock(ASSIGN_LOCK, async () => {
       const target = await getStation(stationId)
       if (!target) return { ok: false, reason: 'not_found' }
-      // Cheap pre-check so a refused assignment never releases another
-      // station pointlessly; re-verified authoritatively under the
-      // station lock below.
       if (target.assignment && target.assignment.visit_id !== visit_id) {
         return { ok: false, reason: 'station_busy', station: target }
       }
 
-      const releasedFrom = []
+      // Every assign is serialized by ASSIGN_LOCK, so this scan cannot be
+      // raced by another assign; a concurrent clear/complete can only free
+      // a station, which makes this check conservative rather than wrong.
       for (const other of await listStations()) {
         if (other.station_id === stationId) continue
         if (other.assignment?.visit_id === visit_id) {
-          await clearAssignment(other.station_id)
-          releasedFrom.push(other.station_id)
+          return { ok: false, reason: 'visit_assigned_elsewhere', station: other }
         }
       }
 
@@ -247,7 +257,7 @@ export function createStationStore(baseDir) {
         }
         await atomicWrite(stationPath(baseDir, stationId), record)
         assignedTokens.set(stationId, { visit_id, token })
-        return { ok: true, station: record, released_from: releasedFrom }
+        return { ok: true, station: record }
       })
     })
   }
@@ -281,11 +291,24 @@ export function createStationStore(baseDir) {
 
   // Clears both halves of an assignment (memory + on-disk metadata). Used
   // by the station's own post-submit call and by staff's manual reset.
-  async function clearAssignment(stationId) {
+  //
+  // `expectedVisitId` (round 10 review fix) makes the clear conditional:
+  // staff's reset revokes the capability BEFORE freeing the station (see
+  // server/store.js's resetStation), and revocation takes a visit lock it
+  // may have to wait for. Passing the visit the caller decided to reset
+  // means that if a different session landed on this station in the
+  // meantime, the reset frees nothing rather than silently discarding an
+  // assignment nobody asked it to touch. Omit it to clear unconditionally
+  // (the station's own post-submit path, which is already scoped to its
+  // own credential).
+  async function clearAssignment(stationId, expectedVisitId = null) {
     return withLock(`station:${stationId}`, async () => {
-      assignedTokens.delete(stationId)
       const record = await getStation(stationId)
       if (!record) return { ok: false, reason: 'not_found' }
+      if (expectedVisitId !== null && record.assignment?.visit_id !== expectedVisitId) {
+        return { ok: true, cleared: null, unchanged: true }
+      }
+      assignedTokens.delete(stationId)
       const cleared = record.assignment
       record.assignment = null
       await atomicWrite(stationPath(baseDir, stationId), record)

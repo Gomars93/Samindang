@@ -74,14 +74,14 @@ import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLo
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
 import { EXAM_CHECK_STATUS_LABEL } from './provenance'
 import {
-  applyCarePlanCarryForward,
-  applyFinalAssessmentCarryForward,
   applyFollowUpTargetsCarryForward,
+  applyJudgmentCarryForward,
+  applyTreatmentPlanCarryForward,
   carryForwardSourceFromSubmission,
   carryForwardSourceFromVisitWorkspace,
   emptyCarryForwardSource,
-  isCarePlanBlank,
-  isFinalAssessmentBlank,
+  isJudgmentBlank,
+  isTreatmentPlanBlank,
 } from './revisitCarryForward'
 
 const SAVE_DEBOUNCE_MS = 900
@@ -242,8 +242,8 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       ? carryForwardSourceFromSubmission(priorSubmission)
       : carryForwardSourceFromVisitWorkspace(priorVisitWorkspace)
 
-  const assessmentBlank = isFinalAssessmentBlank(workspaceState.finalAssessment)
-  const carePlanBlank = isCarePlanBlank(workspaceState.carePlan)
+  const judgmentBlank = isJudgmentBlank(workspaceState.finalAssessment)
+  const treatmentPlanBlank = isTreatmentPlanBlank(workspaceState.finalAssessment, workspaceState.carePlan)
   const targetsBlank = workspaceState.followUpTargets.length === 0
 
   function carryForwardHint(available: boolean, blank: boolean): string {
@@ -339,13 +339,18 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           </span>
         </h3>
         <div className="workspace__revisit__carryForward__actions">
+          {/* Round 10 review fix: each action writes EXACTLY the fields its
+              label names. 시행/예정 처치 and 즉시 재검 대상 are treatment
+              records, so they moved out of the judgment action and under
+              the 처치·관리계획 one -- a judgment-labelled click can no
+              longer author today's treatment text. */}
           <button
             type="button"
             className="workspace__btn"
-            disabled={!carryForward.finalAssessment || !assessmentBlank}
-            title={carryForwardHint(Boolean(carryForward.finalAssessment), assessmentBlank)}
+            disabled={!carryForward.judgment || !judgmentBlank}
+            title={`최종 임상 판단 · 치료 초점만 채웁니다 — ${carryForwardHint(Boolean(carryForward.judgment), judgmentBlank)}`}
             onClick={() =>
-              setWorkspaceState((s) => applyFinalAssessmentCarryForward(s, carryForward, new Date().toISOString()))
+              setWorkspaceState((s) => applyJudgmentCarryForward(s, carryForward, new Date().toISOString()))
             }
           >
             이전 판단 유지
@@ -353,28 +358,30 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           <button
             type="button"
             className="workspace__btn"
-            disabled={!carryForward.carePlan || !carePlanBlank}
-            title={carryForwardHint(Boolean(carryForward.carePlan), carePlanBlank)}
+            disabled={!carryForward.treatmentPlan || !treatmentPlanBlank}
+            title={`시행/예정 처치 · 즉시 재검 대상 · 관리 계획을 채웁니다 — ${carryForwardHint(Boolean(carryForward.treatmentPlan), treatmentPlanBlank)}`}
             onClick={() =>
-              setWorkspaceState((s) => applyCarePlanCarryForward(s, carryForward, new Date().toISOString()))
+              setWorkspaceState((s) => applyTreatmentPlanCarryForward(s, carryForward, new Date().toISOString()))
             }
           >
-            이전 처치/관리계획 유지
+            이전 처치·관리계획 유지
           </button>
           <button
             type="button"
             className="workspace__btn"
             disabled={carryForward.followUpTargets.length === 0 || !targetsBlank}
-            title={carryForwardHint(carryForward.followUpTargets.length > 0, targetsBlank)}
+            title={`추적 항목 선택만 이어갑니다(이전 측정값은 가져오지 않습니다) — ${carryForwardHint(carryForward.followUpTargets.length > 0, targetsBlank)}`}
             onClick={() => setWorkspaceState((s) => applyFollowUpTargetsCarryForward(s, carryForward))}
           >
             기존 Follow-up Target 유지
           </button>
         </div>
         <p className="workspace__revisit__carryForward__note">
-          변화가 없는 일상적인 재진이면 위 버튼으로 이어간 뒤 필요한 부분만 고치면 됩니다. 오늘 새로 확인한
-          진찰 소견은 아래 &quot;오늘 재검&quot;에 직접 기록하세요 — 이전 소견이 오늘 소견으로 복사되는 일은
-          없습니다.
+          변화가 없는 일상적인 재진이면 위 버튼으로 이어간 뒤 필요한 부분만 고치면 됩니다. 각 버튼은 이름에
+          적힌 항목만 채웁니다 — <strong>이전 판단 유지</strong>는 최종 임상 판단·치료 초점만,
+          <strong>이전 처치·관리계획 유지</strong>가 시행/예정 처치·즉시 재검 대상·관리 계획을 담당합니다.
+          오늘 새로 확인한 진찰 소견은 아래 &quot;오늘 재검&quot;에 직접 기록하세요 — 이전 소견이나 이전
+          측정값이 오늘 기록으로 복사되는 일은 없습니다.
         </p>
       </section>
 

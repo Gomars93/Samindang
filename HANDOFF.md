@@ -166,7 +166,49 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 10의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+- (없음 — round 11의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+
+## Completed — Round 11 (Doctor Preview v2 — 10초 임상 화면, 이번 세션)
+
+기본 원장 화면이 "정보 보관소"가 아니라 **임상 행동 화면**이 되도록 기본
+노출 정보를 대폭 줄였다. 데이터는 하나도 삭제하지 않았다.
+
+### 기록 화면을 3개 surface로 분리
+`진료`(기본) / `자료 보기` / `명리`. 이전에는 워크스페이스 아래로 전체
+문진 transcript, 약물·병력, 명리, 녹취·EMR, 레거시 판단 폼, 원본 JSON이
+한 페이지에 세로로 쌓여 있었다. 이제 `진료`에는 임상 흐름만 있고 나머지는
+클릭 한 번 거리에 있다. 명리는 임상 워크스페이스 안에서 **완전히** 사라졌다
+(herbal 워크스페이스 안에 접혀 있던 `명리 참고` 블록도 제거 — 이제 별도
+surface에만 존재한다).
+
+비활성 surface는 `hidden`으로 두고 unmount 하지 않는다. 이유는 상태 보존이
+먼저다 — EMR 요약이나 판단 폼을 반쯤 입력하고 다른 화면을 봤다 돌아왔을 때
+내용이 남아야 한다. 기본 화면의 *보이는* 정보량과 스크롤 길이는 `hidden`
+만으로 이미 달성되므로, unmount는 얻는 것 없이 상태만 잃는다.
+
+### 워크스페이스를 4계층으로 압축
+1. **오늘 한눈에** — 주호소/기간/악화요인/안전상태. 안전은 무조건 기본 노출.
+2. **오늘 확인할 것** — 내용이 있을 때만 렌더. production 제안 목록은 임상
+   승인 전까지 비어 있으므로, 빈 "추천" 블록이 매번 자리를 차지하지 않는다.
+3. **오늘 판단·처치** — 기본은 판단/처치/재검 3개. `치료 초점`은 접힘
+   (이미 내용이 있으면 자동으로 펼쳐짐 — 기록된 것이 숨는 일은 없다).
+   Follow-up Target 선택이 바로 아래.
+4. **다음 액션** — 기록된 값을 읽어주는 compact 카드. 전체 Care Plan 폼과
+   다음 재평가 계획은 disclosure 하나 뒤.
+
+기본에서 내린 것: Clinical Loop 체크리스트(매 방문 필수처럼 보였음), 이전
+방문 상세, 환자 전달문 미리보기, EMR 미리보기 → 워크스페이스 참고 drawer 1개.
+
+### 실제 브라우저로 측정한 결과 (fixtures, 1440×900)
+- 임상 흐름: **1321px = 1.47 viewport** (목표 1–1.5 이내)
+- 기본 화면은 전체 콘텐츠 높이의 **약 43%**
+- 기본 화면에 보이는 section 5개 / 참고 surface 10개
+
+### 이번 라운드에 QA가 잡은 내 실수 1건
+참고 drawer를 만들면서 `EmrPreviewCard`를 drawer 안에 넣고 원본을 지우려
+했는데, `replace(..., 1)`이 **drawer 안에 새로 넣은 쪽**을 지워 원본이 밖에
+남았다. 그 결과 EMR 미리보기(266px)가 기본 화면에 그대로 노출됐다. 마크업
+테스트는 통과했고(존재는 하니까), **브라우저 높이 측정이 잡았다.**
 
 ## Completed — Round 10 (round 9 re-review 5차 수정, 이번 세션)
 
@@ -740,6 +782,13 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 11 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(성공), `npm run test:all`(전체
+  green — `tests/doctor.spec.mjs` 664, `tests/doctor-workspace.spec.mjs` 49,
+  `tests/station.spec.mjs` 100, `follow-up-session` 167, `workspace-round3`
+  97, `server` 213), pytest 80 passed, FROZEN diff empty.
+- **Round 11 헤드리스 브라우저 QA 3종**: 신규 preview-v2 측정 16개 체크 +
+  재진 49개 + 스테이션 30개 전부 통과.
 - **Round 10 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공),
   `npm run test:all`(전체 green — `tests/station.spec.mjs` 100 assertion,
@@ -887,9 +936,8 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 10(스테이션 간 이동 거절 + 초기화 취소-우선 순서 + carry-forward
-   라벨/기록 대상 정합)이 구현되었으니 review author(Gomars93)가 새
-   HEAD를 재확인.
+2. round 11(Doctor Preview v2 — 기록 화면 3 surface 분리 + 워크스페이스
+   4계층 압축)이 구현되었으니 review author(Gomars93)가 새 HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
 4. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

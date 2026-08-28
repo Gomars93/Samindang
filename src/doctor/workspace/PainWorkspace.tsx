@@ -64,6 +64,7 @@ import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { EvidenceItem } from './supportEngine'
 import type { PainCarePlan } from './carePlan'
 import { PainCarePlanCard } from './CarePlanCard'
+import { NextActionCard, isCarePlanEmpty } from './NextActionCard'
 import { PatientCarePlanPreviewCard } from './PatientCarePlanPreviewCard'
 import { buildPainPatientCarePlanPreview } from './patientCarePlanPreview'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
@@ -74,7 +75,6 @@ import { RehabSuggestionCard } from './RehabSuggestionCard'
 import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { deriveAdditionalConcernSummary } from './additionalConcern'
 import { AdditionalConcernCard } from './AdditionalConcernCard'
-import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
 import type { PatientHistoryResult } from './longitudinal'
 import { PriorVisitHistoryCard } from './PriorVisitHistoryCard'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -159,12 +159,6 @@ export function PainWorkspace({
 
   const patientCarePlanText = buildPainPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })
 
-  const loopStatus: ClinicalLoopStatusItem[] = [
-    { key: 'assessment', label: '최종 판단 입력', done: finalAssessment.recordedAt !== null },
-    { key: 'plan', label: '치료 계획 입력', done: carePlan.recordedAt !== null },
-    { key: 'followup', label: '재평가 대상 선택', done: followUpTargets.length > 0 },
-    { key: 'reassessPlan', label: '다음 재평가 계획', done: nextReassessmentPlan.status !== 'UNSET' },
-  ]
 
   return (
     <div className="workspace__pain">
@@ -225,8 +219,15 @@ export function PainWorkspace({
 
       <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
 
-      <section className="workspace__block">
-        <h3>기존 통증 모듈 안전패널</h3>
+      {/*
+        LAYER 1 continued -- safety. These panels are the only non-glance
+        content that stays unconditionally visible: they are the answer to
+        "is there a safety issue?", which the 10-second read must never
+        require a click to reach. Each panel renders nothing for a region
+        this record does not concern, so in practice this is one panel.
+      */}
+      <section className="workspace__block workspace__block--safety">
+        <h3>안전 확인</h3>
         <p className="workspace__block__hint">
           현재 계산된 flag와 안전 잠금 의미를 그대로 표시합니다 — 새 cutoff나 해석을 추가하지 않습니다.
         </p>
@@ -241,19 +242,27 @@ export function PainWorkspace({
         <TmjSafetyPanel payload={payload} />
       </section>
 
-      <section className="workspace__block">
-        <h3>지금 확인할 것</h3>
-        <ExamSuggestionList
-          items={examSuggestions}
-          onChangeItem={onChangeExamSuggestion}
-          onAddToReassessment={onAddExamToReassessment}
-        />
-      </section>
-
-      <section className="workspace__block">
-        <h3>확인 필요 / 서로 맞지 않는 정보</h3>
-        <SupportContradictionPanel items={evidence} emptyText="현재 확인된 지지/반증/미확인 항목이 없습니다." />
-      </section>
+      {/*
+        LAYER 2 -- 오늘 확인할 것. Rendered ONLY when it actually holds
+        something. Production suggestion lists are deliberately empty until
+        clinically approved rules exist, and an always-visible empty
+        "recommendations" block is exactly the kind of default-view noise
+        this round removes. Nothing is lost: when a suggestion or a
+        contradiction does exist, the section appears.
+      */}
+      {(examSuggestions.length > 0 || evidence.length > 0) && (
+        <section className="workspace__block">
+          <h3>오늘 확인할 것</h3>
+          {examSuggestions.length > 0 && (
+            <ExamSuggestionList
+              items={examSuggestions}
+              onChangeItem={onChangeExamSuggestion}
+              onAddToReassessment={onAddExamToReassessment}
+            />
+          )}
+          {evidence.length > 0 && <SupportContradictionPanel items={evidence} emptyText="" />}
+        </section>
+      )}
 
       {additionalConcern && (
         <AdditionalConcernCard
@@ -272,13 +281,17 @@ export function PainWorkspace({
         </section>
       )}
 
+      {/*
+        LAYER 3 -- 오늘 판단·처치. The clinician's main action area, and the
+        only place the default view asks for typing. Follow-up target
+        selection sits immediately below it because "what am I tracking?"
+        is part of the same decision, not a later form.
+
+        오늘 재검(Structured Reassessment) stays collapsed unless it already
+        holds something -- it is a real part of the loop, but presenting it
+        open on every routine visit made it look mandatory.
+      */}
       <PainFinalAssessmentCard value={finalAssessment} onChange={onChangeFinalAssessment} />
-
-      <StructuredReassessmentCard title="오늘 재검(Structured Reassessment)" value={reassessment} onChange={onChangeReassessment} />
-
-      <ClinicalLoopStatusBar items={loopStatus} />
-
-      <PainCarePlanCard value={carePlan} onChange={onChangeCarePlan} />
 
       <FollowUpTargetPicker
         options={PAIN_FOLLOW_UP_OPTIONS}
@@ -287,13 +300,49 @@ export function PainWorkspace({
         showPostTreatmentField
       />
 
-      <NextReassessmentPlanCard value={nextReassessmentPlan} onChange={onChangeNextReassessmentPlan} />
+      <details className="workspace__optional" open={reassessment.items.length > 0}>
+        <summary>오늘 재검(Structured Reassessment) — 필요할 때 펼치기</summary>
+        <StructuredReassessmentCard
+          title="오늘 재검(Structured Reassessment)"
+          value={reassessment}
+          onChange={onChangeReassessment}
+        />
+      </details>
 
-      <PriorVisitHistoryCard history={priorVisits} profile="pain" />
+      {/*
+        LAYER 4 -- 다음 액션. A compact read of what is actually recorded,
+        with the full Care Plan form and the next-reassessment plan one
+        click away. The forms are unchanged and still autosave; they simply
+        stop occupying the default screen when nothing has been written.
+      */}
+      <NextActionCard
+        homeAction={carePlan.homeActionPlan}
+        nextCheck={carePlan.nextVisitCheckItem}
+        nextReassessmentPlan={nextReassessmentPlan}
+      />
 
-      <PatientCarePlanPreviewCard title="환자 전달용 치료 계획" text={patientCarePlanText} />
+      <details
+        className="workspace__optional"
+        open={!isCarePlanEmpty(carePlan) || nextReassessmentPlan.status !== 'UNSET'}
+      >
+        <summary>관리 계획 · 다음 재평가 — 자세히 입력</summary>
+        <PainCarePlanCard value={carePlan} onChange={onChangeCarePlan} />
+        <NextReassessmentPlanCard value={nextReassessmentPlan} onChange={onChangeNextReassessmentPlan} />
+      </details>
 
-      <EmrPreviewCard text={emrText} />
+      {/*
+        One reference drawer, closed by default. Prior-visit detail, the
+        patient-facing preview and the EMR preview are all real and all
+        preserved -- they are simply not part of answering the five
+        10-second questions, so they no longer stack under the clinical
+        flow as equal-weight cards.
+      */}
+      <details className="workspace__optional workspace__optional--reference">
+        <summary>참고 자료 (이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
+        <PriorVisitHistoryCard history={priorVisits} profile="pain" />
+        <PatientCarePlanPreviewCard title="환자 전달용 치료 계획" text={patientCarePlanText} />
+        <EmrPreviewCard text={emrText} />
+        </details>
     </div>
   )
 }

@@ -1191,6 +1191,86 @@
   gap: 8px;
 }
 
+/* ---------- round 11: Doctor Preview v2 (10-second clinical view) ---------- */
+/* One shared style for every optional/reference disclosure, so a collapsed
+   section reads as "available" rather than as another equal-weight card. */
+.workspace__optional {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.workspace__optional > summary {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.workspace__optional > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.workspace__optional[open] > summary {
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.workspace__optional[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 14px;
+}
+
+.workspace__optional--reference[open] {
+  background: var(--bg);
+}
+
+/* Safety is the one block that must read as louder than everything else. */
+.workspace__block--safety {
+  border-left: 3px solid var(--danger);
+}
+
+/* NEXT ACTION: a read-back, not a form. Neutral by design -- semantic color
+   is reserved for safety (red) and unconfirmed state (amber). */
+.workspace__nextAction__row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+}
+
+.workspace__nextAction__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__nextAction__value {
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.workspace__nextAction__value--empty {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+@media (max-width: 720px) {
+  .workspace__nextAction__row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 /* ---------- round 9: routine-revisit compression ---------- */
 .workspace__revisit__carryForward__actions {
   display: flex;
@@ -1210,6 +1290,9 @@
   color: var(--text-muted);
 }
 
+/* The revisit's own disclosures share the round-11 .workspace__optional
+   styling; this class stays only as the revisit-specific hook tests and
+   the E2E already select on. */
 .workspace__revisit__optional {
   background: var(--surface);
   border: 1px solid var(--border);

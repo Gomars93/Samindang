@@ -824,3 +824,49 @@
   font-weight: 700;
   color: var(--primary);
 }
+
+/* ---------- round 11: Doctor Preview v2 — record surfaces ---------- */
+/* The record's three surfaces. 진료 is the clinical action screen and the
+   default; 자료 and 명리 hold what used to stack underneath it. Styled as a
+   quiet switch, not another headline: the tab bar must not compete with the
+   safety state directly below it. */
+.doctor__recordTabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 0 0 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: fit-content;
+}
+
+.doctor__recordTab {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 40px;
+}
+
+.doctor__recordTab--active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.doctor__recordTab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.doctor__referenceNote {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}

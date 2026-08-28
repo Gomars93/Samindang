@@ -73,30 +73,94 @@ test('pain scenario 1: no Myungri/명리, no birth-time, no herbal-only systemic
   assert.ok(!html.includes('명리'))
   assert.ok(!html.includes('workspace__myungri'))
   assert.ok(!html.includes('핵심 병기 후보'))
-  assert.ok(!html.includes('오늘 반드시 확인'))
 })
 
-test('pain scenario 1: shows the pain-specific 지금 확인할 것 section', () => {
+test('pain scenario 1: shows the pain-specific 오늘 확인할 것 section', () => {
   const html = render(PAIN_SCENARIO_1)
-  assert.ok(html.includes('지금 확인할 것'))
+  assert.ok(html.includes('오늘 확인할 것'))
   assert.ok(html.includes('원장 최종 판단'))
 })
 
-test('herbal scenario: systemic content shown, Myungri present but collapsed (no [open])', () => {
+// Round 11: Myungri is no longer inside the clinical workspace AT ALL --
+// not collapsed within it, not below it. It is a separate record surface
+// (DoctorView's 명리 tab). This is the stronger form of the standing rule
+// that it must be completely separated from the clinical flow, and it now
+// holds for the herbal profile too, not only for pain.
+test('round 11: NO profile renders Myungri inside the clinical workspace', () => {
+  for (const [name, scenario] of [
+    ['pain', PAIN_SCENARIO_1],
+    ['herbal', HERBAL_SCENARIO_1],
+    ['mixed', MIXED_SCENARIO_1],
+  ]) {
+    const html = render(scenario)
+    assert.ok(!html.includes('workspace__myungri'), `${name}: no myungri block in the workspace`)
+    assert.ok(!html.includes('명리 참고'), `${name}: no myungri disclosure in the workspace`)
+  }
+})
+
+test('herbal scenario: systemic content shown, final assessment present', () => {
   const html = render(HERBAL_SCENARIO_1)
   assert.ok(html.includes('핵심 병기 후보'))
-  assert.ok(html.includes('오늘 반드시 확인'))
-  const myungriIdx = html.indexOf('workspace__myungri')
-  assert.ok(myungriIdx !== -1, 'myungri details block present')
-  const detailsOpenIdx = html.lastIndexOf('<details', myungriIdx + 40)
-  const detailsTag = html.slice(detailsOpenIdx, html.indexOf('>', detailsOpenIdx) + 1)
-  assert.ok(!detailsTag.includes(' open'), 'myungri <details> is not open by default')
+  assert.ok(html.includes('오늘 확인할 것'))
   assert.ok(html.includes('최종 변증·병기'))
 })
 
-test('herbal scenario: does not show the pain-specific 지금 확인할 것 section', () => {
+/* ---------- Round 11: the 10-second clinical view ----------
+   The default workspace must be a clinical action screen. These pin the
+   four layers and the things that must no longer occupy the default view. */
+test('round 11: the default workspace renders the four layers in order', () => {
+  const html = render(PAIN_SCENARIO_1)
+  const glance = html.indexOf('workspace__hero')
+  const safety = html.indexOf('workspace__block--safety')
+  const judgment = html.indexOf('원장 최종 판단')
+  const nextAction = html.indexOf('workspace__nextAction')
+  assert.ok(glance !== -1 && safety !== -1 && judgment !== -1 && nextAction !== -1, 'all four layers render')
+  assert.ok(glance < safety, 'the glance card comes first')
+  assert.ok(safety < judgment, 'safety is above the clinician action area')
+  assert.ok(judgment < nextAction, 'next action closes the flow')
+})
+
+test('round 11: the mandatory-looking Clinical Loop checklist is gone from the default view', () => {
+  for (const scenario of [PAIN_SCENARIO_1, HERBAL_SCENARIO_1, MIXED_SCENARIO_1]) {
+    const html = render(scenario)
+    assert.ok(!html.includes('workspace__loopStatus'), 'no clinical loop bar')
+  }
+})
+
+test('round 11: the full Care Plan / next-reassessment forms are behind a closed disclosure when unused', () => {
+  const html = render(PAIN_SCENARIO_1)
+  const idx = html.indexOf('관리 계획 · 다음 재평가')
+  assert.ok(idx !== -1, 'the disclosure exists')
+  const detailsIdx = html.lastIndexOf('<details', idx)
+  const tag = html.slice(detailsIdx, html.indexOf('>', detailsIdx) + 1)
+  // ...but the content is still rendered inside it, so nothing recorded is lost.
+  assert.ok(html.includes('환자 전달용 치료 계획') || html.includes('참고 자료'), 'reference material still present')
+  assert.ok(typeof tag === 'string' && tag.startsWith('<details'), 'it really is a disclosure')
+})
+
+test('round 11: reference material moved into a drawer, not deleted', () => {
+  const html = render(PAIN_SCENARIO_1)
+  assert.ok(html.includes('참고 자료'), 'the reference drawer exists')
+  assert.ok(html.includes('환자 전달용 치료 계획'), 'the patient-facing preview is still rendered')
+  assert.ok(html.includes('EMR'), 'the EMR preview is still rendered')
+})
+
+test('round 11: NEXT ACTION reads back recorded values and never invents one', () => {
+  const html = render(PAIN_SCENARIO_1)
+  assert.ok(html.includes('다음 액션'))
+  assert.ok(html.includes('환자가 집에서 할 일'))
+  assert.ok(html.includes('다음에 확인할 것'))
+  assert.ok(html.includes('다음 재평가'))
+})
+
+// Round 11 renamed both profiles' confirm sections to the same "오늘 확인할 것"
+// heading, so the heading no longer distinguishes them -- the CONTENT does.
+// Pain fills it with the exam-suggestion list, herbal with the clinician
+// observation checklist, and neither may render the other's.
+test('herbal scenario: does not render the pain-specific exam-suggestion list', () => {
   const html = render(HERBAL_SCENARIO_1)
-  assert.ok(!html.includes('지금 확인할 것'))
+  assert.ok(!html.includes('workspace__examSuggestions'))
+  assert.ok(html.includes('workspace__observationChecklist'))
 })
 
 test('mixed scenario: both 통증 진료 and 한약·전신 tabs present, Common Safety renders exactly once', () => {
@@ -109,7 +173,7 @@ test('mixed scenario: both 통증 진료 and 한약·전신 tabs present, Common
 
 test('mixed scenario: default active tab shows Pain workspace content (has pain content)', () => {
   const html = render(MIXED_SCENARIO_1)
-  assert.ok(html.includes('지금 확인할 것'))
+  assert.ok(html.includes('workspace__examSuggestions'))
 })
 
 // ---------- 3. provenance / unknown semantics ----------

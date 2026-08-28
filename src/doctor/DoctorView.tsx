@@ -1693,6 +1693,42 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('CLINIC_TABLET')
   const [stations, setStations] = useState<StationInfo[]>([])
   const [selectedStationId, setSelectedStationId] = useState<string>('')
+  /*
+   * Round 11 (Doctor Preview v2 -- 10-second clinical view): the record
+   * used to render as ONE long vertical page -- clinical workspace, then
+   * the whole questionnaire transcript, then meds/history, then Myungri,
+   * then the recorder/EMR block, then the legacy judgment form, then the
+   * raw JSON payload. Everything the clinician needed in the first ten
+   * seconds was buried in an archive.
+   *
+   * The record is now three surfaces. `진료` is the default and holds
+   * ONLY the clinical action flow. `자료` holds the reference material --
+   * still complete, still editable, just not in the way. `명리` is fully
+   * separated from the clinical workspace, per the standing rule that it
+   * must never sit inside it.
+   *
+   * Nothing here deletes stored data: every block that moved is reachable
+   * in one click, and the underlying record/persistence is untouched.
+   *
+   * Inactive surfaces stay MOUNTED behind `hidden` rather than being
+   * unmounted. Two reasons, and the first is the one that matters:
+   * a half-typed EMR summary or judgment entry must survive a glance at
+   * another surface and back. The second is that `hidden` already achieves
+   * what this round is actually asked for -- the default view's *visible*
+   * information and scroll length -- so unmounting would buy nothing while
+   * costing state. Tests that assert on rendered markup therefore keep
+   * covering the whole record; the browser QA measures what is visible.
+   */
+  const [recordTab, setRecordTab] = useState<'clinical' | 'reference' | 'myungri'>('clinical')
+  function openRecordTab(tab: 'clinical' | 'reference' | 'myungri') {
+    setRecordTab(tab)
+  }
+  // Opening a different record always starts back on the clinical surface --
+  // otherwise patient B would silently inherit patient A's "I was reading
+  // the archive" position.
+  useEffect(() => {
+    setRecordTab('clinical')
+  }, [selectedId, workspaceScenarioId, mode])
   // Round 9: a busy tablet cannot be assigned (the server refuses it with
   // 409 station_busy), so it must not be the default selection either.
   const selectedStationBusy = stations.some((st) => st.stationId === selectedStationId && Boolean(st.assignment))
@@ -2577,6 +2613,45 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </section>
       )}
       {/*
+        Round 11: the record's three surfaces. 진료 is the clinical action
+        screen and the default; the other two hold everything that used to
+        stack underneath it. Myungri only exists as a surface at all when
+        the profile is not pain (the standing Phase 2 invariant).
+      */}
+      <nav className="doctor__recordTabs" role="tablist" aria-label="환자 기록 화면">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={recordTab === 'clinical'}
+          className={`doctor__recordTab${recordTab === 'clinical' ? ' doctor__recordTab--active' : ''}`}
+          onClick={() => openRecordTab('clinical')}
+        >
+          진료
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={recordTab === 'reference'}
+          className={`doctor__recordTab${recordTab === 'reference' ? ' doctor__recordTab--active' : ''}`}
+          onClick={() => openRecordTab('reference')}
+        >
+          자료 보기
+        </button>
+        {viewProfile !== 'pain' && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={recordTab === 'myungri'}
+            className={`doctor__recordTab${recordTab === 'myungri' ? ' doctor__recordTab--active' : ''}`}
+            onClick={() => openRecordTab('myungri')}
+          >
+            명리
+          </button>
+        )}
+      </nav>
+
+      <div hidden={recordTab !== 'clinical'}>
+      {/*
         key={payload.session_id}: DoctorWorkspace owns its own local state
         (profile override, mixed-mode active tab) seeded from the payload
         on mount. Without this key, switching the underlying record (a
@@ -2614,6 +2689,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         }
       />
 
+      </div>
+
+      <div hidden={recordTab !== 'reference'}>
+      <p className="doctor__referenceNote">
+        아래는 참고 자료입니다 — 진료 화면에서 내려온 것일 뿐 사라진 것은 없고, 내용도 그대로 편집됩니다.
+      </p>
       {/*
         Tablet UX v2.2 §33: 현재 questionnaire mode를 작게 표시한다 --
         진단/임상 판단이 아닌 운영 참고 메타데이터이며, 위 safety
@@ -2860,9 +2941,17 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
-      {/* PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지 않는다. */}
+      {/*
+        PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지
+        않는다. Round 11 goes further -- Myungri is not merely below the
+        clinical workspace, it is a separate surface that the clinical flow
+        never renders, per the standing rule that it must be completely
+        separated from it.
+      */}
+      </div>
+
       {viewProfile !== 'pain' && (
-      <>
+      <div hidden={recordTab !== 'myungri'}>
       <MyungriCompactCard saju={saju} />
 
       <section className="doctor__section doctor__section--myungri">
@@ -2963,9 +3052,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           기록&rdquo;에 원장이 직접 기록합니다.
         </p>
       </section>
-      </>
+      </div>
       )}
 
+      <div hidden={recordTab !== 'reference'}>
       {mode === 'server' && selectedRecord?.visit_id && (
         <section className="doctor__section">
           <h2>진료 녹취·요약</h2>
@@ -3050,6 +3140,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         <summary>원본 응답 보기 (JSON)</summary>
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
+      </div>
       </>
       )}
     </div>

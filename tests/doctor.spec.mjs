@@ -1256,4 +1256,62 @@ function detailsRange(html, classMarker) {
   assert('female patient fixture with WOMEN_SAFETY_01 answered: 여성 안전정보 section renders', html.includes('여성 안전정보'))
 }
 
+/* =====================================================================
+   Round 11 (Doctor Preview v2 -- 10-second clinical view). The record used
+   to render as one long vertical page: clinical workspace, then the whole
+   questionnaire transcript, then meds/history, then Myungri, then the
+   recorder/EMR block, then the legacy judgment form, then the raw JSON.
+   It is now three surfaces, and only the clinical one is visible by
+   default. Nothing was deleted -- these tests pin BOTH halves of that.
+   ===================================================================== */
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+
+  // The surfaces exist and 진료 is the one selected on open.
+  assert('round 11: the record offers a 진료 / 자료 보기 surface switch', html.includes('doctor__recordTabs') && html.includes('자료 보기'))
+  const clinicalTabIdx = html.indexOf('doctor__recordTab--active')
+  assert('round 11: 진료 is the surface selected on open', clinicalTabIdx !== -1 && html.slice(clinicalTabIdx, clinicalTabIdx + 120).includes('진료'))
+
+  /* ---- what must NOT be on the default surface. Each of these is
+     rendered inside a hidden panel, so "not default-visible" is checked by
+     finding it AFTER the point where the reference surface begins. ---- */
+  const referenceStart = html.indexOf('doctor__referenceNote')
+  assert('round 11: the reference surface exists', referenceStart !== -1)
+
+  const rawJsonIdx = html.indexOf('원본 응답 보기 (JSON)')
+  assert('round 11: the raw JSON payload is NOT on the default clinical surface', rawJsonIdx > referenceStart)
+
+  const transcriptIdx = html.indexOf('환자 기본')
+  assert('round 11: the raw questionnaire transcript is NOT on the default clinical surface', transcriptIdx > referenceStart)
+
+  const medsIdx = html.indexOf('약물·병력·알레르기·수술')
+  assert('round 11: medication/history detail is NOT on the default clinical surface', medsIdx > referenceStart)
+
+  /* ---- ...but every one of them is still rendered, one click away. ---- */
+  assert('round 11: the raw JSON payload still exists (moved, not deleted)', rawJsonIdx !== -1)
+  assert('round 11: the questionnaire detail still exists (moved, not deleted)', transcriptIdx !== -1)
+  assert('round 11: medication/history detail still exists (moved, not deleted)', medsIdx !== -1)
+
+  /* ---- safety must stay above every ordinary clinical block. ---- */
+  const safetyIdx = html.indexOf('doctor__commonSafety')
+  const judgmentIdx = html.indexOf('원장 최종 판단')
+  assert('round 11: Common Safety still renders on the default clinical surface', safetyIdx !== -1 && safetyIdx < referenceStart)
+  assert('round 11: safety comes before the clinician action area', safetyIdx < judgmentIdx)
+}
+
+{
+  /* ---- Myungri is a SEPARATE surface, never inside the clinical flow.
+     For a herbal/mixed record it exists as its own panel; for a pain
+     record it does not exist at all (the standing Phase 2 invariant). ---- */
+  const herbal = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  const herbalReferenceStart = herbal.indexOf('doctor__referenceNote')
+  const myungriIdx = herbal.indexOf('명리 검토')
+  assert('round 11: a herbal record still has its Myungri content', myungriIdx !== -1)
+  assert('round 11: Myungri is NOT on the default clinical surface', myungriIdx > herbalReferenceStart)
+  assert('round 11: the clinical workspace itself contains no Myungri block', !herbal.includes('workspace__myungri'))
+
+  const pain = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('round 11: a pain record offers no Myungri surface at all', !pain.includes('명리 검토'))
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

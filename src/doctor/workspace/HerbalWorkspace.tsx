@@ -20,13 +20,7 @@
  * herbal-pattern-mapping or rehab-suggestion content here — those remain
  * clinical-decision blockers per the absolute safety boundary.
  */
-import {
-  Field,
-  MyungriCompactCard,
-  isEmptyValue,
-  primaryConcernLabel,
-  safetyIssueCategories,
-} from '../DoctorView'
+import { Field, isEmptyValue, primaryConcernLabel, safetyIssueCategories } from '../DoctorView'
 import type { DoctorPayload } from '../types'
 import { PatternCandidateCard } from './PatternCandidateCard'
 import { ClinicianObservationChecklist } from './ClinicianObservationChecklist'
@@ -44,12 +38,12 @@ import type { HerbalPatternCandidate } from './patternCandidate'
 import type { ClinicianObservationItem } from './clinicianObservation'
 import type { HerbalCarePlan } from './carePlan'
 import { HerbalCarePlanCard } from './CarePlanCard'
+import { NextActionCard, isHerbalCarePlanEmpty } from './NextActionCard'
 import { PatientCarePlanPreviewCard } from './PatientCarePlanPreviewCard'
 import { buildHerbalPatientCarePlanPreview } from './patientCarePlanPreview'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import type { StructuredReassessment } from './reassessmentExam'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
-import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
 import type { PatientHistoryResult } from './longitudinal'
 import { PriorVisitHistoryCard } from './PriorVisitHistoryCard'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -97,7 +91,6 @@ export function HerbalWorkspace({
 }) {
   const r = payload.responses
   const { flags } = payload
-  const saju = payload.myungri_calculation
   const safetyCats = safetyIssueCategories(flags)
   const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
   const hasReproductiveData = r.reproductive_status.derived.source !== null
@@ -114,12 +107,6 @@ export function HerbalWorkspace({
 
   const patientCarePlanText = buildHerbalPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })
 
-  const loopStatus: ClinicalLoopStatusItem[] = [
-    { key: 'assessment', label: '최종 판단 입력', done: finalAssessment.recordedAt !== null },
-    { key: 'plan', label: '관리 계획 입력', done: carePlan.recordedAt !== null },
-    { key: 'followup', label: '재평가 대상 선택', done: followUpTargets.length > 0 },
-    { key: 'reassessPlan', label: '다음 재평가 계획', done: nextReassessmentPlan.status !== 'UNSET' },
-  ]
 
   const systemicFields: Array<{ qid: string; label: string; value: unknown }> = [
     { qid: 'SLEEP_01', label: '수면', value: r.modules.sleep.problems },
@@ -170,46 +157,15 @@ export function HerbalWorkspace({
 
       <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
 
-      {hasReproductiveData && (
-        <section className="workspace__block">
-          <h3>여성·생식 정보</h3>
-          <div className="doctor__grid">
-            <Field
-              qid="WOMEN_SAFETY_01"
-              label="환자가 답한 것"
-              value={r.reproductive_status.reproductive_status as never}
-            />
-          </div>
-        </section>
-      )}
-
+      {/*
+        LAYER 2 -- 오늘 확인할 것. The clinician observation checklist is the
+        herbal side's "what must I confirm today?", so it stays visible.
+        Pattern candidates are a production-empty suggestion list until
+        clinically approved rules exist, so the block appears only when it
+        actually holds something rather than sitting empty on every record.
+      */}
       <section className="workspace__block">
-        <h3>약물·병력</h3>
-        <div className="doctor__grid">
-          <Field qid="MED_USE" value={r.medication.medication_use} />
-          <Field qid="MED_TYPES" value={r.medication.medication_types} />
-          <Field qid="HISTORY_01" value={r.medical_history.medical_history_flags as never} />
-        </div>
-      </section>
-
-      <section className="workspace__block">
-        <h3>핵심 병기 후보</h3>
-        {patternCandidates.length === 0 ? (
-          <p className="workspace__empty">현재 후보로 제안된 병기가 없습니다.</p>
-        ) : (
-          patternCandidates.map((c) => (
-            <PatternCandidateCard
-              key={c.id}
-              candidate={c}
-              onChange={onChangePatternCandidate}
-              onAdoptToFinal={() => handleAdoptToFinal(c)}
-            />
-          ))
-        )}
-      </section>
-
-      <section className="workspace__block">
-        <h3>오늘 반드시 확인</h3>
+        <h3>오늘 확인할 것</h3>
         <ClinicianObservationChecklist
           items={clinicianObservations}
           onChangeItem={onChangeClinicianObservation}
@@ -217,20 +173,25 @@ export function HerbalWorkspace({
         />
       </section>
 
-      <details className="workspace__myungri">
-        <summary>
-          명리 참고 <span className="workspace__myungri__hint">· 보조 정보 · 기본 접힘</span>
-        </summary>
-        <MyungriCompactCard saju={saju} />
-      </details>
+      {patternCandidates.length > 0 && (
+        <section className="workspace__block">
+          <h3>핵심 병기 후보</h3>
+          {patternCandidates.map((c) => (
+            <PatternCandidateCard
+              key={c.id}
+              candidate={c}
+              onChange={onChangePatternCandidate}
+              onAdoptToFinal={() => handleAdoptToFinal(c)}
+            />
+          ))}
+        </section>
+      )}
 
+      {/*
+        LAYER 3 -- 오늘 판단·처치, with follow-up target selection directly
+        beneath it and today's reassessment collapsed unless already used.
+      */}
       <HerbalFinalAssessmentCard value={finalAssessment} onChange={onChangeFinalAssessment} />
-
-      <StructuredReassessmentCard title="오늘 재검(Structured Reassessment)" value={reassessment} onChange={onChangeReassessment} />
-
-      <ClinicalLoopStatusBar items={loopStatus} />
-
-      <HerbalCarePlanCard value={carePlan} onChange={onChangeCarePlan} />
 
       <FollowUpTargetPicker
         options={HERBAL_FOLLOW_UP_OPTIONS}
@@ -238,13 +199,69 @@ export function HerbalWorkspace({
         onChange={onChangeFollowUpTargets}
       />
 
-      <NextReassessmentPlanCard value={nextReassessmentPlan} onChange={onChangeNextReassessmentPlan} />
+      <details className="workspace__optional" open={reassessment.items.length > 0}>
+        <summary>오늘 재검(Structured Reassessment) — 필요할 때 펼치기</summary>
+        <StructuredReassessmentCard
+          title="오늘 재검(Structured Reassessment)"
+          value={reassessment}
+          onChange={onChangeReassessment}
+        />
+      </details>
 
-      <PriorVisitHistoryCard history={priorVisits} profile="herbal" />
+      {/* LAYER 4 -- 다음 액션, with the full forms one click away. */}
+      <NextActionCard
+        homeAction={carePlan.homeLifestyleManagement}
+        nextCheck={carePlan.nextVisitCheckItem}
+        nextReassessmentPlan={nextReassessmentPlan}
+        homeActionLabel="환자가 생활에서 할 일"
+      />
 
-      <PatientCarePlanPreviewCard title="환자 전달용 관리 계획" text={patientCarePlanText} />
+      <details
+        className="workspace__optional"
+        open={!isHerbalCarePlanEmpty(carePlan) || nextReassessmentPlan.status !== 'UNSET'}
+      >
+        <summary>관리 계획 · 다음 재평가 — 자세히 입력</summary>
+        <HerbalCarePlanCard value={carePlan} onChange={onChangeCarePlan} />
+        <NextReassessmentPlanCard value={nextReassessmentPlan} onChange={onChangeNextReassessmentPlan} />
+      </details>
 
-      <EmrPreviewCard text={emrText} />
+      {/*
+        One reference drawer. 여성·생식 정보 and 약물·병력 are read-only
+        patient facts already captured elsewhere in the record, so they move
+        here with the rest of the reference material rather than sitting
+        between the clinician's action areas.
+
+        Myungri is NOT here and no longer appears anywhere in the clinical
+        workspace: round 11 makes it a separate record surface entirely (see
+        DoctorView's 명리 tab), per the standing rule that it must be
+        completely separated from the clinical flow.
+      */}
+      <details className="workspace__optional workspace__optional--reference">
+        <summary>참고 자료 (환자 배경 · 이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
+        {hasReproductiveData && (
+          <section className="workspace__block">
+            <h3>여성·생식 정보</h3>
+            <div className="doctor__grid">
+              <Field
+                qid="WOMEN_SAFETY_01"
+                label="환자가 답한 것"
+                value={r.reproductive_status.reproductive_status as never}
+              />
+            </div>
+          </section>
+        )}
+        <section className="workspace__block">
+          <h3>약물·병력</h3>
+          <div className="doctor__grid">
+            <Field qid="MED_USE" value={r.medication.medication_use} />
+            <Field qid="MED_TYPES" value={r.medication.medication_types} />
+            <Field qid="HISTORY_01" value={r.medical_history.medical_history_flags as never} />
+          </div>
+        </section>
+        <PriorVisitHistoryCard history={priorVisits} profile="herbal" />
+        <PatientCarePlanPreviewCard title="환자 전달용 관리 계획" text={patientCarePlanText} />
+        <EmrPreviewCard text={emrText} />
+        </details>
     </div>
   )
 }

@@ -618,6 +618,31 @@
 }
 
 /*
+ * Round 14: the all-empty checklist states one fact on one line. Laid out
+ * as a row so the 빠른 입력 action sits beside the summary rather than
+ * under it -- the collapsed state must cost less height than a single
+ * expanded row, or it is not a compression.
+ */
+.workspace__observationChecklist--collapsed {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace__observationSummary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.workspace__observationSummary__open {
+  flex: none;
+}
+
+/*
  * Round 13: the observation row's entry area holds a tap action plus an
  * on-demand note box in the same grid cell, so a row that has not been
  * opened for typing costs one button instead of a full-width input.
@@ -708,6 +733,48 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+/*
+ * Round 14: with 판단 / 처치 / 재검 as the primary set, three fields in a
+ * two-column grid left one cell empty and still cost two rows -- so moving
+ * a fourth field into the secondary disclosure bought no height at all.
+ * Laying the primary set out in a single row is what makes that
+ * compression show up on the page. Below 1100px the grid is already
+ * single-column (see the media query near the end of this file, which is
+ * deliberately later in source order so it still wins at equal
+ * specificity), so this applies only where there is room for it.
+ */
+.workspace__finalAssessment__fields--primary {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/*
+ * The secondary disclosure sits INSIDE the raised final-assessment card,
+ * so the default .workspace__optional box drew a border inside a border
+ * and cost more height closed than the field it replaced. Compact and
+ * borderless while closed; a hairline appears only once it is open and
+ * the fields below need separating.
+ */
+.workspace__finalAssessment__secondary {
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.workspace__finalAssessment__secondary > summary {
+  padding: 2px 0;
+  min-height: 28px;
+}
+
+.workspace__finalAssessment__secondary[open] {
+  border-top: 1px solid var(--border);
+  padding-bottom: 0;
+  gap: 10px;
+}
+
+.workspace__finalAssessment__secondary[open] > summary {
+  border-bottom: none;
 }
 
 .workspace__finalAssessment__field {

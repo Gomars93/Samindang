@@ -14,12 +14,21 @@ type Field = { key: string; label: string; value: string; placeholder: string }
 function TextFields({
   fields,
   onChange,
+  primary = false,
 }: {
   fields: Field[]
   onChange: (key: string, value: string) => void
+  /**
+   * Round 14: the primary 판단 / 처치 / 재검 set lays out in one row where
+   * there is room, so moving a field into the secondary disclosure
+   * actually removes a row instead of leaving an empty grid cell.
+   */
+  primary?: boolean
 }) {
   return (
-    <div className="workspace__finalAssessment__fields">
+    <div
+      className={`workspace__finalAssessment__fields${primary ? ' workspace__finalAssessment__fields--primary' : ''}`}
+    >
       {fields.map((f) => (
         <label key={f.key} className="workspace__finalAssessment__field">
           <span>{f.label}</span>
@@ -53,7 +62,7 @@ function SecondaryFields({
   const hasContent = fields.some((f) => f.value.trim() !== '')
   return (
     <details className="workspace__optional workspace__finalAssessment__secondary" open={hasContent}>
-      <summary>{fields.map((f) => f.label).join(' · ')} — 필요할 때 입력</summary>
+      <summary>{`${fields.map((f) => f.label).join(' · ')} — 필요할 때 입력`}</summary>
       <TextFields fields={fields} onChange={onChange} />
     </details>
   )
@@ -90,12 +99,37 @@ export function PainFinalAssessmentCard({
   return (
     <section className="workspace__finalAssessment" aria-label="원장 최종 판단">
       <div className="workspace__finalAssessment__badge">원장 최종 판단</div>
-      <TextFields fields={primary} onChange={handleChange} />
+      <TextFields fields={primary} onChange={handleChange} primary />
       <SecondaryFields fields={secondary} onChange={handleChange} />
     </section>
   )
 }
 
+/*
+ * Round 14: this card was the one place still opening FOUR textareas at
+ * once, so a herbal record read as a form to fill rather than a decision
+ * to record. It now follows the same 판단 / 처치 / 재검 split the Pain card
+ * already used.
+ *
+ * Which field is which was decided by what it records, not by its name:
+ *   판단 = 최종 변증·병기   처치 = 처방·계획   재검 = 추적할 증상
+ * 치법 is the herbal analogue of Pain's 치료 초점 -- the principle behind
+ * the treatment rather than the treatment itself -- so it is the field
+ * that moves to secondary. 처방·계획 stays primary despite its "메모"
+ * label because it is the only field recording what the patient actually
+ * receives; collapsing that would have hidden 처치, not a detail.
+ *
+ * No chips or tap-actions were added for 처치. The round asked for them
+ * ONLY where an already-approved treatment vocabulary could be reused,
+ * and this repository has none: the only TREATMENT_* constants are LBP/
+ * NECK safety gates, and coreSpec's `주사·약침` is a patient-reported
+ * question option about care received elsewhere, not a list of what this
+ * clinic performs. Inventing one would be exactly the patient-fact →
+ * treatment mapping this round forbids.
+ *
+ * Field keys, persisted shape and semantics are unchanged -- this is
+ * purely which fields the default view opens.
+ */
 export function HerbalFinalAssessmentCard({
   value,
   onChange,
@@ -103,14 +137,13 @@ export function HerbalFinalAssessmentCard({
   value: HerbalFinalAssessment
   onChange: (next: HerbalFinalAssessment) => void
 }) {
-  const fields: Field[] = [
+  const primary: Field[] = [
     {
       key: 'finalPatternOrMechanism',
       label: '최종 변증·병기',
       value: value.finalPatternOrMechanism,
       placeholder: '원장이 직접 입력',
     },
-    { key: 'treatmentPrinciple', label: '치법', value: value.treatmentPrinciple, placeholder: '원장이 직접 입력' },
     {
       key: 'prescriptionPlanNote',
       label: '처방/계획 메모',
@@ -119,15 +152,16 @@ export function HerbalFinalAssessmentCard({
     },
     { key: 'symptomsToTrack', label: '추적할 증상', value: value.symptomsToTrack, placeholder: '원장이 직접 입력' },
   ]
+  const secondary: Field[] = [
+    { key: 'treatmentPrinciple', label: '치법', value: value.treatmentPrinciple, placeholder: '원장이 직접 입력' },
+  ]
+  const handleChange = (key: string, v: string) =>
+    onChange({ ...value, [key]: v, recordedAt: new Date().toISOString() } as HerbalFinalAssessment)
   return (
     <section className="workspace__finalAssessment" aria-label="최종 변증·병기 — 원장 판단">
       <div className="workspace__finalAssessment__badge">최종 변증·병기 — 원장 판단</div>
-      <TextFields
-        fields={fields}
-        onChange={(key, v) =>
-          onChange({ ...value, [key]: v, recordedAt: new Date().toISOString() } as HerbalFinalAssessment)
-        }
-      />
+      <TextFields fields={primary} onChange={handleChange} primary />
+      <SecondaryFields fields={secondary} onChange={handleChange} />
     </section>
   )
 }

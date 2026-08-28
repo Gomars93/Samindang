@@ -312,25 +312,35 @@ test('reproductive section shows when WOMEN_SAFETY_01 was answered, even with a 
   assert.ok(html.includes('여성·생식 정보'))
 })
 
-test('production mode (no synthetic clinicianObservations): 설진/맥진/복진/추가 확인문진 default checklist still renders', () => {
+test('round 14: production mode (no synthetic clinicianObservations) collapses the checklist to one summary line naming every item', () => {
   const html = renderWith(HERBAL_SCENARIO_2, { synthetic: { patternCandidates: [] } })
-  assert.ok(html.includes('설진 소견'))
-  assert.ok(html.includes('맥진 소견'))
-  assert.ok(html.includes('복진 소견'))
-  assert.ok(html.includes('추가 확인문진'))
+  // The default checklist is still the same four items -- the summary must
+  // name all of them, so collapsing never hides WHAT is outstanding.
+  assert.ok(html.includes('설진 · 맥진 · 복진 · 추가 문진'))
+  assert.ok(html.includes('4건 미확인'))
+  // ...and the rows are one explicit action away, not gone.
+  assert.ok(html.includes('빠른 입력'))
+  // Nothing is sitting open as a form waiting to be typed into.
+  const boxes = html.match(/placeholder="소견 입력"/g) ?? []
+  assert.equal(boxes.length, 0, 'a fully-unrecorded checklist may not open any note box')
 })
 
-test('round 13: observation rows are tap-first — 특이없음 action, no free-text box until asked', () => {
-  const html = renderWith(HERBAL_SCENARIO_2, { synthetic: { patternCandidates: [] } })
-  // every default checklist row offers the one-tap action...
+test('round 13/14: once the checklist is shown, rows are tap-first — 특이없음 per row, note box only where content exists', () => {
+  // HERBAL_SCENARIO_2 carries its own observations, two of them already
+  // recorded, so the checklist auto-opens (round 14) and the round-13
+  // per-row behaviour is what is under test here.
+  const html = render(HERBAL_SCENARIO_2)
+  assert.ok(!html.includes('빠른 입력'), 'a checklist holding recorded content must not be collapsed')
   const taps = html.match(/특이없음/g) ?? []
   assert.ok(taps.length >= 4, `expected a 특이없음 tap action per row, found ${taps.length}`)
-  // ...and every row offers the on-demand note escape hatch...
-  const memos = html.match(/>메모</g) ?? []
-  assert.ok(memos.length >= 4, `expected a 메모 toggle per row, found ${memos.length}`)
-  // ...but nothing is sitting open as a form waiting to be typed into.
+  // The two recorded rows show their text; the two empty ones offer 메모
+  // rather than an open box.
+  assert.ok(html.includes('홍설, 소태'))
+  assert.ok(html.includes('삭맥'))
   const boxes = html.match(/placeholder="소견 입력"/g) ?? []
-  assert.equal(boxes.length, 0, 'no observation note box may be open before the clinician asks for one')
+  assert.equal(boxes.length, 2, 'only the rows that already hold free text may open a note box')
+  const memos = html.match(/>메모</g) ?? []
+  assert.equal(memos.length, 2, 'the untouched rows offer the note toggle instead of an open box')
 })
 
 test('round 13: an observation that already holds free text renders its note box open', () => {
@@ -354,6 +364,39 @@ test('round 13: an observation that already holds free text renders its note box
   // default must never hide something the clinician already wrote.
   assert.ok(html.includes('설질 담백 · 치흔'))
   assert.ok(html.includes('placeholder="소견 입력"'))
+})
+
+test('round 14: the Herbal final-assessment card opens 판단/처치/재검 and collapses 치법', () => {
+  const html = render(HERBAL_SCENARIO_2)
+  // the three the default view asks for stay open...
+  assert.ok(html.includes('최종 변증·병기'))
+  assert.ok(html.includes('처방/계획 메모'))
+  assert.ok(html.includes('추적할 증상'))
+  // ...and 치법 -- the herbal analogue of 치료 초점 -- moves behind a
+  // closed disclosure rather than being a fourth open textarea.
+  assert.ok(html.includes('치법 — 필요할 때 입력'))
+  const secondary = html.match(/<details[^>]*workspace__finalAssessment__secondary[^>]*>/g) ?? []
+  assert.equal(secondary.length, 1, 'exactly one secondary disclosure on the herbal card')
+  assert.ok(!/open/.test(secondary[0]), 'an empty 치법 must start closed')
+})
+
+test('round 14: a 치법 that already holds text opens its disclosure on render', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'herbal-secondary-test',
+    initialWorkspaceState: {
+      herbalFinalAssessment: {
+        finalPatternOrMechanism: '',
+        treatmentPrinciple: '기존에 기록된 치법',
+        prescriptionPlanNote: '',
+        symptomsToTrack: '',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  assert.ok(html.includes('기존에 기록된 치법'))
+  const secondary = html.match(/<details[^>]*workspace__finalAssessment__secondary[^>]*>/g) ?? []
+  assert.equal(secondary.length, 1)
+  assert.ok(/open/.test(secondary[0]), 'a populated 치법 may never be hidden behind a closed disclosure')
 })
 
 test('no manual-override banner on first render (profile matches auto-derived by default)', () => {

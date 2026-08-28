@@ -14,6 +14,10 @@
  *    without an explicit clinician tap.
  *  - A row that already holds free text opens its note box on render, so
  *    a compressed default never hides something a clinician wrote.
+ *
+ * Round 14 goes one step further: when NOTHING has been observed yet, the
+ * whole list collapses to one summary line plus a 빠른 입력 action. See
+ * the comment on the collapse below for why that is safe.
  */
 import { useState } from 'react'
 import {
@@ -122,10 +126,43 @@ export function ClinicianObservationChecklist({
   /** Round 3 Phase E: optional per-item "재검 항목으로 추가" promotion into Structured Reassessment. */
   onAddToReassessment?: (item: ClinicianObservationItem) => void
 }) {
+  const remaining = countStillNeedsCheck(items)
+  /*
+   * Round 14: on a record where nothing has been observed yet, four full
+   * rows of controls said one thing -- "none of these are done" -- using a
+   * card's worth of the default clinical view. That single fact now reads
+   * as a single line, and the rows arrive on an explicit 빠른 입력.
+   *
+   * The moment ANY row holds a recorded observation the full checklist is
+   * shown unconditionally, so a compressed default can never hide what a
+   * clinician entered. Expansion is one-way within a render: once opened,
+   * clearing the last value does not snap the rows shut under the hands of
+   * whoever is typing.
+   */
+  const nothingRecorded = items.length > 0 && remaining === items.length
+  const [expanded, setExpanded] = useState(false)
+  const showRows = !nothingRecorded || expanded
+
   if (items.length === 0) {
     return <p className="workspace__empty">오늘 확인할 항목이 없습니다.</p>
   }
-  const remaining = countStillNeedsCheck(items)
+
+  if (!showRows) {
+    return (
+      <div className="workspace__observationChecklist workspace__observationChecklist--collapsed">
+        <p className="workspace__observationSummary" role="status">
+          {`${items.map((i) => CLINICIAN_OBSERVATION_CATEGORY_LABEL[i.category]).join(' · ')} — ${remaining}건 미확인`}
+        </p>
+        <button
+          type="button"
+          className="workspace__detailToggle workspace__observationSummary__open"
+          onClick={() => setExpanded(true)}
+        >
+          빠른 입력
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="workspace__observationChecklist">

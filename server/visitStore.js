@@ -105,6 +105,13 @@ export function createVisitStore(visitsDir) {
         // 그건 의도적으로 남겨둔 다음 스프린트의 갭이다.
         judgment_ref: submission_id ? 'submission' : null,
         emr_summary: null,
+        // Round 3 (revisit linkage): the visit-owned clinician workspace, used
+        // ONLY when this visit has no submission_id (a no-questionnaire
+        // revisit). When submission_id is set, the submission's own
+        // `workspace` field (server/store.js's saveWorkspace) remains the
+        // single source of truth -- this field stays null for those visits,
+        // never a duplicate copy (see saveVisitWorkspace below).
+        workspace: null,
       }
       await atomicWrite(visitPath(visitsDir, id), record)
       return record
@@ -113,6 +120,21 @@ export function createVisitStore(visitsDir) {
 
   async function getVisit(id) {
     return readVisit(id)
+  }
+
+  // Round 3 (revisit linkage): same read-modify-write-under-lock shape as
+  // store.js's saveWorkspace, but for a visit that has no submission (a
+  // no-questionnaire revisit) -- this is the visit's OWN workspace, never
+  // written into the previous visit/submission's record.
+  async function saveVisitWorkspace(id, workspace) {
+    return withLock(id, async () => {
+      const record = await readVisit(id)
+      if (!record) return null
+      record.workspace = workspace
+      record.updated_at = new Date().toISOString()
+      await atomicWrite(visitPath(visitsDir, id), record)
+      return record
+    })
   }
 
   // recorder-results POST가 성공할 때마다 이 visit이 "가장 최근에 가리키는"
@@ -137,7 +159,13 @@ export function createVisitStore(visitsDir) {
     for (const f of files) {
       try {
         const v = JSON.parse(await readFile(path.join(visitsDir, f), 'utf8'))
-        records.push({ id: v.id, patient_id: v.patient_id, created_at: v.created_at, submission_id: v.submission_id })
+        records.push({
+          id: v.id,
+          patient_id: v.patient_id,
+          created_at: v.created_at,
+          updated_at: v.updated_at ?? v.created_at,
+          submission_id: v.submission_id,
+        })
       } catch {
         // 손상되거나 쓰는 중(.tmp 아님)인 파일은 목록에서 건너뛴다
       }
@@ -168,5 +196,13 @@ export function createVisitStore(visitsDir) {
     return records
   }
 
-  return { createVisit, getVisit, listVisits, listVisitsForPatient, visitExistsForPatient, setRecorderPointer }
+  return {
+    createVisit,
+    getVisit,
+    listVisits,
+    listVisitsForPatient,
+    visitExistsForPatient,
+    setRecorderPointer,
+    saveVisitWorkspace,
+  }
 }

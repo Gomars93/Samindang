@@ -961,6 +961,26 @@ input {
   text-align: center;
 }
 
+/* Round 3(revisit linkage): patient-facing Micro Follow-up (FollowUpScreen.tsx). */
+.followUp {
+  max-width: var(--content-max);
+  margin: 0 auto;
+}
+
+.followUp__section {
+  margin-bottom: 28px;
+}
+
+.followUp__label {
+  font-size: var(--fs-helper);
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+.followUp__section .textField {
+  margin-top: 10px;
+}
+
 .helper--strong {
   font-weight: 700;
   color: var(--text);

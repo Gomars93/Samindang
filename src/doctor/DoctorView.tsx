@@ -15,16 +15,23 @@ import {
   getPatientHistory,
   getRecorderResults,
   getSubmission,
+  invalidateFollowUpSession,
+  listRevisitQueue,
   listSubmissions,
+  reissueFollowUpSession,
   saveJudgment as saveJudgmentToServer,
   saveWorkspaceState as saveWorkspaceStateToServer,
   setSubmissionStatus,
+  startRevisit,
   type RecorderResult,
   type SubmissionRecord,
   type SubmissionSummary,
 } from '../lib/serverClient'
 import type { PatientHistoryResult } from './workspace/longitudinal'
 import type { MicroFollowUpResponse } from './workspace/microFollowUp'
+import type { RevisitQueueItem } from './workspace/followUpSession'
+import { REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+import { RevisitWorkspace } from './workspace/RevisitWorkspace'
 import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
@@ -1652,6 +1659,24 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   // OPERATIONAL INTEGRATION REQUIRED note -- entering one today requires a
   // doctor/staff session, not a direct patient-tablet submission).
   const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
+  // Round 3(revisit linkage): Doctor Queue for no-submission revisit
+  // visits, polled alongside `submissions` but kept in a SEPARATE list --
+  // never merged into listSubmissions()'s own contract (see server/store.js's
+  // listRevisitQueue doc comment). Selecting a revisit row is mutually
+  // exclusive with selecting a submission row (see the two onClick handlers
+  // below, each clears the other's selection).
+  const [revisits, setRevisits] = useState<RevisitQueueItem[]>([])
+  const [selectedRevisit, setSelectedRevisit] = useState<{ visitId: string; patientId: string } | null>(null)
+  // Local-only: the one-time patient link, held ONLY in this component's
+  // memory from the moment "재진 간단 문진 시작"/"재발급" returns it. The
+  // server never returns the raw token again after that single response
+  // (see serverClient.ts's startRevisit/reissueFollowUpSession doc
+  // comments) -- a page reload genuinely loses this, by design.
+  const [issuedSession, setIssuedSession] = useState<
+    { visitId: string; token: string; expiresAt: string; targetCount: number } | null
+  >(null)
+  const [revisitActionError, setRevisitActionError] = useState<string | null>(null)
+  const [linkCopyStatus, setLinkCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
   // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
@@ -1722,6 +1747,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       setListLoading(false)
     }
 
+    poll()
+    const timer = setInterval(poll, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [mode, retryNonce, tokenVersion])
+
+  // Round 3(revisit linkage): Doctor Queue polling for no-submission
+  // revisit visits, same cadence as the submissions poll above so a
+  // WAITING_FOR_PATIENT row flips to COMPLETED without a manual refresh.
+  useEffect(() => {
+    if (mode !== 'server') return
+    let cancelled = false
+    async function poll() {
+      const result = await listRevisitQueue()
+      if (cancelled) return
+      if (result.ok) setRevisits(result.data)
+    }
     poll()
     const timer = setInterval(poll, POLL_MS)
     return () => {
@@ -1933,6 +1977,88 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const showingServerList = mode === 'server' && !selectedRecord
   const newCount = submissions.filter((s) => s.status === 'new').length
 
+  // Round 3(revisit linkage): "재진 간단 문진 시작". Uses the EXPLICIT
+  // patient_id already carried by the currently-open submission record --
+  // never derived from name/phone/DOB (same identity boundary as every
+  // other revisit-creation path in this codebase).
+  async function handleStartRevisit() {
+    if (!selectedRecord?.patient_id) return
+    setRevisitActionError(null)
+    const result = await startRevisit(selectedRecord.patient_id)
+    if (result.ok) {
+      setIssuedSession({
+        visitId: result.data.visit.id,
+        token: result.data.session.token,
+        expiresAt: result.data.session.expiresAt,
+        targetCount: result.data.session.targets.length,
+      })
+      setLinkCopyStatus('idle')
+      setRetryNonce((n) => n + 1)
+    } else {
+      setRevisitActionError(result.error)
+    }
+  }
+
+  async function handleReissueSession() {
+    if (!issuedSession) return
+    const result = await reissueFollowUpSession(issuedSession.visitId)
+    if (result.ok) {
+      setIssuedSession({
+        visitId: issuedSession.visitId,
+        token: result.data.token,
+        expiresAt: result.data.expiresAt,
+        targetCount: result.data.targets.length,
+      })
+      setLinkCopyStatus('idle')
+    } else {
+      setRevisitActionError(result.error)
+    }
+  }
+
+  async function handleInvalidateSession() {
+    if (!issuedSession) return
+    const result = await invalidateFollowUpSession(issuedSession.visitId)
+    if (result.ok) {
+      setIssuedSession(null)
+      setRetryNonce((n) => n + 1)
+    } else {
+      setRevisitActionError(result.error)
+    }
+  }
+
+  function patientFollowUpLink(token: string): string {
+    return `${window.location.origin}${window.location.pathname}#follow-up=${token}`
+  }
+
+  async function handleCopyPatientLink() {
+    if (!issuedSession) return
+    const link = patientFollowUpLink(issuedSession.token)
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(link)
+        setLinkCopyStatus('copied')
+        return
+      }
+      throw new Error('clipboard unavailable')
+    } catch {
+      // 클립보드 API가 없는 환경(HTTP/구형 브라우저)을 위한 폴백 — 기존
+      // EMR 복사 폴백과 동일한 패턴.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = link
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+        setLinkCopyStatus('copied')
+      } catch {
+        setLinkCopyStatus('error')
+      }
+    }
+  }
+
   return (
     <div className="doctor">
       {readyToast && (
@@ -2057,7 +2183,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                   key={s.id}
                   type="button"
                   className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
-                  onClick={() => setSelectedId(s.id)}
+                  onClick={() => {
+                    setSelectedId(s.id)
+                    setSelectedRevisit(null)
+                    setIssuedSession(null)
+                    setRevisitActionError(null)
+                  }}
                 >
                   <span className="doctorField__label">
                     {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
@@ -2077,8 +2208,109 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </section>
       )}
 
-      {(mode === 'fixtures' || selectedRecord) && (
+      {/*
+        Round 3(revisit linkage): "Doctor Queue" for no-submission revisit
+        visits -- deliberately a SEPARATE section from 제출목록 above (never
+        called a "submission" -- see the North Star's own wording). Hidden
+        entirely when a submission or revisit is already open, same
+        visibility rule as showingServerList.
+      */}
+      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && revisits.length > 0 && (
+        <section className="doctor__section">
+          <h2>재진 목록 ({revisits.length})</h2>
+          <div className="doctor__grid">
+            {revisits.map((rv) => (
+              <button
+                key={rv.visitId}
+                type="button"
+                className={`doctorField doctor__row${rv.needsAttention ? ' doctor__row--new' : ''}`}
+                onClick={() => {
+                  setSelectedRevisit({ visitId: rv.visitId, patientId: rv.patientId })
+                  setSelectedId(null)
+                  setIssuedSession(null)
+                  setRevisitActionError(null)
+                }}
+              >
+                <span className="doctorField__label">
+                  {REVISIT_STATUS_LABEL[rv.status]}
+                  {rv.needsAttention && ' · 추가 확인 필요'}
+                </span>
+                <span className="doctorField__value">{relativeTime(rv.createdAt)} ({new Date(rv.createdAt).toLocaleString('ko-KR')})</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {selectedRevisit && (
+        <>
+          <button
+            type="button"
+            className="judgment__recordBtn"
+            onClick={() => {
+              setSelectedRevisit(null)
+              setIssuedSession(null)
+              setRevisitActionError(null)
+            }}
+          >
+            ← 목록으로
+          </button>
+          <RevisitWorkspace visitId={selectedRevisit.visitId} patientId={selectedRevisit.patientId} />
+        </>
+      )}
+
+      {!selectedRevisit && (mode === 'fixtures' || selectedRecord) && (
       <>
+      {/*
+        Round 3(revisit linkage): the single doctor/staff action that
+        creates the revisit visit + derives candidate targets (from this
+        patient's own prior Follow-up Targets, max 3, no ranking) + issues
+        a one-time capability token, all in one step (see
+        server/store.js's startRevisit). Only offered from an open
+        submission (mode==='server' && selectedRecord) since that's the
+        only place patient_id is already on screen -- never derived from
+        name/phone/DOB.
+      */}
+      {mode === 'server' && selectedRecord?.patient_id && (
+        <section className="doctor__section doctor__revisitSession">
+          <h2>재진 간단 문진 (Micro Follow-up)</h2>
+          {!issuedSession ? (
+            <>
+              <button type="button" className="judgment__recordBtn" onClick={handleStartRevisit}>
+                재진 간단 문진 시작
+              </button>
+              <p className="doctor__revisitSession__hint">
+                직전 방문의 추적 항목(최대 3개)을 바탕으로 환자용 1회용 링크를 발급합니다.
+              </p>
+            </>
+          ) : (
+            <div className="doctor__revisitSession__issued">
+              <p>
+                환자용 링크 (만료: {new Date(issuedSession.expiresAt).toLocaleString('ko-KR')})
+              </p>
+              <code className="doctor__revisitSession__link">{patientFollowUpLink(issuedSession.token)}</code>
+              {issuedSession.targetCount === 0 && (
+                <p className="doctor__revisitSession__hint">
+                  이 환자는 이전 방문에 기록된 추적 항목이 없습니다 — 재확인 항목 없이 전반적 변화 · 새로운 증상 ·
+                  이상반응만 묻는 링크가 발급되었습니다.
+                </p>
+              )}
+              <div className="doctor__revisitSession__actions">
+                <button type="button" className="judgment__recordBtn" onClick={handleCopyPatientLink}>
+                  {linkCopyStatus === 'copied' ? '복사됨' : linkCopyStatus === 'error' ? '복사 실패' : '링크 복사'}
+                </button>
+                <button type="button" className="judgment__recordBtn" onClick={handleReissueSession}>
+                  재발급
+                </button>
+                <button type="button" className="judgment__recordBtn" onClick={handleInvalidateSession}>
+                  무효화
+                </button>
+              </div>
+            </div>
+          )}
+          {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}
+        </section>
+      )}
       {/*
         key={payload.session_id}: DoctorWorkspace owns its own local state
         (profile override, mixed-mode active tab) seeded from the payload

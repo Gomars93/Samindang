@@ -5,6 +5,7 @@ import { PatientErrorBoundary } from './components/PatientErrorBoundary'
 import { PreviewBanner } from './components/PreviewBanner'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
+import { FollowUpScreen } from './screens/FollowUpScreen'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
 import {
   QuestionBody,
@@ -88,13 +89,36 @@ export default function App() {
   )
 }
 
+/**
+ * Round 3(revisit linkage): `#follow-up=<token>` hash route. Deliberately a
+ * SEPARATE parse from #doctor -- the opaque capability token is the only
+ * thing this ever extracts from the URL, never anything that could be
+ * mistaken for a patient identifier (see FollowUpScreen.tsx's own doc
+ * comment on the security boundary this maintains).
+ */
+function parseFollowUpToken(hash: string): string | null {
+  const match = hash.match(/^#follow-up=(.+)$/)
+  if (!match) return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
+
 function AppContent() {
   const [isDoctorView, setIsDoctorView] = useState(
     () => typeof window !== 'undefined' && window.location.hash.startsWith('#doctor'),
   )
+  const [followUpToken, setFollowUpToken] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) : null,
+  )
 
   useEffect(() => {
-    const onHashChange = () => setIsDoctorView(window.location.hash.startsWith('#doctor'))
+    const onHashChange = () => {
+      setIsDoctorView(window.location.hash.startsWith('#doctor'))
+      setFollowUpToken(parseFollowUpToken(window.location.hash))
+    }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
@@ -400,6 +424,10 @@ function AppContent() {
   }, [current, visible])
 
   /* ---------- render ---------- */
+
+  if (followUpToken) {
+    return <FollowUpScreen key={followUpToken} token={followUpToken} />
+  }
 
   if (isDoctorView) {
     return <DoctorView />

@@ -1,6 +1,15 @@
 # Current Handoff
 
-## Objective
+## Objective (round 4 — 재진 태블릿 연결, 이번 세션)
+round 3에서 "OPERATIONAL INTEGRATION REQUIRED"로 남겨뒀던 Micro
+Follow-up의 실제 gap — 환자가 태블릿에서 직접 답할 방법이 없던 문제 —
+을 닫는다. 사용자가 명시적으로 승인한 보안/제품 방향(일회용 capability
+token, 이름/전화/생년월일 매칭 절대 금지, doctor 토큰은 환자 태블릿에
+절대 전달 안 함)에 따라 구현. 상세 설계 근거는 `DECISIONS.md`의
+"2026-08-28 — 재진 태블릿 연결" 항목 참고. **PR #24는 여전히 DO NOT
+MERGE.**
+
+## Objective (round 1-3, 이전 세션들)
 PR #24 "Doctor Clinical Workspace" — 태블릿 문진 결과를 단순 요약 화면이
 아니라, 원장이 실제로 "가능성을 좁혀주고, 놓치면 안 되는 확인점을 보여주는"
 진료 워크스페이스로 확장하는 작업. 사용자가 명시적으로 지시한 원칙: 새
@@ -19,10 +28,18 @@ Reassessment → Plan Update → repeat — 를 따라 매 단계에서 임상 �
 ## Current State
 - 작업 브랜치: `feat/doctor-clinical-workspace` (PR #24). Round 3 작업
   시작 시점 HEAD: `c4f355a`(`docs/CLINICAL_OS_NORTH_STAR.md` 추가 커밋).
-  이 문서를 고치는 커밋 자체가 새 tip을 만들기 때문에 여기서는 시작
-  시점 SHA만 기록 — 정확한 현재 SHA는 `git rev-parse
-  feat/doctor-clinical-workspace`로 확인.
-- **CLOSED/FROZEN `src/spec/*Logic.ts`/`*Adapter.ts`는 세 라운드 모두 단
+  Round 4(재진 태블릿 연결) 작업 시작 시점 HEAD: `6939748`. 정확한 현재
+  SHA는 `git rev-parse feat/doctor-clinical-workspace`로 확인.
+- **round 4에서 실제로 검증한 것 (이번 세션)**: `npx tsc -b --force`(0
+  에러), `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
+  test:all`(전체 green — 신규 `tests/follow-up-session.spec.mjs` 113
+  assertion 포함), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+  passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+  'src/spec/*Adapter.ts'`(empty), 그리고 실제 로컬 handoff 서버 + vite
+  dev server + Playwright 헤드리스 Chromium으로 재진 흐름 전체를 실제
+  브라우저에서 왕복 검증(27개 체크 전부 통과 — 아래 Tests / Verification
+  참고).
+- **CLOSED/FROZEN `src/spec/*Logic.ts`/`*Adapter.ts`는 네 라운드 모두 단
   한 줄도 건드리지 않았다** — `git diff origin/main -- 'src/spec/*Logic.ts'
   'src/spec/*Adapter.ts'`가 매 커밋마다 비어있음을 확인.
 - Round 3에서 이 세션이 직접 실행한 전체 로컬 검증: `npx tsc -b --force`
@@ -110,35 +127,90 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 3의 모든 Phase A-M 구현 완료, 로컬 검증 전부 통과.
-  Push 후 CI 재확인만 남음.)
+- (없음 — round 4의 재진 태블릿 연결 구현/테스트/QA 전부 완료. Push 후
+  CI 재확인만 남음.)
+
+## Completed — Round 4 (재진 태블릿 연결, 이번 세션)
+round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
+사용자가 승인한 방향대로 닫았다. 설계 근거/대안 검토는 `DECISIONS.md`의
+"2026-08-28 — 재진 태블릿 연결" 항목 참고.
+
+1. **서버: 일회용 capability-token 저장소** —
+   `server/followUpSessionStore.js`(신규). `randomBytes(32)` 발급, SHA-256
+   해시만 저장(평문은 발급 응답 한 번만 존재), visit_id 1개에 고정,
+   target 스냅샷은 발급 시점에 캡처(공개 POST가 라벨을 절대 재신뢰하지
+   않음), consume은 ACTIVE→CONSUMED 1회만 성공(이중제출 실패), reissue는
+   구토큰을 자동 무효화.
+2. **서버: 재진 개설 + 토큰 발급 원자적 흐름** — `server/store.js`의
+   `startRevisit`/`deriveMicroFollowUpCandidates`/`reissueFollowUpSession`/
+   `submitFollowUpSession`/`listRevisitQueue`. 후보 target은 그 환자의
+   직전 submission-backed 방문 Follow-up Target에서 최대 3개, 재랭킹
+   없음, 없으면 빈 배열(질문 발명 안 함).
+3. **서버: 공개 patient 라우트** — `GET`/`POST /api/follow-up-session/
+   :token`(doctor 인증/Origin allowlist 전혀 없음 — 환자 자신의 기기).
+   GET은 target id/label/상태/만료만 반환(patient_id/이름/전화/사주/
+   원장 노트 전부 미포함). 실패한 공개 시도에 대한 간단한 in-memory
+   rate limit 추가(새 의존성 없음).
+4. **서버: doctor 라우트 6개 추가** — `PUT /api/visits/:id/workspace`,
+   `GET /api/visits/revisits`, `POST /api/patients/:id/start-revisit`,
+   `GET`/`POST(reissue)`/`POST(invalidate) /api/visits/:id/follow-up-
+   session`. 전부 기존과 동일한 `requireDoctor`+Origin allowlist 가드
+   (`tests/server.spec.mjs`가 doctor-guarded 라우트 정확히 22개임을 고정).
+5. **서버: follow-up-session 전용 보존기한** — `cleanupFollowUpSessions()`
+   가 `SAMINDANG_RETENTION_DAYS`와 완전히 분리된 별도 스위치
+   (`SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS`, 기본 24h)로 동작 —
+   구현 중 결합 버그를 스스로 발견해 커밋 전 분리 수정(DECISIONS.md 참고).
+6. **클라이언트: visit-owned WorkspaceState** — `src/doctor/workspace/
+   visitWorkspace.ts`(신규) + `RevisitWorkspace.tsx`(신규, DoctorWorkspace
+   와 구조적으로 별개 컴포넌트 — 문진 없는 재진을 가짜 DoctorPayload로
+   위장하지 않음). 세 구역 분리 렌더: 오늘 환자 입력(Micro Follow-up) /
+   이전 방문 참고(읽기 전용) / 오늘 원장 입력(오늘의 새 판단, visit-owned
+   저장).
+7. **클라이언트: DoctorView 재진 큐 + 발급 UI** — "재진 목록(N)" 섹션
+   (`재진 · 환자 입력 대기`/`재진 · 간단 추적 완료`/`재진 · 링크 만료`
+   라벨, "추가 확인 필요" 배지는 operational flag일 뿐), "재진 간단 문진
+   시작" 버튼, 발급된 링크 표시(만료 시각, 복사, 재발급, 무효화). 후보
+   target이 0개면 원장에게 그 사실을 정직하게 안내(질문 발명 안 함).
+8. **클라이언트: 환자용 Micro Follow-up 화면** — `src/screens/
+   FollowUpScreen.tsx`(신규) + `src/lib/followUpClient.ts`(신규,
+   `serverClient.ts`/`doctorToken.ts`를 절대 import하지 않는 별개 파일 —
+   doctor 토큰이 환자 흐름에 절대 섞일 수 없다는 것을 소스 레벨에서
+   보장, 테스트로 고정). `#follow-up=<token>` 해시 라우트(`App.tsx`).
+   완료 화면 도달 후 뒤로가기가 채워진 답변을 다시 보여주지 못하게 막는
+   기존 문진 프라이버시 패턴을 동일하게 적용.
+9. **테스트** — `tests/follow-up-session.spec.mjs`(신규, 113 assertion):
+   토큰 무작위성/형식, 평문 미저장, visit 범위, 무효/만료/소비 거부,
+   교차환자 격리, 재발급 시 구토큰 무효화, GET의 신원정보 미노출, POST의
+   라벨 변조 불가, doctor 토큰 부재(소스 레벨), 이름/전화/생년월일
+   미사용, CORS/바디크기/rate-limit 가드, 보존기한 분리까지 전부 회귀
+   테스트로 고정.
+10. **실제 헤드리스 브라우저 E2E QA** — 로컬 handoff 서버 + vite dev
+    server + Playwright Chromium으로 재진 전체 흐름을 실제로 왕복
+    (아래 Tests / Verification 참고, 27개 체크 전부 통과). 이 QA 과정에서
+    시딩용 가짜 responses 객체가 DoctorView를 크래시시키는 문제를 2회
+    발견 → 실제 프로덕션 빌더로 만든 기존 `src/doctor/fixtures.ts`의
+    LBP/NECK fixture를 그대로 재사용하도록 QA 스크립트를 고쳐 해결(이
+    자체는 QA 스크립트의 문제였지 프로덕션 코드의 버그는 아니었음).
 
 ## Remaining — 원장(임상)/제품/보안 결정이 필요한 항목만
 1. `docs/clinical-decision-tables/PAIN_EXAM_RECOMMENDATION_TEMPLATE.md`/
    `HERBAL_PATTERN_CANDIDATE_TEMPLATE.md`에 실제 규칙을 원장이 작성/승인
-   (round 1부터 이어지는 항목, round 3에서도 변경 없음).
+   (round 1부터 이어지는 항목, round 4에서도 변경 없음).
 2. `docs/DOCTOR_WORKSPACE_VIEW_PROFILE_MATRIX.md`의 PRODUCT DECISION
    REQUIRED 항목(Pain Additional module SafetyPanel 간극) — round 2부터
-   이어지는 항목, round 3에서도 변경 없음.
-3. **(신규, round 3) Micro Follow-up 환자 입력/전달 경로** —
-   `src/doctor/workspace/microFollowUp.ts` 파일 상단 주석에 상세 기록.
-   요약: 이 서버의 모든 라우트(Recorder 워크스테이션의 POST 포함)는
-   동일한 doctor 토큰을 요구하고, 태블릿 앱은 그 토큰을 절대 가진 적이
-   없다(`src/App.tsx`가 doctor-token-gated 읽기를 참조하지 않음을
-   테스트로 보장). 재진 환자에게 실제로 짧은 체크인 질문을 태블릿에서
-   직접 받으려면 (a) 태블릿에 doctor-token-gated 접근을 새로 허용하거나
-   (b) URL 파라미터/QR/lookup 토큰 같은 새 식별자 체계를 만들어야 하는데,
-   둘 다 이 세션이 임의로 정할 수 없는 보안/제품 결정이다. 지금은 원장/
-   직원이 인증된 세션에서 대신 입력하는 것만 가능(라우트/저장/표시는
-   전부 완성).
-4. **(신규, round 3) 재진 시 실제 문진 재연결** — `visitStore.js`의
-   신원 원칙(새 제출 = 항상 새 patient_id) 때문에, 같은 환자가 실제
-   태블릿으로 새 문진을 다시 제출해도 이전 patient_id와 자동으로 이어
-   지지 않는다. `GET /api/patients/:id/history`는 이미 구현했지만,
-   "이 태블릿 제출을 기존 patient_id에 붙인다"는 판단 자체가 이름/전화
-   매칭을 쓰지 않고는 자동화할 수 없는 신원 문제라 원장/직원이 명시적
-   `POST /api/visits`(기존 patient_id 지정)로 재진을 만드는 현재 방식을
-   그대로 유지했다 — 새 매칭 로직을 발명하지 않음.
+   이어지는 항목, round 4에서도 변경 없음.
+3. **(round 3, round 4에서도 미해결) 재진 시 실제 문진 재연결** —
+   `visitStore.js`의 신원 원칙(새 제출 = 항상 새 patient_id) 때문에,
+   같은 환자가 실제 태블릿으로 새 "전체 문진"을 다시 제출해도 이전
+   patient_id와 자동으로 이어지지 않는다(이번 라운드의 "재진 간단 문진"
+   경로는 원장이 명시적으로 patient_id를 지정하므로 이 문제가 없다 —
+   여기서 미해결인 건 어디까지나 환자가 처음부터 새 전체 문진을 다시
+   시작하는 경우다). "이 태블릿 제출을 기존 patient_id에 붙인다"는 판단
+   자체가 이름/전화 매칭 없이는 자동화할 수 없는 신원 문제라 새 매칭
+   로직을 발명하지 않았다.
+4. QR 코드 생성 — 사용자가 "선택 사항, 지연시키지 말 것"으로 명시했으므로
+   v1 스코프에서 의도적으로 제외(직접 링크 텍스트만). 실제 클리닉 운영
+   시 QR이 필요하면 별도 라운드에서 추가.
 5. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다 — 이 세션은
    merge하지 않는다.
 
@@ -146,6 +218,32 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 - 없음 (엔지니어링 관점). 위 Remaining 항목은 전부 임상/제품/보안
   판단이라 이 세션이 자체적으로 해소할 수 없는 항목이며, 차단이 아니라
   다음 human action이다.
+
+## Relevant Files (round 4 신규/주요 변경)
+- `server/followUpSessionStore.js`(신규, capability-token 저장소),
+  `server/store.js`(`startRevisit`/`deriveMicroFollowUpCandidates`/
+  `reissueFollowUpSession`/`submitFollowUpSession`/`listRevisitQueue`/
+  `cleanupFollowUpSessions`/`saveVisitWorkspace`), `server/visitStore.js`
+  (`saveVisitWorkspace`, visit record에 `workspace: null` 필드 추가),
+  `server/index.js`(doctor 라우트 6개 + 공개 patient 라우트 2개 +
+  rate limit + 보존기한 훅).
+- `src/doctor/workspace/visitWorkspace.ts`(신규),
+  `src/doctor/workspace/followUpSession.ts`(신규, 클라이언트 타입),
+  `src/doctor/workspace/RevisitWorkspace.tsx`(신규).
+- `src/lib/serverClient.ts`(`getVisit`/`saveVisitWorkspace`/`startRevisit`/
+  `reissueFollowUpSession`/`invalidateFollowUpSession`/
+  `getFollowUpSessionStatus`/`listRevisitQueue` 추가),
+  `src/lib/followUpClient.ts`(신규, 공개 patient 전용 클라이언트 —
+  serverClient.ts/doctorToken.ts 미import).
+- `src/doctor/DoctorView.tsx`(재진 큐 섹션, 재진 선택/워크스페이스 렌더,
+  "재진 간단 문진 시작"/재발급/무효화/링크복사 UI), `src/doctor/doctor.css`
+  (`.doctor__revisitSession*`), `src/doctor/workspace/workspace.css`
+  (`.workspace__revisit*`).
+- `src/screens/FollowUpScreen.tsx`(신규, 환자용 Micro Follow-up 화면),
+  `src/App.tsx`(`#follow-up=<token>` 해시 라우트), `src/styles.css`
+  (`.followUp*`).
+- `tests/follow-up-session.spec.mjs`(신규, 113 assertion),
+  `tests/server.spec.mjs`(doctor-guarded 라우트 카운트 16→22 갱신).
 
 ## Relevant Files (round 3 신규/주요 변경)
 - `src/doctor/workspace/carePlan.ts`, `CarePlanCard.tsx`,
@@ -181,6 +279,29 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 4 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
+  test:all`(전체 green — 신규 `tests/follow-up-session.spec.mjs` 113
+  assertion 포함), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+  passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+  'src/spec/*Adapter.ts'`(empty).
+- **Round 4 실제 헤드리스 브라우저 E2E QA**(Playwright, 로컬 handoff
+  서버 + vite dev server + 실제 Chromium, `/opt/pw-browsers`): 27개
+  체크 전부 통과. 검증한 것 — 원장이 실제 제출을 열고 "재진 간단 문진
+  시작" 클릭 → 새 visit_id + 1회용 링크 발급(만료 시각 표시) → 그 링크를
+  별도 브라우저 페이지(환자 기기 역할, portrait 800×1280)로 열어 Micro
+  Follow-up 질문(직전 Follow-up Target 2개 + 전반적 변화 + 새 증상 +
+  이상반응) 응답 → 제출 → 완료 화면 → 뒤로가기가 채워진 답변을 다시
+  보여주지 않음 → 원장 재진 큐가 "재진 · 간단 추적 완료"로 갱신 → 재진
+  워크스페이스가 오늘 환자 입력/이전 방문 참고(읽기 전용)/오늘 원장
+  입력 3구역으로 렌더 → 페이지 새로고침 후에도 재진 상태 유지 → 재발급이
+  구 링크를 무효화하고 새 링크가 동작 → 원장의 수동 무효화가 링크를
+  차단 → 서로 다른 환자(A/B) 전환 시 서로의 이전 최종판단/추적항목
+  텍스트가 전혀 새지 않음. 이 QA 과정에서 시딩용 가짜 `responses`
+  객체가 DoctorView를 크래시시키는 문제(HANDOFF 위 Completed 10번)를
+  실제로 발견해, 프로덕션 빌더로 만든 기존 `src/doctor/fixtures.ts`
+  fixture를 그대로 재사용하도록 QA 스크립트 자체를 고쳐 해결했다(QA
+  스크립트만의 문제였음 — 프로덕션 코드 변경 없음).
 - Round 3 기준 이 세션이 직접 실행: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
   test:all`(전체 green, 2507 assertion), `cd "tablet core" && python3
@@ -205,20 +326,30 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
   는 여전히 별도 레코드 필드. Pain/Herbal 결정지원 제안 항목은 여전히
   프로덕션에서 빈 배열(계산 로직 미구현, 의도된 상태). view_profile
   매트릭스의 PRODUCT DECISION REQUIRED 간극도 그대로.
-- (신규, round 3) Micro Follow-up은 데이터 모델/서버/원장 UI까지 전부
-  완성됐지만, 환자가 태블릿에서 직접 답하는 화면은 없다 — 위 Remaining
-  3번 참고.
-- (신규, round 3) `GET /api/patients/:id/history`는 실제로는 대부분의
-  경우 빈 `visits: []`를 돌려줄 것이다 — 현재 태블릿 제출 경로가 재진
-  환자에게 기존 patient_id를 자동으로 재사용하지 않기 때문(위 Remaining
-  4번 참고). 이 자체는 버그가 아니라 기존 신원 원칙의 자연스러운 결과.
+- (round 3에서 신규, round 4에서 해결됨) Micro Follow-up 환자 태블릿
+  직접 제출 gap은 이번 라운드에서 닫혔다 — 자세한 내용은 위 Completed
+  Round 4 참고.
+- (신규, round 3, round 4에서도 미해결) `GET /api/patients/:id/history`
+  는 "전체 문진을 처음부터 다시 시작하는" 재진의 경우 여전히 빈
+  `visits: []`를 돌려줄 수 있다 — 현재 태블릿의 "전체 문진" 제출 경로가
+  재진 환자에게 기존 patient_id를 자동으로 재사용하지 않기 때문(위
+  Remaining 3번 참고). "재진 간단 문진"(이번 라운드가 만든 경로)은
+  원장이 명시적으로 patient_id를 지정하므로 이 문제가 없다. 이 자체는
+  버그가 아니라 기존 신원 원칙의 자연스러운 결과.
+- (신규, round 4) follow-up-session 토큰의 in-memory rate limiter와
+  실패-시도 카운터는 프로세스 재시작 시 초기화된다(기존 `activeVisit.js`
+  와 동일한 이 저장소의 기존 전제 — 단일 프로세스가 데이터 디렉터리
+  하나를 소유). 파일럿 등급 LAN 서버라는 이 시스템 전체의 기존 보안
+  모델과 일관됨.
 - 환자 개인정보(문진/사주 출생정보)를 다루는 시스템이므로, 향후 모든
-  작업에서 실제 값이 로그/커밋/PR/문서에 남지 않도록 주의.
+  작업에서 실제 값이 로그/커밋/PR/문서에 남지 않도록 주의. 이번 라운드도
+  follow-up-session 감사 로그는 visit_id + event type만 남기고 토큰
+  평문/답변 내용은 절대 남기지 않는다(테스트로 확인).
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다.
 
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. 원장/제품 담당자가 위 Remaining 1-4번(임상 결정표 승인, SafetyPanel
-   간극, Micro Follow-up 환자 입력 경로, 재진 재연결 정책)을 검토.
+2. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
+   간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
 3. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

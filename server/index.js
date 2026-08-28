@@ -31,9 +31,27 @@ function parseAllowedOrigins(raw) {
     .filter(Boolean)
 }
 
-export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays } = {}) {
+export function createApp({
+  dataDir,
+  doctorToken,
+  allowedOrigins,
+  retentionDays,
+  followUpTokenTtlMinutes,
+  followUpTokenRetentionHours,
+} = {}) {
   const resolvedDataDir = dataDir ?? process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
-  const store = createStore(resolvedDataDir)
+  const resolvedFollowUpTtlMinutes =
+    followUpTokenTtlMinutes !== undefined
+      ? followUpTokenTtlMinutes
+      : Number(process.env.SAMINDANG_FOLLOWUP_TOKEN_TTL_MINUTES ?? '30')
+  const resolvedFollowUpRetentionHours =
+    followUpTokenRetentionHours !== undefined
+      ? followUpTokenRetentionHours
+      : Number(process.env.SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS ?? '24')
+  const store = createStore(resolvedDataDir, {
+    followUpTokenTtlMinutes: resolvedFollowUpTtlMinutes,
+    followUpTokenRetentionHours: resolvedFollowUpRetentionHours,
+  })
   const audit = createAuditLog(resolvedDataDir)
   const configuredToken = doctorToken !== undefined ? doctorToken : process.env.SAMINDANG_DOCTOR_TOKEN
   const doctorAllowedOrigins = allowedOrigins ?? parseAllowedOrigins(process.env.SAMINDANG_ALLOWED_ORIGINS)
@@ -63,16 +81,29 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
   // 보존기한 자동 삭제. SAMINDANG_RETENTION_DAYS=0(또는 음수)이면 비활성화.
   // 개수만 로그에 남긴다 — 내용/id는 절대 남기지 않는다.
   async function runRetention() {
-    if (!(configuredRetentionDays > 0)) return
+    if (configuredRetentionDays > 0) {
+      try {
+        const deleted = await store.cleanupOlderThan(configuredRetentionDays)
+        if (deleted > 0) {
+          console.log(
+            `${new Date().toISOString()} retention: purged ${deleted} submission(s) older than ${configuredRetentionDays}d`,
+          )
+        }
+      } catch (err) {
+        console.error(`${new Date().toISOString()} retention: cleanup failed: ${err.message}`)
+      }
+    }
+    // Round 3(revisit linkage): follow-up-session token cleanup runs on its
+    // OWN, always-on schedule regardless of SAMINDANG_RETENTION_DAYS -- a
+    // clinic disabling ordinary medical-record retention must never also
+    // silently stop cleaning up spent one-time tokens.
     try {
-      const deleted = await store.cleanupOlderThan(configuredRetentionDays)
-      if (deleted > 0) {
-        console.log(
-          `${new Date().toISOString()} retention: purged ${deleted} submission(s) older than ${configuredRetentionDays}d`,
-        )
+      const deletedTokens = await store.cleanupFollowUpSessions()
+      if (deletedTokens > 0) {
+        console.log(`${new Date().toISOString()} retention: purged ${deletedTokens} follow-up-session token(s)`)
       }
     } catch (err) {
-      console.error(`${new Date().toISOString()} retention: cleanup failed: ${err.message}`)
+      console.error(`${new Date().toISOString()} retention: follow-up-session cleanup failed: ${err.message}`)
     }
   }
 
@@ -141,6 +172,35 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
     return isDoctorRequestAllowed(remoteAddress(req), req.headers['x-doctor-token'], configuredToken)
   }
 
+  // Round 3(revisit linkage): minimal in-memory rate limit on FAILED public
+  // follow-up-session token attempts only (a resolvable ACTIVE token being
+  // polled/submitted normally never counts against this) -- no new
+  // dependency, resets on process restart, per-process only (matches this
+  // server's existing "single process owns this data dir" assumption).
+  // The 256-bit token space already makes brute force computationally
+  // infeasible; this is defense-in-depth against casual guessing/scripted
+  // probing, not the primary control.
+  const FAILED_ATTEMPT_WINDOW_MS = 5 * 60 * 1000
+  const FAILED_ATTEMPT_MAX = 20
+  const failedPublicAttempts = new Map()
+  function checkPublicRateLimit(ip) {
+    const entry = failedPublicAttempts.get(ip)
+    if (!entry) return true
+    if (Date.now() - entry.windowStart > FAILED_ATTEMPT_WINDOW_MS) {
+      failedPublicAttempts.delete(ip)
+      return true
+    }
+    return entry.count < FAILED_ATTEMPT_MAX
+  }
+  function noteFailedPublicAttempt(ip) {
+    const entry = failedPublicAttempts.get(ip)
+    if (!entry || Date.now() - entry.windowStart > FAILED_ATTEMPT_WINDOW_MS) {
+      failedPublicAttempts.set(ip, { count: 1, windowStart: Date.now() })
+    } else {
+      entry.count += 1
+    }
+  }
+
   // workstation_id가 없으면 undefined를 돌려준다(activeVisit.js가 이를
   // DEFAULT_WORKSTATION_ID로 취급) — 값이 있는데 형식이 틀리면 null을 돌려줘
   // 호출부가 400으로 거부하게 한다.
@@ -169,9 +229,24 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
     // IP+token check inside the handler.
     const isPatientHistoryRoute =
       parts[1] === 'patients' && parts.length === 4 && parts[3] === 'history' && req.method === 'GET'
+    // Round 3(revisit linkage): POST /api/patients/:patientId/start-revisit
+    // is doctor-only exactly like every route above. The public
+    // /api/follow-up-session/:token routes below are deliberately NOT
+    // included here -- those are the patient tablet's own narrow endpoints
+    // and must stay reachable without a doctor token/Origin allowlist,
+    // same posture as the existing patient POST /api/submissions.
+    const isPatientRevisitRoute =
+      parts[1] === 'patients' && parts.length === 4 && parts[3] === 'start-revisit' && req.method === 'POST'
+    const isRevisitsQueueRoute = parts[1] === 'visits' && parts.length === 3 && parts[2] === 'revisits' && req.method === 'GET'
     const doctorRoute =
       parts[0] === 'api' &&
-      (isSubmissionsRoute || isVisitsRoute || isCurrentVisitClear || isCurrentVisitRead || isPatientHistoryRoute)
+      (isSubmissionsRoute ||
+        isVisitsRoute ||
+        isCurrentVisitClear ||
+        isCurrentVisitRead ||
+        isPatientHistoryRoute ||
+        isPatientRevisitRoute ||
+        isRevisitsQueueRoute)
     const cors = corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
@@ -348,6 +423,53 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
           const list = await store.listVisits()
           bytes = sendJson(req, res, 200, list, cors)
         }
+      } else if (parts[0] === 'api' && isRevisitsQueueRoute) {
+        // Round 3(revisit linkage): "Doctor Queue" list of no-submission
+        // revisit visits, enriched with an operational Micro Follow-up
+        // status. Deliberately a SEPARATE route from GET /api/submissions --
+        // never mixed into that response shape/contract (existing tests
+        // pin its exact fields). Checked before the generic GET
+        // /api/visits/:id handler below (same parts.length) so "revisits"
+        // is never misread as a visit id.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const list = await store.listRevisitQueue()
+          bytes = sendJson(req, res, 200, list, cors)
+        }
+      } else if (parts[0] === 'api' && isPatientRevisitRoute) {
+        // Round 3(revisit linkage): "재진 간단 문진 시작" -- the single
+        // doctor/staff action that creates a NEW visit for an EXISTING
+        // patient_id and issues a one-time Micro Follow-up token in one
+        // step. Same "must already be a real patient_id" guard as the
+        // existing POST /api/visits route above (never auto-creates a
+        // patient).
+        const patientId = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else if (!(await store.visitExistsForPatient(patientId))) {
+          status = 400
+          bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
+        } else {
+          const { visit, token, session } = await store.startRevisit(patientId)
+          status = 201
+          await safeAudit({ event: 'follow_up_session_issued', visit_id: visit.id, actor: 'doctor' })
+          await safeAudit({ event: 'visit_created', visit_id: visit.id, actor: 'doctor' })
+          bytes = sendJson(
+            req,
+            res,
+            201,
+            {
+              visit,
+              token,
+              expires_at: session.expires_at,
+              targets: session.targets,
+            },
+            cors,
+          )
+        }
       } else if (
         parts[0] === 'api' &&
         parts[1] === 'patients' &&
@@ -413,6 +535,31 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
                 cors,
               )
             }
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'workspace' &&
+        req.method === 'PUT'
+      ) {
+        // Round 3 (revisit linkage): visit-owned WorkspaceState for a
+        // no-questionnaire revisit -- distinct from PUT /api/submissions/:id/workspace
+        // above. Doctor-guarded, same shape/lock pattern.
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const record = await store.saveVisitWorkspace(id, body)
+          if (!record) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            await safeAudit({ event: 'visit_workspace_saved', visit_id: id, actor: 'doctor' })
+            bytes = sendJson(req, res, 200, record, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 3 && req.method === 'GET') {
@@ -574,6 +721,157 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             bytes = sendJson(req, res, 200, { response: result }, cors)
           }
         }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'follow-up-session' &&
+        req.method === 'GET'
+      ) {
+        // Round 3(revisit linkage): doctor-side status read (expiry/state)
+        // for the current Micro Follow-up token on this visit -- NEVER
+        // returns the raw token (impossible; only its hash is stored). Used
+        // to render "만료까지 N분" / decide whether "재발급" is needed.
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const session = await store.getFollowUpSessionStatus(id)
+            bytes = sendJson(
+              req,
+              res,
+              200,
+              {
+                session: session
+                  ? { status: session.status, issued_at: session.issued_at, expires_at: session.expires_at, targets: session.targets }
+                  : null,
+              },
+              cors,
+            )
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 5 &&
+        parts[3] === 'follow-up-session' &&
+        parts[4] === 'reissue' &&
+        req.method === 'POST'
+      ) {
+        // Round 3(revisit linkage): "재발급" -- fresh candidates re-derived
+        // from the patient's own prior visit, brand-new token. The
+        // previously active token for this visit is invalidated as part of
+        // store.reissueFollowUpSession -> followUpSessions.issueToken.
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const result = await store.reissueFollowUpSession(id)
+          if (!result) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            await safeAudit({ event: 'follow_up_session_reissued', visit_id: id, actor: 'doctor' })
+            bytes = sendJson(
+              req,
+              res,
+              200,
+              { token: result.token, expires_at: result.session.expires_at, targets: result.session.targets },
+              cors,
+            )
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 5 &&
+        parts[3] === 'follow-up-session' &&
+        parts[4] === 'invalidate' &&
+        req.method === 'POST'
+      ) {
+        // Round 3(revisit linkage): "무효화" -- the doctor decides the
+        // current patient link should stop working (e.g. sent to the wrong
+        // device). No new token is issued.
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            await store.invalidateFollowUpSession(id)
+            await safeAudit({ event: 'follow_up_session_invalidated', visit_id: id, actor: 'doctor' })
+            bytes = sendJson(req, res, 200, { ok: true }, cors)
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'follow-up-session' &&
+        parts.length === 3 &&
+        req.method === 'GET'
+      ) {
+        // Round 3(revisit linkage): PUBLIC patient-tablet endpoint -- no
+        // requireDoctor, no doctor Origin allowlist (this is the patient's
+        // own device, same CORS posture as POST /api/submissions above).
+        // Absolutely no patient_id/name/phone/DOB/prior assessment/Myungri/
+        // clinician notes in this response -- only what the token was
+        // explicitly issued to show.
+        const rawToken = decodeURIComponent(parts[2])
+        if (!checkPublicRateLimit(remoteAddress(req))) {
+          status = 429
+          bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
+        } else {
+          const session = await store.resolveFollowUpSession(rawToken)
+          if (!session) {
+            noteFailedPublicAttempt(remoteAddress(req))
+            status = 404
+            bytes = sendJson(req, res, 404, { status: 'INVALID' }, cors)
+          } else if (session.status !== 'ACTIVE') {
+            bytes = sendJson(req, res, 200, { status: session.status }, cors)
+          } else if (new Date(session.expires_at).getTime() < Date.now()) {
+            bytes = sendJson(req, res, 200, { status: 'EXPIRED' }, cors)
+          } else {
+            bytes = sendJson(req, res, 200, { status: 'ACTIVE', targets: session.targets, expires_at: session.expires_at }, cors)
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'follow-up-session' &&
+        parts.length === 3 &&
+        req.method === 'POST'
+      ) {
+        // Round 3(revisit linkage): PUBLIC patient-tablet submission. Every
+        // safety rule (token validity/expiry/consumed, target-id membership,
+        // label resolution from the server-side snapshot, never the
+        // request body) is enforced inside store.submitFollowUpSession --
+        // this handler only maps its result to a response.
+        const rawToken = decodeURIComponent(parts[2])
+        if (!checkPublicRateLimit(remoteAddress(req))) {
+          status = 429
+          bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
+        } else {
+          const body = await readBody(req)
+          const result = await store.submitFollowUpSession(rawToken, body)
+          if (!result.ok) {
+            noteFailedPublicAttempt(remoteAddress(req))
+            status = result.reason === 'invalid' ? 404 : 410
+            bytes = sendJson(req, res, status, { status: (result.reason ?? 'invalid').toUpperCase() }, cors)
+          } else {
+            status = 201
+            await safeAudit({ event: 'follow_up_session_submitted', visit_id: result.visit_id, actor: 'patient' })
+            bytes = sendJson(req, res, 201, { ok: true }, cors)
+          }
+        }
       } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear' && req.method === 'POST') {
         if (!requireDoctor(req)) {
           status = 403
@@ -671,6 +969,7 @@ async function checkDataDirsWritable(dataDir) {
     visits_dir: path.resolve(dataDir, '..', 'visits'),
     recorder_results_dir: path.resolve(dataDir, '..', 'recorder-results'),
     micro_follow_up_dir: path.resolve(dataDir, '..', 'micro-follow-up'),
+    follow_up_sessions_dir: path.resolve(dataDir, '..', 'follow-up-sessions'),
   }
   for (const [label, dir] of Object.entries(dirs)) {
     const probe = path.join(dir, '.write-probe')

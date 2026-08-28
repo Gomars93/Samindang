@@ -5,6 +5,13 @@
  */
 import type { ClinicianJudgment } from '../doctor/judgment'
 import type { WorkspaceState } from '../doctor/workspace/persistence'
+import type { VisitWorkspaceState } from '../doctor/workspace/visitWorkspace'
+import type {
+  FollowUpSessionInfo,
+  IssuedFollowUpSession,
+  RevisitQueueItem,
+  RevisitStatus,
+} from '../doctor/workspace/followUpSession'
 import { getStoredDoctorToken } from '../doctor/doctorToken'
 
 const BASE_URL = import.meta.env.VITE_SAMINDANG_SERVER_URL as string | undefined
@@ -262,6 +269,119 @@ export function getPatientHistory(
           nextReassessmentPlan: v.next_reassessment_plan,
         })),
       },
+    }
+  })
+}
+
+// Round 3(revisit linkage). A visit record as visitStore.js stores it --
+// `workspace` here is the VISIT-owned WorkspaceState (only meaningful when
+// submission_id is null; see visitWorkspace.ts's file header for why this
+// is a separate source of truth from the submission-owned one).
+export type VisitRecord = {
+  id: string
+  patient_id: string
+  created_at: string
+  updated_at: string
+  submission_id: string | null
+  judgment_ref: 'submission' | null
+  workspace: VisitWorkspaceState | null
+}
+
+export function getVisit(visitId: string): Promise<ServerResult<VisitRecord>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}`)
+}
+
+export function saveVisitWorkspace(
+  visitId: string,
+  workspace: VisitWorkspaceState,
+): Promise<ServerResult<VisitRecord>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}/workspace`, {
+    method: 'PUT',
+    body: JSON.stringify(workspace),
+  })
+}
+
+// Round 3(revisit linkage): "재진 간단 문진 시작". The ONLY response that
+// ever carries the raw one-time patient token -- never persisted, never
+// returned again by any other endpoint. The caller must show/copy it
+// immediately; a page reload cannot recover it (by design -- see
+// DECISIONS.md's follow-up-session token entry).
+type StartRevisitWire = {
+  visit: VisitRecord
+  token: string
+  expires_at: string
+  targets: Array<{ id: string; label: string }>
+}
+
+export function startRevisit(
+  patientId: string,
+): Promise<ServerResult<{ visit: VisitRecord; session: IssuedFollowUpSession }>> {
+  return request<StartRevisitWire>(`/api/patients/${encodeURIComponent(patientId)}/start-revisit`, {
+    method: 'POST',
+  }).then((result) => {
+    if (!result.ok) return result
+    return {
+      ok: true,
+      data: {
+        visit: result.data.visit,
+        session: { token: result.data.token, expiresAt: result.data.expires_at, targets: result.data.targets },
+      },
+    }
+  })
+}
+
+type ReissueWire = { token: string; expires_at: string; targets: Array<{ id: string; label: string }> }
+
+export function reissueFollowUpSession(visitId: string): Promise<ServerResult<IssuedFollowUpSession>> {
+  return request<ReissueWire>(`/api/visits/${encodeURIComponent(visitId)}/follow-up-session/reissue`, {
+    method: 'POST',
+  }).then((result) => {
+    if (!result.ok) return result
+    return { ok: true, data: { token: result.data.token, expiresAt: result.data.expires_at, targets: result.data.targets } }
+  })
+}
+
+export function invalidateFollowUpSession(visitId: string): Promise<ServerResult<{ ok: true }>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}/follow-up-session/invalidate`, { method: 'POST' })
+}
+
+type FollowUpSessionStatusWire = {
+  session: { status: FollowUpSessionInfo['status']; issued_at: string; expires_at: string; targets: Array<{ id: string; label: string }> } | null
+}
+
+export function getFollowUpSessionStatus(visitId: string): Promise<ServerResult<FollowUpSessionInfo | null>> {
+  return request<FollowUpSessionStatusWire>(`/api/visits/${encodeURIComponent(visitId)}/follow-up-session`).then((result) => {
+    if (!result.ok) return result
+    const s = result.data.session
+    return {
+      ok: true,
+      data: s ? { status: s.status, issuedAt: s.issued_at, expiresAt: s.expires_at, targets: s.targets } : null,
+    }
+  })
+}
+
+type RevisitQueueWire = Array<{
+  visit_id: string
+  patient_id: string
+  created_at: string
+  updated_at: string
+  status: RevisitStatus
+  needs_attention: boolean
+}>
+
+export function listRevisitQueue(): Promise<ServerResult<RevisitQueueItem[]>> {
+  return request<RevisitQueueWire>('/api/visits/revisits').then((result) => {
+    if (!result.ok) return result
+    return {
+      ok: true,
+      data: result.data.map((r) => ({
+        visitId: r.visit_id,
+        patientId: r.patient_id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        status: r.status,
+        needsAttention: r.needs_attention,
+      })),
     }
   })
 }

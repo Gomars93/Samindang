@@ -349,3 +349,76 @@ INTEGRATION REQUIRED 항목으로 정직하게 남겼다.
   완성되어 있어, 인증 경로 결정만 나면 바로 이어붙일 수 있다.
 - (−) 지금은 "환자가 직접 태블릿에서 답한다"는 North Star의 핵심
   전제가 실제로 동작하지 않는다 — 원장/직원 대리 입력만 가능.
+
+## 2026-08-28 — 재진 태블릿 연결(PR #24 round 3 후속): 일회용 capability
+token으로 Micro Follow-up 환자 직접 제출 gap을 닫음
+
+### Context
+바로 위 2026-08-28 결정에서 "환자가 태블릿에서 직접 답한다"를 의도적으로
+미루고 원장 대리 입력만 남겨뒀다. 사용자가 이 gap을 명시적으로 해소하도록
+승인된 제품/보안 방향을 지시했다: 이름/전화/생년월일 매칭은 여전히 절대
+금지, doctor 토큰은 절대 환자 태블릿에 전달하지 않음, 새 visit_id를
+원장/직원이 명시적으로 개설한 뒤에만 발급되는 1회용 링크만 허용.
+
+### Decision
+`server/followUpSessionStore.js`에 capability-token 모델을 새로 만들었다
+(로그인/세션이 아님):
+- `randomBytes(32).toString('base64url')`(256bit)로 발급, 서버는 SHA-256
+  해시만 저장 — 평문 토큰은 발급 응답 한 번만 존재하고 디스크/로그
+  어디에도 남지 않는다.
+- 토큰 1개 = visit_id 1개에 고정 스냅샷(targets는 발급 시점에 그 환자의
+  직전 방문 Follow-up Target에서 최대 3개, 재랭킹 없음). 공개 GET/POST
+  엔드포인트(`/api/follow-up-session/:token`)는 doctor 인증/Origin
+  allowlist를 전혀 거치지 않는다(환자 자신의 기기이므로 기존 환자 제출
+  라우트와 동일한 CORS 자세) — 대신 토큰 자체가 유일한 권한 증명이다.
+- consume은 ACTIVE→CONSUMED 전이 1회만 성공(동시 재시도는 per-token
+  lock으로 직렬화) — 재제출/이중제출은 항상 실패.
+- "재진 간단 문진 시작"(원장/직원 1클릭) = 새 visit_id 생성 + 후보 도출
+  + 토큰 발급이 한 트랜잭션처럼 항상 함께 일어난다 — visit만 있고 토큰이
+  없거나 그 반대인 상태가 나올 수 없다.
+- follow-up-session 토큰의 보존기한(`SAMINDANG_FOLLOWUP_TOKEN_RETENTION_
+  HOURS`, 기본 24시간)은 일반 진료기록 보존기한(`SAMINDANG_RETENTION_
+  DAYS`)과 완전히 분리된 별도 스위치 — 하나를 꺼도 다른 하나는 그대로
+  동작한다(구현 중 스스로 발견한 결합 버그를 커밋 전에 분리해 수정).
+
+### Reason
+"이름/전화/생년월일로 자동 매칭하지 않는다"는 기존 절대 원칙을 이 새
+경로에도 그대로 적용하려면, 환자 태블릿이 알아도 되는 것은 오직 그
+발급된 opaque token 하나뿐이어야 한다 — token만으로 서버가 정확히 어느
+visit인지 판단하고, 그 visit의 patient_id는 서버 내부에서만 쓰인다(공개
+응답에 절대 포함하지 않음). doctor 토큰을 태블릿에 심는 대신 새 최소권한
+capability token을 발명한 이유는 위 2026-08-28 결정의 "Alternatives
+Considered"에서 이미 기각한 두 옵션(태블릿에 doctor 토큰 부여 = 전체
+doctor API 노출 / 검증 안 된 URL 파라미터 방식)의 정확한 대안이기
+때문이다.
+
+### Alternatives Considered
+- 태블릿에 doctor 토큰 발급 — 기각(위 라운드에서 이미 기각한 이유와
+  동일: EMR/제출목록 등 훨씬 넓은 doctor API 표면이 함께 열림).
+  visit_id/patient_id를 URL 쿼리로 그대로 노출 — 기각(추측 가능한 값,
+  재사용/공유 시 무기한 유효).
+- 4~6자리 숫자 코드 — 사용자가 명시적으로 금지(브루트포스에 취약,
+  128bit 미만 엔트로피).
+
+### Consequences
+- (+) North Star의 Micro Follow-up 여정이 처음으로 실제 동작한다(원장이
+  링크 발급 → 환자가 자기 기기/태블릿에서 직접 답함 → 원장 큐에 자동
+  반영). 실제 헤드리스 브라우저(서버+vite+Chromium)로 전체 왕복(발급 →
+  환자 제출 → 완료 화면 → 뒤로가기 프라이버시 가드 → 원장 큐 COMPLETED →
+  재진 워크스페이스 3분리 렌더 → 새로고침 후에도 유지 → 재발급이 구
+  토큰 무효화 → 원장 수동 무효화)까지 실제로 확인됨.
+- (+) 기존 doctor 라우트 보안 모델(Origin allowlist, requireDoctor)은
+  전혀 약화되지 않았다 — 공개 라우트 2개는 애초에 그 가드 목록에 넣지
+  않았고, 서버 테스트(`tests/server.spec.mjs`)가 doctor-guarded 라우트
+  개수(22개)를 여전히 정확히 고정한다.
+- (+) 새 `tests/follow-up-session.spec.mjs`(113 assertion)이 토큰
+  무작위성/형식, 평문 미저장, visit 범위, 무효/만료/소비 거부, 교차환자
+  격리, 재발급 시 구토큰 무효화, GET의 신원정보 미노출, POST의 라벨
+  변조 불가, doctor 토큰 부재, 이름/전화/생년월일 미사용, CORS/바디크기
+  가드를 전부 회귀 테스트로 고정.
+- (−) 아직 QR 코드 생성은 없다(v1은 직접 링크 텍스트만) — 사용자가
+  "QR은 선택, 지연시키지 말 것"으로 명시했으므로 의도된 축소 범위.
+- (−) 재진 후보 target이 하나도 없는 환자(직전 방문에 Follow-up Target
+  기록이 없는 경우)는 링크는 발급되지만 재확인 항목 없이 전반적 변화/
+  새 증상/이상반응만 묻는다 — 새 질문을 발명하지 않고 정직하게 원장
+  UI에 "이 환자는 이전 방문 추적 항목이 없습니다"로 알린다.

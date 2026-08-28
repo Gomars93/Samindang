@@ -7,6 +7,7 @@ import path from 'node:path'
 import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
 import { createMicroFollowUpStore } from './microFollowUpStore.js'
+import { createFollowUpSessionStore } from './followUpSessionStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
@@ -42,7 +43,7 @@ function withLock(key, fn) {
   return run
 }
 
-export function createStore(dataDir) {
+export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTokenRetentionHours = 24 } = {}) {
   // visits/는 submissions/의 형제 경로다(audit.log와 같은 패턴) — 별도
   // 데이터 디렉터리 설정이 필요 없다.
   const visits = createVisitStore(path.join(dataDir, '..', 'visits'))
@@ -50,6 +51,11 @@ export function createStore(dataDir) {
   const recorderResults = createRecorderResultStore(path.join(dataDir, '..', 'recorder-results'))
   // micro-follow-up/도 같은 형제 경로 패턴(round 3 Phase D).
   const microFollowUp = createMicroFollowUpStore(path.join(dataDir, '..', 'micro-follow-up'))
+  // follow-up-sessions/도 같은 형제 경로 패턴(round 3: secure revisit
+  // linkage 한번쓰기 토큰).
+  const followUpSessions = createFollowUpSessionStore(path.join(dataDir, '..', 'follow-up-sessions'), {
+    ttlMinutes: followUpTokenTtlMinutes,
+  })
 
   async function ensureDir() {
     await mkdir(dataDir, { recursive: true })
@@ -257,6 +263,131 @@ export function createStore(dataDir) {
     return { patient_id: patientId, visits: summaries }
   }
 
+  // Round 3(revisit linkage): candidate Follow-up Targets for a Micro
+  // Follow-up, derived ONLY from the clinician's own prior Follow-up
+  // Targets on the patient's latest applicable (submission-backed) visit --
+  // no ranking/scoring algorithm, no invented items. Combines pain+herbal
+  // target arrays in their existing stored order (whichever profile the
+  // clinician actually used), capped at 3 total by followUpSessions.issueToken
+  // itself. Returns [] (never an error) when there is nothing prior to
+  // carry forward -- the caller/UI must say so plainly, not invent items.
+  async function deriveMicroFollowUpCandidates(patientId, excludeVisitId) {
+    const history = await getPatientHistory(patientId, excludeVisitId)
+    const latest = history.visits[0]
+    if (!latest) return []
+    return [...latest.pain_follow_up_targets, ...latest.herbal_follow_up_targets].map((t) => ({
+      id: t.id,
+      label: t.label,
+    }))
+  }
+
+  // Round 3(revisit linkage): the single doctor/staff action "재진 간단
+  // 문진 시작" -- creates the NEW visit for an EXISTING patient_id (the
+  // caller in server/index.js already verified visitExistsForPatient,
+  // exactly like the existing POST /api/visits route), derives candidate
+  // targets from that patient's own prior visit, and issues one one-time
+  // token scoped to the new visit_id. All three steps happen here so a
+  // caller can never end up with a visit and no token (or vice versa).
+  async function startRevisit(patientId) {
+    const visit = await visits.createVisit({ patient_id: patientId, submission_id: null })
+    const targets = await deriveMicroFollowUpCandidates(patientId, visit.id)
+    const { token, record } = await followUpSessions.issueToken({
+      visit_id: visit.id,
+      patient_id: patientId,
+      targets,
+    })
+    return { visit, token, session: record }
+  }
+
+  // Reissue: same visit, freshly re-derived candidates (in case the
+  // clinician's prior-visit data changed since the original issuance),
+  // brand-new token -- issueToken() itself invalidates the previous active
+  // token for this visit_id.
+  async function reissueFollowUpSession(visitId) {
+    const visit = await visits.getVisit(visitId)
+    if (!visit) return null
+    const targets = await deriveMicroFollowUpCandidates(visit.patient_id, visitId)
+    const { token, record } = await followUpSessions.issueToken({
+      visit_id: visitId,
+      patient_id: visit.patient_id,
+      targets,
+    })
+    return { visit, token, session: record }
+  }
+
+  // Round 3(revisit linkage): the ONLY place that turns a raw patient token
+  // into a saved MicroFollowUpResponse. Enforces every public-endpoint
+  // safety rule in one spot: the token must resolve and successfully
+  // consume (fails closed on invalid/expired/consumed/invalidated), and any
+  // target the patient answered must have an id present in the token's own
+  // server-side snapshot -- a submitted target id NOT in that snapshot is
+  // silently dropped (never trusted), and every label is re-resolved from
+  // the snapshot, never taken from the request body.
+  async function submitFollowUpSession(rawToken, answers) {
+    const consumed = await followUpSessions.consumeToken(rawToken)
+    if (!consumed.ok) return consumed
+    const { record } = consumed
+    const allowedIds = new Set(record.targets.map((t) => t.id))
+    const labelById = new Map(record.targets.map((t) => [t.id, t.label]))
+    const targetRatings = (Array.isArray(answers?.targetRatings) ? answers.targetRatings : [])
+      .filter((t) => t && typeof t.targetId === 'string' && allowedIds.has(t.targetId))
+      .map((t) => ({
+        targetId: t.targetId,
+        label: labelById.get(t.targetId),
+        patientReportedValue: typeof t.patientReportedValue === 'string' ? t.patientReportedValue.slice(0, 500) : '',
+      }))
+    const saved = await microFollowUp.saveResponse({
+      visit_id: record.visit_id,
+      patient_id: record.patient_id,
+      targetRatings,
+      overallChange: typeof answers?.overallChange === 'string' ? answers.overallChange.slice(0, 500) : '',
+      newSymptomReported: Boolean(answers?.newSymptomReported),
+      newSymptomNote: typeof answers?.newSymptomNote === 'string' ? answers.newSymptomNote.slice(0, 1000) : '',
+      adverseEffectReported: Boolean(answers?.adverseEffectReported),
+      adverseEffectNote: typeof answers?.adverseEffectNote === 'string' ? answers.adverseEffectNote.slice(0, 1000) : '',
+    })
+    return { ok: true, visit_id: record.visit_id, response: saved }
+  }
+
+  // Round 3(revisit linkage): "Doctor Queue" for no-submission revisit
+  // visits, each enriched with an OPERATIONAL Micro Follow-up status --
+  // never a diagnostic/safety classification (see microFollowUp.ts's
+  // microFollowUpNeedsAttention doc comment, same rule applies here).
+  // Never mixed into listSubmissions()'s own contract.
+  async function listRevisitQueue() {
+    const allVisits = await visits.listVisits()
+    const revisits = allVisits.filter((v) => !v.submission_id)
+    const results = []
+    for (const v of revisits) {
+      const session = await followUpSessions.getActiveForVisit(v.id)
+      const response = await microFollowUp.getResponse(v.id)
+      let status
+      if (response) {
+        status = 'COMPLETED'
+      } else if (session && session.status === 'ACTIVE' && new Date(session.expires_at).getTime() >= Date.now()) {
+        status = 'WAITING_FOR_PATIENT'
+      } else if (session) {
+        // ACTIVE-but-expired, or INVALIDATED/CONSUMED with no saved
+        // response (shouldn't normally happen -- consumption and response
+        // save happen together in submitFollowUpSession) -- either way the
+        // clinician needs to reissue a fresh link.
+        status = 'EXPIRED'
+      } else {
+        status = 'NOT_STARTED'
+      }
+      results.push({
+        visit_id: v.id,
+        patient_id: v.patient_id,
+        created_at: v.created_at,
+        updated_at: v.updated_at,
+        status,
+        needs_attention: Boolean(response?.newSymptomReported || response?.adverseEffectReported),
+      })
+    }
+    results.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    return results
+  }
+
   // 보존기한(retention) 정리. days <= 0(또는 falsy)이면 아무것도 지우지 않는다
   // (SAMINDANG_RETENTION_DAYS=0 = 자동삭제 비활성화). 반환값은 삭제 건수뿐 —
   // 내용은 절대 로그로 남기지 않는다.
@@ -284,6 +415,16 @@ export function createStore(dataDir) {
     return deleted
   }
 
+  // Round 3(revisit linkage): follow-up-sessions/의 정리는 일부러 위
+  // cleanupOlderThan(days)와 분리된 별도 정책이다 -- 클리닉이
+  // SAMINDANG_RETENTION_DAYS=0(일반 진료기록 자동삭제 비활성화)으로
+  // 설정하더라도, 이미 소비/만료/무효화된 한번쓰기 토큰은 계속 훨씬 짧은
+  // 창(기본 24시간, SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS)으로 정리
+  // 되어야 한다 -- 두 정책을 같은 스위치에 묶으면 안 된다.
+  async function cleanupFollowUpSessions() {
+    return followUpSessions.cleanupOlderThan(followUpTokenRetentionHours)
+  }
+
   // 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 파일 개수만 반환한다.
   // recorder-results/(전사/구조화 노트)도 함께 지운다 — 여기서 빠지면
   // "전체 삭제"라는 스크립트의 약속이 거짓이 된다.
@@ -295,6 +436,7 @@ export function createStore(dataDir) {
     }
     deleted += await recorderResults.purgeAll()
     deleted += await microFollowUp.purgeAll()
+    deleted += await followUpSessions.purgeAll()
     return deleted
   }
 
@@ -317,5 +459,15 @@ export function createStore(dataDir) {
     saveMicroFollowUpResponse: microFollowUp.saveResponse,
     getMicroFollowUpResponse: microFollowUp.getResponse,
     setVisitRecorderPointer: visits.setRecorderPointer,
+    saveVisitWorkspace: visits.saveVisitWorkspace,
+    deriveMicroFollowUpCandidates,
+    startRevisit,
+    reissueFollowUpSession,
+    invalidateFollowUpSession: followUpSessions.invalidateActiveForVisit,
+    getFollowUpSessionStatus: followUpSessions.getActiveForVisit,
+    resolveFollowUpSession: followUpSessions.resolveToken,
+    submitFollowUpSession,
+    cleanupFollowUpSessions,
+    listRevisitQueue,
   }
 }

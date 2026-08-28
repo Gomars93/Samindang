@@ -1442,10 +1442,17 @@ async function main() {
     // 추가되어 16개가 됐다(recorder-results와 동일한 doctor-only 가드 패턴 --
     // 환자 태블릿에서 직접 호출하지 않는다, microFollowUp.ts의 OPERATIONAL
     // INTEGRATION REQUIRED 주석 참고).
+    // Round 3(revisit linkage)에서 6개가 추가되어 22개가 됐다: PUT
+    // /api/visits/:id/workspace, GET /api/visits/revisits, POST
+    // /api/patients/:patientId/start-revisit, GET/POST(reissue)/POST(invalidate)
+    // /api/visits/:id/follow-up-session 계열 -- 전부 같은 doctor-only 가드.
+    // 공개 환자용 /api/follow-up-session/:token(GET/POST) 2개는 의도적으로
+    // 이 목록에 포함되지 않는다(patient POST /api/submissions와 같은 위치의
+    // 공개 엔드포인트 -- followUpSessionStore.js의 토큰 검증이 인증을 대신한다).
     // isLocalOnly는 완전히 제거됐다(server/auth.js).
     assert(
-      'server has exactly the 16 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2)',
-      requireDoctorCalls === 16,
+      'server has exactly the 22 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6)',
+      requireDoctorCalls === 22,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

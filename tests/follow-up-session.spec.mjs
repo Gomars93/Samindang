@@ -8,7 +8,7 @@
 // POST-can't-overwrite-labels, doctor-token-absent-from-patient-flow,
 // no-name/phone/DOB-matching, and CORS/body-size-guards-intact -- plus the
 // end-to-end revisit workflow.
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -164,6 +164,24 @@ async function main() {
       const status = await store.getActiveForVisit('visit-status')
       assert('doctor status read has no field equal to the raw token', JSON.stringify(status) !== JSON.stringify({ token: tokenGen3 }) && !JSON.stringify(status).includes(tokenGen3))
       assert('doctor status read carries only the hash, not plaintext', status.token_hash === hashToken(tokenGen3))
+
+      /* ---- stale by-visit pointer cleanup (round 4 review fix): once a
+         token file is aged off by cleanupOlderThan, its visit's pointer
+         file (which only ever points at ONE token_hash at a time) must be
+         cleaned up too, not left behind forever ---- */
+      const { token: tokenForPointerTest } = await store.issueToken({ visit_id: 'visit-pointer-cleanup', patient_id: 'patient-ptr', targets: [] })
+      const pointerFilePath = path.join(tmpRoot, 'by-visit', 'visit-pointer-cleanup.json')
+      const pointerExistsBefore = await readFile(pointerFilePath, 'utf8').then(() => true).catch(() => false)
+      assert('pointer file exists right after issuance', pointerExistsBefore)
+      await store.consumeToken(tokenForPointerTest)
+      // Backdate consumed_at so cleanupOlderThan(1) actually ages it off.
+      const tokenFilePathForPointerTest = path.join(tmpRoot, 'tokens', `${hashToken(tokenForPointerTest)}.json`)
+      const tokenOnDiskForPointerTest = JSON.parse(await readFile(tokenFilePathForPointerTest, 'utf8'))
+      tokenOnDiskForPointerTest.consumed_at = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+      await writeFile(tokenFilePathForPointerTest, JSON.stringify(tokenOnDiskForPointerTest, null, 2), 'utf8')
+      await store.cleanupOlderThan(1)
+      const pointerExistsAfter = await readFile(pointerFilePath, 'utf8').then(() => true).catch(() => false)
+      assert('the stale by-visit pointer file is removed once its token is cleaned up, not left behind forever', !pointerExistsAfter)
     } finally {
       await rm(tmpRoot, { recursive: true, force: true })
     }
@@ -356,6 +374,181 @@ async function main() {
   }
 
   /* =====================================================================
+     Part 2.5 (round 4 review fixes): required regression scenario for
+     longitudinal continuity, startRevisit atomicity under failure, and
+     submitFollowUpSession durability/retriability under failure.
+     ===================================================================== */
+  {
+    const r5Root = await mkdtemp(path.join(tmpdir(), 'samindang-followup-review5-'))
+    const r5DataDir = path.join(r5Root, 'submissions')
+    try {
+      const store = createStore(r5DataDir, { followUpTokenTtlMinutes: 30, followUpTokenRetentionHours: 24 })
+
+      /* ---- required regression scenario: Initial selects target A ->
+         Revisit 1 patient enters current A + clinician selects target B ->
+         Revisit 2 must receive B (not initial A), prior visits immutable ---- */
+      const subInit = await store.createSubmission({
+        submission: { questionnaire_version: '1.0', session_id: 'sess-r5-init', responses: {}, metadata: {} },
+        myungri: null,
+        patient_label: 'r5 patient',
+      })
+      const r5PatientId = subInit.patient_id
+      await store.saveWorkspace(
+        subInit.id,
+        emptyWorkspaceFor({
+          painFinalAssessment: { finalWorkingAssessment: 'INITIAL 판단', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+          painFollowUpTargets: [{ id: 'targetA', label: 'Target A (통증)', baseline: '7', postTreatmentValue: '5' }],
+        }),
+      )
+
+      // Revisit 1: candidates must be [A] (derived from the initial submission, nothing newer yet).
+      const revisit1 = await store.startRevisit(r5PatientId)
+      assert('regression scenario: Revisit 1 candidates derived from the initial visit -> target A', revisit1.session.targets.map((t) => t.id).join(',') === 'targetA')
+
+      // Patient answers Revisit 1's Micro Follow-up (current value for A).
+      await store.submitFollowUpSession(revisit1.token, {
+        targetRatings: [{ targetId: 'targetA', patientReportedValue: '4' }],
+        overallChange: '좋아짐',
+        newSymptomReported: false,
+        newSymptomNote: '',
+        adverseEffectReported: false,
+        adverseEffectNote: '',
+      })
+
+      // Clinician reviews Revisit 1 and selects a NEW target B to track going forward.
+      const revisit1SaveResult = await store.saveVisitWorkspace(revisit1.visit.id, {
+        schema_version: '1.0.0',
+        finalAssessment: { finalWorkingAssessment: 'REVISIT 1 판단', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-08T00:00:00.000Z' },
+        carePlan: { currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: '', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: '', recordedAt: null },
+        followUpTargets: [{ id: 'targetB', label: 'Target B (걷기 시간)', baseline: '20min', postTreatmentValue: '' }],
+        nextReassessmentPlan: { status: 'UNSET', targetDate: '', afterVisitCount: null, note: '' },
+        reassessment: { items: [], finalReassessmentNote: '', recordedAt: null },
+        updated_at: '2026-01-08T00:00:00.000Z',
+      })
+      assert('clinician can save the revisit workspace with the newly chosen target B', revisit1SaveResult.ok === true)
+
+      // Revisit 2: candidates must now be [B], NOT the stale initial target A.
+      const revisit2 = await store.startRevisit(r5PatientId)
+      assert('regression scenario: Revisit 2 candidates come from Revisit 1s newly-chosen target B, not the stale initial target A', revisit2.session.targets.map((t) => t.id).join(',') === 'targetB')
+      assert('regression scenario: Revisit 2 candidates do NOT include the old target A', !revisit2.session.targets.some((t) => t.id === 'targetA'))
+
+      // Prior visits remain immutable: the initial submission's own workspace still shows target A untouched.
+      const initialRecordAfter = await store.getSubmission(subInit.id)
+      assert('regression scenario: the initial submission workspace is untouched (still target A)', initialRecordAfter.workspace.painFollowUpTargets[0].id === 'targetA')
+      const revisit1RecordAfter = await store.getVisit(revisit1.visit.id)
+      assert('regression scenario: Revisit 1s own workspace still shows its own target B (not overwritten by Revisit 2)', revisit1RecordAfter.workspace.followUpTargets[0].id === 'targetB')
+
+      // History itself, from Revisit 2's own point of view (excluding itself), shows Revisit 1 as the latest -- not the initial submission.
+      const historyFromRevisit2 = await store.getPatientHistory(r5PatientId, revisit2.visit.id)
+      assert('regression scenario: history ordered so Revisit 1 (not the initial submission) is the latest visit', historyFromRevisit2.visits[0].visit_id === revisit1.visit.id)
+
+      /* ---- startRevisit atomicity: if token issuance fails, the visit it
+         just created must be rolled back, not left as an orphan. Uses its
+         OWN isolated data dir (rather than reusing r5Root above) so
+         blocking the follow-up-sessions/tokens/ directory can't also break
+         reads of the OTHER, already-issued tokens still in scope above
+         (listRevisitQueue reads every revisit's token status, and those
+         reads would otherwise ENOTDIR on the same blocked path). ---- */
+      const atomicityRoot = await mkdtemp(path.join(tmpdir(), 'samindang-followup-atomicity-'))
+      try {
+        const atomicityStore = createStore(path.join(atomicityRoot, 'submissions'), { followUpTokenTtlMinutes: 30 })
+        const tokensDirPath = path.join(atomicityRoot, 'follow-up-sessions', 'tokens')
+        // Force issueToken to fail: put a FILE at the exact path its
+        // internal mkdir(tokensDir, {recursive:true}) needs to create as a
+        // directory (checked before pointersDir/by-visit, so that one never
+        // even gets attempted), so that call throws EEXIST before any
+        // token/visit pointer is ever written.
+        await mkdir(path.dirname(tokensDirPath), { recursive: true })
+        await writeFile(tokensDirPath, 'blocking file, not a directory', 'utf8')
+        let startRevisitThrew = false
+        try {
+          await atomicityStore.startRevisit('atomicity-test-patient')
+        } catch {
+          startRevisitThrew = true
+        }
+        assert('startRevisit propagates the token-issuance failure instead of silently succeeding', startRevisitThrew)
+        const visitFiles = await readdir(path.join(atomicityRoot, 'visits')).catch((err) => {
+          if (err.code === 'ENOENT') return [] // visits/ never even got created -- also proof of no orphan
+          throw err
+        })
+        assert('startRevisit atomicity: no orphan no-submission visit is left behind after a failed token issuance', visitFiles.length === 0)
+      } finally {
+        await rm(atomicityRoot, { recursive: true, force: true })
+      }
+
+      /* ---- submitFollowUpSession durability/retriability: if the durable
+         response save fails, the token must remain ACTIVE so the patient
+         can retry with the exact same link, and no partial response is
+         ever recorded ---- */
+      const revisitForFailureTest = await store.startRevisit(r5PatientId)
+      const microFollowUpDirPath = path.join(r5Root, 'micro-follow-up')
+      // Force microFollowUp.saveResponse to fail the same way: replace its
+      // (already-existing, from the regression scenario's earlier
+      // submissions above) directory with a FILE at the same path, so its
+      // internal mkdir(...) throws EEXIST.
+      await rm(microFollowUpDirPath, { recursive: true, force: true })
+      await writeFile(microFollowUpDirPath, 'blocking file, not a directory', 'utf8')
+      let submitThrew = false
+      try {
+        await store.submitFollowUpSession(revisitForFailureTest.token, {
+          targetRatings: [],
+          overallChange: '나빠짐',
+          newSymptomReported: false,
+          newSymptomNote: '',
+          adverseEffectReported: false,
+          adverseEffectNote: '',
+        })
+      } catch {
+        submitThrew = true
+      }
+      assert('submitFollowUpSession propagates a durable-save failure instead of silently succeeding', submitThrew)
+
+      // Unblock the directory before reading back -- otherwise the read
+      // itself would ENOTDIR on the still-blocked path, not report a clean
+      // "nothing saved".
+      await unlink(microFollowUpDirPath)
+      const responseAfterFailure = await store.getMicroFollowUpResponse(revisitForFailureTest.visit.id)
+      assert('no partial/lost response is recorded when the durable save failed', responseAfterFailure === null)
+
+      // Retry with the SAME token -- must succeed, proving the token was
+      // never consumed by the failed attempt.
+      const retryResult = await store.submitFollowUpSession(revisitForFailureTest.token, {
+        targetRatings: [],
+        overallChange: '나빠짐',
+        newSymptomReported: false,
+        newSymptomNote: '',
+        adverseEffectReported: false,
+        adverseEffectNote: '',
+      })
+      assert('retrying with the SAME token after the failure is fixed succeeds -- the token was never burned by the failed attempt', retryResult.ok === true)
+      const responseAfterRetry = await store.getMicroFollowUpResponse(revisitForFailureTest.visit.id)
+      assert('the retried submission is actually saved', responseAfterRetry !== null && responseAfterRetry.overallChange === '나빠짐')
+
+      /* ---- workspace single-source-of-truth: rejecting at the STORE layer,
+         not just the HTTP route -- a submission-backed visit's workspace
+         must never be writable through saveVisitWorkspace ---- */
+      const submissionBackedVisitId = subInit.visit_id
+      const rejectResult = await store.saveVisitWorkspace(submissionBackedVisitId, {
+        schema_version: '1.0.0',
+        finalAssessment: { finalWorkingAssessment: 'SHOULD NEVER BE WRITTEN', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: null },
+        carePlan: { currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: '', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: '', recordedAt: null },
+        followUpTargets: [],
+        nextReassessmentPlan: { status: 'UNSET', targetDate: '', afterVisitCount: null, note: '' },
+        reassessment: { items: [], finalReassessmentNote: '', recordedAt: null },
+        updated_at: null,
+      })
+      assert('store-layer: saveVisitWorkspace rejects a submission-backed visit', rejectResult.ok === false && rejectResult.reason === 'submission_backed')
+      const submissionBackedVisitAfter = await store.getVisit(submissionBackedVisitId)
+      assert('the submission-backed visit record itself was never mutated by the rejected write', submissionBackedVisitAfter.workspace === null)
+
+      const notFoundResult = await store.saveVisitWorkspace('00000000-0000-0000-0000-000000000000', {})
+      assert('store-layer: saveVisitWorkspace on an unknown visit id reports not_found', notFoundResult.ok === false && notFoundResult.reason === 'not_found')
+    } finally {
+      await rm(r5Root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
      Part 3: HTTP-level -- doctor-route auth guards, public endpoint
      no-identifier-leak, CORS/body-size/rate-limit guards, and the full
      patient-tablet-facing lifecycle end to end.
@@ -524,6 +717,26 @@ async function main() {
           body: '{}',
         })
         assert('public POST with a malformed token -> 404 (never a 500/crash)', res.status === 404)
+      }
+
+      /* ---- malformed PERCENT-ENCODING (not just a garbage token string) ->
+         INVALID, never a 500 crash (round 4 review fix) ---- */
+      {
+        // A lone "%" not followed by two hex digits -- decodeURIComponent
+        // throws a URIError on this. Sent raw (not encodeURIComponent'd)
+        // so the malformed sequence actually reaches the server as-is.
+        const res = await fetch(`${base}/api/follow-up-session/abc%zzdef`)
+        assert('public GET with a malformed percent-encoded token -> 404, never a 500', res.status === 404)
+        const body = await res.json()
+        assert('malformed percent-encoding reports INVALID, not a generic server error', body.status === 'INVALID')
+      }
+      {
+        const res = await fetch(`${base}/api/follow-up-session/abc%zzdef`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+        assert('public POST with a malformed percent-encoded token -> 404, never a 500', res.status === 404)
       }
 
       /* ---- reissue invalidates the old token, issues a new working one ---- */

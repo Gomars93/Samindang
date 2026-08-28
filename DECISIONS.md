@@ -422,3 +422,55 @@ doctor API 노출 / 검증 안 된 URL 파라미터 방식)의 정확한 대안�
   기록이 없는 경우)는 링크는 발급되지만 재확인 항목 없이 전반적 변화/
   새 증상/이상반응만 묻는다 — 새 질문을 발명하지 않고 정직하게 원장
   UI에 "이 환자는 이전 방문 추적 항목이 없습니다"로 알린다.
+
+## 2026-08-28 — round 4 리뷰 엔지니어링 수정 (round 5)
+
+### Context
+위 "재진 태블릿 연결" 구현에 대한 PR 리뷰(Gomars93, round 4 follow-up)가
+새 임상 판단은 요구하지 않되 병합 전 필수인 6개 엔지니어링 정합성 문제를
+지적했다: (1) `startRevisit`의 visit-then-token 두 단계가 원자적이지
+않음, (2) `submitFollowUpSession`이 응답 저장 전에 토큰을 소비해 저장
+실패 시 응답이 유실되고 재시도 불가능함, (3) submission-backed visit의
+workspace를 `PUT /api/visits/:id/workspace`로도 덮어쓸 수 있어 단일
+진실 공급원이 깨짐, (4) `getPatientHistory`가 no-submission 재진을
+스킵해 재진 #2가 재진 #1이 아니라 초진의 오래된 target을 봄, (5)
+target별 답변이 좋아짐/비슷함/나빠짐 방향성만 캡처해 통증 7→4처럼
+like-for-like 원본값 비교가 불가능함, (6) 제출 성공 후에도 토큰이
+브라우저 URL/history에 남아있음.
+
+### Decision
+6개 항목 전부와 부수적으로 요청된 edge tightening(malformed
+percent-encoding 처리, stale by-visit 포인터 정리, store 레벨 SSOT
+강제, Herbal 필드 라벨 감사)을 수정한다. 상세 구현은
+`HANDOFF.md`의 "Completed — Round 5" 참고. 핵심 패턴 두 가지만 여기
+기록한다:
+- **rollback-on-failure**: `startRevisit`은 visit을 먼저 만들고,
+  이후 단계(target 도출/토큰 발급)가 실패하면 그 visit을
+  `deleteVisitForRollbackOnly`(HTTP로 노출되지 않는 전용 함수)로 즉시
+  삭제한 뒤 rethrow한다.
+- **validate-act-then-commit-under-lock**: `consumeTokenWithAction`은
+  토큰 상태를 락 안에서 검증한 뒤, 호출자가 넘긴 내구성 저장(actionFn)이
+  성공해야만 토큰을 CONSUMED로 커밋한다. 저장이 실패하면 토큰은 ACTIVE로
+  남아 같은 1회용 링크로 안전하게 재시도할 수 있다.
+
+### Reason
+두 패턴 모두 새 리소스(DB 트랜잭션 등)를 도입하지 않고 기존 파일시스템
+저장소 + per-key 락 구조 위에서 원자성/내구성을 얻는 최소 변경이다.
+`follow_up_targets` 통합 필드는 프로필(Pain/Herbal)마다 다른 필드명을
+호출부에서 매번 분기하는 대신, "가장 최근에 추적된 것"이라는 프로필에
+무관한 개념을 서버가 한 번만 계산해 내려주는 것이 정확성과 유지보수성
+둘 다에 유리하다고 판단했다.
+
+### Consequences
+- (+) 6개 리뷰 항목 + edge tightening 전부 파일시스템 레벨 failure
+  injection 테스트로 실증(코드 리뷰만이 아니라 실제로 원자성/재시도
+  가능성을 검증). `tests/follow-up-session.spec.mjs` 113 → 134
+  assertion, 실제 헤드리스 브라우저 QA 27 → 29 체크.
+- (+) 리뷰가 요구한 정확한 회귀 시나리오(초진 target A → 재진1 환자
+  입력+원장이 B 선택 → 재진2는 B를 받음, 이전 방문 불변)를 전용 테스트로
+  고정.
+- (+) `src/spec/*Logic.ts`/`*Adapter.ts` FROZEN zero-diff 유지, 새 임상
+  threshold/추론 없음.
+- (−) 없음 — 전부 엔지니어링 정합성 수정이며 사용자가 승인한 기존 제품
+  방향(1회용 capability token, 이름/전화/생년월일 매칭 금지)을 변경하지
+  않았다.

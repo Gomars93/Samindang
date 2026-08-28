@@ -240,6 +240,7 @@ type PatientHistoryWire = {
     primary_concern: string | null
     pain_follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
     herbal_follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
+    follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
     pain_final_assessment_summary: string | null
     herbal_final_assessment_summary: string | null
     next_reassessment_plan: import('../doctor/workspace/finalAssessment').NextReassessmentPlan | null
@@ -264,6 +265,7 @@ export function getPatientHistory(
           primaryConcern: v.primary_concern,
           painFollowUpTargets: v.pain_follow_up_targets,
           herbalFollowUpTargets: v.herbal_follow_up_targets,
+          followUpTargets: v.follow_up_targets,
           painFinalAssessmentSummary: v.pain_final_assessment_summary,
           herbalFinalAssessmentSummary: v.herbal_final_assessment_summary,
           nextReassessmentPlan: v.next_reassessment_plan,

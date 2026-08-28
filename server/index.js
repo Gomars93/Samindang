@@ -31,6 +31,18 @@ function parseAllowedOrigins(raw) {
     .filter(Boolean)
 }
 
+// Round 4 review fix: decodeURIComponent throws a URIError on a malformed
+// percent-encoded sequence (e.g. a lone "%" in the URL path segment). The
+// public follow-up-session routes must fail closed on that exactly like any
+// other unrecognizable token, not fall through to the generic 500 handler.
+function safeDecodeToken(raw) {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+}
+
 export function createApp({
   dataDir,
   doctorToken,
@@ -553,13 +565,26 @@ export function createApp({
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
           const body = await readBody(req)
-          const record = await store.saveVisitWorkspace(id, body)
-          if (!record) {
+          const result = await store.saveVisitWorkspace(id, body)
+          if (!result.ok && result.reason === 'not_found') {
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else if (!result.ok && result.reason === 'submission_backed') {
+            // Single-source-of-truth guard: a submission-backed visit's
+            // workspace must only ever be written through
+            // PUT /api/submissions/:id/workspace -- see visitStore.js's
+            // saveVisitWorkspace doc comment.
+            status = 409
+            bytes = sendJson(
+              req,
+              res,
+              409,
+              { error: 'submission-backed visit; use PUT /api/submissions/:id/workspace instead' },
+              cors,
+            )
           } else {
             await safeAudit({ event: 'visit_workspace_saved', visit_id: id, actor: 'doctor' })
-            bytes = sendJson(req, res, 200, record, cors)
+            bytes = sendJson(req, res, 200, result.record, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 3 && req.method === 'GET') {
@@ -826,8 +851,18 @@ export function createApp({
         // Absolutely no patient_id/name/phone/DOB/prior assessment/Myungri/
         // clinician notes in this response -- only what the token was
         // explicitly issued to show.
-        const rawToken = decodeURIComponent(parts[2])
-        if (!checkPublicRateLimit(remoteAddress(req))) {
+        //
+        // Round 4 review fix: a malformed percent-encoding in the URL
+        // (e.g. a lone "%" not followed by two hex digits) makes
+        // decodeURIComponent throw a URIError -- treat that exactly like
+        // any other unrecognizable token (INVALID) instead of letting it
+        // fall through to the generic catch-all 500.
+        const rawToken = safeDecodeToken(parts[2])
+        if (rawToken === null) {
+          noteFailedPublicAttempt(remoteAddress(req))
+          status = 404
+          bytes = sendJson(req, res, 404, { status: 'INVALID' }, cors)
+        } else if (!checkPublicRateLimit(remoteAddress(req))) {
           status = 429
           bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
         } else {
@@ -855,8 +890,12 @@ export function createApp({
         // label resolution from the server-side snapshot, never the
         // request body) is enforced inside store.submitFollowUpSession --
         // this handler only maps its result to a response.
-        const rawToken = decodeURIComponent(parts[2])
-        if (!checkPublicRateLimit(remoteAddress(req))) {
+        const rawToken = safeDecodeToken(parts[2])
+        if (rawToken === null) {
+          noteFailedPublicAttempt(remoteAddress(req))
+          status = 404
+          bytes = sendJson(req, res, 404, { status: 'INVALID' }, cors)
+        } else if (!checkPublicRateLimit(remoteAddress(req))) {
           status = 429
           bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
         } else {

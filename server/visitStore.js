@@ -9,7 +9,7 @@
 // 지정해야만 만들어진다 (server/index.js의 POST /api/visits, patient_id
 // 존재 검증 포함 — visitExistsForPatient).
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 function visitPath(visitsDir, id) {
@@ -126,14 +126,39 @@ export function createVisitStore(visitsDir) {
   // store.js's saveWorkspace, but for a visit that has no submission (a
   // no-questionnaire revisit) -- this is the visit's OWN workspace, never
   // written into the previous visit/submission's record.
+  //
+  // Round 4 review fix: single-source-of-truth enforcement moved down to
+  // THIS layer, not just the HTTP route -- a submission-backed visit's
+  // workspace must only ever be written through store.js's saveWorkspace
+  // (PUT /api/submissions/:id/workspace). Rejecting only at the route would
+  // leave any other future caller of this store function free to write a
+  // second, divergent copy. Returns a discriminated result rather than the
+  // old bare-`record`-or-`null` shape so the caller can tell "not found"
+  // apart from "found but wrong kind of visit".
   async function saveVisitWorkspace(id, workspace) {
     return withLock(id, async () => {
       const record = await readVisit(id)
-      if (!record) return null
+      if (!record) return { ok: false, reason: 'not_found' }
+      if (record.submission_id !== null) return { ok: false, reason: 'submission_backed' }
       record.workspace = workspace
       record.updated_at = new Date().toISOString()
       await atomicWrite(visitPath(visitsDir, id), record)
-      return record
+      return { ok: true, record }
+    })
+  }
+
+  // Round 4 review fix (startRevisit atomicity): rollback-only primitive.
+  // Never exposed via any HTTP route -- store.js's startRevisit is the only
+  // caller, used exclusively to undo a visit it just created in this same
+  // request when the follow-up token issuance that must accompany it fails,
+  // so a caller can never observe a no-submission revisit visit with no
+  // token. Best-effort: if the delete itself fails, the caller still
+  // surfaces the original error rather than masking it.
+  async function deleteVisitForRollbackOnly(id) {
+    return withLock(id, async () => {
+      await unlink(visitPath(visitsDir, id)).catch((err) => {
+        if (err.code !== 'ENOENT') throw err
+      })
     })
   }
 
@@ -186,7 +211,17 @@ export function createVisitStore(visitsDir) {
       try {
         const v = JSON.parse(await readFile(path.join(visitsDir, f), 'utf8'))
         if (v.patient_id === patientId) {
-          records.push({ id: v.id, patient_id: v.patient_id, created_at: v.created_at, submission_id: v.submission_id })
+          // workspace included so store.js's getPatientHistory can summarize
+          // a no-submission revisit's own visit-owned workspace without a
+          // second read per visit (round 4 review fix: longitudinal
+          // continuity across revisits).
+          records.push({
+            id: v.id,
+            patient_id: v.patient_id,
+            created_at: v.created_at,
+            submission_id: v.submission_id,
+            workspace: v.workspace ?? null,
+          })
         }
       } catch {
         // 손상되거나 쓰는 중인 파일은 건너뛴다
@@ -204,5 +239,6 @@ export function createVisitStore(visitsDir) {
     visitExistsForPatient,
     setRecorderPointer,
     saveVisitWorkspace,
+    deleteVisitForRollbackOnly,
   }
 }

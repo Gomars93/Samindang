@@ -9,11 +9,17 @@
  * structurally never reach this screen or any request it makes.
  *
  * No new clinical routing rule lives here: this is the fixed, always-the-same
- * short protocol (per-target change + overall change + new symptom +
- * adverse effect) described in microFollowUp.ts. A reported new symptom or
- * adverse effect never branches this screen's own flow -- it only becomes
- * an "추가 확인 필요" flag the clinician sees later (server/store.js's
- * listRevisitQueue).
+ * short protocol (per-target CURRENT raw value + overall directional change
+ * + new symptom + adverse effect) described in microFollowUp.ts. Per-target
+ * answers capture the patient's own raw current value (free text, e.g. "4"
+ * or "40분") rather than a computed/directional label -- overall change is
+ * the only field that's a directional 좋아짐/비슷함/나빠짐 choice, so a
+ * clinician can compare like-for-like against the target's own prior
+ * baseline/postTreatmentValue text (round 4 review fix: no per-target
+ * label-only answer loses the actual number a clinician needs for real
+ * longitudinal tracking). A reported new symptom or adverse effect never
+ * branches this screen's own flow -- it only becomes an "추가 확인 필요"
+ * flag the clinician sees later (server/store.js's listRevisitQueue).
  */
 import { useEffect, useRef, useState } from 'react'
 import { SingleChoice } from '../components/SingleChoice'
@@ -86,9 +92,21 @@ export function FollowUpScreen({ token }: { token: string }) {
     screenRef.current = screen
   }, [screen])
 
+  // Round 4 review fix (token privacy): once submitted, the one-time token
+  // must not keep sitting in the visible URL/browser history -- someone
+  // glancing at the address bar, or the tablet's own history/tab-switcher
+  // preview, could otherwise see it (moot for reuse since the server has
+  // already consumed it, but the token is still meant to be single-use in
+  // every sense, not just single-accept). replaceState first scrubs the
+  // CURRENT entry (the one the patient actually navigated to, which still
+  // has #follow-up=<token>) down to a bare clean URL with no hash, then a
+  // pushState duplicates that clean URL on top -- so a Back press can only
+  // ever land on an entry that already has the token stripped out.
   useEffect(() => {
     if (screen !== 'done') return
-    window.history.pushState({ samindangFollowUpDone: true }, '', window.location.href)
+    const cleanUrl = window.location.pathname + window.location.search
+    window.history.replaceState({ samindangFollowUpDone: true }, '', cleanUrl)
+    window.history.pushState({ samindangFollowUpDone: true }, '', cleanUrl)
   }, [screen])
 
   useEffect(() => {
@@ -203,11 +221,13 @@ export function FollowUpScreen({ token }: { token: string }) {
           {targets.map((t) => (
             <section key={t.id} className="followUp__section">
               <h2 className="followUp__label">{t.label}</h2>
-              <SingleChoice
-                options={CHANGE_OPTIONS}
-                value={targetAnswers[t.id] ?? null}
-                onSelect={(v) => setTargetAnswers((m) => ({ ...m, [t.id]: v }))}
-                layout="compact3"
+              <p className="followUp__targetHint">지금 상태를 숫자나 짧은 말로 적어주세요 (예: 통증 4, 걷기 40분)</p>
+              <TextInputField
+                mode="short_text"
+                value={targetAnswers[t.id] ?? ''}
+                onChange={(v) => setTargetAnswers((m) => ({ ...m, [t.id]: v }))}
+                maxLength={200}
+                placeholder="현재 상태"
               />
             </section>
           ))}

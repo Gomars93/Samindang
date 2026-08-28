@@ -20,8 +20,18 @@ export function PriorVisitHistoryCard({
     return null
   }
   const latest = history.visits[0]
-  const targets = profile === 'pain' ? latest.painFollowUpTargets : latest.herbalFollowUpTargets
-  const finalAssessmentSummary = profile === 'pain' ? latest.painFinalAssessmentSummary : latest.herbalFinalAssessmentSummary
+  // A no-submission revisit visit has no Pain-vs-Herbal split (by design —
+  // see visitWorkspace.ts) -- when the most recent prior visit is one of
+  // those, fall back to the profile-agnostic union instead of showing an
+  // empty list just because it happens not to match the CURRENT
+  // submission's profile.
+  const isRevisit = latest.submissionId === null
+  const targets = isRevisit ? latest.followUpTargets : profile === 'pain' ? latest.painFollowUpTargets : latest.herbalFollowUpTargets
+  const finalAssessmentSummary = isRevisit
+    ? latest.painFinalAssessmentSummary
+    : profile === 'pain'
+      ? latest.painFinalAssessmentSummary
+      : latest.herbalFinalAssessmentSummary
 
   return (
     <details className="workspace__priorVisit">

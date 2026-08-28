@@ -18,6 +18,16 @@ export type PriorVisitSummary = {
   primaryConcern: string | null
   painFollowUpTargets: FollowUpTarget[]
   herbalFollowUpTargets: FollowUpTarget[]
+  /**
+   * Profile-agnostic union, correct regardless of visit type: pain+herbal
+   * concatenated for a submission-backed visit, or the visit's own generic
+   * list for a no-submission revisit (round 4 review fix — see
+   * server/store.js's getPatientHistory doc comment). Callers that want
+   * "whatever this patient's most recently tracked" should read this
+   * instead of concatenating painFollowUpTargets/herbalFollowUpTargets
+   * themselves.
+   */
+  followUpTargets: FollowUpTarget[]
   /** Free text as the clinician wrote it — finalWorkingAssessment, or null if never recorded. */
   painFinalAssessmentSummary: string | null
   /** Free text as the clinician wrote it — finalPatternOrMechanism, or null if never recorded. */

@@ -146,7 +146,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
 
   const latestPrior = priorHistory?.visits[0] ?? null
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
-    latestPrior ? [...latestPrior.painFollowUpTargets, ...latestPrior.herbalFollowUpTargets] : [],
+    latestPrior ? latestPrior.followUpTargets : [],
   )
   const { examLines, observationLines, carePlanLines } = latestPrior
     ? priorVisitRecapLines(priorSubmission)
@@ -179,7 +179,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         {latestPrior && (
           <div className="workspace__revisit__priorRecap">
             <p className="workspace__priorVisit__date">
-              최근 문진 방문: {new Date(latestPrior.createdAt).toLocaleDateString('ko-KR')}
+              최근 방문: {new Date(latestPrior.createdAt).toLocaleDateString('ko-KR')}
               {latestPrior.primaryConcern ? ` · ${latestPrior.primaryConcern}` : ''}
             </p>
             {(latestPrior.painFinalAssessmentSummary || latestPrior.herbalFinalAssessmentSummary) && (
@@ -188,9 +188,9 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                 {[latestPrior.painFinalAssessmentSummary, latestPrior.herbalFinalAssessmentSummary].filter(Boolean).join(' / ')}
               </p>
             )}
-            {[...latestPrior.painFollowUpTargets, ...latestPrior.herbalFollowUpTargets].length > 0 && (
+            {latestPrior.followUpTargets.length > 0 && (
               <div className="workspace__priorVisit__targets">
-                {[...latestPrior.painFollowUpTargets, ...latestPrior.herbalFollowUpTargets].map((t) => (
+                {latestPrior.followUpTargets.map((t) => (
                   <div key={t.id} className="workspace__priorVisit__targetRow">
                     <strong>{t.label}</strong>
                     <span>{t.baseline.trim() ? `이전 baseline: ${t.baseline.trim()}` : '이전 baseline: 기록 없음'}</span>

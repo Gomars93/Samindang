@@ -977,6 +977,12 @@ input {
   margin: 0 0 10px;
 }
 
+.followUp__targetHint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
 .followUp__section .textField {
   margin-top: 10px;
 }

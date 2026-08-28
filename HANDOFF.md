@@ -1,6 +1,12 @@
 # Current Handoff
 
-## Objective (round 4 — 재진 태블릿 연결, 이번 세션)
+## Objective (round 5 — round 4 리뷰 엔지니어링 수정, 이번 세션)
+PR #24에 대한 GitHub PR review(Gomars93, round 4 follow-up)가 지적한 6개
+엔지니어링 정합성 문제 — 새 임상 판단 없음, 전부 원자성/내구성/SSOT/종단
+연결/데이터 형식/프라이버시 문제 — 를 수정한다. 상세는 아래 Completed —
+Round 5 참고. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (round 4 — 재진 태블릿 연결, 이전 세션)
 round 3에서 "OPERATIONAL INTEGRATION REQUIRED"로 남겨뒀던 Micro
 Follow-up의 실제 gap — 환자가 태블릿에서 직접 답할 방법이 없던 문제 —
 을 닫는다. 사용자가 명시적으로 승인한 보안/제품 방향(일회용 capability
@@ -127,8 +133,67 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 4의 재진 태블릿 연결 구현/테스트/QA 전부 완료. Push 후
-  CI 재확인만 남음.)
+- (없음 — round 5의 리뷰 수정/테스트/QA 전부 완료. Push 후 CI 재확인만
+  남음.)
+
+## Completed — Round 5 (round 4 리뷰 엔지니어링 수정, 이번 세션)
+GitHub PR review(round 4 follow-up)가 지적한 6개 항목 + edge tightening을
+전부 수정했다. 새 임상 threshold/추론/라우팅은 추가하지 않았다.
+
+1. **startRevisit 원자성** — `server/store.js`의 `startRevisit`이
+   visit 생성 → target 도출 → 토큰 발급을 try/catch로 감싸, 토큰 발급
+   실패 시 방금 만든 visit을 롤백 삭제(`server/visitStore.js`의
+   `deleteVisitForRollbackOnly` — HTTP 라우트로는 절대 노출되지 않는
+   rollback 전용 함수)하고 rethrow. 고아 visit이 남지 않음을 파일시스템
+   레벨 failure injection 테스트로 확인.
+2. **환자 응답 내구성** — `server/followUpSessionStore.js`에
+   `consumeTokenWithAction(rawToken, actionFn)` 추가: 토큰 상태를 락 안에서
+   검증 → `actionFn`(내구성 저장, 예: micro-follow-up 저장)을 먼저 실행 →
+   성공해야만 토큰을 CONSUMED로 마킹. 저장이 실패하면 토큰은 여전히
+   ACTIVE로 남아 같은 링크로 재시도 가능(응답 유실 없음). `consumeToken`은
+   이제 이 함수의 얇은 wrapper. `submitFollowUpSession`이 이 경로를 사용.
+   failure injection으로 저장 실패 → 토큰 미소비 확인 → 재시도 성공까지
+   테스트로 확인.
+3. **워크스페이스 단일 진실 공급원(SSOT)** — `saveVisitWorkspace`가
+   `record | null` 대신 `{ok:true, record} | {ok:false, reason:'not_found'
+   |'submission_backed'}`를 반환하도록 변경(store 레벨 강제). `PUT /api/
+   visits/:id/workspace` 라우트도 `submission_id !== null`인 visit을 409로
+   거부(HTTP 레벨 강제 — defense in depth). Submission-backed 초진은
+   `submission.workspace`만, no-submission 재진은 `visit.workspace`만 쓴다.
+4. **재진 간 종단 연결** — `getPatientHistory`가 이제 `submission_id`
+   유무로 분기해 no-submission 재진도 히스토리에 포함(이전엔 스킵되어
+   재진 #2가 재진 #1이 아니라 초진의 오래된 target을 보는 버그가 있었음).
+   프로필(Pain/Herbal)에 무관하게 항상 올바른 최근 target을 주는 신규
+   통합 필드 `follow_up_targets`(서버)/`followUpTargets`(클라이언트) 추가
+   — submission visit은 pain+herbal target 연결, revisit은 자신의
+   generic target 목록. `deriveMicroFollowUpCandidates`/
+   `RevisitWorkspace.tsx`/`PriorVisitHistoryCard.tsx` 전부 이 필드로
+   전환. 리뷰가 요구한 정확한 회귀 시나리오(초진 target A → 재진1 환자가
+   A 현재값 입력 + 원장이 target B 선택 → 재진2는 A가 아닌 B를 받아야
+   함, 이전 방문은 불변)를 전용 테스트로 고정.
+5. **Micro Follow-up target 답변 형식** — target별 답변이 이제
+   좋아짐/비슷함/나빠짐 단일 선택이 아니라 자유 텍스트로 CURRENT 원본
+   값을 그대로 받는다(예: "통증 4", "40분") — threshold/추론 없음.
+   전반적 변화(좋아짐/비슷함/나빠짐)는 별도의 항상 존재하는 필드로 유지.
+   `FollowUpScreen.tsx`에 `TextInputField` 적용.
+6. **제출 후 토큰 프라이버시** — 환자 제출 성공 시 `history.replaceState`
+   로 현재 URL에서 `#follow-up=<token>`을 제거한 뒤 `history.pushState`로
+   그 깨끗한 URL을 한 번 더 쌓아, 뒤로가기/새로고침으로도 URL에 토큰이나
+   history 어디에도 남지 않게 했다(기존 "뒤로가기가 채워진 답변을 다시
+   보여주지 않는" wall 패턴과 호환). 실제 헤드리스 브라우저로 제출 후
+   URL에 토큰 문자열이 전혀 없음을 확인.
+
+Edge tightening(같은 라운드에서 안전하게 처리):
+- `saveVisitWorkspace`를 store 레벨에서도 submission-backed visit에 대해
+  거부(위 3번과 동일 변경).
+- `GET`/`POST /api/follow-up-session/:token`이 잘못된 percent-encoding
+  (`decodeURIComponent` throw)을 500이 아닌 기존 INVALID/404 경로로 처리
+  (`safeDecodeToken` 헬퍼, `server/index.js`).
+- `cleanupOlderThan`이 이제 가리키는 토큰 파일이 사라진 stale
+  `by-visit/<visit_id>.json` 포인터 파일도 함께 정리(이전엔 영구 누적).
+- Herbal 재진 필드가 이미 Pain 관련 라벨을 UI에 노출하지 않음을 확인
+  (`PainFinalAssessmentCard`/`PainCarePlanCard`의 실제 렌더 텍스트는
+  이미 완전히 profile-neutral 한국어 — 코드 변경 불필요, 감사만 수행).
 
 ## Completed — Round 4 (재진 태블릿 연결, 이번 세션)
 round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
@@ -219,6 +284,22 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   판단이라 이 세션이 자체적으로 해소할 수 없는 항목이며, 차단이 아니라
   다음 human action이다.
 
+## Relevant Files (round 5 신규/주요 변경)
+- `server/store.js`(`startRevisit` 롤백, `submitFollowUpSession`이
+  `consumeTokenWithAction` 사용, `getPatientHistory` 재작성,
+  `deriveMicroFollowUpCandidates` 단순화), `server/visitStore.js`
+  (`saveVisitWorkspace` 판별 결과 반환, `deleteVisitForRollbackOnly` 신규),
+  `server/followUpSessionStore.js`(`consumeTokenWithAction` 신규,
+  `cleanupOlderThan`의 stale pointer 정리), `server/index.js`
+  (`safeDecodeToken`, workspace 라우트 판별 결과 분기).
+- `src/doctor/workspace/longitudinal.ts`(`followUpTargets` 필드),
+  `src/lib/serverClient.ts`(`follow_up_targets` 매핑),
+  `src/doctor/workspace/RevisitWorkspace.tsx`/`PriorVisitHistoryCard.tsx`
+  (신규 필드로 전환).
+- `src/screens/FollowUpScreen.tsx`(target 자유텍스트 입력, 제출 후 URL
+  토큰 scrub), `src/styles.css`(`.followUp__targetHint`).
+- `tests/follow-up-session.spec.mjs`(113 → 134 assertion).
+
 ## Relevant Files (round 4 신규/주요 변경)
 - `server/followUpSessionStore.js`(신규, capability-token 저장소),
   `server/store.js`(`startRevisit`/`deriveMicroFollowUpCandidates`/
@@ -279,15 +360,18 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
-- **Round 4 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+- **Round 5 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
-  test:all`(전체 green — 신규 `tests/follow-up-session.spec.mjs` 113
-  assertion 포함), `cd "tablet core" && python3 -m pytest tests/ -q`(80
-  passed), `git diff origin/main -- 'src/spec/*Logic.ts'
-  'src/spec/*Adapter.ts'`(empty).
-- **Round 4 실제 헤드리스 브라우저 E2E QA**(Playwright, 로컬 handoff
-  서버 + vite dev server + 실제 Chromium, `/opt/pw-browsers`): 27개
-  체크 전부 통과. 검증한 것 — 원장이 실제 제출을 열고 "재진 간단 문진
+  test:all`(전체 green — `tests/follow-up-session.spec.mjs` 134
+  assertion, round 4의 113에서 신규 원자성/내구성/SSOT/종단연결/malformed
+  percent-encoding/stale pointer 정리 테스트 추가), `cd "tablet core" &&
+  python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+  'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty).
+- **Round 5 실제 헤드리스 브라우저 E2E QA**(Playwright, 로컬 handoff
+  서버 + vite dev server + 실제 Chromium, `/opt/pw-browsers`): 29개
+  체크 전부 통과(round 4의 27개에 target 자유텍스트 입력 확인 + 제출 후
+  URL에 토큰 미노출 확인 2건 추가). 검증한 것 — 원장이 실제 제출을 열고
+  "재진 간단 문진
   시작" 클릭 → 새 visit_id + 1회용 링크 발급(만료 시각 표시) → 그 링크를
   별도 브라우저 페이지(환자 기기 역할, portrait 800×1280)로 열어 Micro
   Follow-up 질문(직전 Follow-up Target 2개 + 전반적 변화 + 새 증상 +
@@ -350,6 +434,8 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
+2. round 4 리뷰의 6개 항목 + edge tightening이 전부 수정되었으니 review
+   author(Gomars93)가 새 HEAD를 재확인.
+3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
-3. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.
+4. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

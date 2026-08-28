@@ -177,11 +177,16 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     return readJson(tokenPath(baseDir, tokenHash))
   }
 
-  // Consumes atomically under the token's own lock: only an ACTIVE,
-  // unexpired token can be consumed, and it can only ever succeed once --
-  // a second call (double-submit) always finds status !== 'ACTIVE' and
-  // fails closed.
-  async function consumeToken(rawToken) {
+  // Round 4 review fix (durability ordering): the primitive underneath
+  // consumeToken(). Validates the token is ACTIVE/unexpired, then runs the
+  // caller's own durable action BEFORE committing the ACTIVE->CONSUMED
+  // transition -- both still inside the same per-token lock, so no other
+  // request can interleave. If actionFn throws (e.g. the durable save
+  // itself fails), the token is left untouched (still ACTIVE) instead of
+  // being burned: the patient can retry with the exact same one-time link
+  // and their answer is never silently lost. Only after actionFn resolves
+  // successfully does the token actually get consumed.
+  async function consumeTokenWithAction(rawToken, actionFn) {
     if (!isValidTokenFormat(rawToken)) return { ok: false, reason: 'invalid' }
     const tokenHash = hashToken(rawToken)
     return withLock(`token:${tokenHash}`, async () => {
@@ -190,11 +195,22 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
       if (record.status === 'CONSUMED') return { ok: false, reason: 'consumed', record }
       if (record.status === 'INVALIDATED') return { ok: false, reason: 'invalidated', record }
       if (new Date(record.expires_at).getTime() < Date.now()) return { ok: false, reason: 'expired', record }
+      const actionResult = await actionFn(record)
       record.status = 'CONSUMED'
       record.consumed_at = new Date().toISOString()
       await atomicWrite(tokenPath(baseDir, tokenHash), record)
-      return { ok: true, record }
+      return { ok: true, record, actionResult }
     })
+  }
+
+  // Consumes atomically under the token's own lock: only an ACTIVE,
+  // unexpired token can be consumed, and it can only ever succeed once --
+  // a second call (double-submit) always finds status !== 'ACTIVE' and
+  // fails closed. Kept as a thin wrapper over consumeTokenWithAction with a
+  // no-op action for callers (and tests) that only need the plain
+  // validate-and-consume behavior with no durable side effect to sequence.
+  async function consumeToken(rawToken) {
+    return consumeTokenWithAction(rawToken, async () => undefined)
   }
 
   // Retention (round 3): consumed/expired-or-invalidated token records are
@@ -231,6 +247,34 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
         // 손상되거나 쓰는 중인 파일은 건드리지 않는다
       }
     }
+    // Round 4 review fix: a by-visit/<visit_id>.json pointer file that
+    // still points at a token_hash whose token file was just deleted above
+    // (or was deleted by an earlier run) is now stale -- it can never
+    // resolve to anything (getActiveForVisit's readJson just returns null
+    // for the missing token file), so it's harmless to a caller, but left
+    // alone it accumulates forever as a small permanent leak, one file per
+    // ever-created revisit. Remove any pointer whose referenced token file
+    // no longer exists.
+    let pointerFiles
+    try {
+      pointerFiles = (await readdir(pointersDir(baseDir))).filter((f) => f.endsWith('.json'))
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+      pointerFiles = []
+    }
+    for (const f of pointerFiles) {
+      const pointerFilePath = path.join(pointersDir(baseDir), f)
+      try {
+        const pointer = JSON.parse(await readFile(pointerFilePath, 'utf8'))
+        if (!pointer?.active_token_hash) continue
+        const stillExists = await readJson(tokenPath(baseDir, pointer.active_token_hash))
+        if (!stillExists) {
+          await unlink(pointerFilePath).catch(() => {})
+        }
+      } catch {
+        // 손상되거나 쓰는 중인 파일은 건드리지 않는다
+      }
+    }
     return deleted
   }
 
@@ -258,6 +302,7 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     invalidateActiveForVisit,
     resolveToken,
     consumeToken,
+    consumeTokenWithAction,
     cleanupOlderThan,
     purgeAll,
   }

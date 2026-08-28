@@ -235,47 +235,91 @@ export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTok
   // 전화/생년월일 매칭은 여기 없다 — visits.listVisitsForPatient가 이미
   // patient_id 정확히 일치만 반환한다. excludeVisitId는 지금 보고 있는
   // 방문 자신을 "이전 방문" 목록에서 빼기 위한 것뿐, 신원 판단과 무관하다.
+  //
+  // Round 4 review fix (longitudinal continuity): a no-submission revisit
+  // visit now DOES contribute a summary here -- previously this function
+  // skipped every `!submission_id` visit entirely, which meant a SECOND
+  // revisit always derived its Micro Follow-up candidates from the
+  // ORIGINAL questionnaire submission's Follow-up Targets, never from the
+  // clinician's newly-chosen targets on the first revisit (see
+  // deriveMicroFollowUpCandidates below, and the required regression test
+  // in tests/follow-up-session.spec.mjs). `follow_up_targets` is a NEW
+  // profile-agnostic field present on every visit summary (submission
+  // visits: pain+herbal concatenated in their existing order; revisit
+  // visits: their own generic list) -- callers that want "whatever this
+  // patient's most recently tracked, regardless of visit type" should read
+  // this field instead of concatenating pain_follow_up_targets/
+  // herbal_follow_up_targets themselves. Those two fields are left
+  // unchanged for submission visits (PriorVisitHistoryCard's Pain-vs-Herbal
+  // profile display still needs the split) and empty for revisit visits,
+  // which have no such split by design (visitWorkspace.ts's own doc
+  // comment: "a data-shape choice, not a new clinical distinction").
   async function getPatientHistory(patientId, excludeVisitId) {
     if (!patientId) return { patient_id: patientId ?? null, visits: [] }
     const visitRecords = (await visits.listVisitsForPatient(patientId)).filter((v) => v.id !== excludeVisitId)
 
     const summaries = []
     for (const v of visitRecords) {
-      if (!v.submission_id) {
-        // 문진 없는 방문(미래의 재진 UI) -- 지금은 요약할 workspace가 없다.
-        continue
+      if (v.submission_id) {
+        const record = await readRecord(v.submission_id)
+        if (!record) continue
+        const workspace = record.workspace ?? null
+        const painTargets = workspace?.painFollowUpTargets ?? []
+        const herbalTargets = workspace?.herbalFollowUpTargets ?? []
+        summaries.push({
+          visit_id: v.id,
+          submission_id: v.submission_id,
+          created_at: v.created_at,
+          primary_concern: record.submission?.metadata?.primary_concern ?? null,
+          pain_follow_up_targets: painTargets,
+          herbal_follow_up_targets: herbalTargets,
+          follow_up_targets: [...painTargets, ...herbalTargets],
+          pain_final_assessment_summary: workspace?.painFinalAssessment?.finalWorkingAssessment || null,
+          herbal_final_assessment_summary: workspace?.herbalFinalAssessment?.finalPatternOrMechanism || null,
+          next_reassessment_plan: workspace?.nextReassessmentPlan ?? null,
+        })
+      } else {
+        // No-submission revisit: read the visit-owned VisitWorkspaceState
+        // instead. A revisit with no workspace saved yet (never opened, or
+        // opened but nothing recorded) contributes nothing -- there is
+        // genuinely nothing to summarize, not an error.
+        const workspace = v.workspace ?? null
+        if (!workspace) continue
+        summaries.push({
+          visit_id: v.id,
+          submission_id: null,
+          created_at: v.created_at,
+          primary_concern: null,
+          pain_follow_up_targets: [],
+          herbal_follow_up_targets: [],
+          follow_up_targets: Array.isArray(workspace.followUpTargets) ? workspace.followUpTargets : [],
+          // Reuses the pain_final_assessment_summary field for the
+          // revisit's own generic assessment text -- consistent with the
+          // existing display pattern (PriorVisitHistoryCard/RevisitWorkspace
+          // already union pain+herbal summaries under one generic "이전
+          // 최종 판단" label; neither ever says "Pain" to the clinician).
+          pain_final_assessment_summary: workspace.finalAssessment?.finalWorkingAssessment || null,
+          herbal_final_assessment_summary: null,
+          next_reassessment_plan: workspace.nextReassessmentPlan ?? null,
+        })
       }
-      const record = await readRecord(v.submission_id)
-      if (!record) continue
-      const workspace = record.workspace ?? null
-      summaries.push({
-        visit_id: v.id,
-        submission_id: v.submission_id,
-        created_at: v.created_at,
-        primary_concern: record.submission?.metadata?.primary_concern ?? null,
-        pain_follow_up_targets: workspace?.painFollowUpTargets ?? [],
-        herbal_follow_up_targets: workspace?.herbalFollowUpTargets ?? [],
-        pain_final_assessment_summary: workspace?.painFinalAssessment?.finalWorkingAssessment || null,
-        herbal_final_assessment_summary: workspace?.herbalFinalAssessment?.finalPatternOrMechanism || null,
-        next_reassessment_plan: workspace?.nextReassessmentPlan ?? null,
-      })
     }
     return { patient_id: patientId, visits: summaries }
   }
 
   // Round 3(revisit linkage): candidate Follow-up Targets for a Micro
   // Follow-up, derived ONLY from the clinician's own prior Follow-up
-  // Targets on the patient's latest applicable (submission-backed) visit --
-  // no ranking/scoring algorithm, no invented items. Combines pain+herbal
-  // target arrays in their existing stored order (whichever profile the
-  // clinician actually used), capped at 3 total by followUpSessions.issueToken
-  // itself. Returns [] (never an error) when there is nothing prior to
-  // carry forward -- the caller/UI must say so plainly, not invent items.
+  // Targets on the patient's chronologically LATEST visit of any kind
+  // (submission-backed or a no-submission revisit) -- no ranking/scoring
+  // algorithm, no invented items. Capped at 3 total by
+  // followUpSessions.issueToken itself. Returns [] (never an error) when
+  // there is nothing prior to carry forward -- the caller/UI must say so
+  // plainly, not invent items.
   async function deriveMicroFollowUpCandidates(patientId, excludeVisitId) {
     const history = await getPatientHistory(patientId, excludeVisitId)
     const latest = history.visits[0]
     if (!latest) return []
-    return [...latest.pain_follow_up_targets, ...latest.herbal_follow_up_targets].map((t) => ({
+    return latest.follow_up_targets.map((t) => ({
       id: t.id,
       label: t.label,
     }))
@@ -286,17 +330,29 @@ export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTok
   // caller in server/index.js already verified visitExistsForPatient,
   // exactly like the existing POST /api/visits route), derives candidate
   // targets from that patient's own prior visit, and issues one one-time
-  // token scoped to the new visit_id. All three steps happen here so a
-  // caller can never end up with a visit and no token (or vice versa).
+  // token scoped to the new visit_id.
+  //
+  // Round 4 review fix (atomicity): the visit and its token are not written
+  // by a single filesystem transaction (two separate JSON files), so if
+  // candidate derivation or token issuance throws AFTER the visit file is
+  // already written, roll the visit back before re-throwing -- otherwise a
+  // caller could be left with an orphan no-submission revisit visit that
+  // has no way to ever get a token (the doctor UI would show "재진 ·
+  // 시작 전" forever for a visit nobody actually meant to create yet).
   async function startRevisit(patientId) {
     const visit = await visits.createVisit({ patient_id: patientId, submission_id: null })
-    const targets = await deriveMicroFollowUpCandidates(patientId, visit.id)
-    const { token, record } = await followUpSessions.issueToken({
-      visit_id: visit.id,
-      patient_id: patientId,
-      targets,
-    })
-    return { visit, token, session: record }
+    try {
+      const targets = await deriveMicroFollowUpCandidates(patientId, visit.id)
+      const { token, record } = await followUpSessions.issueToken({
+        visit_id: visit.id,
+        patient_id: patientId,
+        targets,
+      })
+      return { visit, token, session: record }
+    } catch (err) {
+      await visits.deleteVisitForRollbackOnly(visit.id).catch(() => {})
+      throw err
+    }
   }
 
   // Reissue: same visit, freshly re-derived candidates (in case the
@@ -323,30 +379,39 @@ export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTok
   // server-side snapshot -- a submitted target id NOT in that snapshot is
   // silently dropped (never trusted), and every label is re-resolved from
   // the snapshot, never taken from the request body.
+  //
+  // Round 4 review fix (durability ordering): validate -> sanitize -> save
+  // -> THEN consume, all inside consumeTokenWithAction's single per-token
+  // lock. If the durable microFollowUp.saveResponse write throws (disk
+  // failure, etc.), the token is never marked CONSUMED -- it stays ACTIVE
+  // so the patient can retry the exact same link instead of the token being
+  // burned with the answer lost. The thrown error propagates to the caller
+  // (server/index.js's route handler), which is expected to surface a
+  // retriable error rather than a success.
   async function submitFollowUpSession(rawToken, answers) {
-    const consumed = await followUpSessions.consumeToken(rawToken)
-    if (!consumed.ok) return consumed
-    const { record } = consumed
-    const allowedIds = new Set(record.targets.map((t) => t.id))
-    const labelById = new Map(record.targets.map((t) => [t.id, t.label]))
-    const targetRatings = (Array.isArray(answers?.targetRatings) ? answers.targetRatings : [])
-      .filter((t) => t && typeof t.targetId === 'string' && allowedIds.has(t.targetId))
-      .map((t) => ({
-        targetId: t.targetId,
-        label: labelById.get(t.targetId),
-        patientReportedValue: typeof t.patientReportedValue === 'string' ? t.patientReportedValue.slice(0, 500) : '',
-      }))
-    const saved = await microFollowUp.saveResponse({
-      visit_id: record.visit_id,
-      patient_id: record.patient_id,
-      targetRatings,
-      overallChange: typeof answers?.overallChange === 'string' ? answers.overallChange.slice(0, 500) : '',
-      newSymptomReported: Boolean(answers?.newSymptomReported),
-      newSymptomNote: typeof answers?.newSymptomNote === 'string' ? answers.newSymptomNote.slice(0, 1000) : '',
-      adverseEffectReported: Boolean(answers?.adverseEffectReported),
-      adverseEffectNote: typeof answers?.adverseEffectNote === 'string' ? answers.adverseEffectNote.slice(0, 1000) : '',
+    const result = await followUpSessions.consumeTokenWithAction(rawToken, async (record) => {
+      const allowedIds = new Set(record.targets.map((t) => t.id))
+      const labelById = new Map(record.targets.map((t) => [t.id, t.label]))
+      const targetRatings = (Array.isArray(answers?.targetRatings) ? answers.targetRatings : [])
+        .filter((t) => t && typeof t.targetId === 'string' && allowedIds.has(t.targetId))
+        .map((t) => ({
+          targetId: t.targetId,
+          label: labelById.get(t.targetId),
+          patientReportedValue: typeof t.patientReportedValue === 'string' ? t.patientReportedValue.slice(0, 500) : '',
+        }))
+      return microFollowUp.saveResponse({
+        visit_id: record.visit_id,
+        patient_id: record.patient_id,
+        targetRatings,
+        overallChange: typeof answers?.overallChange === 'string' ? answers.overallChange.slice(0, 500) : '',
+        newSymptomReported: Boolean(answers?.newSymptomReported),
+        newSymptomNote: typeof answers?.newSymptomNote === 'string' ? answers.newSymptomNote.slice(0, 1000) : '',
+        adverseEffectReported: Boolean(answers?.adverseEffectReported),
+        adverseEffectNote: typeof answers?.adverseEffectNote === 'string' ? answers.adverseEffectNote.slice(0, 1000) : '',
+      })
     })
-    return { ok: true, visit_id: record.visit_id, response: saved }
+    if (!result.ok) return result
+    return { ok: true, visit_id: result.record.visit_id, response: result.actionResult }
   }
 
   // Round 3(revisit linkage): "Doctor Queue" for no-submission revisit

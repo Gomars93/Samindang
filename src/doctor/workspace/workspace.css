@@ -1545,3 +1545,32 @@
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
+
+/*
+ * Round 15 (tablet density). Round 14 laid the primary 판단 / 처치 / 재검
+ * set out in one row above 1100px, but the pre-existing 1100px breakpoint
+ * dropped EVERY final-assessment grid to a single column -- so on a
+ * 1024x768 clinic tablet in landscape the three fields stacked and the
+ * default clinical workflow measured 1192px = 1.55 viewports, over the
+ * 1.5 target. (Portrait 834x1112 measured the same 1192px but passes at
+ * 1.07x, because it has the height.)
+ *
+ * Two columns rather than three: at ~960px of content width three
+ * textareas would be about 310px each, which is tight for typing a
+ * clinical judgment. Two comfortable columns with 재검 spanning the full
+ * width removes one row, leaves no empty cell, and brings landscape back
+ * under the target without touching any field, label or meaning.
+ *
+ * This block must stay AFTER the max-width:1100px query above: both
+ * selectors are a single class, so source order is what decides at equal
+ * specificity (the round-12 lesson). Below 900px the single-column stack
+ * still applies, which is what portrait wants.
+ */
+@media (max-width: 1100px) and (min-width: 900px) {
+  .workspace__finalAssessment__fields--primary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .workspace__finalAssessment__fields--primary > :last-child {
+    grid-column: 1 / -1;
+  }
+}

@@ -495,6 +495,51 @@ function stripComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 }
 
+/*
+ * Round 15 (tablet density guard). The default clinical workflow was
+ * measured in a real browser on the production-shaped record:
+ *
+ *   1440x900  desktop           1028px = 1.14 viewports
+ *   1024x768  tablet landscape  1110px = 1.45 viewports  (1192px = 1.55x before this rule)
+ *   834x1112  tablet portrait   1192px = 1.07 viewports
+ *
+ * Landscape only clears the 1.5-viewport target because the primary
+ * 판단 / 처치 / 재검 grid keeps two columns between 900px and 1100px,
+ * instead of falling into the single-column stack the 1100px breakpoint
+ * applies to every other final-assessment grid.
+ *
+ * That depends on CSS SOURCE ORDER: both selectors are a single class, so
+ * the later rule is the one that wins (the round-12 lesson, learned the
+ * hard way). A future edit that moves, reorders or drops the override
+ * would silently put landscape back over budget with no visible error and
+ * no failing markup test -- this asserts the mechanism instead.
+ */
+test('round 15: the tablet-landscape primary-grid override exists and stays after the 1100px breakpoint', () => {
+  const css = fs.readFileSync('src/doctor/workspace/workspace.css', 'utf8')
+
+  const wideOneRow = css.indexOf('.workspace__finalAssessment__fields--primary')
+  assert.ok(wideOneRow !== -1, 'the wide-screen one-row primary grid rule must exist')
+  assert.ok(
+    /\.workspace__finalAssessment__fields--primary\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*1fr\)/.test(css),
+    'above 1100px the primary set lays out in one row',
+  )
+
+  const stack = css.search(/@media\s*\(max-width:\s*1100px\)\s*\{/)
+  assert.ok(stack !== -1, 'the 1100px single-column breakpoint must still exist')
+
+  const overrideRe = /@media\s*\(max-width:\s*1100px\)\s*and\s*\(min-width:\s*900px\)\s*\{[\s\S]*?\}\s*\}/
+  const override = css.search(overrideRe)
+  assert.ok(override !== -1, 'the 900-1100px tablet-landscape override must exist')
+  assert.ok(
+    override > stack,
+    'the tablet-landscape override must come AFTER the 1100px stack rule -- at equal specificity source order decides',
+  )
+
+  const block = css.match(overrideRe)[0]
+  assert.ok(/grid-template-columns:\s*1fr\s+1fr/.test(block), 'landscape keeps two columns')
+  assert.ok(/grid-column:\s*1\s*\/\s*-1/.test(block), 'the third primary field spans the full width, leaving no empty cell')
+})
+
 test('examSuggestion.ts contains no function computing suggestions from a DoctorPayload', () => {
   const src = stripComments(fs.readFileSync('src/doctor/workspace/examSuggestion.ts', 'utf8'))
   assert.ok(!/DoctorPayload/.test(src), 'examSuggestion.ts must stay payload-agnostic (shape only, no rule engine)')

@@ -1001,7 +1001,12 @@ export function createApp({
           } else {
             const result = await store.assignRevisitToStation(patientId, parts[2], body?.delivery_mode)
             if (!result.ok) {
-              status = result.reason === 'station_not_found' ? 404 : 400
+              // Round 9: 'station_busy' is a conflict, not a malformed
+              // request -- that tablet is still serving someone else and
+              // must be completed or reset first (see stationStore.js).
+              if (result.reason === 'station_not_found') status = 404
+              else if (result.reason === 'station_busy') status = 409
+              else status = 400
               bytes = sendJson(req, res, status, { error: result.reason }, cors)
             } else {
               status = 201
@@ -1029,12 +1034,16 @@ export function createApp({
         }
       } else if (parts[0] === 'api' && parts[1] === 'stations' && parts.length === 4 && parts[3] === 'reset' && req.method === 'POST') {
         // Round 8: staff manually returns a station to its waiting screen
-        // (patient walked away, wrong assignment, etc).
+        // (patient walked away, wrong assignment, etc). Round 9: this is
+        // store.resetStation, NOT completeStationAssignment -- a reset also
+        // revokes the cleared session's capability, because the tablet may
+        // still be showing those questions and has stopped polling. See
+        // store.js's resetStation doc comment.
         if (!requireDoctor(req)) {
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
-          const result = await store.completeStationAssignment(parts[2])
+          const result = await store.resetStation(parts[2])
           if (!result.ok) {
             status = 404
             bytes = sendJson(req, res, 404, { error: 'station not found' }, cors)

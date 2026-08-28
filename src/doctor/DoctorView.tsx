@@ -35,6 +35,13 @@ import type { PatientHistoryResult } from './workspace/longitudinal'
 import type { MicroFollowUpResponse } from './workspace/microFollowUp'
 import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
 import { DELIVERY_MODE_LABEL, INPUT_PROVENANCE_LABEL, REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+
+// Round 9: the first tablet that is not already serving a patient. A busy
+// tablet cannot be assigned (the server refuses it with 409 station_busy --
+// see server/stationStore.js), so it must never be the default selection.
+function firstFreeStationId(stations: StationInfo[]): string {
+  return stations.find((s) => !s.assignment)?.stationId ?? ''
+}
 import { FollowUpQrCode } from './workspace/FollowUpQrCode'
 import { RevisitWorkspace } from './workspace/RevisitWorkspace'
 import { WorkstationSetup } from './WorkstationSetup'
@@ -1686,6 +1693,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('CLINIC_TABLET')
   const [stations, setStations] = useState<StationInfo[]>([])
   const [selectedStationId, setSelectedStationId] = useState<string>('')
+  // Round 9: a busy tablet cannot be assigned (the server refuses it with
+  // 409 station_busy), so it must not be the default selection either.
+  const selectedStationBusy = stations.some((st) => st.stationId === selectedStationId && Boolean(st.assignment))
   const [assignPending, setAssignPending] = useState(false)
   const [assignedStationName, setAssignedStationName] = useState<string | null>(null)
   // The one-time station pairing link, held ONLY in memory from the moment
@@ -1799,7 +1809,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       if (cancelled) return
       if (stationResult.ok) {
         setStations(stationResult.data)
-        setSelectedStationId((current) => current || stationResult.data[0]?.stationId || '')
+        setSelectedStationId((current) => current || firstFreeStationId(stationResult.data))
       }
     }
     poll()
@@ -2083,7 +2093,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     if (result.ok) {
       setStations(result.data)
       // Keep a sensible default selected so the common case is one click.
-      setSelectedStationId((current) => current || result.data[0]?.stationId || '')
+      setSelectedStationId((current) => current || firstFreeStationId(result.data))
     }
   }
 
@@ -2428,10 +2438,17 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                     value={selectedStationId}
                     onChange={(e) => setSelectedStationId(e.target.value)}
                   >
+                    {/* Round 9: a busy tablet is not selectable. The server
+                        refuses it (409 station_busy) because the tablet stops
+                        polling once a patient has the questions open, so a
+                        takeover could not actually replace what is on that
+                        physical screen -- staff must complete or reset it
+                        first. Disabling the option makes the rule visible
+                        instead of letting the click fail. */}
                     {stations.map((s) => (
-                      <option key={s.stationId} value={s.stationId}>
+                      <option key={s.stationId} value={s.stationId} disabled={Boolean(s.assignment)}>
                         {s.name}
-                        {s.assignment ? ' (사용 중)' : ''}
+                        {s.assignment ? ' (사용 중 — 아래에서 초기화 후 배정)' : ''}
                       </option>
                     ))}
                   </select>
@@ -2440,7 +2457,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                       type="button"
                       className="judgment__recordBtn"
                       onClick={handleAssignToStation}
-                      disabled={assignPending || !selectedStationId}
+                      disabled={assignPending || !selectedStationId || selectedStationBusy}
                     >
                       {assignPending ? '배정 중…' : '이 태블릿에 배정'}
                     </button>
@@ -2452,7 +2469,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                     </p>
                   )}
                   <p className="doctor__revisitSession__hint">
-                    이미 다른 환자가 배정된 태블릿에 새로 배정하면 이전 링크는 자동으로 무효화됩니다.
+                    사용 중인 태블릿에는 배정할 수 없습니다 — 아래 「원내 태블릿 관리」에서 초기화한 뒤 배정하세요.
+                    초기화하면 그 태블릿이 들고 있던 링크는 즉시 무효화됩니다.
                   </p>
                 </>
               )}

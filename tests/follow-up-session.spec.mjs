@@ -1108,6 +1108,92 @@ async function main() {
     assert('FollowUpScreen.tsx does not import doctorToken.ts', !/from\s+['"].*doctorToken['"]/.test(screenSrc))
   }
 
+  /* =====================================================================
+     Part 2.8 (round 9 review fix): pointer-authority TOCTOU. Checking the
+     pointer is not enough on its own -- the check and the act have to be
+     mutually exclusive with issueToken's pointer swap, or an old-token
+     request that read the OLD authoritative pointer can keep running and
+     still complete an acceptance AFTER the swap has already moved on.
+     These two tests pin both directions of that mutual exclusion, and are
+     deterministic rather than timing-dependent: withLock installs its map
+     entry synchronously when called, so a call issued first is guaranteed
+     to hold the visit lock before a call issued after it can queue on it.
+     ===================================================================== */
+  {
+    const r9Root = await mkdtemp(path.join(tmpdir(), 'samindang-followup-review9-'))
+    try {
+      const sessions = createFollowUpSessionStore(path.join(r9Root, 'follow-up-sessions'), { ttlMinutes: 30 })
+
+      /* ---- direction 1: the swap wins the lock -> the superseded token
+         must fail closed, and must NEVER run its durable action ---- */
+      const { token: oldToken } = await sessions.issueToken({ visit_id: 'r9-visit', patient_id: 'r9-patient', targets: [] })
+
+      let actionRan = false
+      // issueToken is called FIRST, so it holds `visit:r9-visit` for its
+      // whole two-phase swap; the consume below queues behind it.
+      const reissue = sessions.issueToken({ visit_id: 'r9-visit', patient_id: 'r9-patient', targets: [] })
+      const racedConsume = sessions.consumeTokenWithAction(oldToken, async () => {
+        actionRan = true
+        return 'should never happen'
+      })
+      const [{ token: newToken }, racedResult] = await Promise.all([reissue, racedConsume])
+
+      assert('TOCTOU: a superseded token cannot complete an acceptance once the pointer swap wins', racedResult.ok === false)
+      assert('TOCTOU: the superseded acceptance fails specifically as invalidated', racedResult.reason === 'invalidated')
+      assert('TOCTOU: the superseded token never runs its durable action (no orphan response is saved)', actionRan === false)
+
+      const newStillWorks = await sessions.resolveToken(newToken)
+      assert('TOCTOU: the newly issued token is unaffected and still ACTIVE', newStillWorks.status === 'ACTIVE')
+
+      /* ---- direction 2: an acceptance already in flight wins the lock ->
+         a reissue must WAIT for it, and the answer the patient already
+         submitted stands (the token is genuinely consumed, not lost) ---- */
+      const { token: liveToken } = await sessions.issueToken({ visit_id: 'r9-visit-2', patient_id: 'r9-patient-2', targets: [] })
+
+      let releaseAction
+      const actionGate = new Promise((resolve) => {
+        releaseAction = resolve
+      })
+      let actionStarted = false
+      const slowConsume = sessions.consumeTokenWithAction(liveToken, async () => {
+        actionStarted = true
+        await actionGate
+        return 'durably saved'
+      })
+      // Wait until the acceptance is genuinely inside its critical section.
+      while (!actionStarted) await new Promise((r) => setImmediate(r))
+
+      let reissueSettled = false
+      const blockedReissue = sessions
+        .issueToken({ visit_id: 'r9-visit-2', patient_id: 'r9-patient-2', targets: [] })
+        .then((r) => {
+          reissueSettled = true
+          return r
+        })
+      // Give the reissue every chance to run if it were NOT blocked.
+      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+      assert('TOCTOU: a reissue cannot interleave with an acceptance that already holds the visit lock', reissueSettled === false)
+
+      releaseAction()
+      const acceptedResult = await slowConsume
+      await blockedReissue
+
+      assert('TOCTOU: the in-flight acceptance completes successfully', acceptedResult.ok === true)
+      assert('TOCTOU: the accepted durable action result is preserved', acceptedResult.actionResult === 'durably saved')
+      assert('TOCTOU: the accepted token really is CONSUMED (the commit was not lost to the reissue)', acceptedResult.record.status === 'CONSUMED')
+
+      /* ---- and the same mutual exclusion applies to the read path ---- */
+      const { token: readToken } = await sessions.issueToken({ visit_id: 'r9-visit-3', patient_id: 'r9-patient-3', targets: [] })
+      const reissue3 = sessions.issueToken({ visit_id: 'r9-visit-3', patient_id: 'r9-patient-3', targets: [] })
+      const racedResolve = sessions.resolveToken(readToken)
+      await reissue3
+      const resolvedOld = await racedResolve
+      assert('TOCTOU: a read racing the swap reports the superseded token as INVALIDATED, never ACTIVE', resolvedOld.status === 'INVALIDATED')
+    } finally {
+      await rm(r9Root, { recursive: true, force: true })
+    }
+  }
+
   console.log(`\n${passCount} assertions passed.`)
 }
 

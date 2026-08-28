@@ -24,10 +24,16 @@
 //   This keeps the plaintext capability out of the filesystem entirely,
 //   matching the existing rule that a follow-up token's plaintext exists
 //   only in the single issuance response.
-// - at most ONE active assignment per station, always. Assigning over an
-//   existing pending assignment invalidates the old session's token first
-//   (see server/store.js's assignSessionToStation), so a superseded
-//   patient link can never stay live on a tablet nobody is watching.
+// - at most ONE active assignment per station, AND at most one station per
+//   visit/session (round 9 review fix). A station that is already serving a
+//   different patient is not assignable at all until it is completed or
+//   explicitly reset by staff: the tablet stops polling once a patient has
+//   the questions open, so a staff-side "reassignment" could not actually
+//   replace what is on that physical screen -- the tablet would be handed
+//   to the next patient still showing the previous one's session. Refusing
+//   the assignment (reason 'station_busy') is the honest, safe behavior for
+//   the pilot; a generation/heartbeat protocol that can revoke an
+//   in-progress screen is the alternative if this ever proves too rigid.
 import { randomBytes, createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -35,6 +41,10 @@ import path from 'node:path'
 const CREDENTIAL_BYTES = 32 // 256 bits, same bar as the follow-up capability token
 const CREDENTIAL_FORMAT = /^[A-Za-z0-9_-]{32,128}$/
 const MAX_STATION_NAME_LENGTH = 60
+// Store-wide lock for the cross-station part of an assignment (the "one
+// station per visit" check-and-act). Always acquired BEFORE any
+// `station:<id>` lock, never after -- see assignSession's doc comment.
+const ASSIGN_LOCK = 'assign:all'
 
 function stationsDir(baseDir) {
   return path.join(baseDir, 'stations')
@@ -82,9 +92,19 @@ function withLock(key, fn) {
 }
 
 export function createStationStore(baseDir) {
-  // stationId -> raw follow-up capability token. Never persisted (see the
+  // stationId -> { visit_id, token }: the raw follow-up capability token,
+  // stored TOGETHER with the visit it belongs to. Never persisted (see the
   // module doc comment). Cleared on completion, reassignment, manual
   // reset, and process restart.
+  //
+  // Round 9 review fix: keeping the visit_id alongside the token is what
+  // lets pollAssignment prove the in-memory half and the on-disk half
+  // describe the SAME assignment. Previously a poll that landed between
+  // assignSession's disk write and its `assignedTokens.set` would hand the
+  // station the PREVIOUS assignment's token under the NEW assignment's
+  // metadata. Both halves are now written under the same per-station lock
+  // that pollAssignment also takes, and the visit_id match is verified on
+  // every read, so a torn pair fails closed to WAITING instead.
   const assignedTokens = new Map()
 
   async function ensureDirs() {
@@ -166,25 +186,69 @@ export function createStationStore(baseDir) {
     return stations
   }
 
-  // Installs a new assignment, returning the assignment that was displaced
-  // (if any) so the caller can invalidate its now-superseded follow-up
-  // token. Serialized per station so two concurrent assign calls cannot
-  // both believe they won.
+  // Installs a new assignment. Round 9 review fix -- three guarantees, in
+  // this order:
+  //
+  // 1. A station already serving a DIFFERENT visit is refused outright
+  //    ('station_busy'). Staff must complete or reset it first. See the
+  //    module doc comment for why silently taking it over is unsafe.
+  //    Re-assigning the SAME visit to the same station is allowed and
+  //    simply refreshes the handoff (an idempotent re-hand, not a
+  //    conflict).
+  //
+  // 2. At most one station per visit. `startRevisit` deliberately dedupes
+  //    a repeated same-patient/same-mode start into the SAME visit and
+  //    token, so assigning that patient to station B shortly after station
+  //    A would otherwise leave one live token sitting on two tablets. Any
+  //    OTHER station currently holding this visit is released first, which
+  //    is a plain clear (never a token invalidation -- it is the very
+  //    session we are about to hand to this station).
+  //
+  // 3. The whole thing is serialized twice over: a store-wide assign lock
+  //    makes the cross-station uniqueness check-and-act atomic against
+  //    other assigns, and the per-station lock (also taken by
+  //    pollAssignment and clearAssignment) makes the on-disk metadata and
+  //    the in-memory token move as one.
+  //
+  // Lock order is always ASSIGN_LOCK -> station:<id>, and nothing acquires
+  // them the other way round, so the ordering stays acyclic.
   async function assignSession(stationId, { visit_id, patient_id, token, delivery_mode }) {
-    return withLock(`station:${stationId}`, async () => {
-      const record = await getStation(stationId)
-      if (!record) return { ok: false, reason: 'not_found' }
-      const displaced = record.assignment
-      record.assignment = {
-        visit_id,
-        patient_id,
-        delivery_mode: delivery_mode ?? 'CLINIC_TABLET',
-        status: 'WAITING',
-        assigned_at: new Date().toISOString(),
+    return withLock(ASSIGN_LOCK, async () => {
+      const target = await getStation(stationId)
+      if (!target) return { ok: false, reason: 'not_found' }
+      // Cheap pre-check so a refused assignment never releases another
+      // station pointlessly; re-verified authoritatively under the
+      // station lock below.
+      if (target.assignment && target.assignment.visit_id !== visit_id) {
+        return { ok: false, reason: 'station_busy', station: target }
       }
-      await atomicWrite(stationPath(baseDir, stationId), record)
-      assignedTokens.set(stationId, token)
-      return { ok: true, station: record, displaced }
+
+      const releasedFrom = []
+      for (const other of await listStations()) {
+        if (other.station_id === stationId) continue
+        if (other.assignment?.visit_id === visit_id) {
+          await clearAssignment(other.station_id)
+          releasedFrom.push(other.station_id)
+        }
+      }
+
+      return withLock(`station:${stationId}`, async () => {
+        const record = await getStation(stationId)
+        if (!record) return { ok: false, reason: 'not_found' }
+        if (record.assignment && record.assignment.visit_id !== visit_id) {
+          return { ok: false, reason: 'station_busy', station: record }
+        }
+        record.assignment = {
+          visit_id,
+          patient_id,
+          delivery_mode: delivery_mode ?? 'CLINIC_TABLET',
+          status: 'WAITING',
+          assigned_at: new Date().toISOString(),
+        }
+        await atomicWrite(stationPath(baseDir, stationId), record)
+        assignedTokens.set(stationId, { visit_id, token })
+        return { ok: true, station: record, released_from: releasedFrom }
+      })
     })
   }
 
@@ -194,17 +258,25 @@ export function createStationStore(baseDir) {
   // privacy boundary the public follow-up-session GET already enforces
   // (the station then calls that endpoint with the token like any other
   // patient device would).
+  //
+  // Round 9 review fix: taken under the same per-station lock assignSession
+  // and clearAssignment use, so a poll can never observe one half of an
+  // assignment change, and the in-memory entry's visit_id must match the
+  // on-disk assignment before its token is handed out.
   async function pollAssignment(stationId) {
-    const record = await getStation(stationId)
-    if (!record?.assignment) return { status: 'WAITING' }
-    const token = assignedTokens.get(stationId)
-    if (!token) {
-      // Metadata says assigned but the in-memory token is gone (server
-      // restarted). Report WAITING rather than a broken assigned state --
-      // staff simply reassigns. Never invent or reconstruct a token.
-      return { status: 'WAITING' }
-    }
-    return { status: 'ASSIGNED', token }
+    return withLock(`station:${stationId}`, async () => {
+      const record = await getStation(stationId)
+      if (!record?.assignment) return { status: 'WAITING' }
+      const entry = assignedTokens.get(stationId)
+      if (!entry || entry.visit_id !== record.assignment.visit_id) {
+        // Either the in-memory token is gone (server restarted) or it
+        // belongs to a different assignment than the metadata describes.
+        // Report WAITING rather than a broken or mismatched assigned state
+        // -- staff simply reassigns. Never invent or reconstruct a token.
+        return { status: 'WAITING' }
+      }
+      return { status: 'ASSIGNED', token: entry.token }
+    })
   }
 
   // Clears both halves of an assignment (memory + on-disk metadata). Used

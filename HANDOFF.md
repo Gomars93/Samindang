@@ -166,7 +166,86 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 8의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+- (없음 — round 9의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+
+## Completed — Round 9 (round 8 re-review 4차 수정, 이번 세션)
+
+리뷰가 지적한 3건의 엔지니어링 정확성 문제 + 이미 승인된 제품 후속 1건.
+
+### 1. 포인터 권한 TOCTOU 경합 (보안/정확성)
+round 7에서 by-visit 포인터를 확인하도록 고쳤지만, **확인과 행위가
+`issueToken`의 포인터 교체와 서로 배타적이지 않았다.** 옛 토큰 요청이
+"아직 유효한" 포인터를 읽고 → 그 사이 재발급이 포인터를 교체하고 →
+이미 진행 중이던 옛 요청이 응답 저장과 CONSUMED 전환을 그대로 끝낼 수
+있었다(phase 3은 그 토큰 락을 기다리다 CONSUMED를 보고 무효화를 건너뜀).
+
+수정: 해시로 레코드에 직접 접근하는 **모든 공개 경로**(`resolveToken`,
+`consumeTokenWithAction`, `markStarted`)가 `visit:<visit_id>` 락을
+먼저 잡고 그 안에서 포인터를 다시 읽는다. 락 순서는 항상 visit → token
+으로, `issueToken`의 phase 3 및 `invalidateActiveForVisit`과 동일해
+순환이 없다. 잠금 없는 선행 읽기는 **어떤 visit 락을 잡을지 알아내는
+용도로만** 쓰고 판단에는 쓰지 않는다(레코드의 visit_id는 불변).
+
+결정적(비타이밍) 경합 테스트 3종 추가 — `withLock`이 호출 시점에 맵
+엔트리를 동기적으로 설치하므로 먼저 호출된 쪽이 반드시 먼저 락을 잡는다:
+(a) 교체가 이기면 옛 토큰은 fail closed 하고 **actionFn을 아예 실행하지
+않는다**(고아 응답이 저장되지 않는다), (b) 수락이 먼저 락을 잡으면
+재발급이 실제로 **대기**하고 이미 제출된 답변이 그대로 확정된다,
+(c) 읽기 경로도 교체 후 ACTIVE가 아닌 INVALIDATED로 보고한다.
+수정 전 코드에 대해 이 테스트가 실제로 실패하는 것을 확인했다(공허하지
+않은 회귀 가드).
+
+### 2. 스테이션 배정 경합 / 유일성
+- **poll이 assign과 직렬화되지 않았다**: 디스크 메타데이터는 새 배정인데
+  in-memory 토큰은 아직 이전 것인 순간에 폴링이 들어오면 **새 배정
+  메타데이터 아래 이전 토큰**을 태블릿에 넘길 수 있었다. 이제
+  `assignedTokens`가 `{visit_id, token}`을 **함께** 보관하고,
+  `pollAssignment`가 `assignSession`/`clearAssignment`와 같은
+  `station:<id>` 락 안에서 돌며 visit_id 일치를 확인한다 — 찢어진 쌍은
+  WAITING으로 fail closed.
+- **visit당 스테이션 유일성이 없었다**: `startRevisit`이 같은 환자/같은
+  전달 방식의 재요청을 같은 visit·같은 토큰으로 dedup 하므로, 태블릿 A
+  직후 태블릿 B에 배정하면 **하나의 살아있는 토큰이 두 태블릿에** 남을
+  수 있었다. 이제 store 전역 `assign:all` 락 안에서 같은 visit을 들고
+  있는 다른 스테이션을 먼저 **해제**한다(토큰 무효화가 아니라 단순
+  해제 — 지금 넘기려는 바로 그 세션이므로).
+- **사용 중인 태블릿 인수 금지**: `StationScreen`은 환자가 질문을 연
+  뒤에는 폴링을 멈추므로, 직원이 "재배정"해도 **그 물리적 화면은 바뀌지
+  않는다** — 태블릿을 다음 환자에게 건네면 이전 환자 세션이 그대로 보인다.
+  파일럿에서는 리뷰 제안대로 **거절**(409 `station_busy`)을 택했다.
+  같은 visit의 재배정(같은 세션 다시 건네기)만 허용한다. 원장 UI도
+  사용 중 태블릿을 선택 불가로 표시한다.
+- **직원 초기화는 이제 능력을 실제로 회수한다**: `resetStation`이 배정
+  해제와 함께 그 visit의 토큰을 무효화하고 dedup 캐시도 비운다. 폴링을
+  멈춘 채 남아있는 화면이 회수된 세션에 제출할 수 없다.
+
+### 3. `assignRevisitToStation` 부분 실패 원자성
+스테이션 쓰기가 실패하거나 `station_busy`로 거절되면, 그 전에 만들어진
+재진 visit + 살아있는 토큰이 큐에 고아로 남았다. 이제 두 실패 모양
+모두에서 롤백한다. **단, `started.reused`가 true인 경우(dedup 재생)는
+절대 롤백하지 않는다** — 그 재진은 이전의 의도적인 행동에 속하며 이미
+QR이 떠 있거나 다른 태블릿에 배정되어 있을 수 있다.
+실제 파일시스템 실패 주입 테스트 추가(스테이션 레코드의 `.tmp` 경로만
+막아 EISDIR 유발) — 고아가 남지 않고, 실패 후 재시도가 **회수된 세션의
+재생이 아니라 진짜 쓸 수 있는 새 세션**을 받는 것까지 확인.
+
+### 4. 일상 재진 UI 압축 (이미 승인된 제품 후속)
+`RevisitWorkspace`가 Structured Reassessment + 최종 판단 + Care Plan +
+Follow-up Target + 다음 재평가 계획을 전부 "반드시 채워야 할 것처럼"
+펼쳐두고 있었다. 임상 로직은 전혀 건드리지 않고:
+- **환자가 보고한 변화를 맨 위에서 먼저** 읽도록 유지/강조.
+- 새 `src/doctor/workspace/revisitCarryForward.ts` — `이전 판단 유지` /
+  `이전 처치·관리계획 유지` / `기존 Follow-up Target 유지`. **클릭할
+  때만** 적용되고, 오늘 이미 입력된 내용은 절대 덮어쓰지 않는다.
+- **이전 객관 소견은 절대 이어가지 않는다**: Structured Reassessment
+  항목·진찰 결과·Follow-up Target의 **이전 측정값(baseline/치료직후)**
+  은 carry-forward 대상에서 구조적으로 제외했다(Target은 "이걸 계속
+  추적한다"는 선택만 id/label로 넘어가고 오늘 값은 빈칸에서 시작).
+- Structured Reassessment / 다음 재평가 계획은 `<details>`로 접었다
+  (내용이 이미 있으면 자동으로 펼쳐지므로 기록된 것이 숨지 않는다).
+- 제출 문진이 Pain/Herbal 두 벌 필드를 갖는 것에 반해 재진은 generic
+  한 벌이므로, 두 계열의 임상가 작성 텍스트를 **줄바꿈으로 합쳐** 넘긴다
+  (어떤 텍스트도 조용히 버리지 않는다). 점수화·임계값·재해석 없음.
 
 ## Completed — Round 8 (전달 채널 무관 Micro Follow-up + 원내 태블릿, 이번 세션)
 
@@ -592,6 +671,23 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 9 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(둘 다 성공),
+  `npm run test:all`(전체 green — `tests/station.spec.mjs` 75 assertion,
+  `tests/follow-up-session.spec.mjs` 167, `tests/workspace-round3.spec.mjs`
+  81, `tests/server.spec.mjs` 213), `cd "tablet core" && python3 -m pytest
+  tests/ -q`(80 passed), FROZEN diff empty.
+- **Round 9 실제 헤드리스 브라우저 E2E QA 2종**: 재진 흐름 45개 체크 +
+  스테이션 흐름 30개 체크 전부 통과. 이번 라운드에 추가된 브라우저
+  체크 — 사용 중인 태블릿이 select에서 선택 불가로 표시되고, 서버가
+  409 `station_busy`로 거절하며, 거절된 인수 시도 후에도 그 태블릿이
+  기존 환자를 계속 서빙한다; 재진 워크스페이스에 carry-forward 3버튼이
+  뜨고 `이전 판단 유지` 한 번으로 오늘 판단이 채워지며 버튼이 스스로
+  비활성화되고, **그 순간에도 오늘 재검(Structured Reassessment)은
+  비어 있다**(이전 객관 소견 미복사).
+- **E2E가 이번 라운드에 실제로 잡은 회귀 1건**: UI 재구성 과정에서
+  `오늘 원장 입력` 섹션 제목이 사라졌다(3분할 provenance 경계 표기의
+  손실). E2E가 즉시 실패시켜 복구했다.
 - **Round 8 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공, qrcode 포함),
   `npm run test:all`(전체 green — 신규 `tests/station.spec.mjs` 55
@@ -711,8 +807,9 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 8(전달 채널 무관 Micro Follow-up + 원내 태블릿)이 구현되었으니
-   review author(Gomars93)가 새 HEAD를 재확인.
+2. round 9(포인터 권한 TOCTOU + 스테이션 경합/유일성 + 배정 롤백 +
+   일상 재진 UI 압축)가 구현되었으니 review author(Gomars93)가 새
+   HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
 4. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

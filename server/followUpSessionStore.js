@@ -249,19 +249,38 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     })
   }
 
+  // Round 9 review fix (pointer-authority TOCTOU): checking the pointer is
+  // not enough on its own. issueToken holds `visit:<visit_id>` for its
+  // ENTIRE two-phase swap, but the public read/accept paths below reach a
+  // record BY HASH and used to consult the pointer without holding that
+  // lock -- so a swap could land between the record read and the pointer
+  // read, or (far worse) between the check and a still-running acceptance,
+  // letting a superseded token finish a submission after it had already
+  // lost authority. Every by-hash path therefore now runs its whole
+  // check-and-act inside the same visit-level lock, acquired in one
+  // consistent order (visit -> token) that matches issueToken's own phase
+  // 3 and invalidateActiveForVisit, so the ordering stays acyclic and
+  // cannot deadlock. The unlocked pre-read below is used ONLY to learn
+  // which visit lock to take -- a record's visit_id is immutable once
+  // written -- and never to decide anything.
+  //
   // Public-endpoint lookup: format-validate first (fails closed on garbage
   // without ever touching disk), then a single hashed-filename read -- no
-  // scanning, no plaintext-token comparison loop. Read-only (no lock held
-  // here), so any pointer-authority correction is computed for THIS
-  // response only, never persisted -- consumeTokenWithAction below is the
-  // one that self-heals the on-disk record, under its own token lock.
+  // scanning, no plaintext-token comparison loop. Still read-only: any
+  // pointer-authority correction is computed for THIS response only, never
+  // persisted -- consumeTokenWithAction below is the one that self-heals
+  // the on-disk record.
   async function resolveToken(rawToken) {
     if (!isValidTokenFormat(rawToken)) return null
     const tokenHash = hashToken(rawToken)
-    const record = await readJson(tokenPath(baseDir, tokenHash))
-    if (!record) return null
-    const pointerHash = await currentPointerHash(record.visit_id)
-    return withPointerAuthority(record, tokenHash, pointerHash)
+    const probe = await readJson(tokenPath(baseDir, tokenHash))
+    if (!probe) return null
+    return withLock(`visit:${probe.visit_id}`, async () => {
+      const record = await readJson(tokenPath(baseDir, tokenHash))
+      if (!record) return null
+      const pointerHash = await currentPointerHash(record.visit_id)
+      return withPointerAuthority(record, tokenHash, pointerHash)
+    })
   }
 
   // Round 4 review fix (durability ordering): the primitive underneath
@@ -273,29 +292,43 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
   // being burned: the patient can retry with the exact same one-time link
   // and their answer is never silently lost. Only after actionFn resolves
   // successfully does the token actually get consumed.
+  //
+  // Round 9 review fix (TOCTOU): the whole validate -> act -> commit
+  // sequence now runs inside the token's visit lock as well, so it is
+  // mutually exclusive with issueToken's pointer swap for that visit. The
+  // acceptance and the swap can no longer interleave in either direction:
+  // if the swap wins the lock first, this call re-reads the pointer and
+  // fails closed WITHOUT ever invoking actionFn (no response is saved, no
+  // token is burned); if this call wins, the reissue waits and the answer
+  // the patient already submitted stands.
   async function consumeTokenWithAction(rawToken, actionFn) {
     if (!isValidTokenFormat(rawToken)) return { ok: false, reason: 'invalid' }
     const tokenHash = hashToken(rawToken)
-    return withLock(`token:${tokenHash}`, async () => {
-      const stored = await readJson(tokenPath(baseDir, tokenHash))
-      if (!stored) return { ok: false, reason: 'invalid' }
-      // Pointer-authority check (round 7 review fix): under this same
-      // token lock, so this is also the safe place to self-heal a stale
-      // on-disk ACTIVE status left by a failed phase-3 invalidation.
-      const pointerHash = await currentPointerHash(stored.visit_id)
-      const record = withPointerAuthority(stored, tokenHash, pointerHash)
-      if (record.status === 'CONSUMED') return { ok: false, reason: 'consumed', record }
-      if (record.status === 'INVALIDATED') {
-        if (record !== stored) await atomicWrite(tokenPath(baseDir, tokenHash), record).catch(() => {})
-        return { ok: false, reason: 'invalidated', record }
-      }
-      if (new Date(record.expires_at).getTime() < Date.now()) return { ok: false, reason: 'expired', record }
-      const actionResult = await actionFn(record)
-      record.status = 'CONSUMED'
-      record.consumed_at = new Date().toISOString()
-      await atomicWrite(tokenPath(baseDir, tokenHash), record)
-      return { ok: true, record, actionResult }
-    })
+    // Unlocked pre-read ONLY to learn which visit lock to acquire.
+    const probe = await readJson(tokenPath(baseDir, tokenHash))
+    if (!probe) return { ok: false, reason: 'invalid' }
+    return withLock(`visit:${probe.visit_id}`, async () =>
+      withLock(`token:${tokenHash}`, async () => {
+        const stored = await readJson(tokenPath(baseDir, tokenHash))
+        if (!stored) return { ok: false, reason: 'invalid' }
+        // Pointer-authority check (round 7 review fix): under both locks,
+        // so this is also the safe place to self-heal a stale on-disk
+        // ACTIVE status left by a failed phase-3 invalidation.
+        const pointerHash = await currentPointerHash(stored.visit_id)
+        const record = withPointerAuthority(stored, tokenHash, pointerHash)
+        if (record.status === 'CONSUMED') return { ok: false, reason: 'consumed', record }
+        if (record.status === 'INVALIDATED') {
+          if (record !== stored) await atomicWrite(tokenPath(baseDir, tokenHash), record).catch(() => {})
+          return { ok: false, reason: 'invalidated', record }
+        }
+        if (new Date(record.expires_at).getTime() < Date.now()) return { ok: false, reason: 'expired', record }
+        const actionResult = await actionFn(record)
+        record.status = 'CONSUMED'
+        record.consumed_at = new Date().toISOString()
+        await atomicWrite(tokenPath(baseDir, tokenHash), record)
+        return { ok: true, record, actionResult }
+      }),
+    )
   }
 
   // Round 8 (operational timestamps): records the first moment a patient
@@ -306,15 +339,29 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
   // patient_started_at is only ever set when it is still null. Purely
   // operational (lets the clinic later see whether links sit unopened);
   // no clinical logic reads it.
+  //
+  // Round 9: takes the same visit -> token locks and re-checks pointer
+  // authority as the paths above, so "every by-hash path respects the
+  // pointer" is a true invariant with no documented exceptions -- a
+  // superseded token cannot even record that it was opened.
   async function markStarted(rawToken) {
     if (!isValidTokenFormat(rawToken)) return
     const tokenHash = hashToken(rawToken)
-    await withLock(`token:${tokenHash}`, async () => {
-      const record = await readJson(tokenPath(baseDir, tokenHash))
-      if (!record || record.status !== 'ACTIVE' || record.patient_started_at) return
-      record.patient_started_at = new Date().toISOString()
-      await atomicWrite(tokenPath(baseDir, tokenHash), record)
-    }).catch(() => {})
+    try {
+      const probe = await readJson(tokenPath(baseDir, tokenHash))
+      if (!probe) return
+      await withLock(`visit:${probe.visit_id}`, async () =>
+        withLock(`token:${tokenHash}`, async () => {
+          const record = await readJson(tokenPath(baseDir, tokenHash))
+          if (!record || record.status !== 'ACTIVE' || record.patient_started_at) return
+          if ((await currentPointerHash(record.visit_id)) !== tokenHash) return
+          record.patient_started_at = new Date().toISOString()
+          await atomicWrite(tokenPath(baseDir, tokenHash), record)
+        }),
+      )
+    } catch {
+      // best-effort by design: never fail the patient's read over this
+    }
   }
 
   // Consumes atomically under the token's own lock: only an ACTIVE,

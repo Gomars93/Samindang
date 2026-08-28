@@ -389,7 +389,13 @@ export function createStore(
         // is busy, so staff switches to a personal QR), not the
         // double-click this dedup exists to absorb -- let it through.
         const sameDeliveryMode = (cached.result.session.delivery_mode ?? null) === (deliveryMode ?? null)
-        if (stillFresh && !alreadyAnswered && sameDeliveryMode) return cached.result
+        // Round 9: `reused` tells a composing caller (assignRevisitToStation)
+        // whether THIS call created the revisit or merely replayed one an
+        // earlier action already created -- a replayed revisit may already
+        // be assigned to a station or have had its QR shown, so it must
+        // never be rolled back by a later failure. The flag is added to a
+        // shallow copy so the cached result itself stays canonical.
+        if (stillFresh && !alreadyAnswered && sameDeliveryMode) return { ...cached.result, reused: true }
         recentStartRevisitResults.delete(patientId)
       }
 
@@ -409,8 +415,35 @@ export function createStore(
         throw err
       }
       recentStartRevisitResults.set(patientId, { result, expiresAt: Date.now() + startRevisitDedupWindowMs })
-      return result
+      return { ...result, reused: false }
     })
+  }
+
+  // Round 9 review fix: undo a revisit THIS call just created, when a
+  // composing operation fails after startRevisit already succeeded (see
+  // assignRevisitToStation). Deliberately callable only for a
+  // newly-created revisit -- never for a dedup-replayed pre-existing one.
+  // Order matters: invalidate the capability first so the link is dead
+  // even if the visit delete then fails, then drop the visit, then evict
+  // the dedup cache entry (under the same per-patient lock startRevisit
+  // uses, so a concurrent start cannot pick up a cache entry pointing at a
+  // visit that is being deleted).
+  async function rollbackNewRevisit(started) {
+    await followUpSessions.invalidateActiveForVisit(started.visit.id).catch(() => {})
+    await visits.deleteVisitForRollbackOnly(started.visit.id).catch(() => {})
+    await forgetStartRevisitCache(started.visit.patient_id, started.visit.id)
+  }
+
+  // Drops the dedup cache entry for a patient IF it still names the given
+  // visit. Taken under the same per-patient lock startRevisit uses, so a
+  // concurrent start can never pick up a cache entry for a session that is
+  // being torn down or revoked, and a cache entry belonging to some LATER
+  // revisit is never evicted by accident.
+  async function forgetStartRevisitCache(patientId, visitId) {
+    await withLock(`start-revisit:${patientId}`, async () => {
+      const cached = recentStartRevisitResults.get(patientId)
+      if (cached?.result?.visit?.id === visitId) recentStartRevisitResults.delete(patientId)
+    }).catch(() => {})
   }
 
   // Reissue: same visit, freshly re-derived candidates (in case the
@@ -501,31 +534,49 @@ export function createStore(
   // with the station assignment, then invalidates whatever session that
   // station was previously holding.
   //
-  // Ordering matters: assign FIRST, then invalidate the displaced session.
-  // The reverse order would kill a still-valid patient link before knowing
-  // the new one actually installed -- exactly the reissue failure mode
-  // fixed in round 6 (see followUpSessionStore.js's issueToken phases).
-  // The displaced invalidation is best-effort: if it fails, the old token
-  // is at worst still ACTIVE on disk but no longer assigned anywhere, and
-  // the pointer-authority check (round 7) does not apply here since it is a
-  // different visit entirely -- so it simply ages out on its own TTL, which
-  // is a strictly better failure than destroying the new assignment.
+  // Round 9 review fix (partial-failure atomicity): startRevisit creates a
+  // real visit AND a live capability token before the station assignment is
+  // durable. If the assignment then fails -- it throws, or the station
+  // turns out to be busy serving someone else -- that revisit would sit in
+  // the staff queue forever with a live token and no tablet to hand it to.
+  // Roll it back on EITHER failure shape.
+  //
+  // The rollback is conditional on `started.reused`, which is the crucial
+  // distinction: startRevisit dedupes a repeated same-patient/same-mode
+  // start into a pre-existing PENDING revisit, and that one belongs to an
+  // earlier deliberate action (its QR may already be on screen, or it may
+  // already be assigned to another station). Deleting it because a second,
+  // unrelated assignment attempt failed would destroy working state. Only
+  // a revisit this very call created is ours to undo.
+  //
+  // Station uniqueness (one station per visit, busy stations refused) is
+  // enforced inside stations.assignSession itself -- see its doc comment.
+  // There is no longer a "displaced" session to invalidate here: a busy
+  // station is refused outright rather than silently taken over, and a
+  // station released because it held THIS SAME visit keeps its token
+  // (it is the very session being handed to the new station).
   async function assignRevisitToStation(patientId, stationId, deliveryMode = 'CLINIC_TABLET') {
     const station = await stations.getStation(stationId)
     if (!station) return { ok: false, reason: 'station_not_found' }
 
     const started = await startRevisit(patientId, deliveryMode)
-    const assignResult = await stations.assignSession(stationId, {
-      visit_id: started.visit.id,
-      patient_id: patientId,
-      token: started.token,
-      delivery_mode: deliveryMode,
-    })
-    if (!assignResult.ok) return assignResult
-
-    if (assignResult.displaced?.visit_id && assignResult.displaced.visit_id !== started.visit.id) {
-      await followUpSessions.invalidateActiveForVisit(assignResult.displaced.visit_id).catch(() => {})
+    let assignResult
+    try {
+      assignResult = await stations.assignSession(stationId, {
+        visit_id: started.visit.id,
+        patient_id: patientId,
+        token: started.token,
+        delivery_mode: deliveryMode,
+      })
+    } catch (err) {
+      if (!started.reused) await rollbackNewRevisit(started)
+      throw err
     }
+    if (!assignResult.ok) {
+      if (!started.reused) await rollbackNewRevisit(started)
+      return assignResult
+    }
+
     return { ok: true, visit: started.visit, session: started.session, station: assignResult.station }
   }
 
@@ -533,6 +584,32 @@ export function createStore(
   // so the tablet returns to its waiting screen with nothing retained.
   async function completeStationAssignment(stationId) {
     return stations.clearAssignment(stationId)
+  }
+
+  // Round 9 review fix: STAFF's manual reset is not the same act as the
+  // station reporting a completed submission. Complete happens after the
+  // patient submitted, so that visit's token is already CONSUMED and
+  // clearing the assignment is the whole job. A reset happens while a
+  // session may still be OPEN ON THE PHYSICAL TABLET -- and that screen has
+  // stopped polling, so nothing the server does can make it navigate away.
+  // Clearing the assignment alone would leave that abandoned screen able to
+  // submit into a session staff has already taken back. Invalidating the
+  // cleared visit's capability makes the revocation real: the stale screen
+  // fails closed on submit instead of writing an answer nobody is expecting.
+  // Best-effort -- a failure here must not stop the tablet being freed for
+  // the next patient (the token still ages out on its own short TTL).
+  async function resetStation(stationId) {
+    const result = await stations.clearAssignment(stationId)
+    if (result.ok && result.cleared?.visit_id) {
+      await followUpSessions.invalidateActiveForVisit(result.cleared.visit_id).catch(() => {})
+      // ...and forget the dedup cache entry for that session, so the next
+      // assignment for this patient mints a FRESH capability instead of
+      // replaying the one this reset just revoked.
+      if (result.cleared.patient_id) {
+        await forgetStartRevisitCache(result.cleared.patient_id, result.cleared.visit_id)
+      }
+    }
+    return result
   }
 
   // Round 3(revisit linkage): "Doctor Queue" for no-submission revisit
@@ -680,5 +757,6 @@ export function createStore(
     pollStationAssignment: stations.pollAssignment,
     assignRevisitToStation,
     completeStationAssignment,
+    resetStation,
   }
 }

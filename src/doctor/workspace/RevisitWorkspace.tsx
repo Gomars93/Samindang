@@ -28,6 +28,23 @@
  *                     (PUT /api/visits/:id/workspace), completely separate
  *                     from the prior visit's own (submission-owned)
  *                     WorkspaceState -- editing here never overwrites it.
+ *
+ * Round 9 (routine-revisit compression): an ordinary revisit where nothing
+ * has changed should cost a clinician a few clicks, not a re-typing of
+ * yesterday's judgment into five open forms. Three changes, none of which
+ * touch clinical meaning:
+ *
+ *   - the patient's own reported change is read FIRST, before anything the
+ *     clinician has to fill in;
+ *   - "이전 내용 이어가기" offers carry-forward of the prior visit's
+ *     judgment / care plan / Follow-up Target selection, committed ONLY on
+ *     an explicit click and never overwriting text already entered today
+ *     (see revisitCarryForward.ts -- in particular, prior objective
+ *     findings and prior measured baselines are deliberately NOT carried);
+ *   - Structured Reassessment and the next-reassessment plan are collapsed
+ *     behind disclosures. They are still one click away and still saved
+ *     the same way; they simply stop looking mandatory on a visit where
+ *     the answer is "unchanged, continue".
  */
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -56,6 +73,16 @@ import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
 import { EXAM_CHECK_STATUS_LABEL } from './provenance'
+import {
+  applyCarePlanCarryForward,
+  applyFinalAssessmentCarryForward,
+  applyFollowUpTargetsCarryForward,
+  carryForwardSourceFromSubmission,
+  carryForwardSourceFromVisitWorkspace,
+  emptyCarryForwardSource,
+  isCarePlanBlank,
+  isFinalAssessmentBlank,
+} from './revisitCarryForward'
 
 const SAVE_DEBOUNCE_MS = 900
 const COMBINED_FOLLOW_UP_OPTIONS = [...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS]
@@ -206,6 +233,25 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       ? priorVisitRecapLines(priorSubmission)
       : priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace)
 
+  // Round 9: what the LATEST prior visit offers to carry forward, built
+  // from whichever kind of prior visit it is. Purely a suggestion until
+  // the clinician clicks -- see revisitCarryForward.ts.
+  const carryForward = !latestPrior
+    ? emptyCarryForwardSource()
+    : latestPrior.submissionId
+      ? carryForwardSourceFromSubmission(priorSubmission)
+      : carryForwardSourceFromVisitWorkspace(priorVisitWorkspace)
+
+  const assessmentBlank = isFinalAssessmentBlank(workspaceState.finalAssessment)
+  const carePlanBlank = isCarePlanBlank(workspaceState.carePlan)
+  const targetsBlank = workspaceState.followUpTargets.length === 0
+
+  function carryForwardHint(available: boolean, blank: boolean): string {
+    if (!available) return '이전 방문에 이어갈 기록이 없습니다'
+    if (!blank) return '오늘 이미 입력된 내용이 있어 덮어쓰지 않습니다'
+    return '클릭하면 오늘 기록으로 들어옵니다 (그대로 수정 가능)'
+  }
+
   const loopStatus: ClinicalLoopStatusItem[] = [
     { key: 'assessment', label: '최종 판단 입력', done: workspaceState.finalAssessment.recordedAt !== null },
     { key: 'plan', label: '관리 계획 입력', done: workspaceState.carePlan.recordedAt !== null },
@@ -223,7 +269,10 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       </section>
 
       <section className="workspace__block">
-        <h3>오늘 환자 입력</h3>
+        <h3>
+          오늘 환자 입력{' '}
+          <span className="workspace__block__hint">환자가 직접 보고한 변화 — 먼저 읽고 판단하세요</span>
+        </h3>
         <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse} />
       </section>
 
@@ -277,13 +326,56 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         )}
       </section>
 
-      <section className="workspace__block">
-        <h3>오늘 원장 입력</h3>
-        <StructuredReassessmentCard
-          title="오늘 재검(Structured Reassessment)"
-          value={workspaceState.reassessment}
-          onChange={(next) => setWorkspaceState((s) => ({ ...s, reassessment: next }))}
-        />
+      <section className="workspace__block workspace__revisit__carryForward">
+        {/* The mandated third provenance section. Round 9 gives it a
+            carry-forward header row, but it is still "오늘 원장 입력" --
+            everything below this heading is the clinician's own record for
+            THIS visit. */}
+        <h3>
+          오늘 원장 입력{' '}
+          <span className="workspace__block__hint">
+            이전 내용 이어가기 — 누를 때만 오늘 기록에 들어갑니다 · 이전 진찰 소견과 이전 측정값은 이어가지
+            않습니다
+          </span>
+        </h3>
+        <div className="workspace__revisit__carryForward__actions">
+          <button
+            type="button"
+            className="workspace__btn"
+            disabled={!carryForward.finalAssessment || !assessmentBlank}
+            title={carryForwardHint(Boolean(carryForward.finalAssessment), assessmentBlank)}
+            onClick={() =>
+              setWorkspaceState((s) => applyFinalAssessmentCarryForward(s, carryForward, new Date().toISOString()))
+            }
+          >
+            이전 판단 유지
+          </button>
+          <button
+            type="button"
+            className="workspace__btn"
+            disabled={!carryForward.carePlan || !carePlanBlank}
+            title={carryForwardHint(Boolean(carryForward.carePlan), carePlanBlank)}
+            onClick={() =>
+              setWorkspaceState((s) => applyCarePlanCarryForward(s, carryForward, new Date().toISOString()))
+            }
+          >
+            이전 처치/관리계획 유지
+          </button>
+          <button
+            type="button"
+            className="workspace__btn"
+            disabled={carryForward.followUpTargets.length === 0 || !targetsBlank}
+            title={carryForwardHint(carryForward.followUpTargets.length > 0, targetsBlank)}
+            onClick={() => setWorkspaceState((s) => applyFollowUpTargetsCarryForward(s, carryForward))}
+          >
+            기존 Follow-up Target 유지
+          </button>
+        </div>
+        <p className="workspace__revisit__carryForward__note">
+          변화가 없는 일상적인 재진이면 위 버튼으로 이어간 뒤 필요한 부분만 고치면 됩니다. 오늘 새로 확인한
+          진찰 소견은 아래 &quot;오늘 재검&quot;에 직접 기록하세요 — 이전 소견이 오늘 소견으로 복사되는 일은
+          없습니다.
+        </p>
       </section>
 
       <ClinicalLoopStatusBar items={loopStatus} />
@@ -305,10 +397,30 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         showPostTreatmentField
       />
 
-      <NextReassessmentPlanCard
-        value={workspaceState.nextReassessmentPlan}
-        onChange={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
-      />
+      {/* Round 9: collapsed by default so a routine "unchanged, continue"
+          revisit does not present two more mandatory-looking forms. Both
+          stay one click away and save exactly as before -- and each opens
+          automatically when it already holds content, so a visit that DID
+          need them never hides what was recorded. */}
+      <details className="workspace__revisit__optional" open={workspaceState.reassessment.items.length > 0}>
+        <summary>오늘 재검(Structured Reassessment) — 필요할 때 펼치기</summary>
+        <StructuredReassessmentCard
+          title="오늘 재검(Structured Reassessment)"
+          value={workspaceState.reassessment}
+          onChange={(next) => setWorkspaceState((s) => ({ ...s, reassessment: next }))}
+        />
+      </details>
+
+      <details
+        className="workspace__revisit__optional"
+        open={workspaceState.nextReassessmentPlan.status !== 'UNSET'}
+      >
+        <summary>다음 재평가 계획 변경 — 필요할 때 펼치기</summary>
+        <NextReassessmentPlanCard
+          value={workspaceState.nextReassessmentPlan}
+          onChange={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
+        />
+      </details>
 
       <p className="workspace__saveStatus" role="status" data-status={saveStatus}>
         {saveStatus === 'saving' && '저장 중…'}

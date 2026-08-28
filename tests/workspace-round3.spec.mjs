@@ -18,6 +18,17 @@ import {
   microFollowUpNeedsAttention,
   emptyMicroFollowUpResponse,
 } from './.workspace-round3-microfollowup-bundle.mjs'
+import {
+  applyCarePlanCarryForward,
+  applyFinalAssessmentCarryForward,
+  applyFollowUpTargetsCarryForward,
+  carryForwardSourceFromSubmission,
+  carryForwardSourceFromVisitWorkspace,
+  emptyCarryForwardSource,
+  isCarePlanBlank,
+  isFinalAssessmentBlank,
+} from './.workspace-round3-carryforward-bundle.mjs'
+import { emptyVisitWorkspaceState } from './.workspace-round3-visitworkspace-bundle.mjs'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -242,6 +253,125 @@ function assert(name, cond) {
     'microFollowUp.ts source contains no threshold/branching logic on newSymptomReported or adverseEffectReported beyond the needsAttention flag',
     (src.match(/newSymptomReported|adverseEffectReported/g) ?? []).length <= 6,
   )
+}
+
+/* =====================================================================
+   Round 9: routine-revisit carry-forward. The whole point of this feature
+   is that a clinician can adopt the prior visit's judgment/plan/targets in
+   one click -- and that adopting them can never fabricate today's
+   objective findings or quietly overwrite what the clinician already
+   typed today.
+   ===================================================================== */
+{
+  const priorSubmission = {
+    workspace: {
+      painFinalAssessment: {
+        finalWorkingAssessment: '요추 기계적 통증',
+        treatmentFocus: '신전 가동성',
+        interventionPerformedOrPlanned: '침 + 도수',
+        immediateRetestTarget: '숙일 때 통증 재현',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+      herbalFinalAssessment: {
+        finalPatternOrMechanism: '기허',
+        treatmentPrinciple: '보기',
+        prescriptionPlanNote: '보중익기탕',
+        symptomsToTrack: '피로감',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+      painCarePlan: {
+        currentTreatmentGoal: '통증 감소',
+        rehabilitationGoal: '보행 30분',
+        homeActionPlan: '신전 운동 1일 2회',
+        activityPrecaution: '무거운 것 들지 않기',
+        patientInstruction: '통증 심해지면 연락',
+        nextVisitCheckItem: '아침 뻣뻣함',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+      herbalCarePlan: {
+        currentManagementGoal: '기력 회복',
+        medicationPlanNote: '식후 30분 복용',
+        homeLifestyleManagement: '취침 11시 전',
+        symptomsToObserve: '소화 불편',
+        adverseEffectContactInstruction: '두드러기 시 중단 후 연락',
+        nextVisitCheckItem: '식욕',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+      painFollowUpTargets: [
+        { id: 'pain-nrs', label: '통증 NRS', baseline: '7', postTreatmentValue: '5' },
+        { id: 'walk-min', label: '보행 지속 시간', baseline: '20분', postTreatmentValue: '' },
+      ],
+      herbalFollowUpTargets: [{ id: 'fatigue', label: '피로감', baseline: '심함', postTreatmentValue: '' }],
+      painExamSuggestions: [],
+      herbalClinicianObservations: [],
+    },
+  }
+
+  const source = carryForwardSourceFromSubmission(priorSubmission)
+  assert('carry-forward: a prior submission offers a judgment to continue', source.finalAssessment !== null)
+  assert('carry-forward: Pain and Herbal judgments are unioned, not silently dropped', source.finalAssessment.finalWorkingAssessment.includes('요추 기계적 통증') && source.finalAssessment.finalWorkingAssessment.includes('기허'))
+  assert('carry-forward: the herbal prescription note survives the mapping', source.finalAssessment.interventionPerformedOrPlanned.includes('보중익기탕'))
+  assert('carry-forward: the herbal medication instruction survives the mapping', source.carePlan.patientInstruction.includes('식후 30분 복용'))
+  assert('carry-forward: the herbal adverse-effect instruction survives the mapping', source.carePlan.patientInstruction.includes('두드러기'))
+  assert('carry-forward: herbal symptomsToTrack lands on the next-visit check, not the immediate retest target', source.carePlan.nextVisitCheckItem.includes('피로감') && !source.finalAssessment.immediateRetestTarget.includes('피로감'))
+
+  // THE safety property: prior MEASUREMENTS never become today's values.
+  assert('carry-forward: Follow-up Targets carry the tracking selection only', source.followUpTargets.length === 3)
+  assert('carry-forward: a carried target has NO prior baseline', source.followUpTargets.every((t) => t.baseline === ''))
+  assert('carry-forward: a carried target has NO prior post-treatment value', source.followUpTargets.every((t) => t.postTreatmentValue === ''))
+  assert('carry-forward: carried target labels are preserved', source.followUpTargets.map((t) => t.id).join(',') === 'pain-nrs,walk-min,fatigue')
+
+  // Nothing is applied until it is applied.
+  const blank = emptyVisitWorkspaceState()
+  assert('carry-forward: a fresh revisit workspace starts blank (nothing auto-applied)', isFinalAssessmentBlank(blank.finalAssessment) && isCarePlanBlank(blank.carePlan) && blank.followUpTargets.length === 0)
+
+  const now = '2026-02-02T00:00:00.000Z'
+  const withAssessment = applyFinalAssessmentCarryForward(blank, source, now)
+  assert('carry-forward: applying the judgment fills it', withAssessment.finalAssessment.finalWorkingAssessment.includes('요추 기계적 통증'))
+  assert('carry-forward: the applied judgment is stamped with TODAY (the clinician is affirming it now)', withAssessment.finalAssessment.recordedAt === now)
+  assert('carry-forward: applying the judgment leaves the reassessment untouched (objective findings are never carried)', withAssessment.reassessment.items.length === 0)
+
+  const withPlan = applyCarePlanCarryForward(withAssessment, source, now)
+  assert('carry-forward: applying the care plan fills it', withPlan.carePlan.currentTreatmentGoal.includes('통증 감소'))
+  const withTargets = applyFollowUpTargetsCarryForward(withPlan, source)
+  assert('carry-forward: applying the targets fills them', withTargets.followUpTargets.length === 3)
+  assert('carry-forward: applied targets still carry no prior measurement', withTargets.followUpTargets.every((t) => t.baseline === '' && t.postTreatmentValue === ''))
+
+  // Never overwrite what the clinician already wrote today.
+  const alreadyTyped = {
+    ...blank,
+    finalAssessment: { ...blank.finalAssessment, finalWorkingAssessment: '오늘 새로 판단한 내용' },
+    carePlan: { ...blank.carePlan, currentTreatmentGoal: '오늘 새 목표' },
+    followUpTargets: [{ id: 'today-only', label: '오늘 고른 항목', baseline: '', postTreatmentValue: '' }],
+  }
+  assert("carry-forward: never overwrites today's already-entered judgment", applyFinalAssessmentCarryForward(alreadyTyped, source, now).finalAssessment.finalWorkingAssessment === '오늘 새로 판단한 내용')
+  assert("carry-forward: never overwrites today's already-entered care plan", applyCarePlanCarryForward(alreadyTyped, source, now).carePlan.currentTreatmentGoal === '오늘 새 목표')
+  assert("carry-forward: never replaces today's already-chosen Follow-up Targets", applyFollowUpTargetsCarryForward(alreadyTyped, source).followUpTargets[0].id === 'today-only')
+
+  // A prior visit with nothing recorded offers nothing (the UI disables it).
+  const empty = carryForwardSourceFromSubmission(null)
+  assert('carry-forward: no prior submission offers nothing', empty.finalAssessment === null && empty.carePlan === null && empty.followUpTargets.length === 0)
+  assert('carry-forward: applying an empty source is a no-op', applyFinalAssessmentCarryForward(blank, emptyCarryForwardSource(), now) === blank)
+
+  // Revisit-of-revisit: the prior visit's own generic workspace, read directly.
+  const priorRevisit = {
+    ...emptyVisitWorkspaceState(),
+    finalAssessment: { ...blank.finalAssessment, finalWorkingAssessment: '이전 재진 판단', recordedAt: '2026-01-15T00:00:00.000Z' },
+    carePlan: { ...blank.carePlan, currentTreatmentGoal: '이전 재진 목표', recordedAt: '2026-01-15T00:00:00.000Z' },
+    followUpTargets: [{ id: 'pain-nrs', label: '통증 NRS', baseline: '5', postTreatmentValue: '4' }],
+    reassessment: { items: [{ id: 'x', title: '이전 재검', result: { status: 'POSITIVE', note: '' } }], finalReassessmentNote: '', recordedAt: null },
+  }
+  const revisitSource = carryForwardSourceFromVisitWorkspace(priorRevisit)
+  assert('carry-forward: a prior REVISIT offers its own judgment', revisitSource.finalAssessment.finalWorkingAssessment === '이전 재진 판단')
+  assert("carry-forward: a prior revisit's judgment arrives unstamped (today's click stamps it)", revisitSource.finalAssessment.recordedAt === null)
+  assert('carry-forward: a prior revisit offers its care plan', revisitSource.carePlan.currentTreatmentGoal === '이전 재진 목표')
+  assert("carry-forward: a prior revisit's measured baseline is NOT carried", revisitSource.followUpTargets[0].baseline === '' && revisitSource.followUpTargets[0].postTreatmentValue === '')
+
+  // Structural guard: the module must not reach for objective-finding fields.
+  const carrySrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/revisitCarryForward.ts', import.meta.url)), 'utf8')
+  assert('revisitCarryForward.ts never reads prior exam suggestions', !carrySrc.includes('painExamSuggestions'))
+  assert('revisitCarryForward.ts never reads prior clinician observations', !carrySrc.includes('herbalClinicianObservations'))
+  assert('revisitCarryForward.ts never writes a reassessment', !/reassessment\s*:/.test(carrySrc))
 }
 
 console.log(`\n${passCount} workspace round-3 assertions passed.`)

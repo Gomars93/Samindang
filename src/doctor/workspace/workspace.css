@@ -1191,6 +1191,52 @@
   gap: 8px;
 }
 
+/* ---------- round 9: routine-revisit compression ---------- */
+.workspace__revisit__carryForward__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace__revisit__carryForward__actions .workspace__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.workspace__revisit__carryForward__note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.workspace__revisit__optional {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.workspace__revisit__optional > summary {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.workspace__revisit__optional > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.workspace__revisit__optional[open] > summary {
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
 /* ---------- responsive: tablet landscape/portrait, desktop ---------- */
 @media (max-width: 1100px) {
   .workspace__heroGrid {

@@ -1,6 +1,16 @@
 # Current Handoff
 
-## Objective (round 7 — round 6 리뷰 3차 엔지니어링 수정, 이번 세션)
+## Objective (round 8 — 전달 채널 무관 Micro Follow-up + 원내 태블릿 스테이션, 이번 세션)
+사용자가 승인한 제품 방향: 모든 재진을 클리닉 태블릿으로 강제하지 않되,
+접수 병목을 실제로 줄이도록 Micro Follow-up의 **전달 채널을
+delivery_mode로 추상화**한다. 이번 라운드에서 실제로 구현한 채널은 두
+개(CLINIC_TABLET, PERSONAL_QR)이며, STAFF_ASSISTED는 별도 임상 프로토콜이
+아니라 **입력 주체(provenance)**로만 구현했고, PREVISIT_LINK는 데이터/UI
+훅만 두고 문자·카카오 연동은 하지 않았다(승인된 외부 발송 제공자가 아직
+없음 — 유일하게 남은 human blocker). 새 임상 threshold/판단 없음.
+상세는 아래 Completed — Round 8 참고. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (round 7 — round 6 리뷰 3차 엔지니어링 수정, 이전 세션)
 PR #24에 대한 세 번째 follow-up review(Gomars93, "Round 6 re-review")가
 "이전 blocker는 크게 개선됐지만 3개 비임상 엔지니어링 이슈가 남아있다"며
 지적한 항목 — (1) 보안/정확성: phase 3(old 토큰 무효화) 쓰기가 실패하면
@@ -156,8 +166,68 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 7의 리뷰 수정/테스트/QA 전부 완료. Push 후 CI 재확인만
-  남음.)
+- (없음 — round 8의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+
+## Completed — Round 8 (전달 채널 무관 Micro Follow-up + 원내 태블릿, 이번 세션)
+
+### 실제 접수 워크플로 (클릭 단위)
+1. 직원이 원장 화면에서 **기존 환자 기록을 선택**한다(이름/전화 매칭
+   아님 — 이미 화면에 있는 그 환자의 patient_id를 그대로 씀).
+2. "재진 간단 문진" 패널에서 **전달 방식**을 고른다(기본값 = 원내 태블릿).
+3. 태블릿 드롭다운에서 기기를 고르고 **"이 태블릿에 배정"** 1클릭.
+4. 환자에게 그 태블릿을 그냥 건네준다. 환자는 이름·전화·생년월일을 입력
+   하지 않고, QR도 스캔하지 않고, 큰 버튼/짧은 입력만 한다.
+5. 제출하면 태블릿이 스스로 "감사합니다" → 대기 화면으로 돌아간다.
+원장 개입이 필요 없다.
+
+### 태블릿(스테이션) 워크플로
+- 직원이 태블릿을 한 번만 **등록**한다(예: 접수 태블릿 1) → 1회용 페어링
+  링크가 화면에 뜬다(이 화면을 벗어나면 다시 볼 수 없음).
+- 그 링크를 **해당 태블릿에서 한 번** 열면 기기 credential이
+  localStorage에 저장되고 URL에서 즉시 지워진다. 이후 태블릿은 계속
+  대기 화면에 머문다.
+- 대기 화면에는 **환자 식별정보가 일절 없다**(poll 응답 자체에 없음).
+- 배정되면 폴링으로 받아 기존 `FollowUpScreen`을 그대로 렌더한다 — 질문
+  흐름을 복제하지 않으므로 QR 경로와 **완전히 동일한 코드/동일한 저장
+  데이터**가 된다.
+
+### 구현 항목
+1. **delivery_mode** (CLINIC_TABLET/PERSONAL_QR/STAFF_ASSISTED/
+   PREVISIT_LINK) — 순수 운영 메타데이터. allowlist 검증, 인식 불가 값은
+   null로 정규화(링크 발급을 절대 막지 않음). 질문·추적 대상·threshold·
+   라우팅에 아무 영향 없음.
+2. **운영 타임스탬프** — session_created_at / assigned_at /
+   patient_started_at / submitted_at. 재진 큐가 이제 "환자 입력 대기"와
+   "환자 작성 중"(IN_PROGRESS)을 구분한다.
+3. **inputProvenance** (PATIENT_SELF / STAFF_ASSISTED) — 둘 다 여전히
+   **환자가 보고한 사실**이며 원장 관찰 소견이 아니다. 공개 환자 경로는
+   PATIENT_SELF를 하드코딩하므로 클라이언트가 직원 귀속을 주장할 수
+   없고, STAFF_ASSISTED는 직원 인증된 저장 경로에서만 설정된다.
+4. **`server/stationStore.js`(신규)** — 태블릿 = 256bit 기기 credential
+   (해시만 저장, 평문은 페어링 링크로 1회만 반환), 기존 capability-token
+   모델과 동일한 패턴. 스테이션당 배정 1건, 재배정 시 밀려난 세션 토큰을
+   무효화(단, **배정 성공 후에 무효화** — round 6의 순서 원칙 그대로).
+   **raw 토큰은 메모리에만 두고 디스크에 절대 쓰지 않는다.**
+5. **라우트** — 직원용 register/list/assign/reset은 기존 doctor 가드
+   (개수 22→26), 태블릿 자신의 poll/complete는 기기 credential로만 인증
+   하고 `{status, token}`만 반환(환자 식별정보 없음).
+6. **클라이언트** — `src/lib/stationClient.ts`(serverClient/doctorToken
+   미import, 소스 레벨 테스트로 고정), `src/screens/StationScreen.tsx`
+   (키오스크), `#station` / 1회용 `#station-setup=` 라우트.
+7. **QR** — `qrcode` 의존성 추가(프로덕션 취약점 0건),
+   `FollowUpQrCode.tsx`가 **텍스트로 이미 보이는 그 opaque 링크만**
+   인코딩. 클라이언트에서만 생성(서버가 이미지를 저장하지 않음).
+8. **접수 UI** — 전달 방식 선택 → 태블릿 배정/QR/대필 안내/내원 전 링크
+   분기, 태블릿 관리 패널, 재진 큐 행에 전달 방식·태블릿명·대필 표시.
+
+### 이번 라운드에 실제 브라우저 QA가 잡은 진짜 버그 1건
+`x-station-credential`이 CORS preflight의 `Access-Control-Allow-Headers`
+에 없어서 **브라우저에서만** 스테이션 폴링이 전부 차단되고 있었다(HTTP
+레벨 테스트는 node fetch라 preflight를 하지 않아 통과했다). 헤드리스
+브라우저 E2E가 아니었으면 배포 후에야 발견됐을 종류의 버그다.
+
+`tests/station.spec.mjs`(신규, 55 assertion, `test:all`에 편입). 실제
+헤드리스 브라우저 QA 2종: 재진 39개 체크 + 스테이션 26개 체크 전부 통과.
 
 ## Completed — Round 7 (round 6 리뷰 3차 엔지니어링 수정, 이번 세션)
 "Round 6 re-review"가 지적한 3개 항목을 전부 수정했다. 새 임상
@@ -406,6 +476,21 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   판단이라 이 세션이 자체적으로 해소할 수 없는 항목이며, 차단이 아니라
   다음 human action이다.
 
+## Relevant Files (round 8 신규/주요 변경)
+- `server/stationStore.js`(신규), `server/followUpSessionStore.js`
+  (delivery_mode, patient_started_at, markStarted), `server/store.js`
+  (assignRevisitToStation/completeStationAssignment, 큐 운영 메타데이터),
+  `server/microFollowUpStore.js`(inputProvenance), `server/index.js`
+  (스테이션 라우트 6개 + CORS allow-headers에 x-station-credential).
+- `src/lib/stationClient.ts`(신규), `src/screens/StationScreen.tsx`(신규),
+  `src/doctor/workspace/FollowUpQrCode.tsx`(신규), `src/App.tsx`
+  (#station / #station-setup 라우트), `src/doctor/DoctorView.tsx`(접수
+  UI), `src/doctor/workspace/followUpSession.ts`(DeliveryMode/
+  InputProvenance/StationInfo 타입), `src/lib/serverClient.ts`(스테이션
+  API), `src/doctor/doctor.css` + `src/styles.css`(키오스크/스테이션).
+- `tests/station.spec.mjs`(신규, 55 assertion), `package.json`
+  (`test:station`, `qrcode` 의존성).
+
 ## Relevant Files (round 7 신규/주요 변경)
 - `server/followUpSessionStore.js`(`currentPointerHash`/
   `withPointerAuthority` 신규, `resolveToken`/`consumeTokenWithAction`이
@@ -507,6 +592,22 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 8 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(둘 다 성공, qrcode 포함),
+  `npm run test:all`(전체 green — 신규 `tests/station.spec.mjs` 55
+  assertion 포함), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+  passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+  'src/spec/*Adapter.ts'`(empty).
+- **Round 8 실제 헤드리스 브라우저 E2E QA 2종**: 재진 링크 흐름 39개
+  체크 + 스테이션 흐름 26개 체크 전부 통과. 스테이션 QA가 검증한 것 —
+  직원이 태블릿 등록 → 1회용 페어링 링크를 별도 브라우저 페이지(태블릿
+  역할, portrait 800×1280)에서 열어 credential 저장 + URL에서 즉시 제거
+  → 대기 화면에 환자 식별정보 없음 → 직원이 기존 환자를 그 태블릿에 배정
+  → 태블릿이 폴링으로 받아 질문 표시(그 환자의 이전 추적 항목만, 원장
+  최종판단·환자 이름 없음) → 환자 제출 → 감사합니다 → 자동으로 대기
+  화면 복귀 → 새로고침해도 완료된 답변이 되살아나지 않음 → 다른 환자를
+  배정해도 이전 환자 데이터가 전혀 남지 않음 → 재진 큐에 전달 방식/
+  태블릿명 표시 → PERSONAL_QR 모드가 실제 QR 이미지를 렌더.
 - **Round 7 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
   test:all`(전체 green — `tests/follow-up-session.spec.mjs` 158
@@ -610,8 +711,8 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 6 re-review의 3개 항목이 전부 수정되었으니 review
-   author(Gomars93)가 새 HEAD를 재확인.
+2. round 8(전달 채널 무관 Micro Follow-up + 원내 태블릿)이 구현되었으니
+   review author(Gomars93)가 새 HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
 4. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

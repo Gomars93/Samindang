@@ -123,7 +123,14 @@ export function createApp({
     const origin = req.headers.origin
     const headers = {
       'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
-      'access-control-allow-headers': 'content-type,x-doctor-token',
+      // x-station-credential (round 8) is the clinic tablet's own device
+      // header. It must be listed here or the browser's preflight blocks
+      // the station's poll outright -- found by real headless-browser QA,
+      // which the HTTP-level tests could not catch (node's fetch does not
+      // preflight). Listing it is not itself a privilege: the station
+      // routes still verify the credential against its stored hash, and
+      // the doctor routes ignore this header entirely.
+      'access-control-allow-headers': 'content-type,x-doctor-token,x-station-credential',
     }
     if (doctorRoute) {
       // 원장 라우트는 절대 임의 origin을 반사하지 않는다 — 허용 목록/localhost일

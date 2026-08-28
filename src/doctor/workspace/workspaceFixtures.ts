@@ -29,6 +29,7 @@ import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import type { EvidenceItem } from './supportEngine'
 import type { ClinicianObservationItem } from './clinicianObservation'
+import type { RehabSuggestion } from './rehabSuggestion'
 
 const emptyResponses = (): Responses => Object.fromEntries(ALL_QUESTIONS.map((q) => [q.id, null]))
 
@@ -150,6 +151,24 @@ const PAIN_3_EVIDENCE: EvidenceItem[] = [
   { id: 'p3-e3', text: '회전근개 객관적 근력저하 아직 미확정', kind: 'UNKNOWN', provenance: 'OBSERVED' },
 ]
 
+// Round 3 Phase I: SYNTHETIC-only illustration of the RehabSuggestion
+// framework's shape. Not a clinical mapping (see rehabSuggestion.ts header)
+// -- production RehabSuggestion[] stays empty until an approved rule
+// exists; this example never ships to a real submission.
+const PAIN_1_REHAB: RehabSuggestion[] = [
+  {
+    id: 'p1-rehab-core',
+    title: '(예시) 코어 안정화 홈 운동',
+    goal: '(예시) 체간 안정성 향상',
+    rationale: '(예시) 단순 기계적 요통 소견에서 흔히 고려되는 홈 운동 항목의 표시 형태 예시',
+    sourceFacts: [{ text: '단순 기계적 요통 소견(원장 최종 판단)', provenance: 'FINAL_ASSESSMENT' }],
+    contraindicationFacts: [],
+    source: 'SUGGESTED',
+    status: 'SUGGESTED',
+    clinicianFinalInstruction: '',
+  },
+]
+
 export const PAIN_SCENARIO_1: WorkspaceScenario = {
   id: 'pain-1-mechanical-lbp',
   label: 'SYNTHETIC · 단순 기계적 요통',
@@ -180,7 +199,7 @@ export const PAIN_SCENARIO_1: WorkspaceScenario = {
     LBP_13: 'A_LOT',
     LBP_14: 'A_LOT',
   }),
-  synthetic: { examSuggestions: PAIN_1_EXAMS, evidence: [] },
+  synthetic: { examSuggestions: PAIN_1_EXAMS, evidence: [], rehabSuggestions: PAIN_1_REHAB },
 }
 
 export const PAIN_SCENARIO_2: WorkspaceScenario = {

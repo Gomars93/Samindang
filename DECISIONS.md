@@ -300,3 +300,52 @@ Round 1에서 원장이 입력하는 워크스페이스 상태(검사 결과, �
   최종 판단)와 `ClinicianJudgment`(명리 감사 기록)는 여전히 서로 다른
   두 레코드 필드로 남는다 — 하나로 합칠지는 이번 라운드 스코프 밖의
   별도 설계 결정이다.
+
+## 2026-08-28 — Micro Follow-up(PR #24 round 3 Phase D): 환자 태블릿
+직접 제출 라우트를 만들지 않고 doctor 인증 라우트로만 남김
+
+### Context
+North Star(`docs/CLINICAL_OS_NORTH_STAR.md`)의 Micro Follow-up 단계는
+"재진 환자가 태블릿에서 30-60초 짧은 체크인에 답한다"는 여정을 전제한다.
+데이터 모델(`src/doctor/workspace/microFollowUp.ts`)과 서버 저장소
+(`server/microFollowUpStore.js`)까지는 구현했지만, 이 서버의 기존 모든
+라우트(Recorder 워크스테이션의 POST 포함)는 예외 없이 doctor 토큰을
+요구하고, 태블릿 앱(`src/App.tsx`)은 그 토큰을 가진 적이 전혀 없다
+(패턴이 이미 테스트로 보장되어 있었다 — "patient App.tsx never
+references listSubmissions/getSubmission"). 재진 환자가 실제로 태블릿
+에서 직접 이 질문에 답하게 하려면, 태블릿에 doctor-token 접근을 새로
+허용하거나(기존 보안 경계 확장) 또는 URL 파라미터/QR/lookup 토큰 같은
+새 환자 식별 체계를 만들어야 한다(새 신원 메커니즘 발명).
+
+### Decision
+`POST`/`GET /api/visits/:id/micro-follow-up` 두 라우트 모두 기존 라우트
+와 동일하게 `requireDoctor` + Origin allowlist 가드를 그대로 적용했다.
+태블릿에서 직접 호출하는 무인증/약한인증 경로는 만들지 않았다. 지금은
+원장/직원이 인증된 세션에서 환자 답변을 대신 입력하는 것만 가능하다.
+
+### Reason
+"환자 식별을 이름/전화/생년월일로 자동 매칭하지 않는다"는 이 저장소의
+절대 원칙(`visitStore.js` 최상단 주석)과 동일한 무게의 문제다 — 어떤
+방식으로 태블릿에 patient_id/visit_id를 안전하게 넘길지는 보안/제품
+결정이지 엔지니어링 편의로 정할 수 있는 문제가 아니다. 새 메커니즘을
+임의로 발명하는 대신, 기존 doctor 인증 경계를 그대로 유지하고 이 gap을
+`microFollowUp.ts` 파일 상단 주석과 `HANDOFF.md`의 OPERATIONAL
+INTEGRATION REQUIRED 항목으로 정직하게 남겼다.
+
+### Alternatives Considered
+- 태블릿에 방문별 1회용 URL 토큰(예: `/?visit=<random>`)을 발급 — 토큰
+  발급/만료/재사용 방지 정책이 전부 새로 필요한 보안 설계라 기각(이번
+  라운드는 이미 존재하는 identity 원칙을 확장하는 것까지만 권한이 있음).
+- 태블릿 앱에 doctor 토큰을 직접 심어 매 방문 진료실에서 입력 — 토큰이
+  태블릿에 남는 순간 다른 모든 doctor-guarded 라우트(제출 목록, EMR
+  등)에도 태블릿이 접근 가능해져 버려, 이 기능 하나를 위해 훨씬 넓은
+  보안 경계를 여는 셈이라 기각.
+
+### Consequences
+- (+) 기존 보안 모델을 전혀 흔들지 않았다 — 이 라운드가 만든 새 라우트
+  2개도 기존 13개(이제 14개)와 정확히 같은 가드를 쓴다는 것이 서버
+  테스트로 증명됨.
+- (+) 데이터 모델/저장소/원장 UI(`MicroFollowUpCard.tsx`)는 전부
+  완성되어 있어, 인증 경로 결정만 나면 바로 이어붙일 수 있다.
+- (−) 지금은 "환자가 직접 태블릿에서 답한다"는 North Star의 핵심
+  전제가 실제로 동작하지 않는다 — 원장/직원 대리 입력만 가능.

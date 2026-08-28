@@ -163,8 +163,15 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
     const isCurrentVisitClear = parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear'
     const isCurrentVisitRead =
       parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2 && req.method === 'GET'
+    // Round 3 Phase C(longitudinal linkage): GET /api/patients/:id/history is
+    // doctor-only exactly like every route above -- must share the same
+    // Origin-allowlist defense-in-depth layer, not just requireDoctor()'s
+    // IP+token check inside the handler.
+    const isPatientHistoryRoute =
+      parts[1] === 'patients' && parts.length === 4 && parts[3] === 'history' && req.method === 'GET'
     const doctorRoute =
-      parts[0] === 'api' && (isSubmissionsRoute || isVisitsRoute || isCurrentVisitClear || isCurrentVisitRead)
+      parts[0] === 'api' &&
+      (isSubmissionsRoute || isVisitsRoute || isCurrentVisitClear || isCurrentVisitRead || isPatientHistoryRoute)
     const cors = corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
@@ -343,6 +350,26 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
         }
       } else if (
         parts[0] === 'api' &&
+        parts[1] === 'patients' &&
+        parts.length === 4 &&
+        parts[3] === 'history' &&
+        req.method === 'GET'
+      ) {
+        // Round 3 Phase C(longitudinal linkage): exact patient_id match
+        // only (from the URL path, already-existing explicit id -- never
+        // derived from name/phone/DOB). Doctor-only, same guard as every
+        // other read route here.
+        const patientId = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const excludeVisitId = url.searchParams.get('excludeVisitId') ?? undefined
+          const history = await store.getPatientHistory(patientId, excludeVisitId)
+          bytes = sendJson(req, res, 200, history, cors)
+        }
+      } else if (
+        parts[0] === 'api' &&
         parts[1] === 'visits' &&
         parts.length === 4 &&
         parts[3] === 'activate' &&
@@ -480,6 +507,73 @@ export function createApp({ dataDir, doctorToken, allowedOrigins, retentionDays 
             bytes = sendJson(req, res, 200, { results }, cors)
           }
         }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'micro-follow-up' &&
+        req.method === 'POST'
+      ) {
+        // Round 3 Phase D(micro follow-up). Doctor-guarded like every other
+        // route here, including the Recorder's own POST above -- see
+        // microFollowUp.ts's OPERATIONAL INTEGRATION REQUIRED note for why
+        // this is not yet reachable directly from the patient tablet.
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const body = await readBody(req)
+            const targetRatings = Array.isArray(body?.targetRatings)
+              ? body.targetRatings
+                  .filter((t) => t && typeof t === 'object')
+                  .map((t) => ({
+                    targetId: typeof t.targetId === 'string' ? t.targetId : '',
+                    label: typeof t.label === 'string' ? t.label : '',
+                    patientReportedValue: typeof t.patientReportedValue === 'string' ? t.patientReportedValue : '',
+                  }))
+              : []
+            const result = await store.saveMicroFollowUpResponse({
+              visit_id: id,
+              patient_id: visit.patient_id,
+              targetRatings,
+              overallChange: typeof body?.overallChange === 'string' ? body.overallChange : '',
+              newSymptomReported: Boolean(body?.newSymptomReported),
+              newSymptomNote: typeof body?.newSymptomNote === 'string' ? body.newSymptomNote : '',
+              adverseEffectReported: Boolean(body?.adverseEffectReported),
+              adverseEffectNote: typeof body?.adverseEffectNote === 'string' ? body.adverseEffectNote : '',
+            })
+            status = 201
+            await safeAudit({ event: 'micro_follow_up_saved', visit_id: id, actor: 'doctor' })
+            bytes = sendJson(req, res, 201, result, cors)
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'visits' &&
+        parts.length === 4 &&
+        parts[3] === 'micro-follow-up' &&
+        req.method === 'GET'
+      ) {
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const visit = await store.getVisit(id)
+          if (!visit) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const result = await store.getMicroFollowUpResponse(id)
+            bytes = sendJson(req, res, 200, { response: result }, cors)
+          }
+        }
       } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear' && req.method === 'POST') {
         if (!requireDoctor(req)) {
           status = 403
@@ -576,6 +670,7 @@ async function checkDataDirsWritable(dataDir) {
     submissions_dir: path.resolve(dataDir),
     visits_dir: path.resolve(dataDir, '..', 'visits'),
     recorder_results_dir: path.resolve(dataDir, '..', 'recorder-results'),
+    micro_follow_up_dir: path.resolve(dataDir, '..', 'micro-follow-up'),
   }
   for (const [label, dir] of Object.entries(dirs)) {
     const probe = path.join(dir, '.write-probe')

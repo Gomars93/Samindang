@@ -10,20 +10,26 @@
  * loses or fabricates information.
  *
  * Round 2 Phase 2 (persistence): this component is now the single owner
- * of every piece of clinician-entered workspace state (exam results,
- * herbal pattern-candidate review, clinician observations, both Final
- * Assessment cards, both follow-up target lists) instead of PainWorkspace/
- * HerbalWorkspace each holding their own local useState. Owning it here is
- * what makes debounced save-to-server possible from one place, and is what
- * makes "switch record -> old record's edits never leak into the new one"
- * a single well-tested reset path instead of N separate ones.
+ * of every piece of clinician-entered workspace state instead of
+ * PainWorkspace/HerbalWorkspace each holding their own local useState.
+ * Owning it here is what makes debounced save-to-server possible from one
+ * place, and is what makes "switch record -> old record's edits never
+ * leak into the new one" a single well-tested reset path instead of N
+ * separate ones.
  *
  * Round 2 Phase 5 (profile override UX): the segmented control always
  * shows which profile was auto-derived ("자동 분류: ...") separately from
  * which one is currently on screen, and manual overrides get an explicit,
- * dismissable "수동 보기" banner naming the auto-derived profile — a
- * clinician glancing at the screen should never mistake "I clicked to a
- * different tab" for "the system reclassified this patient."
+ * dismissable "수동 보기" banner naming the auto-derived profile.
+ *
+ * Round 3: adds Care Plan (Phase A), NextReassessmentPlan (Phase B),
+ * Structured Reassessment (Phase E) with an explicit per-item "재검 항목으로
+ * 추가" promotion from an already-recorded exam/observation, a Rehab
+ * suggestion framework (Phase I, empty in production), an Additional
+ * Concern compact card + manual flag (Phase H, never mutates routing), a
+ * Clinical Loop Status cue (Phase G), and prior-visit RAW history display
+ * (Phase C, `priorVisits` is fetched by the caller -- this component stays
+ * free of network code, same pattern as everything else here).
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { CommonSafetyBanner } from '../CommonSafetyBanner'
@@ -37,6 +43,10 @@ import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import { defaultClinicianObservations, type ClinicianObservationItem } from './clinicianObservation'
 import type { EvidenceItem } from './supportEngine'
+import type { RehabSuggestion } from './rehabSuggestion'
+import { reassessmentExamItemFromPrevious } from './reassessmentExam'
+import type { PatientHistoryResult } from './longitudinal'
+import type { MicroFollowUpResponse } from './microFollowUp'
 import {
   deserializeWorkspaceState,
   emptyWorkspaceState,
@@ -49,6 +59,7 @@ export type WorkspaceSyntheticData = {
   evidence?: EvidenceItem[]
   patternCandidates?: HerbalPatternCandidate[]
   clinicianObservations?: ClinicianObservationItem[]
+  rehabSuggestions?: RehabSuggestion[]
 }
 
 const PROFILE_ORDER: DoctorViewProfile[] = ['pain', 'herbal', 'mixed']
@@ -67,6 +78,7 @@ function seedWorkspaceState(
     painExamSuggestions: synthetic?.examSuggestions ?? [],
     herbalPatternCandidates: synthetic?.patternCandidates ?? [],
     herbalClinicianObservations: synthetic?.clinicianObservations ?? defaultClinicianObservations(),
+    painRehabSuggestions: synthetic?.rehabSuggestions ?? [],
   }
 }
 
@@ -78,6 +90,8 @@ export function DoctorWorkspace({
   submissionId,
   initialWorkspaceState,
   onSaveWorkspace,
+  priorVisits,
+  microFollowUpResponse,
 }: {
   payload: DoctorPayload
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
@@ -91,6 +105,10 @@ export function DoctorWorkspace({
   submissionId?: string
   initialWorkspaceState?: WorkspaceState | null
   onSaveWorkspace?: (state: WorkspaceState) => Promise<{ ok: boolean }>
+  /** Round 3 Phase C: already-fetched prior-visit RAW history for this exact patient_id, or undefined/null when unavailable (fixtures mode, no server, or nothing prior). */
+  priorVisits?: PatientHistoryResult | null
+  /** Round 3 Phase D: already-fetched micro follow-up response for THIS visit, or undefined/null when unavailable/not yet answered. */
+  microFollowUpResponse?: MicroFollowUpResponse | null
 }) {
   const basis = deriveViewProfile(payload)
   const [profileOverride, setProfileOverride] = useState<DoctorViewProfile | null>(null)
@@ -165,6 +183,32 @@ export function DoctorWorkspace({
   const activeProfile = profileOverride ?? basis.derived
   const isManualOverride = profileOverride !== null && profileOverride !== basis.derived
 
+  function addPainExamToReassessment(item: PhysicalExamSuggestion) {
+    setWorkspaceState((s) => {
+      if (s.painReassessment.items.some((i) => i.id === `reassess_${item.id}`)) return s
+      const promoted = reassessmentExamItemFromPrevious(`reassess_${item.id}`, item.title, {
+        status: item.result.status,
+        laterality: item.result.laterality,
+        note: item.result.note,
+        recordedAt: item.result.recordedAt,
+      })
+      return { ...s, painReassessment: { ...s.painReassessment, items: [...s.painReassessment.items, promoted] } }
+    })
+  }
+
+  function addHerbalObservationToReassessment(item: ClinicianObservationItem) {
+    setWorkspaceState((s) => {
+      if (s.herbalReassessment.items.some((i) => i.id === `reassess_${item.id}`)) return s
+      const promoted = reassessmentExamItemFromPrevious(`reassess_${item.id}`, item.title, {
+        status: 'UNCLEAR',
+        laterality: null,
+        note: item.value,
+        recordedAt: item.recordedAt,
+      })
+      return { ...s, herbalReassessment: { ...s.herbalReassessment, items: [...s.herbalReassessment.items, promoted] } }
+    })
+  }
+
   const painNode = (
     <PainWorkspace
       payload={payload}
@@ -177,11 +221,29 @@ export function DoctorWorkspace({
           painExamSuggestions: s.painExamSuggestions.map((i) => (i.id === next.id ? next : i)),
         }))
       }
+      onAddExamToReassessment={addPainExamToReassessment}
       evidence={synthetic?.evidence}
       finalAssessment={workspaceState.painFinalAssessment}
       onChangeFinalAssessment={(next) => setWorkspaceState((s) => ({ ...s, painFinalAssessment: next }))}
       followUpTargets={workspaceState.painFollowUpTargets}
       onChangeFollowUpTargets={(next) => setWorkspaceState((s) => ({ ...s, painFollowUpTargets: next }))}
+      carePlan={workspaceState.painCarePlan}
+      onChangeCarePlan={(next) => setWorkspaceState((s) => ({ ...s, painCarePlan: next }))}
+      nextReassessmentPlan={workspaceState.nextReassessmentPlan}
+      onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
+      reassessment={workspaceState.painReassessment}
+      onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, painReassessment: next }))}
+      rehabSuggestions={workspaceState.painRehabSuggestions}
+      onChangeRehabSuggestion={(next) =>
+        setWorkspaceState((s) => ({
+          ...s,
+          painRehabSuggestions: s.painRehabSuggestions.map((r) => (r.id === next.id ? next : r)),
+        }))
+      }
+      additionalConcernPromotion={workspaceState.additionalConcernPromotion}
+      onChangeAdditionalConcernPromotion={(next) => setWorkspaceState((s) => ({ ...s, additionalConcernPromotion: next }))}
+      priorVisits={priorVisits}
+      microFollowUpResponse={microFollowUpResponse}
     />
   )
   const herbalNode = (
@@ -201,10 +263,19 @@ export function DoctorWorkspace({
           herbalClinicianObservations: s.herbalClinicianObservations.map((o) => (o.id === next.id ? next : o)),
         }))
       }
+      onAddObservationToReassessment={addHerbalObservationToReassessment}
       finalAssessment={workspaceState.herbalFinalAssessment}
       onChangeFinalAssessment={(next) => setWorkspaceState((s) => ({ ...s, herbalFinalAssessment: next }))}
       followUpTargets={workspaceState.herbalFollowUpTargets}
       onChangeFollowUpTargets={(next) => setWorkspaceState((s) => ({ ...s, herbalFollowUpTargets: next }))}
+      carePlan={workspaceState.herbalCarePlan}
+      onChangeCarePlan={(next) => setWorkspaceState((s) => ({ ...s, herbalCarePlan: next }))}
+      nextReassessmentPlan={workspaceState.nextReassessmentPlan}
+      onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
+      reassessment={workspaceState.herbalReassessment}
+      onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, herbalReassessment: next }))}
+      priorVisits={priorVisits}
+      microFollowUpResponse={microFollowUpResponse}
     />
   )
 
@@ -326,7 +397,7 @@ export function DoctorWorkspace({
           {saveStatus === 'saving' && '저장 중…'}
           {saveStatus === 'saved' && '저장됨'}
           {saveStatus === 'error' && '저장 실패 — 다시 시도해주세요 (아래 내용은 아직 서버에 반영되지 않았습니다)'}
-          {saveStatus === 'idle' && ' '}
+          {saveStatus === 'idle' && ' '}
         </p>
       )}
     </div>

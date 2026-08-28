@@ -195,3 +195,73 @@ export type RecorderResult = {
 export function getRecorderResults(visitId: string): Promise<ServerResult<{ results: RecorderResult[] }>> {
   return request(`/api/visits/${encodeURIComponent(visitId)}/recorder-results`)
 }
+
+// Round 3 Phase D(micro follow-up). Wire shape from server/microFollowUpStore.js
+// mapped to src/doctor/workspace/microFollowUp.ts's MicroFollowUpResponse.
+// Both routes are doctor-guarded like every other route here -- see
+// microFollowUp.ts's OPERATIONAL INTEGRATION REQUIRED note for why the
+// patient tablet cannot call these directly today.
+export function getMicroFollowUpResponse(
+  visitId: string,
+): Promise<ServerResult<{ response: import('../doctor/workspace/microFollowUp').MicroFollowUpResponse | null }>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}/micro-follow-up`)
+}
+
+export function saveMicroFollowUpResponse(
+  visitId: string,
+  response: Pick<
+    import('../doctor/workspace/microFollowUp').MicroFollowUpResponse,
+    'targetRatings' | 'overallChange' | 'newSymptomReported' | 'newSymptomNote' | 'adverseEffectReported' | 'adverseEffectNote'
+  >,
+): Promise<ServerResult<import('../doctor/workspace/microFollowUp').MicroFollowUpResponse>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}/micro-follow-up`, {
+    method: 'POST',
+    body: JSON.stringify(response),
+  })
+}
+
+// Round 3 Phase C(longitudinal linkage). Wire shape from
+// server/store.js's getPatientHistory (snake_case) mapped to the client's
+// PatientHistoryResult (camelCase, src/doctor/workspace/longitudinal.ts).
+// RAW facts only -- no computed improvement/percentage, ever.
+type PatientHistoryWire = {
+  patient_id: string | null
+  visits: Array<{
+    visit_id: string
+    submission_id: string | null
+    created_at: string
+    primary_concern: string | null
+    pain_follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
+    herbal_follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
+    pain_final_assessment_summary: string | null
+    herbal_final_assessment_summary: string | null
+    next_reassessment_plan: import('../doctor/workspace/finalAssessment').NextReassessmentPlan | null
+  }>
+}
+
+export function getPatientHistory(
+  patientId: string,
+  excludeVisitId?: string,
+): Promise<ServerResult<import('../doctor/workspace/longitudinal').PatientHistoryResult>> {
+  const qs = excludeVisitId ? `?excludeVisitId=${encodeURIComponent(excludeVisitId)}` : ''
+  return request<PatientHistoryWire>(`/api/patients/${encodeURIComponent(patientId)}/history${qs}`).then((result) => {
+    if (!result.ok) return result
+    return {
+      ok: true,
+      data: {
+        patientId: result.data.patient_id ?? patientId,
+        visits: result.data.visits.map((v) => ({
+          visitId: v.visit_id,
+          submissionId: v.submission_id,
+          createdAt: v.created_at,
+          primaryConcern: v.primary_concern,
+          painFollowUpTargets: v.pain_follow_up_targets,
+          herbalFollowUpTargets: v.herbal_follow_up_targets,
+          painFinalAssessmentSummary: v.pain_final_assessment_summary,
+          herbalFinalAssessmentSummary: v.herbal_final_assessment_summary,
+          nextReassessmentPlan: v.next_reassessment_plan,
+        })),
+      },
+    }
+  })
+}

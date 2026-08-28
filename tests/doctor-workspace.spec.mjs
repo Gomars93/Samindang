@@ -48,6 +48,18 @@ for (const s of WORKSPACE_SCENARIOS) {
   })
 }
 
+// Round 3 QA fix: real headless browser QA caught REPEAT_VISIT_AUTO_COMPARE_STATUS
+// literally containing the English internal-tracking phrase "OPERATIONAL
+// INTEGRATION REQUIRED", rendered straight into the clinician-facing page
+// (FollowUpTargetPicker.tsx). Guard against this whole class of bug across
+// every scenario, not just the one that happened to be checked before.
+for (const s of WORKSPACE_SCENARIOS) {
+  test(`scenario "${s.label}" (${s.kind}) never renders the internal marker "OPERATIONAL INTEGRATION REQUIRED"`, () => {
+    const html = render(s)
+    assert.ok(!html.includes('OPERATIONAL INTEGRATION REQUIRED'))
+  })
+}
+
 test('exactly 7 scenarios exist (pain x3, herbal x3, mixed x1)', () => {
   assert.equal(WORKSPACE_SCENARIOS.length, 7)
   assert.equal(WORKSPACE_SCENARIOS.filter((s) => s.kind === 'pain').length, 3)
@@ -168,10 +180,11 @@ test('profile switcher exposes role="group" with aria-pressed buttons', () => {
 })
 
 // ---------- 6. follow-up / reassessment ----------
-test('reassessment picker shows 재평가 대상 and the explicit OPERATIONAL INTEGRATION REQUIRED status (no fake repeat-visit comparison)', () => {
+test('reassessment picker shows 재평가 대상 and an explicit pure-Korean "no automatic comparison" status (no fake repeat-visit judgment, and no internal English tracking phrase leaking into the clinician UI)', () => {
   const html = render(PAIN_SCENARIO_1)
   assert.ok(html.includes('재평가 대상'))
-  assert.ok(html.includes('재진 자동 비교: OPERATIONAL INTEGRATION REQUIRED'))
+  assert.ok(html.includes('재진 자동 비교: 자동 판단 없음'))
+  assert.ok(!html.includes('OPERATIONAL INTEGRATION REQUIRED'))
 })
 
 // ---------- 6b. round 2 Phase 2/3/5/8/14: persistence, conditional sections, override UX, adopt-to-final, tab a11y ----------

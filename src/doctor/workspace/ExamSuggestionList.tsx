@@ -8,9 +8,12 @@ import { groupExamSuggestions, type PhysicalExamSuggestion } from './examSuggest
 export function ExamSuggestionList({
   items,
   onChangeItem,
+  onAddToReassessment,
 }: {
   items: PhysicalExamSuggestion[]
   onChangeItem: (next: PhysicalExamSuggestion) => void
+  /** Round 3 Phase E: optional per-item "재검 항목으로 추가" promotion into Structured Reassessment. */
+  onAddToReassessment?: (item: PhysicalExamSuggestion) => void
 }) {
   if (items.length === 0) {
     return <p className="workspace__empty">이번 방문에 제안된 확인 항목이 없습니다.</p>
@@ -30,7 +33,12 @@ export function ExamSuggestionList({
         <div className="workspace__examGroup">
           <h4>반드시 확인</h4>
           {mustCheck.map((item) => (
-            <ExamSuggestionCard key={item.id} item={item} onChange={onChangeItem} />
+            <ExamSuggestionCard
+              key={item.id}
+              item={item}
+              onChange={onChangeItem}
+              onAddToReassessment={onAddToReassessment ? () => onAddToReassessment(item) : undefined}
+            />
           ))}
         </div>
       )}
@@ -39,7 +47,12 @@ export function ExamSuggestionList({
         <div className="workspace__examGroup">
           <h4>문진에 따라 추가 확인</h4>
           {contextual.map((item) => (
-            <ExamSuggestionCard key={item.id} item={item} onChange={onChangeItem} />
+            <ExamSuggestionCard
+              key={item.id}
+              item={item}
+              onChange={onChangeItem}
+              onAddToReassessment={onAddToReassessment ? () => onAddToReassessment(item) : undefined}
+            />
           ))}
         </div>
       )}

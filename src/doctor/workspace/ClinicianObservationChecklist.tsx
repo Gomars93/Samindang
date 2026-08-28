@@ -11,9 +11,12 @@ import {
 export function ClinicianObservationChecklist({
   items,
   onChangeItem,
+  onAddToReassessment,
 }: {
   items: ClinicianObservationItem[]
   onChangeItem: (next: ClinicianObservationItem) => void
+  /** Round 3 Phase E: optional per-item "재검 항목으로 추가" promotion into Structured Reassessment. */
+  onAddToReassessment?: (item: ClinicianObservationItem) => void
 }) {
   if (items.length === 0) {
     return <p className="workspace__empty">오늘 확인할 항목이 없습니다.</p>
@@ -53,6 +56,15 @@ export function ClinicianObservationChecklist({
           >
             {item.checked ? '확인됨' : '미확인'}
           </span>
+          {onAddToReassessment && item.checked && (
+            <button
+              type="button"
+              className="workspace__adoptBtn workspace__observationRow__adopt"
+              onClick={() => onAddToReassessment(item)}
+            >
+              재검 항목으로 추가 →
+            </button>
+          )}
         </div>
       ))}
     </div>

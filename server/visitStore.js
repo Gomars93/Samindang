@@ -146,5 +146,27 @@ export function createVisitStore(visitsDir) {
     return records
   }
 
-  return { createVisit, getVisit, listVisits, visitExistsForPatient, setRecorderPointer }
+  // Round 3 Phase C(longitudinal linkage): 정확히 이 patient_id와 일치하는
+  // visit만 돌려준다 — 이름/전화/생년월일 기반 매칭은 이 함수 어디에도
+  // 없다(파일에 이미 존재하는 patient_id 문자열의 엄격한 동등 비교뿐).
+  // patientId가 falsy면 빈 배열(안전한 기본값).
+  async function listVisitsForPatient(patientId) {
+    if (!patientId) return []
+    const files = await listFiles()
+    const records = []
+    for (const f of files) {
+      try {
+        const v = JSON.parse(await readFile(path.join(visitsDir, f), 'utf8'))
+        if (v.patient_id === patientId) {
+          records.push({ id: v.id, patient_id: v.patient_id, created_at: v.created_at, submission_id: v.submission_id })
+        }
+      } catch {
+        // 손상되거나 쓰는 중인 파일은 건너뛴다
+      }
+    }
+    records.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    return records
+  }
+
+  return { createVisit, getVisit, listVisits, listVisitsForPatient, visitExistsForPatient, setRecorderPointer }
 }

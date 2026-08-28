@@ -860,6 +860,324 @@
   color: var(--danger);
 }
 
+/* ---------- round 3: care plan (Phase A/J) ---------- */
+.workspace__carePlan {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.workspace__carePlan__badge {
+  display: inline-block;
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  margin-bottom: 12px;
+}
+
+/* ---------- round 3: patient-facing care plan preview (Phase J) ---------- */
+.workspace__patientPreview {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+
+.workspace__patientPreview__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.workspace__patientPreview__head h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.workspace__patientPreview__badge {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.workspace__patientPreview__text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+}
+
+.workspace__patientPreview__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* ---------- round 3: next reassessment plan (Phase B) ---------- */
+.workspace__reassessPlan {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+
+.workspace__reassessPlan h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.workspace__reassessPlan__hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspace__reassessPlan__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.workspace__reassessPlan__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.workspace__reassessPlan__field input,
+.workspace__reassessPlan__field textarea {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* ---------- round 3: prior visit RAW history (Phase C) ---------- */
+.workspace__priorVisit {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 18px;
+}
+
+.workspace__priorVisit > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  padding: 6px 0;
+}
+
+.workspace__priorVisit__hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspace__priorVisit__body {
+  padding: 6px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workspace__priorVisit__date {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__priorVisit__targets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace__priorVisit__targetRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text);
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.workspace__priorVisit__assessment {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* ---------- round 3: additional concern presentation (Phase H) ---------- */
+.workspace__additionalConcern {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+
+.workspace__additionalConcern__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.workspace__additionalConcern__head h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--primary);
+}
+
+.workspace__additionalConcern__role {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* ---------- round 3: clinical loop status (Phase G) ---------- */
+.workspace__loopStatus {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 8px 4px;
+  font-size: 12px;
+}
+
+.workspace__loopStatus__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+}
+
+.workspace__loopStatus__item--done {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+/* ---------- round 3: promotion actions (Phase E) ---------- */
+.workspace__adoptBtn {
+  border: 1px solid var(--primary);
+  background: transparent;
+  color: var(--primary);
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 30px;
+}
+
+.workspace__observationRow__adopt {
+  margin-top: 4px;
+}
+
+/* ---------- round 3: micro follow-up (Phase D) ---------- */
+.workspace__microFollowUp {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 18px;
+}
+
+.workspace__microFollowUp > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workspace__microFollowUp__flag {
+  display: inline-block;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.workspace__microFollowUp__hint {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspace__microFollowUp__body {
+  padding: 6px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace__microFollowUp__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace__microFollowUp__label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__microFollowUp__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text);
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.workspace__microFollowUp__line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.workspace__microFollowUp__line--alert {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 /* ---------- responsive: tablet landscape/portrait, desktop ---------- */
 @media (max-width: 1100px) {
   .workspace__heroGrid {

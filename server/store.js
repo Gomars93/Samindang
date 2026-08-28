@@ -6,6 +6,7 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import path from 'node:path'
 import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
+import { createMicroFollowUpStore } from './microFollowUpStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
@@ -47,6 +48,8 @@ export function createStore(dataDir) {
   const visits = createVisitStore(path.join(dataDir, '..', 'visits'))
   // recorder-results/는 submissions/의 또다른 형제 경로다(visits/와 같은 패턴).
   const recorderResults = createRecorderResultStore(path.join(dataDir, '..', 'recorder-results'))
+  // micro-follow-up/도 같은 형제 경로 패턴(round 3 Phase D).
+  const microFollowUp = createMicroFollowUpStore(path.join(dataDir, '..', 'micro-follow-up'))
 
   async function ensureDir() {
     await mkdir(dataDir, { recursive: true })
@@ -220,6 +223,40 @@ export function createStore(dataDir) {
     })
   }
 
+  // Round 3 Phase C(longitudinal linkage): 이 patient_id의 이전 방문들을
+  // RAW 값만 추려서 돌려준다 — 자동 호전/악화 판단이나 %계산은 절대 하지
+  // 않는다(그 해석 단계는 여전히 미구현, finalAssessment.ts 참고). 이름/
+  // 전화/생년월일 매칭은 여기 없다 — visits.listVisitsForPatient가 이미
+  // patient_id 정확히 일치만 반환한다. excludeVisitId는 지금 보고 있는
+  // 방문 자신을 "이전 방문" 목록에서 빼기 위한 것뿐, 신원 판단과 무관하다.
+  async function getPatientHistory(patientId, excludeVisitId) {
+    if (!patientId) return { patient_id: patientId ?? null, visits: [] }
+    const visitRecords = (await visits.listVisitsForPatient(patientId)).filter((v) => v.id !== excludeVisitId)
+
+    const summaries = []
+    for (const v of visitRecords) {
+      if (!v.submission_id) {
+        // 문진 없는 방문(미래의 재진 UI) -- 지금은 요약할 workspace가 없다.
+        continue
+      }
+      const record = await readRecord(v.submission_id)
+      if (!record) continue
+      const workspace = record.workspace ?? null
+      summaries.push({
+        visit_id: v.id,
+        submission_id: v.submission_id,
+        created_at: v.created_at,
+        primary_concern: record.submission?.metadata?.primary_concern ?? null,
+        pain_follow_up_targets: workspace?.painFollowUpTargets ?? [],
+        herbal_follow_up_targets: workspace?.herbalFollowUpTargets ?? [],
+        pain_final_assessment_summary: workspace?.painFinalAssessment?.finalWorkingAssessment || null,
+        herbal_final_assessment_summary: workspace?.herbalFinalAssessment?.finalPatternOrMechanism || null,
+        next_reassessment_plan: workspace?.nextReassessmentPlan ?? null,
+      })
+    }
+    return { patient_id: patientId, visits: summaries }
+  }
+
   // 보존기한(retention) 정리. days <= 0(또는 falsy)이면 아무것도 지우지 않는다
   // (SAMINDANG_RETENTION_DAYS=0 = 자동삭제 비활성화). 반환값은 삭제 건수뿐 —
   // 내용은 절대 로그로 남기지 않는다.
@@ -242,6 +279,8 @@ export function createStore(dataDir) {
     // recorder-results/(전사/구조화 노트)도 같은 보존기한을 적용한다 — 가장
     // 민감한 데이터가 submissions/보다 더 오래 남아있으면 안 된다.
     deleted += await recorderResults.cleanupOlderThan(days)
+    // micro-follow-up/(round 3 Phase D)도 동일하다.
+    deleted += await microFollowUp.cleanupOlderThan(days)
     return deleted
   }
 
@@ -255,6 +294,7 @@ export function createStore(dataDir) {
       deleted++
     }
     deleted += await recorderResults.purgeAll()
+    deleted += await microFollowUp.purgeAll()
     return deleted
   }
 
@@ -265,6 +305,7 @@ export function createStore(dataDir) {
     setStatus,
     saveJudgment,
     saveWorkspace,
+    getPatientHistory,
     cleanupOlderThan,
     purgeAll,
     createVisit: visits.createVisit,
@@ -273,6 +314,8 @@ export function createStore(dataDir) {
     visitExistsForPatient: visits.visitExistsForPatient,
     saveRecorderResult: recorderResults.saveResult,
     listRecorderResults: recorderResults.listResults,
+    saveMicroFollowUpResponse: microFollowUp.saveResponse,
+    getMicroFollowUpResponse: microFollowUp.getResponse,
     setVisitRecorderPointer: visits.setRecorderPointer,
   }
 }

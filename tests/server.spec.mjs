@@ -1217,6 +1217,211 @@ async function main() {
     }
   }
 
+  /* ---------------- longitudinal patient history (round 3 Phase C) ---------------- */
+  {
+    // The main `server`/`base` from the top-level try block was already
+    // stopped above (see the `finally` that closes it) -- this block needs
+    // its own live HTTP server, so it gets its own temp dir/server pair,
+    // same shape as the retention block above but with real HTTP calls.
+    const histRoot = await mkdtemp(path.join(tmpdir(), 'samindang-history-'))
+    const histDataDir = path.join(histRoot, 'submissions')
+    const { server: histServer, base: histBase } = await startServer(histDataDir)
+    try {
+    const histStore = createStore(histDataDir)
+
+    const emptyWorkspaceFor = (overrides) => ({
+      schema_version: '1.1.0',
+      painExamSuggestions: [],
+      painFinalAssessment: { finalWorkingAssessment: '', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: null },
+      painFollowUpTargets: [],
+      herbalPatternCandidates: [],
+      herbalClinicianObservations: [],
+      herbalFinalAssessment: { finalPatternOrMechanism: '', treatmentPrinciple: '', prescriptionPlanNote: '', symptomsToTrack: '', recordedAt: null },
+      herbalFollowUpTargets: [],
+      painCarePlan: { currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: '', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: '', recordedAt: null },
+      herbalCarePlan: { currentManagementGoal: '', medicationPlanNote: '', homeLifestyleManagement: '', symptomsToObserve: '', adverseEffectContactInstruction: '', nextVisitCheckItem: '', recordedAt: null },
+      nextReassessmentPlan: { status: 'UNSET', targetDate: '', afterVisitCount: null, note: '' },
+      painReassessment: { items: [], finalReassessmentNote: '', recordedAt: null },
+      herbalReassessment: { items: [], finalReassessmentNote: '', recordedAt: null },
+      painRehabSuggestions: [],
+      additionalConcernPromotion: { status: 'NOT_FLAGGED', clinicianNote: '', promotedAt: null },
+      updated_at: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    })
+
+    // Patient P's FIRST visit: a real submission with a workspace carrying
+    // follow-up targets / final assessment / a next-reassessment plan.
+    const subA = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-a', responses: {}, metadata: { primary_concern: '요통' } },
+      myungri: null,
+      patient_label: 'hist-patient-a',
+    })
+    const patientId = subA.patient_id
+    await histStore.saveWorkspace(
+      subA.id,
+      emptyWorkspaceFor({
+        painFinalAssessment: { finalWorkingAssessment: '단순 요통 1차 판단', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+        painFollowUpTargets: [{ id: 'ft1', label: 'LBP_12', baseline: '7', postTreatmentValue: '5' }],
+        nextReassessmentPlan: { status: 'DATE', targetDate: '2026-02-01', afterVisitCount: null, note: '2주 뒤 재검' },
+      }),
+    )
+
+    // Patient Q: a completely different patient/submission, used both as an
+    // "other patient" isolation check and as the underlying submission a
+    // second visit for patient P can point at (this codebase's tablet path
+    // always mints a fresh patient_id per submission -- see visitStore.js's
+    // identity-rule comment -- so a *returning* patient's actual follow-up
+    // questionnaire is not yet wired end to end; the visit-level linkage
+    // below stands in for that until that flow exists).
+    const subQ = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-q', responses: {}, metadata: { primary_concern: '어깨통증' } },
+      myungri: null,
+      patient_label: 'hist-patient-q',
+    })
+    await histStore.saveWorkspace(
+      subQ.id,
+      emptyWorkspaceFor({
+        painFinalAssessment: { finalWorkingAssessment: '환자 Q 전용 판단 -- 절대 P에게 노출되면 안 됨', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-05T00:00:00.000Z' },
+      }),
+    )
+
+    // Patient P's SECOND visit, pointing at a fresh submission of its own
+    // (subB) -- exercises the same patient_id appearing across two
+    // DIFFERENT submission records.
+    const subB = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-b', responses: {}, metadata: { primary_concern: '요통' } },
+      myungri: null,
+      patient_label: 'hist-patient-a-visit2',
+    })
+    await histStore.saveWorkspace(
+      subB.id,
+      emptyWorkspaceFor({
+        painFinalAssessment: { finalWorkingAssessment: '2차 방문 판단', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-02-01T00:00:00.000Z' },
+        painFollowUpTargets: [{ id: 'ft1', label: 'LBP_12', baseline: '5', postTreatmentValue: '3' }],
+      }),
+    )
+    const visitB = await histStore.createVisit({ patient_id: patientId, submission_id: subB.id })
+
+    // An OLDER visit for patient P with NO submission at all (e.g. a
+    // documented-gap "재진" created via POST /api/visits with no
+    // questionnaire) -- must be safely skipped, not crash.
+    await histStore.createVisit({ patient_id: patientId, submission_id: null })
+
+    const res = await fetch(`${histBase}/api/patients/${encodeURIComponent(patientId)}/history?excludeVisitId=${encodeURIComponent(subA.visit_id)}`)
+    assert('GET /api/patients/:id/history -> 200', res.status === 200)
+    const body = await res.json()
+    assert('history response patient_id matches the requested patient exactly', body.patient_id === patientId)
+    assert(
+      'history: excludeVisitId removed patient P\'s own current visit, submission-less visit safely skipped -> exactly 1 remaining',
+      body.visits.length === 1,
+    )
+    const only = body.visits[0]
+    assert('history: the one remaining visit is patient P\'s SECOND visit (subB), not the excluded first one', only.visit_id === visitB.id)
+    assert('history: pain_follow_up_targets carries the RAW baseline/postTreatmentValue text, no computed delta', only.pain_follow_up_targets[0].baseline === '5' && only.pain_follow_up_targets[0].postTreatmentValue === '3')
+    assert('history: pain_final_assessment_summary is patient P\'s own text', only.pain_final_assessment_summary === '2차 방문 판단')
+    assert('history: response body never contains patient Q\'s final assessment text', !JSON.stringify(body).includes('환자 Q 전용 판단'))
+
+    const resNoExclude = await fetch(`${histBase}/api/patients/${encodeURIComponent(patientId)}/history`)
+    const bodyNoExclude = await resNoExclude.json()
+    assert(
+      'history without excludeVisitId: both of patient P\'s submission-backed visits are returned, submission-less one skipped',
+      bodyNoExclude.visits.length === 2,
+    )
+
+    const resOther = await fetch(`${histBase}/api/patients/${encodeURIComponent(subQ.patient_id)}/history`)
+    const bodyOther = await resOther.json()
+    assert('history for patient Q returns only patient Q\'s own visit, never patient P\'s', bodyOther.visits.length === 1 && bodyOther.visits[0].submission_id === subQ.id)
+
+    const resUnknown = await fetch(`${histBase}/api/patients/${encodeURIComponent('00000000-0000-0000-0000-000000000000')}/history`)
+    assert('history for an unknown/never-seen patient_id -> 200 with an empty visits[] (not 404, not a crash)', resUnknown.status === 200)
+    const bodyUnknown = await resUnknown.json()
+    assert('history for unknown patient_id: visits is an empty array', Array.isArray(bodyUnknown.visits) && bodyUnknown.visits.length === 0)
+
+    const resNoAuth = await fetch(`${histBase}/api/patients/${encodeURIComponent(patientId)}/history`, {
+      headers: { origin: 'https://evil.example.com' },
+    })
+    assert('GET /api/patients/:id/history without doctor auth (evil Origin) -> 403, same guard as every other doctor route', resNoAuth.status === 403)
+    } finally {
+      await stopServer(histServer)
+      await rm(histRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* ---------------- micro follow-up (round 3 Phase D) ---------------- */
+  {
+    const mfuRoot = await mkdtemp(path.join(tmpdir(), 'samindang-microfollowup-'))
+    const mfuDataDir = path.join(mfuRoot, 'submissions')
+    const { server: mfuServer, base: mfuBase } = await startServer(mfuDataDir)
+    try {
+      const created = await (
+        await fetch(`${mfuBase}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-mfu-1' })),
+        })
+      ).json()
+      const record = await (await fetch(`${mfuBase}/api/submissions/${created.id}`)).json()
+      const visitId = record.visit_id
+
+      const beforeRes = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`)
+      const before = await beforeRes.json()
+      assert('GET micro-follow-up before any save -> 200 with response: null', beforeRes.status === 200 && before.response === null)
+
+      const postRes = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetRatings: [{ targetId: 'ft1', label: 'LBP_12', patientReportedValue: '4' }],
+          overallChange: '조금 좋아짐',
+          newSymptomReported: true,
+          newSymptomNote: '어깨도 아픔',
+          adverseEffectReported: false,
+          adverseEffectNote: '',
+        }),
+      })
+      const posted = await postRes.json()
+      assert('POST micro-follow-up -> 201', postRes.status === 201)
+      assert('POST micro-follow-up response carries the visit_id it was saved under', posted.visit_id === visitId)
+      assert('POST micro-follow-up response carries the visit\'s own patient_id, not a client-supplied one', posted.patient_id === record.patient_id)
+      assert('POST micro-follow-up preserves targetRatings exactly', posted.targetRatings.length === 1 && posted.targetRatings[0].patientReportedValue === '4')
+      assert('POST micro-follow-up preserves newSymptomReported/Note', posted.newSymptomReported === true && posted.newSymptomNote === '어깨도 아픔')
+
+      const afterRes = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`)
+      const after = await afterRes.json()
+      assert('GET micro-follow-up after save returns the saved response, not null', after.response !== null && after.response.overallChange === '조금 좋아짐')
+
+      const missingVisit = await fetch(`${mfuBase}/api/visits/00000000-0000-0000-0000-000000000000/micro-follow-up`)
+      assert('GET micro-follow-up for an unknown visit_id -> 404', missingVisit.status === 404)
+      const missingVisitPost = await fetch(`${mfuBase}/api/visits/00000000-0000-0000-0000-000000000000/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      assert('POST micro-follow-up for an unknown visit_id -> 404', missingVisitPost.status === 404)
+
+      const malformedPost = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ targetRatings: 'not-an-array', newSymptomReported: 'yes' }),
+      })
+      const malformedBody = await malformedPost.json()
+      assert('POST micro-follow-up with malformed targetRatings -> 201 with [] (never throws/500s)', malformedPost.status === 201 && Array.isArray(malformedBody.targetRatings) && malformedBody.targetRatings.length === 0)
+      assert('POST micro-follow-up coerces a non-boolean newSymptomReported to a real boolean', malformedBody.newSymptomReported === true)
+
+      const noAuth = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, { headers: { origin: 'https://evil.example.com' } })
+      assert('GET micro-follow-up without doctor auth (evil Origin) -> 403, same guard as every other doctor route', noAuth.status === 403)
+      const noAuthPost = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { origin: 'https://evil.example.com', 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      assert('POST micro-follow-up without doctor auth (evil Origin) -> 403', noAuthPost.status === 403)
+    } finally {
+      await stopServer(mfuServer)
+      await rm(mfuRoot, { recursive: true, force: true })
+    }
+  }
+
   /* ---------------- patient path cannot list/read submissions ---------------- */
   {
     const appSrc = await readFile(fileURLToPath(new URL('../src/App.tsx', import.meta.url)), 'utf8')
@@ -1231,10 +1436,16 @@ async function main() {
     // Task 2에서 POST/GET /api/visits/:id/recorder-results 2개 추가되어 12개가 됐고,
     // Doctor Clinical Workspace round 2 Phase 2에서 PUT /api/submissions/:id/workspace
     // 1개가 추가되어 13개가 됐다(judgment 라우트와 동일한 doctor-only 가드 패턴).
+    // Round 3 Phase C에서 GET /api/patients/:patientId/history 1개가 추가되어
+    // 14개가 됐다(같은 doctor-only 가드, exact patient_id match만 사용).
+    // Round 3 Phase D에서 POST/GET /api/visits/:id/micro-follow-up 2개가
+    // 추가되어 16개가 됐다(recorder-results와 동일한 doctor-only 가드 패턴 --
+    // 환자 태블릿에서 직접 호출하지 않는다, microFollowUp.ts의 OPERATIONAL
+    // INTEGRATION REQUIRED 주석 참고).
     // isLocalOnly는 완전히 제거됐다(server/auth.js).
     assert(
-      'server has exactly the 13 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear)',
-      requireDoctorCalls === 13,
+      'server has exactly the 16 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2)',
+      requireDoctorCalls === 16,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

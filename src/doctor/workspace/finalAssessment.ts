@@ -103,12 +103,52 @@ export const HERBAL_FOLLOW_UP_OPTIONS: FollowUpTarget[] = [
 ]
 
 /**
- * OPERATIONAL INTEGRATION REQUIRED: there is no secure, stable patient/visit
- * linkage in this codebase today (confirmed by grep across src/doctor and
- * server/ during Phase 0 audit — no repeat-visit matching exists). Rather
- * than fake a match (e.g. on name+phone, a real patient-safety risk from
- * collisions), the reassessment UI records the *targets* only and displays
- * this constant string wherever an automatic prior-visit comparison would
- * otherwise go.
+ * This string means specifically "no automatic interpretation of the
+ * comparison" (no computed %/개선/악화 judgment) — it does NOT mean "no
+ * prior-visit data is ever shown." Round 3 Phase C adds a real, narrow,
+ * patient_id-scoped prior-visit RAW value lookup (see
+ * `src/doctor/workspace/longitudinal.ts`) that displays the previous
+ * baseline/post-treatment value next to today's input field, purely as
+ * read-only reference facts — never as a computed delta, percentage, or
+ * "호전/악화" judgment. This constant still correctly describes why that
+ * interpretation step itself is not implemented: no clinician-approved
+ * improvement-threshold rule exists to interpret the numbers with.
+ *
+ * Copy note (round 3 QA fix): this text renders directly in the clinician
+ * UI (FollowUpTargetPicker.tsx) — it must stay pure Korean, matching every
+ * other on-screen hint here. Earlier it literally contained the English
+ * internal-tracking phrase "OPERATIONAL INTEGRATION REQUIRED", which real
+ * headless QA caught leaking into the rendered page.
  */
-export const REPEAT_VISIT_AUTO_COMPARE_STATUS = '재진 자동 비교: OPERATIONAL INTEGRATION REQUIRED'
+export const REPEAT_VISIT_AUTO_COMPARE_STATUS = '재진 자동 비교: 자동 판단 없음 — 이전 방문 기록은 아래에서 원장이 직접 확인'
+
+/**
+ * NextReassessmentPlan (round 3 Phase B, North Star "Structured
+ * Reassessment"): the clinician explicitly decides how this patient's next
+ * detailed re-evaluation should be scheduled/tracked. No default "2 weeks"
+ * or any other clinical timing rule is invented here — `status` starts
+ * `UNSET`, and the clinician must pick one of the other three states
+ * (a literal date, a visit count, or a free-text note when neither a date
+ * nor a count is practical to commit to yet).
+ */
+export type NextReassessmentPlanStatus = 'UNSET' | 'DATE' | 'VISIT_COUNT' | 'CLINICIAN_DECIDES'
+
+export type NextReassessmentPlan = {
+  status: NextReassessmentPlanStatus
+  /** ISO date string (yyyy-mm-dd), meaningful only when status === 'DATE'. */
+  targetDate: string
+  /** Meaningful only when status === 'VISIT_COUNT'. */
+  afterVisitCount: number | null
+  note: string
+}
+
+export function emptyNextReassessmentPlan(): NextReassessmentPlan {
+  return { status: 'UNSET', targetDate: '', afterVisitCount: null, note: '' }
+}
+
+export const NEXT_REASSESSMENT_PLAN_STATUS_LABEL: Record<NextReassessmentPlanStatus, string> = {
+  UNSET: '미정',
+  DATE: '날짜 지정',
+  VISIT_COUNT: '방문 횟수 지정',
+  CLINICIAN_DECIDES: '원장 판단(추후 결정)',
+}

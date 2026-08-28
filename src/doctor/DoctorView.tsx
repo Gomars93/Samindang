@@ -11,6 +11,8 @@ import type { AnswerValue } from '../types'
 import {
   activateVisit,
   clearActiveVisit,
+  getMicroFollowUpResponse,
+  getPatientHistory,
   getRecorderResults,
   getSubmission,
   listSubmissions,
@@ -21,6 +23,8 @@ import {
   type SubmissionRecord,
   type SubmissionSummary,
 } from '../lib/serverClient'
+import type { PatientHistoryResult } from './workspace/longitudinal'
+import type { MicroFollowUpResponse } from './workspace/microFollowUp'
 import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
@@ -1637,6 +1641,17 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [retryNonce, setRetryNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
+  // Round 3 Phase C(longitudinal linkage). Fetched from the same exact
+  // patient_id this submission's own record carries -- never derived from
+  // name/phone/DOB. Reset to null on every selection change so a slow
+  // network response for a previous patient can never be misattributed to
+  // the one now on screen (guarded below by the `cancelled` flag too).
+  const [priorVisits, setPriorVisits] = useState<PatientHistoryResult | null>(null)
+  // Round 3 Phase D(micro follow-up). This visit's own short check-in
+  // response, if one was ever saved for it (see microFollowUp.ts's
+  // OPERATIONAL INTEGRATION REQUIRED note -- entering one today requires a
+  // doctor/staff session, not a direct patient-tablet submission).
+  const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
   // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
@@ -1744,6 +1759,45 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       cancelled = true
     }
   }, [mode, selectedId])
+
+  // Round 3 Phase C(longitudinal linkage): once the selected submission's
+  // own patient_id is known, fetch that exact patient's other visits (RAW
+  // facts only -- src/doctor/workspace/PriorVisitHistoryCard.tsx never
+  // computes an improvement/percentage from this). Records saved before
+  // patient_id existed have no linkage target, so priorVisits stays null.
+  useEffect(() => {
+    const patientId = mode === 'server' ? selectedRecord?.patient_id : undefined
+    if (mode !== 'server' || !patientId) {
+      setPriorVisits(null)
+      return
+    }
+    let cancelled = false
+    getPatientHistory(patientId, selectedRecord?.visit_id).then((result) => {
+      if (cancelled) return
+      if (result.ok) setPriorVisits(result.data)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mode, selectedRecord?.patient_id, selectedRecord?.visit_id])
+
+  // Round 3 Phase D(micro follow-up): fetch this visit's own short
+  // check-in response, if one exists, keyed to this visit_id only.
+  useEffect(() => {
+    const visitId = mode === 'server' ? selectedRecord?.visit_id : undefined
+    if (mode !== 'server' || !visitId) {
+      setMicroFollowUpResponse(null)
+      return
+    }
+    let cancelled = false
+    getMicroFollowUpResponse(visitId).then((result) => {
+      if (cancelled) return
+      if (result.ok) setMicroFollowUpResponse(result.data.response)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mode, selectedRecord?.visit_id])
 
   // ClinicAI 연결점: 서버 모드에서 제출건을 열면(그리고 visit_id가 있으면)
   // 그 방문을 "이 workstation에서 진료 중"으로 표시한다. 닫거나(목록으로/
@@ -2046,6 +2100,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         synthetic={mode === 'fixtures' ? (activeScenario?.synthetic ?? undefined) : undefined}
         submissionId={mode === 'server' ? selectedId ?? undefined : undefined}
         initialWorkspaceState={mode === 'server' ? selectedRecord?.workspace ?? null : undefined}
+        priorVisits={mode === 'server' ? priorVisits : undefined}
+        microFollowUpResponse={mode === 'server' ? microFollowUpResponse : undefined}
         onSaveWorkspace={
           mode === 'server' && selectedId
             ? async (state) => {

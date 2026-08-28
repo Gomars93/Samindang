@@ -21,9 +21,17 @@ const LATERALITY_OPTIONS: Laterality[] = ['LEFT', 'RIGHT', 'BILATERAL', 'NOT_APP
 export function ExamSuggestionCard({
   item,
   onChange,
+  onAddToReassessment,
 }: {
   item: PhysicalExamSuggestion
   onChange: (next: PhysicalExamSuggestion) => void
+  /**
+   * Round 3 Phase E: once this item has a real recorded result, the
+   * clinician may explicitly promote it into the Structured Reassessment
+   * list ("재검 항목으로 추가"). Never automatic -- shown only when a
+   * result already exists, and never fires on its own.
+   */
+  onAddToReassessment?: () => void
 }) {
   const noteId = useId()
   const pending = item.result.status === 'NOT_YET_CHECKED'
@@ -104,6 +112,11 @@ export function ExamSuggestionCard({
             onChange={(e) => onChange({ ...item, result: { ...item.result, note: e.target.value } })}
             placeholder="짧은 소견 메모"
           />
+          {onAddToReassessment && (
+            <button type="button" className="workspace__adoptBtn" onClick={onAddToReassessment}>
+              재검 항목으로 추가 →
+            </button>
+          )}
         </div>
       )}
     </div>

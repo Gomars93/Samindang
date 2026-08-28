@@ -46,6 +46,20 @@ function withLock(key, fn) {
   return run
 }
 
+// Round 8: who physically entered the answers. This is NOT the broader
+// clinical Provenance enum (PATIENT_FACT/OBSERVED/...) used elsewhere in
+// this codebase -- both values here are still PATIENT-REPORTED FACTS. A
+// STAFF_ASSISTED response means a staff member read the same fixed
+// questions aloud and typed the patient's own answers for a patient who
+// cannot use a device; it must NEVER be read as a clinician-observed
+// finding. Anything unrecognized normalizes to PATIENT_SELF, the
+// conservative default (never silently upgrade an unknown value into a
+// staff-attributed one).
+const INPUT_PROVENANCES = new Set(['PATIENT_SELF', 'STAFF_ASSISTED'])
+function normalizeInputProvenance(value) {
+  return typeof value === 'string' && INPUT_PROVENANCES.has(value) ? value : 'PATIENT_SELF'
+}
+
 export function createMicroFollowUpStore(followUpDir) {
   async function saveResponse({
     visit_id,
@@ -56,6 +70,7 @@ export function createMicroFollowUpStore(followUpDir) {
     newSymptomNote,
     adverseEffectReported,
     adverseEffectNote,
+    inputProvenance,
   }) {
     return withLock(visit_id, async () => {
       await mkdir(followUpDir, { recursive: true })
@@ -79,6 +94,7 @@ export function createMicroFollowUpStore(followUpDir) {
         newSymptomNote: newSymptomNote ?? '',
         adverseEffectReported: Boolean(adverseEffectReported),
         adverseEffectNote: adverseEffectNote ?? '',
+        inputProvenance: normalizeInputProvenance(inputProvenance),
         created_at: now,
         updated_at: now,
         submitted_at: now,

@@ -8,6 +8,7 @@ import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
 import { createMicroFollowUpStore } from './microFollowUpStore.js'
 import { createFollowUpSessionStore } from './followUpSessionStore.js'
+import { createStationStore } from './stationStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
@@ -66,6 +67,8 @@ export function createStore(
   const followUpSessions = createFollowUpSessionStore(path.join(dataDir, '..', 'follow-up-sessions'), {
     ttlMinutes: followUpTokenTtlMinutes,
   })
+  // stations/도 같은 형제 경로 패턴(round 8: 클리닉 태블릿 스테이션).
+  const stations = createStationStore(path.join(dataDir, '..', 'stations'))
 
   async function ensureDir() {
     await mkdir(dataDir, { recursive: true })
@@ -375,13 +378,18 @@ export function createStore(
   // "pending," so it is not a duplicate of anything.
   const recentStartRevisitResults = new Map() // patient_id -> { result, expiresAt }
 
-  async function startRevisit(patientId) {
+  async function startRevisit(patientId, deliveryMode) {
     return withLock(`start-revisit:${patientId}`, async () => {
       const cached = recentStartRevisitResults.get(patientId)
       if (cached) {
         const stillFresh = cached.expiresAt > Date.now()
         const alreadyAnswered = stillFresh && Boolean(await microFollowUp.getResponse(cached.result.visit.id))
-        if (stillFresh && !alreadyAnswered) return cached.result
+        // Round 8: a repeat call asking for a DIFFERENT delivery mode is a
+        // genuinely different operational intent (e.g. the tablet station
+        // is busy, so staff switches to a personal QR), not the
+        // double-click this dedup exists to absorb -- let it through.
+        const sameDeliveryMode = (cached.result.session.delivery_mode ?? null) === (deliveryMode ?? null)
+        if (stillFresh && !alreadyAnswered && sameDeliveryMode) return cached.result
         recentStartRevisitResults.delete(patientId)
       }
 
@@ -393,6 +401,7 @@ export function createStore(
           visit_id: visit.id,
           patient_id: patientId,
           targets,
+          delivery_mode: deliveryMode,
         })
         result = { visit, token, session: record }
       } catch (err) {
@@ -408,14 +417,19 @@ export function createStore(
   // clinician's prior-visit data changed since the original issuance),
   // brand-new token -- issueToken() itself invalidates the previous active
   // token for this visit_id.
-  async function reissueFollowUpSession(visitId) {
+  async function reissueFollowUpSession(visitId, deliveryMode) {
     const visit = await visits.getVisit(visitId)
     if (!visit) return null
     const targets = await deriveMicroFollowUpCandidates(visit.patient_id, visitId)
+    // Round 8: carry the existing session's delivery_mode forward unless
+    // the caller explicitly asks for a different one -- a plain "재발급"
+    // should not silently change how the link is meant to be delivered.
+    const existing = await followUpSessions.getActiveForVisit(visitId)
     const { token, record } = await followUpSessions.issueToken({
       visit_id: visitId,
       patient_id: visit.patient_id,
       targets,
+      delivery_mode: deliveryMode ?? existing?.delivery_mode ?? null,
     })
     return { visit, token, session: record }
   }
@@ -469,10 +483,56 @@ export function createStore(
         newSymptomNote: typeof answers?.newSymptomNote === 'string' ? answers.newSymptomNote.slice(0, 1000) : '',
         adverseEffectReported: Boolean(answers?.adverseEffectReported),
         adverseEffectNote: typeof answers?.adverseEffectNote === 'string' ? answers.adverseEffectNote.slice(0, 1000) : '',
+        // Round 8: this path is ALWAYS the patient answering on a device
+        // themselves (their own phone via QR, or a clinic tablet station
+        // handed to them) -- never staff transcribing. Hardcoded, never
+        // taken from the request body: a public caller must not be able to
+        // claim staff attribution for its own answers.
+        inputProvenance: 'PATIENT_SELF',
       })
     })
     if (!result.ok) return result
     return { ok: true, visit_id: result.record.visit_id, response: result.actionResult }
+  }
+
+  // Round 8: the single reception/staff action behind "이 환자를 접수
+  // 태블릿 1에 배정". Composes the EXISTING startRevisit (with all its
+  // atomicity, rollback, dedup and candidate-derivation behavior intact)
+  // with the station assignment, then invalidates whatever session that
+  // station was previously holding.
+  //
+  // Ordering matters: assign FIRST, then invalidate the displaced session.
+  // The reverse order would kill a still-valid patient link before knowing
+  // the new one actually installed -- exactly the reissue failure mode
+  // fixed in round 6 (see followUpSessionStore.js's issueToken phases).
+  // The displaced invalidation is best-effort: if it fails, the old token
+  // is at worst still ACTIVE on disk but no longer assigned anywhere, and
+  // the pointer-authority check (round 7) does not apply here since it is a
+  // different visit entirely -- so it simply ages out on its own TTL, which
+  // is a strictly better failure than destroying the new assignment.
+  async function assignRevisitToStation(patientId, stationId, deliveryMode = 'CLINIC_TABLET') {
+    const station = await stations.getStation(stationId)
+    if (!station) return { ok: false, reason: 'station_not_found' }
+
+    const started = await startRevisit(patientId, deliveryMode)
+    const assignResult = await stations.assignSession(stationId, {
+      visit_id: started.visit.id,
+      patient_id: patientId,
+      token: started.token,
+      delivery_mode: deliveryMode,
+    })
+    if (!assignResult.ok) return assignResult
+
+    if (assignResult.displaced?.visit_id && assignResult.displaced.visit_id !== started.visit.id) {
+      await followUpSessions.invalidateActiveForVisit(assignResult.displaced.visit_id).catch(() => {})
+    }
+    return { ok: true, visit: started.visit, session: started.session, station: assignResult.station }
+  }
+
+  // Round 8: the station's own post-submission call. Clears the assignment
+  // so the tablet returns to its waiting screen with nothing retained.
+  async function completeStationAssignment(stationId) {
+    return stations.clearAssignment(stationId)
   }
 
   // Round 3(revisit linkage): "Doctor Queue" for no-submission revisit
@@ -487,11 +547,16 @@ export function createStore(
     for (const v of revisits) {
       const session = await followUpSessions.getActiveForVisit(v.id)
       const response = await microFollowUp.getResponse(v.id)
+      const assignedStation = await stations.findStationForVisit(v.id)
       let status
       if (response) {
         status = 'COMPLETED'
       } else if (session && session.status === 'ACTIVE' && new Date(session.expires_at).getTime() >= Date.now()) {
-        status = 'WAITING_FOR_PATIENT'
+        // Round 8: distinguish "link issued, nobody has opened it yet" from
+        // "the patient/station has actually opened the questions" using the
+        // operational patient_started_at timestamp. Purely a staff-facing
+        // progress cue -- no clinical meaning, no routing effect.
+        status = session.patient_started_at ? 'IN_PROGRESS' : 'WAITING_FOR_PATIENT'
       } else if (session) {
         // ACTIVE-but-expired, or INVALIDATED/CONSUMED with no saved
         // response (shouldn't normally happen -- consumption and response
@@ -508,6 +573,17 @@ export function createStore(
         updated_at: v.updated_at,
         status,
         needs_attention: Boolean(response?.newSymptomReported || response?.adverseEffectReported),
+        // Round 8 operational metadata (never clinical): how this session's
+        // link is meant to reach the patient, which station (if any) is
+        // currently holding it, and the four workflow timestamps that let
+        // the clinic see where time is actually going.
+        delivery_mode: session?.delivery_mode ?? null,
+        station_name: assignedStation?.name ?? null,
+        input_provenance: response?.inputProvenance ?? null,
+        session_created_at: session?.issued_at ?? null,
+        assigned_at: assignedStation?.assignment?.assigned_at ?? null,
+        patient_started_at: session?.patient_started_at ?? null,
+        submitted_at: response?.submitted_at ?? null,
       })
     }
     results.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
@@ -563,6 +639,7 @@ export function createStore(
     deleted += await recorderResults.purgeAll()
     deleted += await microFollowUp.purgeAll()
     deleted += await followUpSessions.purgeAll()
+    deleted += await stations.purgeAll()
     return deleted
   }
 
@@ -592,8 +669,16 @@ export function createStore(
     invalidateFollowUpSession: followUpSessions.invalidateActiveForVisit,
     getFollowUpSessionStatus: followUpSessions.getActiveForVisit,
     resolveFollowUpSession: followUpSessions.resolveToken,
+    markFollowUpSessionStarted: followUpSessions.markStarted,
     submitFollowUpSession,
     cleanupFollowUpSessions,
     listRevisitQueue,
+    // Round 8: clinic tablet stations.
+    registerStation: stations.registerStation,
+    resolveStation: stations.resolveStation,
+    listStations: stations.listStations,
+    pollStationAssignment: stations.pollAssignment,
+    assignRevisitToStation,
+    completeStationAssignment,
   }
 }

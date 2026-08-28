@@ -1482,9 +1482,17 @@ async function main() {
     // 이 목록에 포함되지 않는다(patient POST /api/submissions와 같은 위치의
     // 공개 엔드포인트 -- followUpSessionStore.js의 토큰 검증이 인증을 대신한다).
     // isLocalOnly는 완전히 제거됐다(server/auth.js).
+    // Round 8(clinic tablet stations)에서 4개가 추가되어 26개가 됐다:
+    // POST/GET /api/stations, POST /api/stations/:id/assign, POST
+    // /api/stations/:id/reset -- 전부 접수/직원용이라 같은 doctor-only 가드.
+    // 태블릿 자신의 라우트 2개(GET /api/station/assignment, POST
+    // /api/station/complete)는 의도적으로 이 목록에 포함되지 않는다: 기기
+    // credential로 인증하는 환자 대면 기기용 엔드포인트이며, 공개 환자용
+    // /api/follow-up-session/:token과 동일한 위치다(stationStore.js의
+    // credential 검증이 인증을 대신한다).
     assert(
-      'server has exactly the 22 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6)',
-      requireDoctorCalls === 22,
+      'server has exactly the 26 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4)',
+      requireDoctorCalls === 26,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

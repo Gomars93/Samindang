@@ -32,6 +32,19 @@ const TOKEN_BYTES = 32 // 256 bits, well above the 128-bit minimum
 // hashing/looking it up, so a malformed/garbage "token" fails fast.
 const TOKEN_FORMAT = /^[A-Za-z0-9_-]{32,128}$/
 
+// Round 8 (delivery-channel-agnostic Micro Follow-up): delivery_mode is
+// PURE OPERATIONAL METADATA describing how a session's one-time link
+// reached the patient -- it never changes clinical meaning, routing,
+// thresholds, or Follow-up Target selection, and this store never reads it
+// for anything except passing it through. An unrecognized value is
+// normalized to null rather than rejected (fail-closed on trust, not on
+// availability -- a malformed delivery_mode must never block issuing a
+// working link).
+const DELIVERY_MODES = new Set(['CLINIC_TABLET', 'PERSONAL_QR', 'STAFF_ASSISTED', 'PREVISIT_LINK'])
+function normalizeDeliveryMode(mode) {
+  return typeof mode === 'string' && DELIVERY_MODES.has(mode) ? mode : null
+}
+
 function tokensDir(baseDir) {
   return path.join(baseDir, 'tokens')
 }
@@ -109,7 +122,7 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
   // so issueToken leaves either a fully-installed new token+pointer or
   // (on any failure) exactly the state that existed before the call --
   // never an orphan ACTIVE token record with no pointer referencing it.
-  async function issueToken({ visit_id, patient_id, targets }) {
+  async function issueToken({ visit_id, patient_id, targets, delivery_mode }) {
     return withLock(`visit:${visit_id}`, async () => {
       await ensureDirs()
       const pointer = await readJson(pointerPath(baseDir, visit_id))
@@ -135,8 +148,14 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
         patient_id,
         targets: safeTargets,
         status: 'ACTIVE',
+        delivery_mode: normalizeDeliveryMode(delivery_mode),
         issued_at: now,
         expires_at: expiresAt,
+        // Round 8: set once, the first time a GET on this token succeeds
+        // while ACTIVE (see markStarted below) -- an operational signal for
+        // "did the patient/station actually open this," never read by any
+        // clinical logic.
+        patient_started_at: null,
         consumed_at: null,
         invalidated_at: null,
       }
@@ -279,6 +298,25 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     })
   }
 
+  // Round 8 (operational timestamps): records the first moment a patient
+  // (or an assigned clinic-tablet station acting on their behalf) actually
+  // opened this session's questions. Best-effort and idempotent -- called
+  // from the public GET route, so it must never fail that read: a write
+  // error here is swallowed, and a second call is a no-op because
+  // patient_started_at is only ever set when it is still null. Purely
+  // operational (lets the clinic later see whether links sit unopened);
+  // no clinical logic reads it.
+  async function markStarted(rawToken) {
+    if (!isValidTokenFormat(rawToken)) return
+    const tokenHash = hashToken(rawToken)
+    await withLock(`token:${tokenHash}`, async () => {
+      const record = await readJson(tokenPath(baseDir, tokenHash))
+      if (!record || record.status !== 'ACTIVE' || record.patient_started_at) return
+      record.patient_started_at = new Date().toISOString()
+      await atomicWrite(tokenPath(baseDir, tokenHash), record)
+    }).catch(() => {})
+  }
+
   // Consumes atomically under the token's own lock: only an ACTIVE,
   // unexpired token can be consumed, and it can only ever succeed once --
   // a second call (double-submit) always finds status !== 'ACTIVE' and
@@ -379,6 +417,7 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     resolveToken,
     consumeToken,
     consumeTokenWithAction,
+    markStarted,
     cleanupOlderThan,
     purgeAll,
   }

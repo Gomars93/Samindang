@@ -250,6 +250,13 @@ export function createApp({
     const isPatientRevisitRoute =
       parts[1] === 'patients' && parts.length === 4 && parts[3] === 'start-revisit' && req.method === 'POST'
     const isRevisitsQueueRoute = parts[1] === 'visits' && parts.length === 3 && parts[2] === 'revisits' && req.method === 'GET'
+    // Round 8: /api/stations/* are STAFF routes (register a tablet, list
+    // tablets, assign a patient to one, reset one) and carry the same
+    // doctor guard as every other staff route. Deliberately NOT included
+    // here: the singular /api/station/* routes below, which are the
+    // TABLET's own two narrow endpoints authenticated by its device
+    // credential -- same posture as the public follow-up-session routes.
+    const isStationsAdminRoute = parts[1] === 'stations'
     const doctorRoute =
       parts[0] === 'api' &&
       (isSubmissionsRoute ||
@@ -258,7 +265,8 @@ export function createApp({
         isCurrentVisitRead ||
         isPatientHistoryRoute ||
         isPatientRevisitRoute ||
-        isRevisitsQueueRoute)
+        isRevisitsQueueRoute ||
+        isStationsAdminRoute)
     const cors = corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
@@ -876,6 +884,10 @@ export function createApp({
           } else if (new Date(session.expires_at).getTime() < Date.now()) {
             bytes = sendJson(req, res, 200, { status: 'EXPIRED' }, cors)
           } else {
+            // Round 8: record the first time the patient/station actually
+            // opened these questions. Best-effort and idempotent inside the
+            // store -- it must never affect this read's own outcome.
+            await store.markFollowUpSessionStarted(rawToken)
             bytes = sendJson(req, res, 200, { status: 'ACTIVE', targets: session.targets, expires_at: session.expires_at }, cors)
           }
         }
@@ -909,6 +921,148 @@ export function createApp({
             status = 201
             await safeAudit({ event: 'follow_up_session_submitted', visit_id: result.visit_id, actor: 'patient' })
             bytes = sendJson(req, res, 201, { ok: true }, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'stations' && parts.length === 2 && req.method === 'POST') {
+        // Round 8: register a clinic tablet as a named station. STAFF route
+        // (doctor-guarded like every other staff route). Returns the raw
+        // device credential exactly once -- the caller renders it into a
+        // one-time pairing link opened on the tablet itself. It is never
+        // retrievable again (only its hash is stored).
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const registered = await store.registerStation(body?.name)
+          if (!registered) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'invalid station name' }, cors)
+          } else {
+            status = 201
+            await safeAudit({ event: 'station_registered', actor: 'doctor' })
+            bytes = sendJson(
+              req,
+              res,
+              201,
+              {
+                credential: registered.credential,
+                station: { station_id: registered.station.station_id, name: registered.station.name },
+              },
+              cors,
+            )
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'stations' && parts.length === 2 && req.method === 'GET') {
+        // Round 8: staff-facing station list (never includes credential hashes).
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          bytes = sendJson(req, res, 200, { stations: await store.listStations() }, cors)
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'stations' && parts.length === 4 && parts[3] === 'assign' && req.method === 'POST') {
+        // Round 8: THE reception action -- assign an explicitly-chosen
+        // existing patient's new revisit session to a specific station.
+        // patient_id comes from the staff UI's own selection of a known
+        // record (verified below with the same visitExistsForPatient check
+        // the existing start-revisit route uses); it is never matched from
+        // a name/phone/DOB, and the tablet never chooses a patient itself.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const patientId = typeof body?.patient_id === 'string' ? body.patient_id : ''
+          if (!patientId || !(await store.visitExistsForPatient(patientId))) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
+          } else {
+            const result = await store.assignRevisitToStation(patientId, parts[2], body?.delivery_mode)
+            if (!result.ok) {
+              status = result.reason === 'station_not_found' ? 404 : 400
+              bytes = sendJson(req, res, status, { error: result.reason }, cors)
+            } else {
+              status = 201
+              await safeAudit({ event: 'station_assigned', visit_id: result.visit.id, actor: 'doctor' })
+              // No raw token in this response: the tablet fetches it itself
+              // through its own credential-guarded poll. Staff never needs
+              // to see or handle the capability for the CLINIC_TABLET path.
+              bytes = sendJson(
+                req,
+                res,
+                201,
+                {
+                  visit: result.visit,
+                  station: { station_id: result.station.station_id, name: result.station.name },
+                  session: {
+                    expiresAt: result.session.expires_at,
+                    targets: result.session.targets,
+                    deliveryMode: result.session.delivery_mode,
+                  },
+                },
+                cors,
+              )
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'stations' && parts.length === 4 && parts[3] === 'reset' && req.method === 'POST') {
+        // Round 8: staff manually returns a station to its waiting screen
+        // (patient walked away, wrong assignment, etc).
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const result = await store.completeStationAssignment(parts[2])
+          if (!result.ok) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'station not found' }, cors)
+          } else {
+            await safeAudit({ event: 'station_reset', visit_id: result.cleared?.visit_id, actor: 'doctor' })
+            bytes = sendJson(req, res, 200, { ok: true }, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'station' && parts.length === 3 && parts[2] === 'assignment' && req.method === 'GET') {
+        // Round 8: THE TABLET's own poll. Authenticated by its device
+        // credential only -- no doctor token, no Origin allowlist (the
+        // tablet is a patient-facing device, exactly the posture of the
+        // public follow-up-session routes). Returns only {status} or
+        // {status, token}: never patient_id, name, phone, DOB, or targets.
+        const credential = req.headers['x-station-credential']
+        if (!checkPublicRateLimit(remoteAddress(req))) {
+          status = 429
+          bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
+        } else {
+          const station = await store.resolveStation(typeof credential === 'string' ? credential : '')
+          if (!station) {
+            noteFailedPublicAttempt(remoteAddress(req))
+            status = 403
+            bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+          } else {
+            // Scoped to THIS station's own id, taken from the resolved
+            // credential -- never from a client-supplied station id, so one
+            // station can never read another's assignment.
+            bytes = sendJson(req, res, 200, await store.pollStationAssignment(station.station_id), cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'station' && parts.length === 3 && parts[2] === 'complete' && req.method === 'POST') {
+        // Round 8: the tablet reports that its assigned session finished,
+        // so the assignment is cleared server-side and the tablet returns
+        // to its waiting screen holding nothing.
+        const credential = req.headers['x-station-credential']
+        if (!checkPublicRateLimit(remoteAddress(req))) {
+          status = 429
+          bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
+        } else {
+          const station = await store.resolveStation(typeof credential === 'string' ? credential : '')
+          if (!station) {
+            noteFailedPublicAttempt(remoteAddress(req))
+            status = 403
+            bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+          } else {
+            const result = await store.completeStationAssignment(station.station_id)
+            await safeAudit({ event: 'station_completed', visit_id: result.cleared?.visit_id, actor: 'patient' })
+            bytes = sendJson(req, res, 200, { ok: true }, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear' && req.method === 'POST') {

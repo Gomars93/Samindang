@@ -1,11 +1,11 @@
 /**
  * Clinic tablet STATION client (round 8: delivery-channel-agnostic Micro
- * Follow-up). Deliberately a SEPARATE file from serverClient.ts and imports
- * NOTHING from it or from '../doctor/doctorToken' -- exactly the same
- * structural guarantee followUpClient.ts makes, and verified by the same
- * kind of source-level test: a doctor token can never be attached to a
- * station request, regardless of what happens to be in sessionStorage on
- * the device.
+ * Follow-up). Deliberately a SEPARATE file from serverClient.ts, and it
+ * imports NOTHING from that file nor from the doctor-token module --
+ * exactly the same structural guarantee followUpClient.ts makes, and
+ * verified by the same kind of source-level test: a doctor token can never
+ * be attached to a station request, regardless of what happens to be in
+ * session storage on the device.
  *
  * A station credential authenticates the DEVICE, never a patient. It is
  * paired once (via a one-time `#station-setup=<credential>` link staff

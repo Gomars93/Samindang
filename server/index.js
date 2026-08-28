@@ -732,6 +732,15 @@ export function createApp({
               newSymptomNote: typeof body?.newSymptomNote === 'string' ? body.newSymptomNote : '',
               adverseEffectReported: Boolean(body?.adverseEffectReported),
               adverseEffectNote: typeof body?.adverseEffectNote === 'string' ? body.adverseEffectNote : '',
+              // Round 8: this is the DOCTOR/staff-guarded save path, so a
+              // caller here has already proven staff authority and may
+              // legitimately declare STAFF_ASSISTED (a staff member read
+              // the questions aloud and typed the patient's own answers).
+              // The store normalizes anything unrecognized to PATIENT_SELF,
+              // and the PUBLIC patient path hardcodes PATIENT_SELF -- so
+              // staff attribution can only ever originate from an
+              // authenticated staff request, never from a patient device.
+              inputProvenance: body?.inputProvenance,
             })
             status = 201
             await safeAudit({ event: 'micro_follow_up_saved', visit_id: id, actor: 'doctor' })

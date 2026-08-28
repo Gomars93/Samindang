@@ -20,6 +20,14 @@
  * longitudinal tracking). A reported new symptom or adverse effect never
  * branches this screen's own flow -- it only becomes an "추가 확인 필요"
  * flag the clinician sees later (server/store.js's listRevisitQueue).
+ *
+ * Round 6 review fix: the `token` prop can be nulled by the parent
+ * (App.tsx) after a successful submit, releasing the raw value from React
+ * memory entirely (on top of the round 4 URL/history scrub). This
+ * component freezes the token it was mounted with into its own state
+ * (`activeToken`) and never re-reads the live prop, so that later nulling
+ * cannot re-trigger the fetch effect or otherwise disturb the completion
+ * screen.
  */
 import { useEffect, useRef, useState } from 'react'
 import { SingleChoice } from '../components/SingleChoice'
@@ -51,7 +59,22 @@ const UNAVAILABLE_MESSAGE: Record<string, string> = {
 
 type Screen = 'loading' | 'form' | 'submitting' | 'done' | 'unavailable' | 'load_error'
 
-export function FollowUpScreen({ token }: { token: string }) {
+export function FollowUpScreen({
+  token,
+  onCompleted,
+}: {
+  token: string | null
+  onCompleted?: () => void
+}) {
+  // Round 6 review fix (token scrub from React memory): the parent
+  // (App.tsx) nulls its own `token` prop value once `onCompleted` fires
+  // below, so the raw token stops sitting in ANY React state after a
+  // successful submit -- not just the URL/history. This component must
+  // keep working off the value it had at MOUNT time, never a live re-read
+  // of a prop that is intentionally nulled out afterward (a live re-read
+  // would re-run the fetch effect below with token=null and could stomp
+  // the 'done' screen with 'unavailable'/'load_error').
+  const [activeToken] = useState(token)
   const [screen, setScreen] = useState<Screen>('loading')
   const [unavailableReason, setUnavailableReason] = useState<string>('')
   const [targets, setTargets] = useState<Array<{ id: string; label: string }>>([])
@@ -64,8 +87,16 @@ export function FollowUpScreen({ token }: { token: string }) {
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   useEffect(() => {
+    // activeToken is only ever null if this screen were somehow mounted
+    // without a real token in the first place (App.tsx's render guard
+    // prevents that) -- fail closed rather than calling the network layer
+    // with a null token.
+    if (!activeToken) {
+      setScreen('load_error')
+      return
+    }
     let cancelled = false
-    getFollowUpSession(token).then((result) => {
+    getFollowUpSession(activeToken).then((result) => {
       if (cancelled) return
       if (!result.ok) {
         setScreen('load_error')
@@ -82,7 +113,8 @@ export function FollowUpScreen({ token }: { token: string }) {
     return () => {
       cancelled = true
     }
-  }, [token])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- activeToken is frozen at mount, see its own doc comment
+  }, [])
 
   // 공유 태블릿 프라이버시: 완료 화면 도달 후 뒤로가기(브라우저 Back/제스처)가
   // 채워진 답변 화면으로 되돌아가지 못하게 막는다 -- App.tsx의 phase==='done'
@@ -126,7 +158,7 @@ export function FollowUpScreen({ token }: { token: string }) {
     adverseEffect !== null
 
   async function handleSubmit() {
-    if (!allAnswered || screen === 'submitting') return
+    if (!allAnswered || screen === 'submitting' || !activeToken) return
     setScreen('submitting')
     setSubmitError(null)
     const answers: FollowUpSessionAnswers = {
@@ -137,7 +169,7 @@ export function FollowUpScreen({ token }: { token: string }) {
       adverseEffectReported: adverseEffect === 'yes',
       adverseEffectNote: adverseEffect === 'yes' ? adverseEffectNote : '',
     }
-    const result = await submitFollowUpSession(token, answers)
+    const result = await submitFollowUpSession(activeToken, answers)
     if (!result.ok) {
       setScreen('form')
       setSubmitError(result.error)
@@ -153,6 +185,9 @@ export function FollowUpScreen({ token }: { token: string }) {
     setAdverseEffectNote('')
     setSubmitError(null)
     setScreen('done')
+    // Round 6 review fix: tell the parent to release its own copy of the
+    // raw token from React state now that it has served its only purpose.
+    onCompleted?.()
   }
 
   if (screen === 'loading') {

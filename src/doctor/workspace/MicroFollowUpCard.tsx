@@ -4,9 +4,9 @@
  *  1. `candidates`: the PREVIOUS visit's own Follow-up Targets, carried
  *     forward as what a short next-visit check-in would ask about.
  *  2. `response`: the patient's actual short answers for THIS visit, if
- *     any exist yet (see microFollowUp.ts's OPERATIONAL INTEGRATION
- *     REQUIRED note -- today this can only be entered by staff/doctor,
- *     not the patient tablet directly).
+ *     any exist yet -- entered either by staff/doctor directly, or (since
+ *     round 4) submitted by the patient's own device via the one-time
+ *     `#follow-up=<token>` link (see microFollowUp.ts's doc comment).
  *
  * A reported new symptom/adverse effect only opens the card and shows an
  * "추가 확인 필요" flag -- it never changes any routing, safety computation,

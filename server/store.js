@@ -43,7 +43,17 @@ function withLock(key, fn) {
   return run
 }
 
-export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTokenRetentionHours = 24 } = {}) {
+export function createStore(
+  dataDir,
+  {
+    followUpTokenTtlMinutes = 30,
+    followUpTokenRetentionHours = 24,
+    // Configurable purely so tests can use a tiny window instead of
+    // sleeping for real seconds to prove "the window expired, this is now
+    // a genuinely new start" -- production always uses the 5s default.
+    startRevisitDedupWindowMs = 5000,
+  } = {},
+) {
   // visits/는 submissions/의 형제 경로다(audit.log와 같은 패턴) — 별도
   // 데이터 디렉터리 설정이 필요 없다.
   const visits = createVisitStore(path.join(dataDir, '..', 'visits'))
@@ -338,21 +348,60 @@ export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTok
   // already written, roll the visit back before re-throwing -- otherwise a
   // caller could be left with an orphan no-submission revisit visit that
   // has no way to ever get a token (the doctor UI would show "재진 ·
-  // 시작 전" forever for a visit nobody actually meant to create yet).
+  // 시작 전" forever for a visit nobody actually meant to create yet). This
+  // is still sound after the round 6 fix below: issueToken() itself is now
+  // all-or-nothing (see followUpSessionStore.js), so any thrown error here
+  // leaves no token/pointer artifact for the rollback to worry about.
+  //
+  // Round 6 review fix (duplicate-start prevention): a double-click or a
+  // browser/network retry of this exact doctor action must never mint two
+  // revisit visits (each with its own separate one-time token) for one
+  // intended click -- the doctor would see two "재진 · 환자 입력 대기"
+  // entries and only one link would ever reach the patient. Serialize per
+  // patient_id (calls for two different patients never block each other)
+  // and, within a short in-memory dedup window, replay the SAME result
+  // (same visit, same already-issued token) for a repeat call instead of
+  // creating a second visit. The plaintext token cannot be regenerated
+  // later (by design -- see followUpSessionStore.js), so this cache is the
+  // only way a legitimately-retried request can still receive it.
+  //
+  // This dedup is deliberately narrower than "any repeat call within the
+  // window": it only replays a cached revisit that is STILL PENDING (no
+  // MicroFollowUpResponse saved for it yet). A clinician who starts a
+  // revisit, has the patient answer it, and then deliberately starts a
+  // SECOND, separate revisit for the same patient shortly afterward (the
+  // required longitudinal-continuity regression scenario does exactly
+  // this) must get a genuinely new visit -- that revisit is no longer
+  // "pending," so it is not a duplicate of anything.
+  const recentStartRevisitResults = new Map() // patient_id -> { result, expiresAt }
+
   async function startRevisit(patientId) {
-    const visit = await visits.createVisit({ patient_id: patientId, submission_id: null })
-    try {
-      const targets = await deriveMicroFollowUpCandidates(patientId, visit.id)
-      const { token, record } = await followUpSessions.issueToken({
-        visit_id: visit.id,
-        patient_id: patientId,
-        targets,
-      })
-      return { visit, token, session: record }
-    } catch (err) {
-      await visits.deleteVisitForRollbackOnly(visit.id).catch(() => {})
-      throw err
-    }
+    return withLock(`start-revisit:${patientId}`, async () => {
+      const cached = recentStartRevisitResults.get(patientId)
+      if (cached) {
+        const stillFresh = cached.expiresAt > Date.now()
+        const alreadyAnswered = stillFresh && Boolean(await microFollowUp.getResponse(cached.result.visit.id))
+        if (stillFresh && !alreadyAnswered) return cached.result
+        recentStartRevisitResults.delete(patientId)
+      }
+
+      const visit = await visits.createVisit({ patient_id: patientId, submission_id: null })
+      let result
+      try {
+        const targets = await deriveMicroFollowUpCandidates(patientId, visit.id)
+        const { token, record } = await followUpSessions.issueToken({
+          visit_id: visit.id,
+          patient_id: patientId,
+          targets,
+        })
+        result = { visit, token, session: record }
+      } catch (err) {
+        await visits.deleteVisitForRollbackOnly(visit.id).catch(() => {})
+        throw err
+      }
+      recentStartRevisitResults.set(patientId, { result, expiresAt: Date.now() + startRevisitDedupWindowMs })
+      return result
+    })
   }
 
   // Reissue: same visit, freshly re-derived candidates (in case the
@@ -388,6 +437,18 @@ export function createStore(dataDir, { followUpTokenTtlMinutes = 30, followUpTok
   // burned with the answer lost. The thrown error propagates to the caller
   // (server/index.js's route handler), which is expected to surface a
   // retriable error rather than a success.
+  //
+  // Round 6 review fix (idempotent acceptance): the durability-ordering fix
+  // above still left one window open -- if saveResponse succeeds but the
+  // FINAL write that marks the token CONSUMED then fails, the token stays
+  // ACTIVE and a legitimate retry re-enters this same actionFn. Without
+  // more, that retry would call microFollowUp.saveResponse a second time
+  // and (with the old overwrite behavior) silently replace the first
+  // accepted answer. microFollowUp.saveResponse is now write-once (see its
+  // own doc comment in microFollowUpStore.js): a retry's saveResponse call
+  // returns the already-saved record unchanged instead of overwriting it,
+  // so the token consume boundary and the response boundary are each
+  // independently safe to retry, in either order.
   async function submitFollowUpSession(rawToken, answers) {
     const result = await followUpSessions.consumeTokenWithAction(rawToken, async (record) => {
       const allowedIds = new Set(record.targets.map((t) => t.id))

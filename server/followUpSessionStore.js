@@ -90,24 +90,30 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
   }
 
   // visit_id-keyed lock: issuance/reissue/invalidate for the same visit
-  // always serialize, so "invalidate the previous active token, then
-  // install the new pointer" can never race with itself.
+  // always serialize.
+  //
+  // Round 6 review fix: this used to invalidate the previous active token
+  // BEFORE the new token record + pointer were durably written -- if either
+  // of those writes then failed, a previously working patient link was
+  // already destroyed with nothing to replace it. Now a strict two-phase
+  // swap: (1) durably write the new token record while the OLD token/
+  // pointer are still completely untouched and still resolve normally, (2)
+  // atomically switch the visit's pointer to the new token hash -- this is
+  // the single moment the new link becomes "the" active one. Only after
+  // step (2) succeeds do we best-effort invalidate the old token; if that
+  // last step fails, the old token record is merely stale (still says
+  // ACTIVE) but the pointer no longer references it, so it is not handed
+  // out as "the" active link by getActiveForVisit -- not a correctness
+  // problem for the new capability. If step (2) itself fails, the new
+  // token record we just wrote in step (1) is deleted before rethrowing,
+  // so issueToken leaves either a fully-installed new token+pointer or
+  // (on any failure) exactly the state that existed before the call --
+  // never an orphan ACTIVE token record with no pointer referencing it.
   async function issueToken({ visit_id, patient_id, targets }) {
     return withLock(`visit:${visit_id}`, async () => {
       await ensureDirs()
-      // Invalidate any currently-active token for this visit first -- a
-      // revisit has at most one live patient link at a time.
       const pointer = await readJson(pointerPath(baseDir, visit_id))
-      if (pointer?.active_token_hash) {
-        await withLock(`token:${pointer.active_token_hash}`, async () => {
-          const old = await readJson(tokenPath(baseDir, pointer.active_token_hash))
-          if (old && old.status === 'ACTIVE') {
-            old.status = 'INVALIDATED'
-            old.invalidated_at = new Date().toISOString()
-            await atomicWrite(tokenPath(baseDir, pointer.active_token_hash), old)
-          }
-        })
-      }
+      const previousActiveHash = pointer?.active_token_hash ?? null
 
       const rawToken = randomBytes(TOKEN_BYTES).toString('base64url')
       const tokenHash = hashToken(rawToken)
@@ -134,8 +140,38 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
         consumed_at: null,
         invalidated_at: null,
       }
+
+      // Phase 1: write the new token record. The old token/pointer are
+      // still fully intact at this point -- a failure here leaves zero
+      // trace of this call ever happening.
       await atomicWrite(tokenPath(baseDir, tokenHash), record)
-      await atomicWrite(pointerPath(baseDir, visit_id), { active_token_hash: tokenHash })
+
+      // Phase 2: atomically switch the visit's pointer to the new token.
+      // A failure here means the new capability never became "the active
+      // one" -- clean up the orphaned record we just wrote and rethrow, so
+      // no ACTIVE token with no referencing pointer is left behind.
+      try {
+        await atomicWrite(pointerPath(baseDir, visit_id), { active_token_hash: tokenHash })
+      } catch (err) {
+        await unlink(tokenPath(baseDir, tokenHash)).catch(() => {})
+        throw err
+      }
+
+      // Phase 3: best-effort invalidate the previous token now that the
+      // new one is durably installed and live. If this fails, the old
+      // token record is merely left stale -- it's already unreachable via
+      // getActiveForVisit since the pointer no longer names it.
+      if (previousActiveHash && previousActiveHash !== tokenHash) {
+        await withLock(`token:${previousActiveHash}`, async () => {
+          const old = await readJson(tokenPath(baseDir, previousActiveHash))
+          if (old && old.status === 'ACTIVE') {
+            old.status = 'INVALIDATED'
+            old.invalidated_at = new Date().toISOString()
+            await atomicWrite(tokenPath(baseDir, previousActiveHash), old)
+          }
+        }).catch(() => {})
+      }
+
       // rawToken is returned exactly once, here, and never persisted.
       return { token: rawToken, record }
     })

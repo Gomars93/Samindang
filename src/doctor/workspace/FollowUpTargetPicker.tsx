@@ -1,9 +1,15 @@
 /**
  * Reassessment target picker (PR #24 Phase 8) — clinician nominates 1-3
- * items to reassess at the next visit. No repeat-visit auto-comparison:
- * this codebase has no secure, stable patient/visit linkage today (see
- * finalAssessment.ts's REPEAT_VISIT_AUTO_COMPARE_STATUS), so this only
- * records the *targets*, never a fabricated prior-visit match.
+ * items to reassess at the next visit. No repeat-visit AUTO-comparison
+ * (no computed 호전/악화 judgment) even though round 3/4 did add a secure,
+ * patient_id-scoped prior-visit lookup (`src/doctor/workspace/
+ * longitudinal.ts`, `server/store.js`'s getPatientHistory) and a capability-
+ * token revisit link (`src/lib/followUpClient.ts`) elsewhere in this
+ * codebase — see finalAssessment.ts's REPEAT_VISIT_AUTO_COMPARE_STATUS for
+ * why the INTERPRETATION step specifically (not the linkage itself) stays
+ * unimplemented: no clinician-approved improvement-threshold rule exists.
+ * This component only records the *targets* the clinician nominates here,
+ * never a fabricated or auto-computed prior-visit comparison.
  */
 import {
   MAX_FOLLOW_UP_TARGETS,

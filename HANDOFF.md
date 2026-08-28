@@ -1,6 +1,15 @@
 # Current Handoff
 
-## Objective (round 5 — round 4 리뷰 엔지니어링 수정, 이번 세션)
+## Objective (round 6 — round 5 리뷰 2차 엔지니어링 수정, 이번 세션)
+PR #24에 대한 두 번째 follow-up review(Gomars93, "Round 5 follow-up")가
+round 5의 수정이 "prior 6 blockers는 해결됐지만 재검토에서 2차
+엔지니어링 gap을 발견"했다며 지적한 7개 항목 — 재발급 실패 안전성,
+startRevisit의 부분쓰기 정리, 응답 수락의 멱등성, 중복 클릭 방지,
+재진의 재진(revisit-of-revisit) 이전 맥락 완전성, React 메모리에서 토큰
+해제, 오래된 주석 — 을 수정한다. 새 임상 판단 없음. 상세는 아래
+Completed — Round 6 참고. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (round 5 — round 4 리뷰 엔지니어링 수정, 이전 세션)
 PR #24에 대한 GitHub PR review(Gomars93, round 4 follow-up)가 지적한 6개
 엔지니어링 정합성 문제 — 새 임상 판단 없음, 전부 원자성/내구성/SSOT/종단
 연결/데이터 형식/프라이버시 문제 — 를 수정한다. 상세는 아래 Completed —
@@ -133,10 +142,69 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 5의 리뷰 수정/테스트/QA 전부 완료. Push 후 CI 재확인만
+- (없음 — round 6의 리뷰 수정/테스트/QA 전부 완료. Push 후 CI 재확인만
   남음.)
 
-## Completed — Round 5 (round 4 리뷰 엔지니어링 수정, 이번 세션)
+## Completed — Round 6 (round 5 리뷰 2차 엔지니어링 수정, 이번 세션)
+"Round 5 follow-up" 리뷰가 지적한 7개 항목을 전부 수정했다. 새 임상
+threshold/추론/라우팅은 추가하지 않았다.
+
+1. **재발급(reissue) 실패 안전성** — `server/followUpSessionStore.js`의
+   `issueToken`을 "old 토큰 무효화 → new 토큰/pointer 쓰기" 순서에서
+   "new 토큰 레코드 쓰기(phase 1, old는 완전히 안 건드림) → pointer를
+   new로 원자적 전환(phase 2) → 성공 후에만 old를 best-effort 무효화
+   (phase 3)"으로 재작성. phase 2가 실패하면 phase 1에서 방금 쓴 new
+   토큰 레코드를 즉시 삭제(cleanup)하고 rethrow — old 토큰/링크는 어느
+   실패 지점에서도 절대 파괴되지 않는다. (a) new 토큰 쓰기 실패, (b)
+   pointer 쓰기 실패 두 지점 모두 실제 파일시스템 failure injection으로
+   검증.
+2. **startRevisit의 부분쓰기 정리** — 위 1번 수정으로 `issueToken` 자체가
+   all-or-nothing이 되어, `startRevisit`의 기존 rollback(방금 만든 visit
+   삭제)이 어떤 실패 지점에서도 visit/토큰/pointer 아티팩트를 전혀 남기지
+   않음을 재확인.
+3. **응답 수락의 멱등성** — `server/microFollowUpStore.js`의
+   `saveResponse`를 visit_id당 write-once로 변경: 이미 저장된 응답이
+   있으면 새 입력을 무시하고 기존 레코드를 그대로 반환한다. round 5가
+   만든 "저장 성공 → 토큰 CONSUMED 쓰기 실패" 창에서, 재시도가 이미
+   저장된 첫 응답을 덮어쓰는 문제를 닫는다. 저장 성공 직후 CONSUMED
+   쓰기만 실패하도록 정밀 failure injection(해당 토큰의 `.tmp` 쓰기
+   대상만 차단, 다른 토큰 읽기는 전혀 방해하지 않음)으로 검증 — 재시도가
+   첫 응답을 덮어쓰지 않음을 확인.
+4. **중복 재진 생성 방지** — `server/store.js`의 `startRevisit`이
+   patient_id별로 직렬화(lock)되고, 짧은 in-memory dedup 윈도우 내에서
+   해당 환자의 직전 재진이 아직 "응답 없음"(pending) 상태면 새 visit을
+   만들지 않고 SAME 결과(같은 visit, 같은 토큰)를 재사용한다. 이미 응답이
+   저장된(완료된) 재진에는 적용되지 않음 — round 5의 longitudinal
+   시나리오(재진1 완료 → 재진2 시작)가 여전히 정상 동작함을 재확인.
+   `src/doctor/DoctorView.tsx`의 "재진 간단 문진 시작" 버튼도 요청
+   진행 중에는 비활성화(방어 계층 추가). 실제 동시(Promise.all) 호출
+   테스트로 정확히 visit 1개만 생성됨을 검증.
+5. **재진의 재진(revisit-of-revisit) 이전 맥락 완전성** —
+   `RevisitWorkspace.tsx`가 이전 방문이 submission-backed일 때만
+   `getSubmission`으로 상세를 불러오던 것을, 이전 방문이 그 자체로
+   재진(no-submission revisit)일 때도 `getVisit`으로 그 visit-owned
+   워크스페이스를 읽기 전용으로 불러오도록 확장 — 재진1의 Care
+   Plan/재검(Structured Reassessment) 상세가 재진2에서 사라지지 않는다.
+6. **React 메모리에서 토큰 해제** — round 5가 URL/history는 스크럽했지만
+   `App.tsx`의 `followUpToken` 상태 자체는 그대로 남아있던 문제. 제출
+   성공 시 `FollowUpScreen`이 `onCompleted` 콜백으로 부모의 토큰 상태를
+   null로 만들고, `followUpActive`라는 별도 플래그로 "이 라우트를 계속
+   보여줄지"를 분리해 완료 화면이 사라지지 않게 했다. `FollowUpScreen`
+   자신은 마운트 시점의 토큰을 내부 state로 고정해 이후 부모의 null화가
+   자신의 fetch effect를 재실행시키지 않도록 함.
+7. **오래된 주석 정리** — `microFollowUp.ts`/`MicroFollowUpCard.tsx`/
+   `FollowUpTargetPicker.tsx`/`DoctorView.tsx`/`serverClient.ts`의
+   "OPERATIONAL INTEGRATION REQUIRED"/환자 화면 없음 시절 주석을 round
+   4 이후의 실제 상태(환자 화면 존재, 별도 capability-token 경로)로
+   갱신. 코드 주석만 — 새 문서 없음.
+
+`tests/follow-up-session.spec.mjs` 134 → 151 assertion(재발급 failure
+injection 2건, 멱등성 failure injection 1건, 동시-시작 1건 추가),
+`tests/server.spec.mjs`도 write-once 회귀 테스트 추가(211 → 213
+assertion). 실제 헤드리스 브라우저 QA 29 → 38 체크(중복클릭 disable,
+재진의 재진 맥락, 완료 후 새로고침 시 폼 미노출 추가).
+
+## Completed — Round 5 (round 4 리뷰 엔지니어링 수정, 이전 세션)
 GitHub PR review(round 4 follow-up)가 지적한 6개 항목 + edge tightening을
 전부 수정했다. 새 임상 threshold/추론/라우팅은 추가하지 않았다.
 
@@ -284,6 +352,21 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   판단이라 이 세션이 자체적으로 해소할 수 없는 항목이며, 차단이 아니라
   다음 human action이다.
 
+## Relevant Files (round 6 신규/주요 변경)
+- `server/followUpSessionStore.js`(`issueToken` 재작성 — 2-phase 안전한
+  swap), `server/store.js`(`startRevisit` dedup 캐시,
+  `submitFollowUpSession` 주석 갱신), `server/microFollowUpStore.js`
+  (`saveResponse` write-once).
+- `src/doctor/DoctorView.tsx`(`startRevisitPending` 상태, 버튼 비활성화),
+  `src/doctor/workspace/RevisitWorkspace.tsx`(재진-소유 이전 워크스페이스
+  읽기 전용 로드 + 신규 recap 함수), `src/App.tsx`(`followUpActive`
+  분리, `onCompleted` 콜백), `src/screens/FollowUpScreen.tsx`
+  (`activeToken` 마운트시 고정, `onCompleted` 호출).
+- `src/doctor/workspace/microFollowUp.ts`/`MicroFollowUpCard.tsx`/
+  `FollowUpTargetPicker.tsx`/`src/lib/serverClient.ts`(오래된 주석 갱신).
+- `tests/follow-up-session.spec.mjs`(134 → 151 assertion),
+  `tests/server.spec.mjs`(211 → 213 assertion, write-once 회귀 추가).
+
 ## Relevant Files (round 5 신규/주요 변경)
 - `server/store.js`(`startRevisit` 롤백, `submitFollowUpSession`이
   `consumeTokenWithAction` 사용, `getPatientHistory` 재작성,
@@ -360,6 +443,20 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 6 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
+  test:all`(전체 green — `tests/follow-up-session.spec.mjs` 151
+  assertion[round 5의 134에서 재발급 failure injection 2건/멱등성
+  failure injection 1건/동시-시작 1건 추가], `tests/server.spec.mjs`
+  213 assertion[write-once 회귀 2건 추가]), `cd "tablet core" &&
+  python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+  'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty).
+- **Round 6 실제 헤드리스 브라우저 E2E QA**: 38개 체크 전부 통과(round
+  5의 29개에 추가 — 중복클릭 시 버튼 비활성화 + 서버에 요청 정확히
+  1번만 도달, 재진1에서 입력한 Care Plan 텍스트/신규 재평가 대상이
+  재진2의 "이전 방문 참고"에 그대로 나타남[재진의 재진 종단 연결],
+  완료 후 새로고침해도 문진 폼/이전 target 라벨이 다시 나타나지
+  않음[React 메모리 토큰 해제]).
 - **Round 5 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(둘 다 성공), `npm run
   test:all`(전체 green — `tests/follow-up-session.spec.mjs` 134
@@ -425,6 +522,10 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   와 동일한 이 저장소의 기존 전제 — 단일 프로세스가 데이터 디렉터리
   하나를 소유). 파일럿 등급 LAN 서버라는 이 시스템 전체의 기존 보안
   모델과 일관됨.
+- (신규, round 6) `startRevisit`의 중복-시작 dedup 캐시도 동일하게
+  in-memory·프로세스 단일 소유 전제(재시작 시 초기화, 여러 서버 프로세스
+  간 공유 안 함)를 따른다 — 위 rate limiter와 같은 기존 전제의 자연스러운
+  확장이지 새로운 리스크가 아니다.
 - 환자 개인정보(문진/사주 출생정보)를 다루는 시스템이므로, 향후 모든
   작업에서 실제 값이 로그/커밋/PR/문서에 남지 않도록 주의. 이번 라운드도
   follow-up-session 감사 로그는 visit_id + event type만 남기고 토큰
@@ -434,7 +535,7 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 4 리뷰의 6개 항목 + edge tightening이 전부 수정되었으니 review
+2. round 5 follow-up 리뷰의 7개 항목이 전부 수정되었으니 review
    author(Gomars93)가 새 HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.

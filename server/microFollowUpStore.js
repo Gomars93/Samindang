@@ -1,9 +1,22 @@
 // Micro Follow-up 응답 저장 계층 (round 3 Phase D). visitStore.js/
 // recorderResultStore.js와 동일한 atomic-write JSON-파일 패턴. 한 visit당
 // micro follow-up 응답은 최대 1건이므로 파일 1개 = visit 1개다:
-// <followUpDir>/<visit_id>.json. 같은 visit_id로 다시 저장하면(재전송) 새
-// 파일을 만들지 않고 기존 파일을 덮어쓴다(idempotent) — created_at은 최초
-// 저장 시각을 유지하고 updated_at만 갱신한다.
+// <followUpDir>/<visit_id>.json.
+//
+// Round 6 review fix (idempotent acceptance): saveResponse used to
+// unconditionally overwrite any existing record for the same visit_id.
+// That was a real data-loss risk: server/store.js's submitFollowUpSession
+// calls this INSIDE consumeTokenWithAction's actionFn, which runs BEFORE
+// the token is marked CONSUMED -- if this save succeeds but that final
+// CONSUMED write then fails, the token stays ACTIVE and the patient's
+// client can legitimately retry with the exact same one-time link. A
+// second overwrite-based save would silently replace the first accepted
+// answer. A saved response is now write-once/immutable: once a record
+// exists for a visit_id, every later call (retry or otherwise) returns
+// that existing record completely unchanged rather than overwriting it --
+// there is no supported "edit a submitted Micro Follow-up answer" flow, so
+// treating the first durable save as final is correct, not merely
+// convenient.
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -53,6 +66,9 @@ export function createMicroFollowUpStore(followUpDir) {
       } catch (err) {
         if (err.code !== 'ENOENT') throw err
       }
+      // Write-once: a response already saved for this visit is final. See
+      // the module doc comment above for why this must never overwrite.
+      if (existing) return existing
       const now = new Date().toISOString()
       const record = {
         visit_id,
@@ -63,9 +79,9 @@ export function createMicroFollowUpStore(followUpDir) {
         newSymptomNote: newSymptomNote ?? '',
         adverseEffectReported: Boolean(adverseEffectReported),
         adverseEffectNote: adverseEffectNote ?? '',
-        created_at: existing?.created_at ?? now,
+        created_at: now,
         updated_at: now,
-        submitted_at: existing?.submitted_at ?? now,
+        submitted_at: now,
       }
       await atomicWrite(filePath, record)
       return record

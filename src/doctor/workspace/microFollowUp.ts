@@ -13,22 +13,21 @@
  * to true so the clinician sees an "추가 확인 필요" flag at the next visit.
  * What happens next is always the clinician's own judgment call.
  *
- * OPERATIONAL INTEGRATION REQUIRED (see North Star Phase D / this round's
- * final report): this file defines the data model, and the server carries
- * a doctor-guarded save/read contract for it (server/microFollowUpStore.js
- * + the routes in server/index.js) -- but no patient-facing SCREEN exists
- * to actually deliver these questions on the tablet. Every route on this
- * server (including the ones a Recorder workstation POSTs to) requires the
- * same doctor token; the patient tablet app deliberately never holds one
- * (src/App.tsx never references any doctor-token-gated read, enforced by
- * an existing regression test). Letting the tablet itself submit a
- * MicroFollowUpResponse for a RETURNING patient would require either (a)
- * handing the tablet doctor-token-gated read access it has never had, or
- * (b) inventing a new lookup/URL-token scheme to identify the visit
- * without one -- both are security/product decisions this round is not
- * authorized to make on its own, so the route stays doctor/staff-authenticated
- * only until a human resolves how the tablet safely learns which
- * patient_id/visit_id it is answering for.
+ * This file defines the data model. Two separate write paths exist for a
+ * MicroFollowUpResponse (server/microFollowUpStore.js + the routes in
+ * server/index.js): a doctor/staff session can save one directly (e.g. a
+ * clinician noting a check-in over the phone), and -- since round 4 -- the
+ * PATIENT's own device can also submit one, through a completely separate,
+ * un-doctor-token-gated public route (`GET`/`POST /api/follow-up-session/
+ * :token`) reached via `src/screens/FollowUpScreen.tsx`'s `#follow-up=
+ * <token>` hash link. That link carries a scoped, single-use capability
+ * token (server/followUpSessionStore.js) rather than the doctor token --
+ * `src/App.tsx` still never references any doctor-token-gated read from the
+ * patient tablet app (enforced by an existing regression test), and
+ * `src/lib/followUpClient.ts` structurally cannot import doctorToken.ts/
+ * serverClient.ts (also enforced by a regression test) -- so the two paths
+ * stay fully separate identity boundaries even though they both end up
+ * calling the same `saveResponse`.
  */
 import type { FollowUpTarget } from './finalAssessment'
 

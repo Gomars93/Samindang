@@ -205,9 +205,11 @@ export function getRecorderResults(visitId: string): Promise<ServerResult<{ resu
 
 // Round 3 Phase D(micro follow-up). Wire shape from server/microFollowUpStore.js
 // mapped to src/doctor/workspace/microFollowUp.ts's MicroFollowUpResponse.
-// Both routes are doctor-guarded like every other route here -- see
-// microFollowUp.ts's OPERATIONAL INTEGRATION REQUIRED note for why the
-// patient tablet cannot call these directly today.
+// Both routes below are doctor-guarded like every other route in this
+// file -- this is the DOCTOR/staff-session read/save path. The patient's
+// own device saves a MicroFollowUpResponse through a completely separate,
+// un-doctor-token-gated route instead (see src/lib/followUpClient.ts's
+// submitFollowUpSession, which this file never imports).
 export function getMicroFollowUpResponse(
   visitId: string,
 ): Promise<ServerResult<{ response: import('../doctor/workspace/microFollowUp').MicroFollowUpResponse | null }>> {

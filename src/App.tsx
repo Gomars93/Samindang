@@ -113,11 +113,31 @@ function AppContent() {
   const [followUpToken, setFollowUpToken] = useState<string | null>(() =>
     typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) : null,
   )
+  // Round 6 review fix (token scrub from React memory): FollowUpScreen's
+  // own replaceState/pushState (see its doc comment) already scrub the raw
+  // token out of the visible URL and browser history once the patient
+  // submits -- but that never fires `hashchange`, so `followUpToken` above
+  // used to just sit there holding the plaintext secret in this
+  // component's memory for the rest of the page's life. `onCompleted`
+  // below lets FollowUpScreen tell us to release it (setFollowUpToken
+  // (null)) right after a successful submit. `followUpActive` is a
+  // SEPARATE flag for "are we still on the follow-up route at all" -- it
+  // is set once and never cleared for the life of this mount, so nulling
+  // the token does not also make the render check below fall through and
+  // unmount FollowUpScreen (which would lose its own completion/"done"
+  // screen state, exactly the privacy wall this is supposed to preserve).
+  const [followUpActive, setFollowUpActive] = useState(
+    () => (typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) !== null : false),
+  )
 
   useEffect(() => {
     const onHashChange = () => {
       setIsDoctorView(window.location.hash.startsWith('#doctor'))
-      setFollowUpToken(parseFollowUpToken(window.location.hash))
+      const next = parseFollowUpToken(window.location.hash)
+      if (next !== null) {
+        setFollowUpToken(next)
+        setFollowUpActive(true)
+      }
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
@@ -425,8 +445,13 @@ function AppContent() {
 
   /* ---------- render ---------- */
 
-  if (followUpToken) {
-    return <FollowUpScreen key={followUpToken} token={followUpToken} />
+  if (followUpActive) {
+    // token is intentionally NOT part of the key here: nulling it (via
+    // onCompleted, once submission succeeds) must not remount this
+    // component and lose its own "done" screen state. FollowUpScreen
+    // itself freezes the token value it was first mounted with (see its
+    // own doc comment) and never re-reads a later-nulled prop.
+    return <FollowUpScreen token={followUpToken} onCompleted={() => setFollowUpToken(null)} />
   }
 
   if (isDoctorView) {

@@ -1399,7 +1399,20 @@ async function main() {
       })
       assert('POST micro-follow-up for an unknown visit_id -> 404', missingVisitPost.status === 404)
 
-      const malformedPost = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+      // Round 6 review fix (idempotent acceptance): saveResponse is now
+      // write-once per visit_id (see microFollowUpStore.js's doc comment),
+      // so this sanitization check needs its OWN fresh visit -- `visitId`
+      // above already has a saved response and would just return it
+      // unchanged rather than exercising the malformed-input coercion path.
+      const createdForMalformed = await (
+        await fetch(`${mfuBase}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-mfu-malformed' })),
+        })
+      ).json()
+      const recordForMalformed = await (await fetch(`${mfuBase}/api/submissions/${createdForMalformed.id}`)).json()
+      const malformedPost = await fetch(`${mfuBase}/api/visits/${recordForMalformed.visit_id}/micro-follow-up`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ targetRatings: 'not-an-array', newSymptomReported: 'yes' }),
@@ -1407,6 +1420,25 @@ async function main() {
       const malformedBody = await malformedPost.json()
       assert('POST micro-follow-up with malformed targetRatings -> 201 with [] (never throws/500s)', malformedPost.status === 201 && Array.isArray(malformedBody.targetRatings) && malformedBody.targetRatings.length === 0)
       assert('POST micro-follow-up coerces a non-boolean newSymptomReported to a real boolean', malformedBody.newSymptomReported === true)
+
+      // A second POST for the SAME (already-saved) visitId is now a no-op
+      // replay -- it must return the FIRST response unchanged, never
+      // silently overwrite it with different content.
+      const secondPostSameVisit = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetRatings: [{ targetId: 'ft1', label: 'LBP_12', patientReportedValue: 'SHOULD NOT OVERWRITE' }],
+          overallChange: '나빠짐',
+          newSymptomReported: false,
+          newSymptomNote: '',
+          adverseEffectReported: false,
+          adverseEffectNote: '',
+        }),
+      })
+      const secondPostBody = await secondPostSameVisit.json()
+      assert('POST micro-follow-up: a second save for the same visit_id is write-once and returns the FIRST response unchanged', secondPostSameVisit.status === 201 && secondPostBody.targetRatings[0].patientReportedValue === '4')
+      assert('POST micro-follow-up: the second attempt\'s conflicting text never made it into storage', !JSON.stringify(secondPostBody).includes('SHOULD NOT OVERWRITE'))
 
       const noAuth = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, { headers: { origin: 'https://evil.example.com' } })
       assert('GET micro-follow-up without doctor auth (evil Origin) -> 403, same guard as every other doctor route', noAuth.status === 403)

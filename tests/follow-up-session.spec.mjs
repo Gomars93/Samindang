@@ -8,7 +8,7 @@
 // POST-can't-overwrite-labels, doctor-token-absent-from-patient-flow,
 // no-name/phone/DOB-matching, and CORS/body-size-guards-intact -- plus the
 // end-to-end revisit workflow.
-import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -197,7 +197,10 @@ async function main() {
     const wfRoot = await mkdtemp(path.join(tmpdir(), 'samindang-followup-workflow-'))
     const wfDataDir = path.join(wfRoot, 'submissions')
     try {
-      const store = createStore(wfDataDir, { followUpTokenTtlMinutes: 30, followUpTokenRetentionHours: 24 })
+      // startRevisitDedupWindowMs kept tiny (not the 5s production default)
+      // so this suite can prove "the window expired, this is now a
+      // genuinely separate action" without actually sleeping for seconds.
+      const store = createStore(wfDataDir, { followUpTokenTtlMinutes: 30, followUpTokenRetentionHours: 24, startRevisitDedupWindowMs: 50 })
 
       // Patient P: one prior real submission carrying pain + herbal
       // follow-up targets (order matters -- pain first, then herbal, per
@@ -263,11 +266,30 @@ async function main() {
       assert('startRevisit issues a token scoped to the new visit', started.session.visit_id === started.visit.id)
       assert('startRevisit token snapshot matches derived candidates', started.session.targets.map((t) => t.id).join(',') === 'ft1,ft2,ft3')
 
-      /* ---- visit-scoping: a second revisit for the SAME patient gets an
-         INDEPENDENT visit_id and token, never reusing the first ---- */
+      /* ---- Round 6 review fix (duplicate-start prevention): an immediate
+         repeat call for the SAME patient (double-click / network retry,
+         well within the dedup window) must return the exact SAME visit and
+         the exact SAME token -- never mint a second visit/token pair for
+         one intended click. Since the plaintext token can never be
+         regenerated later (see followUpSessionStore.js), replaying it is
+         the only way a legitimately-retried request still gets it. ---- */
+      const startedImmediateRepeat = await store.startRevisit(patientP)
+      assert(
+        'an immediate repeat start-revisit for the same patient returns the SAME visit (dedup, not a duplicate)',
+        startedImmediateRepeat.visit.id === started.visit.id,
+      )
+      assert(
+        'an immediate repeat start-revisit returns the SAME token as the original call',
+        startedImmediateRepeat.token === started.token,
+      )
+
+      /* ---- visit-scoping: a start-revisit for the SAME patient AFTER the
+         dedup window has elapsed is a genuinely separate action and gets
+         an INDEPENDENT visit_id and token, never reusing the first ---- */
+      await new Promise((resolve) => setTimeout(resolve, 80))
       const startedAgain = await store.startRevisit(patientP)
-      assert('a second start-revisit for the same patient creates yet another distinct visit', startedAgain.visit.id !== started.visit.id)
-      assert('the first revisit\'s token is unaffected by the second (different visit -> different pointer)', started.session.visit_id !== startedAgain.session.visit_id)
+      assert('a start-revisit past the dedup window creates yet another distinct visit', startedAgain.visit.id !== started.visit.id)
+      assert('the first revisit\'s token is unaffected by the later one (different visit -> different pointer)', started.session.visit_id !== startedAgain.session.visit_id)
 
       /* ---- submitFollowUpSession: server resolves labels from its OWN
          snapshot, ignores any client-supplied label / unknown target id ---- */
@@ -545,6 +567,179 @@ async function main() {
       assert('store-layer: saveVisitWorkspace on an unknown visit id reports not_found', notFoundResult.ok === false && notFoundResult.reason === 'not_found')
     } finally {
       await rm(r5Root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 2.6 (round 6 review fixes): reissue failure-safety (both
+     new-token-record and pointer-write failure points), idempotent
+     acceptance across the token-consume boundary, and genuinely
+     concurrent start-revisit calls.
+     ===================================================================== */
+  {
+    const r6Root = await mkdtemp(path.join(tmpdir(), 'samindang-followup-review6-'))
+    try {
+      const followUpBaseDir = path.join(r6Root, 'follow-up-sessions')
+      const sessions = createFollowUpSessionStore(followUpBaseDir, { ttlMinutes: 30 })
+      const tokensDirPath = path.join(followUpBaseDir, 'tokens')
+      const pointersDirPath = path.join(followUpBaseDir, 'by-visit')
+
+      /* ---- reissue failure-safety (a): the NEW token-record write fails.
+         The OLD token must never be touched (not read, not invalidated) --
+         a failure this early must leave the previously-working patient
+         link exactly as it was. The old file is moved aside for the
+         duration of the block (issueToken's phase 1 doesn't read/write it
+         at all, so this doesn't change what's being exercised) and moved
+         back before the "still works" assertion. ---- */
+      const { token: oldTokenA } = await sessions.issueToken({ visit_id: 'r6-visit-a', patient_id: 'r6-patient-a', targets: [] })
+      const tokensBackupDirPath = path.join(r6Root, 'tokens-backup-a')
+      await mkdir(tokensBackupDirPath, { recursive: true })
+      for (const f of await readdir(tokensDirPath)) {
+        await rename(path.join(tokensDirPath, f), path.join(tokensBackupDirPath, f))
+      }
+      await rm(tokensDirPath, { recursive: true, force: true })
+      await writeFile(tokensDirPath, 'blocking file, not a directory', 'utf8')
+
+      let reissueAThrew = false
+      try {
+        await sessions.issueToken({ visit_id: 'r6-visit-a', patient_id: 'r6-patient-a', targets: [] })
+      } catch {
+        reissueAThrew = true
+      }
+      assert('reissue failure-safety (a): a failed new-token-record write propagates instead of silently succeeding', reissueAThrew)
+
+      await unlink(tokensDirPath)
+      await mkdir(tokensDirPath, { recursive: true })
+      for (const f of await readdir(tokensBackupDirPath)) {
+        await rename(path.join(tokensBackupDirPath, f), path.join(tokensDirPath, f))
+      }
+      const stillWorksA = await sessions.consumeToken(oldTokenA)
+      assert('reissue failure-safety (a): the OLD token is untouched and still consumes successfully after the failed reissue attempt', stillWorksA.ok === true)
+
+      /* ---- reissue failure-safety (b): the new token record write
+         SUCCEEDS, but the POINTER write that would switch the visit over
+         to it then fails. The orphaned new token record must be cleaned
+         up (no net growth in tokens/), and the OLD token/pointer must
+         still be exactly as they were -- still ACTIVE, still usable. ---- */
+      const { token: oldTokenB } = await sessions.issueToken({ visit_id: 'r6-visit-b', patient_id: 'r6-patient-b', targets: [] })
+      const pointersBackupDirPath = path.join(r6Root, 'pointers-backup-b')
+      await mkdir(pointersBackupDirPath, { recursive: true })
+      for (const f of await readdir(pointersDirPath)) {
+        await rename(path.join(pointersDirPath, f), path.join(pointersBackupDirPath, f))
+      }
+      await rm(pointersDirPath, { recursive: true, force: true })
+      await writeFile(pointersDirPath, 'blocking file, not a directory', 'utf8')
+
+      const tokenFileCountBefore = (await readdir(tokensDirPath)).length
+      let reissueBThrew = false
+      try {
+        await sessions.issueToken({ visit_id: 'r6-visit-b', patient_id: 'r6-patient-b', targets: [] })
+      } catch {
+        reissueBThrew = true
+      }
+      assert('reissue failure-safety (b): a failed pointer write propagates instead of silently succeeding', reissueBThrew)
+      const tokenFileCountAfter = (await readdir(tokensDirPath)).length
+      assert(
+        'reissue failure-safety (b): the orphaned new token record written before the pointer failure is cleaned up (no net change in tokens/ file count)',
+        tokenFileCountAfter === tokenFileCountBefore,
+      )
+
+      await unlink(pointersDirPath)
+      await mkdir(pointersDirPath, { recursive: true })
+      for (const f of await readdir(pointersBackupDirPath)) {
+        await rename(path.join(pointersBackupDirPath, f), path.join(pointersDirPath, f))
+      }
+      const stillWorksB = await sessions.consumeToken(oldTokenB)
+      assert('reissue failure-safety (b): the OLD token is untouched and still consumes successfully after the failed pointer write', stillWorksB.ok === true)
+
+      /* ---- idempotent acceptance across the consume boundary: a failure
+         AFTER the durable response save succeeds but WHILE the final
+         token-consume write fails must leave the token retriable, and the
+         retry must never overwrite the already-accepted first answer.
+         Blocks only the ONE specific token's own .tmp write target, not
+         the whole tokens/ directory, so this needs no separate isolated
+         root -- nothing else in this suite touches that exact file. ---- */
+      const idemStore = createStore(path.join(r6Root, 'idem-submissions'), { followUpTokenTtlMinutes: 30 })
+      const idemSub = await idemStore.createSubmission({
+        submission: { questionnaire_version: '1.0', session_id: 'sess-r6-idem', responses: {}, metadata: {} },
+        myungri: null,
+        patient_label: 'r6 idem patient',
+      })
+      await idemStore.saveWorkspace(
+        idemSub.id,
+        emptyWorkspaceFor({ painFollowUpTargets: [{ id: 'idemTarget', label: 'Idem Target', baseline: '5', postTreatmentValue: '' }] }),
+      )
+      const idemRevisit = await idemStore.startRevisit(idemSub.patient_id)
+      const idemTokenHash = hashToken(idemRevisit.token)
+      const idemTokenTmpPath = path.join(r6Root, 'idem-submissions', '..', 'follow-up-sessions', 'tokens', `${idemTokenHash}.json.tmp`)
+      await mkdir(idemTokenTmpPath, { recursive: true })
+
+      let firstSubmitThrew = false
+      try {
+        await idemStore.submitFollowUpSession(idemRevisit.token, {
+          targetRatings: [{ targetId: 'idemTarget', patientReportedValue: 'FIRST-ACCEPTED-VALUE' }],
+          overallChange: '좋아짐',
+          newSymptomReported: false,
+          newSymptomNote: '',
+          adverseEffectReported: false,
+          adverseEffectNote: '',
+        })
+      } catch {
+        firstSubmitThrew = true
+      }
+      assert('idempotent acceptance: a failure between response-save-success and token-consume-persistence propagates', firstSubmitThrew)
+
+      const responseAfterFirstAttempt = await idemStore.getMicroFollowUpResponse(idemRevisit.visit.id)
+      assert('idempotent acceptance: the response save itself succeeded despite the later token-consume failure', responseAfterFirstAttempt !== null)
+      assert(
+        "idempotent acceptance: the saved response carries the FIRST attempt's value",
+        responseAfterFirstAttempt.targetRatings[0].patientReportedValue === 'FIRST-ACCEPTED-VALUE',
+      )
+
+      await rm(idemTokenTmpPath, { recursive: true, force: true })
+
+      const idemRetryResult = await idemStore.submitFollowUpSession(idemRevisit.token, {
+        targetRatings: [{ targetId: 'idemTarget', patientReportedValue: 'SECOND-CONFLICTING-VALUE' }],
+        overallChange: '나빠짐',
+        newSymptomReported: true,
+        newSymptomNote: 'should never be saved',
+        adverseEffectReported: false,
+        adverseEffectNote: '',
+      })
+      assert('idempotent acceptance: retrying the SAME token succeeds once the transient failure is gone', idemRetryResult.ok === true)
+      assert(
+        "idempotent acceptance: retry does NOT overwrite the first accepted answer",
+        idemRetryResult.response.targetRatings[0].patientReportedValue === 'FIRST-ACCEPTED-VALUE',
+      )
+      const responseAfterRetry = await idemStore.getMicroFollowUpResponse(idemRevisit.visit.id)
+      assert(
+        "idempotent acceptance: the durably saved response still carries the FIRST attempt's value after retry, never the second",
+        responseAfterRetry.targetRatings[0].patientReportedValue === 'FIRST-ACCEPTED-VALUE',
+      )
+      assert(
+        "idempotent acceptance: the conflicting second attempt's text never made it into storage",
+        !JSON.stringify(responseAfterRetry).includes('SECOND-CONFLICTING-VALUE') && !JSON.stringify(responseAfterRetry).includes('should never be saved'),
+      )
+
+      /* ---- genuinely CONCURRENT start-revisit calls (not just sequential)
+         for the same patient must still only create ONE visit. ---- */
+      const concurrentSub = await idemStore.createSubmission({
+        submission: { questionnaire_version: '1.0', session_id: 'sess-r6-concurrent', responses: {}, metadata: {} },
+        myungri: null,
+        patient_label: 'r6 concurrent patient',
+      })
+      const [concurrentA, concurrentB] = await Promise.all([
+        idemStore.startRevisit(concurrentSub.patient_id),
+        idemStore.startRevisit(concurrentSub.patient_id),
+      ])
+      assert('concurrent start-revisit: two simultaneous calls for the same patient resolve to the SAME visit (no duplicate)', concurrentA.visit.id === concurrentB.visit.id)
+      assert('concurrent start-revisit: two simultaneous calls resolve to the SAME token', concurrentA.token === concurrentB.token)
+      const revisitsForConcurrentPatient = (await idemStore.listVisits()).filter(
+        (v) => v.patient_id === concurrentSub.patient_id && v.submission_id === null,
+      )
+      assert('concurrent start-revisit: exactly ONE revisit visit exists on disk, not two', revisitsForConcurrentPatient.length === 1)
+    } finally {
+      await rm(r6Root, { recursive: true, force: true })
     }
   }
 

@@ -474,3 +474,59 @@ percent-encoding 처리, stale by-visit 포인터 정리, store 레벨 SSOT
 - (−) 없음 — 전부 엔지니어링 정합성 수정이며 사용자가 승인한 기존 제품
   방향(1회용 capability token, 이름/전화/생년월일 매칭 금지)을 변경하지
   않았다.
+
+## 2026-08-28 — round 5 follow-up 리뷰 2차 엔지니어링 수정 (round 6)
+
+### Context
+위 round 5 수정에 대한 2차 리뷰("Round 5 follow-up")가 "prior 6
+blockers는 materially addressed"라면서도 재검토에서 second-order gap
+7개를 지적했다: (1) 재발급이 새 토큰/pointer 쓰기 전에 old 토큰을 먼저
+무효화해 새 쓰기가 실패하면 기존에 잘 작동하던 링크가 대체 없이
+파괴됨, (2) `issueToken`이 자체적으로 all-or-nothing이 아니라 부분쓰기
+아티팩트가 남을 수 있음, (3) round 5가 만든
+validate-act-then-commit 경계에도 "저장 성공 후 consume 쓰기만 실패"
+창이 남아있어 재시도가 이미 저장된 응답을 덮어쓸 수 있음, (4)
+`startRevisit`에 in-flight 중복 방지가 전혀 없어 더블클릭/네트워크
+재시도가 재진 2개를 만들 수 있음, (5) `RevisitWorkspace`가 최신 이전
+방문이 그 자체로 재진일 때 그 visit-owned 워크스페이스를 불러오지 않아
+Care Plan/재검 상세를 잃음, (6) URL/history는 스크럽했지만 React 부모
+상태(`App.tsx`의 `followUpToken`)에는 평문 토큰이 여전히 남아있음, (7)
+`microFollowUp.ts` 등 일부 주석이 round 4 이전(환자 화면 없음) 상태를
+그대로 서술.
+
+### Decision
+7개 전부 수정한다. 핵심 패턴:
+- **재발급 2-phase swap**: `issueToken`을 "new 토큰 레코드 쓰기(old는
+  전혀 안 건드림) → pointer를 new로 원자적 전환 → 성공 후에만 old를
+  best-effort 무효화" 순서로 재작성. pointer 전환이 실패하면 방금 쓴
+  new 토큰 레코드를 즉시 삭제(cleanup) 후 rethrow — 이 자체로 (1)/(2)를
+  동시에 해결한다(호출자인 `startRevisit`의 기존 rollback은 그대로
+  두되, `issueToken`이 이미 깨끗한 상태만 넘겨주므로 부분쓰기 아티팩트가
+  생길 수 없다).
+- **응답 write-once**: `microFollowUpStore.saveResponse`가 이미 저장된
+  visit_id에 대해서는 새 입력을 무시하고 기존 레코드를 반환 — consume
+  경계의 재시도가 안전해진다.
+- **startRevisit dedup**: patient_id별 락 + "직전 재진이 아직 응답 없음
+  (pending)일 때만" 짧은 윈도우 내 재사용. 이미 완료된 재진에는 적용
+  안 됨 — round 5의 longitudinal 시나리오(재진1 완료 후 재진2 시작)와
+  충돌하지 않도록 "완료 여부"를 조건에 넣은 것이 핵심 설계 판단이다
+  (처음엔 단순 시간 윈도우로 구현했다가 round 5 자체 회귀 테스트가
+  깨지는 것을 보고 발견/수정).
+
+### Reason
+재발급의 old-invalidate-first 순서는 "새 링크가 확실히 작동하는 순간까지
+는 이전 링크를 죽이지 않는다"는 가용성 원칙을 어기고 있었다 — 클리닉
+운영 중 파일시스템 순간 오류 하나가 환자에게 전달된 링크를 이유 없이
+끊을 수 있는 구조였다. 두 실패 지점(새 토큰 쓰기/포인터 쓰기) 모두를
+문제 삼은 것도 이 원칙 위반이 어느 지점에서 발생하든 동일하게 old
+링크를 보호해야 하기 때문이다.
+
+### Consequences
+- (+) 7개 항목 전부 파일시스템 레벨 failure injection 또는 실제
+  동시성(Promise.all)/헤드리스 브라우저 테스트로 실증.
+  `tests/follow-up-session.spec.mjs` 134 → 151 assertion,
+  `tests/server.spec.mjs` 211 → 213(write-once 회귀 추가), 실제
+  헤드리스 브라우저 QA 29 → 38 체크.
+- (+) `src/spec/*Logic.ts`/`*Adapter.ts` FROZEN zero-diff 유지, 새 임상
+  threshold/추론 없음.
+- (−) 없음 — 전부 엔지니어링 정합성 수정.

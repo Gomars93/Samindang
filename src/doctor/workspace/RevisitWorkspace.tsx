@@ -14,9 +14,14 @@
  * provenance boundary:
  *
  *   오늘 환자 입력   -- MicroFollowUpCard (today's patient-reported facts only)
- *   이전 방문 참고   -- read-only recap of the LATEST prior submission-backed
- *                     visit's own recorded final assessment / follow-up
- *                     targets / exam-observation findings / Care Plan.
+ *   이전 방문 참고   -- read-only recap of the LATEST prior visit's own
+ *                     recorded final assessment / follow-up targets /
+ *                     exam-observation findings / Care Plan -- whether that
+ *                     latest prior visit is a submission-backed visit (its
+ *                     detail comes from SubmissionRecord.workspace) or
+ *                     itself a no-submission revisit (round 6 review fix:
+ *                     its detail comes from its own visit-owned
+ *                     VisitWorkspaceState, loaded read-only via getVisit).
  *                     Never editable here, never presented as today's data.
  *   오늘 원장 입력   -- the clinician's own new judgment for THIS visit,
  *                     persisted via the visit-owned VisitWorkspaceState
@@ -73,11 +78,37 @@ function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
   return { examLines, observationLines, carePlanLines }
 }
 
+// Round 6 review fix (revisit-of-revisit prior context): the function above
+// only reads a SUBMISSION-owned WorkspaceState (painExamSuggestions/
+// herbalClinicianObservations/painCarePlan/herbalCarePlan). When the latest
+// prior visit is itself a no-submission revisit, its clinician-entered data
+// lives in a visit-owned VisitWorkspaceState instead (see visitWorkspace.ts)
+// -- a different, generic (non Pain/Herbal-split) shape with no
+// herbal-observation equivalent field by design. Without this, revisit N+1
+// silently lost revisit N's Structured Reassessment/Care Plan detail even
+// though the summary-level fields (final assessment text, follow-up
+// targets, next reassessment plan) already carried over correctly via
+// getPatientHistory's `follow_up_targets` field (round 5 fix).
+function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorkspaceState | null) {
+  const examLines = (priorVisitWorkspace?.reassessment.items ?? [])
+    .filter((i) => i.result.status !== 'NOT_YET_CHECKED')
+    .map((i) => `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status]}${i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''}`)
+  const carePlanLines = [
+    priorVisitWorkspace?.carePlan.currentTreatmentGoal ? `치료 목표: ${priorVisitWorkspace.carePlan.currentTreatmentGoal}` : null,
+    priorVisitWorkspace?.carePlan.homeActionPlan ? `집에서 할 일: ${priorVisitWorkspace.carePlan.homeActionPlan}` : null,
+  ].filter((l): l is string => l !== null)
+  // No observationLines equivalent -- a revisit's own VisitWorkspaceState
+  // has no herbal-observation field (see visitWorkspace.ts's doc comment:
+  // one generic set of clinician fields, not a new clinical data shape).
+  return { examLines, observationLines: [] as string[], carePlanLines }
+}
+
 export function RevisitWorkspace({ visitId, patientId }: { visitId: string; patientId: string }) {
   const [loading, setLoading] = useState(true)
   const [workspaceState, setWorkspaceState] = useState<VisitWorkspaceState>(emptyVisitWorkspaceState())
   const [priorHistory, setPriorHistory] = useState<PatientHistoryResult | null>(null)
   const [priorSubmission, setPriorSubmission] = useState<SubmissionRecord | null>(null)
+  const [priorVisitWorkspace, setPriorVisitWorkspace] = useState<VisitWorkspaceState | null>(null)
   const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
@@ -104,6 +135,15 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         if (latest?.submissionId) {
           const submissionResult = await getSubmission(latest.submissionId)
           if (!cancelled && submissionResult.ok) setPriorSubmission(submissionResult.data)
+        } else if (latest) {
+          // Round 6 review fix: latest prior visit is itself a no-submission
+          // revisit -- load its visit-owned workspace read-only (never
+          // fabricating a DoctorPayload from it) so its Structured
+          // Reassessment/Care Plan detail isn't silently lost.
+          const priorVisitResult = await getVisit(latest.visitId)
+          if (!cancelled && priorVisitResult.ok) {
+            setPriorVisitWorkspace(deserializeVisitWorkspaceState(priorVisitResult.data.workspace))
+          }
         }
       }
       if (mfuResult.ok) setMicroFollowUpResponse(mfuResult.data.response)
@@ -148,9 +188,11 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     latestPrior ? latestPrior.followUpTargets : [],
   )
-  const { examLines, observationLines, carePlanLines } = latestPrior
-    ? priorVisitRecapLines(priorSubmission)
-    : { examLines: [], observationLines: [], carePlanLines: [] }
+  const { examLines, observationLines, carePlanLines } = !latestPrior
+    ? { examLines: [], observationLines: [], carePlanLines: [] }
+    : latestPrior.submissionId
+      ? priorVisitRecapLines(priorSubmission)
+      : priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace)
 
   const loopStatus: ClinicalLoopStatusItem[] = [
     { key: 'assessment', label: '최종 판단 입력', done: workspaceState.finalAssessment.recordedAt !== null },

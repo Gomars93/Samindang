@@ -1655,9 +1655,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   // the one now on screen (guarded below by the `cancelled` flag too).
   const [priorVisits, setPriorVisits] = useState<PatientHistoryResult | null>(null)
   // Round 3 Phase D(micro follow-up). This visit's own short check-in
-  // response, if one was ever saved for it (see microFollowUp.ts's
-  // OPERATIONAL INTEGRATION REQUIRED note -- entering one today requires a
-  // doctor/staff session, not a direct patient-tablet submission).
+  // response, if one was ever saved for it -- either through a doctor/
+  // staff session, or (since round 4) submitted directly by the patient's
+  // own device via the one-time `#follow-up=<token>` link (see
+  // microFollowUp.ts's doc comment for the two separate write paths).
   const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
   // Round 3(revisit linkage): Doctor Queue for no-submission revisit
   // visits, polled alongside `submissions` but kept in a SEPARATE list --
@@ -1667,6 +1668,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   // below, each clears the other's selection).
   const [revisits, setRevisits] = useState<RevisitQueueItem[]>([])
   const [selectedRevisit, setSelectedRevisit] = useState<{ visitId: string; patientId: string } | null>(null)
+  // Round 6 review fix (duplicate-start prevention): disables "재진 간단
+  // 문진 시작" while a request is in flight, so a double-click/impatient
+  // re-click can't fire two overlapping requests from the UI side. The
+  // server also now dedupes a rapid repeat call itself (server/store.js's
+  // startRevisit), so this is defense in depth, not the only guard.
+  const [startRevisitPending, setStartRevisitPending] = useState(false)
   // Local-only: the one-time patient link, held ONLY in this component's
   // memory from the moment "재진 간단 문진 시작"/"재발급" returns it. The
   // server never returns the raw token again after that single response
@@ -1983,19 +1990,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   // other revisit-creation path in this codebase).
   async function handleStartRevisit() {
     if (!selectedRecord?.patient_id) return
+    if (startRevisitPending) return
+    setStartRevisitPending(true)
     setRevisitActionError(null)
-    const result = await startRevisit(selectedRecord.patient_id)
-    if (result.ok) {
-      setIssuedSession({
-        visitId: result.data.visit.id,
-        token: result.data.session.token,
-        expiresAt: result.data.session.expiresAt,
-        targetCount: result.data.session.targets.length,
-      })
-      setLinkCopyStatus('idle')
-      setRetryNonce((n) => n + 1)
-    } else {
-      setRevisitActionError(result.error)
+    try {
+      const result = await startRevisit(selectedRecord.patient_id)
+      if (result.ok) {
+        setIssuedSession({
+          visitId: result.data.visit.id,
+          token: result.data.session.token,
+          expiresAt: result.data.session.expiresAt,
+          targetCount: result.data.session.targets.length,
+        })
+        setLinkCopyStatus('idle')
+        setRetryNonce((n) => n + 1)
+      } else {
+        setRevisitActionError(result.error)
+      }
+    } finally {
+      setStartRevisitPending(false)
     }
   }
 
@@ -2276,8 +2289,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <h2>재진 간단 문진 (Micro Follow-up)</h2>
           {!issuedSession ? (
             <>
-              <button type="button" className="judgment__recordBtn" onClick={handleStartRevisit}>
-                재진 간단 문진 시작
+              <button
+                type="button"
+                className="judgment__recordBtn"
+                onClick={handleStartRevisit}
+                disabled={startRevisitPending}
+              >
+                {startRevisitPending ? '처리 중…' : '재진 간단 문진 시작'}
               </button>
               <p className="doctor__revisitSession__hint">
                 직전 방문의 추적 항목(최대 3개)을 바탕으로 환자용 1회용 링크를 발급합니다.

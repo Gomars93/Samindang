@@ -1,6 +1,14 @@
 # Current Handoff
 
-## Objective (round 15 — 실제 태블릿 뷰포트 밀도 확인, 이번 세션)
+## Objective (round 16 — 태블릿 뷰포트 수용 기준을 CI에서 강제, 이번 세션)
+PR #24의 열여섯 번째 리뷰(Gomars93, 99/100)가 지적한 **단 하나의 남은 갭**:
+round 15의 실제 렌더링 측정이 로컬에서만 돈다는 것. CI에는 CSS 소스 순서 가드만
+있어서, 가드의 텍스트 형태를 유지하면서 렌더링 높이는 회귀시키는 변경이 가능하다.
+리뷰 지시: **저장소/러너에 이미 있는 브라우저·런타임을 재사용**하고, 이것 하나를
+위해 무거운 브라우저 스택을 추가하지 말 것. 결과는 아래 Completed — Round 16 참고.
+**PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (round 15 — 실제 태블릿 뷰포트 밀도 확인, 이전 세션)
 PR #24의 열다섯 번째 리뷰(Gomars93)가 지정한 **단일 과제**: round 14의 밀도
 증명이 1440×900에서만 이루어졌는데, 그 CSS는 1100px 미만에서 판단/처치/재검 3필드를
 1열로 떨어뜨린다. 실제 목표 태블릿 크기(1024×768 가로, 834×1112 세로)에서 기본
@@ -192,9 +200,52 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 15의 측정/수정/회귀 체크 전부 완료. Push 후 CI 재확인만 남음.)
+- (없음 — round 16의 구현/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — Round 15 (실제 태블릿 뷰포트 밀도, 이번 세션)
+## Completed — Round 16 (태블릿 뷰포트 수용 기준의 CI 강제, 이번 세션)
+
+### 새 의존성 0개로 CI에서 실제 렌더링을 측정한다
+`tests/tablet-viewport.spec.mjs`(신규)가 **CI 러너에 이미 설치된 Chrome**을
+DevTools Protocol로 직접 몰고, node 22의 전역 `WebSocket`과 `node:http` 기반
+40줄짜리 정적 서버만 쓴다. Playwright도 Puppeteer도 브라우저 다운로드도 없다.
+`package.json`은 스크립트 두 줄만 늘었고 `devDependencies`는 그대로다.
+
+이 저장소의 기존 관례를 그대로 따른 것이다 — `tests/bodymap-assets.spec.mjs`도
+체크 하나를 위해 의존성을 받지 않고 PNG 디코더를 직접 썼다.
+
+측정 대상은 프로덕션 형태 기본 레코드이며, 3개 뷰포트에서 로컬 Playwright QA와
+**완전히 같은 수치**를 낸다(1028 / 1110 / 1192px). 검증하는 것:
+
+- (a) 임상 흐름 높이 ≤ 1.5 viewport **+ 뷰포트별 절대 상한**
+- (b) 가로 오버플로 0px
+- (c) 최소 인터랙티브 타깃 ≥ 36px
+- (d) 기본 노출 자유 입력이 정확히 3개(판단/처치/재검)
+- (e) 미기록 체크리스트가 접힌 상태로 **남아있고**, 요약이 미확인 건수를 말하며,
+  `빠른 입력` 버튼이 탭 가능한 크기로 실제 보인다
+
+### 왜 이 방식인가
+- 브라우저를 찾지 못했을 때 **CI에서는 실패**한다(`process.env.CI`). 정작 중요한
+  머신에서 조용히 스킵하는 수용 증명은 증명이 아니다. 로컬에서는 눈에 보이는
+  SKIP만 찍고 통과시켜, Chrome 없는 기여자를 막지 않는다.
+- round 13이 fixture 픽커를 preview 컨텍스트 뒤로 숨겼으므로, 테스트는
+  `VITE_PREVIEW_MODE=true`로 임시 디렉터리에 빌드해서 잰다. 프로덕션 빌드에는
+  레코드로 가는 UI 경로가 **의도적으로** 없기 때문이다.
+- 닫힌 `<details>`는 Chromium에서 여전히 0이 아닌 rect를 보고하므로 열린 입력
+  개수는 `checkVisibility()`로 센다(round 14에서 실제로 당한 문제).
+
+### 비공허성 확인
+round 15의 900~1100px 오버라이드를 지우면 가로 1024가 1192px = **1.55×**로
+측정되고 새 테스트가 정확한 메시지로 실패하는 것을 확인한 뒤 되돌렸다. 즉 이
+테스트는 CSS 텍스트 형태가 아니라 **렌더링된 높이**를 지킨다.
+
+### 남은 한계 (정직하게)
+CI 러너 이미지가 Chrome을 빼면 이 테스트는 실패한다 — 조용히 통과하는 것보다
+낫다고 판단했다. `CHROME_BIN`으로 경로를 지정할 수 있다.
+
+### 모델 routing에 대한 정직한 기록
+이번에도 **서브에이전트를 하나도 띄우지 않았다.** 단일 세션이 전부 수행했다.
+
+## Completed — Round 15 (실제 태블릿 뷰포트 밀도, 이전 세션)
 
 ### 측정 먼저 (프로덕션 형태 기본 레코드, 같은 스크립트)
 
@@ -1017,6 +1068,11 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 16 기준 이 세션이 직접 실행**: `npm run test:all`(전체 green — 신규
+  `tests/tablet-viewport.spec.mjs` **24 assertion** 포함), `npm run build`/
+  `npm run build:preview`(성공), FROZEN diff empty(0 라인).
+- **Round 16 비공허성 확인**: round 15의 CSS 오버라이드를 지우면 신규 CI
+  테스트가 가로 1024에서 1.55×로 실패하는 것을 확인한 뒤 되돌렸다.
 - **Round 15 기준 이 세션이 직접 실행**: `npm run test:all`(전체 green —
   `tests/doctor-workspace.spec.mjs` 54→**55** assertion), `npm run build`/
   `npm run build:preview`(성공), pytest 80 passed, FROZEN diff empty(0 라인).

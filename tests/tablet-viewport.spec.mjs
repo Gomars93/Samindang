@@ -1,0 +1,310 @@
+/*
+ * Rendered-layout acceptance for the Doctor default clinical workflow, on
+ * the three viewports the clinic actually uses.
+ *
+ * WHY THIS EXISTS. Round 15 fixed a real regression: below 1100px the
+ * primary 판단 / 처치 / 재검 grid fell into a single column, and the
+ * 1024x768 landscape workflow measured 1192px = 1.55 viewports, over the
+ * 1.5 budget. The fix depends on CSS source order, so round 15 added a
+ * source-shape guard -- but a future change can satisfy that guard's text
+ * and still regress the rendered height. Only measuring a real layout
+ * proves the acceptance criteria, so this measures a real layout, in CI.
+ *
+ * WHY NO NEW DEPENDENCY. It drives the Chrome/Chromium that the CI runner
+ * image already ships, over the DevTools Protocol, using node 22's global
+ * WebSocket and a ~40-line static server built on node:http. No Playwright,
+ * no Puppeteer, no browser download -- same instinct as
+ * tests/bodymap-assets.spec.mjs hand-rolling a PNG decoder rather than
+ * taking a dependency for one check.
+ *
+ * WHERE IT RUNS. Anywhere a Chrome binary is discoverable. When CI is set
+ * and no browser is found, it FAILS -- an acceptance proof that silently
+ * skips itself on the machine that matters is not a proof. Off CI it
+ * prints a visible SKIP so a contributor without Chrome is not blocked.
+ *
+ * Run via `npm run test:tablet-viewport` (part of `npm run test:all`).
+ */
+import assert from 'node:assert/strict'
+import { spawn, spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import http from 'node:http'
+import net from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
+
+/* ---------------------------------------------------------------- config */
+
+// Ceilings sit a little above the measured heights so ordinary text-metric
+// variation between machines does not flap, and well under the 1.5-viewport
+// budget so a real regression cannot hide beneath them.
+const VIEWPORTS = [
+  { name: 'desktop 1440x900', width: 1440, height: 900, ceiling: 1120 },
+  { name: 'tablet landscape 1024x768', width: 1024, height: 768, ceiling: 1160 },
+  { name: 'tablet portrait 834x1112', width: 834, height: 1112, ceiling: 1260 },
+]
+const VIEWPORT_BUDGET = 1.5
+const MIN_TARGET = 36
+/** 판단 / 처치 / 재검 -- and nothing else -- is open by default. */
+const EXPECTED_OPEN_INPUTS = 3
+
+let passed = 0
+const check = (name, cond, extra = '') => {
+  assert.ok(cond, `${name} ${extra}`)
+  passed += 1
+  console.log(`OK: ${name} ${extra}`)
+}
+
+/* --------------------------------------------------------- browser lookup */
+
+function findChrome() {
+  const fromEnv = [process.env.CHROME_BIN, process.env.CHROME_PATH].filter(Boolean)
+  for (const p of fromEnv) if (fs.existsSync(p)) return p
+  const names = ['google-chrome-stable', 'google-chrome', 'chromium-browser', 'chromium']
+  for (const n of names) {
+    const r = spawnSync('which', [n], { encoding: 'utf8' })
+    if (r.status === 0 && r.stdout.trim()) return r.stdout.trim()
+  }
+  const paths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/opt/pw-browsers/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ]
+  for (const p of paths) if (fs.existsSync(p)) return p
+  return null
+}
+
+/* ------------------------------------------------------------ static host */
+
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' }
+
+function serve(root) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const rel = decodeURIComponent((req.url || '/').split('?')[0])
+      let file = path.join(root, rel === '/' ? 'index.html' : rel)
+      // SPA fallback: the app routes on the hash, so any unknown path is index.
+      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html')
+      res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' })
+      fs.createReadStream(file).pipe(res)
+    })
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }))
+  })
+}
+
+function freePort() {
+  return new Promise((res) => {
+    const s = net.createServer()
+    s.listen(0, () => { const p = s.address().port; s.close(() => res(p)) })
+  })
+}
+
+/* ------------------------------------------------------------------- CDP */
+
+/** Minimal DevTools Protocol client over node 22's global WebSocket. */
+class Cdp {
+  constructor(ws) {
+    this.ws = ws
+    this.id = 0
+    this.pending = new Map()
+    ws.addEventListener('message', (e) => {
+      const msg = JSON.parse(e.data)
+      const p = this.pending.get(msg.id)
+      if (!p) return
+      this.pending.delete(msg.id)
+      if (msg.error) p.reject(new Error(`${msg.error.message} (${JSON.stringify(msg.error.data ?? '')})`))
+      else p.resolve(msg.result)
+    })
+  }
+  send(method, params = {}) {
+    const id = ++this.id
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject })
+      this.ws.send(JSON.stringify({ id, method, params }))
+    })
+  }
+  /** Evaluate in the page and return the value, retrying until `ready` or a timeout. */
+  async evalUntil(expression, ready, timeoutMs = 20000) {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const r = await this.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+      if (r.exceptionDetails === undefined && ready(r.result.value)) return r.result.value
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for page state; last value: ${JSON.stringify(r.result?.value)}`)
+      }
+      await new Promise((res) => setTimeout(res, 200))
+    }
+  }
+}
+
+async function connect(url) {
+  for (let i = 0; i < 100; i += 1) {
+    try {
+      const ws = new WebSocket(url)
+      await new Promise((res, rej) => {
+        ws.addEventListener('open', res, { once: true })
+        ws.addEventListener('error', rej, { once: true })
+      })
+      return ws
+    } catch {
+      await new Promise((r) => setTimeout(r, 200))
+    }
+  }
+  throw new Error(`could not connect to ${url}`)
+}
+
+/* ------------------------------------------------- the measurement itself */
+
+/*
+ * Mirrors the local headless QA exactly: the CLINICAL WORKFLOW is the
+ * record panel, not the whole document -- the page chrome above it is
+ * navigation, not clinical content.
+ *
+ * checkVisibility() rather than a bounding rect: a CLOSED <details> still
+ * reports a non-zero rect for its skipped content in Chromium, which is
+ * how an earlier version of this measurement counted four open textareas
+ * where three was correct.
+ */
+const MEASURE = `(() => {
+  const panel = document.querySelector('.doctor__recordTabs')?.parentElement ?? document.body
+  const clinical = [...panel.children].find((el) => el.tagName === 'DIV' && !el.hidden && el.querySelector('.workspace'))
+  if (!clinical) return null
+  const vis = (el) => (typeof el.checkVisibility === 'function' ? el.checkVisibility() : true)
+  const targets = [...document.querySelectorAll('.workspace button, .workspace summary, .workspace select')]
+    .filter(vis)
+    .map((el) => { const r = el.getBoundingClientRect(); return Math.round(Math.min(r.width, r.height)) })
+    .filter((n) => n > 0)
+  const collapsed = document.querySelector('.workspace__observationChecklist--collapsed')
+  const opener = collapsed?.querySelector('.workspace__observationSummary__open') ?? null
+  const openerRect = opener ? opener.getBoundingClientRect() : null
+  return {
+    workflow: Math.round(clinical.getBoundingClientRect().height),
+    viewport: window.innerHeight,
+    overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    openInputs: [...document.querySelectorAll('.workspace textarea, .workspace input[type="text"]')].filter(vis).length,
+    smallestTarget: targets.length ? Math.min(...targets) : null,
+    checklistCollapsed: !!collapsed,
+    checklistSummary: collapsed?.querySelector('.workspace__observationSummary')?.textContent ?? '',
+    openerVisible: !!opener && vis(opener),
+    openerSize: openerRect ? Math.round(Math.min(openerRect.width, openerRect.height)) : null,
+  }
+})()`
+
+/* ------------------------------------------------------------------- run */
+
+const chrome = findChrome()
+if (!chrome) {
+  const msg = 'no Chrome/Chromium binary found (set CHROME_BIN to point at one)'
+  if (process.env.CI) {
+    // Deliberate: a rendered-layout acceptance proof that skips itself on CI
+    // is not a proof. Fail loudly instead.
+    throw new Error(`FAIL: ${msg} -- this check is required on CI`)
+  }
+  console.log(`SKIP: tablet viewport acceptance -- ${msg}`)
+  process.exit(0)
+}
+console.log(`browser: ${chrome}`)
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'samindang-tablet-'))
+const outDir = path.join(tmp, 'dist')
+const profile = path.join(tmp, 'profile')
+
+// A preview-context build, because round 13 gates the fixture picker on it:
+// a plain production build has no UI path to a record, by design.
+const build = spawnSync('npx', ['vite', 'build', '--outDir', outDir, '--emptyOutDir'], {
+  env: { ...process.env, VITE_PREVIEW_MODE: 'true' },
+  encoding: 'utf8',
+})
+assert.equal(build.status, 0, `preview build failed:\n${build.stdout}\n${build.stderr}`)
+
+const { server, port } = await serve(outDir)
+const debugPort = await freePort()
+const proc = spawn(chrome, [
+  '--headless=new',
+  `--remote-debugging-port=${debugPort}`,
+  `--user-data-dir=${profile}`,
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  'about:blank',
+], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+let cdp = null
+try {
+  // Discover the page target the ordinary way, over the HTTP endpoint.
+  let list = null
+  for (let i = 0; i < 100 && !list; i += 1) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${debugPort}/json/list`)
+      const json = await r.json()
+      list = json.find((t) => t.type === 'page') ?? null
+    } catch { /* not up yet */ }
+    if (!list) await new Promise((r) => setTimeout(r, 200))
+  }
+  assert.ok(list, 'chrome did not expose a page target')
+  cdp = new Cdp(await connect(list.webSocketDebuggerUrl))
+  await cdp.send('Runtime.enable')
+  await cdp.send('Page.enable')
+
+  for (const vp of VIEWPORTS) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: vp.width, height: vp.height, deviceScaleFactor: 1, mobile: false,
+    })
+    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/#doctor` })
+
+    // Fixtures mode gives a deterministic, PHI-free record. Selecting it
+    // needs a real change event, same as a click would produce.
+    await cdp.evalUntil(`!!document.querySelector('#doctor-source-select')`, (v) => v === true)
+    await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.querySelector('#doctor-source-select')
+        s.value = 'fixtures'
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+        return true
+      })()`,
+      returnByValue: true,
+    })
+    await cdp.evalUntil(`!!document.querySelector('.workspace')`, (v) => v === true)
+    // The production-shaped record: no synthetic decision-support data.
+    await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.querySelector('#doctor-workspace-scenario-select')
+        if (!s) return false
+        s.value = ''
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+        return true
+      })()`,
+      returnByValue: true,
+    })
+
+    const m = await cdp.evalUntil(MEASURE, (v) => v && typeof v.workflow === 'number')
+    const multiple = m.workflow / m.viewport
+    const label = vp.name
+
+    console.log(
+      `\n[measured] ${label}: ${m.workflow}px / ${m.viewport}px = ${multiple.toFixed(2)}x` +
+        ` | overflowX ${m.overflowX}px | ${m.openInputs} open inputs | smallest target ${m.smallestTarget}px`,
+    )
+
+    check(`${label}: clinical workflow within ${VIEWPORT_BUDGET} viewports`, multiple <= VIEWPORT_BUDGET, `(${multiple.toFixed(2)}x)`)
+    check(`${label}: workflow height does not regress`, m.workflow <= vp.ceiling, `(${m.workflow}px <= ${vp.ceiling}px)`)
+    check(`${label}: no horizontal overflow`, m.overflowX === 0, `(${m.overflowX}px)`)
+    check(`${label}: no interactive target under ${MIN_TARGET}px`, m.smallestTarget !== null && m.smallestTarget >= MIN_TARGET, `(${m.smallestTarget}px)`)
+    check(`${label}: exactly the intended always-open inputs`, m.openInputs === EXPECTED_OPEN_INPUTS, `(${m.openInputs})`)
+    check(`${label}: the unrecorded checklist is collapsed, not deleted`, m.checklistCollapsed === true)
+    check(`${label}: the collapsed summary still names what is outstanding`, /미확인/.test(m.checklistSummary), `("${m.checklistSummary.trim()}")`)
+    check(
+      `${label}: the collapsed checklist stays reachable at a tappable size`,
+      m.openerVisible === true && m.openerSize !== null && m.openerSize >= MIN_TARGET,
+      `(${m.openerSize}px)`,
+    )
+  }
+} finally {
+  try { cdp?.ws.close() } catch { /* already gone */ }
+  proc.kill('SIGKILL')
+  server.close()
+  fs.rmSync(tmp, { recursive: true, force: true })
+}
+
+console.log(`\n${passed} tablet-viewport assertions passed.`)

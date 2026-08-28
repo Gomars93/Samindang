@@ -162,6 +162,7 @@ export function PainWorkspace({
 
   return (
     <div className="workspace__pain">
+      <p className="workspace__layerLabel">오늘 한눈에</p>
       <section className="workspace__hero">
         <div className="workspace__hero__head">
           <h3>통증 진료</h3>
@@ -251,8 +252,9 @@ export function PainWorkspace({
         contradiction does exist, the section appears.
       */}
       {(examSuggestions.length > 0 || evidence.length > 0) && (
+        <>
+        <p className="workspace__layerLabel">오늘 확인할 것</p>
         <section className="workspace__block">
-          <h3>오늘 확인할 것</h3>
           {examSuggestions.length > 0 && (
             <ExamSuggestionList
               items={examSuggestions}
@@ -262,6 +264,7 @@ export function PainWorkspace({
           )}
           {evidence.length > 0 && <SupportContradictionPanel items={evidence} emptyText="" />}
         </section>
+        </>
       )}
 
       {additionalConcern && (
@@ -291,6 +294,7 @@ export function PainWorkspace({
         holds something -- it is a real part of the loop, but presenting it
         open on every routine visit made it look mandatory.
       */}
+      <p className="workspace__layerLabel">오늘 판단·처치</p>
       <PainFinalAssessmentCard value={finalAssessment} onChange={onChangeFinalAssessment} />
 
       <FollowUpTargetPicker
@@ -315,6 +319,7 @@ export function PainWorkspace({
         click away. The forms are unchanged and still autosave; they simply
         stop occupying the default screen when nothing has been written.
       */}
+      <p className="workspace__layerLabel">다음 액션</p>
       <NextActionCard
         homeAction={carePlan.homeActionPlan}
         nextCheck={carePlan.nextVisitCheckItem}

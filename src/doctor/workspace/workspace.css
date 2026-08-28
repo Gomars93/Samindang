@@ -11,9 +11,31 @@
 .workspace {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  margin: 20px 0 28px;
+  /* Round 12: tightened from 18px. The four layers are now separated by
+     labelled headers rather than by air, so the gap only has to keep cards
+     from touching. */
+  gap: 10px;
+  margin: 16px 0 24px;
 }
+
+/* ---------- round 12: the four layers, made visible ----------
+   A text-only marker rather than another wrapper card: it names the layer
+   without adding a border, a background, or a level of nesting. This is
+   what makes 오늘 한눈에 → 오늘 확인할 것 → 오늘 판단·처치 → 다음 액션
+   readable as a sequence instead of as a stack of equal-weight cards. */
+.workspace__layerLabel {
+  margin: 8px 0 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.workspace__layerLabel:first-child {
+  margin-top: 0;
+}
+
 
 /* ---------- Common Safety (rendered by CommonSafetyBanner, but the
    surrounding spacing/host classes live here since this file owns the
@@ -155,8 +177,8 @@
 .workspace__hero {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 18px 20px;
+  border-radius: 12px;
+  padding: 14px 16px;
 }
 
 .workspace__hero__head {
@@ -277,13 +299,13 @@
 .workspace__block {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 16px 18px;
+  border-radius: 12px;
+  padding: 12px 16px;
 }
 
 .workspace__block h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
+  margin: 0 0 6px;
+  font-size: 14px;
   color: var(--primary);
 }
 
@@ -645,9 +667,13 @@
 /* ---------- final assessment ---------- */
 .workspace__finalAssessment {
   background: var(--surface);
-  border: 2px solid var(--primary);
-  border-radius: 14px;
-  padding: 16px 18px;
+  /* Round 12: was a 2px primary box on all four sides -- the single
+     loudest element on a page of otherwise equal cards. The left accent
+     above already marks it as a clinician-input area, so the box itself
+     can be as quiet as everything else. */
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
 }
 
 .workspace__finalAssessment__badge {
@@ -696,8 +722,8 @@
 .workspace__followUp {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 14px 18px;
+  border-radius: 12px;
+  padding: 12px 16px;
 }
 
 .workspace__followUp h4 {
@@ -1201,12 +1227,14 @@
 }
 
 .workspace__optional > summary {
-  padding: 12px 16px;
+  padding: 8px 16px;
   font-size: 13px;
   font-weight: 700;
   color: var(--text-muted);
   cursor: pointer;
-  min-height: 44px;
+  /* Still a comfortable touch target on a clinic tablet, just not the
+     44px-plus-padding it was. */
+  min-height: 40px;
   display: flex;
   align-items: center;
 }
@@ -1233,18 +1261,24 @@
 }
 
 /* Safety is the one block that must read as louder than everything else. */
+/* Safety reads first because of position and a single accent -- not
+   because it shouts. No fill, no extra weight elsewhere on the page. */
 .workspace__block--safety {
   border-left: 3px solid var(--danger);
+}
+
+.workspace__block--safety h3 {
+  color: var(--danger);
 }
 
 /* NEXT ACTION: a read-back, not a form. Neutral by design -- semantic color
    is reserved for safety (red) and unconfirmed state (amber). */
 .workspace__nextAction__row {
   display: grid;
-  grid-template-columns: 150px 1fr;
+  grid-template-columns: 140px 1fr;
   gap: 10px;
   align-items: baseline;
-  padding: 6px 0;
+  padding: 3px 0;
 }
 
 .workspace__nextAction__label {
@@ -1367,4 +1401,29 @@
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+/* ---------- round 12: read-only vs clinician-input ----------
+   Read-only patient facts sit on the page background; anything the
+   clinician types into sits on the raised surface with a primary left
+   accent. One consistent rule, so the distinction is legible without
+   reading a single label.
+
+   Placed at the END of this file on purpose: it overrides the per-card
+   background/border rules above, and CSS resolves equal specificity by
+   source order. Defining it earlier (as it first was) silently lost to
+   them -- the browser QA caught that the two areas rendered identically. */
+.workspace__hero,
+.workspace__nextAction,
+.workspace__microFollowUp,
+.workspace__priorVisit,
+.workspace__block--readonly {
+  background: var(--bg);
+}
+
+.workspace__finalAssessment,
+.workspace__followUp,
+.workspace__carePlan,
+.workspace__reassessment {
+  border-left: 3px solid var(--primary);
 }

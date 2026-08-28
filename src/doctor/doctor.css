@@ -844,18 +844,23 @@
 .doctor__recordTab {
   border: 0;
   background: transparent;
+  /* Round 12: the secondary surfaces read as secondary. 진료 is the
+     clinical screen; 자료 보기 and 명리 are lighter and slightly smaller,
+     so the switch never competes with the safety state below it. */
   color: var(--text-muted);
-  padding: 8px 18px;
+  padding: 7px 16px;
   border-radius: 8px;
-  font-weight: 700;
-  font-size: 13px;
+  font-weight: 600;
+  font-size: 12px;
   cursor: pointer;
-  min-height: 40px;
+  min-height: 38px;
 }
 
 .doctor__recordTab--active {
   background: var(--surface);
   color: var(--primary);
+  font-weight: 800;
+  font-size: 13px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 

@@ -130,6 +130,7 @@ export function HerbalWorkspace({
 
   return (
     <div className="workspace__herbal">
+      <p className="workspace__layerLabel">오늘 한눈에</p>
       <section className="workspace__hero">
         <div className="workspace__hero__head">
           <h3>한약·전신</h3>
@@ -164,6 +165,7 @@ export function HerbalWorkspace({
         clinically approved rules exist, so the block appears only when it
         actually holds something rather than sitting empty on every record.
       */}
+      <p className="workspace__layerLabel">오늘 확인할 것</p>
       <section className="workspace__block">
         <h3>오늘 확인할 것</h3>
         <ClinicianObservationChecklist
@@ -191,6 +193,7 @@ export function HerbalWorkspace({
         LAYER 3 -- 오늘 판단·처치, with follow-up target selection directly
         beneath it and today's reassessment collapsed unless already used.
       */}
+      <p className="workspace__layerLabel">오늘 판단·처치</p>
       <HerbalFinalAssessmentCard value={finalAssessment} onChange={onChangeFinalAssessment} />
 
       <FollowUpTargetPicker
@@ -209,6 +212,7 @@ export function HerbalWorkspace({
       </details>
 
       {/* LAYER 4 -- 다음 액션, with the full forms one click away. */}
+      <p className="workspace__layerLabel">다음 액션</p>
       <NextActionCard
         homeAction={carePlan.homeLifestyleManagement}
         nextCheck={carePlan.nextVisitCheckItem}

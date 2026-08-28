@@ -166,7 +166,45 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
     확인(가장 중요한 영속화 증거).
 
 ## In Progress
-- (없음 — round 11의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+- (없음 — round 12의 구현/테스트/QA 전부 완료. Push 후 CI 재확인만 남음.)
+
+## Completed — Round 12 (Doctor Preview UI 폴리시, 이번 세션)
+
+round 11의 구조 압축 위에 가독성·위계·클릭 효율만 손봤다. 제품 범위 추가 없음.
+
+### 위계
+- **네 계층에 이름을 붙였다** — `오늘 한눈에 → 오늘 확인할 것 → 오늘 판단·처치
+  → 다음 액션`. 카드가 아니라 **텍스트 라벨**이라, 테두리·배경·중첩을 하나도
+  더하지 않고 순서가 읽힌다.
+- **읽기 전용 vs 원장 입력을 시각적으로 분리했다.** 읽기 전용(한눈에/다음
+  액션/간단 재확인/이전 방문)은 페이지 배경 위, 원장이 타이핑하는 영역
+  (최종 판단/Follow-up/관리 계획/재검)은 raised surface + primary 좌측 accent.
+  라벨을 읽지 않아도 구분된다.
+- **가장 시끄럽던 테두리를 줄였다** — `.workspace__finalAssessment`의 4면
+  2px primary box를 1px 일반 테두리 + 좌측 accent로. 위 규칙이 이미 입력
+  영역임을 표시하므로 상자까지 소리칠 필요가 없다.
+- 안전은 위치와 좌측 danger accent 하나로 먼저 읽히게 두고, h3만 danger
+  색으로. 채우기·굵기 추가 없음(“dominant but not noisy”).
+- `자료 보기`/`명리` 탭을 더 작고 흐리게 — `진료`만 굵게.
+
+### 밀도
+`.workspace` gap 18→10px, 카드 padding 16/18→12/16, radius 14→12,
+disclosure summary 12→8px(터치 타깃은 40px 유지), NEXT ACTION 행 padding
+6→3px. 임상 흐름 높이는 **1321px → 1320px**로 사실상 동일(1.47 viewport) —
+줄인 여백을 계층 라벨이 가져갔다. **위로 회귀하지 않는다**는 요구는 충족.
+
+### 이번 라운드에 브라우저 QA가 잡은 내 실수 1건
+읽기 전용/입력 구분 규칙을 파일 **앞쪽**에 썼는데, 뒤에 오는 카드별
+background/border 규칙이 같은 specificity로 덮어써서 **두 영역이 완전히
+동일하게 렌더**됐다. 마크업에는 클래스가 다 있으니 마크업 테스트로는
+잡히지 않는다. computed style을 읽는 브라우저 체크가 잡았고, 규칙을 파일
+끝으로 옮겨 해결했다(이유를 주석에 남김).
+
+### 모델 routing에 대한 정직한 기록
+리뷰가 Fable(오케스트레이션)/Opus(IA·회귀 검수)/Sonnet(구현) 분담을
+권고했으나, `CLAUDE.md`의 "역할은 선언만으로 실행되지 않는다" 규칙대로
+이 라운드는 **단일 세션이 전부 수행**했다. 서브에이전트를 띄우지 않았으므로
+3-모델 파이프라인을 수행했다고 기록하지 않는다.
 
 ## Completed — Round 11 (Doctor Preview v2 — 10초 임상 화면, 이번 세션)
 
@@ -782,6 +820,14 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   REQUIRED 문구 회귀 가드 7개 시나리오 전체 추가).
 
 ## Tests / Verification
+- **Round 12 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
+  `npm run build`/`npm run build:preview`(성공), `npm run test:all`(전체
+  green), pytest 80 passed, FROZEN diff empty.
+- **Round 12 헤드리스 브라우저 QA 3종**: preview 측정 **28개**(round 11의
+  16개 + 계층 라벨 순서, 읽기전용/입력 computed-style 구분, 탭 위계, 환자
+  전환 시 진료 복귀 + 이전 환자 UI 상태 미유출, 같은 기록 내 탭 전환 시
+  미저장 입력 보존, 태블릿 가로/세로 가로스크롤·터치타깃) + 재진 49개 +
+  스테이션 30개 전부 통과.
 - **Round 11 기준 이 세션이 직접 실행**: `npx tsc -b --force`(0 에러),
   `npm run build`/`npm run build:preview`(성공), `npm run test:all`(전체
   green — `tests/doctor.spec.mjs` 664, `tests/doctor-workspace.spec.mjs` 49,
@@ -936,8 +982,8 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 11(Doctor Preview v2 — 기록 화면 3 surface 분리 + 워크스페이스
-   4계층 압축)이 구현되었으니 review author(Gomars93)가 새 HEAD를 재확인.
+2. round 12(Doctor Preview UI 폴리시 — 계층 가시화, 읽기전용/입력 분리,
+   밀도 정리)가 구현되었으니 review author(Gomars93)가 새 HEAD를 재확인.
 3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
 4. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

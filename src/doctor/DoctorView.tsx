@@ -1636,14 +1636,39 @@ function relativeTime(iso: string): string {
  * (server/index.js가 LAN에서 떠 있을 때만). 서버 모드는 실패해도 예시
  * 데이터로 안전하게 되돌아간다.
  */
-export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: number } = {}) {
+/*
+ * Round 13: preview/QA controls do not belong on a real clinical screen.
+ * The fixture picker, the SYNTHETIC scenario picker and the data-source
+ * switch are development and QA affordances -- in a clinic they are noise
+ * competing with the record, and worse, they invite a clinician to
+ * accidentally leave the real submission list.
+ *
+ * They are gated on the repo's existing preview-context convention
+ * (`import.meta.env.DEV || VITE_PREVIEW_MODE === 'true'`, the same test
+ * PatientCompleteScreen already uses), so they stay fully available where
+ * QA needs them -- the dev server and the deployed PR preview -- and
+ * disappear from a production clinic build.
+ *
+ * `initialFixtureIndex` is also treated as a preview signal: it is only
+ * ever passed by the fixture-rendering test harness, and honouring it
+ * keeps those suites exercising the same component the clinic runs.
+ */
+function isDoctorPreviewContext(): boolean {
+  const env = (import.meta as { env?: Record<string, unknown> }).env ?? {}
+  return env.DEV === true || env.VITE_PREVIEW_MODE === 'true'
+}
+
+export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: number } = {}) {
   useEffect(() => {
     document.documentElement.classList.add('doctor-mode')
     return () => document.documentElement.classList.remove('doctor-mode')
   }, [])
 
-  const [mode, setMode] = useState<'fixtures' | 'server'>('fixtures')
-  const [fixtureIndex, setFixtureIndex] = useState(initialFixtureIndex)
+  // A clinic build has no data-source switch, so it must start on the real
+  // submission list rather than stranding the clinician in fixture data.
+  const showPreviewControls = isDoctorPreviewContext() || initialFixtureIndex !== undefined
+  const [mode, setMode] = useState<'fixtures' | 'server'>(showPreviewControls ? 'fixtures' : 'server')
+  const [fixtureIndex, setFixtureIndex] = useState(initialFixtureIndex ?? 0)
   // PR #24 Phase 12: SYNTHETIC/NO-PHI Doctor Workspace scenarios (with
   // illustrative exam-suggestion/pattern-candidate/evidence/observation
   // data attached) -- opt-in only, default '' means "off, use the plain
@@ -2232,23 +2257,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             }}
           />
         )}
-        <div className="doctor__pickerRow">
-          <label htmlFor="doctor-source-select">데이터 소스</label>
-          <select
-            id="doctor-source-select"
-            value={mode}
-            onChange={(e) => {
-              const next = e.target.value as 'fixtures' | 'server'
-              setMode(next)
-              setSelectedId(null)
-              setSelectedRecord(null)
-            }}
-          >
-            <option value="fixtures">예시 데이터(fixtures)</option>
-            <option value="server">서버 제출목록</option>
-          </select>
-        </div>
-        {mode === 'fixtures' && (
+        {showPreviewControls && (
+          <div className="doctor__pickerRow">
+            <label htmlFor="doctor-source-select">데이터 소스</label>
+            <select
+              id="doctor-source-select"
+              value={mode}
+              onChange={(e) => {
+                const next = e.target.value as 'fixtures' | 'server'
+                setMode(next)
+                setSelectedId(null)
+                setSelectedRecord(null)
+              }}
+            >
+              <option value="fixtures">예시 데이터(fixtures)</option>
+              <option value="server">서버 제출목록</option>
+            </select>
+          </div>
+        )}
+        {showPreviewControls && mode === 'fixtures' && (
           <div className="doctor__pickerRow">
             <label htmlFor="doctor-fixture-select">미리보기용 예시 데이터</label>
             <select
@@ -2264,7 +2291,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             </select>
           </div>
         )}
-        {mode === 'fixtures' && (
+        {showPreviewControls && mode === 'fixtures' && (
           <div className="doctor__pickerRow">
             <label htmlFor="doctor-workspace-scenario-select">
               Doctor Workspace 시나리오 (SYNTHETIC · NO-PHI)

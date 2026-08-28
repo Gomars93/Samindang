@@ -145,12 +145,46 @@ test('round 11: reference material moved into a drawer, not deleted', () => {
   assert.ok(html.includes('EMR'), 'the EMR preview is still rendered')
 })
 
-test('round 11: NEXT ACTION reads back recorded values and never invents one', () => {
+test('round 11/13: NEXT ACTION reads back recorded values and never invents one', () => {
   const html = render(PAIN_SCENARIO_1)
-  assert.ok(html.includes('다음 액션'))
-  assert.ok(html.includes('환자가 집에서 할 일'))
-  assert.ok(html.includes('다음에 확인할 것'))
-  assert.ok(html.includes('다음 재평가'))
+  assert.ok(html.includes('다음 액션'), 'the layer always exists')
+
+  // Round 13: with nothing recorded, the card collapses to ONE compact line
+  // instead of three repeated "아직 기록 없음" rows saying the same thing.
+  const collapsed = html.includes('다음 액션 미설정')
+  if (collapsed) {
+    assert.ok(!html.includes('아직 기록 없음'), 'the empty state does not repeat itself')
+    assert.ok(html.includes('workspace__nextAction--empty'), 'the empty state is marked as such')
+  } else {
+    // ...and with content, the full read-back returns, unchanged.
+    assert.ok(html.includes('환자가 집에서 할 일'))
+    assert.ok(html.includes('다음에 확인할 것'))
+    assert.ok(html.includes('다음 재평가'))
+  }
+})
+
+test('round 13: a recorded next-action value is never hidden by the empty collapse', () => {
+  // The collapse is a property of emptiness, not a mode the clinician has
+  // to get out of: one recorded field brings the whole read-back back.
+  // Seeded through the real persistence prop, so this exercises the same
+  // path a saved record takes.
+  const html = renderWith(PAIN_SCENARIO_1, {
+    // A partial state is fine: deserializeWorkspaceState degrades per field
+    // and fills the rest from the empty default (see persistence.ts).
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: '',
+        rehabilitationGoal: '',
+        homeActionPlan: 'ROUND13 집에서 할 일',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: '',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  assert.ok(html.includes('ROUND13 집에서 할 일'), 'the recorded value renders')
+  assert.ok(!html.includes('다음 액션 미설정'), 'the compact empty line is gone once content exists')
 })
 
 // Round 11 renamed both profiles' confirm sections to the same "오늘 확인할 것"
@@ -284,6 +318,42 @@ test('production mode (no synthetic clinicianObservations): 설진/맥진/복진
   assert.ok(html.includes('맥진 소견'))
   assert.ok(html.includes('복진 소견'))
   assert.ok(html.includes('추가 확인문진'))
+})
+
+test('round 13: observation rows are tap-first — 특이없음 action, no free-text box until asked', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, { synthetic: { patternCandidates: [] } })
+  // every default checklist row offers the one-tap action...
+  const taps = html.match(/특이없음/g) ?? []
+  assert.ok(taps.length >= 4, `expected a 특이없음 tap action per row, found ${taps.length}`)
+  // ...and every row offers the on-demand note escape hatch...
+  const memos = html.match(/>메모</g) ?? []
+  assert.ok(memos.length >= 4, `expected a 메모 toggle per row, found ${memos.length}`)
+  // ...but nothing is sitting open as a form waiting to be typed into.
+  const boxes = html.match(/placeholder="소견 입력"/g) ?? []
+  assert.equal(boxes.length, 0, 'no observation note box may be open before the clinician asks for one')
+})
+
+test('round 13: an observation that already holds free text renders its note box open', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-note-test',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: {
+      herbalClinicianObservations: [
+        {
+          id: 'obs_tongue',
+          category: 'TONGUE',
+          title: '설진 소견',
+          checked: true,
+          value: '설질 담백 · 치흔',
+          recordedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    },
+  })
+  // the recorded wording is shown verbatim, in an OPEN input -- a compressed
+  // default must never hide something the clinician already wrote.
+  assert.ok(html.includes('설질 담백 · 치흔'))
+  assert.ok(html.includes('placeholder="소견 입력"'))
 })
 
 test('no manual-override banner on first render (profile matches auto-derived by default)', () => {

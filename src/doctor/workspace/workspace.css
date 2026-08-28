@@ -617,6 +617,23 @@
   color: var(--text);
 }
 
+/*
+ * Round 13: the observation row's entry area holds a tap action plus an
+ * on-demand note box in the same grid cell, so a row that has not been
+ * opened for typing costs one button instead of a full-width input.
+ */
+.workspace__observationRow__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workspace__observationRow__actions .workspace__noteInput {
+  flex: 1;
+  min-width: 0;
+}
+
 .workspace__checkBadge {
   font-size: 11px;
   font-weight: 700;
@@ -1426,4 +1443,38 @@
 .workspace__carePlan,
 .workspace__reassessment {
   border-left: 3px solid var(--primary);
+}
+
+/* Round 13: the empty next-action state is one line, not three repeated
+   "아직 기록 없음" rows occupying a full card. */
+.workspace__nextAction__emptyLine {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Round 13: laterality + note are optional detail, reachable in one tap
+   rather than occupying every recorded exam card by default. */
+.workspace__examCard__detailToggleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.workspace__detailToggle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 6px 12px;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.workspace__detailToggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }

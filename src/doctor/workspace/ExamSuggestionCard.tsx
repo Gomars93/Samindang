@@ -5,7 +5,7 @@
  * result is the only thing that moves an item out of "아직 확인 안 됨" —
  * nothing here infers a result from patient answers.
  */
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import {
   EXAM_CHECK_STATUS_LABEL,
   LATERALITY_LABEL,
@@ -35,6 +35,28 @@ export function ExamSuggestionCard({
 }) {
   const noteId = useId()
   const pending = item.result.status === 'NOT_YET_CHECKED'
+
+  /*
+   * Round 13 (input compression): recording a result used to open a row
+   * containing laterality buttons AND an always-visible free-text box, so
+   * the card read as a form waiting to be filled even when the clinician
+   * had already said everything they meant to. The status buttons alone
+   * are a complete record; laterality and the note are optional detail.
+   *
+   * They now sit behind an explicit 상세·메모 toggle -- but the toggle
+   * starts OPEN whenever either already holds content, so nothing a
+   * clinician previously entered is hidden from them.
+   *
+   * Deliberately NOT done here: the round-13 review suggested relabelling
+   * the actions 확인 / 특이없음. Those are not synonyms for the approved
+   * result semantics -- POSITIVE is 양성/이상 소견 and NEGATIVE is
+   * 음성/정상 -- and renaming them would change what the clinician is
+   * asserting, which is a clinical reinterpretation this round forbids.
+   * The compression here is purely about how much UI the default shows.
+   */
+  const hasDetail = item.result.note.trim() !== '' || item.result.laterality !== 'NOT_APPLICABLE'
+  const [detailOpen, setDetailOpen] = useState(hasDetail)
+  const showDetail = detailOpen || hasDetail
 
   return (
     <div
@@ -86,7 +108,24 @@ export function ExamSuggestionCard({
         ))}
       </div>
 
-      {!pending && (
+      {!pending && !showDetail && (
+        <div className="workspace__examCard__detailToggleRow">
+          <button
+            type="button"
+            className="workspace__detailToggle"
+            onClick={() => setDetailOpen(true)}
+          >
+            상세·메모 추가
+          </button>
+          {onAddToReassessment && (
+            <button type="button" className="workspace__adoptBtn" onClick={onAddToReassessment}>
+              재검 항목으로 추가 →
+            </button>
+          )}
+        </div>
+      )}
+
+      {!pending && showDetail && (
         <div className="workspace__examCard__detailRow">
           <div className="workspace__lateralityRow" role="group" aria-label={`${item.title} 좌우`}>
             {LATERALITY_OPTIONS.map((l) => (

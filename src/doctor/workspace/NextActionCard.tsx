@@ -92,6 +92,25 @@ export function NextActionCard({
   homeActionLabel?: string
 }) {
   const reassessment = nextReassessmentSummary(nextReassessmentPlan)
+
+  /*
+   * Round 13: when nothing is recorded, three stacked "아직 기록 없음" rows
+   * said the same thing three times and took the space of a real card.
+   * One compact line says it once. The moment ANY of the three holds
+   * content the full read-back returns, so a recorded value is never
+   * hidden behind a collapsed empty state -- the collapse is a property of
+   * emptiness, not a mode the clinician has to get out of.
+   */
+  const nothingRecorded = homeAction.trim() === '' && nextCheck.trim() === '' && reassessment === null
+  if (nothingRecorded) {
+    return (
+      <section className="workspace__block workspace__nextAction workspace__nextAction--empty" aria-label="다음 액션">
+        <h3>다음 액션</h3>
+        <p className="workspace__nextAction__emptyLine">다음 액션 미설정 — 아래 「관리 계획 · 다음 재평가」에서 입력</p>
+      </section>
+    )
+  }
+
   return (
     <section className="workspace__block workspace__nextAction" aria-label="다음 액션">
       <h3>다음 액션</h3>

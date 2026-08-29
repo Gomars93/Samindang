@@ -89,6 +89,10 @@ function isFresh(record, staleAfterMs) {
   return Number.isFinite(ageMs) && ageMs < staleAfterMs
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /** Read-only status check, used by scripts/purge-data.mjs before it deletes
  * everything out from under a still-live server. Never throws. */
 export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}) {
@@ -96,7 +100,41 @@ export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}
   return { record, fresh: isFresh(record, staleAfterMs) }
 }
 
-export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfterMs = 90000 } = {}) {
+// Closing-review finding (round 17 self-review): the original takeover --
+// atomicWrite(rename) then immediately re-read and compare nonces -- is NOT
+// mutual exclusion. Two processes racing the same stale lock can each
+// rename in turn (P1 at T, P2 at T+epsilon) and each read back IMMEDIATELY
+// after their own write; if P1's read happens before P2's rename, P1 sees
+// its own nonce and proceeds -- even though P2's later rename is about to
+// (or already did) overwrite it. Verified empirically: two real processes
+// racing one pre-seeded stale lock with no settling step produced more than
+// one simultaneous owner in roughly half of trials. A single self-read
+// right after your own write can never distinguish "I'm alone" from "I'm
+// about to be overwritten".
+//
+// Fix: after the takeover write, wait a settling window and re-read AGAIN.
+// If no one else has written since (nonce still matches), and nothing
+// competing is written during a second, shorter confirmation read, treat
+// this as the final word: any later competitor's OWN takeover attempt that
+// started around the same time will have completed its own rename well
+// within the settle window (a single atomicWrite is a few filesystem calls,
+// not seconds), so by the time this process's settle window elapses, the
+// file it reads is the true last-writer -- and if that is not this
+// process's own nonce, this process lost and must not proceed. This is not
+// full distributed consensus (a competitor whose rename lands AFTER this
+// settle window closes could still slip through), but for the realistic
+// failure mode this module exists for -- two processes started within
+// moments of each other, not an adversarial arrival stream -- it converts
+// the race from "coin flip" to "effectively never" without adding a
+// database or a second lock file.
+const DEFAULT_SETTLE_MS = 300
+
+async function verifyStillOwner(lockPath, nonce) {
+  const current = await readLock(lockPath)
+  return current?.nonce === nonce
+}
+
+export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfterMs = 90000, settleMs = DEFAULT_SETTLE_MS, onLost } = {}) {
   const lockPath = ownerLockPath(dataDir)
   await mkdir(path.dirname(lockPath), { recursive: true })
   const nonce = randomUUID()
@@ -118,18 +156,28 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
       )
     }
     // Stale (or corrupt/unreadable) lock: safe to take over. Unconditional
-    // atomic replace via tmp+rename, then self-verify by re-reading -- if
-    // another process is taking over the same stale lock at the same
-    // instant, exactly one rename wins the filesystem race and only that
-    // process's nonce reads back afterward.
+    // atomic replace via tmp+rename.
     const now = new Date().toISOString()
     const takeover = { pid, hostname: host, nonce, acquired_at: now, renewed_at: now }
     await atomicWrite(lockPath, takeover)
-    const verify = await readLock(lockPath)
-    if (verify?.nonce !== nonce) {
+    // Settle-and-reconfirm (see the comment above this function) instead of
+    // a single immediate self-read: wait, then verify twice more (the
+    // second check catches a competitor whose own rename landed anywhere
+    // inside the settle window, including right at its edge).
+    await sleep(settleMs)
+    if (!(await verifyStillOwner(lockPath, nonce))) {
+      const loser = await readLock(lockPath)
       throw new OwnerLockConflictError(
-        `lost the race to take over an abandoned data directory lock to another process (pid=${verify?.pid ?? '?'}) -- refusing to start`,
-        verify,
+        `lost the race to take over an abandoned data directory lock to another process (pid=${loser?.pid ?? '?'}) -- refusing to start`,
+        loser,
+      )
+    }
+    await sleep(Math.min(50, settleMs))
+    if (!(await verifyStillOwner(lockPath, nonce))) {
+      const loser = await readLock(lockPath)
+      throw new OwnerLockConflictError(
+        `lost the race to take over an abandoned data directory lock to another process (pid=${loser?.pid ?? '?'}) -- refusing to start`,
+        loser,
       )
     }
     record = takeover
@@ -139,6 +187,31 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
   const timer = setInterval(async () => {
     if (released) return
     try {
+      // Closing-review finding: a heartbeat that just re-writes its own
+      // remembered `record` without checking what is CURRENTLY on disk can
+      // silently reclaim a lock this process no longer owns. That happens
+      // if this process stalls (OS sleep/hibernate, a long GC pause, a
+      // paused VM) for longer than staleAfterMs: another process correctly
+      // takes over while this one is stalled, but when this process wakes
+      // and its next heartbeat fires, it would previously have blindly
+      // atomicWrite'd the lock back to itself -- becoming a second live
+      // owner alongside the legitimate new one, with the lock file lying
+      // about who holds it. Read-verify ownership FIRST; only renew if
+      // still genuinely ours.
+      const current = await readLock(lockPath)
+      if (current?.nonce !== nonce) {
+        released = true
+        clearInterval(timer)
+        console.error(
+          `fatal: lost ownership of the data directory lock (${lockPath}) -- another process holds it now (pid=${current?.pid ?? '?'}). This process can no longer safely serve requests against this data directory.`,
+        )
+        if (onLost) {
+          onLost()
+        } else {
+          process.exit(1)
+        }
+        return
+      }
       const renewed = { ...record, renewed_at: new Date().toISOString() }
       await atomicWrite(lockPath, renewed)
       record = renewed

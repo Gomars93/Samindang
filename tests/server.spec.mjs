@@ -427,6 +427,61 @@ async function main() {
       assert('PUT judgment with NO x-expected-updated-at header -> 200, unconditional as before (backward-compatible default)', noHeaderRes.status === 200)
     }
 
+    /* ---------------- Round 17 closing-review finding: nextUpdatedAt
+       monotonicity had ZERO test coverage even though it is what makes the
+       whole CAS precondition above actually work -- `new Date().
+       toISOString()` only has millisecond resolution, and under fast
+       back-to-back saves (confirmed empirically: this exact scenario is
+       what made `npm run test:all` flaky before the fix) two real,
+       distinct writes to one record CAN complete within the same
+       millisecond, producing an identical updated_at and silently
+       defeating the CAS check (a stale precondition would be wrongly
+       ACCEPTED). Fire a burst of rapid saves with NO artificial delay and
+       assert every updated_at strictly differs from the one before it,
+       and that a precondition captured from an EARLIER save in the burst
+       is still correctly refused as stale after later ones land. ---------------- */
+    {
+      const burstJudgment = (n) => ({
+        recorded_at: new Date().toISOString(),
+        source: { session_id: 'sess-1', questionnaire_version: '1.0' },
+        innate_features: [`burst-${n}`],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      })
+      const updatedAts = []
+      for (let n = 0; n < 20; n++) {
+        const res = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(burstJudgment(n)),
+        })
+        const record = await res.json()
+        updatedAts.push(record.updated_at)
+      }
+      const allDistinct = new Set(updatedAts).size === updatedAts.length
+      assert('nextUpdatedAt: 20 rapid back-to-back saves with no delay all produce a strictly distinct updated_at (no same-millisecond collision)', allDistinct)
+      const strictlyIncreasing = updatedAts.every((v, i) => i === 0 || v > updatedAts[i - 1])
+      assert('nextUpdatedAt: the sequence of updated_at values is strictly increasing (monotonic, not just distinct/shuffled)', strictlyIncreasing)
+
+      // A precondition captured from an EARLY save in that same rapid
+      // burst must still be correctly recognized as stale after later
+      // saves landed -- proving the CAS check actually distinguishes them,
+      // not just that the values happen to differ.
+      const staleFromBurst = updatedAts[0]
+      const rejectedRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': staleFromBurst },
+        body: JSON.stringify(burstJudgment('should-be-refused')),
+      })
+      assert('nextUpdatedAt: a precondition captured from the FIRST save in a rapid burst is correctly refused as stale once later saves landed', rejectedRes.status === 409)
+    }
+
     /* ---------------- restart persistence ---------------- */
     {
       await stopServer(server)

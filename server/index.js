@@ -47,6 +47,20 @@ function safeDecodeToken(raw) {
   }
 }
 
+// Round 17: reads the optional x-expected-updated-at CAS precondition
+// header. Closing-review finding: an EMPTY header value (e.g. a client
+// bug sending `''`) previously read as the string `''`, which is `!= null`
+// and so was compared against the real updated_at -- guaranteed to never
+// match, permanently 409ing every save from that client. Treat empty/
+// whitespace-only the same as absent (no precondition), matching how a
+// caller that never intended to send one would expect to behave.
+function readExpectedUpdatedAt(req) {
+  const raw = req.headers['x-expected-updated-at']
+  if (typeof raw !== 'string') return undefined
+  const trimmed = raw.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
 export function createApp({
   dataDir,
   doctorToken,
@@ -444,7 +458,7 @@ export function createApp({
           // Round 17: optional CAS precondition -- absent, unconditional
           // last-write-wins exactly as before. See store.js's saveJudgment
           // doc comment.
-          const expectedUpdatedAt = typeof req.headers['x-expected-updated-at'] === 'string' ? req.headers['x-expected-updated-at'] : undefined
+          const expectedUpdatedAt = readExpectedUpdatedAt(req)
           try {
             const record = await store.saveJudgment(id, body, { expectedUpdatedAt })
             if (!record) {
@@ -475,7 +489,7 @@ export function createApp({
           const body = await readBody(req)
           // Round 17: optional CAS precondition, same contract as the
           // judgment route above.
-          const expectedUpdatedAt = typeof req.headers['x-expected-updated-at'] === 'string' ? req.headers['x-expected-updated-at'] : undefined
+          const expectedUpdatedAt = readExpectedUpdatedAt(req)
           try {
             const record = await store.saveWorkspace(id, body, { expectedUpdatedAt })
             if (!record) {
@@ -677,7 +691,7 @@ export function createApp({
           const body = await readBody(req)
           // Round 17: optional CAS precondition, same contract as the
           // submission judgment/workspace routes above.
-          const expectedUpdatedAt = typeof req.headers['x-expected-updated-at'] === 'string' ? req.headers['x-expected-updated-at'] : undefined
+          const expectedUpdatedAt = readExpectedUpdatedAt(req)
           const result = await store.saveVisitWorkspace(id, body, { expectedUpdatedAt })
           if (!result.ok && result.reason === 'not_found') {
             status = 404
@@ -1740,11 +1754,46 @@ if (isMain()) {
   // boot path (isMain()), never inside createApp() itself. A second process
   // pointed at the same data dir refuses to start here, loudly, instead of
   // silently racing every store's in-process-only lock.
-  const heartbeatMs = Number(process.env.SAMINDANG_OWNER_LOCK_HEARTBEAT_MS ?? '15000')
-  const staleAfterMs = Number(process.env.SAMINDANG_OWNER_LOCK_STALE_MS ?? '90000')
+  //
+  // Closing-review finding: `Number(x)` on an unset var is fine (the `??`
+  // fallback), but a SET-but-malformed one (a typo like "90s", or an empty
+  // string) silently becomes NaN -- and ownerLock.js's isFresh() treats a
+  // NaN staleAfterMs as "everything is always stale", which makes the lock
+  // a complete no-op (every process takes over immediately, defeating the
+  // whole point of this module) with zero visible warning. Validate with
+  // Number.isFinite and fail the same loud way checkDataDirsWritable does,
+  // rather than silently disabling the guard it exists to provide.
+  function requirePositiveMs(envVar, fallback) {
+    const raw = process.env[envVar]
+    if (raw === undefined) return fallback
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n <= 0) {
+      console.error(`fatal: ${envVar}="${raw}" is not a valid positive number of milliseconds`)
+      process.exit(1)
+    }
+    return n
+  }
+  const heartbeatMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_HEARTBEAT_MS', 15000)
+  const staleAfterMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_STALE_MS', 90000)
+  const settleMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_SETTLE_MS', 300)
+  // Declared before acquireOwnerLock so onLockLost's closure can reference
+  // it -- it is only actually read once the heartbeat fires (well after
+  // `server` below is assigned), never at lock-acquisition time itself.
+  let server
+  // Closing-review finding: if this process later loses the lock (e.g. it
+  // stalled past staleAfterMs and a different process legitimately took
+  // over while it was stalled), it must stop serving requests against a
+  // data directory another process now owns -- continuing would be exactly
+  // the two-live-owners state this whole module exists to prevent. Do NOT
+  // call ownerLock.release() here: this process no longer owns the lock,
+  // so releasing would delete the NEW owner's live lock file.
+  function onLockLost() {
+    if (server) server.close(() => process.exit(1))
+    else process.exit(1)
+  }
   let ownerLock
   try {
-    ownerLock = await acquireOwnerLock(dataDir, { heartbeatMs, staleAfterMs })
+    ownerLock = await acquireOwnerLock(dataDir, { heartbeatMs, staleAfterMs, settleMs, onLost: onLockLost })
   } catch (err) {
     if (err instanceof OwnerLockConflictError) {
       console.error(`fatal: ${err.message}`)
@@ -1754,7 +1803,7 @@ if (isMain()) {
     process.exit(1)
   }
 
-  const server = createApp({ dataDir })
+  server = createApp({ dataDir })
   server.listen(port, host, () => {
     const retentionDays = Number(process.env.SAMINDANG_RETENTION_DAYS ?? '30')
     console.log(`samindang handoff server listening on http://${host}:${port}`)

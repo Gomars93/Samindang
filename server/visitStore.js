@@ -30,8 +30,12 @@ async function atomicWrite(filePath, data) {
 // each other's conflict detection.
 function nextUpdatedAt(previous) {
   const now = new Date()
-  if (previous && now.toISOString() <= previous) {
-    return new Date(new Date(previous).getTime() + 1).toISOString()
+  const previousMs = previous ? new Date(previous).getTime() : NaN
+  // Closing-review finding: guard against a malformed `previous` (NaN) --
+  // see server/store.js's identical helper for the full reasoning (a
+  // corrupt updated_at must stay self-healing, not throw on every save).
+  if (Number.isFinite(previousMs) && now.toISOString() <= previous) {
+    return new Date(previousMs + 1).toISOString()
   }
   return now.toISOString()
 }

@@ -57,8 +57,20 @@ async function atomicWrite(filePath, data) {
 // saveJudgment/saveWorkspace's checks to stay meaningful.
 function nextUpdatedAt(previous) {
   const now = new Date()
-  if (previous && now.toISOString() <= previous) {
-    return new Date(new Date(previous).getTime() + 1).toISOString()
+  const previousMs = previous ? new Date(previous).getTime() : NaN
+  // Closing-review finding: a malformed `previous` (only reachable via a
+  // hand-edited/corrupt record file) made `new Date(previous).getTime()`
+  // NaN, which the old bump path fed straight back into `new Date(NaN)` --
+  // an Invalid Date whose toISOString() throws. That is a real regression:
+  // before this helper existed, a corrupt updated_at was silently
+  // self-healed by the next save (just overwritten with a fresh valid
+  // one); with the bug, saveJudgment/saveWorkspace would instead throw a
+  // plain Error (not StaleWriteError) that the route re-throws as a
+  // permanent 500 on every future save of that record. Guard with
+  // Number.isFinite so a malformed previous is simply ignored (treated as
+  // "no prior value"), preserving the original self-healing behavior.
+  if (Number.isFinite(previousMs) && now.toISOString() <= previous) {
+    return new Date(previousMs + 1).toISOString()
   }
   return now.toISOString()
 }
@@ -495,34 +507,31 @@ export function createStore(
       // two "재진 · 환자 입력 대기" rows in the doctor queue, and possibly
       // two live capabilities, for one intended click. Re-read durable
       // state before creating anything new: if this patient already has an
-      // unanswered ("pending") revisit whose session was never explicitly
-      // invalidated -- whether it still holds a live token, an expired
-      // one, or (crash window: the process died between visits.createVisit
-      // and followUpSessions.issueToken below, before this function's own
-      // try/catch rollback could even run) no token at all yet --
-      // reissue onto THAT visit instead of minting a new one.
-      // reissueFollowUpSession already tolerates a missing existing
-      // session (it is the same function the doctor-facing manual reissue
-      // route uses), so this one call correctly recovers all three durable
-      // states. See findPendingRevisitForPatient for why an explicitly
-      // INVALIDATED session (e.g. from resetStation) is deliberately
-      // excluded -- that flow's "next assignment mints a fresh visit"
-      // behavior is untouched by this change.
+      // unanswered, non-invalidated, EXPIRED (not currently live) revisit
+      // -- see findPendingRevisitForPatient's own doc comment for exactly
+      // which durable states qualify, and the two real bugs (misattributing
+      // an unrelated old visit; destroying a currently-in-use capability)
+      // a closing review found and fixed in the first version of that
+      // predicate -- reissue onto THAT visit instead of minting a new one.
       //
       // `created: false` here is correct (no NEW visit was made) but
       // `reused: true` would NOT be -- a genuinely NEW follow-up-session
-      // token IS being minted for the first time onto this visit (e.g. the
-      // crash-before-issueToken recovery case has no prior session at
-      // all), which callers must still audit as follow_up_session_issued.
-      // Conflating this with the fast-path cache-hit's "nothing new
-      // happened at all" meaning would silently drop that audit line --
-      // caught by tests/audit-registry.spec.mjs's revisit-start dedup
-      // test, which is exactly why `created` and `reused` are now two
-      // independent flags instead of one.
+      // token IS being minted onto this visit (its previous one had
+      // expired), which callers must still audit as
+      // follow_up_session_issued. Conflating this with the fast-path
+      // cache-hit's "nothing new happened at all" meaning would silently
+      // drop that audit line -- caught by tests/audit-registry.spec.mjs's
+      // revisit-start dedup test, which is exactly why `created` and
+      // `reused` are now two independent flags instead of one.
       const existingPending = await findPendingRevisitForPatient(patientId)
       if (existingPending) {
+        // findPendingRevisitForPatient only ever returns a visit that DID
+        // have a session issued (see its own doc comment), so a re-read
+        // here re-verifies current state under this same lock rather than
+        // trusting a value read moments earlier -- it is never null for a
+        // returned candidate.
         const existingSession = await followUpSessions.getActiveForVisit(existingPending.id)
-        const durableSameDeliveryMode = !existingSession || (existingSession.delivery_mode ?? null) === (deliveryMode ?? null)
+        const durableSameDeliveryMode = (existingSession?.delivery_mode ?? null) === (deliveryMode ?? null)
         if (durableSameDeliveryMode) {
           const reissued = await reissueFollowUpSession(existingPending.id, deliveryMode ?? existingSession?.delivery_mode ?? null)
           if (reissued) {
@@ -580,20 +589,57 @@ export function createStore(
   }
 
   // Round 17: durable (not in-memory-cache) lookup of "does this patient
-  // already have a revisit that is still pending?", used by startRevisit's
-  // restart/multi-process-safe fallback above. A visit qualifies if it is a
-  // revisit (no submission_id), nobody has answered it yet (no saved
-  // MicroFollowUpResponse), AND its session -- if one was ever issued --
-  // was not explicitly INVALIDATED. That last condition is deliberate:
-  // resetStation's own doc comment says a reset's whole point is that "the
-  // next assignment... mints a FRESH capability" -- an ACTIVE or merely
-  // time-expired session is exactly the restart/crash/retry case this
-  // function exists to recover (reuse, don't duplicate), but an
-  // explicitly-INVALIDATED one is a deliberate staff action to close out
-  // that attempt, and must keep creating a genuinely new visit exactly as
-  // it always has (see tests/station.spec.mjs's reset-then-reassign
-  // coverage). O(n) scan of this one patient's visits, same pilot-scale
-  // tradeoff as every other list function in this file.
+  // already have a revisit that is safe to reuse?", used by startRevisit's
+  // restart/multi-process-safe fallback above.
+  //
+  // Closing-review findings (round 17 self-review) tightened this from the
+  // first version, which had two real defects, both confirmed empirically:
+  //
+  // (a) It matched ANY submission_id:null visit with no saved response and
+  // no INVALIDATED session -- including a visit created by the generic
+  // POST /api/visits route (used for unrelated purposes, e.g. minting a
+  // bare patient_id) that never had a follow-up session issued for it at
+  // all. Reusing THAT visit attributes an unrelated, possibly weeks-old
+  // visit to today's follow-up answer -- a clinical-record integrity bug,
+  // not just a UX one. Fix: require a session to have been issued at some
+  // point (`session !== null`). This also gives a natural, already-tested
+  // age bound for free: an EXPIRED, never-consumed token's own file is
+  // swept by followUpSessions.cleanupOlderThan within roughly
+  // followUpTokenRetentionHours (24h default) of its expiry, at which
+  // point getActiveForVisit starts returning null and the visit stops
+  // being a candidate -- so this can never reuse a genuinely
+  // weeks-abandoned pending revisit, without needing a second, separately
+  // maintained age check.
+  //
+  // (b) It reused a visit whose session was still ACTIVE and NOT expired
+  // -- a currently LIVE capability, possibly open in a patient's browser
+  // or actively assigned to a physical station right now.
+  // reissueFollowUpSession's issueToken call unconditionally invalidates
+  // whatever was previously active for that visit, so this silently
+  // killed an in-use link out from under whoever was using it. Fix: only
+  // reuse when the session is NOT currently live -- i.e. it is either
+  // EXPIRED (TTL lapsed; consumeTokenWithAction itself already refuses an
+  // expired token, so there is provably nothing left to destroy) or
+  // explicitly INVALIDATED is excluded below as before. This is the same
+  // "never touch something that might still be in someone's hands"
+  // principle assignRevisitToStation's own rollback gating already follows
+  // (see rollbackNewRevisit's doc comment) -- extended here to cover the
+  // reuse path too, not just the rollback path.
+  //
+  // Known, accepted consequence of (a)+(b) together: the one crash window
+  // this can no longer auto-recover is "the process died in the instant
+  // between issueToken succeeding and the client receiving the response,
+  // and a retry lands while that token is still ACTIVE and unexpired." A
+  // retry in that exact window now creates a genuinely new visit (the
+  // pre-round-17 behavior) rather than reusing -- because we have no way
+  // to tell "abandoned by a crash" apart from "still actively in use" for
+  // a live token, and the plaintext token itself can never be recovered to
+  // check (by design, see followUpSessionStore.js). That is a narrower,
+  // rarer window than destroying a live capability or misattributing an
+  // old visit, and it self-heals the moment the token expires.
+  //
+  // O(n) scan of this one patient's visits, same pilot-scale tradeoff as
+  // every other list function in this file.
   async function findPendingRevisitForPatient(patientId) {
     const patientVisits = await visits.listVisitsForPatient(patientId)
     const candidates = []
@@ -602,7 +648,10 @@ export function createStore(
       const response = await microFollowUp.getResponse(v.id)
       if (response) continue
       const session = await followUpSessions.getActiveForVisit(v.id)
-      if (session?.status === 'INVALIDATED') continue
+      if (!session) continue
+      if (session.status === 'INVALIDATED') continue
+      const stillLive = session.status === 'ACTIVE' && new Date(session.expires_at).getTime() >= Date.now()
+      if (stillLive) continue
       candidates.push(v)
     }
     candidates.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
@@ -884,16 +933,30 @@ export function createStore(
   // this read-check-unlink does not take the per-id `withLock` that
   // setStatus/saveJudgment/saveWorkspace use for their own read-modify-
   // write. A record already past the retention cutoff being actively
-  // edited at the exact moment this sweep reaches it could, in principle,
-  // have its RMW's atomicWrite land in the gap between this function's
-  // read and its unlink -- resurrecting a just-deleted expired record for
-  // one write cycle before the NEXT 6-hourly sweep removes it again. Real
-  // consequence is narrow (retention is measured in days, the sweep
-  // interval in hours, and the record would already have to be past its
-  // retention cutoff yet still actively being edited by a clinician) and
-  // bounded (the record is gone again at most 6 hours later, never
-  // permanently retained past policy). Not worth adding a lock a routine
-  // background sweep would then have to queue behind every live edit for.
+  // edited at the exact moment this sweep reaches it races in TWO possible
+  // orderings, not one (closing-review finding: the first version of this
+  // comment only described the benign one):
+  //   (a) this function's read -> the concurrent atomicWrite lands -> this
+  //       function's unlink: the just-saved write is destroyed anyway
+  //       (unlink doesn't care what the file now contains), silently
+  //       discarding a save the clinician was just told succeeded (200).
+  //       The record IS gone either way (it's past retention), but the
+  //       clinician's belief that their last edit was captured is now
+  //       false for however long until they reload and notice.
+  //   (b) this function's read -> this function's unlink -> the concurrent
+  //       atomicWrite lands: the old (benign) case -- a just-deleted
+  //       expired record is "resurrected" for one write cycle, gone again
+  //       at most 6 hours later on the next sweep.
+  // Both orderings are bounded to the same narrow precondition (the record
+  // must already be past its retention cutoff -- measured in days -- yet
+  // still actively being edited by a clinician in the same few-hundred-ms
+  // window this sweep happens to reach it) and the same outcome ceiling
+  // (never retained past policy; at worst one edit's confirmation is
+  // wrong for up to 6 hours). Still not worth adding a lock a routine
+  // background sweep would then have to queue behind every live edit for
+  // -- but (a) is a real "told you it saved and it didn't" case, not a
+  // purely cosmetic one, so it is written out explicitly here rather than
+  // only the safer half.
   async function cleanupOlderThan(days) {
     if (!(days > 0)) return 0
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000

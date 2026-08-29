@@ -1299,9 +1299,10 @@ async function main() {
       const chartNo = 'CN-2002'
       const chartHash = createHash('sha256').update(chartNo, 'utf8').digest('hex')
 
-      // Block the uuid record's own tmp write path -- the SECOND write in
-      // linkPatientIdentity's order, so the chart pointer (the FIRST
-      // write) is allowed to land normally.
+      // Block the uuid record's own tmp write path -- the THIRD write in
+      // linkPatientIdentity's order (pending marker, then chart pointer,
+      // then the link record), so the first two are allowed to land
+      // normally.
       const linkTmpPath = path.join(root, 'links', `${uuid}.json.tmp`)
       await mkdir(linkTmpPath, { recursive: true })
 
@@ -1314,7 +1315,7 @@ async function main() {
       assert('identity-crash: first attempt genuinely throws when the link-record write is blocked', firstAttemptThrew)
 
       const chartPointerOnDisk = await readRaw(path.join(root, 'by-chart', `${chartHash}.json`))
-      assert('identity-crash: the chart pointer (first write) landed durably despite the interruption', chartPointerOnDisk?.patient_uuid === uuid)
+      assert('identity-crash: the chart pointer landed durably despite the interruption', chartPointerOnDisk?.patient_uuid === uuid)
       assert('identity-crash: no usable link exists yet -- fails closed rather than half-written', (await store.getIdentityByPatientUuid(uuid)) === null)
 
       // Unblock (remove the directory standing in for the tmp file) and retry.
@@ -1326,6 +1327,117 @@ async function main() {
       // Chart_no is still 1:1 -- no orphan second pointer was created.
       const filesInChartIndex = (await readdir(path.join(root, 'by-chart'))).filter((f) => f.endsWith('.json'))
       assert('identity-crash: exactly one chart-index pointer exists after crash + retry (no orphan reservation)', filesInChartIndex.length === 1)
+
+      const pendingFileAfterRecovery = await readRaw(path.join(root, 'pending', `${uuid}.json`))
+      assert('identity-crash: the pending-reservation marker is cleaned up once the link completes', pendingFileAfterRecovery === null)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- round-14 re-review fix: crash after the chart pointer for X is
+     durable but before the link record lands, THEN a retry for the SAME
+     uuid with a DIFFERENT (corrected) chart_no Y. The orphaned reverse
+     pointer for X must be reclaimed -- not left permanently blocking X
+     from ever being claimed by whoever actually holds it -- and the
+     final on-disk state must have exactly one authoritative mapping. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-crash-corrected-chart-'))
+    try {
+      const store = createPatientIdentityStore(root)
+      const uuid = randomUUID()
+      const staleChartNo = 'CN-3003-WRONG'
+      const correctedChartNo = 'CN-3003-RIGHT'
+      const staleChartHash = createHash('sha256').update(staleChartNo, 'utf8').digest('hex')
+      const correctedChartHash = createHash('sha256').update(correctedChartNo, 'utf8').digest('hex')
+
+      // Block the link record's write so the crash lands exactly after the
+      // chart pointer for the (mistaken) staleChartNo is durable.
+      const linkTmpPath = path.join(root, 'links', `${uuid}.json.tmp`)
+      await mkdir(linkTmpPath, { recursive: true })
+      let firstAttemptThrew = false
+      try {
+        await store.linkPatientIdentity({ patientUuid: uuid, chartNo: staleChartNo, patientName: '환자D', confirmedBy: 'staff-1', now: T0 })
+      } catch {
+        firstAttemptThrew = true
+      }
+      assert('identity-crash-corrected: first attempt (wrong chart_no) genuinely throws when blocked', firstAttemptThrew)
+
+      const stalePointerBeforeRetry = await readRaw(path.join(root, 'by-chart', `${staleChartHash}.json`))
+      assert('identity-crash-corrected: the stale chart_no reverse pointer landed durably before the crash', stalePointerBeforeRetry?.patient_uuid === uuid)
+
+      // Unblock, then the operator retries with the CORRECTED chart_no --
+      // not the one that crashed.
+      await rm(linkTmpPath, { recursive: true, force: true })
+      const recovered = await store.linkPatientIdentity({ patientUuid: uuid, chartNo: correctedChartNo, patientName: '환자D', confirmedBy: 'staff-1', now: T0 })
+      assert('identity-crash-corrected: the retry with the corrected chart_no succeeds', recovered.sigma_chart_no === correctedChartNo)
+
+      const finalLink = await store.getIdentityByPatientUuid(uuid)
+      assert('identity-crash-corrected: the authoritative link now names the CORRECTED chart_no', finalLink.sigma_chart_no === correctedChartNo)
+
+      const stalePointerAfterRetry = await readRaw(path.join(root, 'by-chart', `${staleChartHash}.json`))
+      assert('identity-crash-corrected: the orphaned stale-chart reverse pointer was reclaimed (removed), not left dangling', stalePointerAfterRetry === null)
+
+      const correctedPointer = await readRaw(path.join(root, 'by-chart', `${correctedChartHash}.json`))
+      assert('identity-crash-corrected: the corrected chart_no now has its own reverse pointer to this uuid', correctedPointer?.patient_uuid === uuid)
+
+      // Exactly one authoritative chart mapping/reservation survives.
+      const filesInChartIndex = (await readdir(path.join(root, 'by-chart'))).filter((f) => f.endsWith('.json'))
+      assert('identity-crash-corrected: exactly one chart-index pointer exists for this uuid after the corrected retry', filesInChartIndex.length === 1)
+
+      const pendingFileAfterRecovery = await readRaw(path.join(root, 'pending', `${uuid}.json`))
+      assert('identity-crash-corrected: the pending-reservation marker is cleaned up once the corrected link completes', pendingFileAfterRecovery === null)
+
+      // The released stale chart_no can now be claimed by a DIFFERENT
+      // patient -- proving it was genuinely freed, not just hidden.
+      const otherUuid = randomUUID()
+      const claimedByOther = await store.linkPatientIdentity({
+        patientUuid: otherUuid,
+        chartNo: staleChartNo,
+        patientName: '다른환자',
+        confirmedBy: 'staff-2',
+        now: T0,
+      })
+      assert('identity-crash-corrected: a different patient can now claim the released stale chart_no', claimedByOther.sigma_chart_no === staleChartNo)
+      assert('identity-crash-corrected: the original uuid\'s own link is untouched by the other patient claiming the released chart', (await store.getIdentityByPatientUuid(uuid)).sigma_chart_no === correctedChartNo)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- round-14 re-review fix: never touch a pointer owned by a
+     DIFFERENT uuid, even if that other uuid's own pending record happens
+     to still name the chart_no this uuid is trying to abandon. Defense in
+     depth for the reclaim step's ownership guard. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-crash-no-cross-uuid-reclaim-'))
+    try {
+      const store = createPatientIdentityStore(root)
+      const uuidA = randomUUID()
+      const uuidB = randomUUID()
+      const chartX = 'CN-4004-X'
+      const chartY = 'CN-4004-Y'
+
+      // A crashes after reserving X, then corrects to Y (reclaiming X).
+      const linkTmpPathA = path.join(root, 'links', `${uuidA}.json.tmp`)
+      await mkdir(linkTmpPathA, { recursive: true })
+      try {
+        await store.linkPatientIdentity({ patientUuid: uuidA, chartNo: chartX, patientName: '환자A', confirmedBy: 'staff-1', now: T0 })
+      } catch {
+        /* expected */
+      }
+      await rm(linkTmpPathA, { recursive: true, force: true })
+      await store.linkPatientIdentity({ patientUuid: uuidA, chartNo: chartY, patientName: '환자A', confirmedBy: 'staff-1', now: T0 })
+
+      // B now legitimately claims the released X.
+      const claimedByB = await store.linkPatientIdentity({ patientUuid: uuidB, chartNo: chartX, patientName: '환자B', confirmedBy: 'staff-1', now: T0 })
+      assert('identity-cross-uuid-guard: patient B legitimately claims the released chart X', claimedByB.sigma_chart_no === chartX)
+
+      // Both links remain fully intact and correctly attributed.
+      const finalA = await store.getIdentityByPatientUuid(uuidA)
+      const finalB = await store.getIdentityByPatientUuid(uuidB)
+      assert('identity-cross-uuid-guard: patient A still holds Y, unaffected by B claiming X afterward', finalA.sigma_chart_no === chartY)
+      assert('identity-cross-uuid-guard: patient B holds X, correctly attributed', finalB.sigma_chart_no === chartX && finalB.patient_uuid === uuidB)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

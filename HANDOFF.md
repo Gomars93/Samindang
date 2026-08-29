@@ -647,6 +647,66 @@ crmStore.js/server/index.js/serverClient.ts/TodayQueueSection.tsx의
 관례를 파악하기 위해 직접 Read/Grep으로 조사했다(round 13에서 이미
 같은 구조를 직접 확인해둔 상태였다).
 
+### Round 14 재검토 수정 (같은 세션 내에서 이어서 수행)
+
+Gomars93의 재검토: 위 구현이 정상 경로에서는 맞게 동작하지만, 진짜
+crash/재시작 무결성 결함이 하나 남아있다고 지적했다. **DO NOT MERGE.**
+
+**결함**: `linkPatientIdentity()`가 `by-chart/<hash>.json` 예약을
+`links/<uuid>.json` 레코드보다 먼저 쓴다. 기존 failure-injection
+테스트는 재시도가 **같은** chart_no를 쓸 때만 복구를 증명했다. 실제
+결함 경로: (1) `patient_uuid=A`를 `chart_no=X`에 링크 시도, (2) X의
+역방향 포인터가 durable하게 쓰인 직후, `links/A.json`을 쓰기 전에
+프로세스/파일시스템 장애 발생, (3) 재시작 후 운영자가 chart를
+정정해서 A를 `chart_no=Y`로 재시도, (4) `links/A.json`이 여전히 없으므로
+기존 코드는 Y를 예약하고 A→Y를 완료시키면서, orphan이 된 X→A 역방향
+포인터는 디스크에 그대로 남는다. 이는 라운드가 명시한 "양방향 1:1"
+불변식을 위반하고, A의 authoritative 링크가 이제 Y를 가리킴에도 X를
+영구히 다른 환자가 못 쓰게 막을 수 있다.
+
+**수정**: 세 번째 디렉토리 `pending/<patient_uuid>.json`을 추가해
+"이 uuid가 마지막으로 시도한 chart_no"를 O(1)로 추적한다(by-chart/
+전체를 스캔하지 않고). 쓰기 순서를 (1) `pending/<uuid>.json`(durable
+intent, crmStore.js의 dedup intent-first와 같은 논리) → (2) by-chart
+역방향 포인터 → (3) `links/<uuid>.json`(최종 authoritative 레코드) →
+(4) pending 파일 best-effort 삭제로 재정렬했다. 같은 chart_no로
+재시도하면 기존과 동일하게 self-heal한다. **다른** chart_no로 재시도하면,
+`pending/<uuid>.json`이 이전 chart_no와의 불일치를 즉시 드러내고,
+**그 chart_no 자신의 lock 아래에서**(항상 순차적으로, 두 chart lock을
+동시에 잡는 경우는 이 store 어디에도 없음 — 교착 위험 없음) orphan
+포인터를 회수(삭제)한 뒤에야 새 chart_no를 예약한다. 이미 확인했듯
+`links/<uuid>.json`이 없다는 것 자체가 "이 예약은 완료된 적이 없다"는
+뜻이라 안전하게 회수할 수 있고, 회수 로직은 방어적으로 포인터가 여전히
+**같은** uuid를 가리킬 때만 삭제한다(다른 uuid가 소유한 포인터는 절대
+건드리지 않음). 이렇게 **거부가 아니라 회수**를 택한 이유는 재검토가
+요구한 "적절한 시점에 다른 환자가 해제된 chart X를 쓸 수 있어야 한다"는
+조건을 만족시키기 위함이다 — 단순 거부만으로는 X가 영원히 A에게
+묶인 채로 남는다.
+
+**`tests/crm-store.spec.mjs`**: 기존 identity-crash 테스트에 pending
+파일 정리 확인 assertion 1개 추가, 그리고 신규 2개 테스트 블록(총 14
+assertion) — (1) "crash after X pointer → restart → retry same UUID
+with Y" 정확히 재검토가 요구한 시나리오: stale 포인터가 회수되고,
+authoritative 링크가 Y를 가리키며, chart-index에 정확히 하나의 포인터만
+남고, **다른 환자가 실제로 해제된 X를 성공적으로 클레임**할 수 있음을
+증명(10 assertion), (2) 방어 심층화 테스트 — A가 X를 회수하고 Y로
+정정한 뒤 B가 정당하게 X를 클레임해도 A(Y)/B(X) 양쪽 레코드가 서로
+간섭받지 않음을 증명(3 assertion). CRM store 스위트 총 assertion:
+140 → 154.
+
+**검증 (이번 세션이 직접 실행, 재검토 수정 반영):** `npx tsc -b
+--force`(0 에러), `npm run build`/`npm run build:preview`(둘 다 성공),
+`npm run test:all`(전체 green — 3174개 PASS/OK 라인, FAIL 0건, CRM
+store 스위트 154 assertion 포함), `cd "tablet core" && python3 -m
+pytest tests/ -q`(80 passed), `git diff origin/main -- 'src/spec/*
+Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff). 동시성
+uniqueness, 일반 409 충돌, cross-patient Task/Episode isolation, 재시작
+durability는 모두 기존 테스트 그대로 재확인됐다(회귀 없음). 링크 생성
+UI는 지시대로 여전히 만들지 않았다 — 이번 수정은 무결성 결함
+하나만 좁게 고쳤다.
+
+**Subagent 사용 안 함** — 이 재검토 수정도 같은 세션에서 직접 수행.
+
 ## Completed — CRM v0.3.1 Round 13 (Doctor 클라이언트 첫 CRM UI — 읽기 전용 Today Queue, 이전 세션)
 **`src/lib/serverClient.ts`**: `listCrmTasks(params?: { ownerClinician?,
 coverageQueue? })` 추가. `GET /api/crm/tasks`의 wire shape이 이미

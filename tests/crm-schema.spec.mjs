@@ -19,6 +19,8 @@ import {
   resolveTask,
   resolveTaskWithPersistence,
   snoozeTask,
+  cancelTask,
+  supersedeTask,
   onSigmaLookupFailure,
   sortCrmTaskQueue,
   resolveTaskOwner,
@@ -416,6 +418,48 @@ function makeEpisode(overrides = {}) {
   assert('Test 20: an owner-absent task routes to a caller-configured coverage queue A', resolveTaskOwner(task, 'coverage-queue-A') === 'coverage-queue-A')
   assert('Test 20: the same logic routes to a different caller-configured queue B -- nothing is hardcoded', resolveTaskOwner(task, 'coverage-queue-B') === 'coverage-queue-B')
   assert('Test 20: an owned task keeps its own owner regardless of the coverage queue', resolveTaskOwner({ ...task, owner_clinician: 'dr-a' }, 'coverage-queue-A') === 'dr-a')
+}
+
+/* ---------------- Round 2 review fix: SAFETY_REVIEW refused directly at cancelTask/supersedeTask ---------------- */
+{
+  const { task: safety } = createCrmTask(
+    { task_id: 't-r2-safety', patient_uuid: 'pt-1', episode_id: 'ep-1', task_type: 'SAFETY_REVIEW', reason_code: 'SAFETY_REVIEW_REQUEST', source_event_id: 'evt-r2-safety', owner_clinician: null, now: T0, safetyAuthorization: { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'dr-a' } },
+    [],
+  )
+  const safetyBeforeCancel = { ...safety }
+  let cancelThrew = false
+  try {
+    cancelTask(safety)
+  } catch {
+    cancelThrew = true
+  }
+  assert('Round 2: cancelTask() refuses a SAFETY_REVIEW task directly, not only through completeEpisode', cancelThrew)
+  assert('Round 2: the refused cancelTask() call left status unchanged', safety.status === safetyBeforeCancel.status)
+  assert('Round 2: the refused cancelTask() call left version unchanged', safety.version === safetyBeforeCancel.version)
+
+  const safetyBeforeSupersede = { ...safety }
+  let supersedeThrew = false
+  try {
+    supersedeTask(safety)
+  } catch {
+    supersedeThrew = true
+  }
+  assert('Round 2: supersedeTask() refuses a SAFETY_REVIEW task directly, not only through supersedeFutureRoutineTasksOnCarePlanChange', supersedeThrew)
+  assert('Round 2: the refused supersedeTask() call left status unchanged', safety.status === safetyBeforeSupersede.status)
+  assert('Round 2: the refused supersedeTask() call left version unchanged', safety.version === safetyBeforeSupersede.version)
+
+  const { task: routine } = createCrmTask(
+    { task_id: 't-r2-routine', patient_uuid: 'pt-1', episode_id: 'ep-1', task_type: 'ROUTINE', reason_code: 'CARE_GAP', source_event_id: 'evt-r2-routine', owner_clinician: null, now: T0 },
+    [],
+  )
+  assert('Round 2: cancelTask() still works normally for a non-Safety task', cancelTask(routine).status === 'CANCELLED')
+  assert('Round 2: supersedeTask() still works normally for a non-Safety task', supersedeTask(routine).status === 'SUPERSEDED')
+
+  const { task: clinicalReview } = createCrmTask(
+    { task_id: 't-r2-clinical', patient_uuid: 'pt-1', episode_id: 'ep-1', task_type: 'CLINICAL_REVIEW', reason_code: 'CLINICIAN_REVIEW_REQUEST', source_event_id: 'evt-r2-clinical', owner_clinician: null, now: T0 },
+    [],
+  )
+  assert('Round 2: the guard is SAFETY_REVIEW-specific -- CLINICAL_REVIEW may still be cancelled', cancelTask(clinicalReview).status === 'CANCELLED')
 }
 
 /* ---------------- Extra: pauseEpisode never touches tasks (no auto-cancel on pause) ---------------- */

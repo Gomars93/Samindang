@@ -1,6 +1,18 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 1 — non-clinical Episode/Task 스키마 + 상태전이 회귀 테스트, 이번 세션)
+## Objective (CRM v0.3.1 round 2 — SAFETY_REVIEW hardening at cancelTask/supersedeTask, 이번 세션)
+Gomars93의 round 1 재검수(99/100)가 지적한 단일 갭: `completeEpisode()`/
+`snoozeTask()`는 SAFETY_REVIEW를 올바르게 보호하지만, 범용 프리미티브
+`cancelTask()`/`supersedeTask()`는 task_type 검사가 없어서 **직접 호출하면**
+열린 Safety task를 조용히 취소/대체할 수 있었다. 오늘 존재하는 호출부(round
+1의 `completeEpisode`, `supersedeFutureRoutineTasksOnCarePlanChange`,
+`recalculateMedicationTasksOnStartShift`)는 전부 ROUTINE만 필터링해서 호출하므로
+우연히 안전했지만, 그건 호출자의 습관에 의존한 안전이지 불변식이 아니었다.
+지시대로 **프리미티브 자체**에서 SAFETY_REVIEW를 거부하도록 고쳤다(throw,
+status/version 불변). 결과는 아래 Completed — CRM v0.3.1 Round 2 참고. **PR
+#24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 1 — non-clinical Episode/Task 스키마 + 상태전이 회귀 테스트, 이전 세션)
 Gomars93가 PR #24 댓글로 지시한 CRM v0.3.1 첫 라운드: **비임상** Episode/Task
 데이터 모델(Episode lifecycle, CRM task 20개 필드/상태/reason_code, 안전(Safety)
 불변식, dedup/idempotency, claim lease, 우선순위 큐, medication course provenance)
@@ -227,7 +239,34 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 1 (non-clinical Episode/Task 스키마, 이번 세션)
+## Completed — CRM v0.3.1 Round 2 (SAFETY_REVIEW 하드닝, 이번 세션)
+`src/crm/taskEngine.ts`의 `cancelTask()`/`supersedeTask()`에 `task_type ===
+'SAFETY_REVIEW'`면 throw하는 가드를 추가했다(`safety_review_cannot_be_cancelled`
+/ `safety_review_cannot_be_superseded`). `resolveTask()`(clinician-only)와
+`snoozeTask()`(항상 거부)가 이미 갖고 있던 것과 같은 방어를, 마지막 두 프리미티브
+에도 채워 넣었다 — "Safety는 clinician resolution 외에는 절대 사라지지 않는다"는
+불변식이 이제 호출부 습관이 아니라 프리미티브 자체에서 강제된다.
+
+기존 호출부 3곳(`completeEpisode`, `supersedeFutureRoutineTasksOnCarePlanChange`,
+`recalculateMedicationTasksOnStartShift`)은 전부 ROUTINE만 필터링해서 호출하므로
+이 변경으로 동작이 바뀌지 않는다 — 회귀 없음.
+
+`tests/crm-schema.spec.mjs`에 "Round 2 review fix" 블록 9개 assertion 추가:
+`cancelTask()`/`supersedeTask()`를 SAFETY_REVIEW task에 **직접** 호출하면 거부되고
+(throw), 거부된 시도 후 status/version이 정확히 그대로임을 확인. 대조군으로
+ROUTINE/CLINICAL_REVIEW task에는 정상 동작함도 확인(가드가 SAFETY_REVIEW에만
+특정됨을 증명). 총 **67 assertion**(기존 58 + 신규 9), 전부 통과.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체 green, CRM
+스위트 67 assertion), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+passed), `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+(empty, FROZEN zero-diff). 새 임상 로직/threshold/provider/UI/문서 없음 — 지시
+그대로.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 1 (non-clinical Episode/Task 스키마, 이전 세션)
 새 디렉터리 `src/crm/`(React 없음, 서버 없음, 네트워크 없음 — 순수 타입 +
 상태전이 함수). 기존 `NextReassessmentPlan`(`finalAssessment.ts`)을 타입만
 재사용하고 병행 스키마를 만들지 않았다.

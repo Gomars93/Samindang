@@ -191,13 +191,30 @@ export function snoozeTask(task: CrmTask, expectedVersion: number, until: string
   return { ...task, status: 'SNOOZED', due_at: until, version: task.version + 1 }
 }
 
-/** Terminal statuses are left alone rather than re-cancelled, so a batch operation can be applied to a mixed-status list safely. */
+/**
+ * SAFETY_REVIEW can never be cancelled by this generic primitive -- only
+ * clinician resolution (resolveTask) may close it. The guard lives here,
+ * not just at today's call sites (completeEpisode,
+ * supersedeFutureRoutineTasksOnCarePlanChange, recalculateMedicationTasksOnStartShift
+ * all happen to filter to ROUTINE first), so a future caller cannot
+ * accidentally soft-delete an open Safety task by reaching for this
+ * helper directly. Terminal statuses are otherwise left alone rather than
+ * re-cancelled, so a batch operation can be applied to a mixed-status list
+ * safely.
+ */
 export function cancelTask(task: CrmTask): CrmTask {
+  if (task.task_type === 'SAFETY_REVIEW') {
+    throw new Error('safety_review_cannot_be_cancelled')
+  }
   if (task.status === 'DONE' || task.status === 'CANCELLED' || task.status === 'SUPERSEDED') return task
   return { ...task, status: 'CANCELLED', version: task.version + 1 }
 }
 
+/** Same invariant as cancelTask, for the same reason: SAFETY_REVIEW is refused at the primitive, not left to callers to remember. */
 export function supersedeTask(task: CrmTask): CrmTask {
+  if (task.task_type === 'SAFETY_REVIEW') {
+    throw new Error('safety_review_cannot_be_superseded')
+  }
   if (task.status === 'DONE' || task.status === 'CANCELLED' || task.status === 'SUPERSEDED') return task
   return { ...task, status: 'SUPERSEDED', version: task.version + 1 }
 }

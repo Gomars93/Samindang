@@ -1288,6 +1288,13 @@ export function createApp({
         // body (upstream signal or explicit human request), enforced by
         // the same pure engine check this store reuses -- the server
         // cannot infer a safety task into existence.
+        // Round 7: body.patient_uuid below is NOT trusted as the task's
+        // persisted identity -- createTaskStored() loads the referenced
+        // Episode itself and always writes episode.patient_uuid, so a
+        // stale/malicious body supplying a different patient_uuid can
+        // never produce a Task whose patient disagrees with its own
+        // Episode. It is still required here as basic request-shape
+        // validation only.
         if (!requireDoctor(req)) {
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)

@@ -231,7 +231,21 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
   // (CANCELLED/SUPERSEDED) is treated exactly like a non-match in the
   // pure engine's own in-memory check: a new task is created and the
   // index is repointed, never a silent no-op.
-  async function createTaskStored(input) {
+  //
+  // Round 7 fix: input.patient_uuid is NOT trusted as the Task's identity.
+  // A Task's patient is derived from its own Episode -- the only writable
+  // identity is which episode_id a Task is created against, exactly like
+  // any other field on Episode/CrmTask has exactly one writer. Without
+  // this, a stale/malicious caller could persist a Task whose patient_uuid
+  // disagrees with its own Episode's patient_uuid, which would silently
+  // misroute groupTasksForCommunication() (keyed on task.patient_uuid) to
+  // the wrong patient. The Episode is loaded here, inside the store
+  // boundary, specifically so no route-level validation can be bypassed by
+  // calling this function directly.
+  async function createTaskStored(rawInput) {
+    const episode = await getEpisode(rawInput.episode_id)
+    if (!episode) throw new CrmNotFoundError('episode', rawInput.episode_id)
+    const input = { ...rawInput, patient_uuid: episode.patient_uuid }
     const contactPointKey = input.do_not_contact ? 'IN_PERSON_ONLY' : (input.contactPointKey ?? 'DEFAULT')
     const dedup_key = computeDedupKey({
       patient_uuid: input.patient_uuid,

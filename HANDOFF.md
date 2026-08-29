@@ -1,6 +1,25 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 6 — 안정화된 Episode/CrmTask 상태 머신을 서버 persistence에 올림, 이번 세션)
+## Objective (CRM v0.3.1 round 7 — Task 환자 정체성을 Episode에서 파생시켜 identity 불변식 강제, 이번 세션)
+Gomars93의 다음 지시: `POST /api/crm/tasks`가 `episode_id`의 존재만 확인하고
+요청 body의 `patient_uuid`를 그대로 CrmTask에 영속화하고 있었는데, 이러면
+`body.patient_uuid !== episode.patient_uuid`인 stale/malicious 요청이
+Episode.patient_uuid = A인데 CrmTask.patient_uuid = B인 정체성 불일치
+레코드를 만들 수 있었다. `groupTasksForCommunication()`이 `task.patient_uuid`
+기준으로 그룹핑하므로 이 불일치는 환자 단위 communication을 실제로
+오배송시킬 수 있는 결함이었다. 지시된 수정 방향: UI 검증을 추가하는 게
+아니라 "제2의 쓰기 가능한 정체성" 자체를 없앤다 — `createTaskStored()`가
+스스로 Episode를 로드해서 `patient_uuid`를 Episode에서 파생시키고,
+클라이언트가 보낸 값은 authority로 쓰지 않는다. store/API 경계에서 patient
+A의 Episode에 patient B를 섞은 mismatched 요청으로 cross-patient Task가
+절대 만들어지지 않음과, 이후 patient-level grouping이 A로 정확히
+귀속됨을 회귀 테스트로 증명해야 한다. expectedVersion/SAFETY
+invariant/restart durability/claim lease/`first_seen_at`/do-not-contact/Test 0
+PENDING gate는 전부 그대로 보존. 별도로 이미 공개된 task-file→dedup-pointer
+crash window는 이번 라운드 범위 밖(한 번에 하나의 이슈만). CRM UI는 이번
+라운드에도 시작하지 않는다. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 6 — 안정화된 Episode/CrmTask 상태 머신을 서버 persistence에 올림, 이전 세션)
 Gomars93의 다음 지시: CRM UI를 시작하기 전에, round 1-5에서 순수 함수로만
 검증된 Episode/CrmTask 상태 머신을 서버 영속화 계층(파일 기반 store) +
 원장 인증 API로 올린다. 순수 엔진 함수(`src/crm/{types,taskEngine,episode}.ts`)를
@@ -304,7 +323,49 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 6 (서버 persistence + 원장 API, 이번 세션)
+## Completed — CRM v0.3.1 Round 7 (Task 정체성을 Episode에서 파생, 이번 세션)
+**`server/crmStore.js`의 `createTaskStored()`**: 함수 진입 시 즉시
+`getEpisode(rawInput.episode_id)`로 Episode를 로드해서 없으면
+`CrmNotFoundError`, 있으면 `{ ...rawInput, patient_uuid: episode.patient_uuid }`로
+`patient_uuid`를 무조건 덮어쓴다. 이후 dedup_key 계산과
+`createCrmTask()` 호출 전부 이 보정된 input을 쓰므로, 순수 엔진
+(`src/crm/taskEngine.ts`)은 손대지 않고 store 경계에서만 "제2의 쓰기
+가능한 정체성"을 제거했다. `server/index.js`의 라우트는 여전히
+`patient_uuid`를 body에서 읽어 요청 형태를 검사하지만(빈 문자열이면
+400), 그 값은 이제 persist 되는 값에 어떤 authority도 갖지 않는다 —
+주석으로 명시.
+
+**`tests/crm-store.spec.mjs`**: Part 5(store 경계, 6 assertion)와
+Part 6(실제 HTTP `/api/crm/tasks` 경계, 6 assertion)를 추가, 총
+**39 assertion**(28 → 39). Part 5는 patient A의 Episode에 patient B의
+`patient_uuid`를 실은 요청이 A로 정확히 저장됨, dedup_key도 파생된
+정체성(A) 기준으로 계산되어 올바른 재호출이 같은 task로 dedupe됨,
+`groupTasksForCommunication()`이 A로 정확히 귀속됨, 존재하지 않는
+`episode_id`는 `CrmNotFoundError`로 fail-closed됨(고아 task 없음)을
+확인한다. Part 6는 같은 시나리오를 `createApp()`으로 띄운 실제 HTTP
+서버에 대해 반복 — `POST /api/crm/tasks`가 mismatched body로도 201을
+반환하되(요청 자체는 well-formed) 저장된 task는 patient A를 갖고,
+이후 `GET`으로도 A가 확인됨을 증명한다.
+
+**`server/index.js`**: `/api/crm/tasks` POST 핸들러의 주석을 갱신해
+`body.patient_uuid`가 더 이상 authority가 아님을 명시.
+
+이 라운드가 함께 공개한 task-file→dedup-pointer crash window(round 6
+HANDOFF/DECISIONS에 이미 기록)는 지시대로 이번 라운드 범위 밖 —
+건드리지 않았다.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 39 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). CRM UI는 지시대로 이번 라운드에도 시작하지 않았다. Test 0
+여전히 PENDING, Care Gap suppression 여전히 비활성, 새 임상
+로직/threshold/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 6 (서버 persistence + 원장 API, 이전 세션)
 **신규 `server/crmStore.js`**: `src/crm/{types,taskEngine,episode}.ts`의
 순수 함수를 직접 import해서 재사용 — 이 서버는 원래 `node
 server/index.js`로 빌드 단계 없이 바로 실행하는 계약이라(`index.js`

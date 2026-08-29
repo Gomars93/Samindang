@@ -1,6 +1,7 @@
-// CRM v0.3.1 persistence suite (round 6): restart durability, concurrency/
-// version-conflict behavior, and filesystem failure-injection at the
-// server/crmStore.js store boundary. Plain node, no test framework: assert()
+// CRM v0.3.1 persistence suite (round 6-7): restart durability, concurrency/
+// version-conflict behavior, filesystem failure-injection, and Task/Episode
+// identity derivation, at the server/crmStore.js store boundary and the
+// real /api/crm/* HTTP boundary. Plain node, no test framework: assert()
 // prints "OK: <name>" and throws on failure -- same convention as
 // tests/server.spec.mjs / tests/follow-up-session.spec.mjs. No build step:
 // crmStore.js itself imports src/crm/*.ts directly via Node's native TS
@@ -10,6 +11,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from '../server/crmStore.js'
+import { createApp } from '../server/index.js'
+import { groupTasksForCommunication } from '../src/crm/taskEngine.ts'
 
 let passCount = 0
 function assert(name, cond) {
@@ -33,6 +36,17 @@ function isoPlusMinutes(iso, minutes) {
 }
 
 const SAFETY_AUTH = { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'doctor-test' }
+
+async function startServer(opts) {
+  const server = createApp(opts)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  return { server, base: `http://127.0.0.1:${port}` }
+}
+
+function stopServer(server) {
+  return new Promise((resolve) => server.close(resolve))
+}
 
 async function main() {
   /* =====================================================================
@@ -365,6 +379,133 @@ async function main() {
       assert('create-failure: retry after unblocking creates cleanly, not a phantom dedup', deduped === false && retriedTask.status === 'OPEN')
     } finally {
       await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 5: Task identity derivation at the store boundary (round 7 fix) --
+     a stale/malicious caller supplying a Task patient_uuid that disagrees
+     with its own Episode's patient_uuid must never get that mismatched
+     identity persisted. The Task's patient_uuid is derived from the
+     Episode it is created against, not from the caller's input.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-identity-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const patientA = randomUUID()
+      const patientB = randomUUID()
+      const episodeForA = await store.createEpisode({ episode_id: randomUUID(), patient_uuid: patientA, owner_clinician: null, now: T0 })
+
+      // A stale/malicious body claims episodeForA (patient A) but supplies
+      // patient B's uuid as the task's patient_uuid.
+      const { task: mismatchedTask } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientB,
+        episode_id: episodeForA.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-identity-mismatch',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('identity: task persists with the EPISODE\'s patient_uuid, not the caller-supplied one', mismatchedTask.patient_uuid === patientA)
+      assert('identity: task never persists the mismatched caller-supplied patient_uuid', mismatchedTask.patient_uuid !== patientB)
+
+      const onDisk = await readRaw(path.join(root, 'tasks', `${mismatchedTask.task_id}.json`))
+      assert('identity: the persisted file on disk also carries the Episode\'s patient_uuid', onDisk.patient_uuid === patientA)
+
+      // Dedup key must also be computed against the derived identity, not
+      // the caller-supplied one, or a second call with the correct
+      // patient_uuid would (wrongly) be treated as a distinct task.
+      const { task: secondCall, deduped } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientA,
+        episode_id: episodeForA.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-identity-mismatch',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('identity: dedup key is computed against the derived identity, so the correctly-addressed retry dedupes to the same task', deduped === true && secondCall.task_id === mismatchedTask.task_id)
+
+      // Patient-level communication grouping must use the corrected
+      // identity -- the whole point of deriving it at persistence time.
+      const { groups } = groupTasksForCommunication([mismatchedTask])
+      assert('identity: patient-level grouping uses the Episode\'s patient (A), never the spoofed one (B)', groups.length === 1 && groups[0].patient_uuid === patientA)
+
+      // Creating a task against an unknown episode_id fails closed rather
+      // than persisting a Task with no real Episode to derive identity from.
+      let unknownEpisodeThrew = false
+      try {
+        await store.createTaskStored({
+          task_id: randomUUID(),
+          patient_uuid: patientA,
+          episode_id: randomUUID(),
+          task_type: 'ROUTINE',
+          reason_code: 'REASSESSMENT_DUE',
+          source_event_id: 'evt-unknown-episode',
+          owner_clinician: null,
+          now: T0,
+        })
+      } catch (err) {
+        unknownEpisodeThrew = err instanceof CrmNotFoundError
+      }
+      assert('identity: createTaskStored against an unknown episode_id raises CrmNotFoundError, no orphan task', unknownEpisodeThrew)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 6: the same identity-derivation guarantee at the real HTTP API
+     boundary (POST /api/crm/tasks through server/index.js's createApp()),
+     not just the store function called directly -- proving the route
+     cannot be used to bypass the store-boundary fix.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-crm-identity-http-'))
+    const { server, base } = await startServer({ dataDir: path.join(dataRoot, 'submissions'), doctorToken: 'test-doctor-token' })
+    const headers = { 'content-type': 'application/json', 'x-doctor-token': 'test-doctor-token' }
+    try {
+      const visitARes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visitA = await visitARes.json()
+      const visitBRes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visitB = await visitBRes.json()
+
+      const epRes = await fetch(`${base}/api/crm/episodes`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visitA.patient_id }),
+      })
+      const episode = await epRes.json()
+      assert('identity-http: episode created for patient A', episode.patient_uuid === visitA.patient_id)
+
+      // Stale/malicious body: episode belongs to patient A, task body
+      // claims patient B.
+      const taskRes = await fetch(`${base}/api/crm/tasks`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          patient_uuid: visitB.patient_id,
+          episode_id: episode.episode_id,
+          task_type: 'ROUTINE',
+          reason_code: 'REASSESSMENT_DUE',
+          source_event_id: 'evt-identity-http-mismatch',
+        }),
+      })
+      const taskBody = await taskRes.json()
+      assert('identity-http: POST /api/crm/tasks returns 201 (request itself is well-formed)', taskRes.status === 201)
+      assert('identity-http: persisted task carries patient A (the Episode\'s patient), not the spoofed patient B', taskBody.task.patient_uuid === visitA.patient_id)
+      assert('identity-http: persisted task never carries the spoofed patient_uuid', taskBody.task.patient_uuid !== visitB.patient_id)
+
+      const getRes = await fetch(`${base}/api/crm/tasks/${taskBody.task.task_id}`, { headers })
+      const getBody = await getRes.json()
+      assert('identity-http: a subsequent GET of the task also shows patient A, confirming it is what was actually persisted', getBody.patient_uuid === visitA.patient_id)
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
     }
   }
 

@@ -233,9 +233,13 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
     await atomicWrite(lockPath, takeover)
     // Settle-and-reconfirm (see the comment above this function) instead of
     // a single immediate self-read: wait out the settle window, then verify
-    // once. A second post-hoc re-verify does not add coverage (the checked
-    // state is monotonic once this write lands -- see the comment above),
-    // so it is deliberately not repeated here.
+    // once. Fourth-round closing-review finding: an earlier version of
+    // THIS comment (not just the header above) repeated the retracted
+    // "a second re-verify adds no coverage" claim -- same self-contradiction
+    // the header comment above already corrects. There is only one check
+    // here (not two) because DEFAULT_SETTLE_MS/settleMs were lengthened to
+    // cover the same total window the old two-check sequence did, not
+    // because a second check would have been redundant.
     await sleep(settleMs)
     if (!(await verifyStillOwner(lockPath, nonce))) {
       const loser = await readLock(lockPath)

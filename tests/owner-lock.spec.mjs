@@ -374,7 +374,19 @@ async function main() {
      ===================================================================== */
   {
     const isFreshRefusal = /already owned by another live process/
-    const settleRefusal = /lost the race to take over/
+    // Fourth-round closing-review finding (N3): a racer that briefly wins
+    // the takeover (prints "listening on", counted at that instant by the
+    // waitUntil below) can still lose ownership moments later via its own
+    // heartbeat's read-verify-first check (ownerLock.js's documented,
+    // bounded-by-heartbeatMs residual two-owner window -- see that
+    // function's own comment) if another racer's takeover landed in the
+    // narrow gap between this one's read and its renew. That is CORRECT
+    // self-termination, not a bug -- but its stderr ("fatal: lost
+    // ownership of the data directory lock...") matched neither pattern
+    // below, so it was miscounted as "an unrelated crash" by the
+    // recognized-reason check. Recognized here as a third legitimate
+    // outcome.
+    const settleRefusal = /lost the race to take over|lost ownership of the data directory lock/
     const N = 5
     // Re-tuned (third-round closing-review re-check): 3 attempts was not
     // enough headroom under the 2-vCPU `taskset` simulation of this repo's
@@ -539,6 +551,39 @@ async function main() {
       assert('stale-ms-validation: the live server is still running and untouched after all the rejected purge attempts', server.state.exitCode === null)
       const lockStillLive = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
       assert('stale-ms-validation: owner.lock still names the live server -- none of the rejected attempts took it', lockStillLive?.pid === server.child.pid)
+
+      // Fourth-round closing-review finding (N1): the malformed-value loop
+      // above never covered the actual round-4 HIGH finding -- a SMALL but
+      // otherwise VALID positive value (e.g. "90", the single most
+      // plausible typo for the 90000ms default: an operator thinking in
+      // seconds) still passed `requirePositiveMs` and, before the
+      // pid-liveness probe was added, still made this live server's lock
+      // read as stale and get purged. Verified empirically before that fix
+      // existed: this exact env var + a live server -> data deleted, server
+      // still running with a now-nonexistent data directory underneath it.
+      // Must now refuse via the liveness probe -- deliberately checking a
+      // DIFFERENT refusal message than the malformed-value loop above
+      // (that one says "is not a valid positive number", this one names a
+      // live pid), because "90" is not malformed at all.
+      let smallThrew = false
+      let smallStderr = ''
+      try {
+        execFileSync(process.execPath, [path.join(repoRoot, 'scripts', 'purge-data.mjs'), '--yes'], {
+          cwd: repoRoot,
+          env: { ...process.env, SAMINDANG_DATA_DIR: dataDir, SAMINDANG_OWNER_LOCK_STALE_MS: '90' },
+        })
+      } catch (err) {
+        smallThrew = true
+        smallStderr = String(err.stderr ?? '')
+      }
+      assert('stale-ms-validation: SAMINDANG_OWNER_LOCK_STALE_MS="90" (valid but too small) still refuses against a live server -- this is the round-4 HIGH finding\'s exact reproduction', smallThrew)
+      assert(
+        'stale-ms-validation: the "90" refusal names a live pid (the threshold-agnostic liveness probe), not the malformed-value message -- "90" is not malformed',
+        smallStderr.includes('is a live process') && !smallStderr.includes('is not a valid positive number of milliseconds'),
+      )
+      assert('stale-ms-validation: the live server is still running after the "90" purge attempt too', server.state.exitCode === null)
+      const lockAfterSmall = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
+      assert('stale-ms-validation: owner.lock still names the live server after the "90" attempt', lockAfterSmall?.pid === server.child.pid)
     } finally {
       killIfAlive(server)
       await rm(dataRoot, { recursive: true, force: true })
@@ -621,6 +666,51 @@ async function main() {
 
       const lockAfterThrow = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
       assert('throw-leak: owner.lock is still released (removed) even though the purge itself failed partway through', lockAfterThrow === null)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 6c (third/fourth-round closing-review finding): Ctrl-C (SIGINT)
+     and Ctrl-D (EOF) AT the confirmation prompt specifically -- not just
+     answering something other than "DELETE" (6a already covers that) --
+     must not hang purge-data.mjs while it holds the owner lock it already
+     acquired. `await rl.question(...)` alone does not settle on either
+     signal; fixed by racing the question against the readline interface's
+     own 'SIGINT'/'close' events. Sent as real terminal control bytes (not
+     a closed pipe) via the same `script`(1) pty technique 6a uses, since
+     a plain non-TTY pipe never reaches the interactive prompt at all (the
+     isTTY guard refuses first).
+     ===================================================================== */
+  for (const [label, byte] of [['Ctrl-D (EOF)', '\x04'], ['Ctrl-C (SIGINT)', '\x03']]) {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-signalabort-'))
+    try {
+      const dataDir = path.join(dataRoot, 'submissions')
+      await mkdir(dataDir, { recursive: true })
+
+      // 15s outer guard (not tighter): this block runs right after Part
+      // 3b's multi-takeover races (up to 8 attempts * 5 processes each),
+      // and under real CPU contention a `timeout` this tight flaked once
+      // in 8 runs of a `taskset -c 0,1` (2 vCPU) simulation -- the fix
+      // itself is not CPU-bound (it only needs the process to be
+      // scheduled at all to handle the signal), so a generous guard still
+      // fails fast on a genuine hang while tolerating scheduler noise.
+      const scriptCmd = `timeout 15 ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(repoRoot, 'scripts', 'purge-data.mjs'))}`
+      let exitCode = null
+      try {
+        execFileSync('script', ['-qec', scriptCmd, '/dev/null'], {
+          cwd: repoRoot,
+          input: byte,
+          env: { ...process.env, SAMINDANG_DATA_DIR: dataDir },
+        })
+      } catch (err) {
+        exitCode = err.status
+      }
+      assert(`signal-abort (${label}): purge-data.mjs exits promptly (not "timeout 15" killing a hang) and non-zero`, exitCode !== null && exitCode !== 0 && exitCode !== 124)
+
+      const lockAfterSignal = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
+      assert(`signal-abort (${label}): owner.lock is released (removed), not left behind heartbeating while the process hung`, lockAfterSignal === null)
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }

@@ -64,6 +64,37 @@ const identityDir = path.join(dataRoot, 'crm-identity')
 const crmDir = path.join(dataRoot, 'crm')
 const yes = process.argv.includes('--yes')
 
+// Module-scope (not a local in main()) so the process-level SIGINT handler
+// below can see it, whatever point in main()'s execution SIGINT arrives at.
+let ownerLock = null
+
+// Fourth-round closing-review re-check: an earlier version only listened
+// for 'SIGINT' on the readline interface itself, registered from inside
+// the confirmation-prompt block. That has a real gap -- it only exists
+// while a question is actually pending, and there is a window right
+// AFTER the lock is acquired but BEFORE that listener is registered
+// (during the pid-liveness check, staleAfterMs validation, etc.) where a
+// Ctrl-C falls through to Node's own default SIGINT disposition instead,
+// which terminates the process without running this script's `finally`
+// (the same class of problem `process.exit()` causes elsewhere in this
+// file). Reproduced empirically: flaked in roughly 1 of 5 real runs even
+// on an idle machine. A single PROCESS-level handler, registered here
+// before any async work starts, has no such gap -- it is Node's SIGINT
+// disposition for this process's entire lifetime, and it explicitly
+// releases whatever lock is currently held (if any) before exiting. The
+// readline prompt below intentionally does NOT also listen for its own
+// 'SIGINT' -- per Node's own documented default, an `Interface` with no
+// 'SIGINT' listener lets the signal reach `process` normally instead of
+// swallowing it, which is exactly what this handler needs.
+process.on('SIGINT', () => {
+  ;(async () => {
+    if (ownerLock) {
+      await ownerLock.release().catch(() => {})
+    }
+    process.exit(130)
+  })()
+})
+
 async function main() {
   if (!process.stdin.isTTY && !yes) {
     console.error('refusing to run non-interactively without --yes (e.g. `node scripts/purge-data.mjs --yes`)')
@@ -154,7 +185,6 @@ async function main() {
     return
   }
 
-  let ownerLock
   try {
     ownerLock = await acquireOwnerLock(dataDir, { staleAfterMs })
   } catch (err) {
@@ -185,20 +215,22 @@ async function main() {
       let answer = null
       try {
         // Third-round closing-review finding: `await rl.question(...)`
-        // alone never settles on Ctrl-C (SIGINT) or Ctrl-D (EOF/stdin
-        // closed) at this prompt -- reproduced: the process stays alive
-        // indefinitely in both cases, and because the owner lock is
-        // already held and heartbeating (acquired above), that means a
-        // real server is wedged out INDEFINITELY, not just for
-        // staleAfterMs, until someone finds and kills this orphaned
-        // process. Race the question against both signals so either one
-        // is treated the same as answering anything other than "DELETE"
-        // (abort, fall through to the shared `finally` below that
-        // releases the lock) instead of hanging forever while holding it.
+        // alone never settles on Ctrl-D (EOF/stdin closed) at this prompt
+        // -- reproduced: the process stays alive indefinitely, and because
+        // the owner lock is already held and heartbeating (acquired
+        // above), that means a real server is wedged out INDEFINITELY,
+        // not just for staleAfterMs, until someone finds and kills this
+        // orphaned process. Race the question against readline's own
+        // 'close' event so EOF is treated the same as answering anything
+        // other than "DELETE" (abort, fall through to the shared `finally`
+        // below that releases the lock) instead of hanging forever while
+        // holding it. Ctrl-C (SIGINT) is deliberately NOT raced here --
+        // see the module-level `process.on('SIGINT', ...)` handler's own
+        // comment for why a readline-scoped listener has a real gap a
+        // process-level one does not.
         answer = await Promise.race([
           rl.question(`This will PERMANENTLY delete ALL stored submissions in "${dataDir}".\nType DELETE to confirm: `),
           new Promise((resolve) => {
-            rl.once('SIGINT', () => resolve(null))
             rl.once('close', () => resolve(null))
           }),
         ])

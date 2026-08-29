@@ -133,7 +133,36 @@ assertion이 스케줄러에 의존한다"는 사실이므로, 정확성 불변�
 따로 놀던 걸 같이 고침. 전체 게이트 재실행 green(tsc/build/build:preview/
 test:all ×3, 마지막 실패 1회는 기존에 문서화된 tablet-viewport.spec.mjs
 Chrome-profile-cleanup ENOTEMPTY flake로 확인, tablet-core pytest 80,
-FROZEN zero-diff), `tests/owner-lock.spec.mjs` 37 assertion 유지.
+FROZEN zero-diff), `tests/owner-lock.spec.mjs` 37 assertion(멀티테이크오버
+재시도 횟수에 따라 실행마다 37~53 사이로 변동 가능 — CI는 개수가 아니라
+pass/fail만 게이트).
+
+4라운드(이번 커밋): 3라운드 결과에 대한 재검수(약 134k 토큰, 44 tool
+call, ~17분) — 이번엔 두 HIGH 결함(STALE_MS=90 잔여 데이터 손실 경로,
+CI 깨지는 busy-wait) 모두 **실제로 닫혔다고 확인**(리버트 재현 + 수정 후
+재검증 둘 다 직접 실행해서 검증), 다만 병합 전 원해야 할 기계적 개선
+3가지를 지적: (1) ownerLock.js 함수 본문 안에 "2차 검증은 dead code"라는
+철회된 주장이 그대로 남아 헤더 주석과 자기모순 — 주석 재수정.
+(2) multi-takeover 테스트에서 "인식된 거부 사유" 정규식이 heartbeat가
+정상적으로 소유권 상실을 감지해 자진 종료하는 정상 케이스("fatal: lost
+ownership of the data directory lock...")를 못 잡아 CPU 경쟁 상황에서
+가짜 실패를 만들 수 있음(측정: 노이즈 있는 2-vCPU에서 7/10) — 정규식에
+추가. (3) 이번 라운드의 두 핵심 수정(STALE_MS="90" 라이브 서버 거부,
+Ctrl-C/Ctrl-D) 자체에 대한 회귀 테스트가 없었음 — 추가.
+(2)+(3)을 구현하며 Ctrl-C 회귀 테스트가 아이들 상태에서도 약 1/5로
+flaky한 걸 새로 발견: readline-scope `rl.once('SIGINT', ...)`는 lock
+획득 이후 프롬프트 도달 전(pid-liveness 체크 등) 구간에서 SIGINT가 오면
+못 잡는 진짜 gap이 있었음 — 프로세스 레벨 `process.on('SIGINT', ...)`
+핸들러(스크립트 시작 시 바로 등록, held lock 있으면 release 후
+`process.exit(130)`)로 교체해 근본적으로 해결(readline 쪽엔 EOF용
+'close'만 남김, Node의 문서화된 권장 패턴과 일치). 재검증: Ctrl-C 8/8,
+Ctrl-D 8/8 클린; `tests/owner-lock.spec.mjs` 20 → 45 assertion(정상
+1회 실행 기준). 전체 게이트 재실행 green(tsc/build/build:preview/
+test:all ×2, tablet-core pytest 80, FROZEN zero-diff), owner-lock
+스위트 2-vCPU 시뮬레이션 8/8·정상 조건 5/5 클린 확인. 4라운드 재검수가
+"두 HIGH 결함 모두 실제로 닫혔다"고 확인하며 "기계적 수정 3가지만 더 하면
+루프를 닫으라"고 권고했고, 이번 커밋이 그 3가지를 반영 — push 후 이
+수정 자체에 대한 마지막 확인 라운드가 필요한지는 그 결과를 보고 판단.
 
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야

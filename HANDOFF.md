@@ -1,6 +1,20 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 4 — review-open state를 task에서 파생시켜 이중 진실 제거, 이번 세션)
+## Objective (CRM v0.3.1 round 5 — communication grouping을 patient-level로 수정, 이번 세션)
+Gomars93의 다음 지시: `groupTasksForCommunication()`이 `${patient_uuid}|
+${episode_id}` 조합으로 그룹핑하고 있었는데, 승인된 CRM 설계는 커뮤니케이션
+suppression/orchestration이 **여러 Episode를 가로지르는 환자 단위**여야
+한다. 같은 patient의 medication Episode와 pain Episode가 같은 접촉 창구에
+동시에 걸리면 두 개의 별도 outreach로 쪼개지는 버그였다 — 기존 Test 10은
+episode 하나만 써서 이걸 못 잡았다. 그룹 키에서 `episode_id`를 빼고
+`patient_uuid`만으로 묶되(1번), SAFETY_REVIEW는 여전히 완전 제외(2번),
+그룹핑은 task/episode identity를 병합하지 않고 DONE으로 표시하지도 않는
+순수 배송/orchestration 뷰로 유지(3번), `contact_mode`를 그룹 키에 함께
+넣어 OUTBOUND_ALLOWED와 IN_PERSON_ONLY가 절대 한 그룹에 섞이지 않도록
+했다(5번). 결과는 아래 Completed — CRM v0.3.1 Round 5 참고. 서버 영속화/UI는
+이번 라운드에도 시작하지 않았다(6번). **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 4 — review-open state를 task에서 파생시켜 이중 진실 제거, 이전 세션)
 Gomars93의 다음 지시: `Episode.clinical_review_open`/`safety_review_open`
 boolean이 이미 `CrmTask.status` + `task_type`에 존재하는 열림/닫힘 상태를
 중복 저장하고 있었는데, `createCrmTask()`/`resolveTask()`가 그 boolean들을
@@ -265,7 +279,44 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 4 (review-open 단일 진실 소스화, 이번 세션)
+## Completed — CRM v0.3.1 Round 5 (커뮤니케이션 그룹핑 patient-level화, 이번 세션)
+`src/crm/taskEngine.ts`: `groupTasksForCommunication()`의 그룹 키를
+`${patient_uuid}|${episode_id}`에서 `${patient_uuid}|${contact_mode}`로
+변경 — episode_id를 뺐으므로 같은 환자의 서로 다른 Episode(예: 복약
+Episode + 통증 Episode) task가 이제 하나의 outreach 그룹으로 묶인다.
+반환 타입을 `CrmTask[][]`에서 `CommunicationGroup[]`
+(`{patient_uuid, contact_mode, tasks}`)로 바꿔, 그룹이 어떤 환자·어떤
+contact_mode인지 호출부가 재추론하지 않고 바로 알 수 있게 했다.
+`contact_mode`를 그룹 키에 유지했으므로(그대로 유지, 새로 추가한 게
+아니라 이번에 episode_id를 뺀 자리에 이미 있던 것을 계속 활용) 같은
+환자라도 do_not_contact(IN_PERSON_ONLY) task와 outbound-allowed task는
+여전히 서로 다른 그룹으로 분리된다 — outbound 메시지가 in-person 전용
+task를 절대 끌어들이지 못한다.
+
+SAFETY_REVIEW는 이전과 동일하게 완전히 별도로 반환되며(`safetyExcluded`),
+grouping 자체는 여전히 순수 배송/orchestration 뷰일 뿐 task나 Episode를
+병합하거나 DONE으로 표시하지 않는다(함수 구현에 그런 부수효과가 없음).
+
+`tests/crm-schema.spec.mjs`: 기존 Test 10을 새 반환 shape(`g.tasks`)에
+맞게 갱신, "Round 5 review fix" 블록 9개 assertion 추가 — 같은 환자의
+서로 다른 두 episode_id에서 온 task가 한 그룹으로 묶임, 그 그룹이
+episode_id 두 개를 모두 보존함(병합 아님), SAFETY_REVIEW는 여전히
+제외됨, grouping이 task 상태를 바꾸지 않음, do_not_contact task는
+outbound-allowed 그룹과 절대 섞이지 않고 별도 그룹으로 분리됨.
+
+총 **95 assertion**(기존 86 + 신규 9), 전부 통과.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체 green, CRM
+스위트 95 assertion), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+passed), `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+(empty, FROZEN zero-diff). 서버 영속화/UI는 지시대로 이번 라운드에도
+시작하지 않았다. Test 0 여전히 PENDING, Care Gap suppression 여전히
+비활성, 새 임상 로직/threshold/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 4 (review-open 단일 진실 소스화, 이전 세션)
 `src/crm/types.ts`: `Episode`에서 `clinical_review_open`/`safety_review_open`
 필드를 완전히 제거(타입 정의와 `newEpisode()` 둘 다). 코드베이스 전체를
 grep해 이 두 필드를 실제로 읽거나 쓰는 곳이 정의 자리 두 곳뿐이었음을

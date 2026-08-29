@@ -263,7 +263,7 @@ function makeEpisode(overrides = {}) {
     [],
   ).task
   const { groups, safetyExcluded } = groupTasksForCommunication([routine, safety])
-  assert('Test 10: SAFETY_REVIEW is excluded from every communication group', groups.every((g) => g.every((t) => t.task_type !== 'SAFETY_REVIEW')))
+  assert('Test 10: SAFETY_REVIEW is excluded from every communication group', groups.every((g) => g.tasks.every((t) => t.task_type !== 'SAFETY_REVIEW')))
   assert('Test 10: SAFETY_REVIEW surfaces separately rather than disappearing', safetyExcluded.some((t) => t.task_id === 't-10-safety'))
 }
 
@@ -564,6 +564,50 @@ function makeEpisode(overrides = {}) {
   assert(
     "Round 4: because review-open state has no separate flag, the failed write leaves derived state exactly as it was -- no mismatch is possible",
     isReviewOpen([raceTask], episodeId, 'CLINICAL_REVIEW') === openBeforeFailedWrite,
+  )
+}
+
+/* ---------------- Round 5 review fix: communication grouping is patient-level across Episodes, contact-mode safe ---------------- */
+{
+  const patientUuid = 'pt-r5'
+  const medicationTask = createCrmTask(
+    { task_id: 't-r5-med', patient_uuid: patientUuid, episode_id: 'ep-r5-med', task_type: 'ROUTINE', reason_code: 'MEDICATION_MID_CHECK', source_event_id: 'evt-r5-med', owner_clinician: null, now: T0 },
+    [],
+  ).task
+  const painTask = createCrmTask(
+    { task_id: 't-r5-pain', patient_uuid: patientUuid, episode_id: 'ep-r5-pain', task_type: 'CLINICAL_REVIEW', reason_code: 'CLINICIAN_REVIEW_REQUEST', source_event_id: 'evt-r5-pain', owner_clinician: null, now: T0 },
+    [],
+  ).task
+  const safetyTask = createCrmTask(
+    { task_id: 't-r5-safety', patient_uuid: patientUuid, episode_id: 'ep-r5-pain', task_type: 'SAFETY_REVIEW', reason_code: 'SAFETY_REVIEW_REQUEST', source_event_id: 'evt-r5-safety', owner_clinician: null, now: T0, safetyAuthorization: { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'dr-a' } },
+    [],
+  ).task
+
+  const { groups, safetyExcluded } = groupTasksForCommunication([medicationTask, painTask, safetyTask])
+  const patientGroups = groups.filter((g) => g.patient_uuid === patientUuid)
+  assert('Round 5: tasks from two different Episodes for the same patient land in one outreach group', patientGroups.length === 1)
+  assert('Round 5: that one group contains both cross-episode tasks', patientGroups[0].tasks.length === 2)
+  assert(
+    "Round 5: both underlying episode_ids are preserved in the group -- grouping never merges Episode identity",
+    new Set(patientGroups[0].tasks.map((t) => t.episode_id)).size === 2,
+  )
+  assert('Round 5: SAFETY_REVIEW is still fully excluded from the patient-level group', patientGroups[0].tasks.every((t) => t.task_type !== 'SAFETY_REVIEW'))
+  assert('Round 5: the open Safety task surfaces separately, proving it stays a distinct review state', safetyExcluded.some((t) => t.task_id === 't-r5-safety'))
+  assert('Round 5: grouping does not mutate task status -- both tasks remain OPEN', patientGroups[0].tasks.every((t) => t.status === 'OPEN'))
+
+  const doNotContactTask = createCrmTask(
+    { task_id: 't-r5-dnc', patient_uuid: patientUuid, episode_id: 'ep-r5-dnc', task_type: 'ROUTINE', reason_code: 'CONTACT_RETRY', source_event_id: 'evt-r5-dnc', owner_clinician: null, now: T0, do_not_contact: true },
+    [],
+  ).task
+  const { groups: groupsWithDnc } = groupTasksForCommunication([medicationTask, painTask, doNotContactTask])
+  const patientGroupsWithDnc = groupsWithDnc.filter((g) => g.patient_uuid === patientUuid)
+  assert('Round 5: an IN_PERSON_ONLY task splits into its own group -- never mixed with OUTBOUND_ALLOWED tasks', patientGroupsWithDnc.length === 2)
+  const outboundGroup = patientGroupsWithDnc.find((g) => g.contact_mode === 'OUTBOUND_ALLOWED')
+  const inPersonGroup = patientGroupsWithDnc.find((g) => g.contact_mode === 'IN_PERSON_ONLY')
+  assert('Round 5: the OUTBOUND_ALLOWED group contains only outbound-allowed tasks', outboundGroup.tasks.every((t) => t.contact_mode === 'OUTBOUND_ALLOWED'))
+  assert(
+    'Round 5: the IN_PERSON_ONLY group contains only the do_not_contact task',
+    inPersonGroup.tasks.length === 1 && inPersonGroup.tasks[0].task_id === 't-r5-dnc',
   )
 }
 

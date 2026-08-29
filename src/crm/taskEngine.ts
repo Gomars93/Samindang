@@ -288,20 +288,41 @@ export function tasksForOwner(tasks: CrmTask[], ownerClinician: string, coverage
   return tasks.filter((t) => resolveTaskOwner(t, coverageQueue) === ownerClinician)
 }
 
+export type CommunicationGroup = {
+  patient_uuid: string
+  contact_mode: ContactMode
+  tasks: CrmTask[]
+}
+
 /**
- * A communication-grouping pass may combine ROUTINE/CLINICAL_REVIEW tasks
- * for one outreach, but SAFETY_REVIEW can never be folded into that
- * grouping or otherwise made to disappear from view.
+ * Communication/outreach orchestration is patient-level, not episode-
+ * level: a patient's medication-course task and an unrelated pain-episode
+ * task can land in the same contact window and belong in one message, so
+ * grouping keys on patient_uuid alone (not episode_id) -- this is a
+ * delivery/orchestration view only, it never merges task or Episode
+ * identity, and it never marks anything DONE.
+ *
+ * SAFETY_REVIEW is always excluded and returned separately so it can
+ * never be folded into a grouped message or otherwise made to disappear.
+ *
+ * Groups are additionally split by contact_mode so an outbound message
+ * can never be assembled from a mix of OUTBOUND_ALLOWED and
+ * IN_PERSON_ONLY tasks -- a do_not_contact task for a patient still
+ * groups with that patient's other do_not_contact tasks, just never with
+ * their outbound-allowed ones.
  */
-export function groupTasksForCommunication(tasks: CrmTask[]): { groups: CrmTask[][]; safetyExcluded: CrmTask[] } {
+export function groupTasksForCommunication(tasks: CrmTask[]): { groups: CommunicationGroup[]; safetyExcluded: CrmTask[] } {
   const safetyExcluded = tasks.filter((t) => t.task_type === 'SAFETY_REVIEW')
   const groupable = tasks.filter((t) => t.task_type !== 'SAFETY_REVIEW')
-  const byKey = new Map<string, CrmTask[]>()
+  const byKey = new Map<string, CommunicationGroup>()
   for (const t of groupable) {
-    const key = `${t.patient_uuid}|${t.episode_id}`
-    const arr = byKey.get(key) ?? []
-    arr.push(t)
-    byKey.set(key, arr)
+    const key = `${t.patient_uuid}|${t.contact_mode}`
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.tasks.push(t)
+    } else {
+      byKey.set(key, { patient_uuid: t.patient_uuid, contact_mode: t.contact_mode, tasks: [t] })
+    }
   }
   return { groups: Array.from(byKey.values()), safetyExcluded }
 }

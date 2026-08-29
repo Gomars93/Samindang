@@ -464,16 +464,45 @@ build`/`build:preview`(둘 다 성공), `npm run test:all`(직접 exit code
 python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
 
-**Round 17 CLOSED**: 9회 연속 독립 Opus 재검수 끝에 실질적 HIGH급
-엔지니어링 결함이 더 이상 발견되지 않음(9라운드 자신이 찾은 것은
-MEDIUM이었고, 그 자체가 지금 이 커밋으로 닫힘 — 사용자 지시에 따라
-"이번 재검수에서 HIGH/실제 correctness·data-loss·security·
+**Round 17 CLOSED (최종, 10라운드 재검수로 확정)**: 사용자 지시에 따른
+hard-stop 정책("HIGH 또는 실제 correctness·data-loss·security·
 cross-patient leak·restart durability·concurrency 결함만 재오픈,
 MEDIUM/LOW/이론적 hardening/테스트 완성도 개선/성능/정리는 backlog로
-기록 후 CLOSED"). 다음 Opus 재검수(10번째)를 이 커밋을 대상으로 한 번
-더 수행하고, 거기서도 HIGH급이 안 나오면 그 결과를 최종 CLOSED 근거로
-삼는다. 남은 backlog(고쳐야 할 정도는 아니라고 판단된 항목, 필요 시
-향후 별도 배치에서 재검토):
+기록 후 CLOSED, 단 기존 테스트가 HIGH급 버그를 놓쳐 false-green이 되는
+것이 입증되면 correctness 문제로 간주")에 따라, 커밋 `f24df8b`를
+대상으로 10번째 독립 Opus 재검수(실제 subagent 호출, 141k 토큰·76
+tool call·약 38분, worktree 격리·읽기 전용 확인됨)를 수행 — **명시적
+"VERDICT: no HIGH-severity defect found — Round 17 can close"** 판정.
+이 라운드는 9라운드의 `beatInFlight` 수정 자체를 직접 깨보려 시도
+(assignment window 250-trial fuzz 0 leaks, `onLost` 동시 실행
+200/200 안전, settle-window와의 복합 시나리오는 구조적으로 불가능임을
+확인)했고, 숫자 주장도 전부 자체 재현(수정 전 62~108/300 부하별 재현,
+수정 후 0/300, 실서버 종단간 SIGTERM/이중 시그널 latency 6-9ms로
+무회귀)했으며, false-green 여부도 명시적으로 검사(Part 3d는 자체
+coverage guard가 없지만 부하를 걸어도 여전히 실제 버그를 감지함을
+확인 — false-green 아님)했다. CI(`build-and-test`+`build-and-deploy`)
+green, FROZEN zero-diff 확인됨.
+
+이 재검수가 새로 찾은 것은 전부 LOW~MEDIUM이며 재오픈 기준(HIGH)에
+못 미쳐 backlog로만 기록:
+- **B1(신규, LOW)**: `beatInFlight`가 단일 슬롯이라 한 heartbeat tick의
+  자체 fs 작업(readFile+writeFile+rename)이 `heartbeatMs`보다 오래
+  걸려 두 tick이 겹치면 앞 tick의 `.finally()`가 뒤 tick의 참조를
+  지워버릴 수 있음(주입 지연 실험으로 재현: 19-45ms 지연 시
+  53~67/150 누수). 프로덕션 기본값(15000ms)에서 로컬 파일 하나에
+  대한 fs 작업이 그만큼 걸릴 시나리오가 없고, 이 값을 낮추는 것은
+  테스트만 하므로 트리거 가능성 없음 — 그대로 유지, 고칠 경우
+  단일 슬롯 대신 in-flight beat 집합 추적으로 개선.
+- **B2(신규, LOW-MEDIUM, false-green 아님으로 확인된 "누락된" 테스트)**:
+  `beat()`의 실제 renewal 로직 자체(예: 본문을 즉시 return으로
+  바꾸는 mutation)를 검증하는 테스트가 없어, heartbeat 갱신이 통째로
+  죽어도 기존 53개 assertion이 전부 green — 실제 결과(살아있는
+  서버 두 개가 같은 lock을 동시에 소유)까지 종단간 재현 확인. 다만
+  이 gap은 `f24df8b`가 만든 것도 넓힌 것도 아니고(기존부터 있던
+  누락), "있어야 할 테스트가 없다"는 커버리지 확장 요청이지 "있는
+  테스트가 거짓으로 통과시킨다"는 것이 아니므로 hard-stop 정책의
+  false-green 예외에 해당하지 않음 — 향후 별도 "heartbeat liveness"
+  테스트 배치로 추천, 이번 라운드 재오픈 사유 아님.
 - heartbeat의 read-verify와 atomicWrite 사이 TOCTOU(2라운드부터 문서화된
   기존 residual, heartbeatMs 경계의 two-owner 윈도) — 그대로 유지.
 - `exiting`/`shuttingDown` reentrancy 플래그가 release() 자체가 멈추면
@@ -482,6 +511,9 @@ MEDIUM/LOW/이론적 hardening/테스트 완성도 개선/성능/정리는 backl
 - atomicWrite의 write→rename 사이 신호로 orphan `.tmp` 파일이 남을 수
   있는 극희소 경로(7라운드 재검수가 1/258로 재현) — LOW, purge 인벤토리
   정확성 문제일 뿐 lock 정합성에는 영향 없음, 그대로 유지.
+
+**Round 17은 여기서 최종 종료. 같은 owner-lock 주제를 추가로 파지
+않고 승인된 다음 배치(PR #23↔#24 convergence)로 즉시 진행한다.**
 
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야

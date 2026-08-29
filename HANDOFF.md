@@ -199,6 +199,71 @@ test:all, tablet-core pytest 80, FROZEN zero-diff — test:all 전체 체인
 3/3·재실행 모두 clean으로 이 라운드 변경과 무관 확인), owner-lock
 스위트 2-vCPU 8/8 클린.
 
+6라운드(이번 커밋): 5라운드 결과(커밋 `816f27f`)에 대한 재검수가 그
+`process.on('SIGINT'|'SIGTERM'|'SIGHUP', ...)` 핸들러 자체에서 또 다른
+HIGH 결함을 발견 — 같은 누수 클래스(F1)의 **다른** 윈도. 핸들러의
+`releaseAnyLockWeMightHold()`는 `if (ownerLock) { await
+ownerLock.release().catch(()=>{}); return }`로, module-scope
+`ownerLock`이 이미 할당돼 있으면(=정상 흐름 진행 중) release 호출 뒤
+곧장 return했다. 그런데 `server/ownerLock.js`의 `release()`는 자신의
+첫 `await`(실제 read-then-unlink) **이전에** `released = true`를
+동기적으로 먼저 세팅한다 — 그 사이(측정 ~4ms) 신호가 재진입하면
+release()를 두 번째로 호출한 것이 되어 "이미 처리 중"으로 즉시
+early-return하고, 위의 `return`이 그 아래 디스크-기반 fallback을 통째로
+건너뛰어, 디스크엔 이 프로세스의(곧 죽을) pid를 이름 붙인 lock이 실제로
+남는다 — 100~400ms 딜레이 스윕으로 직접 재현(약 19~20% 확률). 수정:
+`releaseAnyLockWeMightHold()`가 handle 유무와 무관하게 **항상** 디스크
+체크로 fall through하도록 `return` 제거(release()가 실제로 끝난
+경우엔 no-op, 안 끝난 경우에만 실질적으로 작동). 같은 재검수의 두 번째
+지적(NEW-2): 이 디스크 fallback의 pid-일치 조건에 인접한 liveness
+체크와 달리 hostname 검사가 없어, 공유 마운트에서 다른 호스트의
+숫자상 우연히 같은 pid를 지워버릴 이론적 gap — `record.hostname ===
+hostname()` 조건 추가로 인접 체크와 통일.
+
+이 라운드 자체가 새 회귀 테스트(Part 6e, release() 자체가 실행 중인
+윈도를 겨냥한 330~460ms 딜레이 스윕)를 작성하며 두 가지 테스트 전용
+버그를 스스로 발견·수정했다(둘 다 프로덕션 코드와 무관, 검증 결과는
+디버그 계측으로 직접 확인): (1) 새 Part 6e 블록이 자식 프로세스의
+stdout/stderr을 드레인하지 않아 OS 파이프 버퍼가 차면 자식의 write()가
+블록되어 `process.exit()`에 도달하지 못하는 고전적 child_process
+교착 — 22-샘플 스윕이 5회 중 3회 행(hang)함을 재현, 드레인 추가로
+1차 수정. (2) 드레인만으로는 불충분함을 재확인(같은 5회 중 2회 여전히
+행) — 임시 계측(`SAMINDANG_DEBUG_SIGNAL` env var로 release()/시그널
+핸들러/main() 각 단계에 타임스탬프 로그)으로 근본 원인을 확정: 자식
+프로세스는 실제로 정상 종료했음(자신의 내부 로그가 `process.exit(0)`을
+기록)에도 불구하고, **부모 테스트 프로세스의 `child.on('exit', ...)`
+리스너가 발화하지 않아** `waitForExit`가 10초 타임아웃까지 영원히
+대기함을 확인 — Node의 child_process 'exit' 이벤트가 SIGCHLD 기반
+waitpid reap을 JS ChildProcess 객체에 매칭하는 내부 메커니즘인데, 이
+테스트의 특정 spawn/kill cadence(짧은 간격으로 22개 프로세스를 연속
+생성) 하에서 그 매칭이 이따금 누락됨 — `server/ownerLock.js`나
+`scripts/purge-data.mjs`의 결함이 아니라 순수 테스트-하네스 신뢰성
+문제(같은 계측으로 purge 스크립트 자신의 동작은 매번 올바름을 확인).
+수정: 공용 `waitForExit` 헬퍼(9개 호출부 전체에 동일 이론적 노출이
+있어 Part 6e만이 아니라 헬퍼 자체를 강화) 자체에 pid-liveness fallback
+추가 — `state.exitCode !== null`(이벤트 발화) **또는**
+`!isPidAlive(child.pid)`(OS가 pid 소멸을 직접 보고, purge-data.mjs의
+동일 패턴 재사용) 중 하나만 참이면 대기 종료. 진단에 쓴 임시 계측
+코드는 전부 되돌리고(`git status` 클린 확인) 실제 수정만 커밋에 남김.
+
+재검증: (a) release()-윈도 수정 자체 — 되돌리면 Part 6e 스윕에서
+2/16 누수, 복원하면 0/16. (b) waitForExit pid-liveness fallback —
+수정 전 `node tests/owner-lock.spec.mjs` 단독 실행 6회 중 4회 행,
+2-vCPU(`taskset -c 0,1`) 시뮬레이션 20회 연속(별도의 격리된 재현
+스크립트) 행 재현 안 됨(수정 전 상태에서도 격리 시나리오 자체는
+안정적이었고, 전체 스위트의 누적 프로세스/이벤트루프 상태에서만
+드러남 — 그래서 반드시 전체 스위트로 재현해야 했음); 수정 후 전체
+스위트 단독 실행 8/8 클린, `taskset -c 0,1` 시뮬레이션 5/5 클린(총
+13/13). `tests/owner-lock.spec.mjs` 49 → 50 assertion. 전체 게이트
+재실행 green — `npx tsc -b --force`(0 에러), `npm run build`/
+`build:preview`(둘 다 성공), `npm run test:all`(파이프 없이 직접
+exit code 캡처로 재확인 — 첫 실행 시 `| tail -120`로 잘못 캡처해
+tail의 exit code(0)를 test:all 것으로 착각할 뻔한 자체 검증 실수를
+발견·정정, 재실행 결과 실제 exit 0, 전체 로그 4687줄 중 FAIL 0건,
+owner-lock 50/50 포함), `cd "tablet core" && python3 -m pytest
+tests/ -q`(80 passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
+
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야
 하는지는 제품 판단) — server-side primitive는 이번 라운드에서 완성되어

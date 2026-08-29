@@ -75,8 +75,37 @@ async function waitForListening(proc) {
   await waitUntil(() => proc.state.stdout.includes('listening on') || proc.state.exitCode !== null)
 }
 
+// Sixth-round closing-review self-check (test-harness reliability, not a
+// production defect): the new Part 6e release-window sweep below spawns and
+// tears down ~22 real child processes back-to-back in a tight loop, and
+// under that load `child.on('exit', ...)` was observed to sometimes never
+// fire in THIS parent process even though the child itself had already
+// exited cleanly moments earlier (confirmed via temporary instrumentation:
+// the child's own internal exit handler logged a clean `process.exit(0)`
+// well before the parent's `waitForExit` timed out 10s later waiting on
+// `state.exitCode`). Node's child_process 'exit' event is delivered via a
+// SIGCHLD-driven waitpid reap matched back to the JS ChildProcess object;
+// under this test's specific spawn/kill cadence that match was
+// occasionally missed. This is a test-harness fragility, not a bug in
+// server/ownerLock.js or scripts/purge-data.mjs -- the purge script's own
+// behavior (confirmed via the same instrumentation) was correct every
+// time. Fixed by treating the wait as satisfied if EITHER the 'exit' event
+// fires OR the OS itself reports the pid is no longer alive (a
+// process.kill(pid, 0) probe, same technique as purge-data.mjs's own
+// isPidAlive) -- the latter is authoritative regardless of whether Node's
+// internal event delivery raced. Applied to the shared helper (not just
+// Part 6e) since every caller below has the same theoretical exposure.
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err.code === 'EPERM'
+  }
+}
+
 async function waitForExit(proc, timeoutMs = 10000) {
-  await waitUntil(() => proc.state.exitCode !== null, { timeoutMs })
+  await waitUntil(() => proc.state.exitCode !== null || !isPidAlive(proc.child.pid), { timeoutMs })
 }
 
 // Closing-review finding: earlier revisions of this file never killed a
@@ -788,6 +817,100 @@ async function main() {
       killIfAlive({ child, state })
       await rm(dataRoot, { recursive: true, force: true })
     }
+  }
+
+  /* =====================================================================
+     Part 6e (sixth-round closing-review finding, HIGH -- same leak class
+     as Part 6d, a DIFFERENT window): Part 6d only ever signals INSIDE
+     acquireOwnerLock's settle window, where the module-scope `ownerLock`
+     handle is still null and the disk-based fallback is what does the
+     work. A signal landing AFTER that handle is assigned -- specifically
+     while main()'s own `finally { await ownerLock.release() }` is
+     running -- exercises a completely different path: `release()`
+     (server/ownerLock.js) marks itself `released = true` SYNCHRONOUSLY,
+     before its own first `await` (the read-then-unlink that actually
+     removes the file). An earlier version of the signal handler's
+     `releaseAnyLockWeMightHold()` called `ownerLock.release()` and then
+     RETURNED, on the assumption that a non-null handle always means
+     release() will finish the job -- it doesn't, if a signal re-enters
+     while release() is between marking itself done and actually
+     unlinking: release() early-returns as already-in-progress, and the
+     old `return` here skipped the disk-based fallback that could have
+     caught it. Reproduced (via a targeted delay sweep against a seeded
+     stale-lock takeover, instrumenting release()'s own entry/exit) at
+     roughly 19-20% of signals landing in that specific window -- with
+     the exact same operator-visible consequence as every other lock leak
+     in this file: a real server later refuses to start, citing a dead
+     pid, for up to staleAfterMs. Fixed by having
+     releaseAnyLockWeMightHold() ALWAYS fall through to the disk check
+     afterward, regardless of whether a handle was released through
+     first -- a no-op whenever release() actually completed (the disk
+     record then names a different, still-legitimate owner, or nothing),
+     and the only thing that catches it when it didn't.
+     This test cannot target the ~4ms window directly (no external
+     observation point into another process's async timing), so it
+     sweeps a wide, fine-grained range of delays spanning from just
+     before the settle window ends through well past when an empty-
+     directory purge naturally completes -- some fraction of samples land
+     while `ownerLock` is still null (Part 6d's window), some while
+     release() is actively running (this finding's window), and some
+     after the process has already exited on its own (harmless, not a
+     leak, and skipped without signaling) -- asserting zero leaks across
+     every sample that DID require a signal.
+     ===================================================================== */
+  {
+    let attemptsSignaled = 0
+    let leaks = 0
+    for (let delayMs = 330; delayMs <= 460; delayMs += 6) {
+      const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-relwindow-'))
+      let child
+      const state = { exitCode: null }
+      try {
+        const dataDir = path.join(dataRoot, 'submissions')
+        await mkdir(dataDir, { recursive: true })
+        const lockPath = path.join(dataRoot, 'owner.lock')
+        await writeFile(
+          lockPath,
+          JSON.stringify({ pid: 999999, hostname: 'seed', nonce: randomUUID(), acquired_at: new Date(0).toISOString(), renewed_at: new Date(0).toISOString() }),
+          'utf8',
+        )
+        child = spawn(process.execPath, [path.join(repoRoot, 'scripts', 'purge-data.mjs'), '--yes'], {
+          cwd: repoRoot,
+          env: { ...process.env, SAMINDANG_DATA_DIR: dataDir },
+        })
+        // Drain stdout/stderr -- an earlier version of this block didn't,
+        // which is a classic child_process deadlock: if the child writes
+        // enough output to fill the OS pipe buffer with nothing reading
+        // it, the child's own write() call blocks, so it never reaches
+        // process.exit() at all. Reproduced directly: with draining
+        // removed, a 22-sample sweep hung (10s timeout) in 3 of 5 runs;
+        // with it restored, the drain alone was not sufficient -- see
+        // waitForExit's own comment above for the second, independent fix
+        // that was still needed after this one.
+        child.stdout.on('data', () => {})
+        child.stderr.on('data', () => {})
+        let exitedAlready = false
+        child.on('exit', (code) => { state.exitCode = code; exitedAlready = true })
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        if (!exitedAlready) {
+          attemptsSignaled++
+          child.kill('SIGINT')
+        }
+        await waitForExit({ child, state }, 10000)
+
+        const lockAfterSignal = await readJsonOrNull(lockPath)
+        if (lockAfterSignal?.pid === child.pid) leaks++
+      } finally {
+        killIfAlive({ child, state })
+        await rm(dataRoot, { recursive: true, force: true })
+      }
+    }
+    console.log(`  (release-window sweep) ${attemptsSignaled} delays actually required a signal (rest exited on their own first); ${leaks} leaked`)
+    assert(
+      `release-window sweep: zero leaks across ${attemptsSignaled} signaled attempts spanning the settle window through natural completion (the specific window this finding closed)`,
+      leaks === 0,
+    )
   }
 
   console.log(`\n${passCount} owner-lock assertions passed.`)

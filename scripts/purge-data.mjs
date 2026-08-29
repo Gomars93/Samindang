@@ -116,13 +116,37 @@ let ownerLock = null
 // is unambiguously safe to remove even without the handle/nonce
 // acquireOwnerLock() would otherwise have returned.
 async function releaseAnyLockWeMightHold() {
+  // Sixth-round closing-review finding (HIGH -- same leak class as F1,
+  // different window): an earlier version of this function `return`ed
+  // right after calling `ownerLock.release()`, on the theory that a
+  // non-null handle always means release() can finish the job. It
+  // cannot, in one specific case: ownerLock.js's release() marks itself
+  // `released = true` SYNCHRONOUSLY, before its own first `await` (the
+  // read-then-unlink that actually removes the file) -- so a signal
+  // landing in that gap (measured ~4ms, not a theoretical microsecond
+  // window: reproduced 19-20% of the time in a targeted sweep) finds
+  // `ownerLock` already non-null, calls release() a second time, gets an
+  // instant early-return (release() treats itself as already
+  // in-progress/done), and the `return` here then skipped the disk-based
+  // fallback below entirely -- leaking a lock naming this process's
+  // now-dead pid, later refusing a real server exactly like the
+  // original F1 bug. Fixed by ALWAYS falling through to the disk check
+  // afterward, regardless of whether a handle was held: it is a no-op
+  // (finds a lock naming some other, still-legitimate owner, or no lock
+  // at all) whenever release() actually completed, and only matters when
+  // it didn't.
   if (ownerLock) {
     await ownerLock.release().catch(() => {})
-    return
   }
   try {
     const { record } = await readOwnerLockStatus(dataDir, {})
-    if (record?.pid === process.pid) {
+    // Sixth-round closing-review finding (hostname guard): match the
+    // adjacent liveness check's own `hostname === hostname()` condition
+    // (see above) -- without it, a lock naming a numerically-colliding
+    // pid on a DIFFERENT host (unlikely under this repo's single-host LAN
+    // deployment model, but not impossible on a shared data mount) could
+    // be removed even though this process never wrote it.
+    if (record?.pid === process.pid && record.hostname === hostname()) {
       await rm(ownerLockPath(dataDir), { force: true })
     }
   } catch {

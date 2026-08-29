@@ -15,6 +15,7 @@ import {
   createCrmTask,
   taskTypeForPatientReportedConcern,
   claimTask,
+  markTaskSeen,
   releaseExpiredClaim,
   resolveTask,
   resolveTaskWithPersistence,
@@ -460,6 +461,41 @@ function makeEpisode(overrides = {}) {
     [],
   )
   assert('Round 2: the guard is SAFETY_REVIEW-specific -- CLINICAL_REVIEW may still be cancelled', cancelTask(clinicalReview).status === 'CANCELLED')
+}
+
+/* ---------------- Round 3 review fix: first_seen_at measures actual queue exposure, not creation ---------------- */
+{
+  const { task } = createCrmTask(
+    { task_id: 't-r3-1', patient_uuid: 'pt-1', episode_id: 'ep-1', task_type: 'ROUTINE', reason_code: 'CARE_GAP', source_event_id: 'evt-r3-1', owner_clinician: null, now: T0 },
+    [],
+  )
+  assert('Round 3: a newly created task has first_seen_at === null (created_at != first_seen_at)', task.first_seen_at === null)
+
+  const firstView = markTaskSeen(task, task.version, T1)
+  assert('Round 3: the first view sets first_seen_at', firstView.first_seen_at === T1)
+  assert('Round 3: the first view bumps the version', firstView.version === task.version + 1)
+
+  const T2 = '2026-01-03T00:00:00.000Z'
+  const secondView = markTaskSeen(firstView, firstView.version, T2)
+  assert('Round 3: a repeat view does not overwrite the original first_seen_at', secondView.first_seen_at === T1)
+  assert('Round 3: a repeat view is a no-op -- same version, no write happened', secondView.version === firstView.version)
+
+  let conflict = false
+  try {
+    // a stale caller, still holding the pre-view version, tries to mark seen again
+    markTaskSeen(firstView, task.version, T2)
+  } catch (err) {
+    conflict = err instanceof CrmConflictError
+  }
+  assert('Round 3: a stale-version markTaskSeen() conflicts rather than silently overwriting', conflict)
+
+  const { task: claimable } = createCrmTask(
+    { task_id: 't-r3-2', patient_uuid: 'pt-1', episode_id: 'ep-1', task_type: 'ROUTINE', reason_code: 'CARE_GAP', source_event_id: 'evt-r3-2', owner_clinician: null, now: T0 },
+    [],
+  )
+  const claimed = claimTask(claimable, claimable.version, 'dr-a', T1, 60_000)
+  assert('Round 3: claiming a never-seen task does not itself set first_seen_at -- seeing, claiming and acknowledging are distinct', claimed.first_seen_at === null)
+  assert('Round 3: claiming still sets its own acknowledged_at, unaffected by first_seen_at', claimed.acknowledged_at === T1)
 }
 
 /* ---------------- Extra: pauseEpisode never touches tasks (no auto-cancel on pause) ---------------- */

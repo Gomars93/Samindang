@@ -1,6 +1,18 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 2 — SAFETY_REVIEW hardening at cancelTask/supersedeTask, 이번 세션)
+## Objective (CRM v0.3.1 round 3 — first_seen_at가 실제 큐 노출 시점을 재도록 수정, 이번 세션)
+Gomars93의 round 1 재검수 코멘트 두 번째(round 2와 별도 코멘트, 같은 `de216fc`
+HEAD를 리뷰): `createCrmTask()`가 `first_seen_at`을 생성 시각(`input.now`)으로
+채우고 있었고 타입도 non-null `string`이었다. 그러면 `created_at → first_seen_at`
+지연이 영구히 0이 되어, v0.3.1이 요구하는 "Clinical/Safety task가 담당 원장에게
+제때 도달했는가" 측정이 이 스키마가 영속화된 뒤에도 원천적으로 불가능해진다.
+지시대로 `first_seen_at`을 `null`에서 시작하게 바꾸고, `markTaskSeen()`을
+새로 추가해 첫 실제 노출 시점만 기록(멱등, 이후 재호출은 최초 값 보존)하도록
+했다. claimTask/acknowledged_at과 결합하지 않았다 — 보기/claim/확인/해결은
+서로 다른 지연 측정 지점이라는 지시를 그대로 따랐다. 결과는 아래 Completed —
+CRM v0.3.1 Round 3 참고. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 2 — SAFETY_REVIEW hardening at cancelTask/supersedeTask, 이전 세션)
 Gomars93의 round 1 재검수(99/100)가 지적한 단일 갭: `completeEpisode()`/
 `snoozeTask()`는 SAFETY_REVIEW를 올바르게 보호하지만, 범용 프리미티브
 `cancelTask()`/`supersedeTask()`는 task_type 검사가 없어서 **직접 호출하면**
@@ -239,7 +251,35 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 2 (SAFETY_REVIEW 하드닝, 이번 세션)
+## Completed — CRM v0.3.1 Round 3 (first_seen_at 큐-노출 시맨틱, 이번 세션)
+`src/crm/types.ts`: `CrmTask.first_seen_at`을 `string`(non-null)에서 `string |
+null`로 변경. `src/crm/taskEngine.ts`: `createCrmTask()`가 이제 `first_seen_at:
+null`로 시작(과거엔 `input.now`); 새 함수 `markTaskSeen(task, expectedVersion,
+now)` 추가 — `first_seen_at`이 이미 채워져 있으면 아무것도 하지 않고(멱등,
+최초 타임스탬프 보존), 채워지지 않았을 때만 `now`로 설정. 버전 검사가 항상
+먼저 실행되므로(round 2의 resolveTask와 같은 원칙) 오래된 expectedVersion으로
+호출하면 이미 seen 여부와 무관하게 `CrmConflictError`가 난다.
+
+`claimTask()`는 손대지 않았다 — `acknowledged_at`은 여전히 claim 시점에
+독립적으로 채워진다. "보기/claim/확인/해결은 서로 다른 시점"이라는 지시를
+지키기 위해 두 필드를 결합하지 않았다.
+
+`tests/crm-schema.spec.mjs`에 "Round 3 review fix" 블록 8개 assertion 추가:
+새 task는 `first_seen_at === null`, 첫 view는 설정, 반복 view는 최초 값을
+덮어쓰지 않음(같은 버전 = no-op), 오래된 버전은 충돌, claim만으로는
+`first_seen_at`이 채워지지 않고 `acknowledged_at`은 독립적으로 채워짐을 확인.
+총 **75 assertion**(기존 67 + 신규 8), 전부 통과.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체 green, CRM
+스위트 75 assertion), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+passed), `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+(empty, FROZEN zero-diff). 새 임상 로직/threshold/provider/UI/문서 없음, Test 0
+여전히 PENDING, Care Gap suppression 여전히 비활성 — 지시 그대로.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 2 (SAFETY_REVIEW 하드닝, 이전 세션)
 `src/crm/taskEngine.ts`의 `cancelTask()`/`supersedeTask()`에 `task_type ===
 'SAFETY_REVIEW'`면 throw하는 가드를 추가했다(`safety_review_cannot_be_cancelled`
 / `safety_review_cannot_be_superseded`). `resolveTask()`(clinician-only)와

@@ -105,7 +105,8 @@ export type CrmTask = {
   claimed_by: string | null
   claimed_at: string | null
   claim_expires_at: string | null
-  first_seen_at: string
+  /** Null until markTaskSeen() records the first actual queue/view exposure -- distinct from created_at, so created_at -> first_seen_at latency is measurable rather than permanently zero. */
+  first_seen_at: string | null
   acknowledged_at: string | null
   resolved_at: string | null
   contact_mode: ContactMode

@@ -100,7 +100,7 @@ export function createCrmTask(
     claimed_by: null,
     claimed_at: null,
     claim_expires_at: null,
-    first_seen_at: input.now,
+    first_seen_at: null,
     acknowledged_at: null,
     resolved_at: null,
     contact_mode,
@@ -136,6 +136,19 @@ export function claimTask(task: CrmTask, expectedVersion: number, claimedBy: str
     acknowledged_at: task.acknowledged_at ?? now,
     version: task.version + 1,
   }
+}
+
+/**
+ * Records the first actual queue/view exposure, distinct from claiming or
+ * acknowledging -- a clinician can see a task in a list well before they
+ * claim or acknowledge it, and created_at -> first_seen_at is the latency
+ * this exists to measure. Idempotent: once set, a later call preserves
+ * the original timestamp rather than overwriting it.
+ */
+export function markTaskSeen(task: CrmTask, expectedVersion: number, now: string): CrmTask {
+  checkVersion(task, expectedVersion)
+  if (task.first_seen_at !== null) return task
+  return { ...task, first_seen_at: now, version: task.version + 1 }
 }
 
 /** No-op unless the claim has actually expired; DONE/OPEN/etc. tasks pass through untouched. */

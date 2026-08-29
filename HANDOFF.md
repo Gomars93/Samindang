@@ -1,6 +1,35 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 12 — SNOOZED가 Today Queue에서 실제로 defer되도록 수정, 이번 세션)
+## Objective (CRM v0.3.1 round 13 — Doctor 클라이언트에 첫 CRM UI(읽기 전용 Today Queue) 추가, 이번 세션)
+Gomars93의 다음 지시: round 6-12에서 이미 만들어 검증한
+`GET /api/crm/tasks`(round 11) 서버 read path 위에, 처음으로 **CRM UI
+표면**을 붙인다 — Doctor 클라이언트 안에 컴팩트하고 **읽기 전용**인
+"Today Queue"를 노출한다. 인수 조건(10개, 전부 만족): (1) 기존
+`ServerResult`/doctor-token 패턴을 재사용하는 typed `serverClient`
+wrapper, (2) 서버가 보낸 순서를 그대로 보존하는 단일 컴팩트 큐 화면 —
+클라이언트 재정렬 금지, (3) Safety/Clinical/Routine 구분·reason
+code·기한 상태/시각·status/claim 상태·owner를 10초 내에 읽을 수 있는
+행, (4) 이미 저장된 `patient_uuid` 표시(짧게 truncate 가능, 전체 값은
+접근 가능해야) 외의 환자 신원 해석 금지 — 이름/전화/생년월일/주민번호/
+Sigma 조회/재진 환자 병합 없음, (5) 이번 라운드는 철저히 읽기 전용 —
+액션 버튼 없음, 그리고 행을 렌더링하는 것만으로 `/seen`을 트리거해서는
+안 됨(`first_seen_at`은 그대로 유지), (6) cross-record 안전 — 이전
+성공적 fetch의 stale task가 refresh/error/disconnect 이후 현재
+데이터인 것처럼 보여서는 안 됨, 진실한 loading/error/empty 상태,
+새 선택 아래로 이전 선택의 detail이 새어나오지 않음, (7)
+클라이언트 측 synthesis/자동 resolution/grouping/suppression/
+threshold/매핑/identity-policy/provider 선택/Sigma-Naver 쓰기 금지,
+(8) auth/network 에러의 진실성, 서버 순서 보존, terminal/미래-snoozed
+항목을 클라이언트가 만들어낼 수 없음, Safety 구분성, 컴팩트 empty
+상태, 전환 시 stale 콘텐츠 없음, 태블릿 뷰포트 안전성(가로 스크롤
+없음)을 증명하는 회귀 테스트, (9) FROZEN zero-diff, Test 0 PENDING,
+Care Gap OFF 유지, tsc/build/build:preview/test:all/tablet-core 전체
+재검증 + 최신 CI/Doctor Workspace Preview, (10) 새 제품 문서 금지,
+기존 HANDOFF만 필요 시 최소 갱신. 이번 라운드는 명시적으로 읽기
+경로만 다룬다 — resolve/claim/snooze/cancel/supersede 같은 task-action
+UI는 다음 라운드로 미룬다. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 12 — SNOOZED가 Today Queue에서 실제로 defer되도록 수정, 이전 세션)
 Gomars93의 다음 지시: round 11의 `listActionableTasks()`가 non-terminal
 상태를 전부 포함하고 있어서, Routine/Clinical task를 `SNOOZED`로 바꿔도
 `GET /api/crm/tasks`가 즉시 그대로 보여주고 있었다 — task-engine 자체의
@@ -461,7 +490,82 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 12 (SNOOZED가 Today Queue에서 실제로 defer됨, 이번 세션)
+## Completed — CRM v0.3.1 Round 13 (Doctor 클라이언트 첫 CRM UI — 읽기 전용 Today Queue, 이번 세션)
+**`src/lib/serverClient.ts`**: `listCrmTasks(params?: { ownerClinician?,
+coverageQueue? })` 추가. `GET /api/crm/tasks`의 wire shape이 이미
+`CrmTask[]`와 정확히 같아서(round 11에서 확정) `listRevisitQueue`류의
+snake_case→camelCase 매핑이 필요 없다 — `listStations`처럼 단순
+pass-through. 기존 `request<T>()`/`ServerResult`/doctor-token
+패턴을 그대로 재사용, 새 인증/타임아웃 로직 없음.
+
+**`src/crm/labels.ts`(신규)**: `CRM_TASK_TYPE_LABEL`/
+`CRM_REASON_CODE_LABEL`/`CRM_TASK_STATUS_LABEL` 3개 한글 라벨 맵.
+`src/doctor/workspace/followUpSession.ts`의 라벨-맵 관례를 그대로
+따름 — 임상적 의미 없는 순수 표시 문자열.
+
+**`src/doctor/TodayQueueSection.tsx`(신규)**: 순수 presentational
+컴포넌트(`{ tasks, loading, error }` props만, fetch/클릭 핸들러/
+`/seen` 호출 전혀 없음). `tasks === null`(유효한 fetch 없음, 초기
+상태 또는 명시적으로 비운 실패한 refetch)과 `tasks === []`(성공적으로
+비어있음)를 구분해 error/loading/empty/list 4가지 상태를 렌더링.
+`tasks.map()`으로 주어진 순서 그대로 렌더링 — 컴포넌트 안에 `.sort()`
+호출 없음. 각 행은 task_type·reason_code 라벨, status/claimed_by/
+owner_clinician, `due_at` 기반 기한 상태(overdue 구분), truncate된
+`patient_uuid`(전체 값은 `title` 속성)를 표시. SAFETY_REVIEW/
+CLINICAL_REVIEW는 각각 별도 CSS class(`--safety_review`/
+`--clinical_review`)로 시각 구분.
+
+**`src/doctor/doctor.css`**: `.doctor__todayQueue__row`(테두리/패딩,
+기존 `.doctor__row`와 달리 `cursor:pointer` 없음 — 이번 라운드는
+클릭 불가), `--safety_review`(danger 테두리+배경), `--clinical_review`
+(강조 좌측 테두리), `.doctor__todayQueue__error`(danger 색) 추가. 기존
+`.doctor__grid`(`auto-fill, minmax(280px, 1fr)`)를 그대로 재사용 —
+태블릿 뷰포트 대응을 위한 새 breakpoint/media query 없음(스타일시트
+전체에서 유일한 반응형 장치가 이 grid 관례라 그대로 따름).
+
+**`src/doctor/DoctorView.tsx`**: `crmTasks`/`crmTasksLoading`/
+`crmTasksError` state 3개 추가. 기존 재진(revisit)/스테이션 polling
+`useEffect`(5초 간격, `cancelled` 플래그로 stale-response 가드)에
+`listCrmTasks()` 호출을 같은 cadence로 추가 — 새 폴링 인프라 없음.
+**의도적으로 기존 재진 폴링보다 엄격한 규칙**: 실패한 fetch는
+`crmTasks`를 `null`로 명시적으로 비우고 `crmTasksError`를 설정한다(기존
+재진 폴링은 실패 시 이전 데이터를 그대로 둠) — round 13의 "stale
+task가 현재 데이터인 것처럼 보이면 안 된다" 요구를 만족시키기 위한
+의도적 차이. `TodayQueueSection`을 재진 목록 섹션 바로 아래, 동일한
+가시성 조건(`mode==='server' && !selectedRecord && !selectedRevisit &&
+!serverError`)으로 렌더링하되, 재진 목록과 달리 `tasks.length > 0`
+게이트를 걸지 않아 컴팩트 empty state가 항상 안정적으로 보인다.
+
+**`tests/today-queue.spec.mjs`(신규, `renderToString()` 기반, 12
+assertion)** + `package.json`의 `test:today-queue` 스크립트(esbuild로
+`TodayQueueSection.tsx`를 CJS 번들 후 실행) + `test:all`에 편입.
+커버리지: loading/empty/error 상태의 진실성(에러 시 이전 tasks가
+전달돼도 절대 렌더링되지 않음), 의도적으로 "잘못된" 우선순위 순서(
+ROUTINE→SAFETY→CLINICAL)를 그대로 렌더링해 재정렬이 없음을 증명,
+SAFETY_REVIEW/CLINICAL_REVIEW의 시각적 구분, patient_uuid truncate +
+title 속성, 렌더링 결과에 `onclick` 속성 없음, 컴포넌트 소스에
+fetch/serverClient/markTaskSeen/onClick 참조 없음(구조적으로 `/seen`을
+트리거할 수 없음을 소스 레벨에서 증명), `.doctor__grid` 재사용(새
+고정폭 레이아웃 없음).
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm
+run build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — 신규 `test:today-queue` 12 assertion 포함), `cd "tablet
+core" && python3 -m pytest tests/ -q`(80 passed), `git diff origin/main
+-- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). Test 0 여전히 PENDING, Care Gap suppression 여전히 비활성,
+새 임상 로직/threshold/identity-policy/provider 선택/Sigma-Naver 쓰기
+없음. Task action UI(resolve/claim/snooze 등)는 지시대로 다음
+라운드로 미뤘다.
+
+**Subagent 사용**: `DoctorView.tsx`/`serverClient.ts`/`doctor.css`의
+기존 구조와 관례(재진 큐 polling 패턴, 라벨 맵 컨벤션, 렌더링 테스트
+번들링 방식 등)를 파악하기 위해 Explore 타입 subagent 1개를 사용했다
+— 조사/탐색 전용이었고 코드 작성은 이 subagent가 하지 않았다. 이후
+모든 파일의 실제 내용은 이 세션이 직접 Read로 재확인했고, 코드/CSS/
+테스트/문서 작성과 전체 검증 실행은 전부 이 세션이 직접 수행했다.
+
+## Completed — CRM v0.3.1 Round 12 (SNOOZED가 Today Queue에서 실제로 defer됨, 이전 세션)
 **`server/crmStore.js`의 `listActionableTasks()` 필터 한 줄 추가**:
 terminal 제외 다음에 `if (task.status === 'SNOOZED' && task.due_at &&
 task.due_at > now) continue`를 추가했다. 이미 저장된 절대 `due_at`

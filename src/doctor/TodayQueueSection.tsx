@@ -1,0 +1,69 @@
+/**
+ * CRM v0.3.1 round 13: read-only "Today Queue" surface. Purely
+ * presentational -- no fetching, no click handlers, no /seen or any other
+ * side effect. Renders tasks in exactly the order the server returned them
+ * (sortCrmTaskQueue's own priority order) -- this component never sorts,
+ * groups, filters, or otherwise re-derives ordering client-side.
+ *
+ * `tasks === null` means "no successful fetch yet reflected" (initial state
+ * or a failed refetch that the caller explicitly cleared) -- distinct from
+ * `tasks === []` ("fetched successfully, queue is empty"), so a stale list
+ * from a prior successful fetch can never be shown after an error.
+ */
+import type { CrmTask } from '../crm/types'
+import { CRM_TASK_TYPE_LABEL, CRM_REASON_CODE_LABEL, CRM_TASK_STATUS_LABEL } from '../crm/labels'
+
+export type TodayQueueSectionProps = {
+  tasks: CrmTask[] | null
+  loading: boolean
+  error: string | null
+}
+
+function truncateUuid(uuid: string): string {
+  return uuid.length <= 8 ? uuid : `${uuid.slice(0, 8)}…`
+}
+
+function dueStateLabel(task: CrmTask, nowIso: string): string {
+  if (!task.due_at) return ''
+  const overdue = task.due_at < nowIso
+  const when = new Date(task.due_at).toLocaleString('ko-KR')
+  return overdue ? `기한 지남 · ${when}` : `기한 ${when}`
+}
+
+export function TodayQueueSection({ tasks, loading, error }: TodayQueueSectionProps) {
+  const now = new Date().toISOString()
+  return (
+    <section className="doctor__section doctor__todayQueue">
+      <h2>오늘 할 일 CRM{tasks ? ` (${tasks.length})` : ''}</h2>
+      {error ? (
+        <p className="doctor__empty doctor__todayQueue__error">CRM 큐를 불러오지 못했습니다: {error}</p>
+      ) : loading && !tasks ? (
+        <p className="doctor__empty">불러오는 중…</p>
+      ) : !tasks || tasks.length === 0 ? (
+        <p className="doctor__empty">지금 처리할 CRM 항목이 없습니다.</p>
+      ) : (
+        <div className="doctor__grid doctor__todayQueue__grid">
+          {tasks.map((task) => (
+            <div
+              key={task.task_id}
+              className={`doctorField doctor__todayQueue__row doctor__todayQueue__row--${task.task_type.toLowerCase()}`}
+            >
+              <span className="doctorField__label">
+                {CRM_TASK_TYPE_LABEL[task.task_type]} · {CRM_REASON_CODE_LABEL[task.reason_code]}
+              </span>
+              <span className="doctorField__value">
+                {CRM_TASK_STATUS_LABEL[task.status]}
+                {task.claimed_by ? ` · 담당: ${task.claimed_by}` : ''}
+                {task.owner_clinician ? ` · 소속: ${task.owner_clinician}` : ''}
+                {task.due_at ? ` · ${dueStateLabel(task, now)}` : ''}
+              </span>
+              <span className="doctorField__value doctorField__value--muted" title={task.patient_uuid}>
+                환자 {truncateUuid(task.patient_uuid)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}

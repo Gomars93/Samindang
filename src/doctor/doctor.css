@@ -369,6 +369,28 @@
   background: #f6ece9;
 }
 
+/* CRM v0.3.1 round 13: read-only Today Queue rows -- deliberately no
+   cursor:pointer (unlike .doctor__row), since these rows have no click
+   handler this round. */
+.doctor__todayQueue__row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.doctor__todayQueue__row--safety_review {
+  border-color: var(--danger);
+  background: #f6ece9;
+}
+
+.doctor__todayQueue__row--clinical_review {
+  border-left: 4px solid #d99a2b;
+}
+
+.doctor__todayQueue__error {
+  color: var(--danger);
+}
+
 .doctor__newDot {
   display: inline-block;
   width: 7px;

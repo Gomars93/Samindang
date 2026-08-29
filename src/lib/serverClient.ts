@@ -15,6 +15,7 @@ import type {
   RevisitStatus,
   StationInfo,
 } from '../doctor/workspace/followUpSession'
+import type { CrmTask } from '../crm/types'
 import { getStoredDoctorToken } from '../doctor/doctorToken'
 
 const BASE_URL = import.meta.env.VITE_SAMINDANG_SERVER_URL as string | undefined
@@ -489,4 +490,21 @@ export function assignRevisitToStation(
 /** Staff manually returns a tablet to its waiting screen. */
 export function resetStation(stationId: string): Promise<ServerResult<{ ok: true }>> {
   return request(`/api/stations/${encodeURIComponent(stationId)}/reset`, { method: 'POST' })
+}
+
+/**
+ * CRM v0.3.1 round 13: read-only Today Queue fetch. Wire shape already
+ * matches CrmTask exactly (see server/index.js's GET /api/crm/tasks), so
+ * no field mapping is needed here -- unlike listRevisitQueue's snake_case
+ * -> camelCase translation. Never sets first_seen_at; this is a plain GET.
+ */
+export function listCrmTasks(params?: {
+  ownerClinician?: string
+  coverageQueue?: string
+}): Promise<ServerResult<{ tasks: CrmTask[] }>> {
+  const qs = new URLSearchParams()
+  if (params?.ownerClinician) qs.set('owner_clinician', params.ownerClinician)
+  if (params?.coverageQueue) qs.set('coverage_queue', params.coverageQueue)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request(`/api/crm/tasks${suffix}`)
 }

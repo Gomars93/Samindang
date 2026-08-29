@@ -125,3 +125,6 @@ tests/.crm-types-bundle.mjs
 tests/.crm-task-engine-bundle.mjs
 tests/.crm-episode-bundle.mjs
 tests/.crm-medication-course-bundle.mjs
+
+# esbuild bundle used by tests/today-queue.spec.mjs (regenerated, not source)
+tests/.today-queue-bundle.cjs

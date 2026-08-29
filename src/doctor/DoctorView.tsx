@@ -17,6 +17,7 @@ import {
   getSubmission,
   assignRevisitToStation,
   invalidateFollowUpSession,
+  listCrmTasks,
   listRevisitQueue,
   listStations,
   listSubmissions,
@@ -35,6 +36,8 @@ import type { PatientHistoryResult } from './workspace/longitudinal'
 import type { MicroFollowUpResponse } from './workspace/microFollowUp'
 import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
 import { DELIVERY_MODE_LABEL, INPUT_PROVENANCE_LABEL, REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+import type { CrmTask } from '../crm/types'
+import { TodayQueueSection } from './TodayQueueSection'
 
 // Round 9: the first tablet that is not already serving a patient. A busy
 // tablet cannot be assigned (the server refuses it with 409 station_busy --
@@ -1704,6 +1707,15 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // exclusive with selecting a submission row (see the two onClick handlers
   // below, each clears the other's selection).
   const [revisits, setRevisits] = useState<RevisitQueueItem[]>([])
+  // CRM v0.3.1 round 13: Today Queue. `crmTasks === null` means "no
+  // currently-valid fetch to show" (initial load, or a failed refetch that
+  // was explicitly cleared) -- deliberately stricter than the revisits
+  // polling above, which leaves stale data in place on a failed poll. A
+  // stale CRM queue must never masquerade as the current authoritative
+  // queue after a refresh/error/disconnect.
+  const [crmTasks, setCrmTasks] = useState<CrmTask[] | null>(null)
+  const [crmTasksLoading, setCrmTasksLoading] = useState(false)
+  const [crmTasksError, setCrmTasksError] = useState<string | null>(null)
   const [selectedRevisit, setSelectedRevisit] = useState<{ visitId: string; patientId: string } | null>(null)
   // Round 6 review fix (duplicate-start prevention): disables "재진 간단
   // 문진 시작" while a request is in flight, so a double-click/impatient
@@ -1871,6 +1883,22 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       if (stationResult.ok) {
         setStations(stationResult.data)
         setSelectedStationId((current) => current || firstFreeStationId(stationResult.data))
+      }
+      // CRM v0.3.1 round 13: Today Queue, same polling cadence. Unlike the
+      // two polls above, a failed fetch here explicitly clears crmTasks to
+      // null (never leaves a stale queue displayed as current) -- see the
+      // crmTasks state declaration's comment for why this queue is held to
+      // a stricter staleness rule.
+      setCrmTasksLoading(true)
+      const crmResult = await listCrmTasks()
+      if (cancelled) return
+      setCrmTasksLoading(false)
+      if (crmResult.ok) {
+        setCrmTasks(crmResult.data.tasks)
+        setCrmTasksError(null)
+      } else {
+        setCrmTasks(null)
+        setCrmTasksError(crmResult.error)
       }
     }
     poll()
@@ -2426,6 +2454,18 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             ))}
           </div>
         </section>
+      )}
+
+      {/*
+        CRM v0.3.1 round 13: read-only Today Queue. Unlike 재진 목록 above,
+        this section stays visible (with its own compact empty state) even
+        when crmTasks is empty, so the clinician has a stable place to check
+        rather than a section that silently disappears. TodayQueueSection is
+        purely presentational -- no click handlers, no /seen call, no
+        client-side re-sort of the server-ordered list.
+      */}
+      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && (
+        <TodayQueueSection tasks={crmTasks} loading={crmTasksLoading} error={crmTasksError} />
       )}
 
       {selectedRevisit && (

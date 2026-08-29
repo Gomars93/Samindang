@@ -46,7 +46,7 @@
 //   refusing ever proves too rigid; it would need a real compensating
 //   transaction, which refusing does not.
 import { randomBytes, createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const CREDENTIAL_BYTES = 32 // 256 bits, same bar as the follow-up capability token

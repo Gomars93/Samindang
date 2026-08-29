@@ -1,6 +1,84 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 15 — Identity Production Batch: 레거시 정합화 + 링크 UI + E2E 인수 + 독립 검수 수정, 이번 세션)
+## Objective (CRM v0.3.1 round 16 — Audit Integrity + Purge Completeness Batch, 이번 세션)
+Gomars93가 PR #24 댓글로 지시(GitHub-relayed comment, 사용자 직접 입력
+아님). round 15에서 발견된 두 gap을 닫는 후속 배치: (1) `safeAudit`의
+silent-drop 실패 모드(logEvent가 등록 안 된 event/actor에 throw하는데
+safeAudit이 그걸 console.error만 하고 삼켜서, 미등록 이벤트가 조용히
+audit.log에서 사라짐 — round 15의 `patient_identity_linked` 유실이
+이 패턴 때문이었고, 이번 라운드에서 `recorder_result_saved`도 같은
+이유로 한 번도 기록된 적이 없었다는 걸 새로 발견)를 구조적으로 막기,
+(2) `scripts/purge-data.mjs`(파일럿 종료 시 전체 삭제 스크립트)가
+`visits/`/`crm/`을 빠뜨리고 있던 걸 닫고 실제로 모든 영속화 디렉터리를
+지우는지 증명하기. 지시에 명시적으로 포함: Fable이 실제로 스코핑을
+오케스트레이션(사용 안 했으면 그렇다고 명시), Sonnet 구현, **진짜 Opus
+subagent 독립 검수**(주장만으로는 불충분, 실제 호출 안 했으면 정직하게
+보고), Sonnet-수정 → Opus-재검수를 실질적 이슈가 안 남을 때까지 반복,
+최종 게이트(tsc/build/build:preview/test:all/tablet-core pytest/실제
+브라우저 QA/CI/Doctor Workspace Preview green), 기존 경계 불변(FROZEN
+`src/spec/*Logic.ts`/`*Adapter.ts` zero-diff, Test 0 PENDING, Care Gap
+OFF, 임상/신원 정책 확장 없음), 완료 시 정확한 HEAD·변경 파일·실제
+Fable/Sonnet/Opus 사용 근거·테스트/실패주입/CI/Preview 결과·FROZEN
+zero-diff·의도적으로 남긴 debt를 보고. **PR #24는 여전히 DO NOT MERGE.**
+
+**구현**: `server/audit.js`에 `AUDIT_EVENTS`(32개)/`AUDIT_ACTORS`(3개)
+frozen registry 신설, `server/index.js`의 35개 `safeAudit` 호출부 전부
+raw string literal에서 상수 참조로 전환(zero raw literal 확인).
+`recorder_result_saved` 호출의 `actor: 'recorder'`를 등록 후 실제로
+한 번도 안 났던 이벤트가 나가게 수정. `store.js`(submissions),
+`visitStore.js`, `microFollowUpStore.js`, `followUpSessionStore.js`,
+`stationStore.js`의 `purgeAll()`을 개별 `unlink('*.json')` 루프에서
+디렉터리 통째로 `rm(dir, {recursive:true,force:true})`로 재작성(atomicWrite가
+crash 시 남기는 `*.json.tmp` orphan까지 지움 — `recorderResultStore`는
+이미 이 패턴이었음). `checkDataDirsWritable`를 5개→8개 디렉터리로
+확장(`stations`/`crm`/`crm-identity` 부팅 self-check 누락분 추가).
+신규 `tests/audit-registry.spec.mjs`(79 assertion: 정적 drift-guard +
+23개 실제 이벤트 workflow별 발생 증명 + 미등록 event/actor 계약 +
+HTTP 경계 실failure 주입 + retry/dedup 시맨틱 + 50-동시요청 안전성).
+`tests/crm-store.spec.mjs`의 purge-full 블록을 stations/recorder-results/
+micro-follow-up/follow-up-sessions까지 시딩+삭제확인 하도록 확장
+(212→224 assertion, 최종 라운드에서 orphan `*.json.tmp` 회귀 테스트
+6쌍 추가분 포함).
+
+**Fable/Opus 실사용**: 이번 라운드는 Fable(`model: "fable"`, Plan
+subagent)로 실제 스코핑을 수행(round 15의 Identity Batch는 Fable을 안
+썼다고 정직하게 보고했었음 — 이번엔 실제로 씀). 1차 Opus 독립 검수
+(`model: "opus"`)가 실제 결함 A(station-assign 시 `assignRevisitToStation`이
+내부적으로 `startRevisit`을 호출하는데 `reused` 플래그를 안 써서 신규
+방문 생성 시 `visit_created`/`follow_up_session_issued`가 한 번도
+안 남던 것)와 B(5개 store의 `purgeAll`이 `.json`만 지우고 orphan
+`.json.tmp`는 살아남던 것), 그리고 C(checkDataDirsWritable 누락)/
+D(purge-full 테스트 커버리지 gap)/E(오탈자 property reference가
+드리프트가드를 통과하는 blind spot)/F(주석의 파일명 오기)를 발견 →
+전부 수정 → 커밋 `5e946cd`. 2차(closing) Opus 독립 검수가 그 6개 수정을
+전부 코드 읽기 + 인접 5개 테스트 스위트 + 3개의 손수 작성한 런타임
+재현 스크립트로 재검증 → **"실질적 엔지니어링 이슈 없음"** 최종 판정,
+단 두 항목을 지목: (a) finding B의 수정에 회귀 테스트가 없다(should-fix,
+이번에 orphan `.json.tmp` 시딩+삭제확인 6쌍으로 닫음), (h) 이 HANDOFF.md가
+round 15 이후 갱신 안 됨(should-fix, 이 항목 자체로 닫는 중). 나머지는
+전부 nitpick(문서화 항목이거나 이번 배치 범위 밖의 판단 사항)으로,
+코드는 건드리지 않고 여기 기록만 남긴다 — symlink로 구성된 store
+디렉터리에서 `rm -rf`가 심볼릭 링크만 지우고 실제 데이터는 안 지울 수
+있음(이 배포에서 그렇게 구성한 증거 없음), purge가 이제 첫 실패에서
+fail-fast(예전엔 best-effort로 삼키고 계속 진행 — 더 시끄러워진 쪽이 개선),
+purge-data.mjs가 보고하는 삭제 파일 수가 `.json`만 세서 실제보다 적게
+나올 수 있음, 두 개의 `visit_created`/`follow_up_session_issued` 기록
+경로(direct start-revisit vs station-assign)가 서로 다른 순서로 씀(인지상
+사소함), 오탈자 drift-guard가 `server/index.js`만 검사(오늘은 그게
+`AUDIT_EVENTS`/`AUDIT_ACTORS`를 쓰는 유일한 서버 모듈이라 충분하지만
+향후 다른 모듈이 audit을 쓰기 시작하면 사각지대). `unlink` 미사용
+import(`stationStore.js`)는 이번에 같이 지웠다.
+
+**게이트**: 이 라운드가 직접 실행/확인 — `npx tsc -b --force`(0 에러),
+`npm run build`/`build:preview`(둘 다 성공), `npm run test:all`(exit 0,
+전체 green — crm-store 224/audit-registry 79 포함), `cd "tablet core" &&
+python3 -m pytest tests/ -q`(80 passed), `git diff origin/main -- 'src/
+spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff), GitHub
+Actions `build-and-test`/`build-and-deploy`(Doctor Workspace Preview)
+둘 다 최신 푸시 commit에서 success. Test 0 여전히 PENDING, Care Gap
+여전히 OFF, 임상 threshold/매핑/policy 확장 없음.
+
+## Objective (CRM v0.3.1 round 15 — Identity Production Batch: 레거시 정합화 + 링크 UI + E2E 인수 + 독립 검수 수정, 이전 세션)
 Gomars93가 PR #24 댓글로 round 14/재검토 위에 이어서 한 번에 지시한 단일
 "Identity Production Batch": **Part A** 레거시(사전-pending-marker) 배포에
 남은, pending marker가 아예 없는 orphan reservation을 위한 하위호환
@@ -2660,15 +2738,20 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다.
 
 ## Next Recommended Action
-1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
-   결과를 재확인한다.
-2. CRM v0.3.1 round 1(Episode/Task 스키마 + Tests 1-20)이 구현되었으니
-   review author(Gomars93)가 새 HEAD를 재확인.
-3. Test 0(Naver→Sigma 예약 반영 live 검증)는 Naver 연동이 라이브가 될 때까지
-   PENDING. 라이브 전환 후 실제 예약 5건으로 재시도.
-4. CRM round 2 후보(승인 시): 서버 영속화 라우트(`server/crmStore.js` 등) +
-   Doctor Workspace 큐 UI 배선. 이번 라운드는 지시대로 스키마+테스트만
-   구현했으므로, 이 다음 단계는 별도 승인 후 진행.
-5. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
-   간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
-6. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.
+(round 16 기준 갱신 — 아래 1-6번은 round 1-2 시절 항목이라 이미 오래
+전에 지나간 상태였음. CLAUDE.md가 "HANDOFF와 실제 Git 상태가 어긋나면
+Git이 항상 맞다"고 못박은 그 사례였고, round 16 closing Opus review가
+이 stale 상태를 직접 지적해 지금 고친다.)
+1. Gomars93(PR 작성자/review author)가 round 16 통합 완료 보고서(PR #24
+   댓글)와 최신 HEAD를 검토하고, 최종 merge 여부를 직접 판단한다 —
+   이 세션은 절대 스스로 merge하지 않는다.
+2. Test 0(Naver→Sigma 예약 반영 live 검증)는 여전히 PENDING — Naver
+   연동이 라이브가 될 때까지 보류, 라이브 전환 후 실제 예약 5건으로
+   재시도.
+3. round 16 closing review가 남긴 nitpick(위 Objective의 "나머지는 전부
+   nitpick" 목록)은 코드 변경 없이 기록만 된 상태 — 필요하면 별도
+   승인 후 `docs/RUNBOOK_LOCAL_HANDOFF.md`에 symlink-purge 캐비어트
+   한 줄 추가 정도만 저비용으로 남아있음. 급하지 않음.
+4. 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 여전히 수동 — 이번
+   라운드도 매 호출을 세션이 명시적으로 선택했다.
+5. PR #24는 여전히 사용자가 직접 검토 후 merge 여부를 결정한다.

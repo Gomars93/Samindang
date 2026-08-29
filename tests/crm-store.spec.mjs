@@ -1927,6 +1927,34 @@ async function main() {
         JSON.stringify(topLevelBeforePurge) === JSON.stringify(expectedTopLevel),
       )
 
+      // Closing-review finding (round 2, item a): the five purgeAll()
+      // rewrites from a per-file unlink('*.json') loop to rm(dir,
+      // {recursive:true,force:true}) close the orphan *.json.tmp gap --
+      // atomicWrite (writeFile(tmp) then rename(tmp, filePath)) leaves a
+      // `<file>.json.tmp` behind if the process crashes between the write
+      // and the rename, and it can hold full clinical content. That fix
+      // shipped with no regression test defending it, so a future round
+      // silently reverting any of the five back to a `*.json` unlink loop
+      // would stay green here. Seed one orphan .tmp per rm-rf'd family,
+      // matching the exact filename shape atomicWrite produces, and prove
+      // none of them survive the real purge script below.
+      const orphanTmpPaths = [
+        path.join(submissionsDir, 'orphan-purge-seed.json.tmp'),
+        path.join(dataRoot, 'visits', 'orphan-purge-seed.json.tmp'),
+        path.join(dataRoot, 'micro-follow-up', 'orphan-purge-seed.json.tmp'),
+        path.join(dataRoot, 'follow-up-sessions', 'tokens', 'orphan-purge-seed.json.tmp'),
+        path.join(dataRoot, 'stations', 'stations', 'orphan-purge-seed.json.tmp'),
+        path.join(dataRoot, 'recorder-results', recorderVisit.id, 'orphan-purge-seed.json.tmp'),
+      ]
+      for (const tmpPath of orphanTmpPaths) {
+        await mkdir(path.dirname(tmpPath), { recursive: true })
+        await writeFile(tmpPath, '{"orphan":true}', 'utf8')
+      }
+      for (const tmpPath of orphanTmpPaths) {
+        const seeded = await access(tmpPath).then(() => true).catch(() => false)
+        assert(`purge-full: sanity -- orphan .json.tmp seeded before purge (${path.relative(dataRoot, tmpPath)})`, seeded)
+      }
+
       await stopServer(server)
       server = undefined
 
@@ -1964,6 +1992,15 @@ async function main() {
       assert('purge-full: crm-identity/ is gone entirely, not just submissions/', identityDirGone)
       const auditLogGone = await access(path.join(dataRoot, 'audit.log')).then(() => false).catch(() => true)
       assert('purge-full: audit.log is gone (purgeAuditLog unlinks it)', auditLogGone)
+
+      // Closing-review finding (round 2, item a): the orphan .json.tmp
+      // seeded above per rm-rf'd family must not survive the purge. A
+      // regression back to a per-file unlink('*.json') loop in any of the
+      // five stores would leave its orphan behind and fail exactly this.
+      for (const tmpPath of orphanTmpPaths) {
+        const stillExists = await access(tmpPath).then(() => true).catch(() => false)
+        assert(`purge-full: orphan .json.tmp does not survive the purge (${path.relative(dataRoot, tmpPath)})`, !stillExists)
+      }
 
       /* ---- idempotency: running the purge again on the now-empty root
          must not throw (ENOENT-tolerant everywhere) ---- */

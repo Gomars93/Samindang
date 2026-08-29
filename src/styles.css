@@ -209,53 +209,65 @@ input {
 .shell__main {
   flex: 1 1 auto;
   overflow-y: auto;
-  /* Tablet UX v2.2 §11: bottom padding을 scroll hint pill 높이(84px,
-     .shell__scrollHint)보다 크게 잡는다 -- 28px였을 때는 스크롤 중 실제
-     option이 pill의 gradient/텍스트 영역과 겹쳐 가려지는 경우가 있었다
-     (하단에 도달하지 않은 동안 pill이 sticky로 항상 마지막 84px 위에
-     떠 있으므로, 그 아래 실제 콘텐츠가 84px보다 적게 남으면 겹친다).
-     96px로 여유를 둬 마지막 옵션이 pill 영역 밖에서 완전히 보이게 한다. */
-  padding: 40px var(--gutter) 96px;
-  scroll-padding-bottom: 96px;
+  padding: 40px var(--gutter) 28px;
 }
 
-/* 스크롤 가능한데 하단에 도달하지 않았을 때만 표시되는 시각적 안내(Tablet UX v2.1
-   §4). 기존 작은 "⌄" 화살표 하나만으로는 실기기에서 "더 있다"는 사실이 거의
-   인지되지 않았다 -- 읽을 수 있는 문구 + 아래방향 아이콘의 알약(pill) 배너로
-   교체한다. 콘텐츠를 가리지 않도록 pointer-events:none, 하단 도달 시 완전히
-   사라진다(ScreenShell.tsx의 hasMore 조건부 렌더). */
-.shell__scrollHint {
-  position: sticky;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 84px;
-  margin-top: -84px;
+/* Tablet UX v2.3 §9-10: 스크롤 가능한데 하단에 도달하지 않았을 때만 보이는
+   안내를, `.shell__main`의 형제 엘리먼트인 고정 레인으로 렌더링한다(항상
+   32-44px 높이를 예약, ScreenShell.tsx 상단 주석 참고) -- 콘텐츠 위에
+   겹쳐 그리는 opacity-gradient overlay를 완전히 제거해 어떤 스크롤
+   위치에서도 옵션/CTA/선택 chip과 절대 겹치지 않는다(구조적으로 다른
+   flex 공간이므로 CSS로도 겹칠 수 없다). 필요 없을 때는 자리만 예약한
+   채 보이지 않게 한다(레이아웃이 나타났다 사라졌다 흔들리지 않도록).
+   landscape에서는 이 레인 자체를 숨기고 우측 rail의 .railScrollHint가
+   대신한다(아래 wide-landscape 미디어쿼리). */
+.shell__scrollHintLane {
+  flex: 0 0 auto;
+  height: 40px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  padding-bottom: 14px;
-  background: linear-gradient(to bottom, transparent, var(--bg) 55%);
-  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease;
 }
 
-.shell__scrollHintPill {
+.shell__scrollHintLane--visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.shell__scrollHintText {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border-radius: 999px;
-  background: var(--primary);
-  color: #fff;
+  gap: 6px;
+  color: var(--text-muted);
   font-size: var(--fs-helper);
   font-weight: 600;
-  line-height: 1;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
 .shell__scrollHintIcon {
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
+}
+
+/* PR #23 real-device QA follow-up §1: same one-time attention pulse as the
+   landscape rail pill (.railScrollHint--attention below) -- the icon
+   bounces briefly once per question, then the class is removed by
+   ScreenShell.tsx's `attention` state (~2s timeout or first real scroll),
+   never a repeating blink. */
+.shell__scrollHintLane--attention .shell__scrollHintIcon {
+  animation: scrollHintBounce 0.5s ease-in-out 3;
+}
+
+@keyframes scrollHintBounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(4px);
+  }
 }
 
 .shell__bottom {
@@ -378,10 +390,76 @@ input {
     padding: 24px 8px;
   }
 
+  .shell__railTop,
+  .shell__railBottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
   .railStepLabel {
     font-size: var(--fs-helper);
     color: var(--text-muted);
     text-align: center;
+  }
+
+  /* Tablet UX v2.3 §9-10, prominence pass (PR #23 real-device QA follow-up
+     §1): portrait의 .shell__scrollHintLane과 동일한 역할(항상 자리를
+     예약해 두고, 스크롤 가능한데 하단에 도달하지 않았을 때만 보이게)을
+     rail 안에서 수행하되, 실기기 QA에서 "너무 작고 흐려서 거의 알아차리지
+     못한다"는 피드백을 받아 일반 helper 텍스트보다 확실히 높은 visual
+     priority를 갖는 pill/card로 바꾼다: primary-soft 배경 + primary 테두리/
+     글자색(고대비), 15px 이상/font-weight 700, 그리고 좁은 rail 폭에서
+     "아래에 항목이 더 있어요" 한 줄이 글자 단위로 쪼개져 보이던 문제를
+     짧은 2줄(railScrollHint__text, "아래에" / "더 있어요")로 바꿔 해결한다.
+     option/CTA를 절대 덮지 않는다는 기존 배치(고정 rail 슬롯) 자체는
+     전혀 바뀌지 않는다 -- 이 규칙은 순수 시각적 강조 스타일 변경이다. */
+  .railScrollHint {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 100%;
+    min-width: 60px;
+    padding: 10px 6px;
+    border: 2px solid var(--primary);
+    border-radius: 14px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 160ms ease;
+  }
+
+  .railScrollHint--visible {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .railScrollHint__icon {
+    /* "icon/arrow를 텍스트보다 조금 크게" */
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .railScrollHint__text {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* 새 질문 진입 시 1회만 재생되는 짧은 attention animation (ScreenShell.tsx
+     의 `attention` state가 ~2초 뒤 또는 실제 스크롤 시 꺼지면 이 클래스
+     자체가 사라진다 -- 계속 깜빡이지 않는다). 화살표 아이콘만 살짝
+     bounce해 "여기 스크롤할 게 있다"는 방향을 직접 가리킨다. */
+  .railScrollHint--attention .railScrollHint__icon {
+    animation: scrollHintBounce 0.5s ease-in-out 3;
   }
 
   .railHelpBtn {
@@ -395,6 +473,13 @@ input {
     text-decoration: underline;
     text-underline-offset: 4px;
     text-align: center;
+  }
+
+  /* portrait 전용 dedicated lane(.shell__scrollHintLane)은 landscape에서
+     숨기고 위 .railScrollHint로 대신한다 -- 두 벌을 동시에 보여주지 않는다
+     (backBtn/railBackBtn과 동일한 display:none 스위칭 원칙). */
+  .shell__scrollHintLane {
+    display: none;
   }
 
   /* Tablet UX v2.2.1 §3: rail만 추가하고 중앙 max-width를 그대로 두면
@@ -640,14 +725,17 @@ input {
   font-weight: 700;
 }
 
-/* Tablet UX v2.2.1 §6: 선택 후 항상 인지 가능한 sticky compact chip --
-   `.shell__scrollHint`(84px 높이, pointer-events:none)와 정확히 같은 sticky
-   메커니즘을 재사용하되 그 바로 위(bottom: 84px)에 고정해 절대 겹치지
-   않는다. 짧은 화면(스크롤 불필요)에서는 sticky가 발동하지 않아 그림 바로
-   아래 자연스러운 위치에 머문다. */
+/* Tablet UX v2.2.1 §6, updated for the v2.3 scroll-hint-lane redesign:
+   선택 후 항상 인지 가능한 sticky compact chip -- 이전에는 겹치는 것을
+   피하려고 옛 overlay pill(`.shell__scrollHint`, 84px) 바로 위에 고정
+   했지만, 그 overlay 자체가 사라지고 `.shell__main`의 형제인 별도
+   `.shell__scrollHintLane`으로 바뀌면서(콘텐츠와 공간을 공유하지 않음)
+   더 이상 겹칠 걱정이 없다 -- 화면 맨 아래(bottom: 0)에 고정한다. 짧은
+   화면(스크롤 불필요)에서는 sticky가 발동하지 않아 그림 바로 아래
+   자연스러운 위치에 머문다. */
 .bodyMap__selectedChip {
   position: sticky;
-  bottom: 84px;
+  bottom: 0;
   z-index: 1;
   display: inline-flex;
   align-items: center;
@@ -831,6 +919,31 @@ input {
   letter-spacing: 0.2em;
   text-align: center;
   font-size: 34px;
+}
+
+/* Tablet UX v2.3 §13: 명시적 "잘 모르겠어요" 버튼(numeric/short_text 전용,
+   Question.unknownOption 지정 시에만 렌더링) -- 기존 .option 선택 버튼과
+   같은 시각 언어를 공유해 "이것도 하나의 선택지"로 읽히게 한다. */
+.textField__unknownBtn {
+  display: block;
+  width: 100%;
+  min-height: var(--btn-min-h);
+  margin-top: 14px;
+  padding: 16px 24px;
+  text-align: center;
+  font-size: var(--fs-answer);
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 16px;
+}
+
+.textField__unknownBtn--selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  font-weight: 700;
+  color: var(--primary);
 }
 
 /* ---------- primary / secondary buttons ---------- */
@@ -1150,6 +1263,13 @@ input {
   background: var(--primary-soft);
   pointer-events: none;
   z-index: 999;
+  /* PR-preview 빌드는 "· PR #23 · <sha>"가 덧붙어 문구가 길어진다 -- 좁은
+     화면에서 줄바꿈되어 두 번째 줄이 헤더 요소와 겹치는 일이 없도록 한
+     줄로 자르고 필요하면 말줄임표만 보여준다. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
 }
 
 /* 좁은 화면(작은 태블릿/폰 미리보기)에서의 축소 */

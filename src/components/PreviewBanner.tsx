@@ -11,13 +11,23 @@
  * 겹치지 않는다. `pointer-events: none`이라 탭 입력을 절대 가로채지 않는다.
  * clinical wording은 전혀 건드리지 않는다 -- 이 배너 문구 자체도 임상
  * 문진과 무관한 순수 운영 안내문이다.
+ *
+ * PR 전용 preview에서만 추가로 `VITE_PREVIEW_PR`/`VITE_PREVIEW_SHA`를
+ * 설정해 "PR #23 · <짧은 SHA>"를 덧붙인다 -- 실기기 QA 담당자가 "이게
+ * 정확히 어느 커밋의 빌드인지"를 배너만 보고 바로 확인할 수 있게 한다.
+ * 이 두 변수를 설정하지 않는 기존 preview workflow는 기존 문구가 완전히
+ * 그대로 유지된다.
  */
 export function PreviewBanner() {
   if (import.meta.env.VITE_PREVIEW_MODE !== 'true') return null
 
+  const pr = import.meta.env.VITE_PREVIEW_PR
+  const sha = import.meta.env.VITE_PREVIEW_SHA
+  const buildLabel = pr && sha ? ` · PR #${pr} · ${sha}` : ''
+
   return (
     <div className="previewBanner" aria-hidden="true">
-      미리보기 환경 · 입력 내용은 전송되지 않습니다
+      미리보기 환경 · 입력 내용은 전송되지 않습니다{buildLabel}
     </div>
   )
 }

@@ -3225,6 +3225,115 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
   전혀 안 보임을 확인. 이 QA 중 위 9번(영어 문구 leak) 버그를 실제로
   발견 → 수정 → 재QA로 사라짐을 확인.
 
+## PR #23 ↔ PR #24 Convergence Batch (Round 17 이후, 신규)
+
+Round 17 종료 직후 승인된 다음 작업: PR #23("Tablet v2.3 UX/Routing
+audit", `fix/tablet-v2-3-ux-and-routing-audit`)과 PR #24는 같은
+`main@b845a877`에서 각자 독립적으로 분기했고 서로 병합되지 않았다.
+지시에 따라 PR #23를 PR #24에 merge/rebase/통째로 cherry-pick하지
+않고, **진짜로 빠져 있고 필요한 non-clinical 코드/테스트만 최소
+범위로 이식**했다.
+
+**이식한 것 (전부 non-clinical, presentation/UX 계층):**
+- `src/types.ts`: `Question.unknownOption?` 필드 추가(opt-in, 미지정
+  시 기존과 완전히 동일하게 렌더링).
+- `src/components/TextInputField.tsx`/`QuestionScreen.tsx`: numeric/
+  short_text 질문에 "잘 모르겠어요" 명시적 skip 버튼 지원.
+- `src/spec/coreSpec.ts`: `SECONDARY_OPTIONS`에서 "없음"을 맨 앞으로
+  재배치(SAFETY_01 등 안전문항은 전혀 건드리지 않음); 신규
+  `LBP_01B_LEG_SCREEN`(다리 증상 유무 사전 확인, "없어요" 선택 시
+  LBP_02/LBP_03에 FROZEN `computeLegState`가 요구하는 NONE/NONE 쌍을
+  미리 채움)와 `LBP_10A_ONSET_AGE`(발병 시기를 decade 단위로 물어
+  기존 LBP_10 YES/NO/UNKNOWN 계약에 매핑, 40대는 의도적으로 UNKNOWN
+  fail-close); `shouldAutoAdvancePast()`라는 **navigation-layer
+  전용 skip**을 도입해 이 화면들의 auto-fill/자동확인 값을 환자에게
+  다시 보여주지 않으면서도 `showIf`/`visibleQuestions`/
+  `pruneStaleResponses`는 전혀 건드리지 않음(FROZEN adapter가 읽는
+  값의 무결성 유지가 최우선).
+- `src/App.tsx`: 위 두 화면의 `setAnswer()` patch 로직 + `nextQuestion`/
+  `goBack`의 `shouldAutoAdvancePast` 배선.
+- `src/components/ScreenShell.tsx`/`styles.css`: scroll hint를 기존
+  overlay pill(`.shell__scrollHint`, 콘텐츠 위에 겹쳐 그리던 방식)에서
+  `.shell__scrollHintLane`(`.shell__main`의 flex 형제 엘리먼트, 구조적으로
+  절대 겹칠 수 없음)로 교체 + 1회성 attention pulse 애니메이션 + 우측
+  rail을 `railTop`/`railBottom`으로 재구성.
+- `src/components/PreviewBanner.tsx`: `VITE_PREVIEW_PR`/`VITE_PREVIEW_SHA`
+  설정 시 빌드 라벨을 덧붙이는 로직(현재 두 preview workflow 모두 이
+  변수를 설정하지 않으므로 inert).
+
+**의도적으로 이식하지 않고 HUMAN DECISION REQUIRED로 보류한 것:**
+1. PR #23의 BodyMap PNG artwork 렌더링(front.png/back.png, inline SVG는
+   손상 시 fallback) — PR #24는 여전히 기존 inline-SVG-only BodyMap을
+   그대로 유지. PNG 채택 여부는 제품 판단.
+2. PR #23의 landscape 전용 우측 rail `railSelection` 기능(Body Map
+   선택 정보를 rail에 항상 표시) — 위 BodyMap 결정에 종속적이고, PR #24는
+   이미 자체적인 `.bodyMap__selectedLabel`/`.bodyMap__selectedChip`
+   메커니즘(스크롤 여부와 무관하게 동작)이 있어 우선순위가 낮음.
+- `getBodyMapZoneLabel` export, `railSelection` prop 자체를 어디에도
+  추가하지 않았다(App.tsx에서 관련 import/계산 코드 전부 제외).
+
+**PR #23에 있었지만 이식하지 않은, 관련 없는 항목:** PR #23의
+`tests/integration.spec.mjs` diff에는 이번 작업과 무관한 NECK/SHOULDER/
+ANKLE_FOOT 모듈의 branch-visibility matrix 테스트, cross-region leak
+audit(섹션 X/Y/Z/AA, 700줄 이상)도 섞여 있었다 — 이번 convergence
+scope 밖이라 이식하지 않음(각 모듈이 필요하면 별도 배치로 논의).
+PR #23의 BodyMap PNG asset 파이프라인(`package.json`의
+`test:bodymap-assets` 스크립트, `.png=dataurl` esbuild loader),
+numeric_scale grid CSS 개선(§16), landscape CTA 높이 축소(§16)도
+이번 범위 밖(BodyMap 결정에 종속되거나, 이번 배치가 다루는 LBP/scroll-
+hint 주제와 무관한 별도 폴리시)이라 제외.
+
+**테스트:** `tests/integration.spec.mjs`의 낡은 W4(LBP_10 옛 문구
+가정, 이제 obsolete)를 새 계약에 맞게 재작성하고, W6(LBP_01B_LEG_SCREEN
+shim)/W7(LBP_10A_ONSET_AGE shim + `mapLbpOnsetDecadeToBefore45` 경계값,
+40대 precision tradeoff 포함)/W8("없음" 재배치)/W11(실제
+`nextQuestion` 알고리즘을 그대로 미러링한 forward-walk 시뮬레이션) 신규
+추가. `tests/questionnaire-volume.spec.mjs`의 LBP 3개 프로필 pinned
+screen/tap count를 +1/+2로 재측정해 갱신(LBP_01B_LEG_SCREEN이 실제
+새 patient-facing 화면이라 floor가 늘어남; LBP_10A/LBP_10 쌍은 이
+프로필들의 greedy walk가 chronic-onset 분기에 도달하지 않아 영향
+없음을 직접 실행으로 확인). `tests/body-map.spec.mjs`의 옛
+`.shell__scrollHint` 픽셀-매칵 overlap 회피 검증 2건을 새 구조적
+불변식(`.shell__scrollHintLane`이 `</main>` 뒤의 flex 형제이고
+position:absolute/sticky/fixed가 아님)으로 교체.
+
+**Opus 검수(model:opus subagent) 결과:** blocking 없음, "commit/push
+해도 안전"으로 판정. `showIf` 동일성, `mapLbpOnsetDecadeToBefore45`의
+total function 여부, `isLbpLegAutofillActive`의 fail-safe 여부,
+`LBP_01` extent-change guard의 정확성, grid2 레이아웃 실제 렌더 경로
+등을 직접 코드로 검증. 단 1건의 HIGH를 "실제 배포된 버그가 아니라
+검증 공백"으로 분류: W6/W7/W11 테스트가 App.tsx의 setAnswer 로직을
+import가 아니라 손으로 복사해 재구현하고 있어, 만약 실제 App.tsx의
+`LBP_03: 'NONE'` 절반이 삭제돼도 그 테스트들은 계속 green으로
+남는다는 false-green 위험을 지적 — 이를 즉시 반영해
+`tests/viewport-budget.spec.mjs`에 App.tsx 소스 자체를 정규식으로
+검증하는 4개 assertion을 추가(기존 HERBAL_ADDON_FIELD 소스-검증
+패턴과 동일 기법)하고, mutation test로 실제 그 정확한 회귀를
+잡아내는 것까지 직접 확인 후 커밋에 포함시켰다.
+
+Backlog(MEDIUM/LOW, 즉시 조치 불필요, 다음 라운드 후보):
+- LBP_01B_LEG_SCREEN에서 이미 선택된 값("있어요"/"잘 모르겠어요")을
+  다시 탭하면 이미 답변된 LBP_02/LBP_03이 불필요하게 초기화됨(복구
+  가능하지만 낭비되는 재입력) — `value !== responses['LBP_01B_LEG_SCREEN']`
+  가드 추가로 해결 가능.
+- `questionnaire-volume.spec.mjs`의 walk는 `shouldAutoAdvancePast`를
+  모델링하지 않아 실제 patient 체감 부담(BACK_ONLY+"없어요" 환자는
+  오히려 화면이 1개 줄어듦)과 이 테스트가 측정하는 "engine-visible
+  screen 수"가 다르다는 점을 diff 주석에 명시해 둠 — 향후 최적화 시
+  착각하지 않도록 주의.
+- `Question.unknownOption`/`.textField__unknownBtn`은 이번 배치에서
+  실제로 사용하는 질문이 없어(LBP_10A_ONSET_AGE는 single_choice로
+  구현됨) 현재 dead code에 가깝다 — 순수 additive/harmless지만 향후
+  numeric 나이 입력이 필요한 다른 질문이 생기면 그때 쓰일 의도적
+  scaffolding.
+- BodyMap 화면에서 `.bodyMap__selectedChip`가 이제 `bottom: 0`(예전엔
+  `84px`)이라 마지막 스크롤 콘텐츠와 더 가까워질 수 있음 — 실기기
+  QA 권장(코드 결함은 아님).
+
+**커밋/푸시:** `feat/doctor-clinical-workspace`에 직접 커밋+push,
+main에는 절대 push하지 않음, merge하지 않음(HUMAN DECISION REQUIRED
+2건은 PR 리뷰에서 사용자에게 별도로 명시).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE).
 

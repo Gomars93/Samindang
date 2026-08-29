@@ -12,7 +12,7 @@
  * 질문 문구 / value / show_if는 Master Spec v1.0 원문 그대로이며 임의로
  * 추가·수정하지 않는다.
  */
-import type { Option, Question, Responses } from '../types'
+import type { AnswerValue, Option, Question, Responses } from '../types'
 import type { SajuInput, TimeBranchKey } from '../saju/types'
 import { ageFromBirthDate } from '../lib/age'
 import { toLbpState } from './lbpAdapter'
@@ -337,7 +337,12 @@ const primaryConcernSecondaryKey = (r: Responses): string | null => {
   return key
 }
 
+// Tablet UX v2.3 §17: SECONDARY_01/REFERENCE_SYMPTOMS_01은 둘 다 안전문항이
+// 아닌 정보용 선택 질문(§18 참고)이라 "없음"을 목록 맨 앞으로 옮긴다 --
+// SAFETY_01/CES/응급 체크리스트류 안전문항에는 이 재배치를 절대 적용하지
+// 않는다(그런 화면들의 옵션 배열은 이 상수를 전혀 참조하지 않음).
 const SECONDARY_OPTIONS: Option[] = [
+  { value: 'none', label: '없음' },
   { value: 'sleep', label: '잠' },
   { value: 'digestion', label: '속·소화' },
   { value: 'bowel', label: '대변' },
@@ -348,7 +353,6 @@ const SECONDARY_OPTIONS: Option[] = [
   { value: 'women', label: '여성 건강' },
   { value: 'weight', label: '체중 관리' },
   { value: 'other', label: '그 밖의 증상' },
-  { value: 'none', label: '없음' },
 ]
 
 const SAFETY_QUESTIONS: Question[] = [
@@ -1061,6 +1065,86 @@ const PAIN_QUESTIONS: Question[] = [
 const IS_LBP_CHRONIC_ONSET = (r: Responses) =>
   r['VISIT_03_SYMPTOM_DURATION'] === '3m_1y' || r['VISIT_03_SYMPTOM_DURATION'] === 'over_1y'
 
+/**
+ * Tablet UX v2.3 §13 (PR #23 real-device QA follow-up, §4-5): 실기기 QA에서
+ * numeric 나이 입력(키보드 입력)이 환자에게 부담스럽다는 피드백을 받아
+ * decade selector(10대/20대/.../50대 이상/잘 모르겠어요)로 교체한다.
+ * FROZEN lbpAdapter.ts가 그대로 읽는 기존 LBP_10 값(YES/NO/UNKNOWN) 계약은
+ * 전혀 바뀌지 않는다 -- lbpLogic.ts의 45세 threshold도 이 함수에서 절대
+ * 재해석하지 않는다(그 threshold는 이미 `computeInflammatoryEligible`
+ * (FROZEN)에 있다).
+ *
+ * 40대는 의도적으로 UNKNOWN으로 fail-close한다 -- 40대에는 45세 threshold의
+ * 양쪽(40-44세=YES 해당, 45-49세=NO 해당)이 모두 섞여 있어, decade 단위
+ * 정보만으로 YES/NO 중 하나를 임의로 결정하면 FROZEN clinical contract를
+ * 왜곡하게 된다. 이는 버그가 아니라 "정밀 정보가 없으면 추측하지 않는다"는
+ * 의도적인 precision tradeoff다(사용자 요청 사항).
+ */
+export const LBP_ONSET_AGE_UNKNOWN_SENTINEL = 'UNKNOWN_AGE'
+/** non-clinical 참고용 metadata -- ALL_QUESTIONS에 속하지 않아 pruneStaleResponses가 건드리지 않는다(HERBAL_ADDON_FIELD와 동일 패턴). lbpLogic.ts/lbpAdapter.ts는 이 필드를 전혀 읽지 않는다. 이제 numeric 나이 대신 환자가 고른 decade 값(예: '30s')을 그대로 보관한다. */
+export const LBP_ONSET_DECADE_FIELD = 'LBP_10_ONSET_DECADE'
+
+export function mapLbpOnsetDecadeToBefore45(raw: AnswerValue): 'YES' | 'NO' | 'UNKNOWN' {
+  if (raw === '10s' || raw === '20s' || raw === '30s') return 'YES'
+  if (raw === '50s_plus') return 'NO'
+  // '40s', 잘 모르겠어요(sentinel), 또는 그 외 malformed 값은 모두
+  // fail-closed UNKNOWN -- 위 함수 주석의 40대 precision tradeoff 참고.
+  return 'UNKNOWN'
+}
+
+/**
+ * Tablet UX v2.3 §8-9/§13 (PR #23 follow-up correction): 환자가 명시적으로
+ * "없어요"(LBP_01B_LEG_SCREEN)를 선택한 뒤/발병 나이를 입력한 뒤에도
+ * LBP_02/LBP_03/LBP_10 화면이 다시 나타나는 것은 실제 UX상 중복이라는
+ * 지적을 반영한다. FROZEN 계약(showIf/required/computeLegState/
+ * computeInflammatoryEligible의 45세 threshold)은 절대 바꾸지 않으면서
+ * "환자에게 보여주지 않는다"를 만들려면, `showIf`를 false로 만드는 방식은
+ * 쓸 수 없다 -- pruneStaleResponses가 "보이지 않는 답"으로 판단해 같은
+ * 호출 안에서 즉시 값을 null로 되돌려 버리기 때문이다(엔진 불변식,
+ * 아래 파일 헤더의 "왜 hide+silently prefill이 안 되는가" 설명 참고).
+ *
+ * 대신 별도의 **navigation-layer skip**을 둔다: `visibleQuestions`/showIf는
+ * 전혀 건드리지 않아 pruneStaleResponses는 이 화면들을 계속 "정상적으로
+ * 보이는, 값이 있는 화면"으로 취급하고(FROZEN adapter가 읽는 값은
+ * 그대로 안전하게 유지), App.tsx의 `nextQuestion`/`goBack`만 이 화면들을
+ * 건너뛰고 지나간다(shouldAutoAdvancePast, 아래). 즉 "논리적으로는
+ * 보이지만, 실제 환자 화면 흐름에서는 렌더링되지 않는다."
+ *
+ * LBP_02/LBP_03는 조건부로만 건너뛴다 -- LBP_01B_LEG_SCREEN='no'가 정확히
+ * 그 shim의 auto-fill 값(LBP_02=[NONE], LBP_03=NONE)을 그대로 갖고 있을
+ * 때만. LBP_01B_LEG_SCREEN을 'yes'/'unknown'으로 바꾸면(App.tsx
+ * setAnswer) 그 즉시 auto-fill 값과 이 provenance 플래그를 함께 지우므로,
+ * 그 뒤로는 두 화면이 다시 정상적으로(건너뛰지 않고) 보인다 -- 환자가
+ * 직접 답한 값과 auto-fill 값이 섞일 수 없다.
+ *
+ * LBP_10는 조건 없이 항상 건너뛴다 -- LBP_10A_ONSET_AGE가 배열에서 항상
+ * 먼저 오고(walk order), 그 답변이 setAnswer에서 즉시 LBP_10을 채우므로
+ * LBP_10 자체는 이제 순수 내부 저장 필드일 뿐이다(§13 참고).
+ */
+export const LBP_LEG_AUTOFILL_FIELD = 'LBP_LEG_AUTOFILL_ACTIVE'
+
+export function isLbpLegAutofillActive(r: Responses): boolean {
+  return (
+    r[LBP_LEG_AUTOFILL_FIELD] === 'yes' &&
+    Array.isArray(r['LBP_02']) &&
+    r['LBP_02'].length === 1 &&
+    r['LBP_02'][0] === 'NONE' &&
+    r['LBP_03'] === 'NONE'
+  )
+}
+
+/**
+ * App.tsx의 nextQuestion()/goBack()이 사용하는 navigation-layer skip
+ * 목록. `visibleQuestions`/showIf는 전혀 바꾸지 않는다 -- 이 함수는
+ * "화면에 실제로 보여줄지"만 결정하고, "논리적으로 존재/응답
+ * 완료했는지"는 기존 엔진(pruneStaleResponses 등)이 그대로 판단한다.
+ */
+export function shouldAutoAdvancePast(q: Question, r: Responses): boolean {
+  if (q.id === 'LBP_02' || q.id === 'LBP_03') return isLbpLegAutofillActive(r)
+  if (q.id === 'LBP_10') return true
+  return false
+}
+
 const LBP_QUESTIONS: Question[] = [
   {
     id: 'LBP_01',
@@ -1077,6 +1161,39 @@ const LBP_QUESTIONS: Question[] = [
       { value: 'BELOW_KNEE', label: '무릎 아래·종아리까지' },
       { value: 'FOOT', label: '발까지' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
+    ],
+  },
+  {
+    // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP_01==='BACK_ONLY'인
+    // 환자가 다리 관련 질문을 "같은 내용을 반복해서 묻는다"고 느끼는
+    // 문제의 해결책. computeLegState(FROZEN lbpLogic.ts)는
+    // leg_symptom_present='NO'가 되려면 LBP_02=['NONE']이고 LBP_03='NONE'인
+    // 것을 "동시에" 요구한다 -- 둘 중 하나만 없애면 fail-closed로 인해
+    // 'UNKNOWN'이 되어 버린다. 이 화면은 그 두 필드를 대신 채우는 게
+    // 아니라, "다리 증상이 있는지"를 하나의 명확한 문장으로 먼저 물어
+    // 이후 LBP_02/LBP_03에 무엇을 미리 선택해 둘지 결정하는 라우팅
+    // 전용 질문이다(payload/adapter에는 노출되지 않음, App.tsx setAnswer
+    // 참고).
+    //
+    // 안전 검토: LBP_02/LBP_03의 required:true/showIf/fail-closed 의미는
+    // 전혀 바뀌지 않는다(FROZEN 계약 그대로) -- "없어요"를 선택하면
+    // 정답을 두 필드에 미리 채우고, **App.tsx의 nextQuestion/goBack이
+    // navigation-layer에서 이 두 화면을 건너뛴다**(shouldAutoAdvancePast,
+    // 이 파일 상단 참고) -- showIf를 false로 만드는 방식이 아니므로
+    // pruneStaleResponses 불변식과 전혀 충돌하지 않는다. "있어요"/"잘
+    // 모르겠어요"를 선택하면 auto-fill과 provenance 플래그를 모두
+    // 지우고 두 화면을 정상적으로(건너뛰지 않고) 보여준다.
+    id: 'LBP_01B_LEG_SCREEN',
+    variable: 'lbp_leg_screen_confirm',
+    input: 'single_choice',
+    question: '허리와 별개로 다리에 저림·감각저하·힘 빠짐 같은 증상이 있나요?',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && r['LBP_01'] === 'BACK_ONLY',
+    options: [
+      { value: 'no', label: '없어요' },
+      { value: 'yes', label: '있어요' },
+      { value: 'unknown', label: '잘 모르겠어요' },
     ],
   },
   {
@@ -1210,13 +1327,56 @@ const LBP_QUESTIONS: Question[] = [
     ],
   },
   {
+    // Tablet UX v2.3 §13 (PR #23 follow-up correction, then real-device QA
+    // follow-up §4-5): 환자에게 "45세" 자체를 노출하는 대신 발병 시기를
+    // decade 단위(10대/20대/.../50대 이상/잘 모르겠어요)로 딱 한 번만
+    // 물어 내부적으로 LBP_10에 YES/NO/UNKNOWN으로 매핑한다(아래 LBP_10
+    // 참고). numeric 키보드 입력은 실기기 QA에서 부담스럽다는 피드백을
+    // 받아 큰 터치 카드 단일 선택으로 교체했다(input: 'single_choice',
+    // layout: 'grid2') -- QuestionScreen.tsx/isAnswered/confirmLabel은
+    // 이미 모든 single_choice 질문을 동일하게 처리하므로 이 화면 자체를
+    // 위한 별도 컴포넌트 변경이 필요 없다. 이 화면 다음에는 확인 화면(구
+    // LBP_10)이 더 이상 patient-facing으로 뜨지 않는다 -- App.tsx의
+    // nextQuestion/goBack이 LBP_10을 navigation-layer에서 항상 건너뛴다
+    // (shouldAutoAdvancePast, 이 파일 상단 참고). 고른 decade 원본은
+    // 임상 계산에 쓰이지 않는 non-clinical 참고용 metadata로만 별도
+    // 보관한다(App.tsx setAnswer, LBP_ONSET_DECADE_FIELD) -- lbpLogic.ts/
+    // lbpAdapter.ts는 전혀 건드리지 않는다. 40대를 임의로 YES/NO 중
+    // 하나로 해석하지 않는 이유는 mapLbpOnsetDecadeToBefore45의 주석
+    // 참고(precision tradeoff, 사용자 요청 사항).
+    id: 'LBP_10A_ONSET_AGE',
+    variable: 'lbp_onset_age_raw',
+    input: 'single_choice',
+    question: '허리통증이 처음 생긴 시기는 언제쯤인가요?',
+    helper: '정확하지 않아도 괜찮아요. 기억나는 정도로 선택해주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
+    layout: 'grid2',
+    options: [
+      { value: '10s', label: '10대' },
+      { value: '20s', label: '20대' },
+      { value: '30s', label: '30대' },
+      { value: '40s', label: '40대' },
+      { value: '50s_plus', label: '50대 이상' },
+      { value: LBP_ONSET_AGE_UNKNOWN_SENTINEL, label: '잘 모르겠어요' },
+    ],
+  },
+  {
     id: 'LBP_10',
     variable: 'lbp_onset_before_45',
     input: 'single_choice',
-    // Tablet UX v2.2.1 §13: 순수 copy change -- id/variable/options/
-    // required/showIf/threshold/logic 전부 그대로, 어색한 한국어 문구만
-    // 자연스럽게 다듬었다.
-    question: '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?',
+    // Tablet UX v2.3 §13 (PR #23 follow-up correction, then real-device QA
+    // follow-up §4-5): LBP_10A(위)에서 고른 decade를 바탕으로 App.tsx가
+    // 이 필드를 자동으로 YES/NO/UNKNOWN 중 하나로 채운다(45세 threshold는
+    // 여전히 어떤 화면 문구에도
+    // 노출하지 않는다). 이 화면 자체는 이제 patient navigation에서
+    // 절대 렌더링되지 않는다 -- App.tsx의 nextQuestion/goBack이 항상
+    // 건너뛴다(shouldAutoAdvancePast, coreSpec.ts 상단). id/variable/
+    // options/required/showIf/threshold/logic은 이전과 완전히 동일하게
+    // 유지한다(FROZEN adapter 계약 불변) -- 문항 문구는 이제 환자에게
+    // 보이지 않으므로 그대로 둔다(내부 저장용 라벨 역할만).
+    question: '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.',
     required: false,
     step: '상세 증상',
     // 원본 YAML은 patient_age 45-120 조건도 요구하지만, 이 Module 시점에는

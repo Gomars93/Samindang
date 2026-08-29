@@ -19,6 +19,12 @@ import {
   questionnaireMode,
   HERBAL_ADDON_FIELD,
   SYSTEMIC_BLOCK_QUESTION_IDS,
+  LBP_ONSET_DECADE_FIELD,
+  LBP_ONSET_AGE_UNKNOWN_SENTINEL,
+  mapLbpOnsetDecadeToBefore45,
+  LBP_LEG_AUTOFILL_FIELD,
+  isLbpLegAutofillActive,
+  shouldAutoAdvancePast,
 } from './.spec-bundle.mjs'
 
 let passCount = 0
@@ -3758,17 +3764,33 @@ for (const sex of ['male', 'female']) {
   assert('W3 (Additional=sleep): final mode is pain_fast', questionnaireMode(r) === 'pain_fast')
 }
 
-// W4: LBP_10 wording fix (§13) -- pure copy change, everything else
-// byte-identical. Exact-string assertion so a future edit can't silently
-// drift the wording again without this test catching it.
+// W4: LBP_10 wording (v2.2.1 §16, superseded by v2.3 §13 onset-age
+// redesign): the 45-year number is never shown to the patient anymore.
+// LBP_10A_ONSET_AGE now asks for a decade bucket (10대/20대/.../50대
+// 이상/잘 모르겠어요) as a single_choice grid, and LBP_10 becomes a
+// lightweight auto-confirm screen whose value is pre-filled by App.tsx's
+// mapLbpOnsetDecadeToBefore45() before the patient ever sees it. The
+// FROZEN lbpLogic.ts/lbpAdapter.ts still read LBP_10 exactly as before
+// (variable/options/required all unchanged) -- only how the value gets
+// there changed.
 {
   const lbp10 = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
+  const lbp10a = ALL_QUESTIONS.find((q) => q.id === 'LBP_10A_ONSET_AGE')
   assert('W4: LBP_10 exists', !!lbp10)
-  assert('W4: LBP_10 question text is the corrected natural-Korean wording', lbp10.question === '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?')
-  assert('W4: LBP_10 old awkward wording is gone', lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
-  assert('W4: LBP_10 variable unchanged', lbp10.variable === 'lbp_onset_before_45')
+  assert('W4: LBP_10A_ONSET_AGE exists (new v2.3 §13 pre-question)', !!lbp10a)
+  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.')
+  assert('W4: LBP_10 old direct 45-year wording is gone from patient-facing text', lbp10.question !== '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?' && lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
+  assert('W4: LBP_10 variable unchanged (FROZEN adapter still reads this)', lbp10.variable === 'lbp_onset_before_45')
   assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)
-  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+  assert('W4: LBP_10 options unchanged (NO/YES/UNKNOWN values, FROZEN contract)', JSON.stringify(lbp10.options.map((o) => o.value)) === JSON.stringify(['NO', 'YES', 'UNKNOWN']))
+  assert('W4: LBP_10 showIf unchanged (same visibility gate as before)', typeof lbp10.showIf === 'function')
+  assert('W4: LBP_10A_ONSET_AGE is a single_choice decade selector', lbp10a.input === 'single_choice')
+  assert(
+    'W4: LBP_10A_ONSET_AGE offers exactly the 6 decade buckets in order',
+    JSON.stringify(lbp10a.options.map((o) => o.value)) === JSON.stringify(['10s', '20s', '30s', '40s', '50s_plus', 'UNKNOWN_AGE']),
+  )
+  assert('W4: the 45-year number never appears in the patient-facing question/helper text', !lbp10a.question.includes('45') && !(lbp10a.helper || '').includes('45'))
+  assert('W4: LBP_10A_ONSET_AGE uses the big-card grid layout', lbp10a.layout === 'grid2')
 }
 
 // W5: HERBAL_ADDON_FIELD stale-reset (§12) -- a brand-new blank Responses
@@ -3782,6 +3804,242 @@ for (const sex of ['male', 'female']) {
   const fresh = emptyResponses()
   assert('W5: a brand-new blank Responses object never has HERBAL_ADDON_FIELD set to yes', fresh['HERBAL_ADDON_ACTIVE'] !== 'yes')
   assert('W5: questionnaireMode on a truly blank Responses object is never herbal_addon', questionnaireMode(fresh) !== 'herbal_addon')
+}
+
+// Real Question objects (not mock literals) for the shouldAutoAdvancePast
+// checks below -- W6/W7 exercise the actual exported predicate against the
+// actual LBP module questions.
+const LBP_02_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_02')
+const LBP_03_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_03')
+const LBP_10_Q = ALL_QUESTIONS.find((q) => q.id === 'LBP_10')
+
+// W6: LBP_01B_LEG_SCREEN presentation shim (v2.3 §8-9). These tests mirror
+// App.tsx's setAnswer() patch logic exactly so they exercise the *actual*
+// patch shape the shim produces. LBP_LEG_AUTOFILL_FIELD is a non-clinical
+// provenance flag (same non-question-metadata pattern as
+// HERBAL_ADDON_FIELD/LBP_ONSET_DECADE_FIELD), and shouldAutoAdvancePast is
+// a navigation-layer skip so the patient is never actually shown
+// LBP_02/LBP_03 once "없어요" auto-fills them -- showIf/visibleQuestions/
+// pruneStaleResponses are completely unchanged (LBP_02/LBP_03 stay
+// "visible" to the engine), only what App.tsx's nextQuestion/goBack
+// actually render to the patient changes.
+function applyLbp01bShim(r, value) {
+  let patch = { ...r, LBP_01B_LEG_SCREEN: value }
+  if (value === 'no') {
+    patch = { ...patch, LBP_02: ['NONE'], LBP_03: 'NONE', [LBP_LEG_AUTOFILL_FIELD]: 'yes' }
+  } else {
+    patch = { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+  }
+  return pruneStaleResponses(patch).responses
+}
+function applyLbp01Change(prevResponses, newValue) {
+  let patch = { ...prevResponses, LBP_01: newValue }
+  if (prevResponses['LBP_01'] === 'BACK_ONLY' && prevResponses['LBP_01B_LEG_SCREEN'] === 'no' && newValue !== 'BACK_ONLY') {
+    patch = { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+  }
+  return pruneStaleResponses(patch).responses
+}
+// Mirrors App.tsx's setAnswer() guard for direct LBP_02/LBP_03 edits: the
+// provenance flag is cleared the moment either field is answered directly
+// (only reachable when the auto-fill was never active, since an active
+// auto-fill means these screens are skipped in navigation).
+function applyLbp02Or03DirectAnswer(r, id, value) {
+  const patch = { ...r, [id]: value, [LBP_LEG_AUTOFILL_FIELD]: null }
+  return pruneStaleResponses(patch).responses
+}
+{
+  const base = withPainCare({ PAIN_01: 'low_back_pelvis', LBP_01: 'BACK_ONLY' })
+  assert('W6: LBP_01B_LEG_SCREEN is reachable once LBP_01=BACK_ONLY', visibleIds(base).has('LBP_01B_LEG_SCREEN'))
+  assert('W6: LBP_01B_LEG_SCREEN is not shown for non-BACK_ONLY extents', !visibleIds(set(base, { LBP_01: 'THIGH' })).has('LBP_01B_LEG_SCREEN'))
+
+  // "없어요" -> LBP_02=['NONE'] and LBP_03='NONE' simultaneously, which is
+  // exactly the FROZEN computeLegState contract for leg_symptom_present='NO'.
+  const no = applyLbp01bShim(base, 'no')
+  assert('W6 CRITICAL: "없어요" fills LBP_02 to [NONE]', JSON.stringify(no['LBP_02']) === JSON.stringify(['NONE']))
+  assert('W6 CRITICAL: "없어요" fills LBP_03 to NONE', no['LBP_03'] === 'NONE')
+  assert('W6: LBP_02/LBP_03 stay engine-visible after "없어요" (showIf/pruneStaleResponses unchanged)', visibleIds(no).has('LBP_02') && visibleIds(no).has('LBP_03'))
+  assert('W6 CRITICAL: LBP_02 is navigation-skipped from the patient once auto-filled', shouldAutoAdvancePast(LBP_02_Q, no))
+  assert('W6 CRITICAL: LBP_03 is navigation-skipped from the patient once auto-filled', shouldAutoAdvancePast(LBP_03_Q, no))
+  assert('W6: isLbpLegAutofillActive is true for this exact state', isLbpLegAutofillActive(no))
+
+  // "있어요" / "잘 모르겠어요" -> must NOT silently pre-fill a leg-negative
+  // answer; the patient still answers LBP_02/LBP_03 themselves, and neither
+  // screen is navigation-skipped.
+  const yes = applyLbp01bShim(base, 'yes')
+  assert('W6: "있어요" leaves LBP_02 unanswered (patient answers directly)', yes['LBP_02'] === null)
+  assert('W6: "있어요" leaves LBP_03 unanswered (patient answers directly)', yes['LBP_03'] === null)
+  assert('W6: "있어요" never navigation-skips LBP_02', !shouldAutoAdvancePast(LBP_02_Q, yes))
+  assert('W6: "있어요" never navigation-skips LBP_03', !shouldAutoAdvancePast(LBP_03_Q, yes))
+  const unknown = applyLbp01bShim(base, 'unknown')
+  assert('W6: "잘 모르겠어요" leaves LBP_02 unanswered', unknown['LBP_02'] === null)
+  assert('W6: "잘 모르겠어요" leaves LBP_03 unanswered', unknown['LBP_03'] === null)
+  assert('W6: "잘 모르겠어요" never navigation-skips LBP_02', !shouldAutoAdvancePast(LBP_02_Q, unknown))
+
+  // Back-navigation restore. Switching LBP_01B_LEG_SCREEN from 'no' to
+  // 'yes'/'unknown' after the auto-fill was active must clear both the
+  // stored NONE/NONE values AND the navigation skip -- LBP_02 becomes a
+  // normal, patient-facing screen again.
+  const backToYes = applyLbp01bShim(no, 'yes')
+  assert('W6 CRITICAL: switching LBP_01B_LEG_SCREEN back to "있어요" clears the auto-filled LBP_02', backToYes['LBP_02'] === null)
+  assert('W6 CRITICAL: switching LBP_01B_LEG_SCREEN back to "있어요" clears the auto-filled LBP_03', backToYes['LBP_03'] === null)
+  assert('W6 CRITICAL: LBP_02 is no longer navigation-skipped after switching away from "없어요"', !shouldAutoAdvancePast(LBP_02_Q, backToYes))
+  assert('W6 CRITICAL: LBP_03 is no longer navigation-skipped after switching away from "없어요"', !shouldAutoAdvancePast(LBP_03_Q, backToYes))
+  assert('W6: LBP_02 is still a normal, engine-visible screen the patient can now answer directly', visibleIds(backToYes).has('LBP_02'))
+  const backToUnknown = applyLbp01bShim(no, 'unknown')
+  assert('W6: switching to "잘 모르겠어요" also clears the navigation skip', !shouldAutoAdvancePast(LBP_02_Q, backToUnknown))
+
+  // Direct-answer provenance guard: once LBP_02 is answered directly (only
+  // reachable after the flow above restores it to a normal screen), the
+  // provenance flag must already be gone -- and even if it somehow
+  // weren't, the value-shape check in isLbpLegAutofillActive would still
+  // refuse to treat a different value as the shim's own auto-fill.
+  const directAnswer = applyLbp02Or03DirectAnswer(backToYes, 'LBP_02', ['PARESTHESIA'])
+  assert('W6: a direct LBP_02 answer is never mistaken for the auto-fill', !shouldAutoAdvancePast(LBP_02_Q, directAnswer))
+  assert('W6: isLbpLegAutofillActive is false once LBP_02 holds a genuine non-NONE answer', !isLbpLegAutofillActive(directAnswer))
+
+  // Guard: going back and changing LBP_01 away from BACK_ONLY after the
+  // shim auto-filled LBP_02/LBP_03 must clear that stale auto-fill (value
+  // AND provenance flag) so DoctorView never displays a leg-negative
+  // answer the patient never gave for their new (non-BACK_ONLY) extent,
+  // and so the navigation skip cannot linger on stale data.
+  const afterBackToThigh = applyLbp01Change(no, 'THIGH')
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the shim-filled LBP_02', afterBackToThigh['LBP_02'] === null)
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the shim-filled LBP_03', afterBackToThigh['LBP_03'] === null)
+  assert('W6 CRITICAL: changing LBP_01 away from BACK_ONLY clears the provenance flag', afterBackToThigh[LBP_LEG_AUTOFILL_FIELD] === null)
+
+  // Guard must NOT fire when LBP_02/LBP_03 were genuinely patient-answered
+  // (not the shim's own auto-fill).
+  const realAnswer = set(yes, { LBP_02: ['PARESTHESIA'], LBP_03: 'RIGHT' })
+  const afterChangeWithRealAnswer = applyLbp01Change(realAnswer, 'THIGH')
+  assert('W6: genuinely patient-answered LBP_02 is not clobbered by the guard', JSON.stringify(afterChangeWithRealAnswer['LBP_02']) === JSON.stringify(['PARESTHESIA']))
+  assert('W6: genuinely patient-answered LBP_03 is not clobbered by the guard', afterChangeWithRealAnswer['LBP_03'] === 'RIGHT')
+
+  // Guard must not fire when the shim's answer was NOT "no".
+  const afterYesThenExtentChange = applyLbp01Change(yes, 'THIGH')
+  assert('W6: no spurious clear when shim answer was "있어요" (nothing to clear)', afterYesThenExtentChange['LBP_02'] === null && afterYesThenExtentChange['LBP_03'] === null)
+}
+
+// W7: LBP_10A_ONSET_AGE presentation shim (v2.3 §13): decade-selector ->
+// LBP_10 YES/NO/UNKNOWN mapping (mapLbpOnsetDecadeToBefore45), plus the
+// App.tsx setAnswer patch shape that writes LBP_10 + LBP_ONSET_DECADE_FIELD
+// together, plus the navigation-layer skip that means LBP_10 is NEVER
+// shown to the patient -- showIf/required/options/variable are all
+// unchanged (FROZEN adapter contract), only what App.tsx's nextQuestion/
+// goBack actually render changes (shouldAutoAdvancePast unconditionally
+// skips LBP_10, coreSpec.ts).
+{
+  assert('W7: 10대 maps to YES', mapLbpOnsetDecadeToBefore45('10s') === 'YES')
+  assert('W7: 20대 maps to YES', mapLbpOnsetDecadeToBefore45('20s') === 'YES')
+  assert('W7: 30대 maps to YES', mapLbpOnsetDecadeToBefore45('30s') === 'YES')
+  assert('W7 CRITICAL (precision tradeoff): 40대 fails closed to UNKNOWN, never guessed as YES or NO', mapLbpOnsetDecadeToBefore45('40s') === 'UNKNOWN')
+  assert('W7: 50대 이상 maps to NO', mapLbpOnsetDecadeToBefore45('50s_plus') === 'NO')
+  assert('W7: the explicit "잘 모르겠어요" sentinel maps to UNKNOWN', mapLbpOnsetDecadeToBefore45(LBP_ONSET_AGE_UNKNOWN_SENTINEL) === 'UNKNOWN')
+  assert('W7: an unrecognized/malformed decade value fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45('not-a-decade') === 'UNKNOWN')
+  assert('W7: empty string fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45('') === 'UNKNOWN')
+  assert('W7: null fails closed to UNKNOWN', mapLbpOnsetDecadeToBefore45(null) === 'UNKNOWN')
+
+  const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  assert('W7: LBP_10A_ONSET_AGE is reachable for chronic-onset LBP patients', visibleIds(chronic).has('LBP_10A_ONSET_AGE'))
+  assert('W7: LBP_10 stays engine-visible alongside it (showIf unchanged, FROZEN adapter still reads it)', visibleIds(chronic).has('LBP_10'))
+  assert('W7 CRITICAL: LBP_10 is unconditionally navigation-skipped even before any decade is chosen', shouldAutoAdvancePast(LBP_10_Q, chronic))
+
+  function applyLbp10aShim(r, decade) {
+    const patch = { ...r, LBP_10A_ONSET_AGE: decade, LBP_10: mapLbpOnsetDecadeToBefore45(decade), [LBP_ONSET_DECADE_FIELD]: decade }
+    return pruneStaleResponses(patch).responses
+  }
+  const filled10s = applyLbp10aShim(chronic, '10s')
+  assert('W7: choosing 10대 pre-fills LBP_10 to YES', filled10s['LBP_10'] === 'YES')
+  assert('W7: the chosen decade is preserved in the non-clinical metadata field', filled10s[LBP_ONSET_DECADE_FIELD] === '10s')
+  assert('W7: LBP_10 stays engine-visible/answerable in storage terms', visibleIds(filled10s).has('LBP_10'))
+  assert('W7: LBP_10 patient screen is never rendered (navigation-skipped) after choosing 10대', shouldAutoAdvancePast(LBP_10_Q, filled10s))
+
+  const filled40s = applyLbp10aShim(chronic, '40s')
+  assert('W7 CRITICAL (precision tradeoff): choosing 40대 pre-fills LBP_10 to UNKNOWN, never YES or NO', filled40s['LBP_10'] === 'UNKNOWN')
+
+  const filledOlder = applyLbp10aShim(chronic, '50s_plus')
+  assert('W7 CRITICAL: choosing 50대 이상 pre-fills LBP_10 to NO', filledOlder['LBP_10'] === 'NO')
+
+  const filledUnknown = applyLbp10aShim(chronic, LBP_ONSET_AGE_UNKNOWN_SENTINEL)
+  assert('W7 CRITICAL: "잘 모르겠어요" pre-fills LBP_10 to UNKNOWN (fail-closed, no guess)', filledUnknown['LBP_10'] === 'UNKNOWN')
+
+  // Back-navigation restore: changing the decade answer must re-derive
+  // LBP_10 correctly every time, never leaving a stale value.
+  const backTo30s = applyLbp10aShim(filled40s, '30s')
+  assert('W7 (back-nav): 40대 -> 30대 correctly re-derives LBP_10 to YES', backTo30s['LBP_10'] === 'YES')
+
+  // Non-chronic-onset patients never see either screen (existing gate unchanged).
+  const acute = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: '1_3m' })
+  assert('W7: LBP_10A_ONSET_AGE hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10A_ONSET_AGE'))
+  assert('W7: LBP_10 also hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10'))
+}
+
+// W8: "없음" first-position reorder (v2.3 §17) -- non-safety optional
+// pickers only. SECONDARY_01/REFERENCE_SYMPTOMS_01 share SECONDARY_OPTIONS
+// and are both info-only/optional, so "없음" moves to index 0 for both.
+// SAFETY_01 (a real safety checklist) has its own separate options array
+// and must be completely untouched by this change.
+{
+  const sec01 = ALL_QUESTIONS.find((q) => q.id === 'SECONDARY_01')
+  const ref01 = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
+  const safety01 = ALL_QUESTIONS.find((q) => q.id === 'SAFETY_01')
+  assert('W8: SECONDARY_01 options[0] is "없음" (none)', sec01.options[0].value === 'none')
+  assert('W8: REFERENCE_SYMPTOMS_01 options[0] is "없음" (none)', ref01.options[0].value === 'none')
+  assert('W8 CRITICAL: SAFETY_01 (a real safety checklist) keeps "해당 없음" LAST, untouched', safety01.options[safety01.options.length - 1].value === 'none' && safety01.options[0].value !== 'none')
+  // optionsIf (used at render time, e.g. excluding the already-chosen
+  // primary/additional category) must also keep 'none' first -- it's a
+  // filter over the same reordered array, not a fresh unordered one.
+  const filteredRef = ref01.optionsIf(withPainCare({ PAIN_01: 'low_back_pelvis' }))
+  assert('W8: REFERENCE_SYMPTOMS_01 optionsIf() output also keeps "없음" first', filteredRef[0].value === 'none')
+}
+
+// W11 (forward-walk simulation): mirrors App.tsx's actual nextQuestion()
+// algorithm (visibleQuestions + shouldAutoAdvancePast) to verify the real
+// patient-visible screen SEQUENCE, not just each question's individual
+// skip predicate in isolation.
+function simulateNextQuestion(fromId, r) {
+  const list = visibleQuestions(r)
+  const fromIdx = list.findIndex((q) => q.id === fromId)
+  let idx = fromIdx >= 0 ? fromIdx + 1 : 0
+  while (idx < list.length && shouldAutoAdvancePast(list[idx], r)) idx += 1
+  return list[idx]
+}
+{
+  const chronic = withPainCare({ PAIN_01: 'low_back_pelvis', VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  const afterAgeEntered = (() => {
+    const patch = { ...chronic, LBP_10A_ONSET_AGE: '30s', LBP_10: mapLbpOnsetDecadeToBefore45('30s'), [LBP_ONSET_DECADE_FIELD]: '30s' }
+    return pruneStaleResponses(patch).responses
+  })()
+  const nextAfterOnsetAge = simulateNextQuestion('LBP_10A_ONSET_AGE', afterAgeEntered)
+  assert(
+    'W11 CRITICAL: the real forward walk never lands on LBP_10 as the next screen after LBP_10A_ONSET_AGE (it is skipped entirely)',
+    nextAfterOnsetAge !== undefined && nextAfterOnsetAge.id !== 'LBP_10',
+  )
+  assert('W11: a next screen does exist after skipping LBP_10 (walk does not dead-end)', nextAfterOnsetAge !== undefined)
+
+  // Same simulation for the leg-symptom shim: after LBP_01B_LEG_SCREEN='no'
+  // auto-fills LBP_02/LBP_03, the real forward walk must land on whatever
+  // comes after LBP_03, never on LBP_02 or LBP_03 themselves.
+  const backOnlyBase = withPainCare({ PAIN_01: 'low_back_pelvis', LBP_01: 'BACK_ONLY' })
+  const afterLegScreenNo = applyLbp01bShim(backOnlyBase, 'no')
+  const nextAfterLegScreen = simulateNextQuestion('LBP_01B_LEG_SCREEN', afterLegScreenNo)
+  assert(
+    'W11 CRITICAL: the real forward walk never lands on LBP_02 right after LBP_01B_LEG_SCREEN="없어요" (it is skipped)',
+    nextAfterLegScreen !== undefined && nextAfterLegScreen.id !== 'LBP_02',
+  )
+  assert(
+    'W11 CRITICAL: the real forward walk never lands on LBP_03 either (both auto-filled screens are skipped together)',
+    nextAfterLegScreen !== undefined && nextAfterLegScreen.id !== 'LBP_03',
+  )
+
+  // Back-navigation restore: once the shim is switched to "있어요", the
+  // same simulated walk starting from LBP_01B_LEG_SCREEN must land on
+  // LBP_02 next (the screen is no longer skipped).
+  const afterLegScreenYes = applyLbp01bShim(backOnlyBase, 'yes')
+  const nextAfterLegScreenYes = simulateNextQuestion('LBP_01B_LEG_SCREEN', afterLegScreenYes)
+  assert(
+    'W11 CRITICAL: after switching to "있어요" the very next screen in the real walk is LBP_02 (no longer skipped)',
+    nextAfterLegScreenYes !== undefined && nextAfterLegScreenYes.id === 'LBP_02',
+  )
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

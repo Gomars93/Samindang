@@ -303,14 +303,18 @@ function cssBlock(css, selector) {
   assert('styles.css: .bodyMap__selectedChip rule exists', Boolean(chipCss))
   assert('styles.css: .bodyMap__selectedChip is sticky (stays visible while scrolling)', /position:\s*sticky/.test(chipCss))
 
-  const hintCssForChip = cssBlock(CSS, '.shell__scrollHint')
-  const hintHeightMatch = hintCssForChip.match(/height:\s*(\d+)px/)
-  const chipBottomMatch = chipCss.match(/bottom:\s*(\d+)px/)
+  // Tablet UX v2.3 §9-10 scroll-hint-lane redesign: the old overlay-based
+  // .shell__scrollHint pill is gone entirely, replaced by
+  // .shell__scrollHintLane -- a structurally separate flex sibling of
+  // .shell__main that reserves its own space and can never overlap
+  // scrolled content. The chip no longer needs to coordinate a matching
+  // "clear the pill height" bottom offset; it sticks flush to the bottom
+  // (bottom: 0) since there is nothing left to clear.
+  assert('styles.css CRITICAL: the old overlay-based .shell__scrollHint class is fully removed (replaced by a non-overlapping lane)', !CSS.includes('.shell__scrollHint {') && !CSS.includes('.shell__scrollHintPill'))
+  assert('styles.css: .shell__scrollHintLane (the new non-overlapping replacement) exists', CSS.includes('.shell__scrollHintLane'))
+  const chipBottomMatch = chipCss.match(/bottom:\s*(\d+)(?:px)?/)
   assert('styles.css: .bodyMap__selectedChip declares a numeric sticky bottom offset', Boolean(chipBottomMatch))
-  assert(
-    'styles.css CRITICAL: .bodyMap__selectedChip sticky offset sits at or above the scroll-hint pill height (chip never overlaps the pill)',
-    Boolean(chipBottomMatch) && Boolean(hintHeightMatch) && Number(chipBottomMatch[1]) >= Number(hintHeightMatch[1]),
-  )
+  assert('styles.css: .bodyMap__selectedChip sticks flush to the bottom (bottom: 0, nothing left to clear)', Number(chipBottomMatch[1]) === 0)
 }
 
 {
@@ -324,22 +328,36 @@ function cssBlock(css, selector) {
 }
 
 {
-  // 9. styles.css: scroll hint no longer risks covering the last option --
-  // .shell__main's bottom padding must be >= the scroll hint pill's own
-  // height (Tablet UX v2.2 §11 fix; see styles.css comment for the math).
+  // 9. Tablet UX v2.3 §9-10: the scroll hint can no longer cover the last
+  // option/CTA/selected-chip AT ALL, in any scroll position -- not just
+  // "the last option specifically" (the old v2.2 §11 padding-coordination
+  // fix this replaces only guarded the very bottom of the list, via a
+  // padding-vs-pill-height arithmetic match that a future edit could
+  // silently break). The new .shell__scrollHintLane is a structurally
+  // separate flex sibling of .shell__main (never inside its scrollable
+  // box, never position:absolute/sticky/fixed over it), so this is a
+  // zero-overlap-by-construction guarantee instead.
   const mainCss = cssBlock(CSS, '.shell__main')
   assert('styles.css: .shell__main rule exists', Boolean(mainCss))
   const paddingMatch = mainCss.match(/padding:\s*[\d.]+px\s+[^\s]+\s+(\d+)px/)
   assert('styles.css: .shell__main declares a 3-value padding shorthand ending in a px bottom value', Boolean(paddingMatch))
-  const hintCss = cssBlock(CSS, '.shell__scrollHint')
-  assert('styles.css: .shell__scrollHint rule exists', Boolean(hintCss))
-  const hintHeightMatch = hintCss.match(/height:\s*(\d+)px/)
-  assert('styles.css: .shell__scrollHint declares a height', Boolean(hintHeightMatch))
+
+  const laneCss = cssBlock(CSS, '.shell__scrollHintLane')
+  assert('styles.css: .shell__scrollHintLane rule exists', Boolean(laneCss))
   assert(
-    'styles.css: .shell__main bottom padding >= scroll hint height (last option can never sit behind the pill)',
-    Number(paddingMatch[1]) >= Number(hintHeightMatch[1]),
+    'styles.css: .shell__scrollHintLane is a normal flex-flow item (flex: 0 0 auto), not position:absolute/sticky/fixed overlaying content',
+    /flex:\s*0 0 auto/.test(laneCss) && !/position:\s*(absolute|sticky|fixed)/.test(laneCss),
   )
-  assert('styles.css: .shell__scrollHint keeps pointer-events: none (never intercepts taps)', /pointer-events:\s*none/.test(hintCss))
+  const laneHeightMatch = laneCss.match(/height:\s*(\d+)px/)
+  assert('styles.css: .shell__scrollHintLane declares a fixed height', Boolean(laneHeightMatch))
+  assert('styles.css: .shell__scrollHintLane height is within the required 32-44px dedicated-lane range (portrait)', Boolean(laneHeightMatch) && Number(laneHeightMatch[1]) >= 32 && Number(laneHeightMatch[1]) <= 44)
+
+  const screenShellSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'ScreenShell.tsx'), 'utf8')
+  const mainCloseIdx = screenShellSrc.indexOf('</main>')
+  const laneOpenIdx = screenShellSrc.indexOf('shell__scrollHintLane')
+  assert('ScreenShell.tsx CRITICAL: the scroll-hint lane markup is a sibling AFTER </main> closes, never inside <main> (cannot overlay scrollable content)', mainCloseIdx !== -1 && laneOpenIdx !== -1 && laneOpenIdx > mainCloseIdx)
+
+  assert('styles.css CRITICAL: no opacity-gradient-over-content technique remains anywhere for the scroll hint (linear-gradient tied to scroll hint removed)', !/shell__scrollHint[\s\S]{0,10}\{[^}]*linear-gradient/.test(CSS))
 }
 
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

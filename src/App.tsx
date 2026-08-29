@@ -23,15 +23,19 @@ import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
   HERBAL_ADDON_FIELD,
+  LBP_LEG_AUTOFILL_FIELD,
+  LBP_ONSET_DECADE_FIELD,
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
   buildSajuInput,
   computeFlags,
+  mapLbpOnsetDecadeToBefore45,
   primaryConcernKey,
   pruneStaleResponses,
   questionnaireMode,
+  shouldAutoAdvancePast,
   visibleQuestions,
 } from './spec/coreSpec'
 import type { AnswerValue, Question, Responses } from './types'
@@ -59,6 +63,13 @@ const emptyResponses = (): Responses => ({
   // 만들 뿐 이전 Responses를 절대 스프레드하지 않는다 -- 이 줄은 그
   // 보장을 명시적으로 코드에 남겨 감사 가능하게 하기 위함이다).
   [HERBAL_ADDON_FIELD]: null,
+  // Tablet UX v2.3 §13: LBP_ONSET_DECADE_FIELD도 같은 이유로 non-question
+  // metadata라 자동 초기화되지 않는다 -- 동일하게 명시적으로 null 처리.
+  [LBP_ONSET_DECADE_FIELD]: null,
+  // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP_LEG_AUTOFILL_FIELD도
+  // 같은 이유로 non-question metadata라 자동 초기화되지 않는다 --
+  // 동일하게 명시적으로 null 처리.
+  [LBP_LEG_AUTOFILL_FIELD]: null,
 })
 
 const newSessionId = () =>
@@ -371,10 +382,23 @@ function AppContent() {
 
   /* ---------- navigation ---------- */
 
+  // Tablet UX v2.3 §8-9/§13 (PR #23 follow-up correction): navigation-layer
+  // auto-skip for LBP_02/LBP_03 (when the LBP_01B_LEG_SCREEN shim auto-filled
+  // them) and LBP_10 (always, once LBP_10A_ONSET_AGE has taken over). This
+  // is deliberately separate from `visibleQuestions`/showIf -- those stay
+  // completely unchanged so pruneStaleResponses keeps treating these
+  // screens as normal, answered, visible questions (the FROZEN adapter
+  // reads their stored values exactly as before). Only what actually gets
+  // *rendered* to the patient changes; see shouldAutoAdvancePast in
+  // coreSpec.ts for the exact skip conditions and safety writeup.
   const nextQuestion = (from: string, r: Responses): Question | undefined => {
     const list = visibleQuestions(r)
-    const idx = list.findIndex((q) => q.id === from)
-    return idx >= 0 ? list[idx + 1] : list[0]
+    const fromIdx = list.findIndex((q) => q.id === from)
+    let idx = fromIdx >= 0 ? fromIdx + 1 : 0
+    while (idx < list.length && shouldAutoAdvancePast(list[idx], r)) {
+      idx += 1
+    }
+    return list[idx]
   }
 
   const goNext = () => {
@@ -396,11 +420,16 @@ function AppContent() {
 
   const goBack = () => {
     if (current && current.id.startsWith('MS_')) setPanelBackCount((c) => c + 1)
-    // show_if 변경으로 더 이상 표시되지 않는 화면은 건너뛴다
+    // show_if 변경으로 더 이상 표시되지 않는 화면은 건너뛴다. Under normal
+    // forward navigation, an auto-skipped question (shouldAutoAdvancePast)
+    // is never pushed onto `visited` in the first place -- nextQuestion
+    // already skips past it -- so this extra check is a defensive mirror
+    // of that same navigation-layer skip, not the primary mechanism.
     const stack = [...visited]
     while (stack.length > 0) {
       const prev = stack.pop() as string
-      if (visible.some((q) => q.id === prev)) {
+      const prevQuestion = visible.find((q) => q.id === prev)
+      if (prevQuestion && !shouldAutoAdvancePast(prevQuestion, responses)) {
         setVisited(stack)
         setCurrentId(prev)
         return
@@ -410,11 +439,57 @@ function AppContent() {
   }
 
   const setAnswer = (q: Question, value: AnswerValue) => {
+    let patch: Responses = { ...responses, [q.id]: value }
+
+    // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP leg-symptom
+    // compact-confirm presentation shim. LBP_02/LBP_03 stay unconditionally
+    // visible (showIf unchanged) so pruneStaleResponses never nulls this
+    // write -- see the LBP_01B_LEG_SCREEN question definition in
+    // coreSpec.ts for the full safety writeup. "없어요" pre-fills the
+    // exact FROZEN-required NONE/NONE pair AND sets LBP_LEG_AUTOFILL_FIELD
+    // so nextQuestion/goBack (below) skip rendering LBP_02/LBP_03 to the
+    // patient entirely; "있어요"/"잘 모르겠어요" clears both the pre-fill
+    // and the provenance flag so the patient answers LBP_02/LBP_03 fresh
+    // (and sees both screens normally).
+    if (q.id === 'LBP_01B_LEG_SCREEN') {
+      patch =
+        value === 'no'
+          ? { ...patch, LBP_02: ['NONE'], LBP_03: 'NONE', [LBP_LEG_AUTOFILL_FIELD]: 'yes' }
+          : { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+    }
+    // Changing LBP_01 away from 'BACK_ONLY' after the leg-symptom shim
+    // auto-filled LBP_02/LBP_03 (shim answered 'no') leaves those two
+    // fields stale -- LBP_02/LBP_03's own showIf never depends on LBP_01,
+    // so pruneStaleResponses can't catch this on its own. Only clears the
+    // shim's own auto-fill (checked against the OLD, pre-patch state) --
+    // genuinely patient-answered LBP_02/LBP_03 (shim was 'yes'/'unknown',
+    // or a non-BACK_ONLY route) are never touched here. Also clears the
+    // provenance flag, since there's nothing left to auto-skip.
+    if (q.id === 'LBP_01' && responses['LBP_01'] === 'BACK_ONLY' && responses['LBP_01B_LEG_SCREEN'] === 'no' && value !== 'BACK_ONLY') {
+      patch = { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+    }
+    // Provenance guard: if LBP_02/LBP_03 are ever answered directly (only
+    // reachable if the shim's auto-fill was never active in the first
+    // place, since an active auto-fill means these screens are skipped in
+    // navigation -- see shouldAutoAdvancePast), clear the provenance flag
+    // so a genuine patient answer is never later mistaken for the shim's
+    // own auto-fill and silently skipped.
+    if (q.id === 'LBP_02' || q.id === 'LBP_03') {
+      patch = { ...patch, [LBP_LEG_AUTOFILL_FIELD]: null }
+    }
+
+    // Tablet UX v2.3 §13 (real-device QA follow-up §4-5): LBP onset-decade
+    // -> existing LBP_10 YES/NO/UNKNOWN compatibility mapping (see
+    // mapLbpOnsetDecadeToBefore45's own comment in coreSpec.ts for the
+    // FROZEN-threshold safety reasoning, incl. why 40s fails closed to
+    // UNKNOWN). LBP_10 stays unconditionally visible alongside LBP_10A
+    // (same showIf), so this pre-fill also survives pruneStaleResponses.
+    if (q.id === 'LBP_10A_ONSET_AGE') {
+      patch = { ...patch, LBP_10: mapLbpOnsetDecadeToBefore45(value), [LBP_ONSET_DECADE_FIELD]: value }
+    }
+
     // 상위 선택이 바뀌면 더 이상 표시되지 않는 화면의 응답을 즉시 정리한다.
-    const { responses: pruned, removed } = pruneStaleResponses({
-      ...responses,
-      [q.id]: value,
-    })
+    const { responses: pruned, removed } = pruneStaleResponses(patch)
 
     setResponses(pruned)
     setMeta((m) => {

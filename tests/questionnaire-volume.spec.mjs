@@ -141,14 +141,22 @@ const MALE = { ...IDENTITY, ID_03: 'male' }
  * expectations below are the measured floor at the time of writing and are
  * here to fail loudly on silent growth, not to bless any particular number.
  */
+// Tablet UX v2.3 §8-9 convergence transplant: LBP_01B_LEG_SCREEN is a
+// genuine new patient-facing screen (reachable whenever LBP_01=BACK_ONLY,
+// which the greedy minimum-burden picker selects for all three LBP
+// profiles below) -- re-measured and re-pinned at +1 screen / +2 taps per
+// affected profile. LBP_10A_ONSET_AGE/LBP_10 are unaffected here: the
+// greedy picker never lands on a chronic-onset duration for these seeds,
+// so that pair (gated on IS_LBP_CHRONIC_ONSET) is never reached by this
+// floor walk either before or after.
 const PROFILES = [
-  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
+  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 24, taps: 48 },
   { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 29, taps: 60 },
   { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 28, taps: 56 },
-  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' }, screens: 25, taps: 50 },
+  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' }, screens: 26, taps: 52 },
   { name: 'symptom · 수면', seed: { ...IDENTITY, VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: 'sleep' }, screens: 17, taps: 34 },
   { name: 'herbal · 증상치료(소화)', seed: { ...IDENTITY, VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, screens: 25, taps: 51 },
-  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 22, taps: 44 },
+  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
 ]
 
 console.log('=== questionnaire information volume (minimum-burden floor) ===\n')

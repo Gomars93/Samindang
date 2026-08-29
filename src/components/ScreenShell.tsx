@@ -50,6 +50,19 @@ export function ScreenShell({
 }: Props) {
   const mainRef = useRef<HTMLElement>(null)
   const [hasMore, setHasMore] = useState(false)
+  // Tablet UX v2.3 §9-10, prominence pass (PR #23 real-device QA follow-up
+  // §1): the scroll cue's *position* (dedicated lane/rail, never overlaying
+  // content) was already correct, but real-device QA found it too small/
+  // faint to notice. Rather than making it permanently larger (which would
+  // read as visual noise on every screen), a short one-time "attention"
+  // animation plays once per question -- it starts the moment a new
+  // question is shown (questionId changes) and stops the instant the
+  // patient actually scrolls (a real scrollTop > 0, not just any 'scroll'
+  // event firing) or after ~2s, whichever comes first. It never repeats
+  // after that for the same question (`animation-iteration-count` on the
+  // CSS side is finite, and this state additionally goes false so the
+  // class is removed entirely, not just paused).
+  const [attention, setAttention] = useState(true)
 
   // 새 질문으로 전환될 때만 본문 스크롤을 맨 위로 되돌린다. 이전 질문에서
   // 아래로 스크롤해 내려간 상태로 다음/이전 질문으로 넘어가면, 새 질문의
@@ -57,6 +70,15 @@ export function ScreenShell({
   // 새 질문이 시작된 줄 모르고 화면 중간부터 보게 되는 문제를 막는다.
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 })
+  }, [questionId])
+
+  // 새 질문마다 attention 애니메이션을 정확히 한 번만 재생한다 -- 2초 뒤
+  // 자동으로 꺼지고(계속 깜빡이지 말 것), 그 전에 실제로 스크롤하면 아래
+  // scroll 리스너가 즉시 꺼준다.
+  useEffect(() => {
+    setAttention(true)
+    const timer = setTimeout(() => setAttention(false), 2000)
+    return () => clearTimeout(timer)
   }, [questionId])
 
   useEffect(() => {
@@ -69,11 +91,16 @@ export function ScreenShell({
       setHasMore(scrollable && !atBottom)
     }
 
+    const handleScroll = () => {
+      recompute()
+      if (el.scrollTop > 0) setAttention(false)
+    }
+
     recompute()
-    el.addEventListener('scroll', recompute)
+    el.addEventListener('scroll', handleScroll)
     window.addEventListener('resize', recompute)
     return () => {
-      el.removeEventListener('scroll', recompute)
+      el.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', recompute)
     }
   }, [children])
@@ -130,15 +157,30 @@ export function ScreenShell({
         ref={mainRef}
       >
         <div className="shell__mainInner">{children}</div>
-        {hasMore && (
-          <div className="shell__scrollHint" aria-hidden="true">
-            <span className="shell__scrollHintPill">
-              아래에 항목이 더 있어요
-              <span className="shell__scrollHintIcon">↓</span>
-            </span>
-          </div>
-        )}
       </main>
+
+      {/*
+        Tablet UX v2.3 §9-10: 이전 버전은 이 안내를 `.shell__main` 안에
+        position:sticky + 음수 margin-top으로 "떠 있는" gradient pill로
+        구현했다 -- pointer-events:none이라 탭은 막지 않지만, 스크롤 중
+        실제 옵션/CTA/선택 chip 위에 시각적으로 겹쳐 보이는 문제가 있었다
+        (opacity-gradient-over-content 금지 규칙 위반). 이제는 `.shell__main`의
+        형제 엘리먼트로, 그 자체의 고정된 32-44px 레인을 항상 예약해 둔다
+        -- 콘텐츠와 절대 같은 공간을 공유하지 않으므로 어떤 스크롤
+        위치에서도 겹칠 수 없다. 필요 없을 때는 opacity/visibility만
+        바꿔 자리를 비워둔다(레이아웃 흔들림 방지). landscape에서는 이
+        레인 자체를 숨기고 우측 rail의 .railScrollHint가 같은 역할을
+        대신한다(아래, styles.css 미디어쿼리).
+      */}
+      <div
+        className={`shell__scrollHintLane${hasMore ? ' shell__scrollHintLane--visible' : ''}${attention && hasMore ? ' shell__scrollHintLane--attention' : ''}`}
+        aria-hidden="true"
+      >
+        <span className="shell__scrollHintText">
+          아래에 항목이 더 있어요
+          <span className="shell__scrollHintIcon">↓</span>
+        </span>
+      </div>
 
       <footer className="shell__bottom">
         <div className="shell__bottomInner">
@@ -150,10 +192,24 @@ export function ScreenShell({
       </footer>
 
       <aside className="shell__railRight">
-        <span className="railStepLabel">{currentStep}</span>
-        <button type="button" className="railHelpBtn" onClick={onHelp}>
-          입력이 어려워요
-        </button>
+        <div className="shell__railTop">
+          <span className="railStepLabel">{currentStep}</span>
+        </div>
+        <div className="shell__railBottom">
+          <span
+            className={`railScrollHint${hasMore ? ' railScrollHint--visible' : ''}${attention && hasMore ? ' railScrollHint--attention' : ''}`}
+            aria-hidden="true"
+          >
+            <span className="railScrollHint__icon">↓</span>
+            <span className="railScrollHint__text">
+              <span>아래에</span>
+              <span>더 있어요</span>
+            </span>
+          </span>
+          <button type="button" className="railHelpBtn" onClick={onHelp}>
+            입력이 어려워요
+          </button>
+        </div>
       </aside>
     </div>
   )

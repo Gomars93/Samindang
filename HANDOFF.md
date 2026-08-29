@@ -1,6 +1,31 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 5 — communication grouping을 patient-level로 수정, 이번 세션)
+## Objective (CRM v0.3.1 round 6 — 안정화된 Episode/CrmTask 상태 머신을 서버 persistence에 올림, 이번 세션)
+Gomars93의 다음 지시: CRM UI를 시작하기 전에, round 1-5에서 순수 함수로만
+검증된 Episode/CrmTask 상태 머신을 서버 영속화 계층(파일 기반 store) +
+원장 인증 API로 올린다. 순수 엔진 함수(`src/crm/{types,taskEngine,episode}.ts`)를
+재사용하고 라우트에서 전이 로직을 다시 구현하지 않는다. CRM UI는 이번
+라운드에도 시작하지 않는다. 임상 threshold/매핑/메시징 provider 선택
+없음, FROZEN zero-diff 유지, 전체 검증 스위트 재실행, subagent 미사용
+확인. 10개 acceptance criteria: (1) 원본 phone 필드 없이 Episode/CrmTask
+영속화, patient_uuid/Sigma 매핑은 참조만, (2) 모든 mutating 라우트가
+expectedVersion을 요구하고 stale write에 conflict 반환, (3) task 생성이
+프로세스 재시작을 넘어서도 dedup key/source-event 규칙에 대해 idempotent,
+(4) SAFETY invariant가 persistence/restart 후에도 유지(직원 resolve
+불가, snooze 불가, episode completion이 open Safety를 취소 못함), (5)
+`first_seen_at`은 persisted queue item이 실제로 노출될 때 정확히 한 번만
+기록, (6) claim lease 만료/재개가 restart 후에도 동작, 영구 CLAIMED
+lock 없음, (7) review-open은 여전히 persisted task에서 파생, Episode
+review boolean이나 제2의 mutable truth 재도입 금지, (8) 커뮤니케이션
+그룹핑은 read/orchestration projection으로만 남고 underlying task를
+mutate/complete하지 않음, (9) Test 0은 여전히 PENDING, reservation
+suppression은 여전히 OFF, Care Gap/LOST/contact/SLA 숫자 기본값 발명
+금지, (10) restart + concurrency/failure-injection 테스트를 store/API
+경계에 추가, 중단된 write가 반쪽짜리 Episode/Task pair를 남기거나 open
+Safety task를 조용히 잃어버리지 않음을 증명. **PR #24는 여전히 DO NOT
+MERGE.**
+
+## Objective (CRM v0.3.1 round 5 — communication grouping을 patient-level로 수정, 이전 세션)
 Gomars93의 다음 지시: `groupTasksForCommunication()`이 `${patient_uuid}|
 ${episode_id}` 조합으로 그룹핑하고 있었는데, 승인된 CRM 설계는 커뮤니케이션
 suppression/orchestration이 **여러 Episode를 가로지르는 환자 단위**여야
@@ -279,7 +304,93 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 5 (커뮤니케이션 그룹핑 patient-level화, 이번 세션)
+## Completed — CRM v0.3.1 Round 6 (서버 persistence + 원장 API, 이번 세션)
+**신규 `server/crmStore.js`**: `src/crm/{types,taskEngine,episode}.ts`의
+순수 함수를 직접 import해서 재사용 — 이 서버는 원래 `node
+server/index.js`로 빌드 단계 없이 바로 실행하는 계약이라(`index.js`
+헤더 주석), 별도 esbuild 프리빌드 단계를 두지 않고 Node v22의 네이티브
+TypeScript 타입 스트리핑을 그대로 활용했다. 단, Node의 ESM 리졸버는
+tsc/vite와 달리 상대 import에 확장자를 요구하므로, `src/crm/` 내부
+상대 import 5곳(`taskEngine.ts`/`episode.ts`/`medicationCourse.ts`)에
+`.ts` 확장자를 명시적으로 붙였다(tsconfig의 기존
+`allowImportingTsExtensions: true`로 이미 합법).
+
+파일 배치는 이 저장소의 다른 store와 동일한 관례: entity당 1파일
+(`episodes/<id>.json`, `tasks/<id>.json`), `dedup/<sha256(dedup_key)>.json
+-> {task_id}` 포인터 파일로 idempotency를 프로세스 재시작 너머까지
+durable하게 보장(순수 엔진의 in-memory `existingTasks[]` 배열 대신).
+claim lease 만료는 백그라운드 타이머 없이 read-time에 lazy하게
+self-heal(`followUpSessionStore.js`의 토큰 만료와 동일한 모델).
+`completeEpisodeStored`는 completeEpisode()가 실제로 바꾼 task들을
+episode 레코드보다 먼저 쓰고, 그 사이에 끊기면 episode는 여전히
+ACTIVE로 남아 안전하게 재시도 가능하다(§10 참고). `cancelTask`/
+`supersedeTask`는 순수 엔진 시그니처 자체에 expectedVersion이 없지만,
+모든 mutating 라우트가 버전 검사를 하도록 하는 요구(§2)를 store
+경계에서 균일하게 확장해 만족시켰다(같은 `CrmConflictError` 사용).
+
+**`server/index.js`**: `POST/GET /api/crm/episodes[/:id[/tasks]]`,
+`POST /api/crm/episodes/:id/{pause,complete,reopen}`, `POST/GET
+/api/crm/tasks[/:id]`, `POST
+/api/crm/tasks/:id/{resolve,snooze,cancel,supersede,claim,seen}` —
+전부 기존 `requireDoctor`/`isOriginAllowedForDoctor` 가드 재사용(원장
+전용, 신규 인증 메커니즘 없음), 모든 mutating 라우트가 body의
+`expectedVersion`(숫자)을 요구하고 없으면 400. `mapCrmError()`가
+`CrmConflictError`→409, `CrmNotFoundError`→404, 그 외 순수 엔진의
+거부(예: `safety_review_cannot_be_cancelled`)→400(자신의 message
+그대로)으로 매핑 — 예상된 정상 거부를 500으로 뭉개지 않는다. `seen`
+액션도 다른 mutating 액션들과 동일하게 `safeAudit({event:
+'crm_task_seen', ...})`을 남기도록 맞췄다(기존 `submission_viewed`
+감사 로그 관례와 일관).
+
+**신규 `tests/crm-store.spec.mjs`**(§10 요구사항): 빌드 단계 없이
+`node tests/crm-store.spec.mjs`로 바로 실행. 4개 파트, 28
+assertion — (1) restart: 완전히 새로운 `createCrmStore()` 인스턴스가
+공유 상태 없이 이전 인스턴스가 쓴 Episode/Task/dedup 인덱스/claim
+lease 자가치유를 그대로 관측, (2) concurrency: cancel/snooze/supersede
+전부 stale expectedVersion에 conflict, 동시에 발사한 두 개의 claim
+요청 중 정확히 하나만 성공하고 나머지는 conflict(잃어버린 update
+없음), (3) failure-injection:
+`tests/follow-up-session.spec.mjs`에서 이미 쓰던 기법(정확한 tmp write
+경로에 실제 디렉터리를 놓아 genuine EISDIR을 유발)으로
+`completeEpisodeStored`의 최종 episode 쓰기를 막아, 중단 후에도
+episode가 ACTIVE로 남고(COMPLETED로 잘못 넘어가지 않음) 이미 취소된
+ROUTINE task는 그대로이며, 열린 SAFETY_REVIEW task는 완전히 손대지
+않은 채 남는다는 것을 확인 — 이후 차단을 풀고 재시도하면
+COMPLETED로 안전하게 수렴, (4) task 생성 자체가 중단됐을 때도 고아
+task 파일이나 phantom dedup이 남지 않고 깨끗하게 재시도됨을 확인.
+
+**알려진 한계 (이번 라운드 범위 밖, 투명하게 기록)**: `createTaskStored`가
+task 파일을 쓴 직후, dedup 포인터 파일을 쓰기 전에 프로세스가 죽으면,
+그 사이의 아주 좁은 창에서는 재시도가 dedup 인덱스를 못 찾아 같은
+dedup_key를 가진 두 번째 task를 만들 수 있다. §10이 명시적으로 요구한
+범위는 "Episode/Task pair"와 "Safety task 손실"이며 이 시나리오는
+거기 해당하지 않아 이번 라운드에서 고치지 않았다 — 다음 라운드에서
+필요하면(예: task 쓰기와 dedup 쓰기를 하나의 원자적 단계로 묶기)
+다룰 수 있다.
+
+**`package.json`**: `test:crm-store` 스크립트 추가, `test:all` 체인에
+`test:crm-schema` 다음 순서로 연결.
+
+**`tests/server.spec.mjs`**: 기존 "26개 doctor-guarded 라우트" 카운트
+assertion을 CRM 라우트 코드 블록 7개 추가분을 반영해 33으로 갱신(라우트
+코드 자체가 정확한지 검증하는 회귀 테스트이므로, 새 라우트를 추가하면
+반드시 이 숫자를 함께 갱신해야 한다는 걸 이번에 직접 확인함).
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 28 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). 로컬 HTTP 스모크 테스트(스크래치패드, 저장소에 커밋 안 함)로
+episode/task 생성→claim→seen→get→no-auth-403(단, loopback이라
+403 대신 200 — auth.js의 문서화된 loopback OR token 모델대로 정상
+동작)→stale-version-409 흐름을 직접 확인. CRM UI는 지시대로 이번
+라운드에도 시작하지 않았다. Test 0 여전히 PENDING, Care Gap
+suppression 여전히 비활성, 새 임상 로직/threshold/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 5 (커뮤니케이션 그룹핑 patient-level화, 이전 세션)
 `src/crm/taskEngine.ts`: `groupTasksForCommunication()`의 그룹 키를
 `${patient_uuid}|${episode_id}`에서 `${patient_uuid}|${contact_mode}`로
 변경 — episode_id를 뺐으므로 같은 환자의 서로 다른 Episode(예: 복약

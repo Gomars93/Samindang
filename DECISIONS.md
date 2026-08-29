@@ -932,3 +932,49 @@ Workspace 큐 UI는 이번 라운드에서 만들지 않았다.
 #14 do_not_contact) 때문에 구조적으로 필요해서 추가했고, `src/crm/types.ts`
 상단 주석에 그 근거를 남겼다 — 목록에 없는 필드를 조용히 끼워넣지 않기
 위해서다.
+
+## 2026-08-29 — CRM v0.3.1 Round 6: 서버 persistence를 빌드 단계 없이 `.ts` 소스 직접 재사용으로 구현
+
+### Context
+Round 1-5에서 순수 함수로 검증된 Episode/CrmTask 상태 머신을, Gomars93의
+지시대로 이번 라운드에서 서버 영속화 계층(`server/crmStore.js`) + 원장
+인증 API(`server/index.js`의 `/api/crm/*`)로 올렸다. `server/index.js`는
+자체 헤더 주석에 "`node server/index.js`로 바로 실행, 빌드 단계 없음"이라고
+명시된 계약을 갖고 있다.
+
+### Decision
+`server/crmStore.js`가 `src/crm/{types,taskEngine,episode}.ts`를 esbuild
+prebuild 없이 상대 경로로 직접 import한다. Node v22의 네이티브 TypeScript
+타입 스트리핑이 `.ts` 파일을 플래그 없이 그대로 실행할 수 있다는 걸
+직접 확인하고 채택했다. 단, Node의 ESM 리졸버는 tsc/vite와 달리 상대
+import에 확장자를 요구하므로, `src/crm/` 내부의 상대 import(`taskEngine.ts`
+→ `./types.ts`, `episode.ts`/`medicationCourse.ts` → `./types.ts`,
+`./taskEngine.ts`)에 명시적으로 `.ts` 확장자를 붙였다.
+
+### Reason
+esbuild 프리빌드 스크립트를 두는 방안을 처음에 설계하다가, `server/index.js`
+자신의 "빌드 단계 없음" 계약과 정면으로 충돌한다는 걸 깨닫고 폐기했다.
+서버 전용 번들 아티팩트를 새로 만들지 않으면서 순수 엔진 로직을
+재구현/포크하지 않는 유일한 방법은, Node가 이미 지원하는 네이티브 TS
+실행을 그대로 쓰는 것이었다. `.ts` 확장자를 붙이는 변경은 tsconfig의
+기존 `allowImportingTsExtensions: true` 설정 아래서 이미 합법이라
+tsc/vite 쪽 빌드에는 아무 영향이 없다(`npx tsc -b --force`, `npm run
+build`, `npm run build:preview` 전부 확인).
+
+### Trade-offs
+- (+) 서버가 순수 엔진과 별개의 사본/번들을 갖지 않는다 — 로직이 항상
+  하나의 소스(`src/crm/*.ts`)에서만 나온다.
+- (+) `server/index.js`의 "빌드 단계 없음" 계약을 그대로 유지한다.
+- (−) `src/crm/` 내부 상대 import는 앞으로도 계속 `.ts` 확장자를 명시해야
+  한다 — 새 파일을 추가할 때 이 관례를 잊으면 Node에서만(브라우저/vite
+  빌드에서는 문제없이) `ERR_MODULE_NOT_FOUND`가 난다.
+
+### 알려진 한계 (다음 라운드로 이월 가능)
+`crmStore.js`의 `createTaskStored`는 task 파일을 쓴 직후, dedup 포인터
+파일을 쓰기 전에 프로세스가 죽으면, 그 좁은 창에서는 재시도가 dedup
+인덱스를 찾지 못해 같은 `dedup_key`를 가진 task를 하나 더 만들 수 있다.
+이번 라운드의 acceptance criteria #10이 명시한 범위("Episode/Task pair"와
+"Safety task 손실")에는 해당하지 않아 고치지 않았고,
+`tests/crm-store.spec.mjs`에도 이 시나리오에 대한 원자성 보장 테스트를
+넣지 않았다 — 다음 CRM 라운드에서 필요하면 task 쓰기와 dedup 쓰기를
+하나의 원자적 단계로 묶는 방식으로 다룰 수 있다.

@@ -8,11 +8,13 @@
 // docs/RUNBOOK_LOCAL_HANDOFF.md 참고.
 import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createStore } from './store.js'
 import { createAuditLog } from './audit.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
+import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import {
   activateVisit,
   clearActiveVisit,
@@ -50,6 +52,7 @@ export function createApp({
   retentionDays,
   followUpTokenTtlMinutes,
   followUpTokenRetentionHours,
+  crmClaimLeaseMinutes,
 } = {}) {
   const resolvedDataDir = dataDir ?? process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
   const resolvedFollowUpTtlMinutes =
@@ -65,6 +68,29 @@ export function createApp({
     followUpTokenRetentionHours: resolvedFollowUpRetentionHours,
   })
   const audit = createAuditLog(resolvedDataDir)
+  // CRM v0.3.1 (round 6): a sibling data dir, not nested under submissions/
+  // -- Episode/CrmTask are not medical-record submissions and must not be
+  // swept by store.cleanupOlderThan's submission-retention logic.
+  // claimLeaseMinutes is an operational lock duration (see crmStore.js),
+  // not a clinical SLA -- configurable like follow-up-token TTL above.
+  const resolvedCrmClaimLeaseMinutes =
+    crmClaimLeaseMinutes !== undefined ? crmClaimLeaseMinutes : Number(process.env.SAMINDANG_CRM_CLAIM_LEASE_MINUTES ?? '60')
+  const crmStore = createCrmStore(path.join(resolvedDataDir, '..', 'crm'), {
+    claimLeaseMinutes: resolvedCrmClaimLeaseMinutes,
+  })
+  // Maps a thrown store error to an HTTP status + body. CrmConflictError
+  // (stale expectedVersion) is always 409; CrmNotFoundError is always 404;
+  // every other thrown Error is a disallowed-transition refusal from the
+  // pure engine itself (e.g. "safety_review_cannot_be_snoozed",
+  // "cannot claim task in status DONE") and is reported as 400 with its
+  // own message rather than falling through to a generic 500 -- these are
+  // expected, well-formed refusals, not server faults.
+  function mapCrmError(err) {
+    if (err instanceof CrmConflictError) return { status: 409, error: 'conflict' }
+    if (err instanceof CrmNotFoundError) return { status: 404, error: 'not found' }
+    if (err instanceof Error) return { status: 400, error: err.message }
+    return { status: 500, error: 'server error' }
+  }
   const configuredToken = doctorToken !== undefined ? doctorToken : process.env.SAMINDANG_DOCTOR_TOKEN
   const doctorAllowedOrigins = allowedOrigins ?? parseAllowedOrigins(process.env.SAMINDANG_ALLOWED_ORIGINS)
   const configuredRetentionDays =
@@ -264,6 +290,10 @@ export function createApp({
     // TABLET's own two narrow endpoints authenticated by its device
     // credential -- same posture as the public follow-up-session routes.
     const isStationsAdminRoute = parts[1] === 'stations'
+    // Round 6 (CRM v0.3.1 persistence): /api/crm/* is doctor-only like
+    // every other administrative route above -- no separate public path,
+    // no UI yet (deliberately, this round).
+    const isCrmRoute = parts[1] === 'crm'
     const doctorRoute =
       parts[0] === 'api' &&
       (isSubmissionsRoute ||
@@ -273,7 +303,8 @@ export function createApp({
         isPatientHistoryRoute ||
         isPatientRevisitRoute ||
         isRevisitsQueueRoute ||
-        isStationsAdminRoute)
+        isStationsAdminRoute ||
+        isCrmRoute)
     const cors = corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
@@ -1146,6 +1177,236 @@ export function createApp({
                 }
               : { active: false, workstation_id: workstationId ?? DEFAULT_WORKSTATION_ID }
             bytes = sendJson(req, res, 200, body, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'episodes' && parts.length === 3 && req.method === 'POST') {
+        // Round 6: create (or, if episode_id already exists, idempotently
+        // return) an Episode. patient_uuid must reference an existing
+        // patient -- the same visitExistsForPatient check every other
+        // patient-linking route already uses, so a CRM Episode can never
+        // be anchored to an arbitrary/typo'd identifier.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const patientUuid = typeof body?.patient_uuid === 'string' ? body.patient_uuid : ''
+          if (!patientUuid || !(await store.visitExistsForPatient(patientUuid))) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown patient_uuid' }, cors)
+          } else {
+            const ownerClinician = typeof body?.owner_clinician === 'string' ? body.owner_clinician : null
+            const episode = await crmStore.createEpisode({
+              episode_id: randomUUID(),
+              patient_uuid: patientUuid,
+              owner_clinician: ownerClinician,
+              now: new Date().toISOString(),
+            })
+            status = 201
+            await safeAudit({ event: 'crm_episode_created', visit_id: undefined, actor: 'doctor' })
+            bytes = sendJson(req, res, 201, episode, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'episodes' && parts.length === 4 && req.method === 'GET') {
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const now = new Date().toISOString()
+          const episode = await crmStore.getEpisode(id)
+          if (!episode) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            const reviewState = await crmStore.getEpisodeReviewState(id, now)
+            bytes = sendJson(req, res, 200, { ...episode, ...reviewState }, cors)
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'crm' &&
+        parts[2] === 'episodes' &&
+        parts.length === 5 &&
+        parts[4] === 'tasks' &&
+        req.method === 'GET'
+      ) {
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const tasks = await crmStore.listTasksByEpisode(id, new Date().toISOString())
+          bytes = sendJson(req, res, 200, { tasks }, cors)
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'crm' &&
+        parts[2] === 'episodes' &&
+        parts.length === 5 &&
+        (parts[4] === 'pause' || parts[4] === 'complete' || parts[4] === 'reopen') &&
+        req.method === 'POST'
+      ) {
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const expectedVersion = body?.expectedVersion
+          if (typeof expectedVersion !== 'number') {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'expectedVersion is required' }, cors)
+          } else {
+            try {
+              const now = new Date().toISOString()
+              if (parts[4] === 'pause') {
+                const episode = await crmStore.pauseEpisodeStored(id, expectedVersion, now)
+                await safeAudit({ event: 'crm_episode_paused', actor: 'doctor' })
+                bytes = sendJson(req, res, 200, episode, cors)
+              } else if (parts[4] === 'complete') {
+                const result = await crmStore.completeEpisodeStored(id, expectedVersion, now)
+                await safeAudit({ event: 'crm_episode_completed', actor: 'doctor' })
+                bytes = sendJson(req, res, 200, result, cors)
+              } else {
+                const episode = await crmStore.reopenEpisodeStored(id, expectedVersion, now)
+                await safeAudit({ event: 'crm_episode_reopened', actor: 'doctor' })
+                bytes = sendJson(req, res, 200, episode, cors)
+              }
+            } catch (err) {
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'tasks' && parts.length === 3 && req.method === 'POST') {
+        // Round 6: create a CrmTask. Idempotent on (patient_uuid,
+        // episode_id, task_type, source_event_id, contact point) across
+        // process restart -- see crmStore.js's createTaskStored. A
+        // SAFETY_REVIEW task still requires safetyAuthorization in the
+        // body (upstream signal or explicit human request), enforced by
+        // the same pure engine check this store reuses -- the server
+        // cannot infer a safety task into existence.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const patientUuid = typeof body?.patient_uuid === 'string' ? body.patient_uuid : ''
+          const episodeId = typeof body?.episode_id === 'string' ? body.episode_id : ''
+          if (!patientUuid || !episodeId || !(await crmStore.getEpisode(episodeId))) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown episode_id' }, cors)
+          } else {
+            try {
+              const { task, deduped } = await crmStore.createTaskStored({
+                task_id: randomUUID(),
+                patient_uuid: patientUuid,
+                episode_id: episodeId,
+                task_type: body?.task_type,
+                reason_code: body?.reason_code,
+                source_type: body?.source_type ?? null,
+                source_id: body?.source_id ?? null,
+                source_event_id: body?.source_event_id,
+                source_timestamp: body?.source_timestamp ?? null,
+                due_at: body?.due_at ?? null,
+                owner_clinician: typeof body?.owner_clinician === 'string' ? body.owner_clinician : null,
+                now: new Date().toISOString(),
+                contactPointKey: typeof body?.contactPointKey === 'string' ? body.contactPointKey : undefined,
+                do_not_contact: body?.do_not_contact === true,
+                safetyAuthorization: body?.safetyAuthorization ?? undefined,
+              })
+              status = deduped ? 200 : 201
+              if (!deduped) await safeAudit({ event: 'crm_task_created', actor: 'doctor' })
+              bytes = sendJson(req, res, status, { task, deduped }, cors)
+            } catch (err) {
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'tasks' && parts.length === 4 && req.method === 'GET') {
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const task = await crmStore.getTask(id, new Date().toISOString())
+          if (!task) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            bytes = sendJson(req, res, 200, task, cors)
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'crm' &&
+        parts[2] === 'tasks' &&
+        parts.length === 5 &&
+        ['resolve', 'snooze', 'cancel', 'supersede', 'claim', 'seen'].includes(parts[4]) &&
+        req.method === 'POST'
+      ) {
+        // Round 6: every mutating task transition, all requiring
+        // expectedVersion and all going through the same pure engine
+        // functions the schema round already proved -- this route layer
+        // adds no transition logic of its own, only auth/validation/
+        // error-mapping around crmStore's calls.
+        id = parts[3]
+        const action = parts[4]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const expectedVersion = body?.expectedVersion
+          if (typeof expectedVersion !== 'number') {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'expectedVersion is required' }, cors)
+          } else {
+            try {
+              const now = new Date().toISOString()
+              let task
+              if (action === 'resolve') {
+                const actorRole = body?.actorRole === 'STAFF' ? 'STAFF' : 'CLINICIAN'
+                task = await crmStore.resolveTaskStored(id, expectedVersion, actorRole, now)
+                await safeAudit({ event: 'crm_task_resolved', actor: actorRole === 'CLINICIAN' ? 'doctor' : 'staff' })
+              } else if (action === 'snooze') {
+                const until = typeof body?.until === 'string' ? body.until : null
+                if (!until) {
+                  status = 400
+                  bytes = sendJson(req, res, 400, { error: 'until is required' }, cors)
+                } else {
+                  task = await crmStore.snoozeTaskStored(id, expectedVersion, until)
+                  await safeAudit({ event: 'crm_task_snoozed', actor: 'doctor' })
+                }
+              } else if (action === 'cancel') {
+                task = await crmStore.cancelTaskStored(id, expectedVersion)
+                await safeAudit({ event: 'crm_task_cancelled', actor: 'doctor' })
+              } else if (action === 'supersede') {
+                task = await crmStore.supersedeTaskStored(id, expectedVersion)
+                await safeAudit({ event: 'crm_task_superseded', actor: 'doctor' })
+              } else if (action === 'claim') {
+                const claimedBy = typeof body?.claimedBy === 'string' ? body.claimedBy : ''
+                if (!claimedBy) {
+                  status = 400
+                  bytes = sendJson(req, res, 400, { error: 'claimedBy is required' }, cors)
+                } else {
+                  task = await crmStore.claimTaskStored(id, expectedVersion, claimedBy, now)
+                  await safeAudit({ event: 'crm_task_claimed', actor: 'doctor' })
+                }
+              } else {
+                task = await crmStore.markTaskSeenStored(id, expectedVersion, now)
+                await safeAudit({ event: 'crm_task_seen', actor: 'doctor' })
+              }
+              if (task) bytes = sendJson(req, res, 200, task, cors)
+            } catch (err) {
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
           }
         }
       } else {

@@ -4,7 +4,7 @@
  * rather than mutating its input, so a caller whose persistence step
  * fails never has a half-applied change to reconcile.
  */
-import type { CrmTask, CrmTaskType, CrmTaskStatus, CrmReasonCode, ContactMode } from './types'
+import type { CrmTask, CrmTaskType, CrmTaskStatus, CrmReasonCode, ContactMode } from './types.ts'
 
 const RAW_PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
 

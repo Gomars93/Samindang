@@ -3,9 +3,9 @@
  * Doctor Workspace's finalAssessment module rather than defining a
  * parallel reassessment-plan shape.
  */
-import type { Episode, CrmTask } from './types'
-import type { NextReassessmentPlan } from '../doctor/workspace/finalAssessment'
-import { cancelTask, supersedeTask } from './taskEngine'
+import type { Episode, CrmTask } from './types.ts'
+import type { NextReassessmentPlan } from '../doctor/workspace/finalAssessment.ts'
+import { cancelTask, supersedeTask } from './taskEngine.ts'
 
 function checkEpisodeVersion(episode: Episode, expectedVersion: number): void {
   if (episode.version !== expectedVersion) {

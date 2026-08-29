@@ -1490,9 +1490,18 @@ async function main() {
     // credential로 인증하는 환자 대면 기기용 엔드포인트이며, 공개 환자용
     // /api/follow-up-session/:token과 동일한 위치다(stationStore.js의
     // credential 검증이 인증을 대신한다).
+    // CRM v0.3.1 Round 6(persistence)에서 7개(라우트 코드 블록 기준 -- 일부는
+    // 여러 HTTP 라우트를 한 requireDoctor 가드 아래 묶어서 처리한다)가
+    // 추가되어 33개가 됐다: POST /api/crm/episodes, GET
+    // /api/crm/episodes/:id, GET /api/crm/episodes/:id/tasks, POST
+    // /api/crm/episodes/:id/{pause,complete,reopen}(한 블록), POST
+    // /api/crm/tasks, GET /api/crm/tasks/:id, POST
+    // /api/crm/tasks/:id/{resolve,snooze,cancel,supersede,claim,seen}(한
+    // 블록) -- 전부 같은 doctor-only 가드이며 CRM UI는 아직 없다(이번
+    // 라운드는 의도적으로 서버 persistence만).
     assert(
-      'server has exactly the 26 doctor-guarded routes calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4)',
-      requireDoctorCalls === 26,
+      'server has exactly the 33 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x7)',
+      requireDoctorCalls === 33,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

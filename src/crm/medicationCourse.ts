@@ -3,8 +3,8 @@
  * inferred; every timing field is either what the source system reported
  * or null.
  */
-import type { CrmTask } from './types'
-import { supersedeTask } from './taskEngine'
+import type { CrmTask } from './types.ts'
+import { supersedeTask } from './taskEngine.ts'
 
 export type MedicationCourse = {
   course_id: string

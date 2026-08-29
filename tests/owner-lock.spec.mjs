@@ -343,62 +343,109 @@ async function main() {
      land within the same settle window -- and by asserting on WHY each
      loser exited, not just that it exited, so a loser that failed for an
      unrelated reason cannot be silently miscounted as a correct refusal.
+
+     Third-round closing-review finding: under real CPU contention (a
+     2-vCPU CI runner is the concrete case that matters here -- this
+     repo's own ubuntu-latest), NO synchronization barrier can force every
+     one of N racing processes to reach their own EEXIST-and-stale check
+     within the same tiny window every single run -- reproduced via
+     `taskset -c 0,1` simulating 2 vCPU: the headline safety invariant
+     (exactly one winner, every loser recognized) held 100% of the time,
+     but the specific "at least one loser reached settle-reconfirm, not
+     everyone just refused via the plain isFresh guard" check -- a
+     TEST-QUALITY assertion proving this test isn't vacuous, not a
+     correctness invariant -- flaked in roughly 1 of 5 runs under
+     contention: legitimately, sometimes the first racer's takeover
+     completes fast enough that every other racer's own initial read
+     already sees a freshly-renewed lock and correctly refuses via
+     isFresh, without any of them ever entering the settle-reconfirm race
+     at all. That is not a bug (the SAME reason a real accidental
+     double-start is unlikely to see this specific window either) --
+     failing the whole test run over it would be exactly the "a test
+     asserting corruption occurred is a liability if the underlying
+     behavior has multiple legitimate outcomes" trap Part 1's own comment
+     above already warns against. Fixed by retrying ONLY that
+     non-vacuousness check across a few fresh attempts (fresh seeded lock
+     + fresh N racers each time) -- the correctness invariants (exactly
+     one winner; every loser's refusal reason recognized; owner.lock names
+     the actual winner) are asserted, with NO retry tolerance, on EVERY
+     attempt, so a genuine regression still fails on attempt 1 exactly as
+     before.
      ===================================================================== */
   {
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-multitakeover-'))
-    const racers = []
-    try {
-      const dataDir = path.join(dataRoot, 'submissions')
-      const lockPath = path.join(dataRoot, 'owner.lock')
-      // Seed a stale lock (pid that cannot possibly be a live racer here,
-      // renewed_at far in the past relative to staleAfterMs below).
-      await writeFile(
-        lockPath,
-        JSON.stringify({ pid: 999999, hostname: 'seed', nonce: randomUUID(), acquired_at: new Date(0).toISOString(), renewed_at: new Date(0).toISOString() }),
-        'utf8',
-      )
-      const fastEnv = { SAMINDANG_OWNER_LOCK_HEARTBEAT_MS: '150', SAMINDANG_OWNER_LOCK_STALE_MS: '200', SAMINDANG_OWNER_LOCK_SETTLE_MS: '150' }
-      // Every racer spin-waits (inside its own process, before calling
-      // acquireOwnerLock) until this shared future instant -- gives Node's
-      // own module-load/import time for all N children to converge on
-      // roughly the same moment before any of them touches the lock file,
-      // instead of relying on OS spawn-order luck.
-      const raceAt = Date.now() + 500
+    const isFreshRefusal = /already owned by another live process/
+    const settleRefusal = /lost the race to take over/
+    const N = 5
+    // Re-tuned (third-round closing-review re-check): 3 attempts was not
+    // enough headroom under the 2-vCPU `taskset` simulation of this repo's
+    // actual CI runner -- observed the per-attempt miss rate is higher
+    // under real contention than on an unloaded dev machine, so 3
+    // consecutive misses were not rare enough. 8 attempts (each only ~1-2s)
+    // keeps the correctness invariants' zero-tolerance re-checked on every
+    // attempt while pushing the chance of the non-vacuousness check never
+    // firing at all down to noise; re-verified 10/10 clean runs under
+    // `taskset -c 0,1` (2 vCPU) and 5/5 under `taskset -c 0` (1 vCPU).
+    const maxAttempts = 8
+    let sawSettlePath = false
+    let attemptsUsed = 0
+    for (let attempt = 1; attempt <= maxAttempts && !sawSettlePath; attempt++) {
+      attemptsUsed = attempt
+      const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-multitakeover-'))
+      const racers = []
+      try {
+        const dataDir = path.join(dataRoot, 'submissions')
+        const lockPath = path.join(dataRoot, 'owner.lock')
+        // Seed a stale lock (pid that cannot possibly be a live racer here,
+        // renewed_at far in the past relative to staleAfterMs below).
+        await writeFile(
+          lockPath,
+          JSON.stringify({ pid: 999999, hostname: 'seed', nonce: randomUUID(), acquired_at: new Date(0).toISOString(), renewed_at: new Date(0).toISOString() }),
+          'utf8',
+        )
+        const fastEnv = { SAMINDANG_OWNER_LOCK_HEARTBEAT_MS: '150', SAMINDANG_OWNER_LOCK_STALE_MS: '200', SAMINDANG_OWNER_LOCK_SETTLE_MS: '150' }
+        // Every racer spin-waits (inside its own process, before calling
+        // acquireOwnerLock) until this shared future instant -- gives Node's
+        // own module-load/import time for all N children to converge on
+        // roughly the same moment before any of them touches the lock file,
+        // instead of relying on OS spawn-order luck.
+        const raceAt = Date.now() + 500
 
-      const N = 5
-      for (let i = 0; i < N; i++) racers.push(spawnServer(dataDir, { ...fastEnv, SAMINDANG_OWNER_LOCK_TEST_RACE_AT: String(raceAt) }))
-      // Wait for every racer to reach a settled state: either listening,
-      // or exited (refused the race).
-      await Promise.all(racers.map((r) => waitUntil(() => r.state.stdout.includes('listening on') || r.state.exitCode !== null, { timeoutMs: 10000 })))
+        for (let i = 0; i < N; i++) racers.push(spawnServer(dataDir, { ...fastEnv, SAMINDANG_OWNER_LOCK_TEST_RACE_AT: String(raceAt) }))
+        // Wait for every racer to reach a settled state: either listening,
+        // or exited (refused the race).
+        await Promise.all(racers.map((r) => waitUntil(() => r.state.stdout.includes('listening on') || r.state.exitCode !== null, { timeoutMs: 10000 })))
 
-      const winners = racers.filter((r) => r.state.stdout.includes('listening on') && r.state.exitCode === null)
-      const losers = racers.filter((r) => !(r.state.stdout.includes('listening on') && r.state.exitCode === null))
+        const winners = racers.filter((r) => r.state.stdout.includes('listening on') && r.state.exitCode === null)
+        const losers = racers.filter((r) => !(r.state.stdout.includes('listening on') && r.state.exitCode === null))
 
-      const isFreshRefusal = /already owned by another live process/
-      const settleRefusal = /lost the race to take over/
-      const losersViaIsFresh = losers.filter((r) => isFreshRefusal.test(r.state.stderr))
-      const losersViaSettle = losers.filter((r) => settleRefusal.test(r.state.stderr))
-      const losersUnrecognized = losers.filter((r) => !isFreshRefusal.test(r.state.stderr) && !settleRefusal.test(r.state.stderr))
-      console.log(
-        `  (multi-takeover) ${winners.length} winner(s) of ${N}, pids=[${winners.map((w) => w.child.pid).join(',')}]; losers: ${losersViaIsFresh.length} via isFresh, ${losersViaSettle.length} via settle-reconfirm, ${losersUnrecognized.length} unrecognized`,
-      )
-      assert(`multi-takeover: exactly ONE of ${N} processes racing a stale lock ends up listening (found ${winners.length})`, winners.length === 1)
-      assert(`multi-takeover: the other ${N - 1} processes all refused/exited (found ${losers.length} losers)`, losers.length === N - 1)
-      assert(
-        'multi-takeover: every loser refused for a RECOGNIZED owner-lock reason (isFresh guard or settle-reconfirm), not an unrelated crash the test would otherwise silently miscount as a correct refusal',
-        losersUnrecognized.length === 0,
-      )
-      assert(
-        'multi-takeover: the spin-wait barrier actually forced at least one loser through the settle-and-reconfirm code path (not every racer merely refused via the earlier isFresh guard) -- this is the specific code this test exists to exercise',
-        losersViaSettle.length >= 1,
-      )
+        const losersViaIsFresh = losers.filter((r) => isFreshRefusal.test(r.state.stderr))
+        const losersViaSettle = losers.filter((r) => settleRefusal.test(r.state.stderr))
+        const losersUnrecognized = losers.filter((r) => !isFreshRefusal.test(r.state.stderr) && !settleRefusal.test(r.state.stderr))
+        console.log(
+          `  (multi-takeover attempt ${attempt}/${maxAttempts}) ${winners.length} winner(s) of ${N}, pids=[${winners.map((w) => w.child.pid).join(',')}]; losers: ${losersViaIsFresh.length} via isFresh, ${losersViaSettle.length} via settle-reconfirm, ${losersUnrecognized.length} unrecognized`,
+        )
+        // Correctness invariants -- hard failures, no retry, on EVERY attempt.
+        assert(`multi-takeover (attempt ${attempt}): exactly ONE of ${N} processes racing a stale lock ends up listening (found ${winners.length})`, winners.length === 1)
+        assert(`multi-takeover (attempt ${attempt}): the other ${N - 1} processes all refused/exited (found ${losers.length} losers)`, losers.length === N - 1)
+        assert(
+          `multi-takeover (attempt ${attempt}): every loser refused for a RECOGNIZED owner-lock reason (isFresh guard or settle-reconfirm), not an unrelated crash the test would otherwise silently miscount as a correct refusal`,
+          losersUnrecognized.length === 0,
+        )
+        const lockAfterRace = await readJsonOrNull(lockPath)
+        assert(`multi-takeover (attempt ${attempt}): owner.lock names the actual winning process`, lockAfterRace?.pid === winners[0]?.child.pid)
 
-      const lockAfterRace = await readJsonOrNull(lockPath)
-      assert('multi-takeover: owner.lock names the actual winning process', lockAfterRace?.pid === winners[0]?.child.pid)
-    } finally {
-      for (const r of racers) killIfAlive(r)
-      await rm(dataRoot, { recursive: true, force: true })
+        // Non-vacuousness check -- allowed to retry (see the comment block
+        // above): only recorded here, asserted once after the loop.
+        if (losersViaSettle.length >= 1) sawSettlePath = true
+      } finally {
+        for (const r of racers) killIfAlive(r)
+        await rm(dataRoot, { recursive: true, force: true })
+      }
     }
+    assert(
+      `multi-takeover: across ${attemptsUsed} attempt(s), the spin-wait barrier eventually forced at least one loser through the settle-and-reconfirm code path (not every racer merely refused via the earlier isFresh guard on every attempt) -- this is the specific code this test exists to exercise`,
+      sawSettlePath,
+    )
   }
 
   /* =====================================================================

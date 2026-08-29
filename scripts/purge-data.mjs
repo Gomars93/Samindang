@@ -37,9 +37,26 @@
 import { createInterface } from 'node:readline/promises'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
+import { hostname } from 'node:os'
 import { createStore } from '../server/store.js'
 import { purgeAuditLog } from '../server/audit.js'
-import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs } from '../server/ownerLock.js'
+import { acquireOwnerLock, OwnerLockConflictError, readOwnerLockStatus, requirePositiveMs } from '../server/ownerLock.js'
+
+// Third-round closing-review finding: a raw pid-liveness probe, independent
+// of whatever SAMINDANG_OWNER_LOCK_STALE_MS is configured to. Returns true
+// only when a process with this pid genuinely exists RIGHT NOW -- signal 0
+// sends no actual signal, it only tests existence/permission. EPERM means
+// the process exists but this user can't signal it (still alive -- treat
+// as alive, the conservative direction for a destructive script); ESRCH
+// means it does not exist (dead, safe to treat as no live owner).
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err.code === 'EPERM'
+  }
+}
 
 const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
 const dataRoot = path.join(dataDir, '..')
@@ -92,9 +109,53 @@ async function main() {
   // mistyped env var is enough. `requirePositiveMs` (shared with
   // server/index.js, see its own comment) rejects zero/negative/malformed
   // values outright instead of silently treating them as "always stale".
+  //
+  // Third-round closing-review finding: requirePositiveMs alone does NOT
+  // close this hazard, only narrows it -- it rejects non-positive/malformed
+  // values, but a SMALL positive one (SAMINDANG_OWNER_LOCK_STALE_MS=90, the
+  // single most plausible typo for the 90000ms default: an operator
+  // thinking in seconds) still passes validation and still makes a
+  // genuinely live server's lock read as stale. Verified empirically. No
+  // threshold value chosen here can be "safe" for every possible operator
+  // mistake, so add an independent, threshold-agnostic check: read the
+  // CURRENT lock record (regardless of its staleness) before attempting
+  // any takeover, and if it names a pid that is actually alive on THIS
+  // host right now, refuse outright -- no staleAfterMs value can override
+  // this. (A different hostname means this check cannot verify liveness
+  // locally; falls through to the staleness-based path below, same as
+  // before this fix -- this repo's local-LAN single-host deployment model,
+  // per docs/RUNBOOK_LOCAL_HANDOFF.md, makes that the rare case, not the
+  // common one.) This is a defense-in-depth layer, not a replacement for
+  // acquireOwnerLock's own staleness logic below -- it does not protect
+  // against a stale-lock's pid being reused by an unrelated process by the
+  // time this check runs (the same inherent limitation any pidfile-based
+  // check has), which is exactly why the staleness/takeover path still
+  // exists as the primary mechanism for a genuinely dead owner.
+  //
+  // Deliberately checked in this order -- `staleAfterMs` validated FIRST,
+  // liveness probed SECOND: a malformed/non-positive env var gets its own
+  // specific, actionable message ("is not a valid positive number of
+  // milliseconds") rather than being masked by the generic liveness
+  // refusal below when a live server also happens to be present (this
+  // ordering has its own regression test, see the "the refusal ... names
+  // it as an invalid value, not a false already-owned report" assertions
+  // in tests/owner-lock.spec.mjs). Both checks still run, and both still
+  // refuse, before any takeover is ever attempted -- the diagnostic
+  // clarity only changes which message the operator sees first, never
+  // whether the purge is allowed to proceed.
+  const staleAfterMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_STALE_MS', 90000)
+
+  const { record: currentLock } = await readOwnerLockStatus(dataDir, {})
+  if (currentLock && currentLock.hostname === hostname() && isPidAlive(currentLock.pid)) {
+    console.error(
+      `refusing to purge: pid ${currentLock.pid} on this host is a live process (owner.lock names it) -- this refusal does not depend on SAMINDANG_OWNER_LOCK_STALE_MS, so a misconfigured threshold cannot bypass it. Stop the server first, then re-run this script.`,
+    )
+    process.exitCode = 1
+    return
+  }
+
   let ownerLock
   try {
-    const staleAfterMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_STALE_MS', 90000)
     ownerLock = await acquireOwnerLock(dataDir, { staleAfterMs })
   } catch (err) {
     if (err instanceof OwnerLockConflictError) {
@@ -121,11 +182,26 @@ async function main() {
   try {
     if (!yes) {
       const rl = createInterface({ input: process.stdin, output: process.stdout })
-      let answer
+      let answer = null
       try {
-        answer = await rl.question(
-          `This will PERMANENTLY delete ALL stored submissions in "${dataDir}".\nType DELETE to confirm: `,
-        )
+        // Third-round closing-review finding: `await rl.question(...)`
+        // alone never settles on Ctrl-C (SIGINT) or Ctrl-D (EOF/stdin
+        // closed) at this prompt -- reproduced: the process stays alive
+        // indefinitely in both cases, and because the owner lock is
+        // already held and heartbeating (acquired above), that means a
+        // real server is wedged out INDEFINITELY, not just for
+        // staleAfterMs, until someone finds and kills this orphaned
+        // process. Race the question against both signals so either one
+        // is treated the same as answering anything other than "DELETE"
+        // (abort, fall through to the shared `finally` below that
+        // releases the lock) instead of hanging forever while holding it.
+        answer = await Promise.race([
+          rl.question(`This will PERMANENTLY delete ALL stored submissions in "${dataDir}".\nType DELETE to confirm: `),
+          new Promise((resolve) => {
+            rl.once('SIGINT', () => resolve(null))
+            rl.once('close', () => resolve(null))
+          }),
+        ])
       } finally {
         rl.close()
       }

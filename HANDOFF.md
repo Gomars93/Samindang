@@ -105,6 +105,36 @@ lock release 확인 — `tests/owner-lock.spec.mjs` 20 → 37 assertion.
 전체 게이트(tsc -b --force/build/build:preview/test:all ×2/tablet-core
 pytest 80/FROZEN zero-diff) 전부 green.
 
+3라운드(이번 커밋): 2라운드 결과에 대한 재검수(약 149k 토큰, 52 tool
+call, ~17분)가 또 찾은 결함들 — "이 배치가 끝난 것으로 선언할 수 없다"는
+판단과 함께. 가장 심각한 것 두 가지:
+(a) `SAMINDANG_OWNER_LOCK_STALE_MS`는 양수 체크만으로는 부족 —
+`=90`(90000ms 기본값을 초 단위로 착각한 가장 그럴듯한 오타) 같은
+"유효하지만 너무 작은" 값도 여전히 라이브 서버의 lock을 stale로 읽어
+`purge-data.mjs`가 실제로 지워버리는 걸 재현·확인. 어떤 threshold
+값으로도 모든 오타를 막을 수 없으므로, threshold와 무관한 독립 방어층
+추가: purge 전에 owner.lock이 가리키는 pid가 **이 호스트에서 실제로
+살아있는지**(`process.kill(pid, 0)`) 직접 확인해 살아있으면 무조건 거부.
+(b) multi-takeover 테스트의 spin-wait 배리어가 순수 busy-wait여서 CI의
+2-vCPU 러너에서는 5개 프로세스가 동시에 스케줄되지 못해 결정적으로
+실패함을 `taskset -c 0,1`로 재현 확인 — 이 커밋을 그대로 머지했으면 CI가
+깨졌을 것. setTimeout으로 대기를 양보하고 마지막 15ms만 짧게 busy-spin하는
+방식으로 교체, 그래도 남는 스케줄링 변동성(같은 검증 코드 경로를 매번
+때리지는 못함)은 코드 자체의 결함이 아니라 "이 특정 비검증용 보조
+assertion이 스케줄러에 의존한다"는 사실이므로, 정확성 불변식(정확히 1명
+승자, 모든 loser가 인식된 사유로 거부)은 매 시도 무관용으로 유지한 채
+"적어도 한 번은 settle-reconfirm 코드를 실제로 탔는가"만 최대 8회
+재시도하도록 재구성(2-vCPU 시뮬레이션 10/10, 1-vCPU 5/5 재검증). 그 외:
+`purge-data.mjs`의 확인 프롬프트가 Ctrl-C/Ctrl-D에서 lock을 쥔 채 무한히
+멈춰있던 것(재현 확인)을 readline의 SIGINT/close 이벤트를 경합시켜
+고침; owner-lock 2차 검증 제거가 사실 dead code가 아니라 실질적 보호
+윈도였다는 걸 재검수가 지적해 주석을 재정정하고 그만큼 DEFAULT_SETTLE_MS
+300→350 보정, `server/index.js` 자체 fallback(300)이 그 보정과
+따로 놀던 걸 같이 고침. 전체 게이트 재실행 green(tsc/build/build:preview/
+test:all ×3, 마지막 실패 1회는 기존에 문서화된 tablet-viewport.spec.mjs
+Chrome-profile-cleanup ENOTEMPTY flake로 확인, tablet-core pytest 80,
+FROZEN zero-diff), `tests/owner-lock.spec.mjs` 37 assertion 유지.
+
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야
 하는지는 제품 판단) — server-side primitive는 이번 라운드에서 완성되어

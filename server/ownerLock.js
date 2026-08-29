@@ -113,6 +113,18 @@ export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}
 // script took the lock away from (and then deleted the data under) a
 // genuinely live server. Shared here, not duplicated per-caller, precisely
 // so the two can't drift the way that regression happened.
+//
+// Third-round closing-review finding: this positivity check alone does NOT
+// close that hazard -- it only rejects values that are non-positive or
+// non-numeric. A SMALL positive value (e.g. `SAMINDANG_OWNER_LOCK_STALE_MS=
+// 90`, the single most plausible typo for the 90000ms default: an operator
+// thinking in seconds and writing the number) still passes this check, and
+// still makes purge-data.mjs treat a genuinely live server's lock as stale
+// -- reproduced empirically. This function cannot fix that on its own (it
+// has no way to know what threshold is "too small" for a given deployment);
+// see purge-data.mjs's own comment for the independent, threshold-agnostic
+// defense (a raw pid-liveness probe) added alongside this to actually close
+// the hazard, not just narrow it.
 export function requirePositiveMs(envVar, fallback) {
   const raw = process.env[envVar]
   if (raw === undefined) return fallback
@@ -147,16 +159,24 @@ export function requirePositiveMs(envVar, fallback) {
 //
 // Second-round closing-review finding: an earlier version of this function
 // performed this same check TWICE (a full settleMs wait, then a second,
-// shorter wait-and-verify) under the theory that the second check "catches
-// a competitor whose rename landed near the edge of the window" -- that
-// reasoning does not hold. Nonces are per-process and this function never
-// rewrites the lock itself between the two checks (the heartbeat timer
-// below is not created yet), so the state being checked is monotonic: once
-// the file stops carrying this process's nonce it can never carry it again
-// without this process performing another write. A second read after the
-// first one already succeeded can only reconfirm the same fact, not learn
-// anything the first read couldn't -- it was strictly dead-weight latency,
-// not extra protection. Replaced with a single wait-then-verify.
+// shorter wait-and-verify), and a second-round comment here incorrectly
+// dismissed the second check as "dead weight" on the theory that the
+// checked state is monotonic so a later read "can only reconfirm the same
+// fact." That reasoning was wrong (third-round closing-review finding): the
+// state IS monotonic once observed, but a second read can still observe a
+// NEW overwrite that landed strictly between the two reads -- a competitor
+// whose rename lands in [T+settleMs, T+settleMs+extra) is caught by a
+// second check at T+settleMs+extra but invisible to one at T+settleMs
+// alone. The second check was real extra coverage, not redundancy.
+// Collapsed to a single check anyway, for simplicity, but the settle window
+// itself was correspondingly LENGTHENED (DEFAULT_SETTLE_MS 300 -> 350, the
+// same total wait the old two-step sequence gave in the default
+// configuration) so this single check covers the same effective window the
+// old two checks did, rather than silently shipping a narrower one. Any
+// caller that overrides `settleMs` explicitly (server/index.js does, for
+// its own env-var-configurable window) must apply the same 50ms directly
+// to whatever total protection window it wants -- there is no second,
+// hidden top-up happening inside this function to compensate for it.
 //
 // Honest limit, not fully closed by this or any single-settle-window
 // design: two takeover renames arriving MORE than settleMs apart can still

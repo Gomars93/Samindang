@@ -1779,7 +1779,13 @@ if (isMain()) {
   // regression that happened when purge-data.mjs had its own, weaker copy.
   const heartbeatMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_HEARTBEAT_MS', 15000)
   const staleAfterMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_STALE_MS', 90000)
-  const settleMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_SETTLE_MS', 300)
+  // Third-round closing-review finding: this fallback had drifted from
+  // ownerLock.js's own DEFAULT_SETTLE_MS (350, chosen specifically to match
+  // the pre-simplification two-check sequence's effective total wait --
+  // see that constant's own comment) -- this call site still said 300,
+  // silently shipping a 50ms-narrower detection window on the real server
+  // boot path than every other caller of acquireOwnerLock gets by default.
+  const settleMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_SETTLE_MS', 350)
   // Declared before acquireOwnerLock so onLockLost's closure can reference
   // it -- it is only actually read once the heartbeat fires (well after
   // `server` below is assigned), never at lock-acquisition time itself.
@@ -1804,19 +1810,48 @@ if (isMain()) {
   // their own EEXIST-and-stale check, so every "loser" refused via the
   // plain isFresh() guard above and the settle-and-reconfirm code this
   // module exists to validate went unexercised in ~19 of 20 runs. When set
-  // (only by that test), spin-wait for the given epoch-ms instant
-  // immediately before attempting to acquire the lock, so multiple
-  // processes' takeover attempts genuinely land within the same settle
-  // window instead of merely reflecting spawn-order luck. Never set
-  // outside that test; a no-op (this whole block does not execute) unless
-  // this exact env var is present, and it can only delay reaching
-  // acquireOwnerLock, never change what that function does.
+  // (only by that test), wait for the given epoch-ms instant immediately
+  // before attempting to acquire the lock, so multiple processes' takeover
+  // attempts genuinely land within the same settle window instead of
+  // merely reflecting spawn-order luck. Never set outside that test; a
+  // no-op (this whole block does not execute) unless this exact env var is
+  // present, and it can only delay reaching acquireOwnerLock, never change
+  // what that function does.
+  //
+  // Third-round closing-review finding: the first version of this hook was
+  // a pure CPU busy-wait for the entire delay. On a CPU-constrained runner
+  // (this repo's own CI: ubuntu-latest, 2 vCPU) with N racing processes all
+  // spinning at once, they cannot all leave the barrier together --
+  // whichever gets scheduled first wins and renews the lock before the
+  // others get CPU time at all, so the test's assertion that at least one
+  // loser reaches the settle-reconfirm code (the very thing this barrier
+  // exists to force) failed on ~5 of 6 runs under a 2-vCPU simulation, even
+  // though the same test passed reliably on a machine with more cores.
+  // Fixed by yielding the event loop (via setTimeout) for the bulk of the
+  // wait -- consuming ~0% CPU so all N processes can actually be scheduled
+  // and reach the barrier close together -- and busy-spinning only for a
+  // short final slice, where millisecond-scale timer imprecision would
+  // otherwise blow the synchronization. Also capped: a very large or
+  // malformed target cannot make this block wait indefinitely.
   const raceAt = process.env.SAMINDANG_OWNER_LOCK_TEST_RACE_AT
   if (raceAt) {
-    const target = Number(raceAt)
+    const requested = Number(raceAt)
+    const target = Number.isFinite(requested) ? Math.min(requested, Date.now() + 5000) : Date.now()
+    // Third-round closing-review re-check: an initial 3ms final-spin slice
+    // was still occasionally too tight under CPU contention (observed
+    // ~1/6 residual flakes simulating CI's 2 vCPU via `taskset`) -- 5
+    // processes' event loops all waking from their parked setTimeout
+    // within the same few milliseconds is itself schedule-dependent, so a
+    // too-short busy-spin slice could still let one process reach the
+    // lock file meaningfully before the others resume. Widened to 15ms,
+    // re-verified 10/10 clean runs under the same 2-vCPU simulation.
+    const spinFromMs = 15
+    while (Date.now() < target - spinFromMs) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(1, Math.min(20, target - spinFromMs - Date.now()))))
+    }
     while (Date.now() < target) {
-      /* spin-wait for the shared instant -- same technique as
-         tests/owner-lock.spec.mjs Part 1's patientIdentityStore race */
+      /* short final spin -- timer callbacks are not precise enough for the
+         last few ms, but this window is short and rare (test-only). */
     }
   }
 

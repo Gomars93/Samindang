@@ -264,6 +264,79 @@ owner-lock 50/50 포함), `cd "tablet core" && python3 -m pytest
 tests/ -q`(80 passed), `git diff origin/main -- 'src/spec/*Logic.ts'
 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
 
+7라운드(이번 커밋): 6라운드 결과(커밋 `6d25433`)에 대한 재검수(실제
+Opus subagent 호출, 136k 토큰·42 tool call·약 17분, worktree 격리·읽기
+전용 확인됨)가 6라운드의 핵심 수정 자체는 실제로 유효하다고 확인하면서
+(되돌리면 161회 시도 중 3회 누수, 복원하면 0회 — 직접 재현),
+**전혀 다른 지점에서 HIGH 결함**을 새로 발견: 이번 라운드까지 owner
+lock 관련 signal-handler 수정은 전부 `scripts/purge-data.mjs`에만
+적용돼 있었고, **실제 서버(`server/index.js`)의 부팅 경로는 정확히
+같은 F1 결함 클래스(process.on('SIGINT'/'SIGTERM', ...)를
+acquireOwnerLock() 이후, 심지어 server.listen() 이후에나 등록)가
+그대로 남아 있었다** — stale-lock TAKEOVER 경로에서 acquireOwnerLock이
+lock 파일을 디스크에 쓴 뒤 settle window(기본 350ms) 동안 sleep하다가
+그제서야 return하는데, 그 사이 Ctrl-C 하면 아무 핸들러가 없어 lock이
+그대로 남고, 재시작도 `purge-data.mjs`도 그 죽은 pid를 근거로 거부당함
+— 실제 서버 프로세스로 delay sweep 재현: 21회 시도 중 18회 누수. 수정:
+`purge-data.mjs`가 이미 하던 방식 그대로 — acquireOwnerLock 호출 전에
+핸들러를 등록하고, 핸들 없을 때 디스크 직접 확인(자기 pid+hostname
+일치 시 제거)하는 fallback을 `server/index.js`에도 포장(재검증:
+같은 sweep 21회 전부 무결함).
+
+이 수정 자체를 검증하려고 새로 만든 회귀 테스트(Part 3c, 서버 프로세스
+대상 signal sweep)가 **자기 자신이 실제로 또 다른, 더 좁은 결함을
+잡아냄**(19회 중 1회 누수) — acquireOwnerLock의 takeover
+write(`writeFile(tmp)` 후 `rename(tmp, lockPath)`)가 signal handler와
+별개의 async 체인이라, rename의 OS 레벨 syscall은 이미 디스크에
+반영됐지만 그 JS Promise는 아직 resolve되지 않은 찰나에 신호가 오면,
+fallback의 단발성 디스크 읽기가 그 순간의 상태를 못 보고 지나칠 수
+있음 — 이후 `process.exit()`가 불려 그 pending Promise는 영영 재개되지
+않음. 수정: 즉시 확인 + 50ms + 150ms 세 번의 디스크 재확인으로
+바꾸고(이 로직은 `purge-data.mjs`와 `server/index.js` 양쪽에 동일하게
+필요하므로 `server/ownerLock.js`에
+`releaseAnyLockNamedThisProcess(dataDir, handle)`로 공용화 — 두
+호출부의 로컬 복사본 삭제) 20회 연속 재검증(2-vCPU 시뮬레이션 5회
+포함) 전부 0 누수로 확인.
+
+같은 재검수가 6라운드의 테스트 하네스 변경(`waitForExit`의
+pid-liveness fallback) 자체에 대해서도 별개의, 진짜 지적을 함: Node의
+'exit' 이벤트는 시그널로 죽은 프로세스에 대해 `code=null`을 주는데(코드
+호출로 종료가 아니라 시그널 종료이므로), 옛 술어(`exitCode !== null`
+단독)는 이런 경우 절대 만족되지 않았을 것이고 — 이 재검수의 SIGKILL
+표적 프로브로는 실제로 `waitForExit`가 이제 `!isPidAlive` fallback으로
+빠르게(약 30ms) "완료"로 판정해버려, 만약 어떤 서버가 정상 거부 대신
+시그널로 죽는 방향으로 회귀해도 `exitCode !== 0` 류의 단언이 조용히
+계속 통과할 수 있는 이론적 gap을 지적(이 저장소의 실제 코드 경로에서
+현재 활성으로 그런 오탐을 낸 적은 없음 — `spawnServer`/purge-data.mjs
+양쪽 다 정상 경로에서는 시그널이 아니라 `process.exit()` 코드로
+종료함, 재검수도 이를 인위적 SIGKILL 프로브로만 시연). 다만 애초에
+이 라운드가 왜 pid-liveness fallback을 도입했는지(자식이 code=0으로
+자연 종료했다는 자체 계측 로그를 남겼는데도 부모의 'exit' 이벤트가
+관측되지 않은 것으로 보였던 원인) 재검수의 SIGKILL 프로브로는
+재현/반증되지 않아 정확한 메커니즘은 여전히 확정하지 못했다 — 정직하게
+인정하고, 서로 다른 두 안전장치(코드나 시그널 중 하나라도 관측되면
+완료로 판정 + OS pid-liveness 재확인)를 배타적이지 않게 함께 유지하는
+쪽으로 정리(관련 주석도 "Node의 exit 이벤트 자체가 발화 안 한다"는
+단정을 걷어내고 재검수 결과를 정확히 반영하도록 수정). 임시(ad-hoc)
+state 객체 3곳도 `exitSignal` 추적을 `spawnServer`와 동일하게 맞춤.
+
+같은 재검수가 지적한 회귀 테스트 민감도 문제(Part 6e 스윕이 6ms 간격
+22개 지점뿐이라, 프로덕션 수정을 되돌려도 10회 중 3회만 실제로
+잡아냄 — 누수가 몰린 지점이 22개 중 단 2곳)도 반영: 2ms 간격 66개
+지점으로 촘촘하게. HANDOFF의 "2/16" 표현도 스윕 1회당 신뢰도가
+아니라 실제 측정치(10회 중 3회)를 정확히 반영하도록 이 항목에서
+바로잡는다.
+
+전체 게이트 재실행 green — `npx tsc -b --force`(0 에러), `npm run
+build`/`build:preview`(둘 다 성공), `npm run test:all`(직접 exit code
+확인, exit 0, 전체 로그 4689줄 중 FAIL 0건, owner-lock 51/51 — 신규
+Part 3c 포함), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff). `tests/
+owner-lock.spec.mjs` 50 → 51 assertion(신규 Part 3c 서버 부팅 경로
+sweep 1개 추가, 기존 assertion 개수는 스윕 표본 수에 따라 실행마다
+소폭 변동 가능 — CI는 pass/fail만 게이트).
+
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야
 하는지는 제품 판단) — server-side primitive는 이번 라운드에서 완성되어

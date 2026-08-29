@@ -13,7 +13,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createStore, StaleWriteError } from './store.js'
 import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS } from './audit.js'
-import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs } from './ownerLock.js'
+import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs, releaseAnyLockNamedThisProcess } from './ownerLock.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
@@ -1790,6 +1790,66 @@ if (isMain()) {
   // it -- it is only actually read once the heartbeat fires (well after
   // `server` below is assigned), never at lock-acquisition time itself.
   let server
+  let ownerLock
+  // Seventh-round closing-review finding (HIGH -- the exact F1 leak class
+  // rounds 5-6 spent two rounds closing in scripts/purge-data.mjs, still
+  // wide open here): this boot path used to register
+  // process.on('SIGINT'/'SIGTERM', ...) only after server.listen() below,
+  // well after acquireOwnerLock() -- and on the stale-lock TAKEOVER path,
+  // acquireOwnerLock() durably writes the lock file (naming this process's
+  // pid) and then sleeps out settleMs (350ms default) before it verifies
+  // and returns. A signal landing anywhere before the old registration
+  // point (during checkDataDirsWritable, during that settle sleep, or
+  // between acquireOwnerLock returning and the old process.on(...) calls)
+  // hit Node's default disposition -- no handler, no release, no
+  // `shutdown()` -- leaking a lock naming this about-to-exit process's pid
+  // and wedging both a real restart and scripts/purge-data.mjs's own
+  // liveness refusal for up to staleAfterMs. Reproduced end-to-end: an
+  // operator Ctrl-C during that window left a real server's restart
+  // refusing to start, citing the dead pid, exactly like every other
+  // instance of this leak class in this file's history.
+  //
+  // Fixed the same way scripts/purge-data.mjs already does it: register
+  // the handlers here, before acquireOwnerLock is ever called, backed by
+  // the same direct-disk fallback (if the current lock file names OUR OWN
+  // pid AND hostname, only this process could have written it, so it is
+  // safe to remove even without the handle acquireOwnerLock() would
+  // otherwise have returned). `shutdown()` below now always goes through
+  // this fallback-aware release, and only touches `server`/exits gracefully
+  // through it if boot has reached that point yet -- otherwise it exits
+  // immediately once the lock (if any) is cleared.
+  //
+  // Seventh-round closing-review finding: a single immediate disk read is
+  // not quite enough here either -- see releaseAnyLockNamedThisProcess's
+  // own comment in server/ownerLock.js for the narrow rename-in-flight
+  // race its short retry loop closes (reproduced against this exact boot
+  // path: 1 leak in 19 signaled attempts before the retry was added).
+  // Shared with scripts/purge-data.mjs's identical need instead of
+  // duplicated, so the two can't drift.
+  async function releaseAnyLockWeMightHold() {
+    await releaseAnyLockNamedThisProcess(dataDir, ownerLock)
+  }
+  let shuttingDown = false
+  async function shutdown(signal) {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`${signal} received, shutting down...`)
+    await releaseAnyLockWeMightHold()
+    if (server) {
+      server.close(() => process.exit(0))
+      // Belt-and-suspenders: if close() hangs on a stuck connection, still
+      // exit once the lock is released rather than leaving the process
+      // dangling with no forward progress.
+      setTimeout(() => process.exit(0), 5000).unref()
+    } else {
+      // Signal landed before server.listen() -- nothing to close yet, and
+      // the lock (if any) has already been handled above.
+      process.exit(0)
+    }
+  }
+  process.on('SIGINT', () => void shutdown('SIGINT'))
+  process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  process.on('SIGHUP', () => void shutdown('SIGHUP'))
   // Closing-review finding: if this process later loses the lock (e.g. it
   // stalled past staleAfterMs and a different process legitimately took
   // over while it was stalled), it must stop serving requests against a
@@ -1855,7 +1915,6 @@ if (isMain()) {
     }
   }
 
-  let ownerLock
   try {
     ownerLock = await acquireOwnerLock(dataDir, { heartbeatMs, staleAfterMs, settleMs, onLost: onLockLost })
   } catch (err) {
@@ -1880,23 +1939,4 @@ if (isMain()) {
     )
     console.log(`owner lock: pid=${ownerLock.pid} (${ownerLock.lockPath})`)
   })
-
-  // Graceful shutdown releases the owner lock immediately so a deliberate
-  // restart doesn't have to wait out staleAfterMs. A SIGKILL or crash skips
-  // this entirely by definition -- that's exactly the case the stale-lock
-  // takeover in ownerLock.js exists to recover from.
-  let shuttingDown = false
-  async function shutdown(signal) {
-    if (shuttingDown) return
-    shuttingDown = true
-    console.log(`${signal} received, shutting down...`)
-    await ownerLock.release()
-    server.close(() => process.exit(0))
-    // Belt-and-suspenders: if close() hangs on a stuck connection, still
-    // exit once the lock is released rather than leaving the process
-    // dangling with no forward progress.
-    setTimeout(() => process.exit(0), 5000).unref()
-  }
-  process.on('SIGINT', () => void shutdown('SIGINT'))
-  process.on('SIGTERM', () => void shutdown('SIGTERM'))
 }

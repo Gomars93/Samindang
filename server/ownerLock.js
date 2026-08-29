@@ -100,6 +100,46 @@ export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}
   return { record, fresh: isFresh(record, staleAfterMs) }
 }
 
+// Seventh-round closing-review finding (HIGH, both callers): both
+// scripts/purge-data.mjs and server/index.js register a process-level
+// signal handler that -- if no acquireOwnerLock() handle is held yet --
+// falls back to a direct disk check: if the current lock file names OUR
+// OWN pid and hostname, only this process could have written it, so it is
+// safe to remove even without the handle acquireOwnerLock() would
+// otherwise have returned. A single, immediate read is not quite enough:
+// acquireOwnerLock()'s own takeover write is `writeFile(tmp)` followed by
+// `rename(tmp, lockPath)` (see atomicWrite above) -- two separate awaited
+// fs operations in a DIFFERENT async chain than the signal handler. If a
+// signal lands while that rename's OS-level syscall has already landed on
+// disk but its JS promise has not yet resolved (a real, if narrow, event-
+// loop-scheduling gap -- confirmed via a real-process delay sweep against
+// server/index.js's own boot path: 1 leak in 19 signaled attempts, the
+// process then exiting via `process.exit()` before that pending promise
+// ever resumes), a single disk read at the exact instant of the signal can
+// still miss a takeover write that is about to land. Retrying a few times
+// with short waits gives that in-flight rename time to actually resolve
+// on disk before giving up -- the total wait (a few hundred ms at most) is
+// negligible next to how rarely this window is actually hit, and each
+// retry is a cheap read, not another write attempt.
+export async function releaseAnyLockNamedThisProcess(dataDir, handle) {
+  if (handle) {
+    await handle.release().catch(() => {})
+  }
+  const lockPath = ownerLockPath(dataDir)
+  for (const waitMs of [0, 50, 150]) {
+    if (waitMs) await sleep(waitMs)
+    try {
+      const record = await readLock(lockPath)
+      if (record?.pid === process.pid && record.hostname === hostname()) {
+        await unlink(lockPath).catch(() => {})
+        return
+      }
+    } catch {
+      // Best-effort: caller is already exiting on a signal.
+    }
+  }
+}
+
 // A malformed env var here must fail loudly, not silently degrade the guard
 // it configures -- `Number(x)` on an unset var is fine (the caller's own
 // fallback), but a SET-but-malformed one (a typo like "90s", or an empty

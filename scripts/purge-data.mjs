@@ -40,7 +40,7 @@ import path from 'node:path'
 import { hostname } from 'node:os'
 import { createStore } from '../server/store.js'
 import { purgeAuditLog } from '../server/audit.js'
-import { acquireOwnerLock, OwnerLockConflictError, ownerLockPath, readOwnerLockStatus, requirePositiveMs } from '../server/ownerLock.js'
+import { acquireOwnerLock, OwnerLockConflictError, readOwnerLockStatus, releaseAnyLockNamedThisProcess, requirePositiveMs } from '../server/ownerLock.js'
 
 // Third-round closing-review finding: a raw pid-liveness probe, independent
 // of whatever SAMINDANG_OWNER_LOCK_STALE_MS is configured to. Returns true
@@ -115,44 +115,30 @@ let ownerLock = null
 // written it (pids are unique among concurrently-live processes), so it
 // is unambiguously safe to remove even without the handle/nonce
 // acquireOwnerLock() would otherwise have returned.
+// Sixth-round closing-review finding (HIGH -- same leak class as F1,
+// different window): an earlier version of this function `return`ed right
+// after calling `ownerLock.release()`, on the theory that a non-null
+// handle always means release() can finish the job. It cannot, in one
+// specific case: ownerLock.js's release() marks itself `released = true`
+// SYNCHRONOUSLY, before its own first `await` (the read-then-unlink that
+// actually removes the file) -- so a signal landing in that gap (measured
+// ~4ms, not a theoretical microsecond window: reproduced 19-20% of the
+// time in a targeted sweep) finds `ownerLock` already non-null, calls
+// release() a second time, gets an instant early-return (release() treats
+// itself as already in-progress/done), and an unconditional `return` here
+// would then skip the disk-based fallback entirely -- leaking a lock
+// naming this process's now-dead pid, later refusing a real server exactly
+// like the original F1 bug.
+//
+// Seventh-round closing-review finding (hostname guard, and the retry
+// loop): the hostname check and the short-retry disk fallback are now
+// shared with server/index.js's identical signal-handling need (see
+// releaseAnyLockNamedThisProcess's own comment in server/ownerLock.js for
+// the narrow rename-in-flight race the retries close) -- centralized
+// there instead of duplicated per-caller, the same reasoning as
+// `requirePositiveMs` above.
 async function releaseAnyLockWeMightHold() {
-  // Sixth-round closing-review finding (HIGH -- same leak class as F1,
-  // different window): an earlier version of this function `return`ed
-  // right after calling `ownerLock.release()`, on the theory that a
-  // non-null handle always means release() can finish the job. It
-  // cannot, in one specific case: ownerLock.js's release() marks itself
-  // `released = true` SYNCHRONOUSLY, before its own first `await` (the
-  // read-then-unlink that actually removes the file) -- so a signal
-  // landing in that gap (measured ~4ms, not a theoretical microsecond
-  // window: reproduced 19-20% of the time in a targeted sweep) finds
-  // `ownerLock` already non-null, calls release() a second time, gets an
-  // instant early-return (release() treats itself as already
-  // in-progress/done), and the `return` here then skipped the disk-based
-  // fallback below entirely -- leaking a lock naming this process's
-  // now-dead pid, later refusing a real server exactly like the
-  // original F1 bug. Fixed by ALWAYS falling through to the disk check
-  // afterward, regardless of whether a handle was held: it is a no-op
-  // (finds a lock naming some other, still-legitimate owner, or no lock
-  // at all) whenever release() actually completed, and only matters when
-  // it didn't.
-  if (ownerLock) {
-    await ownerLock.release().catch(() => {})
-  }
-  try {
-    const { record } = await readOwnerLockStatus(dataDir, {})
-    // Sixth-round closing-review finding (hostname guard): match the
-    // adjacent liveness check's own `hostname === hostname()` condition
-    // (see above) -- without it, a lock naming a numerically-colliding
-    // pid on a DIFFERENT host (unlikely under this repo's single-host LAN
-    // deployment model, but not impossible on a shared data mount) could
-    // be removed even though this process never wrote it.
-    if (record?.pid === process.pid && record.hostname === hostname()) {
-      await rm(ownerLockPath(dataDir), { force: true })
-    }
-  } catch {
-    // Best-effort: we are already exiting on a signal: nothing further to
-    // do if this itself fails.
-  }
+  await releaseAnyLockNamedThisProcess(dataDir, ownerLock)
 }
 
 // Fifth-round closing-review finding (F3): only SIGINT was handled -- the

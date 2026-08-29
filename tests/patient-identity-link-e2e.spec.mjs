@@ -312,7 +312,12 @@ async function main() {
     check('e2e: nothing is linked yet while sitting at the review step (the irreversible action has not fired)', identitiesAtReviewStep.identities[patientA]?.resolved === false)
 
     /* ---------------- row A: 뒤로 from review returns to editing with values intact, then submit for real ---------------- */
-    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkCancel').click()`)
+    // Independent-review finding: 뒤로/취소 share a class
+    // (doctor__todayQueue__linkCancel) for styling, so selecting by that
+    // class alone silently depends on DOM order -- use the dedicated
+    // data-action attribute instead so a future reorder can't make this
+    // click the wrong button.
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkCancel[data-action="back"]').click()`)
     await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkInput')`, (v) => v === true)
     const valueAfterBack = await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkInput').value`)
     check('e2e: 뒤로 returns to editing with the entered chart_no still intact (not cleared)', valueAfterBack === 'CN-E2E-REAL')
@@ -321,15 +326,26 @@ async function main() {
     await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkReviewText')`, (v) => v === true)
     await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkSubmit').click()`)
 
-    // Independent-review finding (#10): this must resolve well BEFORE
-    // POLL_MS (5000ms) to actually prove the optimistic update, not the
-    // next poll cycle, is what put the name on screen.
-    await cdp.evalUntil(
-      `document.querySelector('.doctor__todayQueue__grid').textContent.includes('홍길동E2E') && document.querySelector('.doctor__todayQueue__grid').textContent.includes('CN-E2E-REAL')`,
-      (v) => v === true,
-      2000,
-    )
-    check('e2e: after confirming the review step, the row immediately shows 환자명 · 차트번호 (well under POLL_MS, not waiting for the next poll)', true)
+    // Independent-review finding (#10): a 2000ms timeout against a
+    // 5000ms POLL_MS is only a probabilistic detector (the poll's phase
+    // is arbitrary within its cycle, so a pure-polling implementation
+    // would still pass ~40% of the time). Observed optimistic-update
+    // latency against a loopback server is well under 200ms, so 900ms
+    // catches the same true-positive while raising the odds a
+    // regression to polling-only actually fails this check.
+    let immediateUpdateOk = true
+    let immediateUpdateErr = ''
+    try {
+      await cdp.evalUntil(
+        `document.querySelector('.doctor__todayQueue__grid').textContent.includes('홍길동E2E') && document.querySelector('.doctor__todayQueue__grid').textContent.includes('CN-E2E-REAL')`,
+        (v) => v === true,
+        900,
+      )
+    } catch (err) {
+      immediateUpdateOk = false
+      immediateUpdateErr = ` (${err.message})`
+    }
+    check('e2e: after confirming the review step, the row immediately shows 환자명 · 차트번호 (well under POLL_MS, not waiting for the next poll)', immediateUpdateOk, immediateUpdateErr)
 
     const otherRowText = await cdp.eval(`document.querySelector('${rowBSelector}').textContent`)
     check("e2e: the OTHER (still-unresolved) row does not show the just-linked patient's name", !otherRowText.includes('홍길동E2E'))
@@ -360,11 +376,18 @@ async function main() {
     // genuine fresh load.
     await cdp.send('Page.reload', { ignoreCache: true })
     await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__row').length`, (n) => n >= 2)
-    await cdp.evalUntil(
-      `document.querySelector('.doctor__todayQueue__grid').textContent.includes('홍길동E2E')`,
-      (v) => v === true,
-    )
-    check('e2e: the resolved identity survives a real page reload (persisted server-side, not client memory)', true)
+    let persistsAfterReloadOk = true
+    let persistsAfterReloadErr = ''
+    try {
+      await cdp.evalUntil(
+        `document.querySelector('.doctor__todayQueue__grid').textContent.includes('홍길동E2E')`,
+        (v) => v === true,
+      )
+    } catch (err) {
+      persistsAfterReloadOk = false
+      persistsAfterReloadErr = ` (${err.message})`
+    }
+    check('e2e: the resolved identity survives a real page reload (persisted server-side, not client memory)', persistsAfterReloadOk, persistsAfterReloadErr)
 
     /* ---------------- viewport sweep: overflow + touch target ---------------- */
     const VIEWPORTS = [

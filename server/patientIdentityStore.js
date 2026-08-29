@@ -49,10 +49,27 @@
 // pending/<uuid>.json, because that marker did not exist yet when the
 // crash happened. There is no O(1) index into "legacy" orphans (that is
 // exactly the gap being closed), so recovery here is a lazy, on-demand
-// scan of by-chart/ -- run only when a link attempt finds neither a
-// completed link nor a pending marker for the uuid -- rather than a
-// migration step. See findLegacyOrphanedReservation and its call site in
-// linkPatientIdentity below.
+// scan of by-chart/ -- rather than a migration step. See
+// findLegacyOrphanedReservations and its call site in linkPatientIdentity
+// below.
+//
+// Independent-review finding (#6/#9): the scan runs on EVERY link
+// attempt that reaches it, not only when there is no pending marker at
+// all -- a pending marker only ever tracks the single most recent
+// reservation, so a uuid can carry a genuine legacy orphan under one
+// chart_no at the same time as a pending-tracked orphan under another.
+// This still costs at most one scan per never-yet-linked uuid per link
+// attempt (the top-of-function already_linked check returns early for
+// every uuid that already has a completed link), same bound as before.
+//
+// chart_no normalization note: sigma_chart_no values passed into this
+// store are already trim+uppercase normalized by the caller
+// (server/index.js). This store has never been deployed with any
+// clinic's real data (the whole identity layer is net-new on this
+// unmerged PR), so there is no pre-existing lowercase-cased data to
+// migrate -- if that ever changes before merge, add a one-time
+// normalization pass over links/*.json and by-chart/*.json before
+// relying on this invariant.
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -147,11 +164,11 @@ export function createPatientIdentityStore(baseDir) {
    * pointer that names `patientUuid` under a chart_no OTHER than
    * `excludeChartNo` (the one currently being requested -- an exact match
    * there is the ordinary same-chart-recovery path and needs no special
-   * handling). Only called when linkPatientIdentity finds no pending
-   * marker for this uuid, i.e. exactly the case a legacy (pre-
-   * pending-marker) crash would leave behind. Unlocked read-only scan;
-   * every match this returns is re-verified under its own chart lock
-   * before anything is touched (see the call site).
+   * handling). Called on every linkPatientIdentity attempt that reaches
+   * it (see that function's own doc comment for why this is NOT gated on
+   * "no pending marker exists"). Unlocked read-only scan; every match
+   * this returns is re-verified under its own chart lock before anything
+   * is touched (see the call site).
    */
   async function findLegacyOrphanedReservations(patientUuid, excludeChartNo) {
     let files
@@ -175,10 +192,11 @@ export function createPatientIdentityStore(baseDir) {
   /**
    * Explicit clinician/staff confirmation action. `identity:uuid:
    * {patientUuid}` is always the outermost lock. Beyond it, this function
-   * takes AT MOST ONE `identity:chart:*` lock at a time, in two separate,
-   * strictly sequential critical sections (reclaim-old, then claim-new) --
-   * never two chart locks held simultaneously -- so there is no
-   * cross-chart lock-ordering/deadlock risk anywhere in this store.
+   * takes AT MOST ONE `identity:chart:*` lock at a time, across up to
+   * three separate, strictly sequential critical sections (reclaim-old-
+   * pending, reclaim-old-legacy, claim-new) -- never two chart locks held
+   * simultaneously -- so there is no cross-chart lock-ordering/deadlock
+   * risk anywhere in this store.
    *
    * Crash-safety: write order is (1) pending/<uuid>.json ("this uuid is
    * attempting to claim this chart_no" -- durable intent, written first,
@@ -205,13 +223,17 @@ export function createPatientIdentityStore(baseDir) {
    * become claimable by a different patient afterward -- proven by a
    * failure-injection test.
    *
-   * Identity Production Batch (Part A): when there is no pending marker
-   * either (a genuinely fresh uuid, OR a legacy crash from before the
-   * marker existed), a lazy scan looks for any by-chart/ pointer this
-   * same uuid already owns under a different chart_no. Zero matches:
-   * proceed normally. Exactly one: re-verify it under its own chart lock
-   * (the scan itself is unlocked) and reclaim it the same way as the
-   * O(1) path, only if it is STILL demonstrably incomplete (no completed
+   * Identity Production Batch (Part A): after the O(1) pending-based
+   * reclaim step above (a no-op unless a pending marker names a
+   * DIFFERENT chart_no than the one being requested now), a lazy scan
+   * ALWAYS runs looking for any other by-chart/ pointer this same uuid
+   * owns under yet another chart_no -- a pending marker only ever tracks
+   * the single most recent reservation, so a uuid can carry both a
+   * legacy (pre-marker) orphan and a pending-tracked orphan at once, and
+   * both must be reclaimed by one link call. Zero matches: proceed
+   * normally. Exactly one: re-verify it under its own chart lock (the
+   * scan itself is unlocked) and reclaim it the same way as the O(1)
+   * path, only if it is STILL demonstrably incomplete (no completed
    * link has appeared for this uuid in the meantime). More than one
    * match is genuinely ambiguous/corrupt state -- this never guesses
    * which to reclaim; it fails closed with a distinct conflict reason

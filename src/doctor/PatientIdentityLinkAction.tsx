@@ -12,11 +12,12 @@
  * discards the entered values with no network call and no state change.
  * Submit is disabled while a request is in flight, preventing a
  * double-click from firing two links. Each row mounts its own instance
- * (keyed by patient_uuid in TodayQueueSection), so a failed request or
- * entered-but-not-submitted text in one row can never leak into another
- * row or survive a switch to a different patient -- that isolation is a
- * property of React's per-instance local state, not anything this
- * component has to implement itself.
+ * (keyed by task_id in TodayQueueSection -- a patient with two open CRM
+ * tasks legitimately gets two independent instances), so a failed
+ * request or entered-but-not-submitted text in one row can never leak
+ * into another row or survive a switch to a different patient -- that
+ * isolation is a property of React's per-instance local state, not
+ * anything this component has to implement itself.
  *
  * The reviewing step (independent-review finding #2) exists because this
  * link is IRREVERSIBLE from the UI -- there is deliberately no
@@ -89,26 +90,35 @@ export function PatientIdentityLinkAction({ patientUuid, onLinked }: PatientIden
             if (submitting) return
             setMode('submitting')
             setError(null)
-            linkPatientIdentity({ patientUuid, chartNo, patientName }).then((result) => {
-              if (result.ok) {
-                onLinked(patientUuid, {
-                  resolved: true,
-                  sigma_chart_no: result.data.sigma_chart_no,
-                  patient_name: result.data.patient_name,
-                })
-                resetToIdle()
-              } else {
+            linkPatientIdentity({ patientUuid, chartNo, patientName })
+              .then((result) => {
+                if (result.ok) {
+                  onLinked(patientUuid, {
+                    resolved: true,
+                    sigma_chart_no: result.data.sigma_chart_no,
+                    patient_name: result.data.patient_name,
+                  })
+                  resetToIdle()
+                } else {
+                  setMode('editing')
+                  const base = IDENTITY_LINK_ERROR_LABEL[result.error] ?? `연결 실패: ${result.error}`
+                  const existingChartNo = result.errorBody?.existing_sigma_chart_no
+                  const existingName = result.errorBody?.existing_patient_name
+                  const detail =
+                    typeof existingChartNo === 'string' && typeof existingName === 'string'
+                      ? ` (기존 연결: ${existingName} / ${existingChartNo})`
+                      : ''
+                  setError(`${base}${detail}`)
+                }
+              })
+              .catch(() => {
+                // Independent-review finding: without this, an unexpected
+                // throw would leave `mode` stuck at 'submitting' forever --
+                // every button in this view is disabled while submitting,
+                // so the operator would have no way out except a reload.
                 setMode('editing')
-                const base = IDENTITY_LINK_ERROR_LABEL[result.error] ?? `연결 실패: ${result.error}`
-                const existingChartNo = result.errorBody?.existing_sigma_chart_no
-                const existingName = result.errorBody?.existing_patient_name
-                const detail =
-                  typeof existingChartNo === 'string' && typeof existingName === 'string'
-                    ? ` (기존 연결: ${existingName} / ${existingChartNo})`
-                    : ''
-                setError(`${base}${detail}`)
-              }
-            })
+                setError('연결 실패: 알 수 없는 오류가 발생했습니다.')
+              })
           }}
         >
           {submitting ? '연결 중…' : '이 내용으로 연결'}
@@ -116,12 +126,19 @@ export function PatientIdentityLinkAction({ patientUuid, onLinked }: PatientIden
         <button
           type="button"
           className="doctor__todayQueue__linkCancel"
+          data-action="back"
           disabled={submitting}
           onClick={() => setMode('editing')}
         >
           뒤로
         </button>
-        <button type="button" className="doctor__todayQueue__linkCancel" disabled={submitting} onClick={resetToIdle}>
+        <button
+          type="button"
+          className="doctor__todayQueue__linkCancel"
+          data-action="discard"
+          disabled={submitting}
+          onClick={resetToIdle}
+        >
           취소
         </button>
       </div>
@@ -133,7 +150,13 @@ export function PatientIdentityLinkAction({ patientUuid, onLinked }: PatientIden
       className="doctor__todayQueue__linkForm"
       onSubmit={(e) => {
         e.preventDefault()
-        const trimmedChartNo = chartNo.trim()
+        // Independent-review finding: server/index.js normalizes
+        // sigma_chart_no with .trim().toUpperCase() before persisting it
+        // (fixing a case-sensitivity bug that let two casings of the
+        // same chart_no both succeed) -- the review step exists so the
+        // operator confirms exactly what will be committed, so it must
+        // show this same normalized value, not the raw typed one.
+        const trimmedChartNo = chartNo.trim().toUpperCase()
         const trimmedName = patientName.trim()
         if (!trimmedChartNo || !trimmedName) {
           setError('차트번호와 환자명을 모두 입력하세요.')

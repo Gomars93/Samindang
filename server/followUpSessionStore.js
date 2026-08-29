@@ -23,7 +23,7 @@
 //   clinician data, so a public reader can never see anything the token
 //   wasn't explicitly issued to show.
 import { randomBytes, createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const TOKEN_BYTES = 32 // 256 bits, well above the 128-bit minimum
@@ -439,20 +439,18 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     return deleted
   }
 
+  // Independent-review finding: *.json만 지우면 크래시로 남은 *.json.tmp
+  // 고아 파일(여기서는 캡슐 토큰 자체를 담을 수 있음)이 "전체 삭제" 이후에도
+  // 남는다. 각 디렉터리를 rm -rf해 파일명 패턴과 무관하게 확실히 비운다.
   async function purgeAll() {
     let deleted = 0
     for (const dir of [tokensDir(baseDir), pointersDir(baseDir)]) {
-      let files
       try {
-        files = (await readdir(dir)).filter((f) => f.endsWith('.json'))
+        deleted += (await readdir(dir)).filter((f) => f.endsWith('.json')).length
       } catch (err) {
-        if (err.code === 'ENOENT') continue
-        throw err
+        if (err.code !== 'ENOENT') throw err
       }
-      for (const f of files) {
-        await unlink(path.join(dir, f)).catch(() => {})
-        deleted++
-      }
+      await rm(dir, { recursive: true, force: true })
     }
     return deleted
   }

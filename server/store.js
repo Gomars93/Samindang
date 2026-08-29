@@ -2,7 +2,7 @@
 // ponytail: 디렉터리 스캔으로 목록을 만드므로 O(n) — 파일럿 규모(하루 수십 건)에서는 충분하다.
 // 제출 건수가 많아지면(수천+) 인덱스 파일이나 SQLite로 옮긴다.
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
@@ -578,7 +578,13 @@ export function createStore(
       return assignResult
     }
 
-    return { ok: true, visit: started.visit, session: started.session, station: assignResult.station }
+    // Audit registry batch, finding A: expose `reused` (already returned by
+    // startRevisit) so the route can tell whether this call actually
+    // created a new visit + follow-up capability token, or merely
+    // reattached an existing one to this station -- without it, the route
+    // had no way to audit visit_created/follow_up_session_issued
+    // conditionally, and was auditing neither, even on the create path.
+    return { ok: true, visit: started.visit, session: started.session, station: assignResult.station, reused: started.reused }
   }
 
   // Round 8: the station's own post-submission call. Clears the assignment
@@ -739,12 +745,13 @@ export function createStore(
   // 지워지지 않고, 여기 saveVisitWorkspace로 저장된 임상 메모(clinician
   // 관찰/판단)까지 포함한다. 이전에는 빠져 있었다 — purgeAll()의 "전체
   // 삭제" 약속을 거짓으로 만드는 결함이었다.
+  // Independent-review finding: *.json만 지우면 크래시로 남은 *.json.tmp
+  // 고아 파일(atomicWrite의 rename 직전에 죽은 경우)이 "전체 삭제" 이후에도
+  // 남는다. dataDir 자체를 rm -rf해 파일명 패턴과 무관하게 확실히 비운다
+  // (다음 저장 시 ensureDir()가 다시 만든다).
   async function purgeAll() {
-    let deleted = 0
-    for (const f of await listFiles()) {
-      await unlink(path.join(dataDir, f)).catch(() => {})
-      deleted++
-    }
+    let deleted = (await listFiles()).length
+    await rm(dataDir, { recursive: true, force: true })
     deleted += await recorderResults.purgeAll()
     deleted += await microFollowUp.purgeAll()
     deleted += await followUpSessions.purgeAll()

@@ -17,7 +17,7 @@
 // there is no supported "edit a submitted Micro Follow-up answer" flow, so
 // treating the first durable save as final is correct, not merely
 // convenient.
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 function resultPath(followUpDir, visitId) {
@@ -141,18 +141,18 @@ export function createMicroFollowUpStore(followUpDir) {
     return deleted
   }
 
+  // Independent-review finding: *.json만 지우면 크래시로 남은 *.json.tmp
+  // 고아 파일이 "전체 삭제" 이후에도 남는다. 디렉터리 자체를 rm -rf해
+  // 파일명 패턴과 무관하게 확실히 비운다.
   async function purgeAll() {
-    let files
+    let count = 0
     try {
-      files = (await readdir(followUpDir)).filter((f) => f.endsWith('.json'))
+      count = (await readdir(followUpDir)).filter((f) => f.endsWith('.json')).length
     } catch (err) {
-      if (err.code === 'ENOENT') return 0
-      throw err
+      if (err.code !== 'ENOENT') throw err
     }
-    for (const f of files) {
-      await unlink(path.join(followUpDir, f)).catch(() => {})
-    }
-    return files.length
+    await rm(followUpDir, { recursive: true, force: true })
+    return count
   }
 
   return { saveResponse, getResponse, cleanupOlderThan, purgeAll }

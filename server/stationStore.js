@@ -46,7 +46,7 @@
 //   refusing ever proves too rigid; it would need a real compensating
 //   transaction, which refusing does not.
 import { randomBytes, createHash } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const CREDENTIAL_BYTES = 32 // 256 bits, same bar as the follow-up capability token
@@ -325,19 +325,19 @@ export function createStationStore(baseDir) {
     return null
   }
 
+  // Independent-review finding: *.json만 지우면 크래시로 남은 *.json.tmp
+  // 고아 파일이 "전체 삭제" 이후에도 남는다. 디렉터리 자체를 rm -rf해
+  // 파일명 패턴과 무관하게 확실히 비운다.
   async function purgeAll() {
     assignedTokens.clear()
-    let files
+    let count = 0
     try {
-      files = (await readdir(stationsDir(baseDir))).filter((f) => f.endsWith('.json'))
+      count = (await readdir(stationsDir(baseDir))).filter((f) => f.endsWith('.json')).length
     } catch (err) {
-      if (err.code === 'ENOENT') return 0
-      throw err
+      if (err.code !== 'ENOENT') throw err
     }
-    for (const f of files) {
-      await unlink(path.join(stationsDir(baseDir), f)).catch(() => {})
-    }
-    return files.length
+    await rm(stationsDir(baseDir), { recursive: true, force: true })
+    return count
   }
 
   return {

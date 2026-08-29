@@ -1852,7 +1852,38 @@ async function main() {
       const identityUuid = randomUUID()
       await identityStore.linkPatientIdentity({ patientUuid: identityUuid, chartNo: 'CN-8008', patientName: '환자H', confirmedBy: 'staff-1', now: T0 })
 
-      // (e) audit.log -- every HTTP action above already wrote to it.
+      // (e) a station registration + assignment (stations/). Independent-
+      // review finding: earlier this only exercised stations/ implicitly
+      // via follow-up-sessions/, and neither had a verify-gone assertion --
+      // both are seeded and checked explicitly now.
+      const stationReg = await (await fetch(`${base}/api/stations`, { method: 'POST', headers, body: JSON.stringify({ name: 'purge-seed 스테이션' }) })).json()
+      const stationPatientVisit = await (await fetch(`${base}/api/visits`, { method: 'POST', headers, body: '{}' })).json()
+      const stationAssign = await fetch(`${base}/api/stations/${stationReg.station.station_id}/assign`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_id: stationPatientVisit.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+      })
+      assert('purge-full: seed station assignment created (201)', stationAssign.status === 201)
+
+      // (f) a recorder result save (recorder-results/).
+      const recorderVisit = await (await fetch(`${base}/api/visits`, { method: 'POST', headers, body: '{}' })).json()
+      const recorderRes = await fetch(`${base}/api/visits/${recorderVisit.id}/recorder-results`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ recording_id: 'purge-seed-rec-1', transcript: '테스트', structured_note: null, source: { workstation_id: 'PURGE-SEED' } }),
+      })
+      assert('purge-full: seed recorder result saved (201)', recorderRes.status === 201)
+
+      // (g) a micro-follow-up response save (micro-follow-up/).
+      const microVisit = await (await fetch(`${base}/api/visits`, { method: 'POST', headers, body: '{}' })).json()
+      const microRes = await fetch(`${base}/api/visits/${microVisit.id}/micro-follow-up`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ targetRatings: [], overallChange: '좋아짐', newSymptomReported: false, newSymptomNote: '', adverseEffectReported: false, adverseEffectNote: '' }),
+      })
+      assert('purge-full: seed micro-follow-up response saved (201)', microRes.status === 201)
+
+      // (h) audit.log -- every HTTP action above already wrote to it.
 
       /* ---- verify-exists: every seeded family is genuinely on disk
          BEFORE the purge, so the "verify-gone" assertions below are
@@ -1864,6 +1895,13 @@ async function main() {
       const crmTasksBefore = (await readdir(path.join(dataRoot, 'crm', 'tasks'))).filter((f) => f.endsWith('.json'))
       assert('purge-full: sanity -- crm task file exists before purge', crmTasksBefore.length > 0)
       assert('purge-full: sanity -- crm-identity link file exists before purge', (await readRaw(path.join(dataRoot, 'crm-identity', 'links', `${identityUuid}.json`))) !== null)
+      const stationsBefore = (await readdir(path.join(dataRoot, 'stations', 'stations'))).filter((f) => f.endsWith('.json'))
+      assert('purge-full: sanity -- station file exists before purge', stationsBefore.length > 0)
+      const recorderResultsBefore = (await readdir(path.join(dataRoot, 'recorder-results', recorderVisit.id))).filter((f) => f.endsWith('.json'))
+      assert('purge-full: sanity -- recorder result file exists before purge', recorderResultsBefore.length > 0)
+      assert('purge-full: sanity -- micro-follow-up response file exists before purge', (await readRaw(path.join(dataRoot, 'micro-follow-up', `${microVisit.id}.json`))) !== null)
+      const followUpTokensBefore = (await readdir(path.join(dataRoot, 'follow-up-sessions', 'tokens'))).filter((f) => f.endsWith('.json'))
+      assert('purge-full: sanity -- a follow-up-session token file exists before purge', followUpTokensBefore.length > 0)
       const auditRawBefore = await readFile(path.join(dataRoot, 'audit.log'), 'utf8').catch(() => '')
       assert('purge-full: sanity -- audit.log has content before purge', auditRawBefore.trim().length > 0)
 
@@ -1873,7 +1911,17 @@ async function main() {
       // inventory comment), a new, unexpected entry shows up here and this
       // assertion fails loudly instead of the gap going unnoticed.
       const topLevelBeforePurge = (await readdir(dataRoot)).sort()
-      const expectedTopLevel = ['audit.log', 'crm', 'crm-identity', 'follow-up-sessions', 'submissions', 'visits'].sort()
+      const expectedTopLevel = [
+        'audit.log',
+        'crm',
+        'crm-identity',
+        'follow-up-sessions',
+        'micro-follow-up',
+        'recorder-results',
+        'stations',
+        'submissions',
+        'visits',
+      ].sort()
       assert(
         'purge-full: drift-guard -- top-level entries under the data root are exactly what this seeding is expected to produce',
         JSON.stringify(topLevelBeforePurge) === JSON.stringify(expectedTopLevel),
@@ -1896,6 +1944,20 @@ async function main() {
       assert('purge-full: no submission files remain', submissionFilesAfter.filter((f) => f.endsWith('.json')).length === 0)
       const visitFilesAfter = await readdir(path.join(dataRoot, 'visits')).catch(() => [])
       assert('purge-full: visits/ has no .json files remaining (or the directory itself is gone)', visitFilesAfter.filter((f) => f.endsWith('.json')).length === 0)
+      // Independent-review finding: follow-up-sessions/ was seeded by this
+      // test but never actually checked as gone -- a surviving live
+      // capability token is exactly the class of leak this batch cares
+      // about. stations/, recorder-results/, micro-follow-up/ were not
+      // seeded at all before, so a leak in any of them was structurally
+      // invisible to this test regardless of what the purge script did.
+      const followUpTokensAfter = await readdir(path.join(dataRoot, 'follow-up-sessions', 'tokens')).catch(() => [])
+      assert('purge-full: follow-up-sessions/tokens has no .json files remaining (or the directory itself is gone)', followUpTokensAfter.filter((f) => f.endsWith('.json')).length === 0)
+      const stationFilesAfter = await readdir(path.join(dataRoot, 'stations', 'stations')).catch(() => [])
+      assert('purge-full: stations/ has no .json files remaining (or the directory itself is gone)', stationFilesAfter.filter((f) => f.endsWith('.json')).length === 0)
+      const recorderResultsAfter = await readdir(path.join(dataRoot, 'recorder-results')).catch(() => [])
+      assert('purge-full: recorder-results/ is empty or gone', recorderResultsAfter.length === 0)
+      const microFollowUpAfter = await readdir(path.join(dataRoot, 'micro-follow-up')).catch(() => [])
+      assert('purge-full: micro-follow-up/ has no .json files remaining (or the directory itself is gone)', microFollowUpAfter.filter((f) => f.endsWith('.json')).length === 0)
       const crmDirGone = await access(path.join(dataRoot, 'crm')).then(() => false).catch(() => true)
       assert('purge-full: crm/ is gone entirely', crmDirGone)
       const identityDirGone = await access(path.join(dataRoot, 'crm-identity')).then(() => false).catch(() => true)

@@ -16,7 +16,7 @@
 // audit trail with no visible production failure. A scattered/duplicated
 // allowlist makes that easy to repeat by typo; importing these constants
 // at every call site makes a stray literal or misspelling a lint-visible
-// (grep-checkable, and asserted by tests/server.spec.mjs's static check)
+// (grep-checkable, and asserted by tests/audit-registry.spec.mjs's static check)
 // problem instead of a silent runtime drop. logEvent's own contract is
 // unchanged: still throws on anything not in this registry, still only
 // ever writes the same 6 fixed keys below -- this registry adds NAMES

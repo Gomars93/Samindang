@@ -1071,7 +1071,22 @@ export function createApp({
               bytes = sendJson(req, res, status, { error: result.reason }, cors)
             } else {
               status = 201
+              // Independent-review finding: assignRevisitToStation calls
+              // startRevisit internally, which on the non-reused path
+              // creates a brand-new visit AND mints a live follow-up
+              // capability token -- but only station_assigned was ever
+              // audited here, so a station assignment's own visit_created/
+              // follow_up_session_issued never reached audit.log. Guarded
+              // by the same `reused` signal the direct start-revisit route
+              // already uses (see the comment there); station_assigned
+              // itself is unconditional -- a station being assigned is
+              // real durable state change regardless of whether the
+              // underlying visit was newly created or reattached.
               await safeAudit({ event: AUDIT_EVENTS.STATION_ASSIGNED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
+              if (!result.reused) {
+                await safeAudit({ event: AUDIT_EVENTS.VISIT_CREATED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
+                await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_ISSUED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
+              }
               // No raw token in this response: the tablet fetches it itself
               // through its own credential-guarded poll. Staff never needs
               // to see or handle the capability for the CLINIC_TABLET path.
@@ -1616,12 +1631,24 @@ function isMain() {
 // 그 경로들이 실제로 쓰기 가능한지 즉시 확인해 안 되면 fatal로 죽는다 —
 // 나중에 첫 요청에서야 조용히 실패하는 것보다 낫다.
 async function checkDataDirsWritable(dataDir) {
+  // Independent-review finding: this list had drifted from the actual set
+  // of persistence directories the server creates -- stations/, crm/, and
+  // crm-identity/ (all added in later rounds) were missing, so an operator
+  // whose SAMINDANG_DATA_DIR points somewhere with a writable submissions/
+  // but an unwritable sibling for one of these would pass this boot
+  // self-check cleanly and only discover the problem at the first CRM/
+  // station/identity-link request. scripts/purge-data.mjs's own inventory
+  // comment is the other place this same list is maintained -- keep both
+  // in sync if a future round adds another persistence directory.
   const dirs = {
     submissions_dir: path.resolve(dataDir),
     visits_dir: path.resolve(dataDir, '..', 'visits'),
     recorder_results_dir: path.resolve(dataDir, '..', 'recorder-results'),
     micro_follow_up_dir: path.resolve(dataDir, '..', 'micro-follow-up'),
     follow_up_sessions_dir: path.resolve(dataDir, '..', 'follow-up-sessions'),
+    stations_dir: path.resolve(dataDir, '..', 'stations'),
+    crm_dir: path.resolve(dataDir, '..', 'crm'),
+    crm_identity_dir: path.resolve(dataDir, '..', 'crm-identity'),
   }
   for (const [label, dir] of Object.entries(dirs)) {
     const probe = path.join(dir, '.write-probe')

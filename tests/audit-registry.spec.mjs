@@ -96,6 +96,32 @@ async function main() {
     // least makes the drift visible rather than silent.
     assert('registry: AUDIT_EVENTS has exactly 32 registered event names', Object.keys(AUDIT_EVENTS).length === 32)
     assert('registry: AUDIT_ACTORS has exactly 3 registered actor names', Object.keys(AUDIT_ACTORS).length === 3)
+
+    // Independent-review finding: the raw-literal check above only proves
+    // there's no BYPASS of the registry -- it says nothing about whether a
+    // *reference* to the registry is actually valid. `AUDIT_EVENTS.TYPO`
+    // silently evaluates to `undefined` in plain JS (Object.freeze guards
+    // writes, not reads), `ALLOWED_EVENTS.has(undefined)` is false,
+    // logEvent() throws, and safeAudit() swallows it -- the exact same
+    // silent-drop failure mode this whole registry exists to prevent, just
+    // triggered by a typo'd property name instead of a raw string literal.
+    // This check makes that class of typo loud too: every `AUDIT_EVENTS.X`/
+    // `AUDIT_ACTORS.X` property actually referenced in server/index.js must
+    // be a real, defined key on the registry object.
+    const eventRefs = [...indexSrc.matchAll(/AUDIT_EVENTS\.([A-Z0-9_]+)/g)].map((m) => m[1])
+    const actorRefs = [...indexSrc.matchAll(/AUDIT_ACTORS\.([A-Z0-9_]+)/g)].map((m) => m[1])
+    assert('drift-guard: server/index.js references at least one AUDIT_EVENTS.X property (sanity, not vacuous)', eventRefs.length > 0)
+    assert('drift-guard: server/index.js references at least one AUDIT_ACTORS.X property (sanity, not vacuous)', actorRefs.length > 0)
+    const undefinedEventRefs = eventRefs.filter((key) => AUDIT_EVENTS[key] === undefined)
+    const undefinedActorRefs = actorRefs.filter((key) => AUDIT_ACTORS[key] === undefined)
+    assert(
+      `drift-guard: every AUDIT_EVENTS.X property referenced in server/index.js is a real registered key (found undefined: ${undefinedEventRefs.join(', ')})`,
+      undefinedEventRefs.length === 0,
+    )
+    assert(
+      `drift-guard: every AUDIT_ACTORS.X property referenced in server/index.js is a real registered key (found undefined: ${undefinedActorRefs.join(', ')})`,
+      undefinedActorRefs.length === 0,
+    )
   }
 
   /* =====================================================================

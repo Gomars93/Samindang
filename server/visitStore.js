@@ -9,7 +9,7 @@
 // 지정해야만 만들어진다 (server/index.js의 POST /api/visits, patient_id
 // 존재 검증 포함 — visitExistsForPatient).
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 function visitPath(visitsDir, id) {
@@ -231,19 +231,21 @@ export function createVisitStore(visitsDir) {
     return records
   }
 
-  /** 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 없어도 조용히 넘어간다. */
+  /** 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 없어도 조용히 넘어간다.
+   * Independent-review finding: *.json만 지우면 크래시로 남은 *.json.tmp
+   * 고아 파일(atomicWrite의 rename 직전에 죽은 경우 -- 임상 메모를 담고
+   * 있을 수 있음)이 "전체 삭제"를 약속한 뒤에도 디스크에 남는다.
+   * recorderResultStore.purgeAll처럼 디렉터리 자체를 rm -rf해 파일명
+   * 패턴과 무관하게 확실히 비운다. */
   async function purgeAll() {
-    let files
+    let count = 0
     try {
-      files = await listFiles()
+      count = (await listFiles()).length
     } catch (err) {
-      if (err.code === 'ENOENT') return 0
-      throw err
+      if (err.code !== 'ENOENT') throw err
     }
-    for (const f of files) {
-      await unlink(visitPath(visitsDir, path.basename(f, '.json'))).catch(() => {})
-    }
-    return files.length
+    await rm(visitsDir, { recursive: true, force: true })
+    return count
   }
 
   return {

@@ -9,10 +9,10 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from '../server/crmStore.js'
 import { createApp } from '../server/index.js'
-import { groupTasksForCommunication } from '../src/crm/taskEngine.ts'
+import { groupTasksForCommunication, computeDedupKey } from '../src/crm/taskEngine.ts'
 
 let passCount = 0
 function assert(name, cond) {
@@ -642,6 +642,146 @@ async function main() {
       // engine's own dedup_key construction already enforces.
       const RAW_PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
       assert('dedup-crash: the intent record contains no phone-shaped string', !RAW_PHONE_PATTERN.test(JSON.stringify(intentAfterRemint)))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 8: upgrade compatibility (round 9 fix) -- a dedup pointer already
+     on disk in the pre-round-8 legacy shape ({task_id} only, no full
+     snapshot) must not be misread as "no pointer" by the current code.
+     Seeds an actual legacy-shaped pointer + Task on disk (simulating data
+     left behind by an older deploy), instantiates the CURRENT store fresh
+     (simulating restart/deploy), and retries the same source event.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-legacy-upgrade-'))
+    try {
+      const storeA = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await storeA.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      // Create a real task through the current store first, so the
+      // seeded data is byte-for-byte what this store would have written,
+      // then downgrade just the dedup pointer to the pre-round-8 legacy
+      // shape -- exactly what an older deploy would have left on disk.
+      const { task: original } = await storeA.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-legacy-upgrade',
+        owner_clinician: null,
+        now: T0,
+      })
+      const hashFile = (await readdirDedupFiles(root))[0]
+      const dedupFilePath = path.join(root, 'dedup', hashFile)
+      await writeFile(dedupFilePath, JSON.stringify({ task_id: original.task_id }, null, 2), 'utf8')
+      const seededLegacy = await readRaw(dedupFilePath)
+      assert('legacy-upgrade: seeded pointer is genuinely the old {task_id}-only shape', seededLegacy.task_id === original.task_id && seededLegacy.task === undefined)
+
+      // Simulate an actual restart/deploy: a completely fresh store
+      // instance, then retry the same source event with the caller's own
+      // fresh task_id (exactly what a real retry supplies).
+      const storeB = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const { task: recovered, deduped: recoveredDeduped } = await storeB.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-legacy-upgrade',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('legacy-upgrade: retry against a legacy pointer recognizes the existing task and dedupes, not a duplicate', recoveredDeduped === true && recovered.task_id === original.task_id)
+      assert('legacy-upgrade: patient identity remains Episode-derived through the legacy path', recovered.patient_uuid === patientUuid)
+
+      const allTaskFiles = (await readdir(path.join(root, 'tasks'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      const matchingDedupKey = []
+      for (const f of allTaskFiles) {
+        const t = await readRaw(path.join(root, 'tasks', f))
+        if (t.dedup_key === original.dedup_key) matchingDedupKey.push(t)
+      }
+      assert('legacy-upgrade: exactly one non-terminal Task exists for this dedup_key -- no duplicate from the upgrade', matchingDedupKey.length === 1)
+
+      const pointerAfterUpgrade = await readRaw(dedupFilePath)
+      assert('legacy-upgrade: the legacy pointer was lazily upgraded to the new intent-record shape', pointerAfterUpgrade.task?.task_id === original.task_id)
+
+      const RAW_PHONE_PATTERN2 = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
+      assert('legacy-upgrade: no phone-shaped string anywhere in the upgraded pointer', !RAW_PHONE_PATTERN2.test(JSON.stringify(pointerAfterUpgrade)))
+
+      // Legacy pointer + TERMINAL Task: existing remint behavior must be
+      // preserved -- resolve the task to DONE, force the pointer back to
+      // the legacy shape (as if an old deploy had left it there before
+      // the task was ever resolved), then retry: a genuinely new task
+      // must be minted, not a reuse of the terminal one.
+      const resolved = await storeB.resolveTaskStored(original.task_id, recovered.version, 'CLINICIAN', T0)
+      assert('legacy-upgrade: recovered task resolves to DONE normally', resolved.status === 'DONE')
+      await writeFile(dedupFilePath, JSON.stringify({ task_id: original.task_id }, null, 2), 'utf8')
+
+      const storeC = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const { task: remint, deduped: remintDeduped } = await storeC.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-legacy-upgrade',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('legacy-upgrade: a legacy pointer naming a now-TERMINAL task still mints a genuinely new task, not a reuse', remintDeduped === false && remint.task_id !== original.task_id)
+      const pointerAfterRemint = await readRaw(dedupFilePath)
+      assert('legacy-upgrade: the pointer after remint points at the new mint in the upgraded shape', pointerAfterRemint.task?.task_id === remint.task_id)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 9: legacy pointer naming a MISSING Task (corruption/deletion, not
+     an in-flight crash -- the pre-round-8 write order guaranteed the Task
+     always existed before its pointer did). Must fail/recover explicitly
+     by minting a fresh task, never throwing unhandled or silently
+     guessing at the missing Task's original fields.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-legacy-missing-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      const dedup_key = computeDedupKey({
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        source_event_id: 'evt-legacy-missing',
+        contactPointKey: 'DEFAULT',
+      })
+      const hash = createHash('sha256').update(dedup_key, 'utf8').digest('hex')
+      await mkdir(path.join(root, 'dedup'), { recursive: true })
+      const missingTaskId = randomUUID()
+      await writeFile(path.join(root, 'dedup', `${hash}.json`), JSON.stringify({ task_id: missingTaskId }, null, 2), 'utf8')
+
+      const { task, deduped } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-legacy-missing',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('legacy-missing: a legacy pointer naming a nonexistent Task mints a fresh task explicitly, no throw', deduped === false && task.task_id !== missingTaskId)
+      const stillMissing = await readRaw(path.join(root, 'tasks', `${missingTaskId}.json`))
+      assert('legacy-missing: the phantom task_id the corrupt pointer named was never retroactively created', stillMissing === null)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

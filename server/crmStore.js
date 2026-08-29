@@ -257,6 +257,17 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
   // crash between them left an orphaned Task with no pointer, and the
   // next retry would mint an entirely new (second) non-terminal Task for
   // the same dedup_key -- silently duplicating staff work/contact.
+  //
+  // Round 9 fix (upgrade compatibility): a pointer file already on disk
+  // from before round 8 has the legacy shape { task_id } with no `task`
+  // snapshot. Reading it with `pointer?.task` alone treats it as if no
+  // pointer existed at all, which reintroduces the exact duplicate-task
+  // condition round 8 closed -- just triggered by a software upgrade
+  // instead of a same-version crash. Both shapes are read uniformly by
+  // pointerTaskId below; a legacy pointer that still names a real Task on
+  // disk is treated with the same terminal/non-terminal semantics as a
+  // new-format one, and is lazily upgraded to the new { task } shape once
+  // resolved, so this path only has to run once per dedup_key.
   async function createTaskStored(rawInput) {
     const episode = await getEpisode(rawInput.episode_id)
     if (!episode) throw new CrmNotFoundError('episode', rawInput.episode_id)
@@ -273,23 +284,38 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     return withLock(`dedup:${hash}`, async () => {
       await ensureDirs()
       const pointer = await readJson(dedupPath(baseDir, hash))
-      if (pointer?.task) {
-        const onDisk = await getTask(pointer.task.task_id, input.now)
+      const pointerTaskId = pointer?.task?.task_id ?? pointer?.task_id ?? null
+      if (pointerTaskId) {
+        const onDisk = await getTask(pointerTaskId, input.now)
         if (onDisk) {
           if (!TERMINAL_TASK_STATUSES.has(onDisk.status)) {
+            if (!pointer.task) {
+              // Legacy pointer resolved successfully -- lazily upgrade it
+              // to the new intent-record format so a future read never
+              // has to take this legacy path again for this dedup_key.
+              await atomicWrite(dedupPath(baseDir, hash), { task: onDisk })
+            }
             return { task: onDisk, deduped: true }
           }
           // Terminal -- treated exactly like no match, falls through to
           // mint a fresh intent below (repointing the dedup index).
-        } else {
-          // Recovery: a prior attempt's intent survived, but its Task
+        } else if (pointer.task) {
+          // Recovery: a new-format intent survived a crash, but its Task
           // file never landed (process died in between). Complete that
           // exact prior attempt by replaying its already-computed
           // snapshot verbatim -- this retry's own (possibly different)
           // input is not used to reconstruct it.
-          await withLock(`task:${pointer.task.task_id}`, () => atomicWrite(taskPath(baseDir, pointer.task.task_id), pointer.task))
+          await withLock(`task:${pointerTaskId}`, () => atomicWrite(taskPath(baseDir, pointerTaskId), pointer.task))
           return { task: pointer.task, deduped: false }
         }
+        // else: a legacy { task_id }-only pointer names a Task that does
+        // not exist on disk. Under the pre-round-8 write order (Task
+        // written before its pointer) this state could never arise from
+        // an in-flight crash -- it implies external corruption/deletion,
+        // and a legacy pointer carries no snapshot to replay from. Falls
+        // through to mint a fresh intent below, exactly like "no pointer
+        // at all", rather than silently guessing at the missing Task's
+        // original fields.
       }
       const { task } = createCrmTask(input, [])
       await atomicWrite(dedupPath(baseDir, hash), { task })

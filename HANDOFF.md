@@ -1,6 +1,32 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 8 — durable dedup crash window 제거, 이번 세션)
+## Objective (CRM v0.3.1 round 9 — legacy dedup 포인터 업그레이드 호환성, 이번 세션)
+Gomars93의 다음 지시: round 8이 새 `{task}` 포맷을 도입하면서
+`pointer?.task`만 인식하도록 짰는데, round 6/7 코드가 이미 만들어둔
+레거시 `{task_id}`-only 포맷 포인터는 새 코드에게 "포인터 없음"으로
+보인다 — 그러면 이미 활성 상태인 source event의 첫 재시도가 두 번째
+non-terminal Task를 만들고 인덱스를 새 포맷으로 덮어써버려, round 8이
+막으려던 바로 그 중복 상태를 이번엔 "동일 버전 내 crash"가 아니라
+"소프트웨어 업그레이드"를 계기로 재현한다. 지시된 유일한 과제: 새
+마이그레이션 프레임워크나 데이터베이스 없이 dedup 리더를 기존
+`{task_id}` 포인터와 하위 호환되게 만들 것. 선호 형태: 레거시 포인터가
+존재하는 Task를 가리키면 오늘과 같은 terminal/non-terminal semantics로
+그 Task를 authoritative로 취급하고, 안전한 읽기 이후 선택적으로 포인터를
+새 `{task}` intent 포맷으로 lazily 재기록. 레거시 포인터가 존재하지 않는
+Task를 가리키면, 기존 불변식이 안전하다고 증명하지 않는 한 조용히 무관한
+중복을 만들지 말고 명시적으로 실패/복구할 것. 요구된 회귀: 실제
+Round-7 스타일 `{task_id}` 포인터 + non-terminal Task를 디스크에 심고,
+현재 store를 restart/deploy 이후처럼 인스턴스화해서, 같은 source
+event/contact point로 재시도해 (a) non-terminal Task가 정확히 하나만
+남고, (b) 원본 task_id가 반환/dedupe되고, (c) patient identity가 여전히
+Episode-derived이며, (d) PHI/raw-phone 문자열이 도입되지 않음을 증명.
+레거시 포인터 + terminal Task가 기존 remint 동작을 그대로 보존하는 것도
+같이 커버. CRM UI 없음, 임상 threshold/매핑/red-flag/Additional Pain
+promotion/identity policy/messaging provider 변경 없음. FROZEN
+zero-diff 유지, tsc/build/build:preview/test:all/tablet-core + 최신
+CI/preview 재확인. 새 제품 문서 없음. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 8 — durable dedup crash window 제거, 이전 세션)
 Gomars93의 다음 지시: round 7에서 공개했던 알려진 한계 — `createTaskStored()`가
 Task 파일을 먼저 쓰고 `dedup/<hash>.json` 포인터를 나중에 쓰는데, Task
 rename이 성공한 직후 dedup 포인터가 기록되기 전에 프로세스가 죽으면
@@ -347,7 +373,55 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 8 (durable dedup crash window 제거, 이번 세션)
+## Completed — CRM v0.3.1 Round 9 (legacy dedup 포인터 업그레이드 호환성, 이번 세션)
+**`server/crmStore.js`의 `createTaskStored()` 재작성**: 포인터를
+"`pointer?.task`가 있는지"가 아니라 `pointerTaskId = pointer?.task?.task_id
+?? pointer?.task_id ?? null`로 읽어, 새 포맷(`{task: {...}}`)과 레거시
+포맷(`{task_id: "..."}`) 둘 다 균일하게 처리한다. 이후 로직:
+- `pointerTaskId`가 있고 그 Task가 디스크에 실제로 존재하면(레거시든
+  새 포맷이든 상관없이): 기존과 동일한 terminal/non-terminal 판단.
+  non-terminal이면 dedupe해서 반환하되, 그 포인터가 레거시
+  포맷(`!pointer.task`)이었다면 이 시점에 `{task: onDisk}`로 lazily
+  덮어써 다음부터는 이 경로를 다시 탈 필요가 없게 한다.
+- `pointerTaskId`는 있는데 Task가 없고 **포인터가 새 포맷**이면: round
+  8의 기존 crash-recovery 경로(포인터의 스냅샷을 그대로 재생) 그대로.
+- `pointerTaskId`는 있는데 Task가 없고 **포인터가 레거시 포맷**이면:
+  round 8 이전 쓰기 순서(Task 먼저, 포인터 나중)에서는 이 상태가 크래시
+  로도 나올 수 없었다는 뜻이므로(외부 손상/삭제가 아니면 불가능),
+  재생할 스냅샷도 없다 — "포인터 없음"과 똑같이 새 intent를 발급하는
+  경로로 명시적으로 떨어뜨린다(조용한 fallthrough가 아니라 주석으로
+  근거를 남긴 명시적 분기).
+
+**`tests/crm-store.spec.mjs`**: 신규 Part 8(레거시 포인터 업그레이드,
+9 assertion)과 Part 9(레거시 포인터가 존재하지 않는 Task를 가리키는
+손상 케이스, 2 assertion)를 추가. 총 **64 assertion**(53 → 64). Part 8은
+review가 요구한 그대로: 실제 store로 Task를 만든 뒤 그 dedup 포인터
+파일만 레거시 `{task_id}` 포맷으로 직접 덮어써 "구버전이 남긴 데이터"를
+그대로 재현 → 완전히 새로운 `createCrmStore()` 인스턴스(재시작
+시뮬레이션)로 같은 source event를 재시도 → (a) non-terminal Task가
+정확히 하나만 남음, (b) 원본 task_id가 dedupe되어 반환됨, (c)
+patient_uuid가 여전히 Episode-derived, (d) 포인터가 새 포맷으로 lazily
+업그레이드됨, (e) 어디에도 phone-shaped 문자열 없음을 확인. 이어서 그
+Task를 DONE으로 resolve하고 포인터를 다시 레거시 포맷으로 강제 되돌린
+뒤 재시도 — 기존 remint 동작(terminal Task는 재사용하지 않고 정말 새
+task_id를 발급)이 레거시 경로에서도 그대로 유지됨을 확인. Part 9는
+`computeDedupKey()`로 정확한 hash를 계산해, 존재하지 않는 task_id를
+가리키는 레거시 포인터를 직접 심고, `createTaskStored`가 예외 없이
+명시적으로 새 task를 발급하며 그 phantom task_id를 소급 생성하지
+않음을 확인.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 64 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). CRM UI는 지시대로 이번 라운드에도 시작하지 않았다. Test 0
+여전히 PENDING, Care Gap suppression 여전히 비활성, 새 임상
+로직/threshold/identity-policy/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 8 (durable dedup crash window 제거, 이전 세션)
 **`server/crmStore.js`의 `createTaskStored()` 재작성**: 쓰기 순서를
 뒤집었다 — 이제 dedup 포인터(`dedup/<hash>.json`)를 **먼저** 쓰고 Task
 파일을 나중에 쓴다. 포인터 파일의 내용도 `{task_id}`에서

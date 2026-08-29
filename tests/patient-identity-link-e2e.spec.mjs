@@ -326,18 +326,28 @@ async function main() {
     await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkReviewText')`, (v) => v === true)
     await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkSubmit').click()`)
 
-    // Independent-review finding (#10): a 2000ms timeout against a
-    // 5000ms POLL_MS is only a probabilistic detector (the poll's phase
-    // is arbitrary within its cycle, so a pure-polling implementation
-    // would still pass ~40% of the time). Observed optimistic-update
-    // latency against a loopback server is well under 200ms, so 900ms
-    // catches the same true-positive while raising the odds a
-    // regression to polling-only actually fails this check.
+    // Independent-review finding (#10, round 3): the original condition
+    // checked .doctor__todayQueue__grid's textContent for the linked
+    // name/chart -- but the review pane's OWN confirmation text
+    // ("홍길동E2E / CN-E2E-REAL 로 연결하시겠습니까?") lives inside that same
+    // grid and already contains both strings the instant before this
+    // click, making the check vacuous (it would pass even with the
+    // optimistic-update code deleted entirely, since it was already true
+    // pre-click). Scoped now to row A's resolved-identity label
+    // specifically (.doctorField__value--muted, rendered only once
+    // resolved) AND requires the link form to be gone -- this can only
+    // become true once the row has actually transitioned to resolved.
     let immediateUpdateOk = true
     let immediateUpdateErr = ''
     try {
       await cdp.evalUntil(
-        `document.querySelector('.doctor__todayQueue__grid').textContent.includes('홍길동E2E') && document.querySelector('.doctor__todayQueue__grid').textContent.includes('CN-E2E-REAL')`,
+        `(() => {
+          const row = document.querySelector('${rowASelector}')
+          if (!row) return false
+          const valueEl = row.querySelector('.doctorField__value--muted')
+          const stillEditing = !!row.querySelector('.doctor__todayQueue__linkForm')
+          return !!valueEl && !stillEditing && valueEl.textContent.includes('홍길동E2E') && valueEl.textContent.includes('CN-E2E-REAL')
+        })()`,
         (v) => v === true,
         900,
       )

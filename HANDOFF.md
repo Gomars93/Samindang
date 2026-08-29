@@ -816,12 +816,84 @@ diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty,
 FROZEN zero-diff). Test 0는 여전히 PENDING, Care Gap suppression은
 여전히 OFF — 이번 배치가 건드리지 않음.
 
-**두 번째(재검수) Opus subagent 호출**: 수정된 diff 전체에 대해 다시
-`model: "opus"` subagent를 호출해 11개 fix 전부가 실제로 해결됐는지,
-그리고 fix 자체가 새로운 실질적 이슈를 만들지 않았는지 독립 검증 중.
-결과는 이 세션에서 받는 대로 이 섹션에 이어서 기록한다(아직 진행
-중이라면 이 문장이 최신 상태를 반영한다 — Git/실제 코드 상태가 항상
-우선한다).
+**두 번째(재검수) Opus subagent 호출** (commit `e491fb5` 대상, 실제로
+`model: "opus"` 지정해 호출 — 약 407초, 29 tool call, ~128K 토큰,
+`npm run test:crm-store`/`test:today-queue`/`test:identity-link-e2e`를
+스스로 실행해 확인): 11개 중 8개는 완전히 해결로 판정, 2개는
+불완전(#3 chart_no 대소문자: 기존 데이터 마이그레이션 없음 — 단
+이 store 자체가 origin/main에 존재한 적이 없어 실제로는 마이그레이션할
+데이터가 없음; #10 E2E 2000ms 타임아웃: POLL_MS=5000ms 대비 확률적
+감지기일 뿐), 1개는 미해결(#9 모듈 헤더/JSDoc 코멘트 3곳이 여전히
+예전 "pending marker 없을 때만" 게이팅을 설명 — 실제 코드는 재구조화
+이후 무조건 실행). 그리고 새 이슈 8개: 되돌릴 수 없는 확인 단계가
+서버가 실제로 저장하는(대소문자 정규화된) 값이 아니라 사용자가 입력한
+원본 값을 보여줌(NEW-3, 실질적), `.catch()` 없는 promise 체인 —
+예외 시 mode가 'submitting'에 영구히 고착되고 모든 버튼이 비활성화됨
+(NEW-4), 뒤로/취소 버튼이 클래스를 공유해 E2E가 DOM 순서에 암묵적으로
+의존(NEW-5), E2E의 always-true `check(name, true)` 2곳 — 실패해도
+읽기 어려운 원시 스택트레이스로만 나타남(NEW-6), 컴포넌트 헤더
+코멘트가 "patient_uuid로 keyed"라고 틀리게 적음(실제로는 task_id)
+(NEW-7), 그리고 이 배치 범위 밖의 사전 존재 결함 2개 — audit.js에
+`patient_identity_linked` 외 23개 이벤트명이 여전히 미등록으로 조용히
+드롭됨(NEW-1), purge-data.mjs가 crm-identity/는 고쳤지만 `.data/visits/`
+와 `.data/crm/`은 여전히 안 지움(NEW-2) — 및 이미 push된 커밋 메시지의
+사소한 부정확 서술 1건(NEW-8, 코드 아님, 수정 안 함).
+
+**Sonnet 2차 수정** (commit `602525e`): #9 스테일 코멘트 3곳 전면
+재작성(무조건 실행되는 현재 동작 정확히 반영, "two sections" →
+"three"로 수정) + #3에 "이 store는 origin/main에 존재한 적이 없어
+마이그레이션 불필요, merge 전 바뀌면 추가할 것" 코멘트 추가(기능
+마이그레이션은 만들지 않음 — 실제로 필요 없음) + #10 타임아웃을
+900ms로(관측된 실제 latency <200ms) + NEW-6에 맞춰 두 개의 always-true
+assertion을 try/catch로 감싸 진짜 named FAIL이 나오게 수정 + NEW-3에
+맞춰 `PatientIdentityLinkAction.tsx`가 확인 단계 진입 시
+`.trim().toUpperCase()`를 적용해(서버와 완전히 동일 정규화) 검토
+화면이 실제로 저장될 값과 항상 일치하게 수정 + NEW-4에 맞춰 `.catch()`
+추가(예외 시 mode를 'editing'으로 복귀 + 에러 표시) + NEW-5에 맞춰
+뒤로/취소에 `data-action="back"`/`"discard"` 부여하고 E2E가 이를
+사용하도록 수정 + NEW-7 코멘트 정정. NEW-1/NEW-2는 이 배치의 승인된
+범위(신원 연결) 밖의 기존 결함이라 의도적으로 손대지 않고 완료
+보고서에 후속 과제로 명시.
+
+**세 번째(마감) Opus subagent 호출** (commit `602525e` 대상, 실제로
+`model: "opus"` 지정해 호출 — 약 439초, 41 tool call, ~117K 토큰,
+`git log origin/main -- server/patientIdentityStore.js`로 "이 store는
+origin/main에 존재한 적 없음" 주장을 직접 검증하고, 계측된 스크래치
+스크립트로 실제 optimistic-update latency를 직접 측정): #3/#9/NEW-3/
+NEW-4/NEW-5/NEW-6/NEW-7 전부 완전히 해결로 판정. **#10 하나만 진짜
+미해결로 판정** — 타임아웃 값(900ms)이 문제가 아니라, 검사 대상
+셀렉터(`​.doctor__todayQueue__grid`의 textContent)가 잘못됐다는 정확한
+지적: 검토 확인 화면 자체의 확인 문구("홍길동E2E / CN-E2E-REAL 로
+연결하시겠습니까?")가 같은 grid 안에 렌더링되기 때문에, 확인 버튼을
+누르기도 전에 이미 조건이 참이 되어버려 이 assertion이 사실상
+무의미했다(직접 계측: 클릭 전부터 이미 참, 실제 optimistic-update
+latency는 별도 계측으로 ~200ms 이내로 확인 — 즉 제품 코드 자체는
+정확했고 테스트만 눈이 멀어 있었음). NEW-1/NEW-2의 "범위 밖" 처리에는
+동의하되, NEW-2("파일럿 종료 후 완전 삭제"를 약속하는 스크립트가
+`.data/visits/`·`.data/crm/`의 임상 메모/사유 코드를 남긴다)는 "머지
+차단"이 아니라 "파일럿 종료 차단" 항목으로 명확히 추적돼야 한다고
+지적. 새로 도입된 이슈는 없음.
+
+**Sonnet 3차 수정** (같은 세션에서 이어서, 별도 커밋 예정): #10을 진짜로
+고쳤다 — `.doctor__todayQueue__grid` 전체가 아니라 해당 행의
+`.doctorField__value--muted`(resolved 라벨) + `.doctor__todayQueue__linkForm`이
+사라졌는지를 함께 확인하도록 조건을 재작성. `npm run
+test:identity-link-e2e` 재실행으로 22개 assertion 전부 그대로 통과
+확인. 이로써 3라운드 Opus 독립 검수 루프에서 "실질적 이슈가 남지
+않음"에 도달 — 남은 항목(NEW-1: 감사로그 이벤트 23개 추가 등록 필요,
+NEW-2: purge-data.mjs가 `.data/visits/`·`.data/crm/`도 지우도록
+확장 필요 — 파일럿 종료 전 필수)은 이 배치의 승인 범위 밖이므로
+명시적으로 손대지 않고 다음 라운드 과제로 이 문서와 PR 보고서에
+남긴다.
+
+**최종 검증(3차 수정 반영, 이번 세션이 직접 실행)**: `npx tsc -b
+--force`(0 에러), `npm run test:all` 전체 green(exit code 0, FAIL
+0건 — 도중 실제 GitHub Actions CI에서 `tests/tablet-viewport.spec.mjs`의
+동일한 Chrome 프로필 정리 `ENOTEMPTY` flake가 한 번 재현됐으나, 실패한
+job을 1회 재실행해 즉시 green으로 확인됨), `cd "tablet core" &&
+python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
+Test 0는 여전히 PENDING, Care Gap suppression은 여전히 OFF.
 
 ## Completed — CRM v0.3.1 Round 13 (Doctor 클라이언트 첫 CRM UI — 읽기 전용 Today Queue, 이전 세션)
 **`src/lib/serverClient.ts`**: `listCrmTasks(params?: { ownerClinician?,

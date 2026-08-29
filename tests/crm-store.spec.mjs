@@ -1054,6 +1054,167 @@ async function main() {
     }
   }
 
+  /* =====================================================================
+     Part 12: SNOOZED Routine/Clinical tasks actually defer from the Today
+     Queue until their explicit stored due_at (round 12 fix). Before this,
+     listActionableTasks() included every non-terminal status, so
+     snoozeTask() changed status/due_at but the queue kept showing the
+     item immediately -- snooze was a no-op from the queue's perspective.
+     No duration/SLA/grace-period/timezone rule is invented; only the
+     already-stored absolute due_at is compared to server now, exactly
+     the same string comparison sortCrmTaskQueue() already uses for
+     overdue. SAFETY_REVIEW can never reach SNOOZED at all (the pure
+     engine's own snoozeTask() guard, unchanged), so this can never
+     weaken Safety visibility.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-snooze-queue-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      const { task: routine } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-snooze-queue-routine',
+        owner_clinician: null,
+        now: T0,
+      })
+      const { task: clinical } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'CLINICAL_REVIEW',
+        reason_code: 'CLINICIAN_REVIEW_REQUEST',
+        source_event_id: 'evt-snooze-queue-clinical',
+        owner_clinician: null,
+        now: T0,
+      })
+      const { task: safety } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'SAFETY_REVIEW',
+        reason_code: 'SAFETY_REVIEW_REQUEST',
+        source_event_id: 'evt-snooze-queue-safety',
+        owner_clinician: null,
+        now: T0,
+        safetyAuthorization: SAFETY_AUTH,
+      })
+
+      const snoozeUntil = isoPlusMinutes(T0, 60)
+      const snoozedRoutine = await store.snoozeTaskStored(routine.task_id, routine.version, snoozeUntil)
+      const snoozedClinical = await store.snoozeTaskStored(clinical.task_id, clinical.version, snoozeUntil)
+      assert('snooze-queue: snoozeTaskStored actually records SNOOZED + the given due_at', snoozedRoutine.status === 'SNOOZED' && snoozedRoutine.due_at === snoozeUntil && snoozedClinical.status === 'SNOOZED')
+
+      // Safety cannot be weakened: the pure engine still refuses to snooze
+      // a SAFETY_REVIEW task at all.
+      let safetySnoozeThrew = false
+      try {
+        await store.snoozeTaskStored(safety.task_id, safety.version, snoozeUntil)
+      } catch (err) {
+        safetySnoozeThrew = err instanceof Error && err.message.includes('safety_review_cannot_be_snoozed')
+      }
+      assert('snooze-queue: SAFETY_REVIEW still cannot be snoozed at all', safetySnoozeThrew)
+
+      // Before due_at: both are hidden from the queue.
+      const beforeDue = await store.listActionableTasks(T0, {})
+      const beforeDueIds = beforeDue.map((t) => t.task_id)
+      assert('snooze-queue: future-snoozed ROUTINE is absent from the queue before its due_at', !beforeDueIds.includes(routine.task_id))
+      assert('snooze-queue: future-snoozed CLINICAL_REVIEW is absent from the queue before its due_at', !beforeDueIds.includes(clinical.task_id))
+      assert('snooze-queue: SAFETY_REVIEW remains visible throughout, unaffected by snooze semantics', beforeDueIds.includes(safety.task_id))
+
+      // Exactly AT due_at: both reappear (the boundary is inclusive).
+      const atDue = await store.listActionableTasks(snoozeUntil, {})
+      const atDueIds = atDue.map((t) => t.task_id)
+      assert('snooze-queue: ROUTINE reappears exactly at its stored due_at', atDueIds.includes(routine.task_id))
+      assert('snooze-queue: CLINICAL_REVIEW reappears exactly at its stored due_at', atDueIds.includes(clinical.task_id))
+
+      // After due_at: still present.
+      const afterDue = await store.listActionableTasks(isoPlusMinutes(T0, 120), {})
+      const afterDueIds = afterDue.map((t) => t.task_id)
+      assert('snooze-queue: ROUTINE stays present once past its due_at', afterDueIds.includes(routine.task_id))
+      assert('snooze-queue: CLINICAL_REVIEW stays present once past its due_at', afterDueIds.includes(clinical.task_id))
+
+      // Listing (at any of the three points above) never mutated
+      // first_seen_at, and never silently resolved/cancelled/superseded
+      // anything -- confirmed by reading the tasks fresh from disk.
+      const routineOnDisk = await store.getTask(routine.task_id, isoPlusMinutes(T0, 120))
+      const clinicalOnDisk = await store.getTask(clinical.task_id, isoPlusMinutes(T0, 120))
+      assert('snooze-queue: repeated listing never set first_seen_at on the ROUTINE task', routineOnDisk.first_seen_at === null)
+      assert('snooze-queue: repeated listing never set first_seen_at on the CLINICAL_REVIEW task', clinicalOnDisk.first_seen_at === null)
+      assert('snooze-queue: listing never silently resolved/cancelled/superseded the ROUTINE task (still SNOOZED)', routineOnDisk.status === 'SNOOZED')
+      assert('snooze-queue: listing never silently resolved/cancelled/superseded the CLINICAL_REVIEW task (still SNOOZED)', clinicalOnDisk.status === 'SNOOZED')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- same fix, driven over real HTTP: a far-future snooze is hidden;
+     a snooze whose until has already elapsed (relative to real wall-clock
+     time by the time the queue is fetched) reappears. ---- */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-crm-snooze-queue-http-'))
+    const { server, base } = await startServer({ dataDir: path.join(dataRoot, 'submissions'), doctorToken: 'test-doctor-token' })
+    const headers = { 'content-type': 'application/json', 'x-doctor-token': 'test-doctor-token' }
+    try {
+      const visitRes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visit = await visitRes.json()
+      const epRes = await fetch(`${base}/api/crm/episodes`, { method: 'POST', headers, body: JSON.stringify({ patient_uuid: visit.patient_id }) })
+      const episode = await epRes.json()
+
+      async function createRoutineTask(sourceEventId) {
+        const res = await fetch(`${base}/api/crm/tasks`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            patient_uuid: visit.patient_id,
+            episode_id: episode.episode_id,
+            task_type: 'ROUTINE',
+            reason_code: 'REASSESSMENT_DUE',
+            source_event_id: sourceEventId,
+          }),
+        })
+        return (await res.json()).task
+      }
+
+      const futureSnoozed = await createRoutineTask('evt-snooze-queue-http-future')
+      await fetch(`${base}/api/crm/tasks/${futureSnoozed.task_id}/snooze`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: futureSnoozed.version, until: '2099-01-01T00:00:00.000Z' }),
+      })
+
+      const pastSnoozed = await createRoutineTask('evt-snooze-queue-http-past')
+      await fetch(`${base}/api/crm/tasks/${pastSnoozed.task_id}/snooze`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: pastSnoozed.version, until: new Date(Date.now() - 1000).toISOString() }),
+      })
+
+      const queueRes = await fetch(`${base}/api/crm/tasks`, { headers })
+      const queueBody = await queueRes.json()
+      const ids = queueBody.tasks.map((t) => t.task_id)
+      assert('snooze-queue-http: a far-future snooze is hidden from GET /api/crm/tasks', !ids.includes(futureSnoozed.task_id))
+      assert('snooze-queue-http: a snooze whose until has already elapsed is present in GET /api/crm/tasks', ids.includes(pastSnoozed.task_id))
+
+      const pastSnoozedInQueue = queueBody.tasks.find((t) => t.task_id === pastSnoozed.task_id)
+      assert('snooze-queue-http: the reappeared task still has first_seen_at null (listing is not exposure)', pastSnoozedInQueue?.first_seen_at === null)
+
+      const futureCheck = await fetch(`${base}/api/crm/tasks/${futureSnoozed.task_id}`, { headers })
+      const futureCheckBody = await futureCheck.json()
+      assert('snooze-queue-http: the hidden future-snoozed task is untouched on disk (still SNOOZED)', futureCheckBody.status === 'SNOOZED')
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
   console.log(`\n${passCount} CRM store persistence assertions passed.`)
 }
 

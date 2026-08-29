@@ -236,12 +236,26 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
   // returned; a task's first_seen_at is never written by this function --
   // it is set exclusively by the explicit markTaskSeenStored() action, so
   // merely listing the queue is never itself "exposure".
+  //
+  // Round 12 fix: a SNOOZED task whose due_at is still in the future is
+  // excluded -- otherwise snoozeTask() (round 1) changes status/due_at
+  // but the Today Queue kept showing the item immediately anyway, making
+  // "snooze" a no-op from the queue's perspective. Once the already-stored
+  // due_at reaches now, the task reappears as actionable -- no duration,
+  // SLA, grace period, or timezone rule is invented here; only the exact
+  // stored timestamp is compared against server now, the same string
+  // comparison sortCrmTaskQueue() itself already uses for overdue. This
+  // can never affect SAFETY_REVIEW: the pure engine's snoozeTask() already
+  // refuses to put a SAFETY_REVIEW task into SNOOZED at all, so a Safety
+  // task can never reach this branch.
   async function listActionableTasks(now, { ownerClinician, coverageQueue = null } = {}) {
     const ids = await listTaskIds()
     const tasks = []
     for (const id of ids) {
       const task = await getTask(id, now)
-      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) tasks.push(task)
+      if (!task || TERMINAL_TASK_STATUSES.has(task.status)) continue
+      if (task.status === 'SNOOZED' && task.due_at && task.due_at > now) continue
+      tasks.push(task)
     }
     const scoped = ownerClinician ? tasksForOwner(tasks, ownerClinician, coverageQueue) : tasks
     return sortCrmTaskQueue(scoped, now)

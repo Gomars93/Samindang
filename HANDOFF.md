@@ -1,6 +1,33 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 11 — Today Queue read path(GET /api/crm/tasks) 추가, 이번 세션)
+## Objective (CRM v0.3.1 round 12 — SNOOZED가 Today Queue에서 실제로 defer되도록 수정, 이번 세션)
+Gomars93의 다음 지시: round 11의 `listActionableTasks()`가 non-terminal
+상태를 전부 포함하고 있어서, Routine/Clinical task를 `SNOOZED`로 바꿔도
+`GET /api/crm/tasks`가 즉시 그대로 보여주고 있었다 — task-engine 자체의
+계약과 충돌한다: `SAFETY_REVIEW`는 정확히 "선택한 시점까지 사라지지
+않고 계속 보여야 하기 때문에" snooze가 금지되어 있는데, 지금은
+non-Safety snooze가 status/due_at은 바꾸면서도 Today Queue 관점에서는
+아무 효과가 없었다. 이번 라운드에서는 이 queue-read semantics만
+고치고 CRM UI는 시작하지 않는다. 인수 조건: (1) `due_at > now`인
+SNOOZED Routine/Clinical은 `GET /api/crm/tasks`에서 빠짐, (2) 이미
+저장된 `due_at <= now`가 되면 다시 actionable로 반환됨 — duration/SLA/
+threshold/grace period/timezone 규칙 발명 금지, 이미 저장된 절대
+timestamp를 server now와 비교만 할 것, (3) Safety는 약화되지 않음 —
+SAFETY_REVIEW는 여전히 SNOOZED에 진입할 수 없고 clinician resolution까지
+계속 보임, (4) terminal 제외/owner·coverage 필터링/큐 우선순위 정렬/
+expired-claim self-heal/first_seen_at semantics/provenance/dedup·
+idempotency/version-conflict 동작 전부 불변, (5) 미래-snoozed
+Routine·Clinical이 숨겨지고 정확히 그 due_at에/이후에 다시 보이며,
+listing이 first_seen_at을 mutate하거나 무언가를 조용히 resolve/cancel/
+supersede하지 않음을 증명하는 실제 store + HTTP 회귀 추가, (6) 임상
+threshold/매핑/red-flag/Additional Pain/identity-policy/provider 변경
+없음, Sigma/Naver 쓰기 없음, Test 0 PENDING·Care Gap suppression OFF
+유지, (7) FROZEN zero-diff, tsc/build/build:preview/test:all/tablet-core
++ 최신 CI/Preview 재실행. 가장 작은 구현을 우선 — 스케줄러/cron/새
+status/새 제품 문서를 추가하지 말고 기존 Task semantics를
+필터링/재사용할 것. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 11 — Today Queue read path(GET /api/crm/tasks) 추가, 이전 세션)
 Gomars93의 다음 지시: persistence/authorization 라운드는 닫혔고, 이제
 non-clinical operability의 다음 병목으로 이동한다. 지금 서버는
 Episode-scoped task 조회(`GET /api/crm/episodes/:id/tasks`)와 단일
@@ -434,7 +461,47 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 11 (Today Queue read path — GET /api/crm/tasks, 이번 세션)
+## Completed — CRM v0.3.1 Round 12 (SNOOZED가 Today Queue에서 실제로 defer됨, 이번 세션)
+**`server/crmStore.js`의 `listActionableTasks()` 필터 한 줄 추가**:
+terminal 제외 다음에 `if (task.status === 'SNOOZED' && task.due_at &&
+task.due_at > now) continue`를 추가했다. 이미 저장된 절대 `due_at`
+문자열을 `sortCrmTaskQueue()`가 overdue 판정에 쓰는 것과 동일한 문자열
+비교로 `now`와 비교만 할 뿐, duration/SLA/grace period/timezone 규칙은
+전혀 발명하지 않았다. `due_at === now`(정확히 그 시점)는 `>` 조건이
+거짓이므로 포함됨 — "at/after" 경계가 inclusive. `SAFETY_REVIEW`는
+순수 엔진의 `snoozeTask()`가 애초에 SNOOZED 진입을 거부하므로 이 분기에
+도달할 수 없다 — Safety 약화 없음. task의 `status` 필드 자체를
+되돌리지는 않는다(여전히 디스크에는 `SNOOZED`로 남음) — "가장 작은
+구현" 요구대로 스케줄러/새 status 없이 read-time 필터링만으로 처리했고,
+그 task가 due 시점 이후 큐에 다시 노출된다는 게 이번 라운드의 계약이다.
+
+**`tests/crm-store.spec.mjs`**: 신규 Part 12(store-level 결정론적 경계
+테스트 15 assertion + 실제 HTTP 경계 4 assertion)를 추가. 총 **99
+assertion**(82 → 99). Store-level 블록은 `listActionableTasks(now,
+...)`을 세 시점(`T0`, `snoozeUntil`, `snoozeUntil+60분`)에서 직접 호출해
+경계를 정확히 검증: `due_at` 이전에는 빠짐, 정확히 그 시점과 이후에는
+포함됨, SAFETY_REVIEW는 애초에 snooze 자체가 거부됨, listing이
+`first_seen_at`을 건드리지 않고 status를 조용히 바꾸지 않음(디스크에서
+직접 재확인). HTTP 블록은 실제 `POST .../snooze` → `GET
+/api/crm/tasks` 흐름으로 동일 계약을 증명: 아주 먼 미래로 snooze한
+task는 빠지고, 이미 지난 시각(`Date.now() - 1000`)으로 snooze한
+task는 (실제 HTTP round trip이 걸리는 시간만으로) 다시 나타나며, 그
+task의 `first_seen_at`은 여전히 null, 숨겨진 task는 디스크에서
+`SNOOZED` 그대로임을 확인한다.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 99 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). `npm run test:crm-store`를 3회 연속 재실행해 타이밍
+안정성을 재확인. CRM UI는 지시대로 이번 라운드에도 시작하지 않았다.
+Test 0 여전히 PENDING, Care Gap suppression 여전히 비활성, 새 임상
+로직/threshold/identity-policy/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 11 (Today Queue read path — GET /api/crm/tasks, 이전 세션)
 **`server/crmStore.js`의 신규 `listActionableTasks(now, { ownerClinician,
 coverageQueue })`**: `listTaskIds()`로 모든 task id를 나열하고 각각
 `getTask(id, now)`로 읽는다 — 기존 claim-lease self-heal 경로를 그대로

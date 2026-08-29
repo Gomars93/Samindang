@@ -1,6 +1,39 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 10 — Safety resolve authority를 server-derived로 강제, 이번 세션)
+## Objective (CRM v0.3.1 round 11 — Today Queue read path(GET /api/crm/tasks) 추가, 이번 세션)
+Gomars93의 다음 지시: persistence/authorization 라운드는 닫혔고, 이제
+non-clinical operability의 다음 병목으로 이동한다. 지금 서버는
+Episode-scoped task 조회(`GET /api/crm/episodes/:id/tasks`)와 단일
+task 조회만 노출하고, doctor-인증된 컬렉션 read가 없어서 v0.3.1의
+Today Queue 첫 화면을 구동할 수 없다. 순수 엔진에 이미 승인된 비임상
+정렬 순서가 `sortCrmTaskQueue()`(`SAFETY_REVIEW > CLINICAL_REVIEW >
+ROUTINE`, 그다음 overdue, `due_at`, `created_at`)로 존재하므로 라우트에서
+그 로직을 재구현하지 말 것. 정확히 하나의 수직 서버 capability만
+구현: **doctor-인증 `GET /api/crm/tasks`(actionable Today Queue
+소스)**. 요구사항: (1) 새 store-level 컬렉션 리더가 persisted task를
+로드하고 기존 `getTask()` 경로를 통해 claim-lease self-heal을 적용하며
+actionable/non-terminal task만 반환할 것 — 컬렉션을 가져왔다고 해서
+`first_seen_at`을 mutate하지 말 것(실제 UI 노출은 여전히 명시적
+`/seen` 액션), (2) 기존 `sortCrmTaskQueue(tasks, now)`로 정렬 — 우선순위/순서
+재구현 금지, SLA/threshold 값 추가 금지, (3) Safety를 평범한
+최상위-우선순위 큐 항목으로 유지 — communication group에 절대
+합치지 않고 auto-resolve/snooze/cancel하지 않음, (4) owner 필터를
+노출한다면 기존 `resolveTaskOwner`/`tasksForOwner` semantics와
+caller/설정된 coverage queue만 재사용 — 하드코딩된 clinician
+이름/스케줄 금지, (5) 응답은 CRM task 메타데이터만 — Sigma 조회, 전화
+resolution, raw phone, 환자 이름/DOB/RRN enrichment, provider 호출
+전부 없음, (6) 실제 HTTP 회귀로 증명: auth 필수, terminal task 제외,
+Safety→Clinical→Routine 정렬, overdue/due/created 정렬, 만료된 CLAIMED
+lease가 listing 전에 self-heal, 큐를 가져와도 `first_seen_at`이
+설정되지 않음, PHI/raw-phone 모양 문자열 미도입, (7) Test 0 PENDING,
+reservation suppression OFF 유지 — Care Gap/LOST threshold, latency
+SLA, 임상 매핑, identity-policy 결정, provider 선택, FROZEN 변경, CRM
+UI 전부 이번 라운드 범위 밖, (8) tsc -b --force/build/build:preview/
+test:all·tablet-core/CI/Preview 재실행, 정확한 변경 파일/assertion
+개수/boundary 보고. 새 제품 문서 없음 — 코드/테스트 우선.
+**PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 10 — Safety resolve authority를 server-derived로 강제, 이전 세션)
 Gomars93의 다음 지시: `POST /api/crm/tasks/:id/resolve`가 `requireDoctor(req)`
 가드는 통과하지만, 이후 `actorRole`을 `body?.actorRole === 'STAFF' ? 'STAFF'
 : 'CLINICIAN'`로 요청 body에서 그대로 읽어 `resolveTaskStored()`에
@@ -401,7 +434,60 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 10 (Safety resolve authority server-derived화, 이번 세션)
+## Completed — CRM v0.3.1 Round 11 (Today Queue read path — GET /api/crm/tasks, 이번 세션)
+**`server/crmStore.js`의 신규 `listActionableTasks(now, { ownerClinician,
+coverageQueue })`**: `listTaskIds()`로 모든 task id를 나열하고 각각
+`getTask(id, now)`로 읽는다 — 기존 claim-lease self-heal 경로를 그대로
+타므로 만료된 CLAIMED task도 listing 전에 OPEN으로 self-heal된다.
+`TERMINAL_TASK_STATUSES`에 속하는 task는 결과에서 제외한다.
+`ownerClinician`이 주어지면 순수 엔진의 `tasksForOwner()`로 필터링
+(내부적으로 `resolveTaskOwner()` semantics 재사용, 하드코딩 없음),
+마지막으로 순수 엔진의 `sortCrmTaskQueue(tasks, now)`로 정렬해서
+반환한다 — 정렬 로직은 이 함수 어디에도 재구현하지 않았다.
+`first_seen_at`은 이 함수 어디에서도 쓰지 않는다(그 값은 여전히
+`markTaskSeenStored()`만의 책임).
+
+**`server/index.js`의 신규 `GET /api/crm/tasks`**(parts.length===3,
+GET — 기존 `POST /api/crm/tasks`(생성)와 같은 path, 다른 method라서
+자연스럽게 분리됨): `requireDoctor()` 가드 재사용, query string의
+`owner_clinician`/`coverage_queue`를 선택적으로 읽어 store에
+그대로 전달, 응답은 `{ tasks }` — Sigma 조회·전화 resolution·환자
+이름/DOB/RRN enrichment·provider 호출 전부 없이 CRM task 메타데이터만
+반환한다.
+
+**`tests/crm-store.spec.mjs`**: 신규 Part 11(실제 HTTP
+`GET /api/crm/tasks` 경계, 11 assertion)을 추가. 총 **82
+assertion**(71 → 82). ROUTINE(미래 due_at)/ROUTINE(overdue due_at)/
+CLINICAL_REVIEW/SAFETY_REVIEW/owner 있는 task/owner 없는 task/취소된
+task/claim된 task를 만들어서 (1) auth 없이 GET하면 403(이 스위트가
+이미 쓰는 evil-Origin 기법), (2) CANCELLED task가 결과에서 빠짐, (3)
+SAFETY_REVIEW가 CLINICAL_REVIEW보다 먼저, CLINICAL_REVIEW가
+ROUTINE보다 먼저 정렬됨, (4) overdue ROUTINE이 아직 안 된 ROUTINE보다
+먼저 정렬됨, (5) claim lease를 **0분**으로 설정한 서버 인스턴스로
+claim한 task가 (실제 HTTP round trip이 걸리는 최소한의 실제 시간만으로도)
+이미 OPEN으로 self-heal된 채 listing됨을 확인, (6) 응답의 모든 task가
+`first_seen_at === null`(단순 listing이 절대 노출로 취급되지 않음), (7)
+응답 전체에 phone-shaped 문자열이 없음, (8-9) `owner_clinician` 쿼리
+파라미터가 해당 clinician 소유 task는 포함하고 owner 없는 task는
+제외함(coverage_queue 미설정 시)을 확인.
+
+**`tests/server.spec.mjs`**: doctor-guarded 라우트 카운트를 33 → 34로
+갱신(새 `GET /api/crm/tasks` 컬렉션 라우트 1개 추가).
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 82 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). `npm run test:crm-store`를 3회 연속 재실행해 0분-lease
+self-heal 테스트가 타이밍에 안정적임을 확인. CRM UI는 지시대로 이번
+라운드에도 시작하지 않았다. Test 0 여전히 PENDING, Care Gap
+suppression 여전히 비활성, 새 임상 로직/threshold/identity-policy/provider
+선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 10 (Safety resolve authority server-derived화, 이전 세션)
 **`server/index.js`의 `/api/crm/tasks/:id/resolve` 핸들러**: `const
 actorRole = body?.actorRole === 'STAFF' ? 'STAFF' : 'CLINICIAN'`를
 `const actorRole = 'CLINICIAN'`로 고정 — body에서 절대 읽지 않는다.

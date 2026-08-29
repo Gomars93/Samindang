@@ -30,6 +30,8 @@ import {
   markTaskSeen,
   computeDedupKey,
   deriveEpisodeReviewState,
+  sortCrmTaskQueue,
+  tasksForOwner,
   CrmConflictError,
 } from '../src/crm/taskEngine.ts'
 import { pauseEpisode, completeEpisode, reopenEpisode } from '../src/crm/episode.ts'
@@ -224,6 +226,27 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     return out
   }
 
+  // Round 11 (Today Queue read path): the collection reader behind
+  // GET /api/crm/tasks. Reuses getTask() per id -- so an expired CLAIMED
+  // lease self-heals before the item is ever handed back, exactly as it
+  // already does for every other read path -- and reuses the pure
+  // engine's own sortCrmTaskQueue() for ordering rather than
+  // reimplementing SAFETY_REVIEW > CLINICAL_REVIEW > ROUTINE / overdue /
+  // due_at / created_at priority here. Only non-terminal tasks are
+  // returned; a task's first_seen_at is never written by this function --
+  // it is set exclusively by the explicit markTaskSeenStored() action, so
+  // merely listing the queue is never itself "exposure".
+  async function listActionableTasks(now, { ownerClinician, coverageQueue = null } = {}) {
+    const ids = await listTaskIds()
+    const tasks = []
+    for (const id of ids) {
+      const task = await getTask(id, now)
+      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) tasks.push(task)
+    }
+    const scoped = ownerClinician ? tasksForOwner(tasks, ownerClinician, coverageQueue) : tasks
+    return sortCrmTaskQueue(scoped, now)
+  }
+
   // Idempotent creation: computes the same dedup_key the pure engine
   // would, then durably checks/records it via the dedup index instead of
   // an in-memory array -- so "same source event -> one task" survives a
@@ -416,6 +439,7 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     reopenEpisodeStored,
     getEpisodeReviewState,
     listTasksByEpisode,
+    listActionableTasks,
     createTaskStored,
     getTask,
     resolveTaskStored,

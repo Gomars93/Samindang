@@ -1334,6 +1334,27 @@ export function createApp({
             }
           }
         }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'tasks' && parts.length === 3 && req.method === 'GET') {
+        // Round 11: the Today Queue read path. Doctor-authenticated
+        // collection read over non-terminal CrmTasks, ordered by the pure
+        // engine's own sortCrmTaskQueue() (SAFETY_REVIEW > CLINICAL_REVIEW
+        // > ROUTINE, then overdue, due_at, created_at) -- this route adds
+        // no ordering/priority logic of its own. Fetching the queue is a
+        // read only: it never sets first_seen_at (that stays an explicit
+        // /seen action) and never mutates/aggregates/auto-resolves any
+        // task, Safety included. owner_clinician/coverage_queue are
+        // optional query params reusing the existing
+        // resolveTaskOwner/tasksForOwner semantics -- no hardcoded
+        // clinician names or schedules.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const ownerClinician = url.searchParams.get('owner_clinician') || undefined
+          const coverageQueue = url.searchParams.get('coverage_queue') || null
+          const tasks = await crmStore.listActionableTasks(new Date().toISOString(), { ownerClinician, coverageQueue })
+          bytes = sendJson(req, res, 200, { tasks }, cors)
+        }
       } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'tasks' && parts.length === 4 && req.method === 'GET') {
         id = parts[3]
         if (!requireDoctor(req)) {

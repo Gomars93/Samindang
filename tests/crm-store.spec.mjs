@@ -935,6 +935,125 @@ async function main() {
     }
   }
 
+  /* =====================================================================
+     Part 11: GET /api/crm/tasks -- the Today Queue read path (round 11).
+     Real HTTP-boundary regressions: doctor auth required; terminal tasks
+     excluded; SAFETY_REVIEW > CLINICAL_REVIEW > ROUTINE ordering; overdue
+     -> due_at -> created_at ordering within a priority; an expired
+     CLAIMED lease self-heals to OPEN before the item is ever listed;
+     fetching the queue never sets first_seen_at; no PHI/raw-phone-shaped
+     string anywhere in the response; and the optional owner_clinician
+     filter reuses the pure engine's own resolveTaskOwner/tasksForOwner
+     semantics rather than any hardcoded policy.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-crm-today-queue-'))
+    // claimLeaseMinutes: 0 -- a claim's lease expires at the exact instant
+    // it is granted, so any later real request (even a few ms later, as
+    // an actual HTTP round trip always is) observes it as already expired
+    // -- a deterministic-in-practice way to exercise real self-heal over
+    // real HTTP without a timing-dependent sleep.
+    const { server, base } = await startServer({ dataDir: path.join(dataRoot, 'submissions'), doctorToken: 'test-doctor-token', crmClaimLeaseMinutes: 0 })
+    const headers = { 'content-type': 'application/json', 'x-doctor-token': 'test-doctor-token' }
+    try {
+      const visitRes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visit = await visitRes.json()
+      const epRes = await fetch(`${base}/api/crm/episodes`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visit.patient_id }),
+      })
+      const episode = await epRes.json()
+
+      async function createTask(overrides) {
+        const res = await fetch(`${base}/api/crm/tasks`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            patient_uuid: visit.patient_id,
+            episode_id: episode.episode_id,
+            task_type: 'ROUTINE',
+            reason_code: 'REASSESSMENT_DUE',
+            ...overrides,
+          }),
+        })
+        const body = await res.json()
+        return body.task
+      }
+
+      const routineFuture = await createTask({ source_event_id: 'evt-tq-routine-future', due_at: '2099-01-01T00:00:00.000Z' })
+      const routineOverdue = await createTask({ source_event_id: 'evt-tq-routine-overdue', due_at: '2020-01-01T00:00:00.000Z' })
+      const clinical = await createTask({ source_event_id: 'evt-tq-clinical', task_type: 'CLINICAL_REVIEW' })
+      const safety = await createTask({
+        source_event_id: 'evt-tq-safety',
+        task_type: 'SAFETY_REVIEW',
+        safetyAuthorization: { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'doctor-test' },
+      })
+      const owned = await createTask({ source_event_id: 'evt-tq-owned', owner_clinician: 'clinician-x' })
+      const unowned = await createTask({ source_event_id: 'evt-tq-unowned' })
+
+      const terminal = await createTask({ source_event_id: 'evt-tq-terminal' })
+      await fetch(`${base}/api/crm/tasks/${terminal.task_id}/cancel`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: terminal.version }),
+      })
+
+      const claimedTask = await createTask({ source_event_id: 'evt-tq-claimed' })
+      await fetch(`${base}/api/crm/tasks/${claimedTask.task_id}/claim`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: claimedTask.version, claimedBy: 'clinician-y' }),
+      })
+
+      // 1. Auth required -- the established evil-Origin defense-in-depth
+      // technique this suite and tests/server.spec.mjs already use.
+      const unauthRes = await fetch(`${base}/api/crm/tasks`, { headers: { ...headers, origin: 'https://evil.example' } })
+      assert('today-queue: GET /api/crm/tasks without valid doctor auth is rejected with 403', unauthRes.status === 403)
+
+      const queueRes = await fetch(`${base}/api/crm/tasks`, { headers })
+      assert('today-queue: authenticated GET /api/crm/tasks returns 200', queueRes.status === 200)
+      const queueBody = await queueRes.json()
+      const ids = queueBody.tasks.map((t) => t.task_id)
+
+      // 2. Terminal tasks excluded.
+      assert('today-queue: the CANCELLED task is excluded from the queue', !ids.includes(terminal.task_id))
+
+      // 3. SAFETY_REVIEW > CLINICAL_REVIEW > ROUTINE ordering.
+      const safetyIdx = ids.indexOf(safety.task_id)
+      const clinicalIdx = ids.indexOf(clinical.task_id)
+      const firstRoutineIdx = Math.min(ids.indexOf(routineOverdue.task_id), ids.indexOf(routineFuture.task_id))
+      assert('today-queue: SAFETY_REVIEW sorts before CLINICAL_REVIEW', safetyIdx !== -1 && clinicalIdx !== -1 && safetyIdx < clinicalIdx)
+      assert('today-queue: CLINICAL_REVIEW sorts before ROUTINE', clinicalIdx < firstRoutineIdx)
+
+      // 4. Overdue -> due_at -> created_at ordering within ROUTINE.
+      const overdueIdx = ids.indexOf(routineOverdue.task_id)
+      const futureIdx = ids.indexOf(routineFuture.task_id)
+      assert('today-queue: an overdue ROUTINE task sorts before a not-yet-due one', overdueIdx !== -1 && futureIdx !== -1 && overdueIdx < futureIdx)
+
+      // 5. An expired CLAIMED lease self-heals to OPEN before listing.
+      const claimedInQueue = queueBody.tasks.find((t) => t.task_id === claimedTask.task_id)
+      assert('today-queue: a task claimed under a 0-minute lease is listed already self-healed to OPEN', claimedInQueue?.status === 'OPEN' && claimedInQueue?.claimed_by === null)
+
+      // 6. Fetching the queue never sets first_seen_at.
+      assert('today-queue: no task in the response has first_seen_at set merely from being listed', queueBody.tasks.every((t) => t.first_seen_at === null))
+
+      // 7. No PHI/raw-phone-shaped string anywhere in the response.
+      assert('today-queue: the queue response contains no phone-shaped string', !containsPhoneShapedString(queueBody))
+
+      // owner_clinician filter reuses tasksForOwner/resolveTaskOwner --
+      // no hardcoded clinician policy.
+      const ownedQueueRes = await fetch(`${base}/api/crm/tasks?owner_clinician=clinician-x`, { headers })
+      const ownedQueueBody = await ownedQueueRes.json()
+      const ownedIds = ownedQueueBody.tasks.map((t) => t.task_id)
+      assert('today-queue: owner_clinician filter includes the task owned by that clinician', ownedIds.includes(owned.task_id))
+      assert('today-queue: owner_clinician filter excludes an unowned task (no coverage_queue configured)', !ownedIds.includes(unowned.task_id))
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
   console.log(`\n${passCount} CRM store persistence assertions passed.`)
 }
 

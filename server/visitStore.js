@@ -231,6 +231,21 @@ export function createVisitStore(visitsDir) {
     return records
   }
 
+  /** 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 없어도 조용히 넘어간다. */
+  async function purgeAll() {
+    let files
+    try {
+      files = await listFiles()
+    } catch (err) {
+      if (err.code === 'ENOENT') return 0
+      throw err
+    }
+    for (const f of files) {
+      await unlink(visitPath(visitsDir, path.basename(f, '.json'))).catch(() => {})
+    }
+    return files.length
+  }
+
   return {
     createVisit,
     getVisit,
@@ -240,5 +255,6 @@ export function createVisitStore(visitsDir) {
     setRecorderPointer,
     saveVisitWorkspace,
     deleteVisitForRollbackOnly,
+    purgeAll,
   }
 }

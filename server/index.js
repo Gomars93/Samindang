@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createStore } from './store.js'
-import { createAuditLog } from './audit.js'
+import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS } from './audit.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
@@ -365,18 +365,18 @@ export function createApp({
           id = record.id
           if (record.duplicate) {
             status = 200
-            await safeAudit({ event: 'submission_duplicate', submission_id: record.id, actor: 'patient' })
+            await safeAudit({ event: AUDIT_EVENTS.SUBMISSION_DUPLICATE, submission_id: record.id, actor: AUDIT_ACTORS.PATIENT })
             bytes = sendJson(req, res, 200, { id: record.id, created_at: record.created_at, duplicate: true }, cors)
           } else {
             status = 201
-            await safeAudit({ event: 'submission_created', submission_id: record.id, actor: 'patient' })
+            await safeAudit({ event: AUDIT_EVENTS.SUBMISSION_CREATED, submission_id: record.id, actor: AUDIT_ACTORS.PATIENT })
             // 진짜 새 제출일 때만 새 방문이 만들어진다(store.createSubmission
             // 참고) — 멱등 중복 경로는 여기 안 온다.
             await safeAudit({
-              event: 'visit_created',
+              event: AUDIT_EVENTS.VISIT_CREATED,
               submission_id: record.id,
               visit_id: record.visit_id,
-              actor: 'patient',
+              actor: AUDIT_ACTORS.PATIENT,
             })
             bytes = sendJson(req, res, 201, { id: record.id, created_at: record.created_at }, cors)
           }
@@ -402,7 +402,7 @@ export function createApp({
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
-            await safeAudit({ event: 'submission_viewed', submission_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.SUBMISSION_VIEWED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -418,7 +418,7 @@ export function createApp({
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
-            await safeAudit({ event: 'status_changed', submission_id: id, status: record.status, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.STATUS_CHANGED, submission_id: id, status: record.status, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -434,7 +434,7 @@ export function createApp({
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
-            await safeAudit({ event: 'judgment_saved', submission_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.JUDGMENT_SAVED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -453,7 +453,7 @@ export function createApp({
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
-            await safeAudit({ event: 'workspace_saved', submission_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.WORKSPACE_SAVED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, record, cors)
           }
         }
@@ -475,7 +475,7 @@ export function createApp({
           } else {
             const visit = await store.createVisit({ patient_id: requestedPatientId, submission_id: null })
             status = 201
-            await safeAudit({ event: 'visit_created', visit_id: visit.id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.VISIT_CREATED, visit_id: visit.id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 201, visit, cors)
           }
         }
@@ -521,10 +521,20 @@ export function createApp({
           // absent or unrecognized value normalizes to null in the store
           // and changes nothing about the session that gets issued.
           const revisitBody = await readBody(req).catch(() => null)
-          const { visit, token, session } = await store.startRevisit(patientId, revisitBody?.delivery_mode)
+          const { visit, token, session, reused } = await store.startRevisit(patientId, revisitBody?.delivery_mode)
           status = 201
-          await safeAudit({ event: 'follow_up_session_issued', visit_id: visit.id, actor: 'doctor' })
-          await safeAudit({ event: 'visit_created', visit_id: visit.id, actor: 'doctor' })
+          // Audit registry batch: startRevisit's own dedup (a repeated
+          // same-patient/same-mode start within the fresh window) replays
+          // an EARLIER call's already-created visit/session rather than
+          // making a new one -- auditing here unconditionally would write
+          // a second visit_created/follow_up_session_issued line for one
+          // real visit every time an operator double-clicks the start
+          // button. `reused` is the store's own authoritative "was this a
+          // replay" signal (see store.js's startRevisit comment).
+          if (!reused) {
+            await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_ISSUED, visit_id: visit.id, actor: AUDIT_ACTORS.DOCTOR })
+            await safeAudit({ event: AUDIT_EVENTS.VISIT_CREATED, visit_id: visit.id, actor: AUDIT_ACTORS.DOCTOR })
+          }
           bytes = sendJson(
             req,
             res,
@@ -584,10 +594,10 @@ export function createApp({
             } else {
               const active = activateVisit(visit, workstationId)
               await safeAudit({
-                event: 'visit_activated',
+                event: AUDIT_EVENTS.VISIT_ACTIVATED,
                 visit_id: active.visit_id,
                 submission_id: active.submission_id ?? undefined,
-                actor: 'doctor',
+                actor: AUDIT_ACTORS.DOCTOR,
               })
               bytes = sendJson(
                 req,
@@ -640,7 +650,7 @@ export function createApp({
               cors,
             )
           } else {
-            await safeAudit({ event: 'visit_workspace_saved', visit_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.VISIT_WORKSPACE_SAVED, visit_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, result.record, cors)
           }
         }
@@ -710,7 +720,16 @@ export function createApp({
               })
               await store.setVisitRecorderPointer(id, recordingId)
               status = 201
-              await safeAudit({ event: 'recorder_result_saved', visit_id: id, recording_id: recordingId, actor: 'recorder' })
+              // Audit registry batch: recording_id was previously passed here
+              // but logEvent()'s destructuring silently discards any key
+              // outside its fixed 6 -- dropped, not because it leaked, but
+              // because writing it would have contradicted the documented
+              // minimal-fields contract. actor 'recorder' is now a
+              // registered AUDIT_ACTORS value (was previously invalid,
+              // which meant this call always threw and was always
+              // silently swallowed by safeAudit -- this event has never
+              // actually been written to audit.log until this fix).
+              await safeAudit({ event: AUDIT_EVENTS.RECORDER_RESULT_SAVED, visit_id: id, actor: AUDIT_ACTORS.RECORDER })
               bytes = sendJson(req, res, 201, result, cors)
             }
           }
@@ -787,7 +806,7 @@ export function createApp({
               inputProvenance: body?.inputProvenance,
             })
             status = 201
-            await safeAudit({ event: 'micro_follow_up_saved', visit_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.MICRO_FOLLOW_UP_SAVED, visit_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 201, result, cors)
           }
         }
@@ -869,7 +888,7 @@ export function createApp({
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
-            await safeAudit({ event: 'follow_up_session_reissued', visit_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_REISSUED, visit_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(
               req,
               res,
@@ -901,7 +920,7 @@ export function createApp({
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
           } else {
             await store.invalidateFollowUpSession(id)
-            await safeAudit({ event: 'follow_up_session_invalidated', visit_id: id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_INVALIDATED, visit_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, { ok: true }, cors)
           }
         }
@@ -977,7 +996,7 @@ export function createApp({
             bytes = sendJson(req, res, status, { status: (result.reason ?? 'invalid').toUpperCase() }, cors)
           } else {
             status = 201
-            await safeAudit({ event: 'follow_up_session_submitted', visit_id: result.visit_id, actor: 'patient' })
+            await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_SUBMITTED, visit_id: result.visit_id, actor: AUDIT_ACTORS.PATIENT })
             bytes = sendJson(req, res, 201, { ok: true }, cors)
           }
         }
@@ -998,7 +1017,7 @@ export function createApp({
             bytes = sendJson(req, res, 400, { error: 'invalid station name' }, cors)
           } else {
             status = 201
-            await safeAudit({ event: 'station_registered', actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.STATION_REGISTERED, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(
               req,
               res,
@@ -1052,7 +1071,7 @@ export function createApp({
               bytes = sendJson(req, res, status, { error: result.reason }, cors)
             } else {
               status = 201
-              await safeAudit({ event: 'station_assigned', visit_id: result.visit.id, actor: 'doctor' })
+              await safeAudit({ event: AUDIT_EVENTS.STATION_ASSIGNED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
               // No raw token in this response: the tablet fetches it itself
               // through its own credential-guarded poll. Staff never needs
               // to see or handle the capability for the CLINIC_TABLET path.
@@ -1090,7 +1109,7 @@ export function createApp({
             status = 404
             bytes = sendJson(req, res, 404, { error: 'station not found' }, cors)
           } else {
-            await safeAudit({ event: 'station_reset', visit_id: result.cleared?.visit_id, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.STATION_RESET, visit_id: result.cleared?.visit_id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, { ok: true }, cors)
           }
         }
@@ -1133,7 +1152,7 @@ export function createApp({
             bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
           } else {
             const result = await store.completeStationAssignment(station.station_id)
-            await safeAudit({ event: 'station_completed', visit_id: result.cleared?.visit_id, actor: 'patient' })
+            await safeAudit({ event: AUDIT_EVENTS.STATION_COMPLETED, visit_id: result.cleared?.visit_id, actor: AUDIT_ACTORS.PATIENT })
             bytes = sendJson(req, res, 200, { ok: true }, cors)
           }
         }
@@ -1150,7 +1169,7 @@ export function createApp({
           } else {
             const prev = getActiveVisit(workstationId)
             clearActiveVisit(workstationId)
-            await safeAudit({ event: 'visit_cleared', visit_id: prev?.visit_id ?? undefined, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.VISIT_CLEARED, visit_id: prev?.visit_id ?? undefined, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, { ok: true, workstation_id: workstationId ?? DEFAULT_WORKSTATION_ID }, cors)
           }
         }
@@ -1209,7 +1228,7 @@ export function createApp({
               now: new Date().toISOString(),
             })
             status = 201
-            await safeAudit({ event: 'crm_episode_created', visit_id: undefined, actor: 'doctor' })
+            await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_CREATED, visit_id: undefined, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 201, episode, cors)
           }
         }
@@ -1268,15 +1287,15 @@ export function createApp({
               const now = new Date().toISOString()
               if (parts[4] === 'pause') {
                 const episode = await crmStore.pauseEpisodeStored(id, expectedVersion, now)
-                await safeAudit({ event: 'crm_episode_paused', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_PAUSED, actor: AUDIT_ACTORS.DOCTOR })
                 bytes = sendJson(req, res, 200, episode, cors)
               } else if (parts[4] === 'complete') {
                 const result = await crmStore.completeEpisodeStored(id, expectedVersion, now)
-                await safeAudit({ event: 'crm_episode_completed', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_COMPLETED, actor: AUDIT_ACTORS.DOCTOR })
                 bytes = sendJson(req, res, 200, result, cors)
               } else {
                 const episode = await crmStore.reopenEpisodeStored(id, expectedVersion, now)
-                await safeAudit({ event: 'crm_episode_reopened', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_REOPENED, actor: AUDIT_ACTORS.DOCTOR })
                 bytes = sendJson(req, res, 200, episode, cors)
               }
             } catch (err) {
@@ -1331,7 +1350,7 @@ export function createApp({
                 safetyAuthorization: body?.safetyAuthorization ?? undefined,
               })
               status = deduped ? 200 : 201
-              if (!deduped) await safeAudit({ event: 'crm_task_created', actor: 'doctor' })
+              if (!deduped) await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_CREATED, actor: AUDIT_ACTORS.DOCTOR })
               bytes = sendJson(req, res, status, { task, deduped }, cors)
             } catch (err) {
               const mapped = mapCrmError(err)
@@ -1417,7 +1436,7 @@ export function createApp({
                 // something a caller could simply omit/relabel.
                 const actorRole = 'CLINICIAN'
                 task = await crmStore.resolveTaskStored(id, expectedVersion, actorRole, now)
-                await safeAudit({ event: 'crm_task_resolved', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_RESOLVED, actor: AUDIT_ACTORS.DOCTOR })
               } else if (action === 'snooze') {
                 const until = typeof body?.until === 'string' ? body.until : null
                 if (!until) {
@@ -1425,14 +1444,14 @@ export function createApp({
                   bytes = sendJson(req, res, 400, { error: 'until is required' }, cors)
                 } else {
                   task = await crmStore.snoozeTaskStored(id, expectedVersion, until)
-                  await safeAudit({ event: 'crm_task_snoozed', actor: 'doctor' })
+                  await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_SNOOZED, actor: AUDIT_ACTORS.DOCTOR })
                 }
               } else if (action === 'cancel') {
                 task = await crmStore.cancelTaskStored(id, expectedVersion)
-                await safeAudit({ event: 'crm_task_cancelled', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_CANCELLED, actor: AUDIT_ACTORS.DOCTOR })
               } else if (action === 'supersede') {
                 task = await crmStore.supersedeTaskStored(id, expectedVersion)
-                await safeAudit({ event: 'crm_task_superseded', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_SUPERSEDED, actor: AUDIT_ACTORS.DOCTOR })
               } else if (action === 'claim') {
                 const claimedBy = typeof body?.claimedBy === 'string' ? body.claimedBy : ''
                 if (!claimedBy) {
@@ -1440,11 +1459,11 @@ export function createApp({
                   bytes = sendJson(req, res, 400, { error: 'claimedBy is required' }, cors)
                 } else {
                   task = await crmStore.claimTaskStored(id, expectedVersion, claimedBy, now)
-                  await safeAudit({ event: 'crm_task_claimed', actor: 'doctor' })
+                  await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_CLAIMED, actor: AUDIT_ACTORS.DOCTOR })
                 }
               } else {
                 task = await crmStore.markTaskSeenStored(id, expectedVersion, now)
-                await safeAudit({ event: 'crm_task_seen', actor: 'doctor' })
+                await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_SEEN, actor: AUDIT_ACTORS.DOCTOR })
               }
               if (task) bytes = sendJson(req, res, 200, task, cors)
             } catch (err) {
@@ -1501,7 +1520,7 @@ export function createApp({
                 now: new Date().toISOString(),
               })
               status = 201
-              await safeAudit({ event: 'patient_identity_linked', actor: 'doctor' })
+              await safeAudit({ event: AUDIT_EVENTS.PATIENT_IDENTITY_LINKED, actor: AUDIT_ACTORS.DOCTOR })
               bytes = sendJson(req, res, 201, link, cors)
             } catch (err) {
               if (err instanceof IdentityConflictError) {

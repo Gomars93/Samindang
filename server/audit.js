@@ -5,28 +5,79 @@
 // 위치: SAMINDANG_DATA_DIR의 형제 경로(../audit.log) — 기본 구성에서는
 // `.data/audit.log`가 되어 기존 `.gitignore`의 `.data/` 규칙에 이미
 // 포함된다. 자세한 내용/보존 정책은 docs/RUNBOOK_LOCAL_HANDOFF.md 참고.
+//
+// Audit registry batch (round 16): AUDIT_EVENTS/AUDIT_ACTORS are the single
+// source of truth for every legal event/actor name -- server/index.js
+// imports these constants and never writes a raw string literal for
+// `event`/`actor`. This exists because `patient_identity_linked` was
+// silently dropped for an entire round: logEvent() throws on an
+// unregistered name, but safeAudit() (server/index.js) catches that throw
+// and only console.errors it, so an unregistered event vanishes from the
+// audit trail with no visible production failure. A scattered/duplicated
+// allowlist makes that easy to repeat by typo; importing these constants
+// at every call site makes a stray literal or misspelling a lint-visible
+// (grep-checkable, and asserted by tests/server.spec.mjs's static check)
+// problem instead of a silent runtime drop. logEvent's own contract is
+// unchanged: still throws on anything not in this registry, still only
+// ever writes the same 6 fixed keys below -- this registry adds NAMES
+// only, never new fields, so it does not loosen the PII-minimization
+// guarantee.
 import { appendFile, mkdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
-const ALLOWED_EVENTS = new Set([
-  'submission_created',
-  'submission_duplicate',
-  'submission_viewed',
-  'status_changed',
-  'judgment_saved',
-  // 방문(visit) 상태변경 이벤트. GET /api/current-visit(ClinicAI 폴링용)는
-  // 읽기라서 로그하지 않는다 — audit는 상태변경만 남긴다.
-  'visit_created',
-  'visit_activated',
-  'visit_cleared',
+export const AUDIT_EVENTS = Object.freeze({
+  // 제출(questionnaire submission) 생명주기
+  SUBMISSION_CREATED: 'submission_created',
+  SUBMISSION_DUPLICATE: 'submission_duplicate',
+  SUBMISSION_VIEWED: 'submission_viewed',
+  STATUS_CHANGED: 'status_changed',
+  JUDGMENT_SAVED: 'judgment_saved',
+  WORKSPACE_SAVED: 'workspace_saved',
+  // 방문(visit) 생명주기. GET /api/current-visit(ClinicAI 폴링용)는
+  // 읽기라서 로그하지 않는다 -- audit는 상태변경만 남긴다.
+  VISIT_CREATED: 'visit_created',
+  VISIT_ACTIVATED: 'visit_activated',
+  VISIT_CLEARED: 'visit_cleared',
+  VISIT_WORKSPACE_SAVED: 'visit_workspace_saved',
+  // 원내 태블릿 스테이션(round 8)
+  STATION_REGISTERED: 'station_registered',
+  STATION_ASSIGNED: 'station_assigned',
+  STATION_RESET: 'station_reset',
+  STATION_COMPLETED: 'station_completed',
+  // 재진/후속 follow-up session 토큰 생명주기
+  FOLLOW_UP_SESSION_ISSUED: 'follow_up_session_issued',
+  FOLLOW_UP_SESSION_REISSUED: 'follow_up_session_reissued',
+  FOLLOW_UP_SESSION_INVALIDATED: 'follow_up_session_invalidated',
+  FOLLOW_UP_SESSION_SUBMITTED: 'follow_up_session_submitted',
+  // 녹음/Micro Follow-up 저장
+  RECORDER_RESULT_SAVED: 'recorder_result_saved',
+  MICRO_FOLLOW_UP_SAVED: 'micro_follow_up_saved',
+  // CRM v0.3.1 Episode/Task 생명주기
+  CRM_EPISODE_CREATED: 'crm_episode_created',
+  CRM_EPISODE_PAUSED: 'crm_episode_paused',
+  CRM_EPISODE_COMPLETED: 'crm_episode_completed',
+  CRM_EPISODE_REOPENED: 'crm_episode_reopened',
+  CRM_TASK_CREATED: 'crm_task_created',
+  CRM_TASK_RESOLVED: 'crm_task_resolved',
+  CRM_TASK_SNOOZED: 'crm_task_snoozed',
+  CRM_TASK_CANCELLED: 'crm_task_cancelled',
+  CRM_TASK_SUPERSEDED: 'crm_task_superseded',
+  CRM_TASK_CLAIMED: 'crm_task_claimed',
+  CRM_TASK_SEEN: 'crm_task_seen',
   // Identity Production Batch: 영구적인 신원 연결(patient_uuid <->
-  // sigma_chart_no) 확정 이벤트. safeAudit()가 실패를 조용히 삼키기
-  // 때문에, 이 이름이 여기 없으면 "감사 로그를 남겼다"는 코드의 의도와
-  // 달리 실제로는 아무 것도 기록되지 않는 채로 조용히 통과한다 —
-  // 재검토에서 런타임으로 확인된 실제 결함이었다.
-  'patient_identity_linked',
-])
-const ALLOWED_ACTORS = new Set(['patient', 'doctor'])
+  // sigma_chart_no) 확정 이벤트.
+  PATIENT_IDENTITY_LINKED: 'patient_identity_linked',
+})
+const ALLOWED_EVENTS = new Set(Object.values(AUDIT_EVENTS))
+
+export const AUDIT_ACTORS = Object.freeze({
+  PATIENT: 'patient',
+  DOCTOR: 'doctor',
+  // 녹음(recorder) 파이프라인 자체가 남기는 이벤트 -- 사람이 아니라
+  // 서버 내부 처리 주체이므로 patient/doctor 어느 쪽도 아니다.
+  RECORDER: 'recorder',
+})
+const ALLOWED_ACTORS = new Set(Object.values(AUDIT_ACTORS))
 
 export function auditLogPath(dataDir) {
   return path.join(dataDir, '..', 'audit.log')
@@ -46,6 +97,14 @@ export function createAuditLog(dataDir) {
     // 조각이나 patient_id) 절대 추가하지 않는다. patient_id는 그 자체로
     // 민감정보는 아니지만, audit 로그는 "무슨 일이 있었는지"만 남기는
     // 최소화 원칙을 유지한다 — 어떤 환자인지는 남기지 않는다.
+    //
+    // At-least-once semantics: a legitimate client retry that a store's
+    // own dedup logic (crmStore.js's dedup pointer, patientIdentityStore's
+    // pending marker) replays without re-doing the underlying write is
+    // expected to skip re-calling this too (the call site checks the
+    // store's own "was this a replay" signal before auditing) -- but if a
+    // retry ever does reach here twice for the one real event, a
+    // duplicate append is an accepted cost, never data loss or corruption.
     const entry = { ts: new Date().toISOString(), event, submission_id, actor }
     if (status !== undefined) entry.status = status
     if (visit_id !== undefined) entry.visit_id = visit_id

@@ -733,6 +733,12 @@ export function createStore(
   // 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 파일 개수만 반환한다.
   // recorder-results/(전사/구조화 노트)도 함께 지운다 — 여기서 빠지면
   // "전체 삭제"라는 스크립트의 약속이 거짓이 된다.
+  //
+  // Data purge/audit batch: visits/도 여기 포함한다 -- 재진(revisit)
+  // visit는 submission_id가 null이라 submissions/ 삭제만으로는 절대
+  // 지워지지 않고, 여기 saveVisitWorkspace로 저장된 임상 메모(clinician
+  // 관찰/판단)까지 포함한다. 이전에는 빠져 있었다 — purgeAll()의 "전체
+  // 삭제" 약속을 거짓으로 만드는 결함이었다.
   async function purgeAll() {
     let deleted = 0
     for (const f of await listFiles()) {
@@ -743,6 +749,7 @@ export function createStore(
     deleted += await microFollowUp.purgeAll()
     deleted += await followUpSessions.purgeAll()
     deleted += await stations.purgeAll()
+    deleted += await visits.purgeAll()
     return deleted
   }
 

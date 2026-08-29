@@ -13,7 +13,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createStore, StaleWriteError } from './store.js'
 import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS } from './audit.js'
-import { acquireOwnerLock, OwnerLockConflictError } from './ownerLock.js'
+import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs } from './ownerLock.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
@@ -1726,8 +1726,26 @@ async function checkDataDirsWritable(dataDir) {
     crm_dir: path.resolve(dataDir, '..', 'crm'),
     crm_identity_dir: path.resolve(dataDir, '..', 'crm-identity'),
   }
+  // Second-round closing-review finding (surfaced by tightening
+  // tests/owner-lock.spec.mjs's multi-takeover reproduction's arrival
+  // synchronization -- not one of the original 15 findings, but a real
+  // bug that surfaced once several real processes actually raced this
+  // exact code path): every racing process previously used the SAME fixed
+  // probe filename (`.write-probe`) in the SAME shared directory. Two
+  // processes starting against the same data dir at nearly the same
+  // instant (an operator double-starting the server -- precisely the
+  // scenario the owner lock two lines below exists to catch) could each
+  // writeFile the same path, then race each other's `rm(probe)`: whichever
+  // process's unlink loses the race hits ENOENT on a file the OTHER
+  // process already removed, and crashes with a self-check failure that
+  // never mentions the real cause (a concurrent process, not an actually
+  // unwritable directory) -- before either process even reaches the owner
+  // lock's much clearer "already owned by another live process" refusal.
+  // Fixed the same way atomicWrite's own tmp file in ownerLock.js is: a
+  // unique-per-attempt probe name, so racing processes never touch the
+  // same file at all.
   for (const [label, dir] of Object.entries(dirs)) {
-    const probe = path.join(dir, '.write-probe')
+    const probe = path.join(dir, `.write-probe.${process.pid}.${randomUUID()}`)
     try {
       await mkdir(dir, { recursive: true })
       await writeFile(probe, '')
@@ -1755,24 +1773,10 @@ if (isMain()) {
   // pointed at the same data dir refuses to start here, loudly, instead of
   // silently racing every store's in-process-only lock.
   //
-  // Closing-review finding: `Number(x)` on an unset var is fine (the `??`
-  // fallback), but a SET-but-malformed one (a typo like "90s", or an empty
-  // string) silently becomes NaN -- and ownerLock.js's isFresh() treats a
-  // NaN staleAfterMs as "everything is always stale", which makes the lock
-  // a complete no-op (every process takes over immediately, defeating the
-  // whole point of this module) with zero visible warning. Validate with
-  // Number.isFinite and fail the same loud way checkDataDirsWritable does,
-  // rather than silently disabling the guard it exists to provide.
-  function requirePositiveMs(envVar, fallback) {
-    const raw = process.env[envVar]
-    if (raw === undefined) return fallback
-    const n = Number(raw)
-    if (!Number.isFinite(n) || n <= 0) {
-      console.error(`fatal: ${envVar}="${raw}" is not a valid positive number of milliseconds`)
-      process.exit(1)
-    }
-    return n
-  }
+  // requirePositiveMs lives in ownerLock.js (shared with scripts/purge-
+  // data.mjs) precisely so the validation both callers apply to these env
+  // vars can't drift -- see that function's own comment for the concrete
+  // regression that happened when purge-data.mjs had its own, weaker copy.
   const heartbeatMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_HEARTBEAT_MS', 15000)
   const staleAfterMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_STALE_MS', 90000)
   const settleMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_SETTLE_MS', 300)
@@ -1791,6 +1795,31 @@ if (isMain()) {
     if (server) server.close(() => process.exit(1))
     else process.exit(1)
   }
+  // Test-only race synchronization (second-round closing-review finding):
+  // tests/owner-lock.spec.mjs's multi-takeover reproduction spawns several
+  // real server processes to race one seeded stale lock, but plain
+  // near-simultaneous spawning does not reliably make their takeover
+  // attempts collide -- OS process-spawn scheduling skew reliably let the
+  // FIRST spawned process win outright before the others even reached
+  // their own EEXIST-and-stale check, so every "loser" refused via the
+  // plain isFresh() guard above and the settle-and-reconfirm code this
+  // module exists to validate went unexercised in ~19 of 20 runs. When set
+  // (only by that test), spin-wait for the given epoch-ms instant
+  // immediately before attempting to acquire the lock, so multiple
+  // processes' takeover attempts genuinely land within the same settle
+  // window instead of merely reflecting spawn-order luck. Never set
+  // outside that test; a no-op (this whole block does not execute) unless
+  // this exact env var is present, and it can only delay reaching
+  // acquireOwnerLock, never change what that function does.
+  const raceAt = process.env.SAMINDANG_OWNER_LOCK_TEST_RACE_AT
+  if (raceAt) {
+    const target = Number(raceAt)
+    while (Date.now() < target) {
+      /* spin-wait for the shared instant -- same technique as
+         tests/owner-lock.spec.mjs Part 1's patientIdentityStore race */
+    }
+  }
+
   let ownerLock
   try {
     ownerLock = await acquireOwnerLock(dataDir, { heartbeatMs, staleAfterMs, settleMs, onLost: onLockLost })

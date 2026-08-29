@@ -638,6 +638,23 @@ export function createStore(
   // rarer window than destroying a live capability or misattributing an
   // old visit, and it self-heals the moment the token expires.
   //
+  // Second-round closing-review finding: (a)'s `session !== null` guard
+  // also gives up a DIFFERENT crash recovery this predicate's first
+  // version explicitly listed as covered: "crash between `createVisit` and
+  // `issueToken`, no token at all yet." A visit created by startRevisit's
+  // own createVisit call, where the process then dies before
+  // followUpSessions.issueToken ever runs, has no session at all -- so it
+  // now falls through `if (!session) continue` and is never reused; it
+  // sits in the doctor queue as an orphan NOT_STARTED revisit instead.
+  // Deliberately accepted rather than special-cased: distinguishing that
+  // orphan from an ordinary bare-patient_id visit created by the unrelated
+  // POST /api/visits route is exactly the ambiguity (a) exists to close,
+  // and re-opening it for one narrow crash window would reintroduce the
+  // misattribution bug. The orphan is inert (no live token, nothing to
+  // duplicate) and staff already have a manual reissue path for it; this
+  // is strictly a coverage reduction from the first version's claim, not a
+  // new risk.
+  //
   // O(n) scan of this one patient's visits, same pilot-scale tradeoff as
   // every other list function in this file.
   async function findPendingRevisitForPatient(patientId) {
@@ -650,7 +667,21 @@ export function createStore(
       const session = await followUpSessions.getActiveForVisit(v.id)
       if (!session) continue
       if (session.status === 'INVALIDATED') continue
-      const stillLive = session.status === 'ACTIVE' && new Date(session.expires_at).getTime() >= Date.now()
+      // Second-round closing-review finding: this must mirror
+      // consumeTokenWithAction's OWN expiry check (followUpSessionStore.js,
+      // `new Date(record.expires_at).getTime() < Date.now()`) exactly, not
+      // just approximately -- a malformed/unparseable expires_at makes that
+      // comparison NaN < Date.now() = false, so consume treats it as
+      // "not expired" (still usable). Writing this as `getTime() >=
+      // Date.now()` instead of the negated form below looks equivalent but
+      // is NOT for a malformed value: NaN >= Date.now() is false, which
+      // would have called a still-consumable (per the store that actually
+      // consumes it) token "not live" and let it be silently invalidated
+      // here -- destroying an in-use capability, exactly the bug (b) this
+      // predicate exists to prevent, just re-introduced for a narrower
+      // (corrupt-record) input. The negated form below agrees with
+      // consumeTokenWithAction on every input, malformed included.
+      const stillLive = session.status === 'ACTIVE' && !(new Date(session.expires_at).getTime() < Date.now())
       if (stillLive) continue
       candidates.push(v)
     }

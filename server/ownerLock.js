@@ -100,6 +100,30 @@ export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}
   return { record, fresh: isFresh(record, staleAfterMs) }
 }
 
+// A malformed env var here must fail loudly, not silently degrade the guard
+// it configures -- `Number(x)` on an unset var is fine (the caller's own
+// fallback), but a SET-but-malformed one (a typo like "90s", or an empty
+// string) silently becomes NaN. Two callers depend on that NOT happening in
+// different ways: server/index.js's isFresh() treats a NaN staleAfterMs as
+// "everything is always stale" (the lock becomes a complete no-op -- every
+// process takes over immediately); scripts/purge-data.mjs found the sharper
+// edge of the same bug -- `SAMINDANG_OWNER_LOCK_STALE_MS=0` (or negative)
+// IS `Number.isFinite`, so a check that only validated finiteness let a
+// zero/negative threshold make every lock read as stale, and the purge
+// script took the lock away from (and then deleted the data under) a
+// genuinely live server. Shared here, not duplicated per-caller, precisely
+// so the two can't drift the way that regression happened.
+export function requirePositiveMs(envVar, fallback) {
+  const raw = process.env[envVar]
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`fatal: ${envVar}="${raw}" is not a valid positive number of milliseconds`)
+    process.exit(1)
+  }
+  return n
+}
+
 // Closing-review finding (round 17 self-review): the original takeover --
 // atomicWrite(rename) then immediately re-read and compare nonces -- is NOT
 // mutual exclusion. Two processes racing the same stale lock can each
@@ -112,22 +136,49 @@ export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}
 // right after your own write can never distinguish "I'm alone" from "I'm
 // about to be overwritten".
 //
-// Fix: after the takeover write, wait a settling window and re-read AGAIN.
-// If no one else has written since (nonce still matches), and nothing
-// competing is written during a second, shorter confirmation read, treat
-// this as the final word: any later competitor's OWN takeover attempt that
-// started around the same time will have completed its own rename well
-// within the settle window (a single atomicWrite is a few filesystem calls,
-// not seconds), so by the time this process's settle window elapses, the
-// file it reads is the true last-writer -- and if that is not this
-// process's own nonce, this process lost and must not proceed. This is not
-// full distributed consensus (a competitor whose rename lands AFTER this
-// settle window closes could still slip through), but for the realistic
-// failure mode this module exists for -- two processes started within
-// moments of each other, not an adversarial arrival stream -- it converts
-// the race from "coin flip" to "effectively never" without adding a
-// database or a second lock file.
-const DEFAULT_SETTLE_MS = 300
+// Fix: after the takeover write, wait a settling window, then re-read once
+// more. If nothing has overwritten this process's own nonce by then, any
+// later competitor's OWN takeover attempt that started around the same
+// time will have completed its own rename well within the settle window (a
+// single atomicWrite is a few filesystem calls, not seconds), so by the
+// time this process's settle window elapses, the file it reads is the true
+// last-writer -- and if that is not this process's own nonce, this process
+// lost and must not proceed.
+//
+// Second-round closing-review finding: an earlier version of this function
+// performed this same check TWICE (a full settleMs wait, then a second,
+// shorter wait-and-verify) under the theory that the second check "catches
+// a competitor whose rename landed near the edge of the window" -- that
+// reasoning does not hold. Nonces are per-process and this function never
+// rewrites the lock itself between the two checks (the heartbeat timer
+// below is not created yet), so the state being checked is monotonic: once
+// the file stops carrying this process's nonce it can never carry it again
+// without this process performing another write. A second read after the
+// first one already succeeded can only reconfirm the same fact, not learn
+// anything the first read couldn't -- it was strictly dead-weight latency,
+// not extra protection. Replaced with a single wait-then-verify.
+//
+// Honest limit, not fully closed by this or any single-settle-window
+// design: two takeover renames arriving MORE than settleMs apart can still
+// both "win" locally and both end up listening -- e.g. one process stalls
+// (GC pause, disk contention, a paused VM) past the settle window after
+// writing its own takeover, wakes, and a genuinely new process take over in
+// between goes undetected by either side individually. In practice this
+// residual is narrower than it sounds: any competitor that ARRIVES after
+// the first process's takeover rename (not just after its settle window)
+// sees a lock with a `renewed_at` from moments ago and refuses immediately
+// via the plain `isFresh` check above, never reaching this settle-reconfirm
+// code at all -- confirmed empirically (tests/owner-lock.spec.mjs's
+// multi-takeover block: with several real processes racing one seeded
+// stale lock, every loser refuses via `isFresh`, and this settle-reconfirm
+// path only matters for processes whose *initial* EEXIST read also raced
+// close enough to see the lock as still stale). This is not full
+// distributed consensus -- for the realistic failure mode this module
+// exists for (an operator accidentally double-starting the server, not an
+// adversarial arrival stream) it converts a documented ~45% two-owner
+// collision rate into something not observed in repeated real-process
+// testing, without adding a database or a second lock file.
+const DEFAULT_SETTLE_MS = 350
 
 async function verifyStillOwner(lockPath, nonce) {
   const current = await readLock(lockPath)
@@ -161,18 +212,11 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
     const takeover = { pid, hostname: host, nonce, acquired_at: now, renewed_at: now }
     await atomicWrite(lockPath, takeover)
     // Settle-and-reconfirm (see the comment above this function) instead of
-    // a single immediate self-read: wait, then verify twice more (the
-    // second check catches a competitor whose own rename landed anywhere
-    // inside the settle window, including right at its edge).
+    // a single immediate self-read: wait out the settle window, then verify
+    // once. A second post-hoc re-verify does not add coverage (the checked
+    // state is monotonic once this write lands -- see the comment above),
+    // so it is deliberately not repeated here.
     await sleep(settleMs)
-    if (!(await verifyStillOwner(lockPath, nonce))) {
-      const loser = await readLock(lockPath)
-      throw new OwnerLockConflictError(
-        `lost the race to take over an abandoned data directory lock to another process (pid=${loser?.pid ?? '?'}) -- refusing to start`,
-        loser,
-      )
-    }
-    await sleep(Math.min(50, settleMs))
     if (!(await verifyStillOwner(lockPath, nonce))) {
       const loser = await readLock(lockPath)
       throw new OwnerLockConflictError(
@@ -198,6 +242,21 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
       // owner alongside the legitimate new one, with the lock file lying
       // about who holds it. Read-verify ownership FIRST; only renew if
       // still genuinely ours.
+      //
+      // Honest residual (second-round closing-review finding): this read
+      // (of what is CURRENTLY on disk) and the atomicWrite below it are
+      // still two separate steps, not one atomic operation. If a
+      // competitor's takeover rename lands in the gap between them, two
+      // outcomes are possible: (a) our write lands after theirs -- we
+      // stomp their lock, but their OWN settle-and-reconfirm check (above)
+      // then correctly detects that and THEY refuse to start, so exactly
+      // one owner survives; (b) our write lands before theirs -- we
+      // believe we renewed and keep serving, discovering the loss only on
+      // the NEXT heartbeat tick, a genuine two-live-owner window bounded by
+      // heartbeatMs (15s default). This is a real, currently-untested
+      // residual -- narrower than the unbounded window that existed before
+      // this read-verify was added (previously this process could reclaim
+      // a lock it had lost at ANY later heartbeat, forever), but not zero.
       const current = await readLock(lockPath)
       if (current?.nonce !== nonce) {
         released = true

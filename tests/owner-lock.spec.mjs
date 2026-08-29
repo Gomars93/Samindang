@@ -7,7 +7,7 @@
 // Plain node, no test framework: assert() prints "OK: <name>" and throws on
 // failure -- same convention as tests/audit-registry.spec.mjs.
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -324,6 +324,25 @@ async function main() {
      test seeds a stale lock directly (no victim process needed) and races
      several real processes against it at once -- exactly one must end up
      listening, and it must be the one owner.lock actually names.
+
+     Second-round closing-review finding (NEW-4): an earlier version of
+     this test spawned all N processes back-to-back with no arrival
+     synchronization. Verified (via 20 repeated runs against a
+     deliberately-reverted, known-buggy ownerLock.js) that plain spawn
+     order alone reliably let the first-spawned process win outright
+     BEFORE the others even attempted their takeover -- every "loser" in
+     19 of 20 runs refused via the plain isFresh() guard (arriving after
+     the winner had already renewed the lock), never reaching the
+     settle-and-reconfirm code this test exists to validate at all. That
+     made the test pass almost regardless of whether the fix was present:
+     it caught the reverted bug in only 1 of 20 runs. Fixed by having
+     every racer spin-wait for the same future instant (server/index.js's
+     SAMINDANG_OWNER_LOCK_TEST_RACE_AT hook, same spin-wait technique as
+     Part 1's patientIdentityStore race above) immediately before it
+     attempts to acquire the lock, so their takeover attempts genuinely
+     land within the same settle window -- and by asserting on WHY each
+     loser exited, not just that it exited, so a loser that failed for an
+     unrelated reason cannot be silently miscounted as a correct refusal.
      ===================================================================== */
   {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-multitakeover-'))
@@ -339,18 +358,40 @@ async function main() {
         'utf8',
       )
       const fastEnv = { SAMINDANG_OWNER_LOCK_HEARTBEAT_MS: '150', SAMINDANG_OWNER_LOCK_STALE_MS: '200', SAMINDANG_OWNER_LOCK_SETTLE_MS: '150' }
+      // Every racer spin-waits (inside its own process, before calling
+      // acquireOwnerLock) until this shared future instant -- gives Node's
+      // own module-load/import time for all N children to converge on
+      // roughly the same moment before any of them touches the lock file,
+      // instead of relying on OS spawn-order luck.
+      const raceAt = Date.now() + 500
 
       const N = 5
-      for (let i = 0; i < N; i++) racers.push(spawnServer(dataDir, fastEnv))
+      for (let i = 0; i < N; i++) racers.push(spawnServer(dataDir, { ...fastEnv, SAMINDANG_OWNER_LOCK_TEST_RACE_AT: String(raceAt) }))
       // Wait for every racer to reach a settled state: either listening,
       // or exited (refused the race).
       await Promise.all(racers.map((r) => waitUntil(() => r.state.stdout.includes('listening on') || r.state.exitCode !== null, { timeoutMs: 10000 })))
 
       const winners = racers.filter((r) => r.state.stdout.includes('listening on') && r.state.exitCode === null)
       const losers = racers.filter((r) => !(r.state.stdout.includes('listening on') && r.state.exitCode === null))
-      console.log(`  (multi-takeover) ${winners.length} winner(s) of ${N}, pids=[${winners.map((w) => w.child.pid).join(',')}]`)
+
+      const isFreshRefusal = /already owned by another live process/
+      const settleRefusal = /lost the race to take over/
+      const losersViaIsFresh = losers.filter((r) => isFreshRefusal.test(r.state.stderr))
+      const losersViaSettle = losers.filter((r) => settleRefusal.test(r.state.stderr))
+      const losersUnrecognized = losers.filter((r) => !isFreshRefusal.test(r.state.stderr) && !settleRefusal.test(r.state.stderr))
+      console.log(
+        `  (multi-takeover) ${winners.length} winner(s) of ${N}, pids=[${winners.map((w) => w.child.pid).join(',')}]; losers: ${losersViaIsFresh.length} via isFresh, ${losersViaSettle.length} via settle-reconfirm, ${losersUnrecognized.length} unrecognized`,
+      )
       assert(`multi-takeover: exactly ONE of ${N} processes racing a stale lock ends up listening (found ${winners.length})`, winners.length === 1)
       assert(`multi-takeover: the other ${N - 1} processes all refused/exited (found ${losers.length} losers)`, losers.length === N - 1)
+      assert(
+        'multi-takeover: every loser refused for a RECOGNIZED owner-lock reason (isFresh guard or settle-reconfirm), not an unrelated crash the test would otherwise silently miscount as a correct refusal',
+        losersUnrecognized.length === 0,
+      )
+      assert(
+        'multi-takeover: the spin-wait barrier actually forced at least one loser through the settle-and-reconfirm code path (not every racer merely refused via the earlier isFresh guard) -- this is the specific code this test exists to exercise',
+        losersViaSettle.length >= 1,
+      )
 
       const lockAfterRace = await readJsonOrNull(lockPath)
       assert('multi-takeover: owner.lock names the actual winning process', lockAfterRace?.pid === winners[0]?.child.pid)
@@ -405,6 +446,135 @@ async function main() {
       assert('purge-refusal: purge-data.mjs succeeds once the server has cleanly stopped and released the lock', !purgeSecondThrew)
     } finally {
       killIfAlive(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 5 (second-round closing-review finding, NEW-1): a malformed/
+     non-positive SAMINDANG_OWNER_LOCK_STALE_MS must be REJECTED, not
+     silently treated as "everything is always stale". An earlier version
+     of purge-data.mjs only checked Number.isFinite before passing the
+     value through -- 0 and negative numbers pass that check, and
+     ownerLock.js's isFresh() computes `ageMs < staleAfterMs`, so a
+     threshold of 0 made every lock (including a genuinely live server's)
+     read as stale. Verified to actually purge a live server's data before
+     this fix; must now refuse loudly instead, with the live server
+     completely unaffected.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-stalems-'))
+    let server
+    try {
+      const dataDir = path.join(dataRoot, 'submissions')
+      server = spawnServer(dataDir)
+      await waitForListening(server)
+
+      for (const badValue of ['0', '-1', '90s', '']) {
+        let threw = false
+        let stderr = ''
+        try {
+          execFileSync(process.execPath, [path.join(repoRoot, 'scripts', 'purge-data.mjs'), '--yes'], {
+            cwd: repoRoot,
+            env: { ...process.env, SAMINDANG_DATA_DIR: dataDir, SAMINDANG_OWNER_LOCK_STALE_MS: badValue },
+          })
+        } catch (err) {
+          threw = true
+          stderr = String(err.stderr ?? '')
+        }
+        assert(`stale-ms-validation: SAMINDANG_OWNER_LOCK_STALE_MS=${JSON.stringify(badValue)} makes purge-data.mjs refuse (non-zero exit) instead of treating the lock as always-stale`, threw)
+        assert(
+          `stale-ms-validation: the refusal for ${JSON.stringify(badValue)} names it as an invalid value, not a false "already owned" report`,
+          stderr.includes('is not a valid positive number of milliseconds'),
+        )
+      }
+
+      assert('stale-ms-validation: the live server is still running and untouched after all the rejected purge attempts', server.state.exitCode === null)
+      const lockStillLive = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
+      assert('stale-ms-validation: owner.lock still names the live server -- none of the rejected attempts took it', lockStillLive?.pid === server.child.pid)
+    } finally {
+      killIfAlive(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 6 (second-round closing-review finding, NEW-2/NEW-3): the lock
+     purge-data.mjs acquires for itself must be released on EVERY exit
+     path, not just a clean successful purge -- an operator aborting the
+     confirmation prompt, or a genuine error partway through deletion. An
+     earlier version only released after success, leaving a stale-naming
+     lock behind (naming this now-exited process) that wedged a real
+     server out for up to staleAfterMs on either kind of exit.
+     ===================================================================== */
+  {
+    // 6a: abort at the confirmation prompt (answer anything but DELETE).
+    // The confirmation prompt only appears in the real TTY-interactive
+    // path (no --yes) -- exercised here via `script`(1), which ubuntu-
+    // latest (this repo's CI runner) ships as part of util-linux, to give
+    // the child process a real pty the way an operator's terminal would.
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-abortleak-'))
+    try {
+      const dataDir = path.join(dataRoot, 'submissions')
+      await rm(dataDir, { recursive: true, force: true })
+      await mkdir(dataDir, { recursive: true })
+
+      const scriptCmd = `SAMINDANG_DATA_DIR=${JSON.stringify(dataDir)} ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(repoRoot, 'scripts', 'purge-data.mjs'))}`
+      let abortExitCode = null
+      try {
+        execFileSync('script', ['-qec', scriptCmd, '/dev/null'], { cwd: repoRoot, input: 'NO\n', env: process.env })
+      } catch (err) {
+        abortExitCode = err.status
+      }
+      assert('abort-leak: aborting the confirmation prompt (answering NO) exits non-zero', abortExitCode !== null && abortExitCode !== 0)
+
+      const lockAfterAbort = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
+      assert('abort-leak: owner.lock is fully released (removed) after an aborted purge, not left behind naming the exited process', lockAfterAbort === null)
+
+      // A real server must be able to start IMMEDIATELY afterward -- no
+      // staleAfterMs wait required, because there is no leftover lock to
+      // wait out.
+      const server = spawnServer(dataDir)
+      try {
+        await waitForListening(server)
+        assert('abort-leak: a real server starts immediately after an aborted purge (no stale-lock wait needed)', server.state.stdout.includes('listening on'))
+      } finally {
+        killIfAlive(server)
+        if (server.state.exitCode === null) await waitForExit(server, 3000).catch(() => {})
+      }
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+  {
+    // 6b: a genuine error partway through deletion (here: a pre-existing
+    // regular file where visits/ needs to be a directory, so
+    // store.purgeAll() itself throws ENOTDIR/EEXIST) must still release
+    // the lock this script took, not leave it behind because the throw
+    // unwound past the point that used to call release().
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-throwleak-'))
+    try {
+      const dataDir = path.join(dataRoot, 'submissions')
+      await mkdir(dataDir, { recursive: true })
+      // Block visits/ (a sibling of submissions/) with a plain file so
+      // store.purgeAll() -> visitStore.purgeAll()'s own mkdir/readdir
+      // genuinely throws instead of silently no-op'ing.
+      await writeFile(path.join(dataRoot, 'visits'), '')
+
+      let threw = false
+      try {
+        execFileSync(process.execPath, [path.join(repoRoot, 'scripts', 'purge-data.mjs'), '--yes'], {
+          cwd: repoRoot,
+          env: { ...process.env, SAMINDANG_DATA_DIR: dataDir },
+        })
+      } catch {
+        threw = true
+      }
+      assert('throw-leak: purge-data.mjs genuinely throws (non-zero exit) when a sibling store directory is blocked', threw)
+
+      const lockAfterThrow = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
+      assert('throw-leak: owner.lock is still released (removed) even though the purge itself failed partway through', lockAfterThrow === null)
+    } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }
   }

@@ -39,7 +39,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { createStore } from '../server/store.js'
 import { purgeAuditLog } from '../server/audit.js'
-import { acquireOwnerLock, OwnerLockConflictError } from '../server/ownerLock.js'
+import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs } from '../server/ownerLock.js'
 
 const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
 const dataRoot = path.join(dataDir, '..')
@@ -77,50 +77,83 @@ async function main() {
   // who raised the server's window), since it goes through the identical
   // acquireOwnerLock() staleness logic instead of a second, separately
   // maintained copy of it.
+  //
+  // Second-round closing-review finding (NEW-1, HIGH/data-loss): an
+  // earlier version of this block only checked `Number.isFinite` on
+  // SAMINDANG_OWNER_LOCK_STALE_MS before passing it through --
+  // `Number("0")` and negative values ARE finite, and ownerLock.js's
+  // isFresh() computes `ageMs < staleAfterMs`, so a threshold of 0 (or
+  // negative) makes EVERY lock read as stale regardless of age. Verified
+  // empirically: with SAMINDANG_OWNER_LOCK_STALE_MS=0, this script
+  // successfully purged a data directory while a real server process was
+  // still live and serving requests against it -- exactly the corruption
+  // this lock exists to prevent, and strictly worse than the TOCTOU it was
+  // written to close, because it doesn't even need a race: a single
+  // mistyped env var is enough. `requirePositiveMs` (shared with
+  // server/index.js, see its own comment) rejects zero/negative/malformed
+  // values outright instead of silently treating them as "always stale".
   let ownerLock
   try {
-    const staleAfterMs = process.env.SAMINDANG_OWNER_LOCK_STALE_MS ? Number(process.env.SAMINDANG_OWNER_LOCK_STALE_MS) : undefined
-    ownerLock = await acquireOwnerLock(dataDir, staleAfterMs !== undefined && Number.isFinite(staleAfterMs) ? { staleAfterMs } : {})
+    const staleAfterMs = requirePositiveMs('SAMINDANG_OWNER_LOCK_STALE_MS', 90000)
+    ownerLock = await acquireOwnerLock(dataDir, { staleAfterMs })
   } catch (err) {
     if (err instanceof OwnerLockConflictError) {
       console.error(`refusing to purge: ${err.message.replace('refusing to start a second process against the same data directory', 'stop the server first, then re-run this script')}`)
     } else {
       console.error(`refusing to purge: could not acquire the data directory owner lock -- ${err.message}`)
     }
-    process.exit(1)
+    process.exitCode = 1
+    return
   }
 
-  if (!yes) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
-    let answer
-    try {
-      answer = await rl.question(
-        `This will PERMANENTLY delete ALL stored submissions in "${dataDir}".\nType DELETE to confirm: `,
-      )
-    } finally {
-      rl.close()
+  // Second-round closing-review finding (NEW-2/NEW-3): everything from
+  // here on must release the lock this script itself took above on EVERY
+  // exit path -- an operator aborting the confirmation prompt, or any
+  // error during the actual deletion -- not just the success path. An
+  // earlier version only released after a clean run, so an abort or a
+  // mid-purge throw left a fresh lock naming this (by-then-exited) process
+  // behind, wedging the real server out with a misleading "already owned
+  // by another live process" refusal for up to staleAfterMs (90s default).
+  // `process.exitCode = 1; return` (not `process.exit(1)`) is deliberate
+  // in every branch below the try -- `process.exit()` terminates
+  // immediately and does NOT run a pending `finally` block, which would
+  // silently reintroduce the exact same lock leak.
+  try {
+    if (!yes) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      let answer
+      try {
+        answer = await rl.question(
+          `This will PERMANENTLY delete ALL stored submissions in "${dataDir}".\nType DELETE to confirm: `,
+        )
+      } finally {
+        rl.close()
+      }
+      if (answer !== 'DELETE') {
+        console.log('Aborted — no data was deleted.')
+        process.exitCode = 1
+        return
+      }
     }
-    if (answer !== 'DELETE') {
-      console.log('Aborted — no data was deleted.')
-      process.exit(1)
-    }
-  }
 
-  const store = createStore(dataDir)
-  const count = await store.purgeAll()
-  await purgeAuditLog(dataDir)
-  await rm(crmDir, { recursive: true, force: true })
-  await rm(identityDir, { recursive: true, force: true })
-  // Release the lock this script itself took above -- this both removes
-  // the lock file (part of "delete everything") and ends the takeover
-  // window a real server could otherwise be refused during.
-  await ownerLock.release()
-  console.log(
-    `Purged ${count} file(s) from "${dataDir}" and its sibling stores (visits/, recorder-results/, micro-follow-up/, follow-up-sessions/, stations/), cleared the audit log, and removed "${crmDir}" and "${identityDir}".`,
-  )
+    const store = createStore(dataDir)
+    const count = await store.purgeAll()
+    await purgeAuditLog(dataDir)
+    await rm(crmDir, { recursive: true, force: true })
+    await rm(identityDir, { recursive: true, force: true })
+    console.log(
+      `Purged ${count} file(s) from "${dataDir}" and its sibling stores (visits/, recorder-results/, micro-follow-up/, follow-up-sessions/, stations/), cleared the audit log, and removed "${crmDir}" and "${identityDir}".`,
+    )
+  } finally {
+    // Release the lock this script itself took above -- this both removes
+    // the lock file (part of "delete everything") on the success path and
+    // ends the takeover window a real server could otherwise be refused
+    // during on any other exit from the block above.
+    await ownerLock.release()
+  }
 }
 
 main().catch((err) => {
   console.error(err)
-  process.exit(1)
+  process.exitCode = 1
 })

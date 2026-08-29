@@ -26,7 +26,8 @@ live follow-up 캡슐), `crmStore`의 CAS(잃어버린 update) 등 in-process
   연결(기존 `checkDataDirsWritable`와 동일 위치) — `createApp()` 자체는
   건드리지 않아 수백 개 기존 in-process 테스트에 영향 없음. 두 번째 실
   프로세스는 거부, SIGKILL 후 stale lease는 원자적으로 인수. 실 자식
-  프로세스로 재현하는 `tests/owner-lock.spec.mjs`(신규, 17 assertion):
+  프로세스로 재현하는 `tests/owner-lock.spec.mjs`(신규, 이후 closing-review
+  fix loop 거쳐 37 assertion으로 확장):
   두 프로세스 부팅 경쟁, SIGKILL 인수, `scripts/purge-data.mjs` fresh-lock
   거부, 그리고 락 없이 직접 store를 두 프로세스로 경합시켜 실제 손상
   (chart_no 중복 클레임 또는 예기치 않은 crash)을 재현하는 pre-fix 증명.
@@ -63,6 +64,46 @@ live follow-up 캡슐), `crmStore`의 CAS(잃어버린 update) 등 in-process
   전제 주석을 "이제 ownerLock.js가 실제로 강제한다"로 갱신, orphan-visit
   crash window(createSubmission)와 retention 정리의 RMW 경쟁 가장자리를
   코드 주석으로 문서화(둘 다 benign/bounded, 코드 변경 없음).
+
+**Closing-review fix loop (`fd9e49f` → `b3fe351` → 이번 커밋)**: 실제
+`model:"opus"` 독립 검수(약 147k 토큰, 41 tool call, ~13분) 두 라운드가
+발견한 결함을 순서대로 수정.
+
+1라운드(`b3fe351`): owner-lock takeover 경쟁을 단일 self-read에서
+settle-and-reconfirm으로, heartbeat의 맹목적 갱신을 read-verify-first로,
+`findPendingRevisitForPatient`의 두 가지 오류(무관한 visit 재사용,
+살아있는 세션 파괴)를 한 프레디케이트 강화로, `nextUpdatedAt`의 NaN
+가드, `x-expected-updated-at`의 empty-header guaranteed-mismatch,
+`SAMINDANG_OWNER_LOCK_*_MS` 미검증 등을 수정.
+
+2라운드(이번 커밋): 1라운드 결과에 대한 재검수가 새로 찾은 결함들.
+가장 심각한 것 — **`SAMINDANG_OWNER_LOCK_STALE_MS=0`(또는 음수)이
+`purge-data.mjs`를 살아있는 서버의 데이터까지 지우게 만듦**(finite
+체크만 하고 양수 체크를 안 해서 "모든 lock이 항상 stale"이 됨 — 실제로
+재현·검증됨). `requirePositiveMs`를 `ownerLock.js`로 옮겨
+`server/index.js`와 `purge-data.mjs`가 같은 검증을 공유하도록 고쳐
+드리프트 자체를 봉쇄. 그 외: `purge-data.mjs`가 확인 프롬프트 취소나
+purge 도중 에러 시 자신이 쥔 lock을 release 안 하고 `process.exit()`으로
+바로 죽던 문제(lock을 90초까지 들고 있어 실서버가 막힘) — `process.exit`
+대신 `process.exitCode` + `finally { await ownerLock.release() }` 구조로
+전환(`process.exit()`은 pending finally를 건너뛴다는 점이 원인). 
+owner-lock 2차 검증(settle 이후 두 번째 재확인)이 실제로는 중복 코드였던
+것을 확인하고 단일 검증으로 정리, 주석을 정직하게 재작성(잔여 경쟁
+윈도는 있음을 명시). `findPendingRevisitForPatient`의 `stillLive` 판정이
+`consumeTokenWithAction`의 만료 판정과 부호가 달라(손상된 `expires_at`
+값에서만 재현) 서로 모순되던 것을 동일 부호로 통일. 검수 도구 자체의
+결함도 발견: multi-takeover 테스트가 프로세스 spawn 순서에 의존해 실제
+버그를 20번 중 1번만 잡았던 것 — `server/index.js`에 테스트 전용
+spin-wait 배리어(`SAMINDANG_OWNER_LOCK_TEST_RACE_AT`, 프로덕션에서는
+절대 설정 안 됨)를 추가해 진짜 동시 경쟁을 강제, loser의 거부 사유까지
+검증하도록 강화 — 그 과정에서 `checkDataDirsWritable`의 공유
+`.write-probe` 파일명 경쟁(진짜 버그, 원래 15개 발견 목록에는 없었음)을
+새로 발견해 프로세스별 고유 이름으로 수정. 재검증: reverted `ownerLock.js`
+대상 10/10 재현(수정 전 1/20), `SAMINDANG_OWNER_LOCK_STALE_MS=0`/`-1`
+실제 라이브 서버 대상 검증(더 이상 안 지워짐), abort/throw 양쪽 경로에서
+lock release 확인 — `tests/owner-lock.spec.mjs` 20 → 37 assertion.
+전체 게이트(tsc -b --force/build/build:preview/test:all ×2/tablet-core
+pytest 80/FROZEN zero-diff) 전부 green.
 
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야

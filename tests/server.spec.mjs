@@ -340,6 +340,93 @@ async function main() {
       assert('PUT workspace for unknown id -> 404', missingRes.status === 404)
     }
 
+    /* ---------------- Round 17: optional x-expected-updated-at CAS
+       precondition on judgment/workspace saves. Absent, unconditional
+       last-write-wins exactly as every test above already exercises;
+       supplied and matching, succeeds; supplied and stale (someone else's
+       write landed since the caller last read), refused with 409 and the
+       server-authoritative current record handed back so the client can
+       merge/re-apply without a second round trip. ---------------- */
+    {
+      const currentBefore = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      const staleUpdatedAt = currentBefore.updated_at
+
+      const judgmentV2 = {
+        recorded_at: new Date().toISOString(),
+        source: { session_id: 'sess-1', questionnaire_version: '1.0' },
+        innate_features: ['cas-v2'],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      }
+      const casMatchRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': staleUpdatedAt },
+        body: JSON.stringify(judgmentV2),
+      })
+      assert('PUT judgment with a MATCHING x-expected-updated-at -> 200 (precondition holds)', casMatchRes.status === 200)
+      const afterV2 = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      assert('the matching-precondition judgment save actually took effect', afterV2.judgment.innate_features[0] === 'cas-v2')
+      assert('a successful save changes updated_at (staleUpdatedAt is now genuinely stale)', afterV2.updated_at !== staleUpdatedAt)
+
+      const judgmentV3 = { ...judgmentV2, innate_features: ['cas-v3-should-be-refused'] }
+      const casStaleRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        // Deliberately reusing the NOW-STALE updated_at from before the v2
+        // save above -- simulates a second Doctor Workspace tab (or a
+        // stale GET) whose in-memory copy predates v2's write.
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': staleUpdatedAt },
+        body: JSON.stringify(judgmentV3),
+      })
+      assert('PUT judgment with a STALE x-expected-updated-at -> 409 (lost-update refused, not silently overwritten)', casStaleRes.status === 409)
+      const casStaleBody = await casStaleRes.json()
+      assert('the 409 body reports conflict', casStaleBody.error === 'conflict')
+      assert(
+        'the 409 body hands back the CURRENT (v2) record, not the caller\'s stale view -- server-authoritative state wins',
+        casStaleBody.current?.judgment?.innate_features?.[0] === 'cas-v2',
+      )
+      const afterRefusedWrite = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      assert('the refused v3 write never actually landed -- v2 is still the persisted judgment', afterRefusedWrite.judgment.innate_features[0] === 'cas-v2')
+
+      // Same contract on the workspace route, using the fresh updated_at
+      // the judgment save above just produced.
+      const currentAfterJudgment = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      const workspaceCasBody = { schema_version: '1.0.0', painFinalAssessment: { finalWorkingAssessment: 'cas-workspace-v2' } }
+      const workspaceCasMatch = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': currentAfterJudgment.updated_at },
+        body: JSON.stringify(workspaceCasBody),
+      })
+      assert('PUT workspace with a MATCHING x-expected-updated-at -> 200', workspaceCasMatch.status === 200)
+
+      const workspaceCasStale = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        // Reuses the now-stale pre-workspace-save updated_at.
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': currentAfterJudgment.updated_at },
+        body: JSON.stringify({ schema_version: '1.0.0', painFinalAssessment: { finalWorkingAssessment: 'should-be-refused' } }),
+      })
+      assert('PUT workspace with a STALE x-expected-updated-at -> 409', workspaceCasStale.status === 409)
+      const workspaceCasStaleBody = await workspaceCasStale.json()
+      assert(
+        'the workspace 409 hands back the current record with the ACCEPTED workspace save, not the refused one',
+        workspaceCasStaleBody.current?.workspace?.painFinalAssessment?.finalWorkingAssessment === 'cas-workspace-v2',
+      )
+
+      // Omitting the header entirely is still unconditional last-write-wins
+      // -- no behavior change for every caller that doesn't opt in.
+      const noHeaderRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...judgmentV2, innate_features: ['no-precondition-save'] }),
+      })
+      assert('PUT judgment with NO x-expected-updated-at header -> 200, unconditional as before (backward-compatible default)', noHeaderRes.status === 200)
+    }
+
     /* ---------------- restart persistence ---------------- */
     {
       await stopServer(server)

@@ -673,6 +673,95 @@ async function main() {
     }
   }
 
+  /* =====================================================================
+     Part N (round 17, restart-safe / multi-process correctness batch):
+     assignedTokens (the station's live raw-token map) is documented as
+     IN-MEMORY ONLY, restart-loses-it-by-design (stationStore.js's own
+     header comment: "held IN MEMORY ONLY, never written to disk... A
+     server restart deliberately loses pending handoffs: staff simply
+     reassigns"). This proves that design decision empirically with a
+     genuine restart -- stop the server, start a completely fresh one
+     against the SAME data dir (a fresh createStationStore call gets a
+     brand-new, empty assignedTokens Map, same reasoning verified for
+     patientIdentityStore's crash-window in the audit+purge batch) --
+     rather than just trusting the comment: the durable station record
+     survives (still names the OLD assignment's visit_id), but polling
+     reports WAITING (fails closed, never invents or reconstructs a
+     token), assigning a DIFFERENT patient is still refused as busy
+     (durable metadata governs uniqueness, not the lost in-memory token),
+     and staff can reset + reassign cleanly afterward.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-station-restart-'))
+    try {
+      let { server, base } = await startServer({ dataDir: path.join(root, 'submissions') })
+      const stationReg = await (
+        await fetch(`${base}/api/stations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'restart 스테이션' }) })
+      ).json()
+      const stationHeader = { 'x-station-credential': stationReg.credential }
+
+      const patientVisit = await (await fetch(`${base}/api/visits`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json()
+      const assignRes = await fetch(`${base}/api/stations/${stationReg.station.station_id}/assign`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patient_id: patientVisit.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+      })
+      assert('restart: setup -- station assignment created (201)', assignRes.status === 201)
+      const assigned = await assignRes.json()
+      const pollBeforeRestart = await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()
+      assert('restart: setup -- station genuinely holds a live token before restart', pollBeforeRestart.status === 'ASSIGNED' && typeof pollBeforeRestart.token === 'string')
+
+      await stopServer(server)
+      ;({ server, base } = await startServer({ dataDir: path.join(root, 'submissions') }))
+
+      try {
+        const pollAfterRestart = await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()
+        assert(
+          'restart: assignedTokens is genuinely lost on restart -- poll reports WAITING, never a broken/reconstructed ASSIGNED',
+          pollAfterRestart.status === 'WAITING',
+        )
+
+        const stationsAfterRestart = await (await fetch(`${base}/api/stations`)).json()
+        const durableStation = stationsAfterRestart.stations.find((s) => s.station_id === stationReg.station.station_id)
+        assert(
+          'restart: the DURABLE station record still names the old assignment\'s visit_id -- only the raw token itself was in-memory-only',
+          durableStation?.assignment?.visit_id === assigned.visit.id,
+        )
+
+        // Reassigning a DIFFERENT patient is refused as busy -- durable
+        // metadata still governs uniqueness even though the in-memory
+        // token is gone; staff must reset first, exactly as for any other
+        // busy station.
+        const otherPatientVisit = await (await fetch(`${base}/api/visits`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json()
+        const busyRes = await fetch(`${base}/api/stations/${stationReg.station.station_id}/assign`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patient_id: otherPatientVisit.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+        })
+        assert(
+          'restart: assigning a DIFFERENT patient post-restart is still refused as busy (durable metadata governs uniqueness, not the lost in-memory token)',
+          busyRes.status === 409,
+        )
+
+        const resetRes = await fetch(`${base}/api/stations/${stationReg.station.station_id}/reset`, { method: 'POST' })
+        assert('restart: staff can reset the stale post-restart assignment', resetRes.status === 200)
+
+        const reassignRes = await fetch(`${base}/api/stations/${stationReg.station.station_id}/assign`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patient_id: otherPatientVisit.patient_id, delivery_mode: 'CLINIC_TABLET' }),
+        })
+        assert('restart: after reset, reassigning a new patient succeeds cleanly post-restart', reassignRes.status === 201)
+        const pollAfterReassign = await (await fetch(`${base}/api/station/assignment`, { headers: stationHeader })).json()
+        assert('restart: the reassigned station now holds a fresh live token', pollAfterReassign.status === 'ASSIGNED' && typeof pollAfterReassign.token === 'string')
+      } finally {
+        await stopServer(server)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
   console.log(`\n${passCount} assertions passed.`)
 }
 

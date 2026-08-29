@@ -20,6 +20,12 @@
 //     PHI) -- patientIdentityStore도 별도 생성되므로 명시적으로 rm -rf
 //     (Identity Production Batch에서 추가)
 //   - audit.log -- purgeAuditLog()(server/audit.js)
+//   - owner.lock (round 17, 서버 프로세스가 이 데이터 디렉터리를 자신이
+//     소유 중임을 나타내는 파일 -- server/ownerLock.js) -- 이 스크립트는
+//     먼저 lock이 fresh(살아있는 프로세스가 소유 중)인지 확인해 fresh면
+//     통째로 거부한다(살아있는 서버 밑에서 디스크를 통째로 지우면 그
+//     프로세스의 in-memory 상태와 디스크가 어긋난다); stale하거나 없으면
+//     진행하고, 끝에 남은 stale lock 파일도 같이 지운다.
 //
 // 명시적 목록 방식을 택한 이유: dataDir(SAMINDANG_DATA_DIR)는 운영자가
 // 임의 경로로 지정할 수 있어(RUNBOOK 참고) 그 상위 디렉터리를 통째로
@@ -31,6 +37,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { createStore } from '../server/store.js'
 import { purgeAuditLog } from '../server/audit.js'
+import { readOwnerLockStatus, ownerLockPath } from '../server/ownerLock.js'
 
 const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
 const dataRoot = path.join(dataDir, '..')
@@ -41,6 +48,23 @@ const yes = process.argv.includes('--yes')
 async function main() {
   if (!process.stdin.isTTY && !yes) {
     console.error('refusing to run non-interactively without --yes (e.g. `node scripts/purge-data.mjs --yes`)')
+    process.exit(1)
+  }
+
+  // Round 17: a live server process owns this data dir (server/ownerLock.js)
+  // and holds in-memory state (pending writes, dedup caches, active-visit
+  // pointers) this script knows nothing about. Deleting everything out from
+  // under it would not just lose data on disk -- an in-flight request could
+  // resurrect a file mid-purge, or the server could keep serving stale
+  // in-memory state that no longer matches an empty disk. Refuse while the
+  // lock is fresh; an operator must stop the server first (a stale/absent
+  // lock, e.g. after a clean shutdown or a crash past staleAfterMs, does
+  // not block this).
+  const { record, fresh } = await readOwnerLockStatus(dataDir)
+  if (fresh) {
+    console.error(
+      `refusing to purge: a live server process (pid=${record.pid}, host=${record.hostname}, renewed_at=${record.renewed_at}) currently owns "${dataDir}". Stop the server first, then re-run this script.`,
+    )
     process.exit(1)
   }
 
@@ -65,6 +89,10 @@ async function main() {
   await purgeAuditLog(dataDir)
   await rm(crmDir, { recursive: true, force: true })
   await rm(identityDir, { recursive: true, force: true })
+  // A leftover lock file here can only be a stale one (fresh ones already
+  // refused above) -- garbage from a crashed process, safe to remove as
+  // part of "delete everything".
+  await rm(ownerLockPath(dataDir), { force: true })
   console.log(
     `Purged ${count} file(s) from "${dataDir}" and its sibling stores (visits/, recorder-results/, micro-follow-up/, follow-up-sessions/, stations/), cleared the audit log, and removed "${crmDir}" and "${identityDir}".`,
   )

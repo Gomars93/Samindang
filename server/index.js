@@ -11,8 +11,9 @@ import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { createStore } from './store.js'
+import { createStore, StaleWriteError } from './store.js'
 import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS } from './audit.js'
+import { acquireOwnerLock, OwnerLockConflictError } from './ownerLock.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
@@ -162,7 +163,14 @@ export function createApp({
       // preflight). Listing it is not itself a privilege: the station
       // routes still verify the credential against its stored hash, and
       // the doctor routes ignore this header entirely.
-      'access-control-allow-headers': 'content-type,x-doctor-token,x-station-credential',
+      // x-expected-updated-at (round 17) is the optional CAS precondition
+      // header for the workspace/judgment save routes -- same reasoning as
+      // x-station-credential above: unlisted, the browser's preflight
+      // silently strips it before the request goes out, and the
+      // conflict-detection this header exists for would just never fire
+      // from a real browser client. Not itself a privilege -- the doctor
+      // routes still require x-doctor-token/loopback as before.
+      'access-control-allow-headers': 'content-type,x-doctor-token,x-station-credential,x-expected-updated-at',
     }
     if (doctorRoute) {
       // 원장 라우트는 절대 임의 origin을 반사하지 않는다 — 허용 목록/localhost일
@@ -227,7 +235,11 @@ export function createApp({
   // follow-up-session token attempts only (a resolvable ACTIVE token being
   // polled/submitted normally never counts against this) -- no new
   // dependency, resets on process restart, per-process only (matches this
-  // server's existing "single process owns this data dir" assumption).
+  // server's existing "single process owns this data dir" assumption --
+  // enforced since round 17 by server/ownerLock.js, see server/store.js's
+  // withLock comment). A restart-reset counter is intentional here (this
+  // is UX friction against casual probing, not a security boundary that
+  // needs to survive restart) and unaffected by the owner lock either way.
   // The 256-bit token space already makes brute force computationally
   // infeasible; this is defense-in-depth against casual guessing/scripted
   // probing, not the primary control.
@@ -429,13 +441,26 @@ export function createApp({
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
           const body = await readBody(req)
-          const record = await store.saveJudgment(id, body)
-          if (!record) {
-            status = 404
-            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
-          } else {
-            await safeAudit({ event: AUDIT_EVENTS.JUDGMENT_SAVED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
-            bytes = sendJson(req, res, 200, record, cors)
+          // Round 17: optional CAS precondition -- absent, unconditional
+          // last-write-wins exactly as before. See store.js's saveJudgment
+          // doc comment.
+          const expectedUpdatedAt = typeof req.headers['x-expected-updated-at'] === 'string' ? req.headers['x-expected-updated-at'] : undefined
+          try {
+            const record = await store.saveJudgment(id, body, { expectedUpdatedAt })
+            if (!record) {
+              status = 404
+              bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+            } else {
+              await safeAudit({ event: AUDIT_EVENTS.JUDGMENT_SAVED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, 200, record, cors)
+            }
+          } catch (err) {
+            if (!(err instanceof StaleWriteError)) throw err
+            // Server-authoritative state wins after a conflict: hand back
+            // the CURRENT record so the client can re-read/merge without a
+            // second round trip.
+            status = 409
+            bytes = sendJson(req, res, 409, { error: 'conflict', current: err.current }, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'submissions' && parts.length === 4 && parts[3] === 'workspace' && req.method === 'PUT') {
@@ -448,13 +473,22 @@ export function createApp({
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
           const body = await readBody(req)
-          const record = await store.saveWorkspace(id, body)
-          if (!record) {
-            status = 404
-            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
-          } else {
-            await safeAudit({ event: AUDIT_EVENTS.WORKSPACE_SAVED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
-            bytes = sendJson(req, res, 200, record, cors)
+          // Round 17: optional CAS precondition, same contract as the
+          // judgment route above.
+          const expectedUpdatedAt = typeof req.headers['x-expected-updated-at'] === 'string' ? req.headers['x-expected-updated-at'] : undefined
+          try {
+            const record = await store.saveWorkspace(id, body, { expectedUpdatedAt })
+            if (!record) {
+              status = 404
+              bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+            } else {
+              await safeAudit({ event: AUDIT_EVENTS.WORKSPACE_SAVED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, 200, record, cors)
+            }
+          } catch (err) {
+            if (!(err instanceof StaleWriteError)) throw err
+            status = 409
+            bytes = sendJson(req, res, 409, { error: 'conflict', current: err.current }, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 2 && req.method === 'POST') {
@@ -521,7 +555,7 @@ export function createApp({
           // absent or unrecognized value normalizes to null in the store
           // and changes nothing about the session that gets issued.
           const revisitBody = await readBody(req).catch(() => null)
-          const { visit, token, session, reused } = await store.startRevisit(patientId, revisitBody?.delivery_mode)
+          const { visit, token, session, reused, created } = await store.startRevisit(patientId, revisitBody?.delivery_mode)
           status = 201
           // Audit registry batch: startRevisit's own dedup (a repeated
           // same-patient/same-mode start within the fresh window) replays
@@ -529,11 +563,20 @@ export function createApp({
           // making a new one -- auditing here unconditionally would write
           // a second visit_created/follow_up_session_issued line for one
           // real visit every time an operator double-clicks the start
-          // button. `reused` is the store's own authoritative "was this a
-          // replay" signal (see store.js's startRevisit comment).
+          // button. `reused`/`created` are the store's own authoritative
+          // signals (see store.js's startRevisit comment).
+          //
+          // Round 17: `reused` and `created` are independent -- a durable
+          // restart-recovery reissue onto a pre-existing pending visit has
+          // `created: false` (no new visit) but `reused: false` (a
+          // genuinely new token WAS just minted), and must still be
+          // audited as follow_up_session_issued even though visit_created
+          // must not fire again for that visit.
+          if (created) {
+            await safeAudit({ event: AUDIT_EVENTS.VISIT_CREATED, visit_id: visit.id, actor: AUDIT_ACTORS.DOCTOR })
+          }
           if (!reused) {
             await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_ISSUED, visit_id: visit.id, actor: AUDIT_ACTORS.DOCTOR })
-            await safeAudit({ event: AUDIT_EVENTS.VISIT_CREATED, visit_id: visit.id, actor: AUDIT_ACTORS.DOCTOR })
           }
           bytes = sendJson(
             req,
@@ -632,7 +675,10 @@ export function createApp({
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
           const body = await readBody(req)
-          const result = await store.saveVisitWorkspace(id, body)
+          // Round 17: optional CAS precondition, same contract as the
+          // submission judgment/workspace routes above.
+          const expectedUpdatedAt = typeof req.headers['x-expected-updated-at'] === 'string' ? req.headers['x-expected-updated-at'] : undefined
+          const result = await store.saveVisitWorkspace(id, body, { expectedUpdatedAt })
           if (!result.ok && result.reason === 'not_found') {
             status = 404
             bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
@@ -649,6 +695,12 @@ export function createApp({
               { error: 'submission-backed visit; use PUT /api/submissions/:id/workspace instead' },
               cors,
             )
+          } else if (!result.ok && result.reason === 'conflict') {
+            // Server-authoritative state wins after a conflict: hand back
+            // the CURRENT record so the client can re-read/merge without a
+            // second round trip.
+            status = 409
+            bytes = sendJson(req, res, 409, { error: 'conflict', current: result.current }, cors)
           } else {
             await safeAudit({ event: AUDIT_EVENTS.VISIT_WORKSPACE_SAVED, visit_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, result.record, cors)
@@ -1077,14 +1129,24 @@ export function createApp({
               // capability token -- but only station_assigned was ever
               // audited here, so a station assignment's own visit_created/
               // follow_up_session_issued never reached audit.log. Guarded
-              // by the same `reused` signal the direct start-revisit route
-              // already uses (see the comment there); station_assigned
-              // itself is unconditional -- a station being assigned is
-              // real durable state change regardless of whether the
-              // underlying visit was newly created or reattached.
+              // by the same `reused`/`created` signals the direct
+              // start-revisit route already uses (see the comment there);
+              // station_assigned itself is unconditional -- a station being
+              // assigned is real durable state change regardless of
+              // whether the underlying visit was newly created or
+              // reattached.
+              //
+              // Round 17: split, same reasoning as the direct route -- a
+              // durable restart-recovery reissue has `created: false` but
+              // `reused: false`, and must still audit
+              // follow_up_session_issued (a real new token was minted)
+              // without re-auditing visit_created for a visit this call
+              // did not create.
               await safeAudit({ event: AUDIT_EVENTS.STATION_ASSIGNED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
-              if (!result.reused) {
+              if (result.created) {
                 await safeAudit({ event: AUDIT_EVENTS.VISIT_CREATED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
+              }
+              if (!result.reused) {
                 await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_ISSUED, visit_id: result.visit.id, actor: AUDIT_ACTORS.DOCTOR })
               }
               // No raw token in this response: the tablet fetches it itself
@@ -1673,6 +1735,25 @@ if (isMain()) {
     process.exit(1)
   })
 
+  // Round 17: acquire the data-directory owner lock BEFORE createApp/listen
+  // -- see server/ownerLock.js's header for why this only exists on the CLI
+  // boot path (isMain()), never inside createApp() itself. A second process
+  // pointed at the same data dir refuses to start here, loudly, instead of
+  // silently racing every store's in-process-only lock.
+  const heartbeatMs = Number(process.env.SAMINDANG_OWNER_LOCK_HEARTBEAT_MS ?? '15000')
+  const staleAfterMs = Number(process.env.SAMINDANG_OWNER_LOCK_STALE_MS ?? '90000')
+  let ownerLock
+  try {
+    ownerLock = await acquireOwnerLock(dataDir, { heartbeatMs, staleAfterMs })
+  } catch (err) {
+    if (err instanceof OwnerLockConflictError) {
+      console.error(`fatal: ${err.message}`)
+    } else {
+      console.error(`fatal: could not acquire data directory owner lock — ${err.message}`)
+    }
+    process.exit(1)
+  }
+
   const server = createApp({ dataDir })
   server.listen(port, host, () => {
     const retentionDays = Number(process.env.SAMINDANG_RETENTION_DAYS ?? '30')
@@ -1684,5 +1765,25 @@ if (isMain()) {
     console.log(
       `retention: ${retentionDays > 0 ? `auto-delete submissions older than ${retentionDays}d (every 6h)` : 'disabled (SAMINDANG_RETENTION_DAYS=0)'}`,
     )
+    console.log(`owner lock: pid=${ownerLock.pid} (${ownerLock.lockPath})`)
   })
+
+  // Graceful shutdown releases the owner lock immediately so a deliberate
+  // restart doesn't have to wait out staleAfterMs. A SIGKILL or crash skips
+  // this entirely by definition -- that's exactly the case the stale-lock
+  // takeover in ownerLock.js exists to recover from.
+  let shuttingDown = false
+  async function shutdown(signal) {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`${signal} received, shutting down...`)
+    await ownerLock.release()
+    server.close(() => process.exit(0))
+    // Belt-and-suspenders: if close() hangs on a stuck connection, still
+    // exit once the lock is released rather than leaving the process
+    // dangling with no forward progress.
+    setTimeout(() => process.exit(0), 5000).unref()
+  }
+  process.on('SIGINT', () => void shutdown('SIGINT'))
+  process.on('SIGTERM', () => void shutdown('SIGTERM'))
 }

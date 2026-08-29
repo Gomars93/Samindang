@@ -1,6 +1,76 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 16 — Audit Integrity + Purge Completeness Batch, 이번 세션)
+## Objective (CRM v0.3.1 round 17 — Restart-safe / Multi-process Correctness Batch, 이번 세션)
+Gomars93가 PR #24 댓글로 지시(GitHub-relayed comment). round 16(audit+purge,
+CLOSED) 다음으로 가장 위험도 높은 non-clinical 파일럿 리스크: "기존
+Doctor/CRM/재진 워크플로 전체에 걸친 restart-safe / multi-process 정합성
++ stale-state 복구"를 지시대로 **하나의 cohesive 배치**로 처리(locking/
+stale read/recovery/브라우저 동작/회귀를 별도 마이크로 라운드로 쪼개지
+않음). 요구 오케스트레이션 사이클(Fable 스코핑 → Sonnet 구현 → 진짜 Opus
+독립 검수 → 수정 → 재검수 반복 → 전체 게이트)은 round 16과 동일. 하드
+경계도 동일(FROZEN `src/spec/*Logic.ts`/`*Adapter.ts`, Test 0 PENDING,
+Care Gap OFF, 임상/식별 정책 확장 없음). **PR #24는 여전히 DO NOT MERGE.**
+
+**Fable 스코핑**(실제 `model:"fable"` 호출, 이번에도 진짜 사용): 이 저장소
+모든 store가 "이 프로세스가 데이터 디렉터리를 혼자 소유한다"는 전제를
+문서로만 적어놓고 한 번도 강제한 적이 없다는 걸 실제 코드 읽기로 확인 →
+두 실 프로세스가 같은 데이터 디렉터리를 향하면(운영자 실수로 서버 중복
+기동 등) `patientIdentityStore`(중복 chart_no 링크), `startRevisit`(중복
+live follow-up 캡슐), `crmStore`의 CAS(잃어버린 update) 등 in-process
+락 전부가 무력화됨을 구체적 시나리오로 증명 → W1~W6 작업 분해와 완료
+기준 제시.
+
+**구현(Sonnet, 이 세션)**:
+- **W1** `server/ownerLock.js`(신규): 데이터 디렉터리별 exclusive-create +
+  heartbeat lock/lease. `server/index.js`의 CLI 부팅 경로(`isMain()`)에만
+  연결(기존 `checkDataDirsWritable`와 동일 위치) — `createApp()` 자체는
+  건드리지 않아 수백 개 기존 in-process 테스트에 영향 없음. 두 번째 실
+  프로세스는 거부, SIGKILL 후 stale lease는 원자적으로 인수. 실 자식
+  프로세스로 재현하는 `tests/owner-lock.spec.mjs`(신규, 17 assertion):
+  두 프로세스 부팅 경쟁, SIGKILL 인수, `scripts/purge-data.mjs` fresh-lock
+  거부, 그리고 락 없이 직접 store를 두 프로세스로 경합시켜 실제 손상
+  (chart_no 중복 클레임 또는 예기치 않은 crash)을 재현하는 pre-fix 증명.
+- **W2** `server/store.js`의 `startRevisit`: in-memory dedup 캐시가
+  5초 창을 넘기거나 재시작/프로세스 전환으로 사라지면, durable 상태를
+  재조회해(`findPendingRevisitForPatient`) 아직 미응답인 재진 visit이
+  있으면 새 visit을 만드는 대신 그 visit에 재발급한다 — staff의 명시적
+  reset(`INVALIDATED` 세션)은 의도적으로 제외해 기존 reset→재배정 흐름은
+  그대로 둔다. `reused`/`created` 두 개의 독립 플래그로 분리(하나로는
+  "새 visit 없음"과 "새 토큰 없음"을 동시에 표현 못 해 audit 라인이
+  실제로 하나 빠지는 걸 자체 테스트로 발견 → 수정).
+- **W3** `server/followUpSessionStore.js`의 보존기한 정리: pointer 스윕이
+  `issueToken`과 같은 `visit:<id>` 락 없이 read-check-unlink라서, 막
+  재발급된 pointer를 정리가 지워버릴 수 있던 TOCTOU를 같은 락으로 닫음.
+- **W4** `server/store.js`(saveJudgment/saveWorkspace)와
+  `server/visitStore.js`(saveVisitWorkspace)에 옵션 `expectedUpdatedAt`
+  CAS precondition 추가 — 안 넘기면 기존 unconditional last-write-wins과
+  100% 동일(하위호환), 넘기고 어긋나면 409 + 서버의 현재 레코드를 그대로
+  반환(재조회 없이 바로 최신 상태 확인 가능). HTTP 경계는 새 헤더
+  `x-expected-updated-at`(CORS allow-headers에도 추가). `setStatus`는
+  의도적으로 last-write-wins 그대로 유지(문서화만). 클라이언트
+  `src/lib/serverClient.ts`의 `saveJudgment`/`saveWorkspaceState`/
+  `saveVisitWorkspace`에 옵션 인자로 배관만 추가 — 실제 UI가 언제/어떻게
+  충돌을 노출할지(자동 새로고침/배너/병합 뷰)는 별도 제품 판단이라 이번
+  라운드에서 UI 배선까지는 하지 않음(의도적으로 미룸, 아래 참고).
+- **W5** 이미 안전한 경로들의 실제 증명: `tests/station.spec.mjs`에 진짜
+  재시작 테스트 추가(station의 `assignedTokens`가 in-memory-only로
+  설계대로 재시작에 사라지고, durable 메타데이터로 busy 상태는 유지되며,
+  reset 후 재배정이 정상 동작함을 실제 서버 재시작으로 증명).
+  `tests/follow-up-session.spec.mjs`에 cleanup-vs-reissue 경쟁 증명(순서
+  강제 없이 Promise.all로 실제 경합, 어느 쪽이 먼저든 pointer가 살아있는
+  토큰을 항상 가리킴을 증명) 추가.
+- **W6** 문서화만: `store.js`/`visitStore.js`/`index.js`의 단일 프로세스
+  전제 주석을 "이제 ownerLock.js가 실제로 강제한다"로 갱신, orphan-visit
+  crash window(createSubmission)와 retention 정리의 RMW 경쟁 가장자리를
+  코드 주석으로 문서화(둘 다 benign/bounded, 코드 변경 없음).
+
+**의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
+새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야
+하는지는 제품 판단) — server-side primitive는 이번 라운드에서 완성되어
+테스트로 증명됐고, 클라이언트는 옵션 인자를 그냥 안 쓰면 기존과 100%
+동일하게 동작한다.
+
+## Objective (CRM v0.3.1 round 16 — Audit Integrity + Purge Completeness Batch, 이전 세션)
 Gomars93가 PR #24 댓글로 지시(GitHub-relayed comment, 사용자 직접 입력
 아님). round 15에서 발견된 두 gap을 닫는 후속 배치: (1) `safeAudit`의
 silent-drop 실패 모드(logEvent가 등록 안 된 event/actor에 throw하는데
@@ -2738,20 +2808,19 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다.
 
 ## Next Recommended Action
-(round 16 기준 갱신 — 아래 1-6번은 round 1-2 시절 항목이라 이미 오래
-전에 지나간 상태였음. CLAUDE.md가 "HANDOFF와 실제 Git 상태가 어긋나면
-Git이 항상 맞다"고 못박은 그 사례였고, round 16 closing Opus review가
-이 stale 상태를 직접 지적해 지금 고친다.)
-1. Gomars93(PR 작성자/review author)가 round 16 통합 완료 보고서(PR #24
+(round 17 기준 갱신.)
+1. Gomars93(PR 작성자/review author)가 round 17 통합 완료 보고서(PR #24
    댓글)와 최신 HEAD를 검토하고, 최종 merge 여부를 직접 판단한다 —
    이 세션은 절대 스스로 merge하지 않는다.
-2. Test 0(Naver→Sigma 예약 반영 live 검증)는 여전히 PENDING — Naver
+2. round 17이 의도적으로 미룬 항목(위 Objective 참고): Doctor Workspace/
+   RevisitWorkspace 클라이언트가 새 `expectedUpdatedAt` CAS
+   precondition을 실제로 보내고 409를 UX로 다루도록 배선하는 일 — 충돌
+   시 화면이 어때야 하는지(자동 새로고침/배너/병합 뷰)는 제품 판단이라
+   별도 승인 후 진행.
+3. Test 0(Naver→Sigma 예약 반영 live 검증)는 여전히 PENDING — Naver
    연동이 라이브가 될 때까지 보류, 라이브 전환 후 실제 예약 5건으로
    재시도.
-3. round 16 closing review가 남긴 nitpick(위 Objective의 "나머지는 전부
-   nitpick" 목록)은 코드 변경 없이 기록만 된 상태 — 필요하면 별도
-   승인 후 `docs/RUNBOOK_LOCAL_HANDOFF.md`에 symlink-purge 캐비어트
-   한 줄 추가 정도만 저비용으로 남아있음. 급하지 않음.
-4. 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 여전히 수동 — 이번
-   라운드도 매 호출을 세션이 명시적으로 선택했다.
-5. PR #24는 여전히 사용자가 직접 검토 후 merge 여부를 결정한다.
+4. round 16 closing review가 남긴 nitpick(문서화만, 코드 변경 없음)은
+   여전히 급하지 않음.
+5. 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 여전히 수동.
+6. PR #24는 여전히 사용자가 직접 검토 후 merge 여부를 결정한다.

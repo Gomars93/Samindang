@@ -130,23 +130,40 @@ export function setSubmissionStatus(
   })
 }
 
+// Round 17 (restart-safe / multi-process correctness): `expectedUpdatedAt`
+// is an OPTIONAL compare-and-swap precondition (server/store.js's
+// saveJudgment/saveWorkspace) -- omitted, this is the exact original
+// unconditional last-write-wins call every existing caller already makes.
+// A caller that DOES pass the `updated_at` it last read gets a 409 instead
+// of silently overwriting a newer save (e.g. from a second open tab); the
+// server's current record comes back as `errorBody.current` on that 409 --
+// see ServerResult's own `errorBody` field, the same mechanism the
+// patient-identity 409 route already uses. No UI currently opts into this
+// (deciding how a conflict should surface to the clinician -- silent
+// refresh, a banner, a merge view -- is a product/UX call, not made here);
+// this plumbing exists so a future round can wire it in without touching
+// the transport layer again.
 export function saveJudgment(
   id: string,
   judgment: ClinicianJudgment,
+  expectedUpdatedAt?: string,
 ): Promise<ServerResult<SubmissionRecord>> {
   return request(`/api/submissions/${id}/judgment`, {
     method: 'PUT',
     body: JSON.stringify(judgment),
+    headers: expectedUpdatedAt ? { 'x-expected-updated-at': expectedUpdatedAt } : undefined,
   })
 }
 
 export function saveWorkspaceState(
   id: string,
   workspace: WorkspaceState,
+  expectedUpdatedAt?: string,
 ): Promise<ServerResult<SubmissionRecord>> {
   return request(`/api/submissions/${id}/workspace`, {
     method: 'PUT',
     body: JSON.stringify(workspace),
+    headers: expectedUpdatedAt ? { 'x-expected-updated-at': expectedUpdatedAt } : undefined,
   })
 }
 
@@ -302,13 +319,18 @@ export function getVisit(visitId: string): Promise<ServerResult<VisitRecord>> {
   return request(`/api/visits/${encodeURIComponent(visitId)}`)
 }
 
+// Round 17: same optional expectedUpdatedAt CAS precondition as
+// saveJudgment/saveWorkspaceState above -- omitted, unchanged unconditional
+// last-write-wins.
 export function saveVisitWorkspace(
   visitId: string,
   workspace: VisitWorkspaceState,
+  expectedUpdatedAt?: string,
 ): Promise<ServerResult<VisitRecord>> {
   return request(`/api/visits/${encodeURIComponent(visitId)}/workspace`, {
     method: 'PUT',
     body: JSON.stringify(workspace),
+    headers: expectedUpdatedAt ? { 'x-expected-updated-at': expectedUpdatedAt } : undefined,
   })
 }
 

@@ -425,16 +425,42 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
     }
     for (const f of pointerFiles) {
       const pointerFilePath = path.join(pointersDir(baseDir), f)
-      try {
-        const pointer = JSON.parse(await readFile(pointerFilePath, 'utf8'))
-        if (!pointer?.active_token_hash) continue
-        const stillExists = await readJson(tokenPath(baseDir, pointer.active_token_hash))
-        if (!stillExists) {
+      // Round 17 (restart-safe / multi-process correctness): this was an
+      // unlocked read-check-unlink, racing issueToken's own two-phase
+      // pointer swap (see its doc comment above). Sequence that actually
+      // happened in a reproduction: this loop reads pointer P for visit V,
+      // sees its token file missing (already aged off by the *.json loop
+      // above, or by an earlier cleanup run) -- then, before this loop
+      // gets to unlink P, a doctor reissues: issueToken writes a brand-new
+      // token file and atomically swaps by-visit/V.json to point at it.
+      // This loop, still holding its now-STALE in-memory copy of P, then
+      // unlinks by-visit/V.json anyway -- destroying the pointer to the
+      // capability that was JUST handed to the patient. Every subsequent
+      // read of that visit's session goes through the pointer
+      // (getActiveForVisit/resolveToken's pointer-authority contract, see
+      // this file's round 7/9 comments), so the freshly-issued link
+      // silently starts reporting as gone. Fix: take the SAME
+      // `visit:<id>` lock issueToken's pointer swap uses, and RE-READ the
+      // pointer from disk inside that lock before deciding to unlink --
+      // exactly the same TOCTOU-closing pattern round 9 already applied to
+      // the read side (getActiveForVisit/consumeTokenWithAction).
+      const visitId = f.endsWith('.json') ? f.slice(0, -'.json'.length) : f
+      await withLock(`visit:${visitId}`, async () => {
+        try {
+          // Read the pointer FRESH, inside the lock -- not the copy this
+          // loop may have listed earlier -- so a concurrent issueToken
+          // pointer swap can never be observed as still-dangling.
+          const pointer = JSON.parse(await readFile(pointerFilePath, 'utf8'))
+          if (!pointer?.active_token_hash) return
+          const stillExists = await readJson(tokenPath(baseDir, pointer.active_token_hash))
+          if (stillExists) return
           await unlink(pointerFilePath).catch(() => {})
+        } catch {
+          // 손상되거나 쓰는 중인 파일은 건드리지 않는다 (ENOENT here means
+          // the pointer was already removed by a concurrent run/action --
+          // also safe to just return)
         }
-      } catch {
-        // 손상되거나 쓰는 중인 파일은 건드리지 않는다
-      }
+      })
     }
     return deleted
   }

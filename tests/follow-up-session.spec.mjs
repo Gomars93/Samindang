@@ -283,13 +283,39 @@ async function main() {
         startedImmediateRepeat.token === started.token,
       )
 
-      /* ---- visit-scoping: a start-revisit for the SAME patient AFTER the
-         dedup window has elapsed is a genuinely separate action and gets
-         an INDEPENDENT visit_id and token, never reusing the first ---- */
+      /* ---- Round 17 (restart-safe / multi-process correctness): a
+         start-revisit for the SAME patient AFTER the in-memory dedup
+         window has elapsed, while the FIRST revisit is STILL UNANSWERED,
+         is no longer treated as "a genuinely separate action" -- that
+         assumption was exactly the restart/retry duplication gap this
+         round closes (a process restart, or a retry landing on a second
+         process after an owner-lock takeover, is invisible to the 5s
+         in-memory cache but must not mint a second live capability for
+         one intended click). Durable state is now consulted
+         (server/store.js's findPendingRevisitForPatient): an unanswered,
+         non-invalidated revisit is REUSED -- a fresh token reissued onto
+         the SAME visit_id, never a second visit. The genuinely-new-visit
+         case (the prior revisit was actually ANSWERED first) is unchanged
+         and covered by the longitudinal-continuity regression below. ---- */
       await new Promise((resolve) => setTimeout(resolve, 80))
       const startedAgain = await store.startRevisit(patientP)
-      assert('a start-revisit past the dedup window creates yet another distinct visit', startedAgain.visit.id !== started.visit.id)
-      assert('the first revisit\'s token is unaffected by the later one (different visit -> different pointer)', started.session.visit_id !== startedAgain.session.visit_id)
+      assert('a start-revisit past the dedup window, while still unanswered, REUSES the same pending visit instead of duplicating it', startedAgain.visit.id === started.visit.id)
+      // `created: false` (no new visit) but `reused: false` (a genuinely
+      // NEW token was minted onto the existing visit, unlike the fast
+      // in-memory-cache-hit path above which is `reused: true`) -- see
+      // store.js's startRevisit doc comment on why these are two
+      // independent flags now, not one.
+      assert('the reuse creates no new visit (created: false)', startedAgain.created === false)
+      assert('the reuse mints a genuinely new token, so it is NOT reused: true (a real follow_up_session_issued event happened)', startedAgain.reused === false)
+      assert(
+        'the reused revisit issues a genuinely FRESH token, never the original plaintext (which can never be recovered once dropped)',
+        startedAgain.token !== started.token,
+      )
+      const originalTokenAfterReuse = await store.resolveFollowUpSession(started.token)
+      assert(
+        'the original (pre-reuse) token is invalidated once a fresh one is reissued onto the same visit, same as any other reissue',
+        originalTokenAfterReuse.status === 'INVALIDATED',
+      )
 
       /* ---- submitFollowUpSession: server resolves labels from its OWN
          snapshot, ignores any client-supplied label / unknown target id ---- */
@@ -304,9 +330,13 @@ async function main() {
         adverseEffectReported: false,
         adverseEffectNote: '',
       }
-      const submitResult = await store.submitFollowUpSession(started.token, fakeAnswers)
+      // Round 17: submit using startedAgain.token, the currently-live one
+      // for this visit -- started.token was just invalidated above by the
+      // reissue-on-reuse, exactly like any other reissue supersedes its
+      // predecessor.
+      const submitResult = await store.submitFollowUpSession(startedAgain.token, fakeAnswers)
       assert('submitFollowUpSession succeeds for a valid ACTIVE token', submitResult.ok === true)
-      assert('submitted response is attached to the token\'s OWN visit_id, not a client-supplied one', submitResult.visit_id === started.visit.id)
+      assert('submitted response is attached to the token\'s OWN visit_id, not a client-supplied one', submitResult.visit_id === startedAgain.visit.id)
       const savedRating = submitResult.response.targetRatings.find((r) => r.targetId === 'ft1')
       assert('server re-resolves the label from its own snapshot, ignoring the client-supplied fake label', savedRating.label === 'LBP_12')
       assert('server never persists the client-injected fake label text anywhere', !JSON.stringify(submitResult.response).includes('HACKED LABEL'))
@@ -314,23 +344,34 @@ async function main() {
       assert('needsAttention-driving field (newSymptomReported) round-trips correctly', submitResult.response.newSymptomReported === true)
 
       /* ---- double-submit: the same token cannot be consumed twice ---- */
-      const doubleSubmit = await store.submitFollowUpSession(started.token, fakeAnswers)
+      const doubleSubmit = await store.submitFollowUpSession(startedAgain.token, fakeAnswers)
       assert('double-submit with the same token fails closed', doubleSubmit.ok === false && doubleSubmit.reason === 'consumed')
-      const responseAfterDouble = await store.getMicroFollowUpResponse(started.visit.id)
+      const responseAfterDouble = await store.getMicroFollowUpResponse(startedAgain.visit.id)
       assert('the response saved by the FIRST submit is not overwritten/duplicated by the double-submit attempt', responseAfterDouble.targetRatings.length === submitResult.response.targetRatings.length)
 
-      /* ---- visit-scoping: the second revisit's own visit is untouched by
-         the first revisit's submission ---- */
-      const secondVisitResponse = await store.getMicroFollowUpResponse(startedAgain.visit.id)
+      /* ---- Round 17: NOW that this revisit has actually been ANSWERED,
+         a further start-revisit for the same patient is once again a
+         genuinely NEW, separate action (this is the pre-existing
+         longitudinal-continuity scenario: patient answered, doctor later
+         starts a fresh follow-up) and gets an INDEPENDENT visit_id and
+         token -- the "still pending" reuse above never applies once a
+         response exists. ---- */
+      const startedThird = await store.startRevisit(patientP)
+      assert('once the pending revisit has been answered, a further start-revisit creates a genuinely NEW, separate visit', startedThird.visit.id !== startedAgain.visit.id)
+      assert('the new visit is reported as reused: false', startedThird.reused === false)
+
+      /* ---- visit-scoping: the new (third) visit is untouched by the
+         earlier submission ---- */
+      const secondVisitResponse = await store.getMicroFollowUpResponse(startedThird.visit.id)
       assert('a DIFFERENT visit for the same patient has no response leaked into it', secondVisitResponse === null)
 
       /* ---- listRevisitQueue: status transitions + needs_attention flag ---- */
       const queueAfterSubmit = await store.listRevisitQueue()
-      const completedRow = queueAfterSubmit.find((r) => r.visit_id === started.visit.id)
+      const completedRow = queueAfterSubmit.find((r) => r.visit_id === startedAgain.visit.id)
       assert('listRevisitQueue: a submitted revisit shows COMPLETED', completedRow.status === 'COMPLETED')
       assert('listRevisitQueue: needs_attention is true when a new symptom was reported (operational flag only)', completedRow.needs_attention === true)
 
-      const waitingRow = queueAfterSubmit.find((r) => r.visit_id === startedAgain.visit.id)
+      const waitingRow = queueAfterSubmit.find((r) => r.visit_id === startedThird.visit.id)
       assert('listRevisitQueue: an issued-but-unanswered revisit shows WAITING_FOR_PATIENT', waitingRow.status === 'WAITING_FOR_PATIENT')
       assert('listRevisitQueue: needs_attention is false with no response yet', waitingRow.needs_attention === false)
 
@@ -1191,6 +1232,95 @@ async function main() {
       assert('TOCTOU: a read racing the swap reports the superseded token as INVALIDATED, never ACTIVE', resolvedOld.status === 'INVALIDATED')
     } finally {
       await rm(r9Root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 2.9 (round 17, restart-safe / multi-process correctness batch):
+     cleanup-vs-reissue pointer race. Before this round, the retention
+     cleanup's pointer-sweep read a visit's by-visit/ pointer, saw its
+     referenced token file already gone (aged off by the token-file loop
+     just above it, or by a prior cleanup run), and unlinked the pointer --
+     WITHOUT taking the same `visit:<id>` lock issueToken's own two-phase
+     pointer swap uses. If a doctor reissued in that exact window, cleanup
+     could destroy the pointer to the capability that was JUST handed to
+     the patient, even though the reissue itself had already succeeded.
+     Reproduce the dangling-pointer precondition directly (delete a
+     token's file off disk, simulating "already aged off"), then run
+     cleanup and a reissue CONCURRENTLY with NO artificial ordering -- the
+     fix makes both take the same lock, so the invariant must hold
+     regardless of which one's lock acquisition happens to land first. ---- */
+  {
+    const cleanupRoot = await mkdtemp(path.join(tmpdir(), 'samindang-followup-cleanup-race-'))
+    try {
+      const followUpDir = path.join(cleanupRoot, 'follow-up-sessions')
+      const sessions = createFollowUpSessionStore(followUpDir, { ttlMinutes: 30 })
+      const visitId = 'cleanup-race-visit'
+
+      await sessions.issueToken({ visit_id: visitId, patient_id: 'cleanup-race-patient', targets: [] })
+
+      const pointerFilePath = path.join(followUpDir, 'by-visit', `${visitId}.json`)
+      const pointerBefore = JSON.parse(await readFile(pointerFilePath, 'utf8'))
+      await unlink(path.join(followUpDir, 'tokens', `${pointerBefore.active_token_hash}.json`))
+
+      // No forced ordering -- both orderings must be safe under the fix
+      // (see this block's comment above for why).
+      await Promise.all([
+        sessions.cleanupOlderThan(24),
+        sessions.issueToken({ visit_id: visitId, patient_id: 'cleanup-race-patient', targets: [] }),
+      ])
+
+      const pointerAfterRaw = await readFile(pointerFilePath, 'utf8').catch(() => null)
+      assert('cleanup-vs-reissue race: the pointer file was not destroyed by the race', pointerAfterRaw !== null)
+      const pointerAfter = JSON.parse(pointerAfterRaw)
+      const referencedTokenExists = await readFile(path.join(followUpDir, 'tokens', `${pointerAfter.active_token_hash}.json`), 'utf8')
+        .then(() => true)
+        .catch(() => false)
+      assert(
+        'cleanup-vs-reissue race: the pointer always references a token file that actually exists (never left dangling)',
+        referencedTokenExists,
+      )
+
+      const afterStatus = await sessions.getActiveForVisit(visitId)
+      assert(
+        'cleanup-vs-reissue race: the visit resolves to an ACTIVE session no matter which side (cleanup vs reissue) won the lock first',
+        afterStatus?.status === 'ACTIVE',
+      )
+    } finally {
+      await rm(cleanupRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 2.10 (round 17): the same optional x-expected-updated-at CAS
+     precondition contract, at the visit-owned workspace boundary
+     (saveVisitWorkspace) -- server/store.js's saveJudgment/saveWorkspace
+     already prove the submission-owned side in tests/server.spec.mjs (the
+     real HTTP boundary, including the 409 route mapping); this proves the
+     visit-owned side's store-level contract returns the SAME
+     {ok:false, reason:'conflict', current} shape instead of silently
+     overwriting a newer save, and that omitting the precondition stays
+     unconditional last-write-wins (no behavior change for any existing
+     caller).
+     ===================================================================== */
+  {
+    const casRoot = await mkdtemp(path.join(tmpdir(), 'samindang-followup-workspace-cas-'))
+    try {
+      const casStore = createStore(path.join(casRoot, 'submissions'))
+      const visit = await casStore.createVisit({ patient_id: 'cas-visit-patient', submission_id: null })
+
+      const v1 = await casStore.saveVisitWorkspace(visit.id, { note: 'v1' })
+      assert('saveVisitWorkspace with no precondition -> ok:true (unconditional, backward-compatible default)', v1.ok === true)
+
+      const v2 = await casStore.saveVisitWorkspace(visit.id, { note: 'v2' }, { expectedUpdatedAt: v1.record.updated_at })
+      assert('saveVisitWorkspace with a MATCHING precondition -> ok:true', v2.ok === true)
+      assert('the matching-precondition save actually took effect', v2.record.workspace.note === 'v2')
+
+      const v3 = await casStore.saveVisitWorkspace(visit.id, { note: 'v3-should-be-refused' }, { expectedUpdatedAt: v1.record.updated_at })
+      assert('saveVisitWorkspace with a STALE precondition -> ok:false, reason:conflict (lost-update refused)', v3.ok === false && v3.reason === 'conflict')
+      assert('the stale-precondition refusal hands back the CURRENT (v2) record, proving v3 never landed', v3.current?.workspace?.note === 'v2')
+    } finally {
+      await rm(casRoot, { recursive: true, force: true })
     }
   }
 

@@ -22,11 +22,27 @@ async function atomicWrite(filePath, data) {
   await rename(tmp, filePath)
 }
 
+// Round 17: same reasoning as server/store.js's identical helper -- keeps
+// `updated_at` strictly monotonic across successive writes to one visit
+// record even within the same millisecond, so saveVisitWorkspace's
+// optional expectedUpdatedAt CAS precondition (and setRecorderPointer,
+// which touches the same field on the same record) can't silently defeat
+// each other's conflict detection.
+function nextUpdatedAt(previous) {
+  const now = new Date()
+  if (previous && now.toISOString() <= previous) {
+    return new Date(new Date(previous).getTime() + 1).toISOString()
+  }
+  return now.toISOString()
+}
+
 // ponytail: store.js의 withLock과 모양은 같지만 일부러 별도 인스턴스로
 // 둔다 — visit 생성은 submission id 락 공간과 무관한 별개의 키 공간이라
 // 같은 맵을 공유해도 얻는 게 없고, store.js 내부 Map을 export하면 결합도만
 // 늘어난다. 두 파일 다 "이 프로세스가 데이터 디렉터리를 혼자 소유한다"는
-// 같은 전제 위에 있다(server.js 문서화된 전제와 동일).
+// 같은 전제 위에 있다(server.js 문서화된 전제와 동일). Round 17부터 이
+// 전제는 server/ownerLock.js가 CLI 부팅 시점에 실제로 강제한다 -- 자세한
+// 내용은 store.js의 동일 주석 참고.
 const locks = new Map()
 function withLock(key, fn) {
   const prev = locks.get(key) ?? Promise.resolve()
@@ -135,13 +151,23 @@ export function createVisitStore(visitsDir) {
   // second, divergent copy. Returns a discriminated result rather than the
   // old bare-`record`-or-`null` shape so the caller can tell "not found"
   // apart from "found but wrong kind of visit".
-  async function saveVisitWorkspace(id, workspace) {
+  // Round 17: `expectedUpdatedAt` is an OPTIONAL compare-and-swap
+  // precondition, identical contract to server/store.js's
+  // saveJudgment/saveWorkspace (see their doc comment) -- absent, this is
+  // the original unconditional last-write-wins save; supplied and stale,
+  // this returns `{ok:false, reason:'conflict', current: record}` instead
+  // of silently overwriting a newer write, carrying the fresh record so
+  // the caller never needs a second read.
+  async function saveVisitWorkspace(id, workspace, { expectedUpdatedAt } = {}) {
     return withLock(id, async () => {
       const record = await readVisit(id)
       if (!record) return { ok: false, reason: 'not_found' }
       if (record.submission_id !== null) return { ok: false, reason: 'submission_backed' }
+      if (expectedUpdatedAt != null && record.updated_at !== expectedUpdatedAt) {
+        return { ok: false, reason: 'conflict', current: record }
+      }
       record.workspace = workspace
-      record.updated_at = new Date().toISOString()
+      record.updated_at = nextUpdatedAt(record.updated_at)
       await atomicWrite(visitPath(visitsDir, id), record)
       return { ok: true, record }
     })
@@ -172,7 +198,7 @@ export function createVisitStore(visitsDir) {
       const record = await readVisit(id)
       if (!record) return null
       record.recording_id = recording_id
-      record.updated_at = new Date().toISOString()
+      record.updated_at = nextUpdatedAt(record.updated_at)
       await atomicWrite(visitPath(visitsDir, id), record)
       return record
     })

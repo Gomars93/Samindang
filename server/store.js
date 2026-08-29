@@ -14,6 +14,21 @@ const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed']
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
 const SESSION_INDEX_LOCK_KEY = '__session_index__'
 
+// Round 17 (restart-safe / multi-process correctness): thrown by
+// saveJudgment/saveWorkspace when a CALLER-SUPPLIED expected_updated_at
+// precondition (optional -- see each function's doc comment) does not
+// match the record's actual current updated_at. Carries the fresh record
+// so the route can hand it straight back without a second read -- the
+// directive's "server-authoritative state wins after conflicts" applies
+// literally here: the conflict response IS the authoritative state.
+export class StaleWriteError extends Error {
+  constructor(current) {
+    super('stale_write')
+    this.name = 'StaleWriteError'
+    this.current = current
+  }
+}
+
 function recordPath(dataDir, id) {
   return path.join(dataDir, `${id}.json`)
 }
@@ -24,11 +39,43 @@ async function atomicWrite(filePath, data) {
   await rename(tmp, filePath)
 }
 
+// Round 17: guarantees `updated_at` is strictly monotonically increasing
+// across successive writes to the SAME record, even when two writes land
+// in the same millisecond -- ISO-8601 via toISOString() only has
+// millisecond resolution, and under fast sequential execution (confirmed
+// empirically: this repo's own full test:all run, not just a contrived
+// stress test) two real, distinct writes to one record CAN complete
+// within the same millisecond. saveJudgment/saveWorkspace/
+// saveVisitWorkspace's optional expectedUpdatedAt CAS precondition
+// depends on updated_at reliably changing on every write; without this,
+// two same-millisecond writes would produce identical updated_at values
+// and silently defeat the very conflict check the precondition exists
+// for. Every function that sets updated_at on a record CAS-guarded
+// elsewhere must use this, not a bare `new Date().toISOString()` --
+// setStatus included, even though it offers no CAS option itself, because
+// its write still has to keep the SAME record's updated_at monotonic for
+// saveJudgment/saveWorkspace's checks to stay meaningful.
+function nextUpdatedAt(previous) {
+  const now = new Date()
+  if (previous && now.toISOString() <= previous) {
+    return new Date(new Date(previous).getTime() + 1).toISOString()
+  }
+  return now.toISOString()
+}
+
 // ponytail: 단일 서버 프로세스 안에서만 유효한 in-process async mutex(키별
 // promise 체인). 이 프로세스가 데이터 디렉터리를 혼자 소유한다는 전제라서
 // 이걸로 충분하다 — 같은 데이터 디렉터리를 향해 서버 프로세스 2개를 띄우는
 // 구성은 지원하지 않는다(파일 레벨 잠금이 없다). 규모가 커지면 파일 락이나
 // 실제 DB 트랜잭션으로 옮긴다.
+//
+// Round 17: 이 전제는 이제 문서화만이 아니라 실제로 강제된다 --
+// server/ownerLock.js가 CLI 부팅 경로(server/index.js의 isMain())에서
+// 데이터 디렉터리별 lock/lease를 획득해, 같은 디렉터리를 향한 두 번째
+// 서버 프로세스가 이 in-process 락(그리고 이 파일의 모든 다른 락 맵,
+// visitStore.js/followUpSessionStore.js/stationStore.js/crmStore.js/
+// microFollowUpStore.js/patientIdentityStore.js/recorderResultStore.js
+// 전부 동일 전제)을 조용히 우회하지 못하도록 부팅 시점에 거부한다.
 const locks = new Map()
 function withLock(key, fn) {
   const prev = locks.get(key) ?? Promise.resolve()
@@ -120,6 +167,18 @@ export function createStore(
       // 자동 매칭하지 않는다(동명이인이 같은 patient_id로 잘못 묶이는
       // 사고를 방지하는 절대 원칙) — 같은 환자의 재진은 원장이 명시적으로
       // POST /api/visits에 기존 patient_id를 지정해야만 만들어진다.
+      //
+      // Round 17 (documented, not fixed -- Fable scoping report class B7i):
+      // a process crash between this createVisit succeeding and the
+      // submission's own atomicWrite below leaves an orphan visit with no
+      // submission ever referencing it. Benign: findBySessionId/
+      // listSubmissions only ever read submissions/, never scan visits/
+      // for this, so nothing trusts the orphan; scripts/purge-data.mjs's
+      // rm -rf on visits/ removes it along with everything else at pilot
+      // exit; a retried createSubmission call (same session_id) creates a
+      // clean new visit+submission pair rather than reusing or noticing
+      // the orphan. Not worth a two-phase commit for a benign,
+      // self-cleaning artifact.
       const visit = await visits.createVisit({ submission_id: id })
       const record = {
         // 저장된 레코드 "포장"(wrapper) 자체의 shape 버전. submission/myungri/judgment
@@ -193,7 +252,7 @@ export function createStore(
       if (!record) return null
       const before = { submission: record.submission, myungri: record.myungri }
       record.status = status
-      record.updated_at = new Date().toISOString()
+      record.updated_at = nextUpdatedAt(record.updated_at)
       // assert: status transition must never touch submission/myungri
       if (record.submission !== before.submission || record.myungri !== before.myungri) {
         throw new Error('invariant violated: setStatus mutated submission/myungri')
@@ -203,13 +262,28 @@ export function createStore(
     })
   }
 
-  async function saveJudgment(id, judgment) {
+  // Round 17: `expectedUpdatedAt` is an OPTIONAL compare-and-swap
+  // precondition -- absent (undefined/null), this is exactly the original
+  // unconditional last-write-wins save. When supplied, it must match the
+  // record's `updated_at` AS READ under this same lock; a mismatch means
+  // someone else's write landed since the caller last read this record
+  // (e.g. a second Doctor Workspace tab, or a stale GET that outlived a
+  // colleague's save), and this save is refused with StaleWriteError
+  // instead of silently overwriting their write -- the lost-accepted-write
+  // hole the directive calls out. This is opt-in, not the new default:
+  // setStatus (a 4-value enum toggle, idempotent, always doctor-visible)
+  // deliberately keeps plain last-write-wins with no precondition option
+  // at all -- see its own doc comment above, still accurate.
+  async function saveJudgment(id, judgment, { expectedUpdatedAt } = {}) {
     return withLock(id, async () => {
       const record = await readRecord(id)
       if (!record) return null
+      if (expectedUpdatedAt != null && record.updated_at !== expectedUpdatedAt) {
+        throw new StaleWriteError(record)
+      }
       const before = { submission: record.submission, myungri: record.myungri }
       record.judgment = judgment
-      record.updated_at = new Date().toISOString()
+      record.updated_at = nextUpdatedAt(record.updated_at)
       if (record.submission !== before.submission || record.myungri !== before.myungri) {
         throw new Error('invariant violated: saveJudgment mutated submission/myungri')
       }
@@ -222,14 +296,19 @@ export function createStore(
   // Same read-modify-write-under-lock shape as saveJudgment, on the same
   // per-id lock queue (so a judgment save and a workspace save for the
   // same submission still serialize against each other, never interleave
-  // into a torn read). Never touches submission/myungri/judgment.
-  async function saveWorkspace(id, workspace) {
+  // into a torn read). Never touches submission/myungri/judgment. See
+  // saveJudgment's doc comment immediately above for the optional
+  // `expectedUpdatedAt` CAS precondition -- identical contract here.
+  async function saveWorkspace(id, workspace, { expectedUpdatedAt } = {}) {
     return withLock(id, async () => {
       const record = await readRecord(id)
       if (!record) return null
+      if (expectedUpdatedAt != null && record.updated_at !== expectedUpdatedAt) {
+        throw new StaleWriteError(record)
+      }
       const before = { submission: record.submission, myungri: record.myungri, judgment: record.judgment }
       record.workspace = workspace
-      record.updated_at = new Date().toISOString()
+      record.updated_at = nextUpdatedAt(record.updated_at)
       if (
         record.submission !== before.submission ||
         record.myungri !== before.myungri ||
@@ -395,8 +474,62 @@ export function createStore(
         // be assigned to a station or have had its QR shown, so it must
         // never be rolled back by a later failure. The flag is added to a
         // shallow copy so the cached result itself stays canonical.
-        if (stillFresh && !alreadyAnswered && sameDeliveryMode) return { ...cached.result, reused: true }
+        //
+        // Round 17: `created` is a SEPARATE flag from `reused` -- see the
+        // durable-reuse branch below for why one boolean can no longer
+        // capture both "should a caller skip auditing visit_created" and
+        // "should a caller skip auditing follow_up_session_issued". This
+        // fast in-memory-cache-hit path is the one case where BOTH are
+        // true: nothing new happened at all, not even a reissued token.
+        if (stillFresh && !alreadyAnswered && sameDeliveryMode) return { ...cached.result, reused: true, created: false }
         recentStartRevisitResults.delete(patientId)
+      }
+
+      // Round 17 (restart-safe / multi-process correctness): the in-memory
+      // cache above is only a short (default 5s) plaintext-token-replay
+      // window -- it cannot survive a process restart, and it is invisible
+      // to a retry that lands on a second process after an owner-lock
+      // takeover (server/ownerLock.js). Without a durable check here,
+      // either of those turns a legitimately-retried "재진 시작" click into
+      // a SECOND revisit visit with its own SECOND live follow-up token --
+      // two "재진 · 환자 입력 대기" rows in the doctor queue, and possibly
+      // two live capabilities, for one intended click. Re-read durable
+      // state before creating anything new: if this patient already has an
+      // unanswered ("pending") revisit whose session was never explicitly
+      // invalidated -- whether it still holds a live token, an expired
+      // one, or (crash window: the process died between visits.createVisit
+      // and followUpSessions.issueToken below, before this function's own
+      // try/catch rollback could even run) no token at all yet --
+      // reissue onto THAT visit instead of minting a new one.
+      // reissueFollowUpSession already tolerates a missing existing
+      // session (it is the same function the doctor-facing manual reissue
+      // route uses), so this one call correctly recovers all three durable
+      // states. See findPendingRevisitForPatient for why an explicitly
+      // INVALIDATED session (e.g. from resetStation) is deliberately
+      // excluded -- that flow's "next assignment mints a fresh visit"
+      // behavior is untouched by this change.
+      //
+      // `created: false` here is correct (no NEW visit was made) but
+      // `reused: true` would NOT be -- a genuinely NEW follow-up-session
+      // token IS being minted for the first time onto this visit (e.g. the
+      // crash-before-issueToken recovery case has no prior session at
+      // all), which callers must still audit as follow_up_session_issued.
+      // Conflating this with the fast-path cache-hit's "nothing new
+      // happened at all" meaning would silently drop that audit line --
+      // caught by tests/audit-registry.spec.mjs's revisit-start dedup
+      // test, which is exactly why `created` and `reused` are now two
+      // independent flags instead of one.
+      const existingPending = await findPendingRevisitForPatient(patientId)
+      if (existingPending) {
+        const existingSession = await followUpSessions.getActiveForVisit(existingPending.id)
+        const durableSameDeliveryMode = !existingSession || (existingSession.delivery_mode ?? null) === (deliveryMode ?? null)
+        if (durableSameDeliveryMode) {
+          const reissued = await reissueFollowUpSession(existingPending.id, deliveryMode ?? existingSession?.delivery_mode ?? null)
+          if (reissued) {
+            recentStartRevisitResults.set(patientId, { result: reissued, expiresAt: Date.now() + startRevisitDedupWindowMs })
+            return { ...reissued, reused: false, created: false }
+          }
+        }
       }
 
       const visit = await visits.createVisit({ patient_id: patientId, submission_id: null })
@@ -415,7 +548,7 @@ export function createStore(
         throw err
       }
       recentStartRevisitResults.set(patientId, { result, expiresAt: Date.now() + startRevisitDedupWindowMs })
-      return { ...result, reused: false }
+      return { ...result, reused: false, created: true }
     })
   }
 
@@ -444,6 +577,36 @@ export function createStore(
       const cached = recentStartRevisitResults.get(patientId)
       if (cached?.result?.visit?.id === visitId) recentStartRevisitResults.delete(patientId)
     }).catch(() => {})
+  }
+
+  // Round 17: durable (not in-memory-cache) lookup of "does this patient
+  // already have a revisit that is still pending?", used by startRevisit's
+  // restart/multi-process-safe fallback above. A visit qualifies if it is a
+  // revisit (no submission_id), nobody has answered it yet (no saved
+  // MicroFollowUpResponse), AND its session -- if one was ever issued --
+  // was not explicitly INVALIDATED. That last condition is deliberate:
+  // resetStation's own doc comment says a reset's whole point is that "the
+  // next assignment... mints a FRESH capability" -- an ACTIVE or merely
+  // time-expired session is exactly the restart/crash/retry case this
+  // function exists to recover (reuse, don't duplicate), but an
+  // explicitly-INVALIDATED one is a deliberate staff action to close out
+  // that attempt, and must keep creating a genuinely new visit exactly as
+  // it always has (see tests/station.spec.mjs's reset-then-reassign
+  // coverage). O(n) scan of this one patient's visits, same pilot-scale
+  // tradeoff as every other list function in this file.
+  async function findPendingRevisitForPatient(patientId) {
+    const patientVisits = await visits.listVisitsForPatient(patientId)
+    const candidates = []
+    for (const v of patientVisits) {
+      if (v.submission_id) continue
+      const response = await microFollowUp.getResponse(v.id)
+      if (response) continue
+      const session = await followUpSessions.getActiveForVisit(v.id)
+      if (session?.status === 'INVALIDATED') continue
+      candidates.push(v)
+    }
+    candidates.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    return candidates[0] ?? null
   }
 
   // Reissue: same visit, freshly re-derived candidates (in case the
@@ -541,13 +704,21 @@ export function createStore(
   // the staff queue forever with a live token and no tablet to hand it to.
   // Roll it back on EITHER failure shape.
   //
-  // The rollback is conditional on `started.reused`, which is the crucial
+  // The rollback is conditional on `started.created` (round 17: split out
+  // from the old `!started.reused`, see startRevisit's own doc comment on
+  // why one boolean stopped being enough), which is the crucial
   // distinction: startRevisit dedupes a repeated same-patient/same-mode
   // start into a pre-existing PENDING revisit, and that one belongs to an
   // earlier deliberate action (its QR may already be on screen, or it may
-  // already be assigned to another station). Deleting it because a second,
-  // unrelated assignment attempt failed would destroy working state. Only
-  // a revisit this very call created is ours to undo.
+  // already be assigned to another station) -- OR, since round 17, it may
+  // be a durable-restart-recovery reissue onto a visit this call did not
+  // create. Deleting that visit because a second, unrelated assignment
+  // attempt failed would destroy working state. Only a visit this very
+  // call created (`created: true`) is ours to delete; if it merely
+  // reissued a token onto a pre-existing visit and the assignment then
+  // fails, the visit is simply left as an unassigned pending revisit with
+  // a valid (if now-unused) token -- a legitimate, already-supported state
+  // staff can reassign later, not a leak.
   //
   // Station uniqueness is enforced inside stations.assignSession itself --
   // see its doc comment. Nothing is ever displaced: a station already
@@ -570,21 +741,28 @@ export function createStore(
         delivery_mode: deliveryMode,
       })
     } catch (err) {
-      if (!started.reused) await rollbackNewRevisit(started)
+      if (started.created) await rollbackNewRevisit(started)
       throw err
     }
     if (!assignResult.ok) {
-      if (!started.reused) await rollbackNewRevisit(started)
+      if (started.created) await rollbackNewRevisit(started)
       return assignResult
     }
 
-    // Audit registry batch, finding A: expose `reused` (already returned by
-    // startRevisit) so the route can tell whether this call actually
-    // created a new visit + follow-up capability token, or merely
-    // reattached an existing one to this station -- without it, the route
-    // had no way to audit visit_created/follow_up_session_issued
-    // conditionally, and was auditing neither, even on the create path.
-    return { ok: true, visit: started.visit, session: started.session, station: assignResult.station, reused: started.reused }
+    // Audit registry batch, finding A: expose `reused`/`created` (both
+    // already returned by startRevisit) so the route can tell whether this
+    // call actually created a new visit, issued a genuinely new token onto
+    // a pre-existing one, or merely replayed an already-issued result --
+    // without them, the route had no way to audit
+    // visit_created/follow_up_session_issued conditionally and correctly.
+    return {
+      ok: true,
+      visit: started.visit,
+      session: started.session,
+      station: assignResult.station,
+      reused: started.reused,
+      created: started.created,
+    }
   }
 
   // Round 8: the station's own post-submission call. Clears the assignment
@@ -702,6 +880,20 @@ export function createStore(
   // 보존기한(retention) 정리. days <= 0(또는 falsy)이면 아무것도 지우지 않는다
   // (SAMINDANG_RETENTION_DAYS=0 = 자동삭제 비활성화). 반환값은 삭제 건수뿐 —
   // 내용은 절대 로그로 남기지 않는다.
+  // Round 17 (documented, not fixed -- Fable scoping report class B7ii):
+  // this read-check-unlink does not take the per-id `withLock` that
+  // setStatus/saveJudgment/saveWorkspace use for their own read-modify-
+  // write. A record already past the retention cutoff being actively
+  // edited at the exact moment this sweep reaches it could, in principle,
+  // have its RMW's atomicWrite land in the gap between this function's
+  // read and its unlink -- resurrecting a just-deleted expired record for
+  // one write cycle before the NEXT 6-hourly sweep removes it again. Real
+  // consequence is narrow (retention is measured in days, the sweep
+  // interval in hours, and the record would already have to be past its
+  // retention cutoff yet still actively being edited by a clinician) and
+  // bounded (the record is gone again at most 6 hours later, never
+  // permanently retained past policy). Not worth adding a lock a routine
+  // background sweep would then have to queue behind every live edit for.
   async function cleanupOlderThan(days) {
     if (!(days > 0)) return 0
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000

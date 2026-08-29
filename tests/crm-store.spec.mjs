@@ -39,6 +39,19 @@ async function readdirDedupFiles(root) {
   }
 }
 
+const RAW_PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
+// Every id in these fixtures is a randomUUID() -- 32 hex chars with no
+// digit/letter separation -- so an *unrelated* run of digits shaped like
+// a phone number can appear there purely by chance (independently
+// verified: this fired in a real CI-equivalent run). Strip UUID-shaped
+// substrings before testing for phone-shaped strings so the check stays
+// meaningful (it still catches an actual phone number anywhere else in
+// the structure) without being a coin flip on every random id drawn.
+const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
+function containsPhoneShapedString(value) {
+  return RAW_PHONE_PATTERN.test(JSON.stringify(value).replace(UUID_PATTERN, ''))
+}
+
 const T0 = '2026-01-01T00:00:00.000Z'
 function isoPlusMinutes(iso, minutes) {
   return new Date(Date.parse(iso) + minutes * 60 * 1000).toISOString()
@@ -640,8 +653,7 @@ async function main() {
       // No raw phone/PHI anywhere in the intent record -- only UUID
       // references and non-PHI status fields, same invariant the pure
       // engine's own dedup_key construction already enforces.
-      const RAW_PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
-      assert('dedup-crash: the intent record contains no phone-shaped string', !RAW_PHONE_PATTERN.test(JSON.stringify(intentAfterRemint)))
+      assert('dedup-crash: the intent record contains no phone-shaped string', !containsPhoneShapedString(intentAfterRemint))
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -711,8 +723,7 @@ async function main() {
       const pointerAfterUpgrade = await readRaw(dedupFilePath)
       assert('legacy-upgrade: the legacy pointer was lazily upgraded to the new intent-record shape', pointerAfterUpgrade.task?.task_id === original.task_id)
 
-      const RAW_PHONE_PATTERN2 = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
-      assert('legacy-upgrade: no phone-shaped string anywhere in the upgraded pointer', !RAW_PHONE_PATTERN2.test(JSON.stringify(pointerAfterUpgrade)))
+      assert('legacy-upgrade: no phone-shaped string anywhere in the upgraded pointer', !containsPhoneShapedString(pointerAfterUpgrade))
 
       // Legacy pointer + TERMINAL Task: existing remint behavior must be
       // preserved -- resolve the task to DONE, force the pointer back to
@@ -782,6 +793,143 @@ async function main() {
       assert('legacy-missing: a legacy pointer naming a nonexistent Task mints a fresh task explicitly, no throw', deduped === false && task.task_id !== missingTaskId)
       const stillMissing = await readRaw(path.join(root, 'tasks', `${missingTaskId}.json`))
       assert('legacy-missing: the phantom task_id the corrupt pointer named was never retroactively created', stillMissing === null)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 10: Safety resolve authorization is server-derived, never
+     request-body-derived (round 10 fix). Before this round,
+     POST /api/crm/tasks/:id/resolve read `actorRole` straight out of the
+     JSON body and passed it to the pure engine's SAFETY_REVIEW guard --
+     so "Safety close authority = clinician only" was enforced by an
+     editable request field, not by authenticated server context. Proves,
+     at the real HTTP boundary: a caller cannot change authorization by
+     sending actorRole in the body either way, the doctor-authenticated
+     route resolves Safety only under server-derived clinician authority,
+     and no unauthenticated request can resolve any CRM task at all. Also
+     proves, directly at the store boundary, that the pure engine's own
+     STAFF-cannot-resolve-SAFETY_REVIEW invariant is untouched.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-crm-safety-authz-'))
+    const { server, base } = await startServer({ dataDir: path.join(dataRoot, 'submissions'), doctorToken: 'test-doctor-token' })
+    const headers = { 'content-type': 'application/json', 'x-doctor-token': 'test-doctor-token' }
+    try {
+      const visitRes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visit = await visitRes.json()
+
+      const epRes = await fetch(`${base}/api/crm/episodes`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visit.patient_id }),
+      })
+      const episode = await epRes.json()
+
+      async function createSafetyTask(sourceEventId) {
+        const res = await fetch(`${base}/api/crm/tasks`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            patient_uuid: visit.patient_id,
+            episode_id: episode.episode_id,
+            task_type: 'SAFETY_REVIEW',
+            reason_code: 'SAFETY_REVIEW_REQUEST',
+            source_event_id: sourceEventId,
+            safetyAuthorization: { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'doctor-test' },
+          }),
+        })
+        const body = await res.json()
+        return body.task
+      }
+
+      // 1. A caller cannot upgrade/downgrade authorization by sending
+      // actorRole: 'STAFF' -- the doctor-authenticated route must still
+      // resolve it (as server-derived CLINICIAN), proving the body field
+      // has no effect on the outcome either way.
+      const taskA = await createSafetyTask('evt-safety-authz-staff-body')
+      const resolveAsStaffRes = await fetch(`${base}/api/crm/tasks/${taskA.task_id}/resolve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: taskA.version, actorRole: 'STAFF' }),
+      })
+      const resolvedA = await resolveAsStaffRes.json()
+      assert('safety-authz: doctor-authenticated resolve succeeds even when body claims actorRole STAFF', resolveAsStaffRes.status === 200 && resolvedA.status === 'DONE')
+
+      // 2. Sending actorRole: 'CLINICIAN' explicitly changes nothing --
+      // same server-derived outcome, not a body-controlled one.
+      const taskB = await createSafetyTask('evt-safety-authz-clinician-body')
+      const resolveAsClinicianRes = await fetch(`${base}/api/crm/tasks/${taskB.task_id}/resolve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: taskB.version, actorRole: 'CLINICIAN' }),
+      })
+      const resolvedB = await resolveAsClinicianRes.json()
+      assert('safety-authz: doctor-authenticated resolve succeeds identically when body claims actorRole CLINICIAN', resolveAsClinicianRes.status === 200 && resolvedB.status === 'DONE')
+
+      // 3. Omitting actorRole entirely -- also identical, server-derived.
+      const taskC = await createSafetyTask('evt-safety-authz-no-body-field')
+      const resolveNoFieldRes = await fetch(`${base}/api/crm/tasks/${taskC.task_id}/resolve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ expectedVersion: taskC.version }),
+      })
+      const resolvedC = await resolveNoFieldRes.json()
+      assert('safety-authz: doctor-authenticated resolve succeeds with no actorRole field at all', resolveNoFieldRes.status === 200 && resolvedC.status === 'DONE')
+
+      // 4. No unauthenticated request can resolve any CRM task -- an evil
+      // Origin (the established defense-in-depth technique this suite
+      // and tests/server.spec.mjs already use for "loopback + evil
+      // Origin -> 403") is rejected before ever reaching the store, and
+      // the targeted task is provably untouched afterward.
+      const taskD = await createSafetyTask('evt-safety-authz-unauthenticated')
+      const unauthResolveRes = await fetch(`${base}/api/crm/tasks/${taskD.task_id}/resolve`, {
+        method: 'POST',
+        headers: { ...headers, origin: 'https://evil.example' },
+        body: JSON.stringify({ expectedVersion: taskD.version, actorRole: 'STAFF' }),
+      })
+      assert('safety-authz: an unauthenticated (evil-Origin) resolve attempt is rejected with 403', unauthResolveRes.status === 403)
+      const taskDAfter = await fetch(`${base}/api/crm/tasks/${taskD.task_id}`, { headers })
+      const taskDAfterBody = await taskDAfter.json()
+      assert('safety-authz: the targeted task is untouched (still OPEN) after the rejected unauthenticated attempt', taskDAfterBody.status === 'OPEN')
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- direct store-level confirmation: the pure engine's own
+     STAFF-cannot-resolve-SAFETY_REVIEW invariant is untouched, even
+     though the HTTP route above no longer exposes actorRole as a caller
+     choice at all. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-safety-engine-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+      const { task } = await store.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'SAFETY_REVIEW',
+        reason_code: 'SAFETY_REVIEW_REQUEST',
+        source_event_id: 'evt-safety-engine-invariant',
+        owner_clinician: null,
+        now: T0,
+        safetyAuthorization: SAFETY_AUTH,
+      })
+      let staffResolveThrew = false
+      try {
+        await store.resolveTaskStored(task.task_id, task.version, 'STAFF', T0)
+      } catch (err) {
+        staffResolveThrew = err instanceof Error && err.message.includes('safety_review_resolution_requires_clinician')
+      }
+      assert('safety-authz: the pure engine still refuses to resolve SAFETY_REVIEW under STAFF authority', staffResolveThrew)
+      const stillOpen = await store.getTask(task.task_id, T0)
+      assert('safety-authz: the refused STAFF resolve left the SAFETY_REVIEW task untouched (still OPEN)', stillOpen.status === 'OPEN')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

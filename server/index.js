@@ -1377,9 +1377,20 @@ export function createApp({
               const now = new Date().toISOString()
               let task
               if (action === 'resolve') {
-                const actorRole = body?.actorRole === 'STAFF' ? 'STAFF' : 'CLINICIAN'
+                // Round 10 fix: actorRole is NEVER read from the request
+                // body. /api/crm/* is entirely doctor-authenticated (no
+                // separate staff auth boundary exists yet), so the only
+                // authority this route can honestly assert is CLINICIAN,
+                // derived from requireDoctor()'s own successful check
+                // above -- never from a client-editable JSON field. A
+                // future staff-resolve path needs its own authenticated
+                // boundary, not a body flag on this route. This is what
+                // makes "Safety close authority = clinician only" an
+                // actually-enforced server invariant rather than
+                // something a caller could simply omit/relabel.
+                const actorRole = 'CLINICIAN'
                 task = await crmStore.resolveTaskStored(id, expectedVersion, actorRole, now)
-                await safeAudit({ event: 'crm_task_resolved', actor: actorRole === 'CLINICIAN' ? 'doctor' : 'staff' })
+                await safeAudit({ event: 'crm_task_resolved', actor: 'doctor' })
               } else if (action === 'snooze') {
                 const until = typeof body?.until === 'string' ? body.until : null
                 if (!until) {

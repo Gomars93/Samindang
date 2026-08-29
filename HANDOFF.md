@@ -1,6 +1,34 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 9 — legacy dedup 포인터 업그레이드 호환성, 이번 세션)
+## Objective (CRM v0.3.1 round 10 — Safety resolve authority를 server-derived로 강제, 이번 세션)
+Gomars93의 다음 지시: `POST /api/crm/tasks/:id/resolve`가 `requireDoctor(req)`
+가드는 통과하지만, 이후 `actorRole`을 `body?.actorRole === 'STAFF' ? 'STAFF'
+: 'CLINICIAN'`로 요청 body에서 그대로 읽어 `resolveTaskStored()`에
+넘기고 있었다. 순수 엔진은 STAFF가 SAFETY_REVIEW를 resolve하는 걸
+올바르게 막지만, HTTP 경계에서는 같은 doctor route를 통과한 아무나
+`actorRole`을 생략하거나 원하는 값으로 보내 CLINICIAN으로 취급될 수
+있었다 — 즉 "Safety close 권한 = clinician만"이라는 불변식이 인증된
+서버 authority가 아니라 수정 가능한 요청 필드로 강제되고 있었다. audit
+actor 귀속도 같은 body 값 기준이었다. 지시된 유일한 과제: resolve
+actor authority를 server-derived로 만들고 절대 request-body-derived로
+두지 않을 것. 이번 라운드에서 새 staff 인증 체계를 만들지 않는다 —
+`/api/crm/*`는 지금 전부 doctor-인증 표면이므로, 최소 안전 수정은
+클라이언트 `actorRole`을 authority 입력으로 제거/무시/거부하고,
+`requireDoctor()`의 인증된 컨텍스트 자체에서 `CLINICIAN`을 전달하며,
+audit도 같은 server-derived 컨텍스트에서 기록할 것. 향후 staff resolve
+경로가 필요하면 body flag가 아니라 별도로 인증/인가된 경계에 맡길 것.
+요구된 HTTP 경계 회귀: (1) `actorRole: 'CLINICIAN'`이든 `'STAFF'`든
+body로 보내도 authorization을 바꿀 수 없음, (2) 현재 doctor-인증 라우트가
+server-derived clinician authority 하에서만 Safety를 resolve함, (3)
+인증되지 않은 어떤 요청도 CRM task를 resolve할 수 없음, (4) 순수 엔진
+Safety invariant는 그대로임, (5) PHI/raw-phone 로깅이나 FROZEN 변경
+없음. CRM UI 없음, 임상 threshold/patient-fact→exam 규칙/한약·재활
+매핑/red-flag 해석/Additional Pain promotion/patient identity
+policy/messaging provider 변경 없음. Test 0 PENDING, Care Gap
+suppression OFF 유지. tsc/build/build:preview/test:all/tablet-core +
+최신 CI/preview 재실행. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 9 — legacy dedup 포인터 업그레이드 호환성, 이전 세션)
 Gomars93의 다음 지시: round 8이 새 `{task}` 포맷을 도입하면서
 `pointer?.task`만 인식하도록 짰는데, round 6/7 코드가 이미 만들어둔
 레거시 `{task_id}`-only 포맷 포인터는 새 코드에게 "포인터 없음"으로
@@ -373,7 +401,57 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 9 (legacy dedup 포인터 업그레이드 호환성, 이번 세션)
+## Completed — CRM v0.3.1 Round 10 (Safety resolve authority server-derived화, 이번 세션)
+**`server/index.js`의 `/api/crm/tasks/:id/resolve` 핸들러**: `const
+actorRole = body?.actorRole === 'STAFF' ? 'STAFF' : 'CLINICIAN'`를
+`const actorRole = 'CLINICIAN'`로 고정 — body에서 절대 읽지 않는다.
+`/api/crm/*`가 지금 전부 doctor-인증 표면이라 이 라우트가 정직하게
+주장할 수 있는 authority는 CLINICIAN뿐이고, 그건 이미 통과한
+`requireDoctor()` 자체에서 나온다. audit도 `actor: 'doctor'`로
+고정(더 이상 조건부 아님). 순수 엔진(`resolveTask()`의 SAFETY_REVIEW
+가드)은 손대지 않았다 — store 경계에서 client 입력을 아예 제거하는
+쪽으로 고쳤다. 향후 별도 인증된 staff resolve 경로가 필요하면 이 body
+flag가 아니라 새 인증 경계로 만들어야 한다는 걸 코드 주석에 남겼다.
+
+**`tests/crm-store.spec.mjs`**: 신규 Part 10(실제 HTTP `/api/crm/tasks/:id/resolve`
+경계, 5 assertion)과 직후 store-level 확인 블록(2 assertion)을 추가.
+Part 10은 SAFETY_REVIEW task를 만들고 (a) body에 `actorRole: 'STAFF'`를
+보내도 doctor-인증 라우트가 그대로 resolve함(body 필드가 결과에 아무
+영향 없음을 증명), (b) `actorRole: 'CLINICIAN'`을 명시해도 동일,
+(c) `actorRole`을 아예 생략해도 동일, (d) evil Origin으로
+인증되지 않은 시도는 403으로 거부됨(이 스위트와 `tests/server.spec.mjs`가
+이미 쓰는 "loopback + evil Origin → 403" defense-in-depth 기법 재사용),
+(e) 거부된 시도 이후 해당 task가 여전히 OPEN임을 확인. 직후 블록은
+store를 직접 호출해 `resolveTaskStored(id, version, 'STAFF', now)`가
+여전히 `safety_review_resolution_requires_clinician`으로 거부됨을
+증명 — HTTP 라우트가 더 이상 `actorRole`을 노출하지 않더라도 순수
+엔진 자체의 보호는 그대로 살아있다는 걸 별도로 확인한다.
+
+**부수적으로 발견하고 고친 것: `tests/crm-store.spec.mjs`의 기존 phone-shaped-string
+검사 2곳이 flaky했다.** round 8/9에서 추가한 "PHI/raw-phone 문자열
+없음" 검사가 객체 전체를 `JSON.stringify`해서 정규식으로 검사하고
+있었는데, 이 객체들에는 `randomUUID()`로 만든 32자리 hex 문자열(구분자
+없이 연속)이 여러 개 들어있어서, 순전히 우연으로 8자리 이상 연속
+숫자가 나오면 전화번호 모양 정규식과 우연히 매치될 수 있었다 — 실제로
+이번 세션 중 한 번 발생해서 재현/확인했다(재실행하면 통과, 5회 연속
+재실행으로 재확인). `containsPhoneShapedString()` 헬퍼를 추가해 검사
+전에 UUID 모양 부분 문자열을 제거하도록 고쳐, 검사의 원래 의도(진짜
+전화번호가 어딘가에 남아있으면 잡아낸다)는 유지하면서 무작위 UUID에
+좌우되는 flakiness를 제거했다.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 71 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). `npm run test:crm-store`를 5회 연속 재실행해 flaky 수정이
+실제로 안정화됐음을 확인. CRM UI는 지시대로 이번 라운드에도 시작하지
+않았다. Test 0 여전히 PENDING, Care Gap suppression 여전히 비활성, 새
+임상 로직/threshold/identity-policy/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 9 (legacy dedup 포인터 업그레이드 호환성, 이전 세션)
 **`server/crmStore.js`의 `createTaskStored()` 재작성**: 포인터를
 "`pointer?.task`가 있는지"가 아니라 `pointerTaskId = pointer?.task?.task_id
 ?? pointer?.task_id ?? null`로 읽어, 새 포맷(`{task: {...}}`)과 레거시

@@ -508,3 +508,51 @@ export function listCrmTasks(params?: {
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return request(`/api/crm/tasks${suffix}`)
 }
+
+/**
+ * CRM v0.3.1 round 14: resolved Sigma identity for one patient_uuid --
+ * display-only (name + chart number), never RRN/phone. `resolved: false`
+ * is an explicit, distinct state (no mapping yet, or the server otherwise
+ * could not resolve it) -- it is never omitted and never guessed into a
+ * fabricated name.
+ */
+export type ResolvedPatientIdentity =
+  | { resolved: true; sigma_chart_no: string; patient_name: string }
+  | { resolved: false; reason: string }
+
+/**
+ * Batch read for Today Queue enrichment -- one request covers every
+ * task's patient_uuid instead of N+1 polling. Wire shape is already the
+ * client shape (a map keyed by patient_uuid), so no translation needed.
+ */
+export function listPatientIdentities(
+  patientUuids: string[],
+): Promise<ServerResult<{ identities: Record<string, ResolvedPatientIdentity> }>> {
+  const qs = new URLSearchParams()
+  for (const uuid of patientUuids) qs.append('patient_uuid', uuid)
+  return request(`/api/crm/patient-identities?${qs.toString()}`)
+}
+
+/**
+ * Explicit clinician/staff confirmation action (never automatic name/
+ * phone/RRN matching) that links a Clinical OS patient_uuid to a Sigma
+ * chart_no + display name. 1:1 both directions is enforced server-side --
+ * a conflict comes back as `ok:false` with `kind:'other'` (409), not a
+ * silent success.
+ */
+export function linkPatientIdentity(params: {
+  patientUuid: string
+  chartNo: string
+  patientName: string
+  confirmedBy?: string
+}): Promise<ServerResult<{ patient_uuid: string; sigma_chart_no: string; patient_name: string }>> {
+  return request('/api/crm/patient-identity', {
+    method: 'POST',
+    body: JSON.stringify({
+      patient_uuid: params.patientUuid,
+      sigma_chart_no: params.chartNo,
+      patient_name: params.patientName,
+      confirmed_by: params.confirmedBy,
+    }),
+  })
+}

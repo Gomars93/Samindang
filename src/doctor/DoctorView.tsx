@@ -18,6 +18,7 @@ import {
   assignRevisitToStation,
   invalidateFollowUpSession,
   listCrmTasks,
+  listPatientIdentities,
   listRevisitQueue,
   listStations,
   listSubmissions,
@@ -29,6 +30,7 @@ import {
   setSubmissionStatus,
   startRevisit,
   type RecorderResult,
+  type ResolvedPatientIdentity,
   type SubmissionRecord,
   type SubmissionSummary,
 } from '../lib/serverClient'
@@ -1716,6 +1718,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const [crmTasks, setCrmTasks] = useState<CrmTask[] | null>(null)
   const [crmTasksLoading, setCrmTasksLoading] = useState(false)
   const [crmTasksError, setCrmTasksError] = useState<string | null>(null)
+  // CRM v0.3.1 round 14: Sigma identity enrichment (display-only name +
+  // chart number) for the Today Queue, keyed by patient_uuid. Empty object
+  // is the safe default -- TodayQueueSection falls back to the truncated
+  // UUID for any patient_uuid missing from this map, so an empty/cleared
+  // map is never mistaken for "resolved to nothing."
+  const [patientIdentities, setPatientIdentities] = useState<Record<string, ResolvedPatientIdentity>>({})
   const [selectedRevisit, setSelectedRevisit] = useState<{ visitId: string; patientId: string } | null>(null)
   // Round 6 review fix (duplicate-start prevention): disables "재진 간단
   // 문진 시작" while a request is in flight, so a double-click/impatient
@@ -1896,9 +1904,29 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       if (crmResult.ok) {
         setCrmTasks(crmResult.data.tasks)
         setCrmTasksError(null)
+        // Round 14: identity enrichment is derived from THIS fetch's own
+        // task list, never from whatever the previous poll happened to
+        // show -- so a task that just left the queue can't keep a stale
+        // resolved name attached to a row that no longer exists. Skipped
+        // entirely when there are no tasks (nothing to resolve).
+        const uuids = [...new Set(crmResult.data.tasks.map((t) => t.patient_uuid))]
+        if (uuids.length === 0) {
+          setPatientIdentities({})
+        } else {
+          const identityResult = await listPatientIdentities(uuids)
+          if (cancelled) return
+          // Replaced wholesale (never merged) on success, and cleared
+          // entirely on failure -- a failed identity fetch must never
+          // leave a previous poll's resolved name displayed as current,
+          // same staleness rule as crmTasks itself. The safe fallback
+          // (truncated UUID) is what TodayQueueSection renders for any
+          // uuid missing from this map.
+          setPatientIdentities(identityResult.ok ? identityResult.data.identities : {})
+        }
       } else {
         setCrmTasks(null)
         setCrmTasksError(crmResult.error)
+        setPatientIdentities({})
       }
     }
     poll()
@@ -2465,7 +2493,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         client-side re-sort of the server-ordered list.
       */}
       {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && (
-        <TodayQueueSection tasks={crmTasks} loading={crmTasksLoading} error={crmTasksError} />
+        <TodayQueueSection
+          tasks={crmTasks}
+          loading={crmTasksLoading}
+          error={crmTasksError}
+          identities={patientIdentities}
+        />
       )}
 
       {selectedRevisit && (

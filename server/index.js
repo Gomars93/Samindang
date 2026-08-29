@@ -15,6 +15,7 @@ import { createStore } from './store.js'
 import { createAuditLog } from './audit.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
+import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
 import {
   activateVisit,
   clearActiveVisit,
@@ -78,6 +79,11 @@ export function createApp({
   const crmStore = createCrmStore(path.join(resolvedDataDir, '..', 'crm'), {
     claimLeaseMinutes: resolvedCrmClaimLeaseMinutes,
   })
+  // Round 14: identity linkage lives in its own sibling dir, same reasoning
+  // as crm/ above -- not a medical-record submission, not swept by
+  // submission retention. See patientIdentityStore.js's header for the
+  // scope/safety rules this store enforces.
+  const patientIdentityStore = createPatientIdentityStore(path.join(resolvedDataDir, '..', 'crm-identity'))
   // Maps a thrown store error to an HTTP status + body. CrmConflictError
   // (stale expectedVersion) is always 409; CrmNotFoundError is always 404;
   // every other thrown Error is a disallowed-transition refusal from the
@@ -1447,6 +1453,78 @@ export function createApp({
               bytes = sendJson(req, res, status, { error: mapped.error }, cors)
             }
           }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'patient-identity' && parts.length === 3 && req.method === 'POST') {
+        // Round 14: explicit clinician/staff confirmation that a Clinical
+        // OS patient_uuid corresponds to a specific Sigma chart_no +
+        // display name. This is the ONLY way such a link is created --
+        // no automatic name/phone/RRN matching anywhere in this path,
+        // same identity rule visitStore.js already enforces for patient_id
+        // itself. 1:1 both directions is enforced in the store: linking
+        // rejects (409) rather than silently overwriting if either side is
+        // already linked.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const patientUuid = typeof body?.patient_uuid === 'string' ? body.patient_uuid : ''
+          const chartNo = typeof body?.sigma_chart_no === 'string' ? body.sigma_chart_no.trim() : ''
+          const patientName = typeof body?.patient_name === 'string' ? body.patient_name.trim() : ''
+          // Round 14: confirmed_by is an advisory audit label only (like
+          // claimedBy above), never an authority claim -- this deployment
+          // has one shared doctor token, not per-staff accounts, so there
+          // is no stronger identity to derive it from server-side.
+          const confirmedBy =
+            typeof body?.confirmed_by === 'string' && body.confirmed_by.trim() ? body.confirmed_by.trim() : 'doctor'
+          if (!patientUuid || !(await store.visitExistsForPatient(patientUuid))) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown patient_uuid' }, cors)
+          } else if (!chartNo || !patientName) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'sigma_chart_no and patient_name are required' }, cors)
+          } else {
+            try {
+              const link = await patientIdentityStore.linkPatientIdentity({
+                patientUuid,
+                chartNo,
+                patientName,
+                confirmedBy,
+                now: new Date().toISOString(),
+              })
+              status = 201
+              await safeAudit({ event: 'patient_identity_linked', actor: 'doctor' })
+              bytes = sendJson(req, res, 201, link, cors)
+            } catch (err) {
+              if (err instanceof IdentityConflictError) {
+                status = 409
+                bytes = sendJson(req, res, 409, { error: err.reason }, cors)
+              } else {
+                throw err
+              }
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'patient-identities' && parts.length === 3 && req.method === 'GET') {
+        // Round 14: batch read for Today Queue enrichment -- one request
+        // covers every task's patient_uuid instead of N+1 polling.
+        // Unresolved entries are returned explicitly (never omitted or
+        // guessed) so the caller can tell "no link yet" apart from
+        // "request failed" -- see TodayQueueSection's stale-data handling.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const uuids = url.searchParams.getAll('patient_uuid').filter((v) => typeof v === 'string' && v)
+          const links = await patientIdentityStore.getIdentitiesByPatientUuids(uuids)
+          const identities = {}
+          for (const uuid of uuids) {
+            const link = links[uuid]
+            identities[uuid] = link
+              ? { resolved: true, sigma_chart_no: link.sigma_chart_no, patient_name: link.patient_name }
+              : { resolved: false, reason: 'no_mapping' }
+          }
+          bytes = sendJson(req, res, 200, { identities }, cors)
         }
       } else {
         status = 404

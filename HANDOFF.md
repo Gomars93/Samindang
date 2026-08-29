@@ -1,6 +1,44 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 13 — Doctor 클라이언트에 첫 CRM UI(읽기 전용 Today Queue) 추가, 이번 세션)
+## Objective (CRM v0.3.1 round 14 — Sigma 신원 연결 레이어 + Today Queue 사람이 읽을 수 있는 표시, 이번 세션)
+Gomars93가 PR #24 댓글로 신원 정책을 승인하고 다음 라운드를 지시했다.
+**승인된 정책**: Clinical OS는 기존 내부 random UUID(`patient_uuid`)를 계속
+내부 키로 쓴다. 그 UUID에서 Sigma `chart_no`/patient_id로의 1:1 연결을
+추가한다. Doctor용 CRM 화면은 **환자명 + 차트번호**를 표시할 수 있다.
+RRN은 저장/매칭에 절대 쓰지 않는다. 전화번호는 큐 표시용 식별자로 쓰지
+않는다(추후 아웃바운드 연락 플로우에서 필요하면 별도 보호되는 메시징/
+provider 정책 아래 Sigma에서 그때그때 가져온다). 동명이인/재등록/모호한
+환자를 절대 자동 병합하지 않는다 — 모호하거나 첫 연결은 사람의 명시적
+확인이 있어야 하며, 실패 시 항상 fail closed. 연결된 Sigma chart_no가
+암묵적으로 다른 Clinical OS UUID로 Task/Episode를 재배정하는 일이 없도록
+cross-patient isolation을 유지한다.
+
+**이번 라운드의 단일 과제**: 최소한의 안전한 Sigma 신원 연결 레이어를
+구현하고, 이를 이용해 Today Queue를 사람이 읽을 수 있게 만든다. 인수
+조건(8개): (1) `clinical_patient_uuid <-> sigma_chart_no` 최소 durable
+매핑, 양방향 1:1, RRN/전화번호 저장 금지, (2) 기존 Episode/CrmTask의
+`patient_uuid`는 계속 내부 authoritative FK로 유지 — 과거 task를 Sigma
+ID로 재작성하지 않음, (3) doctor 인증된 서버 read/enrichment 경로가
+저장된 매핑을 표시용 Sigma 사실(이름+차트번호)로 해석 — 조회/연결이
+불가능하면 명시적 unresolved 상태를 반환하고 절대 추측하거나 다른
+환자로 fallback하지 않음, (4) 읽기 전용 Today Queue가 검증된 경우
+`환자명 · 차트번호`를 보여주고, 내부 UUID는 필요 시 비주요 진단/출처
+정보로만 유지, (5) 링크 생성/변경은 서버 경계에서 명시적 임상의/직원
+확인 행위여야 함 — fuzzy/이름만/전화만 자동 매칭 없음, 기존 매핑의
+조용한 덮어쓰기 없음, 충돌은 눈에 보이게 거부, (6) 회귀 테스트가
+증명해야 할 것: 중복 Sigma chart_no가 두 Clinical UUID에 연결될 수
+없음, 한 Clinical UUID가 조용히 차트를 바꿀 수 없음, unresolved 조회가
+다른 환자의 신원을 절대 보여주지 않음, stale/에러 응답이 이전 행의
+이름을 흘리지 않음, 재시작 후 매핑 유지, cross-patient Task isolation
+유지, (7) 이번 라운드는 신원/읽기 경로에만 집중 — 아웃바운드 메시징/
+provider 선택/전화번호 저장/Care Gap suppression/임상 threshold·매핑/
+task-action UI는 아직 추가하지 않음, (8) Test 0 여전히 PENDING, Care
+Gap suppression 여전히 OFF, `src/spec/*Logic.ts`/`*Adapter.ts` zero-diff
+유지, CRM/store/server/client 테스트 + test:all + CI + Doctor Workspace
+Preview 재실행. 가장 작은 구현을 우선 — 새 identity framework나 새 제품
+문서를 만들지 말 것. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 13 — Doctor 클라이언트에 첫 CRM UI(읽기 전용 Today Queue) 추가, 이전 세션)
 Gomars93의 다음 지시: round 6-12에서 이미 만들어 검증한
 `GET /api/crm/tasks`(round 11) 서버 read path 위에, 처음으로 **CRM UI
 표면**을 붙인다 — Doctor 클라이언트 안에 컴팩트하고 **읽기 전용**인
@@ -490,7 +528,126 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 13 (Doctor 클라이언트 첫 CRM UI — 읽기 전용 Today Queue, 이번 세션)
+## Completed — CRM v0.3.1 Round 14 (Sigma 신원 연결 레이어 + Today Queue 사람이 읽을 수 있는 표시, 이번 세션)
+**설계 결정, 명시적으로 기록**: 이 저장소에는 Sigma에 대한 라이브 API
+클라이언트/인증정보가 전혀 없다(Test 0 — Naver→Sigma 예약 반영 검증 —
+가 여전히 PENDING인 것과 같은 이유). 지시의 "Sigma lookup"을 이 서버가
+스스로 Sigma에 네트워크 호출을 거는 것으로 해석해 존재하지 않는 API
+스펙/인증 방식을 추측해 구현하는 대신, **사람(직원/임상의)이 Sigma를
+직접 조회해 chart_no + 이름을 이 라운드의 명시적 확인 엔드포인트로
+확정(confirm)하는 것**으로 구현했다 — round 8의 PREVISIT_LINK가 "SMS/
+Kakao 연동을 발명하지 않는다"며 훅만 남겨둔 것과 같은 판단이다. 매핑
+저장소(`patient_uuid <-> sigma_chart_no`) 자체는 지시 1번 문구 그대로
+chart_no만 다루고, 표시용 이름은 같은 확인 행위에서 함께 확정되어 같은
+레코드에 저장된다(둘 다 그 확인 시점 하나에서만 나올 수 있는 값이라
+분리할 이유가 없다). 향후 실제 Sigma 조회 API가 승인되면 이 저장소의
+스키마를 바꾸지 않고 확인 엔드포인트 앞단에 실제 조회를 끼워 넣을 수
+있다.
+
+**`server/patientIdentityStore.js`(신규)**: `crmStore.js`와 같은
+file-per-entity + durable-pointer 관례(자체 `atomicWrite`/`readJson`/
+`withLock`, 공유 유틸 없음). `links/<patient_uuid>.json`(레코드)과
+`by-chart/<sha256(chart_no)>.json`(역방향 uniqueness 포인터) 두 디렉토리.
+`linkPatientIdentity()`는 `identity:uuid:{uuid}` 락을 바깥, `identity:
+chart:{hash}` 락을 안쪽으로 고정된 순서로 잡는다(이 store에서 두 락을
+동시에 쓰는 유일한 지점이라 교착 위험 없음). 이미 링크된 uuid에 다시
+링크 시도 -> `IdentityConflictError('already_linked')`, 이미 다른
+uuid가 쓰는 chart_no에 링크 시도 -> `IdentityConflictError
+('chart_already_linked')` — 둘 다 조용한 덮어쓰기가 아니라 예외. 크래시
+안전성: chart 포인터를 먼저 쓰고 uuid 레코드를 나중에 쓴다(round 8의
+dedup intent-first와 같은 이유) — 중간에 죽으면 chart_no는 예약된
+채로 남지만 `getIdentityByPatientUuid`는 여전히 null을 반환해 fail
+closed(Today Queue는 UUID fallback을 계속 보여줌), 재시도하면 같은
+예약을 이어받아 정상적으로 완료된다(failure-injection 테스트로 증명).
+
+**`server/index.js`**: `POST /api/crm/patient-identity`(명시적 확인
+액션, doctor 인증, `store.visitExistsForPatient()`로 미지의 patient_uuid
+거부 — round 6 Episode 생성과 동일한 규칙 재사용, `sigma_chart_no`/
+`patient_name` 필수, 충돌 시 409 + reason)와 `GET
+/api/crm/patient-identities`(patient_uuid 여러 개를 배치로 조회, 각
+uuid에 대해 `{resolved:true, sigma_chart_no, patient_name}` 또는
+`{resolved:false, reason:'no_mapping'}`을 **항상 명시적으로** 반환 —
+키 자체를 생략하지 않아 클라이언트가 "매핑 없음"과 "응답에 없음"을
+구분할 수 있다) 2개 라우트 추가. `confirmed_by`는 claimedBy와 같은
+성격의 advisory 감사 라벨일 뿐 권한 판단에 쓰이지 않는다(이 배포는
+직원별 계정이 아니라 공유 doctor token 하나뿐이라 서버가 그 이상의
+신원을 스스로 유도할 수 없다).
+
+**`src/lib/serverClient.ts`**: `listPatientIdentities(patientUuids)`
+(배치 GET, wire shape이 이미 클라이언트 shape과 같아 매핑 불필요)와
+`linkPatientIdentity({patientUuid, chartNo, patientName, confirmedBy?})`
+(POST) 추가. `ResolvedPatientIdentity` 유니온 타입 export.
+
+**`src/doctor/TodayQueueSection.tsx`**: 새 optional prop `identities:
+Record<string, ResolvedPatientIdentity>`(기본값 `{}`). resolved된
+patient_uuid는 `환자명 · 차트번호`를 보여주고, 없거나 `resolved:false`인
+경우 round 13의 truncate-UUID fallback을 그대로 유지 — `title` 속성의
+전체 UUID는 resolved 여부와 무관하게 항상 유지(비주요 진단 정보).
+컴포넌트 자체는 여전히 fetch/클릭 핸들러가 전혀 없다 — enrichment
+데이터는 순수하게 props로만 들어온다.
+
+**`src/doctor/DoctorView.tsx`**: 새 state `patientIdentities`(기본값
+`{}`). 기존 CRM task polling(5초 간격) 안에서, `crmTasks` fetch가
+성공하면 그 응답의 patient_uuid 집합으로 `listPatientIdentities()`를
+호출해 **전체 교체**(merge 아님)로 `patientIdentities`를 갱신한다 —
+이전 poll에 있었지만 이번 poll에는 없는 uuid의 오래된 resolved 이름이
+남아있을 수 없다. `crmTasks` fetch 자체가 실패하면 `patientIdentities`도
+함께 `{}`로 비운다(round 13이 `crmTasks`에 적용한 것과 같은 엄격한
+staleness 규칙). identity fetch 자체가 실패해도 `{}`로 비워 안전한
+UUID fallback으로 떨어진다.
+
+**의도적으로 하지 않은 것**: 연결(link) 생성 UI. 지시 5번은 "서버
+경계에서 명시적 확인 행위"를 요구했고, 이는 POST 엔드포인트 자체가
+doctor 인증 + 명시적 chart_no/patient_name 파라미터를 요구하는 것으로
+이미 충족된다 — DoctorView에 확인 버튼/폼을 추가하라는 지시는 없었고,
+round 13이 세운 "이번 라운드는 읽기 전용, task-action UI는 다음
+라운드로" 원칙과 같은 이유로 이번 라운드에서는 만들지 않았다. 지금은
+API를 직접 호출해야만 링크가 생기며, 실제 클리닉 운영에 필요한
+링크-생성 UI는 다음 라운드의 몫으로 남긴다 — 그 전까지 Today Queue는
+round 13과 동일하게 truncate-UUID를 계속 보여준다.
+
+**`tests/crm-store.spec.mjs`**: 신규 Part 13(store-level uniqueness/
+재시작 14 assertion + failure-injection 6 assertion + 실제 HTTP 경계 21
+assertion, 총 41 assertion) — 1:1 양방향 uniqueness(같은 uuid 재링크 거부, 같은 chart_no
+두번째 uuid 거부), 재시작 후 매핑 생존, 크래시 윈도우 fail-closed +
+재시도 후 정확히 하나의 chart 포인터만 존재, RRN/phone 필드가 요청
+body에 있어도 저장 파일 자체에 전혀 남지 않음(디스크 직접 확인),
+evil-Origin 미인증 요청 403, 미지의 patient_uuid 400, 필수 필드 누락
+400, 이미 링크된 patient_uuid 재링크 409, 다른 patient의 chart_no
+가로채기 409, 배치 GET이 unresolved uuid를 명시적으로(생략하지 않고)
+반환, cross-patient Task/Episode isolation(신원 링크가 다른 환자의
+Task patient_uuid/status/first_seen_at을 절대 건드리지 않음, 링크
+순서와 무관하게 서로의 신원이 서로에게 영향받지 않음)을 증명.
+
+**`tests/server.spec.mjs`**: `requireDoctor` 라우트 그룹 카운트를
+34 -> 36으로 갱신(새 라우트 2개, `crm x8` -> `crm x10`).
+
+**`tests/today-queue.spec.mjs`**: 신규 5 assertion 추가(총 12 -> 17) —
+resolved 신원이 `환자명 · 차트번호`로 표시, unresolved/누락 시 truncate-
+UUID로 fallback(조작된 이름을 절대 만들어내지 않음), 다른 환자의
+identities 항목이 이 task의 행에 새어나오지 않음(no cross-patient
+identity), 두 환자의 신원이 서로 뒤바뀌지 않음. 기존 "no serverClient
+reference" 소스 가드는 round 14가 추가한 type-only import를 반영해
+"serverClient로의 참조는 전부 `import type`뿐이고 실제 함수 호출은
+없음"으로 정교화했다.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green — 3160개 PASS/OK 라인, FAIL 0건, 신규 CRM identity 41 assertion +
+Today Queue 5 assertion 포함), `cd "tablet core" && python3 -m pytest
+tests/ -q`(80 passed), `git diff origin/main -- 'src/spec/*Logic.ts'
+'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff). Test 0 여전히 PENDING,
+Care Gap suppression 여전히 비활성, 임상 threshold/매핑/red-flag
+재해석/재활 매핑/Additional Pain 승격/provider 선택/Sigma-Naver 쓰기
+없음. RRN은 스키마에 필드 자체가 없고, 전화번호는 이 라운드 어디에도
+등장하지 않는다(입력 필드/저장 필드 모두 없음).
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행. 기존
+crmStore.js/server/index.js/serverClient.ts/TodayQueueSection.tsx의
+관례를 파악하기 위해 직접 Read/Grep으로 조사했다(round 13에서 이미
+같은 구조를 직접 확인해둔 상태였다).
+
+## Completed — CRM v0.3.1 Round 13 (Doctor 클라이언트 첫 CRM UI — 읽기 전용 Today Queue, 이전 세션)
 **`src/lib/serverClient.ts`**: `listCrmTasks(params?: { ownerClinician?,
 coverageQueue? })` 추가. `GET /api/crm/tasks`의 wire shape이 이미
 `CrmTask[]`와 정확히 같아서(round 11에서 확정) `listRevisitQueue`류의

@@ -146,12 +146,18 @@ test('rendered output contains no onclick attribute (component takes no callback
   assert.ok(!/onclick/i.test(html))
 })
 
-test('component source contains no fetch/serverClient call, no markTaskSeen reference, no onClick handler', () => {
+test('component source contains no fetch/serverClient function call, no markTaskSeen reference, no onClick handler', () => {
   const src = fs.readFileSync(new URL('../src/doctor/TodayQueueSection.tsx', import.meta.url), 'utf8')
   assert.ok(!/fetch\(/.test(src))
-  assert.ok(!/serverClient/i.test(src))
   assert.ok(!/markTaskSeen/i.test(src))
   assert.ok(!/onClick/.test(src))
+  // Round 14 added a type-only import of ResolvedPatientIdentity for the
+  // identity-enrichment prop shape -- that reference to '../lib/serverClient'
+  // must stay type-only (no runtime function call/import from it).
+  const serverClientLines = src.split('\n').filter((line) => line.includes('serverClient'))
+  assert.ok(serverClientLines.length > 0, 'expected the type-only serverClient import to exist')
+  assert.ok(serverClientLines.every((line) => /^\s*import type\b/.test(line)))
+  assert.ok(!/serverClient\./.test(src))
 })
 
 // ---------- 6. tablet-viewport safety ----------
@@ -165,6 +171,76 @@ test('grid container reuses the existing .doctor__grid class (no new fixed-width
 test('component renders without throwing for a task with no due_at/claimed_by/owner_clinician', () => {
   const html = render({ tasks: [makeTask({ due_at: null, claimed_by: null, owner_clinician: null })], loading: false, error: null })
   assert.ok(html.length > 0)
+})
+
+// ---------- 7. Sigma identity enrichment (round 14) ----------
+
+test('a resolved identity shows "환자명 · 차트번호" instead of the truncated UUID', () => {
+  const uuid = '11111111-2222-3333-4444-555555555555'
+  const html = render({
+    tasks: [makeTask({ patient_uuid: uuid })],
+    loading: false,
+    error: null,
+    identities: { [uuid]: { resolved: true, sigma_chart_no: 'CN-1001', patient_name: '홍길동' } },
+  })
+  assert.ok(html.includes('홍길동'))
+  assert.ok(html.includes('CN-1001'))
+  // Diagnostic/provenance access to the full UUID is retained even when resolved.
+  assert.ok(html.includes(`title="${uuid}"`))
+})
+
+test('an unresolved identity entry (resolved:false) falls back to the truncated UUID, never a fabricated name', () => {
+  const uuid = '22222222-3333-4444-5555-666666666666'
+  const html = render({
+    tasks: [makeTask({ patient_uuid: uuid })],
+    loading: false,
+    error: null,
+    identities: { [uuid]: { resolved: false, reason: 'no_mapping' } },
+  })
+  assert.ok(html.includes('환자 22222222'))
+  assert.ok(!html.includes('no_mapping'))
+})
+
+test('a missing identities prop (undefined) falls back to the truncated UUID for every row', () => {
+  const uuid = '33333333-4444-5555-6666-777777777777'
+  const html = render({ tasks: [makeTask({ patient_uuid: uuid })], loading: false, error: null })
+  assert.ok(html.includes('환자 33333333'))
+})
+
+test('an identities entry for a DIFFERENT patient_uuid never leaks onto this task\'s row (no cross-patient identity)', () => {
+  const taskUuid = '44444444-5555-6666-7777-888888888888'
+  const otherUuid = '99999999-8888-7777-6666-555555555555'
+  const html = render({
+    tasks: [makeTask({ patient_uuid: taskUuid })],
+    loading: false,
+    error: null,
+    identities: { [otherUuid]: { resolved: true, sigma_chart_no: 'CN-9999', patient_name: '다른환자' } },
+  })
+  assert.ok(!html.includes('다른환자'))
+  assert.ok(!html.includes('CN-9999'))
+  assert.ok(html.includes('환자 44444444'))
+})
+
+test('two tasks for two different patients each show their own resolved identity, never swapped', () => {
+  const uuidA = 'aaaaaaaa-1111-1111-1111-111111111111'
+  const uuidB = 'bbbbbbbb-2222-2222-2222-222222222222'
+  const tasks = [
+    makeTask({ task_id: 'task-a', patient_uuid: uuidA }),
+    makeTask({ task_id: 'task-b', patient_uuid: uuidB }),
+  ]
+  const identities = {
+    [uuidA]: { resolved: true, sigma_chart_no: 'CN-A', patient_name: '환자A' },
+    [uuidB]: { resolved: true, sigma_chart_no: 'CN-B', patient_name: '환자B' },
+  }
+  const html = render({ tasks, loading: false, error: null, identities })
+  const idxA = html.indexOf('환자A')
+  const idxCnA = html.indexOf('CN-A')
+  const idxB = html.indexOf('환자B')
+  const idxCnB = html.indexOf('CN-B')
+  assert.ok(idxA > -1 && idxCnA > -1 && idxB > -1 && idxCnB > -1)
+  // 환자A's chart number must be nearer to 환자A's own name than to 환자B's.
+  assert.ok(Math.abs(idxCnA - idxA) < Math.abs(idxCnA - idxB))
+  assert.ok(Math.abs(idxCnB - idxB) < Math.abs(idxCnB - idxA))
 })
 
 console.log(`\n${passed} passed`)

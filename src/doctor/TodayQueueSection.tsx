@@ -9,18 +9,34 @@
  * or a failed refetch that the caller explicitly cleared) -- distinct from
  * `tasks === []` ("fetched successfully, queue is empty"), so a stale list
  * from a prior successful fetch can never be shown after an error.
+ *
+ * Round 14: `identities` (patient_uuid -> resolved Sigma name/chart_no) is
+ * an optional enrichment layer, not a second source of truth -- when a
+ * patient_uuid is missing from the map, or the map itself is empty, the
+ * row falls back to the truncated UUID exactly as round 13 did. No lookup
+ * or identity resolution happens in this component; the caller (DoctorView)
+ * is responsible for clearing `identities` on a failed fetch so a stale
+ * resolved name can never outlive the poll that produced it.
  */
 import type { CrmTask } from '../crm/types'
+import type { ResolvedPatientIdentity } from '../lib/serverClient'
 import { CRM_TASK_TYPE_LABEL, CRM_REASON_CODE_LABEL, CRM_TASK_STATUS_LABEL } from '../crm/labels'
 
 export type TodayQueueSectionProps = {
   tasks: CrmTask[] | null
   loading: boolean
   error: string | null
+  identities?: Record<string, ResolvedPatientIdentity>
 }
 
 function truncateUuid(uuid: string): string {
   return uuid.length <= 8 ? uuid : `${uuid.slice(0, 8)}…`
+}
+
+function patientLabel(task: CrmTask, identities: Record<string, ResolvedPatientIdentity>): string {
+  const identity = identities[task.patient_uuid]
+  if (identity?.resolved) return `${identity.patient_name} · ${identity.sigma_chart_no}`
+  return `환자 ${truncateUuid(task.patient_uuid)}`
 }
 
 function dueStateLabel(task: CrmTask, nowIso: string): string {
@@ -30,7 +46,7 @@ function dueStateLabel(task: CrmTask, nowIso: string): string {
   return overdue ? `기한 지남 · ${when}` : `기한 ${when}`
 }
 
-export function TodayQueueSection({ tasks, loading, error }: TodayQueueSectionProps) {
+export function TodayQueueSection({ tasks, loading, error, identities = {} }: TodayQueueSectionProps) {
   const now = new Date().toISOString()
   return (
     <section className="doctor__section doctor__todayQueue">
@@ -58,7 +74,7 @@ export function TodayQueueSection({ tasks, loading, error }: TodayQueueSectionPr
                 {task.due_at ? ` · ${dueStateLabel(task, now)}` : ''}
               </span>
               <span className="doctorField__value doctorField__value--muted" title={task.patient_uuid}>
-                환자 {truncateUuid(task.patient_uuid)}
+                {patientLabel(task, identities)}
               </span>
             </div>
           ))}

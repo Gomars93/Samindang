@@ -1502,9 +1502,13 @@ async function main() {
     // CRM v0.3.1 Round 11(Today Queue read path)에서 1개가 추가되어
     // 34개가 됐다: GET /api/crm/tasks(컬렉션, Today Queue 소스) -- 같은
     // doctor-only 가드, CRM UI는 여전히 없다.
+    // CRM v0.3.1 Round 14(Sigma identity linkage)에서 2개가 추가되어
+    // 36개가 됐다: POST /api/crm/patient-identity(명시적 확인 링크 생성),
+    // GET /api/crm/patient-identities(Today Queue enrichment 배치 조회) --
+    // 같은 doctor-only 가드.
     assert(
-      'server has exactly the 34 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x8)',
-      requireDoctorCalls === 34,
+      'server has exactly the 36 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x10)',
+      requireDoctorCalls === 36,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

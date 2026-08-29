@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from '../server/crmStore.js'
+import { createPatientIdentityStore, IdentityConflictError } from '../server/patientIdentityStore.js'
 import { createApp } from '../server/index.js'
 import { groupTasksForCommunication, computeDedupKey } from '../src/crm/taskEngine.ts'
 
@@ -1209,6 +1210,267 @@ async function main() {
       const futureCheck = await fetch(`${base}/api/crm/tasks/${futureSnoozed.task_id}`, { headers })
       const futureCheckBody = await futureCheck.json()
       assert('snooze-queue-http: the hidden future-snoozed task is untouched on disk (still SNOOZED)', futureCheckBody.status === 'SNOOZED')
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 13: CRM v0.3.1 round 14 -- Sigma identity-linkage layer
+     (patientIdentityStore.js). Store-level first (direct calls, no HTTP),
+     then the real /api/crm/patient-identity(ies) HTTP boundary, matching
+     this file's existing store-then-HTTP structure for every prior fix.
+     ===================================================================== */
+
+  /* ---- store-level: 1:1 uniqueness both directions, restart durability,
+     fail-closed crash recovery ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-store-'))
+    try {
+      const storeA = createPatientIdentityStore(root)
+      const uuidA = randomUUID()
+      const uuidB = randomUUID()
+
+      assert('identity-store: unknown patient_uuid resolves to null, never guesses', (await storeA.getIdentityByPatientUuid(uuidA)) === null)
+
+      const linkA = await storeA.linkPatientIdentity({
+        patientUuid: uuidA,
+        chartNo: 'CN-1001',
+        patientName: '환자A',
+        confirmedBy: 'staff-1',
+        now: T0,
+      })
+      assert('identity-store: link created with the given chart_no', linkA.sigma_chart_no === 'CN-1001')
+      assert('identity-store: link created with the given name', linkA.patient_name === '환자A')
+      assert('identity-store: link record carries no rrn/phone field at all', !('rrn' in linkA) && !('phone' in linkA))
+
+      // 1:1 direction 1 -- the SAME uuid cannot silently switch charts.
+      let relinkThrew = null
+      try {
+        await storeA.linkPatientIdentity({ patientUuid: uuidA, chartNo: 'CN-9999', patientName: '환자A', confirmedBy: 'staff-2', now: T0 })
+      } catch (err) {
+        relinkThrew = err
+      }
+      assert('identity-store: relinking an already-linked uuid throws IdentityConflictError', relinkThrew instanceof IdentityConflictError)
+      assert('identity-store: relink conflict reason is already_linked', relinkThrew?.reason === 'already_linked')
+      const uuidAAfterRelinkAttempt = await storeA.getIdentityByPatientUuid(uuidA)
+      assert('identity-store: a rejected relink leaves the original chart_no untouched', uuidAAfterRelinkAttempt.sigma_chart_no === 'CN-1001')
+
+      // 1:1 direction 2 -- the SAME chart_no cannot be claimed by a second uuid.
+      let dupChartThrew = null
+      try {
+        await storeA.linkPatientIdentity({ patientUuid: uuidB, chartNo: 'CN-1001', patientName: '환자B(오기입)', confirmedBy: 'staff-1', now: T0 })
+      } catch (err) {
+        dupChartThrew = err
+      }
+      assert('identity-store: linking a chart_no already claimed by a different uuid throws IdentityConflictError', dupChartThrew instanceof IdentityConflictError)
+      assert('identity-store: duplicate-chart conflict reason is chart_already_linked', dupChartThrew?.reason === 'chart_already_linked')
+      assert('identity-store: uuidB has no link after the rejected duplicate-chart attempt', (await storeA.getIdentityByPatientUuid(uuidB)) === null)
+
+      // Restart durability: a completely fresh store instance over the
+      // same directory (no shared in-memory state) sees the prior link.
+      const storeRestarted = createPatientIdentityStore(root)
+      const afterRestart = await storeRestarted.getIdentityByPatientUuid(uuidA)
+      assert('identity-store: mapping survives a fresh store instance (restart) with the same chart_no', afterRestart?.sigma_chart_no === 'CN-1001')
+      assert('identity-store: mapping survives a fresh store instance (restart) with the same name', afterRestart?.patient_name === '환자A')
+
+      // Batch read never omits a requested uuid, even when unresolved --
+      // this is what lets the client tell "no mapping" apart from "this
+      // uuid's identity state simply wasn't returned" (see the HTTP block
+      // below for the same guarantee at the wire level).
+      const batch = await storeA.getIdentitiesByPatientUuids([uuidA, uuidB])
+      assert('identity-store: batch read resolves the linked uuid', batch[uuidA]?.sigma_chart_no === 'CN-1001')
+      assert('identity-store: batch read explicitly returns null (not omitted) for the unlinked uuid', uuidB in batch && batch[uuidB] === null)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- store-level: failure-injection crash window between the chart
+     pointer write and the uuid record write -- fails closed (no usable
+     link yet), and a retry after unblocking converges to one completed
+     link rather than a duplicate/corrupt one. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-crash-'))
+    try {
+      const store = createPatientIdentityStore(root)
+      const uuid = randomUUID()
+      const chartNo = 'CN-2002'
+      const chartHash = createHash('sha256').update(chartNo, 'utf8').digest('hex')
+
+      // Block the uuid record's own tmp write path -- the SECOND write in
+      // linkPatientIdentity's order, so the chart pointer (the FIRST
+      // write) is allowed to land normally.
+      const linkTmpPath = path.join(root, 'links', `${uuid}.json.tmp`)
+      await mkdir(linkTmpPath, { recursive: true })
+
+      let firstAttemptThrew = false
+      try {
+        await store.linkPatientIdentity({ patientUuid: uuid, chartNo, patientName: '환자C', confirmedBy: 'staff-1', now: T0 })
+      } catch {
+        firstAttemptThrew = true
+      }
+      assert('identity-crash: first attempt genuinely throws when the link-record write is blocked', firstAttemptThrew)
+
+      const chartPointerOnDisk = await readRaw(path.join(root, 'by-chart', `${chartHash}.json`))
+      assert('identity-crash: the chart pointer (first write) landed durably despite the interruption', chartPointerOnDisk?.patient_uuid === uuid)
+      assert('identity-crash: no usable link exists yet -- fails closed rather than half-written', (await store.getIdentityByPatientUuid(uuid)) === null)
+
+      // Unblock (remove the directory standing in for the tmp file) and retry.
+      await rm(linkTmpPath, { recursive: true, force: true })
+      const recovered = await store.linkPatientIdentity({ patientUuid: uuid, chartNo, patientName: '환자C', confirmedBy: 'staff-1', now: T0 })
+      assert('identity-crash: retry after unblocking converges to a completed link', recovered.sigma_chart_no === chartNo)
+      assert('identity-crash: the recovered link keeps the SAME chart_no reserved by the crashed attempt, not a second reservation', recovered.patient_uuid === uuid)
+
+      // Chart_no is still 1:1 -- no orphan second pointer was created.
+      const filesInChartIndex = (await readdir(path.join(root, 'by-chart'))).filter((f) => f.endsWith('.json'))
+      assert('identity-crash: exactly one chart-index pointer exists after crash + retry (no orphan reservation)', filesInChartIndex.length === 1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- real HTTP boundary: auth, validation, 1:1 conflicts, batch read
+     truthfulness, and cross-patient Task/Episode isolation. ---- */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-identity-http-'))
+    const { server, base } = await startServer({ dataDir: path.join(dataRoot, 'submissions'), doctorToken: 'test-doctor-token' })
+    const headers = { 'content-type': 'application/json', 'x-doctor-token': 'test-doctor-token' }
+    try {
+      const visitARes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visitA = await visitARes.json()
+      const visitBRes = await fetch(`${base}/api/visits`, { method: 'POST', headers, body: JSON.stringify({}) })
+      const visitB = await visitBRes.json()
+
+      // Evil-Origin request is rejected before any store access -- the
+      // same defense-in-depth technique used throughout this suite (a
+      // bare no-token request from loopback is intentionally ALLOWED by
+      // this server's pilot-grade trust model, so evil-Origin is what
+      // actually proves the auth guard).
+      const unauthedRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+        body: JSON.stringify({ patient_uuid: visitA.patient_id, sigma_chart_no: 'CN-3001', patient_name: '환자A' }),
+      })
+      assert('identity-http: POST without doctor auth (evil-Origin) is rejected (403)', unauthedRes.status === 403)
+
+      // Unknown patient_uuid (typo'd/never-existed) is rejected -- linking
+      // can never anchor to an arbitrary identifier, same rule every other
+      // patient-linking route in this codebase already enforces.
+      const unknownPatientRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: randomUUID(), sigma_chart_no: 'CN-3002', patient_name: '환자X' }),
+      })
+      assert('identity-http: POST for an unknown patient_uuid is rejected (400)', unknownPatientRes.status === 400)
+
+      // Missing chart_no/name is rejected.
+      const missingFieldsRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visitA.patient_id }),
+      })
+      assert('identity-http: POST missing sigma_chart_no/patient_name is rejected (400)', missingFieldsRes.status === 400)
+
+      // Real link for patient A. Body includes rrn/phone fields the route
+      // never reads -- proves they cannot be smuggled into persistence.
+      const linkRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          patient_uuid: visitA.patient_id,
+          sigma_chart_no: 'CN-3001',
+          patient_name: '환자A',
+          rrn: '900101-1234567',
+          phone: '010-1234-5678',
+        }),
+      })
+      const linkBody = await linkRes.json()
+      assert('identity-http: POST creates the link (201)', linkRes.status === 201)
+      assert('identity-http: created link carries the given chart_no', linkBody.sigma_chart_no === 'CN-3001')
+      assert('identity-http: created link record has no rrn field', !('rrn' in linkBody))
+      assert('identity-http: created link record has no phone field', !('phone' in linkBody))
+
+      // Directly inspect the file on disk -- not just the response body --
+      // to prove rrn/phone were never written, not merely omitted from
+      // this particular response shape.
+      const onDisk = await readRaw(path.join(dataRoot, 'crm-identity', 'links', `${visitA.patient_id}.json`))
+      assert('identity-http: the persisted file itself has no rrn field', onDisk && !('rrn' in onDisk))
+      assert('identity-http: the persisted file itself has no phone field', onDisk && !('phone' in onDisk))
+
+      // No silent overwrite -- relinking the same patient is a 409, not a
+      // 200 that quietly replaces the chart_no.
+      const relinkRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visitA.patient_id, sigma_chart_no: 'CN-9999', patient_name: '환자A' }),
+      })
+      assert('identity-http: relinking an already-linked patient_uuid is rejected (409)', relinkRes.status === 409)
+      const relinkBody = await relinkRes.json()
+      assert('identity-http: relink conflict names the reason', relinkBody.error === 'already_linked')
+
+      // No cross-patient chart collision -- patient B cannot claim patient
+      // A's chart_no.
+      const crossChartRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visitB.patient_id, sigma_chart_no: 'CN-3001', patient_name: '환자B(오기입)' }),
+      })
+      assert('identity-http: linking patient B to patient A\'s chart_no is rejected (409)', crossChartRes.status === 409)
+      const crossChartBody = await crossChartRes.json()
+      assert('identity-http: cross-chart conflict names the reason', crossChartBody.error === 'chart_already_linked')
+
+      // Batch read: patient A resolves, patient B (never linked) is
+      // explicitly unresolved -- proves an unresolved lookup never shows
+      // another patient's identity, and the key is present (not omitted)
+      // so the client can distinguish "no mapping" from "not returned".
+      const batchRes = await fetch(
+        `${base}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(visitA.patient_id)}&patient_uuid=${encodeURIComponent(visitB.patient_id)}`,
+        { headers },
+      )
+      const batchBody = await batchRes.json()
+      assert('identity-http: batch GET resolves patient A', batchBody.identities[visitA.patient_id]?.resolved === true)
+      assert('identity-http: batch GET resolved patient A carries the correct name', batchBody.identities[visitA.patient_id]?.patient_name === '환자A')
+      assert('identity-http: batch GET explicitly marks patient B unresolved (never guesses/leaks patient A\'s identity)', batchBody.identities[visitB.patient_id]?.resolved === false)
+      assert('identity-http: unresolved entry names a reason', batchBody.identities[visitB.patient_id]?.reason === 'no_mapping')
+
+      // Cross-patient Task/Episode isolation: create a CRM task for
+      // UNLINKED patient B, confirm linking patient A's identity has zero
+      // effect on it -- the Today Queue source of truth (GET
+      // /api/crm/tasks) is untouched by identity-linkage operations.
+      const epBRes = await fetch(`${base}/api/crm/episodes`, { method: 'POST', headers, body: JSON.stringify({ patient_uuid: visitB.patient_id }) })
+      const epB = await epBRes.json()
+      const taskBRes = await fetch(`${base}/api/crm/tasks`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          patient_uuid: visitB.patient_id,
+          episode_id: epB.episode_id,
+          task_type: 'ROUTINE',
+          reason_code: 'REASSESSMENT_DUE',
+          source_event_id: 'evt-identity-isolation',
+        }),
+      })
+      const taskBBefore = (await taskBRes.json()).task
+
+      // Now actually link patient B's identity too, then re-fetch the task.
+      await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visitB.patient_id, sigma_chart_no: 'CN-4004', patient_name: '환자B' }),
+      })
+      const taskBAfterRes = await fetch(`${base}/api/crm/tasks/${taskBBefore.task_id}`, { headers })
+      const taskBAfter = await taskBAfterRes.json()
+      assert('identity-isolation: linking a patient\'s identity never rewrites their existing Task\'s patient_uuid', taskBAfter.patient_uuid === visitB.patient_id)
+      assert('identity-isolation: linking a patient\'s identity never mutates Task status as a side effect', taskBAfter.status === taskBBefore.status)
+      assert('identity-isolation: linking a patient\'s identity never sets first_seen_at as a side effect', taskBAfter.first_seen_at === taskBBefore.first_seen_at)
+
+      // And patient A's identity link is untouched by patient B's link
+      // having been created afterwards (both directions of isolation).
+      const identityAAfterBRes = await fetch(`${base}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(visitA.patient_id)}`, { headers })
+      const identityAAfterB = await identityAAfterBRes.json()
+      assert('identity-isolation: patient A\'s resolved identity is unaffected by patient B being linked afterwards', identityAAfterB.identities[visitA.patient_id]?.sigma_chart_no === 'CN-3001')
     } finally {
       await stopServer(server)
       await rm(dataRoot, { recursive: true, force: true })

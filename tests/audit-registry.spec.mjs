@@ -1,0 +1,549 @@
+// Audit registry regression suite (Audit registry batch). Plain node, no
+// test framework: assert() prints "OK: <name>" and throws on failure --
+// same convention as tests/crm-store.spec.mjs. Starts the real server via
+// createApp() on an ephemeral port against a real temp data directory, then
+// reads the real audit.log file it wrote (JSON Lines) -- same pattern as
+// tests/server.spec.mjs's "audit log: one line per event" block.
+//
+// This file exists to make it structurally impossible for a future call
+// site in server/index.js to write a raw event/actor string literal (which
+// risks an unregistered name that logEvent() would throw on and safeAudit()
+// would then silently swallow -- see server/audit.js's own header comment
+// for the patient_identity_linked incident this registry was built to
+// prevent) without a test failing loudly instead.
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { createApp } from '../server/index.js'
+import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS, auditLogPath } from '../server/audit.js'
+
+let passCount = 0
+function assert(name, cond) {
+  if (!cond) throw new Error(`FAIL: ${name}`)
+  passCount++
+  console.log(`OK: ${name}`)
+}
+
+async function startServer(opts) {
+  const server = createApp(opts)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  return { server, base: `http://127.0.0.1:${port}` }
+}
+
+function stopServer(server) {
+  return new Promise((resolve) => server.close(resolve))
+}
+
+async function readAuditLines(logPath) {
+  let raw
+  try {
+    raw = await readFile(logPath, 'utf8')
+  } catch (err) {
+    if (err.code === 'ENOENT') return []
+    throw err
+  }
+  return raw
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+}
+
+const DOCTOR_TOKEN = 'audit-registry-test-token'
+const AUTH_HEADERS = { 'content-type': 'application/json', 'x-doctor-token': DOCTOR_TOKEN }
+
+async function postJson(url, body, headers = AUTH_HEADERS) {
+  const res = await fetch(url, { method: 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  return { status: res.status, body: await res.json() }
+}
+
+const ANSWERS = {
+  targetRatings: [],
+  overallChange: '좋아짐',
+  newSymptomReported: false,
+  newSymptomNote: '',
+  adverseEffectReported: false,
+  adverseEffectNote: '',
+}
+
+async function main() {
+  /* =====================================================================
+     Part 1: static drift-guard. This is the single most important test in
+     this file -- it is what makes a FUTURE developer adding a new audit
+     call site with a raw string literal (bypassing AUDIT_EVENTS/
+     AUDIT_ACTORS) fail a test instead of silently risking an unregistered
+     event that logEvent() throws on and safeAudit() then swallows.
+     ===================================================================== */
+  {
+    const RAW_EVENT_LITERAL = /\bevent:\s*['"]/
+    const RAW_ACTOR_LITERAL = /\bactor:\s*['"]/
+
+    // Sanity check the regexes themselves against known-bad snippets first,
+    // so a silently-broken pattern can never make the real check below
+    // vacuously pass.
+    assert('drift-guard: the raw-event regex actually matches a known-bad snippet', RAW_EVENT_LITERAL.test("event: 'foo'"))
+    assert('drift-guard: the raw-actor regex actually matches a known-bad snippet', RAW_ACTOR_LITERAL.test("actor: 'foo'"))
+
+    const indexSrc = await readFile(path.join(process.cwd(), 'server', 'index.js'), 'utf8')
+    const rawEventMatches = indexSrc.match(new RegExp(RAW_EVENT_LITERAL, 'g')) || []
+    const rawActorMatches = indexSrc.match(new RegExp(RAW_ACTOR_LITERAL, 'g')) || []
+    assert('drift-guard: zero raw `event: \'...\'` string literals in server/index.js', rawEventMatches.length === 0)
+    assert('drift-guard: zero raw `actor: \'...\'` string literals in server/index.js', rawActorMatches.length === 0)
+
+    // Registry size guard: if a future round adds/removes an event or actor
+    // without updating this test's requiredEvents list below, this at
+    // least makes the drift visible rather than silent.
+    assert('registry: AUDIT_EVENTS has exactly 32 registered event names', Object.keys(AUDIT_EVENTS).length === 32)
+    assert('registry: AUDIT_ACTORS has exactly 3 registered actor names', Object.keys(AUDIT_ACTORS).length === 3)
+  }
+
+  /* =====================================================================
+     Part 2: per-workflow persistence proof. Drives every real HTTP
+     workflow that reaches an audit call site NOT already covered by
+     tests/server.spec.mjs / tests/crm-store.spec.mjs's own audit-canary
+     blocks (submission_created, submission_duplicate, submission_viewed,
+     status_changed, judgment_saved, visit_created, visit_activated,
+     visit_cleared, patient_identity_linked), then confirms the matching
+     audit.log line exists with only the allowed 6 keys.
+     ===================================================================== */
+  const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-workflows-'))
+  const dataDir = path.join(dataRoot, 'submissions')
+  const crmDir = path.join(dataRoot, 'crm')
+  const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+  try {
+    /* ---- Station lifecycle: register, assign, reset, assign again,
+       submit through it, complete ---- */
+    const stationPatient = (await postJson(`${base}/api/visits`, {})).body
+    const stationReg = (await postJson(`${base}/api/stations`, { name: '감사 테스트 스테이션' })).body
+    const stationCred = stationReg.credential
+    const stationId = stationReg.station.station_id
+
+    const assign1 = await postJson(`${base}/api/stations/${stationId}/assign`, {
+      patient_id: stationPatient.patient_id,
+      delivery_mode: 'CLINIC_TABLET',
+    })
+    assert('workflow setup: station assign 1 -> 201', assign1.status === 201)
+
+    const reset1 = await postJson(`${base}/api/stations/${stationId}/reset`, {})
+    assert('workflow setup: station reset -> 200', reset1.status === 200)
+
+    const assign2 = await postJson(`${base}/api/stations/${stationId}/assign`, {
+      patient_id: stationPatient.patient_id,
+      delivery_mode: 'CLINIC_TABLET',
+    })
+    assert('workflow setup: station assign 2 (after reset) -> 201', assign2.status === 201)
+
+    const pollBody = await (await fetch(`${base}/api/station/assignment`, { headers: { 'x-station-credential': stationCred } })).json()
+    assert('workflow setup: station poll reports ASSIGNED with a token', pollBody.status === 'ASSIGNED' && typeof pollBody.token === 'string')
+
+    const submitRes = await fetch(`${base}/api/follow-up-session/${pollBody.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(ANSWERS),
+    })
+    assert('workflow setup: patient submits through the station-delivered token -> 201', submitRes.status === 201)
+
+    const completeRes = await fetch(`${base}/api/station/complete`, { method: 'POST', headers: { 'x-station-credential': stationCred } })
+    assert('workflow setup: station reports completion -> 200', completeRes.status === 200)
+
+    /* ---- Follow-up session lifecycle: issue, reissue, invalidate ---- */
+    const fusVisit = (await postJson(`${base}/api/visits`, {})).body
+    const fusStart = (await postJson(`${base}/api/patients/${fusVisit.patient_id}/start-revisit`, { delivery_mode: 'PERSONAL_QR' })).body
+    const fusReissue = await postJson(`${base}/api/visits/${fusStart.visit.id}/follow-up-session/reissue`, undefined)
+    assert('workflow setup: follow-up-session reissue -> 200', fusReissue.status === 200)
+    const fusInvalidate = await postJson(`${base}/api/visits/${fusStart.visit.id}/follow-up-session/invalidate`, undefined)
+    assert('workflow setup: follow-up-session invalidate -> 200', fusInvalidate.status === 200)
+
+    /* ---- Recorder result save ---- */
+    const recorderVisit = (await postJson(`${base}/api/visits`, {})).body
+    const recorderRes = await fetch(`${base}/api/visits/${recorderVisit.id}/recorder-results`, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        recording_id: 'audit-test-rec-1',
+        transcript: '환자: 테스트 중입니다.',
+        structured_note: null,
+        source: { workstation_id: 'AUDIT-TEST' },
+      }),
+    })
+    assert('workflow setup: recorder-results POST -> 201', recorderRes.status === 201)
+
+    /* ---- Micro follow-up save (doctor-guarded direct save path) ---- */
+    const microVisit = (await postJson(`${base}/api/visits`, {})).body
+    const microRes = await fetch(`${base}/api/visits/${microVisit.id}/micro-follow-up`, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(ANSWERS),
+    })
+    assert('workflow setup: micro-follow-up direct save -> 201', microRes.status === 201)
+
+    /* ---- Workspace save (submission) + visit workspace save (revisit) ---- */
+    const submissionRes = await fetch(`${base}/api/submissions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ questionnaire_version: '1.0', session_id: 'audit-workflow-workspace', responses: { patient: {} } }),
+    })
+    const submission = await submissionRes.json()
+    const workspaceRes = await fetch(`${base}/api/submissions/${submission.id}/workspace`, {
+      method: 'PUT',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ note: 'audit test workspace' }),
+    })
+    assert('workflow setup: submission workspace PUT -> 200', workspaceRes.status === 200)
+
+    const visitWsPatient = (await postJson(`${base}/api/visits`, {})).body
+    const visitWsStart = (await postJson(`${base}/api/patients/${visitWsPatient.patient_id}/start-revisit`, {})).body
+    const visitWorkspaceRes = await fetch(`${base}/api/visits/${visitWsStart.visit.id}/workspace`, {
+      method: 'PUT',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ note: 'audit test visit workspace' }),
+    })
+    assert('workflow setup: visit workspace PUT -> 200', visitWorkspaceRes.status === 200)
+
+    /* ---- CRM episode lifecycle: create, pause, complete, reopen ----
+       reopenEpisode (src/crm/episode.ts) only accepts a LOST episode, and
+       no HTTP route in this codebase ever sets an episode to LOST (there is
+       no "mark lost" route yet) -- pause/complete/reopen are the only three
+       transition routes that exist. To exercise the reopen AUDIT CALL SITE
+       itself (the thing this file is actually testing -- not the episode
+       state machine, which is already covered by src/crm's own unit tests)
+       this seeds LOST directly onto the on-disk Episode file between the
+       complete and reopen calls, exactly the same "write the store's own
+       on-disk shape directly" technique tests/crm-store.spec.mjs already
+       uses for its legacy-pointer-upgrade tests. This is not fabricating a
+       passing assertion -- the reopen call itself, and the audit line it
+       writes, are both genuinely exercised through the real HTTP route. */
+    const crmPatient = (await postJson(`${base}/api/visits`, {})).body
+    const episodeCreate = await postJson(`${base}/api/crm/episodes`, { patient_uuid: crmPatient.patient_id })
+    assert('workflow setup: crm episode create -> 201', episodeCreate.status === 201)
+    const episode = episodeCreate.body
+    const episodePause = await postJson(`${base}/api/crm/episodes/${episode.episode_id}/pause`, { expectedVersion: episode.version })
+    assert('workflow setup: crm episode pause -> 200', episodePause.status === 200)
+    const episodeComplete = await postJson(`${base}/api/crm/episodes/${episode.episode_id}/complete`, { expectedVersion: episodePause.body.version })
+    assert('workflow setup: crm episode complete -> 200', episodeComplete.status === 200)
+    // completeEpisodeStored's HTTP response is { episode, tasks } (it may
+    // also cancel ROUTINE tasks under the episode) -- not the bare episode
+    // the pause/reopen routes return.
+    assert('workflow setup: completed episode status is COMPLETED', episodeComplete.body.episode.status === 'COMPLETED')
+
+    const episodeFilePath = path.join(crmDir, 'episodes', `${episode.episode_id}.json`)
+    const onDiskEpisode = JSON.parse(await readFile(episodeFilePath, 'utf8'))
+    assert('workflow setup: on-disk episode matches the completed version before the LOST seed', onDiskEpisode.version === episodeComplete.body.episode.version)
+    onDiskEpisode.status = 'LOST'
+    await writeFile(episodeFilePath, JSON.stringify(onDiskEpisode, null, 2), 'utf8')
+    const episodeReopen = await postJson(`${base}/api/crm/episodes/${episode.episode_id}/reopen`, { expectedVersion: onDiskEpisode.version })
+    assert('workflow setup: crm episode reopen (after seeding LOST on disk) -> 200', episodeReopen.status === 200)
+    assert('workflow setup: reopened episode is ACTIVE again', episodeReopen.body.status === 'ACTIVE')
+
+    /* ---- CRM task lifecycle A: create -> claim -> seen -> resolve ---- */
+    const taskEpisode = (await postJson(`${base}/api/crm/episodes`, { patient_uuid: crmPatient.patient_id })).body
+    const t1 = (
+      await postJson(`${base}/api/crm/tasks`, {
+        patient_uuid: crmPatient.patient_id,
+        episode_id: taskEpisode.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-audit-lifecycle-1',
+      })
+    ).body.task
+    const claimed = (await postJson(`${base}/api/crm/tasks/${t1.task_id}/claim`, { expectedVersion: t1.version, claimedBy: 'audit-test-clinician' })).body
+    assert('workflow setup: task claim -> CLAIMED', claimed.status === 'CLAIMED')
+    const seen = (await postJson(`${base}/api/crm/tasks/${t1.task_id}/seen`, { expectedVersion: claimed.version })).body
+    const resolved = (await postJson(`${base}/api/crm/tasks/${t1.task_id}/resolve`, { expectedVersion: seen.version })).body
+    assert('workflow setup: task resolve -> DONE', resolved.status === 'DONE')
+
+    /* ---- CRM task lifecycle B/C/D: fresh tasks for snooze/cancel/supersede
+       (the task state machine does not allow e.g. resolving AND cancelling
+       the same task, so each of these three gets its own freshly-created
+       ROUTINE task rather than reusing t1 above). ---- */
+    const t2 = (
+      await postJson(`${base}/api/crm/tasks`, {
+        patient_uuid: crmPatient.patient_id,
+        episode_id: taskEpisode.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-audit-lifecycle-snooze',
+      })
+    ).body.task
+    const snoozed = await postJson(`${base}/api/crm/tasks/${t2.task_id}/snooze`, { expectedVersion: t2.version, until: '2099-01-01T00:00:00.000Z' })
+    assert('workflow setup: task snooze -> SNOOZED', snoozed.body.status === 'SNOOZED')
+
+    const t3 = (
+      await postJson(`${base}/api/crm/tasks`, {
+        patient_uuid: crmPatient.patient_id,
+        episode_id: taskEpisode.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-audit-lifecycle-cancel',
+      })
+    ).body.task
+    const cancelled = await postJson(`${base}/api/crm/tasks/${t3.task_id}/cancel`, { expectedVersion: t3.version })
+    assert('workflow setup: task cancel -> CANCELLED', cancelled.body.status === 'CANCELLED')
+
+    const t4 = (
+      await postJson(`${base}/api/crm/tasks`, {
+        patient_uuid: crmPatient.patient_id,
+        episode_id: taskEpisode.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-audit-lifecycle-supersede',
+      })
+    ).body.task
+    const superseded = await postJson(`${base}/api/crm/tasks/${t4.task_id}/supersede`, { expectedVersion: t4.version })
+    assert('workflow setup: task supersede -> SUPERSEDED', superseded.body.status === 'SUPERSEDED')
+
+    /* ---- Now read audit.log and confirm every workflow above produced its
+       matching event. The pre-existing 9 events (submission_created,
+       submission_duplicate, submission_viewed, status_changed,
+       judgment_saved, visit_created, visit_activated, visit_cleared,
+       patient_identity_linked) already have coverage in
+       tests/server.spec.mjs / tests/crm-store.spec.mjs and are not
+       re-tested here -- these are the remaining 23. ---- */
+    const lines = await readAuditLines(auditLogPath(dataDir))
+    const hasEvent = (ev) => lines.some((l) => l.event === ev)
+
+    const requiredEvents = [
+      AUDIT_EVENTS.WORKSPACE_SAVED,
+      AUDIT_EVENTS.VISIT_WORKSPACE_SAVED,
+      AUDIT_EVENTS.STATION_REGISTERED,
+      AUDIT_EVENTS.STATION_ASSIGNED,
+      AUDIT_EVENTS.STATION_RESET,
+      AUDIT_EVENTS.STATION_COMPLETED,
+      AUDIT_EVENTS.FOLLOW_UP_SESSION_ISSUED,
+      AUDIT_EVENTS.FOLLOW_UP_SESSION_REISSUED,
+      AUDIT_EVENTS.FOLLOW_UP_SESSION_INVALIDATED,
+      AUDIT_EVENTS.FOLLOW_UP_SESSION_SUBMITTED,
+      AUDIT_EVENTS.RECORDER_RESULT_SAVED,
+      AUDIT_EVENTS.MICRO_FOLLOW_UP_SAVED,
+      AUDIT_EVENTS.CRM_EPISODE_CREATED,
+      AUDIT_EVENTS.CRM_EPISODE_PAUSED,
+      AUDIT_EVENTS.CRM_EPISODE_COMPLETED,
+      AUDIT_EVENTS.CRM_EPISODE_REOPENED,
+      AUDIT_EVENTS.CRM_TASK_CREATED,
+      AUDIT_EVENTS.CRM_TASK_RESOLVED,
+      AUDIT_EVENTS.CRM_TASK_SNOOZED,
+      AUDIT_EVENTS.CRM_TASK_CANCELLED,
+      AUDIT_EVENTS.CRM_TASK_SUPERSEDED,
+      AUDIT_EVENTS.CRM_TASK_CLAIMED,
+      AUDIT_EVENTS.CRM_TASK_SEEN,
+    ]
+    assert('workflow: exactly 23 events are asserted here (the 32-event registry minus the 9 already covered elsewhere)', requiredEvents.length === 23)
+    for (const ev of requiredEvents) {
+      assert(`workflow: ${ev} appears at least once in audit.log`, hasEvent(ev))
+    }
+
+    // Minimal-fields contract holds for every line this run produced, not
+    // just the ones this file specifically drove.
+    const allowedKeys = new Set(['ts', 'event', 'submission_id', 'actor', 'status', 'visit_id'])
+    assert(
+      'workflow: every audit.log line has only the allowed 6 keys',
+      lines.length > 0 && lines.every((l) => Object.keys(l).every((k) => allowedKeys.has(k))),
+    )
+    assert(
+      'workflow: every audit.log line has a valid ISO ts',
+      lines.every((l) => typeof l.ts === 'string' && !Number.isNaN(Date.parse(l.ts))),
+    )
+
+    // recorder_result_saved specifics: actor is the newly-registered
+    // 'recorder' actor (previously invalid -> always thrown -> always
+    // swallowed by safeAudit, so this event never actually reached
+    // audit.log before this batch), and recording_id must never appear --
+    // logEvent's destructuring silently drops any key outside its fixed 6.
+    const recorderLines = lines.filter((l) => l.event === AUDIT_EVENTS.RECORDER_RESULT_SAVED)
+    assert('recorder_result_saved: at least one line was written', recorderLines.length > 0)
+    assert('recorder_result_saved: actor is AUDIT_ACTORS.RECORDER on every line', recorderLines.every((l) => l.actor === AUDIT_ACTORS.RECORDER))
+    assert('recorder_result_saved: no recording_id key on any line', recorderLines.every((l) => !('recording_id' in l)))
+
+    // station_completed specifics: actor is patient (the tablet reporting
+    // on the patient's behalf), not doctor.
+    const stationCompletedLines = lines.filter((l) => l.event === AUDIT_EVENTS.STATION_COMPLETED)
+    assert('station_completed: actor is AUDIT_ACTORS.PATIENT', stationCompletedLines.every((l) => l.actor === AUDIT_ACTORS.PATIENT))
+  } finally {
+    await stopServer(server)
+    await rm(dataRoot, { recursive: true, force: true })
+  }
+
+  /* =====================================================================
+     Part 3: unknown/malformed event contract -- logEvent() throws on an
+     unregistered event or actor name, and writes nothing to disk when it
+     does.
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-unknown-'))
+    try {
+      const dataDir = path.join(tmpRoot, 'submissions')
+      const audit = createAuditLog(dataDir)
+
+      let eventThrew = false
+      try {
+        await audit.logEvent({ event: 'not_a_real_event', actor: AUDIT_ACTORS.DOCTOR, submission_id: 'x' })
+      } catch (err) {
+        eventThrew = err instanceof Error && err.message.includes('invalid audit event')
+      }
+      assert('logEvent throws on an unregistered event name', eventThrew)
+
+      let actorThrew = false
+      try {
+        await audit.logEvent({ event: AUDIT_EVENTS.SUBMISSION_VIEWED, actor: 'nurse', submission_id: 'x' })
+      } catch (err) {
+        actorThrew = err instanceof Error && err.message.includes('invalid audit actor')
+      }
+      assert('logEvent throws on an unregistered actor name', actorThrew)
+
+      const linesAfterFailedAttempts = await readAuditLines(auditLogPath(dataDir))
+      assert('a failed logEvent call writes nothing to audit.log', linesAfterFailedAttempts.length === 0)
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- HTTP boundary: a genuine internal audit write failure never
+     surfaces to the client or breaks the request. Forces a REAL failure
+     (no product code touched) by pre-creating a directory at audit.log's
+     own path, so every appendFile() inside logEvent() genuinely throws
+     (EISDIR) -- this is exactly the failure safeAudit()'s try/catch in
+     server/index.js is documented to swallow. ---- */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-blocked-'))
+    try {
+      const dataDir = path.join(tmpRoot, 'submissions')
+      await mkdir(auditLogPath(dataDir), { recursive: true })
+      const { server, base } = await startServer({ dataDir })
+      try {
+        const res = await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ questionnaire_version: '1.0', session_id: 'audit-blocked-1', responses: { patient: {} } }),
+        })
+        assert('a request whose audit write genuinely fails (EISDIR) still succeeds at the HTTP boundary', res.status === 201)
+        const body = await res.json()
+        assert('...and returns a normal, complete response body', typeof body.id === 'string' && typeof body.created_at === 'string')
+      } finally {
+        await stopServer(server)
+      }
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 4: retry/dedup semantics -- a legitimate client retry that a
+     store's own dedup guard replays must never double-write the audit
+     line for the underlying event.
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-dedup-task-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+      const episode = (await postJson(`${base}/api/crm/episodes`, { patient_uuid: visit.patient_id })).body
+      const beforeLines = await readAuditLines(auditLogPath(dataDir))
+      const beforeCount = beforeLines.filter((l) => l.event === AUDIT_EVENTS.CRM_TASK_CREATED).length
+
+      const taskBody = {
+        patient_uuid: visit.patient_id,
+        episode_id: episode.episode_id,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-audit-dedup-task',
+      }
+      const first = await postJson(`${base}/api/crm/tasks`, taskBody)
+      const second = await postJson(`${base}/api/crm/tasks`, taskBody)
+      assert('dedup setup: first create is NOT deduped', first.body.deduped === false)
+      assert('dedup setup: second create with identical dedup fields IS deduped', second.body.deduped === true)
+
+      const afterLines = await readAuditLines(auditLogPath(dataDir))
+      const afterCount = afterLines.filter((l) => l.event === AUDIT_EVENTS.CRM_TASK_CREATED).length
+      assert('dedup: exactly ONE crm_task_created audit line for two dedup-identical create calls', afterCount - beforeCount === 1)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-dedup-revisit-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+      const patientId = visit.patient_id
+
+      // Fired back-to-back with no delay, well inside the store's default
+      // 5s dedup window (server/store.js's startRevisitDedupWindowMs).
+      const [r1, r2] = await Promise.all([
+        postJson(`${base}/api/patients/${patientId}/start-revisit`, { delivery_mode: 'PERSONAL_QR' }),
+        postJson(`${base}/api/patients/${patientId}/start-revisit`, { delivery_mode: 'PERSONAL_QR' }),
+      ])
+      assert('revisit-start dedup: both calls resolve to the SAME visit', r1.body.visit.id === r2.body.visit.id)
+      const revisitVisitId = r1.body.visit.id
+
+      const lines = await readAuditLines(auditLogPath(dataDir))
+      const visitCreatedCount = lines.filter((l) => l.event === AUDIT_EVENTS.VISIT_CREATED && l.visit_id === revisitVisitId).length
+      const issuedCount = lines.filter((l) => l.event === AUDIT_EVENTS.FOLLOW_UP_SESSION_ISSUED && l.visit_id === revisitVisitId).length
+      assert('revisit-start dedup: exactly ONE visit_created line for this revisit visit', visitCreatedCount === 1)
+      assert('revisit-start dedup: exactly ONE follow_up_session_issued line for this revisit visit', issuedCount === 1)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 5: concurrent-write safety -- many audit-generating requests
+     fired in parallel must land as exactly that many clean, individually
+     parseable JSON lines, never truncated or interleaved.
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-concurrent-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const submissionRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ questionnaire_version: '1.0', session_id: 'audit-concurrent-1', responses: { patient: {} } }),
+      })
+      const sub = await submissionRes.json()
+
+      const beforeLines = await readAuditLines(auditLogPath(dataDir))
+      const beforeCount = beforeLines.length
+
+      const N = 50
+      const results = await Promise.all(
+        Array.from({ length: N }, () => fetch(`${base}/api/submissions/${sub.id}`, { headers: AUTH_HEADERS })),
+      )
+      assert('concurrent: all 50 concurrent GETs succeeded', results.every((r) => r.status === 200))
+
+      const rawAfter = await readFile(auditLogPath(dataDir), 'utf8')
+      const rawLines = rawAfter.trim().split('\n').filter(Boolean)
+      assert(
+        'concurrent: every single line in audit.log parses as clean JSON (no truncation/interleaving)',
+        rawLines.every((l) => {
+          try {
+            JSON.parse(l)
+            return true
+          } catch {
+            return false
+          }
+        }),
+      )
+      const afterLines = rawLines.map((l) => JSON.parse(l))
+      assert('concurrent: exactly N new audit lines were appended for N concurrent audited requests', afterLines.length - beforeCount === N)
+      const newSubmissionViewedCount = afterLines.filter((l) => l.event === AUDIT_EVENTS.SUBMISSION_VIEWED && l.submission_id === sub.id).length
+      assert('concurrent: all N new lines are the expected submission_viewed event for this id', newSubmissionViewedCount === N)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  console.log(`\n${passCount} audit registry assertions passed.`)
+}
+
+main().catch((err) => {
+  console.error(err)
+  process.exitCode = 1
+})

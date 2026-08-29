@@ -1769,27 +1769,182 @@ async function main() {
     }
   }
 
-  /* ---- Independent-review finding (#7): scripts/purge-data.mjs purged
-     submissions/recorder-results/etc. and the audit log, but never
-     crm-identity/, silently leaving linked patient names on disk after a
-     pilot-end purge. ---- */
+  /* =====================================================================
+     Purge completeness (Purge completeness batch): the original
+     Independent-review finding (#7) below only proved crm-identity/ gets
+     removed. Extended here to prove the FULL pilot-end-purge promise
+     end-to-end -- seed one instance of every persistence family this round
+     added purge coverage for (visits/ + its visit-owned workspace, crm/
+     Episode+Task, crm-identity/, submissions/, audit.log), verify each one
+     genuinely exists first, run the real purge script via execFileSync
+     (never the store function directly -- this must prove the actual
+     operator-facing script, same as the original finding below), then
+     prove: nothing wanders outside the data root, every seeded family is
+     gone, a second purge on the empty root is a no-op (not a crash), and a
+     completely fresh server instance pointed at the purged root sees
+     genuinely empty state everywhere -- no phantom recovered tasks from a
+     leftover dedup pointer, no orphan identity pointer, nothing.
+     ===================================================================== */
   {
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-purge-identity-'))
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-purge-full-'))
     const submissionsDir = path.join(dataRoot, 'submissions')
+    // A sentinel OUTSIDE dataRoot entirely -- proves the purge script can
+    // never wander past its explicit, hand-enumerated directory list (see
+    // scripts/purge-data.mjs's own header comment on why it uses an
+    // explicit list rather than "scan dataRoot's parent and delete
+    // everything not on an exclude list").
+    const sentinelRoot = await mkdtemp(path.join(tmpdir(), 'samindang-purge-sentinel-'))
+    const sentinelFile = path.join(sentinelRoot, 'must-survive.txt')
+    let server
     try {
-      const store = createPatientIdentityStore(path.join(dataRoot, 'crm-identity'))
-      const uuid = randomUUID()
-      await store.linkPatientIdentity({ patientUuid: uuid, chartNo: 'CN-8008', patientName: '환자H', confirmedBy: 'staff-1', now: T0 })
-      assert('purge-data: sanity check -- the link file exists on disk before purge', (await readRaw(path.join(dataRoot, 'crm-identity', 'links', `${uuid}.json`))) !== null)
+      await writeFile(sentinelFile, 'must survive the purge', 'utf8')
 
+      ;({ server } = await startServer({ dataDir: submissionsDir, doctorToken: 'test-doctor-token' }))
+      const base = `http://127.0.0.1:${server.address().port}`
+      const headers = { 'content-type': 'application/json', 'x-doctor-token': 'test-doctor-token' }
+
+      /* ---- seed: one instance of every family this batch covers ---- */
+
+      // (a) a real submission via the actual patient-facing HTTP route.
+      const submissionRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ questionnaire_version: '1.0', session_id: 'purge-seed-submission', responses: { patient: {} } }),
+      })
+      const submission = await submissionRes.json()
+      assert('purge-full: seed submission created (201)', submissionRes.status === 201)
+
+      // (b) a revisit visit (visits/, no submission_id) with a saved
+      // visit-owned workspace -- exercises the visits/ purge coverage this
+      // batch specifically added.
+      const revisitPatientVisit = await (await fetch(`${base}/api/visits`, { method: 'POST', headers, body: '{}' })).json()
+      const revisitStart = await (
+        await fetch(`${base}/api/patients/${revisitPatientVisit.patient_id}/start-revisit`, { method: 'POST', headers, body: '{}' })
+      ).json()
+      const revisitVisitId = revisitStart.visit.id
+      const visitWorkspaceRes = await fetch(`${base}/api/visits/${revisitVisitId}/workspace`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ note: 'purge-seed visit workspace' }),
+      })
+      assert('purge-full: seed visit workspace saved (200)', visitWorkspaceRes.status === 200)
+
+      // (c) a CRM episode + task (crm/).
+      const episode = await (
+        await fetch(`${base}/api/crm/episodes`, { method: 'POST', headers, body: JSON.stringify({ patient_uuid: revisitPatientVisit.patient_id }) })
+      ).json()
+      const taskRes = await fetch(`${base}/api/crm/tasks`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          patient_uuid: episode.patient_uuid,
+          episode_id: episode.episode_id,
+          task_type: 'ROUTINE',
+          reason_code: 'REASSESSMENT_DUE',
+          source_event_id: 'evt-purge-seed',
+        }),
+      })
+      assert('purge-full: seed CRM task created (201)', taskRes.status === 201)
+
+      // (d) the pre-existing identity-link scenario (crm-identity/),
+      // unchanged from the original Independent-review finding (#7).
+      const identityStore = createPatientIdentityStore(path.join(dataRoot, 'crm-identity'))
+      const identityUuid = randomUUID()
+      await identityStore.linkPatientIdentity({ patientUuid: identityUuid, chartNo: 'CN-8008', patientName: '환자H', confirmedBy: 'staff-1', now: T0 })
+
+      // (e) audit.log -- every HTTP action above already wrote to it.
+
+      /* ---- verify-exists: every seeded family is genuinely on disk
+         BEFORE the purge, so the "verify-gone" assertions below are
+         meaningful and not vacuously true. ---- */
+      assert('purge-full: sanity -- submission file exists before purge', (await readRaw(path.join(submissionsDir, `${submission.id}.json`))) !== null)
+      const visitFileBefore = await readRaw(path.join(dataRoot, 'visits', `${revisitVisitId}.json`))
+      assert('purge-full: sanity -- revisit visit file exists with its saved workspace before purge', visitFileBefore?.workspace?.note === 'purge-seed visit workspace')
+      assert('purge-full: sanity -- crm episode file exists before purge', (await readRaw(path.join(dataRoot, 'crm', 'episodes', `${episode.episode_id}.json`))) !== null)
+      const crmTasksBefore = (await readdir(path.join(dataRoot, 'crm', 'tasks'))).filter((f) => f.endsWith('.json'))
+      assert('purge-full: sanity -- crm task file exists before purge', crmTasksBefore.length > 0)
+      assert('purge-full: sanity -- crm-identity link file exists before purge', (await readRaw(path.join(dataRoot, 'crm-identity', 'links', `${identityUuid}.json`))) !== null)
+      const auditRawBefore = await readFile(path.join(dataRoot, 'audit.log'), 'utf8').catch(() => '')
+      assert('purge-full: sanity -- audit.log has content before purge', auditRawBefore.trim().length > 0)
+
+      // Drift-guard: the exact set of top-level entries this seeding
+      // produces. If a FUTURE round adds a new persistence directory
+      // without updating this test (or scripts/purge-data.mjs's own
+      // inventory comment), a new, unexpected entry shows up here and this
+      // assertion fails loudly instead of the gap going unnoticed.
+      const topLevelBeforePurge = (await readdir(dataRoot)).sort()
+      const expectedTopLevel = ['audit.log', 'crm', 'crm-identity', 'follow-up-sessions', 'submissions', 'visits'].sort()
+      assert(
+        'purge-full: drift-guard -- top-level entries under the data root are exactly what this seeding is expected to produce',
+        JSON.stringify(topLevelBeforePurge) === JSON.stringify(expectedTopLevel),
+      )
+
+      await stopServer(server)
+      server = undefined
+
+      /* ---- run the actual operator-facing script (not the store function
+         directly) ---- */
       execFileSync(process.execPath, [path.join(process.cwd(), 'scripts', 'purge-data.mjs'), '--yes'], {
         env: { ...process.env, SAMINDANG_DATA_DIR: submissionsDir },
       })
 
+      /* ---- sentinel outside dataRoot is completely untouched ---- */
+      assert('purge-full: a sentinel file OUTSIDE the data root survives the purge untouched', (await readFile(sentinelFile, 'utf8')) === 'must survive the purge')
+
+      /* ---- verify-gone: every seeded family ---- */
+      const submissionFilesAfter = await readdir(submissionsDir).catch(() => [])
+      assert('purge-full: no submission files remain', submissionFilesAfter.filter((f) => f.endsWith('.json')).length === 0)
+      const visitFilesAfter = await readdir(path.join(dataRoot, 'visits')).catch(() => [])
+      assert('purge-full: visits/ has no .json files remaining (or the directory itself is gone)', visitFilesAfter.filter((f) => f.endsWith('.json')).length === 0)
+      const crmDirGone = await access(path.join(dataRoot, 'crm')).then(() => false).catch(() => true)
+      assert('purge-full: crm/ is gone entirely', crmDirGone)
       const identityDirGone = await access(path.join(dataRoot, 'crm-identity')).then(() => false).catch(() => true)
-      assert('purge-data: purge removes crm-identity/ entirely, not just submissions/', identityDirGone)
+      assert('purge-full: crm-identity/ is gone entirely, not just submissions/', identityDirGone)
+      const auditLogGone = await access(path.join(dataRoot, 'audit.log')).then(() => false).catch(() => true)
+      assert('purge-full: audit.log is gone (purgeAuditLog unlinks it)', auditLogGone)
+
+      /* ---- idempotency: running the purge again on the now-empty root
+         must not throw (ENOENT-tolerant everywhere) ---- */
+      let secondRunThrew = false
+      try {
+        execFileSync(process.execPath, [path.join(process.cwd(), 'scripts', 'purge-data.mjs'), '--yes'], {
+          env: { ...process.env, SAMINDANG_DATA_DIR: submissionsDir },
+        })
+      } catch {
+        secondRunThrew = true
+      }
+      assert('purge-full: running the purge script again on an already-purged root exits cleanly (idempotent)', !secondRunThrew)
+
+      /* ---- restart-clean: a completely FRESH server instance pointed at
+         the purged root sees genuinely empty state everywhere -- no
+         phantom recovered tasks from a leftover dedup pointer, no orphan
+         identity pointer, nothing surviving a restart. ---- */
+      ;({ server } = await startServer({ dataDir: submissionsDir, doctorToken: 'test-doctor-token' }))
+      const freshBase = `http://127.0.0.1:${server.address().port}`
+
+      const submissionsAfter = await (await fetch(`${freshBase}/api/submissions`, { headers })).json()
+      assert('purge-full: restart-clean -- GET /api/submissions is empty', Array.isArray(submissionsAfter) && submissionsAfter.length === 0)
+
+      const tasksAfter = await (await fetch(`${freshBase}/api/crm/tasks`, { headers })).json()
+      assert('purge-full: restart-clean -- the CRM Today Queue is empty', Array.isArray(tasksAfter.tasks) && tasksAfter.tasks.length === 0)
+
+      const revisitsAfter = await (await fetch(`${freshBase}/api/visits/revisits`, { headers })).json()
+      assert('purge-full: restart-clean -- the revisit queue is empty', Array.isArray(revisitsAfter) && revisitsAfter.length === 0)
+
+      const stationsAfter = await (await fetch(`${freshBase}/api/stations`, { headers })).json()
+      assert('purge-full: restart-clean -- the stations list is empty', Array.isArray(stationsAfter.stations) && stationsAfter.stations.length === 0)
+
+      const identityAfter = await (
+        await fetch(`${freshBase}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(identityUuid)}`, { headers })
+      ).json()
+      assert(
+        'purge-full: restart-clean -- the previously-linked patient_uuid resolves false (no orphan identity pointer survives)',
+        identityAfter.identities[identityUuid]?.resolved === false,
+      )
     } finally {
+      if (server) await stopServer(server)
       await rm(dataRoot, { recursive: true, force: true })
+      await rm(sentinelRoot, { recursive: true, force: true })
     }
   }
 

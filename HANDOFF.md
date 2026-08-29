@@ -3334,6 +3334,101 @@ Backlog(MEDIUM/LOW, 즉시 조치 불필요, 다음 라운드 후보):
 main에는 절대 push하지 않음, merge하지 않음(HUMAN DECISION REQUIRED
 2건은 PR 리뷰에서 사용자에게 별도로 명시).
 
+### 후속 배치: BodyMap PNG artwork + railSelection + NECK/SHOULDER/ANKLE_FOOT 회귀 커버리지
+
+위 배치를 PR #24 댓글로 리뷰한 Gomars93(OWNER)가 scope 정정을 지시:
+BodyMap PNG artwork/rendering과 landscape `railSelection`은 현재 보호
+정책상 HUMAN DECISION REQUIRED 대상이 **아니다** — region/zone identity,
+선택 semantics, routing, threshold, safety 로직, 저장된 provenance가
+전혀 안 바뀌는 한 non-clinical presentation/UX이므로 자율적으로
+이식하거나 이미 동등/대체됨을 증명하라는 지시. NECK/SHOULDER/
+ANKLE_FOOT의 PR #23 테스트 추가분도 "자동으로 범위 밖"이 아니라
+회귀 커버리지로 재평가해, 진짜로 빠진 non-clinical 커버리지만
+(clinical 로직을 건드리지 않고) 이식하라는 지시.
+
+**실행 내용:**
+- PR #23의 실제 커밋된 `src/assets/bodymap/front.png`/`back.png`를
+  직접 diff/디코드해 검증(자체 제작 PNG chunk-integrity 체커 +
+  from-scratch pixel decoder) — 구조적으로 유효한 PNG이고, 두 파일이
+  pixel 단위로 서로 다름(408,960 바이트 중 38,605 바이트 차이)을
+  직접 확인한 뒤에만 이식. PR #23 자체 커밋 히스토리에는 한때
+  "corrupted" 버전과 "pixel-identical" 버전이 있었다는 기록이 있었으나,
+  PR #23 최종 HEAD의 실제 파일은 이미 그 문제들이 해결된 상태였음을
+  실측으로 확인 — 기록을 그대로 믿지 않고 직접 검증.
+- `src/components/BodyMap.tsx`를 PR #23판(535줄)으로 전체 교체:
+  PNG를 1차 artwork로, 기존 inline SVG(`Silhouette`, 이번에 매끄러운
+  베지어 곡선 토르소/팔/다리로 재설계 + 목 연결부 추가 + 얼굴 cue
+  완전 제거)는 PNG 로드 실패/손상 시 자동 fallback으로 유지
+  (`Artwork()`, canvas 기반 pixel-variance 무결성 체크 — 손상된 PNG가
+  Chromium에서 `onError`를 안 띄우는 실제 결함 케이스를 커버). 실제
+  버그 수정도 포함: `knee`/`arm_hand`/`leg_foot`처럼 같은 view에 zone이
+  2개 있는 값을 탭하면 기존 코드는 둘 다에 체크마크가 뜨는 버그가
+  있었음 — `zoneKey()`/`defaultStrongZoneKey()`/`strongZoneKey`로 정확히
+  탭한 zone 하나만 강조하도록 수정(같은 값의 다른 zone은 약한 tint만).
+  `bodyMap__selectedChip`의 `aria-hidden="true"`도 `aria-live="polite"`로
+  수정(기존엔 실제 상태 변경 정보가 스크린리더에 전혀 전달 안 됐음).
+- `App.tsx`/`ScreenShell.tsx`: `railSelection` prop을 실제로 배선
+  (landscape 우측 rail에 "선택한 부위: X" 상시 표시).
+- `package.json`: `test:body-map`에 `--loader:.png=dataurl` 추가,
+  신규 `test:bodymap-assets` 스크립트 + `test:all` 체인 편입.
+- `tests/bodymap-assets.spec.mjs`(신규, PR #23 원본 그대로 318줄):
+  PNG 구조적 무결성 + pixel 디코드 기반 front/back 구분 검증 +
+  BodyMap.tsx/styles.css 소스 검증. 실제 커밋된 PNG 대상 17/17 통과.
+- `tests/body-map.spec.mjs` 대폭 재작성(264줄 변경): "양쪽 무릎 동시
+  체크마크" 버그의 회귀 테스트, Silhouette 재설계 검증, aria-live
+  수정 검증 등 추가. 118/118 통과.
+- `tests/integration.spec.mjs`에 PR #23의 X(NECK_V1 branch-visibility
+  matrix)/Y(SHOULDER_V1)/Z(ANKLE_FOOT_V1, "가장 테스트가 얇은 모듈"
+  audit finding 대응 + 전체 blank walk)/AA(9개 지역 모듈 상호
+  cross-region leak audit) 섹션을 원본 그대로 추가(~400줄) — 이
+  섹션들이 건드리는 `neckLogic.ts`/`shoulderLogic.ts`/
+  `ankleFootLogic.ts`/`ankleFootAdapter.ts`는 PR #23 fork 시점과
+  현재 origin/main 사이 완전히 동일함을 직접 diff로 재확인한 뒤 이식
+  (clinical 로직 변경 전혀 없음). 1154/1154 통과.
+- PR #23의 `numeric_scale` CSS grid 개선, landscape CTA 높이 축소
+  테스트는 이번 topic(BodyMap/NECK/SHOULDER/ANKLE_FOOT)과 무관해
+  여전히 범위 밖으로 판단, 이식하지 않음.
+
+**Opus 최종 closing 검수(model:opus subagent, 이 배치의 최종 커밋
+직전 상태 기준) 결과:** HIGH 1건 발견 — landscape에서
+`.bodyMap__selectedLabel`/`.bodyMap__selectedChip`을 무조건 숨기는
+CSS 규칙과, 아직 아무 부위도 선택하지 않았을 때(`typeof value !==
+'string'`) `railSelection`이 `null`이 되는 App.tsx 로직이 겹쳐,
+BodyMap 화면 최초 진입 시(landscape, 미선택 상태) 화면 어디에도
+"부위를 선택해주세요" 안내가 뜨지 않는 실제 결함을 지적(부수적으로
+스크린리더 aria-live 영역도 첫 선택 시 "이미 채워진 채 나타나는" 것이
+되어 그 첫 변경을 announce하지 않는 접근성 문제 동반). **즉시 수정**:
+`railSelection`을 `current.layout === 'body_map'`이면 무조건
+non-null이 되도록 변경(값이 없으면 "부위를 선택해주세요" 텍스트),
+`tests/viewport-budget.spec.mjs`에 이 정확한 회귀를 잡는 소스-레벨
+assertion 2건 추가, 실제 헤드리스 브라우저로 landscape+미선택 상태에서
+rail이 "부위를 선택해주세요"를 정확히 렌더링함을 재확인. 같은 리뷰가
+지적한 non-blocking 항목(모두 backlog로 기록, 즉시 조치 없음): (1)
+`bodymap-assets.spec.mjs`의 aria-hidden assertion에 있던 vacuous
+`||` fallback 제거(수정 완료, 즉시 반영); (2) `.bodyMap__figure`
+aspect-ratio(480/853)가 실제 PNG 치수(480/852)와 0.12% 오차(시각적
+영향 없음, CSS 값 그대로 유지); (3) `decodePngPixels()`가 지원하지
+않는 인코딩(interlaced/16-bit)에서는 조용히 SKIP만 하고 fail하지
+않음(향후 강화 후보); (4) `zoneKey` 파싱이 PAIN_01 enum에 하이픈이
+없다는 암묵적 전제에 의존(현재는 안전, 향후 강화 후보).
+
+**실기기/브라우저 QA(헤드리스 Chromium, 직접 실행):** portrait에서
+BodyMap 화면 진입 시 PNG 두 장(`naturalWidth=240`, fallback 미발동)
+정상 렌더 확인; 무릎 zone 탭 시 체크마크 정확히 1개만 표시됨을 실제
+클릭으로 확인(SSR 테스트가 아니라 실제 상호작용); landscape 전환 시
+우측 rail에 "선택한 부위: 무릎"이 정확히 1회 표시되고 본문의
+selectedChip은 `display: none`으로 확인; **HIGH 수정 후 재확인**:
+landscape에서 미선택 상태로 최초 진입 시 rail이 "부위를 선택해주세요"를
+정확히 표시함을 확인.
+
+**전체 게이트:** `tsc -b --force`, `build`, `build:preview`(PNG가
+해시된 자산으로 정상 번들링됨 확인), `test:all` 전체(신규
+`test:bodymap-assets` 포함) 모두 green. FROZEN
+`src/spec/*Logic.ts`/`*Adapter.ts`는 이번 배치가 **`src/spec/` 파일을
+전혀 건드리지 않았음**(staged diff에 `src/spec/` 파일 0개, Opus가
+직접 확인)과 `origin/main` 대비 zero-diff(브랜치 tip이 아니라
+origin/main 직접 비교, 사용자 지시대로)를 함께 확인.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE).
 

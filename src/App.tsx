@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getBodyMapZoneLabel } from './components/BodyMap'
 import { HelpModal } from './components/HelpModal'
 import { IdleWarningModal } from './components/IdleWarningModal'
 import { PatientErrorBoundary } from './components/PatientErrorBoundary'
@@ -622,6 +623,31 @@ function AppContent() {
   const value = responses[current.id]
   const answered = !current.required || isAnswered(current, value)
   const showConfirm = needsConfirmButton()
+  // Tablet UX v2.3 §11-12: Body Map 화면에서 landscape 우측 rail에 "지금
+  // 뭘 선택했는지"를 항상 보여준다(스크롤과 무관). ScreenShell 자체는
+  // BodyMap 내부를 모르므로, 여기서 미리 계산해 짧은 텍스트만 넘긴다.
+  //
+  // CRITICAL (closing review fix): landscape에서는 styles.css가
+  // .bodyMap__selectedLabel/.bodyMap__selectedChip을 항상 숨기고 이
+  // rail이 그 자리를 대신한다 -- 값이 없을 때(아직 아무 부위도 선택
+  // 안 함)도 반드시 무언가를 렌더링해야 한다. 아니면 BodyMap.tsx의
+  // "부위를 선택해주세요" 안내가 landscape에서 완전히 사라지고(첫
+  // 화면에 아무 안내도 없음), 이 aria-live 영역도 첫 선택 시 "새로
+  // 나타나며 채워지는" 것이 되어 스크린리더가 그 첫 변경을 announce하지
+  // 않는다(기존에 존재하던 live region의 "내용 변경"만 announce됨).
+  // typeof value === 'string' 여부와 무관하게 body_map 화면이면 항상
+  // non-null을 반환해 rail이 처음부터 안정적인 live region으로 존재하게
+  // 한다.
+  const railSelection =
+    current.layout === 'body_map' ? (
+      typeof value === 'string' ? (
+        <>
+          선택한 부위: <strong>{getBodyMapZoneLabel(value)}</strong>
+        </>
+      ) : (
+        '부위를 선택해주세요'
+      )
+    ) : null
 
   return (
     <>
@@ -635,6 +661,7 @@ function AppContent() {
         // 유지하고, 짧은 카테고리 선택 화면(grid2/compact3/body_map)만
         // 더 넓게 쓴다.
         wideContent={current.layout != null && current.layout !== 'list'}
+        railSelection={railSelection}
         canGoBack={visited.length > 0}
         onBack={goBack}
         onHelp={() => {

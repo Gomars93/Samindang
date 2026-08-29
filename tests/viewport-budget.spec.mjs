@@ -368,6 +368,20 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
     'App.tsx: nextQuestion()/goBack() actually call the real shouldAutoAdvancePast (imported from coreSpec.ts), not a local reimplementation',
     (appSrc.match(/shouldAutoAdvancePast\(/g) || []).length >= 2,
   )
+
+  // Closing-review fix: styles.css unconditionally hides
+  // .bodyMap__selectedLabel/.bodyMap__selectedChip in wide landscape
+  // (the railSelection rail is meant to replace them) -- but if
+  // railSelection were only computed when a value already exists, a
+  // patient who has not yet tapped a zone would see NO prompt anywhere
+  // in landscape (no center label, no chip, no rail text), and the
+  // rail's aria-live region would arrive pre-filled on first selection
+  // instead of announcing a mutation. railSelection must therefore be
+  // non-null for every body_map screen regardless of whether value is
+  // already a string.
+  const railSelectionMatch = appSrc.match(/const railSelection =\s*\n\s*current\.layout === 'body_map' \? \(([\s\S]*?)\n\s*\) : null/)
+  assert('App.tsx CRITICAL: railSelection is non-null for every body_map screen (not gated on typeof value === \'string\'), so landscape always has a prompt even before any zone is tapped', Boolean(railSelectionMatch))
+  assert('App.tsx CRITICAL: railSelection falls back to the unselected prompt text ("부위를 선택해주세요") when no value is chosen yet, matching BodyMap.tsx\'s own selectedLabel fallback', Boolean(railSelectionMatch) && /부위를 선택해주세요/.test(railSelectionMatch[1]))
 }
 
 /* =========================================================================

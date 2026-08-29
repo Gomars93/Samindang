@@ -4042,4 +4042,404 @@ function simulateNextQuestion(fromId, r) {
   )
 }
 
+/* =========================================================================
+ * X. NECK_V1 -- dedicated branch-visibility matrix for NECK's own
+ * conditional children (docs/QUESTIONNAIRE_BRANCH_AUDIT.md NECK Findings
+ * #3: "no dedicated visibility-branch matrix ... the way KNEE/ELBOW/
+ * WRIST_HAND/HIP/TMJ get in sections N/O/P/Q/R"). Follows the same
+ * visible-when-gate-holds / NOT-visible-and-pruned-when-it-does-not pattern
+ * as those sections, using neckShoulderBaseResponses() (already defined
+ * above, section L/M) as the base.
+ * ========================================================================= */
+
+// --- X-C1: NECK_02A only when NECK_02 has a concrete positive
+// (hasNeckCordConcretePositive, neckLogic.ts) --------------------------------
+{
+  const rUrgentPositive = set(neckShoulderBaseResponses(), { NECK_02: ['RAPIDLY_WORSENING_LIMB_WEAKNESS'] })
+  const rOtherConcretePositive = set(neckShoulderBaseResponses(), { NECK_02: ['HAND_CLUMSINESS'] })
+  const rNone = set(neckShoulderBaseResponses(), { NECK_02: ['NONE'] })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_02: ['UNKNOWN'] })
+  assert('X-C1: NECK_02A visible when NECK_02 has an urgent concrete positive (RAPIDLY_WORSENING_LIMB_WEAKNESS)', visibleIds(rUrgentPositive).has('NECK_02A'))
+  assert('X-C1: NECK_02A visible when NECK_02 has a non-urgent concrete positive (HAND_CLUMSINESS)', visibleIds(rOtherConcretePositive).has('NECK_02A'))
+  assert('X-C1: NECK_02A NOT visible when NECK_02=[NONE]', !visibleIds(rNone).has('NECK_02A'))
+  assert(
+    'X-C1 CRITICAL: NECK_02A NOT visible when NECK_02=[UNKNOWN] -- hasNeckCordConcretePositive excludes UNKNOWN, unlike NECK_10As E1-widened {YES,UNKNOWN} gate below',
+    !visibleIds(rUnknown).has('NECK_02A'),
+  )
+}
+{
+  let r = set(neckShoulderBaseResponses(), { NECK_02: ['HAND_CLUMSINESS'], NECK_02A: 'STABLE' })
+  assert('X-C1b: NECK_02A holds an answer while NECK_02 is concrete-positive', r['NECK_02A'] === 'STABLE')
+  const switched = set(r, { NECK_02: ['NONE'] })
+  assert('X-C1b CRITICAL: switching NECK_02 to [NONE] prunes NECK_02A to null (no stale answer survives hiding)', switched['NECK_02A'] === null)
+  assert('X-C1b: NECK_02A no longer visible after prune', !visibleIds(switched).has('NECK_02A'))
+}
+
+// --- X-C2: NECK_08 only when NECK_07 indicates arm involvement --------------
+{
+  const rShoulder = set(neckShoulderBaseResponses(), { NECK_07: 'SHOULDER_UPPER_ARM' })
+  const rForearm = set(neckShoulderBaseResponses(), { NECK_07: 'FOREARM' })
+  const rHand = set(neckShoulderBaseResponses(), { NECK_07: 'HAND_FINGERS' })
+  const rNeckOnly = set(neckShoulderBaseResponses(), { NECK_07: 'NECK_ONLY' })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_07: 'UNKNOWN' })
+  assert('X-C2: NECK_08 visible when NECK_07=SHOULDER_UPPER_ARM', visibleIds(rShoulder).has('NECK_08'))
+  assert('X-C2: NECK_08 visible when NECK_07=FOREARM', visibleIds(rForearm).has('NECK_08'))
+  assert('X-C2: NECK_08 visible when NECK_07=HAND_FINGERS', visibleIds(rHand).has('NECK_08'))
+  assert('X-C2: NECK_08 NOT visible when NECK_07=NECK_ONLY', !visibleIds(rNeckOnly).has('NECK_08'))
+  assert('X-C2: NECK_08 NOT visible when NECK_07=UNKNOWN', !visibleIds(rUnknown).has('NECK_08'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { NECK_07: 'FOREARM', NECK_08: 'LEFT' })
+  const switched = set(r, { NECK_07: 'NECK_ONLY' })
+  assert('X-C2b CRITICAL: switching NECK_07 to NECK_ONLY prunes NECK_08 to null', switched['NECK_08'] === null)
+}
+
+// --- X-C3: NECK_10A when NECK_10 in {YES, UNKNOWN} (E1 erratum) ------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { NECK_10: 'YES' })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_10: 'UNKNOWN' })
+  const rNo = set(neckShoulderBaseResponses(), { NECK_10: 'NO' })
+  assert('X-C3: NECK_10A visible when NECK_10=YES', visibleIds(rYes).has('NECK_10A'))
+  assert('X-C3: NECK_10A visible when NECK_10=UNKNOWN (E1 erratum widened gate)', visibleIds(rUnknown).has('NECK_10A'))
+  assert('X-C3: NECK_10A NOT visible when NECK_10=NO', !visibleIds(rNo).has('NECK_10A'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { NECK_10: 'UNKNOWN', NECK_10A: 'YES' })
+  const switched = set(r, { NECK_10: 'NO' })
+  assert('X-C3b CRITICAL: switching NECK_10 to NO prunes NECK_10A to null', switched['NECK_10A'] === null)
+}
+
+// --- X-C4: NECK_11 only when NECK_10 === 'YES' exactly (deliberately NOT
+// widened like NECK_10A, per v0.2.1) -----------------------------------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { NECK_10: 'YES' })
+  const rUnknown = set(neckShoulderBaseResponses(), { NECK_10: 'UNKNOWN' })
+  const rNo = set(neckShoulderBaseResponses(), { NECK_10: 'NO' })
+  assert('X-C4: NECK_11 visible when NECK_10=YES', visibleIds(rYes).has('NECK_11'))
+  assert(
+    'X-C4 CRITICAL: NECK_11 stays hidden when NECK_10=UNKNOWN (deliberately narrower than NECK_10A -- v0.2.1 phenotype-only gate, not a bug)',
+    !visibleIds(rUnknown).has('NECK_11'),
+  )
+  assert('X-C4: NECK_11 NOT visible when NECK_10=NO', !visibleIds(rNo).has('NECK_11'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { NECK_10: 'YES', NECK_11: 'YES' })
+  const switched = set(r, { NECK_10: 'UNKNOWN' })
+  assert('X-C4b CRITICAL: switching NECK_10 from YES to UNKNOWN prunes NECK_11 to null (exact-YES gate, not widened)', switched['NECK_11'] === null)
+}
+
+// --- X-C5: NECK_12 only for chronic onset (VISIT_03_SYMPTOM_DURATION) ------
+{
+  const rChronic1 = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: '3m_1y' })
+  const rChronic2 = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: 'over_1y' })
+  const rAcute = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: '1_3m' })
+  const rWithin1w = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: 'within_1w' })
+  assert('X-C5: NECK_12 visible for chronic onset (3m_1y)', visibleIds(rChronic1).has('NECK_12'))
+  assert('X-C5: NECK_12 visible for chronic onset (over_1y)', visibleIds(rChronic2).has('NECK_12'))
+  assert('X-C5: NECK_12 NOT visible for acute onset (1_3m)', !visibleIds(rAcute).has('NECK_12'))
+  assert('X-C5: NECK_12 NOT visible for within_1w onset', !visibleIds(rWithin1w).has('NECK_12'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { VISIT_03_SYMPTOM_DURATION: 'over_1y', NECK_12: 'YES' })
+  const switched = set(r, { VISIT_03_SYMPTOM_DURATION: 'within_1w' })
+  assert('X-C5b CRITICAL: switching VISIT_03_SYMPTOM_DURATION to acute onset prunes NECK_12 to null', switched['NECK_12'] === null)
+}
+
+/* =========================================================================
+ * Y. SHOULDER_V1 -- SH01-dependency of SH02/SH03, SH09-dependency of SH09A
+ * (docs/QUESTIONNAIRE_BRANCH_AUDIT.md SHOULDER Findings #3), plus a
+ * double-check that SH05's already-urgent skip (F2) never drops out of
+ * shoulderSafetyStatus's URGENT OR-chain (the audit doc's M4 cross-ref --
+ * M4 itself only exercises SH04, so this fills the SH05-specific gap).
+ * ========================================================================= */
+
+// --- Y-C1: SH02/SH03 only when SH01 === 'YES' exactly ----------------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['NONE'], SH03: 'NO' })
+  const rNo = set(neckShoulderBaseResponses(), { SH01: 'NO' })
+  const rUnknown = set(neckShoulderBaseResponses(), { SH01: 'UNKNOWN' })
+  assert('Y-C1: SH02 visible when SH01=YES', visibleIds(rYes).has('SH02'))
+  assert('Y-C1: SH02 NOT visible when SH01=NO', !visibleIds(rNo).has('SH02'))
+  assert('Y-C1: SH02 NOT visible when SH01=UNKNOWN (exact-YES gate)', !visibleIds(rUnknown).has('SH02'))
+  assert('Y-C1: SH03 visible when SH01=YES', visibleIds(rYes).has('SH03'))
+  assert('Y-C1: SH03 NOT visible when SH01=NO', !visibleIds(rNo).has('SH03'))
+  assert('Y-C1: SH03 NOT visible when SH01=UNKNOWN (exact-YES gate)', !visibleIds(rUnknown).has('SH03'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH01: 'YES', SH02: ['NONE'], SH03: 'NO' })
+  const switched = set(r, { SH01: 'NO' })
+  assert('Y-C1b CRITICAL: switching SH01 to NO prunes SH02 and SH03 to null', switched['SH02'] === null && switched['SH03'] === null)
+}
+
+// --- Y-C2: SH09A only when SH09 === 'YES' exactly ---------------------------
+{
+  const rYes = set(neckShoulderBaseResponses(), { SH09: 'YES' })
+  const rNo = set(neckShoulderBaseResponses(), { SH09: 'NO' })
+  const rUnknown = set(neckShoulderBaseResponses(), { SH09: 'UNKNOWN' })
+  assert('Y-C2: SH09A visible when SH09=YES', visibleIds(rYes).has('SH09A'))
+  assert('Y-C2: SH09A NOT visible when SH09=NO', !visibleIds(rNo).has('SH09A'))
+  assert('Y-C2: SH09A NOT visible when SH09=UNKNOWN', !visibleIds(rUnknown).has('SH09A'))
+}
+{
+  const r = set(neckShoulderBaseResponses(), { SH09: 'YES', SH09A: 'TRAUMATIC' })
+  const switched = set(r, { SH09: 'NO' })
+  assert('Y-C2b CRITICAL: switching SH09 to NO prunes SH09A to null', switched['SH09A'] === null)
+}
+
+// --- Y-C3: SH05 already-urgent skip never drops out of the URGENT OR-chain -
+{
+  const r = set(neckShoulderBaseResponses(), { SAFETY_01: ['chest_breathing'] })
+  assert('Y-C3: SH05 hidden once Core general_red is already true (fail-safe skip, F2)', !visibleIds(r).has('SH05'))
+  const payload = buildResponsePayload(r)
+  assert(
+    'Y-C3 CRITICAL: shoulderSafetyStatus is still URGENT_REVIEW via core_safety_already_urgent passthrough despite SH05 being skipped (the skip cannot create a safety gap)',
+    payload.safety_flags.shoulder?.shoulder_safety_status === 'URGENT_REVIEW',
+  )
+}
+
+/* =========================================================================
+ * Z. ANKLE_FOOT_V1 -- full branch-visibility matrix + dedicated stale-prune
+ * test + a real blank-{} full walk across every AF_00 region
+ * (docs/QUESTIONNAIRE_BRANCH_AUDIT.md ANKLE_FOOT Findings #3: "the
+ * thinnest-tested module ... this is the module most in need of
+ * test-coverage investment"). Mirrors the KNEE(N)/ELBOW(O) pattern.
+ * ========================================================================= */
+
+function ankleFootBaseResponses(region = 'ANKLE') {
+  let r = emptyResponses()
+  return set(r, {
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    SAFETY_01: ['none'],
+    PAIN_01: 'leg_foot',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    AF_00: region,
+    AF_01: 'NO',
+    AF_02: ['NONE'],
+    AF_06: 'NO_CONCERN',
+    AF_08: 'NO',
+  })
+}
+
+// --- Z-C1: AF_03 only when AF_01 === 'YES' exactly (audit doc Category E:
+// diverges from KNEE_03/ELBOW_03/WH_03's {YES,UNKNOWN} convention -- verified
+// here to actually be the current code behavior, not assumed) --------------
+{
+  const rYes = set(ankleFootBaseResponses(), { AF_01: 'YES' })
+  const rUnknown = set(ankleFootBaseResponses(), { AF_01: 'UNKNOWN' })
+  const rNo = ankleFootBaseResponses()
+  assert('Z-C1: AF_03 visible when AF_01=YES (exact-YES gate)', visibleIds(rYes).has('AF_03'))
+  assert(
+    'Z-C1 CRITICAL: AF_03 stays hidden when AF_01=UNKNOWN -- AF_03 does not follow the {YES,UNKNOWN} convention used by KNEE_03/ELBOW_03/WH_03 (confirmed current behavior, audit doc Category E finding)',
+    !visibleIds(rUnknown).has('AF_03'),
+  )
+  assert('Z-C1: AF_03 NOT visible when AF_01=NO', !visibleIds(rNo).has('AF_03'))
+}
+
+// --- Z-C2: AF_04 via IS_AF_04_SHOWN (AF_01=YES AND AF_00 in
+// {FOOT_TOES, DIFFUSE_OR_MULTIPLE, UNKNOWN}) --------------------------------
+{
+  const rFootYes = set(ankleFootBaseResponses('FOOT_TOES'), { AF_01: 'YES' })
+  const rFootNo = ankleFootBaseResponses('FOOT_TOES')
+  const rDiffuseYes = set(ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE'), { AF_01: 'YES' })
+  const rUnknownRegionYes = set(ankleFootBaseResponses('UNKNOWN'), { AF_01: 'YES' })
+  const rAnkleYes = set(ankleFootBaseResponses('ANKLE'), { AF_01: 'YES' })
+  assert('Z-C2: AF_04 visible when AF_01=YES and AF_00=FOOT_TOES', visibleIds(rFootYes).has('AF_04'))
+  assert('Z-C2: AF_04 visible when AF_01=YES and AF_00=DIFFUSE_OR_MULTIPLE', visibleIds(rDiffuseYes).has('AF_04'))
+  assert('Z-C2: AF_04 visible when AF_01=YES and AF_00=UNKNOWN', visibleIds(rUnknownRegionYes).has('AF_04'))
+  assert('Z-C2: AF_04 NOT visible when AF_01=NO even in AF_00=FOOT_TOES', !visibleIds(rFootNo).has('AF_04'))
+  assert('Z-C2: AF_04 NOT visible when AF_00=ANKLE (not midfoot-relevant) even with AF_01=YES', !visibleIds(rAnkleYes).has('AF_04'))
+}
+
+// --- Z-C3: AF_05 via IS_AF_05_SHOWN (AF_01=YES AND AF_00 in
+// {LOWER_LEG_CALF, ANKLE, HEEL_POSTERIOR_ANKLE, DIFFUSE_OR_MULTIPLE,
+// UNKNOWN}) ------------------------------------------------------------------
+{
+  const rAnkleYes = set(ankleFootBaseResponses('ANKLE'), { AF_01: 'YES' })
+  const rCalfYes = set(ankleFootBaseResponses('LOWER_LEG_CALF'), { AF_01: 'YES' })
+  const rHeelYes = set(ankleFootBaseResponses('HEEL_POSTERIOR_ANKLE'), { AF_01: 'YES' })
+  const rFootYes = set(ankleFootBaseResponses('FOOT_TOES'), { AF_01: 'YES' })
+  const rAnkleNo = ankleFootBaseResponses('ANKLE')
+  assert('Z-C3: AF_05 visible when AF_01=YES and AF_00=ANKLE', visibleIds(rAnkleYes).has('AF_05'))
+  assert('Z-C3: AF_05 visible when AF_01=YES and AF_00=LOWER_LEG_CALF', visibleIds(rCalfYes).has('AF_05'))
+  assert('Z-C3: AF_05 visible when AF_01=YES and AF_00=HEEL_POSTERIOR_ANKLE', visibleIds(rHeelYes).has('AF_05'))
+  assert('Z-C3: AF_05 NOT visible when AF_00=FOOT_TOES (not Achilles-relevant) even with AF_01=YES', !visibleIds(rFootYes).has('AF_05'))
+  assert('Z-C3: AF_05 NOT visible when AF_01=NO even in AF_00=ANKLE', !visibleIds(rAnkleNo).has('AF_05'))
+}
+
+// --- Z-C4: AF_07 via IS_AF_07_SHOWN -- region-gated, explicitly NOT
+// trauma-gated (stays visible even when AF_01=NO) ---------------------------
+{
+  const rCalfNoTrauma = ankleFootBaseResponses('LOWER_LEG_CALF')
+  const rDiffuseNoTrauma = ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE')
+  const rUnknownRegionNoTrauma = ankleFootBaseResponses('UNKNOWN')
+  const rAnkleNoTrauma = ankleFootBaseResponses('ANKLE')
+  assert('Z-C4: AF_07 stays visible when AF_00=LOWER_LEG_CALF even with AF_01=NO (region-gated, not trauma-gated)', visibleIds(rCalfNoTrauma).has('AF_07'))
+  assert('Z-C4: AF_07 stays visible when AF_00=DIFFUSE_OR_MULTIPLE even with AF_01=NO', visibleIds(rDiffuseNoTrauma).has('AF_07'))
+  assert('Z-C4: AF_07 stays visible when AF_00=UNKNOWN even with AF_01=NO', visibleIds(rUnknownRegionNoTrauma).has('AF_07'))
+  assert('Z-C4: AF_07 NOT visible when AF_00=ANKLE (region not calf/diffuse/unknown)', !visibleIds(rAnkleNoTrauma).has('AF_07'))
+}
+
+// --- Z-C5: dedicated stale-prune test for the ANKLE_FOOT module (the audit
+// doc explicitly flags this as missing) --------------------------------------
+{
+  const r = set(ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE'), { AF_01: 'YES', AF_03: 'CAN_WALK_NORMALLY', AF_04: ['NONE'], AF_05: ['NONE'] })
+  assert('Z-C5: AF_03/AF_04/AF_05 all visible and answered while AF_01=YES', ['AF_03', 'AF_04', 'AF_05'].every((id) => visibleIds(r).has(id) && r[id] !== null))
+  const switched = set(r, { AF_01: 'NO' })
+  assert(
+    'Z-C5 CRITICAL: switching AF_01 to NO prunes AF_03/AF_04/AF_05 to null (pruneStaleResponses -- no stale hidden value survives)',
+    ['AF_03', 'AF_04', 'AF_05'].every((id) => switched[id] === null),
+  )
+  assert('Z-C5: AF_03/AF_04/AF_05 no longer visible after the prune', !['AF_03', 'AF_04', 'AF_05'].some((id) => visibleIds(switched).has(id)))
+}
+
+// --- Z-D: real blank-{} full walk through a leg_foot primary-pain patient,
+// hitting every ANKLE_FOOT region via AF_00, confirming the walk terminates
+// and every AF_0x question that should be reachable actually gets visited --
+{
+  const regions = ['LOWER_LEG_CALF', 'ANKLE', 'HEEL_POSTERIOR_ANKLE', 'FOOT_TOES', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN']
+  const everVisibleAll = new Set()
+  for (const region of regions) {
+    let r = emptyResponses()
+    r = set(r, { ID_03: 'female', VISIT_01: 'symptom', VISIT_02_SYMPTOM_MAIN: 'pain', SAFETY_01: ['none'], PAIN_01: 'leg_foot', PAIN_02: ['aching'], PAIN_04: 'none', AF_00: region })
+    const { everVisible, terminated, iterations } = autoAnswerWalk(r)
+    assert(`Z-D1: leg_foot walk (AF_00=${region}) terminates within the ${WALK_CAP}-iteration cap (used ${iterations})`, terminated)
+    for (const id of everVisible) everVisibleAll.add(id)
+  }
+  const expectedAfIds = ['AF_00', 'AF_01', 'AF_02', 'AF_03', 'AF_04', 'AF_05', 'AF_06', 'AF_07', 'AF_08']
+  assert(
+    `Z-D2 CRITICAL: across all 6 AF_00 regions, every reachable ANKLE_FOOT question was actually visited at least once (missing: ${expectedAfIds.filter((id) => !everVisibleAll.has(id)).join(', ') || 'none'})`,
+    expectedAfIds.every((id) => everVisibleAll.has(id)),
+  )
+}
+
+/* =========================================================================
+ * AA. Cross-region leak audit (docs/QUESTIONNAIRE_BRANCH_AUDIT.md item 4):
+ * for each of the 9 regional MSK modules, activating that module's own
+ * PAIN_01/routing value must never expose another module's questions.
+ * moduleOf()/MODULE_PREFIX (used by G/H above) only recognizes the coarse
+ * top-level "pain" bucket -- this defines a finer regional-prefix map to
+ * check the sub-blocks inside "pain" against each other, which nothing
+ * upstream of this section does.
+ *
+ * HIP-vs-LBP (section R: R-C1/R-C2b/R-C5) and TMJ's HFJ_00 HEADACHE_CRANIAL
+ * exclusion (section Q: Q-C4/Q-C5) already have dedicated, thorough tests
+ * for their specific pairing, so they are not duplicated here -- AA-8/AA-9
+ * below add a complementary "vs every OTHER region" sweep using the shared
+ * regionOf() helper instead of re-proving the same pair a second time.
+ * Likewise ELBOW-vs-WRIST_HAND is already covered by O-C5/P-C2/P-C3/
+ * V-ArmHand; AA-4/AA-5 below re-run it through the same uniform mechanism
+ * for consistency with the rest of this section, not as a fresh finding.
+ * ========================================================================= */
+
+const REGIONAL_PREFIXES = {
+  lbp: ['LBP_'],
+  neck: ['NECK_'],
+  shoulder: ['SH', 'NS01'],
+  knee: ['KNEE_'],
+  elbow: ['ELBOW_'],
+  wrist_hand: ['WH_'],
+  ankle_foot: ['AF_'],
+  hip: ['HIP_'],
+  tmj: ['TMJ_', 'HFJ_'],
+}
+function regionOf(id) {
+  for (const [key, prefixes] of Object.entries(REGIONAL_PREFIXES)) {
+    if (prefixes.some((p) => id.startsWith(p))) return key
+  }
+  return null
+}
+
+// AA-1: LBP-only
+{
+  const r = withPainCare({ PAIN_01: 'low_back_pelvis' })
+  const visible = visibleIds(r)
+  const disallowed = ['neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-1: PAIN_01=low_back_pelvis exposes no NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-2: NECK+SHOULDER shared population (F1 invariant -- intentional, per
+// section L/M) vs every other region
+{
+  const r = neckShoulderBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-2: PAIN_01=neck_shoulder (F1 shared NECK+SHOULDER population) exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-3: KNEE-only
+{
+  const r = kneeBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'elbow', 'wrist_hand', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-3: PAIN_01=knee exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-4: arm_hand routed to ELBOW
+{
+  const r = elbowBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-4: PAIN_01=arm_hand, ELBOW_00=ELBOW exposes no questions outside ELBOW/WRIST_HAND (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+  assert('AA-4b: ELBOW_00=ELBOW never exposes WH_* (re-verifies O-C5/P-C2 via the uniform regionOf mechanism)', ![...visible].some((id) => id.startsWith('WH_')))
+}
+
+// AA-5: arm_hand routed to WRIST_HAND
+{
+  const r = wristHandBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'ankle_foot', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-5: PAIN_01=arm_hand, ELBOW_00=WRIST_HAND exposes no questions outside ELBOW/WRIST_HAND (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+  assert('AA-5b: ELBOW_00=WRIST_HAND never exposes ELBOW_01+ safety screens (re-verifies P-C2)', !['ELBOW_01', 'ELBOW_02', 'ELBOW_07'].some((id) => visible.has(id)))
+}
+
+// AA-6: ANKLE_FOOT-only
+{
+  const r = ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE')
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'hip', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-6: PAIN_01=leg_foot exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+// AA-7: KNEE ('knee') and ANKLE_FOOT ('leg_foot') are distinct PAIN_01
+// single_choice values -- mutually exclusive by construction, not by a
+// shared secondary router the way ELBOW_00 is for ELBOW/WRIST_HAND.
+{
+  const kneeVisible = visibleIds(kneeBaseResponses())
+  const afVisible = visibleIds(ankleFootBaseResponses('DIFFUSE_OR_MULTIPLE'))
+  assert('AA-7: PAIN_01=knee never shows any AF_* question', ![...kneeVisible].some((id) => id.startsWith('AF_')))
+  assert('AA-7b: PAIN_01=leg_foot never shows any KNEE_* question', ![...afVisible].some((id) => id.startsWith('KNEE_')))
+}
+
+// AA-8: HIP (low_back_pelvis, HIP_00 routed to HIP_GROIN_DOMINANT) vs every
+// non-LBP region (LBP itself is expected to stay visible -- shared
+// population, already proven by R-C2b/R-C5b)
+{
+  const r = hipBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'tmj']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(
+    `AA-8: PAIN_01=low_back_pelvis with HIP_00=HIP_GROIN_DOMINANT exposes no NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ questions (leaks: ${leaks.join(', ') || 'none'})`,
+    leaks.length === 0,
+  )
+}
+
+// AA-9: TMJ (head_face_jaw) vs every other region
+{
+  const r = tmjBaseResponses()
+  const visible = visibleIds(r)
+  const disallowed = ['lbp', 'neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'hip']
+  const leaks = [...visible].filter((id) => disallowed.includes(regionOf(id)))
+  assert(`AA-9: PAIN_01=head_face_jaw exposes no other region questions (leaks: ${leaks.join(', ') || 'none'})`, leaks.length === 0)
+}
+
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

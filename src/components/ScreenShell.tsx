@@ -29,6 +29,16 @@ type Props = {
    * semantics와 무관하다(Question.layout과 동일 원칙, styles.css 참고).
    */
   wideContent?: boolean
+  /**
+   * Tablet UX v2.3 §11-12: Body Map처럼 "지금 무엇을 선택했는지"를 항상
+   * 보여줘야 하는 화면이 landscape에서 쓸 우측 rail 전용 슬롯. App.tsx가
+   * 현재 질문/응답으로부터 미리 계산한 짧은 텍스트만 넘긴다(ScreenShell은
+   * 어떤 질문 타입인지 모르고, 그냥 주어진 내용을 rail에 놓을 뿐이다).
+   * portrait에서는 이 슬롯을 렌더링하지 않는다 -- 해당 화면 자체(children)가
+   * 이미 자기 콘텐츠 안에 sticky compact chip으로 같은 정보를 보여준다
+   * (예: BodyMap.tsx의 .bodyMap__selectedChip, landscape에서는 CSS로 숨김).
+   */
+  railSelection?: ReactNode
 }
 
 /**
@@ -47,6 +57,7 @@ export function ScreenShell({
   footer,
   questionId,
   wideContent,
+  railSelection,
 }: Props) {
   const mainRef = useRef<HTMLElement>(null)
   const [hasMore, setHasMore] = useState(false)
@@ -193,6 +204,11 @@ export function ScreenShell({
 
       <aside className="shell__railRight">
         <div className="shell__railTop">
+          {railSelection && (
+            <div className="railSelection" aria-live="polite">
+              {railSelection}
+            </div>
+          )}
           <span className="railStepLabel">{currentStep}</span>
         </div>
         <div className="shell__railBottom">

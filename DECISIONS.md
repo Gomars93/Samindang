@@ -894,3 +894,41 @@ chip을 넣지 않았다. 저장소 전체를 확인한 결과 **원장이 시�
 하나도 없음"** 이며, 한 줄이라도 값이 생기면 접히지 않는다 — round 11부터
 지켜온 "접힘은 모드가 아니라 비어있음의 성질"을 그대로 따른다. 펼침은 렌더
 안에서 단방향이라, 입력 도중 마지막 값을 지워도 화면이 손 밑에서 닫히지 않는다.
+
+## 2026-08-29 — CRM v0.3.1 Round 1: 스키마+테스트만, 서버/UI는 다음 라운드로
+
+### Context
+Gomars93가 PR #24 댓글로 CRM v0.3.1의 첫 구현 라운드(Episode/Task 데이터
+모델 + Tests 1-20)를 지시했다. Care Gap 예약 suppression은 Test 0(Naver→
+Sigma 예약 반영 live 검증)가 VERIFIED로 나올 때까지 비활성으로 남겨두라는
+조건이 붙었고, Naver 예약 연동 자체가 아직 라이브가 아니라는 사실이 같은
+스레드에서 별도로 확인됐다(Test 0는 PENDING으로 이미 PR #24에 보고됨).
+
+### Decision
+`src/crm/`에 순수 타입 + 상태전이 함수 + 회귀 테스트(58 assertion, Tests
+1-20)만 구현했다. 서버 영속화 라우트(예: `server/crmStore.js`)와 Doctor
+Workspace 큐 UI는 이번 라운드에서 만들지 않았다.
+
+### Reason
+지시문이 명시한 요구사항 20개가 전부 "필드 shape / 상태 전이 / 불변식"
+수준이었고, 지시문 자체가 "기존 CarePlanCard/NextReassessmentPlanCard 재사용,
+두 번째 Care Plan 입력 화면을 만들지 말 것"이라고 UI를 만들지 말라는 경계를
+줬다. 서버 라우트 배선은 지시문에 없었다. 순수 함수 계층으로 먼저 스키마를
+확정하고 검증받은 뒤 영속화/UI를 얹는 편이, 승인 없이 스키마와 저장 형식을
+동시에 확정하는 것보다 되돌리기 쉽다.
+
+### Trade-offs
+- (+) 서버/DB 마이그레이션이나 UI 배선 없이 스키마 자체를 독립적으로 검토·
+  승인받을 수 있다.
+- (+) Care Gap suppression을 실제로 켜는 코드가 아예 존재하지 않으므로,
+  "비활성 상태를 유지하라"는 지시를 어길 방법이 구조적으로 없다.
+- (−) 이 라운드만으로는 실제 화면에서 CRM task가 보이지 않는다 — round 2가
+  서버 저장 + 큐 UI를 맡아야 실사용 가능해진다.
+
+### 함께 정한 필드 규칙
+`CrmTask`/`Episode`의 `version` 필드와 `CrmTask`의 `dedup_key`/`contact_mode`
+필드는 지시문의 "Provenance/timing fields" 열거 목록(#10)에 없다. 각각 다른
+명시 요구사항(#15 "stale writes must conflict", #16 dedup/idempotency key,
+#14 do_not_contact) 때문에 구조적으로 필요해서 추가했고, `src/crm/types.ts`
+상단 주석에 그 근거를 남겼다 — 목록에 없는 필드를 조용히 끼워넣지 않기
+위해서다.

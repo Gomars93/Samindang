@@ -1,6 +1,20 @@
 # Current Handoff
 
-## Objective (round 17 — 환자 문진 정보량 감사(Primary vs Additional), 이번 세션)
+## Objective (CRM v0.3.1 round 1 — non-clinical Episode/Task 스키마 + 상태전이 회귀 테스트, 이번 세션)
+Gomars93가 PR #24 댓글로 지시한 CRM v0.3.1 첫 라운드: **비임상** Episode/Task
+데이터 모델(Episode lifecycle, CRM task 20개 필드/상태/reason_code, 안전(Safety)
+불변식, dedup/idempotency, claim lease, 우선순위 큐, medication course provenance)
+을 스키마 + 순수 상태전이 함수 + Tests 1-20 회귀 스위트로 구현한다. Care Gap
+예약 suppression은 Test 0(Naver→Sigma 예약 반영 live 검증, Naver 연동이 아직
+라이브가 아니라 보류)이 VERIFIED로 나올 때까지 비활성 상태로만 스키마에
+존재한다 — 실제로 켜지 않았고 fallback 예약 데이터나 threshold를 발명하지
+않았다. 이번 라운드 범위는 **순수 데이터 모델 + 테스트뿐**이며, 서버 영속화
+라우트와 새 UI는 만들지 않았다(기존 `CarePlanCard`/`NextReassessmentPlanCard`를
+그대로 재사용하라는 지시와 일치 — 두 번째 Care Plan 입력 화면을 만들지 않음).
+결과는 아래 Completed — CRM v0.3.1 Round 1 참고. **PR #24는 여전히 DO NOT
+MERGE.**
+
+## Objective (round 17 — 환자 문진 정보량 감사(Primary vs Additional), 이전 세션)
 PR #24의 열일곱 번째 리뷰(Gomars93)가 지정한 **단일 과제**: 대표 프로필별로 현재
 환자 문진 흐름의 정보량(화면 수 / 탭 수 / branch depth / 섹션별 부담)을 **재현
 가능하게 측정**하고, **정확한 중복 또는 표현(presentation) 수준의 중복만** —
@@ -213,7 +227,64 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — Round 17 (환자 문진 정보량 감사, 이번 세션)
+## Completed — CRM v0.3.1 Round 1 (non-clinical Episode/Task 스키마, 이번 세션)
+새 디렉터리 `src/crm/`(React 없음, 서버 없음, 네트워크 없음 — 순수 타입 +
+상태전이 함수). 기존 `NextReassessmentPlan`(`finalAssessment.ts`)을 타입만
+재사용하고 병행 스키마를 만들지 않았다.
+
+- `types.ts` — `Episode`(status ACTIVE|PAUSED|COMPLETED|LOST, REOPENED는 상태가
+  아니라 event), `CrmTask`(20개 provenance/timing 필드 + 이번 라운드가 다른
+  요구사항 때문에 추가로 필요했던 `version`/`dedup_key`/`contact_mode` 3개,
+  근거를 파일 상단 주석에 명시), `RESERVATION_SUPPRESSION_STATE` (기본값
+  `PENDING_TEST_0` — VERIFIED가 아니면 `isReservationSuppressionActive()`는
+  항상 false).
+- `taskEngine.ts` — `createCrmTask`(SAFETY_REVIEW는 승인된 upstream 신호 또는
+  명시적 인간 요청 없이는 생성 자체가 거부됨, dedup은 patient_uuid+episode_id+
+  task_type+source_event_id+contactPointKey), `claimTask`/`releaseExpiredClaim`
+  (lease, 영구 lock 아님), `resolveTask`(버전 불일치는 DONE 여부와 무관하게
+  항상 먼저 검사 → 동시성 충돌이 조용히 덮어써지지 않음; staff는 Safety를
+  resolve 불가), `snoozeTask`(Safety는 거부), `cancelTask`/`supersedeTask`
+  (terminal 상태는 멱등), `sortCrmTaskQueue`(SAFETY > CLINICAL > ROUTINE,
+  이후 overdue → due_at → created_at, SLA 하드코딩 없음), `resolveTaskOwner`
+  (owner 없으면 호출자가 넘긴 coverage queue로 — 이름/스케줄 하드코딩 없음),
+  `groupTasksForCommunication`(SAFETY_REVIEW는 항상 그룹 밖), `assertNoRawPhone`
+  (전화번호 형태 문자열을 dedup key 등에 넣으려 하면 거부).
+- `episode.ts` — `pauseEpisode`(task 일절 안 건드림 — pause 시 auto-cancel
+  없음), `completeEpisode`(열린 SAFETY_REVIEW/CLINICAL_REVIEW는 보존, 열린
+  ROUTINE만 취소), `reopenEpisode`(LOST에서만 가능, REOPENED event 기록),
+  `applyNextReassessmentPlanToEpisode`(CLINICIAN_DECIDES/UNSET → reassess_due
+  false, 자동 task 없음), `supersedeFutureRoutineTasksOnCarePlanChange`,
+  `resolveConsecutiveHerbalCourseEpisode`(선택 없이 호출하면 throw — CRM이
+  대신 결정하지 않음).
+- `medicationCourse.ts` — 날짜/기간을 추론하지 않음, timeline anchor 우선순위
+  start > dispensed > prescribed, 시작일 변경 시 이 course에 연결된 아직 열린
+  ROUTINE task만 superseded(DONE은 그대로), 대체 due_at은 호출자가 제공(SLA
+  오프셋 하드코딩 없음).
+- `tests/crm-schema.spec.mjs` — 지시받은 Tests 1-20을 정확히 그 순서/이름으로
+  구현, **58 assertion 전부 통과**. `npm run test:all`에 `test:crm-schema`로
+  연결(test:questionnaire-volume 다음, test:body-map 이전).
+
+**이번 라운드에서 만들지 않은 것 (의도적 경계):** 서버 영속화 라우트(`server/
+crmStore.js` 등)와 새 UI 화면. 지시가 "기존 CarePlanCard/NextReassessmentPlanCard
+재사용, 두 번째 Care Plan 입력 화면 금지"였고 서버/UI 배선은 스코프에
+명시되지 않았으므로, 이번 라운드는 스키마+테스트로 한정했다 — Remaining
+항목에 다음 라운드 후보로 기록.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체 green,
+새 `tests/crm-schema.spec.mjs` 58 assertion 포함), `cd "tablet core" &&
+python3 -m pytest tests/ -q`(80 passed), `git diff origin/main -- 'src/spec/
+*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff). 새 esbuild
+bundle 4개(`tests/.crm-*-bundle.mjs`)는 기존 라운드들과 같은 컨벤션으로
+`.gitignore`에 등록(재생성 산출물, 소스 아님).
+
+**Test 0 상태:** PENDING — Naver 예약 연동이 아직 라이브가 아니므로 PR #24
+댓글에서 이미 BLOCKED로 보고했다. Care Gap 예약 suppression은 여전히
+`PENDING_TEST_0`로 비활성.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — Round 17 (환자 문진 정보량 감사, 이전 세션)
 
 ### 측정 도구 (`tests/questionnaire-volume.spec.mjs`, 신규, CI 포함)
 브라우저 없이 **실제 `visibleQuestions` 엔진**으로 대표 프로필을 끝까지 걸어가며
@@ -1348,8 +1419,13 @@ round 3의 Remaining #3(Micro Follow-up 환자 태블릿 직접 제출 gap)을
 ## Next Recommended Action
 1. push 직후 실제 GitHub Actions(CI + Doctor Workspace Preview 배포)
    결과를 재확인한다.
-2. round 12(Doctor Preview UI 폴리시 — 계층 가시화, 읽기전용/입력 분리,
-   밀도 정리)가 구현되었으니 review author(Gomars93)가 새 HEAD를 재확인.
-3. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
+2. CRM v0.3.1 round 1(Episode/Task 스키마 + Tests 1-20)이 구현되었으니
+   review author(Gomars93)가 새 HEAD를 재확인.
+3. Test 0(Naver→Sigma 예약 반영 live 검증)는 Naver 연동이 라이브가 될 때까지
+   PENDING. 라이브 전환 후 실제 예약 5건으로 재시도.
+4. CRM round 2 후보(승인 시): 서버 영속화 라우트(`server/crmStore.js` 등) +
+   Doctor Workspace 큐 UI 배선. 이번 라운드는 지시대로 스키마+테스트만
+   구현했으므로, 이 다음 단계는 별도 승인 후 진행.
+5. 원장/제품 담당자가 위 Remaining 1-3번(임상 결정표 승인, SafetyPanel
    간극, 전체 문진 재연결 정책)을 검토. Remaining 4번(QR)은 필요 시에만.
-4. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.
+6. PR #24는 사용자가 직접 검토 후 merge 여부를 결정한다.

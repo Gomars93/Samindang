@@ -74,6 +74,7 @@ export function TodayQueueSection({ tasks, loading, error, identities = {}, onId
             <div
               key={task.task_id}
               className={`doctorField doctor__todayQueue__row doctor__todayQueue__row--${task.task_type.toLowerCase()}`}
+              data-patient-uuid={task.patient_uuid}
             >
               <span className="doctorField__label">
                 {CRM_TASK_TYPE_LABEL[task.task_type]} · {CRM_REASON_CODE_LABEL[task.reason_code]}

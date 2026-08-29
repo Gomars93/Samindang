@@ -275,52 +275,79 @@ async function main() {
     const linkButtonCount = await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton').length`)
     check('e2e: both unresolved rows show a 시그마 연결 button', linkButtonCount === 2)
 
-    /* ---------------- row 1: open the form, verify inputs, cancel ---------------- */
-    await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton')[0].click()`)
-    await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__linkForm').length`, (n) => n === 1)
+    // Independent-review finding (#11): select rows by their stable
+    // data-patient-uuid attribute rather than NodeList index, so this
+    // test never silently depends on server-returned row order.
+    const rowASelector = `[data-patient-uuid="${patientA}"]`
+    const rowBSelector = `[data-patient-uuid="${patientB}"]`
 
-    await cdp.eval(setInputsScript('.doctor__todayQueue__linkForm', 'CN-E2E-DISCARDED', '취소될환자'))
-    const beforeCancelValue = await cdp.eval(`document.querySelector('.doctor__todayQueue__linkForm').querySelectorAll('.doctor__todayQueue__linkInput')[0].value`)
+    /* ---------------- row A: open the form, verify inputs, cancel ---------------- */
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkButton').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkForm')`, (v) => v === true)
+
+    await cdp.eval(setInputsScript(rowASelector, 'CN-E2E-DISCARDED', '취소될환자'))
+    const beforeCancelValue = await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkInput').value`)
     check('e2e: typed chart_no is reflected in the input before cancel', beforeCancelValue === 'CN-E2E-DISCARDED')
 
-    await cdp.eval(`document.querySelector('.doctor__todayQueue__linkCancel').click()`)
-    await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__linkForm').length`, (n) => n === 0)
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkCancel').click()`)
+    await cdp.evalUntil(`!document.querySelector('${rowASelector} .doctor__todayQueue__linkForm')`, (v) => v === true)
     const afterCancelButtonCount = await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton').length`)
     check('e2e: cancel reverts to idle with no network call -- button reappears, still 2 unresolved rows', afterCancelButtonCount === 2)
 
     const afterCancelIdentities = await (await fetch(`${apiBase}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(patientA)}`)).json()
     check('e2e: cancel created no server-side link', afterCancelIdentities.identities[patientA]?.resolved === false)
 
-    /* ---------------- row 1: re-open, fill different values than the cancelled attempt, submit for real ---------------- */
-    await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton')[0].click()`)
-    await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__linkForm').length`, (n) => n === 1)
-    const reopenedValue = await cdp.eval(`document.querySelector('.doctor__todayQueue__linkForm').querySelectorAll('.doctor__todayQueue__linkInput')[0].value`)
+    /* ---------------- row A: re-open, fill different values than the cancelled attempt, review, then cancel FROM the review step (뒤로/취소 must not fire the request either) ---------------- */
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkButton').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkForm')`, (v) => v === true)
+    const reopenedValue = await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkInput').value`)
     check('e2e: re-opening the form starts blank, not leaking the earlier cancelled entry', reopenedValue === '')
 
-    await cdp.eval(setInputsScript('.doctor__todayQueue__linkForm', 'CN-E2E-REAL', '홍길동E2E'))
-    await cdp.eval(`document.querySelector('.doctor__todayQueue__linkSubmit').click()`)
+    await cdp.eval(setInputsScript(rowASelector, 'CN-E2E-REAL', '홍길동E2E'))
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkSubmit').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkReviewText')`, (v) => v === true)
+    const reviewText = await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkReviewText').textContent`)
+    check('e2e: the review step shows exactly the values entered, before any request fires', reviewText.includes('홍길동E2E') && reviewText.includes('CN-E2E-REAL'))
+    const identitiesAtReviewStep = await (await fetch(`${apiBase}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(patientA)}`)).json()
+    check('e2e: nothing is linked yet while sitting at the review step (the irreversible action has not fired)', identitiesAtReviewStep.identities[patientA]?.resolved === false)
 
+    /* ---------------- row A: 뒤로 from review returns to editing with values intact, then submit for real ---------------- */
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkCancel').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkInput')`, (v) => v === true)
+    const valueAfterBack = await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkInput').value`)
+    check('e2e: 뒤로 returns to editing with the entered chart_no still intact (not cleared)', valueAfterBack === 'CN-E2E-REAL')
+
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkSubmit').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowASelector} .doctor__todayQueue__linkReviewText')`, (v) => v === true)
+    await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkSubmit').click()`)
+
+    // Independent-review finding (#10): this must resolve well BEFORE
+    // POLL_MS (5000ms) to actually prove the optimistic update, not the
+    // next poll cycle, is what put the name on screen.
     await cdp.evalUntil(
       `document.querySelector('.doctor__todayQueue__grid').textContent.includes('홍길동E2E') && document.querySelector('.doctor__todayQueue__grid').textContent.includes('CN-E2E-REAL')`,
       (v) => v === true,
+      2000,
     )
-    check('e2e: after a successful confirm, the row immediately shows 환자명 · 차트번호 (no wait for the next poll)', true)
+    check('e2e: after confirming the review step, the row immediately shows 환자명 · 차트번호 (well under POLL_MS, not waiting for the next poll)', true)
 
-    const otherRowText = await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__row')[1].textContent`)
+    const otherRowText = await cdp.eval(`document.querySelector('${rowBSelector}').textContent`)
     check("e2e: the OTHER (still-unresolved) row does not show the just-linked patient's name", !otherRowText.includes('홍길동E2E'))
-    const otherRowStillHasButton = await cdp.eval(`!!document.querySelectorAll('.doctor__todayQueue__row')[1].querySelector('.doctor__todayQueue__linkButton')`)
+    const otherRowStillHasButton = await cdp.eval(`!!document.querySelector('${rowBSelector} .doctor__todayQueue__linkButton')`)
     check('e2e: the other row still shows its own 시그마 연결 button, untouched', otherRowStillHasButton === true)
 
-    /* ---------------- error case: linking row 2 to the SAME chart_no is visibly rejected ---------------- */
-    await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton')[0].click()`)
-    await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__linkForm').length`, (n) => n === 1)
-    await cdp.eval(setInputsScript('.doctor__todayQueue__linkForm', 'CN-E2E-REAL', '중복시도'))
-    await cdp.eval(`document.querySelector('.doctor__todayQueue__linkSubmit').click()`)
-    await cdp.evalUntil(`!!document.querySelector('.doctor__todayQueue__linkError')`, (v) => v === true)
-    const errorText = await cdp.eval(`document.querySelector('.doctor__todayQueue__linkError').textContent`)
-    check('e2e: a duplicate-chart conflict shows a visible, non-empty error message', typeof errorText === 'string' && errorText.length > 0)
-    const rejectedRowText = await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__row')[1].textContent`)
-    check('e2e: the rejected row was NOT silently resolved (still no name/chart shown, form stays open with the error)', !rejectedRowText.includes('중복시도') && !!(await cdp.eval(`!!document.querySelectorAll('.doctor__todayQueue__row')[1].querySelector('.doctor__todayQueue__linkForm')`)))
+    /* ---------------- error case: linking row B to the SAME chart_no is visibly rejected with the exact expected message ---------------- */
+    await cdp.eval(`document.querySelector('${rowBSelector} .doctor__todayQueue__linkButton').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowBSelector} .doctor__todayQueue__linkForm')`, (v) => v === true)
+    await cdp.eval(setInputsScript(rowBSelector, 'CN-E2E-REAL', '중복시도'))
+    await cdp.eval(`document.querySelector('${rowBSelector} .doctor__todayQueue__linkSubmit').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowBSelector} .doctor__todayQueue__linkReviewText')`, (v) => v === true)
+    await cdp.eval(`document.querySelector('${rowBSelector} .doctor__todayQueue__linkSubmit').click()`)
+    await cdp.evalUntil(`!!document.querySelector('${rowBSelector} .doctor__todayQueue__linkError')`, (v) => v === true)
+    const errorText = await cdp.eval(`document.querySelector('${rowBSelector} .doctor__todayQueue__linkError').textContent`)
+    check('e2e: a duplicate-chart conflict shows the exact expected Korean error text', errorText === '이미 다른 환자에게 연결된 차트번호입니다.', `(errorText=${JSON.stringify(errorText)})`)
+    const rejectedRowText = await cdp.eval(`document.querySelector('${rowBSelector}').textContent`)
+    check('e2e: the rejected row was NOT silently resolved (still no name/chart shown, form stays open with the error)', !rejectedRowText.includes('중복시도') && !!(await cdp.eval(`!!document.querySelector('${rowBSelector} .doctor__todayQueue__linkForm')`)))
 
     const identitiesAfterConflict = await (await fetch(`${apiBase}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(patientB)}`)).json()
     check('e2e: the server-side state for the rejected patient is still unresolved, not overwritten', identitiesAfterConflict.identities[patientB]?.resolved === false)

@@ -19,6 +19,12 @@ const ALLOWED_EVENTS = new Set([
   'visit_created',
   'visit_activated',
   'visit_cleared',
+  // Identity Production Batch: 영구적인 신원 연결(patient_uuid <->
+  // sigma_chart_no) 확정 이벤트. safeAudit()가 실패를 조용히 삼키기
+  // 때문에, 이 이름이 여기 없으면 "감사 로그를 남겼다"는 코드의 의도와
+  // 달리 실제로는 아무 것도 기록되지 않는 채로 조용히 통과한다 —
+  // 재검토에서 런타임으로 확인된 실제 결함이었다.
+  'patient_identity_linked',
 ])
 const ALLOWED_ACTORS = new Set(['patient', 'doctor'])
 

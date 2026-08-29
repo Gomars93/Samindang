@@ -1469,7 +1469,15 @@ export function createApp({
         } else {
           const body = await readBody(req)
           const patientUuid = typeof body?.patient_uuid === 'string' ? body.patient_uuid : ''
-          const chartNo = typeof body?.sigma_chart_no === 'string' ? body.sigma_chart_no.trim() : ''
+          // Independent-review finding: trim-only normalization let two
+          // different casings of the SAME real chart_no ("cn-1001" vs
+          // "CN-1001") hash to two different reverse pointers, silently
+          // defeating the 1:1 invariant this whole layer exists to
+          // guarantee. Uppercasing (in addition to trim) collapses that --
+          // no assumption about Sigma's actual charset/format is made
+          // beyond "case is not meaningful", which is true of every real
+          // chart-number scheme in ordinary use.
+          const chartNo = typeof body?.sigma_chart_no === 'string' ? body.sigma_chart_no.trim().toUpperCase() : ''
           const patientName = typeof body?.patient_name === 'string' ? body.patient_name.trim() : ''
           // Round 14: confirmed_by is an advisory audit label only (like
           // claimedBy above), never an authority claim -- this deployment
@@ -1498,7 +1506,18 @@ export function createApp({
             } catch (err) {
               if (err instanceof IdentityConflictError) {
                 status = 409
-                bytes = sendJson(req, res, 409, { error: err.reason }, cors)
+                // Independent-review finding: the client had no way to show
+                // *what* the conflicting link actually is, only that one
+                // exists -- forcing the doctor to guess or re-query. When
+                // the store attaches the existing link (already_linked
+                // only; the other reasons have no single existing link to
+                // show), surface it so the UI can display it directly.
+                const body = { error: err.reason }
+                if (err.existingLink) {
+                  body.existing_sigma_chart_no = err.existingLink.sigma_chart_no
+                  body.existing_patient_name = err.existingLink.patient_name
+                }
+                bytes = sendJson(req, res, 409, body, cors)
               } else {
                 throw err
               }
@@ -1515,7 +1534,15 @@ export function createApp({
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
-          const uuids = url.searchParams.getAll('patient_uuid').filter((v) => typeof v === 'string' && v)
+          // Independent-review finding: unvalidated query values were
+          // passed straight through to the store's file-path derivation.
+          // Nothing in this deployment lets an attacker control
+          // patient_uuid values reaching this route (they come from the
+          // doctor's own Today Queue data), but the store's contract is
+          // "valid UUID" -- enforcing the shape here, not deep inside the
+          // store, keeps the validation next to the trust boundary.
+          const uuidPattern = /^[0-9a-f-]{36}$/i
+          const uuids = url.searchParams.getAll('patient_uuid').filter((v) => typeof v === 'string' && uuidPattern.test(v))
           const links = await patientIdentityStore.getIdentitiesByPatientUuids(uuids)
           const identities = {}
           for (const uuid of uuids) {

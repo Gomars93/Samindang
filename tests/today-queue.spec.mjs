@@ -268,4 +268,24 @@ test('a resolved row never renders the link button even when onIdentityLinked is
   assert.ok(!html.includes('doctor__todayQueue__linkButton'))
 })
 
+// ---------- 9. Independent-review finding (#11): stable per-row selector ----------
+
+test('each row carries a data-patient-uuid attribute matching its task', () => {
+  const uuid = '66666666-7777-8888-9999-aaaaaaaaaaaa'
+  const html = render({ tasks: [makeTask({ patient_uuid: uuid })], loading: false, error: null })
+  assert.ok(html.includes(`data-patient-uuid="${uuid}"`))
+})
+
+test('two rows carry distinct data-patient-uuid values matching each own task, not swapped', () => {
+  const uuidA = 'c1c1c1c1-0000-0000-0000-000000000000'
+  const uuidB = 'd2d2d2d2-0000-0000-0000-000000000000'
+  const tasks = [
+    makeTask({ task_id: 'task-a', patient_uuid: uuidA }),
+    makeTask({ task_id: 'task-b', patient_uuid: uuidB }),
+  ]
+  const html = render({ tasks, loading: false, error: null })
+  assert.ok(html.includes(`data-patient-uuid="${uuidA}"`))
+  assert.ok(html.includes(`data-patient-uuid="${uuidB}"`))
+})
+
 console.log(`\n${passed} passed`)

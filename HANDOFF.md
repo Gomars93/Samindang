@@ -1,6 +1,31 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 14 — Sigma 신원 연결 레이어 + Today Queue 사람이 읽을 수 있는 표시, 이번 세션)
+## Objective (CRM v0.3.1 round 15 — Identity Production Batch: 레거시 정합화 + 링크 UI + E2E 인수 + 독립 검수 수정, 이번 세션)
+Gomars93가 PR #24 댓글로 round 14/재검토 위에 이어서 한 번에 지시한 단일
+"Identity Production Batch": **Part A** 레거시(사전-pending-marker) 배포에
+남은, pending marker가 아예 없는 orphan reservation을 위한 하위호환
+lazy reconciliation(마이그레이션 프레임워크가 아니라 최소 lazy scan,
+모호/손상/다중 소유는 추측하지 않고 fail closed) — `findLegacyOrphanedReservations`.
+**Part B** 미해결 Today Queue 행에 대한 최소 사용 가능한 Doctor 링크
+UI(명시적 확인, 성공 시 즉시 새로고침, 보이는 에러, 조용한 덮어쓰기 없음,
+취소=변경 없음, 이중 제출 방지, cross-row 누출 없음) — 명시적으로
+unlink/relink/change-mapping UI나 전화/RRN 필드, 새 identity inference는
+추가하지 않음. **Part C** 실제 브라우저 E2E(데스크톱 1440×900, 태블릿
+가로 1024×768, 태블릿 세로 834×1112)로 confirm 플로우 인수. **Part D**
+Fable 오케스트레이션 → Sonnet 구현 → **실제 Opus subagent 독립 검수** →
+Sonnet이 비임상 Opus 지적사항 전부 수정 → Opus 재검수 → 남는 실질적
+엔지니어링 이슈가 없을 때까지 반복 → 전체 test/CI/Preview 게이트. 진짜
+Opus 모델/subagent를 호출하지 않고서는 "Opus 검수했다"고 주장하지 않기 —
+완료 보고서는 실제로 어떤 모델/subagent를 썼는지 사실대로 적어야 함.
+최종 인수 게이트: tsc -b --force, build, build:preview, test:all,
+tablet-core pytest, 실제 브라우저/E2E, 최신 CI green, 최신 Doctor
+Workspace Preview green, FROZEN zero-diff, Test 0 PENDING, Care Gap OFF
+유지. 승인 범위를 넘는 임상/메시징/provider/identity-policy 확장 없음 —
+진짜로 막히는 단일 보호된 결정만 그 줄에 "HUMAN DECISION REQUIRED"로
+표시하고 나머지 독립 엔지니어링 작업은 계속 진행. **PR #24는 여전히
+DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 14 — Sigma 신원 연결 레이어 + Today Queue 사람이 읽을 수 있는 표시, 이전 세션)
 Gomars93가 PR #24 댓글로 신원 정책을 승인하고 다음 라운드를 지시했다.
 **승인된 정책**: Clinical OS는 기존 내부 random UUID(`patient_uuid`)를 계속
 내부 키로 쓴다. 그 UUID에서 Sigma `chart_no`/patient_id로의 1:1 연결을
@@ -706,6 +731,97 @@ UI는 지시대로 여전히 만들지 않았다 — 이번 수정은 무결성 
 하나만 좁게 고쳤다.
 
 **Subagent 사용 안 함** — 이 재검토 수정도 같은 세션에서 직접 수행.
+
+## Completed — CRM v0.3.1 Round 15 (Identity Production Batch: 레거시 정합화 + 링크 UI + E2E + 독립 검수, 이번 세션)
+
+Round 14 재검토 위에 이어서, Gomars93가 PR #24 댓글로 Part A/B/C/D를 한
+묶음으로 지시했다(위 Objective 참고). **DO NOT MERGE.**
+
+**Part A — 레거시 정합화 (`server/patientIdentityStore.js`)**:
+`findLegacyOrphanedReservations(patientUuid, excludeChartNo)`를 추가 —
+`by-chart/`를 잠금 없이 스캔해 이 uuid가 소유한, `excludeChartNo`가
+아닌 포인터를 찾는다. `linkPatientIdentity`에서 pending marker가 없을
+때(또는, 재검토 수정 이후: pending 경로로 회수되지 않은 모든 경우)
+호출되며, 매치 0개면 정상 진행, 정확히 1개면 자신의 chart lock 아래서
+소유권을 재확인한 뒤 회수, 2개 이상이면 `legacy_reservation_ambiguous`로
+fail closed(아무 것도 건드리지 않음) — 마이그레이션 프레임워크가 아니라
+최소 lazy scan.
+
+**Part B — 링크 UI (`src/doctor/PatientIdentityLinkAction.tsx`,
+`TodayQueueSection.tsx`, `DoctorView.tsx`)**: 미해결 Today Queue 행마다
+"시그마 연결" 버튼 → 차트번호/환자명 입력 폼 → (재검토 수정 이후)
+검토 단계("이 내용으로 연결"/"뒤로"/"취소") → 실제 POST. 성공 시
+`onLinked` 콜백으로 즉시 로컬 상태 갱신(다음 poll을 기다리지 않음).
+취소는 네트워크 호출 없이 폐기. 지시대로 unlink/relink/change-mapping
+UI, 전화/RRN 필드, 새 identity inference는 추가하지 않았다.
+
+**Part C — 실제 브라우저 E2E** (`tests/patient-identity-link-e2e.spec.mjs`,
+신규): DevTools Protocol 기반(Playwright 미사용, 기존
+`tests/tablet-viewport.spec.mjs` 컨벤션 재사용) 실제 Chrome + 실제
+`server/index.js` 인스턴스 + 실제 production build로 confirm 플로우를
+데스크톱 1440×900/태블릿 가로 1024×768/태블릿 세로 834×1112에서 검증.
+`npm run test:identity-link-e2e`로 실행, `test:all`에 편입.
+
+**Part D — 독립 검수 루프**: Agent 도구로 `model: "opus"`를 지정해 실제
+Opus subagent를 호출(시뮬레이션이 아님 — 약 472초, 40회 tool call,
+~160K 토큰 사용, `npm run test:crm-store`를 스스로 실행해 audit 버그를
+런타임으로 직접 확인함). 총 11개 지적사항을 file:line 단위로 보고받음
+(요약: audit 이벤트 미등록으로 조용히 드롭, 되돌릴 수 없는 링크에
+사전 확인 단계 부재, chart_no 대소문자 정규화 누락, optimistic
+업데이트와 in-flight poll의 race, 409 conflict body가 기존 링크
+정보를 안 줌, legacy scan이 pending marker 존재만으로 스킵됨,
+purge 스크립트가 crm-identity/를 안 지움, batch GET의 uuid 형식
+미검증, 모듈 헤더 코멘트 stale화, E2E "즉시 반영" assertion의
+타임아웃이 POLL_MS보다 느슨함, E2E가 NodeList index로 행을 선택 +
+에러 텍스트를 정확히 검증 안 함).
+
+**Sonnet 수정(11개 전부)**: `server/audit.js`에 `patient_identity_linked`
+등록 + 회귀 테스트; `PatientIdentityLinkAction.tsx`에
+idle→editing→reviewing→submitting 2단계 확인 상태 추가(포기 가능한
+"뒤로"/"취소" 분리); `server/index.js`의 chartNo를
+`.trim().toUpperCase()`로 정규화; `DoctorView.tsx`에
+`patientIdentitiesSeqRef`(useRef 카운터)로 optimistic 업데이트가 느린
+poll 응답에 덮어써지는 것 방지; `patientIdentityStore.js`의
+`already_linked` throw에 `err.existingLink` 첨부 →
+`server/index.js` 409 body에 `existing_sigma_chart_no`/
+`existing_patient_name` 추가 → `serverClient.ts`의 `ServerResult`에
+`errorBody` 필드 추가 → `labels.ts`의 "다른" 오표현 제거;
+`linkPatientIdentity`를 재구조화해 legacy scan이 O(1) pending 경로로
+회수되지 않은 모든 경우 실행되도록(단일 링크 호출 안에서 레거시
+orphan과 pending orphan을 동시에 회수하는 `identity-legacy-plus-pending`
+테스트로 증명); `scripts/purge-data.mjs`에 `crm-identity/` 삭제 추가 +
+실제 스크립트를 `execFileSync`로 구동하는 회귀 테스트; batch GET
+라우트에 `/^[0-9a-f-]{36}$/i` 형식 검증 추가(비정상 값은 조용히
+드롭, 유효한 값은 영향 없음 — 회귀 테스트 포함); `TodayQueueSection.tsx`
+행에 `data-patient-uuid` 추가 + E2E를 전면 이 속성 기반 선택으로
+재작성 + 타임아웃을 2000ms로(POLL_MS=5000ms보다 충분히 타이트) +
+중복-차트 에러 텍스트를 정확히 assert.
+
+**테스트**: `tests/crm-store.spec.mjs`에 신규 assertion 다수(대소문자
+충돌, 409 body 보강, `identity-legacy-plus-pending`, batch GET 형식
+검증, purge-data 스크립트 실제 구동) — CRM store 스위트 총 assertion
+154 → **181**. `tests/today-queue.spec.mjs`에 `data-patient-uuid`
+검증 2건 추가 — 20 → **22**. `tests/patient-identity-link-e2e.spec.mjs`
+전면 재작성(검토 단계 흐름 + data-patient-uuid 선택 + 정확한 에러
+텍스트) — **22**개 실제 브라우저 assertion, 전부 통과.
+
+**검증(이번 세션이 직접 실행)**: `npx tsc -b --force`(0 에러), `npm
+run build`/`npm run build:preview`(둘 다 성공), `npm run test:all`
+전체 green(재실행 확인 — 첫 실행에서 `tests/tablet-viewport.spec.mjs`의
+Chrome 프로필 디렉터리 정리 중 `ENOTEMPTY`로 크래시했으나, 단독
+재실행 시 즉시 24개 assertion 전부 통과해 일시적 인프라 flake로
+확인됨; 이후 전체 재실행에서 처음부터 끝까지 green, exit code 0),
+`cd "tablet core" && python3 -m pytest tests/ -q`(80 passed), `git
+diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty,
+FROZEN zero-diff). Test 0는 여전히 PENDING, Care Gap suppression은
+여전히 OFF — 이번 배치가 건드리지 않음.
+
+**두 번째(재검수) Opus subagent 호출**: 수정된 diff 전체에 대해 다시
+`model: "opus"` subagent를 호출해 11개 fix 전부가 실제로 해결됐는지,
+그리고 fix 자체가 새로운 실질적 이슈를 만들지 않았는지 독립 검증 중.
+결과는 이 세션에서 받는 대로 이 섹션에 이어서 기록한다(아직 진행
+중이라면 이 문장이 최신 상태를 반영한다 — Git/실제 코드 상태가 항상
+우선한다).
 
 ## Completed — CRM v0.3.1 Round 13 (Doctor 클라이언트 첫 CRM UI — 읽기 전용 Today Queue, 이전 세션)
 **`src/lib/serverClient.ts`**: `listCrmTasks(params?: { ownerClinician?,

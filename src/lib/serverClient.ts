@@ -27,7 +27,7 @@ export function isServerConfigured(): boolean {
 
 export type ServerResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string; kind: 'auth' | 'network' | 'other' }
+  | { ok: false; error: string; kind: 'auth' | 'network' | 'other'; errorBody?: Record<string, unknown> }
 
 async function request<T>(
   path: string,
@@ -57,7 +57,10 @@ async function request<T>(
     if (!res.ok) {
       const body = await res.json().catch(() => null)
       const kind = res.status === 401 || res.status === 403 ? 'auth' : 'other'
-      return { ok: false, error: body?.error ?? `서버 오류 (${res.status})`, kind }
+      // errorBody carries any extra fields a route attached beyond `error`
+      // (e.g. patient-identity's 409 existing_sigma_chart_no/patient_name)
+      // -- callers that don't need it simply never read it.
+      return { ok: false, error: body?.error ?? `서버 오류 (${res.status})`, kind, errorBody: body ?? undefined }
     }
     const data = (await res.json()) as T
     return { ok: true, data }

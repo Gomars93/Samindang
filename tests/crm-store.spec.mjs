@@ -6,7 +6,8 @@
 // tests/server.spec.mjs / tests/follow-up-session.spec.mjs. No build step:
 // crmStore.js itself imports src/crm/*.ts directly via Node's native TS
 // execution, so this file can just `node tests/crm-store.spec.mjs`.
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
@@ -1525,6 +1526,58 @@ async function main() {
     }
   }
 
+  /* ---- Independent-review finding (#6): a pending marker only ever
+     tracks the SINGLE most recent reservation attempt, so a uuid can
+     carry a genuine legacy orphan (pre-marker crash) under one chart_no
+     AT THE SAME TIME as a pending marker (post-upgrade crash) for a
+     DIFFERENT chart_no. The legacy scan must not be skipped just because
+     a pending marker happens to exist -- both stale reservations must be
+     reclaimed by a single corrected-retry link call. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-legacy-plus-pending-'))
+    try {
+      const store = createPatientIdentityStore(root)
+      const uuid = randomUUID()
+      const legacyChartNo = 'CN-7007-LEGACY'
+      const pendingChartNo = 'CN-7007-PENDING'
+      const correctedChartNo = 'CN-7007-CORRECTED'
+      const legacyHash = createHash('sha256').update(legacyChartNo, 'utf8').digest('hex')
+      const pendingHash = createHash('sha256').update(pendingChartNo, 'utf8').digest('hex')
+
+      await store.getIdentityByPatientUuid(uuid)
+      await mkdir(path.join(root, 'by-chart'), { recursive: true })
+      await mkdir(path.join(root, 'pending'), { recursive: true })
+      // The legacy orphan: a by-chart pointer with no pending marker of
+      // its own (pre-marker crash).
+      await writeFile(path.join(root, 'by-chart', `${legacyHash}.json`), JSON.stringify({ sigma_chart_no: legacyChartNo, patient_uuid: uuid }), 'utf8')
+      // The pending reservation: BOTH the by-chart pointer AND the
+      // pending marker (post-marker crash, tracked by the O(1) path).
+      await writeFile(path.join(root, 'by-chart', `${pendingHash}.json`), JSON.stringify({ sigma_chart_no: pendingChartNo, patient_uuid: uuid }), 'utf8')
+      await writeFile(path.join(root, 'pending', `${uuid}.json`), JSON.stringify({ patient_uuid: uuid, sigma_chart_no: pendingChartNo }), 'utf8')
+
+      const recovered = await store.linkPatientIdentity({ patientUuid: uuid, chartNo: correctedChartNo, patientName: '환자G', confirmedBy: 'staff-1', now: T0 })
+      assert('identity-legacy-plus-pending: the retry with the corrected chart_no succeeds', recovered.sigma_chart_no === correctedChartNo)
+
+      const legacyPointerAfter = await readRaw(path.join(root, 'by-chart', `${legacyHash}.json`))
+      const pendingPointerAfter = await readRaw(path.join(root, 'by-chart', `${pendingHash}.json`))
+      assert('identity-legacy-plus-pending: the legacy orphan (reached only via the scan) was reclaimed', legacyPointerAfter === null)
+      assert('identity-legacy-plus-pending: the pending-tracked orphan (reached via the O(1) path) was reclaimed', pendingPointerAfter === null)
+
+      const filesInChartIndex = (await readdir(path.join(root, 'by-chart'))).filter((f) => f.endsWith('.json'))
+      assert('identity-legacy-plus-pending: exactly one chart-index pointer exists after both reclaims', filesInChartIndex.length === 1)
+
+      const legacyOtherUuid = randomUUID()
+      const claimedLegacy = await store.linkPatientIdentity({ patientUuid: legacyOtherUuid, chartNo: legacyChartNo, patientName: '다른환자3', confirmedBy: 'staff-2', now: T0 })
+      assert('identity-legacy-plus-pending: a different patient can now claim the released legacy chart_no', claimedLegacy.sigma_chart_no === legacyChartNo)
+
+      const pendingOtherUuid = randomUUID()
+      const claimedPending = await store.linkPatientIdentity({ patientUuid: pendingOtherUuid, chartNo: pendingChartNo, patientName: '다른환자4', confirmedBy: 'staff-2', now: T0 })
+      assert('identity-legacy-plus-pending: a different patient can now claim the released pending chart_no', claimedPending.sigma_chart_no === pendingChartNo)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
   /* ---- real HTTP boundary: auth, validation, 1:1 conflicts, batch read
      truthfulness, and cross-patient Task/Episode isolation. ---- */
   {
@@ -1593,6 +1646,18 @@ async function main() {
       assert('identity-http: the persisted file itself has no rrn field', onDisk && !('rrn' in onDisk))
       assert('identity-http: the persisted file itself has no phone field', onDisk && !('phone' in onDisk))
 
+      // Independent-review finding: the audit call for this event named an
+      // event string ('patient_identity_linked') that was never added to
+      // audit.js's ALLOWED_EVENTS, so it was silently dropped every time
+      // (confirmed at runtime by the reviewer, then here). A permanent
+      // identity assertion must leave a real trace.
+      const auditRaw = await readFile(path.join(dataRoot, 'audit.log'), 'utf8').catch(() => '')
+      const auditLines = auditRaw.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      assert('identity-http: linking writes a patient_identity_linked audit line', auditLines.some((l) => l.event === 'patient_identity_linked'))
+      assert('identity-http: the audit line carries only the allowed minimal keys (no chart_no/name/uuid)', auditLines
+        .filter((l) => l.event === 'patient_identity_linked')
+        .every((l) => Object.keys(l).every((k) => ['ts', 'event', 'submission_id', 'status', 'actor', 'visit_id'].includes(k))))
+
       // No silent overwrite -- relinking the same patient is a 409, not a
       // 200 that quietly replaces the chart_no.
       const relinkRes = await fetch(`${base}/api/crm/patient-identity`, {
@@ -1603,6 +1668,11 @@ async function main() {
       assert('identity-http: relinking an already-linked patient_uuid is rejected (409)', relinkRes.status === 409)
       const relinkBody = await relinkRes.json()
       assert('identity-http: relink conflict names the reason', relinkBody.error === 'already_linked')
+      // Independent-review finding (#5): the 409 body must let the doctor
+      // see WHAT this uuid is already linked to, not just that a conflict
+      // exists.
+      assert('identity-http: relink conflict body names the existing chart_no', relinkBody.existing_sigma_chart_no === 'CN-3001')
+      assert('identity-http: relink conflict body names the existing patient name', relinkBody.existing_patient_name === '환자A')
 
       // No cross-patient chart collision -- patient B cannot claim patient
       // A's chart_no.
@@ -1614,6 +1684,20 @@ async function main() {
       assert('identity-http: linking patient B to patient A\'s chart_no is rejected (409)', crossChartRes.status === 409)
       const crossChartBody = await crossChartRes.json()
       assert('identity-http: cross-chart conflict names the reason', crossChartBody.error === 'chart_already_linked')
+
+      // Independent-review finding (#3): trim-only normalization let two
+      // different casings of the SAME chart_no defeat the 1:1 invariant.
+      // Patient B retries with a differently-cased version of A's exact
+      // chart_no -- must still collide, not silently succeed as a
+      // "different" chart_no.
+      const caseVariantRes = await fetch(`${base}/api/crm/patient-identity`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_uuid: visitB.patient_id, sigma_chart_no: 'cn-3001', patient_name: '환자B(오기입)' }),
+      })
+      assert('identity-http: a differently-cased duplicate of an already-claimed chart_no is rejected (409)', caseVariantRes.status === 409)
+      const caseVariantBody = await caseVariantRes.json()
+      assert('identity-http: lowercase/uppercase chart_no collide into the same conflict reason', caseVariantBody.error === 'chart_already_linked')
 
       // Batch read: patient A resolves, patient B (never linked) is
       // explicitly unresolved -- proves an unresolved lookup never shows
@@ -1628,6 +1712,20 @@ async function main() {
       assert('identity-http: batch GET resolved patient A carries the correct name', batchBody.identities[visitA.patient_id]?.patient_name === '환자A')
       assert('identity-http: batch GET explicitly marks patient B unresolved (never guesses/leaks patient A\'s identity)', batchBody.identities[visitB.patient_id]?.resolved === false)
       assert('identity-http: unresolved entry names a reason', batchBody.identities[visitB.patient_id]?.reason === 'no_mapping')
+
+      // Independent-review finding (#8): a malformed patient_uuid query
+      // value must never reach the store's file-path derivation -- the
+      // route filters it out before the store call, so it is simply
+      // absent from the response rather than causing an error or a bogus
+      // filesystem lookup.
+      const malformedBatchRes = await fetch(
+        `${base}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(visitA.patient_id)}&patient_uuid=${encodeURIComponent('../../etc/passwd')}`,
+        { headers },
+      )
+      const malformedBatchBody = await malformedBatchRes.json()
+      assert('identity-http: batch GET still returns 200 when a malformed patient_uuid is present alongside a valid one', malformedBatchRes.status === 200)
+      assert('identity-http: batch GET resolves the valid uuid despite the malformed one being present', malformedBatchBody.identities[visitA.patient_id]?.resolved === true)
+      assert('identity-http: batch GET drops the malformed uuid entirely rather than echoing it back', !('../../etc/passwd' in malformedBatchBody.identities))
 
       // Cross-patient Task/Episode isolation: create a CRM task for
       // UNLINKED patient B, confirm linking patient A's identity has zero
@@ -1667,6 +1765,30 @@ async function main() {
       assert('identity-isolation: patient A\'s resolved identity is unaffected by patient B being linked afterwards', identityAAfterB.identities[visitA.patient_id]?.sigma_chart_no === 'CN-3001')
     } finally {
       await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- Independent-review finding (#7): scripts/purge-data.mjs purged
+     submissions/recorder-results/etc. and the audit log, but never
+     crm-identity/, silently leaving linked patient names on disk after a
+     pilot-end purge. ---- */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-purge-identity-'))
+    const submissionsDir = path.join(dataRoot, 'submissions')
+    try {
+      const store = createPatientIdentityStore(path.join(dataRoot, 'crm-identity'))
+      const uuid = randomUUID()
+      await store.linkPatientIdentity({ patientUuid: uuid, chartNo: 'CN-8008', patientName: '환자H', confirmedBy: 'staff-1', now: T0 })
+      assert('purge-data: sanity check -- the link file exists on disk before purge', (await readRaw(path.join(dataRoot, 'crm-identity', 'links', `${uuid}.json`))) !== null)
+
+      execFileSync(process.execPath, [path.join(process.cwd(), 'scripts', 'purge-data.mjs'), '--yes'], {
+        env: { ...process.env, SAMINDANG_DATA_DIR: submissionsDir },
+      })
+
+      const identityDirGone = await access(path.join(dataRoot, 'crm-identity')).then(() => false).catch(() => true)
+      assert('purge-data: purge removes crm-identity/ entirely, not just submissions/', identityDirGone)
+    } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }
   }

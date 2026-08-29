@@ -221,7 +221,14 @@ export function createPatientIdentityStore(baseDir) {
     await ensureDirs()
     return withLock(`identity:uuid:${patientUuid}`, async () => {
       const existingLink = await readJson(linkPath(baseDir, patientUuid))
-      if (existingLink) throw new IdentityConflictError('already_linked')
+      if (existingLink) {
+        const err = new IdentityConflictError('already_linked')
+        // Independent-review finding (#5): let the caller show the doctor
+        // WHAT this uuid is already linked to, instead of just "conflict"
+        // -- server/index.js reads this to enrich the 409 response body.
+        err.existingLink = existingLink
+        throw err
+      }
 
       const pending = await readJson(pendingPath(baseDir, patientUuid))
       if (pending && pending.sigma_chart_no !== chartNo) {
@@ -236,21 +243,33 @@ export function createPatientIdentityStore(baseDir) {
           }
         })
         await removeFileIfExists(pendingPath(baseDir, patientUuid))
-      } else if (!pending) {
-        const legacyMatches = await findLegacyOrphanedReservations(patientUuid, chartNo)
-        if (legacyMatches.length > 1) {
-          throw new IdentityConflictError('legacy_reservation_ambiguous')
-        }
-        if (legacyMatches.length === 1) {
-          const [legacy] = legacyMatches
-          await withLock(`identity:chart:${hashChartNo(legacy.sigma_chart_no)}`, async () => {
-            const stalePointer = await readJson(chartIndexPath(baseDir, legacy.sigma_chart_no))
-            const stillNoLink = await readJson(linkPath(baseDir, patientUuid))
-            if (stalePointer && stalePointer.patient_uuid === patientUuid && !stillNoLink) {
-              await removeFileIfExists(chartIndexPath(baseDir, legacy.sigma_chart_no))
-            }
-          })
-        }
+      }
+
+      // Independent-review finding (#6): this scan must NOT be gated on
+      // "no pending marker at all". A pending marker only ever tracks the
+      // single most recent reservation attempt, so a uuid can carry a
+      // genuine legacy orphan (from before the marker existed) under a
+      // wholly different chart_no AT THE SAME TIME as a pending marker
+      // for yet another, more recent attempt. Running this unconditionally
+      // -- excluding chartNo, the one being claimed right now, already
+      // handled by the O(1) path above when it applied -- is what finds
+      // that case too. This still only ever runs while `patientUuid` has
+      // no completed link (the guard at the top of this function returns
+      // early otherwise), so it costs at most one scan per never-yet-
+      // linked uuid per link attempt, same bound as before.
+      const legacyMatches = await findLegacyOrphanedReservations(patientUuid, chartNo)
+      if (legacyMatches.length > 1) {
+        throw new IdentityConflictError('legacy_reservation_ambiguous')
+      }
+      if (legacyMatches.length === 1) {
+        const [legacy] = legacyMatches
+        await withLock(`identity:chart:${hashChartNo(legacy.sigma_chart_no)}`, async () => {
+          const stalePointer = await readJson(chartIndexPath(baseDir, legacy.sigma_chart_no))
+          const stillNoLink = await readJson(linkPath(baseDir, patientUuid))
+          if (stalePointer && stalePointer.patient_uuid === patientUuid && !stillNoLink) {
+            await removeFileIfExists(chartIndexPath(baseDir, legacy.sigma_chart_no))
+          }
+        })
       }
 
       return withLock(`identity:chart:${hashChartNo(chartNo)}`, async () => {

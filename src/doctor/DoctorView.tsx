@@ -1724,6 +1724,14 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // UUID for any patient_uuid missing from this map, so an empty/cleared
   // map is never mistaken for "resolved to nothing."
   const [patientIdentities, setPatientIdentities] = useState<Record<string, ResolvedPatientIdentity>>({})
+  // Independent-review finding (#4): a slower, already-in-flight poll's
+  // identity fetch could resolve AFTER a newer optimistic update from
+  // onIdentityLinked below and clobber it back to the pre-link state.
+  // Bumped synchronously by onIdentityLinked; a poll only applies its
+  // identity result if nothing bumped this between issuing the fetch and
+  // it resolving -- otherwise it's discarded and the next poll (POLL_MS
+  // later) picks up the current, now-consistent state instead.
+  const patientIdentitiesSeqRef = useRef(0)
   const [selectedRevisit, setSelectedRevisit] = useState<{ visitId: string; patientId: string } | null>(null)
   // Round 6 review fix (duplicate-start prevention): disables "재진 간단
   // 문진 시작" while a request is in flight, so a double-click/impatient
@@ -1913,6 +1921,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         if (uuids.length === 0) {
           setPatientIdentities({})
         } else {
+          const seq = patientIdentitiesSeqRef.current
           const identityResult = await listPatientIdentities(uuids)
           if (cancelled) return
           // Replaced wholesale (never merged) on success, and cleared
@@ -1920,8 +1929,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           // leave a previous poll's resolved name displayed as current,
           // same staleness rule as crmTasks itself. The safe fallback
           // (truncated UUID) is what TodayQueueSection renders for any
-          // uuid missing from this map.
-          setPatientIdentities(identityResult.ok ? identityResult.data.identities : {})
+          // uuid missing from this map. Skipped if a newer optimistic
+          // update (onIdentityLinked) landed while this fetch was in
+          // flight -- see patientIdentitiesSeqRef's declaration.
+          if (patientIdentitiesSeqRef.current === seq) {
+            setPatientIdentities(identityResult.ok ? identityResult.data.identities : {})
+          }
         }
       } else {
         setCrmTasks(null)
@@ -2498,13 +2511,17 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           loading={crmTasksLoading}
           error={crmTasksError}
           identities={patientIdentities}
-          onIdentityLinked={(uuid, identity) =>
+          onIdentityLinked={(uuid, identity) => {
             // Round 14 identity batch: update immediately on a successful
             // confirm rather than waiting up to POLL_MS for the next poll
             // to reflect it -- the acceptance criteria requires the row
-            // to refresh right away.
+            // to refresh right away. Bump the sequence ref first so any
+            // identity fetch already in flight discards its (now stale)
+            // result instead of overwriting this optimistic update --
+            // see patientIdentitiesSeqRef's declaration.
+            patientIdentitiesSeqRef.current += 1
             setPatientIdentities((prev) => ({ ...prev, [uuid]: identity }))
-          }
+          }}
         />
       )}
 

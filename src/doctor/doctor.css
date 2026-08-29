@@ -455,6 +455,11 @@
   color: var(--danger);
 }
 
+.doctor__todayQueue__linkReviewText {
+  flex-basis: 100%;
+  font-size: 13px;
+}
+
 .doctor__newDot {
   display: inline-block;
   width: 7px;

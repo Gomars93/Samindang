@@ -44,7 +44,12 @@ export const CRM_TASK_STATUS_LABEL: Record<CrmTaskStatus, string> = {
  * PatientIdentityLinkAction.tsx) rather than a silently swallowed error.
  */
 export const IDENTITY_LINK_ERROR_LABEL: Record<string, string> = {
-  already_linked: '이미 다른 차트번호로 연결된 환자입니다.',
+  // Independent-review finding: the server returns this same reason
+  // regardless of whether the requested chart_no matches the existing
+  // link or not, so claiming "다른"(different) here was sometimes false.
+  // PatientIdentityLinkAction.tsx appends the existing chart_no/name (from
+  // the enriched 409 body) after this sentence when available.
+  already_linked: '이미 차트번호가 연결된 환자입니다.',
   chart_already_linked: '이미 다른 환자에게 연결된 차트번호입니다.',
   legacy_reservation_ambiguous: '이전 예약 상태가 모호합니다 — 관리자 확인이 필요합니다.',
   'unknown patient_uuid': '알 수 없는 환자입니다.',

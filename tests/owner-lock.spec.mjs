@@ -369,15 +369,42 @@ async function main() {
      to start, citing the dead pid. Fixed the same way scripts/
      purge-data.mjs already does it: register the handlers (and a
      disk-fallback release, for the window before the acquireOwnerLock()
-     handle exists yet) before acquireOwnerLock is ever called. Swept a
-     wide delay range against a seeded stale lock (fast env so this
-     doesn't take production's real settle/stale windows) to cover the
-     settle window and the moments just after.
+     handle exists yet) before acquireOwnerLock is ever called.
+
+     Eighth-round closing-review finding (MEDIUM, test-integrity -- this
+     block itself, not the fix it guards): the original version of this
+     test swept a FIXED wall-clock delay range (20-200ms) and signaled
+     unconditionally once it elapsed. That silently goes vacuous the
+     moment this real server's own boot (checkDataDirsWritable + the
+     settle sleep) takes longer than 200ms -- which this repo's own CI
+     runner (ubuntu-latest, 2 vCPU, per .github/workflows/ci.yml) does
+     under any concurrent load: measured the takeover write landing at
+     160-200ms on an idle 2-vCPU simulation but past 400-580ms with a
+     couple of CPU hogs pinned alongside it, well outside the swept
+     range. When every sample's SIGINT lands before the lock file has
+     even been written, there is nothing to leak, and the test reports a
+     clean pass -- verified directly: reintroducing the round-7 HIGH bug
+     (server/index.js from before this batch) into this exact test file
+     under `taskset -c 0,1` plus 2-3 CPU hogs, the sweep printed "0
+     leaked" and the suite went fully green, even though the bug was
+     back. Fixed by anchoring the signal to an OBSERVED event -- poll the
+     lock file until it actually names this spawned child's own pid
+     (i.e. the takeover write has genuinely landed) -- instead of a
+     guessed absolute delay, so the test lands inside the window
+     regardless of how slow boot happens to be on a given run. A small
+     jitter after that observed point samples the boundary and the
+     moments just after (the release()-in-flight sub-window, Part 6e's
+     own equivalent target). A `multi-takeover`-style coverage assertion
+     (see Part 3b above) makes a run that never actually observes the
+     write land FAIL instead of silently passing, so this test can never
+     go vacuous again the way the original version did.
      ===================================================================== */
   {
     let attemptsSignaled = 0
     let leaks = 0
-    for (let delayMs = 20; delayMs <= 200; delayMs += 10) {
+    let writeObserved = 0
+    const N = 20
+    for (let i = 0; i < N; i++) {
       const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-serverboot-'))
       let proc
       try {
@@ -397,7 +424,22 @@ async function main() {
         let exitedAlready = false
         proc.child.on('exit', () => { exitedAlready = true })
 
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        const pollDeadline = Date.now() + 5000
+        let landed = false
+        while (Date.now() < pollDeadline) {
+          if (exitedAlready) break
+          const rec = await readJsonOrNull(lockPath)
+          if (rec?.pid === proc.child.pid) { landed = true; break }
+          await new Promise((resolve) => setTimeout(resolve, 3))
+        }
+        if (landed) writeObserved++
+
+        // Jitter 0-30ms after the observed write lands to also sample the
+        // moments just after the settle window (analogous to Part 6e's
+        // own release()-window target), not only the instant of landing.
+        const jitterMs = (i % 7) * 5
+        if (jitterMs) await new Promise((resolve) => setTimeout(resolve, jitterMs))
+
         if (!exitedAlready) {
           attemptsSignaled++
           proc.child.kill('SIGINT')
@@ -411,7 +453,11 @@ async function main() {
         await rm(dataRoot, { recursive: true, force: true })
       }
     }
-    console.log(`  (server boot-path signal sweep) ${attemptsSignaled} delays actually required a signal; ${leaks} leaked`)
+    console.log(`  (server boot-path signal sweep) ${attemptsSignaled} attempts actually required a signal; ${writeObserved}/${N} actually observed the takeover write land before signaling; ${leaks} leaked`)
+    assert(
+      `server boot-path signal sweep: at least one attempt actually observed the takeover write land before being signaled (otherwise every run merely raced a not-yet-written lock file and would pass vacuously without exercising the window this test exists to guard)`,
+      writeObserved > 0,
+    )
     assert(
       `server boot-path signal sweep: zero leaks across ${attemptsSignaled} signaled attempts spanning the settle window (the real server's own version of the Part 6e finding)`,
       leaks === 0,

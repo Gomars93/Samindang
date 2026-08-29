@@ -109,21 +109,46 @@ export async function readOwnerLockStatus(dataDir, { staleAfterMs = 90000 } = {}
 // otherwise have returned. A single, immediate read is not quite enough:
 // acquireOwnerLock()'s own takeover write is `writeFile(tmp)` followed by
 // `rename(tmp, lockPath)` (see atomicWrite above) -- two separate awaited
-// fs operations in a DIFFERENT async chain than the signal handler. If a
-// signal lands while that rename's OS-level syscall has already landed on
-// disk but its JS promise has not yet resolved (a real, if narrow, event-
-// loop-scheduling gap -- confirmed via a real-process delay sweep against
-// server/index.js's own boot path: 1 leak in 19 signaled attempts, the
-// process then exiting via `process.exit()` before that pending promise
-// ever resumes), a single disk read at the exact instant of the signal can
-// still miss a takeover write that is about to land. Retrying a few times
-// with short waits gives that in-flight rename time to actually resolve
-// on disk before giving up -- the total wait (a few hundred ms at most) is
-// negligible next to how rarely this window is actually hit, and each
-// retry is a cheap read, not another write attempt.
+// fs operations in a DIFFERENT async chain than the signal handler.
+//
+// Eighth-round closing-review finding (comment/reasoning correction): the
+// prior version of this comment described the race as "the rename's
+// OS-level syscall has already landed on disk but a subsequent read can
+// still miss it" -- that is not physically possible (POSIX rename(2) is
+// atomic with respect to the directory entry; once it has completed, any
+// later read of the path sees the new content, in this or any other
+// process). What the reproduced 1-in-19 leak actually demonstrates is the
+// rename still being QUEUED on libuv's threadpool -- not yet completed at
+// all -- when the immediate read runs. Retrying a few times with short
+// waits gives that queued rename time to actually complete before giving
+// up; the reasoning matters here specifically because the wrong ("already
+// landed") model is what previously justified paying this retry's wait
+// unconditionally (see the eighth-round MEDIUM regression this fixed,
+// below), when the right model makes clear the wait is only ever useful
+// while the rename genuinely has not completed yet.
+//
+// Eighth-round closing-review finding (MEDIUM, behavioral regression this
+// fixes): the original version of this function ran the retry loop
+// UNCONDITIONALLY, even when `handle` was present and its own release()
+// had already done the authoritative work -- paying up to 200ms on every
+// single signal-driven shutdown (measured: ~210ms vs ~9ms before this
+// function existed), during which the process is still listening and
+// still writable with no lock file on disk, itself a two-live-owner
+// window of the exact kind this module exists to prevent. Fixed by having
+// release() (below) report whether THIS call actually performed the
+// authoritative check-and-unlink (as opposed to being a no-op because
+// some other call already claimed it) -- when it did, its own promise
+// resolving already means the disk state is current and settled, so no
+// retry is needed at all. The retry loop still runs, unconditionally,
+// whenever `handle` was absent (acquireOwnerLock() had not returned yet)
+// or `release()` reports it was a no-op (a second signal or a concurrent
+// heartbeat-loss race got there first, and this call cannot know whether
+// THAT call's own unlink has landed yet) -- both are exactly the windows
+// this retry exists for.
 export async function releaseAnyLockNamedThisProcess(dataDir, handle) {
   if (handle) {
-    await handle.release().catch(() => {})
+    const didAuthoritativeWork = await handle.release().catch(() => false)
+    if (didAuthoritativeWork) return
   }
   const lockPath = ownerLockPath(dataDir)
   for (const waitMs of [0, 50, 150]) {
@@ -347,8 +372,20 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
   }, heartbeatMs)
   timer.unref()
 
+  // Eighth-round closing-review finding (return value, MEDIUM regression
+  // fix): this function used to return nothing, so a caller had no way to
+  // tell "I just did the authoritative read-then-unlink myself" apart from
+  // "someone else already did (or is doing) it -- I was a no-op". Returns
+  // `true` only when THIS invocation got past the `released` guard and
+  // actually ran the check (whether or not it found a nonce match to
+  // unlink) -- by the time that promise resolves, this call's own view is
+  // fully authoritative and current. Returns `false` when another
+  // invocation (a concurrent signal, or a prior call) already claimed it --
+  // that caller cannot know whether the FIRST invocation's own unlink has
+  // landed yet, which is exactly why releaseAnyLockNamedThisProcess below
+  // still falls back to its own disk retry in that case.
   async function release() {
-    if (released) return
+    if (released) return false
     released = true
     clearInterval(timer)
     // Only remove the lock file if it still identifies us as the owner --
@@ -359,6 +396,7 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
     if (current?.nonce === nonce) {
       await unlink(lockPath).catch(() => {})
     }
+    return true
   }
 
   return { release, pid, nonce, lockPath }

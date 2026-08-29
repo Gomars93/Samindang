@@ -337,6 +337,86 @@ owner-lock.spec.mjs` 50 → 51 assertion(신규 Part 3c 서버 부팅 경로
 sweep 1개 추가, 기존 assertion 개수는 스윕 표본 수에 따라 실행마다
 소폭 변동 가능 — CI는 pass/fail만 게이트).
 
+8라운드(이번 커밋): 7라운드 결과(커밋 `14ee716`)에 대한 재검수(실제
+Opus subagent 호출, 148k 토큰·59 tool call·약 22분, worktree 격리·읽기
+전용 확인됨)가 **핵심 프로덕션 수정(`server/index.js`의 조기 핸들러
+등록) 자체는 실제로 완전하다고 확인**하면서도(직접 깨보려 시도했지만
+못 깼음 — checkDataDirsWritable 구간의 raw-signal 종료 79건 전부 무해,
+onLockLost와 shutdown()의 동시 실행도 안전, 이중 시그널 reentrancy도
+방어됨을 개별 확인), **7라운드 자신이 만든 방어 장치 두 곳에서 새
+결함**을 찾음:
+
+(a) MEDIUM, 실측 확인 — 7라운드가 좁은 rename-in-flight 레이스를
+막으려고 추가한 `[0, 50, 150]`ms 재시도 루프가 **handle이 이미 정상
+release된 경우에도 무조건 실행**돼, 정상적인 signal 기반 종료
+**전부**(Ctrl-C, `kill`, 재시작 등 사실상 모든 케이스)에 최대 200ms를
+낭비하고 있었음 — 실측: SIGTERM→프로세스 종료가 7라운드 이전 약
+9ms에서 이번 라운드 약 210ms로 23배 느려짐. 더 나쁜 건, 그 200ms 동안
+서버는 여전히 listen 중이고 lock 파일은 이미 없는 상태라, 그 사이 두
+번째 프로세스가 시작하면 자신이 유일한 소유자라고 믿어버리는 — 바로
+이 모듈이 막으려는 그 two-owner 상태 — 새 창을 만들고 있었음. 수정:
+`release()`가 "이번 호출이 실제로 authoritative 한
+확인+unlink까지 직접 수행했는지"를 boolean으로 반환하도록 바꾸고,
+`releaseAnyLockNamedThisProcess`는 handle의 release()가 실제로 그
+작업을 했으면(true) 즉시 반환(재시도 불필요 — 그 promise가 resolve된
+시점에 디스크 상태는 이미 확정), 다른 동시 호출이 이미 가로챘을
+때만(false, handle 없을 때와 동일하게) 재시도 루프로 진입 — 6라운드가
+막았던 이중 시그널 케이스는 여전히 정확히 이 경로로 보호됨. 재검증:
+정상 SIGTERM 종료 지연 다시 약 8-11ms로 복귀, F-A/rename-in-flight
+양쪽 재현 스윕 모두 0 누수 유지.
+
+(b) MEDIUM, 실측 확인(가장 심각) — 7라운드가 새로 만든 Part 3c
+서버-부팅-경로 sweep 자체가 **이 저장소의 실제 CI 하드웨어 프로파일
+(`.github/workflows/ci.yml`의 `ubuntu-latest`, 2 vCPU)에서 조용히
+무의미해짐**을 발견: 고정된 20-200ms 지연 스윕이었는데, 이 재검수가
+`taskset -c 0,1` + CPU 부하 2-3개를 얹은 시뮬레이션에서 실제 takeover
+write가 400-580ms대에야 일어남을 측정 — 즉 부하 있는 CI에서는 스윕의
+모든 신호가 lock 파일이 아직 써지기도 전에 도착해, 지울 게 아예
+없어서 항상 "0 leaked"로 통과함. 직접 재현: 7라운드 이전(버그가 있는)
+`server/index.js`로 되돌린 뒤 같은 부하 조건에서 이 테스트를 그대로
+실행 → 여전히 "0 leaked"로 green, 전체 스위트도 green — 즉 이 회귀
+테스트가 정작 지키려는 HIGH 버그를 재도입해도 CI에서 못 잡는 상태였다.
+수정: 고정 지연 대신 **실제로 관찰된 사건에 앵커** — lock 파일이
+정말로 이 자식 프로세스의 pid를 갖게 된 순간(=takeover write가 실제로
+반영된 순간)을 폴링으로 확인한 뒤에야 신호를 보내도록 재작성(부팅
+속도가 얼마나 느리든 항상 window 안에 정확히 착지), 그 관찰 시점
+이후 0-30ms 지터를 줘서 release() 실행 중 구간도 함께 샘플링. 또한
+Part 3b의 `multi-takeover` 자체가 이미 쓰고 있던 "적어도 한 번은
+실제로 그 코드 경로를 탔는가" 커버리지 자기점검 패턴을 그대로 이식 —
+관찰 자체가 한 번도 안 됐으면 무조건 FAIL하도록 만들어, 이 테스트가
+다시는 조용히 무의미해질 수 없게 함. 재검증: 같은 부하 조건에서
+버그가 있는 `server/index.js`로 다시 되돌리면 이제 20/20 관찰·20/20
+누수로 명확히 FAIL(전 라운드처럼 조용한 통과가 아니라); 수정된
+`server/index.js`로는 20/20 관찰·0 누수로 17회 연속(2-vCPU 시뮬레이션
+5회 포함) 클린.
+
+같은 재검수가 지적한 LOW 항목(코멘트 정확성): 재시도 루프의 근거로
+"rename의 OS syscall은 이미 디스크에 반영됐지만 JS Promise가 아직
+resolve 안 된 상태에서 읽으면 놓칠 수 있다"는 설명은 POSIX rename(2)의
+원자성과 모순됨(반영이 끝났다면 그 이후의 어떤 read도 놓칠 수 없음) —
+실제로는 rename이 libuv 스레드풀에 아직 큐잉만 되어 완료 전인 상태를
+가리키는 것이므로, 코드(재시도 자체)는 옳지만 근거 서술이 틀렸었다 —
+정정. 이 잘못된 모델이 (a)의 "재시도는 어차피 드물게만 필요하니
+비용이 미미하다"는 (틀린) 정당화로 이어졌던 것이므로 문서 정확성이
+실질적으로 중요했다.
+
+**재검수가 시도했지만 못 깬 것들**(정직하게 기록): `releaseAnyLockNamedThisProcess`가
+다른 프로세스의 정당한 lock을 실수로 지울 가능성(pid+hostname 동시
+일치가 필요해 불가능하다고 확인), `handle.release()`와 재시도 루프
+자체의 디스크 읽기가 서로 겹쳐 잘못된 결과를 낼 가능성(release()를
+완전히 await한 뒤에만 재시도가 시작되므로 겹침 없음), `onLockLost`
+경로가 실수로 새 소유자의 lock을 지울 가능성(여전히 release 관련
+함수를 전혀 호출하지 않음을 재확인), exitSignal-aware `waitForExit`
+술어의 새로운 취약점(SIGKILL을 실제로 쓰는 유일한 테스트는 이미
+exitSignal을 올바르게 확인하고 있었음을 재확인), `purge-data.mjs`
+쪽 동작 변화(공용 함수로 바꾼 뒤에도 동일함을 재확인).
+
+전체 게이트 재실행 green — `npx tsc -b --force`(0 에러), `npm run
+build`/`build:preview`(둘 다 성공), `npm run test:all`(직접 exit code
+확인, exit 0, FAIL 0건, owner-lock 52/52), `cd "tablet core" &&
+python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
+
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야
 하는지는 제품 판단) — server-side primitive는 이번 라운드에서 완성되어

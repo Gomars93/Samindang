@@ -13,6 +13,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { createPatientIdentityStore } from '../server/patientIdentityStore.js'
+import { acquireOwnerLock } from '../server/ownerLock.js'
 
 let passCount = 0
 function assert(name, cond) {
@@ -460,6 +461,72 @@ async function main() {
     )
     assert(
       `server boot-path signal sweep: zero leaks across ${attemptsSignaled} signaled attempts spanning the settle window (the real server's own version of the Part 6e finding)`,
+      leaks === 0,
+    )
+  }
+
+  /* =====================================================================
+     Part 3d (ninth-round closing-review finding, MEDIUM -- a regression
+     the eighth round's own fix introduced): releaseAnyLockNamedThisProcess
+     skips its retry loop whenever the held handle's own release() reports
+     it did the authoritative work itself (see ownerLock.js's own comment
+     on `beatInFlight`) -- but a heartbeat tick already in flight when
+     release() runs does not stop just because release() set `released`
+     and unlinked the file: its own already-started `readLock`/
+     `atomicWrite` can complete AFTER that unlink and recreate the lock
+     file, naming this now-dead process. This is a genuinely single-
+     process, single-async-interleaving race (unlike every other part of
+     this file, which spawns real separate OS processes specifically to
+     exercise MULTI-process visibility -- see this file's own header) --
+     an external signal's delivery latency through a real spawned child
+     turned out to add enough jitter (measured 1-44ms in Part 3c's own
+     review) to make the ~2ms heartbeat-tick window impractical to hit
+     externally, so this test calls acquireOwnerLock()/release() directly
+     in-process instead, timed against the heartbeat's own known interval
+     (this file already imports store modules directly elsewhere, e.g.
+     patientIdentityStore.js above, when a race is genuinely single-
+     process). Reproduced directly: 85/300 trials leaked before this
+     round's fix (release() awaiting any in-flight heartbeat before its
+     own read+unlink), 0/300 after.
+     ===================================================================== */
+  {
+    const heartbeatMs = 20
+    const trials = 300
+    let leaks = 0
+    for (let i = 0; i < trials; i++) {
+      const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-hbrace-'))
+      try {
+        const dataDir = path.join(dataRoot, 'submissions')
+        await mkdir(dataDir, { recursive: true })
+        const lock = await acquireOwnerLock(dataDir, { heartbeatMs, staleAfterMs: 90000, settleMs: 50 })
+        // Straddle the FIRST heartbeat tick's fire instant (t=heartbeatMs)
+        // through shortly after its own read+write would complete.
+        const jitterMs = heartbeatMs - 2 + (i % 12) * 0.5
+        await new Promise((resolve) => setTimeout(resolve, jitterMs))
+        await lock.release()
+        // Give any straggling in-flight heartbeat write time to land
+        // before checking, so a leak is actually observed rather than
+        // raced.
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        const record = await readJsonOrNull(lock.lockPath)
+        if (record?.pid === process.pid) leaks++
+      } finally {
+        // A leaked/resurrected lock file can itself still be landing when
+        // cleanup runs -- retry rather than letting a transient
+        // ENOTEMPTY from that exact race abort the whole suite.
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await rm(dataRoot, { recursive: true, force: true })
+            break
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 20))
+          }
+        }
+      }
+    }
+    console.log(`  (heartbeat-in-flight sweep) ${trials} trials; ${leaks} leaked`)
+    assert(
+      `heartbeat-in-flight sweep: zero leaks across ${trials} trials straddling a heartbeat tick's fire instant (release() must wait out an in-flight tick before its own unlink)`,
       leaks === 0,
     )
   }

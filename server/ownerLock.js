@@ -317,8 +317,26 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
   }
 
   let released = false
-  const timer = setInterval(async () => {
-    if (released) return
+  // Ninth-round closing-review finding (MEDIUM, regression vs the eighth
+  // round's own fix): `release()` below only checked `released` at ITS
+  // OWN entry, but a heartbeat tick already in flight (suspended at its
+  // own `await readLock`/`atomicWrite` below) never re-checks `released`
+  // after release() has run -- so a signal landing mid-beat could have
+  // release() finish its authoritative read+unlink first, then have the
+  // beat's own already-in-progress atomicWrite land AFTER it, silently
+  // recreating the lock file naming this now-dead process. That is
+  // exactly the class of leak this whole module exists to prevent.
+  // Reproduced directly (in-process, `heartbeatMs=20`): 40/600 signaled
+  // releases leaked, 40/40 of them written by the heartbeat's own renewal,
+  // window ~2ms per tick. `beatInFlight` lets release() await any
+  // already-started tick to fully finish BEFORE running its own
+  // authoritative read+unlink, so that unlink is genuinely the last write
+  // -- restoring the guarantee the eighth round's `didAuthoritativeWork`
+  // early-return assumed but did not actually establish. Verified: 0/800
+  // leaks after this fix, shutdown latency unchanged (~8ms median, not
+  // the 200ms the eighth round's fix specifically removed).
+  let beatInFlight = null
+  async function beat() {
     try {
       // Closing-review finding: a heartbeat that just re-writes its own
       // remembered `record` without checking what is CURRENTLY on disk can
@@ -369,6 +387,12 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
       // missed beats before another process would treat this lock as
       // abandoned.
     }
+  }
+  const timer = setInterval(() => {
+    if (released) return
+    beatInFlight = beat().finally(() => {
+      beatInFlight = null
+    })
   }, heartbeatMs)
   timer.unref()
 
@@ -379,15 +403,29 @@ export async function acquireOwnerLock(dataDir, { heartbeatMs = 15000, staleAfte
   // `true` only when THIS invocation got past the `released` guard and
   // actually ran the check (whether or not it found a nonce match to
   // unlink) -- by the time that promise resolves, this call's own view is
-  // fully authoritative and current. Returns `false` when another
-  // invocation (a concurrent signal, or a prior call) already claimed it --
-  // that caller cannot know whether the FIRST invocation's own unlink has
-  // landed yet, which is exactly why releaseAnyLockNamedThisProcess below
-  // still falls back to its own disk retry in that case.
+  // fully authoritative and current (as of the ninth round's beatInFlight
+  // fix above -- an earlier version of this comment claimed that guarantee
+  // already held, which was true of every OTHER write to this lock file
+  // but not of a heartbeat tick already in flight when this call started;
+  // awaiting beatInFlight first is what actually makes it true). Returns
+  // `false` when another invocation (a concurrent signal, or a prior call)
+  // already claimed it -- that caller cannot know whether the FIRST
+  // invocation's own unlink has landed yet, which is exactly why
+  // releaseAnyLockNamedThisProcess below still falls back to its own disk
+  // retry in that case.
   async function release() {
     if (released) return false
     released = true
     clearInterval(timer)
+    // Ninth-round closing-review finding: wait out any heartbeat tick that
+    // was already running when this call started (see beatInFlight's own
+    // comment above `beat()`) BEFORE doing our own authoritative read --
+    // otherwise that tick's still-pending atomicWrite can land AFTER our
+    // unlink below and resurrect the lock file, naming this now-dead
+    // process again.
+    if (beatInFlight) {
+      await beatInFlight.catch(() => {})
+    }
     // Only remove the lock file if it still identifies us as the owner --
     // if this process was already presumed dead and taken over (a very
     // slow shutdown past staleAfterMs), unlinking would delete the NEW

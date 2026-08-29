@@ -417,6 +417,72 @@ build`/`build:preview`(둘 다 성공), `npm run test:all`(직접 exit code
 python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
 
+9라운드(이번 커밋, Round 17 CLOSED): 8라운드 결과(커밋 `bff4f31`)에
+대한 재검수(실제 Opus subagent 호출, 151k 토큰·84 tool call·약 42분,
+worktree 격리·읽기 전용 확인됨)가 8라운드의 두 수정(F-2 무조건 재시도
+제거, F-1 Part 3c 관찰-기반 앵커링)은 실제로 유효하다고 확인하면서도
+(직접 shutdown 지연 재측정 8-11ms 유지, 버그 재도입 시 부하 상황에서도
+Part 3c가 20/20 관찰·20/20 누수로 여전히 loud FAIL함을 자체
+mutation으로 재확인), `releaseAnyLockNamedThisProcess`에서 **다섯
+라운드 연속으로 같은 함수에서 나온 MEDIUM 결함**을 새로 찾음:
+`release()`가 "이번 호출이 authoritative 작업을 직접 했다"고
+true를 반환하면 재시도 루프를 즉시 건너뛰는데, 그 판단은 **이미
+진행 중이던 heartbeat tick**(자신의 `readLock`/`atomicWrite`가
+release()의 unlink보다 먼저 시작됐지만 나중에 끝나는 경우)까지
+고려하지 않았음 — heartbeat 콜백은 자기 자신의 진입 시점에만
+`released`를 확인하고, 그 이후의 await 지점들에서는 재확인하지
+않으므로, release()가 unlink를 마친 *뒤에* 이미 시작돼 있던
+heartbeat의 atomicWrite가 뒤늦게 완료돼 lock 파일을 되살릴 수 있음.
+in-process 직접 재현(heartbeatMs=20, 신호를 heartbeat tick 발화
+순간에 맞춰 조준): 85~88/300 누수, 창 폭 약 2ms(heartbeatMs=100
+기준 정밀 스윕에서 tick 발화 시점 전후 0.5~1.5ms 구간에만 집중).
+실서버 SIGTERM 종단간 재현에서도 동일 증상(죽은 pid를 근거로 재시작
+거부)까지 확인. 이 결함은 기본 설정(heartbeatMs=15000)에서는 약
+1/7500 확률로 드물지만, 소비자가 이 값을 낮추면 그만큼 확률이
+올라가고 — 결과 자체는 5·6·7라운드가 반복해서 닫아온 것과 동일한
+"죽은 pid로 재시작 거부" 증상이므로 correctness 결함으로 취급.
+
+수정: `release()`가 `released=true`로 표시하고 unlink하기 *전에*,
+이미 진행 중이던 heartbeat tick의 Promise(`beatInFlight`)를 먼저
+기다려 완전히 끝내도록 함 — 그 이후에야 자신의 read+unlink를
+수행하므로, 그 unlink가 정말로 "마지막 쓰기"임이 보장됨. 재검증:
+in-process 재현 0/300(부하 없이도, `taskset -c 0,1`에서도), 실서버
+SIGTERM 지연 재측정 median 9ms(8라운드가 없앤 200ms 재도입 없음),
+새 회귀 테스트(heartbeat-in-flight sweep, 300 trial in-process
+직접 `acquireOwnerLock`/`release()` 호출 — 이 파일의 "실제 별도
+OS 프로세스만" 원칙은 멀티프로세스 가시성 문제를 위한 것이고 이
+결함은 단일 프로세스 내부 async 인터리빙이라 원칙 예외로 명시하고
+직접 호출 방식 채택, 이미 `patientIdentityStore.js`를 직접 import하는
+기존 관례와 일치)가 수정 전 88/300, 수정 후 0/300으로 실제 버그
+탐지력을 스스로 증명. 전체 스위트 15회(2-vCPU 시뮬레이션 5회 포함)
+전부 clean, 매 실행 server-boot-path/heartbeat-in-flight/release-window
+세 스윕 모두 0 누수.
+
+전체 게이트 재실행 green — `npx tsc -b --force`(0 에러), `npm run
+build`/`build:preview`(둘 다 성공), `npm run test:all`(직접 exit code
+확인, exit 0, FAIL 0건, owner-lock 53/53), `cd "tablet core" &&
+python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff).
+
+**Round 17 CLOSED**: 9회 연속 독립 Opus 재검수 끝에 실질적 HIGH급
+엔지니어링 결함이 더 이상 발견되지 않음(9라운드 자신이 찾은 것은
+MEDIUM이었고, 그 자체가 지금 이 커밋으로 닫힘 — 사용자 지시에 따라
+"이번 재검수에서 HIGH/실제 correctness·data-loss·security·
+cross-patient leak·restart durability·concurrency 결함만 재오픈,
+MEDIUM/LOW/이론적 hardening/테스트 완성도 개선/성능/정리는 backlog로
+기록 후 CLOSED"). 다음 Opus 재검수(10번째)를 이 커밋을 대상으로 한 번
+더 수행하고, 거기서도 HIGH급이 안 나오면 그 결과를 최종 CLOSED 근거로
+삼는다. 남은 backlog(고쳐야 할 정도는 아니라고 판단된 항목, 필요 시
+향후 별도 배치에서 재검토):
+- heartbeat의 read-verify와 atomicWrite 사이 TOCTOU(2라운드부터 문서화된
+  기존 residual, heartbeatMs 경계의 two-owner 윈도) — 그대로 유지.
+- `exiting`/`shuttingDown` reentrancy 플래그가 release() 자체가 멈추면
+  이후 모든 시그널을 삼켜 SIGKILL만 탈출구가 되는 이론적 gap(8라운드
+  재검수가 지적, 재현 시도 안 함) — LOW, 그대로 유지.
+- atomicWrite의 write→rename 사이 신호로 orphan `.tmp` 파일이 남을 수
+  있는 극희소 경로(7라운드 재검수가 1/258로 재현) — LOW, purge 인벤토리
+  정확성 문제일 뿐 lock 정합성에는 영향 없음, 그대로 유지.
+
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야
 하는지는 제품 판단) — server-side primitive는 이번 라운드에서 완성되어

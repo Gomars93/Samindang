@@ -6,7 +6,7 @@
 // tests/server.spec.mjs / tests/follow-up-session.spec.mjs. No build step:
 // crmStore.js itself imports src/crm/*.ts directly via Node's native TS
 // execution, so this file can just `node tests/crm-store.spec.mjs`.
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -26,6 +26,15 @@ async function readRaw(filePath) {
     return JSON.parse(await readFile(filePath, 'utf8'))
   } catch (err) {
     if (err.code === 'ENOENT') return null
+    throw err
+  }
+}
+
+async function readdirDedupFiles(root) {
+  try {
+    return (await readdir(path.join(root, 'dedup'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+  } catch (err) {
+    if (err.code === 'ENOENT') return []
     throw err
   }
 }
@@ -321,11 +330,12 @@ async function main() {
   }
 
   /* =====================================================================
-     Part 4: failure injection on task creation -- block the tasks
-     directory itself (the first write createTaskStored attempts) so the
-     call fails before any file at all is written, and confirm no dedup
-     pointer or task file was left behind for a subsequent, unblocked call
-     to trip over.
+     Part 4: failure injection on task creation -- block the specific
+     Task file's own write path (the SECOND write createTaskStored
+     attempts, after round 8's reordering -- see Part 7 below for the full
+     durable-dedup-crash-window regression) and confirm the interrupted
+     call throws with no Task file on disk, then that an unblocked retry
+     recovers cleanly.
      ===================================================================== */
   {
     const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-create-failure-'))
@@ -362,9 +372,15 @@ async function main() {
       const taskAfterFailure = await readRaw(path.join(root, 'tasks', `${taskId}.json`))
       assert('create-failure: no task file was left behind by the interrupted create', taskAfterFailure === null)
 
-      // No dedup pointer was written either (it is written strictly after
-      // the task file in createTaskStored), so a retry is a clean create,
-      // not a phantom dedup match against a task that does not exist.
+      // Round 8: the dedup pointer WAS already durably committed before
+      // the blocked task write was attempted -- it is the intent record.
+      // A retry (with a fresh, different task_id, exactly as a real
+      // caller's retry would supply) must recover the ORIGINAL attempt's
+      // task_id from that intent record, not mint a second one.
+      const dedupHashFile = (await readdirDedupFiles(root))[0]
+      const pointerAfterFailure = await readRaw(path.join(root, 'dedup', dedupHashFile))
+      assert('create-failure: the dedup intent record survived the blocked task write', pointerAfterFailure?.task?.task_id === taskId)
+
       await rm(taskTmpPath, { recursive: true, force: true })
       const { task: retriedTask, deduped } = await store.createTaskStored({
         task_id: randomUUID(),
@@ -376,7 +392,8 @@ async function main() {
         owner_clinician: null,
         now: T0,
       })
-      assert('create-failure: retry after unblocking creates cleanly, not a phantom dedup', deduped === false && retriedTask.status === 'OPEN')
+      assert('create-failure: retry after unblocking recovers cleanly, not a phantom dedup', deduped === false && retriedTask.status === 'OPEN')
+      assert('create-failure: retry recovers the ORIGINAL intent\'s task_id, not the retry\'s own fresh one', retriedTask.task_id === taskId)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -506,6 +523,127 @@ async function main() {
     } finally {
       await stopServer(server)
       await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 7: the durable dedup crash window (round 8 fix) -- interrupt
+     createTaskStored at the exact point that used to leave a duplicate:
+     after the dedup intent record is durably committed but before the
+     Task file itself lands. Prove that a fresh createCrmStore() instance
+     (a real restart, no shared state whatsoever) retrying the same
+     source event converges to exactly one authoritative non-terminal
+     Task -- never a second one -- while terminal-task remint semantics
+     are unchanged.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-dedup-crash-'))
+    try {
+      const storeA = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await storeA.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      const originalTaskId = randomUUID()
+      // Block the Task file's own tmp write path -- the SECOND write in
+      // createTaskStored's new order, so the dedup intent record (the
+      // FIRST write) is allowed to land normally.
+      const taskTmpPath = path.join(root, 'tasks', `${originalTaskId}.json.tmp`)
+      await mkdir(taskTmpPath, { recursive: true })
+
+      let firstAttemptThrew = false
+      try {
+        await storeA.createTaskStored({
+          task_id: originalTaskId,
+          patient_uuid: patientUuid,
+          episode_id: episodeId,
+          task_type: 'ROUTINE',
+          reason_code: 'REASSESSMENT_DUE',
+          source_event_id: 'evt-dedup-crash',
+          owner_clinician: null,
+          now: T0,
+        })
+      } catch {
+        firstAttemptThrew = true
+      }
+      assert('dedup-crash: first attempt genuinely throws when the Task write is blocked (intent already committed)', firstAttemptThrew)
+
+      const hashFile = (await readdirDedupFiles(root))[0]
+      assert('dedup-crash: exactly one dedup intent record exists after the interrupted attempt', hashFile !== undefined)
+      const intentAfterCrash = await readRaw(path.join(root, 'dedup', hashFile))
+      assert('dedup-crash: the intent record durably names the original task_id and full snapshot', intentAfterCrash?.task?.task_id === originalTaskId && intentAfterCrash.task.status === 'OPEN')
+      const taskFileAfterCrash = await readRaw(path.join(root, 'tasks', `${originalTaskId}.json`))
+      assert('dedup-crash: the Task file itself does not exist yet -- only the intent survived', taskFileAfterCrash === null)
+
+      // Unblock, then simulate an actual process restart: a completely
+      // fresh createCrmStore() instance, no shared in-memory state.
+      await rm(taskTmpPath, { recursive: true, force: true })
+      const storeB = createCrmStore(root, { claimLeaseMinutes: 60 })
+
+      // Retry with the same dedup-key-relevant fields but the caller's
+      // own FRESH task_id (exactly what server/index.js's route actually
+      // does on every call -- randomUUID() per request) to prove recovery
+      // ignores the retry's own id in favor of the durable intent's.
+      const { task: recovered, deduped: recoveredDeduped } = await storeB.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-dedup-crash',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('dedup-crash: restart-retry recovers the ORIGINAL task_id from the intent record', recovered.task_id === originalTaskId)
+      assert('dedup-crash: restart-retry reports deduped:false -- this call completes the durable creation', recoveredDeduped === false)
+
+      const allTaskFiles = (await readdir(path.join(root, 'tasks'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      assert('dedup-crash: exactly one Task file exists on disk after recovery -- no duplicate', allTaskFiles.length === 1)
+
+      // A further retry now finds a real, non-terminal Task on disk and
+      // dedupes normally (the ordinary path, unaffected by the fix).
+      const { task: thirdCall, deduped: thirdDeduped } = await storeB.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-dedup-crash',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('dedup-crash: a subsequent ordinary retry dedupes to the recovered task, not a new one', thirdDeduped === true && thirdCall.task_id === originalTaskId)
+
+      // Terminal-task remint semantics are unchanged: once the recovered
+      // task is DONE, the identical dedup-key inputs mint a genuinely NEW
+      // task rather than reusing (or getting stuck on) the terminal one --
+      // and that fresh mint is itself crash-safe the same way.
+      const resolved = await storeB.resolveTaskStored(originalTaskId, recovered.version, 'CLINICIAN', T0)
+      assert('dedup-crash: recovered task can be resolved to DONE normally', resolved.status === 'DONE')
+
+      const { task: remint, deduped: remintDeduped } = await storeB.createTaskStored({
+        task_id: randomUUID(),
+        patient_uuid: patientUuid,
+        episode_id: episodeId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-dedup-crash',
+        owner_clinician: null,
+        now: T0,
+      })
+      assert('dedup-crash: same dedup key after the prior task is DONE mints a genuinely new task, not deduped', remintDeduped === false && remint.task_id !== originalTaskId)
+
+      const hashFileAfterRemint = (await readdirDedupFiles(root))[0]
+      const intentAfterRemint = await readRaw(path.join(root, 'dedup', hashFileAfterRemint))
+      assert('dedup-crash: the intent record now points at the new mint, not the terminal task', intentAfterRemint.task.task_id === remint.task_id)
+
+      // No raw phone/PHI anywhere in the intent record -- only UUID
+      // references and non-PHI status fields, same invariant the pure
+      // engine's own dedup_key construction already enforces.
+      const RAW_PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
+      assert('dedup-crash: the intent record contains no phone-shaped string', !RAW_PHONE_PATTERN.test(JSON.stringify(intentAfterRemint)))
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   }
 

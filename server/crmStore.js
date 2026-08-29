@@ -242,6 +242,21 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
   // the wrong patient. The Episode is loaded here, inside the store
   // boundary, specifically so no route-level validation can be bypassed by
   // calling this function directly.
+  //
+  // Round 8 fix (durable dedup crash window): the dedup pointer file is
+  // now the durable INTENT record and is written *before* the Task file,
+  // not after -- and it carries the full computed Task snapshot, not just
+  // its id. This makes the two-file write recoverable across a crash at
+  // either point: if the process dies after the pointer commits but
+  // before the Task file lands, a retry (from a fresh createCrmStore()
+  // instance, i.e. after restart) finds the pointer, finds no Task file
+  // at the id it names, and simply replays the exact already-computed
+  // snapshot -- never reconstructing a Task from whatever fields this
+  // retry happens to carry, and never minting a second task_id for the
+  // same dedup_key. Previously the order was Task-then-pointer, so a
+  // crash between them left an orphaned Task with no pointer, and the
+  // next retry would mint an entirely new (second) non-terminal Task for
+  // the same dedup_key -- silently duplicating staff work/contact.
   async function createTaskStored(rawInput) {
     const episode = await getEpisode(rawInput.episode_id)
     if (!episode) throw new CrmNotFoundError('episode', rawInput.episode_id)
@@ -258,15 +273,27 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     return withLock(`dedup:${hash}`, async () => {
       await ensureDirs()
       const pointer = await readJson(dedupPath(baseDir, hash))
-      if (pointer?.task_id) {
-        const existing = await getTask(pointer.task_id, input.now)
-        if (existing && !TERMINAL_TASK_STATUSES.has(existing.status)) {
-          return { task: existing, deduped: true }
+      if (pointer?.task) {
+        const onDisk = await getTask(pointer.task.task_id, input.now)
+        if (onDisk) {
+          if (!TERMINAL_TASK_STATUSES.has(onDisk.status)) {
+            return { task: onDisk, deduped: true }
+          }
+          // Terminal -- treated exactly like no match, falls through to
+          // mint a fresh intent below (repointing the dedup index).
+        } else {
+          // Recovery: a prior attempt's intent survived, but its Task
+          // file never landed (process died in between). Complete that
+          // exact prior attempt by replaying its already-computed
+          // snapshot verbatim -- this retry's own (possibly different)
+          // input is not used to reconstruct it.
+          await withLock(`task:${pointer.task.task_id}`, () => atomicWrite(taskPath(baseDir, pointer.task.task_id), pointer.task))
+          return { task: pointer.task, deduped: false }
         }
       }
       const { task } = createCrmTask(input, [])
+      await atomicWrite(dedupPath(baseDir, hash), { task })
       await withLock(`task:${task.task_id}`, () => atomicWrite(taskPath(baseDir, task.task_id), task))
-      await atomicWrite(dedupPath(baseDir, hash), { task_id: task.task_id })
       return { task, deduped: false }
     })
   }

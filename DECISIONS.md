@@ -978,3 +978,60 @@ build`, `npm run build:preview` 전부 확인).
 `tests/crm-store.spec.mjs`에도 이 시나리오에 대한 원자성 보장 테스트를
 넣지 않았다 — 다음 CRM 라운드에서 필요하면 task 쓰기와 dedup 쓰기를
 하나의 원자적 단계로 묶는 방식으로 다룰 수 있다.
+
+**Round 8에서 닫힘** — 아래 항목 참고.
+
+## 2026-08-29 — CRM v0.3.1 Round 8: dedup 포인터를 durable intent record로 전환
+
+### Context
+Round 6이 공개하고 Round 7 보고에서 재확인했던 한계 — `createTaskStored`가
+Task 파일을 먼저 쓰고 dedup 포인터를 나중에 쓰는 순서라서, 그 사이에
+프로세스가 죽으면 재시도가 포인터를 못 찾고 같은 `dedup_key`에 대해
+두 번째 non-terminal Task를 만들어버릴 수 있었다 — 를 Gomars93가 CRM UI
+착수 전 마지막 엔지니어링 과제로 지시했다. 조건: 새 데이터베이스/제품
+레이어 추가 금지, 현재의 "빌드 단계 없는 파일 store" 아키텍처와 호환되는
+가장 단순하고 견고한 방식을 고를 것.
+
+### Decision
+쓰기 순서를 뒤집었다 — dedup 포인터를 **먼저**, Task 파일을 **나중에**
+쓴다. 포인터 파일의 내용도 `{task_id}`(참조만)에서 `{task}`(계산된 Task
+객체 전체 스냅샷)로 바꿔, 포인터 자체가 durable "intent record"가
+되도록 했다. 포인터는 있는데 그것이 가리키는 Task 파일이 없으면(=
+intent는 커밋됐지만 완료되지 못한 이전 시도), 이번 재시도의 입력으로
+Task를 다시 조합하는 게 아니라 포인터에 저장된 스냅샷을 그대로 재생한다.
+
+이렇게 하면 두 파일 쓰기가 진짜 원자적 트랜잭션은 아니어도(여전히 별개의
+두 `atomicWrite` 호출), 순서와 "포인터가 유일한 진실"이라는 규칙만으로
+크래시 지점과 무관하게 항상 정확히 하나의 task_id로 수렴한다 — 별도의
+WAL이나 2단계 커밋 프로토콜, deterministic task_id(=dedup_key 해시)
+같은 무거운 장치를 도입하지 않고도.
+
+### Reason
+검토된 대안 두 가지를 기각했다:
+- **deterministic task_id(= dedup_key의 해시)**: task 식별자 자체를
+  caller가 아니라 dedup_key에서 파생시키면 스캔/락 없이도 항상 같은
+  경로를 계산할 수 있지만, 현재 `task_id`는 호출자(주로
+  `server/index.js`)가 `randomUUID()`로 미리 발급해 넘기는 opaque
+  UUID라는 기존 lifecycle을 바꾸는 셈이라 blast radius가 컸다. Round
+  7이 이미 "caller가 보낸 patient_uuid는 authority가 아니다"라는 선례를
+  만들었으므로, 이번에도 "caller가 보낸 task_id는 최초 커밋 시에만
+  의미 있고 그 이후 재시도에서는 durable intent가 이긴다"는 동일한
+  패턴으로 풀 수 있었다 — task_id의 *생성 방식* 자체를 바꿀 필요가
+  없었다.
+- **전체 task 디렉터리 스캔으로 dedup_key 일치 여부 확인**: 매 생성마다
+  선형 스캔이 필요해 이 저장소의 다른 file-per-entity store들이 쓰는
+  "포인터 파일로 O(1) 조회" 관례에서 벗어난다.
+
+### Trade-offs
+- (+) 새 추상화나 데이터베이스 없이 순수 순서 반전 + 포인터 내용
+  확장만으로 불변식을 만족시켰다 — diff가 `createTaskStored` 함수
+  하나에 국한된다.
+- (+) `task_id`의 정체성 규칙이 Round 7의 patient_uuid 규칙과 같은
+  모양이 됐다: "caller가 보낸 값은 durable 소스와 다르면 진다."
+- (−) dedup 포인터 파일이 이제 Task 전체 스냅샷의 사본을 담고 있어
+  디스크 사용량이 약간 늘고, Task가 이후에 mutate되면(claim/resolve
+  등) 포인터의 스냅샷은 그 시점 그대로 stale하게 남는다 — 이는 의도된
+  것이다(포인터는 오직 "이 dedup_key로 처음 만들어진 게 이 task다"라는
+  intent만 기록하며, 실제 최신 상태의 유일한 진실은 항상 `tasks/<id>.json`
+  이다. `createTaskStored`가 dedup 매치를 반환할 때도 포인터의 스냅샷이
+  아니라 `getTask()`로 새로 읽은 최신 Task를 반환한다).

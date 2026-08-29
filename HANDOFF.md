@@ -1,6 +1,30 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 7 — Task 환자 정체성을 Episode에서 파생시켜 identity 불변식 강제, 이번 세션)
+## Objective (CRM v0.3.1 round 8 — durable dedup crash window 제거, 이번 세션)
+Gomars93의 다음 지시: round 7에서 공개했던 알려진 한계 — `createTaskStored()`가
+Task 파일을 먼저 쓰고 `dedup/<hash>.json` 포인터를 나중에 쓰는데, Task
+rename이 성공한 직후 dedup 포인터가 기록되기 전에 프로세스가 죽으면
+재시도가 포인터를 못 찾아 같은 `dedup_key`에 대해 두 번째 non-terminal
+Task를 만들 수 있었다(process 내부 `dedup:${hash}` 락은 재시작을 넘어서
+보호하지 못함) — 를 이번 라운드에서 닫는다. store 경계에서, 클리닉
+데이터를 다루지 않는 새 데이터베이스/제품 레이어 없이 가장 단순하고
+견고한 파일 기반 접근으로 고칠 것. 요구 불변식: task 생성 도중 어느
+crash/restart 지점에서든 같은 `dedup_key`에 대한 재시도는 정확히 하나의
+authoritative non-terminal Task로 수렴해야 한다. 요구된 회귀/failure-injection
+증명 6가지: (1) Task durability 이후·dedup pointer durability 이전 지점에서
+중단, (2) 새 `createCrmStore()` 인스턴스로 재시작 시뮬레이션, (3) 같은
+source event/contact point로 재시도, (4) 그 dedup key에 대해 authoritative
+non-terminal Task가 정확히 하나만 존재하고 API가 중복을 새로 만들지 않고
+그것을 반환/재사용함을 확인, (5) CANCELLED/SUPERSEDED terminal semantics는
+불변 — 이전 authoritative Task가 terminal이면 정말 새 Task가 만들어질 수
+있어야 함, (6) 파일명/로그/audit에 raw phone/PHI 미도입, Safety
+invariant/expectedVersion/claim lease/first_seen_at/Episode-derived patient
+identity/Test 0 PENDING gate 전부 온전. 이번 라운드도 범위를 좁게 유지 —
+CRM UI 없음, 임상 threshold/매핑/identity-policy/provider 변경 없음. tsc/
+build/build:preview/test:all/tablet-core 재실행, CI + preview 확인, FROZEN
+zero-diff 검증. **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 7 — Task 환자 정체성을 Episode에서 파생시켜 identity 불변식 강제, 이전 세션)
 Gomars93의 다음 지시: `POST /api/crm/tasks`가 `episode_id`의 존재만 확인하고
 요청 body의 `patient_uuid`를 그대로 CrmTask에 영속화하고 있었는데, 이러면
 `body.patient_uuid !== episode.patient_uuid`인 stale/malicious 요청이
@@ -323,7 +347,60 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 7 (Task 정체성을 Episode에서 파생, 이번 세션)
+## Completed — CRM v0.3.1 Round 8 (durable dedup crash window 제거, 이번 세션)
+**`server/crmStore.js`의 `createTaskStored()` 재작성**: 쓰기 순서를
+뒤집었다 — 이제 dedup 포인터(`dedup/<hash>.json`)를 **먼저** 쓰고 Task
+파일을 나중에 쓴다. 포인터 파일의 내용도 `{task_id}`에서
+`{task}`(계산된 Task 객체 전체 스냅샷)로 바꿔, 포인터 자체가 "durable
+intent record"가 되도록 했다. 동작:
+- 포인터가 없으면(완전히 새 생성이거나 이전 authoritative Task가
+  terminal이라 재발급하는 경우): `createCrmTask()`로 Task를 계산 →
+  포인터에 그 전체 스냅샷을 먼저 커밋 → 그다음 Task 파일을 쓴다.
+- 포인터가 있고 그 `task.task_id`가 가리키는 Task 파일이 실제로
+  존재하면: 기존과 동일하게 non-terminal이면 dedupe, terminal이면
+  아래 "포인터 없음"과 같은 경로로 재발급.
+- **포인터는 있는데 그 Task 파일이 존재하지 않으면**(바로 이 라운드가
+  닫는 crash window: 포인터는 커밋됐지만 Task 파일 쓰기 전에 프로세스가
+  죽은 상태) — 이번 호출의 입력을 다시 조합해 새 Task를 만드는 게
+  아니라, 포인터에 이미 저장된 스냅샷을 **그대로 재생**해서 Task 파일에
+  쓴다. 어떤 재시도가 몇 번 오든, 그 dedup_key에 대해 처음 커밋된
+  포인터의 task_id/내용만이 유일한 진실이 된다.
+
+기존에는 순서가 반대(Task 먼저, 포인터 나중)였다 — Task rename 성공
+직후·포인터 기록 전에 죽으면 재시도가 포인터를 못 찾고 완전히 새
+task_id로 두 번째 non-terminal Task를 만들어버리는 게 실제 버그였다.
+이번 재작성으로 그 창이 구조적으로 사라진다: 포인터가 없으면 Task도
+아직 하나도 없다는 뜻이고(항상 포인터가 먼저 커밋되므로), 포인터가
+있는데 Task 파일이 없다면 그건 "완료되지 않은 동일한 시도"라는 뜻이지
+"새 생성"이 아니다.
+
+**`tests/crm-store.spec.mjs`**: Part 4(기존 create-failure 테스트, 새
+쓰기 순서에 맞게 주석/단언 갱신 — 포인터가 이제 살아남는다는 것과 재시도가
+ORIGINAL task_id를 회수한다는 것을 명시적으로 확인)와 신규 Part
+7(review의 6개 요구사항을 그대로 구현, 14 assertion)을 추가. 총
+**53 assertion**(39 → 53). Part 7은: (1) Task 쓰기만 막아 정확히
+"포인터 커밋 후·Task 커밋 전" 지점에서 중단, (2) 새
+`createCrmStore()` 인스턴스로 실제 재시작 시뮬레이션, (3) 캐시된
+in-memory 상태 없이 같은 source event로(호출자의 자기 자신은 매번
+새 랜덤 task_id를 보내는 실제 조건 그대로) 재시도, (4) 정확히 하나의
+authoritative non-terminal Task만 디스크에 존재하고 API가 ORIGINAL
+task_id를 재사용함을 확인, (5) 그 Task를 DONE으로 resolve한 뒤 같은
+dedup key로 다시 생성하면 정말 새 task_id가 발급됨(terminal
+재발급 semantics 불변)을 확인, (6) 포인터/Task 어디에도 raw phone 패턴이
+없음을 확인.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체
+green, exit 0 — CRM 스토어 스위트 53 assertion 포함), `cd "tablet core"
+&& python3 -m pytest tests/ -q`(80 passed), `git diff origin/main --
+'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`(empty, FROZEN
+zero-diff). CRM UI는 지시대로 이번 라운드에도 시작하지 않았다. Test 0
+여전히 PENDING, Care Gap suppression 여전히 비활성, 새 임상
+로직/threshold/identity-policy/provider 선택 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 7 (Task 정체성을 Episode에서 파생, 이전 세션)
 **`server/crmStore.js`의 `createTaskStored()`**: 함수 진입 시 즉시
 `getEpisode(rawInput.episode_id)`로 Episode를 로드해서 없으면
 `CrmNotFoundError`, 있으면 `{ ...rawInput, patient_uuid: episode.patient_uuid }`로

@@ -243,4 +243,29 @@ test('two tasks for two different patients each show their own resolved identity
   assert.ok(Math.abs(idxCnB - idxB) < Math.abs(idxCnB - idxA))
 })
 
+// ---------- 8. Identity Production Batch: link-confirmation action gating ----------
+
+test('an unresolved row with onIdentityLinked renders the 시그마 연결 button', () => {
+  const html = render({ tasks: [makeTask({})], loading: false, error: null, onIdentityLinked: () => {} })
+  assert.ok(html.includes('doctor__todayQueue__linkButton'))
+  assert.ok(html.includes('시그마 연결'))
+})
+
+test('an unresolved row WITHOUT onIdentityLinked renders no link button (caller must opt in)', () => {
+  const html = render({ tasks: [makeTask({})], loading: false, error: null })
+  assert.ok(!html.includes('doctor__todayQueue__linkButton'))
+})
+
+test('a resolved row never renders the link button even when onIdentityLinked is provided', () => {
+  const uuid = '55555555-6666-7777-8888-999999999999'
+  const html = render({
+    tasks: [makeTask({ patient_uuid: uuid })],
+    loading: false,
+    error: null,
+    identities: { [uuid]: { resolved: true, sigma_chart_no: 'CN-1', patient_name: '환자G' } },
+    onIdentityLinked: () => {},
+  })
+  assert.ok(!html.includes('doctor__todayQueue__linkButton'))
+})
+
 console.log(`\n${passed} passed`)

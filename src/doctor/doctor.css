@@ -391,6 +391,70 @@
   color: var(--danger);
 }
 
+/* Identity Production Batch: the link-confirmation action for an
+   unresolved row. Deliberately compact and inline-flowing (flex-wrap, no
+   fixed widths) so it never forces horizontal overflow at tablet
+   viewports -- reuses this stylesheet's only responsive convention
+   (.doctor__grid's auto-fill/minmax) at the grid level, needing no new
+   breakpoint of its own. */
+.doctor__todayQueue__linkButton {
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary, #2e6da4);
+  cursor: pointer;
+  min-height: 36px;
+  margin-top: 4px;
+}
+
+.doctor__todayQueue__linkForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.doctor__todayQueue__linkInput {
+  flex: 1 1 100px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.doctor__todayQueue__linkSubmit,
+.doctor__todayQueue__linkCancel {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.doctor__todayQueue__linkSubmit {
+  background: var(--primary, #2e6da4);
+  color: #fff;
+  border-color: transparent;
+}
+
+.doctor__todayQueue__linkCancel {
+  background: transparent;
+}
+
+.doctor__todayQueue__linkError {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--danger);
+}
+
 .doctor__newDot {
   display: inline-block;
   width: 7px;

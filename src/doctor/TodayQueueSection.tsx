@@ -1,7 +1,8 @@
 /**
  * CRM v0.3.1 round 13: read-only "Today Queue" surface. Purely
- * presentational -- no fetching, no click handlers, no /seen or any other
- * side effect. Renders tasks in exactly the order the server returned them
+ * presentational for task data -- no task fetching, no task-action click
+ * handlers (resolve/claim/snooze/etc.), no /seen or any other task side
+ * effect. Renders tasks in exactly the order the server returned them
  * (sortCrmTaskQueue's own priority order) -- this component never sorts,
  * groups, filters, or otherwise re-derives ordering client-side.
  *
@@ -17,16 +18,26 @@
  * or identity resolution happens in this component; the caller (DoctorView)
  * is responsible for clearing `identities` on a failed fetch so a stale
  * resolved name can never outlive the poll that produced it.
+ *
+ * Identity Production Batch: an unresolved row also renders
+ * PatientIdentityLinkAction, the one explicit, human-confirmed way to
+ * create a link (see that file for the actual POST call and its own
+ * isolation/no-double-submit guarantees -- this file only threads the
+ * `onIdentityLinked` callback through so a successful link can update the
+ * caller's `identities` map immediately, without waiting for the next
+ * poll).
  */
 import type { CrmTask } from '../crm/types'
 import type { ResolvedPatientIdentity } from '../lib/serverClient'
 import { CRM_TASK_TYPE_LABEL, CRM_REASON_CODE_LABEL, CRM_TASK_STATUS_LABEL } from '../crm/labels'
+import { PatientIdentityLinkAction } from './PatientIdentityLinkAction'
 
 export type TodayQueueSectionProps = {
   tasks: CrmTask[] | null
   loading: boolean
   error: string | null
   identities?: Record<string, ResolvedPatientIdentity>
+  onIdentityLinked?: (patientUuid: string, identity: ResolvedPatientIdentity) => void
 }
 
 function truncateUuid(uuid: string): string {
@@ -46,7 +57,7 @@ function dueStateLabel(task: CrmTask, nowIso: string): string {
   return overdue ? `기한 지남 · ${when}` : `기한 ${when}`
 }
 
-export function TodayQueueSection({ tasks, loading, error, identities = {} }: TodayQueueSectionProps) {
+export function TodayQueueSection({ tasks, loading, error, identities = {}, onIdentityLinked }: TodayQueueSectionProps) {
   const now = new Date().toISOString()
   return (
     <section className="doctor__section doctor__todayQueue">
@@ -76,6 +87,12 @@ export function TodayQueueSection({ tasks, loading, error, identities = {} }: To
               <span className="doctorField__value doctorField__value--muted" title={task.patient_uuid}>
                 {patientLabel(task, identities)}
               </span>
+              {!identities[task.patient_uuid]?.resolved && onIdentityLinked && (
+                <PatientIdentityLinkAction
+                  patientUuid={task.patient_uuid}
+                  onLinked={onIdentityLinked}
+                />
+              )}
             </div>
           ))}
         </div>

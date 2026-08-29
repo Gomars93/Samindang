@@ -1443,6 +1443,88 @@ async function main() {
     }
   }
 
+  /* ---- Identity Production Batch Part A: legacy reconciliation. A
+     pre-6e2a4b6 deployment could crash after the by-chart pointer landed
+     but with no pending marker at all (that marker did not exist yet).
+     Simulate that exact on-disk shape directly (bypassing the store, so
+     nothing here goes through the pending-marker code path) and prove a
+     later corrected-chart retry still reclaims it via the lazy scan. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-legacy-'))
+    try {
+      const store = createPatientIdentityStore(root)
+      const uuid = randomUUID()
+      const staleChartNo = 'CN-5005-LEGACY-WRONG'
+      const correctedChartNo = 'CN-5005-LEGACY-RIGHT'
+      const staleHash = createHash('sha256').update(staleChartNo, 'utf8').digest('hex')
+
+      // Force directory creation, then hand-write the legacy orphan
+      // exactly as the pre-pending-marker code would have left it: a
+      // by-chart pointer, no links/<uuid>.json, and crucially NO
+      // pending/<uuid>.json.
+      await store.getIdentityByPatientUuid(uuid)
+      await mkdir(path.join(root, 'by-chart'), { recursive: true })
+      await writeFile(
+        path.join(root, 'by-chart', `${staleHash}.json`),
+        JSON.stringify({ sigma_chart_no: staleChartNo, patient_uuid: uuid }),
+        'utf8',
+      )
+      assert('identity-legacy: no pending marker exists for this legacy orphan (simulates the pre-fix version)', (await readRaw(path.join(root, 'pending', `${uuid}.json`))) === null)
+      assert('identity-legacy: no completed link exists yet', (await store.getIdentityByPatientUuid(uuid)) === null)
+
+      const recovered = await store.linkPatientIdentity({ patientUuid: uuid, chartNo: correctedChartNo, patientName: '환자E', confirmedBy: 'staff-1', now: T0 })
+      assert('identity-legacy: the retry with the corrected chart_no succeeds despite no pending marker', recovered.sigma_chart_no === correctedChartNo)
+
+      const stalePointerAfter = await readRaw(path.join(root, 'by-chart', `${staleHash}.json`))
+      assert('identity-legacy: the legacy orphaned pointer was reclaimed via the lazy scan', stalePointerAfter === null)
+
+      const filesInChartIndex = (await readdir(path.join(root, 'by-chart'))).filter((f) => f.endsWith('.json'))
+      assert('identity-legacy: exactly one chart-index pointer exists after legacy reclaim', filesInChartIndex.length === 1)
+
+      const otherUuid = randomUUID()
+      const claimedByOther = await store.linkPatientIdentity({ patientUuid: otherUuid, chartNo: staleChartNo, patientName: '다른환자2', confirmedBy: 'staff-2', now: T0 })
+      assert('identity-legacy: a different patient can now claim the released legacy chart_no', claimedByOther.sigma_chart_no === staleChartNo)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* ---- Identity Production Batch Part A: ambiguous/corrupt legacy state
+     (more than one orphaned pointer names the same uuid) must fail closed
+     rather than guess which one is real. Nothing is touched. ---- */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-identity-legacy-ambiguous-'))
+    try {
+      const store = createPatientIdentityStore(root)
+      const uuid = randomUUID()
+      const chartP = 'CN-6006-P'
+      const chartQ = 'CN-6006-Q'
+      const hashP = createHash('sha256').update(chartP, 'utf8').digest('hex')
+      const hashQ = createHash('sha256').update(chartQ, 'utf8').digest('hex')
+
+      await store.getIdentityByPatientUuid(uuid)
+      await mkdir(path.join(root, 'by-chart'), { recursive: true })
+      await writeFile(path.join(root, 'by-chart', `${hashP}.json`), JSON.stringify({ sigma_chart_no: chartP, patient_uuid: uuid }), 'utf8')
+      await writeFile(path.join(root, 'by-chart', `${hashQ}.json`), JSON.stringify({ sigma_chart_no: chartQ, patient_uuid: uuid }), 'utf8')
+
+      let threw = null
+      try {
+        await store.linkPatientIdentity({ patientUuid: uuid, chartNo: 'CN-6006-R', patientName: '환자F', confirmedBy: 'staff-1', now: T0 })
+      } catch (err) {
+        threw = err
+      }
+      assert('identity-legacy-ambiguous: a link attempt with two competing legacy orphans throws IdentityConflictError', threw instanceof IdentityConflictError)
+      assert('identity-legacy-ambiguous: the conflict reason names the ambiguity explicitly', threw?.reason === 'legacy_reservation_ambiguous')
+
+      const pointerPAfter = await readRaw(path.join(root, 'by-chart', `${hashP}.json`))
+      const pointerQAfter = await readRaw(path.join(root, 'by-chart', `${hashQ}.json`))
+      assert('identity-legacy-ambiguous: neither ambiguous pointer was touched (fail closed, no guessing)', pointerPAfter?.sigma_chart_no === chartP && pointerQAfter?.sigma_chart_no === chartQ)
+      assert('identity-legacy-ambiguous: no link was created for the uuid', (await store.getIdentityByPatientUuid(uuid)) === null)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
   /* ---- real HTTP boundary: auth, validation, 1:1 conflicts, batch read
      truthfulness, and cross-patient Task/Episode isolation. ---- */
   {

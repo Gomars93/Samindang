@@ -2498,6 +2498,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           loading={crmTasksLoading}
           error={crmTasksError}
           identities={patientIdentities}
+          onIdentityLinked={(uuid, identity) =>
+            // Round 14 identity batch: update immediately on a successful
+            // confirm rather than waiting up to POLL_MS for the next poll
+            // to reflect it -- the acceptance criteria requires the row
+            // to refresh right away.
+            setPatientIdentities((prev) => ({ ...prev, [uuid]: identity }))
+          }
         />
       )}
 

@@ -35,3 +35,18 @@ export const CRM_TASK_STATUS_LABEL: Record<CrmTaskStatus, string> = {
   CANCELLED: '취소됨',
   SUPERSEDED: '대체됨',
 }
+
+/**
+ * Identity Production Batch (round 14 UI): Korean labels for the machine
+ * conflict reasons POST /api/crm/patient-identity can return. Purely a
+ * display map -- the server's own reason string is always authoritative;
+ * a reason not listed here still shows via a raw fallback (see
+ * PatientIdentityLinkAction.tsx) rather than a silently swallowed error.
+ */
+export const IDENTITY_LINK_ERROR_LABEL: Record<string, string> = {
+  already_linked: '이미 다른 차트번호로 연결된 환자입니다.',
+  chart_already_linked: '이미 다른 환자에게 연결된 차트번호입니다.',
+  legacy_reservation_ambiguous: '이전 예약 상태가 모호합니다 — 관리자 확인이 필요합니다.',
+  'unknown patient_uuid': '알 수 없는 환자입니다.',
+  'sigma_chart_no and patient_name are required': '차트번호와 환자명을 모두 입력하세요.',
+}

@@ -42,8 +42,19 @@
 // it. pending/<uuid>.json is the O(1) way to detect "this uuid already
 // has an incomplete reservation under a different chart_no" without
 // scanning the whole by-chart/ directory. See linkPatientIdentity below.
+//
+// Identity Production Batch (Part A): a deployment upgraded from the
+// pre-pending-marker version (f15d16f) may already carry a legacy
+// orphaned reservation -- a by-chart/ pointer with no matching
+// pending/<uuid>.json, because that marker did not exist yet when the
+// crash happened. There is no O(1) index into "legacy" orphans (that is
+// exactly the gap being closed), so recovery here is a lazy, on-demand
+// scan of by-chart/ -- run only when a link attempt finds neither a
+// completed link nor a pending marker for the uuid -- rather than a
+// migration step. See findLegacyOrphanedReservation and its call site in
+// linkPatientIdentity below.
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 export class IdentityConflictError extends Error {
@@ -132,6 +143,36 @@ export function createPatientIdentityStore(baseDir) {
   }
 
   /**
+   * Identity Production Batch (Part A): scans by-chart/ for any reverse
+   * pointer that names `patientUuid` under a chart_no OTHER than
+   * `excludeChartNo` (the one currently being requested -- an exact match
+   * there is the ordinary same-chart-recovery path and needs no special
+   * handling). Only called when linkPatientIdentity finds no pending
+   * marker for this uuid, i.e. exactly the case a legacy (pre-
+   * pending-marker) crash would leave behind. Unlocked read-only scan;
+   * every match this returns is re-verified under its own chart lock
+   * before anything is touched (see the call site).
+   */
+  async function findLegacyOrphanedReservations(patientUuid, excludeChartNo) {
+    let files
+    try {
+      files = await readdir(chartIndexDir(baseDir))
+    } catch (err) {
+      if (err.code === 'ENOENT') return []
+      throw err
+    }
+    const matches = []
+    for (const file of files) {
+      if (!file.endsWith('.json') || file.endsWith('.tmp')) continue
+      const pointer = await readJson(path.join(chartIndexDir(baseDir), file))
+      if (pointer && pointer.patient_uuid === patientUuid && pointer.sigma_chart_no !== excludeChartNo) {
+        matches.push(pointer)
+      }
+    }
+    return matches
+  }
+
+  /**
    * Explicit clinician/staff confirmation action. `identity:uuid:
    * {patientUuid}` is always the outermost lock. Beyond it, this function
    * takes AT MOST ONE `identity:chart:*` lock at a time, in two separate,
@@ -163,6 +204,18 @@ export function createPatientIdentityStore(baseDir) {
    * rejecting the corrected retry) is what lets the released chart_no
    * become claimable by a different patient afterward -- proven by a
    * failure-injection test.
+   *
+   * Identity Production Batch (Part A): when there is no pending marker
+   * either (a genuinely fresh uuid, OR a legacy crash from before the
+   * marker existed), a lazy scan looks for any by-chart/ pointer this
+   * same uuid already owns under a different chart_no. Zero matches:
+   * proceed normally. Exactly one: re-verify it under its own chart lock
+   * (the scan itself is unlocked) and reclaim it the same way as the
+   * O(1) path, only if it is STILL demonstrably incomplete (no completed
+   * link has appeared for this uuid in the meantime). More than one
+   * match is genuinely ambiguous/corrupt state -- this never guesses
+   * which to reclaim; it fails closed with a distinct conflict reason
+   * and touches nothing, leaving a human to resolve it directly.
    */
   async function linkPatientIdentity({ patientUuid, chartNo, patientName, confirmedBy, now }) {
     await ensureDirs()
@@ -183,6 +236,21 @@ export function createPatientIdentityStore(baseDir) {
           }
         })
         await removeFileIfExists(pendingPath(baseDir, patientUuid))
+      } else if (!pending) {
+        const legacyMatches = await findLegacyOrphanedReservations(patientUuid, chartNo)
+        if (legacyMatches.length > 1) {
+          throw new IdentityConflictError('legacy_reservation_ambiguous')
+        }
+        if (legacyMatches.length === 1) {
+          const [legacy] = legacyMatches
+          await withLock(`identity:chart:${hashChartNo(legacy.sigma_chart_no)}`, async () => {
+            const stalePointer = await readJson(chartIndexPath(baseDir, legacy.sigma_chart_no))
+            const stillNoLink = await readJson(linkPath(baseDir, patientUuid))
+            if (stalePointer && stalePointer.patient_uuid === patientUuid && !stillNoLink) {
+              await removeFileIfExists(chartIndexPath(baseDir, legacy.sigma_chart_no))
+            }
+          })
+        }
       }
 
       return withLock(`identity:chart:${hashChartNo(chartNo)}`, async () => {

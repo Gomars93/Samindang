@@ -30,6 +30,17 @@ export type EpisodeEvent = {
   at: string
 }
 
+/**
+ * Deliberately no clinical_review_open / safety_review_open fields here.
+ * Whether a Clinical or Safety review is open is fully derivable from
+ * CrmTask (task_type + status) -- see taskEngine.ts's isReviewOpen() /
+ * deriveEpisodeReviewState(). A persisted boolean duplicating that would
+ * be a second writable truth that createCrmTask()/resolveTask() would
+ * have to keep in atomic lockstep with the task list; a stale/failed
+ * write to one and not the other would silently desync them. Keeping
+ * only the tasks as the source of truth makes that class of bug
+ * structurally impossible rather than something to remember to prevent.
+ */
 export type Episode = {
   episode_id: string
   patient_uuid: string
@@ -37,8 +48,6 @@ export type Episode = {
   owner_clinician: string | null
   care_gap: boolean
   reassess_due: boolean
-  clinical_review_open: boolean
-  safety_review_open: boolean
   created_at: string
   updated_at: string
   events: EpisodeEvent[]
@@ -58,8 +67,6 @@ export function newEpisode(input: {
     owner_clinician: input.owner_clinician,
     care_gap: false,
     reassess_due: false,
-    clinical_review_open: false,
-    safety_review_open: false,
     created_at: input.now,
     updated_at: input.now,
     events: [],

@@ -1,6 +1,20 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 3 — first_seen_at가 실제 큐 노출 시점을 재도록 수정, 이번 세션)
+## Objective (CRM v0.3.1 round 4 — review-open state를 task에서 파생시켜 이중 진실 제거, 이번 세션)
+Gomars93의 다음 지시: `Episode.clinical_review_open`/`safety_review_open`
+boolean이 이미 `CrmTask.status` + `task_type`에 존재하는 열림/닫힘 상태를
+중복 저장하고 있었는데, `createCrmTask()`/`resolveTask()`가 그 boolean들을
+원자적으로 갱신하지 않았다 — 서버 영속화가 붙으면 "열린 SAFETY task인데
+episode.safety_review_open=false" 같은 드리프트가 가능한 두 번째 쓰기 가능한
+진실이 된다. 지시대로 두 boolean을 **Episode에서 완전히 제거**하고,
+task 목록에서 파생하는 함수(`isReviewOpen`/`deriveEpisodeReviewState`)로
+대체했다 — "UI 편의를 위한 두 번째 mutable truth를 추가하지 말라"는 지시를
+필드를 아예 없애는 방식으로 만족시켰다. `care_gap`/`reassess_due`는 그대로
+Episode operational flag로 남겼다(지시 2번). 결과는 아래 Completed — CRM
+v0.3.1 Round 4 참고. 서버 영속화/UI는 이번 라운드에도 시작하지 않았다(지시
+4번). **PR #24는 여전히 DO NOT MERGE.**
+
+## Objective (CRM v0.3.1 round 3 — first_seen_at가 실제 큐 노출 시점을 재도록 수정, 이전 세션)
 Gomars93의 round 1 재검수 코멘트 두 번째(round 2와 별도 코멘트, 같은 `de216fc`
 HEAD를 리뷰): `createCrmTask()`가 `first_seen_at`을 생성 시각(`input.now`)으로
 채우고 있었고 타입도 non-null `string`이었다. 그러면 `created_at → first_seen_at`
@@ -251,7 +265,43 @@ workspace`), 여성·생식 정보 조건부 표시, 한약 기본 체크리스�
 ## In Progress
 - (없음 — round 17의 측정/검증 전부 완료. Push 후 CI 재확인만 남음.)
 
-## Completed — CRM v0.3.1 Round 3 (first_seen_at 큐-노출 시맨틱, 이번 세션)
+## Completed — CRM v0.3.1 Round 4 (review-open 단일 진실 소스화, 이번 세션)
+`src/crm/types.ts`: `Episode`에서 `clinical_review_open`/`safety_review_open`
+필드를 완전히 제거(타입 정의와 `newEpisode()` 둘 다). 코드베이스 전체를
+grep해 이 두 필드를 실제로 읽거나 쓰는 곳이 정의 자리 두 곳뿐이었음을
+확인했다 — 즉 애초에 아무도 갱신하지 않던, 순수하게 위험한 죽은 필드였다.
+
+`src/crm/taskEngine.ts`: `isReviewOpen(tasks, episodeId, taskType)`와
+`deriveEpisodeReviewState(tasks, episodeId)`를 새로 추가. "열림"은 해당
+episode의 해당 task_type 중 하나라도 terminal 상태(DONE/CANCELLED/
+SUPERSEDED)가 아닌 것이 있으면 true — OPEN/CLAIMED/IN_PROGRESS/SNOOZED는
+전부 열림으로 센다. Episode 객체가 아니라 task 목록 + episode_id만 받으므로
+호출 시점에 항상 최신 task 상태를 반영하며, 별도로 갱신해야 할 캐시가 없다.
+
+`tests/crm-schema.spec.mjs`에 "Round 4 review fix" 블록 11개 assertion 추가,
+지시받은 4가지를 정확히 검증:
+1. CLINICAL_REVIEW/SAFETY_REVIEW task 생성 → 파생 상태가 열림으로 바뀜.
+2. CLINICAL_REVIEW를 resolve/cancel하면 파생 상태가 닫힘(다른 task_type엔
+   영향 없음도 확인); SAFETY_REVIEW는 clinician resolve로만 닫힘.
+3. `completeEpisode()`로 Episode를 COMPLETED 처리해도 열린 SAFETY_REVIEW의
+   파생 상태는 여전히 열림(episode.ts round 1의 "SAFETY는 보존" 로직과 일치).
+4. 오래된 버전으로 resolve를 시도하면 `CrmConflictError`로 거부되고, 별도
+   flag가 없으므로 파생 상태는 실패한 쓰기 전후로 정확히 동일함을 확인 —
+   "flag/task mismatch가 애초에 불가능함"을 구조로 증명.
+
+총 **86 assertion**(기존 75 + 신규 11), 전부 통과.
+
+**검증 (이번 세션이 직접 실행):** `npx tsc -b --force`(0 에러), `npm run
+build`/`npm run build:preview`(둘 다 성공), `npm run test:all`(전체 green, CRM
+스위트 86 assertion), `cd "tablet core" && python3 -m pytest tests/ -q`(80
+passed), `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+(empty, FROZEN zero-diff). 서버 영속화/UI 배선은 지시대로 이번 라운드에도
+시작하지 않았다. Test 0 여전히 PENDING, Care Gap suppression 여전히 비활성,
+새 임상 로직/threshold/provider/신원 변경 없음.
+
+**Subagent 사용 안 함** — 이 라운드는 단일 세션에서 수행.
+
+## Completed — CRM v0.3.1 Round 3 (first_seen_at 큐-노출 시맨틱, 이전 세션)
 `src/crm/types.ts`: `CrmTask.first_seen_at`을 `string`(non-null)에서 `string |
 null`로 변경. `src/crm/taskEngine.ts`: `createCrmTask()`가 이제 `first_seen_at:
 null`로 시작(과거엔 `input.now`); 새 함수 `markTaskSeen(task, expectedVersion,

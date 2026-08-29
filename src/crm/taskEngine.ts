@@ -4,7 +4,7 @@
  * rather than mutating its input, so a caller whose persistence step
  * fails never has a half-applied change to reconcile.
  */
-import type { CrmTask, CrmTaskType, CrmReasonCode, ContactMode } from './types'
+import type { CrmTask, CrmTaskType, CrmTaskStatus, CrmReasonCode, ContactMode } from './types'
 
 const RAW_PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-\s]?\d{3,4}[-\s]?\d{4}/
 
@@ -235,6 +235,29 @@ export function supersedeTask(task: CrmTask): CrmTask {
 /** A lookup failure must never resolve, cancel, or supersede a task on its own — it stays exactly as-is for a human or a retry to handle. */
 export function onSigmaLookupFailure(task: CrmTask): CrmTask {
   return task
+}
+
+const TERMINAL_TASK_STATUSES: ReadonlySet<CrmTaskStatus> = new Set(['DONE', 'CANCELLED', 'SUPERSEDED'])
+
+/**
+ * Whether an episode has an open Clinical or Safety review, derived from
+ * the tasks themselves rather than a separately persisted flag -- see the
+ * comment on Episode in types.ts for why. "Open" means any task of that
+ * type in that episode is not yet in a terminal status; OPEN, CLAIMED,
+ * IN_PROGRESS and SNOOZED all count as open.
+ */
+export function isReviewOpen(tasks: CrmTask[], episodeId: string, taskType: 'CLINICAL_REVIEW' | 'SAFETY_REVIEW'): boolean {
+  return tasks.some((t) => t.episode_id === episodeId && t.task_type === taskType && !TERMINAL_TASK_STATUSES.has(t.status))
+}
+
+export function deriveEpisodeReviewState(
+  tasks: CrmTask[],
+  episodeId: string,
+): { clinical_review_open: boolean; safety_review_open: boolean } {
+  return {
+    clinical_review_open: isReviewOpen(tasks, episodeId, 'CLINICAL_REVIEW'),
+    safety_review_open: isReviewOpen(tasks, episodeId, 'SAFETY_REVIEW'),
+  }
 }
 
 const TASK_TYPE_PRIORITY: Record<CrmTaskType, number> = { SAFETY_REVIEW: 0, CLINICAL_REVIEW: 1, ROUTINE: 2 }

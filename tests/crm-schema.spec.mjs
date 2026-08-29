@@ -18,6 +18,8 @@ import {
   markTaskSeen,
   releaseExpiredClaim,
   resolveTask,
+  isReviewOpen,
+  deriveEpisodeReviewState,
   resolveTaskWithPersistence,
   snoozeTask,
   cancelTask,
@@ -496,6 +498,73 @@ function makeEpisode(overrides = {}) {
   const claimed = claimTask(claimable, claimable.version, 'dr-a', T1, 60_000)
   assert('Round 3: claiming a never-seen task does not itself set first_seen_at -- seeing, claiming and acknowledging are distinct', claimed.first_seen_at === null)
   assert('Round 3: claiming still sets its own acknowledged_at, unaffected by first_seen_at', claimed.acknowledged_at === T1)
+}
+
+/* ---------------- Round 4 review fix: review-open state derived from tasks, not a duplicated Episode flag ---------------- */
+{
+  const episodeId = 'ep-r4'
+
+  // 1. creating a review task makes the derived state open
+  const { task: clinicalTask } = createCrmTask(
+    { task_id: 't-r4-clinical', patient_uuid: 'pt-1', episode_id: episodeId, task_type: 'CLINICAL_REVIEW', reason_code: 'CLINICIAN_REVIEW_REQUEST', source_event_id: 'evt-r4-clinical', owner_clinician: null, now: T0 },
+    [],
+  )
+  const { task: safetyTask } = createCrmTask(
+    { task_id: 't-r4-safety', patient_uuid: 'pt-1', episode_id: episodeId, task_type: 'SAFETY_REVIEW', reason_code: 'SAFETY_REVIEW_REQUEST', source_event_id: 'evt-r4-safety', owner_clinician: null, now: T0, safetyAuthorization: { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'dr-a' } },
+    [],
+  )
+  assert('Round 4: creating a CLINICAL_REVIEW task makes derived clinical_review_open true', isReviewOpen([clinicalTask, safetyTask], episodeId, 'CLINICAL_REVIEW'))
+  assert('Round 4: creating a SAFETY_REVIEW task makes derived safety_review_open true', isReviewOpen([clinicalTask, safetyTask], episodeId, 'SAFETY_REVIEW'))
+  const opened = deriveEpisodeReviewState([clinicalTask, safetyTask], episodeId)
+  assert('Round 4: deriveEpisodeReviewState reports both open', opened.clinical_review_open === true && opened.safety_review_open === true)
+
+  // 2. resolving/cancelling allowed review tasks clears it
+  const resolvedClinical = resolveTask(clinicalTask, clinicalTask.version, 'CLINICIAN', T1)
+  assert('Round 4: resolving the CLINICAL_REVIEW task clears clinical_review_open', isReviewOpen([resolvedClinical, safetyTask], episodeId, 'CLINICAL_REVIEW') === false)
+  assert('Round 4: safety_review_open is unaffected by resolving the unrelated clinical task', isReviewOpen([resolvedClinical, safetyTask], episodeId, 'SAFETY_REVIEW') === true)
+
+  const { task: cancellableClinical } = createCrmTask(
+    { task_id: 't-r4-clinical-2', patient_uuid: 'pt-1', episode_id: episodeId, task_type: 'CLINICAL_REVIEW', reason_code: 'CLINICIAN_REVIEW_REQUEST', source_event_id: 'evt-r4-clinical-2', owner_clinician: null, now: T0 },
+    [],
+  )
+  const cancelledClinical = cancelTask(cancellableClinical)
+  assert('Round 4: cancelling a CLINICAL_REVIEW task also clears its open state', isReviewOpen([cancelledClinical], episodeId, 'CLINICAL_REVIEW') === false)
+
+  const resolvedSafety = resolveTask(safetyTask, safetyTask.version, 'CLINICIAN', T1)
+  assert('Round 4: clinician-resolving the SAFETY_REVIEW task clears safety_review_open', isReviewOpen([resolvedSafety], episodeId, 'SAFETY_REVIEW') === false)
+
+  // 3. open SAFETY survives Episode completion
+  const episodeForCompletion = makeEpisode({ episode_id: episodeId })
+  const { task: openSafetyForCompletion } = createCrmTask(
+    { task_id: 't-r4-safety-survives', patient_uuid: 'pt-1', episode_id: episodeId, task_type: 'SAFETY_REVIEW', reason_code: 'SAFETY_REVIEW_REQUEST', source_event_id: 'evt-r4-safety-survives', owner_clinician: null, now: T0, safetyAuthorization: { kind: 'EXPLICIT_HUMAN_REQUEST', requestedBy: 'dr-a' } },
+    [],
+  )
+  const { episode: completedEpisode, tasks: tasksAfterCompletion } = completeEpisode(
+    episodeForCompletion,
+    episodeForCompletion.version,
+    [openSafetyForCompletion],
+    T1,
+  )
+  assert('Round 4: episode completion does not close the derived safety_review_open', isReviewOpen(tasksAfterCompletion, episodeId, 'SAFETY_REVIEW') === true)
+  assert('Round 4: (sanity) the episode itself is COMPLETED', completedEpisode.status === 'COMPLETED')
+
+  // 4. stale/failed writes cannot create a flag/task mismatch -- there is only one source of truth
+  const { task: raceTask } = createCrmTask(
+    { task_id: 't-r4-race', patient_uuid: 'pt-1', episode_id: episodeId, task_type: 'CLINICAL_REVIEW', reason_code: 'CLINICIAN_REVIEW_REQUEST', source_event_id: 'evt-r4-race', owner_clinician: null, now: T0 },
+    [],
+  )
+  const openBeforeFailedWrite = isReviewOpen([raceTask], episodeId, 'CLINICAL_REVIEW')
+  let conflict = false
+  try {
+    resolveTask(raceTask, raceTask.version + 1, 'CLINICIAN', T1)
+  } catch (err) {
+    conflict = err instanceof CrmConflictError
+  }
+  assert('Round 4: a stale-version resolve attempt conflicts rather than silently applying', conflict)
+  assert(
+    "Round 4: because review-open state has no separate flag, the failed write leaves derived state exactly as it was -- no mismatch is possible",
+    isReviewOpen([raceTask], episodeId, 'CLINICAL_REVIEW') === openBeforeFailedWrite,
+  )
 }
 
 /* ---------------- Extra: pauseEpisode never touches tasks (no auto-cancel on pause) ---------------- */

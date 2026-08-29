@@ -40,7 +40,7 @@ import path from 'node:path'
 import { hostname } from 'node:os'
 import { createStore } from '../server/store.js'
 import { purgeAuditLog } from '../server/audit.js'
-import { acquireOwnerLock, OwnerLockConflictError, readOwnerLockStatus, requirePositiveMs } from '../server/ownerLock.js'
+import { acquireOwnerLock, OwnerLockConflictError, ownerLockPath, readOwnerLockStatus, requirePositiveMs } from '../server/ownerLock.js'
 
 // Third-round closing-review finding: a raw pid-liveness probe, independent
 // of whatever SAMINDANG_OWNER_LOCK_STALE_MS is configured to. Returns true
@@ -64,8 +64,8 @@ const identityDir = path.join(dataRoot, 'crm-identity')
 const crmDir = path.join(dataRoot, 'crm')
 const yes = process.argv.includes('--yes')
 
-// Module-scope (not a local in main()) so the process-level SIGINT handler
-// below can see it, whatever point in main()'s execution SIGINT arrives at.
+// Module-scope (not a local in main()) so the signal handlers below can see
+// it, whatever point in main()'s execution a signal arrives at.
 let ownerLock = null
 
 // Fourth-round closing-review re-check: an earlier version only listened
@@ -79,21 +79,86 @@ let ownerLock = null
 // (the same class of problem `process.exit()` causes elsewhere in this
 // file). Reproduced empirically: flaked in roughly 1 of 5 real runs even
 // on an idle machine. A single PROCESS-level handler, registered here
-// before any async work starts, has no such gap -- it is Node's SIGINT
-// disposition for this process's entire lifetime, and it explicitly
-// releases whatever lock is currently held (if any) before exiting. The
-// readline prompt below intentionally does NOT also listen for its own
-// 'SIGINT' -- per Node's own documented default, an `Interface` with no
-// 'SIGINT' listener lets the signal reach `process` normally instead of
-// swallowing it, which is exactly what this handler needs.
-process.on('SIGINT', () => {
-  ;(async () => {
-    if (ownerLock) {
-      await ownerLock.release().catch(() => {})
+// before any async work starts, closes that specific gap.
+//
+// Fifth-round closing-review finding (F5, comment-accuracy): the previous
+// version of this comment claimed Node's documented default is for a
+// readline `Interface` with no 'SIGINT' listener of its own to let the
+// signal "reach `process` normally" -- verified against Node 22's actual
+// readline source that this is backwards: with no rl-level 'SIGINT'
+// listener, readline instead closes the interface itself and rejects the
+// pending `question()` with an AbortError, entirely at the JS layer,
+// WITHOUT the OS ever delivering a process-level SIGINT at all (the
+// terminal is in raw mode while a prompt is active, so the OS never
+// generates SIGINT for Ctrl-C in the first place -- readline reads the
+// raw byte and decides what to do with it in JS). So this process-level
+// handler only ever fires in the window BEFORE the prompt puts the
+// terminal into raw mode (exactly the gap described above); WHILE a
+// question is actually pending, Ctrl-C is caught by readline's own
+// 'close' event instead, which the `Promise.race` below already handles.
+// Both windows are covered, by two different mechanisms, not one.
+//
+// Fifth-round closing-review finding (F1, HIGH -- the actual bug, not just
+// a comment): registering this handler does NOT by itself guarantee
+// `ownerLock` (the module-scope variable above) is non-null by the time a
+// signal arrives. On the stale-lock TAKEOVER path specifically,
+// acquireOwnerLock() durably WRITES the lock file to disk (naming this
+// process's real pid) and then deliberately sleeps out settleMs
+// (currently 350ms) before it verifies and RETURNS -- and only that
+// return assigns the local `ownerLock` here. A signal landing inside that
+// settle window previously found `ownerLock` still null and skipped
+// release entirely, leaking a lock that genuinely exists on disk and
+// names this (about-to-exit) pid -- reproduced: a real server refused to
+// start afterward, citing that now-dead pid, for up to staleAfterMs (90s
+// default). Fixed by falling back to a direct disk check: if the current
+// lock file on disk names OUR OWN pid, only this process could have
+// written it (pids are unique among concurrently-live processes), so it
+// is unambiguously safe to remove even without the handle/nonce
+// acquireOwnerLock() would otherwise have returned.
+async function releaseAnyLockWeMightHold() {
+  if (ownerLock) {
+    await ownerLock.release().catch(() => {})
+    return
+  }
+  try {
+    const { record } = await readOwnerLockStatus(dataDir, {})
+    if (record?.pid === process.pid) {
+      await rm(ownerLockPath(dataDir), { force: true })
     }
-    process.exit(130)
-  })()
-})
+  } catch {
+    // Best-effort: we are already exiting on a signal: nothing further to
+    // do if this itself fails.
+  }
+}
+
+// Fifth-round closing-review finding (F3): only SIGINT was handled -- the
+// same leak class (a durably-written lock this process can no longer
+// release through its normal `finally`) is equally reachable via
+// SIGTERM (`kill <pid>` default, a supervisor/systemd stop) or SIGHUP (a
+// closed terminal), both at least as likely as an operator's own Ctrl-C
+// in a real deployment. Reproduced: a plain `kill` while this script held
+// the prompt-stage lock left it behind. Same handler, all three signals.
+//
+// Fifth-round closing-review finding (F4): `process.on` does not
+// serialize handler invocations, and `release()` (server/ownerLock.js)
+// marks itself released synchronously before its own first `await` -- so
+// two signals arriving close together could both pass the `if (ownerLock)`
+// check before either finishes, and the second `process.exit()` could
+// fire before the first invocation's actual unlink lands. Guarded with a
+// plain reentrancy flag; the exit code still reflects whichever signal
+// arrived first.
+let exiting = false
+const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }
+for (const sig of Object.keys(SIGNAL_EXIT_CODES)) {
+  process.on(sig, () => {
+    if (exiting) return
+    exiting = true
+    ;(async () => {
+      await releaseAnyLockWeMightHold()
+      process.exit(SIGNAL_EXIT_CODES[sig])
+    })()
+  })
+}
 
 async function main() {
   if (!process.stdin.isTTY && !yes) {

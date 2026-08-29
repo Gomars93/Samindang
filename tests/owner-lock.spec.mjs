@@ -678,40 +678,114 @@ async function main() {
      must not hang purge-data.mjs while it holds the owner lock it already
      acquired. `await rl.question(...)` alone does not settle on either
      signal; fixed by racing the question against the readline interface's
-     own 'SIGINT'/'close' events. Sent as real terminal control bytes (not
-     a closed pipe) via the same `script`(1) pty technique 6a uses, since
-     a plain non-TTY pipe never reaches the interactive prompt at all (the
-     isTTY guard refuses first).
+     own 'close' event (EOF) and a module-level `process.on('SIGINT', ...)`
+     handler (Ctrl-C). Sent as real terminal control bytes (not a closed
+     pipe) via the same `script`(1) pty technique 6a uses, since a plain
+     non-TTY pipe never reaches the interactive prompt at all (the isTTY
+     guard refuses first).
+
+     Fifth-round closing-review finding (F2): an earlier version of this
+     test wrote the control byte via `input:` on `execFileSync`, which
+     hands the WHOLE input to the pty immediately at process start,
+     racing it against `script`'s own child setup (specifically its
+     process-group assignment) -- reproduced flaking non-vacuously
+     (measured up to ~20% of runs actually hanging to the 15s guard, not
+     just scheduler noise) because a signal-generating byte that arrives
+     before the target process is the pty's true foreground process group
+     can be delivered to the wrong place entirely. Fixed by spawning
+     interactively and waiting for the confirmation PROMPT TEXT to
+     actually appear in the child's stdout before writing the byte --
+     deterministic in re-testing (this ordering removes the race, it
+     doesn't just narrow it).
+
+     SIGTERM/SIGHUP (F3, the module-level handler now covers those too,
+     not just SIGINT) are deliberately NOT tested through this same pty
+     harness -- `child.kill()` on the `script`(1) wrapper process sends
+     the signal to `script` itself, which does not reliably forward it to
+     the actual node process running inside the pty it manages (confirmed:
+     5/5 runs left the target process running, unsignaled). SIGTERM is an
+     OS signal, not a keyboard-generated one, so it needs no pty/prompt at
+     all -- covered separately right after this block via a direct spawn.
      ===================================================================== */
-  for (const [label, byte] of [['Ctrl-D (EOF)', '\x04'], ['Ctrl-C (SIGINT)', '\x03']]) {
+  for (const label of ['Ctrl-D (EOF)', 'Ctrl-C (SIGINT)']) {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-signalabort-'))
+    let child
+    const state = { stdout: '', exitCode: null }
     try {
       const dataDir = path.join(dataRoot, 'submissions')
       await mkdir(dataDir, { recursive: true })
 
-      // 15s outer guard (not tighter): this block runs right after Part
-      // 3b's multi-takeover races (up to 8 attempts * 5 processes each),
-      // and under real CPU contention a `timeout` this tight flaked once
-      // in 8 runs of a `taskset -c 0,1` (2 vCPU) simulation -- the fix
-      // itself is not CPU-bound (it only needs the process to be
-      // scheduled at all to handle the signal), so a generous guard still
-      // fails fast on a genuine hang while tolerating scheduler noise.
-      const scriptCmd = `timeout 15 ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(repoRoot, 'scripts', 'purge-data.mjs'))}`
-      let exitCode = null
-      try {
-        execFileSync('script', ['-qec', scriptCmd, '/dev/null'], {
-          cwd: repoRoot,
-          input: byte,
-          env: { ...process.env, SAMINDANG_DATA_DIR: dataDir },
-        })
-      } catch (err) {
-        exitCode = err.status
-      }
-      assert(`signal-abort (${label}): purge-data.mjs exits promptly (not "timeout 15" killing a hang) and non-zero`, exitCode !== null && exitCode !== 0 && exitCode !== 124)
+      const scriptCmd = `${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(repoRoot, 'scripts', 'purge-data.mjs'))}`
+      child = spawn('script', ['-qec', scriptCmd, '/dev/null'], {
+        cwd: repoRoot,
+        env: { ...process.env, SAMINDANG_DATA_DIR: dataDir },
+      })
+      child.stdout.on('data', (d) => { state.stdout += d.toString() })
+      child.on('exit', (code) => { state.exitCode = code })
+
+      await waitUntil(() => state.stdout.includes('Type DELETE') || state.exitCode !== null, { timeoutMs: 10000 })
+      assert(`signal-abort (${label}): the confirmation prompt is actually reached before signaling`, state.stdout.includes('Type DELETE'))
+
+      child.stdin.write(label === 'Ctrl-D (EOF)' ? '\x04' : '\x03')
+      await waitForExit({ child, state }, 10000)
+
+      assert(`signal-abort (${label}): purge-data.mjs exits promptly and non-zero (not left hanging)`, state.exitCode !== null && state.exitCode !== 0)
 
       const lockAfterSignal = await readJsonOrNull(path.join(dataRoot, 'owner.lock'))
       assert(`signal-abort (${label}): owner.lock is released (removed), not left behind heartbeating while the process hung`, lockAfterSignal === null)
     } finally {
+      killIfAlive({ child, state })
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 6d (fifth-round closing-review finding, F3): SIGTERM (the same
+     leak class as Part 6c's Ctrl-C, reachable via a plain `kill <pid>` or
+     a supervisor/systemd stop -- at least as realistic operationally as
+     an operator's own Ctrl-C) must also release the owner lock. Tested
+     with a direct (non-pty) spawn -- SIGTERM is an OS signal, not a
+     terminal control byte, so it needs no interactive prompt at all --
+     sent during acquireOwnerLock's own settle window on a seeded
+     stale-lock TAKEOVER path (same technique as the F1 reproduction this
+     finding came from), which is exactly the window where the module-
+     scope `ownerLock` handle is not yet assigned and the fallback
+     disk-based release path is the only thing that can still find it.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-ownerlock-sigterm-'))
+    let child
+    const state = { exitCode: null }
+    try {
+      const dataDir = path.join(dataRoot, 'submissions')
+      await mkdir(dataDir, { recursive: true })
+      const lockPath = path.join(dataRoot, 'owner.lock')
+      await writeFile(
+        lockPath,
+        JSON.stringify({ pid: 999999, hostname: 'seed', nonce: randomUUID(), acquired_at: new Date(0).toISOString(), renewed_at: new Date(0).toISOString() }),
+        'utf8',
+      )
+
+      child = spawn(process.execPath, [path.join(repoRoot, 'scripts', 'purge-data.mjs'), '--yes'], {
+        cwd: repoRoot,
+        env: { ...process.env, SAMINDANG_DATA_DIR: dataDir },
+      })
+      child.on('exit', (code) => { state.exitCode = code })
+
+      // 150ms lands inside the default 350ms settle window (verified via
+      // repeated sweeps from 100-400ms during this finding's own repro).
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      child.kill('SIGTERM')
+      await waitForExit({ child, state }, 10000)
+
+      assert('sigterm-abort: purge-data.mjs exits promptly and non-zero (not left hanging)', state.exitCode !== null && state.exitCode !== 0)
+      const lockAfterSignal = await readJsonOrNull(lockPath)
+      assert(
+        'sigterm-abort: owner.lock is released (removed), not left behind naming this process\'s now-dead pid',
+        lockAfterSignal === null,
+      )
+    } finally {
+      killIfAlive({ child, state })
       await rm(dataRoot, { recursive: true, force: true })
     }
   }

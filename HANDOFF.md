@@ -161,8 +161,43 @@ Ctrl-D 8/8 클린; `tests/owner-lock.spec.mjs` 20 → 45 assertion(정상
 test:all ×2, tablet-core pytest 80, FROZEN zero-diff), owner-lock
 스위트 2-vCPU 시뮬레이션 8/8·정상 조건 5/5 클린 확인. 4라운드 재검수가
 "두 HIGH 결함 모두 실제로 닫혔다"고 확인하며 "기계적 수정 3가지만 더 하면
-루프를 닫으라"고 권고했고, 이번 커밋이 그 3가지를 반영 — push 후 이
-수정 자체에 대한 마지막 확인 라운드가 필요한지는 그 결과를 보고 판단.
+루프를 닫으라"고 권고했고, 이전 커밋이 그 3가지를 반영.
+
+5라운드(이번 커밋): 그 3가지 기계적 수정 자체에 대한 재검수(약 110k
+토큰, 35 tool call, ~21분)가 **REQUEST CHANGES** — 새로 도입한
+`process.on('SIGINT', ...)` 핸들러 자체에 진짜 결함 발견. HIGH: 이
+핸들러는 `ownerLock`(module-scope 변수)이 실제로 할당된 이후에만 release를
+시도하는데, stale-lock TAKEOVER 경로에서는 `acquireOwnerLock()`이 lock
+파일을 디스크에 이미 durable하게 쓴 뒤에도 settle window(350ms) 동안
+sleep하다가 그제서야 return(=`ownerLock` 할당) — 그 sleep 구간에 SIGINT가
+오면 핸들러가 `ownerLock`이 아직 null이라고 보고 release를 건너뛰어,
+디스크엔 이 프로세스의(곧 죽을) pid를 이름 붙인 lock이 실제로 남고,
+그 뒤 진짜 서버가 그 죽은 pid를 근거로 시작을 거부당함 — 100~400ms
+delay sweep으로 직접 재현·확인. 수정: `ownerLock`이 아직 없어도, 디스크의
+현재 lock이 **자신의 pid**를 가리키면(동시에 살아있는 프로세스 중 pid는
+유일하므로 그 lock을 쓴 건 자기 자신일 수밖에 없음) 직접 unlink하는
+fallback 경로 추가 — 재검증 100~400ms 전 구간 100% 무결함(lockLeft=no).
+그 외 지적: SIGTERM/SIGHUP 미처리(동일 클래스 결함, `kill <pid>` 기본
+시그널이라 더 흔함) — 세 시그널 모두 같은 핸들러로 통일; 이중 시그널
+재진입 시 release가 건너뛰어질 수 있는 이론적 gap — `exiting` 플래그로
+방어(테스트로는 release 자체는 항상 성공, 드물게 exit() 자체만 느려지는
+libuv 신호처리 quirk 하나 관찰 — 실제 lock 누수는 없어 낮은 우선순위로
+문서화만); readline 관련 코멘트가 Node 22의 실제 기본 동작(프롬프트가
+raw mode일 때 rl 자체 'SIGINT' 리스너가 없으면 readline이 자체적으로
+close+AbortError 처리하고 OS SIGINT는 프로세스까지 아예 안 옴 — 이전
+코멘트의 "프로세스로 전달된다"는 설명은 반대였음)과 달라 정정. 이 라운드
+자체가 새로 만든 Ctrl-C 회귀 테스트(execFileSync의 input: 방식이 pty의
+process-group 할당과 경합해 idle 상태에서도 ~20% 행 — `timeout`이 자식을
+새 프로세스그룹에 넣어 신호가 엉뚱한 그룹에 전달될 수 있음)도 발견해
+spawn 기반으로 재작성(프롬프트 텍스트가 실제로 stdout에 나타난 뒤에만
+바이트 전송 — deterministic, 재검증 5/5·2-vCPU 8/8 클린), SIGTERM은
+pty를 거치지 않는 별도 블록으로 분리(`script`(1) 래퍼 프로세스에 대한
+kill이 안쪽 node 프로세스까지 안 감을 확인 후). `tests/owner-lock.spec.mjs`
+45 → 49 assertion. 전체 게이트 재실행 green(tsc/build/build:preview/
+test:all, tablet-core pytest 80, FROZEN zero-diff — test:all 전체 체인
+중 1회는 무관한 기존 privacy-canary 테스트가 flake했으나 격리 실행
+3/3·재실행 모두 clean으로 이 라운드 변경과 무관 확인), owner-lock
+스위트 2-vCPU 8/8 클린.
 
 **의도적으로 미룬 것**: Doctor Workspace/RevisitWorkspace React 클라이언트가
 새 CAS precondition을 실제로 사용하도록 배선하는 일(충돌 시 UX가 어때야

@@ -5311,11 +5311,87 @@ clean, `tablet core` pytest 80/80, `git diff origin/main --
 src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부
 통과.
 
-**다음 단계**: 위 수정 반영한 커밋을 push하고, 2차(closing) 독립
-`model:opus` 리뷰를 새로 호출해 이번 수정이 실제로 문제를 없앴는지
-(그리고 새 회귀를 만들지 않았는지) 재검증한다. 2차 리뷰가 CLEAN이면
-PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT
-PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
+**2차 독립 `model:opus` closing 리뷰** (진짜 subagent 호출, 커밋
+`824c864` 대상): **NOT CLOSABLE 판정** — 1차 수정이 리뷰가 명시적으로
+지적한 6곳만 고치고, 같은 패턴(`m.<서브모듈>.<leaf>` 무조건 역참조)의
+자매 코드는 그대로 남겨뒀다는 걸 실행으로 증명했다. `DoctorView.tsx`
+자기 렌더 본문에서 직접 호출되는(그래서 `DoctorRecordErrorBoundary`가
+못 잡는) `primaryModuleFields`(12개 `primary_module` 값 중 11개가
+`m.<서브모듈>`을 무조건 참조 — LBP/HIP/NECK/SHOULDER/KNEE/ELBOW/
+WRIST_HAND/TMJ 각 지역 블록 포함)와 `menopauseSleepSummaryLines`
+(`sleep.menopause` 무조건 참조)에서 실제로 동일한 클래스의 throw를
+재현했다. 추가로 MEDIUM 4건: (M1) `?? []`는 필드가 아예 없을 때만
+막고 값이 있지만 배열이 아닌 경우(레거시 데이터에서 흔함)는 못
+막는다 — `routing.secondary_screens`/`saju.policy.pending_approval`/
+`aggravatingField`의 `m.pain.pain_qualities` 등. (M2)
+`MyungriCompactCard`가 정확히 같은 `pending_approval` 필드를 다른
+곳에선 고쳐놓고 자기 자신은 안 고쳤고, `saju.pillars`가 `{}`(빈
+객체, null이 아님)일 때 `.day.charAt(0)`이 던진다. (M3)
+`CommonSafetyBanner.tsx`(별도 컴포넌트라 boundary가 잡긴 하지만,
+잡히면 Common Safety 전체가 fallback 뒤로 숨어버려 이 배치의 상위
+정책과 충돌)도 `reproductive_status.derived`/`modules.*` 여러 곳을
+무조건 참조. (M4) 새로 추가한 leaf 테스트 4개가 실제 코드를 부르는
+대신 가드 로직을 테스트 파일 안에서 재구현해서 항상 통과하는
+vacuous 테스트였다(그 가드를 지워도 테스트가 그대로 통과함을 리뷰가
+직접 확인).
+
+**수정**: (1) `primaryModuleFields`의 11개 case 전부에 해당
+서브모듈 존재 확인을 추가(없으면 그 case 전체를 `[]`로 반환 —
+`frequencyField`/`aggravatingField`와 같은 "없으면 그 줄을 생략한다"
+원칙), Pain case의 8개 지역 하위 블록(LBP/HIP/NECK/SHOULDER/KNEE/
+ELBOW/WRIST_HAND/TMJ) 각각도 `primary_location` 태그 조건에
+`&& m.<서브모듈>`을 추가. Sleep case의 MS_* 필드는 `m.sleep.menopause`
+자체를 먼저 확인. (2) `menopauseSleepSummaryLines`에 `sleep?.menopause`
+가드 추가. (3) 공유 `asArray<T>()` 헬퍼를 새로 만들어 "배열이 아니면
+무조건 빈 배열"로 fail-closed하고, `routing.secondary_screens`/
+`saju.policy.pending_approval`(렌더 3곳 + JudgmentPanel prop
+전달)/`aggravatingField`의 `pain_qualities`/`secondaryModuleFields`/
+`referenceSymptomKeys`/`sajuStatusLine`을 전부 이걸로 교체(`?? []`
+전부 제거). (4) `MyungriCompactCard`: `saju.pillars?.day`로 가드,
+`pending_approval`도 `asArray`로. (5) `CommonSafetyBanner.tsx`:
+`derived` truthy 확인 후 `.pregnant` 등 읽기, `r.modules.*`
+9곳 전부 optional chaining. (6) 리뷰 이후 직접 실사용 재현 중
+**리뷰 범위 밖에서 두 곳을 추가로 발견**해서 같이 고쳤다 —
+`HerbalWorkspace.tsx`의 `r.reproductive_status.derived.source`(가드
+없음, `?.`로 수정)와 `r.modules.{sleep,gi,bowel,urinary,weight}`
+5곳(전부 optional chaining), `PainWorkspace.tsx`의
+`r.modules.lbp.recovery_expectation`(가드 없음, `?.` + `?? null`로
+수정) — 이 두 파일은 별도 workspace 컴포넌트라 1차/2차 리뷰 모두
+`DoctorView.tsx`/`CommonSafetyBanner.tsx` 범위 안에서만 봤다.
+(7) 테스트: `primaryModuleFields`를 export해서 실제 함수를 hollow
+`m={}`로 11개 primaryModule 전부 직접 호출(가드 재구현 아님),
+Pain case의 지역 서브모듈 누락 케이스와 Sleep case의 menopause 누락
+케이스도 직접 호출로 검증. 나머지(인라인 JSX라 export 불가능한
+`routing.secondary_screens`/`saju.normalized`/`saju.policy.pending_approval`
+가드, `SECONDARY_MODULE_VALUE`)는 소스 정규식으로 실제 코드에 그
+표현식이 존재하는지 확인(이 파일이 boundary key에 이미 쓰던 것과
+같은 기법). `CommonSafetyBanner.tsx`는 `tests/doctor-workspace.spec.mjs`에
+같은 방식의 구조 검사 추가. `npm run test:doctor` 800/800(+33),
+`npm run test:doctor-workspace` 57/57(+2).
+
+**실사용 재검증**: 실제 서버에 리뷰가 재현한 것과 같은 hollow
+payload(`routing.primary_module: 'Sleep'`, `responses.modules = {}`)를
+POST하고 Doctor UI를 Playwright로 열어 수정 전/후 비교 — 수정 전:
+`HerbalWorkspace`에서 throw → `DoctorRecordErrorBoundary`가 잡아서
+fallback 표시(전역 크래시는 아니지만 임상 화면 전체가 숨겨짐), 수정
+후: **fallback조차 필요 없이 정상 임상 워크스페이스가 그대로
+렌더**되고 "전신 문진 응답이 없습니다"만 명시적으로 표시(사실을
+지어내지 않음), page error 0건. 스크린샷으로 육안 확인 완료.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 3차(closing) 독립
+`model:opus` 리뷰를 새로 호출한다. 이번에는 DoctorView.tsx/
+CommonSafetyBanner.tsx뿐 아니라 `src/doctor/workspace/*.tsx` 전체를
+같은 기준(자기 렌더 본문의 무조건적 leaf 역참조)으로 훑어달라고
+명시적으로 요청 — 1차/2차 리뷰 모두 이 디렉터리를 보지 않았고, 이번
+라운드에서 실사용 재현으로 그 안에서 2건을 더 찾았기 때문이다. 3차
+리뷰가 CLEAN이면 PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO
+NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상
+사용자(Product Owner).
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절

@@ -39,7 +39,7 @@ function safetyGlanceItems(
   }
 
   const derived = r.reproductive_status.derived
-  if (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding) {
+  if (derived && (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding)) {
     const parts = [
       derived.pregnant && '임신 중',
       derived.pregnancy_possible && '임신 가능성',
@@ -68,13 +68,13 @@ function safetyGlanceItems(
     items.push({
       key: 'sleep_disorder_priority',
       label: '수면장애 선별',
-      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
+      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep?.menopause?.sleep_disorder_screen)}`,
     })
   } else if (flags.sleep_disorder_review) {
     items.push({
       key: 'sleep_disorder',
       label: '수면장애 선별',
-      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
+      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep?.menopause?.sleep_disorder_screen)}`,
     })
   }
 
@@ -110,18 +110,18 @@ function safetyGlanceItems(
   if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
     otherDetailFlags.push('기타 동반증상')
   }
-  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
+  if (((r.modules.sleep?.awakening_reasons as string[] | null) ?? []).includes('other')) {
     otherDetailFlags.push('기타 수면 원인')
   }
-  if (r.modules.pain.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
-  if (r.modules.pain.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
-  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
+  if (r.modules.pain?.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
+  if (r.modules.pain?.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
+  if (((r.modules.women?.problems as string[] | null) ?? []).includes('other')) {
     otherDetailFlags.push('기타 여성 건강 상담')
   }
-  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
+  if (((r.modules.pregnancy?.concerns as string[] | null) ?? []).includes('other')) {
     otherDetailFlags.push('기타 임신 상담')
   }
-  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
+  if (((r.modules.postpartum?.problems as string[] | null) ?? []).includes('other')) {
     otherDetailFlags.push('기타 산후 상담')
   }
   if (otherDetailFlags.length > 0) {
@@ -185,13 +185,13 @@ export function CommonSafetyBanner({ payload }: { payload: DoctorPayload }) {
             {flags.gi_needs_review && (
               <li>
                 소화 문진(GI_03) 응답: &ldquo;
-                {answerLabelFor('GI_03', r.modules.gi.unable_to_eat_or_drink)}&rdquo;
+                {answerLabelFor('GI_03', r.modules.gi?.unable_to_eat_or_drink)}&rdquo;
               </li>
             )}
             {flags.bowel_needs_review && (
               <li>
                 대변 문진(BOWEL_03) 응답: &ldquo;
-                {answerLabelFor('BOWEL_03', r.modules.bowel.blood_or_black_stool)}&rdquo;
+                {answerLabelFor('BOWEL_03', r.modules.bowel?.blood_or_black_stool)}&rdquo;
               </li>
             )}
           </ul>

@@ -180,7 +180,7 @@ export function aggravatingField(
       return m.gi ? { qid: 'GI_02', value: m.gi.meal_relation } : null
     case 'Pain': {
       if (!m.pain) return null
-      const qualities = ((m.pain.pain_qualities as string[] | null) ?? []).filter(
+      const qualities = asArray<string>(m.pain.pain_qualities).filter(
         (q) => q === 'movement_related' || q === 'rest_pain',
       )
       return qualities.length > 0 ? { qid: 'PAIN_02', value: qualities } : null
@@ -201,6 +201,16 @@ export function isEmptyValue(value: AnswerValue | null | undefined): boolean {
   if (Array.isArray(value)) return value.length === 0
   if (typeof value === 'string') return value.trim() === ''
   return false
+}
+
+/**
+ * 레거시/손상된 제출은 배열이어야 할 필드가 문자열/객체 등 다른 타입으로
+ * 저장돼 있을 수 있다(`?? []`만으로는 안 막힘 -- 값 자체가 존재하고
+ * truthy면 그대로 통과한다). 배열이 아니면 무조건 빈 배열로 취급한다 --
+ * "값이 있다"고 추정하지 않고 "확인된 목록이 없다"로 fail-closed.
+ */
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
 }
 
 /** 요약 카드용 "기간 · 빈도" 한 줄. 둘 다 없으면 줄 자체를 생략한다. */
@@ -245,7 +255,7 @@ export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   tone: 'neutral' | 'warning' | 'unresolved'
 } {
   if (saju.status === 'resolved') {
-    if (saju.policy.pending_approval.length === 0) return { text: '계산 완료', tone: 'neutral' }
+    if (asArray(saju.policy.pending_approval).length === 0) return { text: '계산 완료', tone: 'neutral' }
     return { text: '계산 완료 (정책 승인 대기 — 값 변경 가능)', tone: 'warning' }
   }
   if (saju.status === 'partial') return { text: '부분 계산 (시주 미상)', tone: 'warning' }
@@ -267,7 +277,7 @@ const PENDING_APPROVAL_LABELS: Record<string, string> = {
  * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
  */
 export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
-  if (!saju.pillars) {
+  if (!saju.pillars?.day) {
     return (
       <div className="doctor__msSummary doctor__msSummary--myungri">
         <strong className="doctor__msSummary__title">명리 핵심</strong>
@@ -282,7 +292,7 @@ export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calc
   const birthInfoLine = saju.flags.hour_unknown
     ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
     : '출생시간 확인됨 · 4주 8자'
-  const pendingLabels = saju.policy.pending_approval.map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
+  const pendingLabels = asArray<string>(saju.policy.pending_approval).map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
 
   return (
     <div className="doctor__msSummary doctor__msSummary--myungri">
@@ -1196,19 +1206,19 @@ export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
 
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
-  sleep: (sm) => sm.sleep.problems,
-  digestion: (sm) => sm.gi.problems,
-  bowel: (sm) => sm.bowel.problems,
-  pain: (sm) => sm.pain.locations,
-  urinary: (sm) => sm.urinary.problems,
-  fatigue: (sm) => sm.fatigue.patterns,
-  stress: (sm) => sm.stress.problems,
-  women: (sm) => sm.women.problems,
-  weight: (sm) => sm.weight.goal,
+  sleep: (sm) => sm.sleep?.problems ?? null,
+  digestion: (sm) => sm.gi?.problems ?? null,
+  bowel: (sm) => sm.bowel?.problems ?? null,
+  pain: (sm) => sm.pain?.locations ?? null,
+  urinary: (sm) => sm.urinary?.problems ?? null,
+  fatigue: (sm) => sm.fatigue?.patterns ?? null,
+  stress: (sm) => sm.stress?.problems ?? null,
+  women: (sm) => sm.women?.problems ?? null,
+  weight: (sm) => sm.weight?.goal ?? null,
 }
 
 function secondaryModuleFields(r: Responses) {
-  const keys = ((r.secondary_concerns.secondary_concerns as string[] | null) ?? []) as string[]
+  const keys = asArray<string>(r.secondary_concerns.secondary_concerns)
   return keys
     .filter((k) => k !== 'none' && SECONDARY_SHORT_SCREENS[k])
     .map((k) => {
@@ -1221,7 +1231,7 @@ function secondaryModuleFields(r: Responses) {
 /** §PART4 동반문제 칩: 카테고리 라벨 + 짧은 화면 응답 요약(2개 제한은 SECONDARY_01의 max로 이미 강제됨). */
 function secondaryChipsData(r: Responses) {
   return secondaryModuleFields(r).map((f, i) => {
-    const keys = ((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).filter(
+    const keys = asArray<string>(r.secondary_concerns.secondary_concerns).filter(
       (k) => k !== 'none' && SECONDARY_SHORT_SCREENS[k],
     )
     const key = keys[i]
@@ -1239,8 +1249,7 @@ function secondaryChipsData(r: Responses) {
  * flag다 -- 'none'은 표시하지 않는다(선택 안 함과 동일하게 취급).
  */
 function referenceSymptomKeys(routing: DoctorPayload['routing']): string[] {
-  const raw = (routing.reference_symptoms as string[] | null) ?? []
-  return raw.filter((k) => k !== 'none')
+  return asArray<string>(routing.reference_symptoms).filter((k) => k !== 'none')
 }
 
 /**
@@ -1278,7 +1287,8 @@ function constitutionFields(r: Responses) {
  * 이 경우 원래 Sleep Field 목록만 보이고 이 블록 자체가 생기지 않는다.
  */
 function menopauseSleepSummaryLines(sleep: Responses['modules']['sleep']): string[] | null {
-  const ms = sleep.menopause
+  const ms = sleep?.menopause
+  if (!ms) return null
   if (ms.gate_context !== 'yes' && ms.gate_context !== 'unsure') return null
 
   const lines: string[] = []
@@ -1320,46 +1330,60 @@ export function primaryModuleFields(
   primaryModuleDetail: string | null = null,
 ) {
   switch (primaryModule) {
-    case 'Sleep':
+    case 'Sleep': {
+      if (!m.sleep) return []
+      const ms = m.sleep.menopause
       return [
         { qid: 'SLEEP_01', value: m.sleep.problems },
         { qid: 'SLEEP_02', value: m.sleep.frequency_per_week },
         { qid: 'SLEEP_03', value: m.sleep.awakening_reasons },
-        { qid: 'MS_GATE_01', value: m.sleep.menopause.gate_context },
-        { qid: 'MS_01', value: m.sleep.menopause.stage },
-        { qid: 'MS_02', value: m.sleep.menopause.night_vms_frequency },
-        { qid: 'MS_03', value: m.sleep.menopause.rumination_frequency },
-        { qid: 'MS_04', value: m.sleep.menopause.total_sleep_time },
-        { qid: 'MS_05', value: m.sleep.menopause.sleep_disorder_screen },
-        { qid: 'MS_06', value: m.sleep.menopause.awakenings },
-        { qid: 'MS_07', value: m.sleep.menopause.return_to_sleep },
+        ...(ms
+          ? [
+              { qid: 'MS_GATE_01', value: ms.gate_context },
+              { qid: 'MS_01', value: ms.stage },
+              { qid: 'MS_02', value: ms.night_vms_frequency },
+              { qid: 'MS_03', value: ms.rumination_frequency },
+              { qid: 'MS_04', value: ms.total_sleep_time },
+              { qid: 'MS_05', value: ms.sleep_disorder_screen },
+              { qid: 'MS_06', value: ms.awakenings },
+              { qid: 'MS_07', value: ms.return_to_sleep },
+            ]
+          : []),
       ]
-    case 'GI':
+    }
+    case 'GI': {
+      if (!m.gi) return []
       return [
         { qid: 'GI_01', value: m.gi.problems },
         { qid: 'GI_02', value: m.gi.meal_relation },
         { qid: 'GI_03', value: m.gi.unable_to_eat_or_drink },
       ]
-    case 'Bowel':
+    }
+    case 'Bowel': {
+      if (!m.bowel) return []
       return [
         { qid: 'BOWEL_01', value: m.bowel.problems },
         { qid: 'BOWEL_02', value: m.bowel.frequency },
         { qid: 'BOWEL_03', value: m.bowel.blood_or_black_stool },
         { qid: 'BOWEL_04', value: m.bowel.straining },
       ]
-    case 'Urinary':
+    }
+    case 'Urinary': {
+      if (!m.urinary) return []
       return [
         { qid: 'URINARY_01', value: m.urinary.problems },
         { qid: 'URINARY_02', value: m.urinary.burden_frequency },
         { qid: 'URINARY_03', value: m.urinary.nocturia_count },
         { qid: 'URINARY_04', value: m.urinary.leakage_pattern },
       ]
-    case 'Pain':
+    }
+    case 'Pain': {
+      if (!m.pain) return []
       return [
         { qid: 'PAIN_01', value: m.pain.primary_location },
         { qid: 'PAIN_02', value: m.pain.pain_qualities },
         { qid: 'PAIN_04', value: m.pain.radiation },
-        ...(primaryModuleDetail === 'LBP'
+        ...(primaryModuleDetail === 'LBP' && m.lbp
           ? [
               { qid: 'LBP_01', value: m.lbp.distal_extent },
               { qid: 'LBP_02', value: m.lbp.leg_neuro_symptoms },
@@ -1385,7 +1409,7 @@ export function primaryModuleFields(
          * patient's HIP_00-06 raw answers must stay visible alongside LBP's
          * regardless of the (unchanged, LBP-only) `primaryModuleDetail` tag.
          */
-        ...(m.pain.primary_location === 'low_back_pelvis'
+        ...(m.pain.primary_location === 'low_back_pelvis' && m.hip
           ? [
               { qid: 'HIP_00', value: m.hip.region_discriminator },
               { qid: 'HIP_01', value: m.hip.recent_trauma },
@@ -1405,7 +1429,7 @@ export function primaryModuleFields(
          * NECK 원시 응답이 이 필드 목록에서 사라진다 — NeckSafetyPanel과
          * 동일한 이유의 동일한 수정.
          */
-        ...(m.pain.primary_location === 'neck_shoulder'
+        ...(m.pain.primary_location === 'neck_shoulder' && m.neck
           ? [
               { qid: 'NECK_01', value: m.neck.recent_significant_trauma },
               { qid: 'NECK_02', value: m.neck.cord_concern_screen },
@@ -1429,7 +1453,7 @@ export function primaryModuleFields(
          * `m.pain.primary_location === 'neck_shoulder'`로 게이트 -- SH01-05는
          * NS01이 NECK_DOMINANT여도 항상 응답되어 있다(F1).
          */
-        ...(m.pain.primary_location === 'neck_shoulder'
+        ...(m.pain.primary_location === 'neck_shoulder' && m.shoulder
           ? [
               { qid: 'NS01', value: m.shoulder.primary_focus },
               { qid: 'SH01', value: m.shoulder.recent_trauma },
@@ -1451,7 +1475,7 @@ export function primaryModuleFields(
          * `m.pain.primary_location === 'knee'` 게이트가 항상 동일한 결과를
          * 낸다 -- LBP/NECK/SHOULDER처럼 두 게이트가 어긋날 여지가 없다.
          */
-        ...(m.pain.primary_location === 'knee'
+        ...(m.pain.primary_location === 'knee' && m.knee
           ? [
               { qid: 'KNEE_01', value: m.knee.recent_trauma_or_sudden_load },
               { qid: 'KNEE_02', value: m.knee.deformity_neurovascular_screen },
@@ -1483,7 +1507,7 @@ export function primaryModuleFields(
          * 못 봤으니 응답이 없다) 안전하다 -- KNEE류의 F1 primary-tag 어긋남
          * 문제와는 다른 종류이며, 별도 게이트가 필요하지 않다.
          */
-        ...(m.pain.primary_location === 'arm_hand'
+        ...(m.pain.primary_location === 'arm_hand' && m.elbow
           ? [
               { qid: 'ELBOW_00', value: m.elbow.region_discriminator },
               { qid: 'ELBOW_01', value: m.elbow.recent_trauma_or_sudden_load },
@@ -1515,7 +1539,7 @@ export function primaryModuleFields(
          * ELBOW block above (`ELBOW_00`), reading the same shared router
          * value from `m.elbow.region_discriminator` (Fable plan §11).
          */
-        ...(m.pain.primary_location === 'arm_hand'
+        ...(m.pain.primary_location === 'arm_hand' && m.wrist_hand
           ? [
               { qid: 'WH_01', value: m.wrist_hand.recent_trauma },
               { qid: 'WH_02', value: m.wrist_hand.deformity_neurovascular_open_injury_screen },
@@ -1544,7 +1568,7 @@ export function primaryModuleFields(
          * tag but never saw TMJ_01-05 (T2), so those fields render safely
          * as raw-null.
          */
-        ...(m.pain.primary_location === 'head_face_jaw'
+        ...(m.pain.primary_location === 'head_face_jaw' && m.tmj
           ? [
               { qid: 'HFJ_00', value: m.tmj.region_discriminator },
               { qid: 'TMJ_01', value: m.tmj.trauma_dislocation_screen },
@@ -1555,42 +1579,55 @@ export function primaryModuleFields(
             ]
           : []),
       ]
-    case 'Fatigue':
+    }
+    case 'Fatigue': {
+      if (!m.fatigue) return []
       return [
         { qid: 'FATIGUE_01', value: m.fatigue.patterns },
         { qid: 'FATIGUE_02', value: m.fatigue.worst_time },
         { qid: 'FATIGUE_03', value: m.fatigue.recovery_after_rest },
       ]
-    case 'Stress':
+    }
+    case 'Stress': {
+      if (!m.stress) return []
       return [
         { qid: 'STRESS_01', value: m.stress.problems },
         { qid: 'STRESS_03', value: m.stress.associated_symptoms },
       ]
-    case 'Women':
+    }
+    case 'Women': {
+      if (!m.women) return []
       return [
         { qid: 'WOMEN_01', value: m.women.problems },
         { qid: 'WOMEN_02', value: m.women.menstrual_status },
         { qid: 'WOMEN_03', value: m.women.menopause_symptoms },
       ]
-    case 'Pregnancy':
+    }
+    case 'Pregnancy': {
+      if (!m.pregnancy) return []
       return [
         { qid: 'PREGNANCY_01', value: m.pregnancy.status },
         { qid: 'PREGNANCY_02', value: m.pregnancy.trimester },
         { qid: 'PREGNANCY_03', value: m.pregnancy.concerns },
       ]
-    case 'Postpartum':
+    }
+    case 'Postpartum': {
+      if (!m.postpartum) return []
       return [
         { qid: 'POSTPARTUM_01', value: m.postpartum.time_since_delivery },
         { qid: 'POSTPARTUM_02', value: m.postpartum.problems },
         { qid: 'POSTPARTUM_03', value: m.postpartum.breastfeeding_status },
       ]
-    case 'Weight':
+    }
+    case 'Weight': {
+      if (!m.weight) return []
       return [
         { qid: 'WEIGHT_01', value: m.weight.goal },
         { qid: 'WEIGHT_02', value: m.weight.contributing_factors },
         { qid: 'WEIGHT_03', value: m.weight.recent_weight_change },
         { qid: 'WEIGHT_04', value: m.weight.previous_attempts },
       ]
+    }
     default:
       return []
   }
@@ -3067,7 +3104,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         <h2>주호소</h2>
         <p className="doctor__derivedNote">
           시스템 라우팅 — 주호소 모듈: {routing.primary_module ?? '없음'} / 동반 화면:{' '}
-          {(routing.secondary_screens ?? []).length > 0 ? (routing.secondary_screens ?? []).join(', ') : '없음'}
+          {asArray<string>(routing.secondary_screens).length > 0
+            ? asArray<string>(routing.secondary_screens).join(', ')
+            : '없음'}
         </p>
         <div className="doctor__chiefPrimary">
           <span className="doctor__chiefPrimary__label">주호소</span>
@@ -3350,10 +3389,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               </p>
             )}
 
-            {(saju.policy.pending_approval ?? []).length > 0 && (
+            {asArray<string>(saju.policy.pending_approval).length > 0 && (
               <p className="doctor__warning doctor__warning--pending">
                 주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {(saju.policy.pending_approval ?? []).join(', ')}.
+                값이 바뀔 수 있습니다. 대기 항목: {asArray<string>(saju.policy.pending_approval).join(', ')}.
                 원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
                 docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
               </p>
@@ -3451,7 +3490,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           myungri_algorithm_version: saju.policy.algorithm_version,
           myungri_library_version: saju.engine.library_version,
           myungri_status: saju.status,
-          myungri_pending_approval: saju.policy.pending_approval,
+          myungri_pending_approval: asArray<string>(saju.policy.pending_approval),
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
         initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}

@@ -558,4 +558,60 @@ test('DoctorView.tsx passes no synthetic decision-support data for real (server-
   )
 })
 
+/* -------------------------------------------------------------------------
+ * Malformed/legacy submission resilience batch, 2nd independent review
+ * (closing review of 824c864): CommonSafetyBanner.tsx reads several
+ * `r.reproductive_status.derived.*` / `r.modules.<submodule>.*` fields
+ * unconditionally -- for a legacy/hand-crafted submission missing those
+ * namespaces (which `isDoctorPayloadShapeUsable` in DoctorView.tsx only
+ * checks one level deep, by design) this throws inside CommonSafetyBanner.
+ * Unlike the inline-JSX-body crashes in DoctorView.tsx itself, this one IS
+ * a genuinely separate child component, so DoctorRecordErrorBoundary does
+ * catch it -- but that still collapses the entire clinical view to the
+ * neutral fallback and hides Common Safety, which governing task Phase 2
+ * requires stay visible whenever real safety data exists. Structural
+ * check (not a full render) since CommonSafetyBanner isn't re-exported
+ * from the DoctorWorkspace bundle this file otherwise renders against.
+ * ---------------------------------------------------------------------- */
+test('CommonSafetyBanner.tsx guards reproductive_status.derived before reading its booleans', () => {
+  const src = fs.readFileSync('src/doctor/CommonSafetyBanner.tsx', 'utf8')
+  assert.ok(
+    /if \(derived && \(derived\.pregnant/.test(src),
+    'derived must be checked truthy before .pregnant/.pregnancy_possible/.postpartum_1y/.breastfeeding are read',
+  )
+})
+
+test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (submodule can be legitimately absent)', () => {
+  const src = fs.readFileSync('src/doctor/CommonSafetyBanner.tsx', 'utf8')
+  const mustBeOptionalChained = [
+    'r.modules.sleep?.menopause?.sleep_disorder_screen',
+    'r.modules.sleep?.awakening_reasons',
+    'r.modules.pain?.primary_location',
+    'r.modules.pain?.radiation',
+    'r.modules.women?.problems',
+    'r.modules.pregnancy?.concerns',
+    'r.modules.postpartum?.problems',
+    'r.modules.gi?.unable_to_eat_or_drink',
+    'r.modules.bowel?.blood_or_black_stool',
+  ]
+  for (const expr of mustBeOptionalChained) {
+    assert.ok(src.includes(expr), `expected optional-chained read "${expr}" in CommonSafetyBanner.tsx`)
+  }
+  // And the un-guarded (bug) forms must be gone.
+  const mustNotAppear = [
+    'r.modules.sleep.menopause.sleep_disorder_screen',
+    'r.modules.sleep.awakening_reasons',
+    'r.modules.pain.primary_location',
+    'r.modules.pain.radiation',
+    'r.modules.women.problems',
+    'r.modules.pregnancy.concerns',
+    'r.modules.postpartum.problems',
+    'r.modules.gi.unable_to_eat_or_drink',
+    'r.modules.bowel.blood_or_black_stool',
+  ]
+  for (const expr of mustNotAppear) {
+    assert.ok(!src.includes(expr), `unguarded read "${expr}" must no longer appear in CommonSafetyBanner.tsx`)
+  }
+})
+
 console.log(`\n${passed} doctor-workspace assertions passed.`)

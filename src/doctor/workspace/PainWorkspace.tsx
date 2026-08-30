@@ -139,7 +139,7 @@ export function PainWorkspace({
   const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
   // LBP_12: only exists for the LBP regional module — recovery expectation raw score,
   // never an inferred risk/yellow-flag bucket (governing task invariant).
-  const recoveryScore = routing.primary_module_detail === 'LBP' ? r.modules.lbp.recovery_expectation : null
+  const recoveryScore = routing.primary_module_detail === 'LBP' ? (r.modules.lbp?.recovery_expectation ?? null) : null
 
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)

@@ -21,6 +21,7 @@ import {
   DoctorRecordFallback,
   frequencyField,
   aggravatingField,
+  primaryModuleFields,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -1488,16 +1489,15 @@ function detailsRange(html, classMarker) {
 
   const r = hollowPayload.responses
   const { routing } = hollowPayload
-  const saju = hollowPayload.myungri_calculation
-  const leafProbes = [
-    ['routing.secondary_screens (missing on an empty routing object)', () => (routing.secondary_screens ?? []).length],
+  // Real code, not a re-implementation of the guard: this exercises the
+  // actual exported `frequencyField`/`aggravatingField` against the hollow
+  // `r.modules` object (a bare `{}`), which is exactly what the 2nd
+  // independent review reproduced by direct execution against 109e024.
+  const behavioralProbes = [
     ['frequencyField(routing.primary_module, r.modules)', () => frequencyField(routing.primary_module, r.modules)],
     ['aggravatingField(routing.primary_module, r.modules)', () => aggravatingField(routing.primary_module, r.modules)],
-    ['r.reproductive_status.derived?.source guard', () => r.reproductive_status.derived?.source ?? null],
-    ['saju.normalized?.solarDate guard', () => saju.normalized?.solarDate ?? null],
-    ['saju.policy.pending_approval (missing array)', () => (saju.policy.pending_approval ?? []).length],
   ]
-  for (const [label, fn] of leafProbes) {
+  for (const [label, fn] of behavioralProbes) {
     let threw = false
     try {
       fn()
@@ -1506,6 +1506,134 @@ function detailsRange(html, classMarker) {
     }
     assert(`resilience: ${label} does not throw for a hollow-but-gate-passing payload`, threw === false)
   }
+}
+
+/* -------------------------------------------------------------------------
+ * 2nd independent review (closing review of 824c864) found that the leaf
+ * fixes above covered only the two call sites the 1st review happened to
+ * name, and reproduced a live crash inside `primaryModuleFields` (12
+ * `routing.primary_module` values, 11 of which read an `m.<submodule>` that
+ * can be legitimately absent) plus `menopauseSleepSummaryLines` (reads
+ * `sleep.menopause` unconditionally) -- both are called directly from
+ * DoctorView's own render body, so a throw there is NOT caught by
+ * DoctorRecordErrorBoundary (same uncatchable-inline-expression class as
+ * the original bug). `primaryModuleFields` is exported specifically so this
+ * suite can call the REAL function against a hollow `m`, not re-implement
+ * its guard here.
+ * ---------------------------------------------------------------------- */
+{
+  const ALL_PRIMARY_MODULES = [
+    'Sleep', 'GI', 'Bowel', 'Urinary', 'Pain', 'Fatigue', 'Stress', 'Women', 'Pregnancy', 'Postpartum', 'Weight',
+  ]
+  // m = {} : every submodule missing. Every primaryModule value must return
+  // a safe (possibly empty) array, never throw.
+  for (const mod of ALL_PRIMARY_MODULES) {
+    let threw = false
+    let result
+    try {
+      result = primaryModuleFields(mod, {}, null)
+    } catch {
+      threw = true
+    }
+    assert(`resilience: primaryModuleFields('${mod}', {}, null) does not throw on a fully hollow modules object`, threw === false)
+    assert(`resilience: primaryModuleFields('${mod}', {}, null) returns an array`, Array.isArray(result))
+  }
+  // m.pain present but m.lbp/m.hip/m.neck/m.shoulder/m.knee/m.elbow/
+  // m.wrist_hand/m.tmj all missing, primaryModuleDetail='LBP' -- reproduces
+  // exactly the shape a legacy LBP submission that never got its regional
+  // sub-answers persisted would have. The base PAIN_01/02/04 fields must
+  // still come back; none of the region-specific blocks may throw.
+  {
+    let threw = false
+    let result
+    try {
+      result = primaryModuleFields('Pain', { pain: { primary_location: 'low_back_pelvis' } }, 'LBP')
+    } catch {
+      threw = true
+    }
+    assert('resilience: primaryModuleFields Pain case with m.pain present but every region submodule missing does not throw', threw === false)
+    assert(
+      'resilience: primaryModuleFields Pain case still returns the base PAIN_01/02/04 fields when region submodules are missing',
+      Array.isArray(result) && result.some((f) => f.qid === 'PAIN_01'),
+    )
+    assert(
+      'resilience: primaryModuleFields Pain case omits LBP_* fields rather than inventing them when m.lbp is missing',
+      !result.some((f) => f.qid.startsWith('LBP_')),
+    )
+  }
+  // m.sleep present but m.sleep.menopause missing -- the exact shape that
+  // crashed menopauseSleepSummaryLines/primaryModuleFields's MS_* fields in
+  // the closing review's repro (fixture 0 with modules.sleep = {}).
+  {
+    let threw = false
+    let result
+    try {
+      result = primaryModuleFields('Sleep', { sleep: { problems: null } }, null)
+    } catch {
+      threw = true
+    }
+    assert('resilience: primaryModuleFields Sleep case with m.sleep present but m.sleep.menopause missing does not throw', threw === false)
+    assert(
+      'resilience: primaryModuleFields Sleep case omits MS_* fields rather than inventing them when m.sleep.menopause is missing',
+      Array.isArray(result) && !result.some((f) => f.qid.startsWith('MS_')),
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Structural guards for the inline JSX leaf reads that can't be exercised
+ * as standalone pure functions (they're single-use expressions inside
+ * DoctorView's own JSX, not extracted helpers) -- confirms the fix in
+ * 824c864/this round is actually still wired into the source, not just
+ * present in a function this suite happens to import. Uses the same
+ * source-regex technique already established for the boundary key checks
+ * below, rather than re-implementing the guard logic here (the mistake the
+ * closing review found in the previous version of this test).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: a shared asArray() helper guards against both missing AND wrong-typed array fields (not just `?? []`, which lets a non-array truthy value through)',
+    /function asArray<T>\(value: unknown\): T\[\] \{\s*\n\s*return Array\.isArray\(value\)/.test(src),
+  )
+  assert(
+    'resilience: routing.secondary_screens is read through asArray(), not a bare `?? []`',
+    /asArray<string>\(routing\.secondary_screens\)/.test(src),
+  )
+  assert(
+    'resilience: saju.policy.pending_approval is read through asArray() at every render/JudgmentPanel-prop site',
+    (src.match(/asArray(?:<string>)?\(saju\.policy\.pending_approval\)/g) ?? []).length >= 3,
+  )
+  assert(
+    'resilience: r.reproductive_status.derived is optional-chained before .source is read',
+    /r\.reproductive_status\.derived\?\.source/.test(src),
+  )
+  assert(
+    'resilience: saju.normalized?.solarDate is optional-chained before its .year/.month/.day are read',
+    /saju\.normalized\?\.solarDate/.test(src),
+  )
+  assert(
+    'resilience: MyungriCompactCard checks saju.pillars?.day (not just saju.pillars) before calling .charAt on it',
+    /if \(!saju\.pillars\?\.day\)/.test(src),
+  )
+  assert(
+    'resilience: primaryModuleFields Sleep case guards m.sleep.menopause before reading its MS_* leaves',
+    /const ms = m\.sleep\.menopause\s*\n\s*return \[/.test(src) && /\.\.\.\(ms\s*\n\s*\? \[/.test(src),
+  )
+  assert(
+    "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
+    /primaryModuleDetail === 'LBP' && m\.lbp\s*\n\s*\? \[/.test(src),
+  )
+  assert(
+    'resilience: every other Pain-case region sub-block additionally requires its own submodule (m.hip/m.neck/m.shoulder/m.knee/m.elbow/m.wrist_hand/m.tmj), not just the primary_location tag',
+    ['m.hip', 'm.neck', 'm.shoulder', 'm.knee', 'm.elbow', 'm.wrist_hand', 'm.tmj'].every((sub) =>
+      new RegExp(`primary_location === '[a-z_]+' && ${sub.replace('.', '\\.')}\\s*\\n\\s*\\? \\[`).test(src),
+    ),
+  )
+  assert(
+    'resilience: SECONDARY_MODULE_VALUE lambdas optional-chain into each submodule (sm.sleep?., sm.gi?., etc.) rather than assuming it exists',
+    /sleep: \(sm\) => sm\.sleep\?\.problems \?\? null/.test(src) && /weight: \(sm\) => sm\.weight\?\.goal \?\? null/.test(src),
+  )
 }
 
 /* -------------------------------------------------------------------------

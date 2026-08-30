@@ -93,7 +93,7 @@ export function HerbalWorkspace({
   const { flags } = payload
   const safetyCats = safetyIssueCategories(flags)
   const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
-  const hasReproductiveData = r.reproductive_status.derived.source !== null
+  const hasReproductiveData = (r.reproductive_status.derived?.source ?? null) !== null
 
   const emrText = buildHerbalWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
@@ -109,12 +109,12 @@ export function HerbalWorkspace({
 
 
   const systemicFields: Array<{ qid: string; label: string; value: unknown }> = [
-    { qid: 'SLEEP_01', label: '수면', value: r.modules.sleep.problems },
-    { qid: 'GI_01', label: '소화', value: r.modules.gi.problems },
-    { qid: 'BOWEL_01', label: '대변', value: r.modules.bowel.problems },
-    { qid: 'URINARY_01', label: '소변', value: r.modules.urinary.problems },
+    { qid: 'SLEEP_01', label: '수면', value: r.modules.sleep?.problems },
+    { qid: 'GI_01', label: '소화', value: r.modules.gi?.problems },
+    { qid: 'BOWEL_01', label: '대변', value: r.modules.bowel?.problems },
+    { qid: 'URINARY_01', label: '소변', value: r.modules.urinary?.problems },
     { qid: 'HERB_APPETITE', label: '식욕', value: r.constitution_basics.appetite_level },
-    { qid: 'WEIGHT_03', label: '체중 변화', value: r.modules.weight.recent_weight_change },
+    { qid: 'WEIGHT_03', label: '체중 변화', value: r.modules.weight?.recent_weight_change },
     { qid: 'HERB_THERMAL', label: '한열 경향', value: r.constitution_basics.thermal_tendency },
     { qid: 'HERB_SWEAT', label: '땀', value: r.constitution_basics.sweat_pattern },
     { qid: 'HERB_THIRST', label: '갈증', value: r.constitution_basics.thirst_level },

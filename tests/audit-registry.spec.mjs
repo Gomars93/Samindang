@@ -887,6 +887,64 @@ async function main() {
     }
   }
 
+  /* =====================================================================
+     Part 9: 2nd independent closing-review finding (HIGH) -- the Part 8
+     episode_id format guard only covered POST /api/crm/episodes.
+     POST /api/crm/tasks and POST /api/crm/medication-courses also accept
+     a caller-supplied episode_id and, before this fix, passed it straight
+     into crmStore.getEpisode() (a bare path.join lookup) with no format
+     check -- the reviewer proved this let a traversal-shaped episode_id
+     read an arbitrary file under .data/ (a real patient submission
+     record) and, on the tasks route, persist a Task carrying whatever
+     patient_uuid that file happened to contain.
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-episode-traversal-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      // A real submission record to attempt to read via traversal --
+      // crm/episodes/ sits at <tmpRoot>/crm/episodes/, so
+      // ../../submissions/<id> walks back up to the seeded submission
+      // file, exactly the shape the reviewer proved exploitable.
+      const submissionRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ questionnaire_version: '1.0', session_id: 'audit-traversal-victim', responses: { patient: {} } }),
+      })
+      const submission = await submissionRes.json()
+      const traversalId = `../../submissions/${submission.id}`
+
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+
+      const taskTraversal = await postJson(`${base}/api/crm/tasks`, {
+        patient_uuid: visit.patient_id,
+        episode_id: traversalId,
+        task_type: 'ROUTINE',
+        reason_code: 'REASSESSMENT_DUE',
+        source_event_id: 'evt-audit-traversal-task',
+      })
+      assert('episode-id-safety (HTTP, tasks route): traversal-shaped episode_id is rejected -> 400, not 201', taskTraversal.status === 400)
+
+      const courseTraversal = await postJson(`${base}/api/crm/medication-courses`, {
+        episode_id: traversalId,
+        source: 'doctor_manual_entry',
+        source_id: 'evt-audit-traversal-course',
+        source_timestamp: new Date().toISOString(),
+      })
+      assert('episode-id-safety (HTTP, medication-courses route): traversal-shaped episode_id is rejected -> 400, not 201', courseTraversal.status === 400)
+
+      // Sanity: neither rejected call created a Task/MedicationCourse
+      // (i.e. this isn't merely a dedup/validation coincidence).
+      const tasksAfter = await getJson(`${base}/api/crm/tasks`)
+      const leakedTask = tasksAfter.body.tasks?.find((t) => t.source_event_id === 'evt-audit-traversal-task')
+      assert('episode-id-safety (HTTP, tasks route): no Task was persisted from the rejected traversal attempt', leakedTask === undefined)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
   console.log(`\n${passCount} audit registry assertions passed.`)
 }
 

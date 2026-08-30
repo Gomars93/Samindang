@@ -5050,6 +5050,59 @@ pytest 80/80, FROZEN diff 0 lines — 전부 통과.
 "HIGH/MEDIUM 발견 시 재검수" 사이클. CLEAN 판정까지는 이 배치를
 CLOSED로 선언하지 않는다.
 
+**2차 독립 `model:opus` 클로징 리뷰(완료, `08eca1b` 대상) + 수정**: fresh
+subagent 호출(44 tool call, ~10분)로 검수. **판정: NOT CLEAN** — HIGH 1 /
+MEDIUM 1 / LOW·NIT 3.
+
+1. **HIGH(수정)**: 1차 수정이 추가한 `episode_id` 안전 문자셋 검증이
+   `POST /api/crm/episodes` 라우트 하나에만 있었음 — `POST /api/crm/
+   tasks`와 `POST /api/crm/medication-courses`도 캐릭터가 body로 받은
+   `episode_id`를 그대로 `crmStore.getEpisode()`(`path.join` 그대로
+   사용)에 넘김. 리뷰어가 실제로 재현: `episode_id: "../../submissions/
+   <id>"`로 `POST /api/crm/tasks`를 호출하면 201과 함께 그 제출 기록의
+   `patient_uuid`가 그대로 Task에 박혀 실제로 파일이 써지고 Today
+   Queue에 노출됨. `POST /api/crm/medication-courses`도 같은 경로로
+   201 및 잘못된 환자로 course 저장. **이 primitive 자체는 이 배치
+   이전(`3bb07a5`)부터 있던 것**(두 라우트 모두 `episode_id`가 항상
+   "기존 Episode를 가리키는 참조"였고 한 번도 서버가 만든 값이 아니었음)
+   — 하지만 1차 수정의 커밋 메시지와 HANDOFF가 "닫혔다"고 명시적으로
+   주장했는데 실제로는 세 진입점 중 하나만 닫혔던 것은 이번 배치의
+   책임. **수정**: `SAFE_CRM_ID_RE`(`/^[A-Za-z0-9_-]{1,128}$/`)를
+   파일 상단 공유 상수로 추출, 세 곳(episodes 생성/tasks 생성/
+   medication-courses 생성) 모두에 적용. `id`가 URL 경로 세그먼트에서
+   오는 GET류 라우트(`parts[3]`)는 라우팅 자체가 `/`로 split하기
+   때문에 그 값에 `/`가 담길 수 없어 구조적으로 traversal 불가능함을
+   직접 추적해 확인 — 별도 수정 불필요.
+2. **MEDIUM(1차 리뷰 항목 재확인)**: round 7의 "derive, don't trust"
+   설계는 옳지만, "손상 경로가 없다"는 근거 자체가 이 HIGH가 열려
+   있는 동안은 성립하지 않았음(episode_id가 실제 Episode가 아닌
+   임의 파일을 가리킬 수 있었으므로 파생된 patient_uuid도 오염될 수
+   있었음) — 리뷰어가 직접 확인. HIGH를 닫음으로써 근거가 다시
+   성립. `POST /api/crm/tasks` 자체를 reject 방식으로 바꾸는 것은
+   여전히 하지 않음(1차 판단 유지).
+3. **LOW/NIT(코드 변경 없음, 기록만)**: 손상된 JSON 파일에 대한
+   에러 응답이 500→400으로 바뀜(이 파일의 다른 라우트들과 일관된
+   스타일, 실제 동작 변화지만 허용 가능한 트레이드오프로 리뷰어가
+   직접 판단); 존재 여부를 create-on-probe로 알 수 있는 409-vs-201
+   오라클(원장 인증+LAN 전용이라 낮은 위험, 허용 가능); regex가
+   Windows 예약 파일명(`CON` 등)을 허용(실 클라이언트에서 도달
+   불가능, 화장품 수준).
+
+**신규 회귀 테스트**: `tests/audit-registry.spec.mjs`에 리뷰어의 실제
+재현 시나리오(`../../submissions/<id>` 형태 `episode_id`로 `POST
+/api/crm/tasks`와 `POST /api/crm/medication-courses` 둘 다 호출)를
+그대로 옮긴 블록 추가 — 둘 다 400으로 거부되고, Today Queue에 유출된
+Task가 생기지 않음을 확인.
+
+**검증(수정 반영 후)**: `npx tsc -b --force` clean, `node
+tests/crm-store.spec.mjs` 246/246, `node tests/audit-registry.spec.mjs`
+126/126, `node tests/medication-course-ui.spec.mjs` 24/24, `npm run
+test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, FROZEN diff 0 lines — 전부 통과.
+
+**다음 단계**: push 후 3차 독립 `model:opus` 클로징 리뷰. CLEAN
+판정까지는 이 배치를 CLOSED로 선언하지 않는다.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
 HEAD: `5ede4ac`(코드) / HANDOFF 갱신은 이 커밋 뒤에 별도 push — 

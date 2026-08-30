@@ -30,6 +30,21 @@ import {
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1024 * 1024 // 1MB
 
+// 2nd independent closing-review finding (HIGH): a client-minted CRM id
+// (episode_id, and anywhere else one reaches crmStore's file-per-id
+// lookups verbatim) must never contain '/', '.', or other path-traversal
+// characters -- crmStore.js's episodePath()/taskPath()/etc. all do a bare
+// path.join(dir, `${id}.json`) with no sanitization of their own. The
+// 1st-round fix only guarded the episode CREATE route; POST /api/crm/tasks
+// and POST /api/crm/medication-courses also take a caller-supplied
+// episode_id and pass it straight into crmStore.getEpisode() before this
+// fix, letting the same traversal read arbitrary files under .data/ (and,
+// on tasks, persist a task attributed to whatever patient_uuid that file
+// happened to contain). One shared regex, applied at every entry point
+// that accepts a client-supplied CRM id, instead of one inline literal
+// that a future new route can forget to copy.
+const SAFE_CRM_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+
 function parseAllowedOrigins(raw) {
   return (raw ?? '')
     .split(',')
@@ -1741,15 +1756,15 @@ export function createApp({
           if (!patientUuid || !(await store.visitExistsForPatient(patientUuid))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown patient_uuid' }, cors)
-          } else if (rawEpisodeId != null && (typeof rawEpisodeId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(rawEpisodeId))) {
+          } else if (rawEpisodeId != null && (typeof rawEpisodeId !== 'string' || !SAFE_CRM_ID_RE.test(rawEpisodeId))) {
             // Independent-review finding: episode_id now reaches
             // crmStore.episodePath() (path.join(episodesDir, `${id}.json`))
             // verbatim -- before this batch it was always a server-minted
             // randomUUID(), so a caller-controlled value here is new
-            // attack surface. Reusing this file's existing recording_id
-            // safe-charset check (no '/', '.', or other path-traversal
-            // characters) closes both the directory-traversal read/write
-            // and the unhandled-500-on-malformed-id gap in one guard.
+            // attack surface. SAFE_CRM_ID_RE (no '/', '.', or other
+            // path-traversal characters) closes both the directory-
+            // traversal read/write and the unhandled-500-on-malformed-id
+            // gap in one guard.
             status = 400
             bytes = sendJson(req, res, 400, { error: 'episode_id must be a non-empty string matching [A-Za-z0-9_-]{1,128}' }, cors)
           } else {
@@ -1906,7 +1921,13 @@ export function createApp({
           const body = await readBody(req)
           const patientUuid = typeof body?.patient_uuid === 'string' ? body.patient_uuid : ''
           const episodeId = typeof body?.episode_id === 'string' ? body.episode_id : ''
-          if (!patientUuid || !episodeId || !(await crmStore.getEpisode(episodeId))) {
+          // 2nd independent closing-review finding (HIGH): episodeId is
+          // caller-supplied and, before this fix, reached
+          // crmStore.getEpisode() (a bare path.join lookup) with no
+          // format check on this route -- see SAFE_CRM_ID_RE's own
+          // comment for the proven traversal-read/misattributed-write
+          // this closes.
+          if (!patientUuid || !episodeId || !SAFE_CRM_ID_RE.test(episodeId) || !(await crmStore.getEpisode(episodeId))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown episode_id' }, cors)
           } else {
@@ -2073,7 +2094,13 @@ export function createApp({
         } else {
           const body = await readBody(req)
           const episodeId = typeof body?.episode_id === 'string' ? body.episode_id : ''
-          if (!episodeId || !(await crmStore.getEpisode(episodeId))) {
+          // 2nd independent closing-review finding (HIGH): see
+          // SAFE_CRM_ID_RE's own comment -- this route also passed a
+          // caller-supplied episodeId straight into crmStore.getEpisode()
+          // with no format check, and expected_patient_uuid below is
+          // opt-in (omitted by a caller, it never runs), so this was the
+          // one write-capable path the traversal could still reach.
+          if (!episodeId || !SAFE_CRM_ID_RE.test(episodeId) || !(await crmStore.getEpisode(episodeId))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown episode_id' }, cors)
           } else {

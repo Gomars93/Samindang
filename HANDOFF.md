@@ -4108,15 +4108,54 @@ host+path+`userid` 헤더 조합에 도달, 필드명 `tmplId`/`msg`/
 
 **검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
 51/51, `npm run test:all`(exit 0), `npm run build`/`build:preview`,
-`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 2차 독립
-`model:opus` 리뷰는 이어서 진행 예정(오너 지시 7번 항목: "재검토 루프,
-클린할 때까지").
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 커밋
+`c8b9a84`로 푸시.
+
+## Completed — BizM 계약 게이트 2차 독립 리뷰 (완료, 이번 세션)
+
+**2차 독립 `model:opus` 리뷰**(실제 subagent 호출, 커밋 `c8b9a84`
+대상, 1차 리뷰와 컨텍스트 공유 없음): 1차 리뷰의 5개 LOW 발견 사항이
+전부 실제로 수정됐는지 항목별로 직접 코드 추적·재검증 — channel-scoped
+msgId(`deriveBizmMsgId(messageId, channel)`)가 실제 fallback 호출부까지
+정확히 전달됨을 확인, missing-messageId 가드가 crypto 호출 전에 정확히
+위치함을 확인, 필드명 갱신(`tmplCode`→`tmplId`, `message`→`msg`,
+`message_type` 추가)이 실제로 전송되는 리터럴임을 grep으로 확인,
+신규 테스트가 `deriveBizmMsgId`를 직접 import하지 않고 sha256 공식을
+독립적으로 재구현해 진짜로 tautological하지 않음을 확인. `npm run
+test:messaging`(SOLAPI+공유 스토어 회귀) 103/103도 직접 재실행해 확인.
+**판정: CLEAN(남은 HIGH/MEDIUM 없음)**.
+
+LOW/NIT 3건만 발견, 즉시 반영:
+- **LOW(테스트 정직성)**: "채널이 다르면 msgId도 다르다"는 크로스채널
+  테스트를 추가했다고 주석에 썼지만, 실제로는 `send()` 자신이
+  KAKAO_ALIMTALK 이외 채널을 msgId 계산 이전 단계에서 이미 거부하므로
+  이 경계에서는 진짜 크로스채널 테스트가 애초에 작성 불가능함(SMS/LMS
+  계약이 확인되지 않아 그 채널로는 `send()`가 아예 진행되지 않음) —
+  주석을 정직하게 정정: 실제 안전망은 정확한 해시 공식 단언(채널을
+  빠뜨리면 그 단언이 깨짐)이라고 명시, 마지막 단언은 "같은 채널
+  반복 전송 시 결정성 재확인"으로 재명명(이전 단언의 중복 아님 — 같은
+  transport 인스턴스에서의 반복 전송 안정성을 별도로 확인).
+- **NIT**: 헤더의 "Two rounds of research" 문구가 이미 Round 3까지
+  진행된 뒤에도 그대로 남아 있던 것을 "Three rounds"로 수정.
+- **LOW(수용, 코드 변경 없음)**: mock transport는 `messageId` 부재를
+  검증하지 않음(LIVE transport만 검증) — 실제 호출부(`attemptSend`)가
+  항상 messageId를 공급하므로 매우 이론적이라고 리뷰어 스스로도 평가;
+  기존 SOLAPI mock과 동일하게 mock은 프로덕션 검증 로직을 거울처럼
+  복제하지 않는다는 이 저장소의 기존 관례와 일치 — 별도 수정 없음.
+
+**검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
+51/51, `npm run test:all`(exit 0), `npm run build`/`build:preview`,
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과.
+
+**결론**: BizM 계약 검증 게이트 HIGH 수정은 실제 독립 `model:opus`
+리뷰 2회(호출 증거: 서로 다른 두 subagent 호출, 각각 읽기 전용으로
+diff와 코드를 직접 읽고 검증 명령을 실제 실행) 기준 CLEAN. 오너의
+3차 증거(현재 SDK corroboration)까지 전부 반영 완료.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `660f5e2`(1차 독립 리뷰 CLEAN, 위 수정 라운드는 아직 이 위에
-커밋되지 않은 작업 트리
-상태로만 존재, 전체 게이트 재검증 + 독립 리뷰 후 커밋/푸시 예정.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
+(아래 커밋 예정) — BizM 계약 검증 게이트 배치(PENDING_CONTRACT 게이트 +
+필드명 갱신 + 독립 리뷰 2회 CLEAN) 전체 완료.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

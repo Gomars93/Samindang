@@ -25,7 +25,8 @@
 // WIRE FORMAT -- PARTIALLY EVIDENCE-BACKED, STILL NOT VERIFIED. This
 // environment's network egress to bizmsg.kr/kakaoenterprise.com and related
 // hosts is blocked, so this file's author could never load BizM's own
-// interactive docs or console. Two rounds of research went into this file:
+// interactive docs or console. Three rounds of research went into this
+// file:
 //
 // Round 1 (two third-party open-source SDKs, mutually inconsistent, neither
 // BizM's own code):

@@ -185,17 +185,26 @@ async function main() {
       const thirdItem = JSON.parse(capturedRequests[2].init.body)[0]
       assert('LIVE request: msgId differs for a genuinely different message_id', thirdItem.msgId !== item.msgId)
 
-      // Independent-review finding (LOW): a same-attempt fallback to a
-      // different channel must get a DIFFERENT msgId from the primary
-      // attempt it followed, or a real BizM E109 dedup check would reject
-      // the fallback as a duplicate of an attempt that never delivered --
-      // defeating the fallback's purpose. Not reachable via messagingStore
-      // today (BizM's own FALLBACK_CHANNEL is empty), but the derivation
-      // itself must already be channel-scoped so this cannot bite silently
-      // if a real BizM SMS contract is ever confirmed and wired up.
+      // Second-independent-review finding (LOW, test honesty): a genuine
+      // cross-channel divergence test (same message_id, KAKAO_ALIMTALK vs
+      // SMS/LMS -> different msgId) is NOT actually exercisable through
+      // this transport's public send() today -- send() refuses any
+      // non-KAKAO_ALIMTALK channel (the check above, before deriveBizmMsgId
+      // is ever reached) as bizm_channel_unverified, precisely because no
+      // SMS/LMS wire format is confirmed. So this assertion re-confirms
+      // same-channel determinism instead (a genuine, non-duplicate check --
+      // it uses a message_id already sent once above, on the SAME
+      // liveTransport instance, proving repeat sends don't drift). The
+      // actual channel-inclusion in the hash formula IS regression-tested,
+      // just not directly: the exact-formula assertion above
+      // (`sha256('message-id-aaa:KAKAO_ALIMTALK')`) would fail if a future
+      // change silently dropped `channel` from deriveBizmMsgId's input --
+      // that is the real safety net for the channel-scoping fix, until
+      // channel-scoping can be genuinely exercised once a second real
+      // channel exists.
       await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-aaa' })
       const fourthItem = JSON.parse(capturedRequests[3].init.body)[0]
-      assert('LIVE request: same message_id + same channel -> same msgId (re-confirms determinism)', fourthItem.msgId === item.msgId)
+      assert('LIVE request: same message_id + same channel, sent again -> same msgId (repeat-send determinism, not a duplicate of the earlier check)', fourthItem.msgId === item.msgId)
 
       // messageId omitted entirely -- independent-review finding: this used
       // to throw uncaught inside node:crypto (createHash().update(undefined)),

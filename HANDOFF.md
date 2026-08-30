@@ -4536,12 +4536,11 @@ mutation-test로 실제 검증 + LOW 1건 마저 수정) 완료 — 오너 지�
 충족. **CLEAN.**
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
-응답-실패 검증 HIGH 수정 사이클(CLEAN, HEAD `e6af327`까지)에 이어,
-메시지<->캡ability 무결성 배치의 구현(`2ef971f`) + 1차 독립 리뷰
-수정(`87817b8`) + 2차 독립 클로징 리뷰가 찾은 LOW 1건 수정(retry
-라우트 캐시 순서 + 트레이드오프 문서화)을 하나의 커밋으로 이어서 push
-예정 — 최신 HEAD는 이 커밋 직후 갱신. 이 배치도 **CLEAN**.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
+HEAD: `498e675` — button1/응답-실패 검증 HIGH 수정 사이클(CLEAN, HEAD
+`e6af327`까지)에 이어, 메시지<->캡ability 무결성 배치의 구현(`2ef971f`)
++ 1차 독립 리뷰 수정(`87817b8`) + 2차 독립 클로징 리뷰 LOW 수정
+(`498e675`)까지 push 완료. 이 배치도 **CLEAN**.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

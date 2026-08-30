@@ -26,6 +26,42 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : []
 }
 
+/**
+ * MED_USE/ALLERGY_01/SURGERY_01/FREE_01(coreSpec.ts)은 전부 `required: true`,
+ * `showIf` 없이 모든 환자에게 항상 나오는 단일선택 문항이고 값 집합이
+ * 고정돼 있다 -- 그래서 실제 제출은 이 필드들이 절대 null이거나 이
+ * 목록 밖의 값일 수 없다. null/다른 값이면 "환자가 없다고 답함"이 아니라
+ * 레거시/손상 데이터다.
+ */
+function isUnreadableYesNoUnknown(value: unknown, allowed: readonly string[]): boolean {
+  return value != null && !allowed.includes(value as string)
+}
+
+const YES_UNKNOWN_NONE = ['yes', 'unknown', 'none'] as const
+const YES_NONE = ['yes', 'none'] as const
+
+/**
+ * 6차 독립 리뷰 MEDIUM-2: `safetyGlanceItems`가 빈 배열을 반환하는 이유가
+ * "정말로 안전 이슈가 없음"과 "안전 관련 필드 자체를 읽을 수 없음"(레거시/
+ * 손상 데이터) 둘 다일 수 있는데, 호출부는 이를 구분하지 않고 항상
+ * "특이 안전정보 없음"(긍정적 확인 문구)을 그렸다 -- 이미 검증된
+ * asArray/optional-chaining 방어는 크래시만 막을 뿐, 각 항목 체크가
+ * `=== 'yes'`류 비교라서 null/wrong-typed 값은 그냥 "아니요"와 동일하게
+ * 조용히 넘어간다(이 배치가 막으려는 fail-open 그 자체). medical_history_flags
+ * 는 항상 배열이어야 하므로 truthy인데 배열이 아니면 손상.
+ * reproductive_status.derived는 남성 등 정상적으로 null일 수 있으므로
+ * 이 판정에서 제외한다(false positive 방지).
+ */
+function hasUnreadableSafetyField(r: Responses): boolean {
+  return (
+    isUnreadableYesNoUnknown(r.medication.medication_use, YES_UNKNOWN_NONE) ||
+    isUnreadableYesNoUnknown(r.allergy.allergy_yn, YES_UNKNOWN_NONE) ||
+    isUnreadableYesNoUnknown(r.surgery_history.surgery_yn, YES_UNKNOWN_NONE) ||
+    isUnreadableYesNoUnknown(r.free_text.free_text_yn, YES_NONE) ||
+    (r.medical_history.medical_history_flags != null && !Array.isArray(r.medical_history.medical_history_flags))
+  )
+}
+
 function safetyGlanceItems(
   r: Responses,
   flags: DoctorPayload['flags'],
@@ -145,6 +181,13 @@ function safetyGlanceItems(
 function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'] }) {
   const items = safetyGlanceItems(r, flags)
   if (items.length === 0) {
+    if (hasUnreadableSafetyField(r)) {
+      return (
+        <p className="doctor__safetyGlance doctor__safetyGlance--unavailable">
+          안전정보 일부를 읽을 수 없습니다(레거시/손상 데이터로 보임) — 원장 확인 필요
+        </p>
+      )
+    }
     return <p className="doctor__safetyGlance doctor__safetyGlance--empty">특이 안전정보 없음</p>
   }
   return (

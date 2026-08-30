@@ -5671,6 +5671,106 @@ frozen adapter 호출부)까지 포함해 훑어달라고 요청한다. CLEAN이
 PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT
 PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
 
+**6차 독립 `model:opus` closing 리뷰** (진짜 subagent 호출, 커밋
+`74629e0` 대상, "9개 SafetyPanel 게이트류가 아닌 다른 표면"을 명시적으로
+요청): **NOT CLOSABLE 판정** — HIGH 1건 + MEDIUM 2건, 전부 실 서버+
+브라우저로 재현.
+
+(HIGH-1, 가장 근본적) 5차가 8개 패널을 전부 `safety_flags.<region> ==
+null`로 통일했는데 **LBP 패널 하나만 예외**로 `routing.
+primary_module_detail !== 'LBP'`를 그대로 뒀다 — 이 둘은 동치가
+아니다. `coreSpec.ts`: `safety_flags.lbp`는 `IS_PRIMARY_LBP(r) =
+IS_PRIMARY_PAIN(r) && PAIN_01==='low_back_pelvis'`일 때 계산되고,
+`IS_PRIMARY_PAIN(r) = primaryConcernKey(r)==='pain' ||
+hasDetailedConcern(r,'pain')`다 — 즉 주호소가 아니라 "Additional
+Detailed Concern"으로 pain/허리를 선택해도 `safety_flags.lbp`는
+똑같이 계산되지만, `routing.primary_module_detail`은 그 경로에서
+계속 null로 남는다(값은 `additional_module_detail`에만 채워짐).
+그래서 실제로 cauda-equina red flag(`URGENT_REVIEW`)까지 계산된
+레코드가 이 경로로 들어오면 LBP 안전 패널 전체가 조용히 사라지고,
+"안전이슈 없음" 히어로 지표만 남는다 — 리뷰가 실 서버+브라우저로
+정확히 이 케이스(주호소는 수면인데 Additional Detailed Concern으로
+허리 통증 + saddle sensory change/urinary retention 선택)를 재현해
+`URGENT_REVIEW`가 화면에서 완전히 사라짐을 스크린샷으로 증명했다.
+같은 잘못된 신호(`routing.primary_module_detail`/`=== 'LBP'`)가
+`JudgmentPanel`의 `showLbpExam` prop(DoctorView.tsx)과
+`PainWorkspace.tsx`의 `recoveryScore`(LBP_12) 계산에도 그대로
+복제돼 있었다.
+
+(MEDIUM-1) `showShoulderExam={payload.responses.safety_flags.shoulder
+!== null}` — `ShoulderSafetyPanel` 자신은 이미 `== null`(nullish)로
+고쳐져 있는데 바로 옆 줄은 strict `!== null`을 그대로 써서, 레거시
+레코드에서 그 키가 아예 없으면(`undefined`) `undefined !== null`이
+`true`가 되어 실제로는 어깨 문진이 전혀 없는 레코드에 회전근개 근력저하
+소견 입력 컨트롤이 나타남을 재현했다 — 3차가 9개 SafetyPanel에서
+고친 것과 정확히 같은 종류의 비교 실수가 그 게이트들 옆의 다른 호출부에
+남아있던 것.
+
+(MEDIUM-2) `CommonSafetyBanner.tsx`의 `safetyGlanceItems()`가 빈
+배열을 반환하는 두 가지 서로 다른 이유("정말 안전 이슈 없음" vs
+"안전 관련 필드 자체를 읽을 수 없음")를 구분하지 않고 항상 "특이
+안전정보 없음"(긍정적 확인 문구)을 그렸다 — medication_use/
+allergy_yn/surgery_yn/free_text_yn을 null로, medical_history_flags를
+문자열로 만든 레코드(항혈액응고제 복용 + 암 병력이 실제로 있는
+레코드)가 완전히 정상인 레코드와 화면상 구분되지 않음을 재현했다 —
+5차가 9개 SafetyPanel에서 고친 것과 같은 "applicability와 손상을
+뭉뚱그리는" 문제가 이 화면에서는 침묵이 아니라 명시적 긍정 오판
+(fail-open)으로 나타나 정책 위반이 더 직접적이다.
+
+**수정**: (1) `LbpSafetyPanel`의 applicability 신호를
+`payload.responses.safety_flags.lbp == null`로 교체(다른 8개
+패널과 통일), `showLbpExam`/`showShoulderExam`도 각각
+`safety_flags.lbp != null`/`safety_flags.shoulder != null`로
+교체, `PainWorkspace.tsx`의 `recoveryScore`도 같은 신호로 교체.
+(2) `showShoulderExam`을 nullish 비교로 통일(MEDIUM-1). (3)
+`CommonSafetyBanner.tsx`에 `hasUnreadableSafetyField()` 헬퍼를
+추가 — `medication_use`/`allergy_yn`/`surgery_yn`/`free_text_yn`은
+`coreSpec.ts`에서 `required: true`, `showIf` 없이 모든 환자에게
+항상 나오는 고정 값 집합 문항이라 실제 제출은 절대 null이거나 그
+목록 밖일 수 없다(그러면 레거시/손상), `medical_history_flags`도
+항상 배열이어야 하므로 truthy인데 배열이 아니면 손상. 단
+`reproductive_status.derived`는 남성 등에서 정상적으로 null일 수
+있어 이 판정에서 제외(false positive 방지, 이것도 직접 테스트로
+확인). `items.length === 0`이고 이 헬퍼가 true면 "특이 안전정보
+없음" 대신 "안전정보 일부를 읽을 수 없습니다(레거시/손상 데이터로
+보임) — 원장 확인 필요"를 그린다.
+
+**신규/보강 회귀 테스트**: `tests/doctor.spec.mjs`에 LbpSafetyPanel/
+showLbpExam/showShoulderExam 구조 검사를 새 신호에 맞게 재작성하고,
+Additional Detailed Concern 경로(`primary_module_detail: null`,
+`additional_module_detail: 'LBP'`, 실제 계산된 `safety_flags.lbp`
+유지)를 직접 `renderToString`으로 렌더링해 안전 패널이 실제로
+나타나는지 확인하는 behavioral 테스트 추가(HIGH-1), "genuinely
+무관함" sanity 테스트도 새 신호(`safety_flags.lbp = null`)로 갱신.
+`tests/doctor-workspace.spec.mjs`에 `CommonSafetyBanner`를
+`DoctorWorkspace` 전체 렌더로 감싸 테스트하는 3개 behavioral 테스트
+추가 — genuinely all-clear 레코드는 그대로 "특이 안전정보 없음",
+hollow된 레코드는 새 "읽을 수 없습니다" 알림, `reproductive_status.
+derived`만 null인 경우(남성 등 정상 케이스)는 여전히 "특이 안전정보
+없음"(false positive 없음 확인). `npm run test:doctor` 827/827(+2),
+`npm run test:doctor-workspace` 144/144(+3).
+
+**실사용 재검증**: 실제 서버에 (a) LBP 실제 계산된 `REVIEW_REQUIRED`를
+가진 레코드를 `primary_module_detail: null` +
+`additional_module_detail: 'LBP'`로(HIGH-1 정확한 재현), (b)
+medication_use/allergy_yn/surgery_yn/free_text_yn을 null로,
+medical_history_flags를 문자열로 만든 레코드를(MEDIUM-2) POST하고
+Doctor UI를 Playwright로 열어 확인 — (a): "안전 확인 — 허리(LBP)"
+패널이 정상적으로 나타나고 "확인 필요" 상태가 표시됨(수정 전이었다면
+완전히 사라졌을 것), (b): "특이 안전정보 없음"이 사라지고 "안전정보
+일부를 읽을 수 없습니다" 알림이 나타남. 둘 다 page error 0건. 3개
+필수 뷰포트(1440×900/1024×768/834×1112) 전부 수평 오버플로우 0.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 7차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태 코멘트를
+남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge
+판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

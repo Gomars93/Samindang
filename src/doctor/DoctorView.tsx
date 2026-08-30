@@ -439,7 +439,20 @@ export function LbpSafetyPanel({
   // "이 레코드는 LBP와 무관하다"(조용히 아무것도 안 그림)와 "LBP와
   // 관련은 있지만 계산에 필요한 하위 데이터가 손상/누락됐다"(명시적
   // 확인 필요 알림)를 분리한다 -- 5차 독립 리뷰 HIGH-2.
-  if (payload.routing.primary_module_detail !== 'LBP') return null
+  //
+  // applicability 신호는 safety_flags.lbp(coreSpec.ts:
+  // `IS_PRIMARY_LBP(r) ? computeLbpFlags(...) : null`)여야 한다 --
+  // `routing.primary_module_detail`이 아니다. `IS_PRIMARY_LBP`는
+  // `IS_PRIMARY_PAIN(r) && PAIN_01 === 'low_back_pelvis'`이고
+  // `IS_PRIMARY_PAIN`은 `primaryConcernKey==='pain' ||
+  // hasDetailedConcern(r,'pain')` -- 즉 주호소가 아니라 "Additional
+  // Detailed Concern"으로 pain/허리를 선택한 환자도 safety_flags.lbp가
+  // 계산되지만 `primary_module_detail`은 그 경로에서 null로 남는다(그
+  // 값은 `additional_module_detail`에만 채워짐). 그래서 이전 게이트는
+  // 이미 계산된 실제 URGENT_REVIEW/REVIEW_REQUIRED조차 화면에서 완전히
+  // 지워버렸다 -- 6차 독립 리뷰 HIGH-1(다른 8개 패널은 전부
+  // safety_flags.<region>을 쓰므로 LBP만 유일한 예외였다).
+  if (payload.responses.safety_flags.lbp == null) return null
 
   // lbpAdapter.ts(frozen)의 mapPregnancyStatus는 reproductive_status.derived
   // 를, mapMajorHistory는 medical_history.medical_history_flags의 각
@@ -3628,8 +3641,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
         initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
-        showLbpExam={routing.primary_module_detail === 'LBP'}
-        showShoulderExam={payload.responses.safety_flags.shoulder !== null}
+        /* 6차 독립 리뷰 HIGH-1/MEDIUM-1: LbpSafetyPanel과 동일한 applicability
+           신호(safety_flags.<region>, nullish 비교)로 통일 -- routing 태그나
+           strict !== null은 additional-detail 경로/레거시 undefined 키에서
+           잘못된 값을 낸다. */
+        showLbpExam={payload.responses.safety_flags.lbp != null}
+        showShoulderExam={payload.responses.safety_flags.shoulder != null}
         onSave={
           mode === 'server' && selectedId
             ? async (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => {

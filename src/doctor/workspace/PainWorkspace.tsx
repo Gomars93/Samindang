@@ -139,7 +139,12 @@ export function PainWorkspace({
   const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
   // LBP_12: only exists for the LBP regional module — recovery expectation raw score,
   // never an inferred risk/yellow-flag bucket (governing task invariant).
-  const recoveryScore = routing.primary_module_detail === 'LBP' ? (r.modules.lbp?.recovery_expectation ?? null) : null
+  // Gate on safety_flags.lbp (computed whenever IS_PRIMARY_LBP holds, which
+  // covers the Additional Detailed Concern route too), not
+  // routing.primary_module_detail -- that tag stays null on that route even
+  // though r.modules.lbp is real data (6th independent review HIGH-1, same
+  // root cause as LbpSafetyPanel's gate in DoctorView.tsx).
+  const recoveryScore = r.safety_flags.lbp != null ? (r.modules.lbp?.recovery_expectation ?? null) : null
 
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)

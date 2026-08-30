@@ -703,4 +703,48 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
   }
 })
 
+/* -------------------------------------------------------------------------
+ * 6th independent review MEDIUM-2: `safetyGlanceItems` collapsing to an
+ * empty array means either "genuinely nothing to report" OR "the
+ * safety-relevant fields themselves could not be read" (legacy/hollowed
+ * data) -- both used to render the SAME affirmative "특이 안전정보 없음"
+ * text, hiding e.g. an anticoagulant + cancer history behind a message
+ * that reads as an active all-clear. medication_use/allergy_yn/surgery_yn/
+ * free_text_yn are all `required: true`, no `showIf`, fixed value sets
+ * (coreSpec.ts HISTORY_QUESTIONS/FREE_TEXT_QUESTIONS) -- a real submission
+ * can never have them null or out of that set, so that combination is
+ * unambiguously malformed, not a legitimate "no". Behavioral (not just
+ * structural) proof via a full DoctorWorkspace render, since
+ * CommonSafetyBanner is not independently exported from this bundle.
+ * ---------------------------------------------------------------------- */
+{
+  const base = WORKSPACE_SCENARIOS.find((s) => s.label === 'SYNTHETIC · 단순 기계적 요통')
+
+  test('CommonSafetyBanner: a genuinely all-clear record (medication_use/allergy_yn/surgery_yn/free_text_yn all "none") shows the plain all-clear message', () => {
+    const html = render(base)
+    assert.ok(html.includes('특이 안전정보 없음'))
+    assert.ok(!html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner: the same record with medication_use/allergy_yn/surgery_yn/free_text_yn hollowed to null and medical_history_flags wrong-typed shows the explicit "cannot read" notice, never the all-clear message', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.medication.medication_use = null
+    mutated.responses.medical_history.medical_history_flags = 'cancer'
+    mutated.responses.allergy.allergy_yn = null
+    mutated.responses.surgery_history.surgery_yn = null
+    mutated.responses.free_text.free_text_yn = null
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner: reproductive_status.derived alone being null (a legitimate state, e.g. male patients) does NOT trigger the "cannot read" notice by itself', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.derived = null
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(html.includes('특이 안전정보 없음'))
+    assert.ok(!html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+}
+
 console.log(`\n${passed} doctor-workspace assertions passed.`)

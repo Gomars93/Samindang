@@ -1667,11 +1667,16 @@ function detailsRange(html, classMarker) {
       ),
   )
   assert(
-    "resilience: the LbpSafetyPanel gate splits applicability (primary_module_detail !== 'LBP' -> silent null, its own statement) from malformed-data (modules.lbp/reproductive_status.derived/medical_history_flags -> explicit SafetyDataUnavailableNotice, not silence)",
-    /primary_module_detail !== 'LBP'\) return null/.test(src) &&
+    'resilience: the LbpSafetyPanel gate uses safety_flags.lbp (not routing.primary_module_detail) as its applicability signal -- safety_flags.lbp is computed whenever IS_PRIMARY_LBP holds, which also covers the Additional Detailed Concern route where primary_module_detail stays null (6th independent review HIGH-1) -- and separately splits malformed-data (modules.lbp/reproductive_status.derived/medical_history_flags -> explicit SafetyDataUnavailableNotice, not silence)',
+    /safety_flags\.lbp == null\) return null/.test(src) &&
       /!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
         src,
       ),
+  )
+  assert(
+    'resilience: showLbpExam/showShoulderExam on JudgmentPanel use the same nullish safety_flags.<region> applicability signal as their SafetyPanel gates -- routing tags or strict !== null give wrong answers on the Additional Detailed Concern route / legacy undefined keys (6th independent review HIGH-1/MEDIUM-1)',
+    /showLbpExam=\{payload\.responses\.safety_flags\.lbp != null\}/.test(src) &&
+      /showShoulderExam=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(src),
   )
   assert(
     "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
@@ -1803,15 +1808,42 @@ function detailsRange(html, classMarker) {
   // Sanity: the "genuinely not applicable" path must still stay silent
   // (empty render), proving the HIGH-2 fix did not turn every non-match
   // into a visible notice -- only the "applicable but corrupt" case should.
+  // Applicability is safety_flags.lbp (post-6th-review-fix), not
+  // routing.primary_module_detail -- so null out the former to simulate
+  // a genuinely LBP-unrelated record.
   {
     const p = structuredClone(lbpFixture.payload)
-    p.routing.primary_module_detail = 'NECK'
+    p.responses.safety_flags.lbp = null
     const html = renderToString(
       React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
     )
     assert(
-      'resilience behavioral: LbpSafetyPanel for a record where LBP genuinely does not apply still renders nothing (not the notice) -- applicability and malformed-data must stay distinct outcomes',
+      'resilience behavioral: LbpSafetyPanel for a record where LBP genuinely does not apply (safety_flags.lbp == null) still renders nothing (not the notice) -- applicability and malformed-data must stay distinct outcomes',
       html === '' && !html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  // 6th independent review HIGH-1: a record that reached LBP via the
+  // Additional Detailed Concern route (routing.primary_module_detail stays
+  // null on that route; only routing.additional_module_detail is set) but
+  // has a REAL, already-computed safety_flags.lbp (e.g. URGENT_REVIEW from
+  // cauda-equina red flags) must still render that computed status -- not
+  // silently disappear because the gate used to key off
+  // primary_module_detail instead of safety_flags.lbp.
+  {
+    const p = structuredClone(lbpFixture.payload)
+    p.routing.primary_module_detail = null
+    p.routing.additional_module_detail = 'LBP'
+    // safety_flags.lbp is untouched -- still the fixture's real computed
+    // REVIEW_REQUIRED status, exactly as coreSpec.ts would compute it for
+    // this route (IS_PRIMARY_LBP depends on hasDetailedConcern, not on
+    // primary_module_detail).
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel renders the real computed safety_flags.lbp status even when routing.primary_module_detail is null (Additional Detailed Concern route) -- gate must key off safety_flags.lbp, not the routing tag (6th independent review HIGH-1)',
+      html.includes('안전 확인') && html.includes('허리(LBP)') && !html.includes(UNAVAILABLE_TEXT) && html !== '',
     )
   }
 }

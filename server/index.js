@@ -830,28 +830,49 @@ export function createApp({
           } else {
             const text = buildRevisitMessageText(link)
             const variables = { followup_token: followUpToken }
-            messagingContactCache.set(visitId, { phone, text, variables, link })
-            const { record, deduped } = await messagingStore.queueRevisitMessage({
-              visitId,
-              patientId,
-              phone,
-              followUpToken,
-              text,
-              variables,
-              link,
-              primaryChannel,
-            })
-            status = deduped ? 200 : 201
-            if (!deduped) {
-              await safeAudit({ event: AUDIT_EVENTS.MESSAGE_QUEUED, visit_id: visitId, actor: AUDIT_ACTORS.DOCTOR })
+            try {
+              // Message-integrity-batch finding (HIGH, owner-flagged): this
+              // used to call messagingContactCache.set(visitId, ...) BEFORE
+              // queueRevisitMessage, unconditionally -- so a dedup replay
+              // whose follow_up_token/link did NOT match the already-queued
+              // MessageRecord still silently overwrote the transient retry
+              // cache with the new (mismatched) contact tuple, even though
+              // messagingStore.js now rejects that exact case with
+              // MessagingConflictError. The cache write is now deferred
+              // until AFTER queueRevisitMessage has decided this request is
+              // authoritative (a genuine new queue, or an idempotent
+              // replay for the SAME capability) -- on a thrown
+              // MessagingConflictError (caught below), the cache is left
+              // completely untouched, so a subsequent automatic retry (see
+              // runDueRetries) still uses whatever contact tuple was
+              // cached for the ORIGINAL, still-durable record.
+              const { record, deduped } = await messagingStore.queueRevisitMessage({
+                visitId,
+                patientId,
+                phone,
+                followUpToken,
+                text,
+                variables,
+                link,
+                primaryChannel,
+              })
+              messagingContactCache.set(visitId, { phone, text, variables, link })
+              status = deduped ? 200 : 201
+              if (!deduped) {
+                await safeAudit({ event: AUDIT_EVENTS.MESSAGE_QUEUED, visit_id: visitId, actor: AUDIT_ACTORS.DOCTOR })
+              }
+              // provider_message_id/error_code are safe (never echo phone,
+              // link, or provider raw response) -- see messagingStore.js's
+              // own field docs. Never returns the phone number or link back
+              // to the client; the caller already has both (they just typed
+              // the phone in, and already built the link themselves).
+              if (record.status !== 'QUEUED') messagingContactCache.delete(visitId)
+              bytes = sendJson(req, res, status, record, cors)
+            } catch (err) {
+              const mapped = mapMessagingError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, mapped.status, { error: mapped.error }, cors)
             }
-            // provider_message_id/error_code are safe (never echo phone,
-            // link, or provider raw response) -- see messagingStore.js's
-            // own field docs. Never returns the phone number or link back
-            // to the client; the caller already has both (they just typed
-            // the phone in, and already built the link themselves).
-            if (record.status !== 'QUEUED') messagingContactCache.delete(visitId)
-            bytes = sendJson(req, res, status, record, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 4 && parts[3] === 'messages' && req.method === 'GET') {

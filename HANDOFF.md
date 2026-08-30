@@ -4362,18 +4362,79 @@ assertion은 실제로 `msg: text ?? BIZM_MESSAGE_TEXT` 같은 가상의 회귀�
 지시 7번 항목(Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰)
 충족. **CLEAN.** push 완료 후 PR #24에 클로징 상태 코멘트 게시 예정.
 
+## Completed — 메시지<->캡ability 무결성 배치 (진행 중, 이번 세션)
+
+**배경(오너가 PR 코멘트로 직접 지시)**: button1/응답-실패 HIGH가
+CLEAN으로 닫힌 직후, 오너가 저장소 전체를 우선순위 재검토해 새
+HIGH를 지목 — `POST /api/visits/:visitId/messages`가
+`messagingContactCache.set(visitId, {...})`를
+`messagingStore.queueRevisitMessage()`보다 먼저 호출하는데,
+`queueRevisitMessage()`의 dedup은 `(visit_id, 'REVISIT_LINK')` 키로만
+판단하고 재요청의 `follow_up_token`이 기존 레코드와 같은 캡ability인지
+전혀 확인하지 않음 — 같은 visit이 다른(유효한, 예: 재발급된)
+토큰/링크로 다시 제출되면, durable 레코드는 OLD `follow_up_token_hash`
+를 유지한 채 in-memory 재시도 캐시만 NEW 링크/토큰으로 덮어써져서,
+나중 자동 재시도가 레코드의 hash/감사 의미와 어긋나는 캡ability를
+보낼 수 있음. cross-patient 누출은 아니지만 message<->capability
+무결성, dedup 의미론, 재시작/실패 추론, 감사 진실성을 깨는 결함.
+
+**수정 범위(오너 지시 7개 항목)**:
+1. `server/messagingStore.js`의 `queueRevisitMessage()`: dedup 히트 시
+   `hashToken(followUpToken) !== existing.follow_up_token_hash`면
+   `MessagingConflictError`를 던져 fail-closed — 일치할 때만 기존
+   idempotent 반환 유지. raw token은 에러 메시지에도 노출 안 함.
+2. `server/index.js`의 큐 라우트: `messagingContactCache.set()`을
+   `queueRevisitMessage()` 호출 **뒤**로 옮기고 전체를 try/catch로
+   감싸 `MessagingConflictError`를 기존 `mapMessagingError`로 409
+   매핑 — 충돌 시 캐시는 완전히 안 건드림(구조적으로 그 라인에
+   도달 불가).
+3. 회귀 테스트: (a) `tests/messaging.spec.mjs` Part 1(store 직접 호출)에
+   같은 visit + 다른 token → `MessagingConflictError` 던짐 + 기존
+   레코드가 hash/version/updated_at/attempt_count 전부 불변임을 확인하는
+   테스트 추가. (b) Part 2(HTTP)에 `POST .../follow-up-session/reissue`로
+   진짜 다른 유효 토큰을 발급받아 같은 visit에 큐 요청 → 409 + 정확한
+   에러 문자열 + durable 레코드(hash 포함) 완전 불변을 확인하는 테스트
+   추가. 자동 재시도가 "캐시가 안 건드려졌으니 ORIGINAL 튜플을 쓴다"는
+   부분은 코드 구조(디퍼드 캐시 쓰기 + 조기 throw)로 결정론적으로
+   보장됨을 확인 — 실제 20초 타이머 자체를 기다리는 종단 테스트는
+   과도한 비용 대비 가치 판단 하에 추가하지 않음(HANDOFF에 명시).
+4. 기존 리뷰가 지적한 "5개 큐 라우트 400 테스트가 상태코드만 확인"
+   NIT 해소: `linkTokenMismatch`/`unknownPatient`/`mismatched`/
+   `wrongVisitToken`/`neverIssuedToken` 전부 정확한 `error` 문자열까지
+   확인하도록 강화.
+5. cancel/manual-retry의 캐시 삭제 경로 재점검: `retryMessage()`가
+   throw(이미 SENT/DELIVERED/CANCELLED, max attempts 도달)하는
+   케이스에서 retry 라우트가 `messagingContactCache.set()`을 호출 후
+   호출하는 순서 문제 자체는 있으나, 이 store의 dedup 키가
+   visit_id당 정확히 하나의 레코드만 허용하므로 그 캐시 엔트리는
+   같은(이미 terminal인) 레코드에만 대응 — terminal 레코드는
+   `runDueRetries`가 절대 재처리하지 않으므로 실질적 위험 없음(구체적
+   결함 아님, "no broad rewrite" 지시에 따라 변경 안 함). `retryMessage()`
+   자체가 재공급된 새 토큰으로 `follow_up_token_hash`를 갱신하지 않는
+   것도 확인했으나, 이는 오너의 명시적 7항목 범위(큐 라우트의 dedup
+   경로) 밖의 별도 설계 판단 영역으로 판단 — 이번 배치에서 손대지
+   않음(HANDOFF에 명시적으로 기록, 필요시 별도 후속 항목으로).
+6. BizM `PENDING_CONTRACT` 게이트, SMS/LMS OFF, identity policy, Test 0
+   PENDING, Care Gap OFF 등 전부 변경 없음.
+7. FROZEN `src/spec/*Logic.ts`/`*Adapter.ts` zero-diff 유지.
+
+**검증**: `npx tsc -b --force` clean, `npm run test:messaging` 122/122
+(46 신규/강화 assertion 포함), `npm run test:messaging-bizm` 79/79
+(무관, 회귀 없음), `npm run test:crm-store` 230/230, `npm run
+test:audit-registry` 88/88(둘 다 큐 라우트를 거치는 기존 seed 흐름 —
+회귀 없음), `npm run test:all`(exit 0), `npm run build`/`build:preview`,
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 클라이언트
+코드(React/TS)는 전혀 변경하지 않아 실제 브라우저 QA는 해당 없음으로
+판단(순수 서버 라우트/스토어 레벨 수정, 기존 종단 HTTP 테스트가 실제
+네트워크 요청으로 이미 이 계약을 검증). 1차 독립 `model:opus` 리뷰
+진행 중 — 결과 반영 후 2차 클로징 리뷰까지 완료해야 CLEAN 선언.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `877b1c4` — button1/응답-실패 검증 HIGH 수정(`af9ef91`) + 1차
-독립 리뷰 수정(`2f83963`) + 2차 독립 리뷰 MEDIUM 2건 수정(`13f5794`) +
-3차 확인 재검수가 찾은 사소한 주석 정정(`877b1c4`)까지 push 완료 —
-이 button1/응답-실패 수정 사이클은 **CLEAN**. GitHub CI(build-and-test)
-가 `13f5794`에서 한 번 실패했으나 원인은
-`tests/tablet-viewport.spec.mjs`의 headless Chrome 임시 프로필
-디렉터리 정리 시점 경쟁(ENOTEMPTY, 모든 실제 assertion이 이미 통과한
-뒤 teardown에서 발생) — 이번 배치의 diff와 무관한 기존 파일이고,
-바로 다음 커밋(`44ccd74`)에서 CI가 재실행되어 자연히 green으로
-확인됨(추가 조치 불필요).
+HEAD: `e6af327` — button1/응답-실패 검증 HIGH 수정 사이클은 CLEAN으로
+닫힘(GitHub CI/Preview 둘 다 green). 메시지<->캡ability 무결성 배치는
+아직 커밋되지 않은 작업 트리 상태 + 진행 중인 1차 독립 리뷰 — 리뷰
+결과 반영 후 커밋/푸시 예정.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

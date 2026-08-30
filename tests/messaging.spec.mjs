@@ -109,6 +109,29 @@ async function main() {
       assert('dedup: second queue for the same visit_id+purpose IS deduped', q2.deduped === true)
       assert('dedup: second queue returns the SAME message_id', q2.record.message_id === q1.record.message_id)
 
+      // Message-integrity-batch finding (HIGH, owner-flagged): a dedup hit
+      // for the SAME visit_id but a DIFFERENT followUpToken must fail
+      // closed instead of silently handing back the stale record -- see
+      // queueRevisitMessage's hash-comparison check. Not a cross-patient
+      // leak (same visit_id throughout), but silently returning the old
+      // record here would leave the durable follow_up_token_hash
+      // pointing at a capability that no longer matches whatever contact
+      // tuple a caller (server/index.js) might now cache for automatic
+      // retries.
+      let mismatchThrew = null
+      try {
+        await store.queueRevisitMessage({ visitId: 'visit-dedup-1', patientId: 'patient-1', phone: '01011112222', followUpToken: 'tok-a-DIFFERENT' })
+      } catch (err) {
+        mismatchThrew = err
+      }
+      assert('dedup conflict: a DIFFERENT followUpToken for the SAME visit_id throws MessagingConflictError', mismatchThrew?.name === 'MessagingConflictError')
+      const q1AfterMismatch = await store.getMessage(q1.record.message_id)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (hash)', q1AfterMismatch.follow_up_token_hash === q1.record.follow_up_token_hash)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (version)', q1AfterMismatch.version === q1.record.version)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (updated_at)', q1AfterMismatch.updated_at === q1.record.updated_at)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (attempt_count)', q1AfterMismatch.attempt_count === q1.record.attempt_count)
+      assert('dedup conflict: no new/second message was ever created for this visit_id', (await store.listMessagesForVisit('visit-dedup-1')).length === 1)
+
       // follow_up_token_hash is a hash, never the plaintext token.
       assert('privacy: follow_up_token_hash is not the raw token', q1.record.follow_up_token_hash !== 'tok-a')
       assert('privacy: follow_up_token_hash matches hashToken(rawToken)', q1.record.follow_up_token_hash === hashToken('tok-a'))
@@ -409,7 +432,16 @@ async function main() {
         follow_up_token: start.token,
         link: LINK,
       })
+      // Message-integrity-batch finding (NIT from closing verification):
+      // these five queue-route validation tests previously asserted only
+      // status===400, never the response `error` string -- a future
+      // reordering of the route's else-if chain could make one of them
+      // pass at the WRONG branch without any test catching the drift. Now
+      // asserting the exact expected error message alongside status for
+      // each, matching the literal strings in server/index.js's queue
+      // route.
       assert('validation: link embeds a DIFFERENT token than follow_up_token -> 400', linkTokenMismatch.status === 400)
+      assert('validation: link/token mismatch -> the exact expected error branch', linkTokenMismatch.body.error === 'link does not carry the same follow_up_token')
 
       const unknownPatient = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: 'not-a-real-patient-id',
@@ -418,6 +450,7 @@ async function main() {
         link: linkFor(start.token),
       })
       assert('validation: unknown patient_id -> 400', unknownPatient.status === 400)
+      assert('validation: unknown patient_id -> the exact expected error branch', unknownPatient.body.error === 'unknown patient_id')
 
       // Validation: visit_id/patient_id mismatch (a real patient_id, but
       // not the one this visit_id actually belongs to).
@@ -429,6 +462,7 @@ async function main() {
         link: linkFor(start.token),
       })
       assert('validation: visit_id belonging to a DIFFERENT patient_id -> 400', mismatched.status === 400)
+      assert('validation: visit_id/patient_id mismatch -> the exact expected error branch', mismatched.body.error === 'visit_id does not belong to patient_id')
 
       // BizM-batch independent-review finding (MEDIUM): a real,
       // resolvable follow_up_token that does not belong to THIS visit_id
@@ -445,6 +479,7 @@ async function main() {
         link: linkFor(otherStart.token),
       })
       assert('validation: a real follow_up_token issued for a DIFFERENT visit_id -> 400', wrongVisitToken.status === 400)
+      assert('validation: wrong-visit token -> the exact expected error branch', wrongVisitToken.body.error === 'follow_up_token does not belong to this visit')
       const neverIssuedToken = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: visit.patient_id,
         phone: '01055556666',
@@ -452,6 +487,7 @@ async function main() {
         link: linkFor('never-issued-token-xyz'),
       })
       assert('validation: a follow_up_token that was never issued at all -> 400', neverIssuedToken.status === 400)
+      assert('validation: never-issued token -> the exact expected error branch', neverIssuedToken.body.error === 'follow_up_token does not belong to this visit')
 
       // Happy path queue + list.
       const queued = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
@@ -477,6 +513,32 @@ async function main() {
       const listRes = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
       assert('list: 200 and exactly one message for this visit', listRes.status === 200 && listRes.body.messages.length === 1)
       assert('list: no message in the list carries a "phone" key', listRes.body.messages.every((m) => !('phone' in m)))
+
+      // Message-integrity-batch (owner-flagged HIGH): a re-POST for the
+      // SAME visit but a DIFFERENT, still-valid (doctor-reissued)
+      // follow_up_token/link must fail closed with 409 -- never silently
+      // hand back the stale record while the transient retry cache gets
+      // overwritten with a capability the durable record's own
+      // follow_up_token_hash does not reflect. `queued` above is already
+      // terminal (SENT), which is exactly the scenario a naive dedup-hit
+      // would otherwise paper over.
+      const reissuedForConflict = await postJson(`${base}/api/visits/${start.visit.id}/follow-up-session/reissue`, {})
+      assert('conflict setup: reissue succeeds and returns a genuinely different token', reissuedForConflict.status === 200 && reissuedForConflict.body.token !== start.token)
+      const conflictRes = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: reissuedForConflict.body.token,
+        link: linkFor(reissuedForConflict.body.token),
+      })
+      assert('conflict: same visit + a DIFFERENT valid token after a record exists -> 409, never a silent stale dedup', conflictRes.status === 409)
+      assert('conflict: the exact expected error branch', conflictRes.body.error === 'follow_up_token does not match the message already queued for this visit')
+
+      const afterConflict = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
+      assert('conflict: still exactly one message for this visit (no second record created)', afterConflict.body.messages.length === 1)
+      const recordAfterConflict = afterConflict.body.messages.find((m) => m.message_id === queued.body.message_id)
+      assert('conflict: durable record follow_up_token_hash UNCHANGED -- still the ORIGINAL token', recordAfterConflict.follow_up_token_hash === hashToken(start.token))
+      assert('conflict: durable record follow_up_token_hash is NOT the rejected replacement token', recordAfterConflict.follow_up_token_hash !== hashToken(reissuedForConflict.body.token))
+      assert('conflict: durable record status/attempt_count untouched by the rejected conflict', recordAfterConflict.status === queued.body.status && recordAfterConflict.attempt_count === queued.body.attempt_count)
 
       // Manual retry route + cancel route, auth-gated the same way.
       const retryVisit = (await postJson(`${base}/api/visits`, {})).body

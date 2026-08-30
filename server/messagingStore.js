@@ -35,7 +35,14 @@
 // not from a client-supplied idempotency header, so a doctor double-tapping
 // "빠른 재진 발송" before the first request's response has rendered reuses
 // the SAME record rather than creating a second real send -- see
-// queueRevisitMessage's early-return path below.
+// queueRevisitMessage's early-return path below. A dedup hit is only ever
+// idempotent when the re-request's follow_up_token is the SAME capability
+// the existing record was created for (checked by hash, see
+// queueRevisitMessage) -- a re-request for the SAME visit but a DIFFERENT
+// (still valid, e.g. doctor-reissued) token/link fails closed with
+// MessagingConflictError instead of silently returning the stale record,
+// so the durable record always stays authoritative for which capability
+// this visit's one real outbound message actually means.
 //
 // Retry/failure-recovery: exponential backoff (RETRY_DELAYS_MS), driven by
 // server/index.js's periodic runMessageRetries() timer (mirrors the
@@ -204,14 +211,36 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
     return withLock(`dedup:${dedupKey}`, async () => {
       const existing = await findByDedupKey(dedupKey)
       if (existing) {
-        // Idempotent re-request: a message for this exact visit+purpose
-        // already exists. If it already reached a terminal success state
-        // or is actively in flight, hand it back unchanged rather than
-        // sending a second real message. A FAILED message is intentionally
-        // NOT silently re-queued here -- a doctor must explicitly call
-        // retryMessage() for that, so a stale double-click long after a
-        // failure was already handled some other way (e.g. staff called
-        // the patient directly) can never surprise-resend.
+        // Message-integrity-batch finding (HIGH, owner-flagged): a dedup
+        // hit used to hand back `existing` UNCONDITIONALLY, regardless of
+        // whether THIS call's `followUpToken` is the same capability the
+        // existing record was actually queued/sent for. The caller
+        // (server/index.js) separately caches `{phone, text, variables,
+        // link}` in-process for automatic retries, keyed only by visit_id
+        // -- if a visit is re-submitted with a different (but currently
+        // valid, e.g. doctor-reissued) token/link, the durable record kept
+        // the OLD follow_up_token_hash while the transient retry cache got
+        // silently overwritten with the NEW one, so a later automatic
+        // retry could send a capability that no longer matches what the
+        // persisted record's own hash/audit trail says was sent. Not a
+        // cross-patient leak (same visit_id throughout), but it breaks
+        // message<->capability integrity, dedup semantics, and audit
+        // truth. Fail closed instead: the durable record is authoritative
+        // for what THIS visit's one real outbound message means -- a
+        // dedup replay is only ever valid when it is the SAME request
+        // (same token) the record was already created for.
+        if (hashToken(followUpToken) !== existing.follow_up_token_hash) {
+          throw new MessagingConflictError('follow_up_token does not match the message already queued for this visit')
+        }
+        // Idempotent re-request: a message for this exact visit+purpose,
+        // for the SAME capability, already exists. If it already reached a
+        // terminal success state or is actively in flight, hand it back
+        // unchanged rather than sending a second real message. A FAILED
+        // message is intentionally NOT silently re-queued here -- a doctor
+        // must explicitly call retryMessage() for that, so a stale
+        // double-click long after a failure was already handled some other
+        // way (e.g. staff called the patient directly) can never
+        // surprise-resend.
         return { record: existing, deduped: true }
       }
       const now = new Date().toISOString()

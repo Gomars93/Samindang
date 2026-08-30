@@ -63,15 +63,21 @@ export function resolveFallbackChannelMap(env = process.env) {
  *  fallback map, not whatever provider process.env happens to currently
  *  select -- those two can disagree (e.g. no env vars set resolves to BizM
  *  by default, but a test may still explicitly inject a SOLAPI transport).
- *  An unrecognized/missing provider name (a caller-supplied transport that
- *  never set `.provider` at all) defaults to SOLAPI's map, matching
- *  messagingStore.js's own `record.provider ?? 'SOLAPI'` default for the
- *  same reason: pre-existing test doubles from before this generalization
- *  never set `.provider`, and their own fallback expectations (see
- *  tests/messaging.spec.mjs's Part 1.5(b) concurrency spy, none of which
- *  exercise fallback at all) are unaffected either way. */
+ *  BizM-batch independent-review finding (LOW): an unrecognized/missing
+ *  provider name used to default to SOLAPI's own (non-empty,
+ *  KAKAO_ALIMTALK -> SMS) fallback map -- fail-OPEN for a case that should
+ *  fail closed (a caller-supplied transport that never set `.provider` at
+ *  all, e.g. a future third adapter or a new test double, would silently
+ *  get SOLAPI's fallback behavior attempted against it, sending an SMS via
+ *  a transport that may not even implement one). Only a transport that
+ *  explicitly identifies itself as `'SOLAPI'` gets SOLAPI's fallback map
+ *  now; every other value (including missing/unrecognized) gets the empty
+ *  map, matching this file's own BizM-is-the-fail-closed-default posture
+ *  elsewhere. Verified this does not change tests/messaging.spec.mjs's
+ *  Part 1.5(b) concurrency spy (asserts `fallbackEligible:false`, never
+ *  exercises fallback at all) or any other existing assertion. */
 export function fallbackChannelMapForProvider(providerName) {
-  return providerName === 'BIZM' ? BIZM_FALLBACK_CHANNEL : SOLAPI_FALLBACK_CHANNEL
+  return providerName === 'SOLAPI' ? SOLAPI_FALLBACK_CHANNEL : BIZM_FALLBACK_CHANNEL
 }
 
 // Webhook signature verification is already provider-neutral (this

@@ -789,6 +789,26 @@ export function createApp({
             // trail and the contact cache's visit_id keying below.
             status = 400
             bytes = sendJson(req, res, 400, { error: 'visit_id does not belong to patient_id' }, cors)
+          } else if ((await store.resolveFollowUpSession(followUpToken))?.visit_id !== visitId) {
+            // BizM-batch independent-review finding (MEDIUM): under BizM,
+            // the transport never sends `text`/`link` at all -- only
+            // `variables.followup_token` reaches the patient's phone (BizM's
+            // own template substitutes the button URL from it). Until now
+            // this route validated only `isValidFollowUpLink(link)`'s
+            // SHAPE, never that `follow_up_token` is the SAME capability
+            // actually issued for THIS visit_id -- a caller (buggy client,
+            // stale UI state, or a doctor pasting the wrong session's token)
+            // could deliver visit B's live follow-up link to visit A's
+            // patient while the stored MessageRecord's follow_up_token_hash
+            // still (correctly) hashes the token actually sent, silently
+            // mismatching what a later audit would expect for visit A.
+            // store.resolveFollowUpSession is the same read-only lookup the
+            // public GET /api/follow-up-session/:token route already uses
+            // (never mutates/consumes the token) -- fail closed if the
+            // token doesn't resolve at all, or resolves to a different
+            // visit_id.
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'follow_up_token does not belong to this visit' }, cors)
           } else {
             const text = buildRevisitMessageText(link)
             const variables = { followup_token: followUpToken }
@@ -851,6 +871,16 @@ export function createApp({
               const text = buildRevisitMessageText(link)
               const variables = { followup_token: extractFollowUpTokenFromLink(link) }
               const existing = await messagingStore.getMessage(id)
+              // BizM-batch independent-review finding (MEDIUM): same
+              // visit-binding check as the queue route above, applied here
+              // to the re-supplied `link` on a manual retry -- a
+              // re-supplied token for a DIFFERENT visit than this message
+              // record's own visit_id must never be accepted (existing is
+              // null here is a genuine not-found, left to retryMessage's
+              // own MessagingNotFoundError below rather than duplicated).
+              if (existing && (await store.resolveFollowUpSession(variables.followup_token))?.visit_id !== existing.visit_id) {
+                throw new Error('follow_up_token does not belong to this message\'s visit')
+              }
               if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables })
               const record = await messagingStore.retryMessage(id, { phone, text, variables })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })

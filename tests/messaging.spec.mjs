@@ -352,6 +352,21 @@ async function main() {
       // checks.
       const evil = { origin: 'https://evil.example.com' }
       const LINK = 'https://example.invalid/#follow-up=http-test-token'
+      // BizM-batch independent-review finding (MEDIUM): queueRevisitMessage/
+      // retryMessage now verify the SUPPLIED follow-up token actually
+      // resolves (via store.resolveFollowUpSession) to the SAME visit_id
+      // the message is being sent/retried for -- see server/index.js's
+      // "follow_up_token does not belong to this visit"/"...this message's
+      // visit" checks. The shared LINK constant above carries a fake,
+      // never-issued token ('http-test-token'), which is fine for every
+      // queue-route call below (that route only validates the SEPARATE
+      // `follow_up_token` body field against this check, never anything
+      // embedded in `link`) and for retry calls that only exercise
+      // auth/validation short-circuits before this check is ever reached.
+      // A retry call that expects an actual 200 SUCCESS, though, now needs
+      // `link` to embed a REAL token that resolves to the message's own
+      // visit_id -- this helper builds that.
+      const linkFor = (token) => `https://example.invalid/#follow-up=${token}`
       const noAuth = await fetch(`${base}/api/visits/${start.visit.id}/messages`, {
         method: 'POST',
         headers: { ...evil, 'content-type': 'application/json' },
@@ -395,6 +410,29 @@ async function main() {
         link: LINK,
       })
       assert('validation: visit_id belonging to a DIFFERENT patient_id -> 400', mismatched.status === 400)
+
+      // BizM-batch independent-review finding (MEDIUM): a real,
+      // resolvable follow_up_token that does not belong to THIS visit_id
+      // must be rejected -- otherwise a doctor client could deliver visit
+      // B's live one-time capability link to visit A's patient (the
+      // MessageRecord's own follow_up_token_hash would then hash the token
+      // actually sent, but nothing would have verified it belongs to the
+      // visit_id the record claims to be for).
+      const otherStart = (await postJson(`${base}/api/patients/${otherPatientVisit.patient_id}/start-revisit`, {})).body
+      const wrongVisitToken = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: otherStart.token,
+        link: LINK,
+      })
+      assert('validation: a real follow_up_token issued for a DIFFERENT visit_id -> 400', wrongVisitToken.status === 400)
+      const neverIssuedToken = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: 'never-issued-token-xyz',
+        link: LINK,
+      })
+      assert('validation: a follow_up_token that was never issued at all -> 400', neverIssuedToken.status === 400)
 
       // Happy path queue + list.
       const queued = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
@@ -441,7 +479,24 @@ async function main() {
       assert('retry-http: missing phone -> 400', retryMissingPhone.status === 400)
       const retryMissingLink = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998' })
       assert('retry-http: missing link -> 400', retryMissingLink.status === 400)
-      const retryOk = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998', link: LINK })
+      // BizM-batch independent-review finding (MEDIUM), retry-route side:
+      // re-supplying a real token issued for a DIFFERENT visit on a manual
+      // retry must be rejected -- and must NOT touch the message record at
+      // all (still QUEUED, attempt_count untouched), since a rejected
+      // request never reaches attemptSend.
+      const wrongVisitForRetry = (await postJson(`${base}/api/visits`, {})).body
+      const wrongStartForRetry = (await postJson(`${base}/api/patients/${wrongVisitForRetry.patient_id}/start-revisit`, {})).body
+      const retryWrongVisit = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
+        phone: '01000009998',
+        link: linkFor(wrongStartForRetry.token),
+      })
+      assert('retry-http: a real follow_up_token issued for a DIFFERENT visit -> 400, not accepted', retryWrongVisit.status === 400)
+      const afterWrongRetry = await getJson(`${base}/api/visits/${retryStart.visit.id}/messages`)
+      const untouchedRecord = afterWrongRetry.body.messages.find((m) => m.message_id === retryQueue.body.message_id)
+      assert('retry-http: the rejected wrong-visit retry never touched the record (still QUEUED)', untouchedRecord.status === 'QUEUED')
+      assert('retry-http: the rejected wrong-visit retry did not increment attempt_count', untouchedRecord.attempt_count === 1)
+
+      const retryOk = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998', link: linkFor(retryStart.token) })
       assert('retry-http: 200 with phone+link supplied', retryOk.status === 200)
       assert('retry-http: attempt_count incremented', retryOk.body.attempt_count === 2)
 
@@ -528,7 +583,7 @@ async function main() {
       assert('attempt-identity setup: webhook moves it SENT -> FAILED', idAFailRes.status === 200)
       const afterIdAFail = await getJson(`${base}/api/visits/${identityStart.visit.id}/messages`)
       assert('attempt-identity setup: confirmed FAILED before retry', afterIdAFail.body.messages.find((m) => m.message_id === identityQueue.body.message_id).status === 'FAILED')
-      const identityRetried = await postJson(`${base}/api/messages/${identityQueue.body.message_id}/retry`, { phone: '01077778888', link: LINK })
+      const identityRetried = await postJson(`${base}/api/messages/${identityQueue.body.message_id}/retry`, { phone: '01077778888', link: linkFor(identityStart.token) })
       assert('attempt-identity: manual retry succeeds with a NEW provider_message_id B', identityRetried.status === 200 && identityRetried.body.status === 'SENT')
       const idB = identityRetried.body.provider_message_id
       assert('attempt-identity: B is a genuinely different id from A', idB !== idA && typeof idB === 'string')

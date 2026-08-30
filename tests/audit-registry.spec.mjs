@@ -337,7 +337,11 @@ async function main() {
     assert('workflow setup: message stays QUEUED after a mock transient-failure first attempt', msgQueue.body.status === 'QUEUED')
     const msgRetry = await postJson(`${base}/api/messages/${msgQueue.body.message_id}/retry`, {
       phone: '01000009998',
-      link: 'https://example.invalid/#follow-up=audit-test-token',
+      // BizM-batch independent-review finding (MEDIUM): retry now verifies
+      // the link's own follow-up token actually resolves to this message's
+      // visit_id (see server/index.js) -- must reuse the real msgStart.token
+      // issued for msgStart.visit.id, not an arbitrary never-issued value.
+      link: `https://example.invalid/#follow-up=${msgStart.token}`,
     })
     assert('workflow setup: message retry -> 200', msgRetry.status === 200)
     assert('workflow setup: message still QUEUED after a second mock transient failure', msgRetry.body.status === 'QUEUED')

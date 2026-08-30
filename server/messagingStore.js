@@ -118,7 +118,6 @@ const TERMINAL_NON_RETRY_STATUSES = new Set(['SENT', 'DELIVERED', 'CANCELLED'])
 
 export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT_MAX_ATTEMPTS } = {}) {
   const resolvedTransport = transport ?? createMessagingTransport()
-  const fallbackChannelMap = fallbackChannelMapForProvider(resolvedTransport.provider)
 
   async function ensureDirs() {
     await mkdir(messagingDir(baseDir), { recursive: true })
@@ -280,6 +279,16 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
 
       let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables })
 
+      // BizM-batch independent-review finding (LOW): keyed off the
+      // RECORD's own `provider` (set once, at queue time) rather than a
+      // fallback map frozen for this whole store's lifetime -- a store is
+      // long-lived (one per server process), so a record queued under one
+      // provider before an admin restarts the process with
+      // SAMINDANG_MESSAGING_PROVIDER switched to the other would otherwise
+      // silently get evaluated against the NEW provider's fallback map on
+      // its next retry, even though its own `provider` field (and the
+      // original send that actually reached the patient) says otherwise.
+      const fallbackChannelMap = fallbackChannelMapForProvider(record.provider)
       if (!result.ok && result.fallbackEligible && fallbackChannelMap[record.channel] && !record.fallback_channel) {
         const fallbackChannel = fallbackChannelMap[record.channel]
         const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text, variables })
@@ -392,7 +401,18 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
     for (const record of due) {
       try {
         const contact = await resolveContact(record.patient_id, record.visit_id)
-        if (!contact || !contact.phone || !contact.text) {
+        // BizM-batch independent-review finding (LOW): this guard predates
+        // `variables` -- it only ever checked `phone`/`text`, so a
+        // resolveContact returning `{phone, text}` with no (or an empty)
+        // `variables.followup_token` would sail through to attemptSend and
+        // reach a LIVE BizM send with an empty template-substitution value,
+        // producing a dead Alimtalk link marked SENT rather than failing
+        // closed. Every current caller (server/index.js's
+        // messagingContactCache, written on both the queue and manual-retry
+        // routes) always sets `variables.followup_token`, so this only
+        // tightens the fail-closed contract, it does not narrow any
+        // existing legitimate path.
+        if (!contact || !contact.phone || !contact.text || !contact.variables?.followup_token) {
           await withLock(`message:${record.message_id}`, async () => {
             const current = await getMessage(record.message_id)
             if (!current || TERMINAL_NON_RETRY_STATUSES.has(current.status)) return

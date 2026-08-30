@@ -4489,11 +4489,10 @@ build`/`build:preview`, `tablet core` pytest 80/80, FROZEN diff 0
 lines — 전부 통과. 2차(클로징) 독립 `model:opus` 리뷰 예정.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
-응답-실패 검증 HIGH 수정 사이클은 CLEAN으로 닫힘(HEAD `e6af327`,
-GitHub CI/Preview 둘 다 green). 메시지<->캡ability 무결성 배치는
-`2ef971f`(구현) + 1차 리뷰 수정을 하나의 커밋으로 이어서 push
-예정 — 최신 HEAD는 이 커밋 직후 갱신. 2차 클로징 리뷰 대기 중.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
+HEAD: `87817b8` — button1/응답-실패 검증 HIGH 수정 사이클(CLEAN, HEAD
+`e6af327`까지)에 이어, 메시지<->캡ability 무결성 배치의 구현(`2ef971f`)
++ 1차 독립 리뷰 수정(`87817b8`)까지 push 완료. 2차 클로징 리뷰 진행 중.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

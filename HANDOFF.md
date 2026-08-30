@@ -4813,15 +4813,45 @@ test:crm-schema` 95/95, `npm run test:all`(exit 0), `npm run
 build`/`build:preview` clean, `tablet core` pytest 80/80, FROZEN diff
 0 lines — 전부 통과. push 완료.
 
+**5차 독립 `model:opus` 클로징 리뷰(완료, `bd8d094` 대상) + 수정(`0192384`)**:
+fresh subagent 호출(약 104k 토큰, 22 tool call, scratch worktree로
+17개 소스 mutation 실제 실행)로 `bd8d094` 검수. **HIGH/MEDIUM 0건,
+소스 버그 0건**(4차와 동일 결론 재확인) — LOW 2 / NIT 3, 전부 4차
+라운드가 새로 추가한 테스트 자체의 남은 빈틈.
+
+1. **LOW (수정)**: 동기 prefix 절단 지점이 `listEpisodesByPatient(`
+   문자열 하드코딩 — 그 위에 새 비동기 호출이 추가되면 그것까지
+   "동기" 구간으로 삼켜져서, 그 새 호출의 `.then()` 안으로 옮겨진
+   setter가 미검출됨을 실제 mutation으로 확인. **수정**: 하드코딩된
+   함수명 대신 `.then(`/`.finally(`/`.catch(` 중 첫 등장 위치로 절단.
+2. **LOW (수정)**: shift-draft `onToggle`/check-task 칩 toggle-off
+   assertion 둘 다 여는 `if (...)` guard까지만 anchor — guard는
+   맞지만 본문이 no-op이거나 잘못된 키를 지우는 mutation이 여전히
+   통과함을 실제로 확인. **수정**: 각각 실제 `delete
+   next[course.course_id]`까지 정규식 확장.
+3. **NIT (수정)**: `useReducer`로 만들어진 17번째 patient-scoped
+   상태는 모든 `useState` 파생 assertion에 안 보임 — `useReducer(`
+   0개 pin 추가.
+4. NIT ×2(주석 문구가 "unconditionally"를 과장, `useState[<(]`가
+   워드 바운더리 없음)는 리뷰어 스스로 "결함 아님, safe 방향"으로
+   표시 — 코드 변경 없이 기록만.
+
+**검증(`0192384` 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:medication-course` 57/57, `npm run test:medication-course-ui`
+16/16, `npm run test:audit-registry` 106/106, `npm run test:crm-schema`
+95/95, `npm run test:all`(exit 0), `npm run build`/`build:preview`
+clean, `tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과.
+push 완료.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `bd8d094` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
-검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1~4차 독립 클로징 리뷰
-수정(`d8e66d7`/`e067c94`/`898ccdc`/`bd8d094`)까지 push 완료. 4차
-리뷰가 HIGH/MEDIUM 0건·소스 버그 0건을 명시(3개 소스 수정 전부
-mutation으로 검증) — 남은 건 테스트 커버리지 빈틈뿐이었고 이번
-라운드로 닫음. 5차 독립 `model:opus` 클로징 리뷰 대기 중(이번
-라운드가 순수 테스트 강화라 CLEAN 확인 목적의 마지막 라운드로 예상).
+HEAD: `0192384` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1~5차 독립 클로징 리뷰
+수정(`d8e66d7`/`e067c94`/`898ccdc`/`bd8d094`/`0192384`)까지 push 완료.
+4~5차 리뷰 둘 다 HIGH/MEDIUM 0건·소스 버그 0건을 명시(3개 소스 수정 전부
+mutation으로 검증) — 남은 건 테스트 커버리지 빈틈뿐이었고 5차 라운드로
+닫음. 6차 독립 `model:opus` 클로징 리뷰 대기 중(CLEAN 확인 목적의
+마지막 라운드로 예상 — CLEAN이면 PR #24에 클로징 코멘트).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4862,18 +4892,16 @@ mutation으로 검증) — 남은 건 테스트 커버리지 빈틈뿐이었고 
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `bd8d094` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항(`0d5464b`) + 1~4차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
-`898ccdc`/`bd8d094`)까지 완료, 5차 독립 `model:opus` 클로징 리뷰 대기.)
--1. **다음 단계**: `bd8d094`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (4차 클로징 리뷰가 LOW/NIT만 발견했으므로 오너의 "같은 배치 안에서
-   Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복" 사이클에
-   따라 재검수 필요 — 단, 4차 리뷰가 HIGH/MEDIUM 0건·소스 버그 0건을
-   명시했고 이번 라운드는 순수 테스트 강화이므로, 5차는 CLEAN 확인
-   목적의 마지막 라운드로 예상). CLEAN이면 PR #24에 클로징 상태
-   코멘트 게시하고 이 배치를 CLOSABLE로 표시. 발견 사항이 있으면
-   수정 후 재검수 반복. **여전히 새 배치 시작 금지, merge/main push
-   금지.**
+(HEAD `0192384` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항(`0d5464b`) + 1~5차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
+`898ccdc`/`bd8d094`/`0192384`)까지 완료, 6차 독립 `model:opus` 클로징
+리뷰 대기.)
+-1. **다음 단계**: `0192384`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (4·5차 클로징 리뷰 둘 다 HIGH/MEDIUM 0건·소스 버그 0건을 명시했고
+   최근 두 라운드가 순수 테스트 강화였으므로, 6차는 CLEAN 확인 목적의
+   마지막 라운드로 예상). CLEAN이면 PR #24에 클로징 상태 코멘트
+   게시하고 이 배치를 CLOSABLE로 표시. 발견 사항이 있으면 수정 후
+   재검수 반복. **여전히 새 배치 시작 금지, merge/main push 금지.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

@@ -3500,8 +3500,71 @@ enum에 하이픈이 없다는 암묵 전제에 의존(현재 안전); (4) `Artw
 승인된 배치(API-credential-free Quick Revisit + provider-neutral
 SOLAPI 어댑터/mock/CRM delivery-state)로 즉시 이동.
 
+## Quick Revisit 발송(SOLAPI 스캐폴드) — 구현 + 2차 클로징 리뷰 반영 완료
+
+API-credential-free(실 SOLAPI 계정 없음, mock transport로 전 경로 검증)
+전제로 재진 follow-up 링크를 카카오 알림톡(1순위)+SMS 폴백으로 발송하는
+기능 신규 구현. 커밋: `853739b`(최초 구현) → `9ec656e`(HIGH 2건 수정:
+링크 텍스트가 절대 실제로 전송되지 않던 버그, dedup 동시성 레이스) →
+`ca00d23`(webhook HMAC 서명 인증 추가, HIGH SECURITY) →
+`f018b77`(MEDIUM/LOW 백로그: link 형식 검증, contact cache eviction).
+
+**신규/변경 파일**: `src/messaging/types.ts`, `server/solapiAdapter.js`,
+`server/messagingStore.js`, `server/index.js`(라우트+
+`messagingContactCache`+`buildRevisitMessageText`+webhook 서명 검증),
+`src/lib/serverClient.ts`, `src/doctor/MessagingPanel.tsx`,
+`src/doctor/DoctorView.tsx`(1줄), `scripts/purge-data.mjs`,
+`tests/messaging.spec.mjs`(신규, 93 assertions), `tests/audit-registry.spec.mjs`,
+`tests/crm-store.spec.mjs`, `tests/server.spec.mjs`.
+
+**독립 검수 이력** (`model:opus` 백그라운드 에이전트, 총 2회):
+1. `853739b`에 대한 1차 리뷰 → HIGH 2건 발견(위 참고) → `9ec656e`로 수정
+   → 동일 에이전트가 `9ec656e`를 다시 독립 재검수(격리 워크트리에서 실제
+   revert 테스트로 두 수정 모두 검증) → **CLOSABLE** 판정, MEDIUM/LOW
+   4건 백로그 → `f018b77`로 반영.
+2. Gomars93(OWNER)의 GitHub 리뷰(HEAD `853739bd` 기준, PR #24 코멘트)가
+   별도로 5가지 지적을 제기 — 상세 대응은 PR #24의 해당 코멘트 참고,
+   요약:
+   - dedup 동시성(HIGH) → `9ec656e`로 이미 수정 완료(1차 리뷰와 동일 버그).
+   - webhook 미인증(HIGH SECURITY) → `ca00d23`로 수정(HMAC-SHA256 서명
+     검증, mock secret도 fail-closed).
+   - 재시작 시 재시도 복구(HIGH) → **HUMAN DECISION REQUIRED로 명시
+     플래그** (아래 참고, 코드는 변경하지 않음).
+   - "2-3탭 Quick Revisit 문진" cohesive-scope gap → 조사 결과 이번
+     SOLAPI 배치 이전 라운드(Round 3 Phase D, Round 8-2/8-9)에 이미
+     구현·테스트 완료된 기능(`microFollowUp.ts`+`FollowUpScreen.tsx`+
+     `STAFF_ASSISTED` provenance, `tests/station.spec.mjs:385-411`)임을
+     확인 — 코드 변경 없이 근거 제시로 대응.
+   - attempt identity across retry → 이미 안전한 설계였음을 확인,
+     회귀 테스트만 추가(`ca00d23`).
+
+**HUMAN DECISION REQUIRED (미해결, 코드 변경 보류 중)**: 재시작 후
+자동 재시도 복구. 현재 설계는 전화번호/발송 텍스트를 프로세스 로컬
+in-memory `messagingContactCache`에만 보관(디스크 미저장 — 이 저장소의
+기존 신원 정책 "전화번호 절대 미저장"과 일치, `patientIdentityStore.js`
+헤더 참고). 서버 재시작 시 이 캐시는 비워지고, 그 시점에 예정된 자동
+재시도는 `FAILED/recipient_unresolvable`로 처리된다(무음 데이터 손실이
+아니라 fail-closed — 메시지 레코드 자체는 디스크에 남고, 원장 UI에
+"발송 실패"+재시도 버튼으로 계속 보인다). 즉 복구는 "직원이 알아채고
+전화번호/링크를 다시 입력해 수동 재시도"하는 human-mediated 방식이며,
+자동(무인) 재시도의 재시작 내구성은 없다. 이것이 배치가 요구하는
+"restart 이후 retry/failure recovery"의 충분한 답인지, 아니면 (신원
+정책을 건드리지 않는 범위에서) bounded/short-lived 방식의 자동 복구
+메커니즘이 별도로 필요한지는 제품/보안 정책 판단이 필요해 코드로
+임의 해결하지 않음 — PR #24 코멘트에 명시적으로 플래그해 두었다.
+
+**검증 완료(각 커밋마다 개별 실행, 최종 HEAD `f018b77` 기준 재확인)**:
+`tsc -b --force`, `npm run build`, `npm run build:preview`,
+`npm run test:all`(전체 그린, `tests/messaging.spec.mjs` 93개 assertion
+포함), `tablet core` pytest(80 passed), 실제 브라우저(Playwright,
+Chromium) QA로 발송/폴백/재시도/취소 전 경로 실제 확인(HIGH-1 수정
+전후 모두), `git diff origin/main -- 'src/spec/*Logic.ts'
+'src/spec/*Adapter.ts'` = 항상 empty(FROZEN 무손상). CI/Preview green
+(853739bd 기준 확인, 이후 커밋들도 push 후 CI green 통지 수신).
+
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE).
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
+`f018b77`.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -3534,10 +3597,14 @@ SOLAPI 어댑터/mock/CRM delivery-state)로 즉시 이동.
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다.
 
 ## Next Recommended Action
-(round 17 기준 갱신.)
-1. Gomars93(PR 작성자/review author)가 round 17 통합 완료 보고서(PR #24
-   댓글)와 최신 HEAD를 검토하고, 최종 merge 여부를 직접 판단한다 —
-   이 세션은 절대 스스로 merge하지 않는다.
+(Quick Revisit/SOLAPI 배치, HEAD `f018b77` 기준 갱신.)
+0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
+   자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
+   아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가
+   별도로 필요한지 Gomars93의 판단이 필요. PR #24 코멘트에 상세 플래그.
+1. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `f018b77`)와
+   PR #24 코멘트를 검토하고, 최종 merge 여부를 직접 판단한다 — 이 세션은
+   절대 스스로 merge하지 않는다.
 2. round 17이 의도적으로 미룬 항목(위 Objective 참고): Doctor Workspace/
    RevisitWorkspace 클라이언트가 새 `expectedUpdatedAt` CAS
    precondition을 실제로 보내고 409를 UX로 다루도록 배선하는 일 — 충돌

@@ -922,7 +922,13 @@ export function createApp({
                 throw new Error('follow_up_token does not belong to this message\'s visit')
               }
               if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables, link })
-              const record = await messagingStore.retryMessage(id, { phone, text, variables, link })
+              // Message-integrity-batch finding (MEDIUM, independent
+              // review): pass the re-derived token through so
+              // retryMessage/attemptSend can keep the durable record's
+              // follow_up_token_hash honest about whatever capability THIS
+              // retry actually sends -- see messagingStore.js's attemptSend
+              // for why this only matters on the manual-retry path.
+              const record = await messagingStore.retryMessage(id, { phone, text, variables, link, followUpToken: variables.followup_token })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
               if (record.status !== 'QUEUED') messagingContactCache.delete(record.visit_id)
               bytes = sendJson(req, res, 200, record, cors)
@@ -2090,8 +2096,19 @@ export function createApp({
   // Quick Revisit: a much shorter cadence than submission retention above --
   // a due retry is meaningful within seconds/minutes (RETRY_DELAYS_MS is
   // 30s/2min/10min), not hours. unref()/close-cleanup mirrors retentionTimer.
+  // Message-integrity-batch: interval is configurable (SAMINDANG_MESSAGE_
+  // RETRY_INTERVAL_MS, default unchanged at 20s) purely so
+  // tests/messaging.spec.mjs can shrink it to prove a real automatic-retry
+  // sweep uses whatever contact tuple messagingContactCache still holds
+  // (e.g. after a rejected dedup-mismatch never touched it) without a
+  // 20-second wait per test run -- an invalid/non-positive value falls
+  // back to the same safe default rather than crashing or spinning a
+  // zero-delay loop (mirrors ownerLock.js's requirePositiveMs fail-closed
+  // stance, but non-fatal here since this timing is not safety-critical).
+  const rawRetryIntervalMs = Number(process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS)
+  const messageRetryIntervalMs = Number.isFinite(rawRetryIntervalMs) && rawRetryIntervalMs > 0 ? rawRetryIntervalMs : 20_000
   runMessageRetries()
-  const messageRetryTimer = setInterval(runMessageRetries, 20_000)
+  const messageRetryTimer = setInterval(runMessageRetries, messageRetryIntervalMs)
   messageRetryTimer.unref()
   server.on('close', () => clearInterval(messageRetryTimer))
 

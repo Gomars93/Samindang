@@ -4418,23 +4418,82 @@ HIGH를 지목 — `POST /api/visits/:visitId/messages`가
    PENDING, Care Gap OFF 등 전부 변경 없음.
 7. FROZEN `src/spec/*Logic.ts`/`*Adapter.ts` zero-diff 유지.
 
-**검증**: `npx tsc -b --force` clean, `npm run test:messaging` 122/122
-(46 신규/강화 assertion 포함), `npm run test:messaging-bizm` 79/79
-(무관, 회귀 없음), `npm run test:crm-store` 230/230, `npm run
-test:audit-registry` 88/88(둘 다 큐 라우트를 거치는 기존 seed 흐름 —
-회귀 없음), `npm run test:all`(exit 0), `npm run build`/`build:preview`,
-`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 클라이언트
-코드(React/TS)는 전혀 변경하지 않아 실제 브라우저 QA는 해당 없음으로
-판단(순수 서버 라우트/스토어 레벨 수정, 기존 종단 HTTP 테스트가 실제
-네트워크 요청으로 이미 이 계약을 검증). 1차 독립 `model:opus` 리뷰
-진행 중 — 결과 반영 후 2차 클로징 리뷰까지 완료해야 CLEAN 선언.
+**검증(구현 직후, 1차 리뷰 이전)**: `npx tsc -b --force` clean, `npm
+run test:messaging` 122/122, `npm run test:messaging-bizm` 79/79(무관,
+회귀 없음), `npm run test:crm-store` 230/230, `npm run
+test:audit-registry` 88/88, `npm run test:all`(exit 0), `npm run
+build`/`build:preview`, `tablet core` pytest 80/80, FROZEN diff 0
+lines — 전부 통과. (`2ef971f` push.)
+
+**1차 독립 `model:opus` 리뷰(완료) + 수정**: 실제 fresh subagent
+호출(153k 토큰, 28 tool call, ~8분)로 `2ef971f` 검수. 큐 라우트의
+hash-비교/캐시-defer 핵심 수정 자체는 정확하다고 확인했지만, 이 배치가
+"의도적으로 손대지 않기로 판단"했던 item 5(cancel/manual-retry 재점검)
+영역에서 실제로 같은 결함 클래스(follow_up_token_hash 드리프트)가
+manual retry 경로에도 존재함을 발견 — MEDIUM 2건:
+
+1. **MEDIUM (수정)**: `retryMessage()`가 doctor가 재발급된(다른) 토큰을
+   재공급해 수동 재시도할 때 — 실제로 그 새 토큰/링크로 진짜 전송이
+   나가는데도 — `follow_up_token_hash`를 전혀 갱신하지 않아서, 큐
+   라우트의 dedup-hash 수정이 막으려던 것과 정확히 같은 종류의
+   드리프트가 "가장 실제 전송이 일어나는" 경로에 그대로 남아있었음.
+   **수정**: `attemptSend(messageId, {..., followUpToken})`가
+   SENDING 전환 원자적 쓰기와 함께 `followUpToken`이 주어지면
+   `record.follow_up_token_hash`를 그 값의 해시로 갱신(전송 성공 여부와
+   무관하게 — attempt_count/last_attempt_at과 동일하게 "이 시도가 실제로
+   무엇을 썼는지"를 정직하게 기록). `retryMessage`가 이를 통과시키고,
+   `server/index.js`의 retry 라우트가 이미 계산해둔
+   `variables.followup_token`을 그대로 넘기도록 배선. 자동 재시도
+   (`runDueRetries`)는 이 파라미터를 절대 넘기지 않음 — 캐시된 동일
+   튜플을 재사용할 뿐이라 갱신할 새 정보가 없음.
+2. **MEDIUM (테스트 정직성, 수정)**: Part 2의 큐-충돌 테스트가 이미
+   SENT(terminal) 레코드를 사용했는데, `messagingContactCache`는 레코드가
+   QUEUED이 아니게 되는 순간 삭제되므로, 그 테스트는 애초에 캐시가
+   비어있는 상태에서 실행되어 "캐시 오염 방지"를 실제로는 전혀
+   검증하지 못하고 있었음(오너 item 3의 "자동 재시도가 여전히 ORIGINAL
+   튜플을 쓴다" 요구사항 미검증). **수정**: 격리된 별도 서버 인스턴스로
+   새 Part 3 블록 추가 — phone suffix `9998`로 레코드를 QUEUED 상태로
+   유지(캐시가 실제로 살아있음), reissue로 진짜 다른 유효 토큰을 받아
+   충돌시킨 뒤, `SAMINDANG_MESSAGE_RETRY_INTERVAL_MS`(신규, 기본값
+   20초 그대로, 테스트에서만 50ms로 축소) + on-disk `next_retry_at`
+   backdating(messaging-bizm.spec.mjs Part 4b와 동일 기법)으로 실제
+   자동 재시도 sweep을 강제 발동시켜, 그 재시도가 여전히 ORIGINAL
+   전화번호(9998 결정론적 실패)를 썼음을 — 거부된 대체 전화번호로
+   전송되지 않았음을 — 직접 관찰로 증명.
+3. **LOW (accepted, 미수정)**: retry 라우트가
+   `messagingContactCache.set()`을 `retryMessage()` 실패 가능성보다
+   먼저 호출 — 이 store의 dedup 키가 visit_id당 정확히 하나의 레코드만
+   허용해서 그 캐시 엔트리는 같은(이미 terminal일) 레코드에만 대응,
+   terminal 레코드는 `runDueRetries`가 재처리하지 않아 실질적 위험
+   없음(latent-only로 확인).
+4. **LOW (accepted, 미수정)**: 큐 라우트의 idempotent replay(같은 토큰
+   dedup hit)가 캐시를 동일한 데이터로만 재시딩한다는 게 코드로
+   강제되어 있지는 않음 — 오늘은 호출부가 항상 같은 값을 넘기므로
+   안전하지만 명시적 불변식은 아님.
+5. **LOW (accepted, 미수정)**: cancel 라우트가 취소된 레코드의 캐시
+   엔트리를 절대 비우지 않음 — CANCELLED는 terminal이라
+   `runDueRetries`가 절대 안 건드리므로 실질적 위험 없음.
+6. **NIT (accepted, 미수정)**: 새 409가 "이미 terminal인 레코드에
+   reissue된 링크로 재발송할 방법이 없다"는 트레이드오프를 만드는데
+   헤더에 이 트레이드오프가 명시되어 있지 않음.
+
+findings 3-6은 오너의 "no broad rewrite" 지시와 리뷰어 자신의 권고에
+따라 HANDOFF 문서화만으로 처리(코드 변경 없음).
+
+**검증(1차 리뷰 수정 반영 후, 최종)**: `npx tsc -b --force` clean,
+`npm run test:messaging` 136/136(신규: retry-hash unit 4개 + HTTP
+retry-hash 3개 + Part 3 cache-poisoning 종단 8개), `npm run
+test:messaging-bizm` 79/79, `npm run test:crm-store` 230/230, `npm run
+test:audit-registry` 88/88, `npm run test:all`(exit 0), `npm run
+build`/`build:preview`, `tablet core` pytest 80/80, FROZEN diff 0
+lines — 전부 통과. 2차(클로징) 독립 `model:opus` 리뷰 예정.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `e6af327` — button1/응답-실패 검증 HIGH 수정 사이클은 CLEAN으로
-닫힘(GitHub CI/Preview 둘 다 green). 메시지<->캡ability 무결성 배치는
-아직 커밋되지 않은 작업 트리 상태 + 진행 중인 1차 독립 리뷰 — 리뷰
-결과 반영 후 커밋/푸시 예정.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
+응답-실패 검증 HIGH 수정 사이클은 CLEAN으로 닫힘(HEAD `e6af327`,
+GitHub CI/Preview 둘 다 green). 메시지<->캡ability 무결성 배치는
+`2ef971f`(구현) + 1차 리뷰 수정을 하나의 커밋으로 이어서 push
+예정 — 최신 HEAD는 이 커밋 직후 갱신. 2차 클로징 리뷰 대기 중.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

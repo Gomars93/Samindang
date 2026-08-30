@@ -17,7 +17,7 @@
 // (still fully implemented, just no longer the default) is exercised
 // explicitly further below by constructing a store with an explicit SOLAPI
 // transport.
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createApp } from '../server/index.js'
@@ -188,6 +188,20 @@ async function main() {
       assert('BizM default: attempt_count is only 1 (fails closed on the first attempt, not retried)', q4.record.attempt_count === 1)
       assert('BizM default: the record actually says BIZM (provider identity, not a leftover SOLAPI default)', q4.record.provider === 'BIZM')
 
+      // Message-integrity-batch finding (MEDIUM, independent review):
+      // retryMessage() previously never updated follow_up_token_hash even
+      // when a manual retry re-supplies a genuinely DIFFERENT followUpToken
+      // for the same message -- unit-level proof at the store boundary
+      // (the HTTP-level equivalent, via a real reissued token, lives in
+      // Part 2's "retry-hash" tests below).
+      const q4b = await store.queueRevisitMessage({ visitId: 'visit-retry-hash-1', patientId: 'patient-hash', phone: '01000009998', followUpToken: 'tok-hash-original' })
+      assert('retry-hash unit: original hash matches the queue-time token', q4b.record.follow_up_token_hash === hashToken('tok-hash-original'))
+      const retryNoNewToken = await store.retryMessage(q4b.record.message_id, { phone: '01000009998' })
+      assert('retry-hash unit: a retry that omits followUpToken leaves the hash unchanged', retryNoNewToken.follow_up_token_hash === hashToken('tok-hash-original'))
+      const retryWithNewTokenUnit = await store.retryMessage(q4b.record.message_id, { phone: '01000009998', followUpToken: 'tok-hash-DIFFERENT' })
+      assert('retry-hash unit: a retry with a genuinely different followUpToken updates the durable hash', retryWithNewTokenUnit.follow_up_token_hash === hashToken('tok-hash-DIFFERENT'))
+      assert('retry-hash unit: the hash is no longer the original token\'s', retryWithNewTokenUnit.follow_up_token_hash !== hashToken('tok-hash-original'))
+
       // Webhook contract.
       const q5 = await store.queueRevisitMessage({ visitId: 'visit-webhook-1', patientId: 'patient-4', phone: '01033334444', followUpToken: 'tok-d' })
       assert('webhook setup: message SENT with a provider_message_id', q5.record.status === 'SENT' && typeof q5.record.provider_message_id === 'string')
@@ -236,9 +250,11 @@ async function main() {
       assert('listMessagesForVisit: no entry ever carries a "phone" field', forVisit.every((m) => !('phone' in m)))
 
       const purgedCount = await store.purgeAll()
-      // q1, q3, q4, q5, q6 each created one distinct message file (q2 was a
-      // deduped re-request of q1's own visit_id, no second file).
-      assert('purgeAll: purges every message file this test created (5, not 6 -- q2 was a dedup of q1)', purgedCount === 5)
+      // q1, q3, q4, q4b, q5, q6 each created one distinct message file (q2
+      // was a deduped re-request of q1's own visit_id, no second file; the
+      // rejected dedup-conflict/mismatch attempts above never created a
+      // file at all).
+      assert('purgeAll: purges every message file this test created (6, not 7 -- q2 was a dedup of q1)', purgedCount === 6)
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }
@@ -581,6 +597,25 @@ async function main() {
       assert('retry-http: 200 with phone+link supplied', retryOk.status === 200)
       assert('retry-http: attempt_count incremented', retryOk.body.attempt_count === 2)
 
+      // Message-integrity-batch finding (MEDIUM, independent review):
+      // retryMessage() previously never updated follow_up_token_hash even
+      // when a manual retry genuinely re-supplies a DIFFERENT (reissued)
+      // token for the same visit -- the durable record's hash would then
+      // silently drift from the capability actually just sent, the same
+      // class of defect queueRevisitMessage's dedup-hash-check closes for
+      // the initial queue. Reissue once more (still the same visit,
+      // invalidating retryStart.token -- not reused after this point) and
+      // retry with the NEW token; the record's hash must now reflect it.
+      const reissuedForRetryHash = await postJson(`${base}/api/visits/${retryStart.visit.id}/follow-up-session/reissue`, {})
+      assert('retry-hash setup: reissue returns a genuinely different token', reissuedForRetryHash.status === 200 && reissuedForRetryHash.body.token !== retryStart.token)
+      const retryWithNewToken = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
+        phone: '01000009998',
+        link: linkFor(reissuedForRetryHash.body.token),
+      })
+      assert('retry-hash: retry with a genuinely different valid token succeeds', retryWithNewToken.status === 200)
+      assert('retry-hash: durable follow_up_token_hash now reflects the NEW token actually sent, not the original', retryWithNewToken.body.follow_up_token_hash === hashToken(reissuedForRetryHash.body.token))
+      assert('retry-hash: durable follow_up_token_hash is no longer the OLD (original queue-time) token', retryWithNewToken.body.follow_up_token_hash !== hashToken(retryStart.token))
+
       const cancelRes = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/cancel`, undefined)
       assert('cancel-http: 200, CANCELLED', cancelRes.status === 200 && cancelRes.body.status === 'CANCELLED')
       const cancelAgain = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/cancel`, undefined)
@@ -687,6 +722,96 @@ async function main() {
     } finally {
       await stopServer(server)
       await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 3: message-integrity-batch -- 1st independent review finding
+     (MEDIUM, test coverage): Part 2's queue-vs-reissue conflict test used
+     an already-SENT (terminal) record, whose messagingContactCache entry
+     is deleted the moment it stops being QUEUED -- so that test could
+     never actually detect cache poisoning (the cache was already empty
+     by the time the conflict fired, for reasons unrelated to the fix).
+     This block proves the REAL property the owner asked for: a REJECTED
+     dedup-token-mismatch must never let a later AUTOMATIC retry send
+     using the mismatched contact tuple. It uses its own isolated server
+     (own data root + a shrunk SAMINDANG_MESSAGE_RETRY_INTERVAL_MS) so the
+     shortened sweep interval cannot cause unrelated QUEUED fixtures
+     elsewhere in this file to auto-retry mid-test.
+     ===================================================================== */
+  {
+    const previousIntervalEnv = process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS
+    process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS = '50'
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-integrity-'))
+    const dataDir = path.join(dataRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+      const start = (await postJson(`${base}/api/patients/${visit.patient_id}/start-revisit`, {})).body
+      // Phone suffix '9998' is the mock transport's deterministic
+      // RETRYABLE-transient-failure sentinel -- keeps this record QUEUED
+      // (never SENT), so messagingContactCache genuinely still holds a
+      // live tuple for the automatic sweep below to read.
+      const queued = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01000009998',
+        follow_up_token: start.token,
+        link: `https://example.invalid/#follow-up=${start.token}`,
+      })
+      assert('integrity setup: stays QUEUED after a transient mock failure (original tuple now cached)', queued.status === 201 && queued.body.status === 'QUEUED')
+
+      const reissued = await postJson(`${base}/api/visits/${start.visit.id}/follow-up-session/reissue`, {})
+      assert('integrity setup: reissue returns a genuinely different token', reissued.status === 200 && reissued.body.token !== start.token)
+      const conflict = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        // Deliberately a DIFFERENT phone than the original queue call --
+        // if this mismatched tuple ever reached messagingContactCache,
+        // the automatic retry below would use IT instead.
+        phone: '01099998888',
+        follow_up_token: reissued.body.token,
+        link: `https://example.invalid/#follow-up=${reissued.body.token}`,
+      })
+      assert('integrity: a DIFFERENT valid token for the SAME visit -> 409, must never touch the cache', conflict.status === 409)
+
+      // The record's own next_retry_at is still ~30s out (RETRY_DELAYS_MS[0])
+      // regardless of how often the sweep interval ticks -- shrinking the
+      // sweep interval alone does not make a message DUE sooner. Backdate
+      // it directly on disk (same technique tests/messaging-bizm.spec.mjs's
+      // Part 4b already uses for runDueRetries -- this store exposes no
+      // clock-injection knob) so the next (now-frequent) sweep tick picks
+      // this message up almost immediately instead of after a real 30s.
+      const messageFilePath = path.join(dataRoot, 'messaging', `${queued.body.message_id}.json`)
+      const onDiskRecord = JSON.parse(await readFile(messageFilePath, 'utf8'))
+      onDiskRecord.next_retry_at = new Date(Date.now() - 1000).toISOString()
+      await writeFile(messageFilePath, JSON.stringify(onDiskRecord, null, 2), 'utf8')
+
+      // Let the real automatic-retry sweep fire (interval shrunk above)
+      // and confirm it used the ORIGINAL cached tuple. The mock
+      // transport's phone-suffix rule makes this directly observable:
+      // '01099998888' (the rejected phone) does NOT end in a failure
+      // sentinel, so if the cache had been poisoned with it the retry
+      // would now show SENT; the ORIGINAL phone still ends in '9998', so
+      // an untouched cache means this automatic retry deterministically
+      // fails again the same way, staying QUEUED.
+      // Poll until the attempt has both STARTED (attempt_count advanced)
+      // AND SETTLED (status is no longer the transient in-flight
+      // 'SENDING' attemptSend briefly writes before the transport call
+      // resolves) -- otherwise a poll could catch the record mid-write.
+      let afterSweep = null
+      for (let i = 0; i < 80 && !afterSweep; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        const listed = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
+        const record = listed.body.messages.find((m) => m.message_id === queued.body.message_id)
+        if (record.attempt_count > queued.body.attempt_count && record.status !== 'SENDING') afterSweep = record
+      }
+      assert('integrity: the real automatic-retry sweep actually ran and settled (attempt_count advanced)', afterSweep !== null)
+      assert('integrity: the automatic retry still used the ORIGINAL cached tuple -- still QUEUED via the deterministic 9998 failure, never SENT via the rejected phone', afterSweep.status === 'QUEUED')
+      assert('integrity: durable follow_up_token_hash is STILL the ORIGINAL token after the sweep', afterSweep.follow_up_token_hash === hashToken(start.token))
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+      if (previousIntervalEnv === undefined) delete process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS
+      else process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS = previousIntervalEnv
     }
   }
 

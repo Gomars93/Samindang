@@ -311,7 +311,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // each adapter decide for itself whether/where the URL belongs in its
   // own wire format, instead of this store or its callers assuming one
   // fixed answer for every provider.
-  async function attemptSend(messageId, { phone, text, variables, link }) {
+  async function attemptSend(messageId, { phone, text, variables, link, followUpToken } = {}) {
     return withLock(`message:${messageId}`, async () => {
       const record = await getMessage(messageId)
       if (!record) throw new MessagingNotFoundError('message not found')
@@ -328,6 +328,23 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       record.status = 'SENDING'
       record.attempt_count += 1
       record.last_attempt_at = new Date().toISOString()
+      // Message-integrity-batch finding (MEDIUM, independent review): a
+      // manual retry (retryMessage, below) lets staff re-supply a freshly
+      // reissued follow_up_token/link for the same visit -- sending with a
+      // token DIFFERENT from the one this record's follow_up_token_hash
+      // already reflects would leave the durable record/audit trail
+      // silently drifted from what was actually attempted, the same class
+      // of defect queueRevisitMessage's dedup-hash-check (above) closes
+      // for the initial queue. Recording the hash of whatever token THIS
+      // attempt actually uses -- unconditionally, regardless of whether
+      // the send below succeeds -- keeps the record honest about what was
+      // sent, matching how attempt_count/last_attempt_at are already
+      // updated before the outcome is known. Automatic retries
+      // (runDueRetries) never pass followUpToken here -- they always
+      // resend the SAME cached tuple this record was already hashed
+      // against (at queue time, or at the last manual retry that updated
+      // this hash), so there is nothing new to reconcile on that path.
+      if (followUpToken) record.follow_up_token_hash = hashToken(followUpToken)
       await atomicWrite(messagePath(baseDir, messageId), record)
 
       let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables, link, messageId })
@@ -390,7 +407,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // refuses once max_attempts is exhausted or the message already reached
   // a terminal state -- a human retry cannot bypass the attempt cap, only
   // skip the WAIT between attempts.
-  async function retryMessage(messageId, { phone, text, variables, link }) {
+  async function retryMessage(messageId, { phone, text, variables, link, followUpToken }) {
     const record = await getMessage(messageId)
     if (!record) throw new MessagingNotFoundError('message not found')
     if (TERMINAL_NON_RETRY_STATUSES.has(record.status)) {
@@ -399,7 +416,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
     if (record.attempt_count >= record.max_attempts) {
       throw new MessagingConflictError('max attempts already reached')
     }
-    return attemptSend(messageId, { phone, text, variables, link })
+    return attemptSend(messageId, { phone, text, variables, link, followUpToken })
   }
 
   // Cancels a message that is currently QUEUED -- either never attempted

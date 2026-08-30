@@ -122,12 +122,33 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   // viewed" status write, or a sibling JudgmentPanel save) -- without
   // syncing to it, DoctorWorkspace's own first autosave attempt on almost
   // every record 409'd against its own sibling's write.
-  test('DoctorWorkspace.tsx: syncs lastKnownUpdatedAtRef whenever initialRecordUpdatedAt advances for the same record (fixes a real false-conflict bug the QA run caught)', () => {
-    assert.ok(
-      /useEffect\(\(\) => \{\s*if \(initialRecordUpdatedAt != null && initialRecordUpdatedAt !== lastKnownUpdatedAtRef\.current\) \{\s*lastKnownUpdatedAtRef\.current = initialRecordUpdatedAt/.test(
-        src,
-      ),
+  // Closing-review finding (HIGH): the first version of this fix adopted
+  // the newer TOKEN without also adopting the CONTENT it came with, which
+  // let a stale panel's later save pass CAS while silently overwriting a
+  // sibling/another tab's real write. The fix must adopt token+content
+  // TOGETHER, and only when this panel's own workspaceState is pristine
+  // (no unsaved local edits) -- these three assertions pin exactly that
+  // shape so a regression back to the token-only version would be caught.
+  test('DoctorWorkspace.tsx: the version-sync effect only adopts a newer token when workspaceState is pristine (no unsaved local edits)', () => {
+    const effect = src.slice(
+      src.indexOf('useEffect(() => {\n    if (initialRecordUpdatedAt == null'),
+      src.indexOf("}, [initialRecordUpdatedAt])") + 50,
     )
+    assert.ok(effect.length > 60, 'the version-sync effect must exist')
+    const guard = effect.indexOf('if (!workspaceStateEquals(workspaceState, lastSavedRef.current)) return')
+    assert.ok(guard !== -1, 'must bail out while local edits are pending -- never silently discard/keep-stale-under a pending edit')
+  })
+
+  test('DoctorWorkspace.tsx: the version-sync effect adopts fresh CONTENT together with the token (not the token alone)', () => {
+    const effect = src.slice(
+      src.indexOf('useEffect(() => {\n    if (initialRecordUpdatedAt == null'),
+      src.indexOf("}, [initialRecordUpdatedAt])") + 50,
+    )
+    assert.ok(/const fresh = seedWorkspaceState\(initialWorkspaceState, synthetic\)/.test(effect))
+    assert.ok(/lastKnownUpdatedAtRef\.current = initialRecordUpdatedAt/.test(effect))
+    assert.ok(/lastSavedRef\.current = fresh/.test(effect), 'lastSavedRef must advance to the SAME fresh content, not just the token')
+    assert.ok(/setWorkspaceState\(fresh\)/.test(effect), 'workspaceState itself must be replaced with the fresh content -- the exact HIGH finding this guards against')
+    assert.ok(/skipNextSaveRef\.current = true/.test(effect), 'must not immediately re-PUT the just-adopted content back at the server')
   })
 }
 
@@ -166,6 +187,21 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(/setWorkspaceState\(conflict\.current\)/.test(fn))
     assert.ok(!/\.\.\.\s*workspaceState/.test(fn))
   })
+
+  // Closing-review finding (MEDIUM): a failed getVisit previously fell
+  // through to a fully editable, empty form with no CAS precondition at
+  // all -- the first save was true unconditional last-write-wins on a
+  // transient load failure, silently overwriting real stored content.
+  test('RevisitWorkspace.tsx: a failed load blocks editing/saving instead of falling back to an empty, unconditionally-saveable form', () => {
+    assert.ok(/if \(!visitResult\.ok\) \{\s*setLoadError\(true\)/.test(src), 'a failed getVisit must set an error state, not seed an empty editable workspace')
+    assert.ok(
+      !/visitResult\.ok \? deserializeVisitWorkspaceState\(visitResult\.data\.workspace\) : emptyVisitWorkspaceState\(\)/.test(src),
+      'must no longer silently fall back to an empty seed on a failed load (the old unconditional-save hazard)',
+    )
+    const renderGuard = src.indexOf('if (loadError) {')
+    const formRender = src.indexOf('<MicroFollowUpCard')
+    assert.ok(renderGuard !== -1 && formRender !== -1 && renderGuard < formRender, 'the load-error branch must return before the editable form renders')
+  })
 }
 
 // ---------- 4. JudgmentPanel.tsx judgment-save conflict wiring ----------
@@ -178,6 +214,15 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     const banner = src.indexOf('{conflict && (')
     const grid = src.indexOf('<div className="judgment__grid">')
     assert.ok(banner !== -1 && grid !== -1 && banner < grid)
+  })
+
+  test('JudgmentPanel.tsx: handleRecord fails closed on a pending conflict (closing-review MEDIUM finding)', () => {
+    const fnStart = src.indexOf('async function handleRecord() {')
+    const fnEnd = src.indexOf('function handleReloadFromConflict')
+    const fn = src.slice(fnStart, fnEnd)
+    const guardIndex = fn.indexOf('if (conflict) return')
+    const onSaveCallIndex = fn.indexOf('await onSave(')
+    assert.ok(guardIndex !== -1 && onSaveCallIndex !== -1 && guardIndex < onSaveCallIndex)
   })
 
   test('JudgmentPanel.tsx: a rejected save never marks the judgment as recorded ("기록됨" must reflect reality)', () => {
@@ -206,12 +251,21 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(!/\.\.\.\s*judgment\b/.test(fn), 'must never spread the rejected in-progress judgment back on top of the server version')
   })
 
-  test('JudgmentPanel.tsx: syncs lastKnownUpdatedAtRef whenever initialUpdatedAt advances (same false-conflict fix as DoctorWorkspace.tsx)', () => {
-    assert.ok(
-      /useEffect\(\(\) => \{\s*if \(initialUpdatedAt != null && initialUpdatedAt !== lastKnownUpdatedAtRef\.current\) \{\s*lastKnownUpdatedAtRef\.current = initialUpdatedAt/.test(
-        src,
-      ),
-    )
+  // Closing-review finding (HIGH, same class as DoctorWorkspace.tsx's):
+  // token-only adoption let a stale judgment draft pass CAS and clobber a
+  // real concurrent write to the SAME submission's judgment field. Must
+  // adopt token+content together, gated on the draft being pristine.
+  test('JudgmentPanel.tsx: the version-sync effect only adopts a newer token when the draft is pristine (isDraftPristine)', () => {
+    const effect = src.slice(src.indexOf('useEffect(() => {\n    if (initialUpdatedAt == null'), src.indexOf('[initialUpdatedAt])') + 40)
+    assert.ok(effect.length > 60, 'the version-sync effect must exist')
+    assert.ok(/if \(!isDraftPristine\(\)\) return/.test(effect), 'must bail out while the clinician has unsaved typing pending')
+  })
+
+  test('JudgmentPanel.tsx: the version-sync effect adopts fresh CONTENT together with the token (not the token alone)', () => {
+    const effect = src.slice(src.indexOf('useEffect(() => {\n    if (initialUpdatedAt == null'), src.indexOf('[initialUpdatedAt])') + 40)
+    assert.ok(/lastKnownUpdatedAtRef\.current = initialUpdatedAt/.test(effect))
+    assert.ok(/lastKnownJudgmentRef\.current = \{ judgment: freshJudgment, debrief: freshDebrief \}/.test(effect))
+    assert.ok(/setJudgment\(freshJudgment\)/.test(effect) && /setDebrief\(freshDebrief\)/.test(effect), 'the visible form fields must be replaced with the fresh content -- the exact HIGH finding this guards against')
   })
 }
 

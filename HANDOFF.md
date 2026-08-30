@@ -3607,17 +3607,93 @@ Chromium) QA로 발송/폴백/재시도/취소 전 경로 실제 확인(HIGH-1 �
 409로 안내 배너 + 원문 보존 + reload로 서버 최신본 복구(병합 없음),
 다른 환자로 전환 시 배너/초안/텍스트 전혀 누수되지 않음 — 전부 확인.
 
-검증: `npx tsc -b --force`(0 errors), `npm run build`,
+1차 검증: `npx tsc -b --force`(0 errors), `npm run build`,
 `npm run build:preview`, `npm run test:all`(새 `tests/save-conflict.spec.mjs`
 25 assertions 포함 전체 green), `tablet core` pytest 80/80,
 `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'` =
-empty. 독립 `model:opus` 리뷰 진행 중(실제 invocation, 결과 대기).
+empty. 커밋 `f556574`.
 
-커밋: `f556574`.
+### 독립 `model:opus` 클로징 리뷰 — NOT CLOSABLE 판정, HIGH 1건 포함 실제 버그 발견
+
+`f556574` 위에서 실행한 독립 리뷰(실제 invocation, 코드 재분석 +
+`tsc`/`build`/여러 테스트 스위트 직접 재실행으로 검증)가 **NOT CLOSABLE**
+판정을 내렸다. 가장 중요한 발견:
+
+**HIGH — 형제 패널 간 버전 토큰 세탁(version-token laundering)으로 인한
+무음 데이터 손실 가능성.** `DoctorWorkspace.tsx`와 `JudgmentPanel.tsx`는
+같은 제출건 레코드의 서로 다른 필드(`workspace` / `judgment`)를 각자
+편집하지만, 1차 수정본의 "prop이 바뀌면 토큰만 채택" 로직은 **토큰만
+갱신하고 그 토큰과 함께 온 실제 내용은 갱신하지 않았다.** 재현: 탭 B가
+workspace 저장(v0→v1) → 탭 A가 JudgmentPanel에서 충돌(구버전 v0) →
+reload → 재시도 성공(v1→v2, 이 성공 응답에는 B가 쓴 최신
+workspace 내용도 고스란히 포함됨) → 탭 A의 DoctorWorkspace가 (자기
+필드는 안 건드렸으니 "충돌 없음"으로 보고) 이 새 토큰 v2만 조용히
+채택하면서 **자신이 처음에 들고 있던 낡은 workspace 내용은 그대로 유지**
+→ 다음 저장 시 CAS는 통과하지만 실제로는 B가 쓴 내용을 무음으로
+덮어씀. 정확히 이 배치가 막으려던 실패 모드가 다른 경로로 재현된 것.
+
+수정: 토큰만 채택하는 대신 **"이 패널에 미저장 편집이 없을 때만, 토큰과
+그 토큰이 가리키는 최신 내용을 함께" 채택**하도록 변경(양쪽 패널 동일
+원칙). 편집 중이면 아무것도 하지 않고 저장 시점의 정상 CAS 체크가
+잡도록 둔다(가끔의 오탐 충돌 배너는 안전한 실패 모드, 무음 덮어쓰기는
+아니다).
+
+**이 수정 자체에도 실증 QA로만 잡히는 2차 버그가 있었다**: 두 effect의
+의존성 배열에 패널 자신의 콘텐츠 state(`workspaceState` /
+`judgment`+`debrief`)를 넣어뒀더니, `handleReloadFromConflict`가
+그 state를 바꾸는 순간 effect가 즉시 재실행되어 — 이번엔 "방금 reload로
+정확히 갱신한 새 토큰"을 "아직 안 바뀐 낡은 prop 값"으로 다시
+덮어써버려 reload 직후 재시도가 또 409나는 무한루프가 됐다. 의존성
+배열에서 콘텐츠 state를 제거(effect는 오직 prop인
+`initialRecordUpdatedAt`/`initialUpdatedAt`이 바뀔 때만 재실행, "pristine"
+여부는 실행 시점에 클로저로 최신값을 읽음)하여 해결 — **이 2차 버그는
+추론만으로는 못 잡고, 리뷰가 지목한 정확한 재현 시나리오를 실제
+Playwright 2-컨텍스트 QA로 다시 돌려서야 발견됨.**
+
+그 외 발견 및 조치:
+- **MEDIUM — `JudgmentPanel`의 "기록" 클릭이 대기 중인 conflict를
+  무시하고 재시도 가능했음** (DoctorWorkspace/RevisitWorkspace의 autosave
+  effect와 달리 fail-closed 가드가 없었음). `handleRecord` 최상단에
+  `if (conflict) return` 추가로 해결.
+- **MEDIUM — `RevisitWorkspace`가 `getVisit` 실패 시 완전히 편집 가능한
+  빈 폼으로 떨어지고, 첫 저장이 CAS precondition 없이(진짜 무조건
+  last-write-wins) 나갔음** — 일시적 네트워크 실패에도 실제 저장된
+  내용을 덮어쓸 수 있는 구조. `loadError` state 추가 — 로드 실패 시
+  편집/저장 자체를 막고 "다시 시도" 액션만 제공하도록 수정.
+- **LOW/기록만 — `RevisitWorkspace`의 `setRecorderPointer`(녹음 결과
+  연결)가 CAS 가드 없이 같은 visit 레코드의 `updated_at`을 올릴 수 있는
+  이론상 경로**(원장이 재진 화면을 열어둔 채 녹음 결과가 도착하는
+  경우) — 위 Known Risks에 이미 기록됨. fail-safe(배너만 뜸, 데이터
+  손실 없음)이므로 이번 배치에서 별도 코드 수정 없이 기록으로 처리.
+- **LOW/기록만 — 자동저장 effect들에 in-flight 저장 가드가 없어, 저장이
+  900ms 디바운스보다 오래 걸리면 자기 자신의 진행 중인 저장과 경합해
+  불필요한 오탐 충돌이 생길 수 있음** — fail-closed(배너만 뜸)이라
+  데이터 손실은 없음, 후속 과제로 기록.
+- **LOW/기록만 — "열람함" 상태 쓰기 자체는 CAS 가드가 없음**(다른
+  writer가 GET과 상태쓰기 사이에 끼어들 수 있는 좁은 창) — 위와 동일한
+  결함 종류, 발생해도 fail-safe. 후속 과제로 기록.
+- **LOW/기록만 — `tests/save-conflict.spec.mjs`는 소스 레벨 정적
+  검사라 HIGH 버그(2차 버그 포함) 자체를 구조적으로 잡을 수 없음** —
+  이 저장소가 jsdom+act() 신규 의존성을 의도적으로 피하는 것과 같은
+  이유(patient-ux.spec.mjs 헤더 참고). 실제 인터랙티브 증명은 항상
+  real-browser QA가 담당하며, 이번 라운드는 정확히 그 방식으로 HIGH
+  버그와 2차 버그 둘 다 잡았다.
+
+수정 후 재검증: `npx tsc -b --force`(0 errors), `npm run build`,
+`npm run build:preview`, `npm run test:all`(`tests/save-conflict.spec.mjs`
+29 assertions로 확장, 전체 green), `tablet core` pytest 80/80,
+FROZEN diff empty. **리뷰가 지목한 정확한 재현 시나리오를 그대로 옮긴
+전용 Playwright QA(탭 B workspace 저장 → 탭 A JudgmentPanel 충돌→reload→
+재시도 성공 → 탭 A의 DoctorWorkspace가 B의 실제 내용을 올바르게 채택 →
+탭 A가 그 위에 이어서 저장 → 서버에 B와 A의 내용이 모두 살아있는지
+확인)을 실행해 전부 통과 확인.** 기존 2-컨텍스트 QA(단순 stale-writer
+시나리오)도 재실행하여 회귀 없음 확인.
+
+커밋: `f556574` → (HIGH/MEDIUM 수정) → 2차 클로징 리뷰 대기 중.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`f556574`.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD는 이
+배치의 review-fix 커밋(아래 커밋 로그 참고 — push 직후 갱신 예정).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

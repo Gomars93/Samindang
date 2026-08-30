@@ -149,10 +149,23 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const lastKnownUpdatedAtRef = useRef<string | null>(null)
   const [conflict, setConflict] = useState<{ current: VisitWorkspaceState; currentUpdatedAt: string } | null>(null)
   const [preConflictDraft, setPreConflictDraft] = useState<VisitWorkspaceState | null>(null)
+  // Round 18 (closing review, MEDIUM): non-null exactly when getVisit
+  // failed to load this visit. Without this, a transient load failure
+  // (network blip -- the visit itself still exists and still has real
+  // stored content) rendered a fully editable, empty form with
+  // lastKnownUpdatedAtRef left at null, and the first save then went out
+  // with NO x-expected-updated-at precondition at all -- true unconditional
+  // last-write-wins, silently overwriting whatever was really stored.
+  // Blocking editing until a successful (re)load establishes a real
+  // baseline is the fail-closed choice; `reloadNonce` lets the retry button
+  // re-run the load effect without duplicating its logic.
+  const [loadError, setLoadError] = useState(false)
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setLoadError(false)
     skipNextSaveRef.current = true
     // Round 7 review fix (cross-record stale-data safety): reset every
     // record-scoped piece of state BEFORE the async load starts, not just
@@ -178,10 +191,15 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         getMicroFollowUpResponse(visitId),
       ])
       if (cancelled) return
-      const seeded = visitResult.ok ? deserializeVisitWorkspaceState(visitResult.data.workspace) : emptyVisitWorkspaceState()
+      if (!visitResult.ok) {
+        setLoadError(true)
+        setLoading(false)
+        return
+      }
+      const seeded = deserializeVisitWorkspaceState(visitResult.data.workspace)
       setWorkspaceState(seeded)
       lastSavedRef.current = seeded
-      lastKnownUpdatedAtRef.current = visitResult.ok ? visitResult.data.updated_at : null
+      lastKnownUpdatedAtRef.current = visitResult.data.updated_at
       if (historyResult.ok) {
         setPriorHistory(historyResult.data)
         const latest = historyResult.data.visits[0]
@@ -206,7 +224,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     return () => {
       cancelled = true
     }
-  }, [visitId, patientId])
+  }, [visitId, patientId, reloadNonce])
 
   useEffect(() => {
     if (skipNextSaveRef.current) {
@@ -262,6 +280,23 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     return (
       <div className="workspace__revisit">
         <p className="workspace__empty">재진 정보를 불러오는 중…</p>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="workspace__revisit">
+        <div className="doctor__banner doctor__banner--warning" role="alert">
+          <strong>재진 정보를 불러오지 못했습니다</strong>
+          <p>
+            이 상태에서는 편집/저장을 진행할 수 없습니다 — 실제 저장된 내용을 불러오기 전에 저장을 시도하면
+            기존 내용을 덮어쓸 수 있기 때문입니다. 다시 시도해주세요.
+          </p>
+          <button type="button" className="doctor__banner__reloadBtn" onClick={() => setReloadNonce((n) => n + 1)}>
+            다시 시도
+          </button>
+        </div>
       </div>
     )
   }

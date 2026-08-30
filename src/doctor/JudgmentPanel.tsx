@@ -133,6 +133,15 @@ export function JudgmentPanel({
   const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
   const lastKnownUpdatedAtRef = useRef<string | null>(initialUpdatedAt ?? null)
+  // Round 18: what this panel believes CURRENTLY matches the server's
+  // `judgment` field -- updated on mount, on a successful save, on reload,
+  // and by the sync effect below. Compared against live `judgment`/
+  // `debrief` state to decide whether it is safe to silently adopt a newer
+  // external version (see that effect's comment for why this matters).
+  const lastKnownJudgmentRef = useRef<{ judgment: ClinicianJudgment; debrief: DebriefAnswers }>({
+    judgment: initialJudgment ?? createEmptyJudgment(source),
+    debrief: initialJudgment?.debrief ?? emptyDebrief,
+  })
   // Round 18: non-null exactly when the server rejected the last "기록"
   // click as stale. Nothing auto-retries here (this save is already
   // explicit-click-only, not debounced) -- the clinician must review the
@@ -141,25 +150,69 @@ export function JudgmentPanel({
     null,
   )
 
+  function isDraftPristine() {
+    return (
+      JSON.stringify(judgment) === JSON.stringify(lastKnownJudgmentRef.current.judgment) &&
+      JSON.stringify(debrief) === JSON.stringify(lastKnownJudgmentRef.current.debrief)
+    )
+  }
+
   // Round 18 fix (caught by real two-browser-context QA): `initialUpdatedAt`
   // legitimately advances for the SAME submission without any judgment
   // save -- most reliably the automatic "mark as viewed" status write that
   // fires the instant a submission is opened, or an independent
-  // DoctorWorkspace autosave on the same submission. Without this, the
-  // FIRST-ever "기록" click on almost every submission would 409 against a
-  // sibling write, with a single clinician in a single tab. See
-  // DoctorWorkspace.tsx's identical fix for the full reasoning -- adopting
-  // the newer value here can never weaken cross-tab conflict detection,
-  // since a second tab has its own separate prop chain this can never reach.
+  // DoctorWorkspace autosave on the same submission.
+  //
+  // Closing-review finding (HIGH, shared with DoctorWorkspace.tsx's
+  // identical fix): adopting the newer TOKEN alone, without also adopting
+  // the CONTENT it came with, lets a later "기록" click pass CAS while
+  // still submitting whatever STALE `judgment` this panel had -- silently
+  // overwriting a real concurrent write to the SAME submission's `judgment`
+  // field (another tab, or this tab's own round-trip through DoctorView).
+  // Fixed the same way: adopt the token and the fresh `initialJudgment`
+  // TOGETHER, and only when this panel's own draft is pristine (matches
+  // `lastKnownJudgmentRef`, i.e. nothing typed since the last known-good
+  // state) -- never overwrite the clinician's in-progress typing, and never
+  // adopt a token while quietly keeping content that might now be stale
+  // relative to a different writer.
+  //
+  // Empirical fix (caught by re-running the real-browser QA against the
+  // closing review's exact repro, not by reasoning alone): this effect
+  // must depend ONLY on `initialUpdatedAt`, never on `judgment`/`debrief`
+  // themselves. `handleReloadFromConflict` also calls `setJudgment`/
+  // `setDebrief` -- if this effect also re-ran on every judgment/debrief
+  // change, that very reload would immediately re-trigger it, and since
+  // `initialUpdatedAt` (DoctorView's OWN prop, untouched by this panel's
+  // purely-local reload) is still the OLD stale value while
+  // `lastKnownUpdatedAtRef.current` now correctly holds the fresh
+  // `conflict.currentUpdatedAt`, the effect's inequality check (`!==`, not
+  // "is initialUpdatedAt actually NEWER") would pass and silently regress
+  // the just-reloaded token back down to the stale prop -- undoing the
+  // reload and reproducing the exact 409-loop this mechanism exists to
+  // prevent. `isDraftPristine()` still reads the current `judgment`/
+  // `debrief` via closure every time the effect actually runs; they do not
+  // need to be dependencies for that.
   useEffect(() => {
-    if (initialUpdatedAt != null && initialUpdatedAt !== lastKnownUpdatedAtRef.current) {
-      lastKnownUpdatedAtRef.current = initialUpdatedAt
-    }
+    if (initialUpdatedAt == null || initialUpdatedAt === lastKnownUpdatedAtRef.current) return
+    if (!isDraftPristine()) return
+    const freshJudgment = initialJudgment ?? createEmptyJudgment(source)
+    const freshDebrief = initialJudgment?.debrief ?? emptyDebrief
+    lastKnownUpdatedAtRef.current = initialUpdatedAt
+    lastKnownJudgmentRef.current = { judgment: freshJudgment, debrief: freshDebrief }
+    setJudgment(freshJudgment)
+    setDebrief(freshDebrief)
+    setRecorded(initialJudgment ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialUpdatedAt])
 
   const hasDebrief = Object.values(debrief).some((v) => v.trim() !== '')
 
   async function handleRecord() {
+    // Round 18 (closing review, MEDIUM): fail closed on a pending conflict
+    // exactly like DoctorWorkspace/RevisitWorkspace's autosave effects --
+    // the clinician must explicitly reload before any further save attempt
+    // instead of "기록" silently retrying with a stale precondition.
+    if (conflict) return
     const withDebrief: ClinicianJudgment = { ...judgment, debrief: hasDebrief ? debrief : null }
     const result = validateJudgment(withDebrief)
     if (!result.ok) {
@@ -178,6 +231,7 @@ export function JudgmentPanel({
       setRecorded(finalized)
       setConflict(null)
       lastKnownUpdatedAtRef.current = outcome.updatedAt
+      lastKnownJudgmentRef.current = { judgment: finalized, debrief: finalized.debrief ?? emptyDebrief }
     } else if (outcome.conflict) {
       // Round 18: fail closed -- `recorded` deliberately stays whatever it
       // was before this click (never shows `finalized` as "기록됨" when it
@@ -196,10 +250,12 @@ export function JudgmentPanel({
   function handleReloadFromConflict() {
     if (!conflict) return
     const next = conflict.current ?? createEmptyJudgment(source)
+    const nextDebrief = next.debrief ?? emptyDebrief
     setJudgment(next)
-    setDebrief(next.debrief ?? emptyDebrief)
+    setDebrief(nextDebrief)
     setRecorded(conflict.current)
     lastKnownUpdatedAtRef.current = conflict.currentUpdatedAt
+    lastKnownJudgmentRef.current = { judgment: next, debrief: nextDebrief }
     setConflict(null)
     setErrors([])
   }

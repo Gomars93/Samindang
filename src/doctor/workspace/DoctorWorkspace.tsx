@@ -187,27 +187,67 @@ export function DoctorWorkspace({
     setPreConflictDraft(null)
   }
 
-  // Round 18 fix (caught by real two-browser-context QA, not by any unit
-  // test): `initialRecordUpdatedAt` legitimately advances for the SAME
-  // record without DoctorWorkspace ever saving anything -- e.g. the
-  // automatic "mark as viewed" status write that fires the instant a
-  // submission is opened, or an independent JudgmentPanel save on the same
-  // submission. Without this, `lastKnownUpdatedAtRef` stays pinned to
-  // whatever value was seeded at mount, so DoctorWorkspace's very first
-  // autosave attempt on almost every record would 409 against its OWN
-  // sibling's write -- a false conflict with a single clinician in a single
-  // tab, no second writer involved at all. Adopting the newer value here is
-  // always safe: the real CAS comparison still happens server-side against
-  // the record's actual current updated_at at save time; this ref is only
-  // ever this component's best guess of "what we last confirmed," never
-  // itself authoritative. This does NOT weaken genuine cross-tab/
-  // cross-device conflict detection -- a SECOND browser tab has its own,
-  // separate `selectedRecord` state that this prop can never reach; it only
-  // changes here because of THIS tab's own actions.
+  // Round 18 fix (caught by real two-browser-context QA): `initialRecordUpdatedAt`
+  // legitimately advances for the SAME record without DoctorWorkspace ever
+  // saving anything -- e.g. the automatic "mark as viewed" status write
+  // that fires the instant a submission is opened, or an independent
+  // JudgmentPanel save on the same submission. Without tracking that,
+  // DoctorWorkspace's very first autosave attempt on almost every record
+  // would 409 against a sibling's write.
+  //
+  // Closing-review finding (HIGH): the first version of this fix adopted
+  // the newer TOKEN without also adopting the CONTENT it came with. A
+  // per-record `updated_at` cannot certify per-FIELD freshness across two
+  // independently-seeded editors of the same record (this panel owns
+  // `workspace`, JudgmentPanel owns `judgment`) -- adopting a token that
+  // was actually bumped by a SIBLING's write, while this panel's own
+  // `workspace` content stays whatever was seeded at mount/last save, lets
+  // a LATER save from this panel pass CAS while silently overwriting
+  // whatever a different writer (another tab, or this same tab's own
+  // sibling panel round-tripping through DoctorView) had written to
+  // `workspace` in between. Repro: tab B saves workspace (v0->v1); tab A's
+  // JudgmentPanel independently reloads-and-saves its OWN field, which
+  // bumps v1->v2 and hands DoctorWorkspace a fresh `initialRecordUpdatedAt`
+  // of v2 -- if DoctorWorkspace blindly adopted v2 while still holding its
+  // OWN stale pre-B `workspaceState`, tab A's next keystroke would save
+  // that stale content at v2 and succeed, discarding tab B's real edit
+  // with no conflict ever shown.
+  //
+  // Fixed by only ever adopting the newer token TOGETHER with the fresh
+  // content it came with (`initialWorkspaceState`), and ONLY when this
+  // panel has no unsaved local edits of its own
+  // (`workspaceStateEquals(workspaceState, lastSavedRef.current)`). If
+  // edits ARE pending, this deliberately does nothing and lets the
+  // ordinary save-time CAS check catch it -- an occasional false-positive
+  // conflict banner (nothing lost: the draft is preserved, per
+  // ConflictBanner) is the correct fail-closed outcome; silently adopting
+  // a token while keeping stale content is not.
+  //
+  // Empirical fix (caught by re-running the real-browser QA against the
+  // closing review's exact repro, not by reasoning alone): this effect
+  // must depend ONLY on `initialRecordUpdatedAt`, never on `workspaceState`
+  // itself. `handleReloadFromConflict` below also calls `setWorkspaceState`
+  // -- if this effect also re-ran on every `workspaceState` change, that
+  // very setWorkspaceState call would immediately re-trigger it, and since
+  // `initialRecordUpdatedAt` (DoctorView's OWN prop, untouched by this
+  // panel's purely-local reload) is still the OLD stale value while
+  // `lastKnownUpdatedAtRef.current` now correctly holds the fresh
+  // `conflict.currentUpdatedAt`, the effect's inequality check
+  // (`!==`, not "is initialRecordUpdatedAt actually NEWER") would pass and
+  // silently regress the just-reloaded token back down to the stale prop
+  // value -- undoing the reload and reproducing the exact 409-loop this
+  // whole mechanism exists to prevent. The pristine check inside still
+  // reads the current `workspaceState`/`lastSavedRef` via closure every
+  // time the effect actually runs; it does not need to be a dependency.
   useEffect(() => {
-    if (initialRecordUpdatedAt != null && initialRecordUpdatedAt !== lastKnownUpdatedAtRef.current) {
-      lastKnownUpdatedAtRef.current = initialRecordUpdatedAt
-    }
+    if (initialRecordUpdatedAt == null || initialRecordUpdatedAt === lastKnownUpdatedAtRef.current) return
+    if (!workspaceStateEquals(workspaceState, lastSavedRef.current)) return
+    const fresh = seedWorkspaceState(initialWorkspaceState, synthetic)
+    lastKnownUpdatedAtRef.current = initialRecordUpdatedAt
+    lastSavedRef.current = fresh
+    skipNextSaveRef.current = true
+    setWorkspaceState(fresh)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialRecordUpdatedAt])
 
   // Debounced autosave: fires SAVE_DEBOUNCE_MS after the last edit, only in

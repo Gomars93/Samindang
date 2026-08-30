@@ -2122,6 +2122,31 @@ async function main() {
       assert('episode-retry: both concurrent calls return the same episode_id', concA.episode.episode_id === concB.episode.episode_id)
       const concurrentFiles = (await readdir(path.join(root, 'episodes'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
       assert('episode-retry: concurrent double-submit still leaves exactly two Episode files total (the first patient one + this one)', concurrentFiles.length === 2)
+
+      // Independent-review finding (HIGH): a client-minted episode_id is
+      // now caller-controlled, so it can collide with an id that already
+      // belongs to a DIFFERENT patient -- either a stale/buggy client
+      // reusing an id across a patient switch, or a probe. Before this
+      // fix, createEpisode's create-if-absent path matched purely on
+      // episode_id and handed back the existing Episode regardless of
+      // whose patient_uuid it carried, leaking that Episode (and its
+      // patient_uuid) to the mismatched caller.
+      const patientOther = randomUUID()
+      let ownershipErr
+      try {
+        await store.createEpisode({ episode_id: clientMintedEpisodeId, patient_uuid: patientOther, owner_clinician: null, now: T0 })
+      } catch (err) {
+        ownershipErr = err
+      }
+      assert(
+        'episode-retry: a client-minted episode_id already belonging to a DIFFERENT patient throws CrmOwnershipError',
+        ownershipErr instanceof CrmOwnershipError,
+      )
+      const stillFirstPatientEpisode = await store.getEpisode(clientMintedEpisodeId)
+      assert(
+        'episode-retry: the rejected cross-patient collision does not overwrite or corrupt the original Episode',
+        stillFirstPatientEpisode.patient_uuid === patientUuid,
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }

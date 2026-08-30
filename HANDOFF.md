@@ -4978,9 +4978,77 @@ audit-registry 114/114 포함), `npm run build`/`build:preview` clean,
 `tablet core` pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
 src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 
-**다음 단계**: 독립 `model:opus` 리뷰(진짜 subagent 호출) 대기 중 —
-아직 시작 전. 리뷰 완료 후 발견 사항 수정 → 재검수 반복(Medication/
-Herbal CRM 배치와 같은 사이클), 그 다음 push + PR 코멘트.
+**1차 독립 `model:opus` 클로징 리뷰(완료, `55949f3` 대상) + 수정**: fresh
+subagent 호출(35 tool call, ~7분)로 검수. **판정: NOT CLEAN** — HIGH 2 /
+MEDIUM 2 / LOW 4 / NIT 1.
+
+1. **HIGH(수정)**: `episode_id`가 이제 클라이언트가 지정할 수 있는데,
+   라우트가 "비어있지 않은 문자열"만 검사하고 `crmStore.js`의
+   `episodePath()`가 이를 그대로 `path.join(episodesDir, \`${id}.json\`)`에
+   씀 — `episode_id: "../../submissions/<id>"`로 `.data/submissions/`의
+   환자 제출 기록을 그대로 읽어올 수 있고, 존재하지 않는 대상이면 데이터
+   루트 밖에 임의 파일을 쓸 수도 있음(리뷰어가 실제로 재현: 응답 본문에
+   환자 이름/전화 등이 그대로 노출됨). 이 배치 이전엔 `episode_id`가
+   항상 서버가 만든 `randomUUID()`라 도달 불가능했던 경로. **수정**:
+   라우트에 이 파일의 기존 `recording_id` 안전 문자셋 검사와 동일한
+   `/^[A-Za-z0-9_-]{1,128}$/` 검증 추가(불일치 시 400) — 클라이언트의
+   두 id 생성 형태(`crypto.randomUUID()`, `id-<ts>-<rand>`) 모두 통과.
+2. **HIGH(수정)**: `createEpisode`의 create-if-absent 경로가 `episode_id`
+   로만 매칭하고 기존 레코드의 `patient_uuid`가 요청자의 것과 같은지
+   확인하지 않음 — 다른 환자가 이미 쓰고 있는 id를 재사용하면 그 환자의
+   Episode를 그대로 돌려받음(신규 배치가 course 생성에 추가한 ownership
+   체크의 정확히 반대쪽 구멍, 새로 열린 caller-controlled 경로에만
+   남아 있었음). **수정**: `existing.patient_uuid !== patient_uuid`면
+   `CrmOwnershipError`(409)를 throw — 라우트도 `mapCrmError`로 감싸도록
+   `try/catch` 추가.
+3. **MEDIUM(검토 후 코드 변경 없음)**: `POST /api/crm/tasks`가
+   caller가 보낸 `patient_uuid`를 `episode.patient_uuid`로 조용히
+   덮어씀(reject가 아니라 derive) — round 7(CLOSED)이 의도적으로 설계·
+   테스트한 "derive, don't trust" 패턴(`tests/crm-store.spec.mjs`의
+   "identity: task persists with the EPISODE's patient_uuid" 블록,
+   L444-445)과 정확히 같은 동작. 실제 데이터 손상 경로는 없음(파생된
+   patient_uuid가 항상 진짜 소유자 Episode의 것과 일치) — course에
+   추가한 새 "즉시 거부(409)" 방식은 오너가 명시적으로 지시한 범위
+   (course 생성)를 넘어 여기까지 확장하면 (a) round 7의 기존 검증된
+   설계·테스트를 뒤집고 (b) 오너의 "avoid broad API churn elsewhere"
+   지시와 충돌 — 코드 변경하지 않기로 판단, 이 판단과 근거를 여기
+   기록만.
+4. **MEDIUM(수정)**: HTTP 레벨 ownership 거부 테스트의 tamper 본문에
+   `source_id`/`source_timestamp`가 빠져 있어, ownership 체크를
+   지워도 `createMedicationCourseStored`의 필수 필드 검사만으로
+   똑같이 409 근처(사실은 400)가 나올 뻔함 — 즉 체크를 실제로
+   구분하지 못하는 pass-by-construction. **수정**: 유효한 본문으로
+   교체 + "같은 본문에 올바른 patient_uuid면 201로 성공"하는 대조
+   assertion 추가.
+5. **NIT(수정)**: "옛 자동선택 제거" 테스트의 두 regex 중 하나가
+   옛 소스에도 매치되지 않는 vacuous 패턴(리뷰어가 `3bb07a5` 시점
+   소스로 직접 확인) — 삭제, 실제로 옛 소스에 매치했던 나머지
+   하나만 남김.
+6. LOW 4건은 리뷰어가 "문서화된 트레이드오프" 또는 "결함 아님"으로
+   분류(감사 이벤트가 진짜 크래시 창에서 유실될 수 있음은 이
+   저장소의 기존 `!deduped` 관례의 자연스러운 확장, picker에
+   "뒤로가기"가 없음은 UX nit, 자동선택 경계 로직은 직접 추적해
+   정확함을 확인했지만 구조적 pin이라 회귀만 잡음) — 코드 변경
+   없음.
+
+**신규 회귀 테스트(HIGH 1/2 수정에 대응)**: `tests/crm-store.spec.mjs`에
+클라이언트가 지정한 id가 다른 환자 소유일 때 `CrmOwnershipError`를
+던지는지 확인하는 블록 추가(원본 Episode가 훼손되지 않음도 확인).
+`tests/audit-registry.spec.mjs`에 traversal 모양 `episode_id` 5종
+(`../../...`, URL-encoded, `a/b`, `a.json`, 빈 문자열)이 모두 400으로
+거부됨(200도 500도 아님)과, 같은 id를 다른 환자로 재사용하면 409이고
+응답 본문에 첫 환자의 Episode가 새지 않음을 확인하는 블록 추가.
+
+**검증(수정 반영 후)**: `npx tsc -b --force` clean, `node
+tests/crm-store.spec.mjs` 246/246, `node tests/audit-registry.spec.mjs`
+123/123, `node tests/medication-course-ui.spec.mjs` 24/24, `npm run
+test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, FROZEN diff 0 lines — 전부 통과.
+
+**다음 단계**: 이번 라운드의 수정을 push한 뒤, 2차 독립 `model:opus`
+클로징 리뷰(fresh subagent) 호출 — Medication/Herbal CRM 배치와 같은
+"HIGH/MEDIUM 발견 시 재검수" 사이클. CLEAN 판정까지는 이 배치를
+CLOSED로 선언하지 않는다.
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된

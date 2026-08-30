@@ -174,7 +174,25 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     return withLock(`episode:${episode_id}`, async () => {
       await ensureDirs()
       const existing = await readJson(episodePath(baseDir, episode_id))
-      if (existing) return { episode: existing, created: false }
+      if (existing) {
+        // Independent-review finding: episode_id is now client-minted
+        // (Episode↔Medication association integrity batch), so a genuine
+        // same-patient retry landing here (the intended path) must be
+        // told apart from a caller supplying an id that happens to
+        // already belong to a DIFFERENT patient -- either a stale/buggy
+        // client, or a probe. Silently returning the foreign Episode
+        // (the old behavior, back when episode_id could only ever be a
+        // server-minted randomUUID() so this branch never needed to
+        // consider identity) would both leak that Episode's existence to
+        // the wrong caller and let the UI attach the wrong patient's
+        // Episode to whatever the caller does next. Fail closed instead,
+        // mirroring the exact same check createMedicationCourseStored
+        // already applies to expected_patient_uuid.
+        if (existing.patient_uuid !== patient_uuid) {
+          throw new CrmOwnershipError('episode', episode_id)
+        }
+        return { episode: existing, created: false }
+      }
       const episode = newEpisode({ episode_id, patient_uuid, owner_clinician, now })
       await atomicWrite(episodePath(baseDir, episode_id), episode)
       return { episode, created: true }

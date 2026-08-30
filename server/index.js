@@ -1741,20 +1741,38 @@ export function createApp({
           if (!patientUuid || !(await store.visitExistsForPatient(patientUuid))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown patient_uuid' }, cors)
-          } else if (rawEpisodeId != null && (typeof rawEpisodeId !== 'string' || !rawEpisodeId)) {
+          } else if (rawEpisodeId != null && (typeof rawEpisodeId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(rawEpisodeId))) {
+            // Independent-review finding: episode_id now reaches
+            // crmStore.episodePath() (path.join(episodesDir, `${id}.json`))
+            // verbatim -- before this batch it was always a server-minted
+            // randomUUID(), so a caller-controlled value here is new
+            // attack surface. Reusing this file's existing recording_id
+            // safe-charset check (no '/', '.', or other path-traversal
+            // characters) closes both the directory-traversal read/write
+            // and the unhandled-500-on-malformed-id gap in one guard.
             status = 400
-            bytes = sendJson(req, res, 400, { error: 'episode_id must be a non-empty string' }, cors)
+            bytes = sendJson(req, res, 400, { error: 'episode_id must be a non-empty string matching [A-Za-z0-9_-]{1,128}' }, cors)
           } else {
             const ownerClinician = typeof body?.owner_clinician === 'string' ? body.owner_clinician : null
-            const { episode, created } = await crmStore.createEpisode({
-              episode_id: typeof rawEpisodeId === 'string' && rawEpisodeId ? rawEpisodeId : randomUUID(),
-              patient_uuid: patientUuid,
-              owner_clinician: ownerClinician,
-              now: new Date().toISOString(),
-            })
-            status = created ? 201 : 200
-            if (created) await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_CREATED, visit_id: undefined, actor: AUDIT_ACTORS.DOCTOR })
-            bytes = sendJson(req, res, status, episode, cors)
+            try {
+              const { episode, created } = await crmStore.createEpisode({
+                episode_id: typeof rawEpisodeId === 'string' && rawEpisodeId ? rawEpisodeId : randomUUID(),
+                patient_uuid: patientUuid,
+                owner_clinician: ownerClinician,
+                now: new Date().toISOString(),
+              })
+              status = created ? 201 : 200
+              if (created) await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_CREATED, visit_id: undefined, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, status, episode, cors)
+            } catch (err) {
+              // Independent-review finding: a client-minted episode_id that
+              // already belongs to a DIFFERENT patient must fail closed
+              // (crmStore.createEpisode now throws CrmOwnershipError for
+              // this), not silently hand back the foreign Episode.
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'episodes' && parts.length === 3 && req.method === 'GET') {

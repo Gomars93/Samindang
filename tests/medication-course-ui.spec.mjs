@@ -301,8 +301,18 @@ test('MedicationCourseSection: clicking the already-active check-task reason chi
 // unambiguous-only auto-select logic replaced it, and that an explicit
 // picker render branch exists for the ambiguous case, rather than relying
 // solely on the jsdom-free real-browser QA documented in HANDOFF.md.
+// Independent-review finding: the sibling assertion this test used to
+// also run --
+//   assert.doesNotMatch(src, /activeEpisodes\.find\([\s\S]{0,40}\)\s*\?\?\s*(result\.data\.)?episodes\[0\]/)
+// -- was vacuous: `activeEpisodes` did not exist as an identifier before
+// this batch, so the regex could never match the OLD source either,
+// meaning it "passed" regardless of whether the old pattern was actually
+// removed. Confirmed by running it against the pre-batch source
+// (git show 3bb07a5:src/doctor/MedicationCourseSection.tsx) directly.
+// Dropped rather than kept for false reassurance -- the remaining
+// assertion below is the one that actually matched the pre-batch source
+// and is the real regression guard.
 test('MedicationCourseSection: the old unconditional find(ACTIVE) ?? episodes[0] auto-select is gone', () => {
-  assert.doesNotMatch(src, /activeEpisodes\.find\([\s\S]{0,40}\)\s*\?\?\s*(result\.data\.)?episodes\[0\]/)
   assert.doesNotMatch(src, /\.find\(\(e\) => e\.status === 'ACTIVE'\)\s*\?\?/)
 })
 

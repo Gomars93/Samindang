@@ -810,12 +810,20 @@ async function main() {
       const beforeLines = await readAuditLines(auditLogPath(dataDir))
       const beforeCount = beforeLines.filter((l) => l.event === AUDIT_EVENTS.CRM_MEDICATION_COURSE_CREATED).length
 
-      const tamperRes = await postJson(`${base}/api/crm/medication-courses`, {
+      // Independent-review finding: the tamper body must otherwise be a
+      // fully valid create request (real source_id/source_timestamp) --
+      // an incomplete body would 400 on createMedicationCourseStored's own
+      // required-field check regardless of the ownership guard, making the
+      // 409 assertion below pass-by-construction instead of actually
+      // discriminating the ownership check.
+      const tamperBody = {
         patient_uuid: visitB.patient_id,
         episode_id: episodeA.episode_id,
-        herb_name: 'audit-ownership-test-herb',
-        source: 'DOCTOR_ENTRY',
-      })
+        source: 'doctor_manual_entry',
+        source_id: 'evt-audit-ownership-tamper',
+        source_timestamp: new Date().toISOString(),
+      }
+      const tamperRes = await postJson(`${base}/api/crm/medication-courses`, tamperBody)
       assert('episode-ownership (HTTP): cross-patient course create is rejected -> 409', tamperRes.status === 409)
 
       const afterLines = await readAuditLines(auditLogPath(dataDir))
@@ -824,6 +832,55 @@ async function main() {
 
       const listRes = await getJson(`${base}/api/crm/episodes/${episodeA.episode_id}/medication-courses`)
       assert('episode-ownership (HTTP): zero MedicationCourses exist under the targeted episode after the rejected tamper', listRes.body.courses.length === 0)
+
+      // Control: the exact same otherwise-valid body, but with the
+      // CORRECT patient_uuid, must succeed -- proving the 409 above is
+      // caused specifically by the ownership mismatch, not by some other
+      // property of the request.
+      const controlRes = await postJson(`${base}/api/crm/medication-courses`, { ...tamperBody, patient_uuid: visitA.patient_id })
+      assert('episode-ownership (HTTP): the identical body with the CORRECT patient_uuid succeeds -> 201', controlRes.status === 201)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 8: Episode↔Medication association integrity batch -- closing-
+     review findings. episode_id is now client-minted input reaching
+     crmStore.episodePath() (path.join) verbatim, and a client-minted id
+     can collide with one already owned by a different patient -- both
+     were unreachable before this batch (episode_id was always a
+     server-minted randomUUID()).
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-episode-idsafety-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+
+      // Path-traversal-shaped episode_id must be rejected before it ever
+      // reaches the filesystem -- not 200 (would mean it silently read or
+      // wrote outside episodes/), not 500 (would mean an unhandled fs
+      // error surfaced instead of a clean validation failure).
+      for (const badId of ['../../submissions/some-record', '..%2f..%2fetc', 'a/b', 'a.json', '']) {
+        const res = await postJson(`${base}/api/crm/episodes`, { patient_uuid: visit.patient_id, episode_id: badId })
+        assert(`episode-id-safety (HTTP): malformed episode_id ${JSON.stringify(badId)} is rejected -> 400`, res.status === 400)
+      }
+
+      // A well-formed but cross-patient episode_id collision must fail
+      // closed (409), not silently hand back the other patient's Episode.
+      const visitOther = (await postJson(`${base}/api/visits`, {})).body
+      const sharedId = `qa-shared-episode-id-${Date.now()}`
+      const firstCreate = await postJson(`${base}/api/crm/episodes`, { patient_uuid: visit.patient_id, episode_id: sharedId })
+      assert('episode-id-safety (HTTP): first create under a client-minted id -> 201', firstCreate.status === 201)
+      const collision = await postJson(`${base}/api/crm/episodes`, { patient_uuid: visitOther.patient_id, episode_id: sharedId })
+      assert('episode-id-safety (HTTP): reusing the same id for a DIFFERENT patient is rejected -> 409', collision.status === 409)
+      assert(
+        'episode-id-safety (HTTP): the rejected response never discloses the first patient\'s Episode body',
+        collision.body.patient_uuid === undefined,
+      )
     } finally {
       await stopServer(server)
       await rm(tmpRoot, { recursive: true, force: true })

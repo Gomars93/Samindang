@@ -1621,6 +1621,26 @@ function detailsRange(html, classMarker) {
     /const ms = m\.sleep\.menopause\s*\n\s*return \[/.test(src) && /\.\.\.\(ms\s*\n\s*\? \[/.test(src),
   )
   assert(
+    'resilience: menopauseSleepSummaryLines (a separate function from primaryModuleFields, used by the 10-second-summary card) also guards sleep?.menopause before reading its gate_context/stage/etc leaves',
+    /const ms = sleep\?\.menopause\s*\n\s*if \(!ms\) return null/.test(src),
+  )
+  assert(
+    "resilience: every simple regional SafetyPanel gate (Neck/Knee/Elbow/WristHand) uses nullish (== null) and additionally requires its own modules.<region> submodule -- a legacy record with safety_flags.<region> entirely absent (undefined, not null) must not fail the strict === null check open",
+    ['neck', 'knee', 'elbow', 'wrist_hand'].every((region) =>
+      new RegExp(`safety_flags\\.${region} == null \\|\\| !payload\\.responses\\.modules\\.${region}\\) return null`).test(src),
+    ),
+  )
+  assert(
+    'resilience: ShoulderSafetyPanel additionally requires modules.neck (not just modules.shoulder) -- shoulderAdapter.ts (frozen) internally calls toNeckStateFromDoctorPayload, so computing shoulder state without modules.neck crashes inside that frozen adapter',
+    /safety_flags\.shoulder == null \|\|\s*\n\s*!payload\.responses\.modules\.shoulder \|\|\s*\n\s*!payload\.responses\.modules\.neck/.test(
+      src,
+    ),
+  )
+  assert(
+    "resilience: the LbpSafetyPanel gate additionally requires modules.lbp, not just primary_module_detail === 'LBP'",
+    /primary_module_detail !== 'LBP' \|\| !payload\.responses\.modules\.lbp\) return null/.test(src),
+  )
+  assert(
     "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
     /primaryModuleDetail === 'LBP' && m\.lbp\s*\n\s*\? \[/.test(src),
   )
@@ -1634,6 +1654,75 @@ function detailsRange(html, classMarker) {
     'resilience: SECONDARY_MODULE_VALUE lambdas optional-chain into each submodule (sm.sleep?., sm.gi?., etc.) rather than assuming it exists',
     /sleep: \(sm\) => sm\.sleep\?\.problems \?\? null/.test(src) && /weight: \(sm\) => sm\.weight\?\.goal \?\? null/.test(src),
   )
+}
+
+/* -------------------------------------------------------------------------
+ * 3rd independent review: HipSafetyPanel.tsx/TmjSafetyPanel.tsx/
+ * AnkleFootSafetyPanel.tsx are separate files (not DoctorView.tsx) with the
+ * exact same strict `safety_flags.<region> === null` gate bug -- a legacy
+ * record where that key is entirely absent (undefined, not null) reads
+ * responses.modules.<region>.* unconditionally right after.
+ * ---------------------------------------------------------------------- */
+{
+  const hipSrc = await readFile(fileURLToPath(new URL('../src/doctor/HipSafetyPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: HipSafetyPanel gate uses nullish (== null) and additionally requires modules.hip',
+    /safety_flags\.hip == null \|\| !payload\.responses\.modules\.hip\) return null/.test(hipSrc),
+  )
+
+  const tmjSrc = await readFile(fileURLToPath(new URL('../src/doctor/TmjSafetyPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: TmjSafetyPanel gate uses nullish (== null) and additionally requires modules.tmj',
+    /safety_flags\.tmj == null \|\| !payload\.responses\.modules\.tmj\) return null/.test(tmjSrc),
+  )
+
+  const ankleSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/AnkleFootSafetyPanel.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'resilience: AnkleFootSafetyPanel gate uses nullish (== null) and additionally requires modules.ankle_foot',
+    /safety_flags\.ankle_foot == null \|\| !payload\.responses\.modules\.ankle_foot\) return null/.test(ankleSrc),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * 3rd independent review: CommonSafetyBanner.tsx had 7 bare `?? []` fallbacks
+ * that stop a MISSING array field but let a wrong-typed (string/object)
+ * truthy value straight through -- `.filter()` on a string throws, and
+ * `.includes('other')` on a string silently substring-matches and FABRICATES
+ * a "기타 확인" safety item that was never actually reported (fail-open,
+ * which this batch's policy forbids more than a crash). All 7 sites must
+ * route through the file's own asArray() helper.
+ * ---------------------------------------------------------------------- */
+{
+  const bannerSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/CommonSafetyBanner.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'resilience: CommonSafetyBanner.tsx defines its own asArray() helper (Array.isArray check, not just a nullish fallback)',
+    /function asArray<T>\(value: unknown\): T\[\] \{\s*\n\s*return Array\.isArray\(value\)/.test(bannerSrc),
+  )
+  assert(
+    'resilience: no bare `?? []` array fallback remains in CommonSafetyBanner.tsx (all routed through asArray())',
+    !/\?\? \[\]/.test(bannerSrc),
+  )
+  const mustUseAsArray = [
+    'r.medical_history.medical_history_flags',
+    'r.secondary_concerns.secondary_concerns',
+    'r.modules.sleep?.awakening_reasons',
+    'r.modules.women?.problems',
+    'r.modules.pregnancy?.concerns',
+    'r.modules.postpartum?.problems',
+    'r.safety_flags.red_flag_general',
+  ]
+  for (const field of mustUseAsArray) {
+    assert(
+      `resilience: CommonSafetyBanner.tsx reads ${field} through asArray()`,
+      bannerSrc.includes(`asArray<string>(${field})`),
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------

@@ -15,6 +15,17 @@ import type { DoctorPayload } from './types'
 
 type Responses = DoctorPayload['responses']
 
+/**
+ * 레거시/손상된 제출은 배열이어야 할 필드가 문자열/객체 등 다른 타입으로
+ * 저장돼 있을 수 있다 -- nullish 병합만으로는 안 막힌다(값 자체가 존재하고
+ * truthy면 그대로 통과한다), 그리고 문자열이면 `.includes()`가 던지지 않고
+ * 부분 문자열 매치로 사실을 지어낼 수도 있다. 배열이 아니면 무조건 빈
+ * 배열로 취급한다.
+ */
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
 function safetyGlanceItems(
   r: Responses,
   flags: DoctorPayload['flags'],
@@ -31,7 +42,7 @@ function safetyGlanceItems(
     })
   }
 
-  const historyFlags = ((r.medical_history.medical_history_flags as string[] | null) ?? []).filter(
+  const historyFlags = asArray<string>(r.medical_history.medical_history_flags).filter(
     (v) => v !== 'none',
   )
   if (historyFlags.length > 0) {
@@ -107,21 +118,21 @@ function safetyGlanceItems(
   // 배지를 만들면 노란 배지가 난립한다(§21).
   const otherDetailFlags: string[] = []
   if (r.visit_goal.primary_symptom === 'other') otherDetailFlags.push('기타 주호소')
-  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
+  if (asArray<string>(r.secondary_concerns.secondary_concerns).includes('other')) {
     otherDetailFlags.push('기타 동반증상')
   }
-  if (((r.modules.sleep?.awakening_reasons as string[] | null) ?? []).includes('other')) {
+  if (asArray<string>(r.modules.sleep?.awakening_reasons).includes('other')) {
     otherDetailFlags.push('기타 수면 원인')
   }
   if (r.modules.pain?.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
   if (r.modules.pain?.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
-  if (((r.modules.women?.problems as string[] | null) ?? []).includes('other')) {
+  if (asArray<string>(r.modules.women?.problems).includes('other')) {
     otherDetailFlags.push('기타 여성 건강 상담')
   }
-  if (((r.modules.pregnancy?.concerns as string[] | null) ?? []).includes('other')) {
+  if (asArray<string>(r.modules.pregnancy?.concerns).includes('other')) {
     otherDetailFlags.push('기타 임신 상담')
   }
-  if (((r.modules.postpartum?.problems as string[] | null) ?? []).includes('other')) {
+  if (asArray<string>(r.modules.postpartum?.problems).includes('other')) {
     otherDetailFlags.push('기타 산후 상담')
   }
   if (otherDetailFlags.length > 0) {
@@ -166,7 +177,7 @@ export function CommonSafetyBanner({ payload }: { payload: DoctorPayload }) {
 
   const generalFlagLabels = optionLabels(
     'SAFETY_01',
-    ((r.safety_flags.red_flag_general as string[] | null) ?? []).filter((v) => v !== 'none'),
+    asArray<string>(r.safety_flags.red_flag_general).filter((v) => v !== 'none'),
   )
 
   return (

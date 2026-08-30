@@ -67,6 +67,41 @@ test('exactly 7 scenarios exist (pain x3, herbal x3, mixed x1)', () => {
   assert.equal(WORKSPACE_SCENARIOS.filter((s) => s.kind === 'mixed').length, 1)
 })
 
+/* -------------------------------------------------------------------------
+ * Malformed/legacy submission resilience batch, 3rd independent review:
+ * every regional SafetyPanel (Neck/Shoulder/Knee/Elbow/WristHand/Hip/Tmj/
+ * AnkleFoot/Lbp) gates on `safety_flags.<region> === null` (or, for Lbp,
+ * `primary_module_detail !== 'LBP'`) and then reads
+ * `responses.modules.<region>.*` unconditionally. A legacy submission
+ * recorded before that region module existed has `safety_flags` present
+ * but WITHOUT that key -- `undefined === null` is false, so the strict
+ * gate does not fire, and the panel crashes reading the missing module.
+ * This single loop (one region namespace deleted at a time, across every
+ * real scenario) is what the review said would have caught the whole
+ * class instead of testing named instances one at a time -- it replaces
+ * chasing individual panels with a general "delete this namespace, must
+ * not throw" property.
+ * ---------------------------------------------------------------------- */
+{
+  const REGIONS = ['neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'hip', 'tmj', 'ankle_foot', 'lbp']
+  for (const s of WORKSPACE_SCENARIOS) {
+    for (const region of REGIONS) {
+      test(`scenario "${s.label}" (${s.kind}) with safety_flags.${region} AND modules.${region} both deleted does not throw`, () => {
+        const mutated = structuredClone(s.payload)
+        delete mutated.responses.safety_flags[region]
+        delete mutated.responses.modules[region]
+        let threw = false
+        try {
+          renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: s.synthetic }))
+        } catch {
+          threw = true
+        }
+        assert.equal(threw, false)
+      })
+    }
+  }
+}
+
 // ---------- 2. profile isolation ----------
 test('pain scenario 1: no Myungri/명리, no birth-time, no herbal-only systemic content', () => {
   const html = render(PAIN_SCENARIO_1)

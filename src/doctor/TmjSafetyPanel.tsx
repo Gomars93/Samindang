@@ -23,7 +23,7 @@ const STATUS_LABEL = {
  * import + render change, matching AnkleFootSafetyPanel.tsx's precedent.
  */
 export function TmjSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.tmj === null) return null
+  if (payload.responses.safety_flags.tmj == null || !payload.responses.modules.tmj) return null
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toTmjStateFromDoctorPayload(payload.responses, payload.flags.general_red, age)

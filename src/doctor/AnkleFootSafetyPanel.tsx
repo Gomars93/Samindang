@@ -19,7 +19,7 @@ const STATUS_LABEL = {
  * import + render change after this component has independently type-checked.
  */
 export function AnkleFootSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.ankle_foot === null) return null
+  if (payload.responses.safety_flags.ankle_foot == null || !payload.responses.modules.ankle_foot) return null
 
   const state = toAnkleFootStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeAnkleFootFlags(state)

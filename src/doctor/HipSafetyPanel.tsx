@@ -25,7 +25,7 @@ const STATUS_LABEL = {
  * import + render change.
  */
 export function HipSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.hip === null) return null
+  if (payload.responses.safety_flags.hip == null || !payload.responses.modules.hip) return null
 
   const state = toHipStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeHipFlags(state)

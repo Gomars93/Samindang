@@ -5383,15 +5383,86 @@ FAIL 0건), `npm run build`/`build:preview` clean, `tablet core`
 pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
 src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 
-**다음 단계**: 이번 수정 커밋을 push하고, 3차(closing) 독립
-`model:opus` 리뷰를 새로 호출한다. 이번에는 DoctorView.tsx/
-CommonSafetyBanner.tsx뿐 아니라 `src/doctor/workspace/*.tsx` 전체를
-같은 기준(자기 렌더 본문의 무조건적 leaf 역참조)으로 훑어달라고
-명시적으로 요청 — 1차/2차 리뷰 모두 이 디렉터리를 보지 않았고, 이번
-라운드에서 실사용 재현으로 그 안에서 2건을 더 찾았기 때문이다. 3차
-리뷰가 CLEAN이면 PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO
-NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상
-사용자(Product Owner).
+**3차 독립 `model:opus` closing 리뷰** (진짜 subagent 호출, 커밋
+`eec8308` 대상, `src/doctor/workspace/*.tsx` 전체를 명시적으로
+훑어달라고 요청): **NOT CLOSABLE 판정, 또 새 HIGH 발견** —
+`src/doctor/workspace/`는 이번엔 실제로 전부 훑었고(디렉터리의 모든
+파일을 체크리스트로 나열해 각각의 결과를 보고함) 그 안에서는 문제
+없음(2차에서 고친 두 사이트가 정확했고 그 외엔 클린)을 확인했지만,
+정작 놓친 건 `src/doctor/DoctorView.tsx`/`HipSafetyPanel.tsx`/
+`TmjSafetyPanel.tsx`/`AnkleFootSafetyPanel.tsx` 자체에 있던 9개
+지역별 SafetyPanel(Neck/Shoulder/Knee/Elbow/WristHand/Hip/Tmj/
+AnkleFoot/Lbp)의 게이트였다 — 전부 `safety_flags.<region> === null`
+(엄격한 `===`)로 게이트하고 있었는데, "그 지역 모듈이 아예 존재하기
+전에 만들어진 레거시 레코드"는 `safety_flags`에 그 키 자체가 없다
+(`undefined`), `undefined === null`은 false라서 게이트가 열리지
+않고 그대로 `responses.modules.<region>.*`을 무조건 읽어 던진다.
+434/434 hollow 케이스로 직접 실행 재현, 8/8 지역에서 확인. Boundary가
+잡긴 하지만(각 패널이 실제로 분리된 컴포넌트), 그 결과 안전 flag
+전체를 포함한 임상 화면 전체가 fallback 뒤로 숨어버려 2차 리뷰가
+`CommonSafetyBanner`에 대해 지적한 것과 동일한(오히려 더 넓은) 문제.
+추가로 HIGH 1건 더: `CommonSafetyBanner.tsx`의 `asArray` 스윕이 그
+파일 경계에서 멈췄었다 — `asArray`가 `DoctorView.tsx`의 모듈 전용
+함수라 애초에 `CommonSafetyBanner.tsx`에서 참조할 수 없었고, 그
+파일엔 여전히 7곳의 bare `?? []`가 남아 있었다(`.filter is not a
+function`으로 직접 재현). 게다가 그중 `.includes('other')`를 쓰는
+5곳은 wrong-typed 문자열 값에 대해 **크래시가 아니라 부분 문자열
+매치로 실제로 없던 "기타 확인" 안전 항목을 지어내는** fail-open
+버그였다(`'another_reason'.includes('other') === true`) — 이 배치가
+막으려는 정책(사실을 지어내지 않는다)을 크래시보다 더 직접적으로
+위반.
+
+**수정**: (1) 9개 SafetyPanel 게이트 전부 nullish(`== null`)로
+바꾸고 자기 자신의 `modules.<region>` 서브모듈 존재까지 요구하도록
+확장(Lbp는 `primary_module_detail !== 'LBP'`에 `|| !modules.lbp`
+추가). 그 과정에서 **직접 실행 재검증으로 리뷰도 못 본 문제를 하나
+더 찾았다** — `shoulderAdapter.ts`(frozen)가 내부적으로
+`neckAdapter.ts`의 `toNeckStateFromDoctorPayload`를 그대로 호출한다
+(어깨/목이 `neck_shoulder` population을 공유하는 설계, SH01-05가
+NS01 태그와 무관하게 항상 응답되어 있다는 기존 주석대로) — 그래서
+`ShoulderSafetyPanel`은 `modules.shoulder`뿐 아니라 `modules.neck`도
+있어야 안전하다. `modules.neck`만 지워도 `ShoulderSafetyPanel`이
+크래시함을 직접 실행으로 재현 후, 게이트에 `|| !modules.neck` 추가.
+(2) `CommonSafetyBanner.tsx`에 자체 `asArray` 헬퍼를 새로 만들고(파일
+간 임포트 대신 이 파일 안에서 독립적으로 정의 — 이미 `Responses` 타입
+alias도 두 파일에 각각 정의돼 있는 이 코드베이스의 기존 관례와 동일)
+7곳 전부 교체. (3) 테스트: `tests/doctor-workspace.spec.mjs`에 리뷰가
+제안한 정확히 그 형태의 일반 테스트 추가 — 7개 실제 시나리오 ×
+9개 지역, 각각 `safety_flags.<region>`과 `modules.<region>`을 함께
+지운 채로 `DoctorWorkspace`를 렌더링해서 던지지 않는지 확인하는
+63개 조합 루프(개별 사이트를 하나씩 쫓는 대신 "이 클래스 전체"를
+검증) — 이 루프가 실제로 `ShoulderSafetyPanel`의 새 크로스-어댑터
+버그를 처음 잡아냈다(고쳤다고 생각했던 게이트가 여전히 부족했음을
+증명). `HipSafetyPanel.tsx`/`TmjSafetyPanel.tsx`/
+`AnkleFootSafetyPanel.tsx`(별도 파일)의 게이트와 `CommonSafetyBanner.tsx`의
+`asArray` 사용을 각각 소스 정규식으로 검증. `menopauseSleepSummaryLines`
+(2차에서 고쳤지만 그동안 테스트 커버리지가 없었던 것을 3차 리뷰가
+지적) 자체 가드에 대한 정규식도 추가. `npm run test:doctor` 816/816
+(+16), `npm run test:doctor-workspace` 120/120(+63).
+
+**실사용 재검증**: 워크스페이스 시나리오 중 하나("어깨 통증(불확실/재검
+필요)")를 실제 서버에 `modules.neck`+`safety_flags.neck`을 지운 채로
+POST하고 Doctor UI를 Playwright로 열어 확인 — 수정 전: 크래시 →
+`DoctorRecordErrorBoundary`가 잡아 fallback, 수정 후: **정상 임상
+화면이 그대로 렌더**되고 어깨 안전 패널만 조용히 생략됨(사실을
+지어내지 않고 "정보 없음"으로 fail-closed), page error 0건.
+스크린샷으로 육안 확인 완료.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 4차(closing) 독립
+`model:opus` 리뷰를 새로 호출한다. 세 라운드 연속으로 "같은 클래스의
+자매 코드를 놓친다"는 패턴이 반복됐으므로, 이번엔 "레거시 서브모듈
+누락"류가 아닌 다른 각도(예: 여러 지역이 동시에 primary인 조합,
+`primary_module_detail`과 `primary_location`이 실제로 어긋나는
+케이스, 페이로드 크기/깊이 등 이 배치가 원래 요구했던 5번
+항목-보안/pathological shape-의 재검토)까지 포함해 훑어달라고
+요청한다. 4차 리뷰가 CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절

@@ -387,7 +387,7 @@ export function LbpSafetyPanel({
   payload: DoctorPayload
   lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
 }) {
-  if (payload.routing.primary_module_detail !== 'LBP') return null
+  if (payload.routing.primary_module_detail !== 'LBP' || !payload.responses.modules.lbp) return null
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
@@ -573,7 +573,7 @@ function suggestedNeckExamCodes(
  * JudgmentPanel에 대응 필드를 추가하지 않았다.
  */
 export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.neck === null) return null
+  if (payload.responses.safety_flags.neck == null || !payload.responses.modules.neck) return null
 
   const state = toNeckStateFromDoctorPayload(payload.responses)
   const flags = computeNeckFlags(state)
@@ -718,7 +718,17 @@ export function ShoulderSafetyPanel({
   payload: DoctorPayload
   shoulderObjectiveCuffWeakness: ClinicianJudgment['shoulder_objective_cuff_weakness']
 }) {
-  if (payload.responses.safety_flags.shoulder === null) return null
+  // shoulderAdapter.ts internally calls toNeckStateFromDoctorPayload (shared
+  // neck_shoulder safety logic, frozen) -- computing shoulder state without
+  // modules.neck present crashes inside that frozen adapter, so this gate
+  // must require both submodules, not just modules.shoulder.
+  if (
+    payload.responses.safety_flags.shoulder == null ||
+    !payload.responses.modules.shoulder ||
+    !payload.responses.modules.neck
+  ) {
+    return null
+  }
 
   const state = toShoulderStateFromDoctorPayload(
     payload.responses,
@@ -858,7 +868,7 @@ function suggestedKneeExamCodes(
  * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.knee === null) return null
+  if (payload.responses.safety_flags.knee == null || !payload.responses.modules.knee) return null
 
   const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeKneeFlags(state)
@@ -997,7 +1007,7 @@ function suggestedElbowExamCodes(
  * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.elbow === null) return null
+  if (payload.responses.safety_flags.elbow == null || !payload.responses.modules.elbow) return null
 
   const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeElbowFlags(state)
@@ -1146,7 +1156,7 @@ function suggestedWristHandExamCodes(
  * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.wrist_hand === null) return null
+  if (payload.responses.safety_flags.wrist_hand == null || !payload.responses.modules.wrist_hand) return null
 
   const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeWristHandFlags(state)

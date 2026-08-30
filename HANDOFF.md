@@ -5103,9 +5103,52 @@ pytest 80/80, FROZEN diff 0 lines — 전부 통과.
 **다음 단계**: push 후 3차 독립 `model:opus` 클로징 리뷰. CLEAN
 판정까지는 이 배치를 CLOSED로 선언하지 않는다.
 
+**3차 독립 `model:opus` 클로징 리뷰(완료, `97a9e8c` 대상)**: fresh
+subagent 호출(59 tool call, ~11분)로 검수. **판정: 코드 기준
+CLEAN** — HIGH/MEDIUM 0건. 리뷰어가 직접 재도출(이전 라운드 근거를
+그대로 믿지 않고): raw socket으로 URL 경로 traversal 시도(`../../`,
+`%2e%2e`, `%2f` 등) 전부 재현해 CRM 핸들러에 도달하지 않음을 확인
+(WHATWG `URL`이 `%2e` dot-segment를 디코딩 전에 정규화하고, CRM id
+세그먼트를 나중에 디코딩하는 코드가 없음을 직접 추적 — 2차 리뷰의
+"라우팅이 `/`로 split해서 안전하다"는 근거가 불완전했음을 지적하되
+결론 자체는 맞다고 독립 확인); `crmStore.*`의 client-supplied id
+사용처 24곳 전수조사(episode_id 3곳 전부 가드됨, task_id/course_id는
+항상 서버가 만든 randomUUID, source_id류는 전부 `hashDedupKey`로
+해시된 뒤에만 경로에 쓰임); regex를 null byte/CRLF/fullwidth
+solidus/RTL override/UNC 등으로 재차 adversarial 프로빙(전부 차단,
+`path.win32.join`까지 대조); `97a9e8c`를 되돌려 새 회귀 테스트가
+실제로 실패하는지 확인(1건씩 되돌려 각각 독립적으로 fail); 피커
+로직/`handleSelectEpisode` epoch guard/ownership 체크의 TOCTOU를
+다시 처음부터 추적(전부 문제 없음, `episode.patient_uuid`가
+write-once임을 근거로 TOCTOU 불가능 확인).
+
+LOW 2건(코드 아님, `HANDOFF.md` 자체의 stale 참조) — 아래 "## Current
+Branch"의 HEAD가 `5ede4ac`로 남아 있던 것과 "## Next Recommended
+Action"의 "미착수" 문구가 실제로는 이미 완료된 1~3차 리뷰와 모순된다는
+지적. CLAUDE.md의 "HANDOFF가 실제 상태와 어긋나면 발견 즉시 고친다"
+원칙에 따라 이번 갱신에서 바로 반영(아래 두 섹션). NIT 3건(URL-path id
+는 길이 제한 없음 — 이 배치 이전부터 그랬고 정보 유출 없이 500으로
+안전하게 끝남; 커밋 메시지의 안전 근거 서술이 완전하지 않음 — 코드는
+맞으나 문서가 왜 맞는지 다 설명 못 함; picker 화면에 "에피소드 만들기"
+버튼 없음 — 기존 auto-select 경로에도 없던 것과 동일, 회귀 아님) —
+전부 코드 변경 없이 기록만.
+
+**배치 판정**: 3라운드 연속 독립 `model:opus` 리뷰(1차 HIGH 2/
+MEDIUM 2/NIT 1 → 수정, 2차 HIGH 1/MEDIUM 1(재확인) → 수정, 3차
+코드 CLEAN) — 소스 결함 0건에 도달. Medication/Herbal CRM 배치의
+7라운드 사이클과 동일한 엄격도. **배치 CLOSABLE** — PR #24에 클로징
+코멘트 게시 진행. 병합 여부는 여전히 Gomars93이 직접 판단(**이
+세션은 스스로 merge/main push하지 않는다**).
+
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `5ede4ac`(코드) / HANDOFF 갱신은 이 커밋 뒤에 별도 push — 
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
+자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의
+기록이며 그대로 보존한다 — 그 뒤 Episode↔Medication association
+integrity 배치가 이어져 실제 최신 HEAD는 맨 위 절을 참고할 것
+(3차 독립 리뷰까지 CLEAN, `97a9e8c` 기준). 3차 독립 리뷰 자체가
+바로 이 줄의 HEAD 기술이 stale해진 것을 LOW로 지적 — 발견 즉시
+갱신).**
+
 Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차 검수(`bff300c` 대상)
 지적사항(`0d5464b`) + 1~7차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
 `898ccdc`/`bd8d094`/`0192384`/`5ede4ac`) — **7차에서 CLEAN 판정,
@@ -5174,13 +5217,16 @@ mutation 포함), timer/microtask pin도 정상 발화 확인(이 저장소의
 
 ## Next Recommended Action
 (위 "Episode↔Medication association integrity 배치" 섹션 기준 갱신 —
-**진행 중**, 다음 단계는 독립 `model:opus` 리뷰. Medication/Herbal
-CRM 배치는 이미 CLOSED, 재검수 대상 아님.)
--2. **다음 단계(미착수)**: 이번 배치(Episode retry-idempotency,
-   ambiguity picker, ownership check)의 신선한 독립 `model:opus`
-   리뷰를 실제로 호출 → 발견 사항 수정 → 재검수 반복(Medication/
-   Herbal CRM 배치의 사이클과 동일) → push + PR #24 코멘트.
-   완료 전까지는 이 배치를 CLOSED로 선언하지 않는다.
+1~3차 독립 `model:opus` 리뷰 전부 완료, 3차는 코드 기준 CLEAN(LOW
+2건은 HANDOFF 기록 자체의 stale 참조였고 이 갱신으로 반영됨).
+Medication/Herbal CRM 배치는 이미 CLOSED, 재검수 대상 아님.)
+-2. **완료됨**: 이번 배치(Episode retry-idempotency, ambiguity
+   picker, ownership check)의 독립 `model:opus` 리뷰 1~3차 모두
+   실제로 호출·완료(`55949f3`→`08eca1b`→`97a9e8c`, HIGH 3건·MEDIUM
+   2건 수정, 나머지는 판단 근거와 함께 기록). 3차 판정: 코드 CLEAN.
+   **다음 단계**: PR #24에 클로징 상태 코멘트 게시, 그 다음은
+   Gomars93이 검토·merge 여부 직접 판단. 이 세션은 스스로 merge하지
+   않는다.
 -1. **완료됨(Medication/Herbal CRM 배치)**: 7차 독립 `model:opus` 리뷰가 `5ede4ac`를 CLEAN으로
    판정(HIGH/MEDIUM/LOW 0건, NIT 1건은 "8차를 열 기준을 못 넘는다"고
    리뷰어 스스로 명시, 코드 변경 없이 기록만) — 소스는 4라운드 연속

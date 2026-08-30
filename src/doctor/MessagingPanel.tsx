@@ -7,14 +7,23 @@
  * hint). CLINIC_TABLET is deliberately excluded (the tablet delivers the
  * link itself, there is no phone number involved in that flow at all).
  *
+ * `link` is the SAME one-time follow-up URL DoctorView.tsx's own
+ * patientFollowUpLink() already builds for the copy-link/QR paths --
+ * passed down as a prop rather than rebuilt here so there is exactly one
+ * place that knows the URL shape. The server builds the actual message
+ * TEXT from it (server/index.js's buildRevisitMessageText) and never
+ * persists either the link or the text, for the same reason it never
+ * persists the phone number below.
+ *
  * Privacy: this server never stores a patient's full phone number
- * anywhere (see server/index.js's messagingPhoneCache comment and
+ * anywhere (see server/index.js's messagingContactCache comment and
  * patientIdentityStore.js's identity policy) -- the clinician/staff member
  * confirms it fresh from the clinic's own EMR (Sigma) each time they send
  * or retry. The typed value lives only in this component's own React
  * state for the lifetime of this screen; it is never written to
- * localStorage/sessionStorage and is discarded the moment the component
- * unmounts (e.g. navigating back to the submissions list).
+ * localStorage/sessionStorage and is reset whenever `visitId` changes
+ * (switching patients) or discarded the moment the component unmounts
+ * (e.g. navigating back to the submissions list).
  *
  * Deliberately NOT built here (matches the scaffold's own documented
  * scope): live SOLAPI credential entry, template management, or delivery
@@ -30,6 +39,7 @@ export type MessagingPanelProps = {
   visitId: string
   patientId: string
   followUpToken: string
+  link: string
 }
 
 const STATUS_LABEL: Record<MessageRecord['status'], string> = {
@@ -47,7 +57,7 @@ const CHANNEL_LABEL: Record<MessageRecord['channel'], string> = {
   LMS: 'LMS',
 }
 
-export function MessagingPanel({ visitId, patientId, followUpToken }: MessagingPanelProps) {
+export function MessagingPanel({ visitId, patientId, followUpToken, link }: MessagingPanelProps) {
   const [phone, setPhone] = useState('')
   const [messages, setMessages] = useState<MessageRecord[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -56,11 +66,15 @@ export function MessagingPanel({ visitId, patientId, followUpToken }: MessagingP
   const [pendingMessageId, setPendingMessageId] = useState<string | null>(null)
 
   // Reload whenever the visit changes (a different patient's revisit
-  // session must never show a stale list from the previously-open one).
+  // session must never show a stale list -- or a stale typed-in phone
+  // number -- from the previously-open one). Resetting `phone` here makes
+  // that isolation explicit rather than relying solely on this component
+  // happening to unmount when DoctorView clears issuedSession on switch.
   useEffect(() => {
     let cancelled = false
     setMessages(null)
     setListError(null)
+    setPhone('')
     listVisitMessages(visitId).then((result) => {
       if (cancelled) return
       if (result.ok) setMessages(result.data.messages)
@@ -88,7 +102,7 @@ export function MessagingPanel({ visitId, patientId, followUpToken }: MessagingP
     if (!trimmedPhone || sending) return
     setSending(true)
     setActionError(null)
-    queueRevisitMessage(visitId, { patientId, phone: trimmedPhone, followUpToken })
+    queueRevisitMessage(visitId, { patientId, phone: trimmedPhone, followUpToken, link })
       .then((result) => {
         if (result.ok) upsertMessage(result.data)
         else setActionError(result.error)
@@ -101,7 +115,7 @@ export function MessagingPanel({ visitId, patientId, followUpToken }: MessagingP
     if (!trimmedPhone || pendingMessageId) return
     setPendingMessageId(messageId)
     setActionError(null)
-    retryRevisitMessage(messageId, trimmedPhone)
+    retryRevisitMessage(messageId, trimmedPhone, link)
       .then((result) => {
         if (result.ok) upsertMessage(result.data)
         else setActionError(result.error)

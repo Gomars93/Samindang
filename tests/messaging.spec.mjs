@@ -209,6 +209,85 @@ async function main() {
   }
 
   /* =====================================================================
+     Part 1.5: closing-review regression coverage (two HIGH findings from
+     the independent review of the first version of this batch):
+       (a) queueRevisitMessage previously called attemptSend with
+           `{ phone, linkUrl: null, buildText: null }` while attemptSend
+           destructured `{ phone, text }` -- `text` was silently undefined
+           on every single send, so the transport never actually received
+           the follow-up link. A spy transport here inspects exactly what
+           reaches `send()`, which the mock-transport-based tests above
+           cannot do (the mock only reports ok/fail, never echoes its
+           input back).
+       (b) queueRevisitMessage's check-then-create (findByDedupKey then
+           atomicWrite) previously ran with NO lock, so two concurrent
+           calls for the same visit_id could both create a record sharing
+           one dedup_key and both send the patient a real message.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-closing-review-'))
+    try {
+      // (a) text-delivery: a spy transport that just records every call.
+      const sendCalls = []
+      const spyTransport = {
+        async send(args) {
+          sendCalls.push(args)
+          return { ok: true, providerMessageId: `spy_${sendCalls.length}`, channelUsed: args.channel }
+        },
+      }
+      const spyStore = createMessagingStore(path.join(dataRoot, 'text-delivery'), { transport: spyTransport })
+
+      const REAL_TEXT = '[삼인당한의원] 재진 확인 문진 안내\n아래 링크를 눌러 몇 가지만 답해 주세요.\nhttps://example.invalid/#follow-up=tok-text-check'
+      await spyStore.queueRevisitMessage({ visitId: 'visit-text-1', patientId: 'patient-text-1', phone: '01011112222', followUpToken: 'tok-text-check', text: REAL_TEXT })
+      assert('text-delivery: the initial queue send actually reaches the transport with the real text', sendCalls.length === 1 && sendCalls[0].text === REAL_TEXT)
+      assert('text-delivery: the transport never receives undefined for text', sendCalls[0].text !== undefined)
+
+      // Force a retryable failure to reach the manual retry path with a
+      // DIFFERENT text, confirming retryMessage's own `text` argument
+      // (not some stale cached value) is what's actually sent.
+      const failThenRetryTransport = {
+        calls: 0,
+        async send(args) {
+          failThenRetryTransport.calls += 1
+          sendCalls.push(args)
+          if (failThenRetryTransport.calls === 1) return { ok: false, errorCode: 'spy_forced_retry', retryable: true, fallbackEligible: false }
+          return { ok: true, providerMessageId: 'spy_retry_ok', channelUsed: args.channel }
+        },
+      }
+      const retryStore = createMessagingStore(path.join(dataRoot, 'text-delivery-retry'), { transport: failThenRetryTransport })
+      const qRetry = await retryStore.queueRevisitMessage({ visitId: 'visit-text-2', patientId: 'patient-text-2', phone: '01033334444', followUpToken: 'tok-text-retry', text: 'first attempt text' })
+      assert('text-delivery retry setup: first attempt failed retryable, still QUEUED', qRetry.record.status === 'QUEUED')
+      const retried = await retryStore.retryMessage(qRetry.record.message_id, { phone: '01033334444', text: 'second attempt text' })
+      assert('text-delivery: manual retry sends its OWN text argument, not the original queue call\'s', retried.status === 'SENT')
+      const retryCallTexts = sendCalls.filter((c) => c.text === 'first attempt text' || c.text === 'second attempt text').map((c) => c.text)
+      assert('text-delivery: both the original and the retried text actually reached the transport', retryCallTexts.includes('first attempt text') && retryCallTexts.includes('second attempt text'))
+
+      // (b) concurrency: two simultaneous queue calls for the SAME
+      // visit_id must produce exactly one real record and exactly one
+      // real send -- the second must be deduped, not race past the check.
+      const concurrentTransport = {
+        sends: 0,
+        async send(args) {
+          concurrentTransport.sends += 1
+          return { ok: true, providerMessageId: `concurrent_${concurrentTransport.sends}`, channelUsed: args.channel }
+        },
+      }
+      const concurrentStore = createMessagingStore(path.join(dataRoot, 'concurrency'), { transport: concurrentTransport })
+      const [c1, c2] = await Promise.all([
+        concurrentStore.queueRevisitMessage({ visitId: 'visit-concurrent-1', patientId: 'patient-concurrent-1', phone: '01055556666', followUpToken: 'tok-concurrent', text: 'concurrent text' }),
+        concurrentStore.queueRevisitMessage({ visitId: 'visit-concurrent-1', patientId: 'patient-concurrent-1', phone: '01055556666', followUpToken: 'tok-concurrent', text: 'concurrent text' }),
+      ])
+      assert('concurrency: exactly one of the two concurrent queue calls is deduped', [c1.deduped, c2.deduped].filter(Boolean).length === 1)
+      assert('concurrency: both calls resolve to the SAME message_id', c1.record.message_id === c2.record.message_id)
+      const allForVisit = await concurrentStore.listMessagesForVisit('visit-concurrent-1')
+      assert('concurrency: exactly one record exists on disk for this visit_id (not two)', allForVisit.length === 1)
+      assert('concurrency: the transport was actually invoked exactly once -- the patient was sent exactly one real message', concurrentTransport.sends === 1)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
      Part 2: HTTP boundary -- routes, auth, privacy, audit.
      ===================================================================== */
   {
@@ -228,10 +307,11 @@ async function main() {
       // Origin, exactly like tests/station.spec.mjs's own "evil Origin"
       // checks.
       const evil = { origin: 'https://evil.example.com' }
+      const LINK = 'https://example.invalid/#follow-up=http-test-token'
       const noAuth = await fetch(`${base}/api/visits/${start.visit.id}/messages`, {
         method: 'POST',
         headers: { ...evil, 'content-type': 'application/json' },
-        body: JSON.stringify({ patient_id: visit.patient_id, phone: '01055556666', follow_up_token: start.token }),
+        body: JSON.stringify({ patient_id: visit.patient_id, phone: '01055556666', follow_up_token: start.token, link: LINK }),
       })
       assert('auth: POST .../messages (evil Origin) -> 403', noAuth.status === 403)
       const noAuthList = await fetch(`${base}/api/visits/${start.visit.id}/messages`, { headers: evil })
@@ -239,28 +319,49 @@ async function main() {
 
       // Validation.
       const missingFields = await postJson(`${base}/api/visits/${start.visit.id}/messages`, { patient_id: visit.patient_id })
-      assert('validation: missing phone/follow_up_token -> 400', missingFields.status === 400)
+      assert('validation: missing phone/follow_up_token/link -> 400', missingFields.status === 400)
+      const missingLink = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+      })
+      assert('validation: missing link specifically -> 400 (this is the exact HIGH-1 closing-review regression)', missingLink.status === 400)
       const unknownPatient = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: 'not-a-real-patient-id',
         phone: '01055556666',
         follow_up_token: start.token,
+        link: LINK,
       })
       assert('validation: unknown patient_id -> 400', unknownPatient.status === 400)
+
+      // Validation: visit_id/patient_id mismatch (a real patient_id, but
+      // not the one this visit_id actually belongs to).
+      const otherPatientVisit = (await postJson(`${base}/api/visits`, {})).body
+      const mismatched = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: otherPatientVisit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: LINK,
+      })
+      assert('validation: visit_id belonging to a DIFFERENT patient_id -> 400', mismatched.status === 400)
 
       // Happy path queue + list.
       const queued = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: visit.patient_id,
         phone: '01055556666',
         follow_up_token: start.token,
+        link: LINK,
       })
       assert('queue: 201 on first queue', queued.status === 201)
       assert('queue: response has no "phone" key anywhere', !('phone' in queued.body))
+      assert('queue: response has no "link" key anywhere', !('link' in queued.body))
       assert('queue: status is SENT via the mock transport', queued.body.status === 'SENT')
 
       const dedupRes = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: visit.patient_id,
         phone: '01055556666',
         follow_up_token: start.token,
+        link: LINK,
       })
       assert('queue: a second identical queue call -> 200 (deduped), not a new 201', dedupRes.status === 200)
       assert('queue: dedup returns the same message_id', dedupRes.body.message_id === queued.body.message_id)
@@ -276,18 +377,21 @@ async function main() {
         patient_id: retryVisit.patient_id,
         phone: '01000009998',
         follow_up_token: retryStart.token,
+        link: LINK,
       })
       assert('retry-http setup: QUEUED after a transient mock failure', retryQueue.body.status === 'QUEUED')
       const retryNoAuth = await fetch(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
         method: 'POST',
         headers: { ...evil, 'content-type': 'application/json' },
-        body: JSON.stringify({ phone: '01000009998' }),
+        body: JSON.stringify({ phone: '01000009998', link: LINK }),
       })
       assert('auth: POST .../retry (evil Origin) -> 403', retryNoAuth.status === 403)
-      const retryMissingPhone = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {})
+      const retryMissingPhone = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { link: LINK })
       assert('retry-http: missing phone -> 400', retryMissingPhone.status === 400)
-      const retryOk = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998' })
-      assert('retry-http: 200 with phone supplied', retryOk.status === 200)
+      const retryMissingLink = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998' })
+      assert('retry-http: missing link -> 400', retryMissingLink.status === 400)
+      const retryOk = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998', link: LINK })
+      assert('retry-http: 200 with phone+link supplied', retryOk.status === 200)
       assert('retry-http: attempt_count incremented', retryOk.body.attempt_count === 2)
 
       const cancelRes = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/cancel`, undefined)

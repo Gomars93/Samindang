@@ -590,17 +590,19 @@ export function linkPatientIdentity(params: {
  * designed alongside its own HTTP route rather than adapted from an
  * earlier shape.
  *
- * `phone` is deliberately a required, explicit argument on every call
- * here (queue AND retry) -- this server never stores a patient's full
- * phone number anywhere (see server/index.js's messagingPhoneCache
- * comment and patientIdentityStore.js's identity policy), so the
- * clinician/staff member types it in fresh each time from the clinic's
- * own EMR (Sigma). It is sent once per request and never echoed back in
- * any response this client reads.
+ * `phone` and `link` are deliberately required, explicit arguments on
+ * every call here (queue AND retry) -- this server never stores a
+ * patient's full phone number anywhere (see server/index.js's
+ * messagingContactCache comment and patientIdentityStore.js's identity
+ * policy), and the message text is built server-side from `link` (the
+ * SAME one-time follow-up URL the copy-link/QR paths already build via
+ * DoctorView.tsx's patientFollowUpLink) rather than persisted alongside
+ * it. Both are sent once per request and never echoed back in any
+ * response this client reads.
  */
 export function queueRevisitMessage(
   visitId: string,
-  params: { patientId: string; phone: string; followUpToken: string; channel?: MessageChannel },
+  params: { patientId: string; phone: string; followUpToken: string; link: string; channel?: MessageChannel },
 ): Promise<ServerResult<MessageRecord>> {
   return request(`/api/visits/${encodeURIComponent(visitId)}/messages`, {
     method: 'POST',
@@ -608,6 +610,7 @@ export function queueRevisitMessage(
       patient_id: params.patientId,
       phone: params.phone,
       follow_up_token: params.followUpToken,
+      link: params.link,
       channel: params.channel,
     }),
   })
@@ -617,10 +620,10 @@ export function listVisitMessages(visitId: string): Promise<ServerResult<{ messa
   return request(`/api/visits/${encodeURIComponent(visitId)}/messages`)
 }
 
-export function retryRevisitMessage(messageId: string, phone: string): Promise<ServerResult<MessageRecord>> {
+export function retryRevisitMessage(messageId: string, phone: string, link: string): Promise<ServerResult<MessageRecord>> {
   return request(`/api/messages/${encodeURIComponent(messageId)}/retry`, {
     method: 'POST',
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ phone, link }),
   })
 }
 

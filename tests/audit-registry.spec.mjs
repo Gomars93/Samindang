@@ -331,10 +331,14 @@ async function main() {
       patient_id: msgVisit.patient_id,
       phone: '01000009998',
       follow_up_token: msgStart.token,
+      link: 'https://example.invalid/#follow-up=audit-test-token',
     })
     assert('workflow setup: message queue -> 201', msgQueue.status === 201)
     assert('workflow setup: message stays QUEUED after a mock transient-failure first attempt', msgQueue.body.status === 'QUEUED')
-    const msgRetry = await postJson(`${base}/api/messages/${msgQueue.body.message_id}/retry`, { phone: '01000009998' })
+    const msgRetry = await postJson(`${base}/api/messages/${msgQueue.body.message_id}/retry`, {
+      phone: '01000009998',
+      link: 'https://example.invalid/#follow-up=audit-test-token',
+    })
     assert('workflow setup: message retry -> 200', msgRetry.status === 200)
     assert('workflow setup: message still QUEUED after a second mock transient failure', msgRetry.body.status === 'QUEUED')
     const msgCancel = await postJson(`${base}/api/messages/${msgQueue.body.message_id}/cancel`, undefined)

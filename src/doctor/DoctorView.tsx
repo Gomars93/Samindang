@@ -2691,6 +2691,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                   visitId={issuedSession.visitId}
                   patientId={selectedRecord.patient_id}
                   followUpToken={issuedSession.token}
+                  link={patientFollowUpLink(issuedSession.token)}
                 />
               )}
             </div>

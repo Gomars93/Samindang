@@ -10,12 +10,15 @@
 // checkDataDirsWritable/runRetention).
 //
 // Privacy guard (the whole reason this file never takes a raw phone
-// number as a persisted field): the recipient phone number is resolved by
-// the CALLER (server/index.js's route handler, from the patient's own
-// record) and passed into queueRevisitMessage/attemptSend as a transient
-// argument only -- it is used to call the transport and then discarded. It
-// is never written to disk here, never included in the audit log (see
-// server/index.js's safeAudit calls for this feature), and never returned
+// number OR the actual message text as a persisted field): the recipient
+// phone number, and the message `text` (built from the same one-time
+// follow-up link this record's follow_up_token_hash is a hash of), are
+// resolved by the CALLER (server/index.js's route handler, from the
+// patient's own record / the doctor's own already-open session) and
+// passed into queueRevisitMessage/attemptSend/retryMessage as transient
+// arguments only -- used to call the transport and then discarded. Neither
+// is ever written to disk here, ever included in the audit log (see
+// server/index.js's safeAudit calls for this feature), or ever returned
 // in any response body this store produces. The only patient-identifying
 // field a MessageRecord itself persists is patient_id (the same opaque
 // server-minted id used everywhere else), plus a SHA-256 hash (never the
@@ -172,60 +175,86 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   }
 
   // Creates (or, if an identical logical request already exists, returns)
-  // a QUEUED message and immediately attempts the first send. `phone` is
-  // never persisted -- see the module doc comment.
-  async function queueRevisitMessage({ visitId, patientId, phone, followUpToken, primaryChannel = 'KAKAO_ALIMTALK' }) {
+  // a QUEUED message and immediately attempts the first send. `phone`/
+  // `text` are never persisted -- see the module doc comment.
+  //
+  // Closing-review finding (HIGH): the check-then-create sequence below
+  // (findByDedupKey then atomicWrite) is the only mutating path in this
+  // file that previously ran with NO lock at all -- every other operation
+  // locks by message_id, but two concurrent queueRevisitMessage calls for
+  // the SAME visit_id race each other before either message_id exists to
+  // lock on. Reproduced: two concurrent calls both saw "not found" and
+  // both created a record sharing one dedup_key, sending the patient two
+  // real messages -- exactly what dedup exists to prevent. Fixed the same
+  // way stationStore.js's own structurally identical scan-then-create
+  // (assignRevisitToStation) is fixed: lock the ENTIRE check-and-create by
+  // the dedup key itself, so a second concurrent call for the same
+  // visit_id+purpose always waits for the first to finish creating (or
+  // reusing) the record before it ever reads.
+  async function queueRevisitMessage({ visitId, patientId, phone, followUpToken, text, primaryChannel = 'KAKAO_ALIMTALK' }) {
     await ensureDirs()
     const dedupKey = deriveDedupKey(visitId, 'REVISIT_LINK')
-    const existing = await findByDedupKey(dedupKey)
-    if (existing) {
-      // Idempotent re-request: a message for this exact visit+purpose
-      // already exists. If it already reached a terminal success state or
-      // is actively in flight, hand it back unchanged rather than sending
-      // a second real message. A FAILED message is intentionally NOT
-      // silently re-queued here -- a doctor must explicitly call
-      // retryMessage() for that, so a stale double-click long after a
-      // failure was already handled some other way (e.g. staff called the
-      // patient directly) can never surprise-resend.
-      return { record: existing, deduped: true }
-    }
-    const now = new Date().toISOString()
-    const record = {
-      message_id: randomUUID(),
-      visit_id: visitId,
-      patient_id: patientId,
-      purpose: 'REVISIT_LINK',
-      follow_up_token_hash: hashToken(followUpToken),
-      channel: primaryChannel,
-      fallback_channel: null,
-      provider: 'SOLAPI',
-      provider_message_id: null,
-      status: 'QUEUED',
-      attempt_count: 0,
-      max_attempts: maxAttempts,
-      last_attempt_at: null,
-      next_retry_at: null,
-      dedup_key: dedupKey,
-      created_at: now,
-      updated_at: now,
-      version: 1,
-      error_code: null,
-    }
-    await atomicWrite(messagePath(baseDir, record.message_id), record)
-    const sent = await attemptSend(record.message_id, { phone, linkUrl: null, buildText: null })
-    return { record: sent ?? record, deduped: false }
+    return withLock(`dedup:${dedupKey}`, async () => {
+      const existing = await findByDedupKey(dedupKey)
+      if (existing) {
+        // Idempotent re-request: a message for this exact visit+purpose
+        // already exists. If it already reached a terminal success state
+        // or is actively in flight, hand it back unchanged rather than
+        // sending a second real message. A FAILED message is intentionally
+        // NOT silently re-queued here -- a doctor must explicitly call
+        // retryMessage() for that, so a stale double-click long after a
+        // failure was already handled some other way (e.g. staff called
+        // the patient directly) can never surprise-resend.
+        return { record: existing, deduped: true }
+      }
+      const now = new Date().toISOString()
+      const record = {
+        message_id: randomUUID(),
+        visit_id: visitId,
+        patient_id: patientId,
+        purpose: 'REVISIT_LINK',
+        follow_up_token_hash: hashToken(followUpToken),
+        channel: primaryChannel,
+        fallback_channel: null,
+        provider: 'SOLAPI',
+        provider_message_id: null,
+        status: 'QUEUED',
+        attempt_count: 0,
+        max_attempts: maxAttempts,
+        last_attempt_at: null,
+        next_retry_at: null,
+        dedup_key: dedupKey,
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        error_code: null,
+      }
+      await atomicWrite(messagePath(baseDir, record.message_id), record)
+      // Closing-review finding (HIGH): this used to call attemptSend with
+      // `{ phone, linkUrl: null, buildText: null }` -- attemptSend actually
+      // destructures `{ phone, text }`, so `text` was silently `undefined`
+      // on every single send, on every channel, always. The patient never
+      // received the follow-up link at all. Fixed by actually threading
+      // the caller-supplied `text` (the real message body, built by the
+      // caller from the same one-time link this record's
+      // follow_up_token_hash is a hash of -- see server/index.js's
+      // buildRevisitMessageText) through to attemptSend.
+      const sent = await attemptSend(record.message_id, { phone, text })
+      return { record: sent ?? record, deduped: false }
+    })
   }
 
   // One send attempt, with automatic same-request fallback (Alimtalk ->
-  // SMS) on a fallback-eligible failure. `phone`/`linkUrl`/`buildText` are
-  // the caller-supplied, never-persisted inputs the transport actually
-  // needs; on a later automatic retry (see runDueRetries) the caller no
-  // longer has the phone number in hand, which is why a RETRYABLE failure
-  // schedules next_retry_at instead of this function re-deriving contact
-  // details itself -- see the module doc comment on why phone numbers are
-  // never persisted. server/index.js's retry timer therefore always
-  // re-resolves the phone from the patient record immediately before
-  // calling attemptSend again, exactly like the original queue call did.
+  // SMS) on a fallback-eligible failure. `phone`/`text` are the
+  // caller-supplied, never-persisted inputs the transport actually needs;
+  // on a later automatic retry (see runDueRetries) the caller no longer
+  // has the phone number (or the one-time link `text` is built from) in
+  // hand unless it cached them, which is why a RETRYABLE failure schedules
+  // next_retry_at instead of this function re-deriving contact details
+  // itself -- see the module doc comment on why phone numbers are never
+  // persisted, and server/index.js's messagingContactCache for how the
+  // caller keeps `{phone, text}` around in-process (never on disk) for the
+  // retry sweep. Manual retryMessage() calls always re-supply both fresh.
   async function attemptSend(messageId, { phone, text }) {
     return withLock(`message:${messageId}`, async () => {
       const record = await getMessage(messageId)
@@ -246,7 +275,6 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       await atomicWrite(messagePath(baseDir, messageId), record)
 
       let result = await resolvedTransport.send({ to: phone, channel: record.channel, text })
-      let channelUsed = record.channel
 
       if (!result.ok && result.fallbackEligible && FALLBACK_CHANNEL[record.channel] && !record.fallback_channel) {
         const fallbackChannel = FALLBACK_CHANNEL[record.channel]
@@ -254,7 +282,6 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
         record.fallback_channel = fallbackChannel
         if (fallbackResult.ok) {
           result = fallbackResult
-          channelUsed = fallbackChannel
         } else {
           // Keep the ORIGINAL failure's retryability -- a fallback attempt
           // that also fails should not make an otherwise-non-retryable
@@ -287,7 +314,6 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
           record.next_retry_at = null
         }
       }
-      void channelUsed
       await atomicWrite(messagePath(baseDir, messageId), record)
       return record
     })
@@ -336,19 +362,27 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
     })
   }
 
-  // Runs every message currently due for an automatic retry. `resolvePhone`
+  // Runs every message currently due for an automatic retry. `resolveContact`
   // is supplied by the caller (server/index.js) so this store never needs
-  // to know how to look up a patient's phone number itself -- it only
-  // knows it needs one, exactly when it needs it, and never persists it.
-  // A phone-resolution failure (e.g. the patient record was deleted after
-  // retention) is treated as a terminal failure for that message rather
-  // than a crash of the whole retry sweep.
-  async function runDueRetries(resolvePhone) {
+  // to know how to look up a patient's phone number or rebuild the
+  // one-time follow-up link text itself -- it only knows it needs both,
+  // exactly when it needs them, and never persists either (see the module
+  // doc comment on why phone numbers are never persisted -- the same
+  // reasoning applies to `text`, since it is built from the same live
+  // one-time capability link this record's follow_up_token_hash is a hash
+  // of). resolveContact(patientId, visitId) returns `{ phone, text }` or a
+  // falsy value; a resolution failure (e.g. the process restarted since
+  // this was queued and the in-memory cache is now empty, or the patient
+  // record was deleted after retention) is treated as a terminal failure
+  // for that ONE message rather than a crash of the whole retry sweep --
+  // staff can always fall back to the manual retryMessage() endpoint,
+  // which takes both phone and text fresh again.
+  async function runDueRetries(resolveContact) {
     const due = await listDueForRetry()
     for (const record of due) {
       try {
-        const phone = await resolvePhone(record.patient_id)
-        if (!phone) {
+        const contact = await resolveContact(record.patient_id, record.visit_id)
+        if (!contact || !contact.phone) {
           await withLock(`message:${record.message_id}`, async () => {
             const current = await getMessage(record.message_id)
             if (!current || TERMINAL_NON_RETRY_STATUSES.has(current.status)) return
@@ -361,7 +395,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
           })
           continue
         }
-        await attemptSend(record.message_id, { phone, text: null })
+        await attemptSend(record.message_id, { phone: contact.phone, text: contact.text })
       } catch {
         // A single message's retry failing (e.g. a lock contention edge
         // case) must never abort the sweep for every other due message.

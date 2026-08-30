@@ -1890,7 +1890,12 @@ async function main() {
       const messageRes = await fetch(`${base}/api/visits/${revisitVisitId}/messages`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ patient_id: revisitPatientVisit.patient_id, phone: '01000000001', follow_up_token: revisitStart.token }),
+        body: JSON.stringify({
+          patient_id: revisitPatientVisit.patient_id,
+          phone: '01000000001',
+          follow_up_token: revisitStart.token,
+          link: 'https://example.invalid/#follow-up=purge-seed-token',
+        }),
       })
       assert('purge-full: seed Quick Revisit message queued (201)', messageRes.status === 201)
 

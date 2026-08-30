@@ -114,17 +114,29 @@ export function createApp({
   // already know it from the clinic's own EMR (Sigma) and type it in
   // explicitly at the moment they trigger a send, the same "a human bridges
   // the gap explicitly" pattern patientIdentityStore.js already uses for
-  // chart_no linking. That typed-in phone number is kept ONLY in this
-  // process-local, never-disk-written Map (patient_id -> most recently
-  // supplied phone), purely so the automatic retry sweep below can reuse it
-  // within this process's lifetime; a restart clears it, and any retry due
-  // after a restart fails closed (messagingStore.js's runDueRetries already
-  // marks it FAILED/recipient_unresolvable) rather than guessing -- staff
-  // can always fall back to the manual retry endpoint, which takes the
-  // phone number again. Mirrors this codebase's existing tolerance for
-  // restart-reset, process-local operational state (see
-  // failedPublicAttempts below).
-  const messagingPhoneCache = new Map()
+  // chart_no linking. The same reasoning applies to the message TEXT below
+  // (it embeds the same one-time follow-up link this system already treats
+  // as a live capability, never persisted as plaintext anywhere else) --
+  // both are kept ONLY in this process-local, never-disk-written Map,
+  // keyed by visit_id (not patient_id: a patient can have more than one
+  // revisit in flight, and visit_id is exactly the granularity
+  // messagingStore.js's own dedup_key already uses), purely so the
+  // automatic retry sweep below can reuse them within this process's
+  // lifetime. A restart clears the cache, and any retry due after a
+  // restart fails closed (messagingStore.js's runDueRetries already marks
+  // it FAILED/recipient_unresolvable) rather than guessing -- staff can
+  // always fall back to the manual retry endpoint, which takes both fresh
+  // again. Mirrors this codebase's existing tolerance for restart-reset,
+  // process-local operational state (see failedPublicAttempts below).
+  const messagingContactCache = new Map()
+  // Owns the exact wording sent to the patient -- a single source of
+  // truth server-side, so the client only ever supplies the raw link URL
+  // (which it already builds identically for the copy-link/QR paths, see
+  // DoctorView.tsx's patientFollowUpLink) rather than arbitrary free text.
+  // No clinical content, no PHI -- purely operational copy.
+  function buildRevisitMessageText(link) {
+    return `[삼인당한의원] 재진 확인 문진 안내\n아래 링크를 눌러 몇 가지만 답해 주세요.\n${link}`
+  }
   function mapMessagingError(err) {
     if (err instanceof MessagingConflictError) return { status: 409, error: err.message }
     if (err instanceof MessagingNotFoundError) return { status: 404, error: 'not found' }
@@ -202,15 +214,15 @@ export function createApp({
   // re-attempts them. Runs far more often than runRetention (see the
   // shorter interval at the bottom of this file) because a patient waiting
   // on a revisit link cares about minutes, not the multi-day cadence
-  // ordinary submission retention runs on. resolvePhone reads only the
-  // process-local messagingPhoneCache (see its declaration above) -- never
-  // any persisted store -- so a message due for retry after this process
-  // restarted simply has no cached phone and is marked
-  // FAILED/recipient_unresolvable by messagingStore.js itself, never a
-  // crash here.
+  // ordinary submission retention runs on. The resolveContact callback
+  // reads only the process-local messagingContactCache (see its
+  // declaration above) -- never any persisted store -- so a message due
+  // for retry after this process restarted simply has no cached
+  // phone/text and is marked FAILED/recipient_unresolvable by
+  // messagingStore.js itself, never a crash here.
   async function runMessageRetries() {
     try {
-      const count = await messagingStore.runDueRetries(async (patientId) => messagingPhoneCache.get(patientId) ?? null)
+      const count = await messagingStore.runDueRetries(async (_patientId, visitId) => messagingContactCache.get(visitId) ?? null)
       if (count > 0) {
         console.log(`${new Date().toISOString()} messaging: swept ${count} due retry attempt(s)`)
       }
@@ -673,11 +685,11 @@ export function createApp({
           )
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 4 && parts[3] === 'messages' && req.method === 'POST') {
-        // Quick Revisit 발송: 이미 발급된 follow-up 토큰을 SOLAPI(알림톡 우선,
+        // Quick Revisit 발송: 이미 발급된 follow-up 링크를 SOLAPI(알림톡 우선,
         // SMS/LMS 폴백)로 환자에게 전달한다. phone은 staff/doctor가 지금 막
         // Sigma 등 기존 EMR에서 직접 확인해 입력한 값 -- 이 서버는 전화번호를
-        // 저장/조회하는 소스가 아니다(위 messagingPhoneCache 선언부 주석,
-        // patientIdentityStore.js 헤더 참고). visit_id/patient_id/token은
+        // 저장/조회하는 소스가 아니다(위 messagingContactCache 선언부 주석,
+        // patientIdentityStore.js 헤더 참고). visit_id/patient_id/token/link은
         // start-revisit(위)가 방금 돌려준 값을 그대로 넘기는 것이 정상 흐름.
         const visitId = parts[2]
         if (!requireDoctor(req)) {
@@ -688,30 +700,42 @@ export function createApp({
           const patientId = typeof body?.patient_id === 'string' ? body.patient_id : ''
           const phone = typeof body?.phone === 'string' ? body.phone.trim() : ''
           const followUpToken = typeof body?.follow_up_token === 'string' ? body.follow_up_token : ''
+          const link = typeof body?.link === 'string' ? body.link.trim() : ''
           const primaryChannel = body?.channel === 'SMS' || body?.channel === 'LMS' ? body.channel : 'KAKAO_ALIMTALK'
-          if (!patientId || !phone || !followUpToken) {
+          const visitRecord = await store.getVisit(visitId)
+          if (!patientId || !phone || !followUpToken || !link) {
             status = 400
-            bytes = sendJson(req, res, 400, { error: 'patient_id, phone, follow_up_token are all required' }, cors)
+            bytes = sendJson(req, res, 400, { error: 'patient_id, phone, follow_up_token, link are all required' }, cors)
           } else if (!(await store.visitExistsForPatient(patientId))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
+          } else if (!visitRecord || visitRecord.patient_id !== patientId) {
+            // Closing-review finding (MEDIUM): visitExistsForPatient above
+            // only proves patient_id has SOME visit, not that THIS visit_id
+            // belongs to it -- a mismatched pair would corrupt the audit
+            // trail and the contact cache's visit_id keying below.
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'visit_id does not belong to patient_id' }, cors)
           } else {
-            messagingPhoneCache.set(patientId, phone)
+            const text = buildRevisitMessageText(link)
+            messagingContactCache.set(visitId, { phone, text })
             const { record, deduped } = await messagingStore.queueRevisitMessage({
               visitId,
               patientId,
               phone,
               followUpToken,
+              text,
               primaryChannel,
             })
             status = deduped ? 200 : 201
             if (!deduped) {
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_QUEUED, visit_id: visitId, actor: AUDIT_ACTORS.DOCTOR })
             }
-            // provider_message_id/error_code are safe (never echo phone or
-            // provider raw response) -- see messagingStore.js's own field
-            // docs. Never returns the phone number back to the client; the
-            // caller already has it (they just typed it).
+            // provider_message_id/error_code are safe (never echo phone,
+            // link, or provider raw response) -- see messagingStore.js's
+            // own field docs. Never returns the phone number or link back
+            // to the client; the caller already has both (they just typed
+            // the phone in, and already built the link themselves).
             bytes = sendJson(req, res, status, record, cors)
           }
         }
@@ -728,9 +752,10 @@ export function createApp({
         }
       } else if (parts[0] === 'api' && parts[1] === 'messages' && parts.length === 4 && parts[3] === 'retry' && req.method === 'POST') {
         // Doctor-triggered manual retry of a FAILED (or still-QUEUED but not
-        // yet due) message -- phone must be supplied again, same reasoning
-        // as queueRevisitMessage above (never persisted, staff re-confirms
-        // it from the EMR at the moment of the retry).
+        // yet due) message -- phone AND link must both be supplied again,
+        // same reasoning as queueRevisitMessage above (neither is
+        // persisted; staff re-confirms the phone from the EMR, and the
+        // link is still visible in the same open DoctorView session).
         id = parts[2]
         if (!requireDoctor(req)) {
           status = 403
@@ -738,14 +763,16 @@ export function createApp({
         } else {
           const body = await readBody(req)
           const phone = typeof body?.phone === 'string' ? body.phone.trim() : ''
-          if (!phone) {
+          const link = typeof body?.link === 'string' ? body.link.trim() : ''
+          if (!phone || !link) {
             status = 400
-            bytes = sendJson(req, res, 400, { error: 'phone is required' }, cors)
+            bytes = sendJson(req, res, 400, { error: 'phone and link are both required' }, cors)
           } else {
             try {
+              const text = buildRevisitMessageText(link)
               const existing = await messagingStore.getMessage(id)
-              if (existing) messagingPhoneCache.set(existing.patient_id, phone)
-              const record = await messagingStore.retryMessage(id, { phone, text: null })
+              if (existing) messagingContactCache.set(existing.visit_id, { phone, text })
+              const record = await messagingStore.retryMessage(id, { phone, text })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
               bytes = sendJson(req, res, 200, record, cors)
             } catch (err) {

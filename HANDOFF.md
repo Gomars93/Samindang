@@ -4615,14 +4615,60 @@ test:all`(exit 0, 전체 통과), `npm run build`/`build:preview` clean,
 patient A→B race QA 2-시나리오 전부 PASS(위 참고) — 전부 통과. push
 완료. Clinical CRM v0.3.1 CLOSED, Test 0 PENDING, Care Gap suppression
 OFF, identity policy·BizM PENDING_CONTRACT 등 기존 정책 변경 없음.
-독립 `model:opus` 클로징 리뷰는 이 커밋에 대해 아직 미실시(다음 단계).
+**1차 독립 `model:opus` 클로징 리뷰(완료, `0d5464b` 대상) + 수정(`d8e66d7`)**:
+실제 fresh subagent 호출(약 109k 토큰, 20 tool call, ~5분)로 `0d5464b`
+검수 — 세 가지 claim 전부 실제 코드 추적으로 검증(TOCTOU 우려 없음:
+`createMedicationCourseCheckTaskStored`의 pre-check와 최종
+`createTaskStored`가 같은 `medication-course:<id>` 락 안에서 원자적으로
+실행됨 확인, non-array 거부는 모든 입력 형태 표로 검증). **판정: NOT
+CLEAN** — MEDIUM 1건, LOW 2건, NIT 3건. 스코프 밖 변경 없음, FROZEN
+zero-diff 확인.
+
+1. **MEDIUM (수정)**: load-epoch effect의 상태 리셋 블록이 `busy`를
+   리셋하지 않음 — 모든 `.finally()`의 `setBusy(false)`가 epoch-guard로
+   막힌 지금, 이전 환자에서 아직 진행 중이던 mutating action이 응답을
+   받아도(guard가 막아서) 새 환자의 `busy`를 절대 못 지움 →
+   `DoctorView.tsx`의 `key={patient_id}` 리마운트가 없다면(바로 이
+   가드가 "그 안전망이 약해져도" 방어하겠다고 명시한 시나리오) 새
+   환자에서 모든 액션 버튼이 영구적으로 disabled됨. **수정**: effect의
+   리셋 블록에 `setBusy(false)` 한 줄 추가(4개 `.finally()` guard는
+   건드리지 않음 — 그건 정확하고 필요한 코드).
+2. **LOW (수정)**: epoch guard로 교체하면서 기존 boolean `cancelled`
+   플래그의 cleanup 함수가 통째로 사라짐 — unmount되는 인스턴스 자신의
+   in-flight promise는 자기 ref가 마지막 epoch에 고정돼 있어 모든
+   guard를 그대로 통과함(실제로는 `key=` 리마운트라 unmount 자체는
+   일어나지만, 이 가드가 존재하는 이유와 같은 종류의 결함). **수정**:
+   cleanup에서 `loadEpochRef.current += 1`로 epoch을 무효화.
+3. **NIT (수정)**: `createMedicationCourseCheckTaskStored`의 pre-check가
+   `(source_id, reason_code)`만 보고 `source_type`은 안 봄 — 이 함수가
+   만드는 task 자신, UI의 필터 둘 다 `source_type === 'MEDICATION_COURSE'`
+   를 포함하는 것과 비교해 더 느슨함(실제 충돌은 사실상 불가능하지만
+   한 토큰짜리 수정). **수정**: 조건에 `t.source_type === 'MEDICATION_COURSE'`
+   추가.
+4. 나머지 2 NIT(`due_at` 조용한 폐기는 기존 동작, `stripComments`
+   정규식 취약성)는 리뷰어 스스로 "optional polish"로 표시 — 코드
+   변경 없이 기록만.
+
+신규 `tests/medication-course-ui.spec.mjs` 3개 assertion 추가(9개로
+확장): effect가 `busy`를 리셋하는지, cleanup이 epoch을 무효화하는지,
+그리고 리뷰가 지적한 "guard 존재만으로는 위치를 증명 못 한다"는 맹점을
+닫기 위해 각 guard가 `.then((result) => {` 콜백의 첫 문장으로 anchor돼
+있는지.
+
+**검증(`d8e66d7` 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:medication-course` 57/57, `npm run test:medication-course-ui`
+9/9(신규 3개 포함), `npm run test:audit-registry` 106/106, `npm run
+test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, FROZEN diff 0 lines — 전부 통과. push 완료. 이 라운드가
+MEDIUM/LOW를 발견했으므로 오너 지시 사이클에 따라 2차 독립 클로징
+리뷰가 필요 — 다음 단계.
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `0d5464b` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
-검수(`bff300c` 대상) 지적사항 + 같은 라운드에서 발견한 두 건(non-array
-replacement_due_dates, do_not_contact dedup 충돌) 수정까지 push 완료.
-독립 `model:opus` 클로징 리뷰 대기 중.
+HEAD: `d8e66d7` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1차 독립 `model:opus`
+클로징 리뷰가 찾은 MEDIUM 1/LOW 2/NIT 1 수정(`d8e66d7`)까지 push 완료.
+2차 독립 `model:opus` 클로징 리뷰 대기 중.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4663,14 +4709,15 @@ replacement_due_dates, do_not_contact dedup 충돌) 수정까지 push 완료.
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `0d5464b` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항 + 자체 발견 2건 수정까지 완료, 독립 `model:opus` 클로징 리뷰
-대기.)
--1. **다음 단계**: `0d5464b`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (오너의 "같은 배치 안에서 Sonnet 구현 → 독립 리뷰 → 수정 → 독립
-   클로징 리뷰" 사이클 요구, 아직 이 커밋에 대해서는 미실시). 발견
-   사항이 있으면 수정 후 재검수 반복, 없으면 CLEAN 코멘트를 PR #24에
-   게시. **여전히 새 배치 시작 금지, merge/main push 금지.**
+(HEAD `d8e66d7` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항(`0d5464b`) + 1차 독립 클로징 리뷰 수정(`d8e66d7`)까지 완료,
+2차 독립 `model:opus` 클로징 리뷰 대기.)
+-1. **다음 단계**: `d8e66d7`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (1차 클로징 리뷰가 MEDIUM/LOW를 발견했으므로 오너의 "같은 배치 안에서
+   Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복" 사이클에
+   따라 재검수 필요). 발견 사항이 있으면 수정 후 재검수 반복, CLEAN이면
+   PR #24에 클로징 상태 코멘트 게시. **여전히 새 배치 시작 금지,
+   merge/main push 금지.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

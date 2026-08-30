@@ -6,9 +6,9 @@ name: Deploy Doctor Workspace Preview
 # left unset (isServerConfigured() -> false), so DoctorView.tsx can only
 # ever run in "fixtures" mode here (server mode is unreachable without a
 # configured URL). VITE_PREVIEW_MODE=true renders the on-screen preview
-# banner. It mirrors the currently-live GitHub Pages root and adds only
-# /doctor-pr/, so the main patient preview remains untouched byte-for-byte
-# (same technique pr-23-preview.yml already established on another branch).
+# banner. It mirrors the currently-live GitHub Pages root and adds both
+# /doctor-pr/ and /followup/, so the main patient preview remains untouched
+# byte-for-byte.
 
 on:
   push:
@@ -41,18 +41,28 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Build preview under /Samindang/doctor-pr/ (no server URL configured, preview banner on)
+      - name: Build Doctor Workspace under /Samindang/doctor-pr/
         run: npm run build:preview
         env:
           VITE_PREVIEW_MODE: 'true'
           VITE_SAMINDANG_SERVER_URL: ''
           VITE_PAGES_BASE_PATH: '/Samindang/doctor-pr/'
 
-      - name: Land the app directly on the Doctor Workspace (#doctor route)
+      - name: Stage doctor-pr build
+        run: mv dist dist-doctor-pr
+
+      - name: Build patient follow-up endpoint under /Samindang/followup/
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+          VITE_PAGES_BASE_PATH: '/Samindang/followup/'
+
+      - name: Inject doctor landing redirect into doctor-pr build
         run: |
           node -e "
             const fs = require('fs');
-            const p = 'dist/index.html';
+            const p = 'dist-doctor-pr/index.html';
             let html = fs.readFileSync(p, 'utf8');
             const redirect = '<script>if (!location.hash) location.hash = \"doctor\";</script>';
             html = html.replace('</head>', redirect + '</head>');
@@ -68,12 +78,19 @@ jobs:
           echo "--- mirrored root ---"
           find combined -maxdepth 2 -type f | sort | head -100
 
-      - name: Add real Doctor Workspace build under /doctor-pr/
+      - name: Add Doctor Workspace build under /doctor-pr/
         run: |
           mkdir -p combined/doctor-pr
-          cp -r dist/. combined/doctor-pr/
+          cp -r dist-doctor-pr/. combined/doctor-pr/
           echo "--- doctor preview ---"
           ls -lh combined/doctor-pr/
+
+      - name: Add patient follow-up build under /followup/
+        run: |
+          mkdir -p combined/followup
+          cp -r dist/. combined/followup/
+          echo "--- followup preview ---"
+          ls -lh combined/followup/
 
       - uses: actions/configure-pages@v5
 
@@ -84,6 +101,7 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Print preview URL
+      - name: Print preview URLs
         run: |
-          echo "Doctor Workspace preview (real build): ${{ steps.deployment.outputs.page_url }}doctor-pr/"
+          echo "Doctor Workspace: ${{ steps.deployment.outputs.page_url }}doctor-pr/"
+          echo "Patient follow-up: ${{ steps.deployment.outputs.page_url }}followup/"

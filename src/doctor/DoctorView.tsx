@@ -292,6 +292,14 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
         if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
         if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
         if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
+        // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/
+        // postpartum_1y/breastfeeding은 pregnancy_possible과 달리 다른
+        // 모듈의 정당한 override 경로가 없으므로, derived가 true인데 raw가
+        // 그 값을 포함하지 않으면 무조건 모순이다(실제 보고되지 않은
+        // 임신/수유 사실을 지어낸 것 -- 반대 방향으로도 fail-open이었다).
+        if (d.pregnant === true && !rawSet.has('pregnant')) return true
+        if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
+        if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
       }
     }
   }

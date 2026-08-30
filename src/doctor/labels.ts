@@ -11,12 +11,27 @@ export const questionById: Map<string, Question> = new Map(
   ALL_QUESTIONS.map((q) => [q.id, q]),
 )
 
+/**
+ * 10차 독립 리뷰 HIGH-1/HIGH-2/MEDIUM-2: AnswerValue 타입은
+ * `string | number | string[] | null`이라고 주장하지만, 이 값은
+ * 검증되지 않은 저장된 JSON에서 그대로 온다(레거시/손상 데이터는 이
+ * 타입을 지키지 않을 수 있다) -- 이전 구현은 그런 값도 무조건
+ * `String(value)`로 바꿔 "[object Object]" 같은 문자열을 그대로
+ * 반환했고, 이게 EMR 미리보기(클립보드로 실제 의무기록에 붙여넣는
+ * 텍스트)/환자 전달용 치료 계획/CommonSafetyBanner의 공통 위험 신호
+ * 배너(7차가 만든, flags를 못 믿을 때의 대체 안전장치 그 자체)까지
+ * 흘러들어갔다. string|number가 아니면 원문을 지어내지 않고 명시적
+ * 실패 토큰을 반환한다.
+ */
+const UNREADABLE_VALUE_LABEL = '확인 필요(값 형식 오류)'
+
 /** 질문에 options가 없으면(자유입력/숫자) 원문 그대로 반환한다. */
 export function optionLabel(
   qid: string,
-  value: string | number | null | undefined,
+  value: unknown,
 ): string {
   if (value === null || value === undefined) return ''
+  if (typeof value !== 'string' && typeof value !== 'number') return UNREADABLE_VALUE_LABEL
   const raw = String(value)
   const q = questionById.get(qid)
   const opt = q?.options?.find((o) => o.value === raw)

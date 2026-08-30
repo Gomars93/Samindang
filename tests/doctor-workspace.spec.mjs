@@ -977,6 +977,45 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(html.includes('수면장애 선별'))
     assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
   })
+
+  /* -----------------------------------------------------------------------
+   * 10th independent review HIGH-2: `generalFlagLabels` (CommonSafetyBanner.tsx)
+   * fed r.safety_flags.red_flag_general straight into optionLabels() with no
+   * element-type check -- a wrong-typed element reached the banner that
+   * round 7 built as the trustworthy fallback for when `flags` cannot be
+   * trusted ("아래는 원본 응답에서 직접 확인 가능한 공통 위험 신호"), and
+   * printed "[object Object]" as if it were a confirmed emergency signal
+   * label. Live-repro confirmed this at all 3 viewports. The fix is in
+   * src/doctor/labels.ts's optionLabel (root cause for HIGH-1/HIGH-2/
+   * MEDIUM-2 all at once): a non-string/non-number value now returns an
+   * explicit fail-closed token instead of String(value).
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner HIGH-2 (10th review): a wrong-typed (object) element in safety_flags.red_flag_general never renders "[object Object]" in the SAFETY_01 fallback banner', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.safety_flags.red_flag_general = [{ corrupted: true }]
+    mutated.flags = {}
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('안전 계산값을 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 10th independent review HIGH-1: primaryConcernLabel(r) (DoctorView.tsx)
+   * feeds a wrong-typed visit_goal.primary_symptom through answerLabel()
+   * with no type check into three destinations: the hero 주호소 metric,
+   * the EMR 미리보기 textarea (the text a clinician copies into the actual
+   * medical record), and the 환자 전달용 치료 계획 (the document handed to
+   * the patient). Live-repro confirmed "[object Object]" leaking into all
+   * three. Root-cause fixed in src/doctor/labels.ts's optionLabel.
+   * ------------------------------------------------------------------- */
+  test('PainWorkspace HIGH-1 (10th review): a wrong-typed (object) visit_goal.primary_symptom never leaks "[object Object]" into the hero metric, EMR preview, or patient care-plan preview', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.visit_goal.primary_symptom = { corrupted: true }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('EMR 미리보기') || html.includes('참고 자료'))
+    assert.ok(html.includes('확인 필요'))
+  })
 }
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

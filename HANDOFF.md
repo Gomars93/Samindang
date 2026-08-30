@@ -6148,6 +6148,130 @@ src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 10차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+10차 리뷰(커밋 `c8d12bd` 대상)는 지금까지 9번의 라운드가 거의 전부
+SafetyPanel 게이트/CommonSafetyBanner에만 집중했던 것과 달리, 실제
+`DoctorWorkspace.tsx`(9개 SafetyPanel 전체와 CommonSafetyBanner의
+유일한 production mount point)를 직접 번들해 20,420건의 leaf-path
+mutation fuzz를 돌렸다(모든 케이스가 `isDoctorPayloadShapeUsable`을
+통과하도록 제약 — 즉 게이트로 걸러지지 않는, 실제 production에
+도달 가능한 입력만). 2 HIGH + 1 MEDIUM(라이브 리프로로 확정) + 1
+MEDIUM(구조 검토, 미검증) + 1 LOW를 찾아냈다.
+
+**(HIGH-1) `primaryConcernLabel`이 wrong-typed
+`visit_goal.primary_symptom`을 EMR 미리보기(실제 의무기록 붙여넣기
+텍스트)와 환자 전달용 치료 계획(환자에게 건네는 문서)에 그대로
+흘려보낸다.** `src/doctor/labels.ts:20`의 `optionLabel`이
+`String(value)`로 무조건 변환해 "[object Object]"를 그대로
+반환했고, 이게 `answerLabel`→`primaryConcernLabel`을 거쳐 hero
+주호소 지표/EMR 텍스트영역/환자 전달 문서 3곳에 도달했다(라이브
+리프로로 확인: LBP 픽스처의 `visit_goal.primary_symptom`을
+`{corrupted:true}`로 바꿔 POST → 두 textarea 모두 "주호소: [object
+Object]" 노출).
+
+**(HIGH-2) round 7이 만든 "flags를 못 믿을 때의 대체 안전장치" 배너
+자체가 손상 데이터를 그대로 노출한다.** `CommonSafetyBanner.tsx`의
+`generalFlagLabels`가 `safety_flags.red_flag_general`의 원소
+타입을 검사하지 않고 `optionLabels`에 그대로 넘겼다 —
+`hasUnreadableSafetyField`가 8개 필드를 검증하면서도 가장
+안전critical한 이 배열의 원소 타입은 검증하지 않았던 공백. 라이브
+리프로로 확인: `red_flag_general = [{corrupted:true}]` + `flags =
+{}` → "공통 위험 신호(SAFETY_01): [object Object]"가 그대로
+노출됐다(목록 배지는 정상적으로 "⚠ 확인 필요"를 보여줬음에도).
+
+**근본 수정 (HIGH-1/HIGH-2/MEDIUM 라이브-확정 공통 원인)**:
+`src/doctor/labels.ts`의 `optionLabel`이 `string|number`가 아닌
+값에 대해 `String(value)` 대신 명시적 실패 토큰(`'확인
+필요(값 형식 오류)'`)을 반환하도록 수정. `answerLabel`/
+`optionLabels`/`Field`/`primaryConcernLabel`이 전부 이 함수를
+거치므로 17개 필드(raw-answer `Field` 표시부, 리뷰가 열거)와 3개
+싱크(hero 지표/EMR/환자 전달 문서/CommonSafetyBanner) 전부가 한
+곳에서 동시에 막힌다 — 9곳 각각을 개별 패치하는 대신 리뷰가 제안한
+근본 수정을 그대로 채택.
+
+**(MEDIUM-1, 라이브 리프로로 확정) `routing.additional_module`이
+검증되지 않은 채 JSX 자식으로 흘러들어가 React 예외를 던지고, 그
+결과가 이 카드 하나가 아니라 전체 임상 화면을 날려버린다.**
+`deriveAdditionalConcernSummary`(`additionalConcern.ts`)가 truthy
+체크만 해서 wrong-typed 객체가 `AdditionalConcernCard`의
+`{summary.detailConcernLabel ?? summary.module}`에 그대로
+전달됐고, "Objects are not valid as a React child" 예외가
+`DoctorRecordErrorBoundary`에 잡혀도 CommonSafetyBanner/9개
+SafetyPanel을 포함한 전체 레코드 뷰가 `DoctorRecordFallback`으로
+통째로 바뀐다 — 안전 데이터는 멀쩡한 레코드인데도. wrong-typed면
+"추가 문제 없음"과 동일하게 조용히 건너뛰도록 타입 검사 추가
+(이 카드는 프레젠테이션 전용이며 실제 안전 표면은 각 지역
+SafetyPanel이 그대로 담당하므로 안전정보 손실이 아니다).
+
+**(LOW-1) `isReproductiveDerivedInconsistentWithRawAnswer`가
+한쪽 방향만 검사했다.** raw가 임신/출산/수유를 주장하는데 derived가
+부정하는 경우만 모순으로 잡았고, 반대(derived가 true인데 raw가
+전혀 보고하지 않은 경우)는 "정상"으로 통과시켜 실제 보고되지 않은
+임신/수유 사실을 지어낼 수 있었다(이 배치의 핵심 원칙 #2 위반).
+pregnant/postpartum_1y/breastfeeding은 pregnancy_possible과 달리
+다른 모듈의 정당한 override 경로가 없으므로, `DoctorView.tsx`/
+`CommonSafetyBanner.tsx` 두 사본 모두에 반대 방향 검사를 추가.
+
+**리뷰가 구조 검토만으로 지적하고 라이브 검증은 하지 못한 것
+(MEDIUM-2, "suspected, unverified"로 명시)**: `PriorVisitHistoryCard.tsx`/
+`RevisitWorkspace.tsx`가 `submission.metadata`(서버가 `body.metadata
+?? null`로 검증 없이 저장)의 `primaryConcern`을 템플릿 리터럴에
+직접 보간한다 — 리뷰 스스로 "unverified"로 표시했고, 이번 라운드
+범위(라이브로 확정된 항목)에서는 다루지 않는다. 다음 라운드로
+이월.
+
+**리뷰가 명시적으로 확인한, 이번 라운드가 손대지 않아도 되는 것**:
+FROZEN 0 lines, 7-flag 재계산 공식이 실제 `coreSpec.ts`
+`computeFlags`와 40,000-샘플 differential fuzz로 완전히 일치
+(`flagFormulaMismatches=0`), reproductive-derived consistency
+check도 동일 fuzz로 false positive 0건, 6개 중복 helper 사본이
+의미상 동일(통합 리팩터 권고는 채택하지 않음 — 기존 방침 유지),
+`isDoctorPayloadShapeUsable` 게이트가 실제로 `DoctorWorkspace`/
+`CommonSafetyBanner`/9개 SafetyPanel 전부를 렌더 전에 막는다는
+9차의 주장이 콜그래프 추적으로 confirmed(`LbpSafetyPanel`류의
+`safety_flags.<region>` 미보호 지점을 손대지 않은 9차의 판단이
+옳았음), write-on-view 없음, cross-record 오염 없음,
+`listSubmissions`에 추가 boolean-coercion 구멍 없음,
+`emrSummary.ts`는 전부 clinician-typed 입력만 사용.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 `optionLabel`/
+`optionLabels`가 wrong-typed 값에 대해 "[object Object]"를 만들지
+않고 명시적 실패 토큰을 반환하는지 확인하는 테스트 3개 +
+`isUnreadableReproductiveDerived`의 반대 방향 검사(LOW-1) 직접
+단위 테스트 3개(+6, 833→839). `tests/doctor-workspace.spec.mjs`에
+CommonSafetyBanner의 red_flag_general wrong-typed 원소가 배너에
+"[object Object]"를 남기지 않는지(HIGH-2), PainWorkspace의
+primary_symptom wrong-typed가 hero/EMR/환자 전달 문서에
+"[object Object]"를 남기지 않는지(HIGH-1) 확인하는 behavioral
+테스트 2개 추가(157→159). `tests/workspace-round3.spec.mjs`에
+`deriveAdditionalConcernSummary`가 wrong-typed
+additional_module/additional_detail_concern을
+"추가 문제 없음"으로 처리하는지 확인하는 테스트 2개 추가.
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch
+포트) + Playwright로 1440×900/1024×768/834×1112 3개 뷰포트
+각각에서 (A) `visit_goal.primary_symptom` wrong-typed(HIGH-1),
+(B) `safety_flags.red_flag_general` wrong-typed 원소 +
+`flags={}`(HIGH-2), (C) `routing.additional_module`
+wrong-typed(MEDIUM-1) 레코드를 POST하고 목록에서 클릭 — (A)(B)
+"[object Object]" 노출 0건, (B)는 "안전 계산값을 읽을 수 없습니다"
+배너 정상 표시, (C)는 `DoctorRecordErrorBoundary` fallback으로
+떨어지지 않고 정상 임상 화면 유지 확인, 3개 시나리오 × 3개 뷰포트
+전부 page error 0건.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 839/839, doctor-workspace 159/159 포함), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
+origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines
+(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 11차 독립 `model:opus`
+리뷰를 새로 호출한다(특히 MEDIUM-2로 이월된 `submission.metadata`
+경로). CLEAN이면 PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO
+NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상
+사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

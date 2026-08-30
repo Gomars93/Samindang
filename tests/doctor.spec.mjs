@@ -26,6 +26,7 @@ import {
   NeckSafetyPanel,
   ShoulderSafetyPanel,
   KneeSafetyPanel,
+  isUnreadableReproductiveDerived,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -934,6 +935,30 @@ for (const f of DOCTOR_FIXTURES) {
   // correct "label" (there is nothing to translate); confirm the helper
   // doesn't crash and doesn't invent a label for those.
   assert('optionLabel falls back to raw value for free-text questions', optionLabel('ID_01', '김민준') === '김민준')
+
+  /*
+   * 10차 독립 리뷰 HIGH-1/HIGH-2/MEDIUM-2: AnswerValue의 타입
+   * (string|number|string[]|null)은 검증되지 않은 저장 JSON에서 온
+   * 값이므로 레거시/손상 데이터는 이를 지키지 않을 수 있다 -- 이전
+   * 구현은 무조건 String(value)로 바꿔 "[object Object]"를 그대로
+   * 반환했고, 이게 EMR 미리보기(실제 의무기록 붙여넣기 텍스트)/환자
+   * 전달용 치료 계획/CommonSafetyBanner의 공통 위험 신호 배너까지
+   * 흘러들어갔다(실제 라이브 리프로로 확인됨). string|number가 아니면
+   * 원문을 지어내지 않고 명시적 실패 토큰을 반환해야 한다.
+   */
+  assert(
+    'optionLabel never String()-coerces a wrong-typed (object) value into "[object Object]" (10th independent review HIGH-1/HIGH-2/MEDIUM-2)',
+    optionLabel('SAFETY_01', { corrupted: true }) !== '[object Object]' &&
+      !optionLabel('SAFETY_01', { corrupted: true }).includes('object Object'),
+  )
+  assert(
+    'optionLabel returns an explicit fail-closed token for a wrong-typed value, not a fabricated label',
+    optionLabel('SAFETY_01', { corrupted: true }).includes('확인 필요'),
+  )
+  assert(
+    'optionLabels never leaks "[object Object]" for a wrong-typed array element',
+    !optionLabels('SAFETY_01', [{ corrupted: true }]).join(',').includes('object Object'),
+  )
 }
 
 /* ---------------------------------------------------------------------
@@ -1986,6 +2011,72 @@ function detailsRange(html, classMarker) {
     assert(
       'resilience behavioral: LbpSafetyPanel renders the explicit unavailable notice (not a computed 치료 안전 status) when reproductive_status.derived is structurally valid but stale relative to a real reported pregnancy (9th independent review HIGH-2/HIGH-3)',
       html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 10th independent review LOW-1: isUnreadableReproductiveDerived's raw-vs-
+   * derived consistency check (added in round 9 for HIGH-3) was
+   * one-directional -- it only caught "raw asserts X but derived denies it".
+   * The reverse ("derived asserts X but raw never reported it") returned
+   * "consistent", so a stale derived object could FABRICATE a pregnancy/
+   * postpartum/breastfeeding fact that was never actually reported (this
+   * batch's core invariant #2: never invent a clinical fact). pregnant/
+   * postpartum_1y/breastfeeding have no legitimate cross-module override
+   * (unlike pregnancy_possible, which PREGNANCY_01==='possible' can
+   * legitimately set true even without WOMEN_SAFETY_01 asserting it), so
+   * this direction is unconditionally checked now.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture3 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture3.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived catches a derived.pregnant=true that raw never reported (10th independent review LOW-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture4 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture4.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: true,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived catches a derived.postpartum_1y=true that raw never reported',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: a genuinely consistent derived (matches raw exactly) is still accepted.
+    const lbpFixture5 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture5.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['pregnant'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does not false-positive on a genuinely consistent derived object',
+      isUnreadableReproductiveDerived(p.responses) === false,
     )
   }
 }

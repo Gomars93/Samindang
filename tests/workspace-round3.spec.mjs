@@ -221,6 +221,29 @@ function assert(name, cond) {
 
   const src = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/additionalConcern.ts', import.meta.url)), 'utf8')
   assert('additionalConcern.ts source never imports or references coreSpec routing computation (read-only projection)', !src.includes("from '../../spec/coreSpec'"))
+
+  /*
+   * 10차 독립 리뷰 MEDIUM-1: routing.additional_module/
+   * additional_detail_concern은 검증되지 않은 저장 JSON에서 그대로
+   * 오므로 레거시/손상 데이터는 string|null 타입을 지키지 않을 수
+   * 있다 -- 이전 구현은 truthy 체크만 해서 wrong-typed 객체가
+   * AdditionalConcernCard의 JSX 자식으로 흘러들어가 "Objects are not
+   * valid as a React child" 예외를 던졌고(라이브 리프로로 확인됨),
+   * DoctorRecordErrorBoundary가 이를 잡아도 이 카드 하나가 아니라
+   * CommonSafetyBanner/모든 SafetyPanel을 포함한 전체 임상 화면이
+   * fallback으로 통째로 바뀌었다.
+   */
+  const routingWithWrongTypedModule = { additional_module: { corrupted: true }, additional_detail_concern: null }
+  assert(
+    'deriveAdditionalConcernSummary treats a wrong-typed (object) additional_module as no-additional-concern rather than passing the object through to render (10th independent review MEDIUM-1)',
+    deriveAdditionalConcernSummary(routingWithWrongTypedModule) === null,
+  )
+
+  const routingWithWrongTypedDetail = { additional_module: 'NECK', additional_detail_concern: { corrupted: true } }
+  assert(
+    'deriveAdditionalConcernSummary treats a wrong-typed (object) additional_detail_concern as no-additional-concern rather than passing the object through to render',
+    deriveAdditionalConcernSummary(routingWithWrongTypedDetail) === null,
+  )
 }
 
 /* ---------------- Phase D: micro follow-up candidates/needsAttention ---------------- */

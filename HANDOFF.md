@@ -4363,16 +4363,17 @@ assertion은 실제로 `msg: text ?? BIZM_MESSAGE_TEXT` 같은 가상의 회귀�
 충족. **CLEAN.** push 완료 후 PR #24에 클로징 상태 코멘트 게시 예정.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
-응답-실패 검증 HIGH 수정(`af9ef91`) + 1차 독립 리뷰 수정(`2f83963`) +
-2차 독립 리뷰 MEDIUM 2건 수정(`13f5794`) + 3차 확인 재검수가 찾은
-사소한 주석 정정을 하나의 커밋으로 이어서 push 예정 — 최신 HEAD는 이
-커밋 직후 갱신. GitHub CI(build-and-test)가 `13f5794`에서 한 번
-실패했으나 원인은 `tests/tablet-viewport.spec.mjs`의 headless Chrome
-임시 프로필 디렉터리 정리 시점 경쟁(ENOTEMPTY, 모든 실제 assertion이
-이미 통과한 뒤 teardown에서 발생) — 이번 배치의 diff와 무관한 기존
-파일이고, 바로 다음 커밋(`44ccd74`)에서 CI가 재실행되어 자연히
-green으로 확인됨(추가 조치 불필요).
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
+HEAD: `877b1c4` — button1/응답-실패 검증 HIGH 수정(`af9ef91`) + 1차
+독립 리뷰 수정(`2f83963`) + 2차 독립 리뷰 MEDIUM 2건 수정(`13f5794`) +
+3차 확인 재검수가 찾은 사소한 주석 정정(`877b1c4`)까지 push 완료 —
+이 button1/응답-실패 수정 사이클은 **CLEAN**. GitHub CI(build-and-test)
+가 `13f5794`에서 한 번 실패했으나 원인은
+`tests/tablet-viewport.spec.mjs`의 headless Chrome 임시 프로필
+디렉터리 정리 시점 경쟁(ENOTEMPTY, 모든 실제 assertion이 이미 통과한
+뒤 teardown에서 발생) — 이번 배치의 diff와 무관한 기존 파일이고,
+바로 다음 커밋(`44ccd74`)에서 CI가 재실행되어 자연히 green으로
+확인됨(추가 조치 불필요).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

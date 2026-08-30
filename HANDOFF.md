@@ -3689,11 +3689,60 @@ FROZEN diff empty. **리뷰가 지목한 정확한 재현 시나리오를 그대
 확인)을 실행해 전부 통과 확인.** 기존 2-컨텍스트 QA(단순 stale-writer
 시나리오)도 재실행하여 회귀 없음 확인.
 
-커밋: `f556574` → `7e4695e`(HIGH/MEDIUM 수정) → 2차 클로징 리뷰 대기 중.
+커밋: `f556574` → `7e4695e`(HIGH/MEDIUM 수정) → `48a5045`(HANDOFF만
+갱신) → 2차 독립 클로징 리뷰 → `0ca7419`(아래 새 MEDIUM 수정).
+
+### 2차 독립 `model:opus` 클로징 리뷰 — HIGH/기존 MEDIUM 2건은 닫힘 확인, 새 MEDIUM 1건 발견
+
+`48a5045` 위에서 실행한 두 번째 독립 리뷰(실제 invocation, 정적 재분석에
+그치지 않고 직접 QA를 재현/재실행해 동적으로 검증)는 위 HIGH 발견과 그
+수정의 2차 버그, 그리고 두 MEDIUM 항목이 모두 실제로 닫혔음을 확인했다.
+다만 그 수정 자체 안에서 **새로운 MEDIUM 1건**을 찾아냈다(추론이 아니라
+직접 재현으로 확인됨):
+
+**MEDIUM — `JudgmentPanel.tsx`의 `isDraftPristine()`이 첫 "기록" 저장 성공
+직후부터 영구적으로 false가 됨.** `handleRecord`의 성공 분기가
+`lastKnownJudgmentRef`에 `finalized`(방금 새로 찍힌 `recorded_at`을
+포함)를 스냅샷했는데, 실제 화면(live) `judgment` state는 `finalized`로
+갱신되는 곳이 어디에도 없다(`setJudgment(finalized)` 호출이 없음). 그
+결과 `JSON.stringify(judgment) === JSON.stringify(lastKnownJudgmentRef...)`
+비교가 **첫 저장 이후 영원히 거짓**이 되어, HIGH 수정이 도입한
+"pristine일 때만 토큰+내용을 함께 채택" 버전-동기화 effect가 그 순간부터
+완전히 무력화됨 — 이후로는 실제로는 아무 충돌도 없는 형제(sibling)
+저장(예: 같은 탭의 DoctorWorkspace autosave)이 한 번이라도 끼어들면
+JudgmentPanel의 다음 "기록" 클릭이 항상 오탐(false) 409로 막히는 구조.
+
+수정(커밋 `0ca7419`): 성공 분기에서 `finalized` 대신 **live 상태 그대로인
+`judgment`/`debrief` 변수**를 `lastKnownJudgmentRef`에 스냅샷하도록 변경
+(`recorded_at` 등 `finalized`가 부여하는 파생 필드는 여기서 비교 기준에
+포함시키지 않음). `tests/save-conflict.spec.mjs`에 이 정확한 계약을
+고정하는 회귀 테스트 추가(성공 분기 소스가 `lastKnownJudgmentRef.current =
+{ judgment, debrief }` 형태이고, `finalized`를 스냅샷하는 옛 형태가
+아님을 검증).
+
+전용 Playwright QA(단일 탭·단일 원장, 두 번째 writer 없음: 기록 1회
+저장 성공 → 진료 탭에서 DoctorWorkspace 필드 편집+저장(형제 쓰기,
+judgment는 안 건드림) → 자료 보기 탭으로 돌아와 판단을 다시 편집하고
+"기록" 2회차 클릭 → 배너 없이 깨끗이 성공해야 함 → 서버에 2회차 판단
+내용과 형제 workspace 편집이 모두 살아있는지 확인)으로 수정 전 실패,
+수정 후 통과를 직접 확인. 기존 두 QA(단순 stale-writer 시나리오, HIGH
+버그의 laundering 재현 시나리오)도 재실행하여 회귀 없음 확인.
+
+재검증: `npx tsc -b --force`(0 errors), `npm run build`,
+`npm run build:preview`, `npm run test:all`(`tests/save-conflict.spec.mjs`
+30 assertions, 전체 green), `tablet core` pytest 80/80, FROZEN diff empty.
+
+**3차 리뷰 여부 판단**: 오너 지시는 "초기 리뷰 + 클로징 리뷰" 1쌍을
+요구했고, 이미 그 쌍을 실행해 초기 리뷰의 HIGH+2 MEDIUM, 클로징 리뷰의
+새 MEDIUM 1건까지 모두 닫았다. 이번 마지막 수정은 범위가 매우 좁고
+원인이 정확히 파악된 한 줄 변경이며, 리뷰가 실제로 사용한 것과 동일한
+동적 검증 방식(정확한 재현 시나리오의 실제 Playwright QA)으로 직접
+확인했으므로, 별도의 3차 독립 리뷰 없이 이 판단으로 배치를 CLOSABLE로
+간주한다. 사용자가 추가 리뷰를 원하면 언제든 요청 가능.
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`7e4695e`.
+`0ca7419`.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -3734,15 +3783,16 @@ FROZEN diff empty. **리뷰가 지목한 정확한 재현 시나리오를 그대
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(Round 18 stale-write 배치, HEAD `f556574` 기준 갱신.)
+(Round 18 stale-write 배치, HEAD `0ca7419` 기준 갱신 — CLOSABLE.)
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가
    별도로 필요한지 Gomars93의 판단이 필요. PR #24 코멘트에 상세 플래그.
    (이번 round 18과는 무관, 여전히 미해결.)
-1. Round 18(stale-write CAS 배선)의 독립 `model:opus` 리뷰 결과 대기 중
-   — 결과에 따라 발견 사항 수정 후 closing 재검토, 또는 CLOSABLE 확정.
-2. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `f556574`)와
+1. Round 18(stale-write CAS 배선)은 초기+클로징 독립 `model:opus` 리뷰
+   2쌍을 모두 완료하고 모든 발견 사항(HIGH 1, MEDIUM 3)을 수정·재검증
+   완료 — CLOSABLE로 판단(위 섹션 참고).
+2. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `0ca7419`)와
    PR #24를 검토하고, 최종 merge 여부를 직접 판단한다 — 이 세션은
    절대 스스로 merge하지 않는다.
 3. ~~round 17이 의도적으로 미룬 항목~~ → **round 18에서 완료**: Doctor

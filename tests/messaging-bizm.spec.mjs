@@ -110,8 +110,10 @@ async function main() {
      'true' + full credentials) to prove the request this file's header
      documents as owner/result-code-evidence-backed is what actually gets
      sent: a JSON ARRAY body (not a single object -- E100 InvalidJsonArray),
-     a `userid` header, and a deterministic <=20-char msgId derived from our
-     own message_id (never the raw patient-identifying token itself).
+     a `userid` header, a button1 object carrying the real one-time
+     capability URL, a link-free static message body, and a deterministic
+     <=20-char msgId derived from our own message_id (never the raw
+     patient-identifying token itself).
      ===================================================================== */
   {
     const originalFetch = globalThis.fetch
@@ -134,11 +136,11 @@ async function main() {
       const liveTransport = createBizmTransport(liveEnv)
       assert('LIVE transport: state is actually LIVE with contract-verified + full credentials', liveTransport.state === 'LIVE')
 
+      const TEST_LINK = 'https://gomars93.github.io/Samindang/followup/#follow-up=raw-one-time-token-value'
       const result1 = await liveTransport.send({
         to: '01011112222',
         channel: 'KAKAO_ALIMTALK',
-        text: 'rendered message text',
-        variables: { followup_token: 'raw-token-should-not-leak-into-msgid' },
+        link: TEST_LINK,
         messageId: 'message-id-aaa',
       })
       assert('LIVE transport: stubbed send succeeds and returns the stubbed providerMessageId', result1.ok === true && result1.providerMessageId === 'stub-provider-id-1')
@@ -158,17 +160,39 @@ async function main() {
       assert('LIVE request item: profile field carries the BIZM_SENDER_KEY value', item.profile === 'stub-sender-key')
       assert('LIVE request item: tmplId field carries the template code (round-3 corroborated field name, replacing round-1\'s tmplCode guess)', item.tmplId === 'SAMINDANG_FOLLOWUP_01')
       assert('LIVE request item: phn field carries the recipient phone', item.phn === '01011112222')
-      assert('LIVE request item: msg field carries the fully-rendered text (round-3 corroborated field name, replacing round-1\'s message guess; E106 EmptyMessage requires a real body, not just template variables)', item.msg === 'rendered message text')
-      assert('LIVE request item: variables field still carries the template-substitution payload alongside the rendered message', item.variables?.followup_token === 'raw-token-should-not-leak-into-msgid')
       assert('LIVE request item: msgId is a string of at most 20 characters (E113 InvalidMsgIdLength)', typeof item.msgId === 'string' && item.msgId.length <= 20 && item.msgId.length > 0)
+      assert('LIVE request item: NO variables field is sent at all (owner-review finding -- the auto-substitution assumption was unsupported; see header)', !('variables' in item))
 
-      // Exact expected value (not just "doesn't look like the token") --
-      // an independent review found the prior assertion here vacuous: since
-      // msgId is lowercase hex and 'raw-token' contains non-hex characters,
-      // a msgId literally derived FROM the raw token would still have
-      // passed an `!includes('raw-token')` check. Recompute the real
-      // formula (sha256(`${messageId}:${channel}`) truncated to 20 hex
-      // chars) independently here and assert equality.
+      // Owner-review finding (HIGH): the button1 object, not `variables`,
+      // is where the real one-time capability URL now lives.
+      assert('LIVE request item: button1 object is present', typeof item.button1 === 'object' && item.button1 !== null)
+      assert('LIVE request item: button1.name matches the owner-confirmed exact button label', item.button1.name === '상태 확인하기')
+      assert('LIVE request item: button1.type is the round-3-corroborated "WL" (Web Link)', item.button1.type === 'WL')
+      assert('LIVE request item: button1.url_mobile carries the REAL one-time link, verbatim', item.button1.url_mobile === TEST_LINK)
+      assert('LIVE request item: button1.url_pc carries the same link', item.button1.url_pc === TEST_LINK)
+
+      // Owner-review finding (HIGH), privacy: the raw token (embedded in
+      // TEST_LINK's #follow-up= fragment) must appear ONLY in
+      // button1.url_mobile/url_pc -- never in `msg` (a K105 template
+      // mismatch risk if the raw URL were inlined), never in `msgId`
+      // (deriveBizmMsgId only ever hashes messageId+channel), and never
+      // anywhere else in the outgoing item.
+      const RAW_TOKEN = 'raw-one-time-token-value'
+      assert('LIVE request item: msg field is BizM\'s own static, link-free text (never the caller\'s shared inline-link text)', typeof item.msg === 'string' && !item.msg.includes('http'))
+      assert('LIVE request item: the raw token does NOT appear in msg', !item.msg.includes(RAW_TOKEN))
+      assert('LIVE request item: the raw token does NOT appear in msgId', !item.msgId.includes(RAW_TOKEN))
+      const itemWithoutButton = { ...item }
+      delete itemWithoutButton.button1
+      assert(
+        'LIVE request item: the raw token does not leak anywhere else in the item outside button1',
+        !JSON.stringify(itemWithoutButton).includes(RAW_TOKEN),
+      )
+
+      // Exact expected msgId value (not just "doesn't look like the
+      // token") -- an earlier independent review found a weaker assertion
+      // here vacuous. Recompute the real formula
+      // (sha256(`${messageId}:${channel}`) truncated to 20 hex chars)
+      // independently here and assert equality.
       const expectedMsgId = createHash('sha256').update('message-id-aaa:KAKAO_ALIMTALK', 'utf8').digest('hex').slice(0, 20)
       assert('LIVE request item: msgId matches the exact documented derivation (sha256(messageId:channel), never derivable from the raw token)', item.msgId === expectedMsgId)
 
@@ -177,32 +201,31 @@ async function main() {
       // produce the SAME msgId, so BizM's own E109 DuplicatedMsgId
       // semantics (if real) can act as a second, provider-side line of
       // defense against a genuine double-send.
-      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-aaa' })
+      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', link: TEST_LINK, messageId: 'message-id-aaa' })
       const secondItem = JSON.parse(capturedRequests[1].init.body)[0]
       assert('LIVE request: msgId is deterministic -- the same (message_id, channel) produces the identical msgId on a second attempt', secondItem.msgId === item.msgId)
 
-      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-bbb' })
+      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', link: TEST_LINK, messageId: 'message-id-bbb' })
       const thirdItem = JSON.parse(capturedRequests[2].init.body)[0]
       assert('LIVE request: msgId differs for a genuinely different message_id', thirdItem.msgId !== item.msgId)
 
-      // Second-independent-review finding (LOW, test honesty): a genuine
-      // cross-channel divergence test (same message_id, KAKAO_ALIMTALK vs
-      // SMS/LMS -> different msgId) is NOT actually exercisable through
-      // this transport's public send() today -- send() refuses any
-      // non-KAKAO_ALIMTALK channel (the check above, before deriveBizmMsgId
-      // is ever reached) as bizm_channel_unverified, precisely because no
-      // SMS/LMS wire format is confirmed. So this assertion re-confirms
-      // same-channel determinism instead (a genuine, non-duplicate check --
-      // it uses a message_id already sent once above, on the SAME
-      // liveTransport instance, proving repeat sends don't drift). The
-      // actual channel-inclusion in the hash formula IS regression-tested,
-      // just not directly: the exact-formula assertion above
-      // (`sha256('message-id-aaa:KAKAO_ALIMTALK')`) would fail if a future
-      // change silently dropped `channel` from deriveBizmMsgId's input --
-      // that is the real safety net for the channel-scoping fix, until
-      // channel-scoping can be genuinely exercised once a second real
-      // channel exists.
-      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-aaa' })
+      // A genuine cross-channel divergence test (same message_id,
+      // KAKAO_ALIMTALK vs SMS/LMS -> different msgId) is NOT actually
+      // exercisable through this transport's public send() today --
+      // send() refuses any non-KAKAO_ALIMTALK channel (the check above,
+      // before deriveBizmMsgId is ever reached) as bizm_channel_unverified,
+      // precisely because no SMS/LMS wire format is confirmed. So this
+      // assertion re-confirms same-channel determinism instead (a genuine,
+      // non-duplicate check -- it uses a message_id already sent once
+      // above, on the SAME liveTransport instance, proving repeat sends
+      // don't drift). The actual channel-inclusion in the hash formula IS
+      // regression-tested, just not directly: the exact-formula assertion
+      // above (`sha256('message-id-aaa:KAKAO_ALIMTALK')`) would fail if a
+      // future change silently dropped `channel` from deriveBizmMsgId's
+      // input -- that is the real safety net for the channel-scoping fix,
+      // until channel-scoping can be genuinely exercised once a second
+      // real channel exists.
+      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', link: TEST_LINK, messageId: 'message-id-aaa' })
       const fourthItem = JSON.parse(capturedRequests[3].init.body)[0]
       assert('LIVE request: same message_id + same channel, sent again -> same msgId (repeat-send determinism, not a duplicate of the earlier check)', fourthItem.msgId === item.msgId)
 
@@ -212,9 +235,86 @@ async function main() {
       // the MessageRecord stuck in SENDING forever (only a normal return
       // value lets attemptSend record a terminal outcome). Must now fail
       // closed as an ordinary, diagnosable send failure instead.
-      const noIdResult = await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {} })
+      const noIdResult = await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', link: TEST_LINK })
       assert('LIVE request: missing messageId fails closed with a diagnosable error, never throws', noIdResult.ok === false && noIdResult.errorCode === 'bizm_missing_message_id')
       assert('LIVE request: missing messageId never reaches the network at all', capturedRequests.length === 4)
+
+      // Owner-review finding (HIGH): `link` omitted entirely -- there is no
+      // capability URL to build button1 from at all, so this must also
+      // fail closed rather than send a broken/pointless button (or crash
+      // trying to build one from `undefined`).
+      const noLinkResult = await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', messageId: 'message-id-ccc' })
+      assert('LIVE request: missing link fails closed with a diagnosable error, never throws', noLinkResult.ok === false && noLinkResult.errorCode === 'bizm_missing_link')
+      assert('LIVE request: missing link never reaches the network at all', capturedRequests.length === 4)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  }
+
+  /* =====================================================================
+     Part 2c: owner-review finding (HIGH) -- HTTP 2xx alone must never be
+     treated as success if the provider's own response body says the send
+     actually failed (BizM's result codes -- K105/K108/E1xx -- can
+     accompany a 200). Same globalThis.fetch stub pattern as Part 2b.
+     ===================================================================== */
+  {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ code: 'K108', message: 'button template mismatch' }],
+    })
+    try {
+      const liveEnv = {
+        BIZM_API_KEY: 'stub-api-key',
+        BIZM_SENDER_KEY: 'stub-sender-key',
+        BIZM_USER_ID: 'stub-user-id',
+        SAMINDANG_BIZM_CONTRACT_VERIFIED: 'true',
+      }
+      const liveTransport = createBizmTransport(liveEnv)
+      const result = await liveTransport.send({
+        to: '01011112222',
+        channel: 'KAKAO_ALIMTALK',
+        link: 'https://gomars93.github.io/Samindang/followup/#follow-up=tok',
+        messageId: 'message-id-k108',
+      })
+      assert('HTTP 200 + provider result code K108 (button mismatch) is NOT treated as success', result.ok === false)
+      assert('HTTP 200 + K108: errorCode surfaces the actual provider result code for diagnosis', result.errorCode === 'provider_result_K108')
+      assert('HTTP 200 + K108: never retryable (a template/button config error, not transient)', result.retryable === false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  }
+
+  /* =====================================================================
+     Part 2d: the same HTTP-200-with-failure-code check must not produce a
+     false positive against a real success response that merely happens to
+     carry an unrelated string field -- only a field VALUE shaped like a
+     real BizM result code (a letter followed by exactly 3 digits) is
+     treated as a failure signal.
+     ===================================================================== */
+  {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ messageId: 'real-provider-id-999', code: '0000' }],
+    })
+    try {
+      const liveEnv = {
+        BIZM_API_KEY: 'stub-api-key',
+        BIZM_SENDER_KEY: 'stub-sender-key',
+        BIZM_USER_ID: 'stub-user-id',
+        SAMINDANG_BIZM_CONTRACT_VERIFIED: 'true',
+      }
+      const liveTransport = createBizmTransport(liveEnv)
+      const result = await liveTransport.send({
+        to: '01011112222',
+        channel: 'KAKAO_ALIMTALK',
+        link: 'https://gomars93.github.io/Samindang/followup/#follow-up=tok',
+        messageId: 'message-id-success',
+      })
+      assert('a genuine success response (code "0000", 4 digits, does not match the [A-Z]\\d{3} failure pattern) is still treated as success', result.ok === true && result.providerMessageId === 'real-provider-id-999')
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -267,6 +367,7 @@ async function main() {
       }
       const store = createMessagingStore(dataRoot, { transport: spyTransport })
       const variables = { followup_token: 'raw-token-value' }
+      const link = 'https://gomars93.github.io/Samindang/followup/#follow-up=raw-token-value'
       await store.queueRevisitMessage({
         visitId: 'visit-variables-1',
         patientId: 'patient-variables-1',
@@ -274,12 +375,14 @@ async function main() {
         followUpToken: 'raw-token-value',
         text: 'fallback text',
         variables,
+        link,
       })
       assert('variables passthrough: the initial send actually receives variables.followup_token', sendCalls[0].variables?.followup_token === 'raw-token-value')
+      assert('link passthrough (owner-review finding): the initial send actually receives the raw link bizmAdapter.js needs for button1', sendCalls[0].link === link)
 
       // Force a retryable failure then manually retry with different
-      // variables, confirming retryMessage's own `variables` argument (not
-      // some stale cached value) is what's actually sent -- same pattern
+      // variables/link, confirming retryMessage's own arguments (not some
+      // stale cached value) are what's actually sent -- same pattern
       // tests/messaging.spec.mjs's Part 1.5(a) already uses for `text`.
       const failThenOk = {
         provider: 'BIZM',
@@ -298,12 +401,19 @@ async function main() {
         phone: '01011113333',
         followUpToken: 'tok-retry',
         variables: { followup_token: 'tok-retry' },
+        link: 'https://gomars93.github.io/Samindang/followup/#follow-up=tok-retry',
       })
       assert('variables passthrough (retry setup): first attempt QUEUED after the forced retryable failure', queued.record.status === 'QUEUED')
-      const retried = await retryStore.retryMessage(queued.record.message_id, { phone: '01011113333', variables: { followup_token: 'tok-retry-manual' } })
+      const retryLink = 'https://gomars93.github.io/Samindang/followup/#follow-up=tok-retry-manual'
+      const retried = await retryStore.retryMessage(queued.record.message_id, {
+        phone: '01011113333',
+        variables: { followup_token: 'tok-retry-manual' },
+        link: retryLink,
+      })
       assert('variables passthrough (retry): manual retry succeeds', retried.status === 'SENT')
       const retrySendCall = sendCalls[sendCalls.length - 1]
       assert('variables passthrough (retry): the retry call carries the manually re-supplied variables, not the original queue-time ones', retrySendCall.variables?.followup_token === 'tok-retry-manual')
+      assert('link passthrough (retry): the retry call carries the manually re-supplied link, not the original queue-time one', retrySendCall.link === retryLink)
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }

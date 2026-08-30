@@ -790,13 +790,13 @@ export function createApp({
             status = 400
             bytes = sendJson(req, res, 400, { error: 'visit_id does not belong to patient_id' }, cors)
           } else if ((await store.resolveFollowUpSession(followUpToken))?.visit_id !== visitId) {
-            // BizM-batch independent-review finding (MEDIUM): under BizM,
-            // the transport never sends `text`/`link` at all -- only
-            // `variables.followup_token` reaches the patient's phone (BizM's
-            // own template substitutes the button URL from it). Until now
-            // this route validated only `isValidFollowUpLink(link)`'s
-            // SHAPE, never that `follow_up_token` is the SAME capability
-            // actually issued for THIS visit_id -- a caller (buggy client,
+            // BizM-batch independent-review finding (MEDIUM): the actual
+            // capability delivered to the patient is derived from
+            // `follow_up_token`/`link` (BizM's button1 URL, see
+            // bizmAdapter.js's header), not just this route's own
+            // `isValidFollowUpLink(link)` SHAPE check -- until now this
+            // route never verified `follow_up_token` is the SAME capability
+            // actually issued for THIS visit_id. A caller (buggy client,
             // stale UI state, or a doctor pasting the wrong session's token)
             // could deliver visit B's live follow-up link to visit A's
             // patient while the stored MessageRecord's follow_up_token_hash
@@ -812,7 +812,7 @@ export function createApp({
           } else {
             const text = buildRevisitMessageText(link)
             const variables = { followup_token: followUpToken }
-            messagingContactCache.set(visitId, { phone, text, variables })
+            messagingContactCache.set(visitId, { phone, text, variables, link })
             const { record, deduped } = await messagingStore.queueRevisitMessage({
               visitId,
               patientId,
@@ -820,6 +820,7 @@ export function createApp({
               followUpToken,
               text,
               variables,
+              link,
               primaryChannel,
             })
             status = deduped ? 200 : 201
@@ -881,8 +882,8 @@ export function createApp({
               if (existing && (await store.resolveFollowUpSession(variables.followup_token))?.visit_id !== existing.visit_id) {
                 throw new Error('follow_up_token does not belong to this message\'s visit')
               }
-              if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables })
-              const record = await messagingStore.retryMessage(id, { phone, text, variables })
+              if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables, link })
+              const record = await messagingStore.retryMessage(id, { phone, text, variables, link })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
               if (record.status !== 'QUEUED') messagingContactCache.delete(record.visit_id)
               bytes = sendJson(req, res, 200, record, cors)

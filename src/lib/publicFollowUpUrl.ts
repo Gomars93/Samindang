@@ -5,34 +5,42 @@
  * built the one-time follow-up URL from `window.location.origin` +
  * `window.location.pathname` -- correct enough for a QR code or a copy-link
  * button opened from whatever host happens to be running DoctorView at the
- * time, but wrong for a real Kakao Alimtalk template: BizM's template
- * button URL is registered ONCE, at template-approval time, and can never
- * be silently changed by which host/sub-path a doctor's browser happens to
- * be on that day (local LAN server, a GitHub Pages preview under
- * `/doctor-pr/`, etc. -- see vite.config.ts's `base` comment for the full
- * list of hosts this app is actually deployed under).
+ * time, but wrong for a real Kakao Alimtalk template: the URL's BASE
+ * (domain + path) must stay fixed and known in advance for BizM's own
+ * template-review/approval process, independent of which host/sub-path a
+ * doctor's browser happens to be on that day (local LAN server, a GitHub
+ * Pages preview under `/doctor-pr/`, etc. -- see vite.config.ts's `base`
+ * comment for the full list of hosts this app is actually deployed under).
+ * (An earlier version of this comment additionally claimed the button URL
+ * is registered once, statically, and never sent per-request -- that
+ * specific claim turned out to be wrong; see bizmAdapter.js's header on the
+ * per-request `button1.url_mobile`/`url_pc` construction. The stable-BASE
+ * requirement this file solves is unaffected either way: BizM's template
+ * review still needs a fixed, known domain+path shape, whether the final
+ * per-send URL is built by substituting into a static template or
+ * constructed fresh in a button object each time.)
  *
  * `VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL` is the one explicit, deliberate
  * source of truth for that base -- set once, at build time, to whatever
- * host BizM's real template button URL was actually registered against
- * (see docs in bizmAdapter.js's header on the `#{followup_token}`-in-URL
- * button pattern). Every caller that needs to build or display a real
- * patient-facing follow-up link (copy-link, QR code, the Alimtalk/SMS
- * message body itself) goes through `buildPublicFollowUpLink()` here --
- * never re-derives the base itself -- so there is exactly one place that
- * knows this URL's shape, matching this codebase's existing
- * one-canonical-builder convention (see MessagingPanel.tsx's own doc
- * comment on why `link` is a prop, not rebuilt locally).
+ * host BizM's real template was actually reviewed/approved against (see
+ * bizmAdapter.js's header for the current, evidence-graded understanding of
+ * exactly how the per-send button URL reaches BizM). Every caller that
+ * needs to build or display a real patient-facing follow-up link
+ * (copy-link, QR code, the Alimtalk/SMS message body itself) goes through
+ * `buildPublicFollowUpLink()` here -- never re-derives the base itself --
+ * so there is exactly one place that knows this URL's shape, matching this
+ * codebase's existing one-canonical-builder convention (see
+ * MessagingPanel.tsx's own doc comment on why `link` is a prop, not rebuilt
+ * locally).
  *
  * Fail-closed by design: a production build (anything that is not Vite's
  * own dev server, `import.meta.env.DEV`) with the env var unset or blank
  * returns `null` rather than silently falling back to whatever host
  * happens to be serving the page -- a wrong-but-plausible-looking link is
  * worse than an honest "설정되지 않음" state, since the wrong link would
- * still LOOK like it worked right up until a patient actually taps it (or
- * BizM's already-registered template button, which points at the ORIGINAL
- * configured base regardless of what this build's `window.location` says,
- * silently diverges from what this build's copy-link/QR paths show).
+ * still LOOK like it worked right up until a patient actually taps it, and
+ * would silently diverge from whatever base BizM's own template was
+ * actually reviewed/approved against.
  * import.meta.env.DEV is Vite's own "this is the dev server" flag (true
  * only for `vite`/`npm run dev`, false for any built artifact -- see
  * vite.config.ts), so the origin+pathname fallback below can never leak

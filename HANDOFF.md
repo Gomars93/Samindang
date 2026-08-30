@@ -4150,12 +4150,79 @@ LOW/NIT 3건만 발견, 즉시 반영:
 **결론**: BizM 계약 검증 게이트 HIGH 수정은 실제 독립 `model:opus`
 리뷰 2회(호출 증거: 서로 다른 두 subagent 호출, 각각 읽기 전용으로
 diff와 코드를 직접 읽고 검증 명령을 실제 실행) 기준 CLEAN. 오너의
-3차 증거(현재 SDK corroboration)까지 전부 반영 완료.
+3차 증거(현재 SDK corroboration)까지 전부 반영 완료. 커밋 `67b9308`로
+푸시, CI/Preview green 확인 완료.
+
+## Completed — BizM button1/응답-실패 검증 HIGH 수정 (이번 세션)
+
+**배경(오너의 세 번째 독립 검수)**: 오너가 HEAD `67b9308`를 다시 직접
+검토해 새로운 HIGH를 발견 — 이 어댑터는 `msg`와 추측성
+`variables:{followup_token}` 필드를 보낼 뿐, **`button1` 객체를 전혀
+보내지 않았다.** 승인된 템플릿의 환자용 캡ability(재확인 링크)는 실제로
+버튼에 있는데, BizM가 미등록·미확인 방식으로 `variables`를 등록된
+버튼 URL에 자동 substitute한다는 근거가 전혀 없었다 — 실제 라이브
+전송이라면 K108(버튼 불일치)로 실패하거나, 최악의 경우 실제 1회용
+capability가 빠진 버튼이 그대로 전달될 위험. 오너는 새 증거(현재
+유지보수 중인 `bizm` 2.5.1 Ruby gem 문서)로 `button1: {name, type:'WL',
+url_mobile, url_pc}`를 실제로 구성해 보낸다는 것, `smsKind`/`msgSms`/
+`smsSender` provider-side SMS 필드가 존재한다는 것을 재확인 — 여전히
+"SSOT 아님"이지만 기존 `variables`-only 가정이 틀렸음을 보여주기에는
+충분하다고 판단.
+
+**수정 범위(오너 지시 그대로)**:
+1. `PENDING_CONTRACT` 게이트는 그대로 유지(변경 없음).
+2. **`link`(1회용 재확인 URL 원문)를 서버 파이프라인 전체에 새로
+   threading**: `server/index.js`의 큐/재시도 라우트 → `messagingContact
+   Cache` → `messagingStore.js`의 `queueRevisitMessage`/`attemptSend`/
+   `retryMessage`/`runDueRetries` → `resolvedTransport.send()`까지.
+   `bizmAdapter.js`의 라이브 `send()`가 이제 `link`를 받아 `button1.
+   url_mobile`/`url_pc`에 그대로 렌더링(transient, 저장/로그 없음).
+   `link` 누락 시 `bizm_missing_link`로 fail-closed(버튼 없는/깨진
+   전송보다 안 보내는 게 낫다).
+3. `variables` 필드는 라이브 요청에서 완전히 제거(미확인 자동
+   substitution 가정에 의존하지 않음). 대신 `button1`이 실제 캡ability
+   전달 경로.
+4. **메시지 본문 분리**: 기존 공유 `text`(SMS/LMS용, 링크를 인라인
+   포함)를 BizM `msg` 필드에 그대로 쓰지 않고, BizM 전용 정적·링크-없는
+   텍스트(`BIZM_MESSAGE_TEXT`)를 새로 도입 — 원문 URL은 오직
+   `button1`에만 존재해야 K105(템플릿/메시지 불일치) 위험과 raw token의
+   `msg` 유출을 동시에 피할 수 있음(정확한 승인 템플릿 문구는 여전히
+   미확인 placeholder로 명시). 신규 privacy 테스트로 raw token이
+   `button1.url_mobile/url_pc`에만 존재하고 `msg`/`msgId`/그 외 필드
+   어디에도 없음을 직접 검증.
+5. **응답 실패 코드 검사 추가**: HTTP 200이라도 응답 배열 첫 항목의
+   `code`/`result`/`resultCode`/`result_code` 값이 BizM 실제 result-code
+   모양(`[A-Z]\d{3}`, 예: K108/E1xx)과 일치하면 무조건 실패로 처리 —
+   기존에는 `providerMessageId`류 필드 존재 여부만 봤음. 정확한 SUCCESS
+   코드 값은 여전히 미확인이므로 "성공 판정"이 아니라 "실패 모양 매칭"
+   방식으로 구현(진짜 성공 응답이 이 패턴에 우연히 걸리지 않음을
+   회귀 테스트로 확인 — `code:'0000'`은 4자리라 패턴에 안 걸림).
+6. SMS/LMS 폴백은 변경 없음(여전히 미구현, `FALLBACK_CHANNEL={}`).
+7. `src/lib/publicFollowUpUrl.ts`의 헤더 주석도 "버튼 URL은 템플릿
+   승인 시점에 한 번만 등록된다"는 이제 틀린 것으로 밝혀진 가정을
+   정정(안정적 base URL 요구사항 자체는 여전히 유효 — BizM 템플릿
+   심사가 고정된 도메인+경로를 요구하는 것은 URL이 정적으로
+   substitute되든 매 요청 button1으로 구성되든 마찬가지).
+
+**테스트**: `tests/messaging-bizm.spec.mjs`에 button1 구성/필드
+검증(name/type/url_mobile/url_pc), variables 필드 완전 부재 확인,
+raw token이 button1 밖 어디에도 없음을 확인하는 privacy 테스트,
+link 누락 시 fail-closed 테스트, HTTP 200+K108 실패 코드 검사 테스트,
+진짜 성공 응답의 false-positive 없음 테스트, `messagingStore.js` 레벨의
+`link` threading(큐+수동 재시도 양쪽) 테스트 추가 — 46→67 assertion.
+`tests/messaging.spec.mjs`(SOLAPI+공유 스토어 HTTP 통합) 103/103도
+회귀 없이 그대로 통과.
+
+**검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
+67/67, `npm run test:messaging` 103/103, `npm run test:all`(exit 0),
+`npm run build`/`build:preview`, `tablet core` pytest 80/80, FROZEN
+diff 0 lines — 전부 통과. 독립 `model:opus` 리뷰 루프는 이어서 진행
+예정(오너 지시 7번 항목 재적용).
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-(아래 커밋 예정) — BizM 계약 검증 게이트 배치(PENDING_CONTRACT 게이트 +
-필드명 갱신 + 독립 리뷰 2회 CLEAN) 전체 완료.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
+HEAD: `67b9308` — 위 button1/응답-실패 검증 HIGH 수정은 아직 이 위에
+커밋되지 않은 작업 트리 상태로만 존재, 독립 리뷰 후 커밋/푸시 예정.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

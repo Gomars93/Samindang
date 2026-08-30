@@ -13,13 +13,17 @@
 // checkDataDirsWritable/runRetention).
 //
 // Privacy guard (the whole reason this file never takes a raw phone
-// number OR the actual message text as a persisted field): the recipient
-// phone number, and the message `text` (built from the same one-time
-// follow-up link this record's follow_up_token_hash is a hash of), are
-// resolved by the CALLER (server/index.js's route handler, from the
-// patient's own record / the doctor's own already-open session) and
-// passed into queueRevisitMessage/attemptSend/retryMessage as transient
-// arguments only -- used to call the transport and then discarded. Neither
+// number, the actual message text, or the raw one-time URL as a persisted
+// field): the recipient phone number, the message `text`, and the raw
+// `link` itself (all built from/derived from the same one-time follow-up
+// capability this record's follow_up_token_hash is a hash of -- `link` is
+// threaded separately from `text` so each provider adapter can decide for
+// itself where the URL belongs in its own wire format, see bizmAdapter.js's
+// button1 construction) are resolved by the CALLER (server/index.js's
+// route handler, from the patient's own record / the doctor's own
+// already-open session) and passed into
+// queueRevisitMessage/attemptSend/retryMessage as transient arguments
+// only -- used to call the transport and then discarded. None of the three
 // is ever written to disk here, ever included in the audit log (see
 // server/index.js's safeAudit calls for this feature), or ever returned
 // in any response body this store produces. The only patient-identifying
@@ -194,7 +198,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // the dedup key itself, so a second concurrent call for the same
   // visit_id+purpose always waits for the first to finish creating (or
   // reusing) the record before it ever reads.
-  async function queueRevisitMessage({ visitId, patientId, phone, followUpToken, text, variables, primaryChannel = 'KAKAO_ALIMTALK' }) {
+  async function queueRevisitMessage({ visitId, patientId, phone, followUpToken, text, variables, link, primaryChannel = 'KAKAO_ALIMTALK' }) {
     await ensureDirs()
     const dedupKey = deriveDedupKey(visitId, 'REVISIT_LINK')
     return withLock(`dedup:${dedupKey}`, async () => {
@@ -252,23 +256,33 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       // caller from the same one-time link this record's
       // follow_up_token_hash is a hash of -- see server/index.js's
       // buildRevisitMessageText) through to attemptSend.
-      const sent = await attemptSend(record.message_id, { phone, text, variables })
+      const sent = await attemptSend(record.message_id, { phone, text, variables, link })
       return { record: sent ?? record, deduped: false }
     })
   }
 
   // One send attempt, with automatic same-request fallback (Alimtalk ->
-  // SMS) on a fallback-eligible failure. `phone`/`text` are the
+  // SMS) on a fallback-eligible failure. `phone`/`text`/`link` are the
   // caller-supplied, never-persisted inputs the transport actually needs;
   // on a later automatic retry (see runDueRetries) the caller no longer
-  // has the phone number (or the one-time link `text` is built from) in
-  // hand unless it cached them, which is why a RETRYABLE failure schedules
-  // next_retry_at instead of this function re-deriving contact details
-  // itself -- see the module doc comment on why phone numbers are never
-  // persisted, and server/index.js's messagingContactCache for how the
-  // caller keeps `{phone, text}` around in-process (never on disk) for the
-  // retry sweep. Manual retryMessage() calls always re-supply both fresh.
-  async function attemptSend(messageId, { phone, text, variables }) {
+  // has the phone number (or the one-time link) in hand unless it cached
+  // them, which is why a RETRYABLE failure schedules next_retry_at instead
+  // of this function re-deriving contact details itself -- see the module
+  // doc comment on why phone numbers are never persisted, and
+  // server/index.js's messagingContactCache for how the caller keeps
+  // `{phone, text, link}` around in-process (never on disk) for the retry
+  // sweep. Manual retryMessage() calls always re-supply all three fresh.
+  //
+  // `link` (owner-review finding, HIGH): the BizM adapter's own button1
+  // construction needs the RAW one-time follow-up URL, separately from
+  // `text` (a shared, provider-agnostic rendered message body some
+  // channels embed the link into inline, others -- like BizM's own
+  // button-carried link -- deliberately do not, see bizmAdapter.js's
+  // header). Threading `link` through here rather than only `text` lets
+  // each adapter decide for itself whether/where the URL belongs in its
+  // own wire format, instead of this store or its callers assuming one
+  // fixed answer for every provider.
+  async function attemptSend(messageId, { phone, text, variables, link }) {
     return withLock(`message:${messageId}`, async () => {
       const record = await getMessage(messageId)
       if (!record) throw new MessagingNotFoundError('message not found')
@@ -287,7 +301,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       record.last_attempt_at = new Date().toISOString()
       await atomicWrite(messagePath(baseDir, messageId), record)
 
-      let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables, messageId })
+      let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables, link, messageId })
 
       // BizM-batch independent-review finding (LOW): keyed off the
       // RECORD's own `provider` (set once, at queue time) rather than a
@@ -301,7 +315,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       const fallbackChannelMap = fallbackChannelMapForProvider(record.provider)
       if (!result.ok && result.fallbackEligible && fallbackChannelMap[record.channel] && !record.fallback_channel) {
         const fallbackChannel = fallbackChannelMap[record.channel]
-        const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text, variables, messageId })
+        const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text, variables, link, messageId })
         record.fallback_channel = fallbackChannel
         if (fallbackResult.ok) {
           result = fallbackResult
@@ -347,7 +361,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // refuses once max_attempts is exhausted or the message already reached
   // a terminal state -- a human retry cannot bypass the attempt cap, only
   // skip the WAIT between attempts.
-  async function retryMessage(messageId, { phone, text, variables }) {
+  async function retryMessage(messageId, { phone, text, variables, link }) {
     const record = await getMessage(messageId)
     if (!record) throw new MessagingNotFoundError('message not found')
     if (TERMINAL_NON_RETRY_STATUSES.has(record.status)) {
@@ -356,7 +370,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
     if (record.attempt_count >= record.max_attempts) {
       throw new MessagingConflictError('max attempts already reached')
     }
-    return attemptSend(messageId, { phone, text, variables })
+    return attemptSend(messageId, { phone, text, variables, link })
   }
 
   // Cancels a message that is currently QUEUED -- either never attempted
@@ -391,10 +405,11 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // one-time follow-up link text itself -- it only knows it needs both,
   // exactly when it needs them, and never persists either (see the module
   // doc comment on why phone numbers are never persisted -- the same
-  // reasoning applies to `text`, since it is built from the same live
-  // one-time capability link this record's follow_up_token_hash is a hash
-  // of). resolveContact(patientId, visitId) returns `{ phone, text }` or a
-  // falsy value; a resolution failure (e.g. the process restarted since
+  // reasoning applies to `text`/`link`, since both are built from/are the
+  // same live one-time capability link this record's follow_up_token_hash
+  // is a hash of). resolveContact(patientId, visitId) returns
+  // `{ phone, text, variables, link }` or a falsy value; a resolution
+  // failure (e.g. the process restarted since
   // this was queued and the in-memory cache is now empty, or the patient
   // record was deleted after retention) is treated as a terminal failure
   // for that ONE message rather than a crash of the whole retry sweep --
@@ -417,12 +432,21 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
         // `variables.followup_token` would sail through to attemptSend and
         // reach a LIVE BizM send with an empty template-substitution value,
         // producing a dead Alimtalk link marked SENT rather than failing
-        // closed. Every current caller (server/index.js's
-        // messagingContactCache, written on both the queue and manual-retry
-        // routes) always sets `variables.followup_token`, so this only
+        // closed.
+        //
+        // Owner-review finding (HIGH): `link` (the raw one-time URL
+        // bizmAdapter.js's button1 needs, see attemptSend's own doc
+        // comment) must be required here too, for the same reason -- a
+        // missing/empty `link` would otherwise reach a LIVE BizM send with
+        // no capability URL to put in the button at all, again producing a
+        // dead-link message marked SENT rather than failing closed.
+        //
+        // Every current caller (server/index.js's messagingContactCache,
+        // written on both the queue and manual-retry routes) always sets
+        // both `variables.followup_token` and `link`, so this only
         // tightens the fail-closed contract, it does not narrow any
         // existing legitimate path.
-        if (!contact || !contact.phone || !contact.text || !contact.variables?.followup_token) {
+        if (!contact || !contact.phone || !contact.text || !contact.link || !contact.variables?.followup_token) {
           await withLock(`message:${record.message_id}`, async () => {
             const current = await getMessage(record.message_id)
             if (!current || TERMINAL_NON_RETRY_STATUSES.has(current.status)) return
@@ -440,7 +464,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
           }
           continue
         }
-        const sent = await attemptSend(record.message_id, { phone: contact.phone, text: contact.text, variables: contact.variables })
+        const sent = await attemptSend(record.message_id, { phone: contact.phone, text: contact.text, variables: contact.variables, link: contact.link })
         try {
           onSettled?.(record.visit_id, sent.status)
         } catch {

@@ -122,13 +122,36 @@ test('MedicationCourseSection: the load effect resets busy synchronously in its 
 // to notice by inspection. (16 is the current count -- verified by the 3rd
 // review two independent ways: manual enumeration and this exact mechanical
 // diff, both agreeing missing=[].)
-test('MedicationCourseSection: the load effect resets EVERY useState setter it declares (complete reset block, derived from the declarations)', () => {
+// 4th closing-review finding (LOW x2): the declaration regex only recognizes
+// one exact destructuring shape (`const [x, setX] = useState`) -- a
+// multi-line destructure, a non-`set`-prefixed setter name, or a line-wrap
+// after `=` all defeat it (decls.length silently stays consistent, so a 17th
+// useState written in any of those styles is invisible to this test, not
+// just unreset). Cross-checking decls.length against a raw count of every
+// `useState(`/`useState<` call site closes that -- a call site the
+// declaration regex didn't see now fails loudly instead of silently. And
+// `missing` was computed against the WHOLE effect body, including the async
+// `.then()` callback -- a setter moved out of the synchronous reset block
+// into that callback (past the `!result.ok` early-return, so it may never
+// run at all) still satisfied `missing=[]`. Restricting the check to the
+// synchronous prefix (everything before the effect's own async call) proves
+// the property the test's name claims: reset happens unconditionally in the
+// reset block, not merely "somewhere, eventually, maybe" in the effect.
+test('MedicationCourseSection: the load effect resets EVERY useState setter it declares, synchronously in the reset block (complete reset block, derived from the declarations)', () => {
   const decls = [...src.matchAll(/const \[\w+, (set\w+)\] = useState/g)].map((m) => m[1])
   assert.equal(decls.length, 16, 'useState declaration count changed -- re-audit which are patient-scoped before updating this number')
+  const callSiteCount = (src.match(/useState[<(]/g) ?? []).length
+  assert.equal(
+    callSiteCount,
+    decls.length,
+    `found ${callSiteCount} useState( / useState< call sites but only recognized ${decls.length} declarations -- a useState was written in a destructuring style the declaration regex above cannot see`,
+  )
   const effectBody = src.match(/useEffect\(\(\) => \{([\s\S]*?)\}, \[patientUuid\]\)/)
   assert.ok(effectBody, 'expected to find the main useEffect body')
-  const missing = decls.filter((d) => !new RegExp(`\\b${d}\\(`).test(effectBody[1]))
-  assert.deepEqual(missing, [], `these patient-scoped setters are never reset on a patientUuid change: ${missing.join(', ')}`)
+  const syncBlock = effectBody[1].split('listEpisodesByPatient(')[0]
+  assert.ok(syncBlock.length > 0 && syncBlock.length < effectBody[1].length, 'expected to isolate the synchronous prefix of the effect body, before its own async call')
+  const missing = decls.filter((d) => !new RegExp(`\\b${d}\\(`).test(syncBlock))
+  assert.deepEqual(missing, [], `these patient-scoped setters are not reset synchronously in the reset block (possibly deferred into an async callback, or missing entirely): ${missing.join(', ')}`)
 })
 
 // 3rd closing-review finding (MEDIUM, part 2): the derived test above proves
@@ -136,11 +159,17 @@ test('MedicationCourseSection: the load effect resets EVERY useState setter it d
 // four clears to the new-course form's cancel button -- reverting just that
 // half (abandoning a draft mid-patient, no switch involved) passed every
 // existing assertion, since none of them looked at the cancel handler.
+// 4th closing-review finding (NIT): String.prototype.match without the /g
+// flag returns only the FIRST match -- if a second, differently-behaved
+// handler with the same opening shape (setShowNewCourseForm(false) then
+// setNewCourseSourceId('')) were ever added earlier in the file, this test
+// would silently validate THAT one while the real cancel button regressed.
+// Asserting exactly one match makes that ambiguity fail loudly instead.
 test('MedicationCourseSection: the new-course form\'s cancel button also clears all four draft date/duration fields (not just the load effect)', () => {
-  const cancelHandler = src.match(/onClick=\{\(\) => \{\s*setShowNewCourseForm\(false\)\s*setNewCourseSourceId\(''\)([\s\S]*?)\}\}/)
-  assert.ok(cancelHandler, 'expected to find the cancel button\'s onClick handler')
+  const cancelHandlerMatches = [...src.matchAll(/onClick=\{\(\) => \{\s*setShowNewCourseForm\(false\)\s*setNewCourseSourceId\(''\)([\s\S]*?)\}\}/g)]
+  assert.equal(cancelHandlerMatches.length, 1, `expected exactly one onClick handler matching the cancel button's opening shape, found ${cancelHandlerMatches.length}`)
   for (const setter of ['setNewPrescribedAt', 'setNewDispensedAt', 'setNewStartAt', 'setNewDurationDays']) {
-    assert.match(cancelHandler[1], new RegExp(`${setter}\\(''\\)`), `expected the cancel handler to also clear ${setter}`)
+    assert.match(cancelHandlerMatches[0][1], new RegExp(`${setter}\\(''\\)`), `expected the cancel handler to also clear ${setter}`)
   }
 })
 
@@ -170,6 +199,38 @@ test('MedicationCourseSection: the load effect invalidates its own epoch on clea
 test('MedicationCourseSection: every .then((result) => {...}) callback opens with the epoch guard as its first statement, before any setState', () => {
   const anchoredGuardCount = (src.match(/\.then\(\(result\) => \{\s*if \(loadEpochRef\.current !== epoch\) return/g) ?? []).length
   assert.equal(anchoredGuardCount, 7, `expected all 7 .then((result) => {...}) callbacks to open with the guard, found ${anchoredGuardCount}`)
+})
+
+// 3rd closing-review finding (LOW): the shift-start date draft
+// (shiftDraftByCourse) lived inside an uncontrolled <details>, so collapsing
+// it hid an abandoned, typed-but-unsaved date without clearing it --
+// reopening later re-showed it pre-filled with an already-enabled save
+// button. Fixed by clearing the draft when this specific disclosure closes
+// (not opens, so an accidental collapse/reopen doesn't lose in-progress work).
+// 4th closing-review finding (LOW): this fix shipped with zero coverage --
+// reverting it (dropping the onToggle handler entirely) passed every
+// pre-existing assertion in this file.
+test('MedicationCourseSection: the shift-start <details> clears its draft when the disclosure closes (not when it opens)', () => {
+  assert.match(
+    src,
+    /className="medCourse__shift"\s*onToggle=\{\(e\) => \{\s*if \(e\.currentTarget\.open\) return/,
+    'expected the medCourse__shift <details> to clear shiftDraftByCourse on close via onToggle',
+  )
+})
+
+// 3rd closing-review finding (NIT): the check-task reason-chip draft had no
+// dismiss affordance -- clicking a reason chip a second time just re-set the
+// same draft, so a mis-click stuck around for the rest of the session. Fixed
+// by making a click on the already-active chip delete the draft instead.
+// 4th closing-review finding (LOW): this fix also shipped with zero
+// coverage -- reverting it to the old unconditional-spread form passed
+// every pre-existing assertion in this file.
+test('MedicationCourseSection: clicking the already-active check-task reason chip dismisses the draft instead of re-setting it', () => {
+  assert.match(
+    src,
+    /setCheckDraftByCourse\(\(prev\) => \{\s*if \(prev\[course\.course_id\]\?\.reason === rc\) \{/,
+    'expected the reason-chip onClick to detect the already-active chip and dismiss the draft',
+  )
 })
 
 console.log(`\n${passed} MedicationCourseSection load-epoch structural assertions passed.`)

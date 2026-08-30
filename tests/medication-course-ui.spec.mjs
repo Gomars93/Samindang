@@ -81,6 +81,21 @@ test('MedicationCourseSection: no .catch( or await async-completion shape exists
   assert.equal((src.match(/\bawait\s/g) ?? []).length, 0, 'an await-based completion point bypasses every .then-shaped assertion in this file')
 })
 
+// 6th closing-review finding (NIT): the .then/.finally/.catch/await
+// vocabulary this file pins covers Promise-based async completions, but a
+// setState deferred via a timer or microtask is a different completion
+// shape entirely -- invisible to every guard-count/anchor assertion above,
+// and no round from 1-5 ever checked for it. The source has none today
+// (verified by re-reading MedicationCourseSection.tsx end to end); this
+// pin keeps it that way rather than relying on that staying true by luck.
+test('MedicationCourseSection: no timer- or microtask-deferred state write exists (a different unfenced completion shape than .then/.finally/.catch/await)', () => {
+  assert.equal(
+    (src.match(/setTimeout\(|setInterval\(|queueMicrotask\(|requestAnimationFrame\(/g) ?? []).length,
+    0,
+    'a timer/microtask-deferred state write is an unfenced completion point no .then-shaped assertion in this file can see',
+  )
+})
+
 test('MedicationCourseSection: each of the four mutating actions captures its own epoch snapshot before issuing the request', () => {
   const captureCount = (src.match(/const epoch = loadEpochRef\.current/g) ?? []).length
   assert.equal(captureCount, 4, `expected handleCreateEpisode/handleCreateCourse/handleCreateCheckTask/handleShiftStart to each capture their own epoch, found ${captureCount}`)
@@ -225,11 +240,19 @@ test('MedicationCourseSection: every .then((result) => {...}) callback opens wit
 // clear -- a handler with the correct guard but a no-op body (or one that
 // deleted the wrong course's entry) still matched. Extended through the
 // setShiftDraftByCourse call and its delete on THIS course's key.
+// 6th closing-review finding (LOW): the 5th review's own extension used a
+// lazy `[\s\S]*?` bridge to `delete next[course.course_id]` -- proven (by
+// mutation, in a scratch copy) to walk straight past a no-op'd handler body
+// and match an UNRELATED delete elsewhere in the file (in this file's
+// current layout, the check-task chip's own delete four handlers away).
+// A lazy wildcard proves the token exists somewhere downstream, not that
+// THIS handler performs it. Pinned the exact handler body instead of
+// bridging past it.
 test('MedicationCourseSection: the shift-start <details> clears its draft when the disclosure closes (not when it opens)', () => {
   assert.match(
     src,
-    /className="medCourse__shift"\s*onToggle=\{\(e\) => \{\s*if \(e\.currentTarget\.open\) return\s*setShiftDraftByCourse\(\(prev\) => \{[\s\S]*?delete next\[course\.course_id\]/,
-    'expected the medCourse__shift <details> to clear shiftDraftByCourse[course.course_id] on close via onToggle',
+    /className="medCourse__shift"\s*onToggle=\{\(e\) => \{\s*if \(e\.currentTarget\.open\) return\s*setShiftDraftByCourse\(\(prev\) => \{\s*if \(!\(course\.course_id in prev\)\) return prev\s*const next = \{ \.\.\.prev \}\s*delete next\[course\.course_id\]\s*return next\s*\}\)\s*\}\}/,
+    'expected the medCourse__shift <details> onToggle handler itself (not some other handler downstream) to clear shiftDraftByCourse[course.course_id] on close',
   )
 })
 
@@ -244,11 +267,16 @@ test('MedicationCourseSection: the shift-start <details> clears its draft when t
 // the anchor stopped at the `if (...)` guard and never required the active
 // branch to actually delete the entry (a branch that fell through to the
 // old unconditional re-set still matched). Extended through the delete.
+// 6th closing-review finding (LOW): same lazy-bridge defect as the
+// shift-draft test above -- the `[\s\S]*?` reached past a no-op'd active
+// branch (or one deleting the wrong course's entry) and matched the
+// UNRELATED delete inside the shift-draft handler elsewhere in the file,
+// proven by mutation in a scratch copy. Pinned the exact active-branch body.
 test('MedicationCourseSection: clicking the already-active check-task reason chip dismisses the draft instead of re-setting it', () => {
   assert.match(
     src,
-    /setCheckDraftByCourse\(\(prev\) => \{\s*if \(prev\[course\.course_id\]\?\.reason === rc\) \{[\s\S]*?delete next\[course\.course_id\]/,
-    'expected the reason-chip onClick to detect the already-active chip and delete its draft entry',
+    /setCheckDraftByCourse\(\(prev\) => \{\s*if \(prev\[course\.course_id\]\?\.reason === rc\) \{\s*const next = \{ \.\.\.prev \}\s*delete next\[course\.course_id\]\s*return next\s*\}/,
+    'expected the reason-chip onClick\'s own already-active branch (not some other handler elsewhere) to delete its draft entry',
   )
 })
 

@@ -4320,20 +4320,59 @@ link 누락 시 fail-closed 테스트, HTTP 200+K108 실패 코드 검사 테스
 400`) — 기존에 실패 경로 검증용으로만 쓰이던 `LINK` 상수를 이 신규
 테스트에 재사용.
 
-**최종 검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
-79/79, `npm run test:messaging` 104/104, `npm run test:all`(exit 0),
-`npm run build`/`build:preview`, `tablet core` pytest 80/80, FROZEN
-diff 0 lines — 전부 통과. 두 번의 진짜 독립 `model:opus` 리뷰(1차 CLEAN
-+ 후속 findings 수정, 2차 NOT CLEAN + MEDIUM 2건 수정 완료) 완료 —
-오너 지시 7번 항목(Sonnet 구현 → 1차 독립 리뷰 → 수정 → 2차 독립
-클로징 리뷰) 충족. push 완료 후 PR #24에 클로징 상태 코멘트 예정.
+**2차 리뷰 수정에 대한 확인 재검수(완료)**: 2차 리뷰가 찾은 MEDIUM 2건의
+수정(`13f5794`)이 실제로 문제를 닫았는지 검증하는 좁은 범위의 3차
+독립 `model:opus` 호출(108k 토큰, 22 tool call, ~3분) — 두 MEDIUM 모두
+**FULLY FIXED** 판정. 큐 라우트 검증은 route의 유일한 진입 경로를
+전부 커버하고(dedup 경로 포함), `extractFollowUpTokenFromLink`의 정규식이
+실제 토큰 형식(`randomBytes().toString('base64url')`, percent-encoding
+불필요)과 클라이언트 파서(`src/App.tsx`)의 파싱 방식 둘 다와 일치함을
+직접 fetch로 프로빙해 확인. retry 라우트는 애초에 token을 link에서
+유도하므로 구조적으로 이 취약점이 불가능함도 재확인. `text`
+assertion은 실제로 `msg: text ?? BIZM_MESSAGE_TEXT` 같은 가상의 회귀를
+추적해 실패하게 됨을 확인. 세 테스트 파일(`messaging.spec.mjs`,
+`crm-store.spec.mjs`, `audit-registry.spec.mjs`)의 5개 변경 호출 모두
+실제 서버를 부팅해 응답 에러 문자열까지 직접 대조, 의도한 분기에
+정확히 도달함을 확인. HIGH/MEDIUM 신규 발견 없음.
+
+이 재검수가 새로 찾은 사소한 항목(수정 완료 1건 + accepted 2건):
+- **LOW (수정)**: `tests/messaging-bizm.spec.mjs`의 `CALLER_SUPPLIED_TEXT`
+  주석이 "매칭 production shape 정확히"라고 주장했지만, 실제
+  `buildRevisitMessageText()`(server/index.js, closure-scoped라 import
+  불가)의 3줄 출력과 달리 중간 줄(`아래 링크를 눌러...`)이 빠져 있었음 —
+  assertion 자체의 유효성(raw link가 인라인되는가)에는 영향 없지만
+  과장된 주장이었음. **수정**: 리터럴을 실제 3줄 출력과 정확히 일치하게
+  고치고, "import할 수 없어 복제한 것이니 원본이 바뀌면 같이 갱신"으로
+  주석 정정.
+- **NIT (accepted, 미수정)**: 5개 큐 라우트 검증 테스트가 `status===400`
+  만 확인하고 정확한 error 메시지는 확인하지 않음 — 향후 체크 순서가
+  바뀌어도 "틀린 분기에서 우연히 400"을 못 잡을 수 있음.
+- **LOW (accepted, pre-existing, out of scope, 미수정)**: dedup(200)
+  큐 호출에서 `messagingContactCache.set()`이 `queueRevisitMessage()`
+  보다 먼저 실행 — 같은 visit에 다른(유효한) 토큰으로 두 번째 호출이
+  오면 캐시된 link가 첫 토큰 기준 `follow_up_token_hash`와 어긋날 수
+  있음. cross-patient 누출 아님, audit-일관성 수준.
+
+**최종 검증(comment fix 반영 후)**: `npx tsc -b --force` clean,
+`npm run test:messaging-bizm` 79/79, `npm run test:messaging` 104/104,
+`npm run test:all`(exit 0), `npm run build`/`build:preview`,
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 세 번의
+진짜 독립 `model:opus` 리뷰(1차 CLEAN+후속수정, 2차 NOT CLEAN+MEDIUM
+2건 수정, 3차 확인 재검수 FULLY FIXED+사소한 수정 1건) 완료 — 오너
+지시 7번 항목(Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰)
+충족. **CLEAN.** push 완료 후 PR #24에 클로징 상태 코멘트 게시 예정.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `13f5794` — button1/응답-실패 검증 HIGH 수정(`af9ef91`) + 1차
-독립 리뷰 수정(`2f83963`) + 2차 독립 리뷰가 찾은 MEDIUM 2건(큐 라우트
-link/token 바인딩, 테스트 정직성) 수정(`13f5794`)까지 push 완료.
-2차 리뷰 수정 자체에 대한 짧은 확인 재검수 진행 중.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
+응답-실패 검증 HIGH 수정(`af9ef91`) + 1차 독립 리뷰 수정(`2f83963`) +
+2차 독립 리뷰 MEDIUM 2건 수정(`13f5794`) + 3차 확인 재검수가 찾은
+사소한 주석 정정을 하나의 커밋으로 이어서 push 예정 — 최신 HEAD는 이
+커밋 직후 갱신. GitHub CI(build-and-test)가 `13f5794`에서 한 번
+실패했으나 원인은 `tests/tablet-viewport.spec.mjs`의 headless Chrome
+임시 프로필 디렉터리 정리 시점 경쟁(ENOTEMPTY, 모든 실제 assertion이
+이미 통과한 뒤 teardown에서 발생) — 이번 배치의 diff와 무관한 기존
+파일이고, 바로 다음 커밋(`44ccd74`)에서 CI가 재실행되어 자연히
+green으로 확인됨(추가 조치 불필요).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

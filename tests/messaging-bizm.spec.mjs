@@ -145,9 +145,11 @@ async function main() {
       // future change like `msg: text ?? BIZM_MESSAGE_TEXT` would be
       // caught. messagingStore.js's attemptSend always DOES pass a `text`
       // built by buildRevisitMessageText(link) (server/index.js), which
-      // inlines the raw link -- so this caller-supplied text below matches
-      // production shape exactly, closing that coverage gap.
-      const CALLER_SUPPLIED_TEXT = `[삼인당한의원] 재진 확인 문진 안내\n${TEST_LINK}`
+      // inlines the raw link -- server/index.js's builder is closure-scoped
+      // (not exported), so this literal reproduces its exact three-line
+      // output rather than importing it; keep the two in sync if that
+      // builder's copy ever changes.
+      const CALLER_SUPPLIED_TEXT = `[삼인당한의원] 재진 확인 문진 안내\n아래 링크를 눌러 몇 가지만 답해 주세요.\n${TEST_LINK}`
       const result1 = await liveTransport.send({
         to: '01011112222',
         channel: 'KAKAO_ALIMTALK',

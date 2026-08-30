@@ -3,6 +3,7 @@ import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
+import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { buildEmrSummary } from './emrSummary'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import type { ClinicianJudgment } from './judgment'
@@ -1608,6 +1609,98 @@ function recordToPayload(record: SubmissionRecord): DoctorPayload {
   }
 }
 
+// malformed/legacy submission resilience 배치: `recordToPayload`가 위에서
+// `as DoctorPayload[...]`로 그냥 타입만 씌운 값은 실제로는 null/누락일 수
+// 있다 -- `routing: null`(하위호환 저장 경로, server/index.js의
+// `routing: body.routing ?? null` 참고)이나 손으로 만든/손상된
+// `responses` 하나만 있어도, 이 파일의 수십 곳(`deriveViewProfile`,
+// `primaryConcernLabel`, 각 부위 SafetyPanel, JudgmentPanel의 props 등)이
+// 예외 없이 그 값을 그대로 읽어 렌더링 도중 던진다. 이 값들은 전부
+// `buildResponsePayload`/`buildRoutingPayload`/`computeSaju`(coreSpec.ts/
+// saju/index.ts) 한 번의 호출로 통째로 만들어지는 atomic한 객체라서, 실제
+// 제출 흐름을 거친 레코드는 이 최상위 키들이 전부 있거나 전부 없다 --
+// 부분적으로만 있는 경우는 레거시 스키마/손상/수기로 만든 요청뿐이다.
+// 그래서 "전부 있는지"만 확인하면 되고(개별 leaf 필드까지 들어가지 않아도
+// 됨), 새 임상 프로필/사실을 추론하지 않는다 -- 그냥 "이 레코드로 상세
+// 화면을 안전하게 그릴 수 있는가"만 판단한다.
+const REQUIRED_RESPONSE_KEYS = [
+  'patient',
+  'visit_goal',
+  'primary_concern',
+  'additional_detail_concern',
+  'reference_symptoms',
+  'secondary_concerns',
+  'safety_flags',
+  'modules',
+  'medication',
+  'medical_history',
+  'allergy',
+  'surgery_history',
+  'reproductive_status',
+  'recent_tests',
+  'birth_info',
+  'free_text',
+] as const
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function isDoctorPayloadShapeUsable(payload: DoctorPayload): boolean {
+  if (!isPlainObject(payload.routing)) return false
+  if (!isPlainObject(payload.flags)) return false
+  const saju = payload.myungri_calculation as unknown
+  if (!isPlainObject(saju)) return false
+  if (!isPlainObject(saju.policy) || !isPlainObject(saju.engine) || !isPlainObject(saju.flags)) return false
+  if (typeof saju.status !== 'string') return false
+  const r = payload.responses as unknown
+  if (!isPlainObject(r)) return false
+  return REQUIRED_RESPONSE_KEYS.every((key) => isPlainObject(r[key]))
+}
+
+/**
+ * 상세 임상 화면을 안전하게 그릴 수 없을 때(구조 검사 실패, 또는
+ * `DoctorRecordErrorBoundary`가 예상 못한 예외를 잡았을 때) 보여주는 중립
+ * fallback -- 실제로 확인된 값(환자 라벨/제출 시각/상태)만 그대로 보여주고,
+ * 어떤 임상 프로필·판단도 추정해서 채우지 않는다. 목록으로 돌아가는
+ * 버튼은 이 컴포넌트 밖(항상 렌더링되는 헤더)에 이미 있고, CRM/투약 코스
+ * 섹션도 이 컴포넌트 밖에서 patient_id만으로 독립적으로 계속 동작한다 --
+ * 여기서 다시 만들지 않는다(중복 회피).
+ */
+export function DoctorRecordFallback({ record }: { record: SubmissionRecord | null | undefined }) {
+  return (
+    <div>
+      <div className="doctor__banner doctor__banner--warning" role="alert">
+        <strong>이 기록의 상세 임상 화면을 표시할 수 없습니다</strong>
+        <p>
+          제출 자료가 불완전하거나 예상한 형식과 다릅니다(레거시 형식이거나
+          손상된 제출로 보입니다). 임상 프로필이나 판단을 추정해서 보여주지
+          않습니다 — 아래 알려진 정보만 확인할 수 있습니다.
+        </p>
+        {record && (
+          <ul>
+            {record.patient_label && <li>환자: {record.patient_label}</li>}
+            <li>제출 시각: {new Date(record.created_at).toLocaleString('ko-KR')}</li>
+            <li>상태: {record.status}</li>
+          </ul>
+        )}
+        <p>
+          아래 CRM/투약 코스 섹션은 이 기록과 무관하게 계속 사용할 수
+          있습니다. 상단의 &ldquo;목록으로&rdquo;를 눌러 다른 제출건을 선택할
+          수도 있습니다.
+        </p>
+      </div>
+      {/*
+        malformed/legacy submission resilience 배치: patient_id만 있으면
+        되는(payload/routing/responses와 무관한) 안전한 기능이라 이 fallback
+        안에서도 그대로 계속 동작한다 -- CRM/투약 코스 추적을 완전히 막을
+        이유가 없다.
+      */}
+      {record?.patient_id && <MedicationCourseSection key={record.patient_id} patientUuid={record.patient_id} />}
+    </div>
+  )
+}
+
 const POLL_MS = 5000
 
 function statusLabel(status: SubmissionSummary['status']): string {
@@ -2070,7 +2163,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const r = payload.responses
   const { routing } = payload
   const saju = payload.myungri_calculation
-  const viewProfile = deriveViewProfile(payload).derived
+  // malformed/legacy submission resilience 배치: 아래 상세 렌더링 블록
+  // 전체가 이 값에 게이트된다 -- false면 deriveViewProfile 자체도 절대
+  // 호출하지 않는다(routing이 null이면 이 호출 자체가 던진다).
+  const payloadShapeOk = isDoctorPayloadShapeUsable(payload)
+  const viewProfile = payloadShapeOk ? deriveViewProfile(payload).derived : null
 
   // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
   // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
@@ -2799,6 +2896,26 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         </section>
       )}
       {/*
+        malformed/legacy submission resilience 배치: 아래 nav+tab 콘텐츠
+        전체(임상/참고/명리 세 표면 + JudgmentPanel + 원본 JSON)는
+        payloadShapeOk에 게이트된다 -- 명리/참고 표면이 "profile이
+        pain이 아닐 때만" 의미가 있는 것처럼, 이 구조 자체가 애초에
+        구조가 온전한 payload를 전제하기 때문에 하나로 묶어서 판단한다.
+        DoctorRecordErrorBoundary는 이 구조 검사가 못 잡은 예외(개별
+        부위 SafetyPanel 내부의 미처 확인 못 한 필드 등)에 대한 2차
+        안전망 -- key를 selectedRecord.id(없으면 'fixtures')로 둬서
+        다른 레코드로 전환하면 이전 에러 상태가 새 레코드로 새지 않고
+        완전히 새로 mount된다.
+      */}
+      <DoctorRecordErrorBoundary
+        key={mode === 'server' ? (selectedRecord?.id ?? 'none') : 'fixtures'}
+        fallback={<DoctorRecordFallback record={mode === 'server' ? selectedRecord : undefined} />}
+      >
+      {!payloadShapeOk ? (
+        <DoctorRecordFallback record={mode === 'server' ? selectedRecord : undefined} />
+      ) : (
+      <>
+      {/*
         Round 11: the record's three surfaces. 진료 is the clinical action
         screen and the default; the other two hold everything that used to
         stack underneath it. Myungri only exists as a surface at all when
@@ -3360,6 +3477,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
       </div>
+      </>
+      )}
+      </DoctorRecordErrorBoundary>
       </>
       )}
     </div>

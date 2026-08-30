@@ -5140,6 +5140,97 @@ MEDIUM 2/NIT 1 → 수정, 2차 HIGH 1/MEDIUM 1(재확인) → 수정, 3차
 코멘트 게시 진행. 병합 여부는 여전히 Gomars93이 직접 판단(**이
 세션은 스스로 merge/main push하지 않는다**).
 
+## Completed — malformed/legacy submission resilience 배치 (진행 중, 이번 세션)
+**배경**: Episode↔Medication association integrity 배치가 CLOSABLE
+선언된 직후, Gomars93가 PR #24 댓글로 새 저장소 전체 우선순위 배치를
+지시. 그 배치의 real-browser QA 도중 발견했지만 범위 밖이라 코드
+변경 없이 기록만 남겨뒀던 이슈 — `routing: null`이나 불완전한
+`responses`를 가진 레거시/손상된 제출건을 Doctor 화면에서 열면
+`deriveViewProfile`/`primaryConcernLabel` 등 수십 곳의 무조건적 필드
+접근이 던져서 전역 `PatientErrorBoundary`가 받아 "문제가
+발생했습니다" 화면으로 대체됨(크래시는 아니지만 그 기록을 사실상
+볼 수 없게 만드는 파일럿 운영 결함) — 를 하나의 cohesive 배치로
+닫으라는 지시. 명시적 요구사항: 사실을 지어내지 않고 fail-closed로
+표시, A→B 전환 시 stale 상태 누출 없음, 보기만 해도 쓰기가 일어나지
+않음, 3개 뷰포트(1440×900/1024×768/834×1112)에서 유용한 10초 샷,
+회귀 테스트, 기존 정책(Clinical CRM v0.3.1 CLOSED, Test 0 PENDING,
+Care Gap OFF, BizM PENDING_CONTRACT 등) 그대로 유지, FROZEN 검증.
+
+**구현(Sonnet, 이번 세션)**: 문제의 근본 원인은 `DoctorView.tsx`의
+`recordToPayload()`가 서버 레코드를 `DoctorPayload`로 그냥 `as`
+캐스팅만 하고 런타임 검증을 전혀 안 한다는 것 — `routing`/`responses`/
+`flags`/`myungri_calculation`은 전부 `buildRoutingPayload`/
+`buildResponsePayload`/`computeFlags`/`computeSaju`(coreSpec.ts/
+saju/index.ts) 한 번의 호출로 통째로 만들어지는 atomic한 객체라서,
+실제 제출 흐름을 거친 레코드는 이 최상위 키들이 전부 있거나 전부
+없다 — 부분적으로만 있는 경우는 레거시 스키마/손상/수기로 만든
+요청뿐이다. 개별 leaf 필드를 일일이 검사하는 대신 "이 레코드로 상세
+화면을 안전하게 그릴 수 있는가"만 판단하는 구조 검사
+(`isDoctorPayloadShapeUsable`, 신규 export)를 만들고, 이 값
+(`payloadShapeOk`)에 상세 렌더링 블록(임상/참고/명리 세 탭 +
+JudgmentPanel + 원본 JSON) 전체를 게이트했다 — `deriveViewProfile`
+호출 자체도 이 값이 true일 때만 실행(false면 절대 호출 안 함, routing
+이 null이면 이 호출 자체가 던지므로). 새 `DoctorRecordErrorBoundary`
+(신규 파일, `PatientErrorBoundary`와 같은 패턴이지만 이 레코드 하나의
+상세 뷰만 격리 — 나머지 화면은 계속 정상 동작)를
+`key={selectedRecord?.id ?? 'fixtures'}`로 감싸서, 구조 검사가 못 잡은
+예외에 대한 2차 안전망 + 레코드 전환 시 이전 에러 상태가 새 레코드로
+새지 않게 함. `DoctorRecordFallback`(신규, export)이 중립 shell을
+그린다 — 이미 확인된 값(환자 라벨/제출 시각/상태)만 보여주고 어떤
+임상 프로필도 추정하지 않으며, `patient_id`만 있으면 되는(payload와
+무관한) CRM/투약 코스 섹션(`MedicationCourseSection`)을 그 안에서
+그대로 계속 사용할 수 있게 했다 — 목록으로 돌아가는 버튼은 이미
+헤더에 항상 떠 있어 중복 추가하지 않음. Micro Follow-up 발급, 재진
+큐, 원내 태블릿 관리 등 payload와 무관한 기존 섹션은 이 게이트 밖에
+그대로 둬서 전혀 영향받지 않는다.
+
+**보기만 해도 쓰기가 일어나지 않음(요구사항 검토, 코드 변경 없음)**:
+새 fallback/boundary는 순수 렌더링만 하고 어떤 저장 호출도 하지 않는다
+— 확인 결과 이 파일에 기존부터 있던 "제출을 열면 status를 'new'→
+'viewed'로 한 번 쓴다"(round 18, `setSubmissionStatus`)는 이 배치와
+무관하게 모든 레코드(정상/손상 불문)에 이미 적용되는 사전 존재
+동작이고, 손상된 `submission` blob 자체를 정규화/수정하지 않는다 —
+그대로 유지, 범위 밖.
+
+**신규 회귀 테스트(`tests/doctor.spec.mjs`에 추가, `npm run
+test:doctor`)**: (1) 기존 7개 fixture 전체 + 새로 추가된 HIP/TMJ 등
+전 fixture가 `isDoctorPayloadShapeUsable`을 통과함을 확인(이 검사가
+정상 payload를 잘못 거부하지 않는다는 sanity) — 47개 assertion. (2)
+mutation-style 가드: `routing`/`flags`/`responses`/`myungri_calculation`
+전체 소실은 물론, `responses`의 16개 필수 namespace(`patient`,
+`visit_goal`, `modules`, `safety_flags` 등, `buildResponsePayload`의
+실제 최상위 키 전수) 각각을 하나씩만 지워도 독립적으로 거부됨을
+확인 — 이 목록이 실제 무조건 읽히는 필드와 어긋나면 실패하는 테스트.
+(3) `DoctorRecordFallback`을 `renderToString`으로 직접 렌더링해
+"임상 프로필을 추정하지 않는다"는 문구, 알려진 환자 라벨/상태 노출,
+patient_id 있고/없고 양쪽 다 예외 없이 렌더됨을 확인. (4) 구조적
+가드: `DoctorView.tsx` 소스 자체가 실제로 `payloadShapeOk` 게이트,
+`DoctorRecordErrorBoundary` wiring, record-id 키를 갖추고 있는지
+regex로 확인(향후 편집이 이 배선을 조용히 제거하는 회귀를 잡음).
+
+**실 브라우저 QA(데스크톱 1440×900 + 클리닉 태블릿 1024×768 + 새
+834×1112, Playwright, 실제 `server/index.js` + `vite --host` 기동)**:
+`routing`/`responses` 전부 누락된 합성 손상 제출건과, 실 questionnaire
+builder로 만든 정상 LBP 제출건 둘 다로 검증(합성, 실제 PHI 아님).
+손상 제출건: 전역 에러 화면 없이(`PatientErrorBoundary` 미발동,
+`pageerror` 이벤트 0건) 중립 fallback이 즉시 렌더, 알려진 정보(환자
+라벨/제출 시각/상태)만 표시, CRM 섹션("에피소드 만들기")이 그 아래
+그대로 동작, 3개 뷰포트 전부 수평 오버플로우 0. 정상 제출건: 기존
+동작 완전히 그대로(fallback 없음, 임상/참고 탭 정상, 세 뷰포트 모두
+동일). A(손상)→B(정상) 레이스(A 클릭 직후 즉시 B로 전환): 최종
+상태가 항상 B의 정상 상세 화면으로 수렴, A의 fallback이 새 레코드로
+새지 않음(boundary의 key remount로 확인) — 세 뷰포트 전부 동일 결과.
+
+**검증**: `npx tsc -b --force` clean, `npm run test:doctor` 747/747
+(신규 assertion 포함), `npm run test:all`(exit 0), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
+origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN
+유지) — 전부 통과.
+
+**다음 단계**: 독립 `model:opus` 리뷰(진짜 subagent 호출) 대기 중 —
+아직 시작 전. 발견 사항 있으면 수정 → 재검수 반복(앞선 두 배치와
+같은 사이클), 그 다음 push + PR #24 코멘트.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

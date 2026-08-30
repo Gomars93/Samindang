@@ -15,7 +15,7 @@ import {
   finalizeJudgment,
 } from './.doctor-judgment-bundle.mjs'
 import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
-import { DoctorView } from './.doctor-view-bundle.cjs'
+import { DoctorView, isDoctorPayloadShapeUsable, DoctorRecordFallback } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
 
@@ -1312,6 +1312,159 @@ function detailsRange(html, classMarker) {
 
   const pain = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
   assert('round 11: a pain record offers no Myungri surface at all', !pain.includes('명리 검토'))
+}
+
+/* =========================================================================
+ * Malformed/legacy submission resilience batch: `isDoctorPayloadShapeUsable`
+ * is the single gate deciding whether DoctorView attempts its normal
+ * detailed rendering (which reads dozens of nested fields unconditionally,
+ * e.g. deriveViewProfile(payload), primaryConcernLabel(r), routing.*,
+ * saju.policy.*) or falls back to a neutral "record incomplete" shell.
+ * Every real fixture must pass it (else this batch would have broken
+ * normal rendering), and deleting any ONE of the top-level keys it checks
+ * must independently fail it (a mutation-style guard against the check
+ * silently drifting out of sync with what DoctorView actually reads).
+ * ======================================================================= */
+
+{
+  for (const f of DOCTOR_FIXTURES) {
+    assert(`resilience: fixture "${f.name}" passes isDoctorPayloadShapeUsable`, isDoctorPayloadShapeUsable(f.payload) === true)
+  }
+}
+
+{
+  const base = byName('허리 통증 주호소 (LBP, 확인 필요)').payload
+  assert('resilience: sanity -- the base fixture itself passes', isDoctorPayloadShapeUsable(base) === true)
+
+  // Whole-namespace loss (the exact bug this batch fixes -- routing: null,
+  // or a hand-built/legacy responses object missing entire namespaces).
+  assert('resilience: routing=null is rejected', isDoctorPayloadShapeUsable({ ...base, routing: null }) === false)
+  assert('resilience: routing=undefined is rejected', isDoctorPayloadShapeUsable({ ...base, routing: undefined }) === false)
+  assert('resilience: flags=null is rejected', isDoctorPayloadShapeUsable({ ...base, flags: null }) === false)
+  assert('resilience: responses=null is rejected', isDoctorPayloadShapeUsable({ ...base, responses: null }) === false)
+  assert('resilience: responses={} (all namespaces missing) is rejected', isDoctorPayloadShapeUsable({ ...base, responses: {} }) === false)
+  assert(
+    'resilience: myungri_calculation=null is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: null }) === false,
+  )
+  assert(
+    'resilience: myungri_calculation missing .policy is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: { ...base.myungri_calculation, policy: undefined } }) === false,
+  )
+  assert(
+    'resilience: myungri_calculation missing .engine is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: { ...base.myungri_calculation, engine: undefined } }) === false,
+  )
+  assert(
+    'resilience: myungri_calculation.status not a string is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: { ...base.myungri_calculation, status: 123 } }) === false,
+  )
+
+  // Mutation guard: each individual `responses` namespace the file's own
+  // render code reads unconditionally (r.patient, r.visit_goal, r.modules,
+  // etc.) must independently be required -- deleting just one must still
+  // fail the check, proving the required-keys list actually covers it
+  // rather than only catching the all-or-nothing case above.
+  const requiredResponseKeys = [
+    'patient',
+    'visit_goal',
+    'primary_concern',
+    'additional_detail_concern',
+    'reference_symptoms',
+    'secondary_concerns',
+    'safety_flags',
+    'modules',
+    'medication',
+    'medical_history',
+    'allergy',
+    'surgery_history',
+    'reproductive_status',
+    'recent_tests',
+    'birth_info',
+    'free_text',
+  ]
+  for (const key of requiredResponseKeys) {
+    const mutated = { ...base.responses }
+    delete mutated[key]
+    const payload = { ...base, responses: mutated }
+    assert(`resilience: responses missing "${key}" alone is rejected`, isDoctorPayloadShapeUsable(payload) === false)
+  }
+
+  // An array where an object is expected must also be rejected (guards
+  // against a malformed body that JSON-parses fine but has the wrong
+  // shape for a specific field, not just a missing one).
+  assert(
+    'resilience: routing as an array (not an object) is rejected',
+    isDoctorPayloadShapeUsable({ ...base, routing: [] }) === false,
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * DoctorRecordFallback: the neutral shell shown when the check above fails.
+ * Must never invent a clinical profile/fact, must show only values already
+ * present on the list-level record (patient_label/created_at/status), and
+ * must still render the CRM/MedicationCourseSection entry point when a
+ * patient_id is available (the one part of the screen that stays usable
+ * regardless of how broken the submission payload is).
+ * ---------------------------------------------------------------------- */
+
+{
+  const recordWithPatient = {
+    id: 'r1',
+    created_at: '2026-01-02T03:04:05.000Z',
+    updated_at: '2026-01-02T03:04:05.000Z',
+    status: 'viewed',
+    patient_label: '(QA) 홍길동',
+    patient_id: 'patient-uuid-1',
+    submission: {},
+    myungri: null,
+    judgment: null,
+  }
+  const html = renderToString(React.createElement(DoctorRecordFallback, { record: recordWithPatient }))
+  assert('resilience fallback: shows the "cannot display" heading', html.includes('상세 임상 화면을 표시할 수 없습니다'))
+  assert('resilience fallback: explicitly states it does not guess a clinical profile', html.includes('추정해서 보여주지'))
+  assert('resilience fallback: shows the known patient_label', html.includes('홍길동'))
+  assert('resilience fallback: shows the known status', html.includes('viewed'))
+  assert('resilience fallback: never mentions pain/herbal/mixed view-profile labels', !/통증 진료|한약·전신 진료|혼합 진료/.test(html))
+
+  const recordWithoutPatient = { ...recordWithPatient, patient_id: undefined }
+  const htmlNoPatient = renderToString(React.createElement(DoctorRecordFallback, { record: recordWithoutPatient }))
+  assert(
+    'resilience fallback: without patient_id, still renders the banner without throwing',
+    htmlNoPatient.includes('상세 임상 화면을 표시할 수 없습니다'),
+  )
+
+  const htmlNoRecord = renderToString(React.createElement(DoctorRecordFallback, { record: undefined }))
+  assert('resilience fallback: record=undefined still renders without throwing', htmlNoRecord.includes('상세 임상 화면을 표시할 수 없습니다'))
+}
+
+/* -------------------------------------------------------------------------
+ * Structural guard: DoctorView.tsx must actually gate its detailed render
+ * on this check and wrap it in the error-boundary backstop -- proves the
+ * wiring itself (not just the pure function in isolation) is present, and
+ * catches a future edit that silently removes the gate while leaving the
+ * exported function behind.
+ * ---------------------------------------------------------------------- */
+
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: DoctorView computes payloadShapeOk from isDoctorPayloadShapeUsable before deriving the view profile',
+    /const payloadShapeOk = isDoctorPayloadShapeUsable\(payload\)/.test(src) &&
+      /const viewProfile = payloadShapeOk \? deriveViewProfile\(payload\)\.derived : null/.test(src),
+  )
+  assert(
+    'resilience: the detailed record view is wrapped in DoctorRecordErrorBoundary',
+    /<DoctorRecordErrorBoundary\s/.test(src) && src.includes('</DoctorRecordErrorBoundary>'),
+  )
+  assert(
+    'resilience: the error boundary is keyed by the record id (or \'fixtures\'), not left unkeyed',
+    /<DoctorRecordErrorBoundary\s*\n\s*key=\{mode === 'server' \? \(selectedRecord\?\.id \?\? 'none'\) : 'fixtures'\}/.test(src),
+  )
+  assert(
+    'resilience: !payloadShapeOk renders DoctorRecordFallback instead of the normal tab content',
+    /\{!payloadShapeOk \? \(\s*<DoctorRecordFallback/.test(src),
+  )
 }
 
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

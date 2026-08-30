@@ -72,6 +72,7 @@ import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { DoctorWorkspace } from './workspace/DoctorWorkspace'
+import { deserializeWorkspaceState } from './workspace/persistence'
 import { deriveViewProfile } from './workspace/viewProfile'
 import { WORKSPACE_SCENARIOS } from './workspace/workspaceFixtures'
 import './doctor.css'
@@ -1968,9 +1969,32 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       if (cancelled) return
       if (result.ok) {
         setSelectedRecord(result.data)
-        if (!viewedRef.current.has(selectedId)) {
+        // Round 18: only mark 'viewed' if the record's server-reported
+        // status is still 'new' -- viewedRef alone is per-tab in-memory
+        // state, so a SECOND tab opening the same already-viewed submission
+        // (e.g. a staff member glancing at a patient a doctor already has
+        // open) previously had no way to know that and re-issued the exact
+        // same status write anyway. That write is a no-op on `status` but
+        // still bumps updated_at (store.js's setStatus), so it was pure
+        // unforced version churn -- purely opening a submission a second
+        // tab already viewed could spuriously conflict that first tab's
+        // next save, with neither tab having edited anything yet.
+        if (result.data.status === 'new' && !viewedRef.current.has(selectedId)) {
           viewedRef.current.add(selectedId)
-          setSubmissionStatus(selectedId, 'viewed')
+          // This status write bumps the record's updated_at the
+          // same as any other save (store.js's setStatus uses the same
+          // nextUpdatedAt helper as saveJudgment/saveWorkspace) -- without
+          // folding the fresh record back into selectedRecord here,
+          // selectedRecord.updated_at stays pinned to the PRE-write value
+          // for the rest of this record's lifetime in this tab, and the
+          // very first CAS-guarded workspace/judgment save would then
+          // always 409 against this component's OWN "mark as viewed"
+          // write -- a false conflict with a single clinician in a single
+          // tab, caught by real two-browser-context QA.
+          setSubmissionStatus(selectedId, 'viewed').then((statusResult) => {
+            if (cancelled) return
+            if (statusResult.ok) setSelectedRecord(statusResult.data)
+          })
         }
       } else {
         setServerError({ message: result.error, kind: result.kind })
@@ -2805,18 +2829,36 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         synthetic={mode === 'fixtures' ? (activeScenario?.synthetic ?? undefined) : undefined}
         submissionId={mode === 'server' ? selectedId ?? undefined : undefined}
         initialWorkspaceState={mode === 'server' ? selectedRecord?.workspace ?? null : undefined}
+        initialRecordUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
         priorVisits={mode === 'server' ? priorVisits : undefined}
         microFollowUpResponse={mode === 'server' ? microFollowUpResponse : undefined}
         onSaveWorkspace={
           mode === 'server' && selectedId
-            ? async (state) => {
-                const result = await saveWorkspaceStateToServer(selectedId, state)
+            ? async (state, expectedUpdatedAt) => {
+                const result = await saveWorkspaceStateToServer(selectedId, state, expectedUpdatedAt ?? undefined)
                 // selectedRecord갱신: 재열람 시(같은 세션 안에서 selectedId를 다시
                 // 고를 때) 이미 저장된 workspace를 stale하지 않게 반영한다 — 기존
                 // saveJudgmentToServer onSave 콜백과 동일한 이유(위 judgment 콜백
                 // 주석 참고).
-                if (result.ok) setSelectedRecord(result.data)
-                return { ok: result.ok }
+                if (result.ok) {
+                  setSelectedRecord(result.data)
+                  return { ok: true, updatedAt: result.data.updated_at }
+                }
+                // Round 18: a 409 stale-write conflict carries the server's
+                // CURRENT record in errorBody.current (server/index.js's
+                // saveWorkspace route) -- hand it back as a typed conflict so
+                // DoctorWorkspace can offer an explicit reload instead of
+                // silently retrying or overwriting. Any other failure
+                // (network/auth/etc.) falls through to the plain error path,
+                // unchanged from before this round.
+                const current = result.errorBody?.current as SubmissionRecord | undefined
+                if (current) {
+                  return {
+                    ok: false,
+                    conflict: { current: deserializeWorkspaceState(current.workspace), currentUpdatedAt: current.updated_at },
+                  }
+                }
+                return { ok: false }
               }
             : undefined
         }
@@ -3254,16 +3296,27 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           myungri_pending_approval: saju.policy.pending_approval,
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
+        initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
         showLbpExam={routing.primary_module_detail === 'LBP'}
         showShoulderExam={payload.responses.safety_flags.shoulder !== null}
         onSave={
           mode === 'server' && selectedId
-            ? async (judgment: ClinicianJudgment) => {
+            ? async (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => {
                 // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
                 // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
                 // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
-                const result = await saveJudgmentToServer(selectedId, judgment)
-                if (result.ok) setSelectedRecord(result.data)
+                const result = await saveJudgmentToServer(selectedId, judgment, expectedUpdatedAt ?? undefined)
+                if (result.ok) {
+                  setSelectedRecord(result.data)
+                  return { ok: true as const, updatedAt: result.data.updated_at }
+                }
+                // Round 18: same 409-conflict translation as the workspace
+                // save callback above -- see its comment.
+                const current = result.errorBody?.current as SubmissionRecord | undefined
+                if (current) {
+                  return { ok: false as const, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
+                }
+                return { ok: false as const }
               }
             : undefined
         }

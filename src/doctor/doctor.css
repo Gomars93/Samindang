@@ -85,6 +85,45 @@
   padding-left: 20px;
 }
 
+/* Round 18: stale-write conflict banner (ConflictBanner.tsx) -- an
+   operational data-safety warning, not a clinical safety signal, so it uses
+   a distinct amber palette and must never visually compete with
+   .doctor__banner--danger above. */
+.doctor__banner--warning {
+  background: #fbf3df;
+  border: 2px solid #a5750f;
+  color: #6b4d0a;
+}
+
+.doctor__banner__reloadBtn {
+  margin-top: 4px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doctor__banner__draft {
+  margin-top: 10px;
+}
+
+.doctor__banner__draftText {
+  width: 100%;
+  min-height: 120px;
+  margin-top: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  box-sizing: border-box;
+}
+
 /* Tablet UX v2.2 §33: questionnaire mode 배지 -- 운영 참고 메타데이터일
    뿐이라 safety banner(.doctor__banner--danger)보다 눈에 띄지 않게
    muted하게, 작게 둔다. */

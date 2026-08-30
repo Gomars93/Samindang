@@ -54,6 +54,7 @@ import {
   getSubmission,
   getMicroFollowUpResponse,
   type SubmissionRecord,
+  type VisitRecord,
 } from '../../lib/serverClient'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -65,6 +66,7 @@ import {
   visitWorkspaceStateEquals,
   type VisitWorkspaceState,
 } from './visitWorkspace'
+import { ConflictBanner } from '../ConflictBanner'
 import { PainFinalAssessmentCard } from './FinalAssessmentCard'
 import { PainCarePlanCard } from './CarePlanCard'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
@@ -87,7 +89,7 @@ import {
 const SAVE_DEBOUNCE_MS = 900
 const COMBINED_FOLLOW_UP_OPTIONS = [...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS]
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 
 function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
   const ws = priorSubmission?.workspace
@@ -140,6 +142,13 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
   const lastSavedRef = useRef<VisitWorkspaceState>(workspaceState)
+  // Round 18: mirrors DoctorWorkspace.tsx's identical fields -- see its
+  // comments. Seeded/reset entirely inside the [visitId, patientId] load
+  // effect below, since this component (unlike DoctorWorkspace) owns its
+  // own fetch cycle rather than receiving state from a parent.
+  const lastKnownUpdatedAtRef = useRef<string | null>(null)
+  const [conflict, setConflict] = useState<{ current: VisitWorkspaceState; currentUpdatedAt: string } | null>(null)
+  const [preConflictDraft, setPreConflictDraft] = useState<VisitWorkspaceState | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -157,6 +166,10 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     setPriorSubmission(null)
     setPriorVisitWorkspace(null)
     setMicroFollowUpResponse(null)
+    // Round 18: a stale-write conflict (and its preserved draft) is scoped
+    // to the PREVIOUS visit -- never let it survive into a newly-opened one.
+    setConflict(null)
+    setPreConflictDraft(null)
 
     async function load() {
       const [visitResult, historyResult, mfuResult] = await Promise.all([
@@ -168,6 +181,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       const seeded = visitResult.ok ? deserializeVisitWorkspaceState(visitResult.data.workspace) : emptyVisitWorkspaceState()
       setWorkspaceState(seeded)
       lastSavedRef.current = seeded
+      lastKnownUpdatedAtRef.current = visitResult.ok ? visitResult.data.updated_at : null
       if (historyResult.ok) {
         setPriorHistory(historyResult.data)
         const latest = historyResult.data.visits[0]
@@ -199,21 +213,50 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       skipNextSaveRef.current = false
       return
     }
+    // Round 18: fail closed on a pending conflict -- see DoctorWorkspace.tsx's
+    // identical guard.
+    if (conflict) return
     if (visitWorkspaceStateEquals(workspaceState, lastSavedRef.current)) return
     setSaveStatus('saving')
     const timer = setTimeout(async () => {
       const toSave: VisitWorkspaceState = { ...workspaceState, updated_at: new Date().toISOString() }
-      const result = await saveVisitWorkspace(visitId, toSave)
+      const result = await saveVisitWorkspace(visitId, toSave, lastKnownUpdatedAtRef.current ?? undefined)
       if (result.ok) {
         lastSavedRef.current = toSave
+        lastKnownUpdatedAtRef.current = result.data.updated_at
         setSaveStatus('saved')
       } else {
-        setSaveStatus('error')
+        // Round 18: a 409 stale-write conflict carries the server's CURRENT
+        // visit record in errorBody.current (server/index.js's visit
+        // workspace route) -- offer an explicit reload instead of silently
+        // retrying or overwriting. Any other failure keeps the pre-existing
+        // "will retry on next edit" behavior.
+        const current = result.errorBody?.current as VisitRecord | undefined
+        if (current) {
+          setPreConflictDraft(toSave)
+          setConflict({ current: deserializeVisitWorkspaceState(current.workspace), currentUpdatedAt: current.updated_at })
+          setSaveStatus('conflict')
+        } else {
+          setSaveStatus('error')
+        }
       }
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceState, visitId])
+  }, [workspaceState, visitId, conflict])
+
+  // Round 18: the only recovery action -- see DoctorWorkspace.tsx's
+  // identical handler for the full reasoning.
+  function handleReloadFromConflict() {
+    if (!conflict) return
+    setWorkspaceState(conflict.current)
+    lastSavedRef.current = conflict.current
+    lastKnownUpdatedAtRef.current = conflict.currentUpdatedAt
+    skipNextSaveRef.current = true
+    setConflict(null)
+    setPreConflictDraft(null)
+    setSaveStatus('saved')
+  }
 
   if (loading) {
     return (
@@ -267,6 +310,13 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           <span className="workspace__hero__hint">문진 없이 원장/직원이 개설한 재진 방문입니다</span>
         </div>
       </section>
+
+      {conflict && (
+        <ConflictBanner
+          onReload={handleReloadFromConflict}
+          draftJson={preConflictDraft ? JSON.stringify(preConflictDraft, null, 2) : null}
+        />
+      )}
 
       <section className="workspace__block">
         <h3>
@@ -433,6 +483,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         {saveStatus === 'saving' && '저장 중…'}
         {saveStatus === 'saved' && '저장됨'}
         {saveStatus === 'error' && '저장 실패 — 다시 시도해주세요 (아래 내용은 아직 서버에 반영되지 않았습니다)'}
+        {saveStatus === 'conflict' && '저장 중단됨 — 위 안내를 확인해주세요'}
         {saveStatus === 'idle' && ' '}
       </p>
     </div>

@@ -176,3 +176,20 @@ export function workspaceStateEquals(a: WorkspaceState, b: WorkspaceState): bool
   const { updated_at: _b, ...restB } = b
   return JSON.stringify(restA) === JSON.stringify(restB)
 }
+
+/**
+ * Round 18 (stale-write conflict wiring): the outcome contract every
+ * onSaveWorkspace/onSaveVisitWorkspace/onSaveJudgment caller returns.
+ * `conflict` is present only for the specific case server/store.js's
+ * StaleWriteError models (a caller-supplied expectedUpdatedAt precondition
+ * did not match) -- carrying the server's CURRENT record so the caller can
+ * offer an explicit reload without a second round trip, per this round's
+ * "server-authoritative state wins after conflicts, never auto-merge"
+ * directive. A plain network/other failure returns `{ ok: false }` with no
+ * `conflict` field, preserving the pre-existing "will retry on next edit"
+ * behavior untouched.
+ */
+export type WorkspaceSaveOutcome =
+  | { ok: true; updatedAt: string }
+  | { ok: false; conflict: { current: WorkspaceState; currentUpdatedAt: string } }
+  | { ok: false; conflict?: undefined }

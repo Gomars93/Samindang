@@ -33,6 +33,7 @@
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { CommonSafetyBanner } from '../CommonSafetyBanner'
+import { ConflictBanner } from '../ConflictBanner'
 import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment } from '../judgment'
@@ -52,6 +53,7 @@ import {
   emptyWorkspaceState,
   workspaceStateEquals,
   type WorkspaceState,
+  type WorkspaceSaveOutcome,
 } from './persistence'
 
 export type WorkspaceSyntheticData = {
@@ -65,7 +67,7 @@ export type WorkspaceSyntheticData = {
 const PROFILE_ORDER: DoctorViewProfile[] = ['pain', 'herbal', 'mixed']
 const SAVE_DEBOUNCE_MS = 900
 
-type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 
 function seedWorkspaceState(
   initial: WorkspaceState | null | undefined,
@@ -89,6 +91,7 @@ export function DoctorWorkspace({
   synthetic,
   submissionId,
   initialWorkspaceState,
+  initialRecordUpdatedAt,
   onSaveWorkspace,
   priorVisits,
   microFollowUpResponse,
@@ -104,7 +107,19 @@ export function DoctorWorkspace({
    */
   submissionId?: string
   initialWorkspaceState?: WorkspaceState | null
-  onSaveWorkspace?: (state: WorkspaceState) => Promise<{ ok: boolean }>
+  /**
+   * Round 18: the submission record's server-authoritative `updated_at` at
+   * the moment this record was loaded -- the CAS precondition sent with the
+   * FIRST autosave attempt for this record (every later attempt uses the
+   * value returned by the previous successful save instead, tracked
+   * internally). Only read on mount / when the underlying record changes,
+   * same as initialWorkspaceState -- a later change to this prop for the
+   * SAME record (e.g. the parent refreshing selectedRecord after our own
+   * save) must never re-seed mid-edit, or a slow typist's in-flight edits
+   * would silently start racing their own just-completed save.
+   */
+  initialRecordUpdatedAt?: string | null
+  onSaveWorkspace?: (state: WorkspaceState, expectedUpdatedAt: string | null) => Promise<WorkspaceSaveOutcome>
   /** Round 3 Phase C: already-fetched prior-visit RAW history for this exact patient_id, or undefined/null when unavailable (fixtures mode, no server, or nothing prior). */
   priorVisits?: PatientHistoryResult | null
   /** Round 3 Phase D: already-fetched micro follow-up response for THIS visit, or undefined/null when unavailable/not yet answered. */
@@ -126,6 +141,20 @@ export function DoctorWorkspace({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
   const lastSavedRef = useRef<WorkspaceState>(workspaceState)
+  // Round 18: the last updated_at we know the server accepted for this
+  // record (from the initial load, or from our own most recent successful
+  // save) -- sent as the CAS precondition on the next save attempt.
+  const lastKnownUpdatedAtRef = useRef<string | null>(initialRecordUpdatedAt ?? null)
+  // Non-null exactly when the server rejected our last save as stale. While
+  // set, autosave stops retrying (fail closed) until the clinician
+  // explicitly reloads -- this is the ONLY code path that clears it besides
+  // switching records.
+  const [conflict, setConflict] = useState<{ current: WorkspaceState; currentUpdatedAt: string } | null>(null)
+  // The locally-edited state we were about to save when the conflict was
+  // detected, preserved verbatim so ConflictBanner can show it -- reload
+  // discards it from the screen, so this is what stands between that and
+  // silently losing the clinician's typing.
+  const [preConflictDraft, setPreConflictDraft] = useState<WorkspaceState | null>(null)
 
   // Reset the manual profile override / mixed-tab choice / all
   // clinician-entered workspace state whenever the underlying record
@@ -150,7 +179,36 @@ export function DoctorWorkspace({
     lastSavedRef.current = seeded
     skipNextSaveRef.current = true
     setSaveStatus('idle')
+    // Round 18: a stale-write conflict (and its preserved draft) belongs to
+    // the OLD record -- carrying it over to a newly-selected record would
+    // show patient A's conflict banner/draft over patient B's screen.
+    lastKnownUpdatedAtRef.current = initialRecordUpdatedAt ?? null
+    setConflict(null)
+    setPreConflictDraft(null)
   }
+
+  // Round 18 fix (caught by real two-browser-context QA, not by any unit
+  // test): `initialRecordUpdatedAt` legitimately advances for the SAME
+  // record without DoctorWorkspace ever saving anything -- e.g. the
+  // automatic "mark as viewed" status write that fires the instant a
+  // submission is opened, or an independent JudgmentPanel save on the same
+  // submission. Without this, `lastKnownUpdatedAtRef` stays pinned to
+  // whatever value was seeded at mount, so DoctorWorkspace's very first
+  // autosave attempt on almost every record would 409 against its OWN
+  // sibling's write -- a false conflict with a single clinician in a single
+  // tab, no second writer involved at all. Adopting the newer value here is
+  // always safe: the real CAS comparison still happens server-side against
+  // the record's actual current updated_at at save time; this ref is only
+  // ever this component's best guess of "what we last confirmed," never
+  // itself authoritative. This does NOT weaken genuine cross-tab/
+  // cross-device conflict detection -- a SECOND browser tab has its own,
+  // separate `selectedRecord` state that this prop can never reach; it only
+  // changes here because of THIS tab's own actions.
+  useEffect(() => {
+    if (initialRecordUpdatedAt != null && initialRecordUpdatedAt !== lastKnownUpdatedAtRef.current) {
+      lastKnownUpdatedAtRef.current = initialRecordUpdatedAt
+    }
+  }, [initialRecordUpdatedAt])
 
   // Debounced autosave: fires SAVE_DEBOUNCE_MS after the last edit, only in
   // server mode (submissionId + onSaveWorkspace both present), and never
@@ -163,22 +221,47 @@ export function DoctorWorkspace({
       return
     }
     if (!submissionId || !onSaveWorkspace) return
+    // Round 18: fail closed on a pending conflict -- never silently retry
+    // (and possibly clobber the version the clinician hasn't reloaded yet)
+    // while ConflictBanner is up. The only way out is the explicit reload.
+    if (conflict) return
     if (workspaceStateEquals(workspaceState, lastSavedRef.current)) return
 
     setSaveStatus('saving')
     const timer = setTimeout(async () => {
       const toSave: WorkspaceState = { ...workspaceState, updated_at: new Date().toISOString() }
-      const result = await onSaveWorkspace(toSave)
+      const result = await onSaveWorkspace(toSave, lastKnownUpdatedAtRef.current)
       if (result.ok) {
         lastSavedRef.current = toSave
+        lastKnownUpdatedAtRef.current = result.updatedAt
         setSaveStatus('saved')
+      } else if (result.conflict) {
+        setPreConflictDraft(toSave)
+        setConflict(result.conflict)
+        setSaveStatus('conflict')
       } else {
         setSaveStatus('error')
       }
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceState, submissionId])
+  }, [workspaceState, submissionId, conflict])
+
+  // Round 18: the ONLY recovery action -- loads the server's current
+  // version verbatim (no field-level merge) and clears the conflict. The
+  // draft that was about to be saved stays visible in ConflictBanner until
+  // this fires, at which point it is gone from the screen for good; the
+  // clinician has already had the chance to copy anything they needed.
+  function handleReloadFromConflict() {
+    if (!conflict) return
+    setWorkspaceState(conflict.current)
+    lastSavedRef.current = conflict.current
+    lastKnownUpdatedAtRef.current = conflict.currentUpdatedAt
+    skipNextSaveRef.current = true
+    setConflict(null)
+    setPreConflictDraft(null)
+    setSaveStatus('saved')
+  }
 
   const activeProfile = profileOverride ?? basis.derived
   const isManualOverride = profileOverride !== null && profileOverride !== basis.derived
@@ -304,6 +387,13 @@ export function DoctorWorkspace({
     <div className="workspace" data-view-profile={activeProfile}>
       <CommonSafetyBanner payload={payload} />
 
+      {conflict && (
+        <ConflictBanner
+          onReload={handleReloadFromConflict}
+          draftJson={preConflictDraft ? JSON.stringify(preConflictDraft, null, 2) : null}
+        />
+      )}
+
       <div className="workspace__profileBar">
         <div>
           <span className="workspace__profileBar__label">진료 화면 프로필</span>
@@ -397,6 +487,7 @@ export function DoctorWorkspace({
           {saveStatus === 'saving' && '저장 중…'}
           {saveStatus === 'saved' && '저장됨'}
           {saveStatus === 'error' && '저장 실패 — 다시 시도해주세요 (아래 내용은 아직 서버에 반영되지 않았습니다)'}
+          {saveStatus === 'conflict' && '저장 중단됨 — 위 안내를 확인해주세요'}
           {saveStatus === 'idle' && ' '}
         </p>
       )}

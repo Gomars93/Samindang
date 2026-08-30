@@ -4,7 +4,7 @@
  * 백엔드/저장소가 없으므로 상태는 React state에만 존재하고, 새로고침하면
  * 사라진다. 이 컴포넌트는 그 사실을 화면에 명시적으로 알린다.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DEBRIEF_QUESTIONS,
   MAX_INNATE_FEATURES,
@@ -14,8 +14,10 @@ import {
   validateJudgment,
   type ClinicianJudgment,
   type DebriefAnswers,
+  type JudgmentSaveOutcome,
   type JudgmentSourcePayload,
 } from './judgment'
+import { ConflictBanner } from './ConflictBanner'
 
 function TextList({
   label,
@@ -86,6 +88,7 @@ const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAU
 export function JudgmentPanel({
   source,
   initialJudgment,
+  initialUpdatedAt,
   onSave,
   showLbpExam = false,
   showShoulderExam = false,
@@ -93,8 +96,16 @@ export function JudgmentPanel({
   source: JudgmentSourcePayload
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
   initialJudgment?: ClinicianJudgment | null
+  /**
+   * Round 18: the submission record's server-authoritative `updated_at` at
+   * the moment this judgment was loaded -- sent as the CAS precondition on
+   * the first "기록" click. This component fully remounts on record switch
+   * (DoctorView's `key={payload.session_id}`), so unlike DoctorWorkspace
+   * there is no mid-life reseed to guard against here.
+   */
+  initialUpdatedAt?: string | null
   /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
-  onSave?: (judgment: ClinicianJudgment) => void
+  onSave?: (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => Promise<JudgmentSaveOutcome>
   /**
    * LBP_V1: 이번 방문의 주호소가 허리(LBP)일 때만 true — 객관적 하지
    * 근력저하 소견 입력 컨트롤을 보여준다. 결정 §1-2: 이 값이
@@ -121,10 +132,34 @@ export function JudgmentPanel({
   const [outlineQuestion, setOutlineQuestion] = useState('')
   const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
+  const lastKnownUpdatedAtRef = useRef<string | null>(initialUpdatedAt ?? null)
+  // Round 18: non-null exactly when the server rejected the last "기록"
+  // click as stale. Nothing auto-retries here (this save is already
+  // explicit-click-only, not debounced) -- the clinician must review the
+  // banner and either reload or re-click "기록" after reloading.
+  const [conflict, setConflict] = useState<{ current: ClinicianJudgment | null; currentUpdatedAt: string } | null>(
+    null,
+  )
+
+  // Round 18 fix (caught by real two-browser-context QA): `initialUpdatedAt`
+  // legitimately advances for the SAME submission without any judgment
+  // save -- most reliably the automatic "mark as viewed" status write that
+  // fires the instant a submission is opened, or an independent
+  // DoctorWorkspace autosave on the same submission. Without this, the
+  // FIRST-ever "기록" click on almost every submission would 409 against a
+  // sibling write, with a single clinician in a single tab. See
+  // DoctorWorkspace.tsx's identical fix for the full reasoning -- adopting
+  // the newer value here can never weaken cross-tab conflict detection,
+  // since a second tab has its own separate prop chain this can never reach.
+  useEffect(() => {
+    if (initialUpdatedAt != null && initialUpdatedAt !== lastKnownUpdatedAtRef.current) {
+      lastKnownUpdatedAtRef.current = initialUpdatedAt
+    }
+  }, [initialUpdatedAt])
 
   const hasDebrief = Object.values(debrief).some((v) => v.trim() !== '')
 
-  function handleRecord() {
+  async function handleRecord() {
     const withDebrief: ClinicianJudgment = { ...judgment, debrief: hasDebrief ? debrief : null }
     const result = validateJudgment(withDebrief)
     if (!result.ok) {
@@ -134,8 +169,39 @@ export function JudgmentPanel({
     }
     setErrors([])
     const finalized = finalizeJudgment(withDebrief)
-    setRecorded(finalized)
-    onSave?.(finalized)
+    if (!onSave) {
+      setRecorded(finalized)
+      return
+    }
+    const outcome = await onSave(finalized, lastKnownUpdatedAtRef.current)
+    if (outcome.ok) {
+      setRecorded(finalized)
+      setConflict(null)
+      lastKnownUpdatedAtRef.current = outcome.updatedAt
+    } else if (outcome.conflict) {
+      // Round 18: fail closed -- `recorded` deliberately stays whatever it
+      // was before this click (never shows `finalized` as "기록됨" when it
+      // was actually rejected). `judgment`/`debrief` state is untouched, so
+      // the clinician's typed values are still right there on screen.
+      setConflict(outcome.conflict)
+    } else {
+      setErrors(['저장 실패 — 다시 시도해주세요'])
+    }
+  }
+
+  // Round 18: the only recovery action -- loads the server's current
+  // judgment verbatim (or a blank form if nobody had saved one yet) and
+  // clears the conflict. The clinician's own draft stays visible in
+  // ConflictBanner until this fires.
+  function handleReloadFromConflict() {
+    if (!conflict) return
+    const next = conflict.current ?? createEmptyJudgment(source)
+    setJudgment(next)
+    setDebrief(next.debrief ?? emptyDebrief)
+    setRecorded(conflict.current)
+    lastKnownUpdatedAtRef.current = conflict.currentUpdatedAt
+    setConflict(null)
+    setErrors([])
   }
 
   return (
@@ -148,6 +214,13 @@ export function JudgmentPanel({
           ? '"기록" 버튼을 누르면 이 제출건에 저장됩니다.'
           : '예시 데이터 미리보기이므로 저장되지 않으며, 화면을 새로고침하면 사라집니다.'}
       </p>
+
+      {conflict && (
+        <ConflictBanner
+          onReload={handleReloadFromConflict}
+          draftJson={JSON.stringify({ ...judgment, debrief: hasDebrief ? debrief : null }, null, 2)}
+        />
+      )}
 
       <div className="judgment__grid">
         <TextList

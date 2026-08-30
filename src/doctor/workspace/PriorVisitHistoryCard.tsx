@@ -7,6 +7,7 @@
  * assessment field to read from each prior visit (Pain vs Herbal).
  */
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
+import { readablePriorVisitPrimaryConcern } from './longitudinal'
 import type { PatientHistoryResult } from './longitudinal'
 
 export function PriorVisitHistoryCard({
@@ -41,7 +42,7 @@ export function PriorVisitHistoryCard({
       <div className="workspace__priorVisit__body">
         <p className="workspace__priorVisit__date">
           최근 방문: {new Date(latest.createdAt).toLocaleDateString('ko-KR')}
-          {latest.primaryConcern ? ` · ${latest.primaryConcern}` : ''}
+          {readablePriorVisitPrimaryConcern(latest.primaryConcern) ? ` · ${readablePriorVisitPrimaryConcern(latest.primaryConcern)}` : ''}
         </p>
 
         {targets.length > 0 ? (

@@ -92,26 +92,79 @@ function isUnreadableStringArray(value: unknown): boolean {
  * `raw`에 없어도 true일 수 있어(coreSpec.ts:3860-3861,3877), 그 방향만
  * 예외로 둔다(raw가 있는데 derived가 없다고 하면만 모순).
  */
-function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, rawAnswer: unknown): boolean {
-  if (d.source !== 'WOMEN_SAFETY_01') return false
-  if (!Array.isArray(rawAnswer)) return false
-  if (!Array.isArray(d.raw)) return true
-  const rawSet = new Set(rawAnswer)
-  if (rawSet.size === 1 && rawSet.has('unknown')) {
-    return d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null
+// coreSpec.ts deriveReproductiveStatus의 POSTPARTUM_WITHIN_1Y와 동일 (FROZEN
+// 파일이 아니므로 값이 바뀔 수 있지만, 바뀌면 이 재계산도 함께 갱신해야 한다).
+const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m']
+
+function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, r: Responses): boolean {
+  const rawAnswer = r.reproductive_status.reproductive_status
+  if (d.source === 'WOMEN_SAFETY_01') {
+    if (!Array.isArray(rawAnswer)) return false
+    if (!Array.isArray(d.raw)) return true
+    const rawSet = new Set(rawAnswer)
+    if (rawSet.size === 1 && rawSet.has('unknown')) {
+      return d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null
+    }
+    if (rawSet.has('pregnant') && d.pregnant !== true) return true
+    if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
+    if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
+    if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
+    // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/postpartum_1y/
+    // breastfeeding은 pregnancy_possible과 달리 다른 모듈의 정당한 override
+    // 경로가 없으므로, derived가 true인데 raw가 그 값을 포함하지 않으면
+    // 무조건 모순이다(실제 보고되지 않은 임신/수유 사실을 지어낸 것 --
+    // DoctorView.tsx의 동명 검사와 동일하게 반대 방향도 막는다).
+    if (d.pregnant === true && !rawSet.has('pregnant')) return true
+    if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
+    if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
+    return false
   }
-  if (rawSet.has('pregnant') && d.pregnant !== true) return true
-  if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
-  if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
-  if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
-  // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/postpartum_1y/
-  // breastfeeding은 pregnancy_possible과 달리 다른 모듈의 정당한 override
-  // 경로가 없으므로, derived가 true인데 raw가 그 값을 포함하지 않으면
-  // 무조건 모순이다(실제 보고되지 않은 임신/수유 사실을 지어낸 것 --
-  // DoctorView.tsx의 동명 검사와 동일하게 반대 방향도 막는다).
-  if (d.pregnant === true && !rawSet.has('pregnant')) return true
-  if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
-  if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
+  if (d.source === 'pregnancy_module') {
+    // 11차 독립 리뷰 MEDIUM-1: 이 source는 visit_goal==='women' &&
+    // women_goal==='pregnancy' && r.modules.pregnancy.status==='pregnant'
+    // 일 때만 coreSpec.ts가 만들고, 그 결과는 항상 고정된 하나의 형태다 --
+    // 9/10차는 이 source 전체를 검사 대상에서 제외했지만 실제로는
+    // r.modules.pregnancy.status로 재계산 가능하다.
+    const isPregnancyContext =
+      r.visit_goal?.visit_goal === 'women' &&
+      r.visit_goal?.women_goal === 'pregnancy' &&
+      r.modules?.pregnancy?.status === 'pregnant'
+    if (!isPregnancyContext) return true
+    return (
+      !Array.isArray(d.raw) ||
+      d.raw.length !== 1 ||
+      d.raw[0] !== 'pregnant' ||
+      d.pregnant !== true ||
+      d.pregnancy_possible !== false ||
+      d.postpartum_1y !== null ||
+      d.breastfeeding !== null
+    )
+  }
+  if (d.source === 'postpartum_module') {
+    const isPostpartumContext = r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'postpartum'
+    if (!isPostpartumContext) return true
+    const since = r.modules?.postpartum?.time_since_delivery
+    const feeding = r.modules?.postpartum?.breastfeeding_status
+    const rawParts: string[] = []
+    if (typeof since === 'string') rawParts.push(since)
+    if (typeof feeding === 'string') rawParts.push(feeding)
+    const expectedRaw = rawParts.length > 0 ? rawParts : null
+    const expectedPostpartum1y = typeof since === 'string' ? POSTPARTUM_WITHIN_1Y.includes(since) : null
+    const expectedBreastfeeding = typeof feeding === 'string' ? feeding === 'yes' || feeding === 'mixed' : null
+    const rawMatches =
+      expectedRaw === null
+        ? d.raw === null
+        : Array.isArray(d.raw) &&
+          d.raw.length === expectedRaw.length &&
+          expectedRaw.every((v, i) => (d.raw as unknown[])[i] === v)
+    return (
+      d.pregnant !== null ||
+      d.pregnancy_possible !== null ||
+      d.postpartum_1y !== expectedPostpartum1y ||
+      d.breastfeeding !== expectedBreastfeeding ||
+      !rawMatches
+    )
+  }
   return false
 }
 
@@ -126,7 +179,7 @@ function isUnreadableReproductiveDerived(r: Responses): boolean {
   if (Array.isArray(r.reproductive_status.reproductive_status) && d.source == null) return true
   const boolOrNullFields = ['pregnant', 'pregnancy_possible', 'postpartum_1y', 'breastfeeding'] as const
   if (boolOrNullFields.some((key) => d[key] !== null && typeof d[key] !== 'boolean')) return true
-  return isReproductiveDerivedInconsistentWithRawAnswer(d, r.reproductive_status.reproductive_status)
+  return isReproductiveDerivedInconsistentWithRawAnswer(d, r)
 }
 
 /**

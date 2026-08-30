@@ -239,10 +239,34 @@ function assert(name, cond) {
     deriveAdditionalConcernSummary(routingWithWrongTypedModule) === null,
   )
 
+  /*
+   * 11차 독립 리뷰 LOW-1: additional_module은 정상인데
+   * additional_detail_concern만 wrong-typed인 경우, 10차 수정은 카드
+   * 전체를 null 처리했다 -- 하지만 자료 보기 탭의 추가 상세상담
+   * 섹션(DoctorView.tsx가 `optionLabel('ADDITIONAL_DETAIL_01', ...)`로
+   * 렌더)은 같은 필드를 "확인 필요(값 형식 오류)"로 계속 보여주므로,
+   * 같은 레코드에서 진료 탭 카드만 사라지는 모순이 생겼다. module이
+   * 유효하면 summary를 보존하고 detailConcernLabel만 명시적 실패
+   * 토큰으로 대체해야 한다.
+   */
   const routingWithWrongTypedDetail = { additional_module: 'NECK', additional_detail_concern: { corrupted: true } }
+  const summaryWithWrongTypedDetail = deriveAdditionalConcernSummary(routingWithWrongTypedDetail)
   assert(
-    'deriveAdditionalConcernSummary treats a wrong-typed (object) additional_detail_concern as no-additional-concern rather than passing the object through to render',
-    deriveAdditionalConcernSummary(routingWithWrongTypedDetail) === null,
+    'deriveAdditionalConcernSummary preserves a valid additional_module even when additional_detail_concern is wrong-typed (11th independent review LOW-1)',
+    summaryWithWrongTypedDetail !== null && summaryWithWrongTypedDetail.module === 'NECK',
+  )
+  assert(
+    'deriveAdditionalConcernSummary never passes a wrong-typed additional_detail_concern through as-is -- it becomes an explicit fail-closed label, never "[object Object]"',
+    typeof summaryWithWrongTypedDetail.detailConcernLabel === 'string' &&
+      summaryWithWrongTypedDetail.detailConcernLabel !== '[object Object]' &&
+      summaryWithWrongTypedDetail.detailConcernLabel.includes('확인 필요'),
+  )
+
+  const routingWithNullDetail = { additional_module: 'NECK', additional_detail_concern: null }
+  const summaryWithNullDetail = deriveAdditionalConcernSummary(routingWithNullDetail)
+  assert(
+    'deriveAdditionalConcernSummary keeps detailConcernLabel genuinely null (not the fail-closed token) when additional_detail_concern was never answered -- "doesn\'t apply" must stay distinct from "corrupted"',
+    summaryWithNullDetail.detailConcernLabel === null,
   )
 }
 

@@ -6272,6 +6272,110 @@ origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines
 NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상
 사용자(Product Owner).
 
+### 11차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+11차 리뷰는 10차가 남긴 "unverified" MEDIUM-2(`submission.metadata`
+경로)를 실제로 라이브 검증했고, 동시에 10차까지 놓치고 있던 3개
+지점(HIGH 1건, MEDIUM 1건, LOW 1건)을 새로 찾아냈다.
+
+**(HIGH-1) `PainWorkspace.tsx`의 `recoveryScore`(LBP_12,
+`modules.lbp.recovery_expectation`)가 `optionLabel`을 거치지 않고
+바로 `String()`으로 렌더됐다.** LBP_12는 태블릿에서 항상
+`number`로 저장되는 `numeric_scale` 문항(`QuestionScreen.tsx`의
+`NumericScale`)이라 10차가 고친 `optionLabel` 경로 밖에 있었다 —
+wrong-typed 객체는 "[object Object]"를 그대로 노출하고, wrong-typed
+배열(예: `['9']`)은 "확인 필요" 표시 없이 실제 보고되지 않은
+원점수처럼 보이게 지어냈다(`isEmptyValue`는 타입을 검증하지 않고
+객체/배열을 "비어있지 않음"으로만 취급해 이 경로를 막지 못했다).
+`recoveryScore`가 finite number가 아니면 명시적 실패 토큰(`'확인
+필요(값 형식 오류)'`)을 렌더하도록 수정.
+
+**(MEDIUM-1) reproductive-derived consistency check가
+`derived.source==='pregnancy_module'`/`'postpartum_module'`을 9/10차
+모두 검사 대상에서 제외했다 — "이 필드로는 재계산할 수 없다"는
+근거였는데, 실제로는 잘못된 판단이었다.** `coreSpec.ts`의
+`deriveReproductiveStatus`(FROZEN 인접이지만 `coreSpec.ts` 자체는
+FROZEN 파일 목록 밖)를 다시 읽어보면, `pregnancy_module`은
+`visit_goal.women_goal==='pregnancy' && modules.pregnancy.status===
+'pregnant'`일 때만 만들어지고 항상 고정된 하나의 형태
+(`raw:['pregnant'], pregnant:true, pregnancy_possible:false,
+postpartum_1y:null, breastfeeding:null`)이며, `postpartum_module`은
+`visit_goal.women_goal==='postpartum'`일 때만 만들어지고
+`postpartum_1y`/`breastfeeding`이 `modules.postpartum.
+time_since_delivery`/`breastfeeding_status`(POSTPARTUM_01/03)에서
+결정론적으로 재계산된다 — 즉 둘 다 완전히 재검증 가능하다. 이
+공백을 이용하면 실제로 보고되지 않은 임신/출산 사실을 지어낼 수
+있었다(이 배치의 핵심 원칙 #2 위반). `DoctorView.tsx`의
+`isUnreadableReproductiveDerived`와 `CommonSafetyBanner.tsx`의
+로컬 사본(`isReproductiveDerivedInconsistentWithRawAnswer`) 양쪽
+모두에 두 source를 재계산해 검증하는 분기를 추가.
+
+**(MEDIUM-2, 10차가 "unverified"로 이월했던 항목 — 이번 라운드가
+실제로 확인·수정함) `submission.metadata.primary_concern`이
+인증되지 않은 환자 제출(POST `/api/submissions`)에서 런타임 검증
+없이 그대로 저장되고, 이전 방문 요약에 그대로 보간됐다.**
+`server/index.js`가 `metadata: body.metadata ?? null`을 그대로
+저장하고(`server/store.js`가 `submission?.metadata?.primary_concern
+?? null`로 읽음), `src/lib/serverClient.ts`가 `string | null`
+타입을 주장하지만 런타임 검증은 하지 않았다 —
+`PriorVisitHistoryCard.tsx:44`/`RevisitWorkspace.tsx:371`이 이
+값을 템플릿 리터럴에 직접 보간해 "[object Object]"를 노출할 수
+있었다(현재 태블릿 `App.tsx`는 이 필드를 보내지 않지만, 레거시
+레코드나 수기 LAN POST는 임의의 JSON을 넣을 수 있다 — 이 배치의
+threat model 안). `src/doctor/workspace/longitudinal.ts`에
+`readablePriorVisitPrimaryConcern` 헬퍼를 추가해(string이 아니면
+명시적 실패 토큰) 두 렌더 지점 모두에 적용.
+
+**(LOW-1) `deriveAdditionalConcernSummary`가 `additional_module`이
+정상인데 `additional_detail_concern`만 wrong-typed인 경우도 카드
+전체를 null 처리했다(10차 수정의 부작용).** 자료 보기 탭의 추가
+상세상담 섹션은 같은 필드를 `optionLabel('ADDITIONAL_DETAIL_01',
+...)`로 렌더해 "확인 필요"를 정상적으로 보여주는데, 같은 레코드의
+진료 탭 추가 문제 카드는 통째로 사라져 두 화면이 모순됐다.
+`additional_module`이 유효하면 summary를 보존하고
+`detailConcernLabel`만 명시적 실패 토큰으로 대체하도록 축소 수정
+(module 자체가 wrong-typed일 때만 — 카드가 표시할 텍스트가 전혀
+없을 때만 — 전체를 null 처리).
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에
+`isUnreadableReproductiveDerived`의 pregnancy_module/postpartum_module
+재계산 검증(정상 케이스 2개 + 컨텍스트 밖 스푸핑 2개 + 형태 불일치
+2개, +6, 839→845). `tests/doctor-workspace.spec.mjs`에 HIGH-1
+(recoveryScore 객체/배열 wrong-typed 2개), MEDIUM-1
+(pregnancy_module/postpartum_module 컨텍스트 밖 스푸핑이
+CommonSafetyBanner의 "안전정보 일부를 읽을 수 없습니다" 배너를
+실제로 띄우는지 2개), MEDIUM-2(PriorVisitHistoryCard가 wrong-typed
+primaryConcern을 "[object Object]" 없이 실패 토큰으로 렌더하는지
+1개) 추가(+5, 159→164). `tests/workspace-round3.spec.mjs`의 LOW-1
+관련 기존 테스트(10차가 작성한, "wrong-typed detail도 전체
+null"이라고 주장하던 테스트)를 새 의도(module 보존 + detail만
+실패 토큰)에 맞게 갱신, null(진짜 미답변)과 실패 토큰(손상)이
+계속 구분되는지 확인하는 테스트 추가.
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch
+포트) + Playwright로 1440×900/1024×768/834×1112 3개 뷰포트
+각각에서 (A) `modules.lbp.recovery_expectation` 객체
+wrong-typed(HIGH-1), (B) 같은 필드 배열 wrong-typed(HIGH-1,
+지어낸 원점수 노출 여부), (C) `reproductive_status.derived.source
+='pregnancy_module'` 컨텍스트 밖 스푸핑(MEDIUM-1), (D) 같은 필드
+`'postpartum_module'` 컨텍스트 밖 스푸핑(MEDIUM-1) LBP 레코드를
+POST하고 목록에서 클릭 — (A)(B) "[object Object]"/지어낸 점수
+노출 0건 및 실패 토큰 정상 표시, (C)(D) "안전정보 일부를 읽을 수
+없습니다" 배너 정상 표시(허위 all-clear 없음), 4개 시나리오 × 3개
+뷰포트 전부 page error 0건 확인.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 845/845, doctor-workspace 164/164,
+workspace-round3 101/101 포함), `npm run build`/`build:preview`
+clean, `tablet core` pytest 80/80, `git diff origin/main --
+src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) —
+전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 12차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

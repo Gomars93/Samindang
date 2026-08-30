@@ -775,6 +775,52 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
   })
 
+  /* -----------------------------------------------------------------------
+   * 11th independent review MEDIUM-1: coreSpec.ts's deriveReproductiveStatus
+   * only ever produces derived.source==='pregnancy_module' when
+   * visit_goal.women_goal==='pregnancy' AND modules.pregnancy.status===
+   * 'pregnant' (and 'postpartum_module' only under the analogous postpartum
+   * context) -- rounds 9/10 exempted these two sources entirely from the
+   * raw-vs-derived consistency check on the theory that they "can't be
+   * recomputed", which was false. A legacy/hand-crafted record claiming
+   * derived.source='pregnancy_module' OUTSIDE that context (this base LBP
+   * fixture has no pregnancy visit_goal at all) fabricates a pregnancy fact
+   * that was never actually reported and must be treated as unreadable,
+   * not as a trustworthy computed status. CommonSafetyBanner.tsx carries
+   * its own local copy of this check (isReproductiveDerivedInconsistentWith
+   * RawAnswer) -- this proves it via a real render, not just the DoctorView
+   * .tsx unit tests in tests/doctor.spec.mjs.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner MEDIUM-1 (11th review): a derived.source="pregnancy_module" claimed outside any pregnancy visit context fabricates an unreported pregnancy and DOES trigger the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.derived = {
+      source: 'pregnancy_module',
+      raw: ['pregnant'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner MEDIUM-1 (11th review): a derived.source="postpartum_module" claimed outside any postpartum visit context fabricates an unreported postpartum status and DOES trigger the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.derived = {
+      source: 'postpartum_module',
+      raw: ['6w_to_3m', 'yes'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: true,
+      breastfeeding: true,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
   test('CommonSafetyBanner HIGH-2: a reported pregnancy (reproductive_status.reproductive_status is an array) with derived.source left null (not recomputed) DOES trigger the "cannot read" notice, never a false all-clear', () => {
     const mutated = structuredClone(base.payload)
     mutated.responses.reproductive_status.reproductive_status = ['pregnant']
@@ -1015,6 +1061,67 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(!html.includes('[object Object]'))
     assert.ok(html.includes('EMR 미리보기') || html.includes('참고 자료'))
     assert.ok(html.includes('확인 필요'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 11th independent review HIGH-1: PainWorkspace's recoveryScore
+   * (LBP_12/modules.lbp.recovery_expectation, a numeric_scale question the
+   * tablet always stores as a number) was rendered via a bare `String()`
+   * with no type check, bypassing optionLabel entirely -- a wrong-typed
+   * value leaked "[object Object]", and a wrong-typed array ('9') was
+   * displayed as if it were a real reported score (no "확인 필요" marker),
+   * fabricating a clinical fact. Fixed in PainWorkspace.tsx by adding an
+   * explicit finite-number check before rendering.
+   * ------------------------------------------------------------------- */
+  test('PainWorkspace HIGH-1 (11th review): a wrong-typed (object) modules.lbp.recovery_expectation never leaks "[object Object]" into the 회복 기대 metric and shows the explicit fail-closed label instead', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules.lbp.recovery_expectation = { corrupted: true }
+    const html = renderWith(base, { payload: mutated })
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('회복 기대'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  test('PainWorkspace HIGH-1 (11th review): a wrong-typed (array) modules.lbp.recovery_expectation is never displayed as if it were a real reported score', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules.lbp.recovery_expectation = ['9']
+    const html = renderWith(base, { payload: mutated })
+    assert.ok(!html.includes('9 / 10'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 11th independent review MEDIUM-2: submission.metadata.primary_concern
+   * is stored by server/store.js completely unvalidated from an
+   * unauthenticated patient POST (`server/index.js`'s
+   * `metadata: body.metadata ?? null`) -- the current tablet never sends
+   * this field, but a legacy record or a hand-crafted LAN POST can put
+   * arbitrary JSON there. PriorVisitHistoryCard.tsx/RevisitWorkspace.tsx
+   * interpolated it directly into a template literal with no type check,
+   * which would leak "[object Object]" into the read-only prior-visit
+   * recap. Fixed via longitudinal.ts's readablePriorVisitPrimaryConcern.
+   * ------------------------------------------------------------------- */
+  test('PriorVisitHistoryCard MEDIUM-2 (11th review): a wrong-typed (object) prior-visit primaryConcern from an unvalidated legacy record never leaks "[object Object]" and shows the explicit fail-closed label instead', () => {
+    const priorVisits = {
+      patientId: 'patient-1',
+      visits: [
+        {
+          visitId: 'visit-1',
+          submissionId: 'sub-1',
+          createdAt: new Date().toISOString(),
+          primaryConcern: { corrupted: true },
+          painFollowUpTargets: [],
+          herbalFollowUpTargets: [],
+          followUpTargets: [],
+          painFinalAssessmentSummary: null,
+          herbalFinalAssessmentSummary: null,
+          nextReassessmentPlan: null,
+        },
+      ],
+    }
+    const html = renderWith(base, { priorVisits })
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
   })
 }
 

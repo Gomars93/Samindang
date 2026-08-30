@@ -57,6 +57,16 @@ export function emptyAdditionalConcernPromotion(): AdditionalConcernPromotionSta
  * concern at all (nothing to summarize), which the card component treats
  * as "render nothing."
  */
+// 11차 독립 리뷰 LOW-1: additional_detail_concern이 wrong-typed일 때 이
+// 카드 전체를 null 처리하면(과거 10차 수정), 자료 보기 탭의 추가
+// 상세상담 섹션은 optionLabel을 통해 이 필드에 "확인 필요(값 형식 오류)"를
+// 그대로 보여주는데(DoctorView.tsx의 `optionLabel('ADDITIONAL_DETAIL_01', ...)`)
+// 같은 레코드의 진료 탭 추가 문제 카드는 통째로 사라져 두 화면이 모순된다.
+// 실제로 렌더 시 예외를 던지는 값은 additional_module(카드의 유일한
+// 텍스트 폴백)뿐이므로, additional_detail_concern은 wrong-typed일 때
+// 이 상수로 대체해 module은 그대로 보존한다.
+const ADDITIONAL_DETAIL_UNREADABLE_LABEL = '확인 필요(값 형식 오류)'
+
 export function deriveAdditionalConcernSummary(routing: {
   additional_module: string | null
   additional_detail_concern: string | null
@@ -68,20 +78,20 @@ export function deriveAdditionalConcernSummary(routing: {
   // "Objects are not valid as a React child" 예외를 던졌고,
   // DoctorRecordErrorBoundary가 이를 잡아도 이 카드 하나가 아니라 전체
   // 임상 화면(CommonSafetyBanner/모든 SafetyPanel 포함)이 통째로
-  // fallback으로 바뀌었다 -- wrong-typed면 "추가 문제 없음"과 동일하게
-  // 조용히 건너뛴다(이 카드는 프레젠테이션 전용이며 실제 안전 표면은 각
-  // 지역 SafetyPanel이 그대로 담당하므로 안전정보 손실이 아니다).
+  // fallback으로 바뀌었다 -- additional_module이 wrong-typed면(카드가
+  // 표시할 텍스트가 전혀 없다) "추가 문제 없음"과 동일하게 조용히
+  // 건너뛴다.
   if (typeof routing.additional_module !== 'string' || routing.additional_module === '') return null
-  if (
-    routing.additional_detail_concern !== null &&
-    typeof routing.additional_detail_concern !== 'string'
-  ) {
-    return null
-  }
+  const detailConcernLabel =
+    routing.additional_detail_concern === null || routing.additional_detail_concern === undefined
+      ? null
+      : typeof routing.additional_detail_concern === 'string'
+        ? routing.additional_detail_concern
+        : ADDITIONAL_DETAIL_UNREADABLE_LABEL
   return {
     role: 'ADDITIONAL',
     module: routing.additional_module,
-    detailConcernLabel: routing.additional_detail_concern,
+    detailConcernLabel,
     source: 'DERIVED',
   }
 }

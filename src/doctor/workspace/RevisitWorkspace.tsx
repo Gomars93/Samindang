@@ -56,6 +56,7 @@ import {
   type SubmissionRecord,
   type VisitRecord,
 } from '../../lib/serverClient'
+import { readablePriorVisitPrimaryConcern } from './longitudinal'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
@@ -368,7 +369,9 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           <div className="workspace__revisit__priorRecap">
             <p className="workspace__priorVisit__date">
               최근 방문: {new Date(latestPrior.createdAt).toLocaleDateString('ko-KR')}
-              {latestPrior.primaryConcern ? ` · ${latestPrior.primaryConcern}` : ''}
+              {readablePriorVisitPrimaryConcern(latestPrior.primaryConcern)
+                ? ` · ${readablePriorVisitPrimaryConcern(latestPrior.primaryConcern)}`
+                : ''}
             </p>
             {(latestPrior.painFinalAssessmentSummary || latestPrior.herbalFinalAssessmentSummary) && (
               <p className="workspace__priorVisit__assessment">

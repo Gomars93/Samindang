@@ -263,6 +263,10 @@ function isNonEmptyObject(value: unknown): boolean {
  * (HerbalWorkspace.tsx는 이미 DoctorView.tsx를 직접 import하는 기존
  * 관례가 있어 이 함수를 export해서 재사용한다).
  */
+// coreSpec.ts deriveReproductiveStatus의 POSTPARTUM_WITHIN_1Y와 동일 (FROZEN
+// 파일이 아니므로 값이 바뀔 수 있지만, 바뀌면 이 재계산도 함께 갱신해야 한다).
+const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m']
+
 export function isUnreadableReproductiveDerived(r: Responses): boolean {
   // 레거시 레코드는 reproductive_status 최상위 키 자체가 없을 수 있다
   // (그 필드가 생기기 전 제출본) -- 옵셔널 체이닝 없이 바로
@@ -301,6 +305,62 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
         if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
         if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
       }
+    }
+  } else if (d.source === 'pregnancy_module') {
+    // 11차 독립 리뷰 MEDIUM-1: coreSpec.ts deriveReproductiveStatus는
+    // key==='pregnancy'(visit_goal==='women' && women_goal==='pregnancy')
+    // && PREGNANCY_01==='pregnant'일 때만 이 source를 만들고, 그 결과는
+    // 항상 고정된 하나의 형태({raw:['pregnant'], pregnant:true,
+    // pregnancy_possible:false, postpartum_1y:null, breastfeeding:null})다
+    // -- 9/10차는 이 source 전체를 검사 대상에서 제외했지만, 실제로는
+    // r.modules.pregnancy.status(=PREGNANCY_01)로 재계산 가능하다.
+    // 이 컨텍스트가 아니거나 고정 형태와 다르면 실제 보고되지 않은
+    // 임신 사실을 지어낸 것이다.
+    const isPregnancyContext =
+      r.visit_goal?.visit_goal === 'women' &&
+      r.visit_goal?.women_goal === 'pregnancy' &&
+      r.modules?.pregnancy?.status === 'pregnant'
+    if (!isPregnancyContext) return true
+    if (
+      !Array.isArray(d.raw) ||
+      d.raw.length !== 1 ||
+      d.raw[0] !== 'pregnant' ||
+      d.pregnant !== true ||
+      d.pregnancy_possible !== false ||
+      d.postpartum_1y !== null ||
+      d.breastfeeding !== null
+    ) {
+      return true
+    }
+  } else if (d.source === 'postpartum_module') {
+    // coreSpec.ts deriveReproductiveStatus: key==='postpartum'일 때만 이
+    // source를 만들고, postpartum_1y/breastfeeding은 각각
+    // POSTPARTUM_01/03(=r.modules.postpartum.time_since_delivery/
+    // breastfeeding_status)에서 결정론적으로 재계산된다.
+    const isPostpartumContext = r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'postpartum'
+    if (!isPostpartumContext) return true
+    const since = r.modules?.postpartum?.time_since_delivery
+    const feeding = r.modules?.postpartum?.breastfeeding_status
+    const rawParts: string[] = []
+    if (typeof since === 'string') rawParts.push(since)
+    if (typeof feeding === 'string') rawParts.push(feeding)
+    const expectedRaw = rawParts.length > 0 ? rawParts : null
+    const expectedPostpartum1y = typeof since === 'string' ? POSTPARTUM_WITHIN_1Y.includes(since) : null
+    const expectedBreastfeeding = typeof feeding === 'string' ? feeding === 'yes' || feeding === 'mixed' : null
+    const rawMatches =
+      expectedRaw === null
+        ? d.raw === null
+        : Array.isArray(d.raw) &&
+          d.raw.length === expectedRaw.length &&
+          expectedRaw.every((v, i) => (d.raw as unknown[])[i] === v)
+    if (
+      d.pregnant !== null ||
+      d.pregnancy_possible !== null ||
+      d.postpartum_1y !== expectedPostpartum1y ||
+      d.breastfeeding !== expectedBreastfeeding ||
+      !rawMatches
+    ) {
+      return true
     }
   }
   return false

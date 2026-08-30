@@ -2079,6 +2079,96 @@ function detailsRange(html, classMarker) {
       isUnreadableReproductiveDerived(p.responses) === false,
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 11th independent review MEDIUM-1: rounds 9/10 exempted
+   * derived.source==='pregnancy_module'/'postpartum_module' entirely from
+   * the raw-vs-derived consistency check, reasoning they "cannot be
+   * recomputed from this field" -- but coreSpec.ts's deriveReproductiveStatus
+   * (lines ~3820-3891) DOES compute both deterministically:
+   * pregnancy_module only ever fires when visit_goal.women_goal==='pregnancy'
+   * AND modules.pregnancy.status==='pregnant' (PREGNANCY_01), always
+   * producing the fixed shape {raw:['pregnant'], pregnant:true,
+   * pregnancy_possible:false, postpartum_1y:null, breastfeeding:null}.
+   * postpartum_module only fires when visit_goal.women_goal==='postpartum',
+   * with postpartum_1y/breastfeeding recomputed from
+   * modules.postpartum.time_since_delivery/breastfeeding_status
+   * (POSTPARTUM_01/03). A record claiming either source outside its real
+   * context, or with a shape that doesn't match what those raw fields
+   * actually recompute to, fabricates a pregnancy/postpartum fact that was
+   * never reported.
+   * ------------------------------------------------------------------- */
+  {
+    const pregnancyFixture = byName('임신 상담')
+    assert(
+      'resilience: isUnreadableReproductiveDerived accepts the genuine pregnancy_module derived object exactly as coreSpec.ts computed it (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(pregnancyFixture.payload.responses) === false,
+    )
+  }
+  {
+    // Same well-formed pregnancy_module shape, but spliced onto a record
+    // whose visit_goal is NOT the pregnancy module (a plain LBP fixture) --
+    // this is exactly the fabrication this fix closes.
+    const lbpFixture6 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture6.payload)
+    p.responses.reproductive_status.derived = {
+      source: 'pregnancy_module',
+      raw: ['pregnant'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a derived.source="pregnancy_module" claimed outside any pregnancy visit context (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Genuine pregnancy context, but the shape deviates from the one fixed
+    // shape coreSpec.ts always produces for this source.
+    const pregnancyFixture2 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture2.payload)
+    p.responses.reproductive_status.derived.breastfeeding = true
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a pregnancy_module derived object that deviates from the one fixed shape coreSpec.ts always produces for it',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const postpartumFixture = byName('산후 회복')
+    assert(
+      'resilience: isUnreadableReproductiveDerived accepts the genuine postpartum_module derived object exactly as coreSpec.ts recomputed it from POSTPARTUM_01/03 (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(postpartumFixture.payload.responses) === false,
+    )
+  }
+  {
+    const lbpFixture7 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture7.payload)
+    p.responses.reproductive_status.derived = {
+      source: 'postpartum_module',
+      raw: ['6w_to_3m', 'yes'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: true,
+      breastfeeding: true,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a derived.source="postpartum_module" claimed outside any postpartum visit context (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Genuine postpartum context, but postpartum_1y contradicts what
+    // POSTPARTUM_01='6w_to_3m' actually recomputes to (must be true).
+    const postpartumFixture2 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture2.payload)
+    p.responses.reproductive_status.derived.postpartum_1y = false
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a postpartum_module derived.postpartum_1y that contradicts what POSTPARTUM_01 actually recomputes to',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------

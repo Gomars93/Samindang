@@ -159,6 +159,15 @@ export function PainWorkspace({
   // though r.modules.lbp is real data (6th independent review HIGH-1, same
   // root cause as LbpSafetyPanel's gate in DoctorView.tsx).
   const recoveryScore = r.safety_flags?.lbp != null ? (r.modules?.lbp?.recovery_expectation ?? null) : null
+  // 11차 독립 리뷰 HIGH-1: LBP_12(numeric_scale, 태블릿은 항상 number로
+  // 저장 -- QuestionScreen.tsx의 NumericScale)는 optionLabel/answerLabel을
+  // 거치지 않고 여기서 바로 String()으로 렌더된다 -- 객체면
+  // "[object Object]"를 그대로 노출하고, 배열이면(예: ['9']) 실제
+  // 환자가 답하지 않은 값을 진짜 원점수처럼 보이게 지어낸다("확인 필요"
+  // 표시 없이). isEmptyValue는 객체/배열을 "비어있지 않음"으로만
+  // 취급할 뿐 타입은 검증하지 않으므로 이 경로를 막지 못한다.
+  const recoveryScoreUnreadable =
+    recoveryScore != null && (typeof recoveryScore !== 'number' || !Number.isFinite(recoveryScore))
 
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)
@@ -198,11 +207,17 @@ export function PainWorkspace({
               <strong className="workspace__metric__value">{durFreq}</strong>
             </div>
           )}
-          {!isEmptyValue(recoveryScore) && (
+          {(!isEmptyValue(recoveryScore) || recoveryScoreUnreadable) && (
             <div className="workspace__metric">
               <span className="workspace__metric__label">회복 기대</span>
               <strong className="workspace__metric__value">
-                {String(recoveryScore)} / 10 <span className="workspace__rawTag">원점수</span>
+                {recoveryScoreUnreadable ? (
+                  '확인 필요(값 형식 오류)'
+                ) : (
+                  <>
+                    {recoveryScore} / 10 <span className="workspace__rawTag">원점수</span>
+                  </>
+                )}
               </strong>
             </div>
           )}

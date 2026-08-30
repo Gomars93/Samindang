@@ -49,16 +49,21 @@ test('MedicationCourseSection: every async state-setting completion point checks
   assert.equal(guardCount, 7, `expected exactly 7 epoch-fenced completions, found ${guardCount}`)
 })
 
-// 2nd closing-review finding (LOW): the guard-count assertion above only
-// proves 7 guards exist -- it says nothing about whether a NEW, unguarded
-// .then((result) => {...}) callback was added elsewhere, since that would
-// leave the guard count at 7 while adding an 8th unfenced completion point.
-// Pinning the total number of this callback shape closes that blind spot:
-// if this ever needs to grow, the anchored-guard test below must grow with
-// it in lockstep.
-test('MedicationCourseSection: there are exactly 7 .then((result) => {...}) callbacks total (a new one must be epoch-guarded, not merely added)', () => {
-  const thenCount = (src.match(/\.then\(\(result\) => \{/g) ?? []).length
-  assert.equal(thenCount, 7, `expected exactly 7 .then((result) => {...}) callbacks, found ${thenCount} -- a new one may be missing its epoch guard`)
+// 2nd closing-review finding (LOW), 3rd closing-review finding (LOW): the
+// guard-count assertion above only proves 7 guards exist -- it says nothing
+// about whether a NEW, unguarded async completion point was added elsewhere.
+// Pinning the total number of `.then((result) => {` closed that for ONE
+// exact source shape, but the 3rd review found it defeated by trivial
+// reformatting: `.then((res) => {`, `.then(function (result) {`, or a bare
+// `.finally(() => setBusy(false))` one-liner all leave both counts unmoved
+// while adding a genuinely unguarded completion point. Counting the bare
+// tokens `.then(`/`.finally(` instead of one fixed callback shape survives
+// that reformatting -- and pinning `.catch(`/`await` at 0 means introducing
+// EITHER (an async completion point no `.then`-shaped assertion here could
+// ever see) fails loudly rather than silently.
+test('MedicationCourseSection: exactly 7 .then( call sites total, regardless of callback formatting (a new one must be epoch-guarded)', () => {
+  const thenCount = (src.match(/\.then\(/g) ?? []).length
+  assert.equal(thenCount, 7, `expected exactly 7 .then( call sites, found ${thenCount} -- a new one may be missing its epoch guard`)
 })
 
 test('MedicationCourseSection: every busy-flag release in a .finally() is itself epoch-guarded (a stale action must never clear a newer epoch\'s busy state)', () => {
@@ -66,12 +71,14 @@ test('MedicationCourseSection: every busy-flag release in a .finally() is itself
   assert.equal(finallyGuardCount, 4, `expected all 4 mutating action handlers to epoch-guard their .finally(), found ${finallyGuardCount}`)
 })
 
-// Same blind spot as above, for .finally(): pin the total so a 5th mutating
-// handler with an unguarded .finally(() => setBusy(false)) cannot slip in
-// while the guarded-count assertion stays at 4.
-test('MedicationCourseSection: there are exactly 4 .finally(() => {...}) blocks total (a new mutating action\'s must be epoch-guarded)', () => {
-  const finallyCount = (src.match(/\.finally\(\(\) => \{/g) ?? []).length
-  assert.equal(finallyCount, 4, `expected exactly 4 .finally(() => {...}) blocks, found ${finallyCount} -- a new one may be missing its epoch guard`)
+test('MedicationCourseSection: exactly 4 .finally( call sites total, regardless of callback formatting (a 5th mutating action\'s must be epoch-guarded)', () => {
+  const finallyCount = (src.match(/\.finally\(/g) ?? []).length
+  assert.equal(finallyCount, 4, `expected exactly 4 .finally( call sites, found ${finallyCount} -- a new one may be missing its epoch guard`)
+})
+
+test('MedicationCourseSection: no .catch( or await async-completion shape exists (neither is covered by the .then/.finally guards above)', () => {
+  assert.equal((src.match(/\.catch\(/g) ?? []).length, 0, 'a .catch() is an async completion point too and must be epoch-guarded like every .then()')
+  assert.equal((src.match(/\bawait\s/g) ?? []).length, 0, 'an await-based completion point bypasses every .then-shaped assertion in this file')
 })
 
 test('MedicationCourseSection: each of the four mutating actions captures its own epoch snapshot before issuing the request', () => {
@@ -90,30 +97,50 @@ test('MedicationCourseSection: the main load effect bumps the epoch exactly once
 // clear `busy` for the new patient, permanently disabling every action
 // button in the section. Every disabled={busy}/if (busy) return call site
 // depends on this being reset on patientUuid change.
-// 2nd closing-review finding (LOW): asserting setBusy(false) appears
-// ANYWHERE in the effect body does not prove the reset is synchronous and
-// unconditional -- e.g. moving it inside the listEpisodesByPatient().then()
-// callback (so it only clears once the NEW patient's load resolves, and
-// never on that call's !result.ok early-return path) still satisfies a
-// body-wide match. Anchoring it as the literal statement immediately after
-// setActionError(null) proves it runs unconditionally in the synchronous
-// reset block, not deferred into an async callback.
+// 2nd closing-review finding (LOW), 3rd closing-review finding (LOW): asserting
+// setBusy(false) appears ANYWHERE in the effect body -- or even anywhere in
+// the whole file, which is what this regressed to -- does not prove the reset
+// is synchronous and unconditional. Extracting the effect body first (as the
+// 3rd review's own fixes below do) and anchoring the statement immediately
+// after setActionError(null) proves it runs unconditionally in the
+// synchronous reset block, not deferred into an async callback or hoisted
+// into a helper that happens to still contain both lines somewhere.
 test('MedicationCourseSection: the load effect resets busy synchronously in its reset block (not deferred into an async callback)', () => {
-  assert.match(src, /setActionError\(null\)\s*setBusy\(false\)/, 'expected setBusy(false) to immediately follow setActionError(null) in the synchronous reset block')
-})
-
-// 2nd closing-review finding (MEDIUM): these four new-course draft fields
-// were only ever cleared on a successful handleCreateCourse -- switching
-// patients mid-draft (without submitting) left them holding the PREVIOUS
-// patient's typed dates. The form itself closes (showNewCourseForm resets),
-// so this was invisible; opening a fresh draft for the new patient then
-// silently pre-fills with the stale dates, one save away from writing one
-// patient's medication dates onto another's course record.
-test('MedicationCourseSection: the load effect resets all four new-course draft date/duration fields on every patientUuid change', () => {
   const effectBody = src.match(/useEffect\(\(\) => \{([\s\S]*?)\}, \[patientUuid\]\)/)
   assert.ok(effectBody, 'expected to find the main useEffect body')
+  assert.match(effectBody[1], /setActionError\(null\)\s*setBusy\(false\)/, 'expected setBusy(false) to immediately follow setActionError(null) in the synchronous reset block')
+})
+
+// 3rd closing-review finding (MEDIUM): two rounds each found a DIFFERENT
+// useState the reset block forgot (busy in round 1, four new-course draft
+// fields in round 2) because no test proved the reset block was COMPLETE --
+// each fix only pinned the specific fields the round in question had found.
+// Deriving the setter list straight from every `useState` DECLARATION and
+// diffing it against what the reset block actually calls makes this
+// self-updating: a 17th useState added later without a matching reset in the
+// block fails here immediately, rather than waiting for a fourth review round
+// to notice by inspection. (16 is the current count -- verified by the 3rd
+// review two independent ways: manual enumeration and this exact mechanical
+// diff, both agreeing missing=[].)
+test('MedicationCourseSection: the load effect resets EVERY useState setter it declares (complete reset block, derived from the declarations)', () => {
+  const decls = [...src.matchAll(/const \[\w+, (set\w+)\] = useState/g)].map((m) => m[1])
+  assert.equal(decls.length, 16, 'useState declaration count changed -- re-audit which are patient-scoped before updating this number')
+  const effectBody = src.match(/useEffect\(\(\) => \{([\s\S]*?)\}, \[patientUuid\]\)/)
+  assert.ok(effectBody, 'expected to find the main useEffect body')
+  const missing = decls.filter((d) => !new RegExp(`\\b${d}\\(`).test(effectBody[1]))
+  assert.deepEqual(missing, [], `these patient-scoped setters are never reset on a patientUuid change: ${missing.join(', ')}`)
+})
+
+// 3rd closing-review finding (MEDIUM, part 2): the derived test above proves
+// the EFFECT resets every field, but the round-2 fix also added the same
+// four clears to the new-course form's cancel button -- reverting just that
+// half (abandoning a draft mid-patient, no switch involved) passed every
+// existing assertion, since none of them looked at the cancel handler.
+test('MedicationCourseSection: the new-course form\'s cancel button also clears all four draft date/duration fields (not just the load effect)', () => {
+  const cancelHandler = src.match(/onClick=\{\(\) => \{\s*setShowNewCourseForm\(false\)\s*setNewCourseSourceId\(''\)([\s\S]*?)\}\}/)
+  assert.ok(cancelHandler, 'expected to find the cancel button\'s onClick handler')
   for (const setter of ['setNewPrescribedAt', 'setNewDispensedAt', 'setNewStartAt', 'setNewDurationDays']) {
-    assert.match(effectBody[1], new RegExp(`${setter}\\(''\\)`), `expected the effect to reset ${setter} alongside its other patient-scoped state`)
+    assert.match(cancelHandler[1], new RegExp(`${setter}\\(''\\)`), `expected the cancel handler to also clear ${setter}`)
   }
 })
 

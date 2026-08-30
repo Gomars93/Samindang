@@ -701,7 +701,19 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
       if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
 
       const tasks = await listTasksByEpisode(course.episode_id, now)
-      const linked = tasks.filter((t) => t.source_type === 'MEDICATION_COURSE' && t.source_id === course_id && t.task_type === 'ROUTINE')
+      // 3rd closing-review finding (LOW): a prior round tightened this filter to
+      // include source_type for "consistency" with the check-task dedup
+      // pre-check -- but recalculateMedicationTasksOnStartShift (medicationCourse.ts)
+      // computes `superseded` from the SAME `tasks` array using the untightened
+      // (source_id, task_type) filter, and originalById below is looked up by
+      // task_id from THIS `linked` set to detect true no-ops. Diverging the two
+      // filters meant a task present in the looser set but absent from this
+      // narrower one would resolve to `undefined` here, making
+      // `t !== originalById.get(t.task_id)` always true -- breaking the DONE-task
+      // immutability the comment below depends on. Reverted to match
+      // medicationCourse.ts:38 exactly; do not re-diverge these without updating
+      // both together.
+      const linked = tasks.filter((t) => t.source_id === course_id && t.task_type === 'ROUTINE')
       const originalById = new Map(linked.map((t) => [t.task_id, t]))
       const updatedCourseSnapshot = { ...course, medication_start_at }
       const { superseded, recalculated } = recalculateMedicationTasksOnStartShift(tasks, updatedCourseSnapshot, () =>

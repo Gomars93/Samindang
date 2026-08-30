@@ -334,10 +334,18 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
                       aria-pressed={draft?.reason === rc}
                       className={`workspace__followUpChip${draft?.reason === rc ? ' workspace__followUpChip--active' : ''}`}
                       onClick={() =>
-                        setCheckDraftByCourse((prev) => ({
-                          ...prev,
-                          [course.course_id]: { reason: rc, dueAt: prev[course.course_id]?.dueAt ?? '' },
-                        }))
+                        // 3rd closing-review finding (NIT): clicking the already-active
+                        // chip now dismisses the draft (no other affordance existed to
+                        // abandon a mis-clicked reason -- it previously stuck around
+                        // until a successful create, the rest of the session).
+                        setCheckDraftByCourse((prev) => {
+                          if (prev[course.course_id]?.reason === rc) {
+                            const next = { ...prev }
+                            delete next[course.course_id]
+                            return next
+                          }
+                          return { ...prev, [course.course_id]: { reason: rc, dueAt: prev[course.course_id]?.dueAt ?? '' } }
+                        })
                       }
                     >
                       {CRM_REASON_CODE_LABEL[rc]}
@@ -365,7 +373,25 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
                 )}
               </div>
 
-              <details className="medCourse__shift">
+              <details
+                className="medCourse__shift"
+                // 3rd closing-review finding (LOW): the shift-start draft was only
+                // ever cleared on a SUCCESSFUL handleShiftStart -- collapsing this
+                // disclosure hid an abandoned date without clearing it, so reopening
+                // later re-showed it pre-filled with an already-enabled save button,
+                // reading as current data. Clearing on close (not on open) means an
+                // in-progress edit survives an accidental collapse/reopen, but an
+                // explicitly closed one never lingers.
+                onToggle={(e) => {
+                  if (e.currentTarget.open) return
+                  setShiftDraftByCourse((prev) => {
+                    if (!(course.course_id in prev)) return prev
+                    const next = { ...prev }
+                    delete next[course.course_id]
+                    return next
+                  })
+                }}
+              >
                 <summary>복용 시작일 변경</summary>
                 <div className="medCourse__actions__row">
                   <input

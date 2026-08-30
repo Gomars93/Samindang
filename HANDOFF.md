@@ -3562,9 +3562,62 @@ Chromium) QA로 발송/폴백/재시도/취소 전 경로 실제 확인(HIGH-1 �
 'src/spec/*Adapter.ts'` = 항상 empty(FROZEN 무손상). CI/Preview green
 (853739bd 기준 확인, 이후 커밋들도 push 후 CI green 통지 수신).
 
+## Completed — Round 18 (stale-write 충돌 안전장치, 이번 세션)
+
+**목표(오너 지시, Quick Revisit/SOLAPI 배치의 CLOSABLE 확인 직후 새로
+지정)**: round 17이 서버에 이미 만들어둔 `expectedUpdatedAt`/409 CAS
+1차조건(`saveJudgment`/`saveWorkspace`/`saveVisitWorkspace`, 이미
+`tests/server.spec.mjs`·`tests/follow-up-session.spec.mjs`에서 HTTP
+레벨로 검증됨)을 실제 Doctor Workspace/Revisit Workspace/JudgmentPanel
+저장 경로에 배선한다 — 지금까지는 클라이언트가 이 헤더를 전혀 보내지
+않아 실질적으로 last-write-wins였다.
+
+- 새 공유 컴포넌트 `src/doctor/ConflictBanner.tsx`: fail-closed 배너 —
+  절대 병합하지 않고, "최신 내용 불러오기" 1개 액션만 제공, 되돌리기 전
+  화면에 있던 미저장 내용을 읽기전용 textarea로 보존(복사해서
+  다시 입력 가능). `.doctor__banner--warning`(안전배너 `--danger`와
+  절대 혼동되지 않는 별도 색상).
+- `DoctorWorkspace.tsx`/`RevisitWorkspace.tsx`: 디바운스 autosave가
+  마지막으로 확인한 `updated_at`을 CAS precondition으로 보내고, 409를
+  받으면 재시도를 완전히 멈춘다(`if (conflict) return`) — 명시적
+  reload 전까지. 레코드 전환 시 conflict/draft 상태 완전 초기화(환자
+  간 누수 없음, 실제 브라우저 QA로 확인).
+- `JudgmentPanel.tsx`: "기록" 버튼(디바운스 아님, 명시적 클릭)도 동일
+  계약 — 거부된 저장은 "기록됨"으로 표시되지 않고, 원장이 입력 중이던
+  판단/디브리핑 텍스트는 그대로 화면에 남는다.
+- `DoctorView.tsx`: 세 저장 경로 모두 409의 `errorBody.current`를
+  typed conflict outcome으로 변환.
+
+**실제 브라우저 QA(2개 Playwright 브라우저 컨텍스트, 같은 제출건을
+동시에 열고 편집)가 배치 완료 전 실제 버그 2건을 잡아냈다**(코드로
+고치기 전에는 QA가 실제로 FAIL했음, 이후 재실행으로 확인):
+1. 제출건을 처음 열 때 자동으로 붙는 "열람함(viewed)" 상태 기록도
+   judgment/workspace 저장과 똑같이 `updated_at`을 올리는데
+   (`store.js`의 `setStatus`), 그 응답을 `selectedRecord`에 반영하지
+   않고 있었다 — 그 결과 어떤 제출건이든 "첫 자동저장"이 원장 자신의
+   열람-표시 기록과 스스로 충돌(spurious 409)하는 구조였다. 단일
+   원장·단일 탭 상황에서도 100% 재현.
+2. 두 번째 탭이 이미 '열람됨' 상태인 제출건을 열어도 `viewedRef`가
+   탭별 in-memory라 이를 몰라 열람-표시를 또 보내 `updated_at`을 한 번
+   더 올렸다 — 직원이 원장이 이미 보고 있는 환자를 잠깐 열어보기만
+   해도 원장 쪽 다음 저장이 충돌할 수 있는 구조.
+둘 다 `DoctorView.tsx`에서 수정(status 응답을 `selectedRecord`에
+반영 + 서버가 보고한 status가 여전히 'new'일 때만 열람-표시 전송).
+수정 후 QA 재실행 결과: 정상 저장자는 깨끗이 저장, stale 저장자는
+409로 안내 배너 + 원문 보존 + reload로 서버 최신본 복구(병합 없음),
+다른 환자로 전환 시 배너/초안/텍스트 전혀 누수되지 않음 — 전부 확인.
+
+검증: `npx tsc -b --force`(0 errors), `npm run build`,
+`npm run build:preview`, `npm run test:all`(새 `tests/save-conflict.spec.mjs`
+25 assertions 포함 전체 green), `tablet core` pytest 80/80,
+`git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'` =
+empty. 독립 `model:opus` 리뷰 진행 중(실제 invocation, 결과 대기).
+
+커밋: `f556574`.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`f018b77`.
+`f556574`.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -3595,25 +3648,35 @@ Chromium) QA로 발송/폴백/재시도/취소 전 경로 실제 확인(HIGH-1 �
   follow-up-session 감사 로그는 visit_id + event type만 남기고 토큰
   평문/답변 내용은 절대 남기지 않는다(테스트로 확인).
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다.
+- (신규, round 18) `RevisitWorkspace.tsx`는 visit 레코드의 `updated_at`을
+  로드 시점에 한 번만 갱신한다(제출건의 "열람함" 버그와 달리, revisit을
+  여는 동작 자체는 visit 레코드에 아무것도 쓰지 않으므로 같은 종류의
+  버그는 없음을 확인함). 다만 `setRecorderPointer`(녹음 결과 연결)가
+  같은 visit 레코드의 `updated_at`을 독립적으로 올릴 수 있는 이론상
+  낮은 확률의 경로가 남아 있다 — 발생해도 데이터 손실 없이(fail-closed
+  배너로) 안전하게 처리되며, 이 경로에 별도 캐시 무효화 로직을 추가하는
+  것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(Quick Revisit/SOLAPI 배치, HEAD `f018b77` 기준 갱신.)
+(Round 18 stale-write 배치, HEAD `f556574` 기준 갱신.)
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가
    별도로 필요한지 Gomars93의 판단이 필요. PR #24 코멘트에 상세 플래그.
-1. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `f018b77`)와
-   PR #24 코멘트를 검토하고, 최종 merge 여부를 직접 판단한다 — 이 세션은
+   (이번 round 18과는 무관, 여전히 미해결.)
+1. Round 18(stale-write CAS 배선)의 독립 `model:opus` 리뷰 결과 대기 중
+   — 결과에 따라 발견 사항 수정 후 closing 재검토, 또는 CLOSABLE 확정.
+2. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `f556574`)와
+   PR #24를 검토하고, 최종 merge 여부를 직접 판단한다 — 이 세션은
    절대 스스로 merge하지 않는다.
-2. round 17이 의도적으로 미룬 항목(위 Objective 참고): Doctor Workspace/
-   RevisitWorkspace 클라이언트가 새 `expectedUpdatedAt` CAS
-   precondition을 실제로 보내고 409를 UX로 다루도록 배선하는 일 — 충돌
-   시 화면이 어때야 하는지(자동 새로고침/배너/병합 뷰)는 제품 판단이라
-   별도 승인 후 진행.
-3. Test 0(Naver→Sigma 예약 반영 live 검증)는 여전히 PENDING — Naver
+3. ~~round 17이 의도적으로 미룬 항목~~ → **round 18에서 완료**: Doctor
+   Workspace/RevisitWorkspace/JudgmentPanel이 이제 실제로
+   `expectedUpdatedAt`을 보내고 409를 fail-closed 배너(자동 병합 없음,
+   명시적 reload만)로 처리한다.
+4. Test 0(Naver→Sigma 예약 반영 live 검증)는 여전히 PENDING — Naver
    연동이 라이브가 될 때까지 보류, 라이브 전환 후 실제 예약 5건으로
    재시도.
-4. round 16 closing review가 남긴 nitpick(문서화만, 코드 변경 없음)은
+5. round 16 closing review가 남긴 nitpick(문서화만, 코드 변경 없음)은
    여전히 급하지 않음.
-5. 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 여전히 수동.
-6. PR #24는 여전히 사용자가 직접 검토 후 merge 여부를 결정한다.
+6. 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 여전히 수동.
+7. PR #24는 여전히 사용자가 직접 검토 후 merge 여부를 결정한다.

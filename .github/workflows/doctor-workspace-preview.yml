@@ -6,26 +6,21 @@ name: Deploy Doctor Workspace Preview
 # left unset (isServerConfigured() -> false), so DoctorView.tsx can only
 # ever run in "fixtures" mode here (server mode is unreachable without a
 # configured URL). VITE_PREVIEW_MODE=true renders the on-screen preview
-# banner. It mirrors the currently-live GitHub Pages root and adds only
-# /doctor-pr/, so the main patient preview remains untouched byte-for-byte
-# (same technique pr-23-preview.yml already established on another branch).
+# banner. It mirrors the currently-live GitHub Pages root and adds both
+# /doctor-pr/ and /followup/, so the main patient preview remains untouched
+# byte-for-byte.
 #
-# BizM batch: this same run/job additionally adds /followup/ -- a stable,
-# NO-PHI GitHub Pages rehearsal path for the real BizM Alimtalk template's
-# button URL (see src/lib/publicFollowUpUrl.ts's header and
-# bizmAdapter.js's header on the `#{followup_token}`-in-URL button pattern
-# BizM's own template UI expects). Reuses this workflow's own existing
-# "mirror the live root + add one more subfolder" technique rather than
-# standing up a fourth separate deploy workflow (which would only add
-# another site-root mirror race alongside pages-preview.yml/
-# pr-23-preview.yml/this file). VITE_SAMINDANG_SERVER_URL stays unset here
-# too -- opening a `#follow-up=<token>` URL under this path can only ever
-# reach FollowUpScreen's own honest "서버가 설정되지 않았습니다" state
-# (src/lib/followUpClient.ts's isFollowUpServerConfigured), never a real
-# network call, so this is safe to keep publicly reachable at a stable URL
-# indefinitely as a template-development/rehearsal target -- it is NOT
-# production and must never be treated as one (no real backend is, or ever
-# will be, reachable from this specific Pages deployment).
+# /followup/ is a stable, NO-PHI GitHub Pages rehearsal path for the real
+# BizM Alimtalk template's button URL (see src/lib/publicFollowUpUrl.ts's
+# header and bizmAdapter.js's header on the `#{followup_token}`-in-URL
+# button pattern BizM's own template UI expects). VITE_SAMINDANG_SERVER_URL
+# stays unset here too -- opening a `#follow-up=<token>` URL under this path
+# can only ever reach FollowUpScreen's own honest "서버가 설정되지
+# 않았습니다" state (src/lib/followUpClient.ts's isFollowUpServerConfigured),
+# never a real network call, so this is safe to keep publicly reachable at a
+# stable URL indefinitely as a template-development/rehearsal target -- it
+# is NOT production and must never be treated as one (no real backend is, or
+# ever will be, reachable from this specific Pages deployment).
 
 on:
   push:
@@ -58,18 +53,28 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Build preview under /Samindang/doctor-pr/ (no server URL configured, preview banner on)
+      - name: Build Doctor Workspace under /Samindang/doctor-pr/
         run: npm run build:preview
         env:
           VITE_PREVIEW_MODE: 'true'
           VITE_SAMINDANG_SERVER_URL: ''
           VITE_PAGES_BASE_PATH: '/Samindang/doctor-pr/'
 
-      - name: Land the app directly on the Doctor Workspace (#doctor route)
+      - name: Stage doctor-pr build
+        run: mv dist dist-doctor-pr
+
+      - name: Build patient follow-up endpoint under /Samindang/followup/
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+          VITE_PAGES_BASE_PATH: '/Samindang/followup/'
+
+      - name: Inject doctor landing redirect into doctor-pr build
         run: |
           node -e "
             const fs = require('fs');
-            const p = 'dist/index.html';
+            const p = 'dist-doctor-pr/index.html';
             let html = fs.readFileSync(p, 'utf8');
             const redirect = '<script>if (!location.hash) location.hash = \"doctor\";</script>';
             html = html.replace('</head>', redirect + '</head>');
@@ -85,26 +90,18 @@ jobs:
           echo "--- mirrored root ---"
           find combined -maxdepth 2 -type f | sort | head -100
 
-      - name: Add real Doctor Workspace build under /doctor-pr/
+      - name: Add Doctor Workspace build under /doctor-pr/
         run: |
           mkdir -p combined/doctor-pr
-          cp -r dist/. combined/doctor-pr/
+          cp -r dist-doctor-pr/. combined/doctor-pr/
           echo "--- doctor preview ---"
           ls -lh combined/doctor-pr/
 
-      - name: Build /followup/ rehearsal target (BizM Alimtalk template dev URL, no server URL configured)
-        run: npm run build:preview
-        env:
-          VITE_PREVIEW_MODE: 'true'
-          VITE_SAMINDANG_SERVER_URL: ''
-          VITE_PAGES_BASE_PATH: '/Samindang/followup/'
-          VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL: 'https://gomars93.github.io/Samindang/followup/'
-
-      - name: Add /followup/ build
+      - name: Add patient follow-up build under /followup/
         run: |
           mkdir -p combined/followup
           cp -r dist/. combined/followup/
-          echo "--- followup rehearsal target ---"
+          echo "--- followup preview ---"
           ls -lh combined/followup/
 
       - uses: actions/configure-pages@v5
@@ -116,7 +113,7 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Print preview URL
+      - name: Print preview URLs
         run: |
-          echo "Doctor Workspace preview (real build): ${{ steps.deployment.outputs.page_url }}doctor-pr/"
-          echo "BizM Alimtalk template dev/rehearsal target: ${{ steps.deployment.outputs.page_url }}followup/#follow-up=<test-token>"
+          echo "Doctor Workspace: ${{ steps.deployment.outputs.page_url }}doctor-pr/"
+          echo "Patient follow-up (BizM Alimtalk template dev/rehearsal target): ${{ steps.deployment.outputs.page_url }}followup/#follow-up=<test-token>"

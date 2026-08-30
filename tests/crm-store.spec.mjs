@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
-import { createCrmStore, CrmConflictError, CrmNotFoundError } from '../server/crmStore.js'
+import { createCrmStore, CrmConflictError, CrmNotFoundError, CrmOwnershipError } from '../server/crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from '../server/patientIdentityStore.js'
 import { createApp } from '../server/index.js'
 import { groupTasksForCommunication, computeDedupKey } from '../src/crm/taskEngine.ts'
@@ -86,7 +86,7 @@ async function main() {
       const episodeId = randomUUID()
       const patientUuid = randomUUID()
 
-      const episode = await storeA.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+      const { episode } = await storeA.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
       assert('restart: episode created ACTIVE version 1', episode.status === 'ACTIVE' && episode.version === 1)
 
       const { task: routineTask } = await storeA.createTaskStored({
@@ -258,7 +258,7 @@ async function main() {
       const store = createCrmStore(root, { claimLeaseMinutes: 60 })
       const episodeId = randomUUID()
       const patientUuid = randomUUID()
-      const episode = await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+      const { episode } = await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
 
       const { task: routineTask } = await store.createTaskStored({
         task_id: randomUUID(),
@@ -427,7 +427,7 @@ async function main() {
       const store = createCrmStore(root, { claimLeaseMinutes: 60 })
       const patientA = randomUUID()
       const patientB = randomUUID()
-      const episodeForA = await store.createEpisode({ episode_id: randomUUID(), patient_uuid: patientA, owner_clinician: null, now: T0 })
+      const { episode: episodeForA } = await store.createEpisode({ episode_id: randomUUID(), patient_uuid: patientA, owner_clinician: null, now: T0 })
 
       // A stale/malicious body claims episodeForA (patient A) but supplies
       // patient B's uuid as the task's patient_uuid.
@@ -2073,6 +2073,118 @@ async function main() {
       if (server) await stopServer(server)
       await rm(dataRoot, { recursive: true, force: true })
       await rm(sentinelRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Episode↔Medication association integrity batch (owner-review, PR #24
+     comment after the Medication/Herbal CRM batch closed): three gaps --
+     Episode creation not retry-idempotent at the HTTP/UI boundary (the
+     route always minted a fresh randomUUID(), so the store's own
+     create-if-absent semantics could never actually fire on a client
+     retry), the UI silently auto-picking an Episode when several exist,
+     and MedicationCourse creation not asserting the episode belongs to
+     the caller's declared patient context. This block covers the store-
+     level half of the first and third.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-episode-assoc-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const patientUuid = randomUUID()
+      const clientMintedEpisodeId = randomUUID()
+
+      const first = await store.createEpisode({ episode_id: clientMintedEpisodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+      assert('episode-retry: first create-if-absent call is a genuine create', first.created === true)
+      assert('episode-retry: first call mints the episode under the client-supplied id', first.episode.episode_id === clientMintedEpisodeId)
+
+      // Simulates the response-loss scenario: the client never learned the
+      // first call succeeded and retries with the SAME (client-minted) id.
+      const retry = await store.createEpisode({ episode_id: clientMintedEpisodeId, patient_uuid: patientUuid, owner_clinician: null, now: '2026-01-02T00:00:00.000Z' })
+      assert('episode-retry: retry with the same id converges to the existing Episode, not a second one', retry.created === false)
+      assert('episode-retry: retry returns the SAME episode_id', retry.episode.episode_id === clientMintedEpisodeId)
+      assert('episode-retry: retry does not overwrite created_at with its own (different) now', retry.episode.created_at === first.episode.created_at)
+
+      const episodeFiles = (await readdir(path.join(root, 'episodes'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      assert('episode-retry: exactly one Episode file exists on disk for this patient after the retry', episodeFiles.length === 1)
+
+      // Concurrent double-submit with the SAME client-minted id (e.g. a
+      // doctor double-clicking, or a real network race) must also converge
+      // to exactly one create -- never two, regardless of which request's
+      // lock acquisition wins.
+      const concurrentId = randomUUID()
+      const [concA, concB] = await Promise.all([
+        store.createEpisode({ episode_id: concurrentId, patient_uuid: patientUuid, owner_clinician: null, now: T0 }),
+        store.createEpisode({ episode_id: concurrentId, patient_uuid: patientUuid, owner_clinician: null, now: T0 }),
+      ])
+      const concurrentCreatedCount = (concA.created ? 1 : 0) + (concB.created ? 1 : 0)
+      assert('episode-retry: exactly one of two concurrent same-id creates reports created=true', concurrentCreatedCount === 1)
+      assert('episode-retry: both concurrent calls return the same episode_id', concA.episode.episode_id === concB.episode.episode_id)
+      const concurrentFiles = (await readdir(path.join(root, 'episodes'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      assert('episode-retry: concurrent double-submit still leaves exactly two Episode files total (the first patient one + this one)', concurrentFiles.length === 2)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-crm-episode-ownership-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const patientA = randomUUID()
+      const patientB = randomUUID()
+      const { episode: episodeA } = await store.createEpisode({ episode_id: randomUUID(), patient_uuid: patientA, owner_clinician: null, now: T0 })
+
+      // A stale/buggy client operating in patient B's context submits
+      // patient A's episode_id -- must be rejected before any write.
+      let threw = null
+      try {
+        await store.createMedicationCourseStored({
+          course_id: randomUUID(),
+          episode_id: episodeA.episode_id,
+          expected_patient_uuid: patientB,
+          source: 'doctor_manual_entry',
+          source_id: 'ownership-mismatch-src',
+          source_timestamp: T0,
+          now: T0,
+        })
+      } catch (err) {
+        threw = err
+      }
+      assert('ownership: mismatched expected_patient_uuid throws CrmOwnershipError', threw instanceof CrmOwnershipError)
+
+      const courseFiles = (await readdir(path.join(root, 'medication-courses')).catch(() => [])).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      assert('ownership: zero MedicationCourse files were written after the rejected mismatch', courseFiles.length === 0)
+      const dedupFiles = (await readdir(path.join(root, 'medication-course-dedup')).catch(() => [])).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      assert('ownership: zero dedup pointer files were written after the rejected mismatch', dedupFiles.length === 0)
+
+      // The correctly-addressed call (matching patient_uuid) must still
+      // succeed normally -- the check is fail-closed only on an actual
+      // mismatch, not a blanket new requirement.
+      const { course: correctCourse, deduped: correctDeduped } = await store.createMedicationCourseStored({
+        course_id: randomUUID(),
+        episode_id: episodeA.episode_id,
+        expected_patient_uuid: patientA,
+        source: 'doctor_manual_entry',
+        source_id: 'ownership-correct-src',
+        source_timestamp: T0,
+        now: T0,
+      })
+      assert('ownership: a call with the CORRECT expected_patient_uuid succeeds normally', correctDeduped === false && correctCourse.patient_uuid === patientA)
+
+      // Omitting expected_patient_uuid entirely (existing/other callers
+      // with no patient context to assert) must remain unaffected.
+      const { course: noContextCourse } = await store.createMedicationCourseStored({
+        course_id: randomUUID(),
+        episode_id: episodeA.episode_id,
+        source: 'doctor_manual_entry',
+        source_id: 'ownership-no-context-src',
+        source_timestamp: T0,
+        now: T0,
+      })
+      assert('ownership: omitting expected_patient_uuid entirely does not trigger the check', noContextCourse.patient_uuid === patientA)
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   }
 

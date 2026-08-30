@@ -35,6 +35,16 @@ import { CRM_REASON_CODE_LABEL, CRM_TASK_STATUS_LABEL } from '../crm/labels'
 const REASON_CODES: MedicationCourseReasonCode[] = ['MEDICATION_START_CHECK', 'MEDICATION_MID_CHECK', 'MEDICATION_END_CHECK']
 const OPEN_STATUSES: CrmTask['status'][] = ['OPEN', 'CLAIMED', 'IN_PROGRESS', 'SNOOZED']
 
+// Episode↔Medication association integrity batch: existing non-clinical
+// Episode status labels only, for the multi-Episode picker below -- no new
+// clinical meaning or priority invented here.
+const EPISODE_STATUS_LABEL: Record<Episode['status'], string> = {
+  ACTIVE: '진행 중',
+  PAUSED: '일시중지',
+  COMPLETED: '종료',
+  LOST: '연락두절',
+}
+
 function formatDate(value: string | null): string {
   if (!value) return '미기록'
   return value.length >= 10 ? value.slice(0, 10) : value
@@ -52,6 +62,12 @@ type CheckTaskDraft = { reason: MedicationCourseReasonCode; dueAt: string }
 export function MedicationCourseSection({ patientUuid }: { patientUuid: string }) {
   const [episodes, setEpisodes] = useState<Episode[] | null>(null)
   const [episodeId, setEpisodeId] = useState<string | null>(null)
+  // Episode↔Medication association integrity batch: same "mint once, reuse
+  // across retries, clear only on success" contract as newCourseSourceId
+  // below -- a retry of a failed/lost-response 에피소드 만들기 click must
+  // resubmit the SAME episode_id so the server's create-if-absent
+  // semantics converge on one Episode, not a fresh one per click.
+  const [newEpisodeRequestId, setNewEpisodeRequestId] = useState('')
   const [courses, setCourses] = useState<MedicationCourseRecord[] | null>(null)
   const [tasks, setTasks] = useState<CrmTask[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -126,6 +142,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setNewDurationDays('')
     setShowNewCourseForm(false)
     setNewCourseSourceId('')
+    setNewEpisodeRequestId('')
     setCheckDraftByCourse({})
     setShiftDraftByCourse({})
     setManualOpen(null)
@@ -136,7 +153,17 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
         return
       }
       setEpisodes(result.data.episodes)
-      const chosen = result.data.episodes.find((e) => e.status === 'ACTIVE') ?? result.data.episodes[0] ?? null
+      // Episode↔Medication association integrity batch (owner-review
+      // finding): the old `find(ACTIVE) ?? episodes[0]` silently picked the
+      // OLDEST episode whenever more than one existed (listEpisodesByPatient
+      // sorts ascending by created_at) -- a new MedicationCourse could land
+      // under an Episode the clinician never chose. Auto-select only when
+      // unambiguous: a single Episode total, or a single ACTIVE one among
+      // several non-active ones. Two or more ACTIVE Episodes (or two or
+      // more non-active ones with none ACTIVE) leaves episodeId null so the
+      // render below shows an explicit picker instead of guessing.
+      const activeEpisodes = result.data.episodes.filter((e) => e.status === 'ACTIVE')
+      const chosen = result.data.episodes.length === 1 ? result.data.episodes[0] : activeEpisodes.length === 1 ? activeEpisodes[0] : null
       if (chosen) {
         setEpisodeId(chosen.episode_id)
         reloadEpisodeData(chosen.episode_id, epoch)
@@ -156,9 +183,15 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
   function handleCreateEpisode() {
     if (busy) return
     const epoch = loadEpochRef.current
+    // Episode↔Medication association integrity batch: mint the request id
+    // only on the FIRST attempt; a retry (busy cleared after a failed or
+    // lost-response first attempt) reuses the same id so the server's
+    // create-if-absent semantics converge on one Episode.
+    const requestId = newEpisodeRequestId || newId()
+    if (!newEpisodeRequestId) setNewEpisodeRequestId(requestId)
     setBusy(true)
     setActionError(null)
-    createEpisode(patientUuid)
+    createEpisode(patientUuid, undefined, requestId)
       .then((result) => {
         if (loadEpochRef.current !== epoch) return
         if (result.ok) {
@@ -166,6 +199,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           setEpisodeId(result.data.episode_id)
           setCourses([])
           setTasks([])
+          setNewEpisodeRequestId('')
         } else {
           setActionError(result.error)
         }
@@ -175,6 +209,19 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
       })
   }
 
+  // Episode↔Medication association integrity batch: the clinician's
+  // explicit choice from the multi-Episode picker below -- this is a
+  // synchronous selection from the already-loaded `episodes` array, no new
+  // network read of its own, but the reload it triggers still needs its
+  // own epoch capture like every other mutating/navigating action here.
+  function handleSelectEpisode(ep: Episode) {
+    const epoch = loadEpochRef.current
+    setEpisodeId(ep.episode_id)
+    setCourses(null)
+    setTasks(null)
+    reloadEpisodeData(ep.episode_id, epoch)
+  }
+
   function handleCreateCourse() {
     if (busy || !episodeId || !newCourseSourceId) return
     const epoch = loadEpochRef.current
@@ -182,6 +229,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setActionError(null)
     createMedicationCourse({
       episodeId,
+      patientUuid,
       source: 'doctor_manual_entry',
       sourceId: newCourseSourceId,
       sourceTimestamp: new Date().toISOString(),
@@ -282,6 +330,30 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
         <button type="button" className="judgment__recordBtn" onClick={handleCreateEpisode} disabled={busy}>
           에피소드 만들기
         </button>
+        {actionError && <p className="doctor__revisitSession__error">{actionError}</p>}
+      </section>
+    )
+  }
+
+  // Episode↔Medication association integrity batch (owner-review finding):
+  // more than one Episode exists and none was unambiguous enough to
+  // auto-select (see the effect above) -- require an explicit choice
+  // rather than silently attaching the next course to whichever one the
+  // old code happened to pick.
+  if (episodeId === null) {
+    return (
+      <section className="medCourse" aria-label="투약/한약 코스">
+        <p className="workspace__empty">이 환자에게 에피소드가 여러 개 있습니다. 투약/한약 코스를 기록할 에피소드를 선택하세요.</p>
+        <ul className="medCourse__episodeList">
+          {episodes.map((ep) => (
+            <li key={ep.episode_id}>
+              <button type="button" className="judgment__recordBtn" onClick={() => handleSelectEpisode(ep)}>
+                {EPISODE_STATUS_LABEL[ep.status]} · {formatDate(ep.created_at)}
+                {ep.owner_clinician ? ` · ${ep.owner_clinician}` : ''}
+              </button>
+            </li>
+          ))}
+        </ul>
         {actionError && <p className="doctor__revisitSession__error">{actionError}</p>}
       </section>
     )

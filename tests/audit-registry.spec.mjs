@@ -757,6 +757,79 @@ async function main() {
     }
   }
 
+  /* =====================================================================
+     Part 6: Episode↔Medication association integrity batch -- HTTP-level
+     retry-idempotency for episode creation. A client-minted episode_id
+     replayed across a lost-response retry must converge to ONE episode
+     (201 then 200) and exactly ONE crm_episode_created audit line, never
+     two, mirroring the store-level coverage in tests/crm-store.spec.mjs.
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-episode-retry-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+      const episodeId = 'audit-http-retry-episode-1'
+
+      const beforeLines = await readAuditLines(auditLogPath(dataDir))
+      const beforeCount = beforeLines.filter((l) => l.event === AUDIT_EVENTS.CRM_EPISODE_CREATED).length
+
+      const first = await postJson(`${base}/api/crm/episodes`, { patient_uuid: visit.patient_id, episode_id: episodeId })
+      const second = await postJson(`${base}/api/crm/episodes`, { patient_uuid: visit.patient_id, episode_id: episodeId })
+      assert('episode-retry (HTTP): first client-minted-id create -> 201', first.status === 201)
+      assert('episode-retry (HTTP): retry with the same client-minted id -> 200', second.status === 200)
+      assert('episode-retry (HTTP): both responses are the SAME episode_id', first.body.episode_id === second.body.episode_id)
+      assert('episode-retry (HTTP): both responses report the same created_at (no overwrite on retry)', first.body.created_at === second.body.created_at)
+
+      const afterLines = await readAuditLines(auditLogPath(dataDir))
+      const afterCount = afterLines.filter((l) => l.event === AUDIT_EVENTS.CRM_EPISODE_CREATED).length
+      assert('episode-retry (HTTP): exactly ONE crm_episode_created audit line for two retried create calls', afterCount - beforeCount === 1)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 7: Episode↔Medication association integrity batch -- cross-patient
+     ownership rejection. A MedicationCourse create request whose declared
+     patient_uuid does not match the target episode's own patient_uuid must
+     be rejected fail-closed (409), with zero course/dedup writes and zero
+     crm_medication_course_created audit line.
+     ===================================================================== */
+  {
+    const tmpRoot = await mkdtemp(path.join(tmpdir(), 'samindang-audit-episode-ownership-'))
+    const dataDir = path.join(tmpRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visitA = (await postJson(`${base}/api/visits`, {})).body
+      const visitB = (await postJson(`${base}/api/visits`, {})).body
+      const episodeA = (await postJson(`${base}/api/crm/episodes`, { patient_uuid: visitA.patient_id })).body
+
+      const beforeLines = await readAuditLines(auditLogPath(dataDir))
+      const beforeCount = beforeLines.filter((l) => l.event === AUDIT_EVENTS.CRM_MEDICATION_COURSE_CREATED).length
+
+      const tamperRes = await postJson(`${base}/api/crm/medication-courses`, {
+        patient_uuid: visitB.patient_id,
+        episode_id: episodeA.episode_id,
+        herb_name: 'audit-ownership-test-herb',
+        source: 'DOCTOR_ENTRY',
+      })
+      assert('episode-ownership (HTTP): cross-patient course create is rejected -> 409', tamperRes.status === 409)
+
+      const afterLines = await readAuditLines(auditLogPath(dataDir))
+      const afterCount = afterLines.filter((l) => l.event === AUDIT_EVENTS.CRM_MEDICATION_COURSE_CREATED).length
+      assert('episode-ownership (HTTP): zero new crm_medication_course_created audit lines after the rejected tamper', afterCount === beforeCount)
+
+      const listRes = await getJson(`${base}/api/crm/episodes/${episodeA.episode_id}/medication-courses`)
+      assert('episode-ownership (HTTP): zero MedicationCourses exist under the targeted episode after the rejected tamper', listRes.body.courses.length === 0)
+    } finally {
+      await stopServer(server)
+      await rm(tmpRoot, { recursive: true, force: true })
+    }
+  }
+
   console.log(`\n${passCount} audit registry assertions passed.`)
 }
 

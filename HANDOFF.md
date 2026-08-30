@@ -4872,6 +4872,116 @@ test:crm-schema` 95/95, `npm run test:all`(exit 0), `npm run
 build`/`build:preview` clean, `tablet core` pytest 80/80, FROZEN diff
 0 lines — 전부 통과. push 완료.
 
+## Completed — Episode↔Medication association integrity 배치 (진행 중, 이번 세션)
+**배경**: Medication/Herbal CRM 배치가 7차에서 CLEAN 판정으로 CLOSED된
+직후, Gomars93가 PR #24 댓글로 **새 cohesive 배치**를 지시(그 배치를
+재검수하지 말 것을 명시). Episode와 MedicationCourse 사이의 association
+무결성에 관한 3개 항목:
+1. Episode 생성이 HTTP/UI 경계에서 retry-idempotent하지 않음(응답
+   유실 후 재시도가 중복 Episode를 만들 수 있음).
+2. Episode가 2개 이상 존재할 때 Medication UI가 어느 것을 쓸지 조용히
+   임의로 골라버림(오래된 Episode를 silent하게 선택).
+3. MedicationCourse 생성이 episode_id가 현재 환자 컨텍스트에 속하는지
+   검증하지 않음(cross-patient tamper 가능성).
+
+명시적 non-goal: "환자당 Episode 1개"를 강제하지 않음, 새 임상 라벨/
+우선순위를 발명하지 않음(다중 Episode는 여전히 정상). Clinical CRM
+v0.3.1은 CLOSED 유지.
+
+**구현(Sonnet, 이번 세션)**:
+- **#1 (retry-idempotency)**: `POST /api/crm/episodes`가 이제 선택적
+  `episode_id`(클라이언트가 미리 생성)를 받는다. `crmStore.js`의
+  `createEpisode`는 기존에도 `episode_id` 기준 create-if-absent였으나
+  반환값이 `{episode, created}`가 아닌 bare episode였음 — 다른
+  `*Stored` 함수들의 관례에 맞춰 `{episode, created}`로 통일하고,
+  라우트가 `created`일 때만 `CRM_EPISODE_CREATED` 감사 이벤트를
+  발화(중복 호출이 감사 로그를 두 번 남기지 않음). 클라이언트
+  (`MedicationCourseSection.tsx`)는 기존 `newCourseSourceId`와 같은
+  "초안당 한 번 mint, 재시도마다 재사용, 성공 시에만 clear" 패턴을
+  `newEpisodeRequestId`로 그대로 복제.
+- **#2 (ambiguity picker)**: 자동 선택은 "Episode가 정확히 1개" 또는
+  "여러 개 중 ACTIVE가 정확히 1개"일 때만 발동 — 그 외(ACTIVE 2개+,
+  또는 비-ACTIVE만 2개+)는 `episodeId`를 `null`로 두고 명시적 선택
+  UI(`.medCourse__episodeList`)를 렌더. 라벨은 기존 `EpisodeStatus`
+  enum + `created_at` + `owner_clinician`만 사용(새 임상 라벨 없음).
+  `handleSelectEpisode`도 다른 4개 변경 액션과 같은 load-epoch 캡처
+  패턴을 따른다(구조적 테스트로 확인).
+- **#3 (ownership check)**: `crmStore.js`에 새 `CrmOwnershipError`(409)
+  추가. `createMedicationCourseStored`가 옵션 `expected_patient_uuid`를
+  받아 `episode.patient_uuid`와 불일치하면 **어떤 write/audit
+  이벤트도 없이** fail-closed. `expected_patient_uuid`는 완전히
+  선택적(생략 시 기존 동작 100% 동일) — Doctor UI의 course 생성
+  호출부만 실제로 채워서 넘기고, 다른 모든 API 호출부(기존 테스트
+  포함)는 영향 없음. `patient_uuid` 자체는 여전히 `episode.
+  patient_uuid`에서만 파생(derive) — `expected_patient_uuid`는
+  신뢰의 원천이 아니라 별도의 assertion.
+
+**테스트(신규)**:
+- `tests/crm-store.spec.mjs`: episode retry-idempotency(순차 2회
+  호출이 `created:true`→`created:false`로 수렴, `created_at` 보존,
+  파일 1개만; 동시 2-way `Promise.all`이 정확히 1개만 `created:true`)
+  + ownership check(불일치 시 `CrmOwnershipError`, course/dedup 파일
+  0개; 일치·생략 시 정상 동작) — store 레벨 15개 신규 assertion,
+  총 244/244 통과.
+- `tests/audit-registry.spec.mjs`: HTTP 레벨 retry-idempotency(첫
+  201, 재시도 200, 동일 episode_id/created_at, `crm_episode_created`
+  감사 라인 정확히 1개) + HTTP 레벨 ownership 거부(cross-patient
+  tamper → 409, `crm_medication_course_created` 감사 라인 0개 증가,
+  대상 Episode 아래 course 0개) — 신규 9개 assertion, 총 114/114
+  통과.
+- `tests/medication-course-ui.spec.mjs`: 옛 `find(ACTIVE) ??
+  episodes[0]` 무조건 자동선택이 제거됐음을 구조적으로 확인, 새
+  unambiguous-only 자동선택 로직 pin, `episodeId === null` picker
+  렌더 분기 존재 확인, picker가 새 임상 라벨을 발명하지 않고 기존
+  status/created/owner만 쓰는지 확인, `handleSelectEpisode`의
+  epoch 캡처 확인(기존 4개 액션 → 5개로 pin 갱신, `newEpisodeRequestId`
+  추가로 `useState` 선언 수 16→17 pin 갱신) — 신규 7개 assertion,
+  총 24/24 통과.
+
+**실 브라우저 QA(데스크톱 1440×900 + 클리닉 태블릿 1024×768, Playwright,
+`server/index.js` + `vite --host` 실제 기동)**: 실 questionnaire
+builder(`buildResponsePayload`/`buildRoutingPayload`/`computeSaju` 등,
+`src/doctor/fixtures.ts`와 동일한 조합)로 만든 두 명의 합성 환자로
+검증(환자 A: Episode 1개, 환자 B: ACTIVE Episode 2개) — 실제 PHI
+아님, 완전 합성.
+- 환자 A(단일 Episode): 자동 선택, picker 없이 바로 코스 목록 —
+  low-click 경로 보존 확인(양쪽 뷰포트).
+- 환자 B(ACTIVE 2개): picker 렌더, 두 옵션 모두 표시, 클릭 시 정상
+  코스 목록으로 전환 — 조용한 오선택 없음(양쪽 뷰포트, 수평 오버플로우
+  0).
+- A↔B 레이스: `/api/crm/episodes` 응답을 라우트 인터셉션으로 지연시켜
+  B의 episodes fetch가 in-flight인 동안 A로 전환 → 최종 상태가 항상
+  A의(단일 Episode, 자동선택) 상태로 수렴하고 B의 지연 응답이 이를
+  덮어쓰지 않음을 확인(load-epoch guard 실동작 증명, 양쪽 뷰포트).
+- Today Queue: 환자 B에서 명시적으로 고른(자동선택 아닌) Episode
+  아래 check-task를 생성 → `GET /api/crm/tasks`와 Doctor 목록 화면의
+  "오늘 할 일 CRM" 둘 다 해당 task를 올바른 episode_id/patient_uuid로
+  정확히 반영함을 확인.
+- purge 커버리지는 기존 `tests/crm-store.spec.mjs`의 purge-full
+  테스트가 이미 `crm/` 전체 트리(episode/course dedup 아티팩트 포함)
+  삭제를 검증 — 이번 배치가 새 디렉터리를 추가하지 않아 별도 코드
+  변경 없이 그대로 커버됨, `npm run test:all` 재실행으로 재확인.
+
+**QA 중 발견한 무관 이슈(코드 변경 안 함, 기록만)**: 극단적으로 빈
+`responses`(`{ patient: {} }`, `routing: null`)로 seed한 제출 건을
+Doctor 화면에서 열면 `deriveViewProfile`(`routing`이 null)과
+`primaryConcernLabel`(`r.visit_goal`이 undefined) 등에서 렌더링
+예외가 발생 — `PatientErrorBoundary`가 잡아 "문제가 발생했습니다"
+화면으로 대체(크래시는 아님). 실제 태블릿 제출 흐름은 항상 전체
+질문에 대한 값(질문마다 null이라도)을 채운 `Responses`를 서버로
+보내므로 이 경로는 실사용에서 발생하지 않는다 — 이번 배치의 범위
+밖(Episode/MedicationCourse와 무관)이라 코드는 건드리지 않음.
+
+**검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0, 전체
+스위트 통과 — crm-store 244/244, medication-course-ui 24/24,
+audit-registry 114/114 포함), `npm run build`/`build:preview` clean,
+`tablet core` pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 독립 `model:opus` 리뷰(진짜 subagent 호출) 대기 중 —
+아직 시작 전. 리뷰 완료 후 발견 사항 수정 → 재검수 반복(Medication/
+Herbal CRM 배치와 같은 사이클), 그 다음 push + PR 코멘트.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
 HEAD: `5ede4ac`(코드) / HANDOFF 갱신은 이 커밋 뒤에 별도 push — 
@@ -4942,9 +5052,15 @@ mutation 포함), timer/microtask pin도 정상 발화 확인(이 저장소의
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `5ede4ac` 기준 갱신 — Medication/Herbal CRM 배치, 7차 독립
-`model:opus` 클로징 리뷰가 **CLEAN** 판정 완료. 배치 CLOSABLE.)
--1. **완료됨**: 7차 독립 `model:opus` 리뷰가 `5ede4ac`를 CLEAN으로
+(위 "Episode↔Medication association integrity 배치" 섹션 기준 갱신 —
+**진행 중**, 다음 단계는 독립 `model:opus` 리뷰. Medication/Herbal
+CRM 배치는 이미 CLOSED, 재검수 대상 아님.)
+-2. **다음 단계(미착수)**: 이번 배치(Episode retry-idempotency,
+   ambiguity picker, ownership check)의 신선한 독립 `model:opus`
+   리뷰를 실제로 호출 → 발견 사항 수정 → 재검수 반복(Medication/
+   Herbal CRM 배치의 사이클과 동일) → push + PR #24 코멘트.
+   완료 전까지는 이 배치를 CLOSED로 선언하지 않는다.
+-1. **완료됨(Medication/Herbal CRM 배치)**: 7차 독립 `model:opus` 리뷰가 `5ede4ac`를 CLEAN으로
    판정(HIGH/MEDIUM/LOW 0건, NIT 1건은 "8차를 열 기준을 못 넘는다"고
    리뷰어 스스로 명시, 코드 변경 없이 기록만) — 소스는 4라운드 연속
    (4~7차) 결함 0건. 리뷰어가 명시적으로 "지금 CLOSABLE 선언이

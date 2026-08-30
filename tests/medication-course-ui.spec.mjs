@@ -96,9 +96,19 @@ test('MedicationCourseSection: no timer- or microtask-deferred state write exist
   )
 })
 
-test('MedicationCourseSection: each of the four mutating actions captures its own epoch snapshot before issuing the request', () => {
+// Episode↔Medication association integrity batch: handleSelectEpisode (the
+// clinician's explicit choice from the multi-Episode picker) joins the
+// four existing mutating actions in capturing its own epoch snapshot --
+// its own reloadEpisodeData call needs the same per-action epoch
+// propagation the other four already have, even though the selection
+// itself is synchronous.
+test('MedicationCourseSection: each of the five mutating/navigating actions captures its own epoch snapshot before issuing its request', () => {
   const captureCount = (src.match(/const epoch = loadEpochRef\.current/g) ?? []).length
-  assert.equal(captureCount, 4, `expected handleCreateEpisode/handleCreateCourse/handleCreateCheckTask/handleShiftStart to each capture their own epoch, found ${captureCount}`)
+  assert.equal(
+    captureCount,
+    5,
+    `expected handleCreateEpisode/handleCreateCourse/handleCreateCheckTask/handleShiftStart/handleSelectEpisode to each capture their own epoch, found ${captureCount}`,
+  )
 })
 
 test('MedicationCourseSection: the main load effect bumps the epoch exactly once per patientUuid change (pre-increment, not read-only)', () => {
@@ -162,7 +172,10 @@ test('MedicationCourseSection: the load effect resets busy synchronously in its 
 // name closes that regardless of which async call comes first.
 test('MedicationCourseSection: the load effect resets EVERY useState setter it declares, synchronously in the reset block (complete reset block, derived from the declarations)', () => {
   const decls = [...src.matchAll(/const \[\w+, (set\w+)\] = useState/g)].map((m) => m[1])
-  assert.equal(decls.length, 16, 'useState declaration count changed -- re-audit which are patient-scoped before updating this number')
+  // Episode↔Medication association integrity batch: 16 -> 17 for the new
+  // newEpisodeRequestId (mint-once-per-draft retry-idempotency id for
+  // handleCreateEpisode, same contract as newCourseSourceId).
+  assert.equal(decls.length, 17, 'useState declaration count changed -- re-audit which are patient-scoped before updating this number')
   const callSiteCount = (src.match(/useState[<(]/g) ?? []).length
   assert.equal(
     callSiteCount,
@@ -277,6 +290,52 @@ test('MedicationCourseSection: clicking the already-active check-task reason chi
     src,
     /setCheckDraftByCourse\(\(prev\) => \{\s*if \(prev\[course\.course_id\]\?\.reason === rc\) \{\s*const next = \{ \.\.\.prev \}\s*delete next\[course\.course_id\]\s*return next\s*\}/,
     'expected the reason-chip onClick\'s own already-active branch (not some other handler elsewhere) to delete its draft entry',
+  )
+})
+
+// Episode↔Medication association integrity batch: the old auto-select
+// effect was `find(ACTIVE) ?? episodes[0]` -- silently picking the OLDEST
+// episode whenever 2+ existed (ambiguous ACTIVE, or ambiguous non-active
+// with none ACTIVE), which could attach a new MedicationCourse to an
+// Episode the clinician never chose. These structural guards prove the
+// unambiguous-only auto-select logic replaced it, and that an explicit
+// picker render branch exists for the ambiguous case, rather than relying
+// solely on the jsdom-free real-browser QA documented in HANDOFF.md.
+test('MedicationCourseSection: the old unconditional find(ACTIVE) ?? episodes[0] auto-select is gone', () => {
+  assert.doesNotMatch(src, /activeEpisodes\.find\([\s\S]{0,40}\)\s*\?\?\s*(result\.data\.)?episodes\[0\]/)
+  assert.doesNotMatch(src, /\.find\(\(e\) => e\.status === 'ACTIVE'\)\s*\?\?/)
+})
+
+test('MedicationCourseSection: auto-select only fires when the Episode set is unambiguous (single total, or single ACTIVE)', () => {
+  assert.match(
+    src,
+    /const activeEpisodes = result\.data\.episodes\.filter\(\(e\) => e\.status === 'ACTIVE'\)\s*const chosen = result\.data\.episodes\.length === 1 \? result\.data\.episodes\[0\] : activeEpisodes\.length === 1 \? activeEpisodes\[0\] : null/,
+  )
+})
+
+test('MedicationCourseSection: episodeId stays null (no reload fired) when the auto-select is ambiguous', () => {
+  assert.match(src, /if \(chosen\) \{\s*setEpisodeId\(chosen\.episode_id\)\s*reloadEpisodeData\(chosen\.episode_id, epoch\)\s*\}/)
+})
+
+test('MedicationCourseSection: renders an explicit multi-episode picker when episodeId is null (not a silent pick)', () => {
+  assert.match(src, /if \(episodeId === null\) \{/)
+  assert.match(src, /className="medCourse__episodeList"/)
+})
+
+test('MedicationCourseSection: each picker entry calls handleSelectEpisode(ep) on click, one button per Episode', () => {
+  assert.match(src, /\{episodes\.map\(\(ep\) => \(/)
+  assert.match(src, /onClick=\{\(\) => handleSelectEpisode\(ep\)\}/)
+})
+
+test('MedicationCourseSection: the picker uses only existing non-clinical Episode metadata (status/created/owner), no invented labels', () => {
+  assert.match(src, /\{EPISODE_STATUS_LABEL\[ep\.status\]\} · \{formatDate\(ep\.created_at\)\}/)
+  assert.match(src, /\{ep\.owner_clinician \? ` · \$\{ep\.owner_clinician\}` : ''\}/)
+})
+
+test('MedicationCourseSection: handleSelectEpisode captures its own load epoch before triggering reloadEpisodeData, like the other mutating/navigating actions', () => {
+  assert.match(
+    src,
+    /function handleSelectEpisode\(ep: Episode\) \{\s*const epoch = loadEpochRef\.current\s*setEpisodeId\(ep\.episode_id\)\s*setCourses\(null\)\s*setTasks\(null\)\s*reloadEpisodeData\(ep\.episode_id, epoch\)\s*\}/,
   )
 })
 

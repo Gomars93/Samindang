@@ -1062,6 +1062,17 @@
   gap: 4px;
 }
 
+/* Episode↔Medication association integrity batch: explicit multi-Episode
+   picker -- shown only when auto-selection would be ambiguous. */
+.medCourse__episodeList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .medCourse__taskRow {
   display: flex;
   justify-content: space-between;

@@ -15,7 +15,7 @@ import { createStore, StaleWriteError } from './store.js'
 import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS } from './audit.js'
 import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs, releaseAnyLockNamedThisProcess } from './ownerLock.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
-import { createCrmStore, CrmConflictError, CrmNotFoundError, MEDICATION_COURSE_REASON_CODES } from './crmStore.js'
+import { createCrmStore, CrmConflictError, CrmNotFoundError, CrmOwnershipError, MEDICATION_COURSE_REASON_CODES } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
 import { createMessagingStore, MessagingConflictError, MessagingNotFoundError } from './messagingStore.js'
 import { resolveWebhookSecret, verifyWebhookSignature } from './messagingTransport.js'
@@ -180,13 +180,18 @@ export function createApp({
   }
   // Maps a thrown store error to an HTTP status + body. CrmConflictError
   // (stale expectedVersion) is always 409; CrmNotFoundError is always 404;
-  // every other thrown Error is a disallowed-transition refusal from the
-  // pure engine itself (e.g. "safety_review_cannot_be_snoozed",
+  // CrmOwnershipError (episode belongs to a different patient than the
+  // caller's declared context -- Episode↔Medication association
+  // integrity batch) is also 409, the same "resource is real but the
+  // write conflicts with stated context" class as CrmConflictError; every
+  // other thrown Error is a disallowed-transition refusal from the pure
+  // engine itself (e.g. "safety_review_cannot_be_snoozed",
   // "cannot claim task in status DONE") and is reported as 400 with its
   // own message rather than falling through to a generic 500 -- these are
   // expected, well-formed refusals, not server faults.
   function mapCrmError(err) {
     if (err instanceof CrmConflictError) return { status: 409, error: 'conflict' }
+    if (err instanceof CrmOwnershipError) return { status: 409, error: err.message }
     if (err instanceof CrmNotFoundError) return { status: 404, error: 'not found' }
     if (err instanceof Error) return { status: 400, error: err.message }
     return { status: 500, error: 'server error' }
@@ -1712,26 +1717,44 @@ export function createApp({
         // patient -- the same visitExistsForPatient check every other
         // patient-linking route already uses, so a CRM Episode can never
         // be anchored to an arbitrary/typo'd identifier.
+        //
+        // Episode↔Medication association integrity batch: episode_id is now
+        // OPTIONAL client-minted input. Before this, every call minted a
+        // fresh server-side randomUUID(), so the store's own create-if-
+        // absent semantics (see crmStore.js's createEpisode) could never
+        // actually trigger on an HTTP-level retry -- a lost response
+        // followed by a client retry always produced a SECOND Episode,
+        // since the retry's freshly-minted id could never match the first
+        // attempt's. Accepting a client-supplied id (minted once per user
+        // action and reused across retries, the same contract
+        // MedicationCourseSection.tsx already uses for newCourseSourceId)
+        // lets a genuine retry converge on the store's existing create-if-
+        // absent path instead. Callers that omit it keep the old
+        // server-minted behavior.
         if (!requireDoctor(req)) {
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
         } else {
           const body = await readBody(req)
           const patientUuid = typeof body?.patient_uuid === 'string' ? body.patient_uuid : ''
+          const rawEpisodeId = body?.episode_id
           if (!patientUuid || !(await store.visitExistsForPatient(patientUuid))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown patient_uuid' }, cors)
+          } else if (rawEpisodeId != null && (typeof rawEpisodeId !== 'string' || !rawEpisodeId)) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'episode_id must be a non-empty string' }, cors)
           } else {
             const ownerClinician = typeof body?.owner_clinician === 'string' ? body.owner_clinician : null
-            const episode = await crmStore.createEpisode({
-              episode_id: randomUUID(),
+            const { episode, created } = await crmStore.createEpisode({
+              episode_id: typeof rawEpisodeId === 'string' && rawEpisodeId ? rawEpisodeId : randomUUID(),
               patient_uuid: patientUuid,
               owner_clinician: ownerClinician,
               now: new Date().toISOString(),
             })
-            status = 201
-            await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_CREATED, visit_id: undefined, actor: AUDIT_ACTORS.DOCTOR })
-            bytes = sendJson(req, res, 201, episode, cors)
+            status = created ? 201 : 200
+            if (created) await safeAudit({ event: AUDIT_EVENTS.CRM_EPISODE_CREATED, visit_id: undefined, actor: AUDIT_ACTORS.DOCTOR })
+            bytes = sendJson(req, res, status, episode, cors)
           }
         }
       } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'episodes' && parts.length === 3 && req.method === 'GET') {
@@ -2019,6 +2042,13 @@ export function createApp({
         // supplies are the only provenance this route accepts. Idempotent
         // across retries/restart via crmStore's dedup pointer keyed on
         // (episode_id, source, source_id) -- see createMedicationCourseStored.
+        //
+        // Episode↔Medication association integrity batch: patient_uuid is
+        // OPTIONAL -- when the caller supplies it (the Doctor UI always
+        // has its current patient in scope), createMedicationCourseStored
+        // fail-closed rejects (409) an episode_id belonging to a
+        // DIFFERENT patient, before any write. Omitting it preserves the
+        // old behavior for any caller without a patient context to assert.
         if (!requireDoctor(req)) {
           status = 403
           bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
@@ -2033,6 +2063,7 @@ export function createApp({
               const { course, deduped } = await crmStore.createMedicationCourseStored({
                 course_id: randomUUID(),
                 episode_id: episodeId,
+                expected_patient_uuid: typeof body?.patient_uuid === 'string' ? body.patient_uuid : undefined,
                 source: body?.source,
                 source_id: body?.source_id,
                 source_timestamp: body?.source_timestamp,

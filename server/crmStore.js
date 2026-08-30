@@ -53,6 +53,21 @@ export class CrmNotFoundError extends Error {
   }
 }
 
+// Episode↔Medication association integrity batch: distinct from
+// CrmNotFoundError (the resource exists) and from CrmConflictError (not a
+// stale-version write) -- the episode_id the caller supplied resolves to a
+// real Episode, but one belonging to a DIFFERENT patient than the caller's
+// own explicitly-declared context. A buggy/stale client passing episode A
+// while operating in patient B's context must fail closed here, before any
+// write, rather than silently attach a course to the wrong patient's
+// Episode.
+export class CrmOwnershipError extends Error {
+  constructor(kind, id) {
+    super(`${kind} ${id} does not belong to the supplied patient context`)
+    this.name = 'CrmOwnershipError'
+  }
+}
+
 const TERMINAL_TASK_STATUSES = new Set(['DONE', 'CANCELLED', 'SUPERSEDED'])
 
 function episodesDir(baseDir) {
@@ -147,15 +162,22 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
 
   // Idempotent create-if-absent by episode_id -- a caller may safely retry
   // a create call (e.g. after a network timeout) without minting a second
-  // Episode.
+  // Episode, PROVIDED it resubmits the same episode_id. Returns
+  // { episode, created } (matching the *Stored convention every other
+  // create function in this file already follows -- createTaskStored/
+  // createMedicationCourseStored/createMedicationCourseCheckTaskStored)
+  // so the caller can tell a genuine create from a retry replay: gating a
+  // one-time audit event on `created`, in particular, is what makes
+  // "response lost, client retries with the same id" converge to exactly
+  // one CRM_EPISODE_CREATED audit line instead of one per retry.
   async function createEpisode({ episode_id, patient_uuid, owner_clinician, now }) {
     return withLock(`episode:${episode_id}`, async () => {
       await ensureDirs()
       const existing = await readJson(episodePath(baseDir, episode_id))
-      if (existing) return existing
+      if (existing) return { episode: existing, created: false }
       const episode = newEpisode({ episode_id, patient_uuid, owner_clinician, now })
       await atomicWrite(episodePath(baseDir, episode_id), episode)
-      return episode
+      return { episode, created: true }
     })
   }
 
@@ -555,6 +577,21 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
   async function createMedicationCourseStored(rawInput) {
     const episode = await getEpisode(rawInput.episode_id)
     if (!episode) throw new CrmNotFoundError('episode', rawInput.episode_id)
+    // Episode↔Medication association integrity batch: expected_patient_uuid
+    // is OPTIONAL -- callers that don't supply a patient context (existing
+    // tests, any future non-UI caller) are unaffected -- but when the Doctor
+    // UI supplies the patient it currently has open, a mismatch means
+    // either a stale client (patient A→B switch raced an in-flight
+    // request for A) or a genuinely wrong episode_id, and must be
+    // rejected here, before the dedup lock/pointer read below, so a
+    // mismatch produces zero course/task writes and zero audit events.
+    if (
+      typeof rawInput.expected_patient_uuid === 'string' &&
+      rawInput.expected_patient_uuid &&
+      rawInput.expected_patient_uuid !== episode.patient_uuid
+    ) {
+      throw new CrmOwnershipError('episode', rawInput.episode_id)
+    }
     const source = typeof rawInput.source === 'string' ? rawInput.source : ''
     const source_id = typeof rawInput.source_id === 'string' ? rawInput.source_id : ''
     const source_timestamp = typeof rawInput.source_timestamp === 'string' ? rawInput.source_timestamp : ''

@@ -548,10 +548,19 @@ export function listEpisodesByPatient(patientUuid: string): Promise<ServerResult
   return request(`/api/crm/episodes?${qs.toString()}`)
 }
 
-export function createEpisode(patientUuid: string, ownerClinician?: string): Promise<ServerResult<Episode>> {
+/**
+ * Episode↔Medication association integrity batch: episodeId is an
+ * OPTIONAL client-minted identity (same "mint once per draft, reuse across
+ * retries" contract MedicationCourseSection.tsx already uses for
+ * newCourseSourceId) -- passing the same id on a retry after a lost
+ * response lets the server's create-if-absent semantics return the
+ * already-created Episode instead of minting a second one. Omitting it
+ * preserves the old server-minted-id behavior for any other caller.
+ */
+export function createEpisode(patientUuid: string, ownerClinician?: string, episodeId?: string): Promise<ServerResult<Episode>> {
   return request('/api/crm/episodes', {
     method: 'POST',
-    body: JSON.stringify({ patient_uuid: patientUuid, owner_clinician: ownerClinician }),
+    body: JSON.stringify({ patient_uuid: patientUuid, owner_clinician: ownerClinician, episode_id: episodeId }),
   })
 }
 
@@ -590,6 +599,14 @@ export function getMedicationCourse(courseId: string): Promise<ServerResult<Medi
  */
 export function createMedicationCourse(params: {
   episodeId: string
+  // Episode↔Medication association integrity batch: the patient the Doctor
+  // UI currently displays. Optional and additive -- the server only checks
+  // it when supplied -- but the Doctor UI always has this in scope, so
+  // supplying it here makes a stale/buggy client's episode_id (one
+  // belonging to a DIFFERENT patient) a fail-closed rejection instead of a
+  // silent cross-patient write. course.patient_uuid itself is still always
+  // derived from the Episode, never trusted from this field.
+  patientUuid: string
   source: string
   sourceId: string
   sourceTimestamp: string
@@ -602,6 +619,7 @@ export function createMedicationCourse(params: {
     method: 'POST',
     body: JSON.stringify({
       episode_id: params.episodeId,
+      patient_uuid: params.patientUuid,
       source: params.source,
       source_id: params.sourceId,
       source_timestamp: params.sourceTimestamp,

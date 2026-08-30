@@ -3689,11 +3689,11 @@ FROZEN diff empty. **리뷰가 지목한 정확한 재현 시나리오를 그대
 확인)을 실행해 전부 통과 확인.** 기존 2-컨텍스트 QA(단순 stale-writer
 시나리오)도 재실행하여 회귀 없음 확인.
 
-커밋: `f556574` → (HIGH/MEDIUM 수정) → 2차 클로징 리뷰 대기 중.
+커밋: `f556574` → `7e4695e`(HIGH/MEDIUM 수정) → 2차 클로징 리뷰 대기 중.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD는 이
-배치의 review-fix 커밋(아래 커밋 로그 참고 — push 직후 갱신 예정).
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
+`7e4695e`.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

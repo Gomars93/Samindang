@@ -3429,6 +3429,77 @@ landscape에서 미선택 상태로 최초 진입 시 rail이 "부위를 선택�
 직접 확인)과 `origin/main` 대비 zero-diff(브랜치 tip이 아니라
 origin/main 직접 비교, 사용자 지시대로)를 함께 확인.
 
+### PR23↔PR24 Convergence — 최종 CLOSED (HEAD `4117f1a` 기준 post-fix 재검수)
+
+Gomars93가 이 HEAD(`4117f1a`)에 대해 다시 명시: 위 HIGH 수정 이전에 실행된
+Opus 검수는 "post-fix closing review"로 인정되지 않으므로, **수정이
+반영된 최종 커밋 상태 자체**를 대상으로 한 번 더 독립적인 `model:opus`
+closing 재검수를 요구. 좁은 검수 범위: landscape/portrait의 최종
+`railSelection`/BodyMap 상태, 미답변→답변 전환과 aria-live 동작,
+same-view/both-view zone 강조, PNG→SVG fallback 무결성, NECK/SHOULDER/
+ANKLE_FOOT 이식이 보호된 clinical semantics를 바꾸지 않았는지, PR23→PR24
+분류 재확인.
+
+**이번 라운드에서 HEAD `4117f1a` 위에서 직접 재실행/재확인한 것:**
+- `git status` clean, `git diff origin/main -- 'src/spec/*Logic.ts'
+  'src/spec/*Adapter.ts'` 재실행 → 빈 결과(변경 없음).
+- `tsc -b --force`, `npm run build`, `npm run build:preview`,
+  `npm run test:all`(전체 스위트) 모두 이 정확한 HEAD 위에서 재실행 →
+  전부 green.
+- `tablet core/` pytest 80개 전부 재실행 → 80 passed.
+- 헤드리스 Chromium으로 4개 시나리오를 실제 클릭/네트워크 조작으로
+  직접 재확인(SSR이 아니라 실제 상호작용):
+  1) portrait 미답변 상태 → 무릎 zone 탭 → 답변 상태: 중앙 label이
+     "부위를 선택해주세요" → "선택한 부위: 무릎"로 전환, `selectedChip`이
+     `aria-live="polite"`로 렌더링됨을 확인.
+  2) landscape 미답변 상태 → 무릎 zone 탭 → 답변 상태: rail이 "부위를
+     선택해주세요" → "선택한 부위: 무릎"로 전환, `selectedChip`/
+     `selectedLabel` 둘 다 답변 여부와 무관하게 `display: none`으로
+     확인(중복 렌더링 없음, HIGH 수정이 실제로 동작함을 재확인).
+  3) `neck_shoulder`(front+back 양쪽에 zone 존재) 탭 → 두 zone 모두
+     `aria-pressed="true"`이지만 체크마크는 정확히 1개만 렌더링됨을
+     확인(both-view 케이스에서도 strongZoneKey 로직이 정확).
+  4) `front.png` 요청을 네트워크 레벨에서 강제로 abort → 실제로
+     `.bodyMap__artwork--hidden`이 붙고 fallback SVG(`.bodyMap__silhouette`)
+     가 정확히 1개 렌더링됨을 확인(onError 경로가 실전에서 실제로
+     동작함, mock이 아니라 진짜 네트워크 실패로 검증).
+
+**최종 Opus closing 재검수(model:opus subagent, HEAD `4117f1a` 자체를
+대상, 이전 검수와 별개로 새로 실행) 결과: "CONVERGENCE BATCH CLOSED —
+no blocking issues".** 검증 내용: `railSelection` fallback 문구가
+`BodyMap.tsx`의 `selectedLabel` 문구와 codepoint 단위로 완전히 동일함을
+직접 대조; landscape hide 규칙과 rail 활성화 규칙이 정확히 같은 media
+query라서 "둘 다 숨겨지는" 뷰포트가 존재할 수 없음을 확인; portait에서는
+`.shell__railRight` 자체가 `display:none`이라 중복 aria-live 영역이
+없고, landscape에서는 rail이 첫 렌더부터 존재하는 채로 값만 바뀌므로
+"이미 채워진 채 나타나는" 원래 결함 패턴이 재발하지 않음을 확인;
+`ZONES` 배열 순서와 `defaultStrongZoneKey`/`Figure`의 index 계산이
+일치함을 직접 코드로 추적해 knee(same-view)와 neck_shoulder(both-view)
+모두 정확히 1개 zone만 strong이 됨을 검증; 실제 PNG 파일을 독립적으로
+다시 디코드해 두 파일 모두 진짜 사람 형태의 실루엣을 담고 있고
+(front 24319 non-background px, back 24150), alpha가 완전 불투명이라
+`checkIntegrity`의 alpha-blind 방식이 false positive를 일으킬 수 없음을
+확인; `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+재확인(빈 결과) + `git show 4117f1a --stat -- src/spec/`도 빈 결과임을
+확인(coreSpec.ts의 기존 diff는 이전 커밋 935da2c에서 온 것이지 이번
+커밋이 아님을 구분); PR23의 non-clinical 표면 중 이번 배치가 놓친 것이
+없는지 `--diff-filter=D`로 재확인(없음).
+
+Backlog로 남긴 non-blocking 4건(이전 라운드와 거의 동일, 즉시 조치
+불필요): (1) `bodymap-assets.spec.mjs`의 aspect-ratio 주석이 "실제 PNG
+치수와 일치"라고 잘못 설명하지만 실제로는 CSS 상수를 하드코딩 검증할
+뿐 IHDR을 직접 읽지 않음(0.12% 오차, 시각적 영향 없음); (2) PNG
+artwork의 명암 대비가 기존 SVG 실루엣보다 약 14% 더 흐림(1.20:1 vs
+1.39:1, 둘 다 WCAG 기준 3:1 미달이라 이번에 새로 생긴 회귀는 아니지만
+실기기 조명에서 한 번 육안 확인 권장); (3) `zoneKey` 파싱이 PAIN_01
+enum에 하이픈이 없다는 암묵 전제에 의존(현재 안전); (4) `Artwork()`에
+로드 타임아웃이 없어 요청이 영원히 멈추면 onLoad/onError 둘 다 발화하지
+않을 수 있음(번들 자산이라 실무 영향 미미).
+
+**결론: PR23 ↔ PR24 convergence batch 공식 CLOSED.** 이후 다음
+승인된 배치(API-credential-free Quick Revisit + provider-neutral
+SOLAPI 어댑터/mock/CRM delivery-state)로 즉시 이동.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE).
 

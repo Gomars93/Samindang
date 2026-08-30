@@ -4663,12 +4663,70 @@ pytest 80/80, FROZEN diff 0 lines — 전부 통과. push 완료. 이 라운드�
 MEDIUM/LOW를 발견했으므로 오너 지시 사이클에 따라 2차 독립 클로징
 리뷰가 필요 — 다음 단계.
 
+**2차 독립 `model:opus` 클로징 리뷰(완료, `d8e66d7` 대상) + 수정(`e067c94`)**:
+실제 fresh subagent 호출(약 94k 토큰, 23 tool call, ~5분)로 `d8e66d7`
+검수. 세 claim(busy 리셋/cleanup epoch 무효화/source_type 추가) 전부
+"실제로 깨보려고 시도했으나 못 깼음"으로 확인 — epoch 산술을 React
+strict-mode 이중 호출까지 포함한 실제 A→B 시퀀스로 직접 추적, git
+history(`bff300c`/`1df3e0e`부터)로 `source_type` 없는 legacy task가
+한 번도 존재한 적 없음을 직접 확인. **판정: NOT CLEAN** — 세 claim
+자체는 맞지만 같은 reset 블록이 여전히 불완전, 그리고 새 테스트
+3개의 맹점.
+
+1. **MEDIUM (수정)**: load-epoch effect의 reset 블록이 `busy`와 나머지
+   11개 상태를 리셋하도록 고쳤지만, 새 코스 기록 폼의 draft 필드
+   4개(`newPrescribedAt`/`newDispensedAt`/`newStartAt`/`newDurationDays`)
+   는 여전히 리셋 안 됨 — `handleCreateCourse` 성공 시에만 지워짐.
+   환자 A에서 새 코스 폼을 열고 날짜를 입력한 뒤 제출 없이 B로
+   전환하면(폼 자체는 `showNewCourseForm`이 닫혀서 눈에 안 보임), B에서
+   새로 연 폼에 A의 날짜가 그대로 남아있어 저장 한 번으로 A의 투약
+   날짜가 B의 코스 레코드에 쓰일 수 있음. **수정**: effect의 리셋
+   블록에 4개 setter 추가, 폼 취소 버튼 핸들러에도 동일 추가(한 환자
+   안에서도 같은 종류의 stale draft 문제이므로).
+2. **LOW ×2 (수정)**: guard-count/`.finally()`-count assertion이 "N개
+   가드가 존재한다"만 증명하지, `.then((result) => {...})`나
+   `.finally(() => {...})` 콜백의 **총 개수**가 그 값과 일치하는지는
+   증명 못 함 — 새로 추가된 unguarded 콜백이 있어도 두 카운트 다
+   그대로일 수 있음. **수정**: 각각 총 개수(7, 4)를 고정하는 assertion
+   추가 — 앞으로 늘어나려면 guard 개수와 총 개수가 lockstep으로 함께
+   늘어나야 함.
+3. **LOW (수정)**: busy-reset assertion이 effect 본문 어디든
+   `setBusy(false)`가 있으면 통과 — `listEpisodesByPatient().then()`
+   콜백 안으로 옮기면(그러면 새 환자 로드가 끝나야만 풀리고,
+   `!result.ok` 조기 리턴 경로에서는 아예 안 풀림) 여전히 통과함을
+   실제로 확인. **수정**: `setActionError(null)` 바로 다음 문장으로
+   anchor.
+4. **NIT (수정)**: cleanup-invalidates-epoch assertion이 파일 전체에서
+   매칭 — cleanup을 effect 밖 미사용 헬퍼로 옮겨도 통과함을 실제로
+   확인. **수정**: busy-reset 테스트와 같은 effect-body 추출 재사용.
+5. **NIT (수정)**: `shiftMedicationCourseStartStored`가 코스의 연결된
+   task를 `(source_id, task_type)`로만 식별 — check-task dedup
+   pre-check가 이제 쓰는 `(source_type, source_id, reason_code)`보다
+   느슨함. git history로 `source_type` 없는 task가 나온 적 없음을
+   확인(관찰 가능한 동작 변경 없음) 후 일관성만 맞춤.
+6. **NIT (latent, 기록만)**: 리뷰가 지적한 나머지 두 항목(한 epoch
+   안에서 동시 reload의 순서 비보장; `.then(async (result) => {`나
+   `result =>` 같은 다른 형태는 정규식 assertion이 못 잡음)은 코드
+   변경 없이 기록만 — 전자는 이 배치 이전부터 있던 self-healing
+   동작, 후자는 현재 소스에 그런 형태가 없어 latent.
+
+신규 `tests/medication-course-ui.spec.mjs` 3개 assertion 추가(12개로
+확장): `.then`/`.finally` 총 개수 고정, busy-reset anchor 강화, 4개
+draft 필드 리셋 확인, cleanup assertion을 effect-body 스코프로 강화.
+
+**검증(`e067c94` 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:medication-course` 57/57, `npm run test:medication-course-ui`
+12/12(신규 3개 포함), `npm run test:audit-registry` 106/106, `npm run
+test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, FROZEN diff 0 lines — 전부 통과. push 완료. 2차 리뷰도
+MEDIUM을 발견했으므로 3차 독립 클로징 리뷰가 필요 — 다음 단계.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `d8e66d7` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
-검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1차 독립 `model:opus`
-클로징 리뷰가 찾은 MEDIUM 1/LOW 2/NIT 1 수정(`d8e66d7`)까지 push 완료.
-2차 독립 `model:opus` 클로징 리뷰 대기 중.
+HEAD: `e067c94` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1차 독립 클로징 리뷰
+수정(`d8e66d7`) + 2차 독립 클로징 리뷰 수정(`e067c94`)까지 push 완료.
+3차 독립 `model:opus` 클로징 리뷰 대기 중.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4709,11 +4767,12 @@ HEAD: `d8e66d7` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `d8e66d7` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항(`0d5464b`) + 1차 독립 클로징 리뷰 수정(`d8e66d7`)까지 완료,
-2차 독립 `model:opus` 클로징 리뷰 대기.)
--1. **다음 단계**: `d8e66d7`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (1차 클로징 리뷰가 MEDIUM/LOW를 발견했으므로 오너의 "같은 배치 안에서
+(HEAD `e067c94` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항(`0d5464b`) + 1차 독립 클로징 리뷰 수정(`d8e66d7`) + 2차 독립
+클로징 리뷰 수정(`e067c94`)까지 완료, 3차 독립 `model:opus` 클로징
+리뷰 대기.)
+-1. **다음 단계**: `e067c94`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (2차 클로징 리뷰도 MEDIUM을 발견했으므로 오너의 "같은 배치 안에서
    Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복" 사이클에
    따라 재검수 필요). 발견 사항이 있으면 수정 후 재검수 반복, CLEAN이면
    PR #24에 클로징 상태 코멘트 게시. **여전히 새 배치 시작 금지,

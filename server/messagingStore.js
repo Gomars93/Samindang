@@ -219,7 +219,17 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
         follow_up_token_hash: hashToken(followUpToken),
         channel: primaryChannel,
         fallback_channel: null,
-        provider: resolvedTransport.provider ?? 'SOLAPI',
+        // Second-pass independent-review finding (LOW): this used to
+        // default to 'SOLAPI', which disagreed with
+        // fallbackChannelMapForProvider's own fail-closed default (the
+        // empty/BizM map) for the exact same "transport never set
+        // .provider" case -- a caller-injected transport with no
+        // `.provider` would get labeled SOLAPI here but then, at send time,
+        // fall back-map-wise on this same SOLAPI label (a non-empty map)
+        // in attemptSend, i.e. genuinely fail-open end-to-end, not just in
+        // comment wording. Both defaults now agree on BizM (fail-closed:
+        // empty fallback map) for an unrecognized/unset provider.
+        provider: resolvedTransport.provider ?? 'BIZM',
         provider_message_id: null,
         status: 'QUEUED',
         attempt_count: 0,

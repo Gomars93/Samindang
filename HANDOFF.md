@@ -3948,14 +3948,64 @@ invalid 네 시나리오 모두 재확인 — 전부 통과. `/followup/` CI 동
 노출) 모두 `npx tsc -b --force`/`npm run build`/`npm run test:all`
 (exit 0)/`tablet core` pytest 80/80/FROZEN 0 lines로 재검증 완료.
 
-**아직 남은 작업(다음 세션)**: 독립 `model:opus` 클로징 리뷰(실제 호출
-증거 필요) → 발견 사항 수정 → 재검토 루프 → commit/push. 이 세션은 아직
-commit하지 않았다 — 위 커밋되지 않은 변경사항은 다음 세션에서 완료 후
-한 번에 커밋/푸시할 예정.
+## Completed — BizM 배치 독립 `model:opus` 리뷰 루프 (완료, 이번 세션)
+
+**1차 독립 리뷰**(실제 subagent 호출, `model:opus`, 커밋 `6ec11eb` 대상):
+읽기 전용으로 전체 diff를 직접 읽고 검증 명령을 실제로 실행 — FROZEN
+diff 0 lines, `tsc -b`/`build` clean, `test:messaging` 98/98,
+`test:messaging-bizm` 25/25, `test:public-followup-url` 10/10 확인 후
+4건 발견:
+- **MEDIUM**: 발송 큐 라우트(`POST /api/visits/:id/messages`)와 수동
+  재시도 라우트(`POST /api/messages/:id/retry`) 둘 다, 전달받은
+  `follow_up_token`(또는 재시도 시 `link`에 담긴 토큰)이 실제로 그
+  visit_id 것인지 전혀 검증하지 않고 URL "모양"만 확인하고 있었음 —
+  BizM에서는 링크 전체가 `variables.followup_token`만으로 재구성되므로
+  이게 사실상 유일한 실질적 게이트였음.
+- **LOW** x2: `runDueRetries`의 fail-closed 가드가 `variables.
+  followup_token` 누락을 못 잡음; `fallbackChannelMapForProvider`가
+  인식 불가 provider를 SOLAPI의 비어있지 않은 맵으로 fail-open 처리(게다가
+  스토어 생성 시점에 한 번만 고정되어 있어 런타임에 provider가 바뀌면
+  기존 레코드가 새 provider 맵으로 잘못 평가될 수 있었음).
+
+**수정**(commit `0db44b5`): 두 라우트 모두 기존 공개 GET 라우트가 쓰는
+동일한 읽기 전용 `store.resolveFollowUpSession(token)`으로 토큰이 실제
+그 visit_id 것인지 확인(불일치/미해결 시 400, 레코드는 전혀 건드리지
+않음); `runDueRetries` 가드에 `variables.followup_token` 존재 확인
+추가; `fallbackChannelMapForProvider`의 인식 불가 provider 기본값을
+BizM의 빈 맵으로 변경 + `attemptSend`에서 스토어 레벨이 아닌
+`record.provider` 기준으로 매번 조회하도록 변경. 이 과정에서 기존
+`tests/messaging.spec.mjs`/`tests/audit-registry.spec.mjs`의 수동 재시도
+테스트 일부가 실제로는 한 번도 발급되지 않은 가짜 토큰을 `link`에
+써왔다는 것도 드러나 실제 토큰을 재사용하도록 함께 수정, 새 회귀
+테스트(큐/재시도 양쪽의 visit 불일치 거부, 거부된 재시도가 레코드를
+건드리지 않음을 확인)도 추가.
+
+**2차 독립 리뷰**(별도 subagent 호출, `model:opus`, 커밋 `0db44b5`
+대상, 1차와 컨텍스트 공유 없음): `resolveFollowUpSession`이 반환할 수
+있는 모든 경로(형식 오류/미존재/visit_id 불일치/throw)를 직접 추적,
+`test:messaging` 103/103·`test:messaging-bizm` 25/25·
+`test:public-followup-url` 10/10·`test:audit-registry` 88/88를 직접
+재실행해 확인 — **CLEAN 판정(남은 HIGH/MEDIUM 없음)**. LOW 관찰 1건만
+발견: `record.provider`의 기본값이 여전히 `'SOLAPI'`라서, `.provider`를
+전혀 설정하지 않는(가상의) transport는 라벨도 SOLAPI로 찍히고 그 결과
+SOLAPI의 비어있지 않은 폴백 맵을 그대로 받는 end-to-end fail-open이
+남아 있었음(현재 실제 두 provider 모두 `.provider`를 항상 설정하므로
+악용 불가하지만, 일관성 문제) — 즉시 수정해 기본값을 `'BIZM'`으로
+통일(같은 세션에서 반영, 재검증: `tsc`/`test:messaging` 103/103·
+`test:messaging-bizm` 25/25·`test:all`(exit 0)·pytest 80/80·FROZEN 0
+lines 전부 통과).
+
+**결론**: BizM 메시징 배치는 실제 독립 `model:opus` 리뷰(호출 증거:
+두 차례의 별도 subagent 호출, 각각 읽기 전용으로 diff를 직접 읽고
+검증 명령을 실제 실행) 기준 CLEAN. 남은 라이브 발송 요구사항은
+BizM 실제 자격증명/템플릿 승인, 그리고 실제 프로덕션 host/backend
+설정으로 좁혀진다 — 코드 측 작업은 이 배치 범위에서 완료.
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`7930cc1` — 위 BizM 메시징 배치는 아직 미커밋(작업 트리에만 존재).
+`0db44b5` + 위 provider 기본값 통일 수정(커밋 예정) — BizM 메시징
+배치(provider-neutral 전환 + BizM adapter + 안정 후속 URL + 안전성
+재검토 + 독립 리뷰 2회 CLEAN) 전체 완료.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

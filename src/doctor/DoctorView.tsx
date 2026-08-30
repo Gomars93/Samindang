@@ -213,6 +213,32 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : []
 }
 
+/**
+ * `?? []`/asArray는 필드 자체가 빠졌거나 잘못된 타입인 경우만 막는다 --
+ * 배열 "안"의 각 원소가 문자열이 아니면(레거시 데이터에서 숫자/null/객체가
+ * 섞여 들어올 수 있음) 여전히 위험하다. lbpAdapter.ts/neckAdapter.ts(둘 다
+ * frozen)의 `mapMajorHistory`가 `medical_history_flags`의 각 원소에
+ * `.toUpperCase()`를 무조건 호출하므로, 그 필드를 쓰는 패널의 게이트는
+ * "배열이면서 모든 원소가 문자열"까지 확인해야 안전하다.
+ */
+function isNullOrStringArray(value: unknown): boolean {
+  if (value == null) return true
+  return Array.isArray(value) && value.every((v) => typeof v === 'string')
+}
+
+/**
+ * 실제 제출은 `buildResponsePayload`가 각 모듈 하위 키를 전부(응답 안 한
+ * 것도 `null`로) 채워서 만들기 때문에, 서브모듈이 "존재는 하지만 완전히
+ * 빈 객체"인 경우는 실제 제출 흐름에서 나올 수 없다 -- 레거시/손상된
+ * 데이터에서만 나온다. 빈 객체를 그대로 통과시키면 모든 leaf가
+ * `undefined`가 되어 "확인 안 됨"이 전부 "아니요"로 렌더되는 fail-open이
+ * 생긴다(이 배치가 막으려는 것과 정확히 같은 문제). 서브모듈에 키가
+ * 하나도 없으면 빈 것과 동일하게 취급한다.
+ */
+function isNonEmptyObject(value: unknown): boolean {
+  return isPlainObject(value) && Object.keys(value).length > 0
+}
+
 /** 요약 카드용 "기간 · 빈도" 한 줄. 둘 다 없으면 줄 자체를 생략한다. */
 export function durationFrequencyText(r: Responses, primaryModule: string | null): string | null {
   const duration = r.visit_goal.chief_duration
@@ -387,7 +413,18 @@ export function LbpSafetyPanel({
   payload: DoctorPayload
   lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
 }) {
-  if (payload.routing.primary_module_detail !== 'LBP' || !payload.responses.modules.lbp) return null
+  // lbpAdapter.ts(frozen)의 mapPregnancyStatus는 reproductive_status.derived
+  // 를, mapMajorHistory는 medical_history.medical_history_flags의 각
+  // 원소가 문자열이라고 무조건 가정한다 -- 둘 다 없으면(레거시 데이터)
+  // 그 함수들 안에서 던진다.
+  if (
+    payload.routing.primary_module_detail !== 'LBP' ||
+    !isNonEmptyObject(payload.responses.modules.lbp) ||
+    !payload.responses.reproductive_status.derived ||
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
+  ) {
+    return null
+  }
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
@@ -573,7 +610,16 @@ function suggestedNeckExamCodes(
  * JudgmentPanel에 대응 필드를 추가하지 않았다.
  */
 export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.neck == null || !payload.responses.modules.neck) return null
+  // neckAdapter.ts(frozen)의 mapPregnancyStatus/mapMajorHistory도 LBP와
+  // 같은 두 필드를 무조건 가정한다 -- 위 LbpSafetyPanel과 동일한 이유.
+  if (
+    payload.responses.safety_flags.neck == null ||
+    !isNonEmptyObject(payload.responses.modules.neck) ||
+    !payload.responses.reproductive_status.derived ||
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
+  ) {
+    return null
+  }
 
   const state = toNeckStateFromDoctorPayload(payload.responses)
   const flags = computeNeckFlags(state)
@@ -721,11 +767,16 @@ export function ShoulderSafetyPanel({
   // shoulderAdapter.ts internally calls toNeckStateFromDoctorPayload (shared
   // neck_shoulder safety logic, frozen) -- computing shoulder state without
   // modules.neck present crashes inside that frozen adapter, so this gate
-  // must require both submodules, not just modules.shoulder.
+  // must require both submodules, not just modules.shoulder. That frozen
+  // path also reaches neckAdapter's mapPregnancyStatus/mapMajorHistory, so
+  // it needs the same reproductive_status.derived/medical_history_flags
+  // checks as NeckSafetyPanel itself.
   if (
     payload.responses.safety_flags.shoulder == null ||
-    !payload.responses.modules.shoulder ||
-    !payload.responses.modules.neck
+    !isNonEmptyObject(payload.responses.modules.shoulder) ||
+    !isNonEmptyObject(payload.responses.modules.neck) ||
+    !payload.responses.reproductive_status.derived ||
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
   ) {
     return null
   }
@@ -868,7 +919,7 @@ function suggestedKneeExamCodes(
  * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.knee == null || !payload.responses.modules.knee) return null
+  if (payload.responses.safety_flags.knee == null || !isNonEmptyObject(payload.responses.modules.knee)) return null
 
   const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeKneeFlags(state)
@@ -1007,7 +1058,7 @@ function suggestedElbowExamCodes(
  * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.elbow == null || !payload.responses.modules.elbow) return null
+  if (payload.responses.safety_flags.elbow == null || !isNonEmptyObject(payload.responses.modules.elbow)) return null
 
   const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeElbowFlags(state)
@@ -1156,7 +1207,12 @@ function suggestedWristHandExamCodes(
  * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.wrist_hand == null || !payload.responses.modules.wrist_hand) return null
+  if (
+    payload.responses.safety_flags.wrist_hand == null ||
+    !isNonEmptyObject(payload.responses.modules.wrist_hand)
+  ) {
+    return null
+  }
 
   const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeWristHandFlags(state)
@@ -2226,11 +2282,16 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
   // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
   useEffect(() => {
+    // malformed/legacy submission resilience 배치: 레코드 A -> B 전환처럼
+    // 둘 다 visit_id를 갖는 경우(둘 다 이 if를 안 타는 경우)에도 A의
+    // recorderResults/emrText/emrSeedRecordingIdRef가 B의 화면에 잠깐이라도
+    // 남아있으면 안 된다 -- 이 effect는 [mode, selectedRecord?.visit_id]가
+    // 바뀔 때마다 실행되므로, 무조건 리셋한 뒤에만 새 poll을 시작한다.
+    setRecorderResults(null)
+    setRecorderResultsError(null)
+    setEmrText('')
+    emrSeedRecordingIdRef.current = null
     if (mode !== 'server' || !selectedRecord?.visit_id) {
-      setRecorderResults(null)
-      setRecorderResultsError(null)
-      setEmrText('')
-      emrSeedRecordingIdRef.current = null
       return
     }
     const visitId = selectedRecord.visit_id
@@ -2264,7 +2325,15 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
   // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
   // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
+  // malformed/legacy submission resilience 배치: 이 effect는 JSX 게이트(위
+  // payloadShapeOk ? ... 분기)와 무관하게 항상 실행된다 -- hook은 조건부로
+  // 건너뛸 수 없다. primaryConcernLabel(r)은 r.visit_goal.visit_goal을
+  // 무조건 읽으므로, payloadShapeOk가 false인 레코드에서 recorder 결과가
+  // 먼저 도착하면(EMR 패널 자체는 화면에 없어도) 이 effect가 부모
+  // DoctorView 안에서 직접 던진다 -- DoctorRecordErrorBoundary는 자신의
+  // 자식 렌더만 잡으므로 이 예외는 그 경계를 완전히 우회한다.
   useEffect(() => {
+    if (!payloadShapeOk) return
     const latest = recorderResults?.[0] ?? null
     if (!latest) return
     if (emrSeedRecordingIdRef.current === latest.recording_id) return
@@ -2276,7 +2345,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         judgment: selectedRecord?.judgment ?? null,
       }),
     )
-  }, [recorderResults, selectedRecord?.judgment])
+  }, [payloadShapeOk, recorderResults, selectedRecord?.judgment])
 
   useEffect(() => {
     if (copyStatus === 'idle') return

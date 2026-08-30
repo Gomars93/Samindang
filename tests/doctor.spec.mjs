@@ -1625,20 +1625,41 @@ function detailsRange(html, classMarker) {
     /const ms = sleep\?\.menopause\s*\n\s*if \(!ms\) return null/.test(src),
   )
   assert(
-    "resilience: every simple regional SafetyPanel gate (Neck/Knee/Elbow/WristHand) uses nullish (== null) and additionally requires its own modules.<region> submodule -- a legacy record with safety_flags.<region> entirely absent (undefined, not null) must not fail the strict === null check open",
-    ['neck', 'knee', 'elbow', 'wrist_hand'].every((region) =>
-      new RegExp(`safety_flags\\.${region} == null \\|\\| !payload\\.responses\\.modules\\.${region}\\) return null`).test(src),
-    ),
-  )
-  assert(
-    'resilience: ShoulderSafetyPanel additionally requires modules.neck (not just modules.shoulder) -- shoulderAdapter.ts (frozen) internally calls toNeckStateFromDoctorPayload, so computing shoulder state without modules.neck crashes inside that frozen adapter',
-    /safety_flags\.shoulder == null \|\|\s*\n\s*!payload\.responses\.modules\.shoulder \|\|\s*\n\s*!payload\.responses\.modules\.neck/.test(
+    'resilience: a shared asArray() -- isNonEmptyObject() -- helper exists guarding against a submodule that is technically present but completely empty (a shape real submissions cannot produce, since buildResponsePayload always fills every key even when unanswered -- an empty object only happens from legacy/hand-crafted data, and leaving it through renders every leaf as undefined, which several panels display as a definitive "아니요"/negative rather than "확인 필요")',
+    /function isNonEmptyObject\(value: unknown\): boolean \{\s*\n\s*return isPlainObject\(value\) && Object\.keys\(value\)\.length > 0/.test(
       src,
     ),
   )
   assert(
-    "resilience: the LbpSafetyPanel gate additionally requires modules.lbp, not just primary_module_detail === 'LBP'",
-    /primary_module_detail !== 'LBP' \|\| !payload\.responses\.modules\.lbp\) return null/.test(src),
+    'resilience: a shared isNullOrStringArray() helper exists guarding array ELEMENTS, not just the array container -- lbpAdapter.ts/neckAdapter.ts (frozen) call .toUpperCase() unconditionally on each medical_history_flags element',
+    /function isNullOrStringArray\(value: unknown\): boolean \{/.test(src) &&
+      /return Array\.isArray\(value\) && value\.every\(\(v\) => typeof v === 'string'\)/.test(src),
+  )
+  assert(
+    "resilience: every simple regional SafetyPanel gate (Neck/Knee/Elbow/WristHand) uses nullish (== null) and additionally requires its own modules.<region> submodule via isNonEmptyObject() -- a legacy record with safety_flags.<region> entirely absent (undefined, not null), or modules.<region> present but empty, must not fail the strict === null check open",
+    ['neck', 'knee', 'elbow', 'wrist_hand'].every((region) =>
+      new RegExp(`safety_flags\\.${region} == null \\|\\|.{0,80}isNonEmptyObject\\(payload\\.responses\\.modules\\.${region}\\)`, 's').test(
+        src,
+      ),
+    ),
+  )
+  assert(
+    'resilience: NeckSafetyPanel additionally requires reproductive_status.derived and a null-or-string-array medical_history_flags -- neckAdapter.ts (frozen) mapPregnancyStatus/mapMajorHistory crash on the missing/wrong-typed forms of each',
+    /safety_flags\.neck == null \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)/.test(
+      src,
+    ),
+  )
+  assert(
+    'resilience: ShoulderSafetyPanel additionally requires modules.neck (not just modules.shoulder) via isNonEmptyObject(), plus the same reproductive_status.derived/medical_history_flags checks as NeckSafetyPanel -- shoulderAdapter.ts (frozen) internally calls toNeckStateFromDoctorPayload, so computing shoulder state without any of these crashes inside that frozen adapter',
+    /safety_flags\.shoulder == null \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)/.test(
+      src,
+    ),
+  )
+  assert(
+    "resilience: the LbpSafetyPanel gate additionally requires modules.lbp (via isNonEmptyObject), reproductive_status.derived, and a null-or-string-array medical_history_flags -- not just primary_module_detail === 'LBP'",
+    /primary_module_detail !== 'LBP' \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)/.test(
+      src,
+    ),
   )
   assert(
     "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
@@ -1666,14 +1687,14 @@ function detailsRange(html, classMarker) {
 {
   const hipSrc = await readFile(fileURLToPath(new URL('../src/doctor/HipSafetyPanel.tsx', import.meta.url)), 'utf8')
   assert(
-    'resilience: HipSafetyPanel gate uses nullish (== null) and additionally requires modules.hip',
-    /safety_flags\.hip == null \|\| !payload\.responses\.modules\.hip\) return null/.test(hipSrc),
+    'resilience: HipSafetyPanel gate uses nullish (== null) and additionally requires a non-empty modules.hip',
+    /safety_flags\.hip == null \|\| !isNonEmptyObject\(payload\.responses\.modules\.hip\)\) return null/.test(hipSrc),
   )
 
   const tmjSrc = await readFile(fileURLToPath(new URL('../src/doctor/TmjSafetyPanel.tsx', import.meta.url)), 'utf8')
   assert(
-    'resilience: TmjSafetyPanel gate uses nullish (== null) and additionally requires modules.tmj',
-    /safety_flags\.tmj == null \|\| !payload\.responses\.modules\.tmj\) return null/.test(tmjSrc),
+    'resilience: TmjSafetyPanel gate uses nullish (== null) and additionally requires a non-empty modules.tmj',
+    /safety_flags\.tmj == null \|\| !isNonEmptyObject\(payload\.responses\.modules\.tmj\)\) return null/.test(tmjSrc),
   )
 
   const ankleSrc = await readFile(
@@ -1681,8 +1702,8 @@ function detailsRange(html, classMarker) {
     'utf8',
   )
   assert(
-    'resilience: AnkleFootSafetyPanel gate uses nullish (== null) and additionally requires modules.ankle_foot',
-    /safety_flags\.ankle_foot == null \|\| !payload\.responses\.modules\.ankle_foot\) return null/.test(ankleSrc),
+    'resilience: AnkleFootSafetyPanel gate uses nullish (== null) and additionally requires a non-empty modules.ankle_foot',
+    /safety_flags\.ankle_foot == null \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.ankle_foot\)/.test(ankleSrc),
   )
 }
 

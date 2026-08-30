@@ -102,6 +102,60 @@ test('exactly 7 scenarios exist (pain x3, herbal x3, mixed x1)', () => {
   }
 }
 
+/* -------------------------------------------------------------------------
+ * Malformed/legacy submission resilience batch, 4th independent review:
+ * the review's own exhaustive sub-object sweep found the missing-namespace
+ * class was NOT fully enumerated by the region loop above -- two more
+ * shapes crash the same way (uncaught by the boundary in
+ * DoctorView.tsx's own render body for Lbp/Neck/Shoulder, caught but
+ * fail-open elsewhere): reproductive_status.derived absent/null (frozen
+ * lbpAdapter.ts/neckAdapter.ts's mapPregnancyStatus reads `.source`
+ * unconditionally), and medical_history_flags containing a non-string
+ * element (frozen mapMajorHistory calls `.toUpperCase()` on each element
+ * unconditionally). Both are namespace-complete-but-leaf-hollow/wrong-typed
+ * shapes that `isDoctorPayloadShapeUsable` is designed to accept (it only
+ * checks top-level presence), so the render itself has to hold.
+ * ---------------------------------------------------------------------- */
+{
+  for (const s of WORKSPACE_SCENARIOS) {
+    test(`scenario "${s.label}" (${s.kind}) with reproductive_status.derived deleted does not throw`, () => {
+      const mutated = structuredClone(s.payload)
+      delete mutated.responses.reproductive_status.derived
+      let threw = false
+      try {
+        renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: s.synthetic }))
+      } catch {
+        threw = true
+      }
+      assert.equal(threw, false)
+    })
+
+    test(`scenario "${s.label}" (${s.kind}) with reproductive_status.derived = null does not throw`, () => {
+      const mutated = structuredClone(s.payload)
+      mutated.responses.reproductive_status.derived = null
+      let threw = false
+      try {
+        renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: s.synthetic }))
+      } catch {
+        threw = true
+      }
+      assert.equal(threw, false)
+    })
+
+    test(`scenario "${s.label}" (${s.kind}) with medical_history_flags containing a non-string element does not throw`, () => {
+      const mutated = structuredClone(s.payload)
+      mutated.responses.medical_history.medical_history_flags = [null, 'diabetes', 42, { x: 1 }]
+      let threw = false
+      try {
+        renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: s.synthetic }))
+      } catch {
+        threw = true
+      }
+      assert.equal(threw, false)
+    })
+  }
+}
+
 // ---------- 2. profile isolation ----------
 test('pain scenario 1: no Myungri/명리, no birth-time, no herbal-only systemic content', () => {
   const html = render(PAIN_SCENARIO_1)

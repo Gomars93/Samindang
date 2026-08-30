@@ -5464,6 +5464,119 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+**4차 독립 `model:opus` closing 리뷰** (진짜 subagent 호출, 커밋
+`9636d3f` 대상): **NOT CLOSABLE 판정** — "레거시 서브모듈 누락"류가
+아닌 다른 각도로 훑어달라는 요청대로, 이번엔 네임스페이스는 전부
+존재하지만 리프가 비어있거나(namespace-complete-but-leaf-hollow)
+타입이 잘못된(wrong-typed leaf) 케이스에서 HIGH 2건을 직접 실행으로
+증명했다 — 둘 다 `isDoctorPayloadShapeUsable`이 top-level 존재만
+확인하도록 설계돼 있어(leaf까지 검사하면 임상 추론이 됨) 통과시키는
+게 의도된 동작이라, 렌더 쪽에서 반드시 버텨야 하는 케이스. (HIGH-2)
+frozen `lbpAdapter.ts`/`neckAdapter.ts`의 `mapPregnancyStatus`가
+`reproductive_status.derived`가 존재해도 그 안의 `.source`를
+무조건 읽는다 — `derived`가 없거나(namespace 삭제가 아니라 그
+안의 leaf가 없는 경우) `null`이면 던짐, Lbp/Neck/Shoulder(어깨는
+neckAdapter를 내부 호출하므로 전이) SafetyPanel 전부에서 재현.
+(HIGH-3) 같은 두 adapter의 `mapMajorHistory`가
+`medical_history.medical_history_flags` 배열의 각 원소에
+무조건 `.toUpperCase()`를 호출한다 — `Array.isArray()`로 컨테이너만
+확인하고 원소 타입은 확인하지 않는 이 배치의 기존 가드(`asArray`)로는
+못 막는 클래스: 배열 자체는 있지만 원소 중 하나가 `null`/숫자/객체인
+경우. MEDIUM 3건도 함께 지적: (M4) `DoctorView.tsx` 자기 자신의
+`useEffect`(recorder 결과로 EMR 요약 텍스트를 시딩하는 effect, 2323행
+근방) 가 `payloadShapeOk`와 무관하게 항상 실행되고 그 안에서
+`primaryConcernLabel(r)`을 무조건 호출한다 — JSX 쪽 EMR 패널은
+`payloadShapeOk`로 게이트돼 있지만 hook 자체는 조건부로 건너뛸 수
+없으므로, payload가 malformed인 레코드에 recorder 결과가 먼저
+도착하면(패널이 화면에 없어도) 이 effect가 `DoctorView`라는 부모
+컴포넌트 안에서 직접 던진다 — `DoctorRecordErrorBoundary`는 자신의
+자식 렌더만 잡으므로 이 예외는 그 경계를 완전히 우회한다(이 배치가
+원래 막으려던 바로 그 문제 클래스가 effect 쪽 사각지대로 남아있던
+것). (M5) 레코드 A→B 전환 시 recorder polling effect가
+`emrText`/`recorderResults`/`emrSeedRecordingIdRef`를 "이번
+레코드가 서버모드+visit_id 있음" 조건의 early-return 분기 안에서만
+리셋해서, A/B 둘 다 visit_id가 있는 정상 케이스는 이 분기를 안
+타 예전 값이 새 레코드 화면에 그대로 남을 수 있었다(boundary의
+`key={selectedRecord?.id}`는 `DoctorView` 자신의 이 state를
+remount하지 않으므로 못 잡음). (M6) 9개 SafetyPanel의
+`isNonEmptyObject`류 게이트가 아직 없어 `modules.<region> = {}`
+(네임스페이스는 있지만 완전히 빈 객체) 케이스가 열려 있었음. LOW/NIT
+몇 건(saju.pillars.day/hour 비문자열, additionalConcern.ts 객체
+truthy 체크, DoctorWorkspace.tsx NaN 무한 재렌더 위험 등)도 함께
+보고됐으나 실사용 도달 불가능성이 높아 이번 라운드에선 HIGH/MEDIUM만
+우선 처리.
+
+**수정**: (1) `DoctorView.tsx`에 `isNullOrStringArray`/
+`isNonEmptyObject` 헬퍼 추가. `LbpSafetyPanel`/`NeckSafetyPanel`
+게이트에 `reproductive_status.derived` 존재 확인과
+`medical_history_flags`가 null이거나 문자열만 담은 배열인지 확인을
+추가(frozen adapter가 실제로 읽는 필드만 정확히 대응 —
+`grep -ln "reproductive_status\|medical_history_flags\|mapPregnancyStatus\|mapMajorHistory" src/spec/*Adapter.ts`로
+lbpAdapter.ts/neckAdapter.ts 둘뿐임을 먼저 확인한 뒤 범위를
+Lbp/Neck/Shoulder로 정확히 좁힘). `ShoulderSafetyPanel`은 3차 리뷰가
+이미 요구한 `modules.neck` 조건에 이 두 조건을 추가로 얹음(전이적
+의존성이 같은 두 필드에도 적용되므로). Knee/Elbow/WristHand 게이트는
+`isNonEmptyObject(modules.<region>)`로 M6 해결(이 세 지역은 저 두
+필드를 안 읽으므로 그 이상은 불필요). `HipSafetyPanel.tsx`/
+`TmjSafetyPanel.tsx`/`AnkleFootSafetyPanel.tsx`(별도 파일) 각각에
+동일한 로컬 `isNonEmptyObject` 헬퍼를 추가해 같은 방식으로 M6 해결.
+(2) M4: EMR 시딩 effect 맨 앞에 `if (!payloadShapeOk) return`
+추가하고 의존성 배열에 `payloadShapeOk` 포함 — JSX 게이트와 hook을
+동일한 조건으로 동기화. (3) M5: recorder polling effect의 리셋 3줄
+(`setRecorderResults(null)`/`setRecorderResultsError(null)`/
+`setEmrText('')`/`emrSeedRecordingIdRef.current = null`)을
+early-return 분기 밖으로 빼서 effect가 실행될 때마다(즉
+`[mode, selectedRecord?.visit_id]`가 바뀔 때마다) 무조건 먼저
+실행되게 하고, 그 다음에만 `mode !== 'server' || !visit_id`를
+확인해 새 poll을 시작할지 결정하도록 순서를 바꿈.
+
+**신규/보강 회귀 테스트**: `tests/doctor.spec.mjs`에 9개 SafetyPanel
+게이트 전체(Neck/Knee/Elbow/WristHand 공용 정규식 + Shoulder/Lbp
+전용 다중 조건 정규식 + Hip/Tmj/AnkleFoot `isNonEmptyObject` 정규식)를
+새 게이트 텍스트에 맞게 재작성하고, `isNonEmptyObject`/
+`isNullOrStringArray` 헬퍼 정의 자체를 확인하는 정규식 2개 추가.
+`npm run test:doctor` 819/819(+3). `tests/doctor-workspace.spec.mjs`에
+7개 실제 시나리오 × 3개 mutation(① `reproductive_status.derived`
+삭제 ② `derived = null` ③ `medical_history_flags`에 `null`/`42`/
+객체가 섞인 배열)의 21개 신규 behavioral 테스트 추가(모두
+`DoctorWorkspace`를 `renderToString`으로 직접 렌더링해 안 던지는지
+확인) — 기존 63-조합 지역 삭제 루프가 이 두 클래스(네임스페이스는
+있지만 leaf가 없거나 wrong-typed)를 커버하지 못했다는 걸 리뷰가
+지적한 정확히 그 형태. `npm run test:doctor-workspace` 141/141(+21).
+M4/M5는 `useEffect` 안 로직이라 `renderToString`(SSR, effect 미실행)
+기반 테스트로는 검증 불가능해 별도 유닛 테스트를 만들지 않고 아래
+실사용 재검증으로 직접 확인했다.
+
+**실사용 재검증**(로컬 서버+`vite --host` 기동, Playwright): 실제
+questionnaire builder 시나리오 기반 정상 제출건 2개(A/B, 서로 다른
+가상 환자)와 `routing: null` + 극단적으로 sparse한 `responses`
+(payloadShapeOk가 false가 되는 레거시/손상 케이스, C)를 실제
+`POST /api/submissions`로 생성. C의 visit에 recorder 결과를
+**페이지 로드 전에 미리** POST해 M4의 정확한 repro window(효과가
+"malformed 레코드에 recorder 결과가 이미 도착해 있는" 상태에서
+첫 poll이 즉시 실행되는 순간)를 재현 — 수정 후: C를 열어도 fail-closed
+fallback("이 기록의 상세 임상 화면을 표시할 수 없습니다")이 정상
+표시되고 `pageerror` 이벤트 0건. A에는 recorder 결과를 POST하고
+Doctor UI에서 A를 열어 "자료 보기" 탭의 EMR 요약 textarea에 seed된
+값(`구조화된 note.assessment`로 넣은 마커 문자열)이 정확히 나타남을
+DOM에서 직접 확인 — 그 다음 목록으로 돌아가 recorder 결과가 아직
+없는 B로 전환: 전환 직후(50ms 뒤)와 안정화 뒤(1.5초 뒤) 둘 다 A의
+마커 문자열이 어디에도 남아있지 않음(M5 재검증) — B의 "진료 녹취·요약"
+섹션은 정확히 "아직 결과 없음"으로 초기화된 상태를 보여줌. 전체 QA
+동안 `pageerror` 이벤트 0건(콘솔에 뜬 유일한 에러는 무관한 favicon
+404).
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 5차 독립 `model:opus`
+리뷰를 새로 호출한다(자기 자신의 요약을 신뢰하지 말고 직접 실행해
+깨보라는 요청 포함). CLEAN이면 PR #24에 이 배치의 종료 상태 코멘트를
+남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge
+판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

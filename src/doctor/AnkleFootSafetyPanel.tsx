@@ -2,6 +2,11 @@ import { computeAnkleFootFlags } from '../spec/ankleFootLogic'
 import { toAnkleFootStateFromDoctorPayload } from '../spec/ankleFootAdapter'
 import type { DoctorPayload } from './types'
 
+/** 실제 제출은 서브모듈이 완전히 빈 객체일 수 없다 -- DoctorView.tsx의 동명 헬퍼와 동일한 이유. */
+function isNonEmptyObject(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
+}
+
 const STATUS_LABEL = {
   CLEAR: '안전',
   REVIEW_REQUIRED: '확인 필요',
@@ -19,7 +24,12 @@ const STATUS_LABEL = {
  * import + render change after this component has independently type-checked.
  */
 export function AnkleFootSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.ankle_foot == null || !payload.responses.modules.ankle_foot) return null
+  if (
+    payload.responses.safety_flags.ankle_foot == null ||
+    !isNonEmptyObject(payload.responses.modules.ankle_foot)
+  ) {
+    return null
+  }
 
   const state = toAnkleFootStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeAnkleFootFlags(state)

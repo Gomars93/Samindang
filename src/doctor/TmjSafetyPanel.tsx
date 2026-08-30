@@ -3,6 +3,11 @@ import { toTmjStateFromDoctorPayload } from '../spec/tmjAdapter'
 import { ageFromDoctorPayload } from '../spec/lbpAdapter'
 import type { DoctorPayload } from './types'
 
+/** 실제 제출은 서브모듈이 완전히 빈 객체일 수 없다 -- DoctorView.tsx의 동명 헬퍼와 동일한 이유. */
+function isNonEmptyObject(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
+}
+
 const STATUS_LABEL = {
   CLEAR: '안전',
   REVIEW_REQUIRED: '확인 필요',
@@ -23,7 +28,7 @@ const STATUS_LABEL = {
  * import + render change, matching AnkleFootSafetyPanel.tsx's precedent.
  */
 export function TmjSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.tmj == null || !payload.responses.modules.tmj) return null
+  if (payload.responses.safety_flags.tmj == null || !isNonEmptyObject(payload.responses.modules.tmj)) return null
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toTmjStateFromDoctorPayload(payload.responses, payload.flags.general_red, age)

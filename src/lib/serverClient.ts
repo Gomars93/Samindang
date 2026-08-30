@@ -16,6 +16,7 @@ import type {
   StationInfo,
 } from '../doctor/workspace/followUpSession'
 import type { CrmTask } from '../crm/types'
+import type { MessageChannel, MessageRecord } from '../messaging/types'
 import { getStoredDoctorToken } from '../doctor/doctorToken'
 
 const BASE_URL = import.meta.env.VITE_SAMINDANG_SERVER_URL as string | undefined
@@ -580,4 +581,49 @@ export function linkPatientIdentity(params: {
       confirmed_by: params.confirmedBy,
     }),
   })
+}
+
+/**
+ * Quick Revisit outbound messaging (SOLAPI scaffold). Wire shape already
+ * matches MessageRecord (src/messaging/types.ts) field-for-field, so no
+ * translation is needed here -- unlike CrmTask above, this type was
+ * designed alongside its own HTTP route rather than adapted from an
+ * earlier shape.
+ *
+ * `phone` is deliberately a required, explicit argument on every call
+ * here (queue AND retry) -- this server never stores a patient's full
+ * phone number anywhere (see server/index.js's messagingPhoneCache
+ * comment and patientIdentityStore.js's identity policy), so the
+ * clinician/staff member types it in fresh each time from the clinic's
+ * own EMR (Sigma). It is sent once per request and never echoed back in
+ * any response this client reads.
+ */
+export function queueRevisitMessage(
+  visitId: string,
+  params: { patientId: string; phone: string; followUpToken: string; channel?: MessageChannel },
+): Promise<ServerResult<MessageRecord>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      patient_id: params.patientId,
+      phone: params.phone,
+      follow_up_token: params.followUpToken,
+      channel: params.channel,
+    }),
+  })
+}
+
+export function listVisitMessages(visitId: string): Promise<ServerResult<{ messages: MessageRecord[] }>> {
+  return request(`/api/visits/${encodeURIComponent(visitId)}/messages`)
+}
+
+export function retryRevisitMessage(messageId: string, phone: string): Promise<ServerResult<MessageRecord>> {
+  return request(`/api/messages/${encodeURIComponent(messageId)}/retry`, {
+    method: 'POST',
+    body: JSON.stringify({ phone }),
+  })
+}
+
+export function cancelRevisitMessage(messageId: string): Promise<ServerResult<MessageRecord>> {
+  return request(`/api/messages/${encodeURIComponent(messageId)}/cancel`, { method: 'POST' })
 }

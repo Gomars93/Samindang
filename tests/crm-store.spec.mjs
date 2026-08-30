@@ -1883,7 +1883,18 @@ async function main() {
       })
       assert('purge-full: seed micro-follow-up response saved (201)', microRes.status === 201)
 
-      // (h) audit.log -- every HTTP action above already wrote to it.
+      // (h) a Quick Revisit outbound message (messaging/) -- reuses the
+      // revisit visit/token already minted in (b). The mock SOLAPI
+      // transport (no real credentials configured in this test process)
+      // sends it successfully, so it lands on disk as a real MessageRecord.
+      const messageRes = await fetch(`${base}/api/visits/${revisitVisitId}/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ patient_id: revisitPatientVisit.patient_id, phone: '01000000001', follow_up_token: revisitStart.token }),
+      })
+      assert('purge-full: seed Quick Revisit message queued (201)', messageRes.status === 201)
+
+      // (i) audit.log -- every HTTP action above already wrote to it.
 
       /* ---- verify-exists: every seeded family is genuinely on disk
          BEFORE the purge, so the "verify-gone" assertions below are
@@ -1902,6 +1913,8 @@ async function main() {
       assert('purge-full: sanity -- micro-follow-up response file exists before purge', (await readRaw(path.join(dataRoot, 'micro-follow-up', `${microVisit.id}.json`))) !== null)
       const followUpTokensBefore = (await readdir(path.join(dataRoot, 'follow-up-sessions', 'tokens'))).filter((f) => f.endsWith('.json'))
       assert('purge-full: sanity -- a follow-up-session token file exists before purge', followUpTokensBefore.length > 0)
+      const messagingBefore = (await readdir(path.join(dataRoot, 'messaging'))).filter((f) => f.endsWith('.json'))
+      assert('purge-full: sanity -- a Quick Revisit message file exists before purge', messagingBefore.length > 0)
       const auditRawBefore = await readFile(path.join(dataRoot, 'audit.log'), 'utf8').catch(() => '')
       assert('purge-full: sanity -- audit.log has content before purge', auditRawBefore.trim().length > 0)
 
@@ -1916,6 +1929,7 @@ async function main() {
         'crm',
         'crm-identity',
         'follow-up-sessions',
+        'messaging',
         'micro-follow-up',
         'recorder-results',
         'stations',
@@ -1945,6 +1959,7 @@ async function main() {
         path.join(dataRoot, 'follow-up-sessions', 'tokens', 'orphan-purge-seed.json.tmp'),
         path.join(dataRoot, 'stations', 'stations', 'orphan-purge-seed.json.tmp'),
         path.join(dataRoot, 'recorder-results', recorderVisit.id, 'orphan-purge-seed.json.tmp'),
+        path.join(dataRoot, 'messaging', 'orphan-purge-seed.json.tmp'),
       ]
       for (const tmpPath of orphanTmpPaths) {
         await mkdir(path.dirname(tmpPath), { recursive: true })
@@ -1990,6 +2005,8 @@ async function main() {
       assert('purge-full: crm/ is gone entirely', crmDirGone)
       const identityDirGone = await access(path.join(dataRoot, 'crm-identity')).then(() => false).catch(() => true)
       assert('purge-full: crm-identity/ is gone entirely, not just submissions/', identityDirGone)
+      const messagingDirGone = await access(path.join(dataRoot, 'messaging')).then(() => false).catch(() => true)
+      assert('purge-full: messaging/ is gone entirely, not just submissions/', messagingDirGone)
       const auditLogGone = await access(path.join(dataRoot, 'audit.log')).then(() => false).catch(() => true)
       assert('purge-full: audit.log is gone (purgeAuditLog unlinks it)', auditLogGone)
 
@@ -2032,6 +2049,9 @@ async function main() {
 
       const stationsAfter = await (await fetch(`${freshBase}/api/stations`, { headers })).json()
       assert('purge-full: restart-clean -- the stations list is empty', Array.isArray(stationsAfter.stations) && stationsAfter.stations.length === 0)
+
+      const messagesAfter = await (await fetch(`${freshBase}/api/visits/${revisitVisitId}/messages`, { headers })).json()
+      assert('purge-full: restart-clean -- the previously-seeded visit has no surviving messages', Array.isArray(messagesAfter.messages) && messagesAfter.messages.length === 0)
 
       const identityAfter = await (
         await fetch(`${freshBase}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(identityUuid)}`, { headers })

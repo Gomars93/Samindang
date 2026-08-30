@@ -67,6 +67,13 @@ export const AUDIT_EVENTS = Object.freeze({
   // Identity Production Batch: 영구적인 신원 연결(patient_uuid <->
   // sigma_chart_no) 확정 이벤트.
   PATIENT_IDENTITY_LINKED: 'patient_identity_linked',
+  // Quick Revisit 발송(SOLAPI 스캐폴드): 사람(doctor/staff)이 직접 트리거한
+  // 행위만 감사 대상 -- 자동 백오프 재시도, provider webhook 배달 상태
+  // 갱신은 messaging/*.json 레코드 자체의 attempt/status 이력으로 이미
+  // 추적되므로 audit.log에는 중복 기록하지 않는다(범위를 의도적으로 좁힘).
+  MESSAGE_QUEUED: 'message_queued',
+  MESSAGE_RETRIED: 'message_retried',
+  MESSAGE_CANCELLED: 'message_cancelled',
 })
 const ALLOWED_EVENTS = new Set(Object.values(AUDIT_EVENTS))
 

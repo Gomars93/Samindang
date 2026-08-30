@@ -19,6 +19,9 @@
 //   - crm-identity/{links,by-chart,pending}/ (Sigma chart_no + 확정 이름 --
 //     PHI) -- patientIdentityStore도 별도 생성되므로 명시적으로 rm -rf
 //     (Identity Production Batch에서 추가)
+//   - messaging/ (Quick Revisit 발송 MessageRecord -- 전화번호는 애초에
+//     저장하지 않음, patient_id + follow-up 토큰 해시만) -- messagingStore도
+//     별도 생성되므로 명시적으로 rm -rf (SOLAPI 스캐폴드 배치에서 추가)
 //   - audit.log -- purgeAuditLog()(server/audit.js)
 //   - owner.lock (round 17, 서버 프로세스가 이 데이터 디렉터리를 자신이
 //     소유 중임을 나타내는 파일 -- server/ownerLock.js) -- 이 스크립트는
@@ -62,6 +65,7 @@ const dataDir = process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
 const dataRoot = path.join(dataDir, '..')
 const identityDir = path.join(dataRoot, 'crm-identity')
 const crmDir = path.join(dataRoot, 'crm')
+const messagingDir = path.join(dataRoot, 'messaging')
 const yes = process.argv.includes('--yes')
 
 // Module-scope (not a local in main()) so the signal handlers below can see
@@ -324,8 +328,9 @@ async function main() {
     await purgeAuditLog(dataDir)
     await rm(crmDir, { recursive: true, force: true })
     await rm(identityDir, { recursive: true, force: true })
+    await rm(messagingDir, { recursive: true, force: true })
     console.log(
-      `Purged ${count} file(s) from "${dataDir}" and its sibling stores (visits/, recorder-results/, micro-follow-up/, follow-up-sessions/, stations/), cleared the audit log, and removed "${crmDir}" and "${identityDir}".`,
+      `Purged ${count} file(s) from "${dataDir}" and its sibling stores (visits/, recorder-results/, micro-follow-up/, follow-up-sessions/, stations/), cleared the audit log, and removed "${crmDir}", "${identityDir}", and "${messagingDir}".`,
     )
   } finally {
     // Release the lock this script itself took above -- this both removes

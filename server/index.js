@@ -17,6 +17,7 @@ import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs, releaseAny
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
+import { createMessagingStore, MessagingConflictError, MessagingNotFoundError } from './messagingStore.js'
 import {
   activateVisit,
   clearActiveVisit,
@@ -99,6 +100,37 @@ export function createApp({
   // submission retention. See patientIdentityStore.js's header for the
   // scope/safety rules this store enforces.
   const patientIdentityStore = createPatientIdentityStore(path.join(resolvedDataDir, '..', 'crm-identity'))
+  // Quick Revisit outbound messaging (SOLAPI scaffold, API-credential-free
+  // today -- see solapiAdapter.js's resolveSolapiProviderState). Another
+  // sibling data dir, same reasoning as crm/ and crm-identity/ above: a
+  // MessageRecord is delivery-operational metadata, not a medical-record
+  // submission, and must not be swept by store.js's submission retention.
+  const messagingStore = createMessagingStore(path.join(resolvedDataDir, '..', 'messaging'))
+  // Privacy guard: this repo's identity-linkage policy is explicit that no
+  // full phone number is ever persisted anywhere (see
+  // patientIdentityStore.js's header, and coreSpec.ts's ID_02 which only
+  // ever collects the last 4 digits from the patient). This system has
+  // never been a source of truth for a patient's real phone number -- staff
+  // already know it from the clinic's own EMR (Sigma) and type it in
+  // explicitly at the moment they trigger a send, the same "a human bridges
+  // the gap explicitly" pattern patientIdentityStore.js already uses for
+  // chart_no linking. That typed-in phone number is kept ONLY in this
+  // process-local, never-disk-written Map (patient_id -> most recently
+  // supplied phone), purely so the automatic retry sweep below can reuse it
+  // within this process's lifetime; a restart clears it, and any retry due
+  // after a restart fails closed (messagingStore.js's runDueRetries already
+  // marks it FAILED/recipient_unresolvable) rather than guessing -- staff
+  // can always fall back to the manual retry endpoint, which takes the
+  // phone number again. Mirrors this codebase's existing tolerance for
+  // restart-reset, process-local operational state (see
+  // failedPublicAttempts below).
+  const messagingPhoneCache = new Map()
+  function mapMessagingError(err) {
+    if (err instanceof MessagingConflictError) return { status: 409, error: err.message }
+    if (err instanceof MessagingNotFoundError) return { status: 404, error: 'not found' }
+    if (err instanceof Error) return { status: 400, error: err.message }
+    return { status: 500, error: 'server error' }
+  }
   // Maps a thrown store error to an HTTP status + body. CrmConflictError
   // (stale expectedVersion) is always 409; CrmNotFoundError is always 404;
   // every other thrown Error is a disallowed-transition refusal from the
@@ -163,6 +195,27 @@ export function createApp({
       }
     } catch (err) {
       console.error(`${new Date().toISOString()} retention: follow-up-session cleanup failed: ${err.message}`)
+    }
+  }
+
+  // Quick Revisit: sweeps messages whose backoff window has elapsed and
+  // re-attempts them. Runs far more often than runRetention (see the
+  // shorter interval at the bottom of this file) because a patient waiting
+  // on a revisit link cares about minutes, not the multi-day cadence
+  // ordinary submission retention runs on. resolvePhone reads only the
+  // process-local messagingPhoneCache (see its declaration above) -- never
+  // any persisted store -- so a message due for retry after this process
+  // restarted simply has no cached phone and is marked
+  // FAILED/recipient_unresolvable by messagingStore.js itself, never a
+  // crash here.
+  async function runMessageRetries() {
+    try {
+      const count = await messagingStore.runDueRetries(async (patientId) => messagingPhoneCache.get(patientId) ?? null)
+      if (count > 0) {
+        console.log(`${new Date().toISOString()} messaging: swept ${count} due retry attempt(s)`)
+      }
+    } catch (err) {
+      console.error(`${new Date().toISOString()} messaging: retry sweep failed: ${err.message}`)
     }
   }
 
@@ -326,6 +379,18 @@ export function createApp({
     // every other administrative route above -- no separate public path,
     // no UI yet (deliberately, this round).
     const isCrmRoute = parts[1] === 'crm'
+    // Quick Revisit messaging: GET/POST /api/visits/:id/messages is already
+    // covered by isVisitsRoute above (parts[1] === 'visits', no length
+    // restriction). /api/messages/:id/retry and /api/messages/:id/cancel
+    // are doctor-only staff actions. /api/messages/webhook is deliberately
+    // EXCLUDED -- that is the provider's own delivery-status callback and
+    // must stay reachable without a doctor token/Origin allowlist, same
+    // posture as the public follow-up-session/station routes (keyed by an
+    // unguessable provider_message_id instead of a capability token --
+    // see messagingStore.js's handleDeliveryWebhook doc comment on why an
+    // unknown id is a safe no-op rather than an error).
+    const isMessagesAdminRoute =
+      parts[1] === 'messages' && parts.length === 4 && (parts[3] === 'retry' || parts[3] === 'cancel') && req.method === 'POST'
     const doctorRoute =
       parts[0] === 'api' &&
       (isSubmissionsRoute ||
@@ -336,7 +401,8 @@ export function createApp({
         isPatientRevisitRoute ||
         isRevisitsQueueRoute ||
         isStationsAdminRoute ||
-        isCrmRoute)
+        isCrmRoute ||
+        isMessagesAdminRoute)
     const cors = corsHeaders(req, { doctorRoute })
 
     if (req.method === 'OPTIONS') {
@@ -605,6 +671,130 @@ export function createApp({
             },
             cors,
           )
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 4 && parts[3] === 'messages' && req.method === 'POST') {
+        // Quick Revisit 발송: 이미 발급된 follow-up 토큰을 SOLAPI(알림톡 우선,
+        // SMS/LMS 폴백)로 환자에게 전달한다. phone은 staff/doctor가 지금 막
+        // Sigma 등 기존 EMR에서 직접 확인해 입력한 값 -- 이 서버는 전화번호를
+        // 저장/조회하는 소스가 아니다(위 messagingPhoneCache 선언부 주석,
+        // patientIdentityStore.js 헤더 참고). visit_id/patient_id/token은
+        // start-revisit(위)가 방금 돌려준 값을 그대로 넘기는 것이 정상 흐름.
+        const visitId = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const patientId = typeof body?.patient_id === 'string' ? body.patient_id : ''
+          const phone = typeof body?.phone === 'string' ? body.phone.trim() : ''
+          const followUpToken = typeof body?.follow_up_token === 'string' ? body.follow_up_token : ''
+          const primaryChannel = body?.channel === 'SMS' || body?.channel === 'LMS' ? body.channel : 'KAKAO_ALIMTALK'
+          if (!patientId || !phone || !followUpToken) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'patient_id, phone, follow_up_token are all required' }, cors)
+          } else if (!(await store.visitExistsForPatient(patientId))) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
+          } else {
+            messagingPhoneCache.set(patientId, phone)
+            const { record, deduped } = await messagingStore.queueRevisitMessage({
+              visitId,
+              patientId,
+              phone,
+              followUpToken,
+              primaryChannel,
+            })
+            status = deduped ? 200 : 201
+            if (!deduped) {
+              await safeAudit({ event: AUDIT_EVENTS.MESSAGE_QUEUED, visit_id: visitId, actor: AUDIT_ACTORS.DOCTOR })
+            }
+            // provider_message_id/error_code are safe (never echo phone or
+            // provider raw response) -- see messagingStore.js's own field
+            // docs. Never returns the phone number back to the client; the
+            // caller already has it (they just typed it).
+            bytes = sendJson(req, res, status, record, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 4 && parts[3] === 'messages' && req.method === 'GET') {
+        // Doctor-facing delivery-state list for a visit's Quick Revisit
+        // sends -- never includes a phone number (messagingStore.js never
+        // persists one).
+        const visitId = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          bytes = sendJson(req, res, 200, { messages: await messagingStore.listMessagesForVisit(visitId) }, cors)
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'messages' && parts.length === 4 && parts[3] === 'retry' && req.method === 'POST') {
+        // Doctor-triggered manual retry of a FAILED (or still-QUEUED but not
+        // yet due) message -- phone must be supplied again, same reasoning
+        // as queueRevisitMessage above (never persisted, staff re-confirms
+        // it from the EMR at the moment of the retry).
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const phone = typeof body?.phone === 'string' ? body.phone.trim() : ''
+          if (!phone) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'phone is required' }, cors)
+          } else {
+            try {
+              const existing = await messagingStore.getMessage(id)
+              if (existing) messagingPhoneCache.set(existing.patient_id, phone)
+              const record = await messagingStore.retryMessage(id, { phone, text: null })
+              await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, 200, record, cors)
+            } catch (err) {
+              const mapped = mapMessagingError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, mapped.status, { error: mapped.error }, cors)
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'messages' && parts.length === 4 && parts[3] === 'cancel' && req.method === 'POST') {
+        // Doctor-triggered cancel of a still-QUEUED, never-attempted message
+        // (e.g. the patient called back before the first automatic send).
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          try {
+            const record = await messagingStore.cancelMessage(id)
+            await safeAudit({ event: AUDIT_EVENTS.MESSAGE_CANCELLED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
+            bytes = sendJson(req, res, 200, record, cors)
+          } catch (err) {
+            const mapped = mapMessagingError(err)
+            status = mapped.status
+            bytes = sendJson(req, res, mapped.status, { error: mapped.error }, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'messages' && parts.length === 3 && parts[2] === 'webhook' && req.method === 'POST') {
+        // Provider delivery-status callback. Deliberately public/unguarded
+        // by doctor-token+Origin (see isMessagesAdminRoute's doc comment
+        // above) -- keyed by an unguessable provider_message_id instead.
+        // HMAC/signature verification of the actual SOLAPI webhook request
+        // is EXTERNAL CREDENTIAL PENDING (see solapiAdapter.js's header);
+        // this accepts a reasonable documented shape so the rest of the
+        // pipeline has something concrete to integrate against today. An
+        // unmatched provider_message_id is always a 200 no-op, never an
+        // error -- see handleDeliveryWebhook's own doc comment.
+        const body = await readBody(req).catch(() => null)
+        const providerMessageId = typeof body?.provider_message_id === 'string' ? body.provider_message_id : ''
+        if (!providerMessageId) {
+          status = 400
+          bytes = sendJson(req, res, 400, { error: 'provider_message_id is required' }, cors)
+        } else {
+          const result = await messagingStore.handleDeliveryWebhook({
+            providerMessageId,
+            delivered: body?.delivered === true,
+            errorCode: typeof body?.error_code === 'string' ? body.error_code : null,
+          })
+          bytes = sendJson(req, res, 200, { ok: result.ok }, cors)
         }
       } else if (
         parts[0] === 'api' &&
@@ -1694,6 +1884,14 @@ export function createApp({
   retentionTimer.unref()
   server.on('close', () => clearInterval(retentionTimer))
 
+  // Quick Revisit: a much shorter cadence than submission retention above --
+  // a due retry is meaningful within seconds/minutes (RETRY_DELAYS_MS is
+  // 30s/2min/10min), not hours. unref()/close-cleanup mirrors retentionTimer.
+  runMessageRetries()
+  const messageRetryTimer = setInterval(runMessageRetries, 20_000)
+  messageRetryTimer.unref()
+  server.on('close', () => clearInterval(messageRetryTimer))
+
   return server
 }
 
@@ -1725,6 +1923,7 @@ async function checkDataDirsWritable(dataDir) {
     stations_dir: path.resolve(dataDir, '..', 'stations'),
     crm_dir: path.resolve(dataDir, '..', 'crm'),
     crm_identity_dir: path.resolve(dataDir, '..', 'crm-identity'),
+    messaging_dir: path.resolve(dataDir, '..', 'messaging'),
   }
   // Second-round closing-review finding (surfaced by tightening
   // tests/owner-lock.spec.mjs's multi-takeover reproduction's arrival

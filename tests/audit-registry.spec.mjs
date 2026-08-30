@@ -94,7 +94,7 @@ async function main() {
     // Registry size guard: if a future round adds/removes an event or actor
     // without updating this test's requiredEvents list below, this at
     // least makes the drift visible rather than silent.
-    assert('registry: AUDIT_EVENTS has exactly 32 registered event names', Object.keys(AUDIT_EVENTS).length === 32)
+    assert('registry: AUDIT_EVENTS has exactly 35 registered event names', Object.keys(AUDIT_EVENTS).length === 35)
     assert('registry: AUDIT_ACTORS has exactly 3 registered actor names', Object.keys(AUDIT_ACTORS).length === 3)
 
     // Independent-review finding: the raw-literal check above only proves
@@ -319,6 +319,28 @@ async function main() {
     const superseded = await postJson(`${base}/api/crm/tasks/${t4.task_id}/supersede`, { expectedVersion: t4.version })
     assert('workflow setup: task supersede -> SUPERSEDED', superseded.body.status === 'SUPERSEDED')
 
+    /* ---- Quick Revisit messaging lifecycle: queue -> retry -> cancel.
+       Phone ends in '9998' -- solapiAdapter.js's mock transport treats that
+       suffix as a deterministic RETRYABLE transient failure on every
+       channel, so the message stays QUEUED (not SENT) after both the
+       initial attempt and the manual retry, which is exactly what lets a
+       single message reach cancelMessage's QUEUED-only guard afterward. ---- */
+    const msgVisit = (await postJson(`${base}/api/visits`, {})).body
+    const msgStart = (await postJson(`${base}/api/patients/${msgVisit.patient_id}/start-revisit`, {})).body
+    const msgQueue = await postJson(`${base}/api/visits/${msgStart.visit.id}/messages`, {
+      patient_id: msgVisit.patient_id,
+      phone: '01000009998',
+      follow_up_token: msgStart.token,
+    })
+    assert('workflow setup: message queue -> 201', msgQueue.status === 201)
+    assert('workflow setup: message stays QUEUED after a mock transient-failure first attempt', msgQueue.body.status === 'QUEUED')
+    const msgRetry = await postJson(`${base}/api/messages/${msgQueue.body.message_id}/retry`, { phone: '01000009998' })
+    assert('workflow setup: message retry -> 200', msgRetry.status === 200)
+    assert('workflow setup: message still QUEUED after a second mock transient failure', msgRetry.body.status === 'QUEUED')
+    const msgCancel = await postJson(`${base}/api/messages/${msgQueue.body.message_id}/cancel`, undefined)
+    assert('workflow setup: message cancel -> 200', msgCancel.status === 200)
+    assert('workflow setup: cancelled message status is CANCELLED', msgCancel.body.status === 'CANCELLED')
+
     /* ---- Now read audit.log and confirm every workflow above produced its
        matching event. The pre-existing 9 events (submission_created,
        submission_duplicate, submission_viewed, status_changed,
@@ -353,8 +375,11 @@ async function main() {
       AUDIT_EVENTS.CRM_TASK_SUPERSEDED,
       AUDIT_EVENTS.CRM_TASK_CLAIMED,
       AUDIT_EVENTS.CRM_TASK_SEEN,
+      AUDIT_EVENTS.MESSAGE_QUEUED,
+      AUDIT_EVENTS.MESSAGE_RETRIED,
+      AUDIT_EVENTS.MESSAGE_CANCELLED,
     ]
-    assert('workflow: exactly 23 events are asserted here (the 32-event registry minus the 9 already covered elsewhere)', requiredEvents.length === 23)
+    assert('workflow: exactly 26 events are asserted here (the 35-event registry minus the 9 already covered elsewhere)', requiredEvents.length === 26)
     for (const ev of requiredEvents) {
       assert(`workflow: ${ev} appears at least once in audit.log`, hasEvent(ev))
     }

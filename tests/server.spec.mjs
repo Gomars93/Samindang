@@ -1648,9 +1648,15 @@ async function main() {
     // 36개가 됐다: POST /api/crm/patient-identity(명시적 확인 링크 생성),
     // GET /api/crm/patient-identities(Today Queue enrichment 배치 조회) --
     // 같은 doctor-only 가드.
+    // Quick Revisit 발송(SOLAPI 스캐폴드)에서 4개가 추가되어 40개가 됐다:
+    // POST/GET /api/visits/:id/messages, POST /api/messages/:id/retry,
+    // POST /api/messages/:id/cancel -- 전부 같은 doctor-only 가드. 공개
+    // provider 콜백 POST /api/messages/webhook은 의도적으로 이 목록에
+    // 포함되지 않는다(provider_message_id 자체가 추측 불가능한 값이라
+    // 이것이 인증을 대신한다 -- 태블릿/스테이션 공개 라우트와 동일한 위치).
     assert(
-      'server has exactly the 36 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x10)',
-      requireDoctorCalls === 36,
+      'server has exactly the 40 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x10 + messaging x4)',
+      requireDoctorCalls === 40,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

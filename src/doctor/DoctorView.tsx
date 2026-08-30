@@ -48,6 +48,7 @@ function firstFreeStationId(stations: StationInfo[]): string {
   return stations.find((s) => !s.assignment)?.stationId ?? ''
 }
 import { FollowUpQrCode } from './workspace/FollowUpQrCode'
+import { MessagingPanel } from './MessagingPanel'
 import { RevisitWorkspace } from './workspace/RevisitWorkspace'
 import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
@@ -2670,8 +2671,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               )}
               {deliveryMode === 'PREVISIT_LINK' && (
                 <p className="doctor__revisitSession__hint">
-                  내원 전 전달용 링크입니다. 문자/카카오 자동 발송은 아직 연동되지 않았습니다 — 현재는 이 링크를 직접
-                  복사해 전달해 주세요.
+                  내원 전 전달용 링크입니다. 아래에서 문자/카카오 알림톡으로 바로 발송하거나, 이 링크를 직접 복사해
+                  전달할 수 있습니다.
                 </p>
               )}
               <div className="doctor__revisitSession__actions">
@@ -2685,6 +2686,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                   무효화
                 </button>
               </div>
+              {selectedRecord?.patient_id && (
+                <MessagingPanel
+                  visitId={issuedSession.visitId}
+                  patientId={selectedRecord.patient_id}
+                  followUpToken={issuedSession.token}
+                />
+              )}
             </div>
           )}
           {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}

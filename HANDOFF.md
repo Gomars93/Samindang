@@ -4001,11 +4001,75 @@ lines 전부 통과).
 BizM 실제 자격증명/템플릿 승인, 그리고 실제 프로덕션 host/backend
 설정으로 좁혀진다 — 코드 측 작업은 이 배치 범위에서 완료.
 
+## Completed — BizM 계약 검증 게이트 (HIGH 수정, 이번 세션)
+
+**배경(오너의 두 번째 독립 검수, PR #24 코멘트)**: 오너가 HEAD `60bfdc1`
+(위 CLEAN 판정 시점의 HEAD)의 `server/bizmAdapter.js`를 직접 다시
+검토해 실제 프로덕션 위험을 발견 — `resolveBizmProviderState()`가
+`BIZM_API_KEY`+`BIZM_SENDER_KEY`만 있으면 즉시 LIVE로 전환되는데, 이
+어댑터 자신의 헤더가 "wire format UNVERIFIED"라고 명시하고 있음에도
+그렇다. 즉 **자격증명만 등록하면 검증되지 않은 프로토콜로 실제 환자
+트래픽이 나갈 수 있는 구조적 결함**(HIGH). 오너는 BizM 공식
+result-code 문서(1차 문서 접근 — 이 샌드박스가 아니라 오너 본인 접근)를
+근거로 다음도 함께 지적: 실제 요청 body는 JSON 객체가 아니라 **JSON
+배열**이어야 함(`E100 InvalidJsonArray`), `profile`/템플릿 코드/실제
+렌더링된 메시지 본문/<=20자 `msgId`/SMS 폴백 필드가 실제 계약에
+존재함(`E102`~`E125`), 인증은 추측한 `Authorization: Bearer`가 아니라
+`userid` 요청 헤더 방식(BizM 공식 개발 문서 확인).
+
+**수정(`server/bizmAdapter.js` 전면 재작성)**:
+1. **게이트 분리(핵심 수정)**: 기존 3-state를 4-state로 확장 —
+   `PENDING_CREDENTIALS` / **`PENDING_CONTRACT`**(신규) / `MOCK` / `LIVE`.
+   자격증명이 전부 있어도 사람이 명시적으로
+   `SAMINDANG_BIZM_CONTRACT_VERIFIED='true'`를 설정하지 않으면
+   `PENDING_CONTRACT`에 머물고, 이 상태는 `PENDING_CREDENTIALS`와
+   동일하게 mock transport만 반환 — 자격증명만으로는 절대 LIVE에
+   도달할 수 없다. 이 플래그는 코드가 자동으로 판단할 수 없고, 사람이
+   BizM 인증된 콘솔/문서로 직접 대조 확인한 뒤에만 켜야 한다.
+2. `BIZM_USER_ID`를 새 필수 자격증명으로 추가(오너 확인된 `userid`
+   헤더 값), 라이브 전송 시 `Authorization: Bearer` 추측을 제거하고
+   `userid` 헤더만 전송(`BIZM_API_KEY`의 실제 역할은 여전히 미확인이므로
+   추측된 위치에 절대 넣지 않음 — 틀린 헤더를 발명하는 것이 자격증명을
+   아직 배치하지 않는 것보다 위험하다고 판단, 대신 게이트 조건에는 계속
+   포함해 모든 자격증명이 실제로 발급된 뒤에만 LIVE 도달 가능하게 유지).
+3. 요청 body를 JSON 배열로 변경, 항목 필드를
+   `profile`/`tmplCode`/`phn`/`message`(렌더링된 실제 텍스트)/
+   `msgId`/`variables`로 구성 — 정확한 키 철자는 여전히 미확인(결과
+   코드 이름의 가장 직접적인 해석일 뿐)이라고 헤더에 명시.
+4. **provider-level idempotency**: `record.message_id`(UUID)에서
+   결정적으로 유도한 <=20자 `msgId`(`sha256(message_id).slice(0,20)`)를
+   매 전송에 포함 — 같은 메시지의 재시도는 항상 같은 msgId를 BizM에
+   제시하므로, BizM의 실제 `E109 DuplicatedMsgId` 시맨틱이 맞다면
+   provider 쪽에서도 이중 발송을 막는 두 번째 방어선이 생긴다. 이를 위해
+   `messagingStore.js`의 `attemptSend`가 `resolvedTransport.send()`
+   호출에 `messageId`를 새로 threading.
+5. SMS/LMS 폴백은 여전히 미구현·`FALLBACK_CHANNEL={}` 유지 — 오너 지시
+   그대로 "실제 계약이 검증된 뒤에만" 구현하기로 결정, BizM API에 SMS
+   필드가 실제로 존재한다는 근거가 있어도 지금 구현하지 않음.
+6. 웹훅 콜백은 여전히 이 서버 자체의 HMAC placeholder(BizM 실제 콜백
+   계약 아님, 헤더에 이미 명시) — 변경 없음. LIVE가 새 게이트로 막혀
+   있으므로 실제 `mockbizm_` 아닌 진짜 provider_message_id가 존재할 수
+   없어, 가짜 콜백이 실제 발송과 혼동될 위험도 구조적으로 없음.
+
+**타입/테스트**: `src/messaging/types.ts`의 `MessagingProviderState`에
+`'PENDING_CONTRACT'` 추가. `tests/messaging-bizm.spec.mjs`에 4-state
+전이 전체(신규 8개 assertion) + `globalThis.fetch` stub으로 실제
+LIVE 코드 경로의 요청 모양을 검증하는 새 섹션(신규 17개 assertion:
+JSON 배열, `userid` 헤더, `Authorization` 헤더 부재, `msgId` <=20자,
+msgId 결정성, raw token이 msgId에 섞이지 않음 등) 추가 — 네트워크는
+전혀 사용하지 않음(같은 파일 안에서 이미 fetch 응답을 stub).
+
+**검증 진행 중**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
+46/46(신규 assertion 전부 통과) 확인 완료. 전체 `test:all`/build/
+build:preview/pytest/FROZEN diff 재검증과 두 차례 독립 `model:opus`
+리뷰(오너 지시 7번 항목)는 이 세션에서 이어서 진행 중 — 아직 commit
+하지 않음.
+
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`0db44b5` + 위 provider 기본값 통일 수정(커밋 예정) — BizM 메시징
-배치(provider-neutral 전환 + BizM adapter + 안정 후속 URL + 안전성
-재검토 + 독립 리뷰 2회 CLEAN) 전체 완료.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
+HEAD: `60bfdc1`(CI/Preview green, 독립 리뷰 2회 CLEAN) — 위 BizM
+계약 검증 게이트 HIGH 수정은 아직 이 위에 커밋되지 않은 작업 트리
+상태로만 존재, 전체 게이트 재검증 + 독립 리뷰 후 커밋/푸시 예정.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

@@ -287,7 +287,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       record.last_attempt_at = new Date().toISOString()
       await atomicWrite(messagePath(baseDir, messageId), record)
 
-      let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables })
+      let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables, messageId })
 
       // BizM-batch independent-review finding (LOW): keyed off the
       // RECORD's own `provider` (set once, at queue time) rather than a
@@ -301,7 +301,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       const fallbackChannelMap = fallbackChannelMapForProvider(record.provider)
       if (!result.ok && result.fallbackEligible && fallbackChannelMap[record.channel] && !record.fallback_channel) {
         const fallbackChannel = fallbackChannelMap[record.channel]
-        const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text, variables })
+        const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text, variables, messageId })
         record.fallback_channel = fallbackChannel
         if (fallbackResult.ok) {
           result = fallbackResult

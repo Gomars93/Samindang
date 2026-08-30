@@ -127,12 +127,23 @@ export type SendResult =
   | { ok: true; providerMessageId: string; channelUsed: MessageChannel }
   | { ok: false; errorCode: string; retryable: boolean; fallbackEligible: boolean }
 
-/** The three states either provider adapter's transport can be in (see
+/** The states either provider adapter's transport can be in (see
  *  server/bizmAdapter.js's resolveBizmProviderState / solapiAdapter.js's
  *  resolveSolapiProviderState). Mirrors src/crm/types.ts's
  *  ReservationSuppressionState pattern: the schema and logic exist and are
  *  fully exercised end-to-end via MOCK, but nothing can silently reach a
  *  real send without an explicit, deliberate move to LIVE (which
  *  additionally requires real credentials to even construct the live
- *  transport). */
-export type MessagingProviderState = 'PENDING_CREDENTIALS' | 'MOCK' | 'LIVE'
+ *  transport).
+ *
+ *  `PENDING_CONTRACT` is BizM-specific (SOLAPI's resolver never returns it):
+ *  full credentials configured, but the wire contract this codebase
+ *  implements has not been independently verified against a real BizM
+ *  account (see bizmAdapter.js's header) -- an owner review found that
+ *  credentials alone previously flipped BizM straight to LIVE despite the
+ *  adapter's own disclosed UNVERIFIED wire format, which could have sent
+ *  real patient traffic through a guessed protocol. Behaves identically to
+ *  PENDING_CREDENTIALS (mock transport only) until a human explicitly sets
+ *  SAMINDANG_BIZM_CONTRACT_VERIFIED=true, which must only happen after
+ *  independently confirming the request/response/auth/callback shape. */
+export type MessagingProviderState = 'PENDING_CREDENTIALS' | 'PENDING_CONTRACT' | 'MOCK' | 'LIVE'

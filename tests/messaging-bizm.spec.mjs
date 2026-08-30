@@ -1,8 +1,11 @@
 // BizM batch: provider-neutral transport selection + BizM adapter
 // regression suite. Plain node, no test framework -- same convention as
-// tests/messaging.spec.mjs. Scope: everything here is credential-free
-// (mock transports only) -- BizM's live wire format is UNVERIFIED (see
-// server/bizmAdapter.js's header) and out of scope for this suite.
+// tests/messaging.spec.mjs. Scope: no real network call is ever made here
+// (stub credentials + a stubbed global.fetch, see Part 2b) -- BizM's live
+// wire format remains UNVERIFIED (see server/bizmAdapter.js's header), so
+// this suite proves the OUTGOING request shape this codebase currently
+// sends matches what it documents sending, never that it matches BizM's
+// real API.
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -25,7 +28,13 @@ function assert(name, cond) {
 
 async function main() {
   /* =====================================================================
-     Part 1: resolveBizmProviderState -- the 3-state gate itself.
+     Part 1: resolveBizmProviderState -- the 4-state gate itself. Widened
+     from 3 states (PENDING_CREDENTIALS/MOCK/LIVE) to 4 after an owner
+     review found credentials alone previously flipped BizM straight to
+     LIVE despite the adapter's own disclosed UNVERIFIED wire format --
+     PENDING_CONTRACT is the fix: a SEPARATE, human-set
+     SAMINDANG_BIZM_CONTRACT_VERIFIED flag is now required in addition to
+     full credentials before LIVE is ever reachable.
      ===================================================================== */
   {
     assert('BizM provider state: no credentials -> PENDING_CREDENTIALS (the real state of this deployment today)', resolveBizmProviderState({}) === 'PENDING_CREDENTIALS')
@@ -33,12 +42,36 @@ async function main() {
       'BizM provider state: partial credentials (missing sender key) -> still PENDING_CREDENTIALS',
       resolveBizmProviderState({ BIZM_API_KEY: 'k' }) === 'PENDING_CREDENTIALS',
     )
-    const fullCreds = { BIZM_API_KEY: 'k', BIZM_SENDER_KEY: 's' }
-    assert('BizM provider state: full credentials, no force-mock -> LIVE', resolveBizmProviderState(fullCreds) === 'LIVE')
     assert(
-      'BizM provider state: full credentials + SAMINDANG_BIZM_FORCE_MOCK=true -> MOCK',
-      resolveBizmProviderState({ ...fullCreds, SAMINDANG_BIZM_FORCE_MOCK: 'true' }) === 'MOCK',
+      'BizM provider state: BIZM_API_KEY + BIZM_SENDER_KEY but missing BIZM_USER_ID -> still PENDING_CREDENTIALS (userid header credential is required too)',
+      resolveBizmProviderState({ BIZM_API_KEY: 'k', BIZM_SENDER_KEY: 's' }) === 'PENDING_CREDENTIALS',
     )
+    const fullCreds = { BIZM_API_KEY: 'k', BIZM_SENDER_KEY: 's', BIZM_USER_ID: 'u' }
+    assert(
+      'BizM provider state: full credentials but SAMINDANG_BIZM_CONTRACT_VERIFIED not set -> PENDING_CONTRACT, NOT LIVE (the core fix -- credentials alone must never enable a real send through an unverified wire format)',
+      resolveBizmProviderState(fullCreds) === 'PENDING_CONTRACT',
+    )
+    assert(
+      'BizM provider state: full credentials + SAMINDANG_BIZM_CONTRACT_VERIFIED="false" -> still PENDING_CONTRACT (only the literal string "true" counts)',
+      resolveBizmProviderState({ ...fullCreds, SAMINDANG_BIZM_CONTRACT_VERIFIED: 'false' }) === 'PENDING_CONTRACT',
+    )
+    const verifiedCreds = { ...fullCreds, SAMINDANG_BIZM_CONTRACT_VERIFIED: 'true' }
+    assert('BizM provider state: full credentials + contract verified, no force-mock -> LIVE', resolveBizmProviderState(verifiedCreds) === 'LIVE')
+    assert(
+      'BizM provider state: full credentials + contract verified + SAMINDANG_BIZM_FORCE_MOCK=true -> MOCK',
+      resolveBizmProviderState({ ...verifiedCreds, SAMINDANG_BIZM_FORCE_MOCK: 'true' }) === 'MOCK',
+    )
+  }
+
+  /* =====================================================================
+     Part 1b: createBizmTransport -- PENDING_CONTRACT must behave exactly
+     like PENDING_CREDENTIALS (mock only), never like a step closer to LIVE.
+     ===================================================================== */
+  {
+    const pendingContractEnv = { BIZM_API_KEY: 'k', BIZM_SENDER_KEY: 's', BIZM_USER_ID: 'u' }
+    const transport = createBizmTransport(pendingContractEnv)
+    assert('PENDING_CONTRACT: createBizmTransport still returns the MOCK transport, never a live one', transport.state === 'MOCK')
+    assert('PENDING_CONTRACT: mock transport still identifies as BIZM', transport.provider === 'BIZM')
   }
 
   /* =====================================================================
@@ -66,6 +99,80 @@ async function main() {
     assert('BizM mock: any non-Alimtalk channel is refused outright (never reaches a guessed SMS wire format)', smsAttempt.ok === false && smsAttempt.errorCode === 'bizm_channel_unverified')
 
     assert('BizM FALLBACK_CHANNEL is an empty map (no verified fallback channel at all)', Object.keys(BIZM_FALLBACK_CHANNEL).length === 0)
+  }
+
+  /* =====================================================================
+     Part 2b: the LIVE transport's outgoing request shape -- credential-free
+     (network is stubbed, never actually reached; same globalThis.fetch
+     override pattern tests/preview-build.spec.mjs already uses), but
+     exercises the real LIVE code path (SAMINDANG_BIZM_CONTRACT_VERIFIED=
+     'true' + full credentials) to prove the request this file's header
+     documents as owner/result-code-evidence-backed is what actually gets
+     sent: a JSON ARRAY body (not a single object -- E100 InvalidJsonArray),
+     a `userid` header, and a deterministic <=20-char msgId derived from our
+     own message_id (never the raw patient-identifying token itself).
+     ===================================================================== */
+  {
+    const originalFetch = globalThis.fetch
+    const capturedRequests = []
+    globalThis.fetch = async (url, init) => {
+      capturedRequests.push({ url, init })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [{ messageId: 'stub-provider-id-1' }],
+      }
+    }
+    try {
+      const liveEnv = {
+        BIZM_API_KEY: 'stub-api-key',
+        BIZM_SENDER_KEY: 'stub-sender-key',
+        BIZM_USER_ID: 'stub-user-id',
+        SAMINDANG_BIZM_CONTRACT_VERIFIED: 'true',
+      }
+      const liveTransport = createBizmTransport(liveEnv)
+      assert('LIVE transport: state is actually LIVE with contract-verified + full credentials', liveTransport.state === 'LIVE')
+
+      const result1 = await liveTransport.send({
+        to: '01011112222',
+        channel: 'KAKAO_ALIMTALK',
+        text: 'rendered message text',
+        variables: { followup_token: 'raw-token-should-not-leak-into-msgid' },
+        messageId: 'message-id-aaa',
+      })
+      assert('LIVE transport: stubbed send succeeds and returns the stubbed providerMessageId', result1.ok === true && result1.providerMessageId === 'stub-provider-id-1')
+      assert('LIVE transport: exactly one fetch call made', capturedRequests.length === 1)
+
+      const { url, init } = capturedRequests[0]
+      assert('LIVE request: POSTs to the documented BizM send endpoint', url === 'https://alimtalk-api.bizmsg.kr/v2/sender/send')
+      assert('LIVE request: userid header carries the BIZM_USER_ID credential (owner-confirmed dev-docs auth scheme, not a guessed Bearer token)', init.headers.userid === 'stub-user-id')
+      assert('LIVE request: no guessed Authorization header is sent (see bizmAdapter.js header on why apiKey is not placed anywhere unconfirmed)', !('authorization' in init.headers) && !('Authorization' in init.headers))
+
+      const body = JSON.parse(init.body)
+      assert('LIVE request: body is a JSON ARRAY, not a single object (E100 InvalidJsonArray)', Array.isArray(body))
+      assert('LIVE request: array has exactly one item (this store sends one recipient per call)', body.length === 1)
+      const item = body[0]
+      assert('LIVE request item: profile field carries the BIZM_SENDER_KEY value', item.profile === 'stub-sender-key')
+      assert('LIVE request item: phn field carries the recipient phone', item.phn === '01011112222')
+      assert('LIVE request item: message field carries the fully-rendered text (E106 EmptyMessage requires a real body, not just template variables)', item.message === 'rendered message text')
+      assert('LIVE request item: variables field still carries the template-substitution payload alongside the rendered message', item.variables?.followup_token === 'raw-token-should-not-leak-into-msgid')
+      assert('LIVE request item: msgId is a string of at most 20 characters (E113 InvalidMsgIdLength)', typeof item.msgId === 'string' && item.msgId.length <= 20 && item.msgId.length > 0)
+      assert('LIVE request item: msgId is derived from message_id, never the raw follow-up token itself', !item.msgId.includes('raw-token'))
+
+      // Idempotency: the SAME message_id (a retry of the same logical
+      // MessageRecord) must always produce the SAME msgId, so BizM's own
+      // E109 DuplicatedMsgId semantics (if real) can act as a second,
+      // provider-side line of defense against a genuine double-send.
+      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-aaa' })
+      const secondItem = JSON.parse(capturedRequests[1].init.body)[0]
+      assert('LIVE request: msgId is deterministic -- the same message_id produces the identical msgId on a second attempt', secondItem.msgId === item.msgId)
+
+      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-bbb' })
+      const thirdItem = JSON.parse(capturedRequests[2].init.body)[0]
+      assert('LIVE request: msgId differs for a genuinely different message_id', thirdItem.msgId !== item.msgId)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   }
 
   /* =====================================================================

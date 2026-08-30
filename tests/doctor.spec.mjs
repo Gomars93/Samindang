@@ -15,7 +15,13 @@ import {
   finalizeJudgment,
 } from './.doctor-judgment-bundle.mjs'
 import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
-import { DoctorView, isDoctorPayloadShapeUsable, DoctorRecordFallback } from './.doctor-view-bundle.cjs'
+import {
+  DoctorView,
+  isDoctorPayloadShapeUsable,
+  DoctorRecordFallback,
+  frequencyField,
+  aggravatingField,
+} from './.doctor-view-bundle.cjs'
 
 let passCount = 0
 
@@ -1374,6 +1380,8 @@ function detailsRange(html, classMarker) {
     'secondary_concerns',
     'safety_flags',
     'modules',
+    'secondary_modules',
+    'constitution_basics',
     'medication',
     'medical_history',
     'allergy',
@@ -1397,6 +1405,107 @@ function detailsRange(html, classMarker) {
     'resilience: routing as an array (not an object) is rejected',
     isDoctorPayloadShapeUsable({ ...base, routing: [] }) === false,
   )
+}
+
+/* =========================================================================
+ * Independent-review regression (2nd Opus review of commit 109e024): the
+ * gate above only checks that each top-level `responses.*` namespace IS a
+ * plain object -- by design it never inspects leaves inside them (that was
+ * this batch's whole point: no leaf-level clinical inference). The review
+ * proved by direct execution that a payload can pass the gate while still
+ * being hollow enough (e.g. responses.modules = {}, routing = {} with no
+ * secondary_screens, myungri_calculation with no normalized/pending_approval)
+ * to crash several inline expressions in DoctorView's own render body --
+ * uncatchable by DoctorRecordErrorBoundary, since these are plain JS
+ * expressions evaluated as part of DoctorView's own function call, not a
+ * separate child component's render. The fix was defensive reads at each
+ * site (optional chaining / `?? []` fallbacks), not a stricter gate --
+ * these tests reproduce the review's exact probes against the fixed code
+ * so a future edit that removes one of those guards fails here.
+ * ======================================================================= */
+
+{
+  const hollowModules = {}
+  for (const primaryModule of ['Sleep', 'Bowel', 'Urinary', 'GI', 'Pain', 'Fatigue', 'Stress', 'Weight']) {
+    let threw = false
+    try {
+      frequencyField(primaryModule, hollowModules)
+      aggravatingField(primaryModule, hollowModules)
+    } catch {
+      threw = true
+    }
+    assert(`resilience: frequencyField/aggravatingField(${primaryModule}, {}) does not throw on a hollow modules namespace`, threw === false)
+  }
+  assert(
+    'resilience: frequencyField(Sleep, {}) returns null rather than reading m.sleep.frequency_per_week off a missing submodule',
+    frequencyField('Sleep', hollowModules) === null,
+  )
+  assert(
+    'resilience: aggravatingField(Pain, {}) returns null rather than reading m.pain.pain_qualities off a missing submodule',
+    aggravatingField('Pain', hollowModules) === null,
+  )
+}
+
+{
+  const requiredResponseKeys = [
+    'patient',
+    'visit_goal',
+    'primary_concern',
+    'additional_detail_concern',
+    'reference_symptoms',
+    'secondary_concerns',
+    'safety_flags',
+    'modules',
+    'secondary_modules',
+    'constitution_basics',
+    'medication',
+    'medical_history',
+    'allergy',
+    'surgery_history',
+    'reproductive_status',
+    'recent_tests',
+    'birth_info',
+    'free_text',
+  ]
+  const responses = Object.fromEntries(requiredResponseKeys.map((k) => [k, {}]))
+  // A shape the LAN server will accept as-is (server/index.js only requires
+  // questionnaire_version: string and truthy responses) with every
+  // namespace the gate checks present, but every leaf inside them missing --
+  // exactly the class of legacy/hand-crafted record the review reproduced.
+  const hollowPayload = {
+    session_id: 'resilience-hollow-leaves',
+    questionnaire_version: '1.0',
+    responses,
+    flags: {},
+    routing: {},
+    myungri_calculation: { policy: {}, engine: {}, flags: {}, status: 'resolved' },
+  }
+  assert(
+    'resilience: a hollow-but-namespace-complete payload still passes the gate ' +
+      '(the gate cannot and should not reject this -- leaf-level defenses in the render are what has to hold)',
+    isDoctorPayloadShapeUsable(hollowPayload) === true,
+  )
+
+  const r = hollowPayload.responses
+  const { routing } = hollowPayload
+  const saju = hollowPayload.myungri_calculation
+  const leafProbes = [
+    ['routing.secondary_screens (missing on an empty routing object)', () => (routing.secondary_screens ?? []).length],
+    ['frequencyField(routing.primary_module, r.modules)', () => frequencyField(routing.primary_module, r.modules)],
+    ['aggravatingField(routing.primary_module, r.modules)', () => aggravatingField(routing.primary_module, r.modules)],
+    ['r.reproductive_status.derived?.source guard', () => r.reproductive_status.derived?.source ?? null],
+    ['saju.normalized?.solarDate guard', () => saju.normalized?.solarDate ?? null],
+    ['saju.policy.pending_approval (missing array)', () => (saju.policy.pending_approval ?? []).length],
+  ]
+  for (const [label, fn] of leafProbes) {
+    let threw = false
+    try {
+      fn()
+    } catch {
+      threw = true
+    }
+    assert(`resilience: ${label} does not throw for a hollow-but-gate-passing payload`, threw === false)
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -1425,7 +1534,7 @@ function detailsRange(html, classMarker) {
   assert('resilience fallback: explicitly states it does not guess a clinical profile', html.includes('추정해서 보여주지'))
   assert('resilience fallback: shows the known patient_label', html.includes('홍길동'))
   assert('resilience fallback: shows the known status', html.includes('viewed'))
-  assert('resilience fallback: never mentions pain/herbal/mixed view-profile labels', !/통증 진료|한약·전신 진료|혼합 진료/.test(html))
+  assert('resilience fallback: never mentions pain/herbal/mixed view-profile labels', !/통증|한약·전신|혼합/.test(html))
 
   const recordWithoutPatient = { ...recordWithPatient, patient_id: undefined }
   const htmlNoPatient = renderToString(React.createElement(DoctorRecordFallback, { record: recordWithoutPatient }))
@@ -1458,8 +1567,14 @@ function detailsRange(html, classMarker) {
     /<DoctorRecordErrorBoundary\s/.test(src) && src.includes('</DoctorRecordErrorBoundary>'),
   )
   assert(
-    'resilience: the error boundary is keyed by the record id (or \'fixtures\'), not left unkeyed',
-    /<DoctorRecordErrorBoundary\s*\n\s*key=\{mode === 'server' \? \(selectedRecord\?\.id \?\? 'none'\) : 'fixtures'\}/.test(src),
+    'resilience: server-mode boundary key is derived from the selected record id',
+    /key=\{mode === 'server' \? \(selectedRecord\?\.id \?\? 'none'\) : /.test(src),
+  )
+  assert(
+    'resilience: fixtures-mode boundary key changes with both fixtureIndex and workspaceScenarioId ' +
+      '(switching fixture/scenario must remount and clear any stale error state -- a constant key would ' +
+      "leave one fixture's error banner stuck over the next fixture's healthy content)",
+    /: `fixtures:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`\}/.test(src),
   )
   assert(
     'resilience: !payloadShapeOk renders DoctorRecordFallback instead of the normal tab content',

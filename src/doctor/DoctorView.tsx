@@ -159,11 +159,11 @@ export function frequencyField(
 ): { qid: string; value: AnswerValue } | null {
   switch (primaryModule) {
     case 'Sleep':
-      return { qid: 'SLEEP_02', value: m.sleep.frequency_per_week }
+      return m.sleep ? { qid: 'SLEEP_02', value: m.sleep.frequency_per_week } : null
     case 'Bowel':
-      return { qid: 'BOWEL_02', value: m.bowel.frequency }
+      return m.bowel ? { qid: 'BOWEL_02', value: m.bowel.frequency } : null
     case 'Urinary':
-      return { qid: 'URINARY_02', value: m.urinary.burden_frequency }
+      return m.urinary ? { qid: 'URINARY_02', value: m.urinary.burden_frequency } : null
     default:
       return null
   }
@@ -175,21 +175,22 @@ export function aggravatingField(
 ): { qid: string; value: AnswerValue } | null {
   switch (primaryModule) {
     case 'Sleep':
-      return { qid: 'SLEEP_03', value: m.sleep.awakening_reasons }
+      return m.sleep ? { qid: 'SLEEP_03', value: m.sleep.awakening_reasons } : null
     case 'GI':
-      return { qid: 'GI_02', value: m.gi.meal_relation }
+      return m.gi ? { qid: 'GI_02', value: m.gi.meal_relation } : null
     case 'Pain': {
+      if (!m.pain) return null
       const qualities = ((m.pain.pain_qualities as string[] | null) ?? []).filter(
         (q) => q === 'movement_related' || q === 'rest_pain',
       )
       return qualities.length > 0 ? { qid: 'PAIN_02', value: qualities } : null
     }
     case 'Fatigue':
-      return { qid: 'FATIGUE_02', value: m.fatigue.worst_time }
+      return m.fatigue ? { qid: 'FATIGUE_02', value: m.fatigue.worst_time } : null
     case 'Stress':
-      return { qid: 'STRESS_03', value: m.stress.associated_symptoms }
+      return m.stress ? { qid: 'STRESS_03', value: m.stress.associated_symptoms } : null
     case 'Weight':
-      return { qid: 'WEIGHT_02', value: m.weight.contributing_factors }
+      return m.weight ? { qid: 'WEIGHT_02', value: m.weight.contributing_factors } : null
     default:
       return null
   }
@@ -1632,6 +1633,8 @@ const REQUIRED_RESPONSE_KEYS = [
   'secondary_concerns',
   'safety_flags',
   'modules',
+  'secondary_modules',
+  'constitution_basics',
   'medication',
   'medical_history',
   'allergy',
@@ -1663,9 +1666,11 @@ export function isDoctorPayloadShapeUsable(payload: DoctorPayload): boolean {
  * `DoctorRecordErrorBoundary`가 예상 못한 예외를 잡았을 때) 보여주는 중립
  * fallback -- 실제로 확인된 값(환자 라벨/제출 시각/상태)만 그대로 보여주고,
  * 어떤 임상 프로필·판단도 추정해서 채우지 않는다. 목록으로 돌아가는
- * 버튼은 이 컴포넌트 밖(항상 렌더링되는 헤더)에 이미 있고, CRM/투약 코스
- * 섹션도 이 컴포넌트 밖에서 patient_id만으로 독립적으로 계속 동작한다 --
- * 여기서 다시 만들지 않는다(중복 회피).
+ * 버튼은 이 컴포넌트 밖(항상 렌더링되는 헤더)에 이미 있다. CRM/투약 코스
+ * 섹션은 아래에서 patient_id만으로 이 컴포넌트가 직접 렌더링한다 --
+ * 정상 경로(payloadShapeOk===true)의 원래 렌더 위치는 이 fallback이 보일
+ * 때는 애초에 마운트되지 않으므로, 여기서 만들지 않으면 이 fallback이
+ * 스스로 약속하는 "CRM 섹션은 계속 쓸 수 있다"가 거짓이 된다.
  */
 export function DoctorRecordFallback({ record }: { record: SubmissionRecord | null | undefined }) {
   return (
@@ -1693,8 +1698,10 @@ export function DoctorRecordFallback({ record }: { record: SubmissionRecord | nu
       {/*
         malformed/legacy submission resilience 배치: patient_id만 있으면
         되는(payload/routing/responses와 무관한) 안전한 기능이라 이 fallback
-        안에서도 그대로 계속 동작한다 -- CRM/투약 코스 추적을 완전히 막을
-        이유가 없다.
+        에서 독립적으로 렌더링한다 -- 정상 경로(아래 tab 콘텐츠 안,
+        payloadShapeOk===true일 때만 마운트됨)의 렌더와는 서로 배타적이라
+        동시에 두 인스턴스가 뜨지 않는다. CRM/투약 코스 추적을 이 기록의
+        구조 문제 때문에 완전히 막을 이유가 없다.
       */}
       {record?.patient_id && <MedicationCourseSection key={record.patient_id} patientUuid={record.patient_id} />}
     </div>
@@ -2903,12 +2910,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         구조가 온전한 payload를 전제하기 때문에 하나로 묶어서 판단한다.
         DoctorRecordErrorBoundary는 이 구조 검사가 못 잡은 예외(개별
         부위 SafetyPanel 내부의 미처 확인 못 한 필드 등)에 대한 2차
-        안전망 -- key를 selectedRecord.id(없으면 'fixtures')로 둬서
-        다른 레코드로 전환하면 이전 에러 상태가 새 레코드로 새지 않고
-        완전히 새로 mount된다.
+        안전망 -- key를 화면에 실제로 그려지는 payload의 정체성(server
+        모드는 selectedRecord.id, fixtures 모드는 fixtureIndex +
+        workspaceScenarioId)으로 둬서, 다른 레코드/시나리오로 전환하면
+        이전 에러 상태가 새 payload로 새지 않고 완전히 새로 mount된다.
       */}
       <DoctorRecordErrorBoundary
-        key={mode === 'server' ? (selectedRecord?.id ?? 'none') : 'fixtures'}
+        key={mode === 'server' ? (selectedRecord?.id ?? 'none') : `fixtures:${fixtureIndex}:${workspaceScenarioId}`}
         fallback={<DoctorRecordFallback record={mode === 'server' ? selectedRecord : undefined} />}
       >
       {!payloadShapeOk ? (
@@ -3059,7 +3067,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         <h2>주호소</h2>
         <p className="doctor__derivedNote">
           시스템 라우팅 — 주호소 모듈: {routing.primary_module ?? '없음'} / 동반 화면:{' '}
-          {routing.secondary_screens.length > 0 ? routing.secondary_screens.join(', ') : '없음'}
+          {(routing.secondary_screens ?? []).length > 0 ? (routing.secondary_screens ?? []).join(', ') : '없음'}
         </p>
         <div className="doctor__chiefPrimary">
           <span className="doctor__chiefPrimary__label">주호소</span>
@@ -3234,7 +3242,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         reproductive was ever recorded) this is null, and showing a card
         full of "확인되지 않음" bullets is pure clutter, not information.
       */}
-      {r.reproductive_status.derived.source !== null && (
+      {r.reproductive_status.derived?.source != null && (
         <section className="doctor__section">
           <h2>여성 안전정보</h2>
           <div className="doctor__grid">
@@ -3334,7 +3342,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               </div>
             )}
 
-            {saju.normalized && (
+            {saju.normalized?.solarDate && (
               <p className="doctor__derivedNote">
                 정규화된 양력 날짜: {saju.normalized.solarDate.year}-
                 {String(saju.normalized.solarDate.month).padStart(2, '0')}-
@@ -3342,10 +3350,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               </p>
             )}
 
-            {saju.policy.pending_approval.length > 0 && (
+            {(saju.policy.pending_approval ?? []).length > 0 && (
               <p className="doctor__warning doctor__warning--pending">
                 주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {saju.policy.pending_approval.join(', ')}.
+                값이 바뀔 수 있습니다. 대기 항목: {(saju.policy.pending_approval ?? []).join(', ')}.
                 원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
                 docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
               </p>

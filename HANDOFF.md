@@ -5227,9 +5227,95 @@ build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
 origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN
 유지) — 전부 통과.
 
-**다음 단계**: 독립 `model:opus` 리뷰(진짜 subagent 호출) 대기 중 —
-아직 시작 전. 발견 사항 있으면 수정 → 재검수 반복(앞선 두 배치와
-같은 사이클), 그 다음 push + PR #24 코멘트.
+**1차 독립 `model:opus` 리뷰** (진짜 subagent 호출, 커밋 `109e024` 대상):
+직접 실행으로 HIGH 1건을 증명했다 — `isDoctorPayloadShapeUsable`는
+`responses.*` 각 namespace가 "plain object인지"만 1단계로 확인하고
+그 안의 leaf는 전혀 보지 않는다(설계상 의도된 동작: leaf 수준 임상
+추론을 하지 않기 위해). 그런데 DoctorView의 렌더 본문은 여러 곳에서
+leaf를 무조건 역참조한다 — `routing.secondary_screens.length`,
+`frequencyField`/`aggravatingField`가 읽는 `m.sleep`/`m.pain` 등 개별
+서브모듈, `r.reproductive_status.derived.source`,
+`saju.normalized.solarDate.*`, `saju.policy.pending_approval.length`.
+리뷰어가 `server/index.js`가 실제로 받아들이는(모양만 맞고 속은 빈)
+payload로 직접 실행해 재현: gate는 `true`를 반환하지만 렌더는
+여전히 throw — `DoctorRecordErrorBoundary`도 이 throw를 못 잡는다
+(DoctorView 자기 함수 본문 안의 inline 표현식이라 별도 자식
+컴포넌트가 아님, 애초에 이 배치가 풀어야 했던 바로 그 문제).
+
+**수정**: gate를 더 깊게 만드는 대신(leaf를 나열하기 시작하면
+render와 계속 sync가 깨짐) 위 6곳의 실제 read 지점에 optional
+chaining/`?? []` fallback을 추가했다(`frequencyField`/
+`aggravatingField`는 서브모듈 자체가 없으면 `null` 반환,
+`routing.secondary_screens ?? []`, `r.reproductive_status.derived?.source`,
+`saju.normalized?.solarDate`, `saju.policy.pending_approval ?? []`).
+임상적 의미는 전혀 만들지 않는다 — 그냥 "이 필드가 없으면 이
+줄/문구를 생략한다"일 뿐.
+
+**직접 실행으로 재검증하다가 실제 프로덕션 버그를 하나 더
+발견했다**(리뷰가 지적한 것보다 근본적) — `REQUIRED_RESPONSE_KEYS`가
+`buildResponsePayload`(coreSpec.ts)가 실제로 만드는 18개
+최상위 namespace 중 2개, `secondary_modules`와 `constitution_basics`를
+누락하고 있었다. 둘 다 다른 16개와 완전히 같은 방식으로(같은 함수
+호출 안에서) atomic하게 만들어지는데 gate 목록에서 빠져 있었던 것 —
+그래서 hollow-but-gate-passing payload를 실제 서버에 POST하고
+브라우저로 열어보니 gate가 `true`를 반환한 뒤
+`constitutionFields`(`r.constitution_basics.energy_recovery`)에서
+그대로 throw, 전역 `PatientErrorBoundary`(&quot;문제가
+발생했습니다&quot;)로 떨어지는 걸 실제로 재현했다. 이건 leaf 문제가
+아니라 gate 자체가 원래 하려던 "top-level namespace 전부 있는지"
+체크가 불완전했던 것이라, 다른 16개 옆에 두 키를 추가하는 게 정확한
+수정이다(개별 접근부마다 optional chaining을 흩뿌리는 것보다 이
+경우엔 gate 레벨 수정이 맞다 — 이 두 namespace도 atomic 원칙을
+그대로 따르므로).
+
+부수적으로 발견한 LOW 3건과 NIT 2건도 함께 수정: (1)
+`DoctorRecordErrorBoundary`의 fixtures 모드 key가 상수 `'fixtures'`라
+fixture/시나리오를 전환해도 remount가 안 되던 것 — server 모드처럼
+`selectedRecord.id`에 대응하는 정체성이 필요해서 `` `fixtures:${fixtureIndex}:${workspaceScenarioId}` ``로 변경(실제
+payload가 이 두 값에 의존하므로). (2) `DoctorRecordFallback`의 JSDoc이
+"CRM 섹션은 밖에서 독립적으로 동작하니 여기서 안 만든다"고 써놓고
+바로 아래서 만들고 있던 자기모순 — 주석을 실제 동작(정상 경로와
+상호 배타적으로 여기서 직접 렌더링)에 맞게 고쳤다. (3) 같은
+환자의 서로 다른 제출건 사이를 전환할 때 `MedicationCourseSection`이
+이제 (record id로 keyed된) boundary 안에 있어 예전엔 없던 remount가
+생기는 것은 인지하고 받아들인다 — 임상적 정확성엔 영향 없고(작성
+중이던 CRM 폼 상태만 초기화됨), 이 batch의 핵심 안전 요구사항(레코드
+전환 시 이전 에러 상태가 새지 않아야 함)과 직접 충돌하는 대안(record
+id로 keyed되지 않은 더 좁은 boundary)을 만드는 것보다 낫다고 판단.
+(4) 구조 검사 테스트의 정규식이 소스 텍스트의 줄바꿈/들여쓰기까지
+그대로 매치해 포맷터 한 번에 깨지던 것, 그리고 fallback이 view-profile
+라벨을 절대 언급 안 한다는 assertion이 사실 상 항상 참으로 통과하던
+것(라벨 뒤에 없는 " 진료" 접미사를 붙여서 검사) — 둘 다 완화.
+
+**신규/보강 회귀 테스트**(`tests/doctor.spec.mjs`): 리뷰가 실제로
+실행한 것과 동일한 hollow-but-gate-passing payload를 재구성해
+`isDoctorPayloadShapeUsable(...) === true`이면서 6개 leaf 표현식이
+전부 throw하지 않음을 직접 assert, `frequencyField`/`aggravatingField`를
+8개 primaryModule 전부에 대해 hollow modules로 직접 호출, gate의
+mutation-guard 목록에 `secondary_modules`/`constitution_basics` 추가.
+`npm run test:doctor` 767/767 통과(이전 747 + 신규 20).
+
+**추가 실사용 검증**(단위 테스트만으로는 안 되는 부분): 로컬 서버를
+띄우고 리뷰가 지적한 것과 정확히 같은 hollow payload(`responses`의
+16개 namespace만 `{}`, `secondary_modules`/`constitution_basics`는
+아예 없음)를 실제 `POST /api/submissions`로 넣은 뒤 Playwright로
+Doctor 화면을 열어 수정 전/후를 직접 비교 — 수정 전:
+`PatientErrorBoundary` 트리거 확인(`Cannot read properties of
+undefined (reading 'energy_recovery')`), 수정 후: fallback 배너 +
+CRM 섹션 정상 렌더, page error 0건, 전역 에러 화면 없음. 스크린샷으로
+육안 확인 완료.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:doctor` 767/767,
+`npm run test:all`(exit 0, FAIL 0건), `npm run build`/`build:preview`
+clean, `tablet core` pytest 80/80, `git diff origin/main --
+src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부
+통과.
+
+**다음 단계**: 위 수정 반영한 커밋을 push하고, 2차(closing) 독립
+`model:opus` 리뷰를 새로 호출해 이번 수정이 실제로 문제를 없앴는지
+(그리고 새 회귀를 만들지 않았는지) 재검증한다. 2차 리뷰가 CLEAN이면
+PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT
+PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절

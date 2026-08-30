@@ -9,6 +9,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { resolveBizmProviderState, createBizmTransport, FALLBACK_CHANNEL as BIZM_FALLBACK_CHANNEL } from '../server/bizmAdapter.js'
 import { resolveSolapiProviderState, FALLBACK_CHANNEL as SOLAPI_FALLBACK_CHANNEL } from '../server/solapiAdapter.js'
 import {
@@ -146,30 +147,65 @@ async function main() {
       const { url, init } = capturedRequests[0]
       assert('LIVE request: POSTs to the documented BizM send endpoint', url === 'https://alimtalk-api.bizmsg.kr/v2/sender/send')
       assert('LIVE request: userid header carries the BIZM_USER_ID credential (owner-confirmed dev-docs auth scheme, not a guessed Bearer token)', init.headers.userid === 'stub-user-id')
-      assert('LIVE request: no guessed Authorization header is sent (see bizmAdapter.js header on why apiKey is not placed anywhere unconfirmed)', !('authorization' in init.headers) && !('Authorization' in init.headers))
+      const headerKeys = Object.keys(init.headers).map((k) => k.toLowerCase())
+      assert('LIVE request: no guessed Authorization header is sent (see bizmAdapter.js header on why apiKey is not placed anywhere unconfirmed)', !headerKeys.includes('authorization'))
 
       const body = JSON.parse(init.body)
       assert('LIVE request: body is a JSON ARRAY, not a single object (E100 InvalidJsonArray)', Array.isArray(body))
       assert('LIVE request: array has exactly one item (this store sends one recipient per call)', body.length === 1)
       const item = body[0]
+      assert('LIVE request item: message_type field is present (round-3 corroborated field, value itself unconfirmed)', typeof item.message_type === 'string' && item.message_type.length > 0)
       assert('LIVE request item: profile field carries the BIZM_SENDER_KEY value', item.profile === 'stub-sender-key')
+      assert('LIVE request item: tmplId field carries the template code (round-3 corroborated field name, replacing round-1\'s tmplCode guess)', item.tmplId === 'SAMINDANG_FOLLOWUP_01')
       assert('LIVE request item: phn field carries the recipient phone', item.phn === '01011112222')
-      assert('LIVE request item: message field carries the fully-rendered text (E106 EmptyMessage requires a real body, not just template variables)', item.message === 'rendered message text')
+      assert('LIVE request item: msg field carries the fully-rendered text (round-3 corroborated field name, replacing round-1\'s message guess; E106 EmptyMessage requires a real body, not just template variables)', item.msg === 'rendered message text')
       assert('LIVE request item: variables field still carries the template-substitution payload alongside the rendered message', item.variables?.followup_token === 'raw-token-should-not-leak-into-msgid')
       assert('LIVE request item: msgId is a string of at most 20 characters (E113 InvalidMsgIdLength)', typeof item.msgId === 'string' && item.msgId.length <= 20 && item.msgId.length > 0)
-      assert('LIVE request item: msgId is derived from message_id, never the raw follow-up token itself', !item.msgId.includes('raw-token'))
 
-      // Idempotency: the SAME message_id (a retry of the same logical
-      // MessageRecord) must always produce the SAME msgId, so BizM's own
-      // E109 DuplicatedMsgId semantics (if real) can act as a second,
-      // provider-side line of defense against a genuine double-send.
+      // Exact expected value (not just "doesn't look like the token") --
+      // an independent review found the prior assertion here vacuous: since
+      // msgId is lowercase hex and 'raw-token' contains non-hex characters,
+      // a msgId literally derived FROM the raw token would still have
+      // passed an `!includes('raw-token')` check. Recompute the real
+      // formula (sha256(`${messageId}:${channel}`) truncated to 20 hex
+      // chars) independently here and assert equality.
+      const expectedMsgId = createHash('sha256').update('message-id-aaa:KAKAO_ALIMTALK', 'utf8').digest('hex').slice(0, 20)
+      assert('LIVE request item: msgId matches the exact documented derivation (sha256(messageId:channel), never derivable from the raw token)', item.msgId === expectedMsgId)
+
+      // Idempotency: the SAME (message_id, channel) pair (a retry of the
+      // same logical MessageRecord on the same channel) must always
+      // produce the SAME msgId, so BizM's own E109 DuplicatedMsgId
+      // semantics (if real) can act as a second, provider-side line of
+      // defense against a genuine double-send.
       await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-aaa' })
       const secondItem = JSON.parse(capturedRequests[1].init.body)[0]
-      assert('LIVE request: msgId is deterministic -- the same message_id produces the identical msgId on a second attempt', secondItem.msgId === item.msgId)
+      assert('LIVE request: msgId is deterministic -- the same (message_id, channel) produces the identical msgId on a second attempt', secondItem.msgId === item.msgId)
 
       await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-bbb' })
       const thirdItem = JSON.parse(capturedRequests[2].init.body)[0]
       assert('LIVE request: msgId differs for a genuinely different message_id', thirdItem.msgId !== item.msgId)
+
+      // Independent-review finding (LOW): a same-attempt fallback to a
+      // different channel must get a DIFFERENT msgId from the primary
+      // attempt it followed, or a real BizM E109 dedup check would reject
+      // the fallback as a duplicate of an attempt that never delivered --
+      // defeating the fallback's purpose. Not reachable via messagingStore
+      // today (BizM's own FALLBACK_CHANNEL is empty), but the derivation
+      // itself must already be channel-scoped so this cannot bite silently
+      // if a real BizM SMS contract is ever confirmed and wired up.
+      await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {}, messageId: 'message-id-aaa' })
+      const fourthItem = JSON.parse(capturedRequests[3].init.body)[0]
+      assert('LIVE request: same message_id + same channel -> same msgId (re-confirms determinism)', fourthItem.msgId === item.msgId)
+
+      // messageId omitted entirely -- independent-review finding: this used
+      // to throw uncaught inside node:crypto (createHash().update(undefined)),
+      // which would have escaped attemptSend's own try-less call and left
+      // the MessageRecord stuck in SENDING forever (only a normal return
+      // value lets attemptSend record a terminal outcome). Must now fail
+      // closed as an ordinary, diagnosable send failure instead.
+      const noIdResult = await liveTransport.send({ to: '01011112222', channel: 'KAKAO_ALIMTALK', text: 't', variables: {} })
+      assert('LIVE request: missing messageId fails closed with a diagnosable error, never throws', noIdResult.ok === false && noIdResult.errorCode === 'bizm_missing_message_id')
+      assert('LIVE request: missing messageId never reaches the network at all', capturedRequests.length === 4)
     } finally {
       globalThis.fetch = originalFetch
     }

@@ -39,46 +39,88 @@
 //
 // Round 2 (owner-supplied facts from BizM's OWN publicly indexed
 // documentation -- an actual first-party source, not a third-party guess,
-// though still not the full authenticated contract):
-//   - Dev host confirmed: `https://dev-alimtalk-api.bizmsg.kr:1443`.
-//   - BizM's own official RESULT-CODE table confirms, by the existence and
-//     naming of these codes, that the real send contract has: a request body
-//     that must be a JSON ARRAY (`E100 InvalidJsonArray` -- "request must be
-//     a JSON array", not a single object, which is what BOTH round-1
-//     third-party guesses got wrong), a profile-key field
+// though still not the full authenticated contract; codeList.html and
+// startTest.html, both publicly reachable pages, not behind login):
+//   - Dev host confirmed: `https://dev-alimtalk-api.bizmsg.kr:1443`, with a
+//     `userid` request HEADER (not an `Authorization: Bearer` scheme) for
+//     partner/test operations, plus development-only direct template
+//     approval and a one-day test-recipient certification step.
+//   - BizM's own official RESULT-CODE table (codeList.html) confirms, by the
+//     existence and naming of these codes, that the real send contract has:
+//     a request body that must be a JSON ARRAY (`E100 InvalidJsonArray` --
+//     "request must be a JSON array", not a single object, which is what
+//     BOTH round-1 third-party guesses got wrong), a profile-key field
 //     (`E102 InvalidProfileKey`), a template-code field
 //     (`E103 EmptyTemplateCode`), a fully-rendered message field, not just
-//     template variables (`E106 EmptyMessage`), an optional per-message
-//     dedup id capped at 20 characters (`E109 DuplicatedMsgId`,
-//     `E113 InvalidMsgIdLength`), and a documented SMS-fallback field
-//     surface (`E120 InvalidSMSProfile`, `E125 InvalidSMSKind`).
-//   - BizM's own development API docs use a `userid` request HEADER (not an
-//     `Authorization: Bearer` scheme) for partner/test operations, and
-//     confirm development-only direct template approval plus a one-day
-//     test-recipient certification step.
+//     template variables (`E106 EmptyMessage`, `E107 SMSEmptyMessage`), an
+//     optional per-message dedup id capped at 20 characters
+//     (`E109 DuplicatedMsgId`, `E113 InvalidMsgIdLength`), a documented
+//     SMS-fallback field surface (`E120 InvalidSMSProfile`,
+//     `E125 InvalidSMSKind`), a button-object field
+//     (`E124 InvalidButtonJsonObject`), and template/content-mismatch
+//     detection at send time (`K105` template/message mismatch, `K108`
+//     button mismatch -- see this file's "template/content mismatch" note
+//     below on why this still cannot be surfaced to staff any more
+//     specifically than a generic provider error code today).
 //
-// What this means concretely for what changed in this file (round 2, this
-// review cycle) vs what is STILL an unconfirmed guess:
-//   CONFIRMED (elevated from guess to evidence-backed): body is a JSON ARRAY
-//     of message objects, not a single object; a `userid` header carries the
-//     BizM login id; a `profile` field, a template-code field, a fully
-//     rendered `message` field, and an optional <=20-char `msgId` field all
-//     exist somewhere in each array item.
-//   STILL UNCONFIRMED (do not trust): the EXACT JSON key spelling for each
-//     field beyond what the result-code names themselves imply (this file
-//     uses `profile`/`tmplCode`/`message`/`msgId`/`phn` as the most literal
-//     reading of the result-code names, not a verified schema); whether
-//     BIZM_API_KEY plays any role in the real auth handshake at all (kept as
-//     a required credential purely so LIVE can never be reachable without an
-//     operator having provisioned every credential BizM's console issues,
-//     NOT because this file knows where to place it in a request -- it is
-//     deliberately NOT sent as a guessed header, since inventing a wrong
-//     header is worse than omitting an unplaced credential); the exact
-//     response array/message-id shape; the button-variable substitution
-//     field name (still assumed to be `variables` per the owner's confirmed
-//     `#{followup_token}` UI syntax, unchanged from round 1); and the entire
-//     webhook/callback contract (still this SERVER's own placeholder HMAC
-//     scheme, see below).
+// Round 3 (owner-supplied corroboration from a CURRENT, actively-maintained
+// third-party SDK release (`bizm` 2.5.1) -- explicitly flagged by the owner
+// as "NOT SSOT," a search hint only, never itself sufficient to call
+// anything verified -- but it independently lands on the SAME production
+// host+path+auth-header combination round 2's official docs pointed at,
+// which round 1's two mutually-inconsistent, now-outdated third-party SDKs
+// did not agree on):
+//   - `POST https://alimtalk-api.bizmsg.kr/v2/sender/send` (the exact
+//     endpoint this file already used from round 1 -- now corroborated by a
+//     production, not just dev-host, source), header `userid` (matching
+//     round 2's confirmed header name, now seen used against the PRODUCTION
+//     endpoint too, not just the dev/partner/test operations round 2's own
+//     source covered).
+//   - JSON-array body with fields `message_type`/`phn`/`profile`/
+//     `reserveDt`(optional, scheduled send -- irrelevant here, this store
+//     always sends immediately)/`msg`/`tmplId`/optional `button1..`
+//     (irrelevant here -- the owner already confirmed the button URL/label
+//     are configured BizM-side at template-approval time, not sent
+//     per-request)/optional `smsKind`/`msgSms`/`smsSender` (BizM
+//     provider-side SMS-fallback fields -- still not implemented here, see
+//     "Channel scope" below). Response is an array.
+//   - This directly supersedes round 1's `tmplCode`/`message` guesses with
+//     the better-corroborated `tmplId`/`msg` (still not a verified schema --
+//     see below), and adds a `message_type` field this file did not
+//     previously send at all.
+//
+// What this means concretely for what changed in this file (rounds 2-3,
+// this review cycle) vs what is STILL an unconfirmed guess:
+//   CONFIRMED (elevated from guess to evidence-backed, first-party source):
+//     body is a JSON ARRAY of message objects, not a single object; a
+//     `userid` header carries the BizM login id for partner/test (dev host)
+//     operations; a `profile` field, a template-id field, a fully rendered
+//     message field, and an optional <=20-char msgId field all exist
+//     somewhere in each array item.
+//   CORROBORATED (multiple independent sources agree, still NOT verified
+//     against an authenticated account -- the owner's own explicit
+//     instruction): the exact production endpoint `.../v2/sender/send`; the
+//     `userid` header applying there too, not just the dev host; the field
+//     spellings `profile`/`tmplId`/`msg`/`phn`/`msgId`/`message_type` (this
+//     file now uses these, replacing round 1's `tmplCode`/`message` guesses
+//     -- `message_type` below is sent with a specific value that has NO
+//     corroborating evidence at all for correctness, only that a field by
+//     this name exists; see its own inline comment).
+//   STILL UNCONFIRMED (do not trust): the EXACT correct value for
+//     `message_type`; whether BIZM_API_KEY plays any role in the real auth
+//     handshake at all (kept as a required credential purely so LIVE can
+//     never be reachable without an operator having provisioned every
+//     credential BizM's console issues, NOT because this file knows where
+//     to place it in a request -- it is deliberately NOT sent as a guessed
+//     header, since inventing a wrong header is worse than omitting an
+//     unplaced credential); whether `userid` alone is sufficient
+//     authentication for a real send with no other secret in the request at
+//     all (plausible a real send would 401 without something more); the
+//     exact response array/message-id shape; the button-variable
+//     substitution field name (still assumed to be `variables` per the
+//     owner's confirmed `#{followup_token}` UI syntax, unchanged from round
+//     1); and the entire webhook/callback contract (still this SERVER's own
+//     placeholder HMAC scheme, see below).
 //
 // NONE of this -- host, path, field names, auth, response shape, callback
 // contract -- may be trusted in production without independently
@@ -211,20 +253,34 @@ function createMockBizmTransport() {
 /**
  * Derives a stable, BizM-safe (<=20 characters, per E113 InvalidMsgIdLength)
  * provider-level dedup id from OUR OWN message_id (a full UUID, too long to
- * send as-is). Deterministic -- the SAME message_id always produces the
- * SAME msgId, so a retry of the same logical send attempt (this store's own
+ * send as-is) plus the channel being attempted. Deterministic -- the SAME
+ * (message_id, channel) pair always produces the SAME msgId, so a retry of
+ * the same logical send attempt on the SAME channel (this store's own
  * message_id never changes across retries of one MessageRecord) presents
  * the identical msgId to BizM every time. If BizM's real E109
  * DuplicatedMsgId semantics do what their name implies, this gives the
  * provider itself a second, independent line of defense against a genuine
  * double-send (e.g. a timeout where our own side never learned whether the
  * first attempt actually landed) on top of this store's own dedup_key
- * check -- see messagingStore.js's module doc comment. Never derived from
- * anything patient-identifying (only message_id, an opaque server-minted
- * id already used everywhere else in this store).
+ * check -- see messagingStore.js's module doc comment.
+ *
+ * Channel is included (independent-review finding, this cycle) so that a
+ * same-attempt fallback to a different channel -- were BizM's SMS/LMS
+ * fallback ever wired up, see "Channel scope" below -- gets a DIFFERENT
+ * msgId from the primary Alimtalk attempt it followed. Without this, a
+ * fallback send would present the identical msgId as the primary send that
+ * just failed, and a real E109 DuplicatedMsgId check would then reject the
+ * fallback as a duplicate of an attempt that never actually delivered --
+ * defeating the fallback's entire purpose. Not reachable today (BizM
+ * FALLBACK_CHANNEL is empty, see below), but fixed now so it cannot bite
+ * silently later.
+ *
+ * Never derived from anything patient-identifying (only message_id, an
+ * opaque server-minted id already used everywhere else in this store, and
+ * channel, a fixed enum value).
  */
-function deriveBizmMsgId(messageId) {
-  return createHash('sha256').update(messageId, 'utf8').digest('hex').slice(0, 20)
+function deriveBizmMsgId(messageId, channel) {
+  return createHash('sha256').update(`${messageId}:${channel}`, 'utf8').digest('hex').slice(0, 20)
 }
 
 /**
@@ -239,25 +295,45 @@ function createLiveBizmTransport({ apiKey, senderKey, userId, templateCode }) {
     if (channel !== 'KAKAO_ALIMTALK') {
       return { ok: false, errorCode: 'bizm_channel_unverified', retryable: false, fallbackEligible: false }
     }
-    // Body shape per this file's header, round 2: a JSON ARRAY (E100
+    // Independent-review finding (LOW, this cycle): deriveBizmMsgId hashes
+    // messageId unconditionally -- a caller that omitted it (there is none
+    // today; messagingStore.js's attemptSend always supplies its own
+    // message_id) would previously throw inside node:crypto, escaping this
+    // function uncaught. Fail closed explicitly instead, so a future
+    // caller mistake becomes an ordinary non-retryable send failure (the
+    // record surfaces as FAILED with a diagnosable error_code) rather than
+    // an uncaught exception that could leave a MessageRecord stuck in
+    // SENDING forever (see messagingStore.js's attemptSend -- it writes
+    // SENDING before calling send(), and only a normal return value, never
+    // a thrown exception, is what lets it record a terminal outcome).
+    if (!messageId) {
+      return { ok: false, errorCode: 'bizm_missing_message_id', retryable: false, fallbackEligible: false }
+    }
+    // Body shape per this file's header, rounds 2-3: a JSON ARRAY (E100
     // InvalidJsonArray) of exactly one message object here (this adapter
     // sends one recipient per call; BizM's array wrapping may exist to
     // support bulk sends in one request, which this store never needs).
-    // Field key spellings (`profile`/`tmplCode`/`message`/`msgId`/`phn`) are
-    // the most literal reading of the confirmed result-code names, NOT a
-    // verified schema -- see header. `message` carries the caller's
-    // already-rendered text (matches E106 EmptyMessage requiring a real
-    // message body, not just template variables), while `variables` is
-    // still sent alongside it for the template-substitution path the owner
-    // confirmed via the BizM UI (`#{followup_token}`) -- until the real
-    // contract confirms which of the two BizM's send API actually consumes,
-    // both are included rather than guessing which one to drop.
+    // Field key spellings (`profile`/`tmplId`/`msg`/`msgId`/`phn`) follow
+    // round 3's corroborated (still NOT verified) shape -- see header.
+    // `message_type` is sent because a field by that name is corroborated
+    // to exist, but 'AT' (a common "Alimtalk Text" convention across
+    // similar Korean bulk-messaging APIs) has ZERO corroborating evidence
+    // of being the CORRECT value for BizM specifically -- this is the
+    // single least-confident guess in this entire payload, more than any
+    // other field here. `msg` carries the caller's already-rendered text
+    // (matches E106 EmptyMessage requiring a real message body, not just
+    // template variables), while `variables` is still sent alongside it for
+    // the template-substitution path the owner confirmed via the BizM UI
+    // (`#{followup_token}`) -- until the real contract confirms which of
+    // the two BizM's send API actually consumes, both are included rather
+    // than guessing which one to drop.
     const item = {
+      message_type: 'AT',
       profile: senderKey,
-      tmplCode: templateCode,
+      tmplId: templateCode,
       phn: to,
-      message: text ?? '',
-      msgId: deriveBizmMsgId(messageId),
+      msg: text ?? '',
+      msgId: deriveBizmMsgId(messageId, channel),
       // See header: `followup_token` is the owner-confirmed BizM template
       // variable name. Never logged, never persisted here.
       variables: variables ?? {},
@@ -327,6 +403,7 @@ export function createBizmTransport(env = process.env) {
  *  (`FALLBACK_CHANNEL[record.channel]`) never finds an entry for
  *  KAKAO_ALIMTALK and therefore never attempts a second channel for BizM,
  *  which is the deliberately safe behavior until a real SMS contract is
- *  confirmed -- even though round 2's result-code evidence confirms BizM's
- *  API surface DOES have SMS-fallback fields (E120/E125); see header. */
+ *  confirmed -- even though rounds 2-3's evidence confirms BizM's API
+ *  surface DOES have SMS-fallback fields (result codes E107/E120/E125, and
+ *  round 3's `smsKind`/`msgSms`/`smsSender` request fields); see header. */
 export const FALLBACK_CHANNEL = {}

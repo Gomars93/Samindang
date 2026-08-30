@@ -31,9 +31,13 @@ export function resolveMessagingProviderName(env = process.env) {
   return env.SAMINDANG_MESSAGING_PROVIDER === 'solapi' ? 'solapi' : 'bizm'
 }
 
-/** Same tri-state contract (PENDING_CREDENTIALS / MOCK / LIVE) as either
- *  adapter's own resolve*ProviderState -- delegates to whichever provider
- *  is actually selected. */
+/** Delegates to whichever provider is actually selected. NOT a fixed
+ *  state set across providers -- SOLAPI's resolveSolapiProviderState only
+ *  ever returns PENDING_CREDENTIALS/MOCK/LIVE, while BizM's
+ *  resolveBizmProviderState can also return PENDING_CONTRACT (see
+ *  bizmAdapter.js's own doc comment on why). Any caller mapping over this
+ *  function's return value must handle PENDING_CONTRACT too, not just
+ *  assume the three SOLAPI-only states. */
 export function resolveMessagingProviderState(env = process.env) {
   return resolveMessagingProviderName(env) === 'solapi' ? resolveSolapiProviderState(env) : resolveBizmProviderState(env)
 }

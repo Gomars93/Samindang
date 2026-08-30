@@ -4059,16 +4059,63 @@ JSON 배열, `userid` 헤더, `Authorization` 헤더 부재, `msgId` <=20자,
 msgId 결정성, raw token이 msgId에 섞이지 않음 등) 추가 — 네트워크는
 전혀 사용하지 않음(같은 파일 안에서 이미 fetch 응답을 stub).
 
-**검증 진행 중**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
-46/46(신규 assertion 전부 통과) 확인 완료. 전체 `test:all`/build/
-build:preview/pytest/FROZEN diff 재검증과 두 차례 독립 `model:opus`
-리뷰(오너 지시 7번 항목)는 이 세션에서 이어서 진행 중 — 아직 commit
-하지 않음.
+**검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm` 46/46,
+`npm run test:all`(exit 0), `npm run build`/`build:preview`, `tablet core`
+pytest 80/80, FROZEN diff 0 lines — 전부 통과. 커밋 `660f5e2`로 푸시.
+
+## Completed — BizM 계약 게이트 1차 독립 리뷰 + 오너 3차 증거 반영 (이번 세션)
+
+**1차 독립 `model:opus` 리뷰**(실제 subagent 호출, 커밋 `660f5e2` 대상,
+읽기 전용): 핵심 안전 수정(자격증명만으로는 LIVE 도달 불가)이 모든
+호출 경로에서 실제로 성립함을 직접 코드 추적으로 확인 — HIGH/MEDIUM
+없음, LOW 5건 + NIT 2건만 발견. 오너가 같은 시점에 PR 코멘트로 3차
+증거(현재 유지보수 중인 `bizm` 2.5.1 서드파티 SDK — "SSOT 아님, 검색
+힌트일 뿐"이라고 오너 스스로 명시 — 가 독립적으로 동일 프로덕션
+host+path+`userid` 헤더 조합에 도달, 필드명 `tmplId`/`msg`/
+`message_type` 제시)를 추가 제공 — 같은 수정 라운드에서 함께 반영.
+
+**수정(`server/bizmAdapter.js`)**:
+- 필드명을 3차 증거 기준으로 갱신: `tmplCode`→`tmplId`, `message`→`msg`,
+  신규 `message_type: 'AT'` 필드 추가(필드 존재는 근거 있음, 값 'AT'
+  자체는 이 페이로드에서 가장 근거가 약한 추측이라고 인라인 주석에
+  명시).
+- **LOW #4 수정(fallback msgId 충돌)**: `deriveBizmMsgId`가 이제
+  `message_id`뿐 아니라 channel도 함께 해시 — 같은 시도 내 원본 채널과
+  폴백 채널이 서로 다른 msgId를 받도록 해, 향후 실제 BizM SMS 계약이
+  확인되어 폴백이 구현될 때 BizM 자신의 E109 DuplicatedMsgId가 정상
+  전달되지 않은 폴백을 "중복"으로 오판·거부하는 것을 방지. 지금은
+  BizM FALLBACK_CHANNEL이 비어 있어 도달 불가하지만 나중에 조용히
+  터지지 않도록 지금 고침.
+- **LOW #3 수정(잠재 crash)**: `messageId`가 누락되면 이전에는
+  `createHash().update(undefined)`가 uncaught로 throw해 레코드가
+  영원히 SENDING에 갇힐 수 있었음(현재 실제 호출부는 항상 messageId를
+  주므로 도달 불가) — 이제 `bizm_missing_message_id`로 명시적으로
+  fail-closed.
+- **LOW #1 수정(stale 문서)**: `messagingTransport.js`의
+  `resolveMessagingProviderState` 주석이 여전히 "tri-state"라고
+  써 있던 것을 PENDING_CONTRACT 존재를 명시하도록 갱신.
+- **LOW #5 수정(공허한 테스트 단언)**: msgId가 raw token을 "포함하지
+  않는다"는 약한 체크 대신, 실제 sha256 공식과 정확히 일치하는지
+  독립적으로 재계산해 단언하도록 강화. 채널 스코핑·messageId 누락
+  가드에 대한 신규 테스트도 추가(`tests/messaging-bizm.spec.mjs`,
+  46→51 assertion).
+- LOW #2(`MessagingProviderState`가 TS 쪽에서 아무도 소비하지 않음)와
+  LOW #6(헤더 존재 체크가 대소문자 case-sensitive) — #6은 테스트에서
+  대소문자 무관 체크로 이미 함께 개선, #2는 실제 결함이 아니라
+  관찰이므로 별도 코드 변경 없음.
+- 헤더의 rounds 2-3 근거 구분을 CONFIRMED(1차 소스)/CORROBORATED(복수
+  독립 소스, 여전히 미검증)/STILL UNCONFIRMED 세 단계로 명확히 재구성.
+
+**검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
+51/51, `npm run test:all`(exit 0), `npm run build`/`build:preview`,
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 2차 독립
+`model:opus` 리뷰는 이어서 진행 예정(오너 지시 7번 항목: "재검토 루프,
+클린할 때까지").
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `60bfdc1`(CI/Preview green, 독립 리뷰 2회 CLEAN) — 위 BizM
-계약 검증 게이트 HIGH 수정은 아직 이 위에 커밋되지 않은 작업 트리
+HEAD: `660f5e2`(1차 독립 리뷰 CLEAN, 위 수정 라운드는 아직 이 위에
+커밋되지 않은 작업 트리
 상태로만 존재, 전체 게이트 재검증 + 독립 리뷰 후 커밋/푸시 예정.
 
 ## Known Risks

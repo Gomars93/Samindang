@@ -921,7 +921,18 @@ export function createApp({
               if (existing && (await store.resolveFollowUpSession(variables.followup_token))?.visit_id !== existing.visit_id) {
                 throw new Error('follow_up_token does not belong to this message\'s visit')
               }
-              if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables, link })
+              // Closing-review finding (LOW): the cache write used to run
+              // BEFORE retryMessage(), the same ordering the queue route
+              // itself was fixed away from earlier in this batch -- an
+              // automatic-retry sweep interleaving between this line and
+              // retryMessage()'s own lock could send using this
+              // freshly-cached tuple while retryMessage then hit a
+              // terminal/max-attempts guard and never updated
+              // follow_up_token_hash to match, leaving the durable record
+              // pointing at a different token than what the sweep actually
+              // sent. Deferring the cache write until AFTER retryMessage
+              // succeeds closes the same window the queue route already
+              // closes, for the same reason.
               // Message-integrity-batch finding (MEDIUM, independent
               // review): pass the re-derived token through so
               // retryMessage/attemptSend can keep the durable record's
@@ -929,6 +940,7 @@ export function createApp({
               // retry actually sends -- see messagingStore.js's attemptSend
               // for why this only matters on the manual-retry path.
               const record = await messagingStore.retryMessage(id, { phone, text, variables, link, followUpToken: variables.followup_token })
+              if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables, link })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
               if (record.status !== 'QUEUED') messagingContactCache.delete(record.visit_id)
               bytes = sendJson(req, res, 200, record, cors)

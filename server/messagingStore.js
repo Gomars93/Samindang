@@ -229,6 +229,18 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
         // for what THIS visit's one real outbound message means -- a
         // dedup replay is only ever valid when it is the SAME request
         // (same token) the record was already created for.
+        // Closing-review finding (LOW, disclosed trade-off, not a
+        // regression): once `existing` is terminal (SENT/DELIVERED/
+        // CANCELLED/FAILED-exhausted) for one token, there is now no way
+        // to re-queue a delivery for a LATER-reissued token on this same
+        // visit through this route -- this 409 fires, and retryMessage()
+        // also refuses (already terminal / max attempts). Before this
+        // batch the same reissue would have silently returned the stale
+        // terminal record with status 200 and sent nothing either, so no
+        // capability was ever actually delivered before this fix; staff
+        // still have DoctorView's own copy-link/QR path for that patient.
+        // Deliberately not solved here -- it is a genuine new-visit /
+        // re-issue product question, not a message-integrity bug.
         if (hashToken(followUpToken) !== existing.follow_up_token_hash) {
           throw new MessagingConflictError('follow_up_token does not match the message already queued for this visit')
         }

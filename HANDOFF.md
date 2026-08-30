@@ -4480,19 +4480,68 @@ manual retry 경로에도 존재함을 발견 — MEDIUM 2건:
 findings 3-6은 오너의 "no broad rewrite" 지시와 리뷰어 자신의 권고에
 따라 HANDOFF 문서화만으로 처리(코드 변경 없음).
 
-**검증(1차 리뷰 수정 반영 후, 최종)**: `npx tsc -b --force` clean,
-`npm run test:messaging` 136/136(신규: retry-hash unit 4개 + HTTP
-retry-hash 3개 + Part 3 cache-poisoning 종단 8개), `npm run
-test:messaging-bizm` 79/79, `npm run test:crm-store` 230/230, `npm run
-test:audit-registry` 88/88, `npm run test:all`(exit 0), `npm run
-build`/`build:preview`, `tablet core` pytest 80/80, FROZEN diff 0
-lines — 전부 통과. 2차(클로징) 독립 `model:opus` 리뷰 예정.
+**검증(1차 리뷰 수정 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:messaging` 136/136(신규: retry-hash unit 4개 + HTTP retry-hash
+3개 + Part 3 cache-poisoning 종단 8개), `npm run test:messaging-bizm`
+79/79, `npm run test:crm-store` 230/230, `npm run test:audit-registry`
+88/88, `npm run test:all`(exit 0), `npm run build`/`build:preview`,
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과.
+(`87817b8` push, `a86a8cc` HANDOFF 갱신 push.)
+
+**2차(클로징) 독립 `model:opus` 리뷰(완료) + 수정**: 실제 fresh
+subagent 호출(187k 토큰, 48 tool call, ~18분)로 `a86a8cc` 검수 — 이번엔
+자체적으로 mutation testing까지 수행(수정을 되돌려서 새 테스트가 실제로
+실패하는지 확인). **전체 판정: CLEAN — HIGH/MEDIUM 없음.** 라운드1의
+두 MEDIUM 모두 실제로 닫혔음을 mutation test로 직접 증명(`attemptSend`의
+hash 갱신 줄을 지우면 → 신규 `retry-hash unit` 테스트가 즉시 실패;
+캐시 defer-write를 되돌리면 → 신규 Part 3 종단 테스트가 즉시 실패).
+LOW/NIT 4건, 전부 non-blocking:
+
+1. **LOW (수정)**: retry 라우트가
+   `messagingContactCache.set()`을 여전히 `retryMessage()` 호출보다
+   먼저 실행 — 큐 라우트는 이미 이 순서를 고쳤는데 retry 라우트만
+   남아있던 비대칭. 리뷰어가 이론적 레이스(재현은 못 했지만 추적은
+   가능)를 지적: QUEUED이고 due인 레코드에 대해 doctor가 재발급 토큰
+   B로 수동 재시도를 거는 바로 그 순간(line 924 실행 직후,
+   `retryMessage`가 락을 잡기 전) 자동 sweep이 끼어들면, sweep이 방금
+   캐시된 B 튜플로 전송을 완료해버리고, 그 후 실제 `retryMessage`
+   호출은 (예: 동시에 다른 이유로) terminal/max-attempts 가드에 걸려
+   `follow_up_token_hash`를 갱신하지 못한 채 끝날 수 있음 — 결과적으로
+   레코드는 A를 가리키는데 실제로는 B가 전송된 상태. 확률은 극히
+   낮지만(파일 read 한 줄 vs 20초 프로덕션 간격), 이 배치가 막으려는
+   것과 정확히 같은 클래스의 결함이라 판단해 수정. **수정**: 큐
+   라우트와 동일하게 `retryMessage()` 성공 이후로 캐시 쓰기를 이동.
+2. **LOW (문서화만, 수정)**: `MessagingConflictError`가 이미 terminal인
+   레코드에 대해 재발급된 토큰으로 재발송할 방법을 아예 막아버림 —
+   실제 운영상 제약이지만, 이 수정 이전에도 그런 재발급은 어차피
+   조용히 stale 200을 반환하며 아무것도 안 보냈으므로 회귀는 아님.
+   `queueRevisitMessage()`의 헤더 주석에 이 트레이드오프를 명시.
+3. **NIT (accepted, 미수정)**: `SAMINDANG_MESSAGE_RETRY_INTERVAL_MS`에
+   소수(`0.5`) 같은 값을 넣으면 매우 짧은 sweep 간격이 되지만,
+   `ownerLock.js`의 `requirePositiveMs`도 동일하게 소수를 허용 —
+   기존 관례와 일치하므로 이번 배치에서 강화하지 않음.
+4. **NIT (accepted, 미수정)**: `attemptSend`가 export되어 있어 이론상
+   외부 호출자가 `retryMessage`의 terminal/max-attempts 가드를 우회해
+   `followUpToken`으로 해시를 직접 덮어쓸 수 있음 — grep으로 확인한
+   내부 호출부 3곳(`queueRevisitMessage`/`retryMessage`/`runDueRetries`)
+   외에 실제 그런 호출자는 없음.
+
+**최종 검증(2차 리뷰 수정 반영 후)**: `npx tsc -b --force` clean,
+`npm run test:messaging` 136/136, `npm run test:messaging-bizm` 79/79,
+`npm run test:all`(exit 0), `npm run build`/`build:preview`, `tablet
+core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 두 번의 진짜 독립
+`model:opus` 리뷰(1차 NOT CLEAN + MEDIUM 2건 수정, 2차 CLEAN +
+mutation-test로 실제 검증 + LOW 1건 마저 수정) 완료 — 오너 지시
+검수/역할 사이클(Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰)
+충족. **CLEAN.**
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `87817b8` — button1/응답-실패 검증 HIGH 수정 사이클(CLEAN, HEAD
-`e6af327`까지)에 이어, 메시지<->캡ability 무결성 배치의 구현(`2ef971f`)
-+ 1차 독립 리뷰 수정(`87817b8`)까지 push 완료. 2차 클로징 리뷰 진행 중.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
+응답-실패 검증 HIGH 수정 사이클(CLEAN, HEAD `e6af327`까지)에 이어,
+메시지<->캡ability 무결성 배치의 구현(`2ef971f`) + 1차 독립 리뷰
+수정(`87817b8`) + 2차 독립 클로징 리뷰가 찾은 LOW 1건 수정(retry
+라우트 캐시 순서 + 트레이드오프 문서화)을 하나의 커밋으로 이어서 push
+예정 — 최신 HEAD는 이 커밋 직후 갱신. 이 배치도 **CLEAN**.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

@@ -4874,13 +4874,34 @@ build`/`build:preview` clean, `tablet core` pytest 80/80, FROZEN diff
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `5ede4ac` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
-검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1~6차 독립 클로징 리뷰
-수정(`d8e66d7`/`e067c94`/`898ccdc`/`bd8d094`/`0192384`/`5ede4ac`)까지
-push 완료. 4~6차 리뷰 셋 다 소스 버그 0건을 명시(6차는 A→B 시나리오를
-직접 재추적해 독립 동의까지 포함) — 남은 건 테스트 커버리지 빈틈뿐이었고
-매 라운드로 닫음. 7차 독립 `model:opus` 클로징 리뷰 대기 중(CLEAN 확인
-목적의 마지막 라운드로 예상 — CLEAN이면 PR #24에 클로징 코멘트).
+HEAD: `5ede4ac`(코드) / HANDOFF 갱신은 이 커밋 뒤에 별도 push — 
+Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차 검수(`bff300c` 대상)
+지적사항(`0d5464b`) + 1~7차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
+`898ccdc`/`bd8d094`/`0192384`/`5ede4ac`) — **7차에서 CLEAN 판정,
+배치 CLOSABLE.** 4~6차 리뷰 셋 다 소스 버그 0건을 명시(6차는 A→B
+시나리오를 직접 재추적해 독립 동의까지 포함) — 남은 건 테스트
+커버리지 빈틈뿐이었고
+매 라운드로 닫음.
+
+**7차 독립 `model:opus` 클로징 리뷰(완료, `5ede4ac` 대상) — 최종
+판정 CLEAN**: fresh subagent 호출(13개 regex mutation + 4개 신규
+관점 검증)로 `5ede4ac` 검수. 6차가 찾은 두 lazy-bridge 문제 모두
+실제로 닫혔음을 mutation으로 재확인(review 6가 쓴 정확히 같은
+mutation 포함), timer/microtask pin도 정상 발화 확인(이 저장소의
+다른 doctor UI 파일들에 실제로 존재하는 debounce-save `setTimeout`
+패턴과 대조해 오탐 위험도 판단 — 감수할 만한 trade-off로 결론).
+**소스는 4라운드 연속(4~7차) 결함 0건.** 이번 라운드가 처음
+시도한 새 관점(`&lt;details&gt;`의 `onToggle`이 React 18에서 실제로
+발화하는지 자체 검증 — non-delegated event set에 포함됨을 확인;
+두 UX 수정의 접근성 — `aria-pressed` 정확히 갱신, focus loss 없음;
+별도 파일 `tests/medication-course.spec.mjs`가 여전히 실제
+`crmStore.js`를 import해 통과하는지; `HANDOFF.md` 6라운드 기록
+자체의 내적 일관성) 전부 문제 없음. NIT 1건(두 새 regex가
+`matchAll`+유일성 검증이 아니라서 이론상 "죽은 위치에 verbatim
+복제된 핸들러" 같은 극히 인위적인 mutation엔 여전히 뚫림) —
+리뷰어 스스로 "8차를 열 만한 기준을 못 넘는다"고 명시, 코드 변경
+없이 기록만. **리뷰어 명시적 권고: "이 배치를 CLOSABLE로 선언하는
+것이 지금 타당하다" — PR #24에 클로징 코멘트 게시 진행.**
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4921,17 +4942,16 @@ push 완료. 4~6차 리뷰 셋 다 소스 버그 0건을 명시(6차는 A→B �
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `5ede4ac` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항(`0d5464b`) + 1~6차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
-`898ccdc`/`bd8d094`/`0192384`/`5ede4ac`)까지 완료, 7차 독립
-`model:opus` 클로징 리뷰 대기.)
--1. **다음 단계**: `5ede4ac`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (4~6차 클로징 리뷰 전부 소스 버그 0건을 명시했고, 6차는 A→B
-   시나리오를 직접 재추적해 핵심 결론에 독립 동의까지 마쳤으므로,
-   7차는 CLEAN 확인 목적의 마지막 라운드로 예상). CLEAN이면 PR #24에
-   클로징 상태 코멘트 게시하고 이 배치를 CLOSABLE로 표시. 발견
-   사항이 있으면 수정 후 재검수 반복. **여전히 새 배치 시작 금지,
-   merge/main push 금지.**
+(HEAD `5ede4ac` 기준 갱신 — Medication/Herbal CRM 배치, 7차 독립
+`model:opus` 클로징 리뷰가 **CLEAN** 판정 완료. 배치 CLOSABLE.)
+-1. **완료됨**: 7차 독립 `model:opus` 리뷰가 `5ede4ac`를 CLEAN으로
+   판정(HIGH/MEDIUM/LOW 0건, NIT 1건은 "8차를 열 기준을 못 넘는다"고
+   리뷰어 스스로 명시, 코드 변경 없이 기록만) — 소스는 4라운드 연속
+   (4~7차) 결함 0건. 리뷰어가 명시적으로 "지금 CLOSABLE 선언이
+   타당하다"고 권고. **다음 단계**: PR #24에 클로징 상태 코멘트
+   게시(완료 예정, 이 세션에서 진행) — 그 다음은 Gomars93이 PR #24
+   전체를 검토하고 merge 여부를 직접 판단. **이 세션은 절대 스스로
+   merge/main push하지 않는다.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

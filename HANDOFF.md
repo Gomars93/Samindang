@@ -4843,15 +4843,44 @@ test:medication-course` 57/57, `npm run test:medication-course-ui`
 clean, `tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과.
 push 완료.
 
+**6차 독립 `model:opus` 클로징 리뷰(완료, `0192384` 대상) + 수정(`5ede4ac`)**:
+fresh subagent 호출(24개 mutation 실행)로 `0192384` 검수 —
+**소스(`MedicationCourseSection.tsx`/`crmStore.js`)는 3라운드 연속
+결함 0건 재확인**, 리뷰어가 A→B 시나리오를 처음부터 직접 재추적해서
+epoch guard + reset 블록이 실제로 stale render를 막는다는 결론에
+독립적으로 동의(`DoctorView.tsx`의 `key=` remount가 커버하는 영역과
+epoch guard가 커버하는 영역의 경계도 재확인). **판정: NOT CLEAN** —
+LOW 1 / NIT 1, 전부 5차 라운드 자체의 남은 빈틈.
+
+1. **LOW (수정)**: 5차가 "delete까지 확장"했다고 주장한 두
+   assertion(shift-draft/check-task 칩) 둘 다 `[\s\S]*?` lazy
+   bridge를 씀 — no-op된 핸들러 본문을 그냥 지나쳐서 파일 다른 곳의
+   무관한 `delete`(서로 상대방 핸들러의 delete)와 매치됨을 실제
+   mutation으로 확인. **수정**: lazy bridge 대신 각 핸들러 본문
+   전체를 정확히 pin.
+2. **NIT (수정)**: `.then`/`.finally`/`.catch`/`await` 어휘는
+   Promise 기반 비동기 완료만 커버 — 타이머/microtask로 지연된
+   setState는 어떤 라운드도 체크한 적 없는 별개의 미보호 형태.
+   **수정**: `setTimeout(`/`setInterval(`/`queueMicrotask(`/
+   `requestAnimationFrame(` 0개 pin 추가(현재 소스엔 없음, 회귀
+   방지용).
+
+**검증(`5ede4ac` 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:medication-course` 57/57, `npm run test:medication-course-ui`
+17/17(신규 1개 포함), `npm run test:audit-registry` 106/106, `npm run
+test:crm-schema` 95/95, `npm run test:all`(exit 0), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, FROZEN diff
+0 lines — 전부 통과. push 완료.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `0192384` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
-검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1~5차 독립 클로징 리뷰
-수정(`d8e66d7`/`e067c94`/`898ccdc`/`bd8d094`/`0192384`)까지 push 완료.
-4~5차 리뷰 둘 다 HIGH/MEDIUM 0건·소스 버그 0건을 명시(3개 소스 수정 전부
-mutation으로 검증) — 남은 건 테스트 커버리지 빈틈뿐이었고 5차 라운드로
-닫음. 6차 독립 `model:opus` 클로징 리뷰 대기 중(CLEAN 확인 목적의
-마지막 라운드로 예상 — CLEAN이면 PR #24에 클로징 코멘트).
+HEAD: `5ede4ac` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1~6차 독립 클로징 리뷰
+수정(`d8e66d7`/`e067c94`/`898ccdc`/`bd8d094`/`0192384`/`5ede4ac`)까지
+push 완료. 4~6차 리뷰 셋 다 소스 버그 0건을 명시(6차는 A→B 시나리오를
+직접 재추적해 독립 동의까지 포함) — 남은 건 테스트 커버리지 빈틈뿐이었고
+매 라운드로 닫음. 7차 독립 `model:opus` 클로징 리뷰 대기 중(CLEAN 확인
+목적의 마지막 라운드로 예상 — CLEAN이면 PR #24에 클로징 코멘트).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4892,16 +4921,17 @@ mutation으로 검증) — 남은 건 테스트 커버리지 빈틈뿐이었고 
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `0192384` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항(`0d5464b`) + 1~5차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
-`898ccdc`/`bd8d094`/`0192384`)까지 완료, 6차 독립 `model:opus` 클로징
-리뷰 대기.)
--1. **다음 단계**: `0192384`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (4·5차 클로징 리뷰 둘 다 HIGH/MEDIUM 0건·소스 버그 0건을 명시했고
-   최근 두 라운드가 순수 테스트 강화였으므로, 6차는 CLEAN 확인 목적의
-   마지막 라운드로 예상). CLEAN이면 PR #24에 클로징 상태 코멘트
-   게시하고 이 배치를 CLOSABLE로 표시. 발견 사항이 있으면 수정 후
-   재검수 반복. **여전히 새 배치 시작 금지, merge/main push 금지.**
+(HEAD `5ede4ac` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항(`0d5464b`) + 1~6차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
+`898ccdc`/`bd8d094`/`0192384`/`5ede4ac`)까지 완료, 7차 독립
+`model:opus` 클로징 리뷰 대기.)
+-1. **다음 단계**: `5ede4ac`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (4~6차 클로징 리뷰 전부 소스 버그 0건을 명시했고, 6차는 A→B
+   시나리오를 직접 재추적해 핵심 결론에 독립 동의까지 마쳤으므로,
+   7차는 CLEAN 확인 목적의 마지막 라운드로 예상). CLEAN이면 PR #24에
+   클로징 상태 코멘트 게시하고 이 배치를 CLOSABLE로 표시. 발견
+   사항이 있으면 수정 후 재검수 반복. **여전히 새 배치 시작 금지,
+   merge/main push 금지.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

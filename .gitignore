@@ -135,3 +135,8 @@ tests/.conflict-banner-bundle.cjs
 # esbuild bundles used by tests/public-followup-url.spec.mjs (regenerated, not source)
 tests/.public-followup-url-configured-bundle.mjs
 tests/.public-followup-url-unconfigured-bundle.mjs
+
+# ad hoc scratch repro bundles/scripts from an in-progress independent review
+# round (not test infra, not source -- safe to delete once that review
+# finishes). Wildcarded since the review may still be generating more.
+tests/.r6-*

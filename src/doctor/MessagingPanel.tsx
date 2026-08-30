@@ -1,5 +1,5 @@
 /**
- * Quick Revisit outbound messaging panel (SOLAPI scaffold). Mounted right
+ * Quick Revisit outbound messaging panel. Mounted right
  * where DoctorView already shows the freshly-issued follow-up link
  * (`issuedSession`) for PERSONAL_QR/STAFF_ASSISTED/PREVISIT_LINK delivery
  * modes -- this is the automation PREVISIT_LINK's own hint text used to
@@ -26,9 +26,9 @@
  * (e.g. navigating back to the submissions list).
  *
  * Deliberately NOT built here (matches the scaffold's own documented
- * scope): live SOLAPI credential entry, template management, or delivery
+ * scope): live BizM credential entry, template management, or delivery
  * analytics -- this panel only exercises the mock transport today (see
- * server/solapiAdapter.js's SolapiProviderState) until real credentials
+ * server/bizmAdapter.js's resolveBizmProviderState) until real credentials
  * exist (EXTERNAL CREDENTIAL PENDING).
  */
 import { useEffect, useState } from 'react'
@@ -153,7 +153,7 @@ export function MessagingPanel({ visitId, patientId, followUpToken, link }: Mess
           autoComplete="off"
         />
         <button type="button" className="judgment__recordBtn" onClick={handleSend} disabled={!trimmedPhone || sending}>
-          {sending ? '발송 중…' : '카카오 알림톡/SMS 발송'}
+          {sending ? '발송 중…' : '카카오 알림톡 발송'}
         </button>
       </div>
       {actionError && <p className="doctor__revisitSession__error">{actionError}</p>}
@@ -167,6 +167,14 @@ export function MessagingPanel({ visitId, patientId, followUpToken, link }: Mess
                 {CHANNEL_LABEL[m.channel]}
                 {m.fallback_channel ? ` → ${CHANNEL_LABEL[m.fallback_channel]} 대체 발송` : ''} — {STATUS_LABEL[m.status]}
                 {m.status === 'FAILED' || m.status === 'QUEUED' ? ` (${m.attempt_count}/${m.max_attempts}회 시도)` : ''}
+                {/* error_code is already a sanitized machine-readable class
+                    (never a raw provider response -- see MessageRecord's own
+                    field doc), safe to show staff as-is. Surfacing it here
+                    (previously silent) is what lets staff distinguish e.g. a
+                    provider-side template/config problem
+                    (provider_http_4xx/bizm_channel_unverified) from a
+                    transient network issue worth just retrying. */}
+                {m.status === 'FAILED' && m.error_code ? ` — 오류: ${m.error_code}` : ''}
               </span>
               {(m.status === 'FAILED' || m.status === 'QUEUED') && (
                 <button

@@ -1,22 +1,30 @@
-// Quick Revisit outbound messaging (SOLAPI scaffold) regression suite.
-// Plain node, no test framework -- same convention as
-// tests/crm-store.spec.mjs / tests/audit-registry.spec.mjs: assert()
-// prints "OK: <name>" and throws on failure.
+// Quick Revisit outbound messaging regression suite. Plain node, no test
+// framework -- same convention as tests/crm-store.spec.mjs /
+// tests/audit-registry.spec.mjs: assert() prints "OK: <name>" and throws on
+// failure.
 //
-// Scope: this batch is explicitly API-credential-free (see
-// server/solapiAdapter.js's header) -- everything here exercises the mock
-// transport (SOLAPI_PROVIDER_STATE resolves to PENDING_CREDENTIALS with no
-// env vars set, which is the real state of this deployment today) plus the
-// full persistence/retry/fallback/webhook contract around it. Live-SOLAPI
-// wire-format correctness is EXTERNAL CREDENTIAL PENDING and out of scope.
+// Scope: this batch is explicitly API-credential-free -- everything here
+// exercises a mock transport (no env vars set, which is the real state of
+// this deployment today, resolves to BizM's own mock -- see
+// server/bizmAdapter.js's resolveBizmProviderState and
+// messagingTransport.js's resolveMessagingProviderName; BizM is the
+// default/selected provider as of the BizM batch) plus the full
+// persistence/retry/status/webhook contract around it. Live wire-format
+// correctness for either provider is EXTERNAL CREDENTIAL PENDING/UNVERIFIED
+// and out of scope here -- see tests/messaging-bizm.spec.mjs for BizM-
+// specific provider-selection/fallback-map coverage and
+// server/bizmAdapter.js's own header. SOLAPI's own fallback contract
+// (still fully implemented, just no longer the default) is exercised
+// explicitly further below by constructing a store with an explicit SOLAPI
+// transport.
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createApp } from '../server/index.js'
 import { auditLogPath } from '../server/audit.js'
-import { resolveSolapiProviderState } from '../server/solapiAdapter.js'
+import { resolveSolapiProviderState, createSolapiTransport } from '../server/solapiAdapter.js'
 import { createMessagingStore, hashToken } from '../server/messagingStore.js'
-import { resolveWebhookSecret, signWebhookBody } from '../server/solapiAdapter.js'
+import { resolveWebhookSecret, signWebhookBody } from '../server/messagingTransport.js'
 
 let passCount = 0
 function assert(name, cond) {
@@ -145,13 +153,17 @@ async function main() {
       }
       assert('retry: retrying an already-FAILED (attempts exhausted) message throws MessagingConflictError', exhaustedThrew)
 
-      // Automatic same-request fallback: phone ending '9999' fails
-      // KAKAO_ALIMTALK specifically (fallback-eligible), SMS succeeds.
+      // BizM batch: BizM (the default provider as of this batch) has no
+      // verified SMS/LMS fallback contract (see bizmAdapter.js's header),
+      // so a phone ending '9999' -- BizM's mock Alimtalk-unreachable
+      // sentinel -- goes straight to FAILED with no fallback attempt at
+      // all, unlike the pre-BizM-batch SOLAPI-default behavior (still
+      // verified separately just below).
       const q4 = await store.queueRevisitMessage({ visitId: 'visit-fallback-1', patientId: 'patient-3', phone: '01000009999', followUpToken: 'tok-c' })
-      assert('fallback: overall status is SENT (the SMS fallback attempt succeeded)', q4.record.status === 'SENT')
-      assert('fallback: channel is still KAKAO_ALIMTALK (the fallback never overwrites the primary channel)', q4.record.channel === 'KAKAO_ALIMTALK')
-      assert('fallback: fallback_channel is recorded as SMS', q4.record.fallback_channel === 'SMS')
-      assert('fallback: attempt_count is only 1 (one logical attempt, not two)', q4.record.attempt_count === 1)
+      assert('BizM default: no verified fallback -- phone ending 9999 goes straight to FAILED', q4.record.status === 'FAILED')
+      assert('BizM default: fallback_channel stays null (no fallback attempted)', q4.record.fallback_channel === null)
+      assert('BizM default: attempt_count is only 1 (fails closed on the first attempt, not retried)', q4.record.attempt_count === 1)
+      assert('BizM default: the record actually says BIZM (provider identity, not a leftover SOLAPI default)', q4.record.provider === 'BIZM')
 
       // Webhook contract.
       const q5 = await store.queueRevisitMessage({ visitId: 'visit-webhook-1', patientId: 'patient-4', phone: '01033334444', followUpToken: 'tok-d' })
@@ -204,6 +216,37 @@ async function main() {
       // q1, q3, q4, q5, q6 each created one distinct message file (q2 was a
       // deduped re-request of q1's own visit_id, no second file).
       assert('purgeAll: purges every message file this test created (5, not 6 -- q2 was a dedup of q1)', purgedCount === 5)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 1.4 (BizM batch): SOLAPI's own automatic same-request fallback
+     (Alimtalk -> SMS) is still fully implemented and still works exactly
+     as before -- it is simply no longer the DEFAULT provider (see the
+     BizM-default assertions in Part 1 above). Verified here by explicitly
+     constructing a store with an explicit SOLAPI transport (no env vars,
+     so it resolves to SOLAPI's own mock, PENDING_CREDENTIALS).
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-solapi-legacy-'))
+    try {
+      const solapiStore = createMessagingStore(dataRoot, { transport: createSolapiTransport({}) })
+      const solapiFallback = await solapiStore.queueRevisitMessage({
+        visitId: 'visit-solapi-fallback-1',
+        patientId: 'patient-solapi-1',
+        phone: '01000009999',
+        followUpToken: 'tok-solapi-fallback',
+      })
+      assert('SOLAPI legacy: overall status is SENT (the SMS fallback attempt succeeded)', solapiFallback.record.status === 'SENT')
+      assert(
+        'SOLAPI legacy: channel is still KAKAO_ALIMTALK (the fallback never overwrites the primary channel)',
+        solapiFallback.record.channel === 'KAKAO_ALIMTALK',
+      )
+      assert('SOLAPI legacy: fallback_channel is recorded as SMS', solapiFallback.record.fallback_channel === 'SMS')
+      assert('SOLAPI legacy: attempt_count is only 1 (one logical attempt, not two)', solapiFallback.record.attempt_count === 1)
+      assert('SOLAPI legacy: record.provider is SOLAPI', solapiFallback.record.provider === 'SOLAPI')
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }

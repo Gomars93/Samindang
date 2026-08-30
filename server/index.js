@@ -18,7 +18,7 @@ import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
 import { createMessagingStore, MessagingConflictError, MessagingNotFoundError } from './messagingStore.js'
-import { resolveWebhookSecret, verifyWebhookSignature } from './solapiAdapter.js'
+import { resolveWebhookSecret, verifyWebhookSignature } from './messagingTransport.js'
 import {
   activateVisit,
   clearActiveVisit,
@@ -101,9 +101,11 @@ export function createApp({
   // submission retention. See patientIdentityStore.js's header for the
   // scope/safety rules this store enforces.
   const patientIdentityStore = createPatientIdentityStore(path.join(resolvedDataDir, '..', 'crm-identity'))
-  // Quick Revisit outbound messaging (SOLAPI scaffold, API-credential-free
-  // today -- see solapiAdapter.js's resolveSolapiProviderState). Another
-  // sibling data dir, same reasoning as crm/ and crm-identity/ above: a
+  // Quick Revisit outbound messaging (BizM is the selected provider,
+  // API-credential-free today -- see bizmAdapter.js's
+  // resolveBizmProviderState / messagingTransport.js's provider
+  // selection). Another sibling data dir, same reasoning as crm/ and
+  // crm-identity/ above: a
   // MessageRecord is delivery-operational metadata, not a medical-record
   // submission, and must not be swept by store.js's submission retention.
   const messagingStore = createMessagingStore(path.join(resolvedDataDir, '..', 'messaging'))
@@ -152,6 +154,20 @@ export function createApp({
   const FOLLOW_UP_LINK_RE = /^https?:\/\/.+#follow-up=.+$/
   function isValidFollowUpLink(link) {
     return typeof link === 'string' && FOLLOW_UP_LINK_RE.test(link)
+  }
+  // BizM batch: a manual retry only re-supplies {phone, link} (see the
+  // /api/messages/:id/retry route below), never the raw token separately --
+  // the token is never persisted anywhere this route could re-read it from
+  // (messagingStore.js only ever keeps its SHA-256 hash), so it is parsed
+  // back out of the ALREADY-VALIDATED link itself (isValidFollowUpLink's
+  // own `#follow-up=` contract) purely to rebuild the `variables.
+  // followup_token` value BizM's Alimtalk template substitution needs (see
+  // bizmAdapter.js's header). Returns null if link doesn't match, though by
+  // the time this is called isValidFollowUpLink has always already
+  // confirmed it does.
+  function extractFollowUpTokenFromLink(link) {
+    const match = typeof link === 'string' ? link.match(/#follow-up=(.+)$/) : null
+    return match ? match[1] : null
   }
   function mapMessagingError(err) {
     if (err instanceof MessagingConflictError) return { status: 409, error: err.message }
@@ -739,8 +755,8 @@ export function createApp({
           )
         }
       } else if (parts[0] === 'api' && parts[1] === 'visits' && parts.length === 4 && parts[3] === 'messages' && req.method === 'POST') {
-        // Quick Revisit 발송: 이미 발급된 follow-up 링크를 SOLAPI(알림톡 우선,
-        // SMS/LMS 폴백)로 환자에게 전달한다. phone은 staff/doctor가 지금 막
+        // Quick Revisit 발송: 이미 발급된 follow-up 링크를 BizM(카카오 알림톡,
+        // SAMINDANG_FOLLOWUP_01 템플릿)으로 환자에게 전달한다. phone은 staff/doctor가 지금 막
         // Sigma 등 기존 EMR에서 직접 확인해 입력한 값 -- 이 서버는 전화번호를
         // 저장/조회하는 소스가 아니다(위 messagingContactCache 선언부 주석,
         // patientIdentityStore.js 헤더 참고). visit_id/patient_id/token/link은
@@ -775,13 +791,15 @@ export function createApp({
             bytes = sendJson(req, res, 400, { error: 'visit_id does not belong to patient_id' }, cors)
           } else {
             const text = buildRevisitMessageText(link)
-            messagingContactCache.set(visitId, { phone, text })
+            const variables = { followup_token: followUpToken }
+            messagingContactCache.set(visitId, { phone, text, variables })
             const { record, deduped } = await messagingStore.queueRevisitMessage({
               visitId,
               patientId,
               phone,
               followUpToken,
               text,
+              variables,
               primaryChannel,
             })
             status = deduped ? 200 : 201
@@ -831,9 +849,10 @@ export function createApp({
           } else {
             try {
               const text = buildRevisitMessageText(link)
+              const variables = { followup_token: extractFollowUpTokenFromLink(link) }
               const existing = await messagingStore.getMessage(id)
-              if (existing) messagingContactCache.set(existing.visit_id, { phone, text })
-              const record = await messagingStore.retryMessage(id, { phone, text })
+              if (existing) messagingContactCache.set(existing.visit_id, { phone, text, variables })
+              const record = await messagingStore.retryMessage(id, { phone, text, variables })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
               if (record.status !== 'QUEUED') messagingContactCache.delete(record.visit_id)
               bytes = sendJson(req, res, 200, record, cors)

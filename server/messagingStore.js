@@ -1,4 +1,7 @@
-// Quick Revisit outbound-message delivery-state store (SOLAPI scaffold).
+// Quick Revisit outbound-message delivery-state store. Provider-neutral --
+// see messagingTransport.js for how BizM (the clinic owner's selected
+// provider) vs SOLAPI (kept as non-default legacy code) is chosen; this
+// file never imports either adapter directly.
 //
 // A "message" here is exactly one attempt to hand a patient their revisit
 // follow-up link over SMS/Kakao Alimtalk, plus everything needed to track
@@ -42,7 +45,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { createSolapiTransport, FALLBACK_CHANNEL } from './solapiAdapter.js'
+import { createMessagingTransport, fallbackChannelMapForProvider } from './messagingTransport.js'
 
 const DEFAULT_MAX_ATTEMPTS = 4
 // Exponential backoff for automatic retries of a RETRYABLE failure:
@@ -114,7 +117,8 @@ function withLock(key, fn) {
 const TERMINAL_NON_RETRY_STATUSES = new Set(['SENT', 'DELIVERED', 'CANCELLED'])
 
 export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT_MAX_ATTEMPTS } = {}) {
-  const resolvedTransport = transport ?? createSolapiTransport()
+  const resolvedTransport = transport ?? createMessagingTransport()
+  const fallbackChannelMap = fallbackChannelMapForProvider(resolvedTransport.provider)
 
   async function ensureDirs() {
     await mkdir(messagingDir(baseDir), { recursive: true })
@@ -191,7 +195,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // the dedup key itself, so a second concurrent call for the same
   // visit_id+purpose always waits for the first to finish creating (or
   // reusing) the record before it ever reads.
-  async function queueRevisitMessage({ visitId, patientId, phone, followUpToken, text, primaryChannel = 'KAKAO_ALIMTALK' }) {
+  async function queueRevisitMessage({ visitId, patientId, phone, followUpToken, text, variables, primaryChannel = 'KAKAO_ALIMTALK' }) {
     await ensureDirs()
     const dedupKey = deriveDedupKey(visitId, 'REVISIT_LINK')
     return withLock(`dedup:${dedupKey}`, async () => {
@@ -216,7 +220,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
         follow_up_token_hash: hashToken(followUpToken),
         channel: primaryChannel,
         fallback_channel: null,
-        provider: 'SOLAPI',
+        provider: resolvedTransport.provider ?? 'SOLAPI',
         provider_message_id: null,
         status: 'QUEUED',
         attempt_count: 0,
@@ -239,7 +243,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       // caller from the same one-time link this record's
       // follow_up_token_hash is a hash of -- see server/index.js's
       // buildRevisitMessageText) through to attemptSend.
-      const sent = await attemptSend(record.message_id, { phone, text })
+      const sent = await attemptSend(record.message_id, { phone, text, variables })
       return { record: sent ?? record, deduped: false }
     })
   }
@@ -255,7 +259,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // persisted, and server/index.js's messagingContactCache for how the
   // caller keeps `{phone, text}` around in-process (never on disk) for the
   // retry sweep. Manual retryMessage() calls always re-supply both fresh.
-  async function attemptSend(messageId, { phone, text }) {
+  async function attemptSend(messageId, { phone, text, variables }) {
     return withLock(`message:${messageId}`, async () => {
       const record = await getMessage(messageId)
       if (!record) throw new MessagingNotFoundError('message not found')
@@ -274,11 +278,11 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
       record.last_attempt_at = new Date().toISOString()
       await atomicWrite(messagePath(baseDir, messageId), record)
 
-      let result = await resolvedTransport.send({ to: phone, channel: record.channel, text })
+      let result = await resolvedTransport.send({ to: phone, channel: record.channel, text, variables })
 
-      if (!result.ok && result.fallbackEligible && FALLBACK_CHANNEL[record.channel] && !record.fallback_channel) {
-        const fallbackChannel = FALLBACK_CHANNEL[record.channel]
-        const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text })
+      if (!result.ok && result.fallbackEligible && fallbackChannelMap[record.channel] && !record.fallback_channel) {
+        const fallbackChannel = fallbackChannelMap[record.channel]
+        const fallbackResult = await resolvedTransport.send({ to: phone, channel: fallbackChannel, text, variables })
         record.fallback_channel = fallbackChannel
         if (fallbackResult.ok) {
           result = fallbackResult
@@ -324,7 +328,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // refuses once max_attempts is exhausted or the message already reached
   // a terminal state -- a human retry cannot bypass the attempt cap, only
   // skip the WAIT between attempts.
-  async function retryMessage(messageId, { phone, text }) {
+  async function retryMessage(messageId, { phone, text, variables }) {
     const record = await getMessage(messageId)
     if (!record) throw new MessagingNotFoundError('message not found')
     if (TERMINAL_NON_RETRY_STATUSES.has(record.status)) {
@@ -333,7 +337,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
     if (record.attempt_count >= record.max_attempts) {
       throw new MessagingConflictError('max attempts already reached')
     }
-    return attemptSend(messageId, { phone, text })
+    return attemptSend(messageId, { phone, text, variables })
   }
 
   // Cancels a message that is currently QUEUED -- either never attempted
@@ -406,7 +410,7 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
           }
           continue
         }
-        const sent = await attemptSend(record.message_id, { phone: contact.phone, text: contact.text })
+        const sent = await attemptSend(record.message_id, { phone: contact.phone, text: contact.text, variables: contact.variables })
         try {
           onSettled?.(record.visit_id, sent.status)
         } catch {

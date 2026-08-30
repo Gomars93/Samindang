@@ -80,7 +80,7 @@ function createMockSolapiTransport() {
     }
     return { ok: true, providerMessageId: `mock_${randomBytes(12).toString('hex')}`, channelUsed: channel }
   }
-  return { send, state: 'MOCK' }
+  return { send, state: 'MOCK', provider: 'SOLAPI' }
 }
 
 /**
@@ -163,7 +163,7 @@ function createLiveSolapiTransport({ apiKey, apiSecret, senderNumber, alimtalkPf
     }
     return { ok: true, providerMessageId, channelUsed: channel }
   }
-  return { send, state: 'LIVE' }
+  return { send, state: 'LIVE', provider: 'SOLAPI' }
 }
 
 /** Single entry point every caller uses. Never constructs a transport
@@ -210,7 +210,18 @@ export const FALLBACK_CHANNEL = { KAKAO_ALIMTALK: 'SMS' }
 // real provider callback.
 const MOCK_WEBHOOK_SECRET = 'mock-webhook-secret-never-use-live'
 
+// Provider-neutral generalization (BizM batch): SAMINDANG_MESSAGING_WEBHOOK_SECRET
+// is the current, provider-agnostic name -- checked first regardless of
+// which provider (BizM or SOLAPI) is actually selected, since this
+// signature scheme is this SERVER's own choice of how to authenticate an
+// inbound callback (see bizmAdapter.js's header), not something either
+// provider dictates. SOLAPI_WEBHOOK_SECRET is kept as a fallback purely for
+// an already-deployed environment that set the old name before this
+// generalization; a fresh deployment should only ever set the new name.
 export function resolveWebhookSecret(env = process.env) {
+  if (typeof env.SAMINDANG_MESSAGING_WEBHOOK_SECRET === 'string' && env.SAMINDANG_MESSAGING_WEBHOOK_SECRET.trim() !== '') {
+    return env.SAMINDANG_MESSAGING_WEBHOOK_SECRET
+  }
   return typeof env.SOLAPI_WEBHOOK_SECRET === 'string' && env.SOLAPI_WEBHOOK_SECRET.trim() !== ''
     ? env.SOLAPI_WEBHOOK_SECRET
     : MOCK_WEBHOOK_SECRET

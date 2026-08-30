@@ -54,6 +54,7 @@ import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
+import { buildPublicFollowUpLink } from '../lib/publicFollowUpUrl'
 import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
 import {
@@ -2233,8 +2234,14 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     }
   }
 
-  function patientFollowUpLink(token: string): string {
-    return `${window.location.origin}${window.location.pathname}#follow-up=${token}`
+  // BizM batch: no longer derived from window.location.origin/pathname --
+  // see src/lib/publicFollowUpUrl.ts's header for why a stable, explicitly
+  // configured base is required for a real BizM Alimtalk template button
+  // URL. Returns null when that base is not configured; every call site
+  // below must render an explicit "설정되지 않음" state rather than ever
+  // falling back to a guessed URL.
+  function patientFollowUpLink(token: string): string | null {
+    return buildPublicFollowUpLink(token)
   }
 
   /* ---------- Round 8: clinic tablet stations (reception surface) ---------- */
@@ -2305,6 +2312,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   async function handleCopyPatientLink() {
     if (!issuedSession) return
     const link = patientFollowUpLink(issuedSession.token)
+    if (link === null) {
+      setLinkCopyStatus('error')
+      return
+    }
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(link)
@@ -2674,13 +2685,29 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                 직전 방문의 추적 항목(최대 3개)을 바탕으로 환자용 1회용 링크를 발급합니다.
               </p>
             </>
-          ) : (
+          ) : (() => {
+            // Computed once here (not re-called at every use site below) so
+            // the QR/code display, copy-link button, and MessagingPanel's
+            // `link` prop can never disagree on whether the public base is
+            // configured -- see src/lib/publicFollowUpUrl.ts's header.
+            const followUpLink = patientFollowUpLink(issuedSession.token)
+            return (
             <div className="doctor__revisitSession__issued">
               <p>
                 환자용 링크 (만료: {new Date(issuedSession.expiresAt).toLocaleString('ko-KR')})
               </p>
-              {deliveryMode === 'PERSONAL_QR' && <FollowUpQrCode url={patientFollowUpLink(issuedSession.token)} />}
-              <code className="doctor__revisitSession__link">{patientFollowUpLink(issuedSession.token)}</code>
+              {followUpLink === null ? (
+                <p className="doctor__revisitSession__error" role="alert">
+                  공개 후속 링크 기본 URL이 설정되지 않았습니다 — 관리자에게
+                  VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL 환경변수 설정을 요청하세요. 그때까지는 링크
+                  복사·QR·문자/알림톡 발송을 사용할 수 없습니다.
+                </p>
+              ) : (
+                <>
+                  {deliveryMode === 'PERSONAL_QR' && <FollowUpQrCode url={followUpLink} />}
+                  <code className="doctor__revisitSession__link">{followUpLink}</code>
+                </>
+              )}
               {issuedSession.targetCount === 0 && (
                 <p className="doctor__revisitSession__hint">
                   이 환자는 이전 방문에 기록된 추적 항목이 없습니다 — 재확인 항목 없이 전반적 변화 · 새로운 증상 ·
@@ -2710,16 +2737,17 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                   무효화
                 </button>
               </div>
-              {selectedRecord?.patient_id && (
+              {selectedRecord?.patient_id && followUpLink !== null && (
                 <MessagingPanel
                   visitId={issuedSession.visitId}
                   patientId={selectedRecord.patient_id}
                   followUpToken={issuedSession.token}
-                  link={patientFollowUpLink(issuedSession.token)}
+                  link={followUpLink}
                 />
               )}
             </div>
-          )}
+            )
+          })()}
           {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}
 
           {/*

@@ -131,3 +131,7 @@ tests/.today-queue-bundle.cjs
 
 # esbuild bundle used by tests/save-conflict.spec.mjs (regenerated, not source)
 tests/.conflict-banner-bundle.cjs
+
+# esbuild bundles used by tests/public-followup-url.spec.mjs (regenerated, not source)
+tests/.public-followup-url-configured-bundle.mjs
+tests/.public-followup-url-unconfigured-bundle.mjs

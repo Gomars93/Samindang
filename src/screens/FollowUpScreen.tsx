@@ -179,7 +179,15 @@ export function FollowUpScreen({
     const result = await submitFollowUpSession(activeToken, answers)
     if (!result.ok) {
       setScreen('form')
-      setSubmitError(result.error)
+      // POST .../follow-up-session/:token answers a no-longer-usable token
+      // (e.g. expired between load and submit) with the same raw
+      // INVALID/EXPIRED/CONSUMED/INVALIDATED enum this screen's own
+      // UNAVAILABLE_MESSAGE map already translates for the initial-load
+      // case -- reuse it here too instead of surfacing the bare enum
+      // string to the patient. A real network/timeout message (already a
+      // Korean sentence, never one of these four keys) passes through
+      // unchanged.
+      setSubmitError(UNAVAILABLE_MESSAGE[result.error] ?? result.error)
       return
     }
     // 프라이버시: 제출 성공 즉시 답변을 메모리에서 비운다(기존 문진 privacy

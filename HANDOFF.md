@@ -3826,9 +3826,136 @@ suppression OFF, 신원 원칙(랜덤 UUID + Sigma chart_no 1:1, RRN 없음,
 `test:all`(crm-schema/crm-store/identity-link-e2e 포함)로 그대로
 유지 확인.
 
+## Completed — BizM 메시징 배치 (진행 중, 이번 세션)
+
+**목표(오너 지시, PR #24 코멘트)**: SOLAPI 전용으로 짜여 있던 Quick
+Revisit 발송 파이프라인을 provider-neutral하게 일반화하고, 오너가 실제로
+선택·등록 중인 **BizM(비즈엠) Alimtalk**용 transport adapter를 구현하며,
+BizM 템플릿 버튼 URL이 이후 바뀌지 않도록 안정적인 공개 후속 문진 URL
+계약을 확립. 실제 라이브 발송/자격증명 없이, 코드 측 작업만 이번
+배치 범위.
+
+**Provider-neutral transport(A)**: `server/messagingTransport.js`(신규)가
+단일 선택 지점 — `SAMINDANG_MESSAGING_PROVIDER=solapi`가 없으면 BizM이
+기본값. 두 adapter(`server/bizmAdapter.js` 신규, `server/solapiAdapter.js`
+유지)가 동일한 `{ send, state, provider }` 인터페이스를 구현해
+`messagingStore.js`는 어느 provider가 활성인지 전혀 몰라도 됨. BizM의
+실제 wire 포맷(요청 필드/인증/템플릿 변수 payload/콜백 시그니처)은 이
+샌드박스에서 bizmsg.kr/kakaoenterprise.com 등으로 egress가 전부 차단되어
+검증 불가 — `bizmAdapter.js` 헤더에 조사한 두 개의 상충하는 서드파티
+오픈소스 SDK와, 무엇이 검증되지 않았는지를 명시. 확인 불가능한 부분(특히
+SMS/LMS 폴백 존재 여부)은 fail-closed(BizM `FALLBACK_CHANNEL`은 빈 맵)로
+처리. SOLAPI는 삭제하지 않고 명시적 legacy/opt-in 코드로 유지(기존
+mock 기반 테스트 전부 그대로 통과).
+
+**버그 발견 및 수정**: 일반화 과정에서 `messagingStore.js`가
+`fallbackChannelMap`을 `resolveFallbackChannelMap()`(인자 없이,
+`process.env`를 독립적으로 재조회)으로 계산하고 있어, 테스트가 명시적으로
+`{transport: createSolapiTransport({})}`를 주입해도 실제 활성 provider
+(BizM 기본값)의 빈 폴백 맵을 잘못 사용하는 버그를 발견 — 새로 추가한
+`fallbackChannelMapForProvider(providerName)`(주입된 transport 자신의
+`.provider` 필드를 신뢰)로 교체해 수정, `tests/messaging.spec.mjs`의
+SOLAPI legacy 폴백 회귀 테스트로 확인.
+
+**안정적 공개 후속 문진 URL(B)**: `src/lib/publicFollowUpUrl.ts`(신규)가
+`patientFollowUpLink()`의 유일한 canonical builder. `window.location`
+기반 추정을 프로덕션에서 완전히 제거 — `VITE_SAMINDANG_PUBLIC_FOLLOWUP_
+BASE_URL`이 설정되지 않으면 프로덕션에서는 **명시적으로 `null`을
+반환**(잘못된 origin으로 조용히 대체하지 않음), dev 서버에서만
+`window.location` fallback 유지. `#follow-up=<token>` 라우트 계약은
+그대로. `DoctorView.tsx`는 링크가 `null`이면 QR/복사/메시지 발송 UI를
+숨기고 "설정되지 않음" 경고를 보여줌(원장에게 거짓 성공 표시 없음).
+
+**`/followup/` 리허설 배포**: `.github/workflows/doctor-workspace-
+preview.yml`에 기존 "라이브 root 미러 + 하위경로 추가" 기법을 재사용해
+`/followup/` 빌드를 추가(서버 URL 미설정 — 실제 백엔드 절대 연결 안 됨,
+NO-PHI). BizM 템플릿 개발/리허설 전용, 프로덕션 아님.
+
+**실제 브라우저 QA로 발견·수정한 2번째 결함**: `src/lib/followUpClient.ts`의
+공용 `request()` 헬퍼가 모든 비-2xx 응답을 무조건 일반 실패로 취급해
+본문을 버리고 있었음 — 그런데 서버는 존재하지 않는/손상된 토큰을 HTTP
+404 + `{status:'INVALID'}`로 응답(만료/사용됨/무효화는 HTTP 200이라
+문제 없었음). 그 결과 `FollowUpScreen.tsx`의 `UNAVAILABLE_MESSAGE.INVALID`
+분기가 도달 불가능했고, 잘못된/오타난 링크를 연 환자는 "유효하지 않은
+링크입니다" 대신 막연한 "연결할 수 없습니다"를 보게 됨 — Playwright로
+실제 서버+토큰 발급까지 재현해 발견. `getFollowUpSession`을 전용
+fetch 경로로 분리해 HTTP 상태와 무관하게 인식 가능한 `status` enum이
+있으면 실데이터로 취급하도록 수정(POST 제출 실패 경로는 건드리지
+않음 — 진짜 실패로 유지하되, `FollowUpScreen.tsx`가 동일
+`UNAVAILABLE_MESSAGE` 맵으로 raw enum 문자열 대신 한국어 메시지를
+보여주도록 보강). 수정 후 실제 브라우저(모바일 뷰포트, 로컬 서버 +
+`VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL`로 설정한 별도 origin)로
+valid→제출→URL/토큰 scrub→새로고침(미부활)→뒤로가기(미노출), consumed,
+invalid 네 시나리오 모두 재확인 — 전부 통과. `/followup/` CI 동등
+아티팩트(서버 미설정)도 모바일 뷰포트에서 가로 오버플로 없음, 정직한
+연결 실패 상태, 토큰 미노출 확인.
+
+**검증**: `npx tsc -b --force`(0 errors), `npm run build`/`build:preview`
+(둘 다 성공), `npm run test:all`(exit 0, `tests/messaging.spec.mjs` 98개
++ `tests/messaging-bizm.spec.mjs` 25개 + `tests/public-followup-url.spec.mjs`
+10개 신규/갱신 assertion 포함 전부 통과), `tablet core` pytest 80/80,
+`git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+0 lines(FROZEN 유지).
+
+**메시징 파이프라인 안전성/durability 재검토(완료, 이번 세션)**:
+오너 지시 Section C의 각 항목을 코드 레벨로 재확인.
+- **cross-patient 누수**: `POST /api/visits/:id/messages`가 `visitRecord.
+  patient_id !== patientId`를 이미 검사(round 18 이전 closing-review
+  수정, 이번 배치로 변경 없음) — 재확인만.
+- **idempotency/dedup**: `queueRevisitMessage`의 check-then-create가
+  `dedup:${dedupKey}` 락으로 전체 원자화되어 있음(기존 수정, 변경 없음)
+  — 재확인만.
+- **재시작 durability**: `messagingContactCache`(phone/text/variables)는
+  의도적으로 process-local, 재시작 시 초기화 — 재시작 후 due한 자동
+  재시도는 `recipient_unresolvable`로 fail-closed, 수동 재시도로 staff가
+  복구. 전화번호를 저장하지 않고는 닫을 수 없는 구조적 트레이드오프이므로
+  **HUMAN DECISION REQUIRED로 그대로 유지**(위 Next Recommended Action
+  0번, 이번 배치가 새로 만든 gap 아님 — BizM 일반화 이전부터 동일).
+- **콜백 replay/out-of-order**: `handleDeliveryWebhook`은 `current.status
+  !== 'SENT'`일 때만 no-op(늦게 도착한 콜백이 이미 재시도/폴백으로 대체된
+  상태를 덮어쓰지 않음), 미지의 `provider_message_id`는 항상 no-op(에러
+  아님) — 재확인만, 변경 없음.
+- **provider timeout/5xx/429 분류**: `bizmAdapter.js`의 live `send()`가
+  429/5xx를 retryable로, network error를 retryable로, 파싱 실패/누락된
+  message id를 retryable로 정확히 분류함을 확인. SOLAPI와 동일하게 fetch
+  자체에 명시적 애플리케이션 레벨 타임아웃은 없음(기존부터의 속성, 이번
+  배치가 만든 gap 아님 — 별도 후속 과제로 남김, 오너 승인 필요).
+- **폴백 이중발송 방지**: BizM `FALLBACK_CHANNEL`은 빈 맵이라 폴백 자체가
+  전혀 시도되지 않음(이중발송 불가능). **실제 버그 발견 및 수정**:
+  `messagingStore.js`가 `fallbackChannelMap`을 `resolveFallbackChannelMap()`
+  (인자 없이 `process.env` 독립 재조회)로 계산해, 테스트가 명시적으로
+  SOLAPI transport를 주입해도 실제 활성 provider(BizM 기본값)의 빈 폴백
+  맵을 잘못 적용하는 버그 — `fallbackChannelMapForProvider(resolvedTransport.
+  provider)`로 교체해 수정(위 "BizM 메시징 배치" 섹션에도 기록됨).
+- **persistence/audit/purge integrity**: `safeAudit` 호출은 전부
+  `{event, visit_id, actor}`만 남기고 `phone`/`text`/`variables`(raw
+  token 포함)는 어디에도 로그/감사되지 않음을 확인. `purgeAll()`은
+  변경 없음.
+- **secret hygiene**: `BIZM_API_KEY`/`BIZM_SENDER_KEY`는 fetch
+  Authorization 헤더에만 쓰이고 어디에도 `console.log`되지 않음을 확인
+  (grep으로 전수 확인).
+- **raw phone 미저장**: `MessageRecord`는 여전히 phone 필드 자체가 타입에
+  없음(구조적 보장, 이번 배치로 변경 없음).
+- **template/content mismatch 오류를 staff에게 명확히 노출**: **실제 gap
+  발견 및 수정**: `MessageRecord.error_code`는 이미 sanitized(원본
+  provider 응답/PHI 없음)로 설계돼 있었지만 `MessagingPanel.tsx`가 이를
+  전혀 렌더링하지 않아, staff가 "발송 실패"만 보고 원인(예:
+  `provider_http_400` vs `bizm_channel_unverified` vs 일시적 네트워크
+  오류)을 구분할 수 없었음 — FAILED 상태일 때 `error_code`를 그대로
+  노출하도록 추가.
+
+두 건의 실제 수정(`fallbackChannelMapForProvider` 배선, `error_code`
+노출) 모두 `npx tsc -b --force`/`npm run build`/`npm run test:all`
+(exit 0)/`tablet core` pytest 80/80/FROZEN 0 lines로 재검증 완료.
+
+**아직 남은 작업(다음 세션)**: 독립 `model:opus` 클로징 리뷰(실제 호출
+증거 필요) → 발견 사항 수정 → 재검토 루프 → commit/push. 이 세션은 아직
+commit하지 않았다 — 위 커밋되지 않은 변경사항은 다음 세션에서 완료 후
+한 번에 커밋/푸시할 예정.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`7930cc1`.
+`7930cc1` — 위 BizM 메시징 배치는 아직 미커밋(작업 트리에만 존재).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

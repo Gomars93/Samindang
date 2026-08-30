@@ -58,11 +58,40 @@ export type FollowUpSessionPublicView = {
 
 type PublicGetWire = { status: FollowUpSessionPublicState; targets?: Array<{ id: string; label: string }>; expires_at?: string }
 
-export function getFollowUpSession(token: string): Promise<FollowUpClientResult<FollowUpSessionPublicView>> {
-  return request<PublicGetWire>(`/api/follow-up-session/${encodeURIComponent(token)}`).then((result) => {
-    if (!result.ok) return result
-    return { ok: true, data: { status: result.data.status, targets: result.data.targets, expiresAt: result.data.expires_at } }
-  })
+const VALID_STATES: ReadonlySet<string> = new Set(['ACTIVE', 'EXPIRED', 'CONSUMED', 'INVALIDATED', 'INVALID'])
+
+// GET /api/follow-up-session/:token deliberately answers an unresolvable
+// token with HTTP 404 + { status: 'INVALID' } (see server/index.js), not
+// just a plain 200 -- INVALID/EXPIRED/CONSUMED/INVALIDATED are all expected,
+// well-defined outcomes of this endpoint, differing only by HTTP status
+// code, not by shape. The shared `request()` helper above treats any
+// non-2xx as a generic failure and discards the parsed body, which made
+// FollowUpScreen's own UNAVAILABLE_MESSAGE.INVALID branch unreachable for
+// exactly the case that matters most (a mistyped/garbage/never-issued
+// link) -- it always fell through to the generic "cannot connect" screen
+// instead. This dedicated path treats any body carrying a recognized
+// `status` enum value as real data regardless of HTTP status; only a
+// response with no such body (a genuine network/timeout/5xx) is a failure.
+export async function getFollowUpSession(token: string): Promise<FollowUpClientResult<FollowUpSessionPublicView>> {
+  if (!isFollowUpServerConfigured()) return { ok: false, error: '서버가 설정되지 않았습니다.', kind: 'other' }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const res = await fetch(`${BASE_URL}/api/follow-up-session/${encodeURIComponent(token)}`, {
+      signal: controller.signal,
+      headers: { 'content-type': 'application/json' },
+    })
+    const body: PublicGetWire | null = await res.json().catch(() => null)
+    if (body && typeof body.status === 'string' && VALID_STATES.has(body.status)) {
+      return { ok: true, data: { status: body.status, targets: body.targets, expiresAt: body.expires_at } }
+    }
+    return { ok: false, error: `오류 (${res.status})`, kind: 'other' }
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'AbortError' ? '요청 시간 초과' : '서버에 연결할 수 없습니다.'
+    return { ok: false, error: msg, kind: 'network' }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export type FollowUpSessionAnswers = {

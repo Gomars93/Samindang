@@ -11,10 +11,14 @@
  * revisit link to the patient" record; it is not a clinical decision and
  * carries no PAIN_01/Question/showIf semantics.
  *
- * Provider: SOLAPI, chosen per the approved plan as the messaging
- * provider, with Kakao Alimtalk as the primary channel and SMS/LMS as an
- * automatic fallback when Alimtalk delivery is not possible (unregistered
- * KakaoTalk number, template rejected, etc.).
+ * Provider: BizM (비즈엠), the clinic owner's actually-selected messaging
+ * provider (see server/bizmAdapter.js's header for exactly which parts of
+ * its wire format are verified vs a best-effort unverified guess), Kakao
+ * Alimtalk only -- BizM's own SMS/LMS fallback contract is unverified and
+ * therefore not wired (see bizmAdapter.js). SOLAPI is kept as a second,
+ * non-default provider (server/solapiAdapter.js) whose own SMS/LMS
+ * automatic-fallback behavior remains as originally built. See
+ * server/messagingTransport.js for how the active provider is selected.
  *
  * `patient_id` here is the same server-minted randomUUID identity concept
  * used throughout this codebase (see server/visitStore.js), matching how
@@ -31,10 +35,11 @@
 /** Kakao Alimtalk is always tried first; SMS/LMS is the automatic fallback. */
 export type MessageChannel = 'KAKAO_ALIMTALK' | 'SMS' | 'LMS'
 
-/** Only one provider is wired today. A literal (not a wider string) keeps a
- *  future second provider from being accepted anywhere this type is used
- *  without an explicit code change. */
-export type MessageProvider = 'SOLAPI'
+/** BizM is the selected/default provider; SOLAPI is kept as a second,
+ *  non-default provider (see server/messagingTransport.js). A literal union
+ *  (not a wider string) keeps a future third provider from being accepted
+ *  anywhere this type is used without an explicit code change. */
+export type MessageProvider = 'BIZM' | 'SOLAPI'
 
 /**
  * Lifecycle, mirroring CrmTaskStatus's "one written status, no derived
@@ -113,18 +118,21 @@ export type MessageRecord = {
   error_code: string | null
 }
 
-/** What server/solapiAdapter.js's transport interface returns for a single
- *  send attempt. Deliberately narrow -- callers only ever branch on `ok`
- *  and (on failure) `retryable`; the raw provider response is never
- *  threaded back up to the HTTP layer or the audit log. */
+/** What either provider adapter's transport interface returns for a single
+ *  send attempt (see server/messagingTransport.js). Deliberately narrow --
+ *  callers only ever branch on `ok` and (on failure) `retryable`; the raw
+ *  provider response is never threaded back up to the HTTP layer or the
+ *  audit log. */
 export type SendResult =
   | { ok: true; providerMessageId: string; channelUsed: MessageChannel }
   | { ok: false; errorCode: string; retryable: boolean; fallbackEligible: boolean }
 
-/** The three states server/solapiAdapter.js's transport can be in. Mirrors
- *  src/crm/types.ts's ReservationSuppressionState pattern: the schema and
- *  logic exist and are fully exercised end-to-end via MOCK, but nothing
- *  can silently reach a real send without an explicit, deliberate move to
- *  LIVE (which additionally requires real credentials to even construct
- *  the live transport -- see resolveSolapiProviderState()). */
-export type SolapiProviderState = 'PENDING_CREDENTIALS' | 'MOCK' | 'LIVE'
+/** The three states either provider adapter's transport can be in (see
+ *  server/bizmAdapter.js's resolveBizmProviderState / solapiAdapter.js's
+ *  resolveSolapiProviderState). Mirrors src/crm/types.ts's
+ *  ReservationSuppressionState pattern: the schema and logic exist and are
+ *  fully exercised end-to-end via MOCK, but nothing can silently reach a
+ *  real send without an explicit, deliberate move to LIVE (which
+ *  additionally requires real credentials to even construct the live
+ *  transport). */
+export type MessagingProviderState = 'PENDING_CREDENTIALS' | 'MOCK' | 'LIVE'

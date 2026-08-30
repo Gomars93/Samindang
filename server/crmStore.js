@@ -701,7 +701,7 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
       if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
 
       const tasks = await listTasksByEpisode(course.episode_id, now)
-      const linked = tasks.filter((t) => t.source_id === course_id && t.task_type === 'ROUTINE')
+      const linked = tasks.filter((t) => t.source_type === 'MEDICATION_COURSE' && t.source_id === course_id && t.task_type === 'ROUTINE')
       const originalById = new Map(linked.map((t) => [t.task_id, t]))
       const updatedCourseSnapshot = { ...course, medication_start_at }
       const { superseded, recalculated } = recalculateMedicationTasksOnStartShift(tasks, updatedCourseSnapshot, () =>

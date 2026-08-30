@@ -113,6 +113,17 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setLoadError(null)
     setActionError(null)
     setBusy(false)
+    // 2nd closing-review finding (MEDIUM): these four draft fields were only
+    // ever cleared on a successful handleCreateCourse -- switching patients
+    // mid-draft (without submitting) left them holding the PREVIOUS
+    // patient's typed dates, invisible because the form itself closes here.
+    // Opening a fresh draft for the new patient then silently pre-fills
+    // with stale dates, one save away from writing one patient's medication
+    // dates onto another's course record.
+    setNewPrescribedAt('')
+    setNewDispensedAt('')
+    setNewStartAt('')
+    setNewDurationDays('')
     setShowNewCourseForm(false)
     setNewCourseSourceId('')
     setCheckDraftByCourse({})
@@ -413,6 +424,10 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
                 onClick={() => {
                   setShowNewCourseForm(false)
                   setNewCourseSourceId('')
+                  setNewPrescribedAt('')
+                  setNewDispensedAt('')
+                  setNewStartAt('')
+                  setNewDurationDays('')
                 }}
                 disabled={busy}
               >

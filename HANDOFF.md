@@ -4721,12 +4721,70 @@ test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
 pytest 80/80, FROZEN diff 0 lines — 전부 통과. push 완료. 2차 리뷰도
 MEDIUM을 발견했으므로 3차 독립 클로징 리뷰가 필요 — 다음 단계.
 
+**3차 독립 `model:opus` 클로징 리뷰(완료, `e067c94` 대상) + 수정(`898ccdc`)**:
+실제 fresh subagent 호출(약 109k 토큰, 24 tool call, ~7분)로 `e067c94`
+검수 — 이번엔 명시적으로 "reset 블록이 정말 완전한지, 아니면 세
+번째로 빠진 게 있는지"를 소스에서 직접 재도출(prior 두 리뷰의 목록을
+신뢰하지 않고)하도록 지시. **결론: reset 블록의 핵심 질문(16개
+useState 전부 리셋되는지)은 이제 실제로 완전함 — 수동 열거와 기계적
+diff 두 가지 독립적 방법으로 확인, `missing: []`.** 그러나 그 완전성을
+**증명하는 테스트가 없었다**는 점과, 이번 라운드 자체의 NIT가 만든
+회귀, 그리고 patient 전환과 무관한 same-patient stale-draft 결함
+2건을 찾음. **판정: NOT CLEAN** — MEDIUM(테스트 품질) 1, LOW 4, NIT 2.
+
+1. **MEDIUM (수정)**: 1·2차 리뷰가 각각 다른 필드(busy, 4개 draft
+   필드)를 놓친 이유 — reset 블록이 "완전하다"는 걸 증명하는 테스트가
+   한 번도 없었고, 각 라운드는 자기가 찾은 필드만 pin했음. **수정**:
+   모든 `useState` 선언에서 setter 이름을 직접 추출해 reset 블록과
+   diff하는 테스트로 교체 — 17번째 필드가 나중에 추가되고 reset이
+   안 되면 즉시 실패(4차 리뷰를 기다릴 필요 없음). 새 코스 폼의
+   취소 버튼도 4개 필드를 지우는지 별도로 검증하는 테스트 추가(이
+   절반만 되돌려도 기존 assertion 전부 통과했었음 — 실제로 확인됨).
+2. **LOW (수정)**: 2차 리뷰의 "`.then`/`.finally` 총 개수 고정" 수정이
+   콜백 파라미터 이름만 바꿔도(`(res) =>` 등) 무력화됨을 실제로 확인
+   — 카운트도 안 움직이고 unguarded completion point도 추가됨.
+   **수정**: 특정 콜백 형태가 아니라 `.then(`/`.finally(` 토큰 자체를
+   세도록 변경, `.catch(`/`await`가 0개인지도 pin(둘 다 기존
+   `.then` 형태 assertion으로는 안 보임).
+3. **LOW (수정)**: busy-reset assertion이 effect-body 스코프에서 파일
+   전체 매칭으로 회귀함 — 재추출해서 원래대로 복구.
+4. **LOW (자체 유발, 수정)**: `e067c94`의 "일관성" NIT가
+   `shiftMedicationCourseStartStored`의 `linked` 필터에 `source_type`
+   을 추가했지만, 같은 데이터를 쓰는
+   `recalculateMedicationTasksOnStartShift`(`medicationCourse.ts`)의
+   병렬 필터는 안 바꿔서 두 집합이 갈라짐 — `superseded`는
+   느슨한 집합에서, `originalById`는 이제 좁아진 집합에서 나오므로,
+   한쪽에만 있는 task가 `t !== originalById.get(t.task_id)`에서
+   항상 true가 되어 실제로는 안 바뀐 DONE task가 "superseded"로
+   잘못 분류될 수 있었음(DONE task immutability 위반). **수정**:
+   `medicationCourse.ts:38`과 정확히 일치하도록 되돌림.
+5. **LOW (수정)**: 복용 시작일 변경 draft가 `e067c94`가 새 코스 폼에서
+   고친 것과 같은 "닫아도 안 지워지는 draft" 패턴을 그대로 갖고
+   있었음 — 단, patient 전환 없이 같은 환자 안에서. `<details>`를
+   접었다가 나중에 다시 펼치면 입력했다가 마음을 바꾼 날짜가 그대로
+   남아있고 저장 버튼도 이미 활성화됨. **수정**: disclosure가 닫힐
+   때(열릴 때가 아니라 — 실수로 접혔다 다시 열어도 작업 중이던 값은
+   안 날아가도록) draft를 지움.
+6. **NIT (수정)**: 확인 작업 예약의 사유 칩(chip)에는 draft를 버리는
+   방법이 아예 없었음 — 잘못 누른 칩이 세션 내내 그대로 남음.
+   **수정**: 이미 활성화된 칩을 다시 누르면 draft를 지우도록.
+
+**검증(`898ccdc` 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:medication-course` 57/57, `npm run test:medication-course-ui`
+14/14(신규 2개 포함), `npm run test:audit-registry` 106/106, `npm run
+test:crm-schema` 95/95(되돌린 필터를 실제로 사용하는 스펙), `npm run
+test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, FROZEN diff 0 lines — 전부 통과. push 완료.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `e067c94` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+HEAD: `898ccdc` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
 검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1차 독립 클로징 리뷰
-수정(`d8e66d7`) + 2차 독립 클로징 리뷰 수정(`e067c94`)까지 push 완료.
-3차 독립 `model:opus` 클로징 리뷰 대기 중.
+수정(`d8e66d7`) + 2차 독립 클로징 리뷰 수정(`e067c94`) + 3차 독립
+클로징 리뷰 수정(`898ccdc`)까지 push 완료. 3차 리뷰가 핵심 메커니즘
+(reset 블록 완전성)은 두 가지 독립 방법으로 확인해 확정했다고 명시
+— 다음 라운드는 이번 라운드 자체의 새 변경(테스트의 파생 로직,
+crmStore 되돌림, 두 UX 수정)에 집중하는 4차 독립 클로징 리뷰.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4767,16 +4825,20 @@ HEAD: `e067c94` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `e067c94` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항(`0d5464b`) + 1차 독립 클로징 리뷰 수정(`d8e66d7`) + 2차 독립
-클로징 리뷰 수정(`e067c94`)까지 완료, 3차 독립 `model:opus` 클로징
-리뷰 대기.)
--1. **다음 단계**: `e067c94`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (2차 클로징 리뷰도 MEDIUM을 발견했으므로 오너의 "같은 배치 안에서
-   Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복" 사이클에
-   따라 재검수 필요). 발견 사항이 있으면 수정 후 재검수 반복, CLEAN이면
-   PR #24에 클로징 상태 코멘트 게시. **여전히 새 배치 시작 금지,
-   merge/main push 금지.**
+(HEAD `898ccdc` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항(`0d5464b`) + 1~3차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
+`898ccdc`)까지 완료, 4차 독립 `model:opus` 클로징 리뷰 대기.)
+-1. **다음 단계**: `898ccdc`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (3차 클로징 리뷰도 MEDIUM 1건을 발견했으므로 오너의 "같은 배치
+   안에서 Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복"
+   사이클에 따라 재검수 필요). 단, 3차 리뷰가 reset 블록 완전성(16개
+   useState 전부)은 수동 열거 + 기계적 diff 두 방법으로 이미 확정했음
+   — 4차 리뷰는 이를 다시 처음부터 재도출하지 말고, 이번 라운드가
+   새로 만든 것(파생 테스트 로직 자체의 정확성, crmStore.js 필터
+   되돌림, shift/check-task draft의 두 UX 수정)에 집중하도록 지시할
+   것. 발견 사항이 있으면 수정 후 재검수 반복, CLEAN이면 PR #24에
+   클로징 상태 코멘트 게시. **여전히 새 배치 시작 금지, merge/main
+   push 금지.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

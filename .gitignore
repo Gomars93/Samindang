@@ -139,4 +139,6 @@ tests/.public-followup-url-unconfigured-bundle.mjs
 # ad hoc scratch repro bundles/scripts from an in-progress independent review
 # round (not test infra, not source -- safe to delete once that review
 # finishes). Wildcarded since the review may still be generating more.
+# Each round gets its own prefix (round number) since rounds can overlap.
 tests/.r6-*
+tests/.r7-*

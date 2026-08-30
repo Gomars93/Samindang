@@ -1005,3 +1005,109 @@
   line-height: 1.6;
   color: var(--text-muted);
 }
+
+/* ---------- Medication/Herbal-course batch ---------- */
+.medCourse {
+  margin-top: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 18px;
+}
+
+.medCourse > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  padding: 6px 0;
+}
+
+.medCourse__body {
+  padding: 6px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.medCourse__card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.medCourse__provenance {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.medCourse__dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.medCourse__taskList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.medCourse__taskRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.medCourse__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.medCourse__actions__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.medCourse__actions__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.medCourse__actions__row input[type='date'] {
+  font-family: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.medCourse__shift > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.medCourse__newForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}

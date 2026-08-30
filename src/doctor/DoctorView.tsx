@@ -73,6 +73,7 @@ import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { DoctorWorkspace } from './workspace/DoctorWorkspace'
+import { MedicationCourseSection } from './MedicationCourseSection'
 import { deserializeWorkspaceState } from './workspace/persistence'
 import { deriveViewProfile } from './workspace/viewProfile'
 import { WORKSPACE_SCENARIOS } from './workspace/workspaceFixtures'
@@ -2891,6 +2892,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             : undefined
         }
       />
+
+      {mode === 'server' && selectedRecord?.patient_id && (
+        <MedicationCourseSection key={selectedRecord.patient_id} patientUuid={selectedRecord.patient_id} />
+      )}
 
       </div>
 

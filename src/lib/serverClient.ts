@@ -15,7 +15,8 @@ import type {
   RevisitStatus,
   StationInfo,
 } from '../doctor/workspace/followUpSession'
-import type { CrmTask } from '../crm/types'
+import type { CrmTask, Episode } from '../crm/types'
+import type { MedicationCourse } from '../crm/medicationCourse'
 import type { MessageChannel, MessageRecord } from '../messaging/types'
 import { getStoredDoctorToken } from '../doctor/doctorToken'
 
@@ -533,6 +534,124 @@ export function listCrmTasks(params?: {
   if (params?.coverageQueue) qs.set('coverage_queue', params.coverageQueue)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return request(`/api/crm/tasks${suffix}`)
+}
+
+/**
+ * Medication/Herbal-course batch: Episode lookup by patient. episode_id is
+ * a server-minted randomUUID with no separate index the client already
+ * knows -- a UI that only has a patient_uuid (the identity it always
+ * starts from) needs this to find or offer to create that patient's own
+ * Episode(s) before it can attach a MedicationCourse.
+ */
+export function listEpisodesByPatient(patientUuid: string): Promise<ServerResult<{ episodes: Episode[] }>> {
+  const qs = new URLSearchParams({ patient_uuid: patientUuid })
+  return request(`/api/crm/episodes?${qs.toString()}`)
+}
+
+export function createEpisode(patientUuid: string, ownerClinician?: string): Promise<ServerResult<Episode>> {
+  return request('/api/crm/episodes', {
+    method: 'POST',
+    body: JSON.stringify({ patient_uuid: patientUuid, owner_clinician: ownerClinician }),
+  })
+}
+
+export function listEpisodeTasks(episodeId: string): Promise<ServerResult<{ tasks: CrmTask[] }>> {
+  return request(`/api/crm/episodes/${encodeURIComponent(episodeId)}/tasks`)
+}
+
+// Wire shape from server/crmStore.js's createMedicationCourseStored --
+// MedicationCourse (src/crm/medicationCourse.ts) plus the persistence
+// fields every CRM store record carries (dedup_key/created_at/updated_at/
+// version), none of which belong on the pure type itself.
+export type MedicationCourseRecord = MedicationCourse & {
+  dedup_key: string
+  created_at: string
+  updated_at: string
+  version: number
+}
+
+export function listMedicationCoursesByEpisode(
+  episodeId: string,
+): Promise<ServerResult<{ courses: MedicationCourseRecord[] }>> {
+  return request(`/api/crm/episodes/${encodeURIComponent(episodeId)}/medication-courses`)
+}
+
+export function getMedicationCourse(courseId: string): Promise<ServerResult<MedicationCourseRecord>> {
+  return request(`/api/crm/medication-courses/${encodeURIComponent(courseId)}`)
+}
+
+/**
+ * Creates a MedicationCourse. Idempotent across retries via the server's
+ * own dedup pointer keyed on (episode_id, source, source_id) -- see
+ * server/crmStore.js's createMedicationCourseStored. Never invents a
+ * date/duration: every timing field here is either what the caller
+ * explicitly supplies (a chart/EMR event, or an explicit clinician-entered
+ * date) or omitted (null).
+ */
+export function createMedicationCourse(params: {
+  episodeId: string
+  source: string
+  sourceId: string
+  sourceTimestamp: string
+  prescribedAt?: string | null
+  dispensedAt?: string | null
+  medicationStartAt?: string | null
+  plannedDurationDays?: number | null
+}): Promise<ServerResult<{ course: MedicationCourseRecord; deduped: boolean }>> {
+  return request('/api/crm/medication-courses', {
+    method: 'POST',
+    body: JSON.stringify({
+      episode_id: params.episodeId,
+      source: params.source,
+      source_id: params.sourceId,
+      source_timestamp: params.sourceTimestamp,
+      prescribed_at: params.prescribedAt ?? null,
+      dispensed_at: params.dispensedAt ?? null,
+      medication_start_at: params.medicationStartAt ?? null,
+      planned_duration_days: params.plannedDurationDays ?? null,
+    }),
+  })
+}
+
+export type MedicationCourseReasonCode = 'MEDICATION_START_CHECK' | 'MEDICATION_MID_CHECK' | 'MEDICATION_END_CHECK'
+
+/**
+ * Creates one MEDICATION_*_CHECK CrmTask against an existing course.
+ * due_at must be an explicit date the caller (clinician/staff) supplies --
+ * this client never computes one from "now" or the course's timeline, and
+ * no product-specific or day-offset schedule lives here either.
+ */
+export function createMedicationCourseCheckTask(
+  courseId: string,
+  expectedVersion: number,
+  reasonCode: MedicationCourseReasonCode,
+  dueAt: string,
+): Promise<ServerResult<{ task: CrmTask; deduped: boolean }>> {
+  return request(`/api/crm/medication-courses/${encodeURIComponent(courseId)}/check-tasks`, {
+    method: 'POST',
+    body: JSON.stringify({ expectedVersion, reason_code: reasonCode, due_at: dueAt }),
+  })
+}
+
+/**
+ * Records an explicit medication_start_at change. replacementDueDates must
+ * be supplied by the caller per surviving reason_code -- this client never
+ * derives a due_at from the new start date either.
+ */
+export function shiftMedicationCourseStart(
+  courseId: string,
+  expectedVersion: number,
+  medicationStartAt: string,
+  replacementDueDates: Array<{ reasonCode: MedicationCourseReasonCode; dueAt: string }>,
+): Promise<ServerResult<{ course: MedicationCourseRecord; superseded: CrmTask[]; createdTasks: CrmTask[] }>> {
+  return request(`/api/crm/medication-courses/${encodeURIComponent(courseId)}/shift-start`, {
+    method: 'POST',
+    body: JSON.stringify({
+      expectedVersion,
+      medication_start_at: medicationStartAt,
+      replacement_due_dates: replacementDueDates.map((r) => ({ reason_code: r.reasonCode, due_at: r.dueAt })),
+    }),
+  })
 }
 
 /**

@@ -15,7 +15,7 @@ import { createStore, StaleWriteError } from './store.js'
 import { createAuditLog, AUDIT_EVENTS, AUDIT_ACTORS } from './audit.js'
 import { acquireOwnerLock, OwnerLockConflictError, requirePositiveMs, releaseAnyLockNamedThisProcess } from './ownerLock.js'
 import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
-import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
+import { createCrmStore, CrmConflictError, CrmNotFoundError, MEDICATION_COURSE_REASON_CODES } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
 import { createMessagingStore, MessagingConflictError, MessagingNotFoundError } from './messagingStore.js'
 import { resolveWebhookSecret, verifyWebhookSignature } from './messagingTransport.js'
@@ -1734,6 +1734,26 @@ export function createApp({
             bytes = sendJson(req, res, 201, episode, cors)
           }
         }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'episodes' && parts.length === 3 && req.method === 'GET') {
+        // Medication/Herbal-course batch: episode_id is a server-minted
+        // randomUUID with no separate index the client already knows --
+        // a UI that only has a patient_uuid (the identity it always
+        // starts from) needs this lookup before it can find or offer to
+        // create that patient's own Episode(s) to attach a
+        // MedicationCourse to.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const patientUuid = url.searchParams.get('patient_uuid') || ''
+          if (!patientUuid) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'patient_uuid is required' }, cors)
+          } else {
+            const episodes = await crmStore.listEpisodesByPatient(patientUuid)
+            bytes = sendJson(req, res, 200, { episodes }, cors)
+          }
+        }
       } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'episodes' && parts.length === 4 && req.method === 'GET') {
         id = parts[3]
         if (!requireDoctor(req)) {
@@ -1765,6 +1785,22 @@ export function createApp({
         } else {
           const tasks = await crmStore.listTasksByEpisode(id, new Date().toISOString())
           bytes = sendJson(req, res, 200, { tasks }, cors)
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'crm' &&
+        parts[2] === 'episodes' &&
+        parts.length === 5 &&
+        parts[4] === 'medication-courses' &&
+        req.method === 'GET'
+      ) {
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const courses = await crmStore.listMedicationCoursesByEpisode(id)
+          bytes = sendJson(req, res, 200, { courses }, cors)
         }
       } else if (
         parts[0] === 'api' &&
@@ -1968,6 +2004,157 @@ export function createApp({
                 await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_SEEN, actor: AUDIT_ACTORS.DOCTOR })
               }
               if (task) bytes = sendJson(req, res, 200, task, cors)
+            } catch (err) {
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'medication-courses' && parts.length === 3 && req.method === 'POST') {
+        // Medication/Herbal-course batch: creates the durable
+        // MedicationCourse record only. Never infers a date/duration from
+        // now -- source_timestamp plus whichever of prescribed_at /
+        // dispensed_at / medication_start_at the caller explicitly
+        // supplies are the only provenance this route accepts. Idempotent
+        // across retries/restart via crmStore's dedup pointer keyed on
+        // (episode_id, source, source_id) -- see createMedicationCourseStored.
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const episodeId = typeof body?.episode_id === 'string' ? body.episode_id : ''
+          if (!episodeId || !(await crmStore.getEpisode(episodeId))) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'unknown episode_id' }, cors)
+          } else {
+            try {
+              const { course, deduped } = await crmStore.createMedicationCourseStored({
+                course_id: randomUUID(),
+                episode_id: episodeId,
+                source: body?.source,
+                source_id: body?.source_id,
+                source_timestamp: body?.source_timestamp,
+                prescribed_at: body?.prescribed_at ?? null,
+                dispensed_at: body?.dispensed_at ?? null,
+                medication_start_at: body?.medication_start_at ?? null,
+                planned_duration_days: typeof body?.planned_duration_days === 'number' ? body.planned_duration_days : null,
+                now: new Date().toISOString(),
+              })
+              status = deduped ? 200 : 201
+              if (!deduped) await safeAudit({ event: AUDIT_EVENTS.CRM_MEDICATION_COURSE_CREATED, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, status, { course, deduped }, cors)
+            } catch (err) {
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'crm' && parts[2] === 'medication-courses' && parts.length === 4 && req.method === 'GET') {
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const course = await crmStore.getMedicationCourse(id)
+          if (!course) {
+            status = 404
+            bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+          } else {
+            bytes = sendJson(req, res, 200, course, cors)
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'crm' &&
+        parts[2] === 'medication-courses' &&
+        parts.length === 5 &&
+        parts[4] === 'check-tasks' &&
+        req.method === 'POST'
+      ) {
+        // Medication/Herbal-course batch: creates one MEDICATION_*_CHECK
+        // CrmTask against an existing course. due_at is never computed
+        // here -- the caller (a doctor/staff explicit action, or a future
+        // client that itself derives it only from an explicit human-
+        // supplied date) must supply it. No day-7/day-15/end-minus-N
+        // default of any kind lives on this route.
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const expectedVersion = body?.expectedVersion
+          const reasonCode = body?.reason_code
+          const dueAt = typeof body?.due_at === 'string' ? body.due_at : ''
+          if (typeof expectedVersion !== 'number') {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'expectedVersion is required' }, cors)
+          } else if (!MEDICATION_COURSE_REASON_CODES.has(reasonCode)) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'reason_code must be one of MEDICATION_START_CHECK/MEDICATION_MID_CHECK/MEDICATION_END_CHECK' }, cors)
+          } else if (!dueAt) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'due_at is required' }, cors)
+          } else {
+            try {
+              const { task, deduped } = await crmStore.createMedicationCourseCheckTaskStored(
+                id,
+                expectedVersion,
+                reasonCode,
+                dueAt,
+                randomUUID(),
+                new Date().toISOString(),
+              )
+              status = deduped ? 200 : 201
+              if (!deduped) await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_CREATED, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, status, { task, deduped }, cors)
+            } catch (err) {
+              const mapped = mapCrmError(err)
+              status = mapped.status
+              bytes = sendJson(req, res, status, { error: mapped.error }, cors)
+            }
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
+        parts[1] === 'crm' &&
+        parts[2] === 'medication-courses' &&
+        parts.length === 5 &&
+        parts[4] === 'shift-start' &&
+        req.method === 'POST'
+      ) {
+        // Medication/Herbal-course batch: records an explicit, human-
+        // supplied medication_start_at change and supersedes/recreates
+        // only the still-open ROUTINE check tasks this course owns (DONE
+        // tasks stay immutable). replacement_due_dates must be supplied by
+        // the caller per surviving reason_code -- this route never invents
+        // a due_at from the new start date.
+        id = parts[3]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const expectedVersion = body?.expectedVersion
+          const medicationStartAt = typeof body?.medication_start_at === 'string' ? body.medication_start_at : ''
+          const rawReplacements = Array.isArray(body?.replacement_due_dates) ? body.replacement_due_dates : []
+          if (typeof expectedVersion !== 'number') {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'expectedVersion is required' }, cors)
+          } else if (!medicationStartAt) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'medication_start_at is required' }, cors)
+          } else {
+            const replacementTasks = rawReplacements
+              .filter((r) => MEDICATION_COURSE_REASON_CODES.has(r?.reason_code) && typeof r?.due_at === 'string' && r.due_at)
+              .map((r) => ({ task_id: randomUUID(), reason_code: r.reason_code, due_at: r.due_at }))
+            try {
+              const result = await crmStore.shiftMedicationCourseStartStored(id, expectedVersion, medicationStartAt, replacementTasks, new Date().toISOString())
+              await safeAudit({ event: AUDIT_EVENTS.CRM_MEDICATION_COURSE_START_SHIFTED, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, 200, result, cors)
             } catch (err) {
               const mapped = mapCrmError(err)
               status = mapped.status

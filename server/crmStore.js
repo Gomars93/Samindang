@@ -32,11 +32,19 @@ import {
   deriveEpisodeReviewState,
   sortCrmTaskQueue,
   tasksForOwner,
+  assertNoRawPhone,
   CrmConflictError,
 } from '../src/crm/taskEngine.ts'
 import { pauseEpisode, completeEpisode, reopenEpisode } from '../src/crm/episode.ts'
+import { recalculateMedicationTasksOnStartShift } from '../src/crm/medicationCourse.ts'
 
 export { CrmConflictError }
+
+// Medication/Herbal-course batch: which CrmReasonCode values a
+// MedicationCourse's own check-task routes may create -- single source of
+// truth so server/index.js validates against the exact same set rather
+// than a second, separately-maintained literal list.
+export const MEDICATION_COURSE_REASON_CODES = new Set(['MEDICATION_START_CHECK', 'MEDICATION_MID_CHECK', 'MEDICATION_END_CHECK'])
 
 export class CrmNotFoundError extends Error {
   constructor(kind, id) {
@@ -64,6 +72,23 @@ function taskPath(baseDir, id) {
 }
 function dedupPath(baseDir, hash) {
   return path.join(dedupDir(baseDir), `${hash}.json`)
+}
+// Medication/Herbal-course batch: sibling subdirs of the same CRM baseDir,
+// same file-per-id + dedup-index convention as episodes/tasks above -- a
+// MedicationCourse is CRM-domain data, so it lives inside the same crm/
+// directory scripts/purge-data.mjs already deletes wholesale (rm -rf
+// crm/), needing no changes there or to its drift-guard test.
+function medicationCoursesDir(baseDir) {
+  return path.join(baseDir, 'medication-courses')
+}
+function medicationCourseDedupDir(baseDir) {
+  return path.join(baseDir, 'medication-course-dedup')
+}
+function medicationCoursePath(baseDir, id) {
+  return path.join(medicationCoursesDir(baseDir), `${id}.json`)
+}
+function medicationCourseDedupPath(baseDir, hash) {
+  return path.join(medicationCourseDedupDir(baseDir), `${hash}.json`)
 }
 
 function hashDedupKey(key) {
@@ -114,6 +139,8 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     await mkdir(episodesDir(baseDir), { recursive: true })
     await mkdir(tasksDir(baseDir), { recursive: true })
     await mkdir(dedupDir(baseDir), { recursive: true })
+    await mkdir(medicationCoursesDir(baseDir), { recursive: true })
+    await mkdir(medicationCourseDedupDir(baseDir), { recursive: true })
   }
 
   /* ---------------- Episode ---------------- */
@@ -134,6 +161,33 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
 
   async function getEpisode(episode_id) {
     return readJson(episodePath(baseDir, episode_id))
+  }
+
+  // Medication/Herbal-course batch: episodes have no id known in advance
+  // from the patient side alone (episode_id is a server-minted randomUUID
+  // -- see the POST /api/crm/episodes route), so a UI that only knows a
+  // patient_uuid needs a way to find (or determine there is none yet, and
+  // must create one) that patient's own Episode(s) before it can attach a
+  // MedicationCourse to one. A directory scan, same shape as
+  // listTasksByEpisode below -- there is no separate by-patient index file
+  // to keep in sync, so this can never drift from what is actually on
+  // disk.
+  async function listEpisodesByPatient(patient_uuid) {
+    await ensureDirs()
+    let ids
+    try {
+      ids = (await readdir(episodesDir(baseDir))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp')).map((f) => f.slice(0, -'.json'.length))
+    } catch (err) {
+      if (err.code === 'ENOENT') return []
+      throw err
+    }
+    const out = []
+    for (const id of ids) {
+      const episode = await readJson(episodePath(baseDir, id))
+      if (episode && episode.patient_uuid === patient_uuid) out.push(episode)
+    }
+    out.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
+    return out
   }
 
   async function pauseEpisodeStored(episode_id, expectedVersion, now) {
@@ -445,9 +499,219 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     })
   }
 
+  /* ---------------- MedicationCourse (Medication/Herbal-course batch) ---------------- */
+  //
+  // Every field this store persists is either what the source system
+  // reported or an explicit human-supplied value -- never inferred from
+  // `now`, never a computed offset. This module never decides WHEN a
+  // check should happen; it only durably records WHAT was explicitly
+  // supplied and wires it to the existing CrmTask machinery via
+  // createTaskStored, which already provides idempotency, identity
+  // derivation (episode.patient_uuid, never the caller's), and durable
+  // dedup by source_event_id.
+
+  async function listMedicationCourseIds() {
+    await ensureDirs()
+    try {
+      return (await readdir(medicationCoursesDir(baseDir)))
+        .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+        .map((f) => f.slice(0, -'.json'.length))
+    } catch (err) {
+      if (err.code === 'ENOENT') return []
+      throw err
+    }
+  }
+
+  async function getMedicationCourse(course_id) {
+    return readJson(medicationCoursePath(baseDir, course_id))
+  }
+
+  async function listMedicationCoursesByEpisode(episode_id) {
+    const ids = await listMedicationCourseIds()
+    const out = []
+    for (const id of ids) {
+      const course = await readJson(medicationCoursePath(baseDir, id))
+      if (course && course.episode_id === episode_id) out.push(course)
+    }
+    out.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
+    return out
+  }
+
+  // Idempotent by (episode_id, source, source_id): a duplicate source
+  // event (the same prescription/dispense record reported twice, e.g. a
+  // retried EMR sync) returns the ALREADY-persisted course rather than
+  // minting a second one for the same real-world course. Same durable
+  // intent-then-finalize two-phase write as createTaskStored above (the
+  // dedup pointer commits first and carries the full snapshot, so a crash
+  // between the two writes is recoverable from a fresh store instance --
+  // see createTaskStored's own Round 8/9 comments for the exact failure
+  // mode this closes) -- there is no legacy pointer shape to be
+  // compatible with here since this is a new store, so only the new-
+  // format path is needed.
+  //
+  // patient_uuid is derived from the Episode, never trusted from the
+  // caller, for the identical reason createTaskStored does this: the only
+  // writable identity is which episode_id a record is created against.
+  async function createMedicationCourseStored(rawInput) {
+    const episode = await getEpisode(rawInput.episode_id)
+    if (!episode) throw new CrmNotFoundError('episode', rawInput.episode_id)
+    const source = typeof rawInput.source === 'string' ? rawInput.source : ''
+    const source_id = typeof rawInput.source_id === 'string' ? rawInput.source_id : ''
+    const source_timestamp = typeof rawInput.source_timestamp === 'string' ? rawInput.source_timestamp : ''
+    if (!source || !source_id || !source_timestamp) {
+      throw new Error('source, source_id, and source_timestamp are all required')
+    }
+    assertNoRawPhone(source, 'medication_course.source')
+    assertNoRawPhone(source_id, 'medication_course.source_id')
+    if (typeof rawInput.now !== 'string' || !rawInput.now) {
+      throw new Error('now is required')
+    }
+    const dedup_key = `${rawInput.episode_id}|${source}|${source_id}`
+    const hash = hashDedupKey(dedup_key)
+    return withLock(`medication-course-dedup:${hash}`, async () => {
+      await ensureDirs()
+      const pointer = await readJson(medicationCourseDedupPath(baseDir, hash))
+      if (pointer?.course) {
+        const onDisk = await readJson(medicationCoursePath(baseDir, pointer.course.course_id))
+        if (onDisk) return { course: onDisk, deduped: true }
+        // Crash recovery: the intent survived, but the course file itself
+        // never landed -- replay the exact already-computed snapshot,
+        // never reconstructing it from this retry's own (possibly
+        // different) input.
+        await withLock(`medication-course:${pointer.course.course_id}`, () =>
+          atomicWrite(medicationCoursePath(baseDir, pointer.course.course_id), pointer.course),
+        )
+        return { course: pointer.course, deduped: false }
+      }
+      const course = {
+        course_id: rawInput.course_id,
+        episode_id: rawInput.episode_id,
+        patient_uuid: episode.patient_uuid,
+        source,
+        source_id,
+        prescribed_at: typeof rawInput.prescribed_at === 'string' ? rawInput.prescribed_at : null,
+        dispensed_at: typeof rawInput.dispensed_at === 'string' ? rawInput.dispensed_at : null,
+        medication_start_at: typeof rawInput.medication_start_at === 'string' ? rawInput.medication_start_at : null,
+        planned_duration_days: typeof rawInput.planned_duration_days === 'number' ? rawInput.planned_duration_days : null,
+        source_timestamp,
+        dedup_key,
+        created_at: rawInput.now,
+        updated_at: rawInput.now,
+        version: 1,
+      }
+      await atomicWrite(medicationCourseDedupPath(baseDir, hash), { course })
+      await withLock(`medication-course:${course.course_id}`, () => atomicWrite(medicationCoursePath(baseDir, course.course_id), course))
+      return { course, deduped: false }
+    })
+  }
+
+  // Creates (or, by createTaskStored's own source_event_id dedup, returns)
+  // the CrmTask for one explicit medication check. due_at is REQUIRED and
+  // always exactly what the caller supplied -- this function computes no
+  // offset, default, or SLA of its own. expectedVersion guards against
+  // creating a check against a course the caller's own view of is already
+  // stale (e.g. a start-date shift happened since they last read it).
+  async function createMedicationCourseCheckTaskStored(course_id, expectedVersion, reason_code, due_at, task_id, now) {
+    if (!MEDICATION_COURSE_REASON_CODES.has(reason_code)) {
+      throw new Error('reason_code must be one of MEDICATION_START_CHECK/MEDICATION_MID_CHECK/MEDICATION_END_CHECK')
+    }
+    if (typeof due_at !== 'string' || !due_at) throw new Error('due_at is required')
+    const course = await readJson(medicationCoursePath(baseDir, course_id))
+    if (!course) throw new CrmNotFoundError('medication_course', course_id)
+    if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
+    return createTaskStored({
+      task_id,
+      episode_id: course.episode_id,
+      task_type: 'ROUTINE',
+      reason_code,
+      source_type: 'MEDICATION_COURSE',
+      source_id: course_id,
+      source_event_id: `${course_id}:${reason_code}`,
+      source_timestamp: course.source_timestamp,
+      due_at,
+      owner_clinician: null,
+      now,
+    })
+  }
+
+  // If medication_start_at changes, every still-open (non-terminal)
+  // ROUTINE task this course owns is superseded and, only for reason
+  // codes the caller explicitly supplies a replacement due_at for, a new
+  // check task is created -- reusing recalculateMedicationTasksOnStartShift
+  // (src/crm/medicationCourse.ts) for the supersede/recalculate contract
+  // itself, and createTaskStored's own dedup for the actual creation, so
+  // this function invents no SLA offset of its own. replacementTasks is
+  // Array<{task_id, reason_code, due_at}>, with task_id ALWAYS minted by
+  // the caller (the HTTP route) -- this store never mints an id itself,
+  // matching every other creation path in this file.
+  //
+  // Crash/restart safety: every superseded Task is written BEFORE any
+  // replacement Task is created, and the course record itself (the new
+  // medication_start_at + version bump) is written LAST -- the same
+  // ordering invariant completeEpisodeStored above uses, for the same
+  // reason. An interruption at any point leaves a state a retry safely
+  // converges from: supersedeTask() is a no-op on an already-terminal
+  // task, and createTaskStored() dedupes by source_event_id (stable
+  // across retries since it is derived from course_id+reason_code, not
+  // from the caller-minted task_id) -- so a retried shift can never
+  // produce a duplicate actionable task, and a crash before the final
+  // course write never silently loses the course (it is simply retried
+  // with its prior, still-valid medication_start_at).
+  async function shiftMedicationCourseStartStored(course_id, expectedVersion, medication_start_at, replacementTasks, now) {
+    if (typeof medication_start_at !== 'string' || !medication_start_at) {
+      throw new Error('medication_start_at is required')
+    }
+    return withLock(`medication-course:${course_id}`, async () => {
+      const course = await readJson(medicationCoursePath(baseDir, course_id))
+      if (!course) throw new CrmNotFoundError('medication_course', course_id)
+      if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
+
+      const tasks = await listTasksByEpisode(course.episode_id, now)
+      const linked = tasks.filter((t) => t.source_id === course_id && t.task_type === 'ROUTINE')
+      const originalById = new Map(linked.map((t) => [t.task_id, t]))
+      const updatedCourseSnapshot = { ...course, medication_start_at }
+      const { superseded, recalculated } = recalculateMedicationTasksOnStartShift(tasks, updatedCourseSnapshot, () =>
+        replacementTasks.map((r) => ({ task_id: r.task_id, due_at: r.due_at })),
+      )
+      // recalculateMedicationTasksOnStartShift() maps supersedeTask() over
+      // every ROUTINE task linked to this course, including ones already
+      // terminal (DONE/CANCELLED/SUPERSEDED) -- supersedeTask() is a no-op
+      // on those and returns the SAME reference, so this filter is what
+      // keeps a DONE task truly immutable: it is never rewritten to disk,
+      // and it is never reported as "superseded" to the caller either.
+      const actuallySuperseded = superseded.filter((t) => t !== originalById.get(t.task_id))
+      for (const t of actuallySuperseded) {
+        await withLock(`task:${t.task_id}`, () => atomicWrite(taskPath(baseDir, t.task_id), t))
+      }
+      const byReplacementId = new Map(replacementTasks.map((r) => [r.task_id, r]))
+      const createdTasks = []
+      for (const entry of recalculated) {
+        const r = byReplacementId.get(entry.task_id)
+        const { task } = await createTaskStored({
+          task_id: r.task_id,
+          episode_id: course.episode_id,
+          task_type: 'ROUTINE',
+          reason_code: r.reason_code,
+          source_type: 'MEDICATION_COURSE',
+          source_id: course_id,
+          source_event_id: `${course_id}:${r.reason_code}`,
+          source_timestamp: course.source_timestamp,
+          due_at: entry.due_at,
+          owner_clinician: null,
+          now,
+        })
+        createdTasks.push(task)
+      }
+      const updatedCourse = { ...course, medication_start_at, updated_at: now, version: course.version + 1 }
+      await atomicWrite(medicationCoursePath(baseDir, course_id), updatedCourse)
+      return { course: updatedCourse, superseded: actuallySuperseded, createdTasks }
+    })
+  }
+
   return {
     createEpisode,
     getEpisode,
+    listEpisodesByPatient,
     pauseEpisodeStored,
     completeEpisodeStored,
     reopenEpisodeStored,
@@ -458,6 +722,11 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
     getTask,
     resolveTaskStored,
     snoozeTaskStored,
+    getMedicationCourse,
+    listMedicationCoursesByEpisode,
+    createMedicationCourseStored,
+    createMedicationCourseCheckTaskStored,
+    shiftMedicationCourseStartStored,
     cancelTaskStored,
     supersedeTaskStored,
     claimTaskStored,

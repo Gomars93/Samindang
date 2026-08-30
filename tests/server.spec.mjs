@@ -1654,9 +1654,17 @@ async function main() {
     // provider 콜백 POST /api/messages/webhook은 의도적으로 이 목록에
     // 포함되지 않는다(provider_message_id 자체가 추측 불가능한 값이라
     // 이것이 인증을 대신한다 -- 태블릿/스테이션 공개 라우트와 동일한 위치).
+    // Medication/Herbal-course batch에서 6개가 추가되어 46개가 됐다:
+    // GET /api/crm/episodes?patient_uuid(패턴트별 Episode 조회),
+    // GET /api/crm/episodes/:id/medication-courses,
+    // POST /api/crm/medication-courses,
+    // GET /api/crm/medication-courses/:id,
+    // POST /api/crm/medication-courses/:id/check-tasks,
+    // POST /api/crm/medication-courses/:id/shift-start -- 전부 같은
+    // doctor-only 가드.
     assert(
-      'server has exactly the 40 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x10 + messaging x4)',
-      requireDoctorCalls === 40,
+      'server has exactly the 46 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x16 + messaging x4)',
+      requireDoctorCalls === 46,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

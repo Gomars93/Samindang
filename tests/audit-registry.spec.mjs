@@ -94,7 +94,7 @@ async function main() {
     // Registry size guard: if a future round adds/removes an event or actor
     // without updating this test's requiredEvents list below, this at
     // least makes the drift visible rather than silent.
-    assert('registry: AUDIT_EVENTS has exactly 35 registered event names', Object.keys(AUDIT_EVENTS).length === 35)
+    assert('registry: AUDIT_EVENTS has exactly 37 registered event names', Object.keys(AUDIT_EVENTS).length === 37)
     assert('registry: AUDIT_ACTORS has exactly 3 registered actor names', Object.keys(AUDIT_ACTORS).length === 3)
 
     // Independent-review finding: the raw-literal check above only proves
@@ -319,6 +319,31 @@ async function main() {
     const superseded = await postJson(`${base}/api/crm/tasks/${t4.task_id}/supersede`, { expectedVersion: t4.version })
     assert('workflow setup: task supersede -> SUPERSEDED', superseded.body.status === 'SUPERSEDED')
 
+    /* ---- Medication/Herbal-course lifecycle: create course -> check-task -> shift-start ---- */
+    const medCourse = (
+      await postJson(`${base}/api/crm/medication-courses`, {
+        episode_id: taskEpisode.episode_id,
+        source: 'audit-test-manual',
+        source_id: 'audit-src-1',
+        source_timestamp: '2026-01-01T00:00:00.000Z',
+        medication_start_at: '2026-01-01',
+      })
+    ).body.course
+    assert('workflow setup: medication course create -> version 1', medCourse.version === 1)
+    const medCheckTask = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/check-tasks`, {
+      expectedVersion: medCourse.version,
+      reason_code: 'MEDICATION_START_CHECK',
+      due_at: '2026-01-08',
+    })
+    assert('workflow setup: medication course check-task create -> 201', medCheckTask.status === 201)
+    const medShift = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/shift-start`, {
+      expectedVersion: medCourse.version,
+      medication_start_at: '2026-01-03',
+      replacement_due_dates: [],
+    })
+    assert('workflow setup: medication course shift-start -> version 2', medShift.body.course.version === 2)
+    assert('workflow setup: medication course shift-start supersedes the open check task', medShift.body.superseded.length === 1)
+
     /* ---- Quick Revisit messaging lifecycle: queue -> retry -> cancel.
        Phone ends in '9998' -- solapiAdapter.js's mock transport treats that
        suffix as a deterministic RETRYABLE transient failure on every
@@ -359,7 +384,7 @@ async function main() {
        judgment_saved, visit_created, visit_activated, visit_cleared,
        patient_identity_linked) already have coverage in
        tests/server.spec.mjs / tests/crm-store.spec.mjs and are not
-       re-tested here -- these are the remaining 23. ---- */
+       re-tested here -- these are the remaining 28. ---- */
     const lines = await readAuditLines(auditLogPath(dataDir))
     const hasEvent = (ev) => lines.some((l) => l.event === ev)
 
@@ -387,11 +412,13 @@ async function main() {
       AUDIT_EVENTS.CRM_TASK_SUPERSEDED,
       AUDIT_EVENTS.CRM_TASK_CLAIMED,
       AUDIT_EVENTS.CRM_TASK_SEEN,
+      AUDIT_EVENTS.CRM_MEDICATION_COURSE_CREATED,
+      AUDIT_EVENTS.CRM_MEDICATION_COURSE_START_SHIFTED,
       AUDIT_EVENTS.MESSAGE_QUEUED,
       AUDIT_EVENTS.MESSAGE_RETRIED,
       AUDIT_EVENTS.MESSAGE_CANCELLED,
     ]
-    assert('workflow: exactly 26 events are asserted here (the 35-event registry minus the 9 already covered elsewhere)', requiredEvents.length === 26)
+    assert('workflow: exactly 28 events are asserted here (the 37-event registry minus the 9 already covered elsewhere)', requiredEvents.length === 28)
     for (const ev of requiredEvents) {
       assert(`workflow: ${ev} appears at least once in audit.log`, hasEvent(ev))
     }

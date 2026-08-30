@@ -64,6 +64,12 @@ export const AUDIT_EVENTS = Object.freeze({
   CRM_TASK_SUPERSEDED: 'crm_task_superseded',
   CRM_TASK_CLAIMED: 'crm_task_claimed',
   CRM_TASK_SEEN: 'crm_task_seen',
+  // Medication/Herbal-course batch: check-task creation reuses
+  // CRM_TASK_CREATED above (it is a genuine CrmTask, created through the
+  // same createTaskStored path) -- these two are for the MedicationCourse
+  // record itself, which is a distinct entity.
+  CRM_MEDICATION_COURSE_CREATED: 'crm_medication_course_created',
+  CRM_MEDICATION_COURSE_START_SHIFTED: 'crm_medication_course_start_shifted',
   // Identity Production Batch: 영구적인 신원 연결(patient_uuid <->
   // sigma_chart_no) 확정 이벤트.
   PATIENT_IDENTITY_LINKED: 'patient_identity_linked',

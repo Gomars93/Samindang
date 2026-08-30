@@ -644,7 +644,11 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
       // differing do_not_contact value on this call mint a second task.
       const existingTasks = await listTasksByEpisode(course.episode_id, now)
       const existingOpen = existingTasks.find(
-        (t) => t.source_id === course_id && t.reason_code === reason_code && !TERMINAL_TASK_STATUSES.has(t.status),
+        (t) =>
+          t.source_type === 'MEDICATION_COURSE' &&
+          t.source_id === course_id &&
+          t.reason_code === reason_code &&
+          !TERMINAL_TASK_STATUSES.has(t.status),
       )
       if (existingOpen) return { task: existingOpen, deduped: true }
       return createTaskStored({

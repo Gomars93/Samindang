@@ -112,6 +112,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setTasks(null)
     setLoadError(null)
     setActionError(null)
+    setBusy(false)
     setShowNewCourseForm(false)
     setNewCourseSourceId('')
     setCheckDraftByCourse({})
@@ -130,6 +131,14 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
         reloadEpisodeData(chosen.episode_id, epoch)
       }
     })
+    // Review finding (LOW): a bumped epoch alone fences setState calls, but
+    // does nothing on unmount -- the unmounting instance's own ref object is
+    // frozen at its last epoch, so its still-in-flight promises would pass
+    // every guard. Invalidating the epoch on cleanup folds the unmount case
+    // into the same mechanism instead of leaving it unfenced.
+    return () => {
+      loadEpochRef.current += 1
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientUuid])
 

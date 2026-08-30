@@ -63,4 +63,38 @@ test('MedicationCourseSection: the main load effect bumps the epoch exactly once
   assert.match(src, /const epoch = \+\+loadEpochRef\.current/)
 })
 
+// Closing-review finding (MEDIUM): the effect's own state-reset block resets
+// eleven other pieces of state on a patient switch but originally omitted
+// `busy` -- since all four .finally() releases are now epoch-guarded (see
+// above), a mutating action left in flight from a PRIOR patient could never
+// clear `busy` for the new patient, permanently disabling every action
+// button in the section. Every disabled={busy}/if (busy) return call site
+// depends on this being reset on patientUuid change.
+test('MedicationCourseSection: the load effect itself resets busy to false on every patientUuid change', () => {
+  const effectBody = src.match(/useEffect\(\(\) => \{([\s\S]*?)\}, \[patientUuid\]\)/)
+  assert.ok(effectBody, 'expected to find the main useEffect body')
+  assert.match(effectBody[1], /setBusy\(false\)/, 'expected the effect to reset busy alongside its other patient-scoped state')
+})
+
+// Closing-review finding (LOW): bumping the epoch alone fences setState
+// calls made by a PRIOR patient's in-flight promises, but does nothing for
+// an unmounting instance -- its own ref object is frozen at its last epoch,
+// so its own in-flight promises would still pass every guard. An
+// epoch-invalidating cleanup folds the unmount case into the same
+// mechanism instead of leaving it unfenced.
+test('MedicationCourseSection: the load effect invalidates its own epoch on cleanup (unmount is fenced too, not just patient switches)', () => {
+  assert.match(src, /return \(\) => \{\s*loadEpochRef\.current \+= 1\s*\}/)
+})
+
+// Closing-review finding (LOW): a raw occurrence-count of the guard string
+// cannot tell whether a guard is the FIRST statement of its callback (before
+// any setState) or merely present somewhere in the file -- a guard placed
+// after a setState call would still count. Anchoring each guard to the
+// immediately-preceding `.then((result) => {` line proves placement, not
+// just presence.
+test('MedicationCourseSection: every .then((result) => {...}) callback opens with the epoch guard as its first statement, before any setState', () => {
+  const anchoredGuardCount = (src.match(/\.then\(\(result\) => \{\s*if \(loadEpochRef\.current !== epoch\) return/g) ?? []).length
+  assert.equal(anchoredGuardCount, 7, `expected all 7 .then((result) => {...}) callbacks to open with the guard, found ${anchoredGuardCount}`)
+})
+
 console.log(`\n${passed} MedicationCourseSection load-epoch structural assertions passed.`)

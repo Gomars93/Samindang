@@ -4253,8 +4253,9 @@ link 누락 시 fail-closed 테스트, HTTP 200+K108 실패 코드 검사 테스
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD는 아래 커밋 직후 갱신 예정 — button1/응답-실패 검증 HIGH 수정 +
-1차 독립 리뷰 수정(Part 4b 테스트, 주석 정정)을 하나의 커밋으로 push.
+HEAD: `2f83963` — button1/응답-실패 검증 HIGH 수정(`af9ef91`) +
+1차 독립 리뷰 수정(Part 4b 테스트, 주석 정정, `2f83963`)까지 push 완료.
+2차(클로징) 독립 `model:opus` 리뷰 진행 중.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

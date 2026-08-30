@@ -6,7 +6,7 @@
 // this suite proves the OUTGOING request shape this codebase currently
 // sends matches what it documents sending, never that it matches BizM's
 // real API.
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -414,6 +414,113 @@ async function main() {
       const retrySendCall = sendCalls[sendCalls.length - 1]
       assert('variables passthrough (retry): the retry call carries the manually re-supplied variables, not the original queue-time ones', retrySendCall.variables?.followup_token === 'tok-retry-manual')
       assert('link passthrough (retry): the retry call carries the manually re-supplied link, not the original queue-time one', retrySendCall.link === retryLink)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 4b: independent-review finding (MEDIUM, this cycle) -- the
+     automatic-retry sweep (runDueRetries) is the ONE hop `link` threading
+     had no direct test coverage for at all before this block: the only
+     pre-existing runDueRetries call in tests/messaging.spec.mjs passes a
+     resolveContact that returns a bare string, which trivially hits the
+     "contact missing/malformed" fail-closed branch without ever reaching
+     the real success path or proving `link` specifically (as opposed to
+     `phone`/`text`/`variables`) is what's missing. This block forces a
+     real QUEUED-and-due message (via a transport that fails retryably
+     once), backdates its own next_retry_at directly on disk (the store
+     exposes no clock-injection knob), and drives runDueRetries with both
+     a complete contact (must reach send() with `link` intact) and a
+     contact missing ONLY `link` (must fail closed as
+     recipient_unresolvable without ever calling send() for that message).
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-bizm-duretries-'))
+    try {
+      const sendCalls = []
+      let callCount = 0
+      const failOnceThenOk = {
+        provider: 'BIZM',
+        async send(args) {
+          callCount += 1
+          sendCalls.push(args)
+          if (callCount % 2 === 1) return { ok: false, errorCode: 'spy_forced_retry', retryable: true, fallbackEligible: false }
+          return { ok: true, providerMessageId: `spy_due_${callCount}`, channelUsed: args.channel }
+        },
+      }
+      const store = createMessagingStore(dataRoot, { transport: failOnceThenOk })
+
+      async function backdateToDue(messageId) {
+        const filePath = path.join(dataRoot, `${messageId}.json`)
+        const record = JSON.parse(await readFile(filePath, 'utf8'))
+        record.next_retry_at = new Date(Date.now() - 60_000).toISOString()
+        await writeFile(filePath, JSON.stringify(record, null, 2), 'utf8')
+      }
+
+      // Sub-case 1: a complete contact (including `link`) -- the automatic
+      // retry must succeed and the transport must actually receive `link`.
+      const goodLink = 'https://gomars93.github.io/Samindang/followup/#follow-up=due-retry-good-token'
+      const queuedGood = await store.queueRevisitMessage({
+        visitId: 'visit-due-good',
+        patientId: 'patient-due-good',
+        phone: '01011114444',
+        followUpToken: 'due-retry-good-token',
+        text: 'fallback text',
+        variables: { followup_token: 'due-retry-good-token' },
+        link: goodLink,
+      })
+      assert('runDueRetries setup (good contact): first attempt QUEUED after the forced retryable failure', queuedGood.record.status === 'QUEUED')
+      await backdateToDue(queuedGood.record.message_id)
+
+      const settledGood = []
+      const dueCountGood = await store.runDueRetries(
+        async () => ({ phone: '01011114444', text: 'fallback text', variables: { followup_token: 'due-retry-good-token' }, link: goodLink }),
+        (visitId, status) => settledGood.push({ visitId, status }),
+      )
+      assert('runDueRetries (good contact): exactly one message was due', dueCountGood === 1)
+      const goodFinal = await store.getMessage(queuedGood.record.message_id)
+      assert('runDueRetries (good contact): the automatic retry actually succeeded (SENT)', goodFinal.status === 'SENT')
+      const goodSendCall = sendCalls[sendCalls.length - 1]
+      assert('runDueRetries (good contact): the transport actually received `link` on the automatic retry, not just phone/text/variables', goodSendCall.link === goodLink)
+      assert('runDueRetries (good contact): onSettled fired with the SENT status', settledGood.some((s) => s.visitId === 'visit-due-good' && s.status === 'SENT'))
+
+      // Sub-case 2: a contact missing ONLY `link` (phone/text/variables all
+      // present) -- independent-review finding this test closes: before
+      // this fix cycle, the fail-closed guard never checked `link` at all,
+      // so this exact contact shape would have sailed through to a LIVE
+      // BizM send with `link` undefined -- bizmAdapter.js's own
+      // bizm_missing_link guard would have caught it one layer down, but
+      // the record would misleadingly end up FAILED with a provider-level
+      // error code instead of the correct, cheaper
+      // recipient_unresolvable classification, and (worse, for a
+      // different future transport that DIDN'T itself guard on `link`)
+      // could have sent a button-less/broken message and marked it SENT.
+      const linklessLink = undefined
+      const queuedLinkless = await store.queueRevisitMessage({
+        visitId: 'visit-due-linkless',
+        patientId: 'patient-due-linkless',
+        phone: '01011115555',
+        followUpToken: 'due-retry-linkless-token',
+        text: 'fallback text',
+        variables: { followup_token: 'due-retry-linkless-token' },
+        link: 'https://gomars93.github.io/Samindang/followup/#follow-up=due-retry-linkless-token',
+      })
+      assert('runDueRetries setup (linkless contact): first attempt QUEUED after the forced retryable failure', queuedLinkless.record.status === 'QUEUED')
+      await backdateToDue(queuedLinkless.record.message_id)
+
+      const sendCallCountBeforeLinkless = sendCalls.length
+      const settledLinkless = []
+      const dueCountLinkless = await store.runDueRetries(
+        async () => ({ phone: '01011115555', text: 'fallback text', variables: { followup_token: 'due-retry-linkless-token' }, link: linklessLink }),
+        (visitId, status) => settledLinkless.push({ visitId, status }),
+      )
+      assert('runDueRetries (linkless contact): exactly one message was due', dueCountLinkless === 1)
+      assert('runDueRetries (linkless contact): the guard fails closed WITHOUT ever calling the transport', sendCalls.length === sendCallCountBeforeLinkless)
+      const linklessFinal = await store.getMessage(queuedLinkless.record.message_id)
+      assert('runDueRetries (linkless contact): the record is marked FAILED', linklessFinal.status === 'FAILED')
+      assert('runDueRetries (linkless contact): the correct error_code is recipient_unresolvable, not a provider-level error', linklessFinal.error_code === 'recipient_unresolvable')
+      assert('runDueRetries (linkless contact): onSettled fired with the FAILED status', settledLinkless.some((s) => s.visitId === 'visit-due-linkless' && s.status === 'FAILED'))
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }

@@ -429,17 +429,25 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
         // BizM-batch independent-review finding (LOW): this guard predates
         // `variables` -- it only ever checked `phone`/`text`, so a
         // resolveContact returning `{phone, text}` with no (or an empty)
-        // `variables.followup_token` would sail through to attemptSend and
-        // reach a LIVE BizM send with an empty template-substitution value,
-        // producing a dead Alimtalk link marked SENT rather than failing
-        // closed.
+        // `variables.followup_token` would sail through to attemptSend. As
+        // of the button1 fix below, BizM itself no longer consumes
+        // `variables` at all (see bizmAdapter.js's header) -- this specific
+        // check now only guards SOLAPI's own live template-substitution
+        // path (see solapiAdapter.js's live send()), but is left in place
+        // unconditionally since this guard has no way to know which
+        // provider a given retry will actually reach.
         //
         // Owner-review finding (HIGH): `link` (the raw one-time URL
         // bizmAdapter.js's button1 needs, see attemptSend's own doc
-        // comment) must be required here too, for the same reason -- a
-        // missing/empty `link` would otherwise reach a LIVE BizM send with
-        // no capability URL to put in the button at all, again producing a
-        // dead-link message marked SENT rather than failing closed.
+        // comment) must be required here too, for the same reason the
+        // `variables` check exists -- a missing/empty `link` would
+        // otherwise reach a LIVE BizM send with no capability URL to put
+        // in the button at all, producing a dead-link message marked SENT
+        // rather than failing closed (bizmAdapter.js's own bizm_missing_
+        // link guard would additionally catch this one layer down, but
+        // this store-level guard is what produces the correct, cheaper
+        // recipient_unresolvable classification instead of a confusing
+        // provider-level error code).
         //
         // Every current caller (server/index.js's messagingContactCache,
         // written on both the queue and manual-retry routes) always sets

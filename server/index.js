@@ -161,10 +161,13 @@ export function createApp({
   // (messagingStore.js only ever keeps its SHA-256 hash), so it is parsed
   // back out of the ALREADY-VALIDATED link itself (isValidFollowUpLink's
   // own `#follow-up=` contract) purely to rebuild the `variables.
-  // followup_token` value BizM's Alimtalk template substitution needs (see
-  // bizmAdapter.js's header). Returns null if link doesn't match, though by
-  // the time this is called isValidFollowUpLink has always already
-  // confirmed it does.
+  // followup_token` value SOLAPI's own Alimtalk template substitution still
+  // needs (see solapiAdapter.js's live send() -- BizM no longer consumes
+  // `variables` at all as of the button1 fix, see bizmAdapter.js's header
+  // on why; this route still builds it unconditionally since the active
+  // provider is a runtime choice this route doesn't need to branch on).
+  // Returns null if link doesn't match, though by the time this is called
+  // isValidFollowUpLink has always already confirmed it does.
   function extractFollowUpTokenFromLink(link) {
     const match = typeof link === 'string' ? link.match(/#follow-up=(.+)$/) : null
     return match ? match[1] : null

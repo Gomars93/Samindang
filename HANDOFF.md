@@ -4213,16 +4213,48 @@ link 누락 시 fail-closed 테스트, HTTP 200+K108 실패 코드 검사 테스
 `tests/messaging.spec.mjs`(SOLAPI+공유 스토어 HTTP 통합) 103/103도
 회귀 없이 그대로 통과.
 
-**검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
-67/67, `npm run test:messaging` 103/103, `npm run test:all`(exit 0),
-`npm run build`/`build:preview`, `tablet core` pytest 80/80, FROZEN
-diff 0 lines — 전부 통과. 독립 `model:opus` 리뷰 루프는 이어서 진행
-예정(오너 지시 7번 항목 재적용).
+**1차 독립 `model:opus` 리뷰(완료) + 수정**: 실제 fresh subagent 호출로
+`af9ef91`(button1/link/응답-실패 검사 구현) 검수. 발견 사항:
+- **MEDIUM**: `runDueRetries`의 `link` threading에 대한 실질적 테스트
+  커버리지가 전무했음 — 기존 유일한 호출은 문자열 하나만 넘기는
+  resolveContact라서 fail-closed 분기만 trivially 맞았을 뿐, 성공
+  경로를 전혀 증명하지 못했음. **수정**: `tests/messaging-bizm.spec.mjs`에
+  새 "Part 4b" 블록 추가 — 스토어가 관리하는 on-disk JSON 레코드 파일을
+  직접 backdate해 `next_retry_at`을 과거로 만드는 방식으로 실제
+  `runDueRetries` 성공/실패 경로를 강제 재현: (a) `link` 포함 완전한
+  contact → 자동 재시도가 실제 SENT로 성공하고 transport가 `link`를
+  실제로 받았음을 확인, (b) `link`만 빠진 contact → transport를 아예
+  호출하지 않고 `recipient_unresolvable`로 fail-closed함을 확인.
+  46→67→78 assertion(신규 11개는 모두 위 (a)/(b) 경로).
+- **LOW** (수정): `server/index.js`/`server/messagingStore.js`의
+  `variables.followup_token` 관련 주석이 "BizM이 필요로 한다"는 이제
+  틀린 서술을 그대로 두고 있었음 — "SOLAPI 전용, BizM은 더 이상
+  `variables`를 전혀 사용하지 않음"으로 정정.
+- **LOW** (accepted residual risk, 미수정): 실제 BizM SUCCESS 코드
+  모양이 여전히 미확인이라, `BIZM_RESULT_FAILURE_CODE_RE`가 가상의
+  `[A-Z]\d{3}` 모양 성공 코드(예: 'A000')를 오탐할 이론적 가능성은
+  남아 있음 — 헤더에 명시적으로 disclosed, `PENDING_CONTRACT` 게이트가
+  실거래 실행을 막고 있어 계정 접근 없이는 실제 성공 코드를 확인할
+  방법이 없음. 추가 수정 보류.
+- **LOW** (pre-existing, out of scope, 미수정): 큐 라우트의
+  `messagingContactCache.set()`이 dedup 체크보다 먼저 일어나 같은
+  visit/patient 내 토큰 재발급 재-POST가 아직 QUEUED인 레코드의 캐시된
+  `link`를 덮어쓸 수 있음 — cross-patient 누출 없음, 감사-흔적 불일치
+  수준. 이번 배치 범위 밖으로 판단.
+- **NIT** (미수정, 불필요 판단): false-positive-safety 테스트가 4자리
+  코드 하나만 쓰는데, 'A000' 모양 케이스를 추가해도 위에서 이미 disclosed된
+  LOW를 재확인하는 것뿐이라 생략.
+
+**검증(1차 리뷰 수정 반영 후, 최종)**: `npx tsc -b --force` clean,
+`npm run test:messaging-bizm` 78/78, `npm run test:messaging` 103/103
+(회귀 없음), `npm run test:all`(exit 0), `npm run build`/`build:preview`,
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 2차(클로징)
+독립 `model:opus` 리뷰는 이어서 진행 예정(오너 지시 7번 항목).
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `67b9308` — 위 button1/응답-실패 검증 HIGH 수정은 아직 이 위에
-커밋되지 않은 작업 트리 상태로만 존재, 독립 리뷰 후 커밋/푸시 예정.
+HEAD는 아래 커밋 직후 갱신 예정 — button1/응답-실패 검증 HIGH 수정 +
+1차 독립 리뷰 수정(Part 4b 테스트, 주석 정정)을 하나의 커밋으로 push.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

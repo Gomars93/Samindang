@@ -357,15 +357,20 @@ async function main() {
       // resolves (via store.resolveFollowUpSession) to the SAME visit_id
       // the message is being sent/retried for -- see server/index.js's
       // "follow_up_token does not belong to this visit"/"...this message's
-      // visit" checks. The shared LINK constant above carries a fake,
-      // never-issued token ('http-test-token'), which is fine for every
-      // queue-route call below (that route only validates the SEPARATE
-      // `follow_up_token` body field against this check, never anything
-      // embedded in `link`) and for retry calls that only exercise
-      // auth/validation short-circuits before this check is ever reached.
-      // A retry call that expects an actual 200 SUCCESS, though, now needs
-      // `link` to embed a REAL token that resolves to the message's own
-      // visit_id -- this helper builds that.
+      // visit" checks.
+      // 2nd independent-review finding (MEDIUM): the queue route ALSO now
+      // requires link's own embedded #follow-up= token to equal the
+      // separately-supplied `follow_up_token` field exactly (see
+      // server/index.js's "link does not carry the same follow_up_token"
+      // check) -- link is what BizM's button1 actually delivers to the
+      // patient, so a mismatched link used to sail through untouched. The
+      // shared LINK constant above carries a fake, never-issued token
+      // ('http-test-token') that deliberately never matches any real
+      // `follow_up_token` -- it is now reserved for the dedicated
+      // link/token-mismatch test below and for auth/malformed-link checks
+      // that short-circuit before the mismatch check is ever reached. Every
+      // other queue/retry call that expects to proceed past it uses this
+      // helper to build a link whose embedded token matches on purpose.
       const linkFor = (token) => `https://example.invalid/#follow-up=${token}`
       const noAuth = await fetch(`${base}/api/visits/${start.visit.id}/messages`, {
         method: 'POST',
@@ -392,11 +397,25 @@ async function main() {
         link: 'javascript:alert(1)',
       })
       assert('validation: a link not shaped like a real follow-up capability URL -> 400', malformedLink.status === 400)
+      // 2nd independent-review finding (MEDIUM): link's own embedded token
+      // must equal the separately-supplied follow_up_token -- LINK above
+      // deliberately carries a token ('http-test-token') that never matches
+      // any real follow_up_token, so this is the dedicated test for that
+      // exact check (server/index.js's "link does not carry the same
+      // follow_up_token" 400).
+      const linkTokenMismatch = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: LINK,
+      })
+      assert('validation: link embeds a DIFFERENT token than follow_up_token -> 400', linkTokenMismatch.status === 400)
+
       const unknownPatient = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: 'not-a-real-patient-id',
         phone: '01055556666',
         follow_up_token: start.token,
-        link: LINK,
+        link: linkFor(start.token),
       })
       assert('validation: unknown patient_id -> 400', unknownPatient.status === 400)
 
@@ -407,7 +426,7 @@ async function main() {
         patient_id: otherPatientVisit.patient_id,
         phone: '01055556666',
         follow_up_token: start.token,
-        link: LINK,
+        link: linkFor(start.token),
       })
       assert('validation: visit_id belonging to a DIFFERENT patient_id -> 400', mismatched.status === 400)
 
@@ -423,14 +442,14 @@ async function main() {
         patient_id: visit.patient_id,
         phone: '01055556666',
         follow_up_token: otherStart.token,
-        link: LINK,
+        link: linkFor(otherStart.token),
       })
       assert('validation: a real follow_up_token issued for a DIFFERENT visit_id -> 400', wrongVisitToken.status === 400)
       const neverIssuedToken = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: visit.patient_id,
         phone: '01055556666',
         follow_up_token: 'never-issued-token-xyz',
-        link: LINK,
+        link: linkFor('never-issued-token-xyz'),
       })
       assert('validation: a follow_up_token that was never issued at all -> 400', neverIssuedToken.status === 400)
 
@@ -439,7 +458,7 @@ async function main() {
         patient_id: visit.patient_id,
         phone: '01055556666',
         follow_up_token: start.token,
-        link: LINK,
+        link: linkFor(start.token),
       })
       assert('queue: 201 on first queue', queued.status === 201)
       assert('queue: response has no "phone" key anywhere', !('phone' in queued.body))
@@ -450,7 +469,7 @@ async function main() {
         patient_id: visit.patient_id,
         phone: '01055556666',
         follow_up_token: start.token,
-        link: LINK,
+        link: linkFor(start.token),
       })
       assert('queue: a second identical queue call -> 200 (deduped), not a new 201', dedupRes.status === 200)
       assert('queue: dedup returns the same message_id', dedupRes.body.message_id === queued.body.message_id)
@@ -466,7 +485,7 @@ async function main() {
         patient_id: retryVisit.patient_id,
         phone: '01000009998',
         follow_up_token: retryStart.token,
-        link: LINK,
+        link: linkFor(retryStart.token),
       })
       assert('retry-http setup: QUEUED after a transient mock failure', retryQueue.body.status === 'QUEUED')
       const retryNoAuth = await fetch(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
@@ -574,7 +593,7 @@ async function main() {
         patient_id: identityVisit.patient_id,
         phone: '01077778888',
         follow_up_token: identityStart.token,
-        link: LINK,
+        link: linkFor(identityStart.token),
       })
       assert('attempt-identity setup: initial send SENT with provider_message_id A', identityQueue.status === 201 && identityQueue.body.status === 'SENT')
       const idA = identityQueue.body.provider_message_id

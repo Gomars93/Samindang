@@ -137,11 +137,23 @@ async function main() {
       assert('LIVE transport: state is actually LIVE with contract-verified + full credentials', liveTransport.state === 'LIVE')
 
       const TEST_LINK = 'https://gomars93.github.io/Samindang/followup/#follow-up=raw-one-time-token-value'
+      // 2nd independent-review finding (test honesty): every call in this
+      // file used to omit `text` entirely, so the "msg is BizM's own static
+      // text, never the caller's text" assertion below passed only because
+      // send() structurally never reads `text` at all (destructures only
+      // {to, channel, link, messageId}) -- it never actually proved a
+      // future change like `msg: text ?? BIZM_MESSAGE_TEXT` would be
+      // caught. messagingStore.js's attemptSend always DOES pass a `text`
+      // built by buildRevisitMessageText(link) (server/index.js), which
+      // inlines the raw link -- so this caller-supplied text below matches
+      // production shape exactly, closing that coverage gap.
+      const CALLER_SUPPLIED_TEXT = `[삼인당한의원] 재진 확인 문진 안내\n${TEST_LINK}`
       const result1 = await liveTransport.send({
         to: '01011112222',
         channel: 'KAKAO_ALIMTALK',
         link: TEST_LINK,
         messageId: 'message-id-aaa',
+        text: CALLER_SUPPLIED_TEXT,
       })
       assert('LIVE transport: stubbed send succeeds and returns the stubbed providerMessageId', result1.ok === true && result1.providerMessageId === 'stub-provider-id-1')
       assert('LIVE transport: exactly one fetch call made', capturedRequests.length === 1)
@@ -178,6 +190,11 @@ async function main() {
       // (deriveBizmMsgId only ever hashes messageId+channel), and never
       // anywhere else in the outgoing item.
       const RAW_TOKEN = 'raw-one-time-token-value'
+      // send() was called with a real caller-supplied `text` above (matching
+      // production shape) -- this now genuinely proves msg is BizM's own
+      // static text rather than passing vacuously because `text` happened
+      // to be undefined in every prior call.
+      assert('LIVE request item: msg field is BizM\'s own static, link-free text, NOT the caller-supplied text even though it was provided', item.msg !== CALLER_SUPPLIED_TEXT)
       assert('LIVE request item: msg field is BizM\'s own static, link-free text (never the caller\'s shared inline-link text)', typeof item.msg === 'string' && !item.msg.includes('http'))
       assert('LIVE request item: the raw token does NOT appear in msg', !item.msg.includes(RAW_TOKEN))
       assert('LIVE request item: the raw token does NOT appear in msgId', !item.msgId.includes(RAW_TOKEN))

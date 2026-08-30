@@ -1894,7 +1894,11 @@ async function main() {
           patient_id: revisitPatientVisit.patient_id,
           phone: '01000000001',
           follow_up_token: revisitStart.token,
-          link: 'https://example.invalid/#follow-up=purge-seed-token',
+          // 2nd independent-review finding (MEDIUM, messaging batch):
+          // server/index.js's queue route now requires link's own embedded
+          // #follow-up= token to equal follow_up_token exactly -- must
+          // match revisitStart.token, not an arbitrary placeholder.
+          link: `https://example.invalid/#follow-up=${revisitStart.token}`,
         }),
       })
       assert('purge-full: seed Quick Revisit message queued (201)', messageRes.status === 201)

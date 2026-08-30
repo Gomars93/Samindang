@@ -331,7 +331,11 @@ async function main() {
       patient_id: msgVisit.patient_id,
       phone: '01000009998',
       follow_up_token: msgStart.token,
-      link: 'https://example.invalid/#follow-up=audit-test-token',
+      // 2nd independent-review finding (MEDIUM, messaging batch): the queue
+      // route now requires link's own embedded #follow-up= token to equal
+      // follow_up_token exactly -- must reuse msgStart.token, not an
+      // arbitrary placeholder.
+      link: `https://example.invalid/#follow-up=${msgStart.token}`,
     })
     assert('workflow setup: message queue -> 201', msgQueue.status === 201)
     assert('workflow setup: message stays QUEUED after a mock transient-failure first attempt', msgQueue.body.status === 'QUEUED')

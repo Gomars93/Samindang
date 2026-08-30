@@ -782,6 +782,21 @@ export function createApp({
           } else if (!isValidFollowUpLink(link)) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'link must be a valid follow-up capability URL' }, cors)
+          } else if (extractFollowUpTokenFromLink(link) !== followUpToken) {
+            // 2nd independent-review finding (MEDIUM): follow_up_token and
+            // link were accepted as two independent body fields -- the check
+            // below only ever proved follow_up_token belongs to visitId, not
+            // that link (the value BizM's button1 actually delivers, see
+            // bizmAdapter.js) carries that SAME token. A stale/mismatched
+            // link would pass every check that existed before this one and
+            // still get embedded in button1, silently delivering a different
+            // visit's live capability URL to this visit's patient. Requiring
+            // exact equality here, before the visitId check, means the
+            // visitId check below now transitively also proves link is
+            // correct for this visit -- mirrors the retry route's own
+            // extractFollowUpTokenFromLink(link)-derived check above.
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'link does not carry the same follow_up_token' }, cors)
           } else if (!(await store.visitExistsForPatient(patientId))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)

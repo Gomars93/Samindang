@@ -4245,17 +4245,95 @@ link 누락 시 fail-closed 테스트, HTTP 200+K108 실패 코드 검사 테스
   코드 하나만 쓰는데, 'A000' 모양 케이스를 추가해도 위에서 이미 disclosed된
   LOW를 재확인하는 것뿐이라 생략.
 
-**검증(1차 리뷰 수정 반영 후, 최종)**: `npx tsc -b --force` clean,
+**검증(1차 리뷰 수정 반영 후)**: `npx tsc -b --force` clean,
 `npm run test:messaging-bizm` 78/78, `npm run test:messaging` 103/103
 (회귀 없음), `npm run test:all`(exit 0), `npm run build`/`build:preview`,
-`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과. 2차(클로징)
-독립 `model:opus` 리뷰는 이어서 진행 예정(오너 지시 7번 항목).
+`tablet core` pytest 80/80, FROZEN diff 0 lines — 전부 통과.
+(`2f83963` push, `c491390` HANDOFF 갱신 push.)
+
+**2차(클로징) 독립 `model:opus` 리뷰(완료) + 수정**: 실제 fresh subagent
+호출(148k 토큰, 21 tool call, ~4분)로 push된 HEAD(`c491390`)를 처음부터
+재검수. 전체 판정: **NOT CLEAN — MEDIUM 2, LOW 3, NIT 2**. 핵심 기능
+(button1 구성, link threading, fail-closed 가드, FROZEN 범위)은 정확하다고
+확인했지만, 이 fix가 만든 근본적 변화 — **"환자에게 실제 전달되는 캡ability는
+이제 `follow_up_token`이 아니라 `link`"** — 를 route 검증과 테스트 양쪽이
+따라가지 못한 두 지점을 발견:
+
+1. **MEDIUM (수정)**: `server/index.js`의 큐 라우트는 `follow_up_token`이
+   visitId에 속하는지는 검증했지만, `link`에 실제로 임베딩된 토큰이 그
+   `follow_up_token`과 같은지는 전혀 검증하지 않았음 — retry 라우트는
+   이미 `extractFollowUpTokenFromLink(link)`로 토큰을 link에서 직접
+   유도해서 이 문제가 구조적으로 없는데, 큐 라우트만 `follow_up_token`과
+   `link`를 독립된 두 body 필드로 받아 각자 다른 정도로만 검증하던
+   비대칭이 원인. 구체적 실패 시나리오: 오래된 DoctorView 상태가 visit
+   B의 `link`를 들고 있는 채로 visit A의 새 `follow_up_token`을 가져와
+   큐에 넣으면, 토큰은 A로 검증 통과하지만 button1에는 B의 살아있는
+   1회용 링크가 그대로 나가 환자 A가 환자 B의 문진 세션에 들어갈 위험.
+   **수정**: `isValidFollowUpLink(link)` 체크 직후,
+   `extractFollowUpTokenFromLink(link) !== followUpToken` 검사를
+   추가(retry 라우트의 기존 패턴과 동일한 논리) — 이제 뒤이은
+   `resolveFollowUpSession(followUpToken).visit_id !== visitId` 체크가
+   전이적으로 link까지 검증하게 됨.
+2. **MEDIUM, 테스트 정직성 (수정)**: `tests/messaging-bizm.spec.mjs`
+   Part 2b의 모든 `liveTransport.send(...)` 호출이 `text`를 전혀
+   넘기지 않아서, "msg는 caller의 text가 아니라 BizM 정적 텍스트"라는
+   assertion이 실제로는 `send()`가 `text`를 구조적으로 아예 안 읽는다는
+   사실 때문에 통과했을 뿐 — 미래에 누군가 `msg: text ?? BIZM_MESSAGE_TEXT`
+   같은 그럴듯한 리팩터를 넣어도 이 테스트가 여전히 통과했을 것(프로덕션
+   경로 `attemptSend`는 항상 raw link가 인라인된 `text`를 넘기므로 실제
+   PHI 유출로 이어짐). **수정**: 첫 `send()` 호출에 프로덕션과 동일한
+   모양의 `CALLER_SUPPLIED_TEXT`(TEST_LINK 인라인)를 실제로 넘기고,
+   `item.msg !== CALLER_SUPPLIED_TEXT` assertion을 추가해 caller의 text가
+   진짜로 무시됨을 증명.
+3. **LOW (accepted, 미수정)**: `BIZM_RESULT_FAILURE_CODE_RE`가 미확인의
+   실제 SUCCESS 코드(예: 'A000' 모양)를 오탐할 이론적 가능성 — 1차 리뷰와
+   동일한 LOW, 헤더에 이미 disclosed.
+4. **LOW (accepted, 미수정)**: 동일 `MessageRecord`의 4번 재시도 전부가
+   같은 msgId를 쓰는 것은 진짜 중복전송 방지(E109)뿐 아니라, 애매한
+   응답(`provider_missing_message_id`, retryable) 이후의 정당한 재시도까지
+   E109로 막을 수 있음 — 의료 시스템으로서는 안전한 방향(전송 안 됐다고
+   과다 주장하지 않음)이지만 헤더에 이 트레이드오프를 명시하는 게 좋다는
+   지적. 다음 라운드 documentation-only 후속으로 기록.
+5. **LOW (pre-existing, out of scope, 미수정)**: 토큰 재발급/무효화가
+   이미 QUEUED 상태인 `MessageRecord`를 건드리지 않아 죽은 링크가
+   그대로 나갈 수 있음 — `link`로 바뀌기 전에도 `text` 경로로 동일하게
+   존재하던 문제, 이번 배치가 새로 만든 게 아님.
+6. **NIT (accepted, 미수정)**: `runDueRetries` 가드가 BizM이 더 이상
+   쓰지 않는 `variables.followup_token`을 여전히 요구 — 오늘은 두
+   라우트 모두 항상 이 필드를 채우므로 fail-closed로 안전하지만, 향후
+   `variables` 완전 제거 시 자동 재시도가 전부 `recipient_unresolvable`로
+   막힐 수 있는 결합.
+7. **NIT (pre-existing, out of scope, 미수정)**: 재시도 라우트가
+   `messagingContactCache.set()`을 `retryMessage()` 실패 가능성보다
+   먼저 실행 — 실패해도 레코드가 terminal이라 sweep이 안 집어가서 실해는
+   없음.
+
+**MEDIUM #1/#2 수정에 대한 회귀 처리**: 큐 라우트에 새 검증을 추가하니
+`tests/messaging.spec.mjs`(SOLAPI HTTP 통합), `tests/crm-store.spec.mjs`
+(purge-full seed), `tests/audit-registry.spec.mjs`(감사 로그 seed) 세
+파일에서 `link`가 `follow_up_token`과 의도적으로 다른 placeholder
+토큰을 쓰던 자리들이 전부 새 400으로 막혀 실패 — 각 파일의 성공 경로
+호출을 `linkFor(token)`(또는 동등한 인라인)로 토큰을 맞추도록 수정하고,
+`tests/messaging.spec.mjs`에는 이 정확한 시나리오(follow_up_token은
+맞는데 link가 다른 토큰을 담은 경우)를 검증하는 전용 테스트를 신규
+추가(`validation: link embeds a DIFFERENT token than follow_up_token ->
+400`) — 기존에 실패 경로 검증용으로만 쓰이던 `LINK` 상수를 이 신규
+테스트에 재사용.
+
+**최종 검증**: `npx tsc -b --force` clean, `npm run test:messaging-bizm`
+79/79, `npm run test:messaging` 104/104, `npm run test:all`(exit 0),
+`npm run build`/`build:preview`, `tablet core` pytest 80/80, FROZEN
+diff 0 lines — 전부 통과. 두 번의 진짜 독립 `model:opus` 리뷰(1차 CLEAN
++ 후속 findings 수정, 2차 NOT CLEAN + MEDIUM 2건 수정 완료) 완료 —
+오너 지시 7번 항목(Sonnet 구현 → 1차 독립 리뷰 → 수정 → 2차 독립
+클로징 리뷰) 충족. push 완료 후 PR #24에 클로징 상태 코멘트 예정.
 
 ## Current Branch
-`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `2f83963` — button1/응답-실패 검증 HIGH 수정(`af9ef91`) +
-1차 독립 리뷰 수정(Part 4b 테스트, 주석 정정, `2f83963`)까지 push 완료.
-2차(클로징) 독립 `model:opus` 리뷰 진행 중.
+`feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). button1/
+응답-실패 검증 HIGH 수정 + 1차 독립 리뷰 수정(`2f83963`) + 2차 독립
+리뷰가 찾은 MEDIUM 2건(큐 라우트 link/token 바인딩, 테스트 정직성)
+수정을 하나의 커밋으로 이어서 push 예정 — 최신 HEAD는 이 커밋 직후
+갱신.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`

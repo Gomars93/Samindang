@@ -5577,6 +5577,100 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge
 판단은 항상 사용자(Product Owner).
 
+**5차 독립 `model:opus` closing 리뷰** (진짜 subagent 호출, 커밋
+`2af75cd` 대상, "4차와 다른 각도로 훑어달라"고 명시적으로 요청):
+**NOT CLOSABLE 판정** — 직접 실행으로 재현한 HIGH 2건.
+
+(HIGH-1) 4차가 `medical_history_flags`의 per-element `.toUpperCase()`는
+Lbp/Neck/Shoulder 게이트에 막았지만, `neckAdapter.ts`(frozen)에는
+같은 패턴의 **또 다른** per-element `.toUpperCase()`가 하나 더 있다
+— `mapMedication`(line 98)이 `medication.medication_types` 배열의
+각 원소에 무조건 호출한다. `NeckSafetyPanel`/`ShoulderSafetyPanel`
+게이트 어디에도 이 필드 체크가 없어, 실제 서버+브라우저로
+`medication_types: ['psych', 7]` 같은 레코드를 열면 그대로 크래시함을
+재현했다 — 4차가 "지목된 두 필드만" 막고 "같은 클래스의 세 번째
+사이트"를 놓친, 이 배치 전체를 관통하는 바로 그 실패 패턴의 반복.
+
+(HIGH-2, 더 근본적) 3~4차가 추가한 9개 SafetyPanel 게이트가 전부
+`return null` 하나로 "이 부위는 이 레코드와 무관하다"(정상, 조용히
+생략)와 "이 부위는 관련 있지만 계산에 필요한 하위 데이터가
+손상됐다"(레거시/손상)를 뭉뚱그리고 있었다 — 그래서 후자가 화면에서
+"이 부위는 확인할 안전 사항이 없다"로 보인다. 실제 서버에 LBP
+레코드(진짜 계산된 `safety_flags.lbp.lbp_safety_status:
+"REVIEW_REQUIRED"`)를 `reproductive_status.derived = null`로만
+POST하고 열어보니: page error 0건(정상 동작처럼 보임), LBP 안전
+패널 자체가 사라지고, 화면에는 "특이 안전정보 없음"/"안전이슈
+없음"만 남았다 — `REVIEW_REQUIRED`라는 이미 계산된 값이 있는데도
+화면은 정반대로 "확인할 것 없음"처럼 보인 것. 이는 이 배치의 핵심
+정책(§2: 없는/불명 값을 부정적 판정으로 둔갑시키지 않는다)을 크래시보다
+더 직접적으로 위반하며, `main` 대비 **회귀**이기도 하다(예전엔 이런
+페이로드가 그냥 던져서 최소한 `DoctorRecordFallback`이라는 눈에 띄는
+경고라도 났는데, 이 배치가 그 경고를 조용한 침묵으로 바꿔버렸다).
+
+**수정**: (1) HIGH-1: `NeckSafetyPanel`/`ShoulderSafetyPanel` 게이트에
+`isNullOrStringArray(payload.responses.medication.medication_types)`
+체크 추가(`lbpAdapter.ts`는 이 필드를 안 읽으므로 Lbp는 대상 아님 —
+`grep`으로 재확인). (2) HIGH-2(구조적 수정): 새
+`SafetyDataUnavailableNotice` 컴포넌트(DoctorView.tsx에 하나,
+Hip/Tmj/AnkleFoot 3개 별도 파일에 각각 로컬 사본 — 기존 관례)를
+만들어 "계산된 안전 상태를 절대 추정하지 않고 확인 필요만 명시"한다.
+9개 SafetyPanel 게이트 전부를 두 단계로 분리했다 — 1단계
+applicability 체크(`safety_flags.<region> == null`이면 조용히
+`return null`, LBP는 기존대로 `primary_module_detail !== 'LBP'`)는
+그대로 유지하고, 2단계 malformed-data 체크(`modules.<region>` 비어
+있음/`reproductive_status.derived` 없음/`medical_history_flags`
+또는 `medication_types` wrong-typed)에서는 `return null` 대신
+`return <SafetyDataUnavailableNotice label="..." />`로 바꿨다.
+applicability와 malformed는 서로 다른 원인이므로 서로 다른 결과를
+내야 한다는 게 핵심 — "무관함"은 계속 조용히 생략되고, "손상됨"만
+명시적 알림을 낸다.
+
+**신규/보강 회귀 테스트**(`tests/doctor.spec.mjs`): 9개 게이트 전부의
+구조적 정규식을 새 2단계 구조(첫 줄만의 applicability if문 +
+`SafetyDataUnavailableNotice` 반환)에 맞게 재작성. 4차 리뷰가 지적한
+"`!threw`만 검사하면 침묵도 통과한다"는 문제를 정면으로 막기 위해
+**실제 컴포넌트를 `renderToString`으로 직접 렌더링하는 behavioral
+테스트**를 새로 추가했다(구조 정규식만으로는 부족 — 리뷰의 핵심
+비판이 정확히 이 지점이었음): 실제 LBP/NECK/SHOULDER fixture를
+가져와 `reproductive_status.derived = null` 또는
+`medication_types`에 비문자열 원소를 섞은 뒤(둘 다 이미 계산된
+진짜 `safety_flags.<region>` 값은 그대로 유지), 렌더된 HTML에
+"안전 상태를 자동으로 계산할 수 없습니다" 문구가 **실제로 존재하는지**
+assert — 침묵을 리턴하는 pre-fix 코드였다면 이 assertion이 실패했을
+것. 대조군으로 "genuinely 무관함" 케이스(LBP 레코드를
+`primary_module_detail: 'NECK'`로 바꿈)는 여전히 빈 문자열을
+렌더함을 확인해 applicability/malformed 분리가 실제로 동작함을
+증명. `npm run test:doctor` 825/825(+5).
+
+**실사용 재검증**: 실제 서버에 세 가지 정확한 리뷰 재현 페이로드를
+POST — (a) LBP, `reproductive_status.derived=null`, 진짜
+`REVIEW_REQUIRED` safety_flags(HIGH-2), (b) NECK,
+`medication_types: ['psych', 7, null, {a:1}]`, 진짜
+`REVIEW_REQUIRED` safety_flags(HIGH-1), (c) SHOULDER,
+`medication_types: ['blood_thinner', 42]`(HIGH-1, neckAdapter 경유
+전이). Playwright로 Doctor UI를 열어 세 케이스 모두 확인 — page
+error 0건, 화면에 "안전 상태를 자동으로 계산할 수 없습니다" 명시적
+알림이 실제로 표시됨(스크린샷으로 육안 확인, (a)의 경우 예전처럼
+"특이 안전정보 없음"만 보이는 게 아니라 LBP 섹션 안에 저 알림이
+명확히 나타남). 3개 필수 뷰포트(1440×900/1024×768/834×1112) 전부
+수평 오버플로우 0.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건), `npm run test:doctor-workspace` 141/141(unaffected),
+`npm run build`/`build:preview` clean, `tablet core` pytest 80/80,
+`git diff origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts`
+0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 6차 독립 `model:opus`
+리뷰를 새로 호출한다. 5회 연속 리뷰 모두 실제 버그를 찾은 패턴을
+감안해, 이번엔 "9개 SafetyPanel 게이트류"가 아닌 완전히 다른 표면
+(예: `SafetyDataUnavailableNotice` 자체가 새로 추가한 코드이므로 그
+컴포넌트/호출부, DoctorWorkspace 쪽 다른 안전 표시 로직, 아직
+`isNonEmptyObject`/`isNullOrStringArray`가 적용되지 않은 나머지
+frozen adapter 호출부)까지 포함해 훑어달라고 요청한다. CLEAN이면
+PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT
+PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

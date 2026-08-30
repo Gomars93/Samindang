@@ -239,6 +239,29 @@ function isNonEmptyObject(value: unknown): boolean {
   return isPlainObject(value) && Object.keys(value).length > 0
 }
 
+/**
+ * 5차 독립 리뷰 HIGH-2: 각 SafetyPanel의 게이트가 "이 부위는 이 레코드와
+ * 무관하다"(정상, 조용히 아무것도 안 그림 -- 예: LBP 레코드에서 어깨 패널)와
+ * "이 부위는 이 레코드와 관련 있지만 저장된 응답 일부가 없거나 손상돼
+ * 안전 상태를 계산할 수 없다"(레거시/손상 데이터)를 똑같이 `return null`
+ * 하나로 뭉뚱그리고 있었다 -- 그래서 후자가 "이 부위는 안전 확인할 것이
+ * 없다"로 오인될 수 있었다(이 배치가 막으려는 정확히 그 fail-open: 계산이
+ * 안 됐을 뿐인데 화면은 "특이 안전정보 없음"처럼 보임). 이 컴포넌트는
+ * 계산된 안전 상태를 절대 추정/대체하지 않고 "확인 필요"만 명시적으로
+ * 알린다 -- 각 게이트는 "무관함" 조건과 "손상됨" 조건을 분리해서, 후자일
+ * 때만 이걸 렌더링해야 한다.
+ */
+function SafetyDataUnavailableNotice({ label }: { label: string }) {
+  return (
+    <div className="doctor__lbpSafety doctor__lbpSafety--unavailable">
+      <span className="doctor__safetyGlance__title">안전 확인 — {label}</span>
+      <p className="doctor__derivedNote">
+        저장된 응답 일부가 없거나 형식이 예상과 달라(레거시/손상 데이터로 보임) 안전 상태를 자동으로 계산할 수 없습니다 — 원장 확인 필요.
+      </p>
+    </div>
+  )
+}
+
 /** 요약 카드용 "기간 · 빈도" 한 줄. 둘 다 없으면 줄 자체를 생략한다. */
 export function durationFrequencyText(r: Responses, primaryModule: string | null): string | null {
   const duration = r.visit_goal.chief_duration
@@ -413,17 +436,21 @@ export function LbpSafetyPanel({
   payload: DoctorPayload
   lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
 }) {
+  // "이 레코드는 LBP와 무관하다"(조용히 아무것도 안 그림)와 "LBP와
+  // 관련은 있지만 계산에 필요한 하위 데이터가 손상/누락됐다"(명시적
+  // 확인 필요 알림)를 분리한다 -- 5차 독립 리뷰 HIGH-2.
+  if (payload.routing.primary_module_detail !== 'LBP') return null
+
   // lbpAdapter.ts(frozen)의 mapPregnancyStatus는 reproductive_status.derived
   // 를, mapMajorHistory는 medical_history.medical_history_flags의 각
   // 원소가 문자열이라고 무조건 가정한다 -- 둘 다 없으면(레거시 데이터)
   // 그 함수들 안에서 던진다.
   if (
-    payload.routing.primary_module_detail !== 'LBP' ||
     !isNonEmptyObject(payload.responses.modules.lbp) ||
     !payload.responses.reproductive_status.derived ||
     !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
   ) {
-    return null
+    return <SafetyDataUnavailableNotice label="허리(LBP)" />
   }
 
   const age = ageFromDoctorPayload(payload.responses)
@@ -610,15 +637,24 @@ function suggestedNeckExamCodes(
  * JudgmentPanel에 대응 필드를 추가하지 않았다.
  */
 export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  // safety_flags.neck는 이 레코드가 NECK/SHOULDER 부위와 관련 있는지의
+  // applicability 신호다(위 클래스 doc comment 참고) -- null이면 조용히
+  // 아무것도 안 그린다(무관함, 정상). 그 외 조건은 "관련은 있지만 계산
+  // 불가"이므로 명시적 알림을 그린다 -- 5차 독립 리뷰 HIGH-2.
+  if (payload.responses.safety_flags.neck == null) return null
+
   // neckAdapter.ts(frozen)의 mapPregnancyStatus/mapMajorHistory도 LBP와
   // 같은 두 필드를 무조건 가정한다 -- 위 LbpSafetyPanel과 동일한 이유.
+  // mapMedication도 medication.medication_types의 각 원소에
+  // .toUpperCase()를 무조건 호출한다(5차 독립 리뷰 HIGH-1) -- 원소가
+  // 문자열이 아니면(레거시 데이터) 던진다.
   if (
-    payload.responses.safety_flags.neck == null ||
     !isNonEmptyObject(payload.responses.modules.neck) ||
     !payload.responses.reproductive_status.derived ||
-    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
+    !isNullOrStringArray(payload.responses.medication.medication_types)
   ) {
-    return null
+    return <SafetyDataUnavailableNotice label="목(NECK)" />
   }
 
   const state = toNeckStateFromDoctorPayload(payload.responses)
@@ -764,21 +800,30 @@ export function ShoulderSafetyPanel({
   payload: DoctorPayload
   shoulderObjectiveCuffWeakness: ClinicianJudgment['shoulder_objective_cuff_weakness']
 }) {
+  // safety_flags.shoulder is the applicability signal (same convention as
+  // NeckSafetyPanel) -- null means this record genuinely does not concern
+  // the shoulder, so stay silent. Anything else below is "applicable but
+  // not computable" and must show an explicit notice, not silence (5th
+  // independent review HIGH-2).
+  if (payload.responses.safety_flags.shoulder == null) return null
+
   // shoulderAdapter.ts internally calls toNeckStateFromDoctorPayload (shared
   // neck_shoulder safety logic, frozen) -- computing shoulder state without
   // modules.neck present crashes inside that frozen adapter, so this gate
   // must require both submodules, not just modules.shoulder. That frozen
-  // path also reaches neckAdapter's mapPregnancyStatus/mapMajorHistory, so
-  // it needs the same reproductive_status.derived/medical_history_flags
-  // checks as NeckSafetyPanel itself.
+  // path also reaches neckAdapter's mapPregnancyStatus/mapMajorHistory/
+  // mapMedication, so it needs the same reproductive_status.derived/
+  // medical_history_flags/medication_types checks as NeckSafetyPanel
+  // itself (5th independent review HIGH-1: mapMedication's per-element
+  // .toUpperCase() on medication_types was missed in round 4).
   if (
-    payload.responses.safety_flags.shoulder == null ||
     !isNonEmptyObject(payload.responses.modules.shoulder) ||
     !isNonEmptyObject(payload.responses.modules.neck) ||
     !payload.responses.reproductive_status.derived ||
-    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
+    !isNullOrStringArray(payload.responses.medication.medication_types)
   ) {
-    return null
+    return <SafetyDataUnavailableNotice label="어깨(SHOULDER)" />
   }
 
   const state = toShoulderStateFromDoctorPayload(
@@ -919,7 +964,12 @@ function suggestedKneeExamCodes(
  * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.knee == null || !isNonEmptyObject(payload.responses.modules.knee)) return null
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
+  if (payload.responses.safety_flags.knee == null) return null
+  if (!isNonEmptyObject(payload.responses.modules.knee)) {
+    return <SafetyDataUnavailableNotice label="무릎(KNEE)" />
+  }
 
   const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeKneeFlags(state)
@@ -1058,7 +1108,12 @@ function suggestedElbowExamCodes(
  * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.elbow == null || !isNonEmptyObject(payload.responses.modules.elbow)) return null
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
+  if (payload.responses.safety_flags.elbow == null) return null
+  if (!isNonEmptyObject(payload.responses.modules.elbow)) {
+    return <SafetyDataUnavailableNotice label="팔꿈치(ELBOW)" />
+  }
 
   const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeElbowFlags(state)
@@ -1207,11 +1262,11 @@ function suggestedWristHandExamCodes(
  * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
  */
 export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (
-    payload.responses.safety_flags.wrist_hand == null ||
-    !isNonEmptyObject(payload.responses.modules.wrist_hand)
-  ) {
-    return null
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
+  if (payload.responses.safety_flags.wrist_hand == null) return null
+  if (!isNonEmptyObject(payload.responses.modules.wrist_hand)) {
+    return <SafetyDataUnavailableNotice label="손목/손(WRIST/HAND)" />
   }
 
   const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)

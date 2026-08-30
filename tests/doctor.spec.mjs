@@ -22,6 +22,9 @@ import {
   frequencyField,
   aggravatingField,
   primaryModuleFields,
+  LbpSafetyPanel,
+  NeckSafetyPanel,
+  ShoulderSafetyPanel,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -1636,30 +1639,39 @@ function detailsRange(html, classMarker) {
       /return Array\.isArray\(value\) && value\.every\(\(v\) => typeof v === 'string'\)/.test(src),
   )
   assert(
-    "resilience: every simple regional SafetyPanel gate (Neck/Knee/Elbow/WristHand) uses nullish (== null) and additionally requires its own modules.<region> submodule via isNonEmptyObject() -- a legacy record with safety_flags.<region> entirely absent (undefined, not null), or modules.<region> present but empty, must not fail the strict === null check open",
-    ['neck', 'knee', 'elbow', 'wrist_hand'].every((region) =>
-      new RegExp(`safety_flags\\.${region} == null \\|\\|.{0,80}isNonEmptyObject\\(payload\\.responses\\.modules\\.${region}\\)`, 's').test(
+    'resilience: a SafetyDataUnavailableNotice component exists (DoctorView.tsx) so "region not applicable" (silent null) and "region applicable but not computable" (explicit notice) are never conflated -- 5th independent review HIGH-2',
+    /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(src) &&
+      /안전 상태를 자동으로 계산할 수 없습니다/.test(src),
+  )
+  assert(
+    "resilience: every simple regional SafetyPanel gate (Knee/Elbow/WristHand) splits applicability (safety_flags.<region> == null -> silent null) from malformed-data (modules.<region> empty -> explicit SafetyDataUnavailableNotice, never silence) -- a legacy record with safety_flags.<region> entirely absent must stay silent, but one with safety_flags.<region> present and modules.<region> empty must show the notice, not nothing",
+    ['knee', 'elbow', 'wrist_hand'].every((region) =>
+      new RegExp(
+        `safety_flags\\.${region} == null\\) return null\\s*\\n\\s*if \\(!isNonEmptyObject\\(payload\\.responses\\.modules\\.${region}\\)\\) \\{\\s*\\n\\s*return <SafetyDataUnavailableNotice`,
+        's',
+      ).test(src),
+    ),
+  )
+  assert(
+    'resilience: NeckSafetyPanel splits applicability (safety_flags.neck == null -> silent null) from malformed-data, and additionally requires reproductive_status.derived, a null-or-string-array medical_history_flags, AND a null-or-string-array medication.medication_types (5th independent review HIGH-1: neckAdapter.ts frozen mapMedication calls .toUpperCase() on each medication_types element, missed by round 4) -- all four crash inside frozen neckAdapter.ts functions, and the malformed branch must render an explicit notice, not silence (HIGH-2)',
+    /safety_flags\.neck == null\) return null/.test(src) &&
+      /!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
         src,
       ),
-    ),
   )
   assert(
-    'resilience: NeckSafetyPanel additionally requires reproductive_status.derived and a null-or-string-array medical_history_flags -- neckAdapter.ts (frozen) mapPregnancyStatus/mapMajorHistory crash on the missing/wrong-typed forms of each',
-    /safety_flags\.neck == null \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)/.test(
-      src,
-    ),
+    'resilience: ShoulderSafetyPanel splits applicability (safety_flags.shoulder == null -> silent null) from malformed-data, and additionally requires modules.neck (not just modules.shoulder), reproductive_status.derived, medical_history_flags, AND medication.medication_types (transitively via frozen shoulderAdapter.ts calling neckAdapter.ts) -- the malformed branch must render an explicit notice, not silence',
+    /safety_flags\.shoulder == null\) return null/.test(src) &&
+      /!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+        src,
+      ),
   )
   assert(
-    'resilience: ShoulderSafetyPanel additionally requires modules.neck (not just modules.shoulder) via isNonEmptyObject(), plus the same reproductive_status.derived/medical_history_flags checks as NeckSafetyPanel -- shoulderAdapter.ts (frozen) internally calls toNeckStateFromDoctorPayload, so computing shoulder state without any of these crashes inside that frozen adapter',
-    /safety_flags\.shoulder == null \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)/.test(
-      src,
-    ),
-  )
-  assert(
-    "resilience: the LbpSafetyPanel gate additionally requires modules.lbp (via isNonEmptyObject), reproductive_status.derived, and a null-or-string-array medical_history_flags -- not just primary_module_detail === 'LBP'",
-    /primary_module_detail !== 'LBP' \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)/.test(
-      src,
-    ),
+    "resilience: the LbpSafetyPanel gate splits applicability (primary_module_detail !== 'LBP' -> silent null, its own statement) from malformed-data (modules.lbp/reproductive_status.derived/medical_history_flags -> explicit SafetyDataUnavailableNotice, not silence)",
+    /primary_module_detail !== 'LBP'\) return null/.test(src) &&
+      /!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+        src,
+      ),
   )
   assert(
     "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
@@ -1683,18 +1695,27 @@ function detailsRange(html, classMarker) {
  * exact same strict `safety_flags.<region> === null` gate bug -- a legacy
  * record where that key is entirely absent (undefined, not null) reads
  * responses.modules.<region>.* unconditionally right after.
+ *
+ * 5th independent review HIGH-2: each also now splits applicability
+ * (safety_flags.<region> == null -> silent null) from malformed-data
+ * (modules.<region> empty -> explicit SafetyDataUnavailableNotice, never
+ * silence).
  * ---------------------------------------------------------------------- */
 {
   const hipSrc = await readFile(fileURLToPath(new URL('../src/doctor/HipSafetyPanel.tsx', import.meta.url)), 'utf8')
   assert(
-    'resilience: HipSafetyPanel gate uses nullish (== null) and additionally requires a non-empty modules.hip',
-    /safety_flags\.hip == null \|\| !isNonEmptyObject\(payload\.responses\.modules\.hip\)\) return null/.test(hipSrc),
+    'resilience: HipSafetyPanel splits applicability (safety_flags.hip == null -> silent null) from malformed-data (modules.hip empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
+    /safety_flags\.hip == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.hip\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      hipSrc,
+    ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(hipSrc),
   )
 
   const tmjSrc = await readFile(fileURLToPath(new URL('../src/doctor/TmjSafetyPanel.tsx', import.meta.url)), 'utf8')
   assert(
-    'resilience: TmjSafetyPanel gate uses nullish (== null) and additionally requires a non-empty modules.tmj',
-    /safety_flags\.tmj == null \|\| !isNonEmptyObject\(payload\.responses\.modules\.tmj\)\) return null/.test(tmjSrc),
+    'resilience: TmjSafetyPanel splits applicability (safety_flags.tmj == null -> silent null) from malformed-data (modules.tmj empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
+    /safety_flags\.tmj == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.tmj\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      tmjSrc,
+    ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(tmjSrc),
   )
 
   const ankleSrc = await readFile(
@@ -1702,9 +1723,97 @@ function detailsRange(html, classMarker) {
     'utf8',
   )
   assert(
-    'resilience: AnkleFootSafetyPanel gate uses nullish (== null) and additionally requires a non-empty modules.ankle_foot',
-    /safety_flags\.ankle_foot == null \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.ankle_foot\)/.test(ankleSrc),
+    'resilience: AnkleFootSafetyPanel splits applicability (safety_flags.ankle_foot == null -> silent null) from malformed-data (modules.ankle_foot empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
+    /safety_flags\.ankle_foot == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.ankle_foot\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      ankleSrc,
+    ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(ankleSrc),
   )
+}
+
+/* -------------------------------------------------------------------------
+ * 5th independent review HIGH-1/HIGH-2 -- behavioral proof, not just
+ * source-regex: render the REAL LbpSafetyPanel/NeckSafetyPanel/
+ * ShoulderSafetyPanel components against a real fixture mutated to be
+ * "applicable but corrupt" (safety_flags.<region> stays a genuinely
+ * computed non-null value -- exactly what a legacy pre-`derived` or
+ * pre-`medication_types`-validation record looks like) and assert the
+ * explicit "확인 필요"-style notice text is actually PRESENT in the
+ * rendered HTML -- not merely that render didn't throw. A test asserting
+ * only `!threw` would have passed on the pre-fix code too (it silently
+ * returned null), which is exactly the bug HIGH-2 identified.
+ * ---------------------------------------------------------------------- */
+{
+  const lbpFixture = byName('허리 통증 주호소 (LBP, 확인 필요)')
+  const neckFixture = byName('목 통증 주호소 (NECK, 확인 필요)')
+  const shoulderFixture = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+
+  const UNAVAILABLE_TEXT = '안전 상태를 자동으로 계산할 수 없습니다'
+
+  // HIGH-2: reproductive_status.derived missing/null, everything else intact
+  // (including a real, already-computed safety_flags.<region> status) must
+  // show the explicit notice, not silently render nothing.
+  {
+    const p = structuredClone(lbpFixture.payload)
+    p.responses.reproductive_status.derived = null
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel with reproductive_status.derived=null (applicable LBP record, real computed safety_flags.lbp) renders the explicit unavailable notice, not silence',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const p = structuredClone(neckFixture.payload)
+    p.responses.reproductive_status.derived = null
+    const html = renderToString(React.createElement(NeckSafetyPanel, { payload: p }))
+    assert(
+      'resilience behavioral: NeckSafetyPanel with reproductive_status.derived=null renders the explicit unavailable notice, not silence',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  // HIGH-1: medication.medication_types containing a non-string element --
+  // frozen neckAdapter.ts's mapMedication calls .toUpperCase() on each
+  // element unconditionally (missed by round 4, which only guarded
+  // medical_history_flags's identical pattern).
+  {
+    const p = structuredClone(neckFixture.payload)
+    p.responses.medication.medication_use = 'yes'
+    p.responses.medication.medication_types = ['psych', 7, null, { a: 1 }]
+    const html = renderToString(React.createElement(NeckSafetyPanel, { payload: p }))
+    assert(
+      'resilience behavioral: NeckSafetyPanel with medication_types containing non-string elements renders the explicit unavailable notice instead of throwing (5th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const p = structuredClone(shoulderFixture.payload)
+    p.responses.medication.medication_use = 'yes'
+    p.responses.medication.medication_types = ['blood_thinner', 42]
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel with medication_types containing a non-string element (transitively via frozen neckAdapter.ts) renders the explicit unavailable notice instead of throwing',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  // Sanity: the "genuinely not applicable" path must still stay silent
+  // (empty render), proving the HIGH-2 fix did not turn every non-match
+  // into a visible notice -- only the "applicable but corrupt" case should.
+  {
+    const p = structuredClone(lbpFixture.payload)
+    p.routing.primary_module_detail = 'NECK'
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel for a record where LBP genuinely does not apply still renders nothing (not the notice) -- applicability and malformed-data must stay distinct outcomes',
+      html === '' && !html.includes(UNAVAILABLE_TEXT),
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------

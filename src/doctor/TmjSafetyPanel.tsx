@@ -8,6 +8,21 @@ function isNonEmptyObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).length > 0
 }
 
+/**
+ * "이 부위는 이 레코드와 무관하다"와 "관련은 있지만 계산 불가"를 구분한다
+ * -- DoctorView.tsx의 동명 헬퍼와 동일한 이유(5차 독립 리뷰 HIGH-2).
+ */
+function SafetyDataUnavailableNotice({ label }: { label: string }) {
+  return (
+    <div className="doctor__lbpSafety doctor__lbpSafety--unavailable">
+      <span className="doctor__safetyGlance__title">안전 확인 — {label}</span>
+      <p className="doctor__derivedNote">
+        저장된 응답 일부가 없거나 형식이 예상과 달라(레거시/손상 데이터로 보임) 안전 상태를 자동으로 계산할 수 없습니다 — 원장 확인 필요.
+      </p>
+    </div>
+  )
+}
+
 const STATUS_LABEL = {
   CLEAR: '안전',
   REVIEW_REQUIRED: '확인 필요',
@@ -28,7 +43,12 @@ const STATUS_LABEL = {
  * import + render change, matching AnkleFootSafetyPanel.tsx's precedent.
  */
 export function TmjSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.tmj == null || !isNonEmptyObject(payload.responses.modules.tmj)) return null
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, DoctorView.tsx의 SafetyPanel들과 동일한 원칙.
+  if (payload.responses.safety_flags.tmj == null) return null
+  if (!isNonEmptyObject(payload.responses.modules.tmj)) {
+    return <SafetyDataUnavailableNotice label="턱관절/얼굴(TMJ)" />
+  }
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toTmjStateFromDoctorPayload(payload.responses, payload.flags.general_red, age)

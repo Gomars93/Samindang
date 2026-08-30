@@ -320,9 +320,30 @@ const REQUIRED_FLAG_KEYS = [
   'requires_staff_check',
 ] as const
 
-export function isFlagsUsable(flags: unknown): boolean {
+/**
+ * 8차 독립 리뷰 HIGH-3: 7개 키가 전부 boolean이어도(구조적으로 정상) 실제
+ * responses와 모순되면(예: 수기 편집/버전 skew로 responses는 고쳤지만
+ * flags를 재계산하지 않은 레코드) `general_red` 등을 그대로 신뢰할 수
+ * 없다. coreSpec.ts computeFlags의 정확한 계산식(SAFETY_01의 non-none
+ * 응답 여부, GI_03/BOWEL_03 === 'yes')과 동일하게 재계산해 대조한다 --
+ * 이 세 필드는 항상 같은 값으로 매핑되므로(coreSpec.ts:4866/4871의
+ * `unable_to_eat_or_drink: r['GI_03']`/`blood_or_black_stool:
+ * r['BOWEL_03']`) 정상 제출에서는 false positive가 날 수 없다.
+ */
+function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: DoctorPayload['responses']): boolean {
+  const generalRedExpected = asArray<string>(r.safety_flags.red_flag_general).some((v) => v !== 'none')
+  if (flags.general_red !== generalRedExpected) return false
+  const giExpected = r.modules.gi?.unable_to_eat_or_drink === 'yes'
+  if (flags.gi_needs_review !== giExpected) return false
+  const bowelExpected = r.modules.bowel?.blood_or_black_stool === 'yes'
+  if (flags.bowel_needs_review !== bowelExpected) return false
+  return true
+}
+
+export function isFlagsUsable(flags: unknown, r: DoctorPayload['responses']): boolean {
   if (!isPlainObject(flags)) return false
-  return REQUIRED_FLAG_KEYS.every((key) => typeof flags[key] === 'boolean')
+  if (!REQUIRED_FLAG_KEYS.every((key) => typeof flags[key] === 'boolean')) return false
+  return isFlagsConsistentWithResponses(flags, r)
 }
 
 /** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
@@ -861,7 +882,14 @@ export function ShoulderSafetyPanel({
     !isNonEmptyObject(payload.responses.modules.neck) ||
     !payload.responses.reproductive_status.derived ||
     !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
-    !isNullOrStringArray(payload.responses.medication.medication_types)
+    !isNullOrStringArray(payload.responses.medication.medication_types) ||
+    // 8차 독립 리뷰 HIGH-1: 아래 toShoulderStateFromDoctorPayload가
+    // payload.flags.general_red를 그대로 신뢰하는데, flags가 레거시/손상
+    // 데이터라 그 값이 항상 false-typed undefined가 되면 실제 core 응급
+    // red flag가 있어도 "안전"으로 조용히 뒤집힌다(policy 2/3 위반) --
+    // 7차가 CommonSafetyBanner/hero metric에는 이 가드를 달았지만 이
+    // SafetyPanel들은 빠뜨렸다.
+    !isFlagsUsable(payload.flags, payload.responses)
   ) {
     return <SafetyDataUnavailableNotice label="어깨(SHOULDER)" />
   }
@@ -1007,7 +1035,10 @@ export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
   // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
   if (payload.responses.safety_flags.knee == null) return null
-  if (!isNonEmptyObject(payload.responses.modules.knee)) {
+  // 8차 독립 리뷰 HIGH-1: 아래 toKneeStateFromDoctorPayload가
+  // payload.flags.general_red를 그대로 신뢰한다 -- flags가 usable하지
+  // 않으면 실제 core 응급 red flag가 있어도 "안전"으로 조용히 뒤집힌다.
+  if (!isNonEmptyObject(payload.responses.modules.knee) || !isFlagsUsable(payload.flags, payload.responses)) {
     return <SafetyDataUnavailableNotice label="무릎(KNEE)" />
   }
 
@@ -1151,7 +1182,9 @@ export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
   // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
   if (payload.responses.safety_flags.elbow == null) return null
-  if (!isNonEmptyObject(payload.responses.modules.elbow)) {
+  // 8차 독립 리뷰 HIGH-1: toElbowStateFromDoctorPayload가
+  // payload.flags.general_red를 그대로 신뢰한다.
+  if (!isNonEmptyObject(payload.responses.modules.elbow) || !isFlagsUsable(payload.flags, payload.responses)) {
     return <SafetyDataUnavailableNotice label="팔꿈치(ELBOW)" />
   }
 
@@ -1305,7 +1338,9 @@ export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
   // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
   if (payload.responses.safety_flags.wrist_hand == null) return null
-  if (!isNonEmptyObject(payload.responses.modules.wrist_hand)) {
+  // 8차 독립 리뷰 HIGH-1: toWristHandStateFromDoctorPayload가
+  // payload.flags.general_red를 그대로 신뢰한다.
+  if (!isNonEmptyObject(payload.responses.modules.wrist_hand) || !isFlagsUsable(payload.flags, payload.responses)) {
     return <SafetyDataUnavailableNotice label="손목/손(WRIST/HAND)" />
   }
 
@@ -2796,7 +2831,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                     {unreadReadyIds.has(s.id) && (
                       <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
                     )}
-                    {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
+                    {s.patient_label}{' '}
+                    {s.requires_staff_check === 'unknown'
+                      ? '⚠ 확인 필요(계산값 읽기 불가)'
+                      : s.requires_staff_check
+                        ? '⚠ 안전 확인 필요'
+                        : ''}
                   </span>
                   <span className="doctorField__value">
                     {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})

@@ -90,7 +90,10 @@ export type SubmissionSummary = {
   status: 'new' | 'viewed' | 'in_consultation' | 'completed'
   patient_label: string
   primary_concern: string | null
-  requires_staff_check: boolean
+  // 8차 독립 리뷰 MEDIUM-2: 'unknown'은 저장된 flags가 레거시/손상
+  // 데이터라 서버가 이 값을 신뢰할 수 없다고 판단했다는 뜻이다(server/
+  // store.js의 isFlagsUsable) -- false와 절대 같은 의미가 아니다.
+  requires_staff_check: boolean | 'unknown'
   // recorder-results가 이 방문에 적어도 하나 도착했다는 실제 서버 상태(추정 아님).
   recorder_ready: boolean
 }

@@ -8,6 +8,50 @@ function isNonEmptyObject(value: unknown): boolean {
 }
 
 /**
+ * 8차 독립 리뷰 HIGH-1: 아래 toHipStateFromDoctorPayload가
+ * payload.flags.general_red를 그대로 신뢰해 hipLogic.ts의
+ * `core_safety_already_urgent`로 넘긴다 -- flags가 레거시/손상 데이터라
+ * general_red가 undefined(falsy)가 되면 실제 core 응급 red flag가 있어도
+ * 이 패널이 "안전"으로 조용히 뒤집힌다(policy 2/3 위반, 치료 락도 함께
+ * 풀림). 7차가 CommonSafetyBanner/PainWorkspace 히어로 지표에는 이
+ * 가드를 달았지만 이 SafetyPanel들은 빠뜨렸다 -- DoctorView.tsx/
+ * CommonSafetyBanner.tsx의 동명 헬퍼와 동일한 이유로 로컬 사본을 둔다.
+ */
+const REQUIRED_FLAG_KEYS = [
+  'general_red',
+  'gi_needs_review',
+  'bowel_needs_review',
+  'sleep_disorder_review',
+  'sleep_disorder_priority_review',
+  'response_consistency_review',
+  'requires_staff_check',
+] as const
+
+/**
+ * 8차 독립 리뷰 HIGH-3: 7개 키가 전부 boolean이어도 실제 responses와
+ * 모순되면(수기 편집/버전 skew로 flags를 재계산하지 않은 레코드)
+ * general_red를 그대로 신뢰할 수 없다 -- DoctorView.tsx의 동명 헬퍼와
+ * 동일한 계산식.
+ */
+function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: DoctorPayload['responses']): boolean {
+  const redFlagGeneral = r.safety_flags.red_flag_general
+  const generalRedExpected = Array.isArray(redFlagGeneral) && redFlagGeneral.some((v) => v !== 'none')
+  if (flags.general_red !== generalRedExpected) return false
+  const giExpected = r.modules.gi?.unable_to_eat_or_drink === 'yes'
+  if (flags.gi_needs_review !== giExpected) return false
+  const bowelExpected = r.modules.bowel?.blood_or_black_stool === 'yes'
+  if (flags.bowel_needs_review !== bowelExpected) return false
+  return true
+}
+
+function isFlagsUsable(flags: unknown, r: DoctorPayload['responses']): boolean {
+  if (typeof flags !== 'object' || flags === null || Array.isArray(flags)) return false
+  const f = flags as Record<string, unknown>
+  if (!REQUIRED_FLAG_KEYS.every((key) => typeof f[key] === 'boolean')) return false
+  return isFlagsConsistentWithResponses(f, r)
+}
+
+/**
  * "이 부위는 이 레코드와 무관하다"와 "관련은 있지만 계산 불가"를 구분한다
  * -- DoctorView.tsx의 동명 헬퍼와 동일한 이유(5차 독립 리뷰 HIGH-2).
  */
@@ -48,7 +92,7 @@ export function HipSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
   // 리뷰 HIGH-2, DoctorView.tsx의 SafetyPanel들과 동일한 원칙.
   if (payload.responses.safety_flags.hip == null) return null
-  if (!isNonEmptyObject(payload.responses.modules.hip)) {
+  if (!isNonEmptyObject(payload.responses.modules.hip) || !isFlagsUsable(payload.flags, payload.responses)) {
     return <SafetyDataUnavailableNotice label="고관절/사타구니(HIP)" />
   }
 

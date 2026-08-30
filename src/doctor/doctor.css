@@ -250,6 +250,24 @@
   margin: 0 0 20px;
 }
 
+/* 8차 독립 리뷰 LOW: 7차가 추가한 "안전정보를 읽을 수 없습니다" 경고
+   (`<p class="doctor__safetyGlance doctor__safetyGlance--unavailable">`)에
+   대응하는 CSS가 아예 없었다 -- .doctor__safetyGlance(flex 컨테이너)만
+   적용돼 --empty 변형과 달리 danger 색상/구분이 전혀 없었고, SafetyGlance가
+   이 경고를 items와 함께 보여주도록 바뀌면서 같은 클래스의 바깥 div 안에
+   중첩되기까지 한다. --empty와 대칭되는 명확한 danger 스타일을 준다. */
+.doctor__safetyGlance--unavailable {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  background: #f6ece9;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 8px;
+}
+
 .doctor__safetyGlance__title {
   font-size: 12px;
   font-weight: 700;
@@ -272,6 +290,44 @@
 
 .doctor__safetyChip strong {
   margin-right: 4px;
+}
+
+/* 8차 독립 리뷰 LOW 후속: 지역별 SafetyPanel(LBP/NECK/SHOULDER/KNEE/
+   ELBOW/WRIST_HAND/HIP/TMJ/ANKLE_FOOT 전부 동일한 `doctor__lbpSafety
+   doctor__lbpSafety--<status>` 패턴)이 CSS 규칙 자체가 하나도 없어
+   상태(안전/확인 필요/긴급 확인 필요/읽을 수 없음)가 시각적으로 전혀
+   구분되지 않았다 -- 이번 배치가 고친 `--unavailable` 경고와 대칭되게,
+   기존에도 존재하던 다른 상태 클래스에도 최소한의 색 구분을 준다. */
+.doctor__lbpSafety {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.doctor__lbpSafety--clear {
+  border-color: var(--primary);
+}
+
+.doctor__lbpSafety--review_required {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.doctor__lbpSafety--urgent_review {
+  border: 2px solid var(--danger);
+  background: #f6ece9;
+}
+
+.doctor__lbpSafety--unavailable {
+  border-color: var(--text-muted);
+}
+
+.doctor__lbpSafety .doctor__derivedNote {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
 }
 
 /* -------------------------------------------------------------------

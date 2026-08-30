@@ -5896,6 +5896,127 @@ origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 8차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+8차 리뷰(커밋 `3dc614d` 대상)는 "flags 검증"이라는 7차의 프레임에
+갇히지 않고 옆으로 더 파고들어, 3 HIGH + 2 MEDIUM + 1 LOW를 새로
+찾아냈다.
+
+**(HIGH-1) 지역별 SafetyPanel 7개가 `payload.flags.general_red`를
+검증 없이 그대로 `core_safety_already_urgent`로 넘긴다.**
+`HipSafetyPanel.tsx`/`TmjSafetyPanel.tsx`/`AnkleFootSafetyPanel.tsx`
+(독립 파일)와 `DoctorView.tsx`의 `ShoulderSafetyPanel`/
+`KneeSafetyPanel`/`ElbowSafetyPanel`/`WristHandSafetyPanel` — 7차가
+`CommonSafetyBanner`/히어로 지표에는 `isFlagsUsable` 가드를 달았지만
+이 7개 SafetyPanel은 빠뜨렸다. flags가 hollow하면 `general_red`가
+`undefined`(falsy)가 되어, 실제 core 응급 red flag로 `URGENT_REVIEW`가
+계산된 레코드가 "안전"으로 조용히 뒤집히고 운동/도수치료 락도 함께
+풀린다(리뷰가 실제 HIP 픽스처 "Core 전신 응급 동시"로 재현: `긴급
+확인 필요` → `안전`).
+
+**(HIGH-2) `reproductive_status.derived`를 판정에서 제외한 이전 라운드의
+전제 자체가 틀렸다.** coreSpec.ts `deriveReproductiveStatus`는 절대
+null을 반환하지 않는다 — 남성/미응답이어도 `{source: null, raw: null,
+pregnant: null, ...}` 객체를 반환한다. `derived === null`은 정상
+케이스가 아니라 이 필드가 생기기 전 레거시 레코드/손상 데이터다.
+게다가 WOMEN_SAFETY_01에 실제 임신 사실이 배열로 보고됐는데
+`derived.source`가 재계산 없이 null로 남아있으면(수기 편집/버전
+skew) 똑같이 위험하다.
+
+**(HIGH-3) 구조적으로는 정상이지만 responses와 모순되는 flags.**
+`isFlagsUsable`은 7개 키가 boolean인지만 확인했을 뿐, 그 값 자체가
+실제 responses와 일치하는지는 보지 않았다 — 수기 편집으로 responses는
+고쳤지만 flags를 재계산하지 않은 레코드는 여전히 통과한다.
+
+**(MEDIUM-1) `medical_history_flags`에만 적용됐던 원소 타입 검사가
+`medication_types`/`allergy_detail`/`MS_05`(sleep_disorder_screen)에는
+빠져 있었다** — wrong-typed 값이 `optionLabel`의 `String()` fallback을
+거쳐 "[object Object]"를 칩에 그대로 노출하면서 "읽을 수 없음" 경고도
+뜨지 않았다(무관한 실제 항목이 있어 items.length>0이 되므로).
+
+**(MEDIUM-2) 제출 목록의 트리아지 배지가 `?? false`로 무조건
+false-coerce.** `server/store.js`의 `listSubmissions`가
+`r.submission?.flags?.requires_staff_check ?? false`를 그대로 써서,
+flags가 unusable인 레코드는 원장이 레코드를 열어보기도 전에 목록에서
+"⚠ 안전 확인 필요" 배지 자체가 사라진다.
+
+**(LOW) `doctor__safetyGlance--unavailable`/`doctor__lbpSafety*`에
+CSS 규칙이 아예 없어서, 7차가 추가한 "읽을 수 없습니다" 경고와 9개
+지역 SafetyPanel의 상태(안전/확인 필요/긴급 확인 필요)가 전부 시각적
+구분 없이 렌더됐다.**
+
+**수정**: (1) 7개 SafetyPanel(4개는 `DoctorView.tsx`, 3개는 독립
+파일)의 게이트에 `!isFlagsUsable(payload.flags, payload.responses)`를
+추가 — 독립 파일 3개는 이 배치의 기존 관례대로 로컬 사본을 둔다.
+(2) `isFlagsUsable`의 시그니처를 `(flags, r)`로 확장하고 내부에
+`isFlagsConsistentWithResponses`를 추가 — SAFETY_01(응답)로부터
+`general_red`, GI_03/BOWEL_03(응답)으로부터 `gi_needs_review`/
+`bowel_needs_review`를 재계산해 flags 값과 대조한다(coreSpec.ts
+computeFlags와 정확히 같은 계산식이라 정상 제출에서 false positive가
+날 수 없다) — `CommonSafetyBanner.tsx`/`DoctorView.tsx`/HipㆍTmjㆍ
+AnkleFoot 3개 파일 전부의 `isFlagsUsable` 호출부를 새 시그니처로
+갱신(PainWorkspace.tsx/HerbalWorkspace.tsx 포함, 총 9곳). (3) 새
+`isUnreadableReproductiveDerived(r)` 헬퍼 — derived가 plain object가
+아니면 손상, WOMEN_SAFETY_01 원본이 배열인데 source가 null이면
+모순, pregnant/pregnancy_possible/postpartum_1y/breastfeeding이
+boolean|null이 아니면 손상으로 판정 — `hasUnreadableSafetyField`에
+추가하고 `safetyGlanceItems`의 임신/수유 항목 생성도 이 판정으로
+가드해 wrong-typed truthy 값의 사실 지어내기를 막았다. (4)
+`isUnreadableMedicationTypes` 신설 +
+`isUnreadableStringArray(allergy_detail)` +
+`isUnreadableStringArray(sleep_disorder_screen)`를
+`hasUnreadableSafetyField`(flags도 인자로 받도록 확장)에 추가하고,
+`safetyGlanceItems`의 복용약/알레르기/수면장애 선별 항목 생성도 각각
+가드해 "[object Object]" 노출을 막았다. (5) `server/store.js`에
+로컬 `isFlagsUsable`(구조 검사만, responses 없이) 추가,
+`requires_staff_check`를 `boolean | 'unknown'` tri-state로 변경 —
+`src/lib/serverClient.ts`의 타입과 `DoctorView.tsx` 목록 배지 렌더를
+함께 갱신("⚠ 확인 필요(계산값 읽기 불가)"). (6)
+`doctor.css`에 `.doctor__safetyGlance--unavailable`(danger 색)과
+`.doctor__lbpSafety`/`--clear`/`--review_required`/`--urgent_review`/
+`--unavailable` 규칙을 신설.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 ShoulderSafetyPanel/
+KneeSafetyPanel을 hollow flags({})로 렌더해 unavailable 알림이
+뜨는지(HIGH-1), 구조는 정상이지만 general_red가 실제 SAFETY_01
+응답과 모순되는 flags를 신뢰하지 않는지(HIGH-3) 확인하는 behavioral
+테스트 3개 추가 + 기존 7개 SafetyPanel 구조 검사 정규식을 새 게이트
+문자열에 맞게 갱신(+3, 827→830). `tests/doctor-workspace.spec.mjs`에
+`derived===null`(레거시, 이제 unreadable)과 `derived.source===null +
+raw fields null`(정상, 남성 등)을 구분하는 테스트, 임신 보고 +
+source 미재계산 모순 테스트, medication_types/allergy_detail/MS_05
+각각의 "[object Object]" 방지 + cannot-read 알림 테스트 총 7개
+추가하고 기존 round-6 전제-오류 테스트 1개를 정정(+5 net,
+149→154). `tests/server.spec.mjs`에 `store.js`
+`listSubmissions`의 tri-state를 직접 확인하는 단위 테스트 3개
+추가(230). `tests/ankle-foot-doctor-panel.spec.mjs`의 기존 `payload()`
+헬퍼가 1개 키짜리 hollow flags만 만들고 있어서(이 배치 이전부터
+있던 테스트 인프라, AnkleFootSafetyPanel이 그때는 flags를 검증하지
+않았다) HIGH-1 수정 이후 구조 검사에서 전부 unavailable로 떨어졌다
+— 실제 버그가 아니라 테스트 fixture가 새 계약을 반영하지 못한 것이라
+7개 키 전부를 채우도록 고쳤다(8/8 유지).
+
+**실사용 재검증**: 실제 서버에 `DOCTOR_FIXTURES`의 "고관절 통증
+주호소 (HIP, Core 전신 응급 동시)"(실제 계산된 `hip_safety_status:
+URGENT_REVIEW`, `flags.general_red: true`)를 그대로 가져와 `flags =
+{}`만 바꿔 POST하고 실제 목록에서 클릭 — "안전 확인 —
+고관절/사타구니(HIP)"가 "안전"이 아니라 명시적 "저장된 응답 일부가
+없거나 형식이 예상과 달라... 원장 확인 필요" 알림으로 나타남을
+확인, page error 0건, 1440×900 뷰포트(Playwright,
+`/opt/pw-browsers/chromium`).
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 830/830, doctor-workspace 154/154, server
+230/230, ankle-foot-doctor-panel 8/8 포함), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
+origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines
+(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 9차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

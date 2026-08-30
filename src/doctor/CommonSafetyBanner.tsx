@@ -59,6 +59,34 @@ function isUnreadableStringArray(value: unknown): boolean {
 }
 
 /**
+ * 8차 독립 리뷰 HIGH-2: 이전 주석("reproductive_status.derived는 남성 등
+ * 정상적으로 null일 수 있다")은 사실이 아니다 -- coreSpec.ts
+ * deriveReproductiveStatus는 어떤 경로에서도 절대 null을 반환하지 않고
+ * 항상 `{source, raw, pregnant, pregnancy_possible, postpartum_1y,
+ * breastfeeding}` 6개 키를 가진 객체를 반환한다(남성/미응답이면
+ * source=null과 나머지 필드가 모두 null인 객체). `derived === null`은
+ * 이 필드가 아예 추가되기 전의 레거시 레코드이거나 손상된 데이터일
+ * 뿐이다 -- 그런데 이걸 정상 케이스로 착각해 판정에서 빼면, 실제
+ * WOMEN_SAFETY_01에 임신 사실이 보고됐어도(reproductive_status.
+ * reproductive_status가 배열) derived가 null이라는 이유만으로
+ * "특이 안전정보 없음"이 그대로 나온다(정책 1/2 위반, 가장 위험한
+ * 종류의 fail-open). 세 가지를 함께 검사한다: (1) derived 자체가
+ * plain object가 아니면 손상, (2) WOMEN_SAFETY_01 원본 응답이 배열인데
+ * derived.source가 null이면 모순(재계산 안 됨), (3) pregnant/
+ * pregnancy_possible/postpartum_1y/breastfeeding 각 필드가
+ * boolean이나 null이 아닌 다른 타입이면 손상(예: 잘못된 truthy 값이
+ * 임신/수유 사실을 지어낼 수 있다).
+ */
+function isUnreadableReproductiveDerived(r: Responses): boolean {
+  const derived = r.reproductive_status.derived
+  if (typeof derived !== 'object' || derived === null || Array.isArray(derived)) return true
+  const d = derived as Record<string, unknown>
+  if (Array.isArray(r.reproductive_status.reproductive_status) && d.source == null) return true
+  const boolOrNullFields = ['pregnant', 'pregnancy_possible', 'postpartum_1y', 'breastfeeding'] as const
+  return boolOrNullFields.some((key) => d[key] !== null && typeof d[key] !== 'boolean')
+}
+
+/**
  * 6차 독립 리뷰 MEDIUM-2: `safetyGlanceItems`가 빈 배열을 반환하는 이유가
  * "정말로 안전 이슈가 없음"과 "안전 관련 필드 자체를 읽을 수 없음"(레거시/
  * 손상 데이터) 둘 다일 수 있는데, 호출부는 이를 구분하지 않고 항상
@@ -66,16 +94,41 @@ function isUnreadableStringArray(value: unknown): boolean {
  * asArray/optional-chaining 방어는 크래시만 막을 뿐, 각 항목 체크가
  * `=== 'yes'`류 비교라서 null/wrong-typed 값은 그냥 "아니요"와 동일하게
  * 조용히 넘어간다(이 배치가 막으려는 fail-open 그 자체).
- * reproductive_status.derived는 남성 등 정상적으로 null일 수 있으므로
- * 이 판정에서 제외한다(false positive 방지).
+ *
+ * 8차 독립 리뷰 MEDIUM-1: medication_types(MED_TYPES)/allergy_detail
+ * (ALLERGY_02)도 medical_history_flags와 같은 이유로 원소/타입이
+ * 검증되지 않으면 optionLabel의 String() fallback을 거쳐
+ * "[object Object]" 같은 값이 칩에 그대로 노출된다 -- MED_TYPES는
+ * `required:false`/`showIf MED_USE in {yes,unknown}`라 실제 제출에서
+ * null이거나 문자열 배열이어야 하고(DoctorView.tsx의
+ * isNullOrStringArray와 동일 기준), ALLERGY_02는
+ * `required:true`/`showIf ALLERGY_01==='yes'`라 allergy_yn==='yes'일 때
+ * 항상 문자열 배열이어야 한다.
  */
-function hasUnreadableSafetyField(r: Responses): boolean {
+function isUnreadableMedicationTypes(value: unknown): boolean {
+  return value != null && !(Array.isArray(value) && value.every((v) => typeof v === 'string'))
+}
+
+/**
+ * MS_05(sleep_disorder_screen)도 같은 이유로 검사한다 -- flags.
+ * sleep_disorder_review/sleep_disorder_priority_review가 true라는 것은
+ * computeFlags(coreSpec.ts)가 MS_05 응답 중 특정 값을 실제로 읽었다는
+ * 뜻이므로, 그 경우 r.modules.sleep?.menopause?.sleep_disorder_screen이
+ * 문자열 배열이 아니면 safetyGlanceItems가 그 값을 그대로
+ * answerLabel에 넘겨 "[object Object]"류를 노출할 수 있다.
+ */
+function hasUnreadableSafetyField(r: Responses, flags: DoctorPayload['flags']): boolean {
   return (
     isUnreadableYesNoUnknown(r.medication.medication_use, YES_UNKNOWN_NONE) ||
     isUnreadableYesNoUnknown(r.allergy.allergy_yn, YES_UNKNOWN_NONE) ||
     isUnreadableYesNoUnknown(r.surgery_history.surgery_yn, YES_UNKNOWN_NONE) ||
     isUnreadableYesNoUnknown(r.free_text.free_text_yn, YES_NONE) ||
-    isUnreadableStringArray(r.medical_history.medical_history_flags)
+    isUnreadableStringArray(r.medical_history.medical_history_flags) ||
+    isUnreadableReproductiveDerived(r) ||
+    isUnreadableMedicationTypes(r.medication.medication_types) ||
+    (r.allergy.allergy_yn === 'yes' && isUnreadableStringArray(r.allergy.allergy_detail)) ||
+    ((flags.sleep_disorder_review || flags.sleep_disorder_priority_review) &&
+      isUnreadableStringArray(r.modules.sleep?.menopause?.sleep_disorder_screen))
   )
 }
 
@@ -101,10 +154,27 @@ const REQUIRED_FLAG_KEYS = [
   'requires_staff_check',
 ] as const
 
-function isFlagsUsable(flags: unknown): boolean {
+/**
+ * 8차 독립 리뷰 HIGH-3: 7개 키가 전부 boolean이어도(구조적으로 정상)
+ * 실제 responses와 모순되면(수기 편집/버전 skew로 flags를 재계산하지
+ * 않은 레코드) general_red 등을 그대로 신뢰할 수 없다 --
+ * DoctorView.tsx의 동명 헬퍼와 동일한 계산식(coreSpec.ts computeFlags).
+ */
+function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: Responses): boolean {
+  const generalRedExpected = asArray<string>(r.safety_flags.red_flag_general).some((v) => v !== 'none')
+  if (flags.general_red !== generalRedExpected) return false
+  const giExpected = r.modules.gi?.unable_to_eat_or_drink === 'yes'
+  if (flags.gi_needs_review !== giExpected) return false
+  const bowelExpected = r.modules.bowel?.blood_or_black_stool === 'yes'
+  if (flags.bowel_needs_review !== bowelExpected) return false
+  return true
+}
+
+function isFlagsUsable(flags: unknown, r: Responses): boolean {
   if (typeof flags !== 'object' || flags === null || Array.isArray(flags)) return false
   const f = flags as Record<string, unknown>
-  return REQUIRED_FLAG_KEYS.every((key) => typeof f[key] === 'boolean')
+  if (!REQUIRED_FLAG_KEYS.every((key) => typeof f[key] === 'boolean')) return false
+  return isFlagsConsistentWithResponses(f, r)
 }
 
 function safetyGlanceItems(
@@ -115,7 +185,14 @@ function safetyGlanceItems(
 
   const medUse = r.medication.medication_use
   if (medUse === 'yes' || medUse === 'unknown') {
-    const types = answerLabel('MED_TYPES', r.medication.medication_types)
+    // 8차 독립 리뷰 MEDIUM-1: medication_types가 wrong-typed면(예:
+    // 문자열 하나 또는 [null, {}] 같은 배열) answerLabel의 String()
+    // fallback을 거쳐 "[object Object]"류를 그대로 노출한다 -- 원소까지
+    // 검증해 실패하면 종류 detail을 아예 붙이지 않는다(hasUnreadableSafetyField
+    // 쪽 "읽을 수 없음" 경고에 맡긴다).
+    const types = isUnreadableMedicationTypes(r.medication.medication_types)
+      ? ''
+      : answerLabel('MED_TYPES', r.medication.medication_types)
     items.push({
       key: 'medication',
       label: '복용약',
@@ -141,8 +218,14 @@ function safetyGlanceItems(
     }
   }
 
+  // 8차 독립 리뷰 HIGH-2: derived가 손상됐으면(위 isUnreadableReproductiveDerived)
+  // pregnant/pregnancy_possible 등을 truthy로 읽어 임신/수유 사실을
+  // 지어낼 수 있으므로, 손상 여부를 먼저 확인하고 정상일 때만 표시한다.
   const derived = r.reproductive_status.derived
-  if (derived && (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding)) {
+  if (
+    !isUnreadableReproductiveDerived(r) &&
+    (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding)
+  ) {
     const parts = [
       derived.pregnant && '임신 중',
       derived.pregnancy_possible && '임신 가능성',
@@ -153,10 +236,16 @@ function safetyGlanceItems(
   }
 
   if (r.allergy.allergy_yn === 'yes') {
+    // 8차 독립 리뷰 MEDIUM-1: allergy_detail이 wrong-typed면 종류를
+    // 지어내지 않고 "있음"만 표시한다(hasUnreadableSafetyField가 별도로
+    // "읽을 수 없음" 경고를 담당).
+    const detail = isUnreadableStringArray(r.allergy.allergy_detail)
+      ? ''
+      : answerLabel('ALLERGY_02', r.allergy.allergy_detail)
     items.push({
       key: 'allergy',
       label: '알레르기',
-      text: answerLabel('ALLERGY_02', r.allergy.allergy_detail) || '있음',
+      text: detail || '있음',
     })
   }
 
@@ -167,17 +256,24 @@ function safetyGlanceItems(
   }
 
   // MENOPAUSE_SLEEP MS_05: 진단명 노출 없이 원장 확인용으로만 표시한다(delta 3장).
+  // 8차 독립 리뷰 MEDIUM-1: sleep_disorder_screen이 wrong-typed면 상세를
+  // 지어내지 않는다(hasUnreadableSafetyField가 "읽을 수 없음" 경고를 담당).
+  const sleepScreenUnreadable = isUnreadableStringArray(r.modules.sleep?.menopause?.sleep_disorder_screen)
   if (flags.sleep_disorder_priority_review) {
     items.push({
       key: 'sleep_disorder_priority',
       label: '수면장애 선별',
-      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep?.menopause?.sleep_disorder_screen)}`,
+      text: sleepScreenUnreadable
+        ? '우선 확인 필요'
+        : `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep?.menopause?.sleep_disorder_screen)}`,
     })
   } else if (flags.sleep_disorder_review) {
     items.push({
       key: 'sleep_disorder',
       label: '수면장애 선별',
-      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep?.menopause?.sleep_disorder_screen)}`,
+      text: sleepScreenUnreadable
+        ? '확인 필요'
+        : `확인 필요 — ${answerLabel('MS_05', r.modules.sleep?.menopause?.sleep_disorder_screen)}`,
     })
   }
 
@@ -253,8 +349,8 @@ function safetyGlanceItems(
  */
 function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'] }) {
   const items = safetyGlanceItems(r, flags)
-  const flagsUsable = isFlagsUsable(flags)
-  const responsesUnreadable = hasUnreadableSafetyField(r)
+  const flagsUsable = isFlagsUsable(flags, r)
+  const responsesUnreadable = hasUnreadableSafetyField(r, flags)
 
   if (!flagsUsable || responsesUnreadable) {
     return (
@@ -313,7 +409,7 @@ function answerLabelFor(qid: string, value: AnswerValue | undefined): string {
 export function CommonSafetyBanner({ payload }: { payload: DoctorPayload }) {
   const r = payload.responses
   const { flags } = payload
-  const flagsUsable = isFlagsUsable(flags)
+  const flagsUsable = isFlagsUsable(flags, r)
 
   const generalFlagLabels = optionLabels(
     'SAFETY_01',

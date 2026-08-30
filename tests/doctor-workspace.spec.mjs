@@ -664,9 +664,14 @@ test('DoctorView.tsx passes no synthetic decision-support data for real (server-
  * ---------------------------------------------------------------------- */
 test('CommonSafetyBanner.tsx guards reproductive_status.derived before reading its booleans', () => {
   const src = fs.readFileSync('src/doctor/CommonSafetyBanner.tsx', 'utf8')
+  // 8차 독립 리뷰 HIGH-2 이후: 이전에는 `derived &&`(truthy) 하나로만
+  // 지켰지만, deriveReproductiveStatus는 절대 null을 반환하지 않으므로
+  // truthy 체크만으로는 (a) derived===null(레거시) 자체를 놓치고 (b)
+  // 손상된 non-null 값(wrong-typed truthy 필드)이 그대로 통과했다 --
+  // isUnreadableReproductiveDerived(r)로 대체되어 두 경우 모두 막힌다.
   assert.ok(
-    /if \(derived && \(derived\.pregnant/.test(src),
-    'derived must be checked truthy before .pregnant/.pregnancy_possible/.postpartum_1y/.breastfeeding are read',
+    /!isUnreadableReproductiveDerived\(r\) &&\s*\n\s*\(derived\.pregnant/.test(src),
+    'derived must be checked via isUnreadableReproductiveDerived before .pregnant/.pregnancy_possible/.postpartum_1y/.breastfeeding are read',
   )
 })
 
@@ -738,12 +743,52 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
   })
 
-  test('CommonSafetyBanner: reproductive_status.derived alone being null (a legitimate state, e.g. male patients) does NOT trigger the "cannot read" notice by itself', () => {
+  /**
+   * 8차 독립 리뷰 HIGH-2 후속: 이 테스트의 원래 전제("derived===null이
+   * 남성 등 정상 케이스")는 사실이 아니었다 -- coreSpec.ts
+   * deriveReproductiveStatus는 절대 null을 반환하지 않고, 정상적으로
+   * "확인된 사실 없음"인 경우(남성/미응답)에도 `{source: null, raw: null,
+   * pregnant: null, pregnancy_possible: null, postpartum_1y: null,
+   * breastfeeding: null}` 객체를 반환한다. 진짜 정상 케이스는
+   * `derived.source === null`이지, `derived === null`이 아니다.
+   */
+  test('CommonSafetyBanner: reproductive_status.derived with source=null and all fields null (a legitimate state, e.g. male patients) does NOT trigger the "cannot read" notice by itself', () => {
     const mutated = structuredClone(base.payload)
-    mutated.responses.reproductive_status.derived = null
+    mutated.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
     const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
     assert.ok(html.includes('특이 안전정보 없음'))
     assert.ok(!html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner HIGH-2: reproductive_status.derived === null (legacy record predating this field, not a legitimate state) DOES trigger the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.derived = null
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner HIGH-2: a reported pregnancy (reproductive_status.reproductive_status is an array) with derived.source left null (not recomputed) DOES trigger the "cannot read" notice, never a false all-clear', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.reproductive_status = ['pregnant']
+    mutated.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
   })
 
   /* -----------------------------------------------------------------------
@@ -829,6 +874,50 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     mutated.responses.medication.medication_use = 'yes'
     const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
     assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 8th independent review MEDIUM-1: medication_types/allergy_detail/MS_05
+   * (sleep_disorder_screen) had the same element-type-checking gap as
+   * medical_history_flags(LOW-1 above) but were never fixed by round 7 --
+   * a wrong-typed value slipped past answerLabel's String() fallback and
+   * rendered "[object Object]" in a real (not empty) safety chip, with the
+   * "cannot read" notice never appearing because items.length was already
+   * >0 for an unrelated reason.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner MEDIUM-1: medication_types containing non-string elements never renders "[object Object]" in the 복용약 chip and shows the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.medication.medication_use = 'yes'
+    mutated.responses.medication.medication_types = [null, {}, 'not_a_real_option']
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner MEDIUM-1: allergy_detail wrong-typed (not an array) never renders "[object Object]" in the 알레르기 chip, falls back to "있음", and shows the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.allergy.allergy_yn = 'yes'
+    mutated.responses.allergy.allergy_detail = { bogus: true }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('알레르기'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner MEDIUM-1: MS_05(sleep_disorder_screen) wrong-typed never renders "[object Object]" in the 수면장애 선별 chip and shows the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.flags.sleep_disorder_priority_review = true
+    mutated.responses.modules.sleep = {
+      ...(mutated.responses.modules.sleep ?? {}),
+      menopause: {
+        ...(mutated.responses.modules.sleep?.menopause ?? {}),
+        sleep_disorder_screen: [null, {}],
+      },
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('수면장애 선별'))
     assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
   })
 }

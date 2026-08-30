@@ -9,9 +9,23 @@ function assert(name, cond) {
   console.log(`OK: ${name}`)
 }
 
+// 8차 독립 리뷰 HIGH-1/HIGH-3 이후: AnkleFootSafetyPanel이 payload.flags를
+// 렌더 전에 isFlagsUsable(flags, responses)로 검증한다 -- 7개 boolean 키가
+// 모두 있어야 하고(구조), general_red/gi_needs_review/bowel_needs_review가
+// responses와 모순되지 않아야 한다(일관성). safety_flags.red_flag_general/
+// modules.gi/modules.bowel을 여기서 정의하지 않으므로(undefined) 대응하는
+// expected 값은 전부 false -- flags의 세 필드도 기본 false로 맞춘다.
 function payload(moduleValues, safetyStatus = 'REVIEW_REQUIRED', generalRed = false) {
   return {
-    flags: { general_red: generalRed },
+    flags: {
+      general_red: generalRed,
+      gi_needs_review: false,
+      bowel_needs_review: false,
+      sleep_disorder_review: false,
+      sleep_disorder_priority_review: false,
+      response_consistency_review: false,
+      requires_staff_check: generalRed,
+    },
     responses: {
       safety_flags: { ankle_foot: { ankle_foot_safety_status: safetyStatus } },
       modules: { ankle_foot: moduleValues },

@@ -141,7 +141,7 @@ export function PainWorkspace({
   // 레거시/버전 skew로 이 7개 키 중 하나라도 없으면 flags.* 전부를 신뢰할
   // 수 없다(실제로 SAFETY_01에 응급 신호가 있어도 safetyCats가 항상 빈
   // 배열이 되어 "안전이슈 없음"으로 보일 수 있다).
-  const flagsUsable = isFlagsUsable(flags)
+  const flagsUsable = isFlagsUsable(flags, r)
   const safetyCats = safetyIssueCategories(flags)
   // 7차 독립 리뷰 MEDIUM-1: isEmptyValue는 wrong-typed truthy 값(문자열/
   // 객체)도 "응답함"으로 취급한다 -- red_flag_general(SAFETY_01)은

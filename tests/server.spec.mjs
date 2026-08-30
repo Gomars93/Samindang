@@ -1692,6 +1692,78 @@ async function main() {
     assert('default audit log path (.data/audit.log) is gitignored', auditLogIgnored)
   }
 
+  /* ---------------- 8th independent review MEDIUM-2: listSubmissions
+   * requires_staff_check tri-state (unit-level, store.js directly) ----------------
+   * submission.flags is computed client-side and stored verbatim (see
+   * createApp's POST /api/submissions handler) -- listSubmissions used to
+   * coerce an unusable flags object to `?? false`, making the triage badge
+   * in the doctor queue silently claim "no red flag" for a record whose
+   * flags are actually unreadable. isFlagsUsable(server/store.js) now
+   * makes this field tri-state: boolean when flags is structurally usable,
+   * the string 'unknown' otherwise. */
+  {
+    const m2Root = await mkdtemp(path.join(tmpdir(), 'samindang-m2-flags-'))
+    const m2DataDir = path.join(m2Root, 'submissions')
+    try {
+      const m2Store = createStore(m2DataDir)
+      const wellFormed = await m2Store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: 'm2-well-formed',
+          responses: {},
+          flags: {
+            general_red: true,
+            gi_needs_review: false,
+            bowel_needs_review: false,
+            sleep_disorder_review: false,
+            sleep_disorder_priority_review: false,
+            response_consistency_review: false,
+            requires_staff_check: true,
+          },
+        },
+        myungri: null,
+        patient_label: 'well-formed patient',
+      })
+      const hollow = await m2Store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: 'm2-hollow',
+          responses: {},
+          flags: {},
+        },
+        myungri: null,
+        patient_label: 'hollow patient',
+      })
+      const missing = await m2Store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: 'm2-missing',
+          responses: {},
+          // flags entirely absent -- a pre-flags-field legacy record.
+        },
+        myungri: null,
+        patient_label: 'missing-flags patient',
+      })
+
+      const listed = await m2Store.listSubmissions()
+      const byId = Object.fromEntries(listed.map((s) => [s.id, s]))
+      assert(
+        'store.js MEDIUM-2: well-formed flags -> requires_staff_check is the real boolean (true)',
+        byId[wellFormed.id].requires_staff_check === true,
+      )
+      assert(
+        'store.js MEDIUM-2: hollow flags ({}) -> requires_staff_check is the string "unknown", never coerced to false',
+        byId[hollow.id].requires_staff_check === 'unknown',
+      )
+      assert(
+        'store.js MEDIUM-2: missing flags (undefined) -> requires_staff_check is "unknown", never coerced to false',
+        byId[missing.id].requires_staff_check === 'unknown',
+      )
+    } finally {
+      await rm(m2Root, { recursive: true, force: true })
+    }
+  }
+
   /* ---------------- doctor-endpoint guard (unit-level, fake remoteAddress) ---------------- */
   assert(
     'guard: non-loopback + no token -> denied',

@@ -95,7 +95,7 @@ export function HerbalWorkspace({
   // 시점에 계산해 보내고 서버는 그대로 저장할 뿐 재검증하지 않는다 --
   // 레거시/버전 skew로 이 7개 키 중 하나라도 없으면 flags.* 전부를 신뢰할
   // 수 없다(PainWorkspace.tsx와 동일한 이유).
-  const flagsUsable = isFlagsUsable(flags)
+  const flagsUsable = isFlagsUsable(flags, r)
   const safetyCats = safetyIssueCategories(flags)
   // 7차 독립 리뷰 MEDIUM-1: isEmptyValue는 wrong-typed truthy 값도 "응답함"
   // 으로 취급한다 -- red_flag_general은 required:true, showIf 없음, 항상

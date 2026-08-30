@@ -142,3 +142,4 @@ tests/.public-followup-url-unconfigured-bundle.mjs
 # Each round gets its own prefix (round number) since rounds can overlap.
 tests/.r6-*
 tests/.r7-*
+tests/.r8-*

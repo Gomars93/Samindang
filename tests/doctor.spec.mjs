@@ -25,6 +25,7 @@ import {
   LbpSafetyPanel,
   NeckSafetyPanel,
   ShoulderSafetyPanel,
+  KneeSafetyPanel,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -1647,8 +1648,7 @@ function detailsRange(html, classMarker) {
     "resilience: every simple regional SafetyPanel gate (Knee/Elbow/WristHand) splits applicability (safety_flags.<region> == null -> silent null) from malformed-data (modules.<region> empty -> explicit SafetyDataUnavailableNotice, never silence) -- a legacy record with safety_flags.<region> entirely absent must stay silent, but one with safety_flags.<region> present and modules.<region> empty must show the notice, not nothing",
     ['knee', 'elbow', 'wrist_hand'].every((region) =>
       new RegExp(
-        `safety_flags\\.${region} == null\\) return null\\s*\\n\\s*if \\(!isNonEmptyObject\\(payload\\.responses\\.modules\\.${region}\\)\\) \\{\\s*\\n\\s*return <SafetyDataUnavailableNotice`,
-        's',
+        `safety_flags\\.${region} == null\\) return null\\s*\\n[\\s\\S]*?if \\(!isNonEmptyObject\\(payload\\.responses\\.modules\\.${region}\\) \\|\\| !isFlagsUsable\\(payload\\.flags, payload\\.responses\\)\\) \\{\\s*\\n\\s*return <SafetyDataUnavailableNotice`,
       ).test(src),
     ),
   )
@@ -1662,7 +1662,7 @@ function detailsRange(html, classMarker) {
   assert(
     'resilience: ShoulderSafetyPanel splits applicability (safety_flags.shoulder == null -> silent null) from malformed-data, and additionally requires modules.neck (not just modules.shoulder), reproductive_status.derived, medical_history_flags, AND medication.medication_types (transitively via frozen shoulderAdapter.ts calling neckAdapter.ts) -- the malformed branch must render an explicit notice, not silence',
     /safety_flags\.shoulder == null\) return null/.test(src) &&
-      /!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      /!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\) \|\|[\s\S]*?!isFlagsUsable\(payload\.flags, payload\.responses\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
         src,
       ),
   )
@@ -1710,7 +1710,7 @@ function detailsRange(html, classMarker) {
   const hipSrc = await readFile(fileURLToPath(new URL('../src/doctor/HipSafetyPanel.tsx', import.meta.url)), 'utf8')
   assert(
     'resilience: HipSafetyPanel splits applicability (safety_flags.hip == null -> silent null) from malformed-data (modules.hip empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
-    /safety_flags\.hip == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.hip\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+    /safety_flags\.hip == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.hip\) \|\| !isFlagsUsable\(payload\.flags, payload\.responses\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
       hipSrc,
     ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(hipSrc),
   )
@@ -1718,7 +1718,7 @@ function detailsRange(html, classMarker) {
   const tmjSrc = await readFile(fileURLToPath(new URL('../src/doctor/TmjSafetyPanel.tsx', import.meta.url)), 'utf8')
   assert(
     'resilience: TmjSafetyPanel splits applicability (safety_flags.tmj == null -> silent null) from malformed-data (modules.tmj empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
-    /safety_flags\.tmj == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.tmj\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+    /safety_flags\.tmj == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.tmj\) \|\| !isFlagsUsable\(payload\.flags, payload\.responses\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
       tmjSrc,
     ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(tmjSrc),
   )
@@ -1729,7 +1729,7 @@ function detailsRange(html, classMarker) {
   )
   assert(
     'resilience: AnkleFootSafetyPanel splits applicability (safety_flags.ankle_foot == null -> silent null) from malformed-data (modules.ankle_foot empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
-    /safety_flags\.ankle_foot == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.ankle_foot\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+    /safety_flags\.ankle_foot == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.ankle_foot\) \|\| !isFlagsUsable\(payload\.flags, payload\.responses\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
       ankleSrc,
     ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(ankleSrc),
   )
@@ -1844,6 +1844,65 @@ function detailsRange(html, classMarker) {
     assert(
       'resilience behavioral: LbpSafetyPanel renders the real computed safety_flags.lbp status even when routing.primary_module_detail is null (Additional Detailed Concern route) -- gate must key off safety_flags.lbp, not the routing tag (6th independent review HIGH-1)',
       html.includes('안전 확인') && html.includes('허리(LBP)') && !html.includes(UNAVAILABLE_TEXT) && html !== '',
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 8th independent review HIGH-1: ShoulderSafetyPanel/KneeSafetyPanel (and
+   * by the same fix, ElbowSafetyPanel/WristHandSafetyPanel/HipSafetyPanel.
+   * tsx/TmjSafetyPanel.tsx/AnkleFootSafetyPanel.tsx) pass
+   * `payload.flags.general_red` straight into their region's
+   * `core_safety_already_urgent` state -- with hollow/legacy `flags`,
+   * `general_red` reads as `undefined` (falsy), so a record whose core
+   * SAFETY_01 red flag genuinely computed URGENT_REVIEW could render as an
+   * affirmative "안전" instead. Every one of these panels now also
+   * requires `isFlagsUsable(payload.flags, payload.responses)` before
+   * computing anything -- proven here by behavioral render, not just
+   * source-regex, on the two panels this bundle re-exports.
+   * ---------------------------------------------------------------------- */
+  {
+    const shoulderFixture2 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture2.payload)
+    p.flags = {}
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel with hollow flags ({}) renders the explicit unavailable notice instead of computing a safety status from an unreadable general_red (8th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const kneeFixture = byName('무릎 통증 주호소 (KNEE, 고관절 연관통 의심)')
+    const p = structuredClone(kneeFixture.payload)
+    p.flags = {}
+    const html = renderToString(React.createElement(KneeSafetyPanel, { payload: p }))
+    assert(
+      'resilience behavioral: KneeSafetyPanel with hollow flags ({}) renders the explicit unavailable notice instead of computing a safety status from an unreadable general_red (8th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 8th independent review HIGH-3: flags can be structurally valid (all 7
+   * keys boolean) yet semantically stale relative to responses (a
+   * hand-edited/version-skewed record whose flags were never recomputed).
+   * isFlagsUsable now recomputes general_red/gi_needs_review/
+   * bowel_needs_review from responses and rejects a mismatch.
+   * ---------------------------------------------------------------------- */
+  {
+    const shoulderFixture3 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture3.payload)
+    // Structurally-valid flags (all 7 keys booleans) but general_red is
+    // asserted true while the real SAFETY_01 responses report no red flag
+    // -- exactly the "stale flags" scenario HIGH-3 describes.
+    p.flags.general_red = true
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel treats structurally-valid but responses-inconsistent flags (general_red=true contradicting real SAFETY_01=none) as unusable, not as a trustworthy urgent signal (8th independent review HIGH-3)',
+      html.includes(UNAVAILABLE_TEXT),
     )
   }
 }

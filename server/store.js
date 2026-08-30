@@ -14,6 +14,29 @@ const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed']
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
 const SESSION_INDEX_LOCK_KEY = '__session_index__'
 
+// 8차 독립 리뷰 MEDIUM-2: submission.flags(coreSpec.ts computeFlags)는
+// 태블릿이 계산해 보내고 서버는 재검증 없이 그대로 저장한다 -- 목록
+// 화면의 "⚠ 안전 확인 필요" 트리아지 배지가 이 값을 `?? false`로 무조건
+// 신뢰하면, flags가 레거시/손상 데이터인 레코드는 실제 위험 신호가
+// 있어도 원장이 리스트에서 열어보기도 전에 조용히 안전한 것처럼
+// 보인다. src/doctor/DoctorView.tsx의 isFlagsUsable과 동일한 구조
+// 검사(7개 boolean 키)만 여기서도 반복한다(서버는 클라이언트 TS
+// 모듈을 import하지 않으므로 로컬 사본).
+const REQUIRED_FLAG_KEYS = [
+  'general_red',
+  'gi_needs_review',
+  'bowel_needs_review',
+  'sleep_disorder_review',
+  'sleep_disorder_priority_review',
+  'response_consistency_review',
+  'requires_staff_check',
+]
+
+function isFlagsUsable(flags) {
+  if (typeof flags !== 'object' || flags === null || Array.isArray(flags)) return false
+  return REQUIRED_FLAG_KEYS.every((key) => typeof flags[key] === 'boolean')
+}
+
 // Round 17 (restart-safe / multi-process correctness): thrown by
 // saveJudgment/saveWorkspace when a CALLER-SUPPLIED expected_updated_at
 // precondition (optional -- see each function's doc comment) does not
@@ -236,7 +259,9 @@ export function createStore(
           status: r.status,
           patient_label: r.patient_label,
           primary_concern: r.submission?.metadata?.primary_concern ?? null,
-          requires_staff_check: r.submission?.flags?.requires_staff_check ?? false,
+          requires_staff_check: isFlagsUsable(r.submission?.flags)
+            ? r.submission.flags.requires_staff_check
+            : 'unknown',
           recorder_ready: Boolean(visit?.recording_id),
         })
       } catch {

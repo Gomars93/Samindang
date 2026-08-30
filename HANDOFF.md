@@ -4776,15 +4776,52 @@ test:crm-schema` 95/95(되돌린 필터를 실제로 사용하는 스펙), `npm 
 test:all`(exit 0), `npm run build`/`build:preview` clean, `tablet core`
 pytest 80/80, FROZEN diff 0 lines — 전부 통과. push 완료.
 
+**4차 독립 `model:opus` 클로징 리뷰(완료, `898ccdc` 대상) + 수정(`bd8d094`)**:
+실제 fresh subagent 호출(약 113k 토큰, 17 tool call, ~6분)로 `898ccdc`
+검수 — 지시대로 reset 블록 열거를 다시 처음부터 하지 않고, 이번
+라운드가 새로 만든 6가지 변경(파생 완전성 테스트, 취소 핸들러
+테스트, `.then`/`.finally`/`.catch`/`await` 토큰 카운트, crmStore
+필터 되돌림, shift-draft `onToggle`, check-task 칩 toggle-off)에
+집중. **판정: NOT CLEAN — 하지만 HIGH/MEDIUM 0건, 소스 버그 0건.**
+LOW 4 / NIT 1, 전부 테스트 커버리지 자체의 빈틈(실제 소스 3개 수정은
+전부 정확하다고 확인 — mutation 시도로 각각 검증).
+
+1. **LOW (수정)**: 파생 완전성 테스트가 `decls.length`만 pin — 정규식이
+   못 보는 destructuring 형태(멀티라인, `set` 접두사 아닌 setter명,
+   `=` 뒤 줄바꿈)로 17번째 `useState`가 추가돼도 `decls.length`는
+   그대로라 통과함(이 저장소엔 Prettier/ESLint 설정이 없어 그런
+   포맷이 실제로 나올 수 있음을 확인). **수정**: `useState(`/`useState<`
+   호출 부위 원시 개수와 교차 검증 추가.
+2. **LOW (수정)**: 같은 테스트가 effect 본문 전체(비동기 `.then()`
+   콜백 포함)에 대해 `missing`을 계산 — setter가 동기 reset 블록
+   밖으로, `.then()`의 `!result.ok` 조기 리턴 이후로 옮겨져도
+   `missing=[]`로 통과함을 실제로 확인. **수정**: effect의 동기
+   prefix(자기 자신의 비동기 호출 이전)로만 범위 제한.
+3. **NIT (수정)**: 취소 핸들러 보조 테스트가 `/g` 없이 `.match()` 사용
+   — 같은 모양의 핸들러가 파일 앞쪽에 먼저 있으면 그걸 검증하고 진짜
+   취소 버튼의 회귀는 못 잡음. **수정**: `matchAll` + "매치 정확히
+   1개" assertion으로 전환.
+4. **LOW ×2 (수정)**: 이번 라운드 자체의 두 소스 수정(shift-draft
+   `onToggle` 클리어, check-task 칩 toggle-off)이 assertion 0개로
+   나감 — 되돌려도 기존 테스트 전부 통과함을 실제로 확인. **수정**:
+   각각 소스-레벨 assertion 1개씩 추가.
+
+**검증(`bd8d094` 반영 후)**: `npx tsc -b --force` clean, `npm run
+test:medication-course` 57/57, `npm run test:medication-course-ui`
+16/16(신규 2개 포함), `npm run test:audit-registry` 106/106, `npm run
+test:crm-schema` 95/95, `npm run test:all`(exit 0), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, FROZEN diff
+0 lines — 전부 통과. push 완료.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `898ccdc` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
-검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1차 독립 클로징 리뷰
-수정(`d8e66d7`) + 2차 독립 클로징 리뷰 수정(`e067c94`) + 3차 독립
-클로징 리뷰 수정(`898ccdc`)까지 push 완료. 3차 리뷰가 핵심 메커니즘
-(reset 블록 완전성)은 두 가지 독립 방법으로 확인해 확정했다고 명시
-— 다음 라운드는 이번 라운드 자체의 새 변경(테스트의 파생 로직,
-crmStore 되돌림, 두 UX 수정)에 집중하는 4차 독립 클로징 리뷰.
+HEAD: `bd8d094` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+검수(`bff300c` 대상) 지적사항(`0d5464b`) + 1~4차 독립 클로징 리뷰
+수정(`d8e66d7`/`e067c94`/`898ccdc`/`bd8d094`)까지 push 완료. 4차
+리뷰가 HIGH/MEDIUM 0건·소스 버그 0건을 명시(3개 소스 수정 전부
+mutation으로 검증) — 남은 건 테스트 커버리지 빈틈뿐이었고 이번
+라운드로 닫음. 5차 독립 `model:opus` 클로징 리뷰 대기 중(이번
+라운드가 순수 테스트 강화라 CLEAN 확인 목적의 마지막 라운드로 예상).
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4825,20 +4862,18 @@ crmStore 되돌림, 두 UX 수정)에 집중하는 4차 독립 클로징 리뷰.
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `898ccdc` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
-지적사항(`0d5464b`) + 1~3차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
-`898ccdc`)까지 완료, 4차 독립 `model:opus` 클로징 리뷰 대기.)
--1. **다음 단계**: `898ccdc`에 대해 fresh 독립 `model:opus` 리뷰 실행
-   (3차 클로징 리뷰도 MEDIUM 1건을 발견했으므로 오너의 "같은 배치
-   안에서 Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복"
-   사이클에 따라 재검수 필요). 단, 3차 리뷰가 reset 블록 완전성(16개
-   useState 전부)은 수동 열거 + 기계적 diff 두 방법으로 이미 확정했음
-   — 4차 리뷰는 이를 다시 처음부터 재도출하지 말고, 이번 라운드가
-   새로 만든 것(파생 테스트 로직 자체의 정확성, crmStore.js 필터
-   되돌림, shift/check-task draft의 두 UX 수정)에 집중하도록 지시할
-   것. 발견 사항이 있으면 수정 후 재검수 반복, CLEAN이면 PR #24에
-   클로징 상태 코멘트 게시. **여전히 새 배치 시작 금지, merge/main
-   push 금지.**
+(HEAD `bd8d094` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항(`0d5464b`) + 1~4차 독립 클로징 리뷰 수정(`d8e66d7`/`e067c94`/
+`898ccdc`/`bd8d094`)까지 완료, 5차 독립 `model:opus` 클로징 리뷰 대기.)
+-1. **다음 단계**: `bd8d094`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (4차 클로징 리뷰가 LOW/NIT만 발견했으므로 오너의 "같은 배치 안에서
+   Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰 반복" 사이클에
+   따라 재검수 필요 — 단, 4차 리뷰가 HIGH/MEDIUM 0건·소스 버그 0건을
+   명시했고 이번 라운드는 순수 테스트 강화이므로, 5차는 CLEAN 확인
+   목적의 마지막 라운드로 예상). CLEAN이면 PR #24에 클로징 상태
+   코멘트 게시하고 이 배치를 CLOSABLE로 표시. 발견 사항이 있으면
+   수정 후 재검수 반복. **여전히 새 배치 시작 금지, merge/main push
+   금지.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

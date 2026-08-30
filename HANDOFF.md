@@ -3772,9 +3772,63 @@ destructure로 제외하므로 같은 종류의 버그가 구조적으로 발생
 재검증(주석 수정 이후): `npx tsc -b --force`(0 errors), `npm run build`,
 `npm run test:save-conflict`(30/30), FROZEN diff empty.
 
+## Completed — PR #23/#24 통합 리허설 (main 미변경, 로컬 임시 브랜치)
+
+**목표(오너 지시)**: `fix/tablet-v2-3-ux-and-routing-audit`(#23, HEAD
+`81252a8`, main 기준 17 커밋 선행)와 `feat/doctor-clinical-workspace`
+(#24, HEAD `7930cc1`, main 기준 76 커밋 선행이지만 #23 기준으로는 17
+커밋 뒤처짐)가 App.tsx/BodyMap.tsx/ScreenShell.tsx/TextInputField.tsx/
+coreSpec.ts/styles.css/여러 테스트 파일/vite.config.ts/package.json에서
+크게 겹쳐, 나중에 실제로 `#23 → main → #24` 순서로 병합할 때 현재
+독립 CI로는 잡을 수 없는 실질적 충돌/회귀 위험이 있음을 로컬 리허설로
+미리 검증. **main도, PR #23/#24 어느 브랜치도 건드리지 않음** —
+로컬 전용 임시 브랜치(`integration-rehearsal-23-into-24`, 별도 git
+worktree, push 안 함)에서만 수행.
+
+**충돌 실태**: 겹치는 18개 파일 중 상당수(`App.tsx`의 railSelection
+블록, `BodyMap.tsx`, `ScreenShell.tsx`, `QuestionScreen.tsx`,
+`types.ts`, `body-map.spec.mjs`)는 main 대비 두 브랜치의 diff가
+바이트 단위로 완전히 동일해 git이 충돌 없이 자동 병합함. 실제 충돌은
+12개 파일(`styles.css`, `TextInputField.tsx`, `PreviewBanner.tsx`,
+`vite.config.ts`, `package.json`, `.gitignore`,
+`integration.spec.mjs`, `preview-build.spec.mjs`,
+`viewport-budget.spec.mjs`, `bodymap-assets.spec.mjs` 등)에서
+발생했고, 전부 양쪽 내용을 직접 읽고 수동 해결(대부분 #23이 이후
+라운드에서 같은 테스트를 더 정교하게 다듬은 상위 호환 버전이라 #23
+쪽을 채택; `viewport-budget.spec.mjs`는 양쪽이 서로 다른, 겹치지 않는
+새 assertion을 각자 추가한 유일한 경우라 둘 다 보존).
+
+**검증(리허설 브랜치에서 실행, 실제 명령/결과)**: `npx tsc -b --force`
+(0 errors), `npm run build`/`npm run build:preview`(둘 다 성공),
+`git diff -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`를 main/#23
+HEAD/#24 HEAD 세 기준 모두에 대해 실행 — 전부 empty(FROZEN 완전
+유지), `npm run test:all` 전체 green(`tests/integration.spec.mjs`
+1176/1176 — #23 PR 본문이 보고한 수치와 정확히 일치, `bodymap-assets`
+17/17), `tablet core` pytest 80/80. 실제 브라우저 QA(Playwright, 통합
+빌드로 직접 실행): 환자 태블릿 portrait(800×1280)/landscape
+(1024×640) 첫 화면 가로 오버플로 없음, 원장 기본 워크스페이스 정상
+렌더, station 등록/배정/리셋 API 정상, start-revisit 정상, round 18
+stale-write 충돌(저장자 A 성공 → B 409+배너 → reload 복구) 정상 —
+전부 통과.
+
+**CI/Preview workflow 중복 점검**: `pr-23-preview.yml`(`/pr-23/`
+하위경로)과 `doctor-workspace-preview.yml`(`/doctor-pr/` 하위경로)은
+서로 다른 sub-path로 배포하고 동일한 `pages` concurrency group을
+공유해 경합하지 않도록 이미 설계돼 있음을 확인 — 안전하게 공존 중이며
+제거/수정 대상 아님.
+
+**결론**: 실제 `#23 → main → #24` 병합 시점에는 이 리허설이 기록한
+12개 충돌 파일과 해결 방향을 그대로 참고할 수 있다. main/PR 브랜치
+자체는 이번 라운드에서 전혀 변경되지 않았으므로 이 섹션은 순수 기록
+목적. Clinical CRM v0.3.1 CLOSED, Test 0 PENDING, Care Gap reservation
+suppression OFF, 신원 원칙(랜덤 UUID + Sigma chart_no 1:1, RRN 없음,
+전화번호 비-신원/비영구표시, 자동 병합 없음) 모두 리허설 중 실행된
+`test:all`(crm-schema/crm-store/identity-link-e2e 포함)로 그대로
+유지 확인.
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:
-`0ca7419`.
+`7930cc1`.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -3815,16 +3869,21 @@ destructure로 제외하므로 같은 종류의 버그가 구조적으로 발생
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(Round 18 stale-write 배치, HEAD `0ca7419` 기준 갱신 — CLOSABLE.)
+(HEAD `7930cc1` 기준 갱신 — Round 18 CLOSABLE + PR #23/#24 통합
+리허설 완료.)
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가
    별도로 필요한지 Gomars93의 판단이 필요. PR #24 코멘트에 상세 플래그.
    (이번 round 18과는 무관, 여전히 미해결.)
-1. Round 18(stale-write CAS 배선)은 초기+클로징 독립 `model:opus` 리뷰
-   2쌍을 모두 완료하고 모든 발견 사항(HIGH 1, MEDIUM 3)을 수정·재검증
+1. Round 18(stale-write CAS 배선)은 초기+클로징+3차 독립 `model:opus`
+   리뷰를 모두 완료하고 모든 발견 사항(HIGH 1, MEDIUM 3)을 수정·재검증
    완료 — CLOSABLE로 판단(위 섹션 참고).
-2. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `0ca7419`)와
+1-1. PR #23/#24 통합 리허설(로컬 임시 브랜치, main/두 PR 브랜치 모두
+   미변경)을 완료 — 실제 병합 시점에 참고할 충돌 파일 목록과 해결
+   방향을 HANDOFF에 기록(위 섹션 참고). 실제 병합은 Gomars93이 각
+   PR을 검토·승인한 뒤 원하는 순서로 직접 진행.
+2. Gomars93(PR 작성자/review author)가 이번 배치(HEAD `7930cc1`)와
    PR #24를 검토하고, 최종 merge 여부를 직접 판단한다 — 이 세션은
    절대 스스로 merge하지 않는다.
 3. ~~round 17이 의도적으로 미룬 항목~~ → **round 18에서 완료**: Doctor

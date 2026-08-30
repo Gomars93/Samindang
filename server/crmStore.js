@@ -629,6 +629,24 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
       const course = await readJson(medicationCoursePath(baseDir, course_id))
       if (!course) throw new CrmNotFoundError('medication_course', course_id)
       if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
+      // Closing-review finding (MEDIUM): createTaskStored's own dedup key
+      // includes contactPointKey, which do_not_contact overrides to
+      // 'IN_PERSON_ONLY' -- and a check-task create never bumps
+      // course.version. Two sequential calls with the same expectedVersion
+      // but different do_not_contact therefore hashed to two DIFFERENT
+      // dedup keys and minted two separate OPEN tasks for the same
+      // (course, reason_code): one OUTBOUND_ALLOWED, one IN_PERSON_ONLY --
+      // duplicate contact against a patient explicitly flagged
+      // do-not-contact on the other task. (course_id, reason_code) is
+      // made the authoritative identity here, independent of contact
+      // mode: an existing non-terminal task for this reason_code is
+      // always reused (its own contact_mode wins) rather than letting a
+      // differing do_not_contact value on this call mint a second task.
+      const existingTasks = await listTasksByEpisode(course.episode_id, now)
+      const existingOpen = existingTasks.find(
+        (t) => t.source_id === course_id && t.reason_code === reason_code && !TERMINAL_TASK_STATUSES.has(t.status),
+      )
+      if (existingOpen) return { task: existingOpen, deduped: true }
       return createTaskStored({
         task_id,
         episode_id: course.episode_id,

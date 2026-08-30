@@ -367,6 +367,26 @@ async function main() {
       medCourseAfterBadShift.body.version === medShift.body.course.version,
     )
 
+    /* ---- Closing-review fix verification (HIGH): coercing a non-array
+       replacement_due_dates straight to [] made the two validation
+       checks above pass VACUOUSLY (an empty array's .every()/.size
+       trivially satisfy them), so a caller that sends the single
+       replacement object instead of wrapping it in an array -- a classic
+       client bug -- used to still get 200 with the open task already
+       superseded and zero replacements created. Only an absent/null value
+       may mean "no replacements"; anything else non-array is rejected. ---- */
+    const medShiftNonArrayReplacements = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/shift-start`, {
+      expectedVersion: medShift.body.course.version,
+      medication_start_at: '2026-01-05',
+      replacement_due_dates: { reason_code: 'MEDICATION_MID_CHECK', due_at: '2026-02-10' },
+    })
+    assert('review-fix: shift-start with a non-array replacement_due_dates -> 400', medShiftNonArrayReplacements.status === 400)
+    const medCourseAfterNonArrayShift = await getJson(`${base}/api/crm/medication-courses/${medCourse.course_id}`)
+    assert(
+      'review-fix: the rejected non-array shift-start left the course version unchanged (nothing was superseded)',
+      medCourseAfterNonArrayShift.body.version === medShift.body.course.version,
+    )
+
     const medShiftDupReason = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/shift-start`, {
       expectedVersion: medShift.body.course.version,
       medication_start_at: '2026-01-05',

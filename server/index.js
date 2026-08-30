@@ -2141,13 +2141,29 @@ export function createApp({
           const body = await readBody(req)
           const expectedVersion = body?.expectedVersion
           const medicationStartAt = typeof body?.medication_start_at === 'string' ? body.medication_start_at : ''
-          const rawReplacements = Array.isArray(body?.replacement_due_dates) ? body.replacement_due_dates : []
+          // Closing-review finding (HIGH): coercing straight to `[]` for
+          // ANY non-array value (an object, a string -- the classic
+          // client bug of sending the single replacement instead of
+          // wrapping it in an array) made the two validation checks below
+          // pass vacuously (`[].every(...)` is true, `Set([]).size === 0
+          // === [].length`), so a malformed-but-present body still
+          // superseded the open task and returned 200. Only an absent or
+          // explicit null value is treated as "no replacements" -- anything
+          // else that isn't already an array is rejected outright.
+          const rawReplacementsInput = body?.replacement_due_dates
+          // Only computed as [] once we know rawReplacementsInput is either
+          // nullish or already an array (the branch below rejects anything
+          // else before this is ever read).
+          const rawReplacements = Array.isArray(rawReplacementsInput) ? rawReplacementsInput : []
           if (typeof expectedVersion !== 'number') {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'expectedVersion is required' }, cors)
           } else if (!medicationStartAt) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'medication_start_at is required' }, cors)
+          } else if (rawReplacementsInput != null && !Array.isArray(rawReplacementsInput)) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'replacement_due_dates must be an array' }, cors)
           } else if (
             // Independent-review finding (HIGH): silently filtering out a
             // malformed replacement entry used to still return 200 --

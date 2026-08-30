@@ -435,6 +435,72 @@ async function main() {
   }
 
   /* =====================================================================
+     Part 4d (closing-review fix): createTaskStored's own dedup key
+     includes contactPointKey, which do_not_contact overrides to
+     'IN_PERSON_ONLY' -- and creating a check-task never bumps
+     course.version. Two sequential calls with the SAME expectedVersion
+     but DIFFERENT do_not_contact used to hash to two different dedup
+     keys and mint two separate OPEN tasks for one (course, reason_code):
+     one OUTBOUND_ALLOWED, one IN_PERSON_ONLY -- duplicate contact against
+     a patient explicitly flagged do-not-contact on the other task.
+     (course_id, reason_code) must be the authoritative identity
+     regardless of do_not_contact.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-medcourse-dnc-dedup-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      const { course } = await store.createMedicationCourseStored({
+        course_id: randomUUID(),
+        episode_id: episodeId,
+        source: 'manual',
+        source_id: 'src-dnc-dedup-1',
+        source_timestamp: T0,
+        now: T0,
+      })
+
+      const first = await store.createMedicationCourseCheckTaskStored(
+        course.course_id,
+        course.version,
+        'MEDICATION_MID_CHECK',
+        '2026-03-01',
+        randomUUID(),
+        T0,
+        false,
+      )
+      assert('dnc-dedup: first call creates a genuinely new task', first.deduped === false)
+      assert('dnc-dedup: first call (do_not_contact=false) is OUTBOUND_ALLOWED', first.task.contact_mode === 'OUTBOUND_ALLOWED')
+
+      const second = await store.createMedicationCourseCheckTaskStored(
+        course.course_id,
+        course.version, // course.version is unchanged by a check-task create -- same value is still "current"
+        'MEDICATION_MID_CHECK',
+        '2026-03-15', // even a different attempted due_at must not mint a second task
+        randomUUID(),
+        T0,
+        true, // differs from the first call -- must NOT be enough to bypass dedup
+      )
+      assert('dnc-dedup: second call with a different do_not_contact dedupes rather than minting a second task', second.deduped === true)
+      assert('dnc-dedup: second call returns the SAME task_id as the first', second.task.task_id === first.task.task_id)
+      assert('dnc-dedup: the existing task\'s own contact_mode wins -- unaffected by the second call\'s do_not_contact', second.task.contact_mode === 'OUTBOUND_ALLOWED')
+
+      const taskFiles = (await readdir(path.join(root, 'tasks'))).filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      const midCheckTasks = []
+      for (const f of taskFiles) {
+        const t = await readRaw(path.join(root, 'tasks', f))
+        if (t.source_id === course.course_id && t.reason_code === 'MEDICATION_MID_CHECK') midCheckTasks.push(t)
+      }
+      assert('dnc-dedup: exactly one MEDICATION_MID_CHECK task file exists on disk for this course -- never two', midCheckTasks.length === 1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
      Part 5: episode/patient identity -- patient_uuid on the created course
      is always DERIVED from the referenced Episode, and a nonexistent
      episode_id is refused rather than silently accepted.

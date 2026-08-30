@@ -17,7 +17,7 @@
  * The clinician re-schedules explicitly afterward via "확인 예약", keeping
  * every due_at traceable to a human decision.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   createEpisode,
   createMedicationCourse,
@@ -79,18 +79,33 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
   // to the auto-expand-when-non-empty heuristic.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
 
-  function reloadEpisodeData(epId: string) {
+  // Owner-review finding: this component is only isolated from a patient
+  // switch by DoctorView.tsx's `key={selectedRecord.patient_id}` on its own
+  // caller -- a real but external safety net. Every async completion below
+  // (the initial load, its nested course/task reads, and every mutating
+  // action's own reload) now proves it still belongs to the CURRENT load
+  // epoch before committing state, so a slow/failed response for a
+  // previous patient can never render under a newly-selected one even if
+  // that external remount guarantee were ever weakened. Bumped exactly
+  // once per patientUuid change; every in-flight promise from a prior
+  // epoch captures its own epoch number in closure and compares against
+  // the current ref value at completion time.
+  const loadEpochRef = useRef(0)
+
+  function reloadEpisodeData(epId: string, epoch: number) {
     listMedicationCoursesByEpisode(epId).then((result) => {
+      if (loadEpochRef.current !== epoch) return
       if (result.ok) setCourses(result.data.courses)
       else setLoadError(result.error)
     })
     listEpisodeTasks(epId).then((result) => {
+      if (loadEpochRef.current !== epoch) return
       if (result.ok) setTasks(result.data.tasks)
     })
   }
 
   useEffect(() => {
-    let cancelled = false
+    const epoch = ++loadEpochRef.current
     setEpisodes(null)
     setEpisodeId(null)
     setCourses(null)
@@ -103,7 +118,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setShiftDraftByCourse({})
     setManualOpen(null)
     listEpisodesByPatient(patientUuid).then((result) => {
-      if (cancelled) return
+      if (loadEpochRef.current !== epoch) return
       if (!result.ok) {
         setLoadError(result.error)
         return
@@ -112,21 +127,20 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
       const chosen = result.data.episodes.find((e) => e.status === 'ACTIVE') ?? result.data.episodes[0] ?? null
       if (chosen) {
         setEpisodeId(chosen.episode_id)
-        reloadEpisodeData(chosen.episode_id)
+        reloadEpisodeData(chosen.episode_id, epoch)
       }
     })
-    return () => {
-      cancelled = true
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientUuid])
 
   function handleCreateEpisode() {
     if (busy) return
+    const epoch = loadEpochRef.current
     setBusy(true)
     setActionError(null)
     createEpisode(patientUuid)
       .then((result) => {
+        if (loadEpochRef.current !== epoch) return
         if (result.ok) {
           setEpisodes((prev) => [...(prev ?? []), result.data])
           setEpisodeId(result.data.episode_id)
@@ -136,11 +150,14 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           setActionError(result.error)
         }
       })
-      .finally(() => setBusy(false))
+      .finally(() => {
+        if (loadEpochRef.current === epoch) setBusy(false)
+      })
   }
 
   function handleCreateCourse() {
     if (busy || !episodeId || !newCourseSourceId) return
+    const epoch = loadEpochRef.current
     setBusy(true)
     setActionError(null)
     createMedicationCourse({
@@ -154,6 +171,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
       plannedDurationDays: newDurationDays.trim() === '' ? null : Number(newDurationDays),
     })
       .then((result) => {
+        if (loadEpochRef.current !== epoch) return
         if (result.ok) {
           setCourses((prev) => [...(prev ?? []).filter((c) => c.course_id !== result.data.course.course_id), result.data.course])
           setShowNewCourseForm(false)
@@ -166,18 +184,22 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           setActionError(result.error)
         }
       })
-      .finally(() => setBusy(false))
+      .finally(() => {
+        if (loadEpochRef.current === epoch) setBusy(false)
+      })
   }
 
   function handleCreateCheckTask(course: MedicationCourseRecord) {
     const draft = checkDraftByCourse[course.course_id]
     if (busy || !draft || !draft.dueAt) return
+    const epoch = loadEpochRef.current
     setBusy(true)
     setActionError(null)
     createMedicationCourseCheckTask(course.course_id, course.version, draft.reason, draft.dueAt)
       .then((result) => {
+        if (loadEpochRef.current !== epoch) return
         if (result.ok) {
-          if (episodeId) reloadEpisodeData(episodeId)
+          if (episodeId) reloadEpisodeData(episodeId, epoch)
           setCheckDraftByCourse((prev) => {
             const next = { ...prev }
             delete next[course.course_id]
@@ -185,23 +207,27 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           })
         } else if (result.error === 'conflict') {
           setActionError('다른 곳에서 이미 변경되었습니다 -- 최신 상태로 새로고침합니다.')
-          if (episodeId) reloadEpisodeData(episodeId)
+          if (episodeId) reloadEpisodeData(episodeId, epoch)
         } else {
           setActionError(result.error)
         }
       })
-      .finally(() => setBusy(false))
+      .finally(() => {
+        if (loadEpochRef.current === epoch) setBusy(false)
+      })
   }
 
   function handleShiftStart(course: MedicationCourseRecord) {
     const draftDate = shiftDraftByCourse[course.course_id]
     if (busy || !draftDate) return
+    const epoch = loadEpochRef.current
     setBusy(true)
     setActionError(null)
     shiftMedicationCourseStart(course.course_id, course.version, draftDate, [])
       .then((result) => {
+        if (loadEpochRef.current !== epoch) return
         if (result.ok) {
-          if (episodeId) reloadEpisodeData(episodeId)
+          if (episodeId) reloadEpisodeData(episodeId, epoch)
           setShiftDraftByCourse((prev) => {
             const next = { ...prev }
             delete next[course.course_id]
@@ -209,12 +235,14 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           })
         } else if (result.error === 'conflict') {
           setActionError('다른 곳에서 이미 변경되었습니다 -- 최신 상태로 새로고침합니다.')
-          if (episodeId) reloadEpisodeData(episodeId)
+          if (episodeId) reloadEpisodeData(episodeId, epoch)
         } else {
           setActionError(result.error)
         }
       })
-      .finally(() => setBusy(false))
+      .finally(() => {
+        if (loadEpochRef.current === epoch) setBusy(false)
+      })
   }
 
   if (loadError) {

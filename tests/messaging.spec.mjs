@@ -327,6 +327,13 @@ async function main() {
         follow_up_token: start.token,
       })
       assert('validation: missing link specifically -> 400 (this is the exact HIGH-1 closing-review regression)', missingLink.status === 400)
+      const malformedLink = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: 'javascript:alert(1)',
+      })
+      assert('validation: a link not shaped like a real follow-up capability URL -> 400', malformedLink.status === 400)
       const unknownPatient = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
         patient_id: 'not-a-real-patient-id',
         phone: '01055556666',

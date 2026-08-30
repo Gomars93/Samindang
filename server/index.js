@@ -138,6 +138,21 @@ export function createApp({
   function buildRevisitMessageText(link) {
     return `[삼인당한의원] 재진 확인 문진 안내\n아래 링크를 눌러 몇 가지만 답해 주세요.\n${link}`
   }
+  // Closing-review finding (MEDIUM): `link` is doctor-authenticated but
+  // otherwise arbitrary caller-supplied text that ends up verbatim in a
+  // real outbound patient SMS/Alimtalk body -- no privilege escalation
+  // (only a doctor-authed request can reach this), but a compromised or
+  // buggy client could put unrelated content in a real patient message.
+  // The server has no fixed "correct" origin to allowlist against (this
+  // SPA is deployed from more than one host -- local LAN, ghpages preview
+  // -- see vite.config.ts's `base` comment), so this checks only the one
+  // shape every legitimate caller (DoctorView.tsx's patientFollowUpLink)
+  // actually produces: an http(s) URL carrying the `#follow-up=` fragment
+  // this system's own one-time capability links always use.
+  const FOLLOW_UP_LINK_RE = /^https?:\/\/.+#follow-up=.+$/
+  function isValidFollowUpLink(link) {
+    return typeof link === 'string' && FOLLOW_UP_LINK_RE.test(link)
+  }
   function mapMessagingError(err) {
     if (err instanceof MessagingConflictError) return { status: 409, error: err.message }
     if (err instanceof MessagingNotFoundError) return { status: 404, error: 'not found' }
@@ -223,7 +238,18 @@ export function createApp({
   // messagingStore.js itself, never a crash here.
   async function runMessageRetries() {
     try {
-      const count = await messagingStore.runDueRetries(async (_patientId, visitId) => messagingContactCache.get(visitId) ?? null)
+      const count = await messagingStore.runDueRetries(
+        async (_patientId, visitId) => messagingContactCache.get(visitId) ?? null,
+        // Closing-review finding (MEDIUM): evict a visit_id's cached
+        // {phone, text} once its message reaches a status that will never
+        // need the cache again (anything other than QUEUED, which is the
+        // only status a future automatic retry can still be scheduled
+        // from) -- otherwise the cache only ever grows for the life of
+        // the process.
+        (visitId, status) => {
+          if (status !== 'QUEUED') messagingContactCache.delete(visitId)
+        },
+      )
       if (count > 0) {
         console.log(`${new Date().toISOString()} messaging: swept ${count} due retry attempt(s)`)
       }
@@ -734,6 +760,9 @@ export function createApp({
           if (!patientId || !phone || !followUpToken || !link) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'patient_id, phone, follow_up_token, link are all required' }, cors)
+          } else if (!isValidFollowUpLink(link)) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'link must be a valid follow-up capability URL' }, cors)
           } else if (!(await store.visitExistsForPatient(patientId))) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'unknown patient_id' }, cors)
@@ -764,6 +793,7 @@ export function createApp({
             // own field docs. Never returns the phone number or link back
             // to the client; the caller already has both (they just typed
             // the phone in, and already built the link themselves).
+            if (record.status !== 'QUEUED') messagingContactCache.delete(visitId)
             bytes = sendJson(req, res, status, record, cors)
           }
         }
@@ -795,6 +825,9 @@ export function createApp({
           if (!phone || !link) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'phone and link are both required' }, cors)
+          } else if (!isValidFollowUpLink(link)) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'link must be a valid follow-up capability URL' }, cors)
           } else {
             try {
               const text = buildRevisitMessageText(link)
@@ -802,6 +835,7 @@ export function createApp({
               if (existing) messagingContactCache.set(existing.visit_id, { phone, text })
               const record = await messagingStore.retryMessage(id, { phone, text })
               await safeAudit({ event: AUDIT_EVENTS.MESSAGE_RETRIED, visit_id: record.visit_id, actor: AUDIT_ACTORS.DOCTOR })
+              if (record.status !== 'QUEUED') messagingContactCache.delete(record.visit_id)
               bytes = sendJson(req, res, 200, record, cors)
             } catch (err) {
               const mapped = mapMessagingError(err)

@@ -377,12 +377,18 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
   // for that ONE message rather than a crash of the whole retry sweep --
   // staff can always fall back to the manual retryMessage() endpoint,
   // which takes both phone and text fresh again.
-  async function runDueRetries(resolveContact) {
+  // `onSettled(visitId, status)`, if supplied, fires once per due message
+  // after its outcome for this sweep is known -- purely advisory (e.g. so
+  // the caller can evict a now-terminal visit_id from its own contact
+  // cache; see server/index.js's messagingContactCache). Never called for
+  // a message this sweep's own try/catch swallowed an error for, and its
+  // own failure must never abort the sweep either.
+  async function runDueRetries(resolveContact, onSettled) {
     const due = await listDueForRetry()
     for (const record of due) {
       try {
         const contact = await resolveContact(record.patient_id, record.visit_id)
-        if (!contact || !contact.phone) {
+        if (!contact || !contact.phone || !contact.text) {
           await withLock(`message:${record.message_id}`, async () => {
             const current = await getMessage(record.message_id)
             if (!current || TERMINAL_NON_RETRY_STATUSES.has(current.status)) return
@@ -393,9 +399,19 @@ export function createMessagingStore(baseDir, { transport, maxAttempts = DEFAULT
             current.version += 1
             await atomicWrite(messagePath(baseDir, record.message_id), current)
           })
+          try {
+            onSettled?.(record.visit_id, 'FAILED')
+          } catch {
+            // advisory callback failures must never affect the sweep
+          }
           continue
         }
-        await attemptSend(record.message_id, { phone: contact.phone, text: contact.text })
+        const sent = await attemptSend(record.message_id, { phone: contact.phone, text: contact.text })
+        try {
+          onSettled?.(record.visit_id, sent.status)
+        } catch {
+          // advisory callback failures must never affect the sweep
+        }
       } catch {
         // A single message's retry failing (e.g. a lock contention edge
         // case) must never abort the sweep for every other due message.

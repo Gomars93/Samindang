@@ -670,7 +670,7 @@ test('CommonSafetyBanner.tsx guards reproductive_status.derived before reading i
   // 손상된 non-null 값(wrong-typed truthy 필드)이 그대로 통과했다 --
   // isUnreadableReproductiveDerived(r)로 대체되어 두 경우 모두 막힌다.
   assert.ok(
-    /!isUnreadableReproductiveDerived\(r\) &&\s*\n\s*\(derived\.pregnant/.test(src),
+    /!isUnreadableReproductiveDerived\(r\) &&\s*\n\s*derived &&\s*\n\s*\(derived\.pregnant/.test(src),
     'derived must be checked via isUnreadableReproductiveDerived before .pregnant/.pregnancy_possible/.postpartum_1y/.breastfeeding are read',
   )
 })
@@ -789,6 +789,63 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
     assert.ok(!html.includes('특이 안전정보 없음'))
     assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 9차 독립 리뷰 자체 회귀분석 (이 라운드 자체 수정에서 발견): 7개 플래그
+   * 전부를 재계산하도록 isFlagsConsistentWithResponses를 확장하면서
+   * r.safety_flags.red_flag_general / r.modules.gi / r.modules.bowel /
+   * r.modules.sleep / r.reproductive_status.reproductive_status를 옵셔널
+   * 체이닝 없이 직접 접근했다 -- reproductive_status/modules/safety_flags
+   * 필드 자체가 생기기 전에 제출된 진짜 레거시 레코드에서는 이 최상위 키
+   * 자체가 아예 없으므로, 이 배치가 막으려는 크래시가 이 배치 자신의
+   * 수정으로 재도입됐었다(ankle-foot-doctor-panel.spec.mjs의 최소
+   * payload()로 재현/발견). CommonSafetyBanner.tsx에서도 동일 경로가
+   * 있는지 여기서 직접 재현한다.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner: reproductive_status key entirely absent (pre-field legacy record) does not throw and shows the "cannot read" notice, never a crash', () => {
+    const mutated = structuredClone(base.payload)
+    delete mutated.responses.reproductive_status
+    let html
+    assert.doesNotThrow(() => {
+      html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    })
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /*
+   * safety_flags hollowed to {} (not deleted entirely): LbpSafetyPanel's
+   * applicability gate (DoctorView.tsx:595, `payload.responses.safety_flags.lbp
+   * == null`) and its regional siblings (Neck/Shoulder/...) read
+   * `safety_flags.<region>` unguarded across many pre-existing files well
+   * outside this round's fix -- deleting the whole key would exercise that
+   * separate, pre-existing gap and is out of scope here (CLAUDE.md: no
+   * unrelated-code changes). This test proves only the round-9 fix sites
+   * (CommonSafetyBanner's generalFlagLabels, PainWorkspace/HerbalWorkspace's
+   * safetyAnswered/recoveryScore) stay crash-safe against the minimum shape
+   * this codebase's own gate (isDoctorPayloadShapeUsable) actually
+   * guarantees: the container present, its own keys possibly absent.
+   */
+  test('CommonSafetyBanner: safety_flags hollowed to {} (no red_flag_general/lbp keys) does not throw when rendering the common-safety banner', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.safety_flags = {}
+    let html
+    assert.doesNotThrow(() => {
+      html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    })
+    assert.ok(typeof html === 'string' && html.length > 0)
+  })
+
+  test('CommonSafetyBanner: modules hollowed to {} (no sleep submodule) + flags claiming sleep_disorder_priority_review=true does not throw (hasUnreadableSafetyField reads r.modules.sleep unconditionally when that flag is set)', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules = {}
+    mutated.flags = { ...mutated.flags, sleep_disorder_priority_review: true }
+    let html
+    assert.doesNotThrow(() => {
+      html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    })
+    assert.ok(typeof html === 'string' && html.length > 0)
   })
 
   /* -----------------------------------------------------------------------

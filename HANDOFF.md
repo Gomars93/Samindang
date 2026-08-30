@@ -6017,6 +6017,137 @@ origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 9차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+9차 리뷰(커밋 대상: 8차 수정 커밋)는 8차가 남긴 두 종류의 gap을 찾았다
+— (a) 재계산 대상 플래그가 7개 중 3개뿐이었던 점, (b)
+`isUnreadableReproductiveDerived`가 CommonSafetyBanner.tsx에만 있고
+LBP/NECK/SHOULDER SafetyPanel 게이트와 `boolLabel`/"여성 안전정보"
+표시부와 HerbalWorkspace.tsx에는 없었던 점. 3 HIGH + 1 LOW를 찾아냈다.
+
+**(HIGH-1) `isFlagsConsistentWithResponses`가 7개 플래그 중 3개
+(general_red/gi_needs_review/bowel_needs_review)만 재계산했다.**
+`requires_staff_check`가 그 3개의 OR과 모순되거나(coreSpec.ts:4069),
+`sleep_disorder_review`/`sleep_disorder_priority_review`(MS_05
+기반)/`response_consistency_review`(MS_01×WOMEN_SAFETY_01 기반)가 실제
+responses와 모순돼도 여전히 신뢰됐다 — 나머지 4개를 모두
+재계산하도록 확장(`DoctorView.tsx`/`CommonSafetyBanner.tsx`/
+`HipSafetyPanel.tsx`/`TmjSafetyPanel.tsx`/`AnkleFootSafetyPanel.tsx`/
+`server/store.js` 6곳 전부 동일하게).
+
+**(HIGH-2) `isUnreadableReproductiveDerived`가 CommonSafetyBanner.tsx
+에만 존재하고 LBP/NECK/SHOULDER SafetyPanel의 게이트,
+`boolLabel`("여성 안전정보" 표시부), HerbalWorkspace.tsx의
+`hasReproductiveData`는 여전히 구식 truthy 체크
+(`!payload.responses.reproductive_status.derived`)를 썼다.**
+lbpAdapter.ts(FROZEN)의 `mapPregnancyStatus`는 `true`/`null`이 아닌
+모든 값을 명시적 "임신 아님"으로 변환하므로, 구조는 정상이지만
+재계산되지 않은 stale derived(예: 실제 임신 보고 후에도
+`pregnant: false`로 남은 레코드)가 그대로 통과해 허위 "치료 안전"
+판정을 만들어낼 수 있었다. `isUnreadableReproductiveDerived`를
+`DoctorView.tsx`에서도 export하고 LBP/NECK/SHOULDER 3개 게이트에
+동일하게 연결, `boolLabel`을 `(v: boolean|null)`에서 `(v: unknown)`로
+방어적으로 재작성(`=== true`/`=== false`만 예/아니요, 그 외 전부
+"확인되지 않음"), "여성 안전정보" 섹션을 손상 시 명시적 미확인
+알림으로 대체, `HerbalWorkspace.tsx`의 `hasReproductiveData`도 stale
+`derived.source`만으로 섹션 자체를 숨기지 않도록 원본
+WOMEN_SAFETY_01 배열 존재 여부를 OR로 추가.
+
+**(HIGH-3) `isUnreadableReproductiveDerived`가 derived의 타입/구조만
+보고 raw WOMEN_SAFETY_01 응답과의 일치 여부는 보지 않았다.** 구조적으로
+완전히 정상인(모든 필드 boolean|null) `derived` 객체가 실제 raw 응답과
+모순돼도(예: raw가 `['pregnant']`인데 derived.raw는
+`['menopause']`이고 pregnant:false) 통과했다 — `derived.source ===
+'WOMEN_SAFETY_01'`일 때 `derived.raw`가 배열인지, raw가 `['unknown']`
+단독이 아닌 한 `pregnant`/`postpartum_1y`/`breastfeeding`이
+`rawAnswer.includes(...)`와 정확히 일치하는지(이 3개는 다른 모듈의
+정당한 override 경로가 없음), `pregnancy_possible`은 raw가 주장하는데
+derived가 부정하는 방향만(PREGNANCY_01==='possible' override는 반대
+방향으로 정당하므로) 검사하도록 추가.
+
+**(LOW-1) 8차가 SafetyPanel 9개 중 2개(Shoulder/Knee)만 behavioral
+테스트로 검증하고 나머지 7개(Elbow/WristHand/Hip/Tmj/AnkleFoot)는
+구조(regex) 검사만 남겨뒀다.** 이번 라운드에서 회귀 테스트를 behavioral
+쪽으로 보강했다(아래 참고). 이 배치의 duplicate-helper 관례(5+1개
+파일에 `isFlagsUsable`/`isFlagsConsistentWithResponses` 사본 유지)를
+공유 모듈로 통합하라는 권고는 승인되지 않은 아키텍처 변경이라 채택하지
+않고, 대신 6곳 전부를 문자 단위로 동일하게 유지했다.
+
+**9차 수정 자체가 새로 만든 크래시 (자체 회귀분석, 별도 리뷰 라운드
+없이 이번 세션 내 발견/수정)**: 위 HIGH-1/HIGH-2 확장을 구현하면서
+`r.safety_flags.red_flag_general`/`r.modules.gi`/`r.modules.bowel`/
+`r.modules.sleep`/`r.reproductive_status.reproductive_status`/
+`r.reproductive_status.derived`를 옵셔널 체이닝 없이 직접 접근하는
+코드가 6개 클라이언트 파일에 새로 생겼다 — `reproductive_status`/
+`modules`/`safety_flags` 필드 자체가 생기기 전에 제출된 진짜 레거시
+레코드에서는 이 최상위 키 자체가 아예 없으므로, 이 배치가 막으려는
+"크래시 금지" 원칙을 이 배치 자신의 수정이 위반할 뻔했다
+(`tests/ankle-foot-doctor-panel.spec.mjs`의 최소 `payload()`가
+`TypeError: Cannot read properties of undefined (reading
+'reproductive_status')`로 즉시 재현). `DoctorView.tsx`/
+`CommonSafetyBanner.tsx`/`HipSafetyPanel.tsx`/`TmjSafetyPanel.tsx`/
+`AnkleFootSafetyPanel.tsx`의 `isFlagsConsistentWithResponses`/
+`isUnreadableReproductiveDerived` 전부와, `PainWorkspace.tsx`/
+`HerbalWorkspace.tsx`의 `safetyAnswered`/`recoveryScore`/
+`hasReproductiveData`를 옵셔널 체이닝으로 다시 강화했다.
+(`server/store.js`는 이미 처음부터 옵셔널 체이닝을 썼으므로 영향
+없음.) 참고로 `LbpSafetyPanel`의 `safety_flags.<region>` 계열
+applicability 게이트(예: `payload.responses.safety_flags.lbp`)는 이
+배치 이전부터 있던 별도의 미보호 지점이며, 실제 production
+경로에서는 `DoctorView.tsx`의 `isDoctorPayloadShapeUsable`(모든
+REQUIRED_RESPONSE_KEYS가 plain object인지 1레벨 검사)이 이미
+`DoctorWorkspace`/`PainWorkspace`/`CommonSafetyBanner` 렌더 전에
+이 필드들의 존재를 보장하므로 실사용 경로에서는 도달 불가능 — 이번
+라운드가 고친 것은 그 가드를 우회해 컴포넌트를 단독으로 렌더하는
+기존 테스트 관례(ankle-foot-doctor-panel.spec.mjs 등)에서 드러난
+방어 결함이며, 동일 클래스이지만 이 배치 범위 밖인
+`LbpSafetyPanel`류의 `safety_flags.<region>` 패턴 전체를 건드리는
+광범위한 리팩터는 이번 라운드에서 시도하지 않았다(CLAUDE.md의
+unrelated-code 변경 금지/광범위 리팩터 금지 원칙).
+
+**신규/갱신 회귀 테스트**: `tests/doctor.spec.mjs`에 (1)
+`requires_staff_check`가 개별적으로는 다 맞는 general_red/gi/bowel의
+OR과 모순되는 경우, (2) 실제 MS_05 witnessed_apnea 보고 +
+sleep_disorder_priority_review:false stale 조합, (3) LBP 임신 보고 +
+구조는 정상이지만 stale한 derived 조합 — 각각 ShoulderSafetyPanel/
+LbpSafetyPanel이 UNAVAILABLE 알림을 그리는지 확인하는 behavioral 테스트
+3개 추가 + 게이트 조건식 변경(`isUnreadableReproductiveDerived(...)`)에
+맞춰 기존 구조 검사 정규식 2곳 갱신(830→833).
+`tests/doctor-workspace.spec.mjs`에 CommonSafetyBanner의
+`reproductive_status` 키 전체 부재(진짜 레거시), `safety_flags`/
+`modules`를 `{}`로 hollow(실제 production 계약이 보장하는 최소 형태)
+했을 때 크래시 없이 렌더되는지 확인하는 behavioral 테스트 3개
+추가(154→157). `tests/server.spec.mjs`의 기존 MEDIUM-2 "well-formed
+flags" fixture가 `responses: {}`였는데 `general_red: true`를 주장해
+새 7-플래그 일치 검사와 모순되던 것을 fixture 쪽 결함으로 판단하고
+`responses.safety_flags.red_flag_general: ['fever']`로 실제 뒷받침하도록
+수정(진짜 버그 아님, 230/230 유지).
+`tests/ankle-foot-doctor-panel.spec.mjs`는 8/8 그대로 유지(round
+8에서 채운 7개 flags 키가 이번 확장 이후에도 모두 false 기대값과
+일치함을 재확인).
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch
+포트) + Playwright(`/opt/pw-browsers/chromium`)로 1440×900/
+1024×768/834×1112 3개 뷰포트 각각에서 (A) requires_staff_check가
+OR과 모순되는 Shoulder 레코드, (B) LBP 임신 보고 + stale derived
+레코드, (C) `reproductive_status` 키 전체 부재 레코드를 실제
+`/api/submissions`에 POST하고 목록에서 클릭 — (A)(B) 모두 "안전 상태를
+자동으로 계산할 수 없습니다" 명시적 알림이 뜨고 허위 "치료 안전"
+판정이 나타나지 않음, (C)는 페이지가 크래시 없이 계속 렌더됨을
+확인, 3개 시나리오 × 3개 뷰포트 전부 page error 0건.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 833/833, doctor-workspace 157/157, server 230/230,
+ankle-foot-doctor-panel 8/8 포함), `npm run build`/`build:preview`
+clean, `tablet core` pytest 80/80, `git diff origin/main --
+src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부
+통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 10차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

@@ -1710,7 +1710,12 @@ async function main() {
         submission: {
           questionnaire_version: '1.0',
           session_id: 'm2-well-formed',
-          responses: {},
+          // 9차 독립 리뷰 HIGH-1 이후 isFlagsConsistentWithResponses가
+          // 7개 플래그 전부를 responses로부터 재계산해 대조하므로, 이
+          // fixture의 responses는 general_red:true를 실제로 뒷받침해야
+          // 한다(그 외 6개 플래그는 모두 false이므로 나머지 필드는
+          // 비워둬도 기대값과 일치한다).
+          responses: { safety_flags: { red_flag_general: ['fever'] } },
           flags: {
             general_red: true,
             gi_needs_review: false,

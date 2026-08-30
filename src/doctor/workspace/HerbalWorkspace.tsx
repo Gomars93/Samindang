@@ -100,8 +100,21 @@ export function HerbalWorkspace({
   // 7차 독립 리뷰 MEDIUM-1: isEmptyValue는 wrong-typed truthy 값도 "응답함"
   // 으로 취급한다 -- red_flag_general은 required:true, showIf 없음, 항상
   // 배열이므로 배열이 아니면 손상이다.
-  const safetyAnswered = Array.isArray(r.safety_flags.red_flag_general) && r.safety_flags.red_flag_general.length > 0
-  const hasReproductiveData = (r.reproductive_status.derived?.source ?? null) !== null
+  // 9차 독립 리뷰 자체 회귀분석: safety_flags 최상위 키 자체가 없는 레거시
+  // 레코드에서 옵셔널 체이닝 없이 접근하면 여기서 throw된다.
+  const safetyAnswered =
+    Array.isArray(r.safety_flags?.red_flag_general) && r.safety_flags.red_flag_general.length > 0
+  // 9차 독립 리뷰 HIGH-2: `derived?.source`만으로 판정하면 derived가
+  // 손상돼(재계산 안 됨/레거시) source가 stale null로 남아있을 때, 환자가
+  // 실제로 WOMEN_SAFETY_01에 응답했어도(reproductive_status가 배열)
+  // "여성·생식 정보" 섹션 자체가 통째로 사라진다(applicability와 손상을
+  // 뭉뚱그리는 문제) -- 원본 응답이 배열로 존재하는지 직접 확인하는
+  // 조건을 OR로 추가한다(postpartum/pregnancy 모듈 출처처럼 원본
+  // WOMEN_SAFETY_01이 null이어도 derived.source가 채워지는 경우는
+  // 기존 조건이 그대로 담당한다).
+  const hasReproductiveData =
+    (r.reproductive_status?.derived?.source ?? null) !== null ||
+    Array.isArray(r.reproductive_status?.reproductive_status)
 
   const emrText = buildHerbalWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),

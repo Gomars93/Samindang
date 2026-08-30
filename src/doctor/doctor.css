@@ -410,6 +410,19 @@
   margin: -4px 0 12px;
 }
 
+/* 9차 독립 리뷰 HIGH-2: 여성 안전정보 카드의 계산 박스를 대체하는
+   "읽을 수 없음" 알림 -- .doctor__safetyGlance--unavailable과 동일한
+   danger 색으로 눈에 띄게 한다(기본 --derivedNote는 muted해서 손상
+   데이터 경고에 어울리지 않는다). */
+.doctor__derivedNote--unavailable {
+  color: var(--danger);
+  font-weight: 600;
+  background: #f6ece9;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
 .doctor__empty {
   font-size: 13px;
   color: var(--text-muted);

@@ -1610,7 +1610,7 @@ function detailsRange(html, classMarker) {
   )
   assert(
     'resilience: r.reproductive_status.derived is optional-chained before .source is read',
-    /r\.reproductive_status\.derived\?\.source/.test(src),
+    /r\.reproductive_status\?\.derived\?\.source/.test(src),
   )
   assert(
     'resilience: saju.normalized?.solarDate is optional-chained before its .year/.month/.day are read',
@@ -1655,21 +1655,21 @@ function detailsRange(html, classMarker) {
   assert(
     'resilience: NeckSafetyPanel splits applicability (safety_flags.neck == null -> silent null) from malformed-data, and additionally requires reproductive_status.derived, a null-or-string-array medical_history_flags, AND a null-or-string-array medication.medication_types (5th independent review HIGH-1: neckAdapter.ts frozen mapMedication calls .toUpperCase() on each medication_types element, missed by round 4) -- all four crash inside frozen neckAdapter.ts functions, and the malformed branch must render an explicit notice, not silence (HIGH-2)',
     /safety_flags\.neck == null\) return null/.test(src) &&
-      /!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      /!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*isUnreadableReproductiveDerived\(payload\.responses\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
         src,
       ),
   )
   assert(
     'resilience: ShoulderSafetyPanel splits applicability (safety_flags.shoulder == null -> silent null) from malformed-data, and additionally requires modules.neck (not just modules.shoulder), reproductive_status.derived, medical_history_flags, AND medication.medication_types (transitively via frozen shoulderAdapter.ts calling neckAdapter.ts) -- the malformed branch must render an explicit notice, not silence',
     /safety_flags\.shoulder == null\) return null/.test(src) &&
-      /!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\) \|\|[\s\S]*?!isFlagsUsable\(payload\.flags, payload\.responses\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      /!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*isUnreadableReproductiveDerived\(payload\.responses\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\) \|\|[\s\S]*?!isFlagsUsable\(payload\.flags, payload\.responses\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
         src,
       ),
   )
   assert(
     'resilience: the LbpSafetyPanel gate uses safety_flags.lbp (not routing.primary_module_detail) as its applicability signal -- safety_flags.lbp is computed whenever IS_PRIMARY_LBP holds, which also covers the Additional Detailed Concern route where primary_module_detail stays null (6th independent review HIGH-1) -- and separately splits malformed-data (modules.lbp/reproductive_status.derived/medical_history_flags -> explicit SafetyDataUnavailableNotice, not silence)',
     /safety_flags\.lbp == null\) return null/.test(src) &&
-      /!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*!payload\.responses\.reproductive_status\.derived \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      /!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*isUnreadableReproductiveDerived\(payload\.responses\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
         src,
       ),
   )
@@ -1905,6 +1905,89 @@ function detailsRange(html, classMarker) {
       html.includes(UNAVAILABLE_TEXT),
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 9th independent review HIGH-1: round 8's isFlagsConsistentWithResponses
+   * only recomputed general_red/gi_needs_review/bowel_needs_review --
+   * requires_staff_check (a pure OR of those three, coreSpec.ts:4069) and
+   * the 3 remaining keys (sleep_disorder_review/sleep_disorder_priority_
+   * review/response_consistency_review, all recomputable from MS_05/MS_01/
+   * WOMEN_SAFETY_01) were left unchecked. A record whose general_red/gi/
+   * bowel are each individually correct but whose requires_staff_check
+   * doesn't match their OR is provably corrupt yet passed round 8's check.
+   * ---------------------------------------------------------------------- */
+  {
+    const shoulderFixture4 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture4.payload)
+    // general_red/gi_needs_review/bowel_needs_review are all individually
+    // correct (still match the real 'none' SAFETY_01 answer) -- only
+    // requires_staff_check is stale, hiding what should be a staff-check
+    // banner. Round 8's check alone would call this flags object usable.
+    p.flags.requires_staff_check = true
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel treats a requires_staff_check that contradicts general_red||gi_needs_review||bowel_needs_review as unusable, even when those three fields are each individually correct (9th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const shoulderFixture5 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture5.payload)
+    p.responses.modules.sleep = {
+      ...(p.responses.modules.sleep ?? {}),
+      menopause: { ...(p.responses.modules.sleep?.menopause ?? {}), sleep_disorder_screen: ['witnessed_apnea'] },
+    }
+    // A real witnessed_apnea report should set sleep_disorder_priority_review
+    // true (coreSpec.ts computeFlags) -- leaving it stale false here hides a
+    // genuine priority sleep-disorder screen finding, the direction round 8
+    // could not detect since it never looked at MS_05 at all.
+    p.flags.sleep_disorder_priority_review = false
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel treats sleep_disorder_priority_review=false as unusable when MS_05 reports witnessed_apnea (a real finding round 8 never cross-checked) (9th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 9th independent review HIGH-2/HIGH-3: reproductive_status.derived can
+   * never be null in a real submission, and prior rounds' truthiness gate
+   * (`!payload.responses.reproductive_status.derived`) let a structurally
+   * valid but STALE derived object (never recomputed after WOMEN_SAFETY_01
+   * changed) pass straight through into lbpAdapter.ts's (frozen)
+   * mapPregnancyStatus, which converts anything that isn't `true`/`null`
+   * into an explicit "not pregnant" -- fabricating a false treatment-safety
+   * clearance for a genuinely reported pregnancy. isUnreadableReproductive
+   * Derived now also recomputes pregnant/postpartum_1y/breastfeeding from
+   * the raw WOMEN_SAFETY_01 answer when derived.source==='WOMEN_SAFETY_01'.
+   * ---------------------------------------------------------------------- */
+  {
+    const lbpFixture2 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture2.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant']
+    // Structurally valid derived (all fields correctly typed) but stale --
+    // raw still reflects some earlier, different answer, and pregnant
+    // was never recomputed to true.
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['menopause'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel renders the explicit unavailable notice (not a computed 치료 안전 status) when reproductive_status.derived is structurally valid but stale relative to a real reported pregnancy (9th independent review HIGH-2/HIGH-3)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -1936,7 +2019,7 @@ function detailsRange(html, classMarker) {
     'r.modules.women?.problems',
     'r.modules.pregnancy?.concerns',
     'r.modules.postpartum?.problems',
-    'r.safety_flags.red_flag_general',
+    'r.safety_flags?.red_flag_general',
   ]
   for (const field of mustUseAsArray) {
     assert(

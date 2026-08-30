@@ -146,7 +146,11 @@ export function PainWorkspace({
   // 7차 독립 리뷰 MEDIUM-1: isEmptyValue는 wrong-typed truthy 값(문자열/
   // 객체)도 "응답함"으로 취급한다 -- red_flag_general(SAFETY_01)은
   // required:true, showIf 없음, 항상 배열이므로 배열이 아니면 손상이다.
-  const safetyAnswered = Array.isArray(r.safety_flags.red_flag_general) && r.safety_flags.red_flag_general.length > 0
+  // 9차 독립 리뷰 자체 회귀분석: safety_flags 최상위 키 자체가 없는 레거시
+  // 레코드(그 필드가 생기기 전 제출본)에서 옵셔널 체이닝 없이 접근하면
+  // 여기서 throw된다.
+  const safetyAnswered =
+    Array.isArray(r.safety_flags?.red_flag_general) && r.safety_flags.red_flag_general.length > 0
   // LBP_12: only exists for the LBP regional module — recovery expectation raw score,
   // never an inferred risk/yellow-flag bucket (governing task invariant).
   // Gate on safety_flags.lbp (computed whenever IS_PRIMARY_LBP holds, which
@@ -154,7 +158,7 @@ export function PainWorkspace({
   // routing.primary_module_detail -- that tag stays null on that route even
   // though r.modules.lbp is real data (6th independent review HIGH-1, same
   // root cause as LbpSafetyPanel's gate in DoctorView.tsx).
-  const recoveryScore = r.safety_flags.lbp != null ? (r.modules.lbp?.recovery_expectation ?? null) : null
+  const recoveryScore = r.safety_flags?.lbp != null ? (r.modules?.lbp?.recovery_expectation ?? null) : null
 
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)

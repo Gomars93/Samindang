@@ -119,9 +119,17 @@ export function Field({
   )
 }
 
-function boolLabel(v: boolean | null): string {
-  if (v === null) return '확인되지 않음'
-  return v ? '예' : '아니요'
+/**
+ * 9차 독립 리뷰 HIGH-2 후속: 이 함수를 호출하는 여성 안전정보 카드는 이제
+ * isUnreadableReproductiveDerived로 먼저 걸러지므로 실전에서 wrong-typed
+ * 값이 여기까지 오지 않지만, 그 가드가 없는 다른 호출부가 나중에 생겨도
+ * `=== true`/`=== false`가 아닌 값(예: 문자열 'yes')을 "아니요"로
+ * 지어내지 않도록 시그니처 자체를 방어적으로 둔다.
+ */
+function boolLabel(v: unknown): string {
+  if (v === true) return '예'
+  if (v === false) return '아니요'
+  return '확인되지 않음'
 }
 
 function sourceLabel(source: Responses['reproductive_status']['derived']['source']): string {
@@ -240,6 +248,57 @@ function isNonEmptyObject(value: unknown): boolean {
 }
 
 /**
+ * 9차 독립 리뷰 HIGH-2: `!payload.responses.reproductive_status.derived`
+ * (truthy 체크)로 "임신/수유 관련 안전정보를 읽을 수 없다"를 판정하던
+ * 곳들(LBP/NECK/SHOULDER SafetyPanel 게이트, 아래 여성 안전정보 카드)이
+ * 8차가 CommonSafetyBanner.tsx에 추가한 것과 같은 헛점을 그대로 가지고
+ * 있었다 -- deriveReproductiveStatus(coreSpec.ts)는 절대 null을 반환하지
+ * 않으므로(남성/미응답이면 `{source:null, ...전부 null}` 객체), `derived`
+ * 가 truthy이기만 하면 그 안의 pregnant/pregnancy_possible 등이
+ * wrong-typed 값이어도 그대로 통과해 lbpAdapter.ts(frozen)
+ * mapPregnancyStatus가 그걸 `=== true`/`=== null` 두 경우만 특별 취급하고
+ * 나머지는 전부 "명시적으로 아니요"로 접어버린다(치료 안전 CLEAR로
+ * 오판, FROZEN 파일 자체는 건드리지 않고 호출부 게이트에서 막는다).
+ * CommonSafetyBanner.tsx의 동명 헬퍼와 동일한 이유로 로컬 사본을 둔다
+ * (HerbalWorkspace.tsx는 이미 DoctorView.tsx를 직접 import하는 기존
+ * 관례가 있어 이 함수를 export해서 재사용한다).
+ */
+export function isUnreadableReproductiveDerived(r: Responses): boolean {
+  // 레거시 레코드는 reproductive_status 최상위 키 자체가 없을 수 있다
+  // (그 필드가 생기기 전 제출본) -- 옵셔널 체이닝 없이 바로
+  // r.reproductive_status.derived에 접근하면 여기서 throw되어 Doctor UI
+  // 전체가 죽는다.
+  if (typeof r.reproductive_status !== 'object' || r.reproductive_status === null) return true
+  const derived = r.reproductive_status.derived
+  if (typeof derived !== 'object' || derived === null || Array.isArray(derived)) return true
+  const d = derived as Record<string, unknown>
+  if (Array.isArray(r.reproductive_status.reproductive_status) && d.source == null) return true
+  const boolOrNullFields = ['pregnant', 'pregnancy_possible', 'postpartum_1y', 'breastfeeding'] as const
+  if (boolOrNullFields.some((key) => d[key] !== null && typeof d[key] !== 'boolean')) return true
+  // 9차 독립 리뷰 HIGH-3: 구조는 정상이지만 실제 WOMEN_SAFETY_01 응답과
+  // 모순되는 stale derived(재계산 안 됨)도 손상으로 취급한다 --
+  // CommonSafetyBanner.tsx의 동명 검사와 동일한 계산식/예외
+  // (pregnancy_possible의 PREGNANCY_01==='possible' 모듈 오버라이드는
+  // 한쪽 방향만 예외로 둔다).
+  if (d.source === 'WOMEN_SAFETY_01') {
+    const rawAnswer = r.reproductive_status.reproductive_status
+    if (Array.isArray(rawAnswer)) {
+      if (!Array.isArray(d.raw)) return true
+      const rawSet = new Set(rawAnswer)
+      if (rawSet.size === 1 && rawSet.has('unknown')) {
+        if (d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null) return true
+      } else {
+        if (rawSet.has('pregnant') && d.pregnant !== true) return true
+        if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
+        if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
+        if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
+      }
+    }
+  }
+  return false
+}
+
+/**
  * 5차 독립 리뷰 HIGH-2: 각 SafetyPanel의 게이트가 "이 부위는 이 레코드와
  * 무관하다"(정상, 조용히 아무것도 안 그림 -- 예: LBP 레코드에서 어깨 패널)와
  * "이 부위는 이 레코드와 관련 있지만 저장된 응답 일부가 없거나 손상돼
@@ -331,12 +390,45 @@ const REQUIRED_FLAG_KEYS = [
  * r['BOWEL_03']`) 정상 제출에서는 false positive가 날 수 없다.
  */
 function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: DoctorPayload['responses']): boolean {
-  const generalRedExpected = asArray<string>(r.safety_flags.red_flag_general).some((v) => v !== 'none')
+  // 레거시 레코드는 safety_flags/modules/reproductive_status 최상위 키
+  // 자체가 통째로 없을 수 있다(그 필드가 생기기 전에 제출된 데이터) --
+  // 옵셔널 체이닝 없이 바로 접근하면 여기서 throw되어 Doctor UI 전체가
+  // 죽는다(9차 리뷰 자체 회귀분석에서 발견, ankle-foot-doctor-panel
+  // 테스트로 재현됨).
+  const generalRedExpected = asArray<string>(r.safety_flags?.red_flag_general).some((v) => v !== 'none')
   if (flags.general_red !== generalRedExpected) return false
-  const giExpected = r.modules.gi?.unable_to_eat_or_drink === 'yes'
+  const giExpected = r.modules?.gi?.unable_to_eat_or_drink === 'yes'
   if (flags.gi_needs_review !== giExpected) return false
-  const bowelExpected = r.modules.bowel?.blood_or_black_stool === 'yes'
+  const bowelExpected = r.modules?.bowel?.blood_or_black_stool === 'yes'
   if (flags.bowel_needs_review !== bowelExpected) return false
+  // 9차 독립 리뷰 HIGH-1: 위 3개만 검사하면 나머지 4개 키
+  // (requires_staff_check/sleep_disorder_review/
+  // sleep_disorder_priority_review/response_consistency_review)는
+  // 여전히 검증 없이 신뢰된다 -- 이 3개가 responses와 일치해도
+  // requires_staff_check가 그 OR값과 다르거나(coreSpec.ts:4069), MS_05/
+  // MS_01/WOMEN_SAFETY_01로 계산되는 나머지 3개가 실제 응답과 모순되면
+  // 여전히 손상된 flags다. computeFlags(coreSpec.ts:4035-4071)와 동일한
+  // 계산식으로 나머지 4개도 재계산해 대조한다.
+  const requiresStaffCheckExpected = generalRedExpected || giExpected || bowelExpected
+  if (flags.requires_staff_check !== requiresStaffCheckExpected) return false
+
+  const sleepScreen = r.modules?.sleep?.menopause?.sleep_disorder_screen
+  const sleepScreenArr = Array.isArray(sleepScreen) ? sleepScreen : []
+  const sleepDisorderReviewExpected =
+    sleepScreenArr.includes('loud_snoring') || sleepScreenArr.includes('restless_legs_pattern')
+  if (flags.sleep_disorder_review !== sleepDisorderReviewExpected) return false
+  const sleepDisorderPriorityReviewExpected =
+    sleepScreenArr.includes('witnessed_apnea') || sleepScreenArr.includes('choking_gasping')
+  if (flags.sleep_disorder_priority_review !== sleepDisorderPriorityReviewExpected) return false
+
+  const ms01 = r.modules?.sleep?.menopause?.stage
+  const womenSafety = r.reproductive_status?.reproductive_status
+  const womenSafetyHas = (v: string) => Array.isArray(womenSafety) && womenSafety.includes(v)
+  const responseConsistencyReviewExpected =
+    (ms01 === 'amenorrhea_12m_plus' && (womenSafetyHas('pregnant') || womenSafetyHas('pregnancy_possible'))) ||
+    (ms01 === 'still_regular' && womenSafetyHas('menopause'))
+  if (flags.response_consistency_review !== responseConsistencyReviewExpected) return false
+
   return true
 }
 
@@ -508,7 +600,7 @@ export function LbpSafetyPanel({
   // 그 함수들 안에서 던진다.
   if (
     !isNonEmptyObject(payload.responses.modules.lbp) ||
-    !payload.responses.reproductive_status.derived ||
+    isUnreadableReproductiveDerived(payload.responses) ||
     !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
   ) {
     return <SafetyDataUnavailableNotice label="허리(LBP)" />
@@ -711,7 +803,7 @@ export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 문자열이 아니면(레거시 데이터) 던진다.
   if (
     !isNonEmptyObject(payload.responses.modules.neck) ||
-    !payload.responses.reproductive_status.derived ||
+    isUnreadableReproductiveDerived(payload.responses) ||
     !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
     !isNullOrStringArray(payload.responses.medication.medication_types)
   ) {
@@ -880,7 +972,7 @@ export function ShoulderSafetyPanel({
   if (
     !isNonEmptyObject(payload.responses.modules.shoulder) ||
     !isNonEmptyObject(payload.responses.modules.neck) ||
-    !payload.responses.reproductive_status.derived ||
+    isUnreadableReproductiveDerived(payload.responses) ||
     !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
     !isNullOrStringArray(payload.responses.medication.medication_types) ||
     // 8차 독립 리뷰 HIGH-1: 아래 toShoulderStateFromDoctorPayload가
@@ -3494,28 +3586,42 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         a derived fact -- for a male patient (or any patient where nothing
         reproductive was ever recorded) this is null, and showing a card
         full of "확인되지 않음" bullets is pure clutter, not information.
+
+        9차 독립 리뷰 HIGH-2: `derived?.source != null` 하나만으로는 손상된
+        derived(예: raw가 재계산 안 된 stale 값)가 정상인 것처럼 계산
+        박스를 그대로 보여준다 -- isUnreadableReproductiveDerived(r)가
+        true면(실제 WOMEN_SAFETY_01 응답이 배열로 존재하는 한) 섹션 자체는
+        계속 보여주되(환자가 답한 원본은 계속 노출) 계산 박스만 명시적
+        "읽을 수 없음" 알림으로 대체한다.
       */}
-      {r.reproductive_status.derived?.source != null && (
+      {(r.reproductive_status?.derived?.source != null ||
+        (isUnreadableReproductiveDerived(r) && Array.isArray(r.reproductive_status?.reproductive_status))) && (
         <section className="doctor__section">
           <h2>여성 안전정보</h2>
           <div className="doctor__grid">
             <Field
               qid="WOMEN_SAFETY_01"
               label="환자가 답한 것 (WOMEN_SAFETY_01)"
-              value={r.reproductive_status.reproductive_status as string[] | null}
+              value={(r.reproductive_status?.reproductive_status ?? null) as string[] | null}
             />
           </div>
-          <div className="doctor__derivedBox">
-            <p className="doctor__derivedLabel">
-              시스템이 계산한 것 — 출처: {sourceLabel(r.reproductive_status.derived.source)}
+          {isUnreadableReproductiveDerived(r) ? (
+            <p className="doctor__derivedNote doctor__derivedNote--unavailable">
+              시스템이 계산한 임신/수유 안전정보를 읽을 수 없습니다(레거시/손상 데이터로 보임) — 원장 확인 필요
             </p>
-            <ul>
-              <li>임신 중: {boolLabel(r.reproductive_status.derived.pregnant)}</li>
-              <li>임신 가능성: {boolLabel(r.reproductive_status.derived.pregnancy_possible)}</li>
-              <li>출산 후 1년 이내: {boolLabel(r.reproductive_status.derived.postpartum_1y)}</li>
-              <li>모유수유 중: {boolLabel(r.reproductive_status.derived.breastfeeding)}</li>
-            </ul>
-          </div>
+          ) : (
+            <div className="doctor__derivedBox">
+              <p className="doctor__derivedLabel">
+                시스템이 계산한 것 — 출처: {sourceLabel(r.reproductive_status.derived.source)}
+              </p>
+              <ul>
+                <li>임신 중: {boolLabel(r.reproductive_status.derived.pregnant)}</li>
+                <li>임신 가능성: {boolLabel(r.reproductive_status.derived.pregnancy_possible)}</li>
+                <li>출산 후 1년 이내: {boolLabel(r.reproductive_status.derived.postpartum_1y)}</li>
+                <li>모유수유 중: {boolLabel(r.reproductive_status.derived.breastfeeding)}</li>
+              </ul>
+            </div>
+          )}
         </section>
       )}
 

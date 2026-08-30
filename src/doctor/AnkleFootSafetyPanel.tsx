@@ -27,13 +27,35 @@ const REQUIRED_FLAG_KEYS = [
  * 계산식.
  */
 function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: DoctorPayload['responses']): boolean {
-  const redFlagGeneral = r.safety_flags.red_flag_general
+  const redFlagGeneral = r.safety_flags?.red_flag_general
   const generalRedExpected = Array.isArray(redFlagGeneral) && redFlagGeneral.some((v) => v !== 'none')
   if (flags.general_red !== generalRedExpected) return false
-  const giExpected = r.modules.gi?.unable_to_eat_or_drink === 'yes'
+  const giExpected = r.modules?.gi?.unable_to_eat_or_drink === 'yes'
   if (flags.gi_needs_review !== giExpected) return false
-  const bowelExpected = r.modules.bowel?.blood_or_black_stool === 'yes'
+  const bowelExpected = r.modules?.bowel?.blood_or_black_stool === 'yes'
   if (flags.bowel_needs_review !== bowelExpected) return false
+  // 9차 독립 리뷰 HIGH-1: DoctorView.tsx의 동명 헬퍼와 동일한 이유로
+  // 나머지 4개 키도 재계산해 대조한다.
+  const requiresStaffCheckExpected = generalRedExpected || giExpected || bowelExpected
+  if (flags.requires_staff_check !== requiresStaffCheckExpected) return false
+
+  const sleepScreen = r.modules?.sleep?.menopause?.sleep_disorder_screen
+  const sleepScreenArr = Array.isArray(sleepScreen) ? sleepScreen : []
+  const sleepDisorderReviewExpected =
+    sleepScreenArr.includes('loud_snoring') || sleepScreenArr.includes('restless_legs_pattern')
+  if (flags.sleep_disorder_review !== sleepDisorderReviewExpected) return false
+  const sleepDisorderPriorityReviewExpected =
+    sleepScreenArr.includes('witnessed_apnea') || sleepScreenArr.includes('choking_gasping')
+  if (flags.sleep_disorder_priority_review !== sleepDisorderPriorityReviewExpected) return false
+
+  const ms01 = r.modules?.sleep?.menopause?.stage
+  const womenSafety = r.reproductive_status?.reproductive_status
+  const womenSafetyHas = (v: string) => Array.isArray(womenSafety) && womenSafety.includes(v)
+  const responseConsistencyReviewExpected =
+    (ms01 === 'amenorrhea_12m_plus' && (womenSafetyHas('pregnant') || womenSafetyHas('pregnancy_possible'))) ||
+    (ms01 === 'still_regular' && womenSafetyHas('menopause'))
+  if (flags.response_consistency_review !== responseConsistencyReviewExpected) return false
+
   return true
 }
 

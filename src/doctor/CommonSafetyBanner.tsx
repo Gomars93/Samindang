@@ -77,13 +77,48 @@ function isUnreadableStringArray(value: unknown): boolean {
  * boolean이나 null이 아닌 다른 타입이면 손상(예: 잘못된 truthy 값이
  * 임신/수유 사실을 지어낼 수 있다).
  */
+/**
+ * 9차 독립 리뷰 HIGH-3: 위 HIGH-2 검사는 타입/구조만 볼 뿐, derived의
+ * boolean 값들이 실제 WOMEN_SAFETY_01 원본 응답과 일치하는지는 보지
+ * 않았다 -- 구조적으로 완벽한 derived가 실제로는 재계산되지 않은 채
+ * 남아있으면(예: raw가 예전 응답 그대로) 여전히 통과한다. coreSpec.ts
+ * deriveReproductiveStatus의 WOMEN_SAFETY_01 분기(source==='WOMEN_SAFETY_01'
+ * 일 때만 해당 -- pregnancy_module/postpartum_module 출처는 PREGNANCY_01/
+ * POSTPARTUM_01/03이라는 다른 질문에서 오므로 이 필드로는 재계산할 수
+ * 없어 검사 대상에서 제외한다)은 `raw: answer` 그대로 저장하고
+ * `pregnant`/`postpartum_1y`/`breastfeeding`은 각각 `answer.includes(...)`
+ * 그대로다 -- 이 세 필드는 예외 없는 등식이므로 안전하게 대조할 수 있다.
+ * `pregnancy_possible`만 `PREGNANCY_01==='possible'` 모듈 오버라이드로
+ * `raw`에 없어도 true일 수 있어(coreSpec.ts:3860-3861,3877), 그 방향만
+ * 예외로 둔다(raw가 있는데 derived가 없다고 하면만 모순).
+ */
+function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, rawAnswer: unknown): boolean {
+  if (d.source !== 'WOMEN_SAFETY_01') return false
+  if (!Array.isArray(rawAnswer)) return false
+  if (!Array.isArray(d.raw)) return true
+  const rawSet = new Set(rawAnswer)
+  if (rawSet.size === 1 && rawSet.has('unknown')) {
+    return d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null
+  }
+  if (rawSet.has('pregnant') && d.pregnant !== true) return true
+  if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
+  if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
+  if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
+  return false
+}
+
 function isUnreadableReproductiveDerived(r: Responses): boolean {
+  // 레거시 레코드는 reproductive_status 최상위 키 자체가 없을 수 있다
+  // (9차 독립 리뷰 자체 회귀분석에서 발견된 크래시 -- DoctorView.tsx의
+  // 동명 함수와 동일한 이유/수정).
+  if (typeof r.reproductive_status !== 'object' || r.reproductive_status === null) return true
   const derived = r.reproductive_status.derived
   if (typeof derived !== 'object' || derived === null || Array.isArray(derived)) return true
   const d = derived as Record<string, unknown>
   if (Array.isArray(r.reproductive_status.reproductive_status) && d.source == null) return true
   const boolOrNullFields = ['pregnant', 'pregnancy_possible', 'postpartum_1y', 'breastfeeding'] as const
-  return boolOrNullFields.some((key) => d[key] !== null && typeof d[key] !== 'boolean')
+  if (boolOrNullFields.some((key) => d[key] !== null && typeof d[key] !== 'boolean')) return true
+  return isReproductiveDerivedInconsistentWithRawAnswer(d, r.reproductive_status.reproductive_status)
 }
 
 /**
@@ -127,8 +162,11 @@ function hasUnreadableSafetyField(r: Responses, flags: DoctorPayload['flags']): 
     isUnreadableReproductiveDerived(r) ||
     isUnreadableMedicationTypes(r.medication.medication_types) ||
     (r.allergy.allergy_yn === 'yes' && isUnreadableStringArray(r.allergy.allergy_detail)) ||
+    // 9차 독립 리뷰 자체 회귀분석: flags는 재검증 없이 저장되므로 modules
+    // 최상위 키가 아예 없는 레거시 레코드에서도 sleep_disorder_review가
+    // true로 남아있을 수 있다 -- r.modules?.sleep으로 방어한다.
     ((flags.sleep_disorder_review || flags.sleep_disorder_priority_review) &&
-      isUnreadableStringArray(r.modules.sleep?.menopause?.sleep_disorder_screen))
+      isUnreadableStringArray(r.modules?.sleep?.menopause?.sleep_disorder_screen))
   )
 }
 
@@ -161,12 +199,36 @@ const REQUIRED_FLAG_KEYS = [
  * DoctorView.tsx의 동명 헬퍼와 동일한 계산식(coreSpec.ts computeFlags).
  */
 function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: Responses): boolean {
-  const generalRedExpected = asArray<string>(r.safety_flags.red_flag_general).some((v) => v !== 'none')
+  // 레거시 레코드는 safety_flags/modules/reproductive_status 최상위 키
+  // 자체가 없을 수 있다 -- DoctorView.tsx의 동명 헬퍼와 동일한 이유/수정.
+  const generalRedExpected = asArray<string>(r.safety_flags?.red_flag_general).some((v) => v !== 'none')
   if (flags.general_red !== generalRedExpected) return false
-  const giExpected = r.modules.gi?.unable_to_eat_or_drink === 'yes'
+  const giExpected = r.modules?.gi?.unable_to_eat_or_drink === 'yes'
   if (flags.gi_needs_review !== giExpected) return false
-  const bowelExpected = r.modules.bowel?.blood_or_black_stool === 'yes'
+  const bowelExpected = r.modules?.bowel?.blood_or_black_stool === 'yes'
   if (flags.bowel_needs_review !== bowelExpected) return false
+  // 9차 독립 리뷰 HIGH-1: DoctorView.tsx의 동명 헬퍼와 동일한 이유로
+  // 나머지 4개 키도 재계산해 대조한다.
+  const requiresStaffCheckExpected = generalRedExpected || giExpected || bowelExpected
+  if (flags.requires_staff_check !== requiresStaffCheckExpected) return false
+
+  const sleepScreen = r.modules?.sleep?.menopause?.sleep_disorder_screen
+  const sleepScreenArr = Array.isArray(sleepScreen) ? sleepScreen : []
+  const sleepDisorderReviewExpected =
+    sleepScreenArr.includes('loud_snoring') || sleepScreenArr.includes('restless_legs_pattern')
+  if (flags.sleep_disorder_review !== sleepDisorderReviewExpected) return false
+  const sleepDisorderPriorityReviewExpected =
+    sleepScreenArr.includes('witnessed_apnea') || sleepScreenArr.includes('choking_gasping')
+  if (flags.sleep_disorder_priority_review !== sleepDisorderPriorityReviewExpected) return false
+
+  const ms01 = r.modules?.sleep?.menopause?.stage
+  const womenSafety = r.reproductive_status?.reproductive_status
+  const womenSafetyHas = (v: string) => Array.isArray(womenSafety) && womenSafety.includes(v)
+  const responseConsistencyReviewExpected =
+    (ms01 === 'amenorrhea_12m_plus' && (womenSafetyHas('pregnant') || womenSafetyHas('pregnancy_possible'))) ||
+    (ms01 === 'still_regular' && womenSafetyHas('menopause'))
+  if (flags.response_consistency_review !== responseConsistencyReviewExpected) return false
+
   return true
 }
 
@@ -221,9 +283,14 @@ function safetyGlanceItems(
   // 8차 독립 리뷰 HIGH-2: derived가 손상됐으면(위 isUnreadableReproductiveDerived)
   // pregnant/pregnancy_possible 등을 truthy로 읽어 임신/수유 사실을
   // 지어낼 수 있으므로, 손상 여부를 먼저 확인하고 정상일 때만 표시한다.
-  const derived = r.reproductive_status.derived
+  // 9차 독립 리뷰 자체 회귀분석: isUnreadableReproductiveDerived(r) 가드보다
+  // derived 접근이 먼저 평가되면 reproductive_status 최상위 키 자체가 없는
+  // 레거시 레코드에서 가드가 실행되기도 전에 여기서 throw된다 -- 가드를
+  // 먼저 평가해 short-circuit되게 한다.
+  const derived = r.reproductive_status?.derived
   if (
     !isUnreadableReproductiveDerived(r) &&
+    derived &&
     (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding)
   ) {
     const parts = [
@@ -411,9 +478,12 @@ export function CommonSafetyBanner({ payload }: { payload: DoctorPayload }) {
   const { flags } = payload
   const flagsUsable = isFlagsUsable(flags, r)
 
+  // 9차 독립 리뷰 자체 회귀분석: safety_flags 최상위 키 자체가 없는 레거시
+  // 레코드에서 이 배너는 flagsUsable 여부와 무관하게 항상 렌더되므로,
+  // 여기서 옵셔널 체이닝 없이 접근하면 배너 진입 즉시 크래시한다.
   const generalFlagLabels = optionLabels(
     'SAFETY_01',
-    asArray<string>(r.safety_flags.red_flag_general).filter((v) => v !== 'none'),
+    asArray<string>(r.safety_flags?.red_flag_general).filter((v) => v !== 'none'),
   )
 
   return (

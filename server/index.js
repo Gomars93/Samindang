@@ -2107,6 +2107,7 @@ export function createApp({
                 dueAt,
                 randomUUID(),
                 new Date().toISOString(),
+                body?.do_not_contact === true,
               )
               status = deduped ? 200 : 201
               if (!deduped) await safeAudit({ event: AUDIT_EVENTS.CRM_TASK_CREATED, actor: AUDIT_ACTORS.DOCTOR })
@@ -2147,10 +2148,29 @@ export function createApp({
           } else if (!medicationStartAt) {
             status = 400
             bytes = sendJson(req, res, 400, { error: 'medication_start_at is required' }, cors)
+          } else if (
+            // Independent-review finding (HIGH): silently filtering out a
+            // malformed replacement entry used to still return 200 --
+            // superseding the clinician's open check task while quietly
+            // dropping their explicit reschedule. Every entry must be
+            // valid, and reason codes must be unique per call, or the
+            // whole request is rejected before anything is superseded.
+            !rawReplacements.every(
+              (r) => MEDICATION_COURSE_REASON_CODES.has(r?.reason_code) && typeof r?.due_at === 'string' && r.due_at,
+            )
+          ) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'replacement_due_dates entries must have a valid reason_code and due_at' }, cors)
+          } else if (new Set(rawReplacements.map((r) => r.reason_code)).size !== rawReplacements.length) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'replacement_due_dates must not repeat a reason_code' }, cors)
           } else {
-            const replacementTasks = rawReplacements
-              .filter((r) => MEDICATION_COURSE_REASON_CODES.has(r?.reason_code) && typeof r?.due_at === 'string' && r.due_at)
-              .map((r) => ({ task_id: randomUUID(), reason_code: r.reason_code, due_at: r.due_at }))
+            const replacementTasks = rawReplacements.map((r) => ({
+              task_id: randomUUID(),
+              reason_code: r.reason_code,
+              due_at: r.due_at,
+              do_not_contact: r?.do_not_contact === true,
+            }))
             try {
               const result = await crmStore.shiftMedicationCourseStartStored(id, expectedVersion, medicationStartAt, replacementTasks, new Date().toISOString())
               await safeAudit({ event: AUDIT_EVENTS.CRM_MEDICATION_COURSE_START_SHIFTED, actor: AUDIT_ACTORS.DOCTOR })

@@ -40,6 +40,13 @@ function formatDate(value: string | null): string {
   return value.length >= 10 ? value.slice(0, 10) : value
 }
 
+// Independent-review finding: crypto.randomUUID() is unavailable outside a
+// secure context, and this clinic LAN server is reached over plain
+// http://<lan-ip> -- same guard App.tsx's own newSessionId() already uses.
+function newId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 type CheckTaskDraft = { reason: MedicationCourseReasonCode; dueAt: string }
 
 export function MedicationCourseSection({ patientUuid }: { patientUuid: string }) {
@@ -52,6 +59,12 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
   const [busy, setBusy] = useState(false)
 
   const [showNewCourseForm, setShowNewCourseForm] = useState(false)
+  // Independent-review finding: minting a fresh source_id on every submit
+  // defeated the store's own dedup (a lost response + resubmit created a
+  // second course for the same real event). One id per open draft, reused
+  // across retries of that same draft, makes a resubmit genuinely
+  // idempotent -- a new id is only drawn when a NEW draft is opened.
+  const [newCourseSourceId, setNewCourseSourceId] = useState('')
   const [newPrescribedAt, setNewPrescribedAt] = useState('')
   const [newDispensedAt, setNewDispensedAt] = useState('')
   const [newStartAt, setNewStartAt] = useState('')
@@ -59,6 +72,12 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
 
   const [checkDraftByCourse, setCheckDraftByCourse] = useState<Record<string, CheckTaskDraft>>({})
   const [shiftDraftByCourse, setShiftDraftByCourse] = useState<Record<string, string>>({})
+
+  // Independent-review finding: a plain `open={courses.length > 0}` re-snaps
+  // a user-collapsed section back open on every reload. `manualOpen` wins
+  // once the clinician has actually toggled it; until then this falls back
+  // to the auto-expand-when-non-empty heuristic.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
 
   function reloadEpisodeData(epId: string) {
     listMedicationCoursesByEpisode(epId).then((result) => {
@@ -79,8 +98,10 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setLoadError(null)
     setActionError(null)
     setShowNewCourseForm(false)
+    setNewCourseSourceId('')
     setCheckDraftByCourse({})
     setShiftDraftByCourse({})
+    setManualOpen(null)
     listEpisodesByPatient(patientUuid).then((result) => {
       if (cancelled) return
       if (!result.ok) {
@@ -119,13 +140,13 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
   }
 
   function handleCreateCourse() {
-    if (busy || !episodeId) return
+    if (busy || !episodeId || !newCourseSourceId) return
     setBusy(true)
     setActionError(null)
     createMedicationCourse({
       episodeId,
       source: 'doctor_manual_entry',
-      sourceId: crypto.randomUUID(),
+      sourceId: newCourseSourceId,
       sourceTimestamp: new Date().toISOString(),
       prescribedAt: newPrescribedAt || null,
       dispensedAt: newDispensedAt || null,
@@ -136,6 +157,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
         if (result.ok) {
           setCourses((prev) => [...(prev ?? []).filter((c) => c.course_id !== result.data.course.course_id), result.data.course])
           setShowNewCourseForm(false)
+          setNewCourseSourceId('')
           setNewPrescribedAt('')
           setNewDispensedAt('')
           setNewStartAt('')
@@ -217,8 +239,10 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     )
   }
 
+  const detailsOpen = manualOpen ?? Boolean(courses && courses.length > 0)
+
   return (
-    <details className="medCourse" open={Boolean(courses && courses.length > 0)}>
+    <details className="medCourse" open={detailsOpen} onToggle={(e) => setManualOpen(e.currentTarget.open)}>
       <summary>투약/한약 코스 {courses ? `(${courses.length})` : ''}</summary>
       <div className="medCourse__body">
         {actionError && <p className="doctor__revisitSession__error">{actionError}</p>}
@@ -346,13 +370,29 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
               <button type="button" className="judgment__recordBtn" onClick={handleCreateCourse} disabled={busy}>
                 코스 기록 저장
               </button>
-              <button type="button" className="judgment__recordBtn" onClick={() => setShowNewCourseForm(false)} disabled={busy}>
+              <button
+                type="button"
+                className="judgment__recordBtn"
+                onClick={() => {
+                  setShowNewCourseForm(false)
+                  setNewCourseSourceId('')
+                }}
+                disabled={busy}
+              >
                 취소
               </button>
             </div>
           </div>
         ) : (
-          <button type="button" className="judgment__recordBtn" onClick={() => setShowNewCourseForm(true)} disabled={busy}>
+          <button
+            type="button"
+            className="judgment__recordBtn"
+            onClick={() => {
+              setNewCourseSourceId(newId())
+              setShowNewCourseForm(true)
+            }}
+            disabled={busy}
+          >
             새 투약/한약 코스 기록
           </button>
         )}

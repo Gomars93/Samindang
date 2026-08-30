@@ -58,6 +58,11 @@ async function postJson(url, body, headers = AUTH_HEADERS) {
   return { status: res.status, body: await res.json() }
 }
 
+async function getJson(url, headers = AUTH_HEADERS) {
+  const res = await fetch(url, { headers })
+  return { status: res.status, body: await res.json() }
+}
+
 const ANSWERS = {
   targetRatings: [],
   overallChange: '좋아짐',
@@ -344,6 +349,99 @@ async function main() {
     assert('workflow setup: medication course shift-start -> version 2', medShift.body.course.version === 2)
     assert('workflow setup: medication course shift-start supersedes the open check task', medShift.body.superseded.length === 1)
 
+    /* ---- Independent-review fix verification (Medication/Herbal-course
+       batch): a malformed or duplicated replacement_due_dates entry used
+       to be silently filtered out while the request still returned 200
+       (already superseding the open task and losing the clinician's
+       explicit reschedule). Both are now rejected with 400 before
+       anything is superseded. ---- */
+    const medShiftMissingDueAt = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/shift-start`, {
+      expectedVersion: medShift.body.course.version,
+      medication_start_at: '2026-01-05',
+      replacement_due_dates: [{ reason_code: 'MEDICATION_START_CHECK' }],
+    })
+    assert('review-fix: shift-start with a missing due_at -> 400', medShiftMissingDueAt.status === 400)
+    const medCourseAfterBadShift = await getJson(`${base}/api/crm/medication-courses/${medCourse.course_id}`)
+    assert(
+      'review-fix: the rejected shift-start left the course version unchanged',
+      medCourseAfterBadShift.body.version === medShift.body.course.version,
+    )
+
+    const medShiftDupReason = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/shift-start`, {
+      expectedVersion: medShift.body.course.version,
+      medication_start_at: '2026-01-05',
+      replacement_due_dates: [
+        { reason_code: 'MEDICATION_MID_CHECK', due_at: '2026-01-20' },
+        { reason_code: 'MEDICATION_MID_CHECK', due_at: '2026-01-21' },
+      ],
+    })
+    assert('review-fix: shift-start with a duplicated reason_code -> 400', medShiftDupReason.status === 400)
+
+    /* ---- Independent-review fix verification: do_not_contact on a
+       MedicationCourse check-task now flows through to the created
+       CrmTask's contact_mode (it silently defaulted to OUTBOUND_ALLOWED
+       before, with no way to mark an in-person-only check). ---- */
+    const medCheckTaskDnc = await postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/check-tasks`, {
+      expectedVersion: medShift.body.course.version,
+      reason_code: 'MEDICATION_END_CHECK',
+      due_at: '2026-02-01',
+      do_not_contact: true,
+    })
+    assert('review-fix: medication check-task create with do_not_contact -> 201', medCheckTaskDnc.status === 201)
+    assert('review-fix: the created task has contact_mode IN_PERSON_ONLY', medCheckTaskDnc.body.task.contact_mode === 'IN_PERSON_ONLY')
+
+    /* ---- Independent-review fix verification: a concurrent check-task
+       create and shift-start against the same course used to race (no
+       shared lock at all) -- both could read the same expectedVersion and
+       both succeed, leaving a check-task un-superseded by a shift that
+       just moved the start date out from under it. Sharing a lock
+       serializes the two calls, which has exactly two correct outcomes
+       depending only on acquisition order (see the equivalent store-level
+       proof in tests/medication-course.spec.mjs Part 4b): if shift wins
+       the lock first, the check-task-create must then see the POST-shift
+       version and conflict (409); if the check-task-create wins first, it
+       must succeed AND the shift that runs after it must actually
+       supersede it -- it must never come back OPEN once a shift with a
+       later start date has completed. ---- */
+    const raceBase = await getJson(`${base}/api/crm/medication-courses/${medCourse.course_id}`)
+    const [raceCheckTask, raceShift] = await Promise.all([
+      postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/check-tasks`, {
+        expectedVersion: raceBase.body.version,
+        reason_code: 'MEDICATION_MID_CHECK',
+        due_at: '2026-03-01',
+      }),
+      postJson(`${base}/api/crm/medication-courses/${medCourse.course_id}/shift-start`, {
+        expectedVersion: raceBase.body.version,
+        medication_start_at: '2026-01-06',
+        replacement_due_dates: [],
+      }),
+    ])
+    assert('review-fix: shift-start in the race always succeeds regardless of acquisition order', raceShift.status === 200)
+    assert(
+      'review-fix: the concurrent check-task-create either conflicts (shift won the lock first) or succeeds (201)',
+      raceCheckTask.status === 409 || raceCheckTask.status === 201,
+    )
+    if (raceCheckTask.status === 201) {
+      const raceTaskAfter = await getJson(`${base}/api/crm/tasks/${raceCheckTask.body.task.task_id}`)
+      assert(
+        'review-fix: if the check-task-create won the lock first, the subsequent shift genuinely supersedes it -- never left OPEN after a shift with a later start date',
+        raceTaskAfter.body.status === 'SUPERSEDED',
+      )
+    }
+
+    /* ---- Independent-review fix verification: a duplicate course-create
+       call (same episode/source/source_id) dedupes and must NOT re-emit
+       CRM_MEDICATION_COURSE_CREATED -- checked against the audit log
+       further below. ---- */
+    const medCourseDup = await postJson(`${base}/api/crm/medication-courses`, {
+      episode_id: taskEpisode.episode_id,
+      source: 'audit-test-manual',
+      source_id: 'audit-src-1',
+      source_timestamp: '2026-01-01T00:00:00.000Z',
+      medication_start_at: '1999-01-01',
+    })
+    assert('review-fix: duplicate course create -> deduped:true', medCourseDup.body.deduped === true)
+
     /* ---- Quick Revisit messaging lifecycle: queue -> retry -> cancel.
        Phone ends in '9998' -- solapiAdapter.js's mock transport treats that
        suffix as a deterministic RETRYABLE transient failure on every
@@ -422,6 +520,15 @@ async function main() {
     for (const ev of requiredEvents) {
       assert(`workflow: ${ev} appears at least once in audit.log`, hasEvent(ev))
     }
+
+    // Independent-review fix verification: exactly one real
+    // MedicationCourse was ever created in this whole run (the later
+    // duplicate create call above deduped) -- CRM_MEDICATION_COURSE_CREATED
+    // must appear exactly once, never re-emitted on a dedup replay.
+    assert(
+      'review-fix: CRM_MEDICATION_COURSE_CREATED appears exactly once (the duplicate create above never re-emits it)',
+      lines.filter((l) => l.event === AUDIT_EVENTS.CRM_MEDICATION_COURSE_CREATED).length === 1,
+    )
 
     // Minimal-fields contract holds for every line this run produced, not
     // just the ones this file specifically drove.

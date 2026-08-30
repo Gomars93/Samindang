@@ -277,6 +277,164 @@ async function main() {
   }
 
   /* =====================================================================
+     Part 4b (independent-review fix): createMedicationCourseCheckTaskStored
+     used to read the course and check its version with NO lock at all,
+     while shiftMedicationCourseStartStored holds `medication-course:<id>`.
+     Firing both concurrently against the SAME expectedVersion used to let
+     both succeed with no serialization at all -- a check-task could be
+     minted un-superseded by a shift that just moved the start date out
+     from under it, with neither call ever noticing the other.
+     Sharing the same lock key makes the two calls fully serialize (never
+     interleaved), which has exactly two possible correct outcomes
+     depending only on acquisition order -- there is no third, corrupted
+     one:
+       (a) shift acquires the lock first: it succeeds (version 1->2), and
+           the check-task call -- now reading the POST-shift version --
+           correctly conflicts (409) rather than silently minting a task
+           against the stale pre-shift version.
+       (b) the check-task call acquires the lock first: it succeeds
+           (course version untouched by a check-task create), and the
+           shift call runs strictly after with a fresh listTasksByEpisode
+           scan, so it actually SEES and SUPERSEDES that just-created
+           task rather than racing past it.
+     Either way, the check-task's CrmTask must never end up OPEN and
+     un-superseded after a shift that has already moved the start date --
+     that is the one outcome the pre-fix TOCTOU allowed and this proves is
+     no longer reachable.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-medcourse-lockrace-'))
+    try {
+      const store = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await store.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      const { course } = await store.createMedicationCourseStored({
+        course_id: randomUUID(),
+        episode_id: episodeId,
+        source: 'manual',
+        source_id: 'src-lockrace-1',
+        source_timestamp: T0,
+        now: T0,
+      })
+
+      const checkTaskId = randomUUID()
+      const [checkTaskResult, shiftResult] = await Promise.allSettled([
+        store.createMedicationCourseCheckTaskStored(course.course_id, course.version, 'MEDICATION_MID_CHECK', '2026-03-01', checkTaskId, T0),
+        store.shiftMedicationCourseStartStored(course.course_id, course.version, '2026-01-06', [], T0),
+      ])
+      assert('lock-race: shift-start always succeeds regardless of acquisition order', shiftResult.status === 'fulfilled')
+
+      if (checkTaskResult.status === 'rejected') {
+        assert('lock-race: a rejected check-task-create is a genuine CrmConflictError (shift won the lock first)', checkTaskResult.reason instanceof CrmConflictError)
+      } else {
+        assert('lock-race: a fulfilled check-task-create was not deduped away', checkTaskResult.value.deduped === false)
+        const onDiskCheckTask = await readRaw(path.join(root, 'tasks', `${checkTaskId}.json`))
+        assert(
+          'lock-race: if the check-task-create won the lock first, the SUBSEQUENT shift genuinely supersedes it -- it is never left OPEN after a shift that already moved the start date',
+          onDiskCheckTask.status === 'SUPERSEDED',
+        )
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 4c (independent-review fix): crash injection INSIDE
+     shiftMedicationCourseStartStored, between the superseded-task write
+     and the final course-record write -- a retry against a fresh store
+     instance must converge to exactly one actionable replacement task
+     and the correctly-updated course, never a duplicate or a lost course.
+     ===================================================================== */
+  {
+    const root = await mkdtemp(path.join(tmpdir(), 'samindang-medcourse-shiftcrash-'))
+    try {
+      const storeA = createCrmStore(root, { claimLeaseMinutes: 60 })
+      const episodeId = randomUUID()
+      const patientUuid = randomUUID()
+      await storeA.createEpisode({ episode_id: episodeId, patient_uuid: patientUuid, owner_clinician: null, now: T0 })
+
+      const { course } = await storeA.createMedicationCourseStored({
+        course_id: randomUUID(),
+        episode_id: episodeId,
+        source: 'manual',
+        source_id: 'src-shiftcrash-1',
+        source_timestamp: T0,
+        now: T0,
+      })
+      const { task: originalTask } = await storeA.createMedicationCourseCheckTaskStored(
+        course.course_id,
+        course.version,
+        'MEDICATION_START_CHECK',
+        '2026-01-08',
+        randomUUID(),
+        T0,
+      )
+
+      // Block the replacement task's own tmp write path -- createTaskStored's
+      // intent (dedup pointer) record is still allowed to land, so this
+      // interrupts the shift exactly between "supersede the old task" and
+      // "the course record's own final write".
+      const replacementTaskId = randomUUID()
+      const replacementTmpPath = path.join(root, 'tasks', `${replacementTaskId}.json.tmp`)
+      await mkdir(replacementTmpPath, { recursive: true })
+
+      let shiftThrew = false
+      try {
+        await storeA.shiftMedicationCourseStartStored(
+          course.course_id,
+          course.version,
+          '2026-01-05',
+          [{ task_id: replacementTaskId, reason_code: 'MEDICATION_START_CHECK', due_at: '2026-01-12' }],
+          T0,
+        )
+      } catch {
+        shiftThrew = true
+      }
+      assert('shift-crash: the interrupted shift genuinely throws', shiftThrew)
+
+      const onDiskOriginalMidCrash = await readRaw(path.join(root, 'tasks', `${originalTask.task_id}.json`))
+      assert('shift-crash: the original task IS superseded on disk before the crash point', onDiskOriginalMidCrash.status === 'SUPERSEDED')
+      const onDiskCourseMidCrash = await readRaw(path.join(root, 'medication-courses', `${course.course_id}.json`))
+      assert('shift-crash: the course record itself is NOT yet updated (crash was before its write)', onDiskCourseMidCrash.medication_start_at === null)
+
+      // Unblock, then simulate an actual process restart.
+      await rm(replacementTmpPath, { recursive: true, force: true })
+      const storeB = createCrmStore(root, { claimLeaseMinutes: 60 })
+
+      const retryReplacementTaskId = randomUUID()
+      const retryResult = await storeB.shiftMedicationCourseStartStored(
+        course.course_id,
+        course.version,
+        '2026-01-05',
+        [{ task_id: retryReplacementTaskId, reason_code: 'MEDICATION_START_CHECK', due_at: '2026-01-12' }],
+        T0,
+      )
+      assert('shift-crash: retry succeeds and updates the course', retryResult.course.medication_start_at === '2026-01-05')
+      assert('shift-crash: retry reports the original task as already-superseded (no double-supersede)', retryResult.superseded.length === 0)
+      assert('shift-crash: retry converges to exactly one replacement task, not the retry-minted duplicate', retryResult.createdTasks.length === 1)
+      assert(
+        'shift-crash: the replacement task is the ORIGINAL attempt\'s task_id, recovered from the durable dedup intent -- not the retry\'s own fresh id',
+        retryResult.createdTasks[0].task_id === replacementTaskId,
+      )
+
+      const allTaskFilesForReason = (await readdir(path.join(root, 'tasks')))
+        .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
+      const openTasksForReason = []
+      for (const f of allTaskFilesForReason) {
+        const t = await readRaw(path.join(root, 'tasks', f))
+        if (t.source_id === course.course_id && t.reason_code === 'MEDICATION_START_CHECK' && t.status === 'OPEN') openTasksForReason.push(t)
+      }
+      assert('shift-crash: exactly one OPEN MEDICATION_START_CHECK task exists for this course after recovery -- no duplicate', openTasksForReason.length === 1)
+      assert('shift-crash: never actually created the retry\'s own fresh task_id as a second task', retryReplacementTaskId !== openTasksForReason[0].task_id)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
      Part 5: episode/patient identity -- patient_uuid on the created course
      is always DERIVED from the referenced Episode, and a nonexistent
      episode_id is refused rather than silently accepted.

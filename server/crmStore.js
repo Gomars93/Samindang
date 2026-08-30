@@ -611,26 +611,38 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
   // offset, default, or SLA of its own. expectedVersion guards against
   // creating a check against a course the caller's own view of is already
   // stale (e.g. a start-date shift happened since they last read it).
-  async function createMedicationCourseCheckTaskStored(course_id, expectedVersion, reason_code, due_at, task_id, now) {
+  async function createMedicationCourseCheckTaskStored(course_id, expectedVersion, reason_code, due_at, task_id, now, do_not_contact = false) {
     if (!MEDICATION_COURSE_REASON_CODES.has(reason_code)) {
       throw new Error('reason_code must be one of MEDICATION_START_CHECK/MEDICATION_MID_CHECK/MEDICATION_END_CHECK')
     }
     if (typeof due_at !== 'string' || !due_at) throw new Error('due_at is required')
-    const course = await readJson(medicationCoursePath(baseDir, course_id))
-    if (!course) throw new CrmNotFoundError('medication_course', course_id)
-    if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
-    return createTaskStored({
-      task_id,
-      episode_id: course.episode_id,
-      task_type: 'ROUTINE',
-      reason_code,
-      source_type: 'MEDICATION_COURSE',
-      source_id: course_id,
-      source_event_id: `${course_id}:${reason_code}`,
-      source_timestamp: course.source_timestamp,
-      due_at,
-      owner_clinician: null,
-      now,
+    // Independent-review finding (HIGH): this used to read the course
+    // and check its version with no lock at all, while
+    // shiftMedicationCourseStartStored holds `medication-course:<id>` --
+    // a concurrent shift-start could supersede/recreate the course's
+    // tasks while a check-task creation reads a stale (pre-shift)
+    // version and slips a new OPEN task in afterward, unsupersededed and
+    // pointed at a stale due_at. Sharing the same lock key serializes
+    // the two operations against each other, matching shift-start's own
+    // locking.
+    return withLock(`medication-course:${course_id}`, async () => {
+      const course = await readJson(medicationCoursePath(baseDir, course_id))
+      if (!course) throw new CrmNotFoundError('medication_course', course_id)
+      if (course.version !== expectedVersion) throw new CrmConflictError(course_id)
+      return createTaskStored({
+        task_id,
+        episode_id: course.episode_id,
+        task_type: 'ROUTINE',
+        reason_code,
+        source_type: 'MEDICATION_COURSE',
+        source_id: course_id,
+        source_event_id: `${course_id}:${reason_code}`,
+        source_timestamp: course.source_timestamp,
+        due_at,
+        owner_clinician: null,
+        now,
+        do_not_contact,
+      })
     })
   }
 
@@ -699,6 +711,7 @@ export function createCrmStore(baseDir, { claimLeaseMinutes = 60 } = {}) {
           due_at: entry.due_at,
           owner_clinician: null,
           now,
+          do_not_contact: r.do_not_contact === true,
         })
         createdTasks.push(task)
       }

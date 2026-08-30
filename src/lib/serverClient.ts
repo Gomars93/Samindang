@@ -626,30 +626,37 @@ export function createMedicationCourseCheckTask(
   expectedVersion: number,
   reasonCode: MedicationCourseReasonCode,
   dueAt: string,
+  doNotContact?: boolean,
 ): Promise<ServerResult<{ task: CrmTask; deduped: boolean }>> {
   return request(`/api/crm/medication-courses/${encodeURIComponent(courseId)}/check-tasks`, {
     method: 'POST',
-    body: JSON.stringify({ expectedVersion, reason_code: reasonCode, due_at: dueAt }),
+    body: JSON.stringify({ expectedVersion, reason_code: reasonCode, due_at: dueAt, do_not_contact: doNotContact === true }),
   })
 }
 
 /**
  * Records an explicit medication_start_at change. replacementDueDates must
  * be supplied by the caller per surviving reason_code -- this client never
- * derives a due_at from the new start date either.
+ * derives a due_at from the new start date either. The server rejects the
+ * whole call (400) if any entry is malformed or a reason_code repeats,
+ * rather than silently dropping it after already superseding the old task.
  */
 export function shiftMedicationCourseStart(
   courseId: string,
   expectedVersion: number,
   medicationStartAt: string,
-  replacementDueDates: Array<{ reasonCode: MedicationCourseReasonCode; dueAt: string }>,
+  replacementDueDates: Array<{ reasonCode: MedicationCourseReasonCode; dueAt: string; doNotContact?: boolean }>,
 ): Promise<ServerResult<{ course: MedicationCourseRecord; superseded: CrmTask[]; createdTasks: CrmTask[] }>> {
   return request(`/api/crm/medication-courses/${encodeURIComponent(courseId)}/shift-start`, {
     method: 'POST',
     body: JSON.stringify({
       expectedVersion,
       medication_start_at: medicationStartAt,
-      replacement_due_dates: replacementDueDates.map((r) => ({ reason_code: r.reasonCode, due_at: r.dueAt })),
+      replacement_due_dates: replacementDueDates.map((r) => ({
+        reason_code: r.reasonCode,
+        due_at: r.dueAt,
+        do_not_contact: r.doNotContact === true,
+      })),
     }),
   })
 }

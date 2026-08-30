@@ -1655,7 +1655,7 @@ async function main() {
     // 포함되지 않는다(provider_message_id 자체가 추측 불가능한 값이라
     // 이것이 인증을 대신한다 -- 태블릿/스테이션 공개 라우트와 동일한 위치).
     // Medication/Herbal-course batch에서 6개가 추가되어 46개가 됐다:
-    // GET /api/crm/episodes?patient_uuid(패턴트별 Episode 조회),
+    // GET /api/crm/episodes?patient_uuid(환자별 Episode 조회),
     // GET /api/crm/episodes/:id/medication-courses,
     // POST /api/crm/medication-courses,
     // GET /api/crm/medication-courses/:id,

@@ -137,6 +137,14 @@ test('MedicationCourseSection: the load effect resets busy synchronously in its 
 // synchronous prefix (everything before the effect's own async call) proves
 // the property the test's name claims: reset happens unconditionally in the
 // reset block, not merely "somewhere, eventually, maybe" in the effect.
+// 5th closing-review finding (LOW): the synchronous-prefix cut point was
+// hardcoded to the literal string `listEpisodesByPatient(` -- a NEW async
+// call inserted ABOVE that one (e.g. a prefetch) would be swallowed into the
+// "synchronous" prefix along with everything after it, hiding a setter
+// deferred into that new call's own .then() callback. Cutting at the first
+// occurrence of ANY async-completion token (.then(/.finally(/.catch(, the
+// same vocabulary already pinned above) instead of one hardcoded function
+// name closes that regardless of which async call comes first.
 test('MedicationCourseSection: the load effect resets EVERY useState setter it declares, synchronously in the reset block (complete reset block, derived from the declarations)', () => {
   const decls = [...src.matchAll(/const \[\w+, (set\w+)\] = useState/g)].map((m) => m[1])
   assert.equal(decls.length, 16, 'useState declaration count changed -- re-audit which are patient-scoped before updating this number')
@@ -146,10 +154,12 @@ test('MedicationCourseSection: the load effect resets EVERY useState setter it d
     decls.length,
     `found ${callSiteCount} useState( / useState< call sites but only recognized ${decls.length} declarations -- a useState was written in a destructuring style the declaration regex above cannot see`,
   )
+  assert.equal((src.match(/\buseReducer\(/g) ?? []).length, 0, 'a useReducer-based piece of state is invisible to every useState-derived assertion in this file -- add explicit coverage before introducing one')
   const effectBody = src.match(/useEffect\(\(\) => \{([\s\S]*?)\}, \[patientUuid\]\)/)
   assert.ok(effectBody, 'expected to find the main useEffect body')
-  const syncBlock = effectBody[1].split('listEpisodesByPatient(')[0]
-  assert.ok(syncBlock.length > 0 && syncBlock.length < effectBody[1].length, 'expected to isolate the synchronous prefix of the effect body, before its own async call')
+  const firstAsync = effectBody[1].search(/\.then\(|\.finally\(|\.catch\(/)
+  assert.ok(firstAsync > 0, 'expected to find the effect\'s own first async call (.then/.finally/.catch) after its synchronous reset block')
+  const syncBlock = effectBody[1].slice(0, firstAsync)
   const missing = decls.filter((d) => !new RegExp(`\\b${d}\\(`).test(syncBlock))
   assert.deepEqual(missing, [], `these patient-scoped setters are not reset synchronously in the reset block (possibly deferred into an async callback, or missing entirely): ${missing.join(', ')}`)
 })
@@ -210,11 +220,16 @@ test('MedicationCourseSection: every .then((result) => {...}) callback opens wit
 // 4th closing-review finding (LOW): this fix shipped with zero coverage --
 // reverting it (dropping the onToggle handler entirely) passed every
 // pre-existing assertion in this file.
+// 5th closing-review finding (LOW): the anchor above stopped at the opening
+// `if (e.currentTarget.open) return` guard and never required the actual
+// clear -- a handler with the correct guard but a no-op body (or one that
+// deleted the wrong course's entry) still matched. Extended through the
+// setShiftDraftByCourse call and its delete on THIS course's key.
 test('MedicationCourseSection: the shift-start <details> clears its draft when the disclosure closes (not when it opens)', () => {
   assert.match(
     src,
-    /className="medCourse__shift"\s*onToggle=\{\(e\) => \{\s*if \(e\.currentTarget\.open\) return/,
-    'expected the medCourse__shift <details> to clear shiftDraftByCourse on close via onToggle',
+    /className="medCourse__shift"\s*onToggle=\{\(e\) => \{\s*if \(e\.currentTarget\.open\) return\s*setShiftDraftByCourse\(\(prev\) => \{[\s\S]*?delete next\[course\.course_id\]/,
+    'expected the medCourse__shift <details> to clear shiftDraftByCourse[course.course_id] on close via onToggle',
   )
 })
 
@@ -225,11 +240,15 @@ test('MedicationCourseSection: the shift-start <details> clears its draft when t
 // 4th closing-review finding (LOW): this fix also shipped with zero
 // coverage -- reverting it to the old unconditional-spread form passed
 // every pre-existing assertion in this file.
+// 5th closing-review finding (LOW): same gap as the shift-draft test above --
+// the anchor stopped at the `if (...)` guard and never required the active
+// branch to actually delete the entry (a branch that fell through to the
+// old unconditional re-set still matched). Extended through the delete.
 test('MedicationCourseSection: clicking the already-active check-task reason chip dismisses the draft instead of re-setting it', () => {
   assert.match(
     src,
-    /setCheckDraftByCourse\(\(prev\) => \{\s*if \(prev\[course\.course_id\]\?\.reason === rc\) \{/,
-    'expected the reason-chip onClick to detect the already-active chip and dismiss the draft',
+    /setCheckDraftByCourse\(\(prev\) => \{\s*if \(prev\[course\.course_id\]\?\.reason === rc\) \{[\s\S]*?delete next\[course\.course_id\]/,
+    'expected the reason-chip onClick to detect the already-active chip and delete its draft entry',
   )
 })
 

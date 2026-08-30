@@ -3732,13 +3732,45 @@ judgment는 안 건드림) → 자료 보기 탭으로 돌아와 판단을 다�
 `npm run build:preview`, `npm run test:all`(`tests/save-conflict.spec.mjs`
 30 assertions, 전체 green), `tablet core` pytest 80/80, FROZEN diff empty.
 
-**3차 리뷰 여부 판단**: 오너 지시는 "초기 리뷰 + 클로징 리뷰" 1쌍을
-요구했고, 이미 그 쌍을 실행해 초기 리뷰의 HIGH+2 MEDIUM, 클로징 리뷰의
-새 MEDIUM 1건까지 모두 닫았다. 이번 마지막 수정은 범위가 매우 좁고
-원인이 정확히 파악된 한 줄 변경이며, 리뷰가 실제로 사용한 것과 동일한
-동적 검증 방식(정확한 재현 시나리오의 실제 Playwright QA)으로 직접
-확인했으므로, 별도의 3차 독립 리뷰 없이 이 판단으로 배치를 CLOSABLE로
-간주한다. 사용자가 추가 리뷰를 원하면 언제든 요청 가능.
+**3차 리뷰를 생략하기로 한 위 판단은 오너(Gomars93)가 PR #24 코멘트로
+명시적으로 뒤집었다**: 이 저장소의 표준 규칙은 "Opus 발견 → Sonnet 수정 →
+Opus 재검토"이며 수정 이후 재검토를 생략한 것 자체가 그 규칙 위반이라는
+지적. 이에 따라 `4b2a418`(HANDOFF만 갱신) 위에서 `0ca7419` 수정과 그
+주변 stale-write/version-sync 경로에 초점을 맞춘 **실제 3번째 독립
+`model:opus` 리뷰**를 실행했다(실제 invocation, 다음 명령/파일을 직접
+실행·판독해 검증 — `git log`/`git show 0ca7419`, `npx tsc -b --force`,
+`npm run build`, `npm run test:all`(전체 green), `npm run test:save-conflict`
+(30/30), `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+(empty) — 그리고 결정적으로, 저장소 자체가 소스-레벨 정적 검사만 갖고
+있어 이런 종류의 버그를 구조적으로 잡지 못한다는 한계를 넘어서기 위해
+리뷰가 직접 임시(저장소에 커밋하지 않는) Playwright 하네스를 만들어
+수정 전(`48a5045`) 빌드와 수정 후(HEAD) 빌드를 같은 7개 시나리오로
+차등 실행: 수정 전 빌드는 7개 중 5개(정확히 2차 리뷰가 지적한 증상과
+HIGH의 laundering 재현 포함)에서 실제로 FAIL, 수정 후 빌드는 7개 전부
+PASS — 이 fix가 실제로 문제를 해결했다는 것을 정적 재읽기가 아니라
+동작 차이로 직접 증명함).
+
+**판정: CLOSABLE.** 새 HIGH/MEDIUM 없음. `isDraftPristine()`이 라이브
+상태 그대로를 비교 기준으로 삼도록 완전히 복구되었고, `DoctorWorkspace`/
+`RevisitWorkspace`의 동등 비교 함수(`workspaceStateEquals`/
+`visitWorkspaceStateEquals`)는 애초에 `updated_at`을 비교 전에
+destructure로 제외하므로 같은 종류의 버그가 구조적으로 발생할 수 없음을
+확인. `7e4695e`의 laundering 수정과 의존성 배열 수정도 이 리뷰의 새
+시나리오(저장 연속 처리와 sync effect 사이의 순서, reload 이후
+`lastKnownJudgmentRef` 정합성)로 재검증되어 이상 없음.
+
+부수 지적 2건(코드 변경 필요, 둘 다 사소함) — 반영 완료:
+1. `JudgmentPanel.tsx`의 `lastKnownJudgmentRef` 주석이 "서버의 judgment와
+   현재 일치하는 값"이라고 설명했는데, `0ca7419` 이후로는 저장 성공
+   직후에도 서버는 `finalized`(recorded_at 포함)를 갖고 이 ref는 그
+   이전 라이브 상태를 갖는 것이 의도된 동작이라 주석이 부정확해짐 —
+   "판단 편집 여부를 가리는 pristine 기준선"이라는 실제 의미로 주석
+   교정(코드 동작 변경 없음).
+2. 이 HANDOFF 섹션 자체가 "3차 리뷰 생략" 판단을 여전히 최신 사실인 것처럼
+   기록하고 있었던 것 — 지금 이 갱신으로 해결.
+
+재검증(주석 수정 이후): `npx tsc -b --force`(0 errors), `npm run build`,
+`npm run test:save-conflict`(30/30), FROZEN diff empty.
 
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 HEAD:

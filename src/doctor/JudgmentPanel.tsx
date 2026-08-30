@@ -133,11 +133,16 @@ export function JudgmentPanel({
   const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
   const lastKnownUpdatedAtRef = useRef<string | null>(initialUpdatedAt ?? null)
-  // Round 18: what this panel believes CURRENTLY matches the server's
-  // `judgment` field -- updated on mount, on a successful save, on reload,
-  // and by the sync effect below. Compared against live `judgment`/
-  // `debrief` state to decide whether it is safe to silently adopt a newer
-  // external version (see that effect's comment for why this matters).
+  // Round 18: the last `judgment`/`debrief` state this panel considers
+  // NOT locally edited -- i.e. the pristine baseline `isDraftPristine()`
+  // diffs live state against, updated on mount, on a successful save (to
+  // the live pre-finalize state, not the finalized/persisted one -- see
+  // handleRecord), on reload, and by the sync effect below. This is no
+  // longer literally "what matches the server" after a save (the server
+  // holds `finalized`, which stamps recorded_at); it only needs to answer
+  // "has the clinician typed anything since we last knew where we stood,"
+  // which is what safely gates adopting a newer external version (see that
+  // effect's comment for why this matters).
   const lastKnownJudgmentRef = useRef<{ judgment: ClinicianJudgment; debrief: DebriefAnswers }>({
     judgment: initialJudgment ?? createEmptyJudgment(source),
     debrief: initialJudgment?.debrief ?? emptyDebrief,

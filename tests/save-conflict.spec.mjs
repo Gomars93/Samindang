@@ -267,6 +267,28 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(/lastKnownJudgmentRef\.current = \{ judgment: freshJudgment, debrief: freshDebrief \}/.test(effect))
     assert.ok(/setJudgment\(freshJudgment\)/.test(effect) && /setDebrief\(freshDebrief\)/.test(effect), 'the visible form fields must be replaced with the fresh content -- the exact HIGH finding this guards against')
   })
+
+  // Second closing-review finding (MEDIUM): a successful save must snapshot
+  // the LIVE pre-finalize judgment/debrief into lastKnownJudgmentRef, never
+  // `finalized` -- finalizeJudgment stamps a fresh recorded_at that the live
+  // `judgment` state never receives (this success path never calls
+  // setJudgment(finalized)), so snapshotting `finalized` made
+  // isDraftPristine()'s comparison permanently false after the FIRST
+  // successful save, silently disabling the version-sync effect above for
+  // the rest of the panel's life and reintroducing a false conflict on
+  // every subsequent save.
+  test('JudgmentPanel.tsx: a successful save snapshots the LIVE judgment/debrief (not `finalized`) so isDraftPristine() stays meaningful after the first save', () => {
+    const fnStart = src.indexOf('async function handleRecord() {')
+    const fnEnd = src.indexOf('function handleReloadFromConflict')
+    const fn = src.slice(fnStart, fnEnd)
+    const successBranch = fn.slice(fn.indexOf('if (outcome.ok) {'), fn.indexOf('} else if (outcome.conflict) {'))
+    assert.ok(successBranch.length > 0)
+    assert.ok(
+      /lastKnownJudgmentRef\.current = \{ judgment, debrief \}/.test(successBranch),
+      'must snapshot the live judgment/debrief variables, not `finalized` (which carries a freshly-stamped recorded_at the live judgment state never receives)',
+    )
+    assert.ok(!/lastKnownJudgmentRef\.current = \{ judgment: finalized/.test(successBranch))
+  })
 }
 
 // ---------- 4.5. DoctorView.tsx: the "mark as viewed" sibling-write fix ----------

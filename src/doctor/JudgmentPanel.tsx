@@ -231,7 +231,19 @@ export function JudgmentPanel({
       setRecorded(finalized)
       setConflict(null)
       lastKnownUpdatedAtRef.current = outcome.updatedAt
-      lastKnownJudgmentRef.current = { judgment: finalized, debrief: finalized.debrief ?? emptyDebrief }
+      // Round 18 closing-review fix (MEDIUM): snapshot the LIVE pre-finalize
+      // `judgment`/`debrief` here, never `finalized`. `finalizeJudgment`
+      // stamps a fresh `recorded_at` and prunes empty array entries, but
+      // this success path never calls `setJudgment(finalized)` -- the
+      // visible form state stays exactly what the clinician typed. Snapshotting
+      // `finalized` instead made `isDraftPristine()`'s comparison permanently
+      // false after the FIRST successful save (the live judgment's
+      // `recorded_at` can never again match the ref's stamped one), which
+      // silently disabled the version-sync effect below for the rest of this
+      // panel's life -- reintroducing the exact false-conflict bug this
+      // mechanism exists to prevent on every subsequent save. Snapshotting
+      // the live values keeps pristine-comparison meaningful indefinitely.
+      lastKnownJudgmentRef.current = { judgment, debrief }
     } else if (outcome.conflict) {
       // Round 18: fail closed -- `recorded` deliberately stays whatever it
       // was before this click (never shows `finalized` as "기록됨" when it

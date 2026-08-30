@@ -42,6 +42,7 @@ import {
   durationFrequencyText,
   frequencyField,
   isEmptyValue,
+  isFlagsUsable,
   primaryConcernLabel,
   safetyIssueCategories,
 } from '../DoctorView'
@@ -135,8 +136,17 @@ export function PainWorkspace({
 
   const durFreq = durationFrequencyText(r, routing.primary_module)
   const aggravatingText = aggravatingSummaryText(routing.primary_module, r.modules)
+  // 7차 독립 리뷰 HIGH-1: flags(coreSpec.ts computeFlags)는 태블릿이 제출
+  // 시점에 계산해 보내고 서버는 그대로 저장할 뿐 재검증하지 않는다 --
+  // 레거시/버전 skew로 이 7개 키 중 하나라도 없으면 flags.* 전부를 신뢰할
+  // 수 없다(실제로 SAFETY_01에 응급 신호가 있어도 safetyCats가 항상 빈
+  // 배열이 되어 "안전이슈 없음"으로 보일 수 있다).
+  const flagsUsable = isFlagsUsable(flags)
   const safetyCats = safetyIssueCategories(flags)
-  const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
+  // 7차 독립 리뷰 MEDIUM-1: isEmptyValue는 wrong-typed truthy 값(문자열/
+  // 객체)도 "응답함"으로 취급한다 -- red_flag_general(SAFETY_01)은
+  // required:true, showIf 없음, 항상 배열이므로 배열이 아니면 손상이다.
+  const safetyAnswered = Array.isArray(r.safety_flags.red_flag_general) && r.safety_flags.red_flag_general.length > 0
   // LBP_12: only exists for the LBP regional module — recovery expectation raw score,
   // never an inferred risk/yellow-flag bucket (governing task invariant).
   // Gate on safety_flags.lbp (computed whenever IS_PRIMARY_LBP holds, which
@@ -192,10 +202,18 @@ export function PainWorkspace({
               </strong>
             </div>
           )}
-          <div className={`workspace__metric${safetyCats.length > 0 ? ' workspace__metric--danger' : ''}`}>
+          <div
+            className={`workspace__metric${!flagsUsable || safetyCats.length > 0 ? ' workspace__metric--danger' : ''}`}
+          >
             <span className="workspace__metric__label">안전이슈</span>
             <strong className="workspace__metric__value">
-              {safetyCats.length > 0 ? safetyCats.join(', ') : safetyAnswered ? '없음' : '미확인'}
+              {!flagsUsable
+                ? '확인 필요 — 계산값 읽기 불가'
+                : safetyCats.length > 0
+                  ? safetyCats.join(', ')
+                  : safetyAnswered
+                    ? '없음'
+                    : '미확인'}
             </strong>
           </div>
         </div>

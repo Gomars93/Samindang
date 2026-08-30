@@ -298,6 +298,33 @@ export function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
   return cats
 }
 
+/**
+ * 7차 독립 리뷰 HIGH-1: `flags`(coreSpec.ts `computeFlags`)는 태블릿에서
+ * 제출 시점에 클라이언트가 계산해 보내고, 서버는 그대로 저장할 뿐
+ * 재검증하지 않는다(server/index.js: `flags: body.flags ?? null`) — 지금까지
+ * 이 배치의 모든 라운드가 `responses`만 강화했고 `flags`는 `isPlainObject`
+ * 인지만 확인했다. `computeFlags`는 항상 이 7개 boolean 키를 전부 만드므로,
+ * 하나라도 없거나 boolean이 아니면 레거시/버전 skew/손상이다 -- 그런데
+ * `flags.requires_staff_check`/`flags.general_red` 등을 무조건 신뢰하면,
+ * 환자가 실제로 SAFETY_01에 응급 신호를 보고했어도 안전 배너/안전이슈
+ * 지표가 전부 "없음"으로 보일 수 있다(크래시도, 침묵도 아니고 명시적
+ * 오판 -- 이 배치가 막으려는 것 중 가장 심각한 형태).
+ */
+const REQUIRED_FLAG_KEYS = [
+  'general_red',
+  'gi_needs_review',
+  'bowel_needs_review',
+  'sleep_disorder_review',
+  'sleep_disorder_priority_review',
+  'response_consistency_review',
+  'requires_staff_check',
+] as const
+
+export function isFlagsUsable(flags: unknown): boolean {
+  if (!isPlainObject(flags)) return false
+  return REQUIRED_FLAG_KEYS.every((key) => typeof flags[key] === 'boolean')
+}
+
 /** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
 export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   text: string

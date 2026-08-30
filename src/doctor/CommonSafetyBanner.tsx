@@ -32,13 +32,31 @@ function asArray<T>(value: unknown): T[] {
  * 고정돼 있다 -- 그래서 실제 제출은 이 필드들이 절대 null이거나 이
  * 목록 밖의 값일 수 없다. null/다른 값이면 "환자가 없다고 답함"이 아니라
  * 레거시/손상 데이터다.
+ *
+ * 7차 독립 리뷰 HIGH-2: 이전 구현은 `value != null &&`로 시작해서 null/
+ * undefined를 "읽을 수 있음"으로 잘못 취급했다 -- 바로 위 주석이 스스로
+ * "null이면 손상"이라고 선언한 것과 모순된다. 이 필드들은 위에서 설명한
+ * 이유로 실제 제출에서 null일 수 없으므로, null도 다른 wrong-typed 값과
+ * 동일하게 "읽을 수 없음"으로 판정해야 한다.
  */
 function isUnreadableYesNoUnknown(value: unknown, allowed: readonly string[]): boolean {
-  return value != null && !allowed.includes(value as string)
+  return !(typeof value === 'string' && allowed.includes(value))
 }
 
 const YES_UNKNOWN_NONE = ['yes', 'unknown', 'none'] as const
 const YES_NONE = ['yes', 'none'] as const
+
+/**
+ * medical_history_flags(HISTORY_01)도 위와 같은 이유로 항상 배열이어야
+ * 한다. 7차 독립 리뷰 LOW-1: 컨테이너가 배열인지만 확인하면(이전 구현)
+ * 원소 중 하나가 문자열이 아닐 때(`[null, {}, 'not_a_real_option']`류)
+ * 그대로 통과해 SafetyGlance 칩에 "[object Object]" 같은 값이 그대로
+ * 노출된다 -- DoctorView.tsx의 isNullOrStringArray와 같은 기준(원소까지
+ * 문자열인지)으로 통일한다.
+ */
+function isUnreadableStringArray(value: unknown): boolean {
+  return !(Array.isArray(value) && value.every((v) => typeof v === 'string'))
+}
 
 /**
  * 6차 독립 리뷰 MEDIUM-2: `safetyGlanceItems`가 빈 배열을 반환하는 이유가
@@ -47,8 +65,7 @@ const YES_NONE = ['yes', 'none'] as const
  * "특이 안전정보 없음"(긍정적 확인 문구)을 그렸다 -- 이미 검증된
  * asArray/optional-chaining 방어는 크래시만 막을 뿐, 각 항목 체크가
  * `=== 'yes'`류 비교라서 null/wrong-typed 값은 그냥 "아니요"와 동일하게
- * 조용히 넘어간다(이 배치가 막으려는 fail-open 그 자체). medical_history_flags
- * 는 항상 배열이어야 하므로 truthy인데 배열이 아니면 손상.
+ * 조용히 넘어간다(이 배치가 막으려는 fail-open 그 자체).
  * reproductive_status.derived는 남성 등 정상적으로 null일 수 있으므로
  * 이 판정에서 제외한다(false positive 방지).
  */
@@ -58,8 +75,36 @@ function hasUnreadableSafetyField(r: Responses): boolean {
     isUnreadableYesNoUnknown(r.allergy.allergy_yn, YES_UNKNOWN_NONE) ||
     isUnreadableYesNoUnknown(r.surgery_history.surgery_yn, YES_UNKNOWN_NONE) ||
     isUnreadableYesNoUnknown(r.free_text.free_text_yn, YES_NONE) ||
-    (r.medical_history.medical_history_flags != null && !Array.isArray(r.medical_history.medical_history_flags))
+    isUnreadableStringArray(r.medical_history.medical_history_flags)
   )
+}
+
+/**
+ * 7차 독립 리뷰 HIGH-1: flags(coreSpec.ts computeFlags)는 태블릿이 제출
+ * 시점에 계산해 보내고 서버는 그대로 저장할 뿐 재검증하지 않는다
+ * (server/index.js: `flags: body.flags ?? null`) -- 지금까지 이 배치의
+ * 모든 라운드가 responses만 강화했고 flags는 isPlainObject인지만
+ * 확인했다. computeFlags는 항상 이 7개 boolean 키를 전부 만드므로,
+ * 하나라도 없거나 boolean이 아니면 레거시/버전 skew/손상이다 --
+ * flags.requires_staff_check/general_red 등을 무조건 신뢰하면, 환자가
+ * 실제로 SAFETY_01에 응급 신호를 보고했어도 안전 배너/안전정보
+ * 한눈에가 전부 "없음"으로 보일 수 있다(DoctorView.tsx의 동명 헬퍼와
+ * 동일한 이유로 여기도 로컬 사본을 둔다).
+ */
+const REQUIRED_FLAG_KEYS = [
+  'general_red',
+  'gi_needs_review',
+  'bowel_needs_review',
+  'sleep_disorder_review',
+  'sleep_disorder_priority_review',
+  'response_consistency_review',
+  'requires_staff_check',
+] as const
+
+function isFlagsUsable(flags: unknown): boolean {
+  if (typeof flags !== 'object' || flags === null || Array.isArray(flags)) return false
+  const f = flags as Record<string, unknown>
+  return REQUIRED_FLAG_KEYS.every((key) => typeof f[key] === 'boolean')
 }
 
 function safetyGlanceItems(
@@ -78,11 +123,22 @@ function safetyGlanceItems(
     })
   }
 
-  const historyFlags = asArray<string>(r.medical_history.medical_history_flags).filter(
-    (v) => v !== 'none',
-  )
-  if (historyFlags.length > 0) {
-    items.push({ key: 'history', label: '주요 병력', text: optionLabels('HISTORY_01', historyFlags).join(', ') })
+  /**
+   * 7차 독립 리뷰 LOW-1 후속: medical_history_flags가 배열이지만 원소가
+   * 문자열이 아닌 경우(`[null, {}, 'not_a_real_option']`류), 이전 구현은
+   * asArray()가 컨테이너만 확인하고 그대로 optionLabels에 넘겨
+   * String({})="[object Object]" 같은 값을 "주요 병력" 칩에 그대로
+   * 노출시켰다 -- isUnreadableStringArray로 원소까지 검증해 실패하면 이
+   * 항목 자체를 만들지 않고 hasUnreadableSafetyField 쪽 "읽을 수 없음"
+   * 경고에 맡긴다(아래 SafetyGlance에서 items 유무와 무관하게 표시).
+   */
+  if (!isUnreadableStringArray(r.medical_history.medical_history_flags)) {
+    const historyFlags = asArray<string>(r.medical_history.medical_history_flags).filter(
+      (v) => v !== 'none',
+    )
+    if (historyFlags.length > 0) {
+      items.push({ key: 'history', label: '주요 병력', text: optionLabels('HISTORY_01', historyFlags).join(', ') })
+    }
   }
 
   const derived = r.reproductive_status.derived
@@ -178,16 +234,56 @@ function safetyGlanceItems(
   return items
 }
 
+/**
+ * 7차 독립 리뷰 HIGH-1 후속: flags가 unusable이어도 safetyGlanceItems는
+ * flags 무관 항목(복용약/병력/임신·수유/알레르기 등 responses 기반)이 있으면
+ * 빈 배열이 아닐 수 있다 -- 그 경우 items.length===0 분기만 고치면 그
+ * 항목들이 그대로 렌더되면서 flags 기반 항목(위험신호/수면장애 선별/응답
+ * 확인 필요)만 조용히 빠진 채 "문제 없음"처럼 보인다. items 유무와 관계
+ *없이 flags가 unusable이면 항상 명시적 경고를 먼저 보여준다(있는 항목은
+ * 그 아래 계속 보여준다 -- 정보 자체를 숨기지 않는다).
+ */
+/**
+ * 7차 독립 리뷰 LOW-1 후속: `hasUnreadableSafetyField(r)`도 flagsUsable과
+ * 같은 이유로 items.length===0일 때만 확인하면 안 된다 -- 손상된 필드와
+ * 무관한 다른 필드(복용약 등)에서 실제 항목이 하나라도 생기면 items가
+ * 비지 않아 "읽을 수 없음" 경고 자체가 통째로 사라진다. 두 unusable
+ * 신호(flags, responses) 모두 items 유무와 무관하게 항상 먼저 보여주고,
+ * 실제 항목이 있으면 그 아래 계속 보여준다(정보를 숨기지 않는다).
+ */
 function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'] }) {
   const items = safetyGlanceItems(r, flags)
+  const flagsUsable = isFlagsUsable(flags)
+  const responsesUnreadable = hasUnreadableSafetyField(r)
+
+  if (!flagsUsable || responsesUnreadable) {
+    return (
+      <div className="doctor__safetyGlance">
+        {!flagsUsable && (
+          <p className="doctor__safetyGlance doctor__safetyGlance--unavailable">
+            안전 계산값(flags)을 읽을 수 없습니다(레거시/손상 데이터로 보임) — 위험신호/수면장애
+            선별 등 일부 안전정보가 누락됐을 수 있습니다 — 원장 확인 필요
+          </p>
+        )}
+        {responsesUnreadable && (
+          <p className="doctor__safetyGlance doctor__safetyGlance--unavailable">
+            안전정보 일부를 읽을 수 없습니다(레거시/손상 데이터로 보임) — 원장 확인 필요
+          </p>
+        )}
+        {items.length > 0 && (
+          <div className="doctor__safetyGlance__items">
+            {items.map((it) => (
+              <span key={it.key} className="doctor__safetyChip">
+                <strong>{it.label}</strong> {it.text}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   if (items.length === 0) {
-    if (hasUnreadableSafetyField(r)) {
-      return (
-        <p className="doctor__safetyGlance doctor__safetyGlance--unavailable">
-          안전정보 일부를 읽을 수 없습니다(레거시/손상 데이터로 보임) — 원장 확인 필요
-        </p>
-      )
-    }
     return <p className="doctor__safetyGlance doctor__safetyGlance--empty">특이 안전정보 없음</p>
   }
   return (
@@ -217,6 +313,7 @@ function answerLabelFor(qid: string, value: AnswerValue | undefined): string {
 export function CommonSafetyBanner({ payload }: { payload: DoctorPayload }) {
   const r = payload.responses
   const { flags } = payload
+  const flagsUsable = isFlagsUsable(flags)
 
   const generalFlagLabels = optionLabels(
     'SAFETY_01',
@@ -225,7 +322,33 @@ export function CommonSafetyBanner({ payload }: { payload: DoctorPayload }) {
 
   return (
     <div className="doctor__commonSafety" aria-label="공통 안전 확인">
-      {flags.requires_staff_check && (
+      {/*
+       * 7차 독립 리뷰 HIGH-1: flags(requires_staff_check 등)는 태블릿이
+       * 계산해 보낸 값을 서버가 재검증 없이 그대로 저장한 것이라 레거시/
+       * 버전 skew로 hollow할 수 있다 -- 그럴 때 flags.requires_staff_check를
+       * 무조건 신뢰하면 실제 응급 신호가 있어도 이 배너 자체가 나타나지
+       * 않는다. flags를 읽을 수 없을 때는 flags에 의존하지 않고 responses에서
+       * 직접 계산 가능한 SAFETY_01 응답만으로 대체 경고를 보여준다.
+       */}
+      {!flagsUsable && (
+        <div className="doctor__banner doctor__banner--danger">
+          <strong>안전 계산값을 읽을 수 없습니다</strong>
+          <p>
+            이 제출은 안전 확인 계산값(flags)이 레거시/손상 데이터로 보여 자동
+            판정을 신뢰할 수 없습니다. 아래는 원본 응답에서 직접 확인 가능한
+            공통 위험 신호(SAFETY_01)이며, GI_03/BOWEL_03 등 다른 안전 문항은
+            원장이 문진 원본을 직접 확인해야 합니다.
+          </p>
+          <ul>
+            <li>
+              공통 위험 신호(SAFETY_01):{' '}
+              {generalFlagLabels.length > 0 ? generalFlagLabels.join(', ') : '보고된 항목 없음(원본 확인 필요)'}
+            </li>
+          </ul>
+        </div>
+      )}
+
+      {flagsUsable && flags.requires_staff_check && (
         <div className="doctor__banner doctor__banner--danger">
           <strong>안전 확인 필요</strong>
           <p>

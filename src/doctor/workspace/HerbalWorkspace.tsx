@@ -20,7 +20,7 @@
  * herbal-pattern-mapping or rehab-suggestion content here — those remain
  * clinical-decision blockers per the absolute safety boundary.
  */
-import { Field, isEmptyValue, primaryConcernLabel, safetyIssueCategories } from '../DoctorView'
+import { Field, isEmptyValue, isFlagsUsable, primaryConcernLabel, safetyIssueCategories } from '../DoctorView'
 import type { DoctorPayload } from '../types'
 import { PatternCandidateCard } from './PatternCandidateCard'
 import { ClinicianObservationChecklist } from './ClinicianObservationChecklist'
@@ -91,8 +91,16 @@ export function HerbalWorkspace({
 }) {
   const r = payload.responses
   const { flags } = payload
+  // 7차 독립 리뷰 HIGH-1: flags(coreSpec.ts computeFlags)는 태블릿이 제출
+  // 시점에 계산해 보내고 서버는 그대로 저장할 뿐 재검증하지 않는다 --
+  // 레거시/버전 skew로 이 7개 키 중 하나라도 없으면 flags.* 전부를 신뢰할
+  // 수 없다(PainWorkspace.tsx와 동일한 이유).
+  const flagsUsable = isFlagsUsable(flags)
   const safetyCats = safetyIssueCategories(flags)
-  const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
+  // 7차 독립 리뷰 MEDIUM-1: isEmptyValue는 wrong-typed truthy 값도 "응답함"
+  // 으로 취급한다 -- red_flag_general은 required:true, showIf 없음, 항상
+  // 배열이므로 배열이 아니면 손상이다.
+  const safetyAnswered = Array.isArray(r.safety_flags.red_flag_general) && r.safety_flags.red_flag_general.length > 0
   const hasReproductiveData = (r.reproductive_status.derived?.source ?? null) !== null
 
   const emrText = buildHerbalWorkspaceEmrPreview({
@@ -150,8 +158,16 @@ export function HerbalWorkspace({
         </div>
         <div className="workspace__heroRow">
           <span>안전이슈</span>
-          <strong className={safetyCats.length > 0 ? 'workspace__heroRow__value--danger' : undefined}>
-            {safetyCats.length > 0 ? safetyCats.join(', ') : safetyAnswered ? '없음' : '미확인'}
+          <strong
+            className={!flagsUsable || safetyCats.length > 0 ? 'workspace__heroRow__value--danger' : undefined}
+          >
+            {!flagsUsable
+              ? '확인 필요 — 계산값 읽기 불가'
+              : safetyCats.length > 0
+                ? safetyCats.join(', ')
+                : safetyAnswered
+                  ? '없음'
+                  : '미확인'}
           </strong>
         </div>
       </section>

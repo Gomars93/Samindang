@@ -5771,6 +5771,131 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge
 판단은 항상 사용자(Product Owner).
 
+### 7차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+7차 리뷰는 지금까지 6번의 라운드가 전부 `payload.responses`만
+강화했고 `payload.flags`(coreSpec.ts `computeFlags`)는 단 한 번도
+검증한 적이 없다는 새로운 계열의 문제를 찾아냈다(HIGH-1). 그 외
+`isUnreadableYesNoUnknown`의 null 처리 버그(HIGH-2), 같은 필드
+(`red_flag_general`)에 대해 서로 다른 판정을 내리는 두 헬퍼 간
+불일치(MEDIUM-1), `medical_history_flags` 원소 타입 검사 누락
+(LOW-1)을 함께 지적했다. 이번 수정 도중 LOW-1을 근본적으로 닫으려다
+같은 계열의 다섯 번째 문제(아래 "LOW-1 후속")를 직접 찾아 함께
+고쳤다.
+
+**(HIGH-1) `flags`는 태블릿이 제출 시점에 계산해 보내고 서버는
+재검증 없이 그대로 저장한다(`server/index.js`: `flags: body.flags ??
+null`).** `computeFlags`는 항상 `general_red`/`gi_needs_review`/
+`bowel_needs_review`/`sleep_disorder_review`/
+`sleep_disorder_priority_review`/`response_consistency_review`/
+`requires_staff_check` 7개 boolean 키를 만드는데, 지금까지 이
+배치의 모든 강화는 `isPlainObject(flags)`만 확인했다 — 레거시/버전
+skew(예: `sleep_disorder_priority_review`는 git blame상
+`general_red`보다 나중에 추가된 키라 그 이전 제출은 구조적으로
+가질 수 없다)로 `flags`가 hollow해도 통과한다. 그 상태에서
+`flags.requires_staff_check`/`gi_needs_review` 등을 무조건 신뢰하면,
+환자가 SAFETY_01에 실제 응급 신호(예: `chest_breathing`)를
+보고했어도 `CommonSafetyBanner`의 위험 배너 자체가 나타나지 않고
+"안전정보 한눈에"도 "특이 안전정보 없음"으로 보일 수 있음을 실제
+렌더로 증명했다.
+
+**(HIGH-2) `isUnreadableYesNoUnknown`의 원래 구현이 자기 자신의
+주석과 모순됐다.** `value != null && !allowed.includes(value)`로
+시작해서 null/undefined를 "읽을 수 있음"(반환값 `false`)으로
+취급했는데, 바로 위 주석은 "이 필드들은 `required: true`, `showIf`
+없음, 고정 값 집합이라 실제 제출에서 절대 null일 수 없다 — null이면
+레거시/손상"이라고 스스로 선언하고 있었다. 리뷰가 null만 단독으로
+바꾼 변이(6차의 기존 테스트는 wrong-typed 배열과 함께 섞여 있어서
+이 버그를 우연히 통과시키고 있었다)로 직접 실행해 증명했다.
+
+**(MEDIUM-1) 같은 필드(`red_flag_general`)에 대해 서로 다른 두
+검사가 반대 결론을 냈다.** `CommonSafetyBanner.tsx`는 `asArray()`
+기반(배열이 아니면 "읽을 수 없음")인데, `PainWorkspace.tsx`/
+`HerbalWorkspace.tsx`의 "안전이슈" 히어로 지표는 `isEmptyValue()`
+기반(truthy 스칼라는 전부 "답변됨")이었다 — wrong-typed 값(예:
+배열 대신 문자열)이 오면 한쪽은 "확인 불가", 다른 쪽은 자신 있게
+"없음"을 보여줘 서로 모순되는 화면을 만든다.
+
+**(LOW-1) `hasUnreadableSafetyField`가 컨테이너만 확인하고 원소
+타입은 확인하지 않았다.** `medical_history_flags`가 배열이긴 하지만
+원소가 `[null, {}, 'not_a_real_option']`처럼 문자열이 아니면
+그대로 통과해, `optionLabels`에 들어가 `String({})`="[object
+Object]" 같은 값이 "주요 병력" 칩에 그대로 노출될 수 있었다.
+
+**수정**: (1) `DoctorView.tsx`와 `CommonSafetyBanner.tsx` 양쪽에
+(두 파일이 서로 import하지 않는 이 저장소의 기존 관례대로 각자
+로컬 사본으로) `REQUIRED_FLAG_KEYS` 상수 + `isFlagsUsable(flags)`를
+추가 — 7개 키가 전부 boolean인지 확인한다. `PainWorkspace.tsx`/
+`HerbalWorkspace.tsx`의 "안전이슈" 히어로 지표는 `!flagsUsable`일 때
+"확인 필요 — 계산값 읽기 불가"를 보여주고, `safetyAnswered`도
+`isEmptyValue` 대신 `Array.isArray(...) && length > 0` 기반으로
+교체해 MEDIUM-1을 닫았다. (2) `isUnreadableYesNoUnknown`을
+`!(typeof value === 'string' && allowed.includes(value))`로 교체해
+null/undefined도 다른 wrong-typed 값과 동일하게 "읽을 수 없음"으로
+판정한다(HIGH-2). (3) 새 `isUnreadableStringArray` 헬퍼를 추가해
+`hasUnreadableSafetyField`가 `medical_history_flags`의 원소까지
+검사하도록 교체했다(LOW-1). (4) `CommonSafetyBanner`(danger 배너)와
+`SafetyGlance`(안전정보 한눈에) 양쪽에 `isFlagsUsable(flags)`를
+실제로 소비하도록 배선 — `flags.requires_staff_check` 기반 배너는
+`flagsUsable &&`로 감싸고, `!flagsUsable`일 때는 `flags`에 의존하지
+않고 `responses.safety_flags.red_flag_general`에서 직접 계산 가능한
+SAFETY_01 라벨을 대체 경고로 보여준다(HIGH-1).
+
+**LOW-1 후속(리뷰가 지적하지 않았지만 고치는 과정에서 발견한
+다섯 번째 문제)**: `hasUnreadableSafetyField`/`isFlagsUsable`을
+원소 타입까지 검사하도록 고쳐도, `SafetyGlance`/`CommonSafetyBanner`
+양쪽 모두 이 "읽을 수 없음" 판정을 `items.length === 0`일 때만
+확인하고 있었다 — 즉 `medical_history_flags`가 망가졌어도 무관한
+다른 필드(예: `medication_use === 'yes'`)에서 진짜 항목이 하나라도
+생기면 items가 비지 않아 경고 자체가 통째로 사라지고, 망가진
+필드는 계속 `optionLabels`를 거쳐 "[object Object]"류 값을 그대로
+칩에 노출했다. `flagsUsable`과 동일한 패턴으로 고쳤다: (a)
+`safetyGlanceItems()`의 병력 항목 생성을 `isUnreadableStringArray`로
+먼저 걸러 애초에 항목을 만들지 않게 하고, (b) `SafetyGlance`는
+`hasUnreadableSafetyField(r)`와 `!isFlagsUsable(flags)` 둘 다
+`items.length`와 무관하게 항상 먼저 확인해, 실제 항목이 있어도 그
+위에 경고를 계속 보여주도록 재구성했다(정보를 숨기지 않으면서도
+경고가 사라지지 않게).
+
+**신규 회귀 테스트** (`tests/doctor-workspace.spec.mjs`, 전부
+`renderToString(DoctorWorkspace)` 기반 behavioral 테스트):
+hollow `flags = {}` + 실제 보고된 SAFETY_01 응급 신호
+(`chest_breathing`)가 "안전 계산값을 읽을 수 없습니다" 경고와 원본
+라벨을 보여주고 "특이 안전정보 없음"은 나타나지 않음(HIGH-1),
+`flags`에서 마이그레이션 이후 추가된 키 하나만 빠져도 unusable로
+판정됨(HIGH-1 변형), `medication_use`만 단독으로 null(6차 테스트와
+달리 다른 필드는 건드리지 않음)이 "cannot read" 알림을 띄움
+(HIGH-2 null 전용 격리), wrong-typed(문자열) `red_flag_general`이
+`flags`는 정상인 레코드에서 "미확인"을 보여주고 확신에 찬 "없음"은
+보여주지 않음(MEDIUM-1), `medical_history_flags: [null, {},
+'not_a_real_option']` + 무관한 실제 항목(medication_use: 'yes')이
+함께 있어도 "[object Object]"가 렌더되지 않고 "cannot read" 알림이
+여전히 나타남(LOW-1 + 후속). `npm run test:doctor` 827/827(변경
+없음, 구조 변경 없이 helper 뒤에서만 고쳤으므로), `npm run
+test:doctor-workspace` 149/149(+5, 기존 3개 전부 그대로 통과).
+
+**실사용 재검증**: 실제 서버(`server/index.js`)에 production 빌더
+(`buildResponsePayload`/`computeFlags`/`buildRoutingPayload`/
+`computeSaju`)로 만든 완전한 PAIN_SCENARIO_1 페이로드를 기반으로
+`responses.safety_flags.red_flag_general = ['chest_breathing']` +
+`flags = {}`만 바꿔 POST하고, `#doctor-source-select`를 `server`로
+바꾼 뒤 실제 목록에서 그 레코드를 클릭 — "안전 계산값을 읽을 수
+없습니다" 경고와 SAFETY_01 원본 라벨("새로 생긴 심한 가슴 통증이나
+숨쉬기가 매우 힘든 증상")이 그대로 나타나고 "특이 안전정보 없음"은
+나타나지 않음, page error 0건, 1440×900 뷰포트에서 확인(Playwright,
+`/opt/pw-browsers/chromium`).
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건, 1154+149(doctor-workspace 포함) 전부 통과), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
+origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines
+(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 8차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

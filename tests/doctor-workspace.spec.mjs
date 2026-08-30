@@ -745,6 +745,92 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(html.includes('특이 안전정보 없음'))
     assert.ok(!html.includes('안전정보 일부를 읽을 수 없습니다'))
   })
+
+  /* -----------------------------------------------------------------------
+   * 7th independent review HIGH-1: `flags` (coreSpec.ts computeFlags) is
+   * computed client-side on the tablet and stored verbatim by the server
+   * without revalidation (server/index.js: `flags: body.flags ?? null`).
+   * A legacy/version-skewed submission can have a hollow `flags` object
+   * while `responses.safety_flags.red_flag_general` still holds a real
+   * reported emergency red flag -- trusting `flags.requires_staff_check`
+   * unconditionally would render the danger banner as if nothing were
+   * wrong. Proven here with a real SAFETY_01 answer (`chest_breathing`)
+   * plus `flags = {}` (all 7 required boolean keys missing).
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner HIGH-1: hollow flags ({}) with a real reported SAFETY_01 emergency red flag shows the flags-unusable warning (with the raw red-flag label as fallback), never the misleading all-clear text', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.safety_flags.red_flag_general = ['chest_breathing']
+    mutated.flags = {}
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(html.includes('안전 계산값을 읽을 수 없습니다'))
+    assert.ok(html.includes('새로 생긴 심한 가슴 통증이나 숨쉬기가 매우 힘든 증상'))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+  })
+
+  test('CommonSafetyBanner HIGH-1: flags missing one required key (sleep_disorder_priority_review, a real post-migration key absent from a pre-migration record) is treated as unusable even though every other key is a valid boolean', () => {
+    const mutated = structuredClone(base.payload)
+    delete mutated.flags.sleep_disorder_priority_review
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(html.includes('안전 계산값을 읽을 수 없습니다') || html.includes('안전 계산값(flags)을 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 7th independent review HIGH-2: `isUnreadableYesNoUnknown`'s old
+   * `value != null && ...` structure let null/undefined pass as
+   * "readable" for MED_USE/ALLERGY_01/SURGERY_01/FREE_01 -- fields that a
+   * real submission can never leave null (all `required: true`, no
+   * `showIf`, fixed value sets). This mutates ONLY medication_use to null
+   * (unlike the pre-existing round-6 test above, which also wrong-typed
+   * medical_history_flags and so only incidentally passed through that
+   * second, unrelated guard) -- isolating the null-specific fix.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner HIGH-2: medication_use alone set to null (not wrong-typed, not combined with any other malformed field) shows the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.medication.medication_use = null
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 7th independent review MEDIUM-1: `isEmptyValue` (PainWorkspace/
+   * HerbalWorkspace) and `asArray`-based checks (CommonSafetyBanner)
+   * disagreed on a wrong-typed `red_flag_general` -- `isEmptyValue` treats
+   * any truthy scalar as "answered" (so a stray string would have read as
+   * a confident "없음"), while the array-based check now used for
+   * `safetyAnswered` treats a non-array as unreadable. `flags` is left
+   * untouched here (still usable) so this isolates the safetyAnswered fix
+   * from the HIGH-1 flags-usability fix above.
+   * ------------------------------------------------------------------- */
+  test('PainWorkspace MEDIUM-1: a wrong-typed (string, not array) red_flag_general on an otherwise-usable record renders 미확인 for 안전이슈, never a confident 없음', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.safety_flags.red_flag_general = 'none'
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(html.includes('안전이슈'))
+    assert.ok(html.includes('미확인'))
+    assert.ok(!/안전이슈[^<]*<\/span>\s*<strong[^>]*>\s*없음/.test(html))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 7th independent review LOW-1 (+ follow-up fix found while closing it
+   * out): `medical_history_flags` being an array of non-string elements
+   * used to slip through `asArray()` (container-only check) straight into
+   * `optionLabels`, rendering `String({})` ("[object Object]") as a "주요
+   * 병력" chip -- and because that produced a non-empty items list, the
+   * pre-existing hasUnreadableSafetyField() check (gated behind
+   * items.length===0) never even ran. Both are fixed: the malformed
+   * array no longer generates a fabricated history item, and the "cannot
+   * read" notice is no longer suppressed just because an unrelated real
+   * item exists.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner LOW-1: medical_history_flags containing non-string elements never renders "[object Object]" and shows the "cannot read" notice even though the record has other real safety info', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.medical_history.medical_history_flags = [null, {}, 'not_a_real_option']
+    mutated.responses.medication.medication_use = 'yes'
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
 }
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

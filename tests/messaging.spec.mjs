@@ -16,6 +16,7 @@ import { createApp } from '../server/index.js'
 import { auditLogPath } from '../server/audit.js'
 import { resolveSolapiProviderState } from '../server/solapiAdapter.js'
 import { createMessagingStore, hashToken } from '../server/messagingStore.js'
+import { resolveWebhookSecret, signWebhookBody } from '../server/solapiAdapter.js'
 
 let passCount = 0
 function assert(name, cond) {
@@ -399,33 +400,95 @@ async function main() {
       const cancelAgain = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/cancel`, undefined)
       assert('cancel-http: cancelling an already-CANCELLED message -> 409', cancelAgain.status === 409)
 
-      // Webhook route: public (no doctor token needed), unknown id is a
-      // safe 200 no-op, known id transitions state.
-      const webhookNoToken = await fetch(`${base}/api/messages/webhook`, {
+      // Webhook route: public (no doctor token needed) but NOT
+      // unauthenticated -- closing-review finding (HIGH SECURITY): every
+      // request must carry a valid HMAC-SHA256 signature over the raw
+      // body (x-solapi-signature), computed against resolveWebhookSecret()
+      // (falls back to a fixed mock secret when no real
+      // SOLAPI_WEBHOOK_SECRET is configured, which is this test process's
+      // real state -- so signature verification is genuinely exercised,
+      // never skipped). A provider_message_id alone was never meant to be
+      // an authentication secret.
+      const webhookSecret = resolveWebhookSecret()
+      function signedWebhookHeaders(rawBody) {
+        return { 'content-type': 'application/json', 'x-solapi-signature': signWebhookBody(rawBody, webhookSecret) }
+      }
+
+      const noSigBody = JSON.stringify({ provider_message_id: 'mock_unknown_id_entirely', delivered: true })
+      const webhookNoSignature = await fetch(`${base}/api/messages/webhook`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider_message_id: 'mock_unknown_id_entirely', delivered: true }),
+        body: noSigBody,
       })
-      assert('webhook-http: reachable with no doctor token at all -> 200', webhookNoToken.status === 200)
-      const webhookBody = await webhookNoToken.json()
+      assert('webhook-http: missing x-solapi-signature -> 401 (this is the exact HIGH-security closing-review regression)', webhookNoSignature.status === 401)
+
+      const webhookWrongSignature = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-solapi-signature': signWebhookBody(noSigBody, 'a-completely-wrong-secret') },
+        body: noSigBody,
+      })
+      assert('webhook-http: wrong signature -> 401', webhookWrongSignature.status === 401)
+
+      const webhookUnknown = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: signedWebhookHeaders(noSigBody),
+        body: noSigBody,
+      })
+      assert('webhook-http: reachable with no doctor token at all -> 200 once correctly signed', webhookUnknown.status === 200)
+      const webhookBody = await webhookUnknown.json()
       assert('webhook-http: unknown id -> ok:true (no-op, never an error)', webhookBody.ok === true)
 
+      const missingIdBody = JSON.stringify({ delivered: true })
       const webhookMissingId = await fetch(`${base}/api/messages/webhook`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ delivered: true }),
+        headers: signedWebhookHeaders(missingIdBody),
+        body: missingIdBody,
       })
-      assert('webhook-http: missing provider_message_id -> 400', webhookMissingId.status === 400)
+      assert('webhook-http: missing provider_message_id (correctly signed) -> 400', webhookMissingId.status === 400)
 
+      const knownIdBody = JSON.stringify({ provider_message_id: queued.body.provider_message_id, delivered: true })
       const webhookKnown = await fetch(`${base}/api/messages/webhook`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider_message_id: queued.body.provider_message_id, delivered: true }),
+        headers: signedWebhookHeaders(knownIdBody),
+        body: knownIdBody,
       })
-      assert('webhook-http: known provider_message_id -> 200', webhookKnown.status === 200)
+      assert('webhook-http: known provider_message_id (correctly signed) -> 200', webhookKnown.status === 200)
       const afterWebhook = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
       const updated = afterWebhook.body.messages.find((m) => m.message_id === queued.body.message_id)
       assert('webhook-http: the matching message transitioned to DELIVERED', updated.status === 'DELIVERED')
+
+      // Closing-review finding #5 (attempt identity across retry): a
+      // fresh SENT message (id A), pushed to FAILED by a delivered:false
+      // webhook, then manually retried to a SECOND success (id B) --
+      // record.provider_message_id now holds ONLY B. A late webhook
+      // replaying the ORIGINAL id A must be a safe no-op, never able to
+      // reach back and mutate the record via its now-superseded id.
+      const identityVisit = (await postJson(`${base}/api/visits`, {})).body
+      const identityStart = (await postJson(`${base}/api/patients/${identityVisit.patient_id}/start-revisit`, {})).body
+      const identityQueue = await postJson(`${base}/api/visits/${identityStart.visit.id}/messages`, {
+        patient_id: identityVisit.patient_id,
+        phone: '01077778888',
+        follow_up_token: identityStart.token,
+        link: LINK,
+      })
+      assert('attempt-identity setup: initial send SENT with provider_message_id A', identityQueue.status === 201 && identityQueue.body.status === 'SENT')
+      const idA = identityQueue.body.provider_message_id
+      const idAFailBody = JSON.stringify({ provider_message_id: idA, delivered: false, error_code: 'handset_unreachable' })
+      const idAFailRes = await fetch(`${base}/api/messages/webhook`, { method: 'POST', headers: signedWebhookHeaders(idAFailBody), body: idAFailBody })
+      assert('attempt-identity setup: webhook moves it SENT -> FAILED', idAFailRes.status === 200)
+      const afterIdAFail = await getJson(`${base}/api/visits/${identityStart.visit.id}/messages`)
+      assert('attempt-identity setup: confirmed FAILED before retry', afterIdAFail.body.messages.find((m) => m.message_id === identityQueue.body.message_id).status === 'FAILED')
+      const identityRetried = await postJson(`${base}/api/messages/${identityQueue.body.message_id}/retry`, { phone: '01077778888', link: LINK })
+      assert('attempt-identity: manual retry succeeds with a NEW provider_message_id B', identityRetried.status === 200 && identityRetried.body.status === 'SENT')
+      const idB = identityRetried.body.provider_message_id
+      assert('attempt-identity: B is a genuinely different id from A', idB !== idA && typeof idB === 'string')
+      const lateIdAWebhookBody = JSON.stringify({ provider_message_id: idA, delivered: true })
+      const lateIdAWebhookRes = await fetch(`${base}/api/messages/webhook`, { method: 'POST', headers: signedWebhookHeaders(lateIdAWebhookBody), body: lateIdAWebhookBody })
+      assert('attempt-identity: a late webhook replaying the SUPERSEDED id A -> 200 no-op (never matches, record now holds B)', lateIdAWebhookRes.status === 200)
+      const afterLateIdA = await getJson(`${base}/api/visits/${identityStart.visit.id}/messages`)
+      const finalIdentityRecord = afterLateIdA.body.messages.find((m) => m.message_id === identityQueue.body.message_id)
+      assert('attempt-identity: the record is untouched by the id-A replay -- still SENT (from the id-B retry), not reverted by the stale id-A payload', finalIdentityRecord.status === 'SENT')
+      assert('attempt-identity: the record still carries id B, not A', finalIdentityRecord.provider_message_id === idB)
 
       // Audit: audit.log never contains a phone number substring, and the
       // three new events all appear at least once from the flows above.

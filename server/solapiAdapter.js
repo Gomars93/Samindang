@@ -19,7 +19,7 @@
 // to SOLAPI's HTTP shape directly -- so swapping the live implementation
 // once real credentials exist, or adding a second provider later, touches
 // only this one file.
-import { createHmac, randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 const SOLAPI_SEND_ENDPOINT = 'https://api.solapi.com/messages/v4/send'
 
@@ -186,3 +186,57 @@ export function createSolapiTransport(env = process.env) {
  *  chosen explicitly (a long message that would truncate as SMS), never
  *  as the automatic fallback target -- see messagingStore.js. */
 export const FALLBACK_CHANNEL = { KAKAO_ALIMTALK: 'SMS' }
+
+// Owner-review closing finding (HIGH SECURITY): the delivery-status webhook
+// must never be "authenticated" merely by provider_message_id being hard to
+// guess -- an id is an identifier, not a secret, and can leak through
+// provider dashboards/logs/UI. This is a provider-neutral HMAC-SHA256
+// verifier over the raw request body, checked against a per-request
+// signature header, so a forged callback can never flip a message's
+// delivery state without knowing the current webhook secret.
+//
+// PENDING_CREDENTIALS/MOCK (no real SOLAPI_WEBHOOK_SECRET configured, the
+// actual state of this deployment today): falls back to a fixed,
+// clearly-named mock secret so every request -- including this scaffold's
+// own tests -- still goes through real signature verification rather than
+// short-circuiting it. This deliberately does NOT skip verification in the
+// absence of a real secret ("fail closed in any non-explicit mock/test
+// mode", per the closing review) -- there is always some secret in effect.
+// LIVE: uses the real SOLAPI_WEBHOOK_SECRET. The exact live SOLAPI webhook
+// signature SCHEME (header name, encoding, canonical body construction) is
+// UNVERIFIED against real docs/an account, same EXTERNAL CREDENTIAL PENDING
+// caveat as createLiveSolapiTransport above -- this HMAC-over-raw-body
+// shape is a reasonable placeholder to re-verify before ever processing a
+// real provider callback.
+const MOCK_WEBHOOK_SECRET = 'mock-webhook-secret-never-use-live'
+
+export function resolveWebhookSecret(env = process.env) {
+  return typeof env.SOLAPI_WEBHOOK_SECRET === 'string' && env.SOLAPI_WEBHOOK_SECRET.trim() !== ''
+    ? env.SOLAPI_WEBHOOK_SECRET
+    : MOCK_WEBHOOK_SECRET
+}
+
+/** Computes the signature a caller (a real provider, or a test) must send
+ *  for a given raw body under the given secret -- exported so tests can
+ *  construct a valid signature without duplicating the HMAC logic. */
+export function signWebhookBody(rawBody, secret) {
+  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
+}
+
+/** Constant-time signature check. A missing/malformed header, or a
+ *  differently-LENGTHED signature, is rejected outright before ever
+ *  reaching timingSafeEqual (which throws on mismatched buffer lengths --
+ *  itself not a timing leak here, since length alone is not the secret). */
+export function verifyWebhookSignature(rawBody, signatureHeader, secret) {
+  if (typeof signatureHeader !== 'string' || signatureHeader.trim() === '') return false
+  const expectedHex = signWebhookBody(rawBody, secret)
+  let expected, actual
+  try {
+    expected = Buffer.from(expectedHex, 'hex')
+    actual = Buffer.from(signatureHeader, 'hex')
+  } catch {
+    return false
+  }
+  if (expected.length !== actual.length) return false
+  return timingSafeEqual(expected, actual)
+}

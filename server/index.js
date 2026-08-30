@@ -18,6 +18,7 @@ import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
 import { createMessagingStore, MessagingConflictError, MessagingNotFoundError } from './messagingStore.js'
+import { resolveWebhookSecret, verifyWebhookSignature } from './solapiAdapter.js'
 import {
   activateVisit,
   clearActiveVisit,
@@ -249,7 +250,7 @@ export function createApp({
       // conflict-detection this header exists for would just never fire
       // from a real browser client. Not itself a privilege -- the doctor
       // routes still require x-doctor-token/loopback as before.
-      'access-control-allow-headers': 'content-type,x-doctor-token,x-station-credential,x-expected-updated-at',
+      'access-control-allow-headers': 'content-type,x-doctor-token,x-station-credential,x-expected-updated-at,x-solapi-signature',
     }
     if (doctorRoute) {
       // 원장 라우트는 절대 임의 origin을 반사하지 않는다 — 허용 목록/localhost일
@@ -297,6 +298,33 @@ export function createApp({
         } catch {
           reject(Object.assign(new Error('invalid json'), { statusCode: 400 }))
         }
+      })
+      req.on('error', reject)
+    })
+  }
+
+  // Same size-capped chunk-reading as readBody above, but returns the raw
+  // Buffer without JSON-parsing it -- needed only by the webhook route,
+  // whose signature is computed over the exact bytes received, before any
+  // parsing happens (see solapiAdapter.js's verifyWebhookSignature).
+  function readRawBody(req) {
+    return new Promise((resolve, reject) => {
+      let total = 0
+      const chunks = []
+      let rejected = false
+      req.on('data', (chunk) => {
+        if (rejected) return
+        total += chunk.length
+        if (total > MAX_BODY_BYTES) {
+          rejected = true
+          reject(Object.assign(new Error('payload too large'), { statusCode: 413 }))
+          return
+        }
+        chunks.push(chunk)
+      })
+      req.on('end', () => {
+        if (rejected) return
+        resolve(Buffer.concat(chunks))
       })
       req.on('error', reject)
     })
@@ -803,25 +831,50 @@ export function createApp({
       } else if (parts[0] === 'api' && parts[1] === 'messages' && parts.length === 3 && parts[2] === 'webhook' && req.method === 'POST') {
         // Provider delivery-status callback. Deliberately public/unguarded
         // by doctor-token+Origin (see isMessagesAdminRoute's doc comment
-        // above) -- keyed by an unguessable provider_message_id instead.
-        // HMAC/signature verification of the actual SOLAPI webhook request
-        // is EXTERNAL CREDENTIAL PENDING (see solapiAdapter.js's header);
-        // this accepts a reasonable documented shape so the rest of the
-        // pipeline has something concrete to integrate against today. An
-        // unmatched provider_message_id is always a 200 no-op, never an
-        // error -- see handleDeliveryWebhook's own doc comment.
-        const body = await readBody(req).catch(() => null)
-        const providerMessageId = typeof body?.provider_message_id === 'string' ? body.provider_message_id : ''
-        if (!providerMessageId) {
-          status = 400
-          bytes = sendJson(req, res, 400, { error: 'provider_message_id is required' }, cors)
+        // above) -- but NOT unauthenticated: an unguessable
+        // provider_message_id is an identifier, not a secret (closing-
+        // review finding, HIGH SECURITY -- it can leak through provider
+        // dashboards/logs/UI), so every request must additionally carry a
+        // valid HMAC-SHA256 signature over the raw body (see
+        // solapiAdapter.js's verifyWebhookSignature/resolveWebhookSecret).
+        // This fails closed even with no real SOLAPI_WEBHOOK_SECRET
+        // configured (the actual state of this deployment today) --
+        // resolveWebhookSecret falls back to a fixed mock secret rather
+        // than skipping verification, so a request with no/wrong signature
+        // is rejected in every environment, never just in "production".
+        // The exact live SOLAPI webhook signature scheme itself remains
+        // EXTERNAL CREDENTIAL PENDING (unverified against real docs/an
+        // account) -- see solapiAdapter.js's header. Once past signature
+        // verification, an unmatched provider_message_id is still always a
+        // 200 no-op, never an error -- see handleDeliveryWebhook's own doc
+        // comment (a stale/replayed/foreign-account callback can still be
+        // validly signed and simply reference a message this deployment
+        // never sent).
+        const rawBody = await readRawBody(req).catch(() => null)
+        const signatureHeader = req.headers['x-solapi-signature']
+        const secret = resolveWebhookSecret()
+        if (rawBody === null || !verifyWebhookSignature(rawBody, typeof signatureHeader === 'string' ? signatureHeader : '', secret)) {
+          status = 401
+          bytes = sendJson(req, res, 401, { error: 'invalid signature' }, cors)
         } else {
-          const result = await messagingStore.handleDeliveryWebhook({
-            providerMessageId,
-            delivered: body?.delivered === true,
-            errorCode: typeof body?.error_code === 'string' ? body.error_code : null,
-          })
-          bytes = sendJson(req, res, 200, { ok: result.ok }, cors)
+          let body
+          try {
+            body = rawBody.length === 0 ? undefined : JSON.parse(rawBody.toString('utf8'))
+          } catch {
+            body = null
+          }
+          const providerMessageId = typeof body?.provider_message_id === 'string' ? body.provider_message_id : ''
+          if (!providerMessageId) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'provider_message_id is required' }, cors)
+          } else {
+            const result = await messagingStore.handleDeliveryWebhook({
+              providerMessageId,
+              delivered: body?.delivered === true,
+              errorCode: typeof body?.error_code === 'string' ? body.error_code : null,
+            })
+            bytes = sendJson(req, res, 200, { ok: result.ok }, cors)
+          }
         }
       } else if (
         parts[0] === 'api' &&

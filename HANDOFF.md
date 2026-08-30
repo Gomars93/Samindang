@@ -4535,12 +4535,94 @@ mutation-test로 실제 검증 + LOW 1건 마저 수정) 완료 — 오너 지�
 검수/역할 사이클(Sonnet 구현 → 독립 리뷰 → 수정 → 독립 클로징 리뷰)
 충족. **CLEAN.**
 
+## Completed — Medication/Herbal CRM 배치 (진행 중, 이번 세션)
+
+**배경(오너가 PR 코멘트로 직접 지시)**: "generic Medication/Herbal CRM
+loop를 조작화하되 임상 timing/제품 규칙은 창작하지 말 것" — 10개 항목
+스펙(durable MedicationCourse persistence, doctor 인증 CRUD, 명시적
+소스/사람 지정 due_at만 허용하는 MEDICATION_START/MID/END_CHECK task
+연동, medication_start_at 변경 시 supersede/recalculate 계약, Doctor
+CRM/Today Queue 압축 표면, 제품 무관 generic 처리, 기존 불변식 보존,
+회귀/장애주입 커버리지, 실브라우저 QA, FROZEN zero-diff).
+
+**구현(Sonnet)**: `src/crm/medicationCourse.ts`(타입), `server/crmStore.js`
+(durable persistence: `createMedicationCourseStored`,
+`createMedicationCourseCheckTaskStored`,
+`shiftMedicationCourseStartStored` — intent-then-finalize 2단계 쓰기,
+`medication-course:<id>` 락으로 동시 mutation 직렬화), `server/index.js`
+(doctor 인증 HTTP 라우트 6개 + audit 이벤트), `src/lib/serverClient.ts` +
+`src/doctor/MedicationCourseSection.tsx`(Doctor CRM UI), 회귀/장애주입
+테스트(`tests/medication-course.spec.mjs`).
+
+**1차 독립 `model:opus` 리뷰(완료) + 수정(`1df3e0e`)**: HIGH 1건
+(`shiftMedicationCourseStartStored`와 `createMedicationCourseCheckTaskStored`
+사이 TOCTOU — 같은 `medication-course:<id>` 락으로 닫음), MEDIUM 1건
+(수동 코스 기록 재시도 시 `sourceId`가 매번 새로 생성돼 재시도 시
+중복 생성 위험 — 초안당 한 번만 채번해 재사용) 수정.
+
+**오너 2차 검수(GitHub PR 코멘트, commit `bff300c` 대상) — NOT CLEAN**:
+"같은 배치 안에서 계속, 새 배치 시작 금지, merge/main push 금지" 명시.
+발견 사항 2건(1건은 리뷰 시점 기준 `1df3e0e`가 이미 해결, 아래는 미해결
+1건 + 이번 커밋에서 함께 발견/수정한 2건):
+
+1. **HIGH (수정, `0d5464b`)**: `MedicationCourseSection.tsx`의
+   `reloadEpisodeData` 내부 중첩 promise들이 patient/request 세대 가드
+   없음 — patient A를 연 뒤 A의 course/task 응답이 도착하기 전에 B로
+   전환하면, A의 늦은 응답이 B가 화면에 있는 동안 `setCourses`/`setTasks`
+   를 호출할 수 있음(cross-patient stale-response leak). **수정**:
+   `loadEpochRef`(useRef(0), patientUuid 변경마다 1회 증가) 도입 —
+   초기 로드/중첩 course·task 읽기/네 개 mutating 액션의 reload 전부
+   현재 epoch과 비교 후에만 `setState`. `DoctorView.tsx`의 기존
+   `key={selectedRecord.patient_id}` 리마운트와 별개의 내부 방어선.
+   신규 구조 가드 테스트 `tests/medication-course-ui.spec.mjs`(6개,
+   loadEpochRef 선언/epoch 파라미터/가드 7곳/busy-release 가드 4곳/
+   캡처 4곳/++ 1회 증가 확인) + 실제 Playwright 2-시나리오 QA:
+   (a) A 지연 → B로 전환(B는 정상 로드) — A의 늦은 응답이 B 아래
+   렌더된 적 없음, B 자체 데이터는 정상 표시. (b) A 지연 → B로 전환,
+   **B 자신의 요청을 route.abort()로 진짜 실패**시킴 — A의 늦은 응답이
+   B의 실패 상태 아래 fallback으로 렌더된 적 없음, 진짜
+   `section.medCourse` 에러 상태(캐시/크래시 아님)가 표시됨을 확인.
+2. **HIGH (이번 커밋에서 발견/수정)**: `server/index.js`
+   shift-start 라우트의 `replacement_due_dates` 배열 강제변환이 배열이
+   아닌 값(객체/문자열 등)을 전부 조용히 `[]`로 바꿔버려서, 뒤이은 두
+   검증(`every`/중복 `reason_code` 체크)이 공허하게 통과 — 잘못된 형태의
+   요청이 여전히 200과 함께 open task를 supersede함. **수정**: 원본
+   미변환 값이 `null`/`undefined`가 아니면서 배열도 아닐 때 400으로
+   즉시 거부, 그 이후에만 `[]` 강제변환 수행. 회귀 테스트
+   `tests/audit-registry.spec.mjs`에 non-array 케이스 추가(400 확인 +
+   course version 불변 확인).
+3. **MEDIUM (이번 커밋에서 발견/수정)**: `createMedicationCourseCheckTaskStored`
+   의 dedup이 `createTaskStored`의 공용 dedup key에 의존하는데, 이 키는
+   `contactPointKey`(do_not_contact가 'IN_PERSON_ONLY'로 override)를
+   포함 — check-task 생성은 `course.version`을 절대 올리지 않으므로,
+   같은 `expectedVersion`+다른 `do_not_contact`로 순차 호출하면 서로
+   다른 dedup key로 해시돼 같은 `(course, reason_code)`에 대해 서로
+   다른 contact_mode의 task 두 개가 만들어질 수 있었음(한쪽은
+   do-not-contact인데 다른 쪽이 실제로 연락 시도). **수정**:
+   `createTaskStored` 호출 전에 같은 `(course_id, reason_code)`의
+   non-terminal task를 먼저 조회 — 있으면 그 task의 기존 contact_mode를
+   그대로 두고 `{deduped:true}` 반환, 공용 dedup 메커니즘의 contact-mode
+   민감도를 이 경로에서만 우회(다른 task 타입의 기존 계약은 안 건드림).
+   신규 테스트 `tests/medication-course.spec.mjs` Part 4d(5개 assertion:
+   최초 생성/두 번째 호출 dedup/동일 task_id/기존 contact_mode 유지/
+   디스크에 파일 정확히 1개).
+
+**검증(이번 커밋 `0d5464b` 반영 후)**: `npx tsc -b --force` clean, `npm
+run test:medication-course` 57/57, `npm run test:medication-course-ui`
+6/6(신규), `npm run test:audit-registry` 106/106, `npm run
+test:all`(exit 0, 전체 통과), `npm run build`/`build:preview` clean,
+`tablet core` pytest 80/80, FROZEN diff 0 lines, 실브라우저 Playwright
+patient A→B race QA 2-시나리오 전부 PASS(위 참고) — 전부 통과. push
+완료. Clinical CRM v0.3.1 CLOSED, Test 0 PENDING, Care Gap suppression
+OFF, identity policy·BizM PENDING_CONTRACT 등 기존 정책 변경 없음.
+독립 `model:opus` 클로징 리뷰는 이 커밋에 대해 아직 미실시(다음 단계).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). 최신 push된
-HEAD: `498e675` — button1/응답-실패 검증 HIGH 수정 사이클(CLEAN, HEAD
-`e6af327`까지)에 이어, 메시지<->캡ability 무결성 배치의 구현(`2ef971f`)
-+ 1차 독립 리뷰 수정(`87817b8`) + 2차 독립 클로징 리뷰 LOW 수정
-(`498e675`)까지 push 완료. 이 배치도 **CLEAN**.
+HEAD: `0d5464b` — Medication/Herbal CRM 배치, 오너의 "NOT CLEAN" 2차
+검수(`bff300c` 대상) 지적사항 + 같은 라운드에서 발견한 두 건(non-array
+replacement_due_dates, do_not_contact dedup 충돌) 수정까지 push 완료.
+독립 `model:opus` 클로징 리뷰 대기 중.
 
 ## Known Risks
 - Round 2와 동일: `ClinicianJudgment`(명리 감사 기록)와 `WorkspaceState`
@@ -4581,8 +4663,14 @@ HEAD: `498e675` — button1/응답-실패 검증 HIGH 수정 사이클(CLEAN, HE
   것은 이번 배치 범위 밖(불필요한 복잡도)으로 판단.
 
 ## Next Recommended Action
-(HEAD `7930cc1` 기준 갱신 — Round 18 CLOSABLE + PR #23/#24 통합
-리허설 완료.)
+(HEAD `0d5464b` 기준 갱신 — Medication/Herbal CRM 배치, 오너 2차 검수
+지적사항 + 자체 발견 2건 수정까지 완료, 독립 `model:opus` 클로징 리뷰
+대기.)
+-1. **다음 단계**: `0d5464b`에 대해 fresh 독립 `model:opus` 리뷰 실행
+   (오너의 "같은 배치 안에서 Sonnet 구현 → 독립 리뷰 → 수정 → 독립
+   클로징 리뷰" 사이클 요구, 아직 이 커밋에 대해서는 미실시). 발견
+   사항이 있으면 수정 후 재검수 반복, 없으면 CLEAN 코멘트를 PR #24에
+   게시. **여전히 새 배치 시작 금지, merge/main push 금지.**
 0. **HUMAN DECISION REQUIRED**: 위 "Quick Revisit 발송" 섹션의 재시작-후-
    자동재시도 복구 방식 — 현재의 human-mediated 수동 재시도로 충분한지,
    아니면 신원 정책을 건드리지 않는 bounded/short-lived 자동 복구가

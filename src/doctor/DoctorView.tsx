@@ -24,26 +24,10 @@ import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
-import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
-import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
-import {
-  computeNeckFlags,
-  neckDiseaseSafetyLocked,
-  neckManipulationLocked,
-  type NeckComputedFields,
-} from '../spec/neckLogic'
-import { toNeckStateFromDoctorPayload } from '../spec/neckAdapter'
-import { computeShoulderFlags, shoulderSafetyLocked, type ShoulderComputedFields } from '../spec/shoulderLogic'
-import { toShoulderStateFromDoctorPayload } from '../spec/shoulderAdapter'
-import { computeKneeFlags, kneeSafetyLocked, KNEE08_HIP_FRACTURE_OPTION, type KneeComputedFields } from '../spec/kneeLogic'
-import { toKneeStateFromDoctorPayload } from '../spec/kneeAdapter'
-import { computeElbowFlags, elbowSafetyLocked, type ElbowComputedFields } from '../spec/elbowLogic'
-import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
-import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
-import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
-import { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'
-import { TmjSafetyPanel } from './TmjSafetyPanel'
-import { HipSafetyPanel } from './HipSafetyPanel'
+import { ageFromDoctorPayload } from '../spec/lbpAdapter'
+import { SafetySection } from './SafetySection'
+import { deriveSafetyOverview } from './safetyOverview'
+import { computeSafetyModuleRows, type SafetyClinicianInputs } from './safetyModules'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -389,1025 +373,6 @@ function TenSecondSummary({ payload }: { payload: DoctorPayload }) {
         </span>
       </div>
     </section>
-  )
-}
-
-/** §PART2 "안전정보 한눈에" — 복용약/병력/임신·수유/알레르기 중 실제 값이 있는 것만, 위험신호는 배너를 가리키는 짧은 포인터만. */
-function safetyGlanceItems(
-  r: Responses,
-  flags: DoctorPayload['flags'],
-): { key: string; label: string; text: string }[] {
-  const items: { key: string; label: string; text: string }[] = []
-
-  const medUse = r.medication.medication_use
-  if (medUse === 'yes' || medUse === 'unknown') {
-    const types = answerLabel('MED_TYPES', r.medication.medication_types)
-    items.push({
-      key: 'medication',
-      label: '복용약',
-      text: `${answerLabel('MED_USE', medUse)}${types ? ` — ${types}` : ''}`,
-    })
-  }
-
-  const historyFlags = ((r.medical_history.medical_history_flags as string[] | null) ?? []).filter(
-    (v) => v !== 'none',
-  )
-  if (historyFlags.length > 0) {
-    items.push({ key: 'history', label: '주요 병력', text: optionLabels('HISTORY_01', historyFlags).join(', ') })
-  }
-
-  const derived = r.reproductive_status.derived
-  if (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding) {
-    const parts = [
-      derived.pregnant && '임신 중',
-      derived.pregnancy_possible && '임신 가능성',
-      derived.postpartum_1y && '출산 후 1년 이내',
-      derived.breastfeeding && '모유수유 중',
-    ].filter((v): v is string => Boolean(v))
-    items.push({ key: 'reproductive', label: '임신/수유', text: parts.join(', ') })
-  }
-
-  if (r.allergy.allergy_yn === 'yes') {
-    items.push({
-      key: 'allergy',
-      label: '알레르기',
-      text: answerLabel('ALLERGY_02', r.allergy.allergy_detail) || '있음',
-    })
-  }
-
-  // 위험신호는 배너에서 이미 전체 내용을 보여준다 — 여기서는 같은 문장을
-  // 반복하지 않고, 위에 배너가 있다는 것만 짧게 가리킨다.
-  if (flags.requires_staff_check) {
-    items.push({ key: 'redflag', label: '위험신호', text: '있음 — 위 안전 확인 배너 참고' })
-  }
-
-  // MENOPAUSE_SLEEP MS_05: 진단명 노출 없이 원장 확인용으로만 표시한다(delta 3장).
-  if (flags.sleep_disorder_priority_review) {
-    items.push({
-      key: 'sleep_disorder_priority',
-      label: '수면장애 선별',
-      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
-    })
-  } else if (flags.sleep_disorder_review) {
-    items.push({
-      key: 'sleep_disorder',
-      label: '수면장애 선별',
-      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
-    })
-  }
-
-  if (flags.response_consistency_review) {
-    items.push({
-      key: 'response_consistency',
-      label: '응답 확인 필요',
-      text: '생리 상태(MS_01)와 임신/폐경 관련 응답이 서로 다릅니다 — 자동 수정하지 않음',
-    })
-  }
-
-  /**
-   * Routing/UX v2 §20-21: 자유입력을 줄인 대신 clinician confirmation cue를
-   * 강화한다. 환자 선택만으로 진단/객관적 소견을 만들지 않고 "확인
-   * 필요"/"진료 중 확인" 수준으로만 표시한다. 기존 urgent safety
-   * panel/redflag보다 강하게 보이면 안 되므로 이 함수의 기존 항목들
-   * 뒤에(가장 낮은 우선순위로) 추가한다 -- §21 우선순위(1.safety/urgent
-   * 2.medication/allergy 3.surgery/history 4.추가 전달사항 5.기타 상세)
-   * 중 1~2는 위에 이미 있고, 여기서는 3~5만 이 순서로 덧붙인다.
-   */
-  if (r.surgery_history.surgery_yn === 'yes') {
-    items.push({ key: 'surgery', label: '수술·입원력', text: '있음 — 종류/시기 확인' })
-  }
-
-  if (r.free_text.free_text_yn === 'yes') {
-    items.push({ key: 'free_text', label: '추가 전달사항', text: '있음 — 진료 중 확인' })
-  }
-
-  // "기타" 선택 확인 필요 항목들을 하나의 배지로 묶는다 -- 필드마다 따로
-  // 배지를 만들면 노란 배지가 난립한다(§21).
-  const otherDetailFlags: string[] = []
-  if (r.visit_goal.primary_symptom === 'other') otherDetailFlags.push('기타 주호소')
-  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 동반증상')
-  }
-  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 수면 원인')
-  }
-  if (r.modules.pain.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
-  if (r.modules.pain.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
-  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 여성 건강 상담')
-  }
-  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 임신 상담')
-  }
-  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 산후 상담')
-  }
-  if (otherDetailFlags.length > 0) {
-    items.push({ key: 'other_detail', label: '기타 확인', text: `${otherDetailFlags.join(', ')} — 진료 중 확인` })
-  }
-
-  return items
-}
-
-function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'] }) {
-  const items = safetyGlanceItems(r, flags)
-  if (items.length === 0) {
-    return <p className="doctor__safetyGlance doctor__safetyGlance--empty">특이 안전정보 없음</p>
-  }
-  return (
-    <div className="doctor__safetyGlance">
-      <span className="doctor__safetyGlance__title">안전정보 한눈에</span>
-      <div className="doctor__safetyGlance__items">
-        {items.map((it) => (
-          <span key={it.key} className="doctor__safetyChip">
-            <strong>{it.label}</strong> {it.text}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-const LBP_SAFETY_STATUS_LABEL: Record<LbpComputedFields['lbp_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-  URGENT_REVIEW: '긴급 확인 필요',
-}
-
-const LBP_TREATMENT_SAFETY_LABEL: Record<LbpComputedFields['treatment_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-}
-
-const LBP_EXAM_LABELS: Record<string, string> = {
-  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
-  LUMBAR_ACTIVE_MOVEMENT_RESPONSE: '요추 능동 움직임 반응 검사',
-  LOWER_EXTREMITY_MOTOR_MYOTOME: '하지 근절(myotome) 근력 검사',
-  SENSORY_SCREEN: '감각 검사',
-  REFLEX_SCREEN: '반사 검사',
-  NEURODYNAMIC_TEST_AS_INDICATED: '신경역동학 검사(필요시)',
-  GAIT_AND_WALKING_TOLERANCE: '보행 및 보행 내구성 검사',
-  NEUROLOGIC_EXAM: '신경학적 검사',
-  HIP_SCREEN_AS_INDICATED: '고관절 검사(필요시)',
-  VASCULAR_SCREEN_AS_INDICATED: '혈관 검사(필요시)',
-}
-
-/**
- * lbp_v1.0.yaml의 clinician_exam_selector.rules를 그대로 옮긴다. SIJ/hip
- * cluster 제안처럼 "원장이 의심할 때만" 해당하는 항목은 데이터로 판단할 수
- * 없어 제외한다(그 부분까지 자동 제안하면 클리니션 판단을 대신하는 것이 됨).
- */
-function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: AnswerValue): string[] {
-  const codes: string[] = []
-  if (flags.lbp_safety_status === 'CLEAR') {
-    codes.push('TARGET_FUNCTION_REPRODUCTION', 'LUMBAR_ACTIVE_MOVEMENT_RESPONSE')
-  }
-  if (flags.leg_symptom_present === 'YES' || flags.leg_symptom_present === 'UNKNOWN' || flags.lbp_neuro_baseline_required) {
-    for (const c of ['LOWER_EXTREMITY_MOTOR_MYOTOME', 'SENSORY_SCREEN', 'REFLEX_SCREEN']) {
-      if (!codes.includes(c)) codes.push(c)
-    }
-  }
-  if (flags.leg_symptom_present === 'YES' || flags.leg_symptom_present === 'UNKNOWN') {
-    codes.push('NEURODYNAMIC_TEST_AS_INDICATED')
-  }
-  if (claudicationWalking === 'YES') {
-    codes.push('GAIT_AND_WALKING_TOLERANCE', 'NEUROLOGIC_EXAM', 'HIP_SCREEN_AS_INDICATED', 'VASCULAR_SCREEN_AS_INDICATED')
-  }
-  return codes
-}
-
-/**
- * LBP_V1 안전 확인 패널. SafetyGlance(일반 red flag)와 별개 — 인터럽트하지
- * 않는다(LBP_04 URGENT 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트, coreSpec.ts
- * 참고). `payload.routing.primary_module_detail !== 'LBP'`면 아무것도
- * 렌더링하지 않는다.
- *
- * clinician_objective_motor_deficit은 이 화면이 아니라 JudgmentPanel에서
- * 입력·저장되므로(기존 judgment 저장 경로 재사용, 별도 저장 메커니즘 없음)
- * 여기서는 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
- * (fixtures) 항상 "아직 진찰 전"으로 취급한다.
- */
-function LbpSafetyPanel({
-  payload,
-  lbpObjectiveMotorDeficit,
-}: {
-  payload: DoctorPayload
-  lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
-}) {
-  if (payload.routing.primary_module_detail !== 'LBP') return null
-
-  const age = ageFromDoctorPayload(payload.responses)
-  const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
-  const flags = computeLbpFlags(state)
-  const locked = diseaseSafetyLocked(flags)
-  const treatmentLocked = treatmentSafetyLocked(flags)
-  const legSymptomLabel =
-    flags.leg_symptom_present === 'YES' ? '있음' : flags.leg_symptom_present === 'NO' ? '없음' : '확인 필요'
-  const examCodes = suggestedExamCodes(flags, payload.responses.modules.lbp.claudication_walking)
-
-  return (
-    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.lbp_safety_status.toLowerCase()}`}>
-      <span className="doctor__safetyGlance__title">안전 확인 — 허리(LBP)</span>
-      <div className="doctor__safetyGlance__items">
-        <span className="doctor__safetyChip">
-          <strong>안전 확인</strong> {LBP_SAFETY_STATUS_LABEL[flags.lbp_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>치료 안전</strong> {LBP_TREATMENT_SAFETY_LABEL[flags.treatment_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신경근성 증상 가능성</strong> {legSymptomLabel}
-        </span>
-        {flags.lbp_neuro_baseline_required && (
-          <span className="doctor__safetyChip">
-            <strong>신경학적 기저검사</strong> 필요(양쪽 다리 통증만, 자동 긴급 아님)
-          </span>
-        )}
-        {flags.lbp_inflammatory_pattern_consider && (
-          <span className="doctor__safetyChip">
-            <strong>염증성 패턴</strong> 고려(진단 아님)
-          </span>
-        )}
-      </div>
-      {locked && (
-        <p className="doctor__derivedNote">
-          안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
-        </p>
-      )}
-      {treatmentLocked && !locked && (
-        <p className="doctor__derivedNote">
-          치료 안전(임신 등) 확인 전까지 금기 민감 치료/운동은 원장 승인 없이 확정하지 않습니다.
-        </p>
-      )}
-      {examCodes.length > 0 && (
-        <div className="doctor__lbpExam">
-          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
-          <ul>
-            {examCodes.map((c) => (
-              <li key={c}>{LBP_EXAM_LABELS[c] ?? c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {/* TODO(LBP_V2): exercise_recommender_contract(순위 매긴 운동 추천 + 원장 승인)는
-          아직 구현하지 않음 — required_before_ranking의 원장 입력(irritability/
-          movement_response/neuro_status)이 없고, target_function 대리 지표(chief_impact)로는
-          계약을 충실히 만족시키지 못해 v1 범위에서 제외 (LBP_INTEGRATION_PLAN_DRAFT.md §4/Scope). */}
-    </div>
-  )
-}
-
-const NECK_SAFETY_STATUS_LABEL: Record<NeckComputedFields['neck_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-  URGENT_REVIEW: '긴급 확인 필요',
-}
-
-const NECK_TREATMENT_SAFETY_LABEL: Record<NeckComputedFields['neck_treatment_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-}
-
-const NECK_RADICULAR_LABEL: Record<NeckComputedFields['radicular_support'], string> = {
-  HIGHER_SUPPORT: '가능성 높음(임상 확인 필요)',
-  CONSIDER: '고려 대상',
-  LOWER_SUPPORT: '가능성 낮음',
-  UNDETERMINED: '미분류(추가 확인 필요)',
-}
-
-const NECK_EXAM_LABELS: Record<string, string> = {
-  CERVICAL_AROM: '경추 능동 관절가동범위 검사',
-  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
-  C5_T1_MOTOR: 'C5-T1 근절 근력 검사',
-  DERMATOMAL_SENSORY: '피부분절 감각 검사',
-  REFLEX_SCREEN: '반사 검사(이두근/상완요골근/삼두근)',
-  SPURLING_TEST: 'Spurling 검사',
-  DISTRACTION_TEST: '견인 검사(distraction)',
-  ULNT_AS_INDICATED: '상지 신경역동학 검사(필요시)',
-  GAIT_TANDEM: '보행/일자보행 검사',
-  UE_LE_MOTOR_SENSORY: '상하지 근력·감각 검사',
-  HYPERREFLEXIA_SCREEN: '반사항진 검사',
-  HOFFMANN_TEST: 'Hoffmann 검사',
-  BABINSKI_CLONUS_AS_INDICATED: 'Babinski/clonus 검사(필요시)',
-  HAND_DEXTERITY: '손 정교운동 검사',
-  UPPER_CERVICAL_EXAM: '상부 경추 검사',
-  CFRT_CANDIDATE: '두개경부 굴곡회전 검사(CFRT) 후보',
-  SHOULDER_AROM_PROM_RESISTED: '어깨 관절가동범위·저항 검사',
-  CERVICAL_VS_SHOULDER_REPRODUCTION: '경추 vs 어깨 증상 재현 검사',
-  DEEP_NECK_FLEXOR_ENDURANCE: '심부 목굴곡근 조절·지구력 검사',
-  SCAPULAR_CONTROL_ENDURANCE: '견갑골 조절·지구력 검사',
-  FUNCTIONAL_POSTURE_TOLERANCE: '기능적 자세 내구성 검사',
-}
-
-/**
- * v0.2.1 §8 Suggested Exam Selector의 firing 조건을 그대로 옮긴다. §8이
- * 명시한 발화 조건(NB6에서 지적된 미기술을 구현 시점에 확정한 것) 그대로:
- * uncomplicated는 safety CLEAR일 때만(LBP_V1과 동일한 선택), distal
- * arm/neuro는 N07 원위부 또는 N09 concrete positive, cord concern은 N02
- * concrete positive 또는 N02A WORSENING, headache는 N10 YES,
- * shoulder-dominant는 SHOULDER_UPPER_ARM + N09 NONE, sustained posture는
- * N12 YES.
- */
-function suggestedNeckExamCodes(
-  flags: NeckComputedFields,
-  neck: DoctorPayload['responses']['modules']['neck'],
-): string[] {
-  const codes: string[] = []
-  if (flags.neck_safety_status === 'CLEAR') {
-    codes.push('CERVICAL_AROM', 'TARGET_FUNCTION_REPRODUCTION')
-  }
-
-  const extent = neck.distal_extent
-  const neuro = neck.arm_neuro_symptoms
-  const hasConcreteNeuro =
-    Array.isArray(neuro) && neuro.some((v) => v === 'PARESTHESIA' || v === 'NUMBNESS' || v === 'SUBJECTIVE_WEAKNESS')
-  const isNeuroNoneOnly = Array.isArray(neuro) && neuro.length === 1 && neuro[0] === 'NONE'
-
-  if (extent === 'FOREARM' || extent === 'HAND_FINGERS' || hasConcreteNeuro) {
-    for (const c of ['C5_T1_MOTOR', 'DERMATOMAL_SENSORY', 'REFLEX_SCREEN', 'SPURLING_TEST', 'DISTRACTION_TEST', 'ULNT_AS_INDICATED']) {
-      if (!codes.includes(c)) codes.push(c)
-    }
-  }
-
-  const cord = neck.cord_concern_screen
-  const hasCordConcrete =
-    Array.isArray(cord) &&
-    cord.some((v) =>
-      ['HAND_CLUMSINESS', 'GAIT_BALANCE_CHANGE', 'BILATERAL_OR_MULTI_LIMB_NEURO', 'RAPIDLY_WORSENING_LIMB_WEAKNESS', 'NEW_BLADDER_BOWEL_CHANGE'].includes(v),
-    )
-  if (hasCordConcrete || neck.cord_symptom_course === 'WORSENING') {
-    for (const c of ['GAIT_TANDEM', 'UE_LE_MOTOR_SENSORY', 'HYPERREFLEXIA_SCREEN', 'HOFFMANN_TEST', 'BABINSKI_CLONUS_AS_INDICATED', 'HAND_DEXTERITY']) {
-      if (!codes.includes(c)) codes.push(c)
-    }
-  }
-
-  if (neck.headache_present === 'YES') {
-    codes.push('UPPER_CERVICAL_EXAM', 'CFRT_CANDIDATE')
-    if (!codes.includes('CERVICAL_AROM')) codes.push('CERVICAL_AROM')
-  }
-
-  if (extent === 'SHOULDER_UPPER_ARM' && isNeuroNoneOnly) {
-    codes.push('SHOULDER_AROM_PROM_RESISTED', 'CERVICAL_VS_SHOULDER_REPRODUCTION')
-  }
-
-  if (neck.sustained_posture_aggravation === 'YES') {
-    codes.push('DEEP_NECK_FLEXOR_ENDURANCE', 'SCAPULAR_CONTROL_ENDURANCE', 'FUNCTIONAL_POSTURE_TOLERANCE')
-  }
-
-  return codes
-}
-
-/**
- * NECK_V1 안전 확인 패널. LbpSafetyPanel과 동일한 원칙 — 인터럽트하지
- * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
- * coreSpec.ts 참고).
- *
- * 게이트를 `payload.responses.safety_flags.neck !== null`로 판정한다
- * (SHOULDER_V1 통합 전에는 `primary_module_detail !== 'NECK'`였음).
- * SHOULDER_V1이 도입되면서 `primary_module_detail`이 같은 `neck_shoulder`
- * 환자군에서도 `'SHOULDER'`가 될 수 있게 됐다 — 그 리터럴로 계속
- * 게이트했다면 SHOULDER_DOMINANT로 태깅된 환자의 canonical NECK safety
- * (양성이었을 수도 있는)가 이 패널에서 안 보이는, 바로 그 F1이 막으려던
- * 종류의 결함이 생겼을 것이다. `safety_flags.neck`은 NS01 값과 무관하게
- * `PAIN_01 === 'neck_shoulder'`인 모든 환자에게 항상 계산되므로(coreSpec.ts
- * buildResponsePayload 참고), 이 게이트는 기존 NECK-only 시나리오에서는
- * 완전히 동일하게 동작하고(그때는 safety_flags.neck !== null ⟺
- * primary_module_detail === 'NECK'였음) SHOULDER_DOMINANT 환자에서만
- * 추가로 렌더링된다 — 순수 additive, 회귀 없음.
- *
- * LBP와 달리 disease safety 계산에 원장 입력(clinician judgment)이 필요
- * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
- * JudgmentPanel에 대응 필드를 추가하지 않았다.
- */
-function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.neck === null) return null
-
-  const state = toNeckStateFromDoctorPayload(payload.responses)
-  const flags = computeNeckFlags(state)
-  const locked = neckDiseaseSafetyLocked(flags)
-  const manipulationLocked = neckManipulationLocked(flags)
-  const examCodes = suggestedNeckExamCodes(flags, payload.responses.modules.neck)
-
-  return (
-    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.neck_safety_status.toLowerCase()}`}>
-      <span className="doctor__safetyGlance__title">안전 확인 — 목(NECK)</span>
-      <div className="doctor__safetyGlance__items">
-        <span className="doctor__safetyChip">
-          <strong>안전 확인</strong> {NECK_SAFETY_STATUS_LABEL[flags.neck_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>치료 안전</strong> {NECK_TREATMENT_SAFETY_LABEL[flags.neck_treatment_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신경근성 증상(방사통) 지지도</strong> {NECK_RADICULAR_LABEL[flags.radicular_support]}
-        </span>
-        {flags.neck_neuro_baseline_required && (
-          <span className="doctor__safetyChip">
-            <strong>신경학적 기저검사</strong> 필요
-          </span>
-        )}
-        {flags.cervicogenic_headache_pattern_consider && (
-          <span className="doctor__safetyChip">
-            <strong>경인성 두통 패턴</strong> 고려(진단 아님, CFRT 등 추가 검사 필요)
-          </span>
-        )}
-        {flags.movement_coordination_deficit_consider && (
-          <span className="doctor__safetyChip">
-            <strong>자세 조절 저하</strong> 고려(진단 아님)
-          </span>
-        )}
-      </div>
-      {locked && (
-        <p className="doctor__derivedNote">
-          안전 확인 전까지 일상적인 운동 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
-        </p>
-      )}
-      {manipulationLocked && (
-        <p className="doctor__derivedNote">
-          {locked
-            ? '안전 확인 전까지 경추 HVLA/추나 조작·견인 제안도 함께 잠깁니다.'
-            : '치료 안전(항응고제·골다공증·출혈질환·임신 등) 확인 전까지 경추 HVLA/추나 조작·견인·침습적 치료는 원장 승인 없이 확정하지 않습니다.'}
-        </p>
-      )}
-      {examCodes.length > 0 && (
-        <div className="doctor__lbpExam">
-          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
-          <ul>
-            {examCodes.map((c) => (
-              <li key={c}>{NECK_EXAM_LABELS[c] ?? c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {/* TODO(NECK_V2): exercise_recommender_contract(순위 매긴 운동 추천 + 원장 승인)는
-          LBP_V1과 동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현
-          (v0.2.1 §11, D6/checklist item 17-18과 동일한 판단). */}
-    </div>
-  )
-}
-
-const SHOULDER_SAFETY_STATUS_LABEL: Record<ShoulderComputedFields['shoulder_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-  URGENT_REVIEW: '긴급 확인 필요',
-}
-
-const SHOULDER_EXAM_LABELS: Record<string, string> = {
-  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
-  AROM_FLEXION_ABDUCTION_ER: '능동 관절가동범위 검사(굴곡/외전/외회전)',
-  PROM_ELEVATION_ER_IR: '수동 관절가동범위 검사(거상/외회전/내회전)',
-  CUFF_STRENGTH_ER_ABDUCTION_IR: '회전근개 근력 검사(외회전/외전-scaption/내회전)',
-  DEFORMITY_NEUROVASCULAR_FIRST: '변형·신경혈관 우선 확인',
-  ACTIVE_VS_PASSIVE_ELEVATION: '능동 vs 수동 거상 비교 검사',
-  LAG_DROP_ARM_ADJUNCT: 'Lag/drop-arm 검사(보조)',
-  APPREHENSION_RELOCATION_IF_SAFE: '불안정성 유발 검사(안전 확인 후에만)',
-  MOVEMENT_CONTROL_ASSESSMENT: '움직임 조절 평가',
-}
-
-/**
- * v0.1.1 §7 Suggested Exam Selector의 firing 조건을 구현 시점에 확정한다
- * (NECK_V1의 NB6와 동일한 성격 — 스펙이 "무엇을 검사할지" 목록은 주지만
- * 정확한 트리거는 남겨둠). "Global passive restriction"(frozen
- * shoulder/OA 감별)과 "focal AC/local"은 태블릿에서 계산 가능한 명확한
- * trigger가 v0.1.1에 정의되어 있지 않아 자동 제안하지 않는다 — 원장
- * 판단에 맡긴다(§6이 이미 이 두 항목을 "Tablet에서 묻지 않음"으로
- * 분류). "Distal neuro / neck-linked"는 NeckSafetyPanel이 canonical NECK
- * 데이터로 이미 자체 권장 검사를 제공하므로 여기서 중복하지 않는다.
- */
-function suggestedShoulderExamCodes(
-  flags: ShoulderComputedFields,
-  shoulder: DoctorPayload['responses']['modules']['shoulder'],
-): string[] {
-  const codes: string[] = []
-  if (flags.shoulder_safety_status === 'CLEAR') {
-    codes.push('TARGET_FUNCTION_REPRODUCTION', 'AROM_FLEXION_ABDUCTION_ER', 'PROM_ELEVATION_ER_IR', 'CUFF_STRENGTH_ER_ABDUCTION_IR')
-  }
-
-  const hadTrauma = shoulder.recent_trauma === 'YES'
-  const hardTraumaPositive =
-    Array.isArray(shoulder.trauma_emergency_screen) &&
-    shoulder.trauma_emergency_screen.some((v) => v === 'DEFORMITY_OR_STILL_OUT' || v === 'NEW_NEUROVASCULAR_CHANGE')
-  const acuteCuffConcern =
-    shoulder.acute_traumatic_cuff_concern === 'YES' || shoulder.acute_traumatic_cuff_concern === 'UNKNOWN'
-  if (hadTrauma && (hardTraumaPositive || acuteCuffConcern)) {
-    codes.push('DEFORMITY_NEUROVASCULAR_FIRST', 'ACTIVE_VS_PASSIVE_ELEVATION', 'CUFF_STRENGTH_ER_ABDUCTION_IR', 'LAG_DROP_ARM_ADJUNCT')
-  }
-
-  if (shoulder.instability_present === 'YES') {
-    codes.push('APPREHENSION_RELOCATION_IF_SAFE', 'MOVEMENT_CONTROL_ASSESSMENT')
-  }
-
-  return [...new Set(codes)]
-}
-
-/**
- * SHOULDER_V1 안전 확인 패널. NeckSafetyPanel과 동일한 원칙 — 인터럽트하지
- * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
- * coreSpec.ts 참고).
- *
- * 게이트는 `payload.responses.safety_flags.shoulder !== null`이다 —
- * `primary_module_detail === 'SHOULDER'`가 **아니다**. F1 invariant: SH01-05는
- * NS01 값과 무관하게 모든 `neck_shoulder` 환자에게 항상 노출/계산되므로,
- * 이 패널도 NS01이 `NECK_DOMINANT`/`SIMILAR`/`UNKNOWN`이어도 shoulder
- * safety가 양성이면 반드시 렌더링되어야 한다 — primary 태그로 게이트하면
- * F1이 막으려던 바로 그 결함(안전 정보가 태깅 때문에 숨겨짐)이 Doctor
- * View 레벨에서 재발한다.
- *
- * disease safety 계산에 원장 입력이 필요 없다(NECK과 동일) — 단
- * expedited_referral_consider의 세 번째 조건(원장 진찰에서 확인된 새
- * 회전근개 약화)만 JudgmentPanel의 `shoulder_objective_cuff_weakness`를
- * 읽어 반영한다(§11).
- */
-function ShoulderSafetyPanel({
-  payload,
-  shoulderObjectiveCuffWeakness,
-}: {
-  payload: DoctorPayload
-  shoulderObjectiveCuffWeakness: ClinicianJudgment['shoulder_objective_cuff_weakness']
-}) {
-  if (payload.responses.safety_flags.shoulder === null) return null
-
-  const state = toShoulderStateFromDoctorPayload(
-    payload.responses,
-    payload.flags.general_red,
-    shoulderObjectiveCuffWeakness,
-  )
-  const flags = computeShoulderFlags(state)
-  const locked = shoulderSafetyLocked(flags)
-  const examCodes = suggestedShoulderExamCodes(flags, payload.responses.modules.shoulder)
-
-  return (
-    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.shoulder_safety_status.toLowerCase()}`}>
-      <span className="doctor__safetyGlance__title">안전 확인 — 어깨(SHOULDER)</span>
-      <div className="doctor__safetyGlance__items">
-        <span className="doctor__safetyChip">
-          <strong>안전 확인</strong> {SHOULDER_SAFETY_STATUS_LABEL[flags.shoulder_safety_status]}
-        </span>
-        {flags.expedited_referral_consider && (
-          <span className="doctor__safetyChip">
-            <strong>신속 전문의 평가/의뢰 고려</strong> 급성 외상 후 회전근개 파열 가능성 평가 필요
-          </span>
-        )}
-        {flags.pmr_or_systemic_inflammatory_pattern_consider && (
-          <span className="doctor__safetyChip">
-            <strong>양측성 염증 패턴</strong> 고려(진단 아님, PMR 등 전신질환 감별 필요)
-          </span>
-        )}
-      </div>
-      {locked && (
-        <p className="doctor__derivedNote">
-          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
-        </p>
-      )}
-      {examCodes.length > 0 && (
-        <div className="doctor__lbpExam">
-          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
-          <ul>
-            {examCodes.map((c) => (
-              <li key={c}>{SHOULDER_EXAM_LABELS[c] ?? c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {/* TODO(SHOULDER_V2): exercise_recommender_contract는 LBP_V1/NECK_V1과
-          동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현(§15). */}
-    </div>
-  )
-}
-
-const KNEE_SAFETY_STATUS_LABEL: Record<KneeComputedFields['knee_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-  URGENT_REVIEW: '긴급 확인 필요',
-}
-
-const KNEE_EXAM_LABELS: Record<string, string> = {
-  GAIT_WEIGHT_BEARING: '보행/체중부하 검사',
-  KNEE_AROM_PROM_EXTENSION: '능동/수동 관절가동범위 검사(신전 포함)',
-  EFFUSION_ASSESSMENT: '삼출(effusion) 평가',
-  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
-  DISTAL_NEUROVASCULAR_EXAM: '원위부 신경혈관 검사',
-  DEFORMITY_BONY_TENDERNESS: '변형·골압통 확인',
-  FOCAL_BONY_TENDERNESS: '국소 골압통 확인',
-  RADIOGRAPH_INDICATION_REVIEW: '방사선 촬영 필요성 검토',
-  STRAIGHT_LEG_RAISE: '다리 들어올리기 검사(SLR)',
-  ACTIVE_EXTENSION_EXTENSOR_LAG: '능동 신전/extensor lag 검사',
-  EXTENSOR_MECHANISM_PALPATION: '신전기전 촉진',
-  TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM: '실제 기계적 차단 vs 통증성 ROM 제한 감별',
-  JOINT_LINE_EXAM: '관절선 압통 검사',
-  CLINICIAN_DVT_ASSESSMENT_WELLS: '원장 DVT 평가(Wells)',
-  HIP_GROIN_EXAM: '고관절/서혜부 검사',
-  WEIGHT_BEARING_ASSESSMENT: '체중부하 평가',
-}
-
-/**
- * Fable Integration Plan §5.4 Suggested Exam -- minimal mechanical mapping
- * only, CLOSED 문서가 직접 연결한 경우만 추천한다(SHOULDER의
- * suggestedShoulderExamCodes와 동일한 성격 -- 정확한 firing 조건은 구현
- * 시점에 확정). Meniscus/ligament/PF special test 목록은 raw pattern과
- * clinician judgment로 선택하는 영역이라 여기서 자동 제안하지 않는다(§6).
- */
-function suggestedKneeExamCodes(
-  flags: KneeComputedFields,
-  knee: DoctorPayload['responses']['modules']['knee'],
-): string[] {
-  const codes: string[] = []
-  if (flags.knee_safety_status === 'CLEAR') {
-    codes.push('GAIT_WEIGHT_BEARING', 'KNEE_AROM_PROM_EXTENSION', 'EFFUSION_ASSESSMENT', 'TARGET_FUNCTION_REPRODUCTION')
-  }
-
-  const deformityNvConcern =
-    (Array.isArray(knee.deformity_neurovascular_screen) &&
-      knee.deformity_neurovascular_screen.some(
-        (v) => v === 'GROSS_DEFORMITY_OR_STILL_OUT' || v === 'COLD_PALE_BLUE_FOOT' || v === 'MAJOR_NEW_DISTAL_NEURO_CHANGE',
-      )) ||
-    knee.spontaneously_reduced_dislocation_screen === 'YES'
-  if (deformityNvConcern) {
-    codes.push('DISTAL_NEUROVASCULAR_EXAM', 'DEFORMITY_BONY_TENDERNESS')
-  }
-
-  if (flags.fracture_imaging_consider) {
-    codes.push('FOCAL_BONY_TENDERNESS', 'RADIOGRAPH_INDICATION_REVIEW')
-  }
-
-  if (knee.extensor_mechanism_concern === 'YES' || knee.extensor_mechanism_concern === 'UNKNOWN') {
-    codes.push('STRAIGHT_LEG_RAISE', 'ACTIVE_EXTENSION_EXTENSOR_LAG', 'EXTENSOR_MECHANISM_PALPATION')
-  }
-
-  if (knee.true_locked_extension_block === 'YES' || knee.true_locked_extension_block === 'UNKNOWN') {
-    codes.push('TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM', 'JOINT_LINE_EXAM')
-  }
-
-  if (flags.dvt_assessment_required) {
-    codes.push('CLINICIAN_DVT_ASSESSMENT_WELLS')
-  }
-
-  const hipGroinConcern =
-    Array.isArray(knee.referred_non_knee_redflag_screen) &&
-    knee.referred_non_knee_redflag_screen.includes(KNEE08_HIP_FRACTURE_OPTION)
-  if (hipGroinConcern) {
-    codes.push('HIP_GROIN_EXAM', 'WEIGHT_BEARING_ASSESSMENT')
-  }
-
-  return [...new Set(codes)]
-}
-
-/**
- * KNEE_V1 안전 확인 패널. NeckSafetyPanel/ShoulderSafetyPanel과 동일한 원칙
- * -- 인터럽트하지 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도
- * 인터럽트, coreSpec.ts 참고). KNEE_V1은 다른 모듈 재사용이 없으므로 게이트는
- * 단순히 `safety_flags.knee !== null`이다 -- LBP/NECK/SHOULDER처럼
- * primary-tag와 safety-population이 어긋날 여지 자체가 없다(IS_PRIMARY_KNEE는
- * IS_PRIMARY_LBP/IS_PRIMARY_NECK와 완전히 독립).
- *
- * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
- * plan §3.2/§5.5) -- Wells/SLR/신경혈관 결과의 persistence schema는 아직
- * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
- */
-function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.knee === null) return null
-
-  const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
-  const flags = computeKneeFlags(state)
-  const locked = kneeSafetyLocked(flags)
-  const examCodes = suggestedKneeExamCodes(flags, payload.responses.modules.knee)
-
-  return (
-    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.knee_safety_status.toLowerCase()}`}>
-      <span className="doctor__safetyGlance__title">안전 확인 — 무릎(KNEE)</span>
-      <div className="doctor__safetyGlance__items">
-        <span className="doctor__safetyChip">
-          <strong>안전 확인</strong> {KNEE_SAFETY_STATUS_LABEL[flags.knee_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신속 의뢰 고려</strong> {flags.expedited_referral_consider ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>골절·영상 평가 고려</strong> {flags.fracture_imaging_consider ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>DVT 평가 필요</strong> {flags.dvt_assessment_required ? '예' : '아니요'}
-        </span>
-      </div>
-      {flags.dvt_assessment_required && (
-        <p className="doctor__derivedNote">
-          DVT 가능성을 확정한 것이 아니라 clinician-side 평가/Wells 확인이 필요합니다.
-        </p>
-      )}
-      {locked && (
-        <p className="doctor__derivedNote">
-          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
-        </p>
-      )}
-      {examCodes.length > 0 && (
-        <div className="doctor__lbpExam">
-          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
-          <ul>
-            {examCodes.map((c) => (
-              <li key={c}>{KNEE_EXAM_LABELS[c] ?? c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {/* TODO(KNEE_V2): exercise_recommender_contract는 LBP_V1/NECK_V1/SHOULDER_V1과
-          동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현(§13). */}
-    </div>
-  )
-}
-
-const ELBOW_SAFETY_STATUS_LABEL: Record<ElbowComputedFields['elbow_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-  URGENT_REVIEW: '긴급 확인 필요',
-}
-
-const ELBOW_EXAM_LABELS: Record<string, string> = {
-  ELBOW_AROM_PROM_FLEXION_EXTENSION: '능동/수동 관절가동범위 검사(굴곡-신전)',
-  FOREARM_PRONATION_SUPINATION: '전완 회내/회외 검사',
-  TARGET_FUNCTION_REPRODUCTION: '목표 기능 재현 검사',
-  GRIP_FUNCTIONAL_LOAD: '악력/기능적 부하 검사',
-  DEFORMITY_BONY_TENDERNESS: '변형·골압통 확인',
-  DISTAL_NEUROVASCULAR_EXAM: '원위부 신경혈관 검사',
-  RADIOGRAPH_INDICATION_REVIEW: '방사선 촬영 필요성 검토',
-  HOOK_TEST: 'Hook test',
-  RESISTED_SUPINATION_FLEXION: '저항 회외/굴곡 검사',
-  TENDON_CONTOUR_GAP: '건 윤곽/결손 촉진',
-  ACTIVE_EXTENSION_AGAINST_RESISTANCE: '저항 능동 신전 검사',
-  EXTENSOR_LAG_PALPABLE_DEFECT: 'Extensor lag/촉지 가능한 결손 확인',
-  TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM: '실제 기계적 차단 vs 통증성 ROM 제한 감별',
-  EFFUSION_ASSESSMENT: '삼출(effusion) 평가',
-  ULNAR_SENSORY_DISTRIBUTION: '척골신경 감각분포 검사',
-  INTRINSIC_HAND_STRENGTH_COORDINATION: '수내재근 근력/협조 검사',
-}
-
-/**
- * Fable Integration Plan §5.4 Suggested Exam -- minimal mechanical mapping
- * only, CLOSED 문서(§8)가 직접 연결한 경우만 추천한다(KNEE/SHOULDER의
- * suggested*ExamCodes와 동일한 성격 -- 정확한 트리거는 구현 시점에 확정해도
- * 되는 non-clinical 세부). ELBOW_11(심장 연관통)은 clinician physical exam
- * 항목이 아니라 응급 의뢰 신호이므로 여기 추천 목록에 넣지 않는다.
- */
-function suggestedElbowExamCodes(
-  flags: ElbowComputedFields,
-  elbow: DoctorPayload['responses']['modules']['elbow'],
-): string[] {
-  const codes: string[] = []
-  if (flags.elbow_safety_status === 'CLEAR') {
-    codes.push('ELBOW_AROM_PROM_FLEXION_EXTENSION', 'FOREARM_PRONATION_SUPINATION', 'TARGET_FUNCTION_REPRODUCTION', 'GRIP_FUNCTIONAL_LOAD')
-  }
-
-  const deformityNvConcern =
-    (Array.isArray(elbow.deformity_neurovascular_screen) &&
-      elbow.deformity_neurovascular_screen.some(
-        (v) => v === 'GROSS_DEFORMITY_OR_STILL_OUT' || v === 'COLD_PALE_BLUE_HAND' || v === 'MAJOR_NEW_DISTAL_NEURO_CHANGE',
-      )) ||
-    elbow.spontaneously_reduced_dislocation_screen === 'YES'
-  if (deformityNvConcern) {
-    codes.push('DEFORMITY_BONY_TENDERNESS', 'DISTAL_NEUROVASCULAR_EXAM')
-  }
-
-  if (flags.fracture_imaging_consider) {
-    codes.push('RADIOGRAPH_INDICATION_REVIEW')
-  }
-
-  if (elbow.distal_biceps_concern === 'YES' || elbow.distal_biceps_concern === 'UNKNOWN') {
-    codes.push('HOOK_TEST', 'RESISTED_SUPINATION_FLEXION', 'TENDON_CONTOUR_GAP')
-  }
-
-  if (elbow.distal_triceps_concern === 'YES' || elbow.distal_triceps_concern === 'UNKNOWN') {
-    codes.push('ACTIVE_EXTENSION_AGAINST_RESISTANCE', 'EXTENSOR_LAG_PALPABLE_DEFECT')
-  }
-
-  if (elbow.true_locked_rom_block === 'YES' || elbow.true_locked_rom_block === 'UNKNOWN') {
-    codes.push('TRUE_MECHANICAL_BLOCK_VS_PAIN_LIMITED_ROM', 'EFFUSION_ASSESSMENT')
-  }
-
-  if (flags.neuro_assessment_required) {
-    codes.push('ULNAR_SENSORY_DISTRIBUTION', 'INTRINSIC_HAND_STRENGTH_COORDINATION')
-  }
-
-  return [...new Set(codes)]
-}
-
-/**
- * ELBOW_V1 안전 확인 패널. KneeSafetyPanel과 동일한 원칙 -- 인터럽트하지
- * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
- * coreSpec.ts 참고). ELBOW_V1은 다른 모듈 재사용이 없으므로 게이트는 단순히
- * `safety_flags.elbow !== null`이다 -- WRIST_HAND-only 환자는 ELBOW_01-15를
- * 본 적이 없어 이 값이 항상 null이므로, 이 패널이 그 환자에게 렌더되지
- * 않는 것이 정확한 동작이다(F1류 게이트가 아니라 진짜 "이 모듈이 이
- * 환자에게 적용되지 않음"이다 -- LBP/NECK/SHOULDER의 primary-tag-vs-
- * population 어긋남 문제와는 다른 종류).
- *
- * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
- * plan §3.2/§5.6) -- Wells류의 persistence schema가 아직 CLOSED되지
- * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
- */
-function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.elbow === null) return null
-
-  const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
-  const flags = computeElbowFlags(state)
-  const locked = elbowSafetyLocked(flags)
-  const examCodes = suggestedElbowExamCodes(flags, payload.responses.modules.elbow)
-
-  return (
-    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.elbow_safety_status.toLowerCase()}`}>
-      <span className="doctor__safetyGlance__title">안전 확인 — 팔꿈치(ELBOW)</span>
-      <div className="doctor__safetyGlance__items">
-        <span className="doctor__safetyChip">
-          <strong>안전 확인</strong> {ELBOW_SAFETY_STATUS_LABEL[flags.elbow_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신속 의뢰 고려</strong> {flags.expedited_referral_consider ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>골절·영상 평가 고려</strong> {flags.fracture_imaging_consider ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신경학적 평가 필요</strong> {flags.neuro_assessment_required ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>감염 평가 필요</strong> {flags.infection_assessment_required ? '예' : '아니요'}
-        </span>
-      </div>
-      {locked && (
-        <p className="doctor__derivedNote">
-          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
-        </p>
-      )}
-      {examCodes.length > 0 && (
-        <div className="doctor__lbpExam">
-          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
-          <ul>
-            {examCodes.map((c) => (
-              <li key={c}>{ELBOW_EXAM_LABELS[c] ?? c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {/* TODO(ELBOW_V2): exercise_recommender_contract는 LBP_V1/NECK_V1/SHOULDER_V1/KNEE_V1과
-          동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현(§12). */}
-    </div>
-  )
-}
-
-const WRIST_HAND_SAFETY_STATUS_LABEL: Record<WristHandComputedFields['wrist_hand_safety_status'], string> = {
-  CLEAR: '안전',
-  REVIEW_REQUIRED: '확인 필요',
-  URGENT_REVIEW: '긴급 확인 필요',
-}
-
-const WRIST_HAND_EXAM_LABELS: Record<string, string> = {
-  WRIST_HAND_AROM_PROM: '손목/손가락 능동·수동 관절가동범위 검사',
-  GRIP_PINCH_FUNCTIONAL: '악력/집는 힘 기능 평가',
-  DEFORMITY_BONY_TENDERNESS: '변형·골압통 확인',
-  DISTAL_NEUROVASCULAR_EXAM: '원위부 신경혈관 검사',
-  RADIOGRAPH_INDICATION_REVIEW: '방사선 촬영 필요성 검토',
-  SCAPHOID_SNUFFBOX_TENDERNESS: '주상골/스너프박스 압통 평가',
-  FLEXOR_EXTENSOR_TENDON_INTEGRITY: '굴곡/신전건 기능 검사',
-  WOUND_ERYTHEMA_SPREAD_ASSESSMENT: '상처/발적 확산 평가',
-  FLEXOR_SHEATH_PALPATION: 'Flexor sheath(굴건막) 촉진',
-  MEDIAN_ULNAR_SENSORY_DISTRIBUTION: '정중/척골신경 감각분포 검사',
-  THENAR_INTRINSIC_STRENGTH: '무지대립근/수내재근 근력 검사',
-}
-
-const WRIST_HAND_XRAY_CONTEXT_LABEL: Record<string, string> = {
-  NOT_DONE: '아직 X-ray를 찍지 않음(환자 보고)',
-  DONE_TOLD_NORMAL: 'X-ray 촬영, 정상이라고 들었음(환자 보고)',
-  DONE_TOLD_ABNORMAL: 'X-ray 촬영, 이상이 있다고 들었음(환자 보고)',
-  DONE_RESULT_UNKNOWN: 'X-ray 촬영, 결과를 모름(환자 보고)',
-  UNKNOWN: 'X-ray 여부 잘 모르겠다고 답변(환자 보고)',
-}
-
-/**
- * Fable Integration Plan §11 Suggested Exam -- minimal mechanical mapping
- * only, CLOSED 문서가 직접 연결한 경우만 추천한다(ELBOW/KNEE/SHOULDER의
- * suggested*ExamCodes와 동일한 성격 -- 정확한 트리거는 구현 시점에 확정해도
- * 되는 non-clinical 세부).
- */
-function suggestedWristHandExamCodes(
-  flags: WristHandComputedFields,
-  wristHand: DoctorPayload['responses']['modules']['wrist_hand'],
-): string[] {
-  const codes: string[] = []
-  if (flags.wrist_hand_safety_status === 'CLEAR') {
-    codes.push('WRIST_HAND_AROM_PROM', 'GRIP_PINCH_FUNCTIONAL')
-  }
-
-  const deformityNvConcern =
-    Array.isArray(wristHand.deformity_neurovascular_open_injury_screen) &&
-    wristHand.deformity_neurovascular_open_injury_screen.some(
-      (v) =>
-        v === 'GROSS_DEFORMITY_OR_STILL_OUT' ||
-        v === 'COLD_PALE_BLUE_DIGITS' ||
-        v === 'MAJOR_NEW_DISTAL_NEURO_CHANGE' ||
-        v === 'UNCONTROLLED_HEAVY_BLEEDING' ||
-        v === 'SEVERE_OPEN_WOUND_WITH_DEEP_EXPOSURE',
-    )
-  if (deformityNvConcern) {
-    codes.push('DEFORMITY_BONY_TENDERNESS', 'DISTAL_NEUROVASCULAR_EXAM')
-  }
-
-  if (flags.fracture_imaging_consider) {
-    codes.push('RADIOGRAPH_INDICATION_REVIEW', 'SCAPHOID_SNUFFBOX_TENDERNESS')
-  }
-
-  if (flags.tendon_injury_assessment_required) {
-    codes.push('FLEXOR_EXTENSOR_TENDON_INTEGRITY')
-  }
-
-  if (flags.infection_assessment_required) {
-    codes.push('WOUND_ERYTHEMA_SPREAD_ASSESSMENT', 'FLEXOR_SHEATH_PALPATION')
-  }
-
-  if (flags.neuro_assessment_required) {
-    codes.push('MEDIAN_ULNAR_SENSORY_DISTRIBUTION', 'THENAR_INTRINSIC_STRENGTH')
-  }
-
-  return [...new Set(codes)]
-}
-
-/**
- * WRIST_HAND_V1 안전 확인 패널. ElbowSafetyPanel과 동일한 원칙 -- 인터럽트하지
- * 않는다(URGENT_REVIEW 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트,
- * coreSpec.ts 참고). 게이트는 `safety_flags.wrist_hand !== null`이다 --
- * ELBOW-only 환자는 WH_01-14를 본 적이 없어 이 값이 항상 null이므로, 이
- * 패널이 그 환자에게 렌더되지 않는 것이 정확한 동작이다. FOREARM 환자는
- * ElbowSafetyPanel과 이 패널이 둘 다 렌더된다(의도된 overlap, Fable plan
- * §11).
- *
- * `region_discriminator`(ELBOW_00)는 `modules.elbow`에서만 읽는다 --
- * `modules.wrist_hand`에 중복 저장하지 않는다(같은 공유 router 값이므로).
- *
- * WH_04A(X-ray 이력)는 참고 정보로만 표시하고, 안전 판정에 영향을 주지
- * 않는다는 문구를 항상 함께 노출한다(Tablet §3/Fable plan §9 -- adapter가
- * 이 필드를 아예 읽지 않으므로 이 UI 문구는 실제 계산과 구조적으로
- * 일치한다).
- *
- * stable sensory-only(WH_08 concrete + WH_08A=[NONE])는 별도 UI 없이
- * neuro_assessment_required/expedited_referral_consider가 false인 정상
- * 결과로만 나타난다.
- *
- * 이번 iteration에서는 clinician-entered objective field가 필요 없다
- * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
- */
-function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.wrist_hand === null) return null
-
-  const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)
-  const flags = computeWristHandFlags(state)
-  const locked = wristHandSafetyLocked(flags)
-  const wristHand = payload.responses.modules.wrist_hand
-  const examCodes = suggestedWristHandExamCodes(flags, wristHand)
-  const xrayContext = typeof wristHand.prior_xray_context === 'string' ? wristHand.prior_xray_context : null
-
-  return (
-    <div className={`doctor__lbpSafety doctor__lbpSafety--${flags.wrist_hand_safety_status.toLowerCase()}`}>
-      <span className="doctor__safetyGlance__title">안전 확인 — 손목/손(WRIST/HAND)</span>
-      <div className="doctor__safetyGlance__items">
-        <span className="doctor__safetyChip">
-          <strong>안전 확인</strong> {WRIST_HAND_SAFETY_STATUS_LABEL[flags.wrist_hand_safety_status]}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신속 의뢰 고려</strong> {flags.expedited_referral_consider ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>골절·영상 평가 고려</strong> {flags.fracture_imaging_consider ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>힘줄 손상 평가 필요</strong> {flags.tendon_injury_assessment_required ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>감염 평가 필요</strong> {flags.infection_assessment_required ? '예' : '아니요'}
-        </span>
-        <span className="doctor__safetyChip">
-          <strong>신경학적 평가 필요</strong> {flags.neuro_assessment_required ? '예' : '아니요'}
-        </span>
-      </div>
-      {locked && (
-        <p className="doctor__derivedNote">
-          안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다 — 아래 추가 권장 검사를 우선하세요.
-        </p>
-      )}
-      {xrayContext && (
-        <p className="doctor__derivedNote">
-          {WRIST_HAND_XRAY_CONTEXT_LABEL[xrayContext] ?? xrayContext} — 안전 판정에는 영향을 주지 않는 환자 보고 정보입니다.
-        </p>
-      )}
-      {examCodes.length > 0 && (
-        <div className="doctor__lbpExam">
-          <span className="doctor__safetyGlance__title">추가 권장 검사</span>
-          <ul>
-            {examCodes.map((c) => (
-              <li key={c}>{WRIST_HAND_EXAM_LABELS[c] ?? c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {/* TODO(WRIST_HAND_V2): exercise_recommender_contract는 LBP_V1/NECK_V1/SHOULDER_V1/KNEE_V1/
-          ELBOW_V1과 동일한 이유로 v1 범위에서 제외 -- fail-closed lock만 구현. */}
-    </div>
   )
 }
 
@@ -1857,6 +822,26 @@ function relativeTime(iso: string): string {
 }
 
 /**
+ * v0.2 §8.2 — 목록 정렬: URGENT 최상단 → 신규 → 최신순, 완료는 별도
+ * 접힘 그룹. 서버 응답(created_at desc)을 그대로 신뢰하지 않고 여기서
+ * 다시 명시적으로 정렬한다 — 정렬 규칙이 이 함수 하나에만 존재해야
+ * 다음에 필드가 늘어도 규칙이 흩어지지 않는다.
+ */
+function sortSubmissionsForList(
+  submissions: SubmissionSummary[],
+): { active: SubmissionSummary[]; completed: SubmissionSummary[] } {
+  const active = submissions.filter((s) => s.status !== 'completed')
+  const completed = submissions.filter((s) => s.status === 'completed')
+  const rank = (s: SubmissionSummary) => (s.overview === 'URGENT' ? 0 : s.status === 'new' ? 1 : 2)
+  const sorted = [...active].sort((a, b) => {
+    const r = rank(a) - rank(b)
+    if (r !== 0) return r
+    return a.created_at < b.created_at ? 1 : -1
+  })
+  return { active: sorted, completed }
+}
+
+/**
  * 원장/직원용 진료 전 요약 화면. 진단·치료 추천을 하지 않는다 — 환자가 답한
  * 내용과, 라벨을 명확히 붙인 파생(계산된) 사실만 정리해서 보여준다.
  *
@@ -2127,6 +1112,20 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
   const showingRecord = mode === 'fixtures' || Boolean(selectedRecord)
 
+  // v0.2 §11.1 — 안전 상태 단일 출처. 헤더 pill·URGENT 배너·통합 안전
+  // 리스트가 전부 이 selector 하나만 읽는다(invariant). 원장 진찰 입력
+  // (lbp_objective_motor_deficit/shoulder_objective_cuff_weakness)은 서버
+  // 모드에서만 존재한다 — fixtures 미리보기는 "아직 진찰 전"으로 취급한다.
+  const clinicianInputs: SafetyClinicianInputs = {
+    lbpObjectiveMotorDeficit: mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined,
+    shoulderObjectiveCuffWeakness:
+      mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined,
+  }
+  const safetyOverview = showingRecord ? deriveSafetyOverview(payload, clinicianInputs) : undefined
+  const urgentModuleRows = showingRecord
+    ? computeSafetyModuleRows(payload, clinicianInputs).filter((row) => row.status === 'URGENT_REVIEW')
+    : []
+
   return (
     <div className="doctor">
       {readyToast && (
@@ -2222,7 +1221,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </details>
       </header>
 
-      {showingRecord && <PatientHeader payload={payload} />}
+      {showingRecord && (
+        <PatientHeader payload={payload} overview={safetyOverview} responseConsistencyReview={flags.response_consistency_review} />
+      )}
 
       <div className="doctor__pageSection">
         {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
@@ -2262,28 +1263,62 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             ) : submissions.length === 0 ? (
               <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
             ) : (
-              <div className="doctor__grid">
-                {submissions.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
-                    onClick={() => setSelectedId(s.id)}
-                  >
-                    <span className="doctorField__label">
-                      {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
-                      {unreadReadyIds.has(s.id) && (
-                        <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
-                      )}
-                      {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
-                    </span>
-                    <span className="doctorField__value">
-                      {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
-                      {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              (() => {
+                const { active, completed } = sortSubmissionsForList(submissions)
+                return (
+                  <>
+                    <div className="doctor__grid">
+                      {active.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
+                          onClick={() => setSelectedId(s.id)}
+                        >
+                          <span className="doctorField__label">
+                            {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
+                            {unreadReadyIds.has(s.id) && (
+                              <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
+                            )}
+                            {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
+                            {s.overview === 'URGENT' && (
+                              <span className="doctor__listOverview doctor__listOverview--urgent">긴급 확인</span>
+                            )}
+                            {s.overview === 'REVIEW' && (
+                              <span className="doctor__listOverview doctor__listOverview--review">확인 필요</span>
+                            )}
+                          </span>
+                          <span className="doctorField__value">
+                            {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
+                            {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {completed.length > 0 && (
+                      <details className="doctor__secDetails">
+                        <summary>오늘 완료 {completed.length}건</summary>
+                        <div className="doctor__grid">
+                          {completed.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className="doctorField doctor__row"
+                              onClick={() => setSelectedId(s.id)}
+                            >
+                              <span className="doctorField__label">{s.patient_label}</span>
+                              <span className="doctorField__value">
+                                {statusLabel(s.status)} · {relativeTime(s.created_at)} (
+                                {new Date(s.created_at).toLocaleString('ko-KR')})
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </>
+                )
+              })()
             )}
           </section>
         )}
@@ -2294,7 +1329,15 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       <div className="doctor__mainCol">
       <TenSecondSummary payload={payload} />
 
-      {flags.requires_staff_check && (
+      {/*
+        v0.2 §11.1/Opus B1: URGENT 배너는 이제 `deriveSafetyOverview`
+        하나만 읽는다 — 기존 `flags.requires_staff_check`(general/GI/Bowel
+        red flag 전용) 배너 내용은 그대로 유지하되, 모듈별 URGENT_REVIEW
+        (예: 무릎 패혈성 관절염 KNEE_07)도 이 밴드 안으로 통합한다. 이전에는
+        모듈 URGENT가 목록/헤더 어디에도 반영되지 않아 "안전 확인됨"으로
+        잘못 보일 수 있었다(B1 시나리오).
+      */}
+      {safetyOverview === 'URGENT' && (
         <div className="doctor__banner doctor__banner--danger">
           <strong>안전 확인 필요</strong>
           <p>
@@ -2317,36 +1360,14 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                 {answerLabel('BOWEL_03', r.modules.bowel.blood_or_black_stool)}&rdquo;
               </li>
             )}
+            {urgentModuleRows.map((row) => (
+              <li key={row.key}>{row.label}: 긴급 확인 필요</li>
+            ))}
           </ul>
         </div>
       )}
 
-      <SafetyGlance r={r} flags={flags} />
-
-      <LbpSafetyPanel
-        payload={payload}
-        lbpObjectiveMotorDeficit={
-          mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
-        }
-      />
-
-      <HipSafetyPanel payload={payload} />
-
-      <NeckSafetyPanel payload={payload} />
-
-      <ShoulderSafetyPanel
-        payload={payload}
-        shoulderObjectiveCuffWeakness={
-          mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
-        }
-      />
-
-      <KneeSafetyPanel payload={payload} />
-
-      <ElbowSafetyPanel payload={payload} />
-      <WristHandSafetyPanel payload={payload} />
-      <AnkleFootSafetyPanel payload={payload} />
-      <TmjSafetyPanel payload={payload} />
+      <SafetySection payload={payload} clinicianInputs={clinicianInputs} />
 
       {/*
         Tablet UX v2.2 §33: 현재 questionnaire mode를 작게 표시한다 --
@@ -2756,7 +1777,11 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           myungri_pending_approval: saju.policy.pending_approval,
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
-        showLbpExam={routing.primary_module_detail === 'LBP'}
+        // v0.2 §11.2/Opus B3: primary_module_detail 게이트는 fail-open
+        // 결함이었다(주호소가 비-통증이고 "추가 상세상담=허리"인 환자는
+        // safety_flags.lbp가 계산되는데도 이 컨트롤이 렌더되지 않았다).
+        // SHOULDER는 이미 같은 패턴으로 safety_flags 기준이었다.
+        showLbpExam={payload.responses.safety_flags.lbp !== null}
         showShoulderExam={payload.responses.safety_flags.shoulder !== null}
         onSave={
           mode === 'server' && selectedId

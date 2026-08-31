@@ -30,6 +30,7 @@ tests/.doctor-fixtures-bundle.mjs
 tests/.doctor-labels-bundle.mjs
 tests/.doctor-judgment-bundle.mjs
 tests/.doctor-sectionorder-bundle.mjs
+tests/.doctor-safety-overview-bundle.mjs
 tests/.doctor-view-bundle.cjs
 
 # esbuild bundles used by tests/patient-flow.spec.mjs (regenerated, not source)

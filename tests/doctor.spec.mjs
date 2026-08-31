@@ -15,6 +15,7 @@ import {
   finalizeJudgment,
 } from './.doctor-judgment-bundle.mjs'
 import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
+import { deriveSafetyOverview } from './.doctor-safety-overview-bundle.mjs'
 import { DoctorView } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -327,9 +328,11 @@ for (const f of DOCTOR_FIXTURES) {
   assert('KNEE fixture: renders 안전 확인 — 무릎 panel title', html.includes('안전 확인 — 무릎'))
   assert('KNEE fixture: shows 확인 필요 status', html.includes('확인 필요'))
   assert('KNEE fixture: renders 골절·영상 평가 고려 chip with 예', /골절·영상 평가 고려<\/strong> (?:<!-- -->)?예/.test(html))
+  // Doctor View 재설계 v0.2 §11.3: 계산 플래그는 true인 것만 렌더한다 —
+  // K5 de-escalation의 증거는 이제 "아니요" 텍스트가 아니라 칩 자체의 부재다.
   assert(
-    'KNEE fixture: renders DVT 평가 필요 chip with 아니요 (K5 de-escalation)',
-    /DVT 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html),
+    'KNEE fixture: 계산 플래그가 true만 렌더 — DVT 평가 필요 chip은 아예 렌더되지 않음 (K5 de-escalation)',
+    !html.includes('DVT 평가 필요'),
   )
   assert(
     'KNEE fixture: disease-safety lock note renders',
@@ -392,7 +395,8 @@ for (const f of DOCTOR_FIXTURES) {
   assert('ELBOW fixture: renders 안전 확인 — 팔꿈치 panel title', html.includes('안전 확인 — 팔꿈치'))
   assert('ELBOW fixture: shows 확인 필요 status', html.includes('확인 필요'))
   assert('ELBOW fixture: renders 신속 의뢰 고려 chip with 예', /신속 의뢰 고려<\/strong> (?:<!-- -->)?예/.test(html))
-  assert('ELBOW fixture: renders 신경학적 평가 필요 chip with 아니요 (E5 de-escalation)', /신경학적 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html))
+  // v0.2 §11.3: true만 렌더 — E5 de-escalation은 이제 칩 부재로 증명한다.
+  assert('ELBOW fixture: 계산 플래그가 true만 렌더 — 신경학적 평가 필요 chip 부재 (E5 de-escalation)', !html.includes('신경학적 평가 필요'))
   assert(
     'ELBOW fixture: disease-safety lock note renders',
     html.includes('안전 확인 전까지 일상적인 운동/도수치료 추천은 잠깁니다'),
@@ -447,7 +451,8 @@ for (const f of DOCTOR_FIXTURES) {
   const html = renderDoctorView('손목 통증 주호소 (WRIST_HAND, 안정형 감각이상)')
   assert('WRIST_HAND fixture: renders 안전 확인 — 손목/손 panel title', html.includes('안전 확인 — 손목/손'))
   assert('WRIST_HAND fixture: status chip shows CLEAR label (안전)', /<strong>안전 확인<\/strong> (?:<!-- -->)?안전(?:<!-- -->)?<\/span>/.test(html))
-  assert('WRIST_HAND fixture: renders 신경학적 평가 필요 chip with 아니요 (stable sensory-only)', /신경학적 평가 필요<\/strong> (?:<!-- -->)?아니요/.test(html))
+  // v0.2 §11.3: true만 렌더 — E5-analog de-escalation은 이제 칩 부재로 증명한다.
+  assert('WRIST_HAND fixture: 계산 플래그가 true만 렌더 — 신경학적 평가 필요 chip 부재 (stable sensory-only)', !html.includes('신경학적 평가 필요'))
   assert('WRIST_HAND fixture: does NOT render 안전 확인 — 팔꿈치 panel (ELBOW safety is null)', !html.includes('안전 확인 — 팔꿈치'))
   assert('WRIST_HAND fixture: PAIN_01 question text renders', html.includes('가장 불편한 한 곳을 눌러주세요'))
   assert('WRIST_HAND fixture: WH_08 question text renders', html.includes('손가락 저림이나 감각이상이 있다면'))
@@ -1233,5 +1238,96 @@ function detailsRange(html, classMarker) {
   assert('SSR (no localStorage): workstation badge shows "설정 필요", not a stale id', html.includes('워크스테이션 설정 필요'))
   assert('SSR (no localStorage): workstation setup banner renders (localStorage absence handled safely, no throw)', html.includes('워크스테이션 설정 필요'))
 }
+
+/* =======================================================================
+ * P2 — Doctor View 재설계 v0.2 §11.1: deriveSafetyOverview 단일 출처
+ * node 테스트. 각 모듈 URGENT fixture -> 'URGENT', REVIEW/locked ->
+ * 'REVIEW', 응답 모순 -> 'REVIEW'.
+ * ===================================================================== */
+
+// 15a. 모듈 URGENT(requires_staff_check와 독립) -> overview === 'URGENT'
+//      (Opus B1 시나리오: 무릎 패혈성 관절염류 — 여기서는 실제로 존재하는
+//      HIP/TMJ URGENT fixture로 재현한다. 둘 다 requires_staff_check는
+//      false다 — 모듈 URGENT는 StaffCheck 인터스티셜로만 처리되고
+//      persisted 플래그에는 반영되지 않기 때문이다).
+{
+  const hipUrgent = byName('고관절 통증 주호소 (HIP, 관절 변형 응급)')
+  assert('B1 시나리오: HIP URGENT fixture는 requires_staff_check가 false다', hipUrgent.payload.flags.requires_staff_check === false)
+  assert(
+    "deriveSafetyOverview: 모듈 URGENT(HIP)만 있어도 overview === 'URGENT' (requires_staff_check와 무관, B1 fix)",
+    deriveSafetyOverview(hipUrgent.payload) === 'URGENT',
+  )
+
+  const tmjUrgent = byName('턱관절 통증 주호소 (TMJ, 턱 고정 비정상 위치 응급)')
+  assert('TMJ URGENT fixture는 requires_staff_check가 false다', tmjUrgent.payload.flags.requires_staff_check === false)
+  assert("deriveSafetyOverview: 모듈 URGENT(TMJ)만 있어도 overview === 'URGENT'", deriveSafetyOverview(tmjUrgent.payload) === 'URGENT')
+
+  const coreUrgent = byName('고관절 통증 주호소 (HIP, Core 전신 응급 동시)')
+  assert(
+    "deriveSafetyOverview: requires_staff_check === true 단독으로도 overview === 'URGENT'",
+    deriveSafetyOverview(coreUrgent.payload) === 'URGENT',
+  )
+}
+
+// 15b. 모듈 REVIEW_REQUIRED -> overview === 'REVIEW'
+{
+  const lbpReview = byName('허리 통증 주호소 (LBP, 확인 필요)')
+  assert("deriveSafetyOverview: 모듈 REVIEW_REQUIRED(LBP) -> overview === 'REVIEW'", deriveSafetyOverview(lbpReview.payload) === 'REVIEW')
+}
+
+// 15c. CLEAR only -> overview === 'CLEAR' (모든 안전 모듈이 CLEAR고 다른
+//      REVIEW/URGENT 사유가 없는 fixture).
+{
+  const clearFixture = byName('턱관절 통증 주호소 (TMJ, 안전 확인 완료)')
+  assert(
+    "deriveSafetyOverview: 안전 사유가 전혀 없으면 overview === 'CLEAR'",
+    deriveSafetyOverview(clearFixture.payload) === 'CLEAR',
+  )
+}
+
+// 15d. 응답 모순(response_consistency_review) -> overview === 'REVIEW'.
+//      현재 fixtures.ts에 이 플래그를 실제로 세팅하는 fixture가 없으므로
+//      (MS_01/임신·폐경 응답을 의도적으로 어긋나게 만들어야 함), selector가
+//      순수 함수라는 점을 이용해 실제 fixture 하나를 얕은 복제 후 그 필드
+//      하나만 뒤집어 계약(§11.1 "|| flags.response_consistency_review")을
+//      직접 검증한다 — 다른 필드는 전부 실제 production payload 그대로다.
+{
+  const base = byName('수면 주호소 + 동반 소화/통증')
+  assert('기저 fixture는 response_consistency_review가 false다', base.payload.flags.response_consistency_review === false)
+  assert("기저 fixture 자체는 overview === 'CLEAR'", deriveSafetyOverview(base.payload) === 'CLEAR')
+  const withInconsistency = { ...base.payload, flags: { ...base.payload.flags, response_consistency_review: true } }
+  assert(
+    "deriveSafetyOverview: flags.response_consistency_review === true -> overview === 'REVIEW'",
+    deriveSafetyOverview(withInconsistency) === 'REVIEW',
+  )
+}
+
+/* =======================================================================
+ * P2 — 안전 우선 순서(§8.4 방식): 렌더된 HTML 문자열 인덱스로 "안전 블록이
+ * 명리보다 항상 앞선다"를 검증한다(13a의 §8.4 등가). DOM 순서 ≠ 시각 순서인
+ * 2컬럼 레이아웃에서도 성립해야 하는 불변식(invariant 2)이다.
+ * ===================================================================== */
+
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const safetySectionIdx = html.indexOf('doctor__safetySection')
+  const myungriIdx = html.indexOf('명리 검토')
+  assert('§8.4: 통합 안전 확인 블록 마크업이 명리 검토보다 앞선다', safetySectionIdx !== -1 && myungriIdx !== -1 && safetySectionIdx < myungriIdx)
+}
+
+{
+  // 헤더 안전 pill은 항상 문서 최상단 밴드(patientHeader) 안에 있다 —
+  // 좌측 첫 안전 블록(doctor__safetySection)보다도 앞서 나온다.
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const pillIdx = html.indexOf('doctor__safetyPill')
+  const safetySectionIdx = html.indexOf('doctor__safetySection')
+  assert('§8.4: 헤더 안전 pill이 좌측 통합 안전 블록보다 먼저 나온다', pillIdx !== -1 && safetySectionIdx !== -1 && pillIdx < safetySectionIdx)
+  assert('§8.4: 헤더 안전 pill이 doctor__patientHeader 안에 있다', html.indexOf('doctor__patientHeader') < pillIdx)
+}
+
+/* =======================================================================
+ * P2 — 목록 화면(§8.2) overview 배지 어서션은 tests/server.spec.mjs로
+ * 옮긴다(서버 목록 응답이 overview 필드의 유일한 출처이므로).
+ * ===================================================================== */
 
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

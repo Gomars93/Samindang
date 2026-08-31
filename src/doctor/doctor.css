@@ -231,6 +231,135 @@
   padding: 20px 32px 0;
 }
 
+/* -------------------------------------------------------------------
+ * v0.2 §9.4/§11.3 — 3-status 시각 인코딩 (신규 구현, Opus B2). 색 단독
+ * 표현 금지: 색 + 아이콘(⚠/⚠/✓/🔒) + 텍스트 3중 인코딩(invariant 12).
+ * ----------------------------------------------------------------- */
+
+.doctor__safetyRow {
+  display: block;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  padding: 10px 14px;
+  border-left: 4px solid transparent;
+}
+
+.doctor__safetyRow--urgent_review {
+  background: var(--doctor-red-soft);
+  border-left-color: var(--doctor-red);
+}
+.doctor__safetyRow--urgent_review .doctor__safetyRow__statusText {
+  color: var(--doctor-red);
+  font-weight: 700;
+}
+
+.doctor__safetyRow--review_required {
+  background: var(--doctor-amber-soft);
+  border-left-color: var(--doctor-amber);
+}
+.doctor__safetyRow--review_required .doctor__safetyRow__statusText {
+  color: var(--doctor-amber);
+  font-weight: 700;
+}
+
+.doctor__safetyRow--clear {
+  background: var(--doctor-mint);
+}
+.doctor__safetyRow--clear .doctor__safetyRow__statusText {
+  color: var(--doctor-green);
+  font-weight: 400;
+}
+
+.doctor__safetyRow__summary {
+  cursor: pointer;
+  list-style: none;
+}
+.doctor__safetyRow__summary::-webkit-details-marker {
+  display: none;
+}
+
+.doctor__safetyRow__summaryLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.doctor__safetyRow__icon {
+  font-size: 14px;
+}
+
+.doctor__safetyRow__lock {
+  display: block;
+  flex-basis: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--doctor-text);
+}
+
+.doctor__safetyRow__body {
+  margin-top: 10px;
+}
+
+.doctor__safetyRow__disclaimer {
+  margin: 10px 0 0;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--doctor-text-muted);
+}
+
+.doctor__safetyGeneral {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.doctor__safetyChip--amber {
+  border-color: var(--doctor-amber);
+  background: var(--doctor-amber-soft);
+}
+
+/* 헤더 안전 종합 pill(§9.4) — 동일한 3중 인코딩. */
+.doctor__safetyPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.doctor__safetyPill--urgent_review {
+  background: var(--doctor-red-soft);
+  color: var(--doctor-red);
+}
+.doctor__safetyPill--review_required {
+  background: var(--doctor-amber-soft);
+  color: var(--doctor-amber);
+}
+.doctor__safetyPill--clear {
+  background: var(--doctor-mint);
+  color: var(--doctor-green);
+}
+
+/* 목록 화면 행 배지 — §8.2. */
+.doctor__listOverview {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.doctor__listOverview--urgent {
+  background: var(--doctor-red-soft);
+  color: var(--doctor-red);
+}
+.doctor__listOverview--review {
+  background: var(--doctor-amber-soft);
+  color: var(--doctor-amber);
+}
+
 .doctor__rail {
   min-width: 0;
   display: flex;

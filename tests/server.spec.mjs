@@ -115,6 +115,90 @@ async function main() {
       assert('new submission appears in list', !!found)
       assert('summary has no responses object', found.responses === undefined)
       assert('summary has patient_label', typeof found.patient_label === 'string')
+      // Doctor View 재설계 v0.2 §8.2: 목록 배지의 유일한 출처인 overview
+      // 필드. validPayload()는 safety_flags를 아예 포함하지 않으므로(하위
+      // 호환 최소 payload) — 없는 shape을 임의로 CLEAR로 단정하지 않고
+      // null로 보류한다(server/store.js deriveListOverview).
+      assert('minimal payload (no safety_flags): overview stays null (보류, 임의 발명 금지)', found.overview === null)
+    }
+
+    /* ---------------- overview 파생 (§8.2) — safety_flags 상태 문자열 + requires_staff_check만 읽는다 ---------------- */
+    {
+      const urgentModulePayload = validPayload({
+        session_id: 'sess-overview-urgent-module',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '1234' },
+          safety_flags: { knee: { knee_safety_status: 'URGENT_REVIEW' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(urgentModulePayload),
+      })
+      const { id: urgentId } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.id === urgentId)
+      assert(
+        'B1 시나리오: requires_staff_check=false + 모듈 URGENT_REVIEW 하나만 있어도 목록 overview는 URGENT다(새 임상 계산 아님, 저장된 상태 문자열만 읽음)',
+        found?.overview === 'URGENT',
+      )
+    }
+
+    {
+      const staffCheckPayload = validPayload({
+        session_id: 'sess-overview-staff-check',
+        flags: { requires_staff_check: true },
+      })
+      await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(staffCheckPayload),
+      })
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.requires_staff_check === true)
+      assert('requires_staff_check=true -> 목록 overview는 URGENT', found?.overview === 'URGENT')
+    }
+
+    {
+      const reviewPayload = validPayload({
+        session_id: 'sess-overview-review',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '5678' },
+          safety_flags: { lbp: { lbp_safety_status: 'REVIEW_REQUIRED', treatment_safety_status: 'CLEAR' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(reviewPayload),
+      })
+      const { id: reviewId } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.id === reviewId)
+      assert('모듈 REVIEW_REQUIRED만 있으면 목록 overview는 REVIEW', found?.overview === 'REVIEW')
+    }
+
+    {
+      const clearPayload = validPayload({
+        session_id: 'sess-overview-clear',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '9012' },
+          safety_flags: { lbp: { lbp_safety_status: 'CLEAR', treatment_safety_status: 'CLEAR' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(clearPayload),
+      })
+      const { id: clearId } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.id === clearId)
+      assert('안전 사유가 전혀 없으면 목록 overview는 CLEAR', found?.overview === 'CLEAR')
     }
 
     /* ---------------- CORS / origin guard on doctor routes ---------------- */

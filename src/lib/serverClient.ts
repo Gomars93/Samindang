@@ -76,6 +76,10 @@ export type SubmissionSummary = {
   requires_staff_check: boolean
   // recorder-results가 이 방문에 적어도 하나 도착했다는 실제 서버 상태(추정 아님).
   recorder_ready: boolean
+  // Doctor View 재설계 v0.2 §8.2 — 목록 행 배지. 저장된 submission의
+  // safety_flags.*/requires_staff_check로만 서버(store.js)가 파생한다(새
+  // 임상 계산 아님). 저장 shape이 갖춰지지 않은 레코드는 null(보류).
+  overview: 'URGENT' | 'REVIEW' | 'CLEAR' | null
 }
 
 export function listSubmissions(): Promise<ServerResult<SubmissionSummary[]>> {

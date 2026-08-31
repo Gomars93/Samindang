@@ -8,6 +8,63 @@ import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
+
+// Doctor View 재설계 v0.2 §8.2/§11.1: 목록 화면 행 배지용 overview 파생.
+// **새 임상 계산이 아니다** — 저장된 submission 안에 이미 계산 완료된
+// safety_flags.<module>.<module>_safety_status 문자열들 + flags.
+// requires_staff_check만 읽어서 같은 3-status union(URGENT/REVIEW/CLEAR)을
+// 만든다. src/doctor/safetyOverview.ts(deriveSafetyOverview)와 계산식은
+// 같지만, 여기서는 그 함수를 import하지 않는다 — 그 함수는 compute*Flags를
+// "다시" 호출해 재계산하는 렌더 계층 selector이고(원장 진찰 입력까지
+// 반영), 여기 store.js는 서버 프로세스이며 이미 태블릿이 계산해서 저장한
+// 값만 읽는 것이 계약이다(구현 재사용이 아니라 "같은 공식을 각자 계층에서
+// 적절한 입력으로 적용"하는 의도된 중복 — Doctor View invariant 1과 동일한
+// FROZEN 재계산 금지 정신).
+//
+// 저장된 레코드가 이 shape을 갖추지 못했으면(과거 레코드, 또는 최소
+// 테스트 payload) overview는 `null`로 보류한다 — 없는 필드를 임의로
+// CLEAR로 단정하지 않는다.
+const SAFETY_MODULE_STATUS_FIELDS = [
+  'lbp_safety_status',
+  'hip_safety_status',
+  'neck_safety_status',
+  'shoulder_safety_status',
+  'knee_safety_status',
+  'elbow_safety_status',
+  'wrist_hand_safety_status',
+  'ankle_foot_safety_status',
+  'tmj_safety_status',
+]
+
+function deriveListOverview(submission) {
+  const requiresStaffCheck = submission?.flags?.requires_staff_check
+  // requires_staff_check는 이 shape 중 가장 오래된 필드다(모듈 안전
+  // 시스템보다 먼저 있었다) — true라면 safety_flags 존재 여부와 무관하게
+  // 이미 URGENT다.
+  if (requiresStaffCheck === true) return 'URGENT'
+
+  const safetyFlags = submission?.responses?.safety_flags
+  const hasSafetyFlagsShape = safetyFlags !== undefined && safetyFlags !== null && typeof safetyFlags === 'object'
+  if (typeof requiresStaffCheck !== 'boolean' || !hasSafetyFlagsShape) {
+    // requires_staff_check 자체가 없거나(아주 오래된 shape) safety_flags
+    // 키 자체가 없으면(모듈 안전 시스템 도입 이전 레코드), 모듈 URGENT/
+    // REVIEW 여부를 판단할 근거가 없다 — CLEAR를 임의로 단정하지 않고
+    // 보류한다.
+    return null
+  }
+
+  const statuses = []
+  for (const module of Object.values(safetyFlags)) {
+    if (!module || typeof module !== 'object') continue
+    for (const field of SAFETY_MODULE_STATUS_FIELDS) {
+      if (field in module) statuses.push(module[field])
+    }
+  }
+
+  if (statuses.includes('URGENT_REVIEW')) return 'URGENT'
+  if (statuses.includes('REVIEW_REQUIRED')) return 'REVIEW'
+  return 'CLEAR'
+}
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
 const SESSION_INDEX_LOCK_KEY = '__session_index__'
 
@@ -141,6 +198,7 @@ export function createStore(dataDir) {
           primary_concern: r.submission?.metadata?.primary_concern ?? null,
           requires_staff_check: r.submission?.flags?.requires_staff_check ?? false,
           recorder_ready: Boolean(visit?.recording_id),
+          overview: deriveListOverview(r.submission),
         })
       } catch {
         // 손상되거나 쓰는 중(.tmp 아님)인 파일은 목록에서 건너뛴다

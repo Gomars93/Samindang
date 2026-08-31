@@ -14,10 +14,29 @@ const byName = (needle) => {
   return f
 }
 
-test('DoctorView contains ANKLE_FOOT panel wiring exactly once', () => {
-  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
-  const matches = src.match(/<AnkleFootSafetyPanel payload=\{payload\} \/>/g) ?? []
-  assert.equal(matches.length, 1)
+// Doctor View 재설계 v0.2 §11.1/§11.2 (Opus B1/B2): DoctorView는 더 이상
+// 10개 개별 안전 패널을 각각 렌더하지 않는다 — 통합 안전 리스트
+// (<SafetySection>)가 `computeSafetyModuleRows`(safetyModules.ts)로 9개
+// 모듈(ANKLE_FOOT 포함)을 한 번에 계산해서 정렬된 행으로 렌더한다.
+// `AnkleFootSafetyPanel`은 이 테스트 스위트처럼 모듈을 단독으로 검증하고
+// 싶을 때 쓰는 독립 wrapper로 남아 있고(같은 `computeAnkleFootRow`를
+// 호출하므로 결과가 통합 리스트와 절대 갈라지지 않는다), DoctorView 본문
+// wiring은 아니다. 이 테스트는 "ANKLE_FOOT이 통합 계산 경로에 정확히
+// 한 번 등록돼 있는지"로 재작성한다.
+test('SafetySection wires ANKLE_FOOT into the unified safety row computation exactly once', () => {
+  const doctorViewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+  assert.ok(
+    doctorViewSrc.includes('<SafetySection payload={payload}') && !doctorViewSrc.includes('<AnkleFootSafetyPanel'),
+    'DoctorView renders the unified <SafetySection>, not a standalone <AnkleFootSafetyPanel>',
+  )
+  const safetyModulesSrc = fs.readFileSync('src/doctor/safetyModules.ts', 'utf8')
+  assert.ok(safetyModulesSrc.includes("'ankle_foot',"), "ankle_foot is registered in SAFETY_MODULE_KEYS")
+  assert.ok(safetyModulesSrc.includes('export function computeAnkleFootRow'), 'computeAnkleFootRow is exported for standalone reuse')
+  assert.ok(
+    safetyModulesSrc.includes('const ankleFoot = computeAnkleFootRow(payload)') &&
+      (safetyModulesSrc.match(/computeAnkleFootRow\(payload\)/g) ?? []).length === 1,
+    'computeSafetyModuleRows calls computeAnkleFootRow exactly once',
+  )
 })
 
 test('clear fixture is built through production payload builder and renders clear panel', () => {

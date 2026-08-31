@@ -2550,8 +2550,19 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       setListLoading(false)
     }
 
-    poll()
-    const timer = setInterval(poll, POLL_MS)
+    // 18차 독립 리뷰 HIGH-2: listSubmissions()는 이제 wire body가 배열이
+    // 아니면 스스로 fail-closed(ok:false)로 반환하지만, poll() 자체는
+    // 여전히 catch 없이 호출됐다 -- 어떤 예기치 않은 이유로든 reject하면
+    // setListLoading(false)가 실행되지 않아 제출목록이 "불러오는 중…"에
+    // 영원히 멈췄다. 17차가 재진/CRM poll에 적용한 것과 동일한 이중 방어.
+    poll().catch(() => {
+      if (!cancelled) setListLoading(false)
+    })
+    const timer = setInterval(() => {
+      poll().catch(() => {
+        if (!cancelled) setListLoading(false)
+      })
+    }, POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
@@ -2800,8 +2811,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       }
     }
 
-    poll()
-    const timer = setInterval(poll, POLL_MS)
+    // 18차 독립 리뷰 LOW-7: getRecorderResults()는 이제 `results`가 배열이
+    // 아니면 스스로 fail-closed로 반환하지만, poll() 자체는 catch가 없어
+    // 다른 예기치 않은 실패가 조용히 사라질 수 있었다.
+    poll().catch(() => {})
+    const timer = setInterval(() => {
+      poll().catch(() => {})
+    }, POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
@@ -2915,6 +2931,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       } else {
         setRevisitActionError(result.error)
       }
+    } catch {
+      // 18차 독립 리뷰 LOW-6: handleRegisterStation/handleAssignToStation의
+      // 17차 fix와 동일한 이유 -- try/finally뿐이면 rejection이 조용히
+      // 사라져 revisitActionError가 세팅되지 않은 채 버튼이 아무 반응 없이
+      // 끝난 것처럼 보였다.
+      setRevisitActionError('재진 시작에 실패했습니다. 다시 시도해 주세요.')
     } finally {
       setStartRevisitPending(false)
     }
@@ -2922,17 +2944,23 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
   async function handleReissueSession() {
     if (!issuedSession) return
-    const result = await reissueFollowUpSession(issuedSession.visitId)
-    if (result.ok) {
-      setIssuedSession({
-        visitId: issuedSession.visitId,
-        token: result.data.token,
-        expiresAt: result.data.expiresAt,
-        targetCount: result.data.targets.length,
-      })
-      setLinkCopyStatus('idle')
-    } else {
-      setRevisitActionError(result.error)
+    try {
+      const result = await reissueFollowUpSession(issuedSession.visitId)
+      if (result.ok) {
+        setIssuedSession({
+          visitId: issuedSession.visitId,
+          token: result.data.token,
+          expiresAt: result.data.expiresAt,
+          targetCount: result.data.targets.length,
+        })
+        setLinkCopyStatus('idle')
+      } else {
+        setRevisitActionError(result.error)
+      }
+    } catch {
+      // 18차 독립 리뷰 LOW-6: handleStartRevisit과 동일한 이유 -- 이전엔
+      // try/catch 자체가 없어 rejection이 완전히 조용히 사라졌다.
+      setRevisitActionError('링크 재발급에 실패했습니다. 다시 시도해 주세요.')
     }
   }
 

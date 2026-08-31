@@ -57,6 +57,26 @@ function dueStateLabel(task: CrmTask, nowIso: string): string {
   return overdue ? `기한 지남 · ${when}` : `기한 ${when}`
 }
 
+/**
+ * 18차 독립 리뷰 LOW-8: 이 컴포넌트는 서버가 검증 없이 그대로 보내는
+ * CrmTask 필드를 그대로 신뢰했다 -- `task.task_type`이 문자열이 아니면
+ * `.toLowerCase()`에서 그대로 throw했고(listCrmTasks가 `tasks` 배열
+ * 자체는 이제 검증하지만 개별 필드까지는 검증하지 않는다), 알려지지
+ * 않은 task_type/reason_code/status는 label map에서 undefined가 되어
+ * bare JSX child로는 조용히 빈 칸을 렌더했다(리터럴 "undefined"는
+ * 아니지만, 손상된 값을 조용히 숨기는 것도 이 배치가 막으려는
+ * fail-silent다).
+ */
+function isValidTaskType(v: unknown): v is CrmTask['task_type'] {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(CRM_TASK_TYPE_LABEL, v)
+}
+function isValidReasonCode(v: unknown): v is CrmTask['reason_code'] {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(CRM_REASON_CODE_LABEL, v)
+}
+function isValidTaskStatus(v: unknown): v is CrmTask['status'] {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(CRM_TASK_STATUS_LABEL, v)
+}
+
 export function TodayQueueSection({ tasks, loading, error, identities = {}, onIdentityLinked }: TodayQueueSectionProps) {
   const now = new Date().toISOString()
   return (
@@ -73,14 +93,17 @@ export function TodayQueueSection({ tasks, loading, error, identities = {}, onId
           {tasks.map((task) => (
             <div
               key={task.task_id}
-              className={`doctorField doctor__todayQueue__row doctor__todayQueue__row--${task.task_type.toLowerCase()}`}
+              className={`doctorField doctor__todayQueue__row doctor__todayQueue__row--${
+                isValidTaskType(task.task_type) ? task.task_type.toLowerCase() : 'unknown'
+              }`}
               data-patient-uuid={task.patient_uuid}
             >
               <span className="doctorField__label">
-                {CRM_TASK_TYPE_LABEL[task.task_type]} · {CRM_REASON_CODE_LABEL[task.reason_code]}
+                {isValidTaskType(task.task_type) ? CRM_TASK_TYPE_LABEL[task.task_type] : '확인 필요'} ·{' '}
+                {isValidReasonCode(task.reason_code) ? CRM_REASON_CODE_LABEL[task.reason_code] : '확인 필요'}
               </span>
               <span className="doctorField__value">
-                {CRM_TASK_STATUS_LABEL[task.status]}
+                {isValidTaskStatus(task.status) ? CRM_TASK_STATUS_LABEL[task.status] : '확인 필요'}
                 {task.claimed_by ? ` · 담당: ${task.claimed_by}` : ''}
                 {task.owner_clinician ? ` · 소속: ${task.owner_clinician}` : ''}
                 {task.due_at ? ` · ${dueStateLabel(task, now)}` : ''}

@@ -57,6 +57,24 @@ const CHANNEL_LABEL: Record<MessageRecord['channel'], string> = {
   LMS: 'LMS',
 }
 
+/**
+ * 18차 독립 리뷰 MEDIUM-5: round 17이 DELIVERY_MODE_LABEL에 적용한 것과
+ * 동일한 가드 -- `m.channel`/`m.fallback_channel`/`m.status`는 서버가
+ * 검증 없이 그대로 돌려주는 값이므로, 알려지지 않은 값이 template
+ * literal(` → ${...}`)에 들어가면 리터럴 "undefined"를 그대로 노출한다
+ * (governing task 정책 5 위반).
+ */
+function channelLabelOrFallback(channel: unknown): string {
+  return typeof channel === 'string' && Object.prototype.hasOwnProperty.call(CHANNEL_LABEL, channel)
+    ? CHANNEL_LABEL[channel as MessageRecord['channel']]
+    : '확인 필요'
+}
+function statusLabelOrFallback(status: unknown): string {
+  return typeof status === 'string' && Object.prototype.hasOwnProperty.call(STATUS_LABEL, status)
+    ? STATUS_LABEL[status as MessageRecord['status']]
+    : '확인 필요'
+}
+
 export function MessagingPanel({ visitId, patientId, followUpToken, link }: MessagingPanelProps) {
   const [phone, setPhone] = useState('')
   const [messages, setMessages] = useState<MessageRecord[] | null>(null)
@@ -75,11 +93,18 @@ export function MessagingPanel({ visitId, patientId, followUpToken, link }: Mess
     setMessages(null)
     setListError(null)
     setPhone('')
-    listVisitMessages(visitId).then((result) => {
-      if (cancelled) return
-      if (result.ok) setMessages(result.data.messages)
-      else setListError(result.error)
-    })
+    // 18차 독립 리뷰 MEDIUM-5: listVisitMessages()는 이제 `messages`가
+    // 배열이 아니면 스스로 fail-closed로 반환하지만, 이 호출 자체에는
+    // `.catch`가 없어 다른 예기치 않은 실패가 조용히 사라질 수 있었다.
+    listVisitMessages(visitId)
+      .then((result) => {
+        if (cancelled) return
+        if (result.ok) setMessages(result.data.messages)
+        else setListError(result.error)
+      })
+      .catch(() => {
+        if (!cancelled) setListError('메시지 목록을 불러오지 못했습니다.')
+      })
     return () => {
       cancelled = true
     }
@@ -164,8 +189,9 @@ export function MessagingPanel({ visitId, patientId, followUpToken, link }: Mess
           {messages.map((m) => (
             <li key={m.message_id} className="doctor__revisitSession__messageRow">
               <span>
-                {CHANNEL_LABEL[m.channel]}
-                {m.fallback_channel ? ` → ${CHANNEL_LABEL[m.fallback_channel]} 대체 발송` : ''} — {STATUS_LABEL[m.status]}
+                {channelLabelOrFallback(m.channel)}
+                {m.fallback_channel ? ` → ${channelLabelOrFallback(m.fallback_channel)} 대체 발송` : ''} —{' '}
+                {statusLabelOrFallback(m.status)}
                 {m.status === 'FAILED' || m.status === 'QUEUED' ? ` (${m.attempt_count}/${m.max_attempts}회 시도)` : ''}
                 {/* error_code is already a sanitized machine-readable class
                     (never a raw provider response -- see MessageRecord's own

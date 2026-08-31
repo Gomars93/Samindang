@@ -288,4 +288,37 @@ test('two rows carry distinct data-patient-uuid values matching each own task, n
   assert.ok(html.includes(`data-patient-uuid="${uuidB}"`))
 })
 
+// ---------- 10. 18차 독립 리뷰 LOW-8: corrupted task_type/reason_code/status ----------
+// server/index.js returns whatever crmStore.js has on disk with no re-
+// validation against the CrmTaskType/CrmReasonCode/CrmTaskStatus enums --
+// a hand-edited/legacy data file can carry a value outside them. Must never
+// crash (task_type feeds .toLowerCase() for a CSS class) and must never
+// silently render blank (label lookups on an unknown key).
+
+test('18차 LOW-8: a non-string task_type does not crash (no .toLowerCase() throw) and renders an explicit fail-closed label instead of blank', () => {
+  const html = render({ tasks: [makeTask({ task_type: 123 })], loading: false, error: null })
+  assert.ok(html.includes('확인 필요'), 'must show an explicit fail-closed label, not silently blank')
+  assert.ok(html.includes('doctor__todayQueue__row--unknown'), 'must fall back to a safe CSS class, never throw from .toLowerCase()')
+})
+
+test('18차 LOW-8: an out-of-enum task_type string renders the fail-closed label, never a blank cell', () => {
+  const html = render({ tasks: [makeTask({ task_type: 'ZZZ_UNKNOWN' })], loading: false, error: null })
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('18차 LOW-8: an out-of-enum reason_code renders the fail-closed label, never a blank cell', () => {
+  const html = render({ tasks: [makeTask({ reason_code: 'ZZZ_UNKNOWN' })], loading: false, error: null })
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('18차 LOW-8: an out-of-enum status renders the fail-closed label, never a blank cell', () => {
+  const html = render({ tasks: [makeTask({ status: 'ZZZ_UNKNOWN' })], loading: false, error: null })
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('18차 LOW-8 sanity: genuine in-enum task_type/reason_code/status values still render their real labels, not the fail-closed marker', () => {
+  const html = render({ tasks: [makeTask({ task_type: 'ROUTINE', reason_code: 'REASSESSMENT_DUE', status: 'OPEN' })], loading: false, error: null })
+  assert.ok(!html.includes('확인 필요'))
+})
+
 console.log(`\n${passed} passed`)

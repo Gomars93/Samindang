@@ -31,6 +31,18 @@ export type ServerResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; kind: 'auth' | 'network' | 'other'; errorBody?: Record<string, unknown> }
 
+/**
+ * 18차 독립 리뷰: rounds 16-17이 `getPatientHistory`/`listRevisitQueue`/
+ * `listStations`에 각자 반복해 추가한 "wire body가 기대한 shape이 아니면
+ * fail-closed ok:false"의 공통 형태를 하나로 묶는다 -- 이 배치가 같은
+ * 클래스의 버그를 라운드마다 형제 함수 하나씩 찾아낸 패턴 자체가, 이제는
+ * 매번 개별적으로 가드를 손으로 반복하는 대신 공유 헬퍼로 막을 시점임을
+ * 보여준다. 아래의 모든 목록/맵 조회 함수가 이 헬퍼를 거친다.
+ */
+function invalidResponseShape(): { ok: false; error: string; kind: 'other' } {
+  return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -99,7 +111,19 @@ export type SubmissionSummary = {
 }
 
 export function listSubmissions(): Promise<ServerResult<SubmissionSummary[]>> {
-  return request('/api/submissions')
+  // 18차 독립 리뷰 HIGH-2: 이 함수는 원래 wire body를 검증 없이 그대로
+  // 반환했다 -- 배열이 아닌 값이 오면 DoctorView.tsx의 `poll()`이 `.filter`
+  // 에서 그대로 throw했고(HIGH-1의 listCrmTasks/listRevisitQueue와 동일한
+  // 클래스), 그 poll() 호출부는 catch가 없어 `setListLoading(false)`가
+  // 영원히 실행되지 않았다(제출목록이 "불러오는 중…"에 무한히 멈춤). 게다가
+  // `submissions.filter(...)`가 컴포넌트 렌더 본문에서도 무조건 호출되므로
+  // (DoctorView.tsx), 매 렌더마다 크래시하며 그 크래시는 어떤 error
+  // boundary도 감싸지 않는 지점이다.
+  return request<SubmissionSummary[]>('/api/submissions').then((result) => {
+    if (!result.ok) return result
+    if (!Array.isArray(result.data)) return invalidResponseShape()
+    return result
+  })
 }
 
 export type SubmissionRecord = {
@@ -229,7 +253,15 @@ export type RecorderResult = {
 }
 
 export function getRecorderResults(visitId: string): Promise<ServerResult<{ results: RecorderResult[] }>> {
-  return request(`/api/visits/${encodeURIComponent(visitId)}/recorder-results`)
+  // 18차 독립 리뷰 LOW-7: 다른 목록 조회 함수들과 동일한 클래스 -- `results`가
+  // 배열이 아니면 호출부(DoctorView.tsx의 poll)가 그대로 throw했다.
+  return request<{ results: RecorderResult[] }>(`/api/visits/${encodeURIComponent(visitId)}/recorder-results`).then(
+    (result) => {
+      if (!result.ok) return result
+      if (!Array.isArray(result.data?.results)) return invalidResponseShape()
+      return result
+    },
+  )
 }
 
 // Round 3 Phase D(micro follow-up). Wire shape from server/microFollowUpStore.js
@@ -560,7 +592,21 @@ export function listCrmTasks(params?: {
   if (params?.ownerClinician) qs.set('owner_clinician', params.ownerClinician)
   if (params?.coverageQueue) qs.set('coverage_queue', params.coverageQueue)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  return request(`/api/crm/tasks${suffix}`)
+  // 18차 독립 리뷰 HIGH-1: 이 함수는 wire body를 검증 없이 그대로 반환했다
+  // -- `tasks`가 배열이 아니면 DoctorView.tsx의 poll()이 이미
+  // `setCrmTasks(crmResult.data.tasks)`로 손상된 값을 커밋한 뒤에야
+  // `.map()`에서 throw했고(17차가 추가한 poll().catch가 그 throw를 조용히
+  // 삼켜버려 사용자에게 아무 신호도 남기지 않는다), null인 경우엔
+  // "지금 처리할 CRM 항목이 없습니다"라는 명시적 all-clear로 렌더돼
+  // "손상되어 못 읽음"과 "정말 할 일 없음"을 구별할 수 없게 만들었다
+  // (governing task 정책 1/2 위반). 여기서 fail-closed로 막으면
+  // DoctorView.tsx의 기존 `else` 분기(setCrmTasks(null) +
+  // setCrmTasksError(...))가 그대로 발동한다.
+  return request<{ tasks: CrmTask[] }>(`/api/crm/tasks${suffix}`).then((result) => {
+    if (!result.ok) return result
+    if (!Array.isArray(result.data?.tasks)) return invalidResponseShape()
+    return result
+  })
 }
 
 /**
@@ -572,7 +618,17 @@ export function listCrmTasks(params?: {
  */
 export function listEpisodesByPatient(patientUuid: string): Promise<ServerResult<{ episodes: Episode[] }>> {
   const qs = new URLSearchParams({ patient_uuid: patientUuid })
-  return request(`/api/crm/episodes?${qs.toString()}`)
+  // 18차 독립 리뷰 MEDIUM-3: 이 함수의 결과는 MedicationCourseSection.tsx를
+  // 거쳐 DoctorRecordFallback(DoctorRecordErrorBoundary의 fallback prop
+  // 자체)에서도 렌더된다 -- React는 fallback 렌더 도중의 throw를 잡지
+  // 못하므로, 이 배치가 손상된 레코드를 위해 만든 안전한 착지 화면 자체가
+  // 크래시할 수 있었다. 여기서 fail-closed로 막아 그 경로에 절대 도달하지
+  // 않도록 한다.
+  return request<{ episodes: Episode[] }>(`/api/crm/episodes?${qs.toString()}`).then((result) => {
+    if (!result.ok) return result
+    if (!Array.isArray(result.data?.episodes)) return invalidResponseShape()
+    return result
+  })
 }
 
 /**
@@ -592,7 +648,14 @@ export function createEpisode(patientUuid: string, ownerClinician?: string, epis
 }
 
 export function listEpisodeTasks(episodeId: string): Promise<ServerResult<{ tasks: CrmTask[] }>> {
-  return request(`/api/crm/episodes/${encodeURIComponent(episodeId)}/tasks`)
+  // 18차 독립 리뷰 MEDIUM-3: listEpisodesByPatient와 동일한 이유 --
+  // MedicationCourseSection.tsx(DoctorRecordFallback 내부)가 이 결과도
+  // 검증 없이 소비한다.
+  return request<{ tasks: CrmTask[] }>(`/api/crm/episodes/${encodeURIComponent(episodeId)}/tasks`).then((result) => {
+    if (!result.ok) return result
+    if (!Array.isArray(result.data?.tasks)) return invalidResponseShape()
+    return result
+  })
 }
 
 // Wire shape from server/crmStore.js's createMedicationCourseStored --
@@ -609,7 +672,16 @@ export type MedicationCourseRecord = MedicationCourse & {
 export function listMedicationCoursesByEpisode(
   episodeId: string,
 ): Promise<ServerResult<{ courses: MedicationCourseRecord[] }>> {
-  return request(`/api/crm/episodes/${encodeURIComponent(episodeId)}/medication-courses`)
+  // 18차 독립 리뷰 MEDIUM-3: listEpisodesByPatient와 동일한 이유 --
+  // MedicationCourseSection.tsx(DoctorRecordFallback 내부)가 이 결과도
+  // 검증 없이 소비한다.
+  return request<{ courses: MedicationCourseRecord[] }>(
+    `/api/crm/episodes/${encodeURIComponent(episodeId)}/medication-courses`,
+  ).then((result) => {
+    if (!result.ok) return result
+    if (!Array.isArray(result.data?.courses)) return invalidResponseShape()
+    return result
+  })
 }
 
 export function getMedicationCourse(courseId: string): Promise<ServerResult<MedicationCourseRecord>> {
@@ -727,7 +799,22 @@ export function listPatientIdentities(
 ): Promise<ServerResult<{ identities: Record<string, ResolvedPatientIdentity> }>> {
   const qs = new URLSearchParams()
   for (const uuid of patientUuids) qs.append('patient_uuid', uuid)
-  return request(`/api/crm/patient-identities?${qs.toString()}`)
+  // 18차 독립 리뷰 MEDIUM-4: `identities`는 배열이 아니라 uuid로 키가 잡힌
+  // 맵이라서 Array.isArray로는 검증할 수 없다 -- null/배열/원시값이 오면
+  // 이전엔 검증 없이 그대로 반환됐고, DoctorView.tsx가 그 값을 바로
+  // `setPatientIdentities`에 넘겨(null이 지나가면 TodayQueueSection.tsx의
+  // `identities[uuid]` 조회가 그대로 throw, 컴포넌트가 렌더 도중 죽는다)
+  // 이전 poll의 환자 이름이 화면에 그대로 남는(cross-patient 정보가 아니라
+  // stale 정보지만, round 14 주석이 명시적으로 금지한 상황) 결과로
+  // 이어질 수 있었다.
+  return request<{ identities: Record<string, ResolvedPatientIdentity> }>(
+    `/api/crm/patient-identities?${qs.toString()}`,
+  ).then((result) => {
+    if (!result.ok) return result
+    const identities = result.data?.identities
+    if (identities == null || typeof identities !== 'object' || Array.isArray(identities)) return invalidResponseShape()
+    return result
+  })
 }
 
 /**
@@ -788,7 +875,15 @@ export function queueRevisitMessage(
 }
 
 export function listVisitMessages(visitId: string): Promise<ServerResult<{ messages: MessageRecord[] }>> {
-  return request(`/api/visits/${encodeURIComponent(visitId)}/messages`)
+  // 18차 독립 리뷰 MEDIUM-5: MessagingPanel.tsx가 이 결과를 `.catch` 없이
+  // 소비하고, DoctorRecordErrorBoundary 밖에서 마운트된다.
+  return request<{ messages: MessageRecord[] }>(`/api/visits/${encodeURIComponent(visitId)}/messages`).then(
+    (result) => {
+      if (!result.ok) return result
+      if (!Array.isArray(result.data?.messages)) return invalidResponseShape()
+      return result
+    },
+  )
 }
 
 export function retryRevisitMessage(messageId: string, phone: string, link: string): Promise<ServerResult<MessageRecord>> {

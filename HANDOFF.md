@@ -7003,6 +7003,100 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 18차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+18차 리뷰는 17차 커밋(`a8411f0`)을 대상으로, 17차 자신의 fix는 정확하다고
+확인하면서도 HIGH 2건 + MEDIUM 3건 + LOW 2건을 찾아냈다 — 전부 15~17차가
+반복해 온 것과 동일한 클래스("고친 함수 하나씩 옆에 형제 함수가 남아있다")
+였다. 이번엔 리뷰어의 제안대로 함수 하나씩 patch하는 대신, `serverClient.ts`
+전체를 훑어 남아있던 모든 형제 함수를 한 라운드에 묶어 고쳤다.
+
+**(HIGH-1) `listCrmTasks`가 wire body의 `tasks` 필드를 검증하지 않았다.**
+DoctorView.tsx의 poll()은 `setCrmTasks(crmResult.data.tasks)`로 먼저
+커밋한 뒤에야 `.map()`에서 throw했고, 17차가 poll()에 추가한
+`.catch(() => {})`가 그 throw를 조용히 삼켜 사용자에게 아무 신호도 남기지
+않았다. `tasks`가 `null`인 경우엔 아예 throw조차 하지 않고 "지금 처리할
+CRM 항목이 없습니다"라는 명시적 all-clear로 렌더돼, "손상되어 못 읽음"과
+"정말 할 일 없음"을 구별할 수 없게 만들었다(governing task 정책 1/2 위반).
+
+**(HIGH-2) `listSubmissions`가 wire body 자체를 검증하지 않았다.**
+DoctorView.tsx의 `submissions.filter(...)`가 **컴포넌트 렌더 본문에서
+무조건 호출되므로**(`const newCount = submissions.filter(...)`), 배열이
+아닌 값이 오면 매 렌더마다 크래시하며 그 경로는 어떤 error boundary도
+감싸지 않는다.
+
+**(MEDIUM-3, 가장 심각한 아키텍처적 함의) `listEpisodesByPatient`/
+`listEpisodeTasks`/`listMedicationCoursesByEpisode`가 각자의 배열 필드를
+검증하지 않았다.** 이 세 함수의 결과는 `MedicationCourseSection.tsx`를
+거쳐 **`DoctorRecordFallback`(DoctorRecordErrorBoundary의 `fallback` prop
+자체) 안에서도 렌더된다** — React는 fallback 렌더 도중의 throw를 잡지
+못하므로, 이 배치가 손상된 레코드를 위해 만든 안전한 착지 화면 자체가
+크래시할 수 있었다(이 배치의 모든 라운드를 통틀어 가장 심각한 구조적
+공백).
+
+**(MEDIUM-4) `listPatientIdentities`의 `identities`는 배열이 아니라
+uuid로 키가 잡힌 맵이라서 `Array.isArray`로 검증할 수 없다** — null/배열/
+원시값이 오면 검증 없이 그대로 반환됐다. null이 `TodayQueueSection.tsx`의
+`identities[uuid]` 조회로 흘러가면 그대로 throw한다.
+
+**(MEDIUM-5) `MessagingPanel.tsx`의 `` ` → ${CHANNEL_LABEL[m.fallback_channel]} 대체 발송` ``는
+round 17이 `DELIVERY_MODE_LABEL`에 적용한 것과 동일한 클래스의 template
+literal 리터럴 "undefined" 누출이었다(governing task 정책 5 위반).
+`listVisitMessages`도 `messages` 필드를 검증하지 않았다.
+
+**(LOW-6/7) `handleStartRevisit`/`handleReissueSession`(재진 시작/링크
+재발급)과 recorder-results poll이 round 17이 이미 고친 것과 동일한 클래스의
+무가드 catch/poll 패턴을 그대로 갖고 있었다.**
+
+**근본 수정**: 반복되는 패턴 자체를 인정하고, `serverClient.ts`에
+`invalidResponseShape()` 공유 헬퍼를 추가한 뒤 남아있던 8개 함수
+(`listCrmTasks`/`listSubmissions`/`listEpisodesByPatient`/
+`listEpisodeTasks`/`listMedicationCoursesByEpisode`/
+`listPatientIdentities`/`listVisitMessages`/`getRecorderResults`) 전부에
+이 헬퍼로 wire-shape 가드를 추가했다. `DoctorView.tsx`의 제출목록/
+recorder-results poll에 `.catch`를 추가하고, `handleStartRevisit`/
+`handleReissueSession`에 catch 블록을 추가했다. `MessagingPanel.tsx`에
+`channelLabelOrFallback`/`statusLabelOrFallback` 가드 함수를 추가하고
+`listVisitMessages` 호출에 `.catch`를 추가했다. `TodayQueueSection.tsx`도
+같은 스윕에서 `task.task_type.toLowerCase()`(비문자열이면 throw)와
+`CRM_TASK_TYPE_LABEL`/`CRM_REASON_CODE_LABEL`/`CRM_TASK_STATUS_LABEL`
+(알려지지 않은 값이면 조용히 빈 칸)을 함께 고쳤다 — MEDIUM-3/4와 정확히
+같은 클래스가 이 컴포넌트에도 있었다.
+
+**MedicationCourseSection.tsx 자체는 수정하지 않았다** — 이 컴포넌트가
+소비하는 세 함수(`listEpisodesByPatient`/`listEpisodeTasks`/
+`listMedicationCoursesByEpisode`)를 근본에서 고쳤으므로, `result.ok`
+분기 안의 `.filter()`/`.map()`은 이제 항상 안전하다. 컴포넌트 자체를
+건드리지 않고 원인(serverClient.ts)에서 막는 쪽을 선택했다.
+
+**신규 회귀 테스트**: `tests/save-conflict.spec.mjs`에 구조적 가드 테스트
+12개(+12, 41→53 — serverClient.ts 8개 함수의 가드 + DoctorView.tsx의
+제출목록/recorder-results poll catch + handleStartRevisit/
+handleReissueSession catch + MessagingPanel.tsx의 라벨 가드/catch).
+`tests/today-queue.spec.mjs`에 TodayQueueSection.tsx의 실제 렌더 회귀
+테스트 5개(+5, 22→27 — 비문자열 task_type이 크래시하지 않고
+"확인 필요"를 보여주는지, 옵션 밖 task_type/reason_code/status가 빈 칸
+대신 "확인 필요"를 보여주는지, 정상 값에 대한 sanity).
+
+**실사용 재검증**: HIGH-1/HIGH-2를 포함한 모든 finding이 정상 서버 응답
+경로에서는 재현 불가능(서버는 항상 배열/구조가 맞는 JSON을 보냄 --
+server/index.js·crmStore.js가 항상 구조가 맞는 값을 씀)하므로 — 16/17차와
+동일한 판단 근거 — 별도의 live-repro 시나리오를 만들지 않고 구조적/실제
+렌더 테스트로만 커버했다. `TodayQueueSection.tsx`의 LOW-8 fix는
+`tests/today-queue.spec.mjs`에서 실제 `renderToString`으로 검증했다(구조적
+정규식이 아닌 진짜 렌더 회귀).
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — save-conflict 53/53, today-queue 27/27 포함), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
+origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN
+유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 19차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

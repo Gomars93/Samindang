@@ -482,4 +482,130 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 }
 
+// ---------- 7. src/lib/serverClient.ts: 18차 독립 리뷰 (remaining unguarded mappers) ----------
+// Rounds 16-17 guarded 3 of the ~11 list/map response mappers in this file
+// (getPatientHistory/listRevisitQueue/listStations). 18차 found the rest of
+// them still assumed the wire body's array/object fields without checking --
+// each is called from a DoctorView.tsx poll or a component effect with no
+// (or, for the poll cases, a too-late) catch, so a malformed response either
+// crashed outside DoctorRecordErrorBoundary (one of them -- MedicationCourse
+// Section -- INSIDE the boundary's own fallback, which React cannot catch)
+// or committed a fail-open state before throwing.
+{
+  const src = fs.readFileSync('src/lib/serverClient.ts', 'utf8')
+
+  test('serverClient.ts 18차: a shared invalidResponseShape() helper exists for the new guards to use', () => {
+    assert.ok(/function invalidResponseShape\(\): \{ ok: false; error: string; kind: 'other' \} \{/.test(src))
+  })
+
+  test('serverClient.ts 18차 HIGH-1: listCrmTasks guards the `tasks` field before any caller can commit it as fail-open', () => {
+    const fnStart = src.indexOf('export function listCrmTasks(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(!Array\.isArray\(result\.data\?\.tasks\)\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 18차 HIGH-2: listSubmissions guards the wire body before DoctorView.tsx\'s poll() or its render-body .filter() can throw', () => {
+    const fnStart = src.indexOf('export function listSubmissions(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(!Array\.isArray\(result\.data\)\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 18차 MEDIUM-3: listEpisodesByPatient/listEpisodeTasks/listMedicationCoursesByEpisode all guard their array field (consumed inside DoctorRecordFallback -- a crash there is uncatchable by React)', () => {
+    for (const [fnName, field] of [
+      ['listEpisodesByPatient', 'episodes'],
+      ['listEpisodeTasks', 'tasks'],
+      ['listMedicationCoursesByEpisode', 'courses'],
+    ]) {
+      const fnStart = src.indexOf(`export function ${fnName}(`)
+      assert.ok(fnStart !== -1, `${fnName} must exist`)
+      const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+      const fn = src.slice(fnStart, fnEnd === -1 ? fnStart + 1200 : fnEnd)
+      assert.ok(
+        new RegExp(`if \\(!Array\\.isArray\\(result\\.data\\?\\.${field}\\)\\) return invalidResponseShape\\(\\)`).test(fn),
+        `${fnName} must guard its ${field} field`,
+      )
+    }
+  })
+
+  test('serverClient.ts 18차 MEDIUM-4: listPatientIdentities guards `identities` being a non-null, non-array object (it is a uuid-keyed map, not an array)', () => {
+    const fnStart = src.indexOf('export function listPatientIdentities(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/identities == null \|\| typeof identities !== 'object' \|\| Array\.isArray\(identities\)/.test(fn))
+  })
+
+  test('serverClient.ts 18차 MEDIUM-5: listVisitMessages guards the `messages` field', () => {
+    const fnStart = src.indexOf('export function listVisitMessages(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(!Array\.isArray\(result\.data\?\.messages\)\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 18차 LOW-7: getRecorderResults guards the `results` field', () => {
+    const fnStart = src.indexOf('export function getRecorderResults(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(!Array\.isArray\(result\.data\?\.results\)\) return invalidResponseShape\(\)/.test(fn))
+  })
+}
+
+// ---------- 8. DoctorView.tsx: 18차 독립 리뷰 (remaining uncaught polls/handlers) ----------
+{
+  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx 18차 HIGH-2: the submissions list poll() is invoked with .catch on both the initial call and every interval tick', () => {
+    const effectStart = src.indexOf('async function poll() {\n      const result = await listSubmissions()')
+    const effectEnd = src.indexOf('}, [mode, retryNonce, tokenVersion])', effectStart)
+    const effect = src.slice(effectStart, effectEnd)
+    const catchCount = (effect.match(/poll\(\)\.catch\(/g) || []).length
+    assert.ok(catchCount >= 2, `expected poll().catch(...) on both the initial call and the setInterval tick, found ${catchCount}`)
+    assert.ok(effect.includes('setListLoading(false)'), 'a rejected poll must still clear the loading spinner, not leave it stuck')
+  })
+
+  test('DoctorView.tsx 18차 LOW-7: the recorder-results poll() is invoked with .catch on both the initial call and every interval tick', () => {
+    const effectStart = src.indexOf('async function poll() {\n      const result = await getRecorderResults(visitId)')
+    const effectEnd = src.indexOf('}, [mode, selectedRecord?.visit_id])', effectStart)
+    const effect = src.slice(effectStart, effectEnd)
+    const catchCount = (effect.match(/poll\(\)\.catch\(/g) || []).length
+    assert.ok(catchCount >= 2, `expected poll().catch(...) on both the initial call and the setInterval tick, found ${catchCount}`)
+  })
+
+  test('DoctorView.tsx 18차 LOW-6: handleStartRevisit and handleReissueSession both surface an error instead of failing silently on a rejected call', () => {
+    const startFn = src.slice(src.indexOf('async function handleStartRevisit() {'), src.indexOf('async function handleReissueSession() {'))
+    assert.ok(/catch \{\s*\n[\s\S]*?setRevisitActionError\(/.test(startFn), 'handleStartRevisit must set revisitActionError on a rejected startRevisit() call')
+    const reissueFn = src.slice(src.indexOf('async function handleReissueSession() {'), src.indexOf('async function handleInvalidateSession() {'))
+    assert.ok(/catch \{\s*\n[\s\S]*?setRevisitActionError\(/.test(reissueFn), 'handleReissueSession must set revisitActionError on a rejected reissueFollowUpSession() call')
+  })
+}
+
+// ---------- 9. MessagingPanel.tsx: 18차 독립 리뷰 MEDIUM-5 ----------
+// Not independently renderable/bundled elsewhere in this suite (no
+// dedicated test file exists for it), so this follows the same structural
+// fallback pattern already established for RevisitWorkspace.tsx/DoctorView.tsx
+// in this file.
+{
+  const src = fs.readFileSync('src/doctor/MessagingPanel.tsx', 'utf8')
+
+  test('MessagingPanel.tsx 18차 MEDIUM-5: channel/status labels are guarded against unmapped values instead of leaking a literal "undefined" through the fallback_channel template literal', () => {
+    assert.ok(src.includes('function channelLabelOrFallback('), 'must define a guarded channel-label lookup')
+    assert.ok(src.includes('function statusLabelOrFallback('), 'must define a guarded status-label lookup')
+    assert.ok(
+      /m\.fallback_channel \? ` → \$\{channelLabelOrFallback\(m\.fallback_channel\)\} 대체 발송` : ''/.test(src),
+      'the fallback_channel template literal must route through the guarded lookup, not CHANNEL_LABEL[...] directly',
+    )
+    assert.ok(src.includes('{channelLabelOrFallback(m.channel)}'))
+    assert.ok(src.includes('{statusLabelOrFallback(m.status)}'))
+  })
+
+  test('MessagingPanel.tsx 18차 MEDIUM-5: the message-list fetch has a .catch that surfaces listError instead of failing silently', () => {
+    const effectStart = src.indexOf('listVisitMessages(visitId)')
+    const effectEnd = src.indexOf('}, [visitId])', effectStart)
+    const effect = src.slice(effectStart, effectEnd)
+    assert.ok(effect.includes('.catch(() => {'))
+    assert.ok(/if \(!cancelled\) setListError\(/.test(effect))
+  })
+}
+
 console.log(`\n${passed} save-conflict assertions passed.`)

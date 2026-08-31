@@ -1,129 +1,118 @@
 # Current Handoff
 
 ## Objective
-삼인당 태블릿 문진 UX 반복 개선. PR #19/#20/#21이 모두 `main`에 merge된
-상태에서, 실제 11" Android landscape 실기기 screenshot QA로 발견된 v2.2
-의도사항 미반영 문제를 바로잡는 **Tablet v2.2.1 real-device correction**이
-이번 세션의 작업이다. `docs/TABLET_V2_2_PAIN_FAST_TRACK_AND_HERBAL_ADDON.md`
-§15("v2.2.1 addendum")에 전체 root-cause 조사/수정 내역이 문서화되어 있다.
+Doctor View 전면 재설계(`docs/DOCTOR_VIEW_REDESIGN_v0.2.md`, 별도 브랜치
+`claude/frontend-design-skill-install-5z0rmw`에만 존재 — 아직 `main`에
+merge되지 않음)의 구현 단계. 이번 세션은 **P1(골격) + P2(안전 통합)**
+두 단계를 구현했다. 오케스트레이터가 이 브랜치에 이어서 P3~P7을 계속
+진행할 예정이다.
 
 ## Current State
-- `main` tip: `784a9bd4b6858711ec6d2e2297aea68555a189b3` (PR #21 merge
-  커밋 — Tablet UX v2.2: Pain Fast Track + Herbal Add-on). 안정 상태.
-- 이번 세션은 `main`에서 새 브랜치 `ux/tablet-v2-2-1-real-device-correction`을
-  만들어 작업했다. **아직 PR을 생성하지 않았다** (이 커밋 직후 생성 예정).
-  **merge 금지** — 사용자 명시 지시.
-- 실기기에서 확인된 4가지 문제와 처리 결과:
-  1. **landscape rail이 실기기에서 발동 안 함** — root cause: viewport
-     meta는 정상이었고, breakpoint 기준값(`min-width:1000px`)이 실제 11"
-     Android landscape CSS viewport 폭(DPR에 따라 800~1280px대)보다 높았다.
-     `min-width:760px`로 낮추고, backBtn/stepLabel이 rail로 이동했는데도
-     `.shell__topRow`가 옛 min-height(56px)를 그대로 예약하던 버그도 같이
-     고쳤다(§15.1-15.2 참고). 1280×800 기준 available height
-     456px→608px(+152px) 실측 개선.
-  2. **Body Map front/back 구분 약함** — stroke-width 0.6/--text-muted →
-     2.2/--text로 강화, front에 입 추가(눈만으론 약함), back에 둔부/등
-     contour 추가.
-  3. **선택 부위 label이 스크롤 시 사라짐** — figures 아래 sticky compact
-     chip 추가(scroll hint pill과 절대 안 겹치도록 bottom:84px 고정).
-  4. **Pain Fast Track에서 전신정보 질문 노출 재현 시도** — 실제
-     `responses={}`부터 시작하는 screen-by-screen walk(성별×옵션선택전략
-     여러 조합, Additional=sleep 케이스 포함, `tests/integration.spec.mjs`
-     §W1-W3, 12개 assertion group)로 재현을 시도했으나 **현재 `main`
-     baseline에서는 재현되지 않았다** — §10의 7가지 가설 전부 소스 레벨로
-     확인, 실제 코드 결함 없음. 중복 showIf 땜질 없이, 이 클래스의 회귀를
-     영구히 막는 exhaustive regression test만 추가했다(자세한 내용은
-     `docs/TABLET_V2_2_...md` §15.3).
-- 추가로 LBP_10 문구를 자연스럽게 수정(순수 copy change, id/variable/
-  options/showIf/threshold 전부 동일)했고, `HERBAL_ADDON_FIELD`가 매 새
-  세션마다 명시적으로 초기화되도록 `App.tsx`의 `emptyResponses()`를
-  self-documenting하게 강화했다(기능적으로는 기존에도 안전했음을 확인).
-- **CLOSED/FROZEN `src/spec/*Logic.ts`/`*Adapter.ts`는 이번 작업에서도 단
-  한 줄도 건드리지 않았다** — `git diff origin/main -- 'src/spec/*Logic.ts'
-  'src/spec/*Adapter.ts'`가 비어있음을 확인.
-- 전체 테스트: `npm run test:all` 전부 green (`test:integration` 1010/1010,
-  이전(PR #21 기준 974) 대비 +36 assertion), `tablet core` pytest 80/80
-  green.
+- `main` tip: `b845a87`(PR #22 merge — Tablet v2.2.1 real-device
+  correction). 안정 상태.
+- 작업 브랜치: `claude/feat-doctor-view-redesign` (origin/main에서 분기,
+  push 완료).
+- 커밋 2개:
+  1. `ef6bf05` — P1 골격: `.doctor` 스코프 `--doctor-*` 토큰, 2컬럼 grid
+     (`.doctor__layout`, ≥1440 7/5, 1280~1439 6/6, <1280 단일 컬럼),
+     상단바(`.doctor__topbar`, ⚙ 도구 메뉴로 데이터소스/fixture 픽커/토큰
+     clear/원본 데이터 이동 통합) + 환자 헤더 밴드(`PatientHeader`,
+     이름·끝4자리·성별/나이(계산)+주호소+기간·빈도), npm `pretendard`
+     self-host(400/600/700 woff2, `@font-face`), 토스트 top:56px, 항상-빈
+     legacy 섹션 3종(동반문제/추가 상세상담/참고 증상) 데이터 있을 때만
+     렌더. 기존 JudgmentPanel+EMR 녹취 섹션을 우측 레일로 이동(레일
+     컴팩트 재설계는 P3 — 아직 §8.1 예산 미충족이라 sticky 미적용, 의도적
+     단순화).
+  2. `43a8a65` — P2 안전 통합: `src/doctor/safetyModules.ts`
+     (`computeSafetyModuleRows`, 9개 모듈 계산 단일화) +
+     `src/doctor/safetyOverview.ts`(`deriveSafetyOverview`, §11.1 단일
+     selector) + `SafetyModuleRowView.tsx`/`SafetySection.tsx`(통합 안전
+     리스트, 3-status 시각 인코딩 신규 구현, 계산 플래그 true만 렌더).
+     LBP fail-open 게이트 결함(Opus B3) 수정 — 행 게이트를
+     `safety_flags.<module> !== null`로 단일화, `showLbpExam`도 동일
+     기준. B1(모듈 URGENT가 목록/헤더에 반영 안 되던 문제) 수정. 서버
+     `store.js`에 `deriveListOverview` 추가(저장된 `safety_flags.*`
+     상태 문자열 + `requires_staff_check`만 읽음, 새 임상 계산 없음;
+     shape 없는 레코드는 `overview: null` 보류) + 목록 정렬(URGENT→신규→
+     최신순, 완료 접힘).
+- **FROZEN(`src/spec/*Logic.ts`, `*Adapter.ts`) 두 커밋 모두 zero-diff**
+  (`git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+  비어있음, 커밋마다 확인함).
+- `npx tsc -b --force` / `npm run build` / `npm run test:all` 전부 green
+  (커밋마다 확인).
+- **PR을 아직 만들지 않았다** — 오케스트레이터가 이 브랜치에서 P3~P7을
+  이어갈 예정이라, 이번 세션 지시(`완료 기준`)에도 PR 생성이 포함되어
+  있지 않았다. 전체 P0~P7이 끝나거나 사용자가 중간 리뷰를 요청하는
+  시점에 PR을 만드는 것이 자연스럽다.
 
-## Completed
-- (PR #19/#20/#21, 이전 세션에서 완료·merge됨 — 여기서는 요약만) Primary/
-  Additional/Reference 3단 구조, 방문목적 라우팅, 픽토그램, 스크롤 안내,
-  Body Map DOM 버그 수정, Primary-before-Additional 순서 fix,
-  questionnaire_mode(pain_fast/expanded/herbal_addon), Herbal Add-on,
-  landscape rail 레이아웃 1차 도입.
-- (이번 세션, v2.2.1) landscape breakpoint 실기기 기준 수정(1000px→760px)
-  + 세로 chrome 실질 압축, Body Map front/back cue 강화 + sticky selected
-  chip + zone highlight 개선, pain_fast systemic spillover 실제 walk 기반
-  재현 시도(재현 안 됨, 원인 7가지 전부 소스 확인) + exhaustive regression
-  suite 추가, LBP_10 wording fix, HERBAL_ADDON_FIELD stale-reset 명시화,
-  `docs/TABLET_V2_2_...md` §15 addendum 작성, 전체 회귀 테스트
-  (test:integration 1010/1010) + FROZEN zero-diff 확인.
+## Completed (이번 세션)
+- P1: 2컬럼 grid 골격, 상단바/환자 헤더 신설, Pretendard self-host,
+  legacy 빈 섹션 3종 조건부 렌더.
+- P2: 안전 selector/통합 리스트 신설, LBP/B1 결함 수정, 3-status 인코딩,
+  서버 목록 overview 필드 + 정렬.
+- 테스트: `tests/doctor.spec.mjs`(9개 모듈 패널 → 통합 리스트 마크업
+  전환, `deriveSafetyOverview` node 테스트 신설, §8.4 방식 안전-우선-순서
+  테스트 신설), `tests/server.spec.mjs`(overview 파생 5건 신설),
+  `tests/ankle-foot-doctor-integration.spec.mjs`(wiring 어서션 재작성).
 
 ## In Progress
-- (없음 — 구현/테스트/문서 전부 완료. 다음 액션은 커밋/push/PR 생성.)
+- 없음 — P1/P2는 완료. 다음은 P3(오케스트레이터가 이어감).
 
-## Remaining
-- PR 생성 후 CI green 확인.
-- **PR은 "DO NOT MERGE" 상태로 유지** — 사용자가 직접 검토/승인 후 merge
-  여부를 결정한다.
-- 실기기 landscape 재QA 권장(이번 breakpoint/chrome 수정이 실제 디바이스에서
-  의도대로 보이는지) — 이 세션의 도구로는 소스/CSS 정적 검사까지만 가능.
-- pain_fast systemic spillover가 **다시** 실기기에서 재현되면: (a) 정확히
-  어떤 build/배포(캐시 여부, 커밋 SHA)를 테스트했는지 우선 확인, (b) 그래도
-  재현되면 이 세션이 놓친 실제 코드 경로가 있다는 뜻이므로 `tests/
-  integration.spec.mjs` §W1-W3에 그 정확한 조작 순서를 추가해 먼저 실패하는
-  테스트로 재현한 뒤 수정한다(§10 root-cause 우선 원칙 유지).
+## Remaining / Next Recommended Action
+1. **P3**: 레일 압축 재설계(오늘 확인 목록 + 진찰 소견 + 판단 compact 폼)
+   + 저장 상태 머신(`onSave` 계약을 `Promise<ServerResult>`로 변경,
+   `JudgmentPanel.tsx:273`의 "아직 저장되지 않음" 고정 문구 교체) + 진료
+   완료 버튼. §8.1 레일 예산(≤560px)은 이 단계에서 성립시킨다.
+2. P4~P7은 `docs/DOCTOR_VIEW_REDESIGN_v0.2.md` §14 표 그대로 순서대로
+   진행.
+3. 전체 단계가 끝나면(또는 사용자가 중간 리뷰를 원하면) 이 브랜치로
+   `main` 대상 PR을 생성하고 ChatGPT 독립 리뷰에 올린다.
+4. 사용자 승인 대기 열린 결정 2건(v0.2 §11.8 `in_consultation` 자동 전이
+   여부, §13-8 차트번호 필드 신설 시점)은 아직 미결 — P3~P7 구현 중 해당
+   지점에 도달하면 임의로 구현하지 말고 다시 확인할 것.
 
 ## Blockers
 - 없음.
 
 ## Relevant Files
-- `docs/TABLET_V2_2_PAIN_FAST_TRACK_AND_HERBAL_ADDON.md` §15 — 이번
-  real-device correction 작업 전체 root-cause/수정 내역.
-- `src/styles.css` — wide-landscape breakpoint(760px)/chrome 압축/Body Map
-  cue·chip·highlight.
-- `src/components/BodyMap.tsx` — front/back cue 강화, selectedChip 추가.
-- `src/spec/coreSpec.ts` — LBP_10 wording.
-- `src/App.tsx` — `emptyResponses()`의 `HERBAL_ADDON_FIELD` 명시적 초기화.
-- `tests/integration.spec.mjs` §W1-W5, `tests/viewport-budget.spec.mjs` §5/§7,
-  `tests/body-map.spec.mjs` — 신규 회귀 테스트.
+- `src/doctor/safetyModules.ts`, `src/doctor/safetyOverview.ts` — 안전
+  계산/selector 단일 출처(P3 이후 계속 재사용할 것 — 새 계산 경로를
+  만들지 말 것).
+- `src/doctor/SafetyModuleRowView.tsx`, `src/doctor/SafetySection.tsx` —
+  통합 안전 리스트 렌더.
+- `src/doctor/DoctorView.tsx` — `.doctor__topbar`/`PatientHeader`/
+  `.doctor__layout`/`.doctor__rail` 골격. `showLbpExam` 게이트 위치.
+- `src/doctor/doctor.css` — `--doctor-*` 토큰, `@font-face`, 3-status
+  CSS(`doctor__safetyRow--*`).
+- `server/store.js` — `deriveListOverview`(목록 배지 유일 출처).
+- `docs/DOCTOR_VIEW_REDESIGN_v0.2.md` — 구현 권위 문서(다른 브랜치에만
+  존재 — `main`에 아직 없음, P3 작업 전에 그 브랜치 또는 PR에서 다시
+  참고할 것).
 
 ## Tests / Verification
-- `ux/tablet-v2-2-1-real-device-correction` 브랜치 기준 (이 세션이 직접
-  실행): `npx tsc -b --force`(0 에러), `npm run build`/`npm run
-  build:preview`(둘 다 성공), `npm run test:all`(전체 green,
-  `test:integration` 1010/1010), `cd "tablet core" && python3 -m pytest
-  tests/ -q`(80 passed), `git diff origin/main -- 'src/spec/*Logic.ts'
-  'src/spec/*Adapter.ts'`(empty, FROZEN zero-diff 확인).
+- 두 커밋 각각에서: `npx tsc -b --force`(0 에러), `npm run build`(성공,
+  Pretendard woff2 3종 정상 번들 확인), `npm run test:all`(전체 green),
+  `git diff origin/main -- 'src/spec/*Logic.ts' 'src/spec/*Adapter.ts'`
+  (empty).
 
 ## Current Branch
-`ux/tablet-v2-2-1-real-device-correction` (PR 생성 예정 — 아직 없음).
+`claude/feat-doctor-view-redesign` (origin에 push됨, PR 없음).
 
 ## Last Commit
-이 문서를 고치는 커밋 자체가 새 tip을 만들기 때문에 SHA를 하드코딩하지
-않는다 — 실제 head는 `git rev-parse origin/ux/tablet-v2-2-1-real-device-correction`
-또는 GitHub PR 페이지에서 직접 확인한다. `main` tip은 위 Current State의
-`784a9bd`.
+`43a8a65` — "feat(doctor): P2 safety integration — deriveSafetyOverview + unified list"
 
 ## Known Risks
-- 이번 landscape/Body Map 수정은 이 저장소의 기존 테스트 방법론(헤드리스
-  브라우저 없음, 소스/CSS 정적 검사 기반)으로만 검증됐다 — 실기기 재QA가
-  merge 전 권장된다.
-- pain_fast systemic spillover는 이번 세션 기준 재현되지 않았지만, 실기기
-  보고와 코드 상태가 어긋난 이유(오래된 배포/캐시 vs 실제 미발견 버그)가
-  100% 확정되지는 않았다 — 위 Remaining 항목 참고.
-- 환자 개인정보(문진/사주 출생정보)를 다루는 시스템이므로, 향후 모든 작업에서
-  실제 값이 로그/커밋/PR/문서에 남지 않도록 주의.
+- 우측 레일이 P1/P2 기준으로는 §8.1 예산(≤560px)을 넘는다(P1 커밋
+  메시지에 명시) — sticky를 아직 켜지 않았으므로 뷰포트보다 긴 sticky
+  회귀(이 저장소의 기존 병목)는 재발하지 않지만, 시각적으로는 P3의
+  컴팩트 재설계 전까지 우측 컬럼이 예산 밖으로 길다.
+- 서버 목록 `overview` 필드는 safety_flags shape이 없는 레코드에서
+  `null`을 반환한다 — 프런트에서 `null`을 CLEAR처럼 취급하지 않도록
+  주의(현재 DoctorView 목록 렌더는 `'URGENT'`/`'REVIEW'`일 때만 배지를
+  그리고 `null`/`'CLEAR'`는 배지 없음 — 두 경우가 시각적으로 구분되지
+  않는다는 뜻이므로, P3 이후 배지 UI를 다듬을 때 이 구분을 명시적으로
+  드러낼지 검토할 것).
+- `docs/DOCTOR_VIEW_REDESIGN_v0.2.md` 자체는 아직 `main`에 없다(다른
+  브랜치에만 존재) — PR 생성 시 리뷰어가 구현 근거 문서를 찾지 못할 수
+  있으므로, PR 생성 단계에서 그 문서를 함께 가져오거나 링크를 명시할 것.
 - 모델 role routing(Opus/Sonnet/Fable 자동 호출)은 아직 수동이다.
-
-## Next Recommended Action
-1. `git push -u origin ux/tablet-v2-2-1-real-device-correction`.
-2. PR 생성 (제목: `fix(ux): correct real-device pain fast track and tablet
-   landscape layout`), Ready for Review로만 두고 merge하지 않는다.
-3. CI(`build-and-test`) green 확인.
-4. 최종 보고 형식(사용자가 지정한 필드: Root cause — landscape/body map/
-   systemic spillover, Pain walk regression, Wide landscape real-device
-   breakpoint, Body Map, LBP_10 wording, HERBAL_ADDON stale reset, FROZEN
-   zero-diff, Tests, HUMAN DECISION REQUIRED, 마지막 줄 DO NOT MERGE)로
-   사용자에게 보고.
-5. 실제 merge는 사용자(Product Owner)가 검토 후 결정한다.

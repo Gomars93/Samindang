@@ -1107,6 +1107,36 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
   })
 
   /* -----------------------------------------------------------------------
+   * 16차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+   * key==='pregnancy' && PREGNANCY_01==='possible'일 때 WOMEN_SAFETY_01
+   * 응답에 'pregnancy_possible'이 없어도 pregnancy_possible을 true로
+   * override한다 -- CommonSafetyBanner.tsx의
+   * isReproductiveDerivedInconsistentWithRawAnswer는 이 override 방향을
+   * 검사하지 않아, 손상된 derived.pregnancy_possible=false가 실제
+   * override로 만들어진 true와 화면상 구별되지 않고 "정상" 판정을 받았다.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner 16차 HIGH-1: a corrupted derived.pregnancy_possible=false when PREGNANCY_01==="possible" should have overridden it to true DOES trigger the "cannot read" notice, never a false all-clear', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.visit_goal = { visit_goal: 'women', women_goal: 'pregnancy' }
+    mutated.responses.modules = {
+      ...mutated.responses.modules,
+      pregnancy: { status: 'possible' },
+    }
+    mutated.responses.reproductive_status.reproductive_status = ['none']
+    mutated.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
    * 9차 독립 리뷰 자체 회귀분석 (이 라운드 자체 수정에서 발견): 7개 플래그
    * 전부를 재계산하도록 isFlagsConsistentWithResponses를 확장하면서
    * r.safety_flags.red_flag_general / r.modules.gi / r.modules.bowel /

@@ -6847,6 +6847,89 @@ src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) —
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 16차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+16차 리뷰는 15차 커밋(`23ecbe4`)을 대상으로, HIGH 1건 + MEDIUM 1건을
+찾아냈다. 두 finding 모두 15차 이전 라운드들이 손대지 않은 새 표면
+(임신 모듈 override 방향, RevisitWorkspace load()의 rejection 처리)
+이었다 — 15차 자신의 fix가 회귀를 일으킨 것은 아니다.
+
+**(HIGH-1) `isUnreadableReproductiveDerived`(양쪽 사본)의
+`WOMEN_SAFETY_01` 분기는 `PREGNANCY_01`(`r.modules.pregnancy.status`)
+==='possible'일 때의 module override를 전혀 검사하지 않았다.**
+coreSpec.ts deriveReproductiveStatus는 `key==='pregnancy' &&
+PREGNANCY_01==='possible'`이면 WOMEN_SAFETY_01 응답에
+'pregnancy_possible'이 없어도 `pregnancy_possible`을 true로
+override한다(난임·임신 준비 상담에서 안전 정보 누락 방지 목적,
+coreSpec.ts:3860-3877). 그런데 지금까지의 raw-derived 일관성 검사는
+`rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true`
+한쪽 방향만 확인했고, override로 만들어진 true는 이 검사를 우회하도록
+"정당한 예외"로 남겨뒀을 뿐 그 override 자체를 재계산해서 확인하지는
+않았다 — 그 결과 PREGNANCY_01==='possible' 컨텍스트에서 손상된
+`derived.pregnancy_possible=false`가 실제 override로 만들어진 true와
+화면상 구별되지 않고 "정상" 판정을 받아 "임신 가능성: 아니요"를
+지어냈다. FROZEN lbpAdapter/neckAdapter의 `mapPregnancyStatus`가
+이 필드로 `POSSIBLE` 대신 `NO`를 계산하는 안전 오류로 직결된다
+(governing task 정책 1/2 위반). **근본 수정**: `PREGNANCY_01_VALUES`
+(coreSpec.ts PREGNANCY_01의 옵션 값 5개 — FROZEN 파일이 아니므로
+옵션이 바뀌면 이 목록도 함께 갱신 필요) 상수를 `DoctorView.tsx`/
+`CommonSafetyBanner.tsx` 양쪽에 추가하고, `pregnancyPossibleFromModule`
+(visit_goal/women_goal/PREGNANCY_01 상태로 override 여부를 직접
+재계산)을 도입해 raw-only 멤버십 대신 "raw 멤버십 OR module override"
+전체를 기대값으로 삼는 양방향 정확한 동등 비교로 교체(일반 분기 +
+`unknown`-only 분기 둘 다). PREGNANCY_01 값 자체가 옵션 밖이면
+(레거시/손상) 먼저 "읽을 수 없음"으로 fail.
+
+**(MEDIUM-1) `RevisitWorkspace.tsx`의 `load()`가 `.catch` 없이
+호출됐다.** `serverClient.ts`의 `getPatientHistory` 응답 매퍼
+(`result.data.visits.map(...)`)는 `request()`의 try/catch 밖에 있는
+`.then()` 콜백이라서, `visits`가 배열이 아니면(버전 skew/프록시 등)
+그대로 throw해 `getPatientHistory`가 반환하는 Promise가 reject됐다.
+그 rejection이 `Promise.all([...])`을 거쳐 `load()` 밖으로
+전파됐는데, `load()`를 그냥 `load()`로만 호출해서 아무도 그 rejection을
+잡지 않았다 — `loading`은 계속 true로 남고, 이 화면이 이미 갖추고
+있던 명시적 fail-closed 경로(`loadError` 배너)는 그 경로에서
+전혀 발동하지 못하고, 원장은 "재진 정보를 불러오는 중…" 스피너에
+영원히 갇혔다(리로드 외엔 빠져나올 방법이 없음). **근본 수정**: 두
+군데를 모두 고친다 — (1) `serverClient.ts`의 `visits` 필드를
+`Array.isArray(...)` 가드로 감싸 이 특정 wire shape에서는 애초에
+reject가 발생하지 않도록 하고, (2) `RevisitWorkspace.tsx`의
+`load()` 호출에 `.catch(() => { if (!cancelled) { setLoadError(true);
+setLoading(false) } })`를 추가해 어떤 이유로든 load()가 reject하면
+항상 fail-closed 배너로 떨어지도록 방어를 이중화한다.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 HIGH-1 단위 테스트
+4개(+4, 879→883 — 일반 분기 corrupted false/unknown-only 분기
+corrupted null/genuine override true sanity/옵션 밖 PREGNANCY_01
+값). `tests/doctor-workspace.spec.mjs`에 HIGH-1 CommonSafetyBanner
+실제 렌더 테스트 1개(+1, 183→184). `tests/save-conflict.spec.mjs`에
+MEDIUM-1 구조적 가드 테스트 2개(+2, 32→34 — RevisitWorkspace.tsx의
+`load().catch(...)`가 loadError/loading을 올바르게 처리하는지,
+serverClient.ts의 `getPatientHistory`가 `Array.isArray` 가드를
+갖는지).
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch 포트)
++ Playwright로 1440×900/1024×768/834×1112 3개 뷰포트 각각에서
+PREGNANCY_01==='possible' 컨텍스트 + 자기-일관적(그러나 지어낸)
+`pregnancy_possible: false`를 POST하고 목록에서 클릭 — "특이
+안전정보 없음" 허위 all-clear 0건 및 "안전정보 일부를 읽을 수
+없습니다" 정상 표시, 3개 뷰포트 전부 page error 0건 확인. MEDIUM-1은
+정상 서버 응답 경로에서는 재현 불가능(서버는 항상 배열을 보냄 --
+`server/store.js:422-424`)하므로 별도의 live-repro 시나리오를 만들지
+않고 구조적 테스트로만 커버했다 — 이는 리뷰가 이 finding을 MEDIUM으로
+매긴 이유(도달 가능성이 정상 서버 하에서는 없음)와 일치한다.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 883/883, doctor-workspace 184/184, save-conflict
+34/34 포함), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 17차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

@@ -289,7 +289,13 @@ export function getPatientHistory(
       ok: true,
       data: {
         patientId: result.data.patient_id ?? patientId,
-        visits: result.data.visits.map((v) => ({
+        // 16차 독립 리뷰 MEDIUM-1: 서버가 언제나 배열을 보낸다는 보장에
+        // 의존하지 않는다 -- 버전 skew/프록시 등으로 `visits`가 배열이
+        // 아니면 이전엔 `.map`이 그대로 throw해 이 함수의 반환 Promise가
+        // reject됐고, 호출부(RevisitWorkspace.tsx의 `load()`)는 그 reject를
+        // 잡지 않아 로딩 스피너가 영원히 멈추지 않았다(고안된 fail-closed
+        // loadError 경로로 아예 도달하지 못함).
+        visits: (Array.isArray(result.data.visits) ? result.data.visits : []).map((v) => ({
           visitId: v.visit_id,
           submissionId: v.submission_id,
           createdAt: v.created_at,

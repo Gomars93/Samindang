@@ -227,6 +227,21 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     const occurrences = src.match(/isValidExamStatus\(i\.result\.status\)/g) || []
     assert.ok(occurrences.length >= 2, `expected the guard in both recap-line builders, found ${occurrences.length}`)
   })
+
+  // 16차 독립 리뷰 MEDIUM-1: load() was called with no .catch -- if a
+  // response mapper (e.g. serverClient.ts's getPatientHistory) throws, the
+  // rejection was never handled: `loading` stayed true forever and
+  // `loadError` (the deliberately fail-closed banner built for exactly this
+  // situation) was never reached. The clinician was stuck on "재진 정보를
+  // 불러오는 중…" permanently with no way out but reloading the app.
+  test('RevisitWorkspace.tsx 16차 MEDIUM-1: the load() effect catches a rejected load and routes it to the fail-closed loadError state', () => {
+    const loadCallStart = src.indexOf('load().catch(')
+    assert.ok(loadCallStart !== -1, 'load() must be invoked with a .catch handler, not bare')
+    const catchBlock = src.slice(loadCallStart, src.indexOf('return () => {', loadCallStart))
+    assert.ok(catchBlock.includes('setLoadError(true)'), 'a rejected load must still set loadError')
+    assert.ok(catchBlock.includes('setLoading(false)'), 'a rejected load must still clear the loading spinner')
+    assert.ok(catchBlock.includes('if (!cancelled)'), 'must not update state after the effect was cancelled (visit/patient switched during the failed load)')
+  })
 }
 
 // ---------- 4. JudgmentPanel.tsx judgment-save conflict wiring ----------
@@ -359,6 +374,28 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   test('DoctorView.tsx: both save callbacks pass expectedUpdatedAt through to the server client (the CAS precondition is actually wired, not dropped)', () => {
     assert.ok(/saveWorkspaceStateToServer\(selectedId, state, expectedUpdatedAt \?\? undefined\)/.test(src))
     assert.ok(/saveJudgmentToServer\(selectedId, judgment, expectedUpdatedAt \?\? undefined\)/.test(src))
+  })
+}
+
+// ---------- 5. src/lib/serverClient.ts: 16차 독립 리뷰 MEDIUM-1 ----------
+// getPatientHistory's response mapper indexed `result.data.visits.map(...)`
+// unconditionally -- a non-array `visits` (version skew, a non-conforming
+// proxy) threw INSIDE the .then() callback, which is outside request()'s own
+// try/catch, so the returned Promise rejected. RevisitWorkspace.tsx's load()
+// (fixed above, same round) now catches that rejection, but the root cause
+// -- the mapper itself assuming the wire shape -- is fixed here too, so the
+// rejection stops happening in the first place for this specific shape.
+{
+  const src = fs.readFileSync('src/lib/serverClient.ts', 'utf8')
+
+  test('serverClient.ts 16차 MEDIUM-1: getPatientHistory never lets a non-array `visits` throw inside the response mapper', () => {
+    const fnStart = src.indexOf('export function getPatientHistory(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(
+      /visits:\s*\(Array\.isArray\(result\.data\.visits\)\s*\?\s*result\.data\.visits\s*:\s*\[\]\)\.map\(/.test(fn),
+      'must guard Array.isArray before calling .map on the wire visits field',
+    )
   })
 }
 

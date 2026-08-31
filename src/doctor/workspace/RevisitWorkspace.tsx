@@ -249,7 +249,19 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       if (mfuResult.ok) setMicroFollowUpResponse(mfuResult.data.response)
       setLoading(false)
     }
-    load()
+    // 16차 독립 리뷰 MEDIUM-1: load()는 catch 없이 호출됐다 -- 응답 매퍼가
+    // (예: serverClient.ts getPatientHistory의 `visits.map`) throw하면 그
+    // rejection이 여기서 잡히지 않은 채 사라져, `loading`은 계속 true로
+    // 남고 `loadError`는 절대 set되지 않았다. 이 화면이 위해 만든 명시적
+    // fail-closed 경로(loadError 배너)가 그 rejection 경로에서는 아예
+    // 발동하지 못하고, 원장은 "재진 정보를 불러오는 중…" 스피너에 영원히
+    // 갇혔다.
+    load().catch(() => {
+      if (!cancelled) {
+        setLoadError(true)
+        setLoading(false)
+      }
+    })
     return () => {
       cancelled = true
     }

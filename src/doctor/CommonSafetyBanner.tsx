@@ -110,6 +110,8 @@ const WOMEN_SAFETY_01_VALUES = new Set([
 /** 15차 독립 리뷰 HIGH-2: DoctorView.tsx의 동명 상수와 동일. */
 const POSTPARTUM_01_VALUES = new Set(['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m', 'over_1y'])
 const POSTPARTUM_03_VALUES = new Set(['yes', 'no', 'mixed'])
+/** 16차 독립 리뷰 HIGH-1: DoctorView.tsx의 동명 상수와 동일. */
+const PREGNANCY_01_VALUES = new Set(['pregnant', 'possible', 'trying', 'fertility', 'unknown'])
 
 function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, r: Responses): boolean {
   const rawAnswer = r.reproductive_status.reproductive_status
@@ -169,13 +171,30 @@ function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknow
     }
     if (!Array.isArray(d.raw)) return true
     const rawSet = new Set(rawAnswer)
+    // 16차 독립 리뷰 HIGH-1: DoctorView.tsx의 동명 검사와 동일한 이유/수정
+    // -- coreSpec.ts deriveReproductiveStatus는 key==='pregnancy' &&
+    // PREGNANCY_01==='possible'일 때 WOMEN_SAFETY_01 응답에
+    // 'pregnancy_possible'이 없어도 pregnancy_possible을 true로
+    // override한다. 이전 구현은 이 override 방향을 전혀 검사하지 않아
+    // (rawSet.has(...)만 확인), 손상된 derived.pregnancy_possible=false가
+    // 실제 override로 만들어진 true와 화면상 구별되지 않고 "정상"
+    // 판정을 받았다.
+    const pregnancyStatus = r.modules?.pregnancy?.status
+    if (typeof pregnancyStatus === 'string' && !PREGNANCY_01_VALUES.has(pregnancyStatus)) return true
+    const pregnancyPossibleFromModule =
+      r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'pregnancy' && pregnancyStatus === 'possible'
     if (rawSet.size === 1 && rawSet.has('unknown')) {
-      return d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null
+      if (d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null) return true
+      return d.pregnancy_possible !== (pregnancyPossibleFromModule ? true : null)
     }
     if (rawSet.has('pregnant') && d.pregnant !== true) return true
     if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
     if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
-    if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
+    // 16차 HIGH-1 수정: pregnancy_possible의 기대값을 raw 멤버십 또는
+    // module override 둘 중 하나로 정확히 정의할 수 있으므로, 한쪽 방향만
+    // 확인하던 이전 검사를 양방향 정확한 동등 비교로 교체한다.
+    const expectedPregnancyPossible = rawSet.has('pregnancy_possible') || pregnancyPossibleFromModule
+    if (d.pregnancy_possible !== expectedPregnancyPossible) return true
     // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/postpartum_1y/
     // breastfeeding은 pregnancy_possible과 달리 다른 모듈의 정당한 override
     // 경로가 없으므로, derived가 true인데 raw가 그 값을 포함하지 않으면

@@ -2496,6 +2496,98 @@ function detailsRange(html, classMarker) {
       isUnreadableReproductiveDerived(postpartumFixture6.payload.responses) === false,
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 16차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+   * key==='pregnancy' && PREGNANCY_01==='possible'일 때 WOMEN_SAFETY_01
+   * 응답에 'pregnancy_possible'이 없어도 pregnancy_possible을 true로
+   * override한다(난임/임신 준비 상담에서 안전 정보 누락 방지) -- 지금까지의
+   * 모든 raw-derived 일관성 검사는 이 override 방향을 전혀 검사하지 않아,
+   * 손상된 derived.pregnancy_possible=false/null이 실제 override로 만들어진
+   * true와 화면상 구별되지 않고 "정상" 판정을 받았다.
+   * ------------------------------------------------------------------- */
+  {
+    const pregnancyFixture1 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture1.payload)
+    p.responses.modules.pregnancy.status = 'possible'
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      // coreSpec.ts가 실제로 계산했다면 PREGNANCY_01==='possible' override로
+      // true가 되어야 한다 -- 이 test는 그 override를 무시한 손상된 false를
+      // 재현한다.
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a corrupted derived.pregnancy_possible=false when PREGNANCY_01==="possible" should have overridden it to true (16th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Same override, but through the WOMEN_SAFETY_01===['unknown']-only
+    // branch, whose expected pregnancy_possible was previously hardcoded to
+    // null regardless of the module override.
+    const pregnancyFixture2 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture2.payload)
+    p.responses.modules.pregnancy.status = 'possible'
+    p.responses.reproductive_status.reproductive_status = ['unknown']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['unknown'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a corrupted derived.pregnancy_possible=null in the unknown-only branch when PREGNANCY_01==="possible" should have overridden it to true (16th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: the genuine override-produced shape (pregnancy_possible=true
+    // despite raw never including it) must NOT be rejected.
+    const pregnancyFixture3 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture3.payload)
+    p.responses.modules.pregnancy.status = 'possible'
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: true,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive on the genuine PREGNANCY_01==="possible" module-override shape (16th independent review HIGH-1 sanity check)',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
+  {
+    // An out-of-option-set PREGNANCY_01 value must also fail closed (same
+    // class of guard as POSTPARTUM_01/03 in round 15).
+    const pregnancyFixture4 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture4.payload)
+    p.responses.modules.pregnancy.status = 'ZZZ'
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an out-of-option-set PREGNANCY_01(modules.pregnancy.status) value (16th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------

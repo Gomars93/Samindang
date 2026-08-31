@@ -74,6 +74,7 @@ import {
   visitWorkspaceStateEquals,
   type VisitWorkspaceState,
 } from './visitWorkspace'
+import { deserializeWorkspaceState } from './persistence'
 import { ConflictBanner } from '../ConflictBanner'
 import { PainFinalAssessmentCard } from './FinalAssessmentCard'
 import { PainCarePlanCard } from './CarePlanCard'
@@ -82,7 +83,7 @@ import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
-import { EXAM_CHECK_STATUS_LABEL } from './provenance'
+import { EXAM_CHECK_STATUS_LABEL, isValidExamStatus, type ExamCheckStatus } from './provenance'
 import {
   applyFollowUpTargetsCarryForward,
   applyJudgmentCarryForward,
@@ -99,11 +100,25 @@ const COMBINED_FOLLOW_UP_OPTIONS = [...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 
+/**
+ * 15차 독립 리뷰 HIGH-1: `priorSubmission.workspace`는 인증되지 않은 PUT
+ * `/api/submissions/:id/workspace`가 검증 없이 저장한 원본을 그대로
+ * 담고 있다 -- `deserializeVisitWorkspaceState`를 거치는 형제 분기
+ * (아래 `priorVisitRecapLinesFromVisitWorkspace`, priorVisitWorkspace는
+ * 로드 시점에 이미 sanitize됨)와 달리 이 함수는 그 원본을 한 번도
+ * 검증하지 않고 바로 읽었다 -- 원소가 null/undefined/필드 누락이면
+ * `.result`/`.status`/`.trim()` 등에서 그대로 크래시했다. 게다가 이
+ * 컴포넌트는 `DoctorRecordErrorBoundary`(DoctorView.tsx) 바깥에
+ * 마운트되므로, 크래시가 나면 원장이 보던 화면이 아니라 환자용
+ * PatientErrorBoundary(App.tsx)의 "태블릿을 직원에게 보여주세요"로
+ * 떨어지고 전체 원장 세션이 리셋됐다. deserializeWorkspaceState로
+ * 먼저 정화한다.
+ */
 function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
-  const ws = priorSubmission?.workspace
+  const ws = priorSubmission?.workspace ? deserializeWorkspaceState(priorSubmission.workspace) : null
   const examLines = (ws?.painExamSuggestions ?? [])
-    .filter((i) => i.result.status !== 'NOT_YET_CHECKED')
-    .map((i) => `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status]}${i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''}`)
+    .filter((i) => isValidExamStatus(i.result.status) && i.result.status !== 'NOT_YET_CHECKED')
+    .map((i) => `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status as ExamCheckStatus]}${i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''}`)
   const observationLines = (ws?.herbalClinicianObservations ?? [])
     .filter((i) => i.checked)
     .map((i) => `${i.title}: ${i.value.trim()}`)
@@ -127,9 +142,15 @@ function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
 // targets, next reassessment plan) already carried over correctly via
 // getPatientHistory's `follow_up_targets` field (round 5 fix).
 function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorkspaceState | null) {
+  // 15차 독립 리뷰 MEDIUM-2: priorVisitWorkspace는 이미
+  // deserializeVisitWorkspaceState를 거쳤지만(컨테이너/leaf는 안전), 그
+  // sanitize는 `result.status`가 문자열이라는 것만 보장할 뿐 알려진
+  // ExamCheckStatus 값인지는 보장하지 않는다 -- 손상된 status가
+  // `EXAM_CHECK_STATUS_LABEL[status]`에서 undefined가 되어 "이전 소견:
+  // undefined"로 그대로 노출됐다.
   const examLines = (priorVisitWorkspace?.reassessment.items ?? [])
-    .filter((i) => i.result.status !== 'NOT_YET_CHECKED')
-    .map((i) => `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status]}${i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''}`)
+    .filter((i) => isValidExamStatus(i.result.status) && i.result.status !== 'NOT_YET_CHECKED')
+    .map((i) => `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status as ExamCheckStatus]}${i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''}`)
   const carePlanLines = [
     priorVisitWorkspace?.carePlan.currentTreatmentGoal ? `치료 목표: ${priorVisitWorkspace.carePlan.currentTreatmentGoal}` : null,
     priorVisitWorkspace?.carePlan.homeActionPlan ? `집에서 할 일: ${priorVisitWorkspace.carePlan.homeActionPlan}` : null,

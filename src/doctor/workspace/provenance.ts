@@ -113,6 +113,25 @@ export function isExamChecked(status: ExamCheckStatus): boolean {
 }
 
 /**
+ * 14차 독립 리뷰 MEDIUM-2 / 15차 독립 리뷰 MEDIUM-2: `sanitizeShape`의
+ * typeof-매칭은 `result.status`가 어떤 문자열이든(옵션 목록 밖이어도)
+ * 통과시키고, `result.laterality`(null-템플릿 필드)는 문자열/숫자/null
+ * 전부 통과시킨다 -- `EXAM_CHECK_STATUS_LABEL[status]`/
+ * `LATERALITY_LABEL[laterality]`가 알려진 키가 아니면 `undefined`를
+ * 반환하고, 그 값이 원장이 그대로 보는/복사하는 텍스트에 리터럴
+ * "undefined"로 그대로 노출된다. 14차는 emrPreview.ts에만 이 가드를
+ * 두었다가 15차 독립 리뷰가 StructuredReassessmentCard.tsx/
+ * RevisitWorkspace.tsx의 동일한 미가공 lookup을 찾아냈다 -- 여러 파일이
+ * 공유할 수 있도록 라벨 맵과 같은 파일로 옮긴다.
+ */
+export function isValidExamStatus(status: unknown): status is ExamCheckStatus {
+  return typeof status === 'string' && Object.prototype.hasOwnProperty.call(EXAM_CHECK_STATUS_LABEL, status)
+}
+export function isValidLaterality(laterality: unknown): laterality is Laterality {
+  return typeof laterality === 'string' && Object.prototype.hasOwnProperty.call(LATERALITY_LABEL, laterality)
+}
+
+/**
  * Laterality — several exam findings are meaningfully left/right/bilateral.
  * Kept generic/non-clinical: this is a UI input shape, not a diagnostic
  * category.

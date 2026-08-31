@@ -9,6 +9,8 @@ import {
   EXAM_CHECK_STATUS_LABEL,
   LATERALITY_LABEL,
   PROVENANCE_BADGE,
+  isValidExamStatus,
+  isValidLaterality,
   type ExamCheckStatus,
   type Laterality,
 } from './provenance'
@@ -38,9 +40,15 @@ function ReassessmentItemCard({
 
       {item.previous && (
         <p className="workspace__examCard__reason">
-          이전 소견: {EXAM_CHECK_STATUS_LABEL[item.previous.status]}
+          {/*
+           * 15차 독립 리뷰 MEDIUM-2: sanitizeShape는 previous.status/laterality가
+           * 문자열이라는 것만 보장할 뿐 알려진 enum 값인지는 보장하지 않는다 --
+           * 손상된 값이 EXAM_CHECK_STATUS_LABEL/LATERALITY_LABEL 조회에서
+           * undefined가 되어 원장 화면에 리터럴 "undefined"로 그대로 노출됐다.
+           */}
+          이전 소견: {isValidExamStatus(item.previous.status) ? EXAM_CHECK_STATUS_LABEL[item.previous.status] : '확인 필요(값 형식 오류)'}
           {item.previous.laterality && item.previous.laterality !== 'NOT_APPLICABLE'
-            ? ` (${LATERALITY_LABEL[item.previous.laterality]})`
+            ? ` (${isValidLaterality(item.previous.laterality) ? LATERALITY_LABEL[item.previous.laterality] : '확인 필요(값 형식 오류)'})`
             : ''}
           {item.previous.note.trim() ? ` — ${item.previous.note.trim()}` : ''}
         </p>

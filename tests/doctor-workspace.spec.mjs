@@ -1034,6 +1034,79 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
   })
 
   /* -----------------------------------------------------------------------
+   * 15차 독립 리뷰 HIGH-2: POSTPARTUM_01(time_since_delivery)/POSTPARTUM_03
+   * (breastfeeding_status)는 산후 컨텍스트에서 항상 물어보는 required
+   * single_choice라서, 실제 제출은 이 값이 옵션 목록 밖일 수 없다. 옵션 밖
+   * 문자열은 `.includes(...)`/`===` 비교에서 그냥 false가 되므로, 손상된 raw
+   * 답변에 대해서도 "출산 후 1년 이내: 아니요/모유수유 중: 아니요"를 계산해
+   * derived와 "일치"시켜 보여줬다 (CommonSafetyBanner.tsx의
+   * isReproductiveDerivedInconsistentWithRawAnswer의 postpartum_module 분기).
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner 15차 HIGH-2: an out-of-option-set POSTPARTUM_01(time_since_delivery) value paired with a self-consistent (but fabricated) derived.postpartum_1y=false DOES trigger the "cannot read" notice, never a false all-clear', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.visit_goal = { visit_goal: 'women', women_goal: 'postpartum' }
+    mutated.responses.modules = {
+      ...mutated.responses.modules,
+      postpartum: { time_since_delivery: 'ZZZ', breastfeeding_status: 'yes' },
+    }
+    mutated.responses.reproductive_status.reproductive_status = ['postpartum']
+    mutated.responses.reproductive_status.derived = {
+      source: 'postpartum_module',
+      raw: ['ZZZ', 'yes'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: false,
+      breastfeeding: true,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  test('CommonSafetyBanner 15차 HIGH-2: an out-of-option-set POSTPARTUM_03(breastfeeding_status) value paired with a self-consistent (but fabricated) derived.breastfeeding=false DOES trigger the "cannot read" notice, never a false all-clear', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.visit_goal = { visit_goal: 'women', women_goal: 'postpartum' }
+    mutated.responses.modules = {
+      ...mutated.responses.modules,
+      postpartum: { time_since_delivery: 'within_6_weeks', breastfeeding_status: 'ZZZ' },
+    }
+    mutated.responses.reproductive_status.reproductive_status = ['postpartum']
+    mutated.responses.reproductive_status.derived = {
+      source: 'postpartum_module',
+      raw: ['within_6_weeks', 'ZZZ'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: true,
+      breastfeeding: false,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 15차 독립 리뷰 MEDIUM-2 (StructuredReassessmentCard.tsx): sanitizeShape
+   * only guarantees item.previous.status/laterality are strings, not known
+   * enum members -- an unmapped value must not leak as the literal string
+   * "undefined" into the 이전 소견 recap line. Not independently renderable
+   * outside DoctorWorkspace's revisit flow, so this is a structural guard on
+   * the source (same established pattern as save-conflict.spec.mjs's
+   * RevisitWorkspace.tsx checks) rather than a full-render assertion.
+   * ------------------------------------------------------------------- */
+  test('StructuredReassessmentCard.tsx 15차 MEDIUM-2: both the status and laterality lookups on item.previous are guarded against unmapped enum values', () => {
+    const src = fs.readFileSync('src/doctor/workspace/StructuredReassessmentCard.tsx', 'utf8')
+    assert.ok(src.includes("isValidExamStatus,") && src.includes("isValidLaterality,"), 'must import both guards from ./provenance')
+    assert.ok(
+      /isValidExamStatus\(item\.previous\.status\)\s*\?\s*EXAM_CHECK_STATUS_LABEL\[item\.previous\.status\]\s*:\s*'확인 필요\(값 형식 오류\)'/.test(src),
+      'status lookup must fall back to a fail-closed marker instead of an unmapped-key undefined',
+    )
+    assert.ok(
+      /isValidLaterality\(item\.previous\.laterality\)\s*\?\s*LATERALITY_LABEL\[item\.previous\.laterality\]\s*:\s*'확인 필요\(값 형식 오류\)'/.test(src),
+      'laterality lookup must fall back to a fail-closed marker instead of an unmapped-key undefined',
+    )
+  })
+
+  /* -----------------------------------------------------------------------
    * 9차 독립 리뷰 자체 회귀분석 (이 라운드 자체 수정에서 발견): 7개 플래그
    * 전부를 재계산하도록 isFlagsConsistentWithResponses를 확장하면서
    * r.safety_flags.red_flag_general / r.modules.gi / r.modules.bowel /

@@ -298,6 +298,14 @@ const WOMEN_SAFETY_01_VALUES = new Set([
   'unknown',
 ])
 
+/**
+ * 15차 독립 리뷰 HIGH-2: coreSpec.ts POSTPARTUM_01/POSTPARTUM_03의 옵션 값
+ * 전체 집합 -- FROZEN 파일이 아니므로 옵션이 바뀌면 이 목록도 함께 갱신
+ * 필요.
+ */
+const POSTPARTUM_01_VALUES = new Set(['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m', 'over_1y'])
+const POSTPARTUM_03_VALUES = new Set(['yes', 'no', 'mixed'])
+
 export function isUnreadableReproductiveDerived(r: Responses): boolean {
   // 레거시 레코드는 reproductive_status 최상위 키 자체가 없을 수 있다
   // (그 필드가 생기기 전 제출본) -- 옵셔널 체이닝 없이 바로
@@ -427,6 +435,20 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
     // 위 expectedSource에서 이미 끝났다.
     const since = r.modules?.postpartum?.time_since_delivery
     const feeding = r.modules?.postpartum?.breastfeeding_status
+    // 15차 독립 리뷰 HIGH-2: POSTPARTUM_01/03은 `required: true`인
+    // single_choice라서(postpartum 컨텍스트에서 항상 물어봄) 실제 제출은
+    // 이 값이 옵션 목록 밖일 수 없다 -- 옵션 밖 문자열은
+    // `POSTPARTUM_WITHIN_1Y.includes(...)`/`=== 'yes' || === 'mixed'`
+    // 비교에서 그냥 false가 되므로, 이전 구현은 이런 손상된 raw 답변에
+    // 대해서도 "출산 후 1년 이내: 아니요 / 모유수유 중: 아니요"를 그대로
+    // 계산해서 보여줬다 -- WOMEN_SAFETY_01과 동일한 클래스의 fail-open을
+    // 산후 컨텍스트에서 재현한 것.
+    if (
+      (typeof since === 'string' && !POSTPARTUM_01_VALUES.has(since)) ||
+      (typeof feeding === 'string' && !POSTPARTUM_03_VALUES.has(feeding))
+    ) {
+      return true
+    }
     const rawParts: string[] = []
     if (typeof since === 'string') rawParts.push(since)
     if (typeof feeding === 'string') rawParts.push(feeding)

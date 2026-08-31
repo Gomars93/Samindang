@@ -6743,6 +6743,110 @@ origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 15차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+15차 리뷰는 14차 커밋(`c870171`)을 대상으로, HIGH 2건 + MEDIUM 2건 +
+LOW 4건을 찾아냈다. 이번에도 13~14차와 같은 패턴 — "고쳤다고 믿었던
+메커니즘"의 자매 지점이 남아 있었다. 다만 이번 HIGH-1은 성격이
+다르다: sanitizer 자체의 검증 공백이 아니라 **sanitizer가 아예
+호출되지 않은 경로**였다.
+
+**(HIGH-1) `RevisitWorkspace.tsx`의 `priorVisitRecapLines`(재진
+화면의 "직전 방문 요약")와 `revisitCarryForward.ts`의
+`carryForwardSourceFromSubmission`이 `priorSubmission.workspace`를
+`deserializeWorkspaceState`를 거치지 않고 완전히 원본(raw) 그대로
+읽었다.** 이 필드는 인증되지 않은 PUT `/api/submissions/:id/workspace`가
+스키마 검증 없이 그대로 저장한 값이므로, 원소가 `null`/필드 누락이면
+`.result.status`/`.trim()` 등에서 그대로 크래시했다. 더 심각한 건
+파급 범위다: `RevisitWorkspace`는 `DoctorView.tsx`의
+`DoctorRecordErrorBoundary`(원장 화면 크래시를 원장 쪽 fallback으로만
+가두는 경계) **밖에** 마운트된다 — 크래시가 나면 환자용
+`PatientErrorBoundary`(App.tsx)의 "문제가 발생했습니다. 태블릿을
+직원에게 보여주세요."로 떨어지고, 그 리셋이 전체 원장 세션(선택된
+레코드, 탭 상태 등)을 통째로 날린다. **근본 수정**: 두 함수 모두
+`priorSubmission.workspace ? deserializeWorkspaceState(priorSubmission
+.workspace) : null`로 필드 접근 전에 먼저 정화. `carryForwardSourceFrom
+Submission` 수정은 부수적으로 별도 MEDIUM-1(손상된 follow-up target
+label이 그대로 살아남는 문제)도 함께 해소했다 — `deserializeWorkspace
+State`가 이미 `FollowUpTarget.label`을 `sanitizeArray`로 보장하므로
+`trackingOnly`에 별도 가드를 추가할 필요는 없었다.
+
+**(HIGH-2) `isUnreadableReproductiveDerived`(양쪽 사본)의
+`postpartum_module` 분기는 14차가 `WOMEN_SAFETY_01` 분기에 추가한
+멤버십 가드를 갖지 못했다.** POSTPARTUM_01(`time_since_delivery`)/
+POSTPARTUM_03(`breastfeeding_status`)는 coreSpec.ts에서 산후
+컨텍스트일 때 항상 물어보는 `required: true` `single_choice`라서,
+실제 제출은 이 값이 옵션 목록 밖일 수 없다(WOMEN_SAFETY_01과 동일한
+근거). 옵션 밖 문자열은 `POSTPARTUM_WITHIN_1Y.includes(...)`/
+`=== 'yes' || === 'mixed'` 비교에서 그냥 false가 되므로, 이전
+구현은 손상된 raw 답변에 대해서도 "출산 후 1년 이내: 아니요/모유수유
+중: 아니요"를 그대로 계산해 derived와 "일치"시켜 보여줬다 —
+14차가 WOMEN_SAFETY_01에서 막은 것과 정확히 같은 클래스의 fail-open이
+산후 컨텍스트에 그대로 남아 있었다. **근본 수정**:
+`POSTPARTUM_01_VALUES`(5개)/`POSTPARTUM_03_VALUES`(3개) 상수를
+양쪽 파일에 추가하고, `since`/`feeding`이 존재하지만 옵션 목록 밖이면
+`expectedPostpartum1y`/`expectedBreastfeeding` 계산 전에 바로
+"읽을 수 없음"으로 fail.
+
+**(MEDIUM-2, 14차 LOW-3 재등급) `StructuredReassessmentCard.tsx`/
+`RevisitWorkspace.tsx`의 두 지점에서 `EXAM_CHECK_STATUS_LABEL
+[previous.status]`/`LATERALITY_LABEL[previous.laterality]`를
+가드 없이 조회했다.** 14차는 이 클래스의 문제를 `emrPreview.ts`
+한 곳에만 고쳤는데, 15차가 동일한 미가공 lookup이 있는 자매 파일
+두 곳을 더 찾아냈다 — 14차가 "LOW-3"으로 격하해 넘겼던 항목이
+실제로는 여러 파일에 반복되는 패턴이었다는 뜻이라 MEDIUM으로
+재등급했다. **근본 수정**: `isValidExamStatus`/`isValidLaterality`
+가드 함수를 `emrPreview.ts`에서 `provenance.ts`(라벨 맵과 같은
+파일)로 옮겨 세 파일이 공유하도록 하고, `StructuredReassessment
+Card.tsx`/`RevisitWorkspace.tsx`(양쪽 recap-line 빌더 모두) 조회
+지점에 적용 — 미매핑 값은 "확인 필요(값 형식 오류)"로 표시.
+
+**LOW 4건은 이번 배치에서 수정하지 않고 기록만 남긴다** — 크래시나
+사실 지어내기가 아니라 저심각도 표시 흠결이고, HIGH/MEDIUM에 예산을
+우선 배정했다. 리뷰는 별도로 "하드코딩된 옵션 값 allowlist(WOMEN_SAFETY_01
+_VALUES/POSTPARTUM_01_VALUES/POSTPARTUM_03_VALUES 등, FROZEN 파일이
+아니라 옵션이 바뀌면 수동 갱신 필요)를 coreSpec.ts에서 파생시키는
+아키텍처 개선"을 HUMAN DECISION REQUIRED로 언급했다 — 이번 배치
+범위 밖이므로 여기 기록만 하고 결정은 사용자에게 맡긴다.
+
+**신규 회귀 테스트**: `tests/save-conflict.spec.mjs`에 HIGH-1/MEDIUM-2
+구조적 가드 테스트 2개(+2, `RevisitWorkspace.tsx`는 JSX+네트워크
+클라이언트 의존이라 순수 함수 번들링 대신 기존 파일의 구조적 정규식
+테스트 패턴을 그대로 따름). `tests/workspace-round3.spec.mjs`에
+`carryForwardSourceFromSubmission` 순수 함수 단위 테스트 3개(+3,
+125→128 — 손상된 prior workspace가 크래시하지 않는지, wrong-typed
+follow-up target label이 정화되는지). `tests/doctor.spec.mjs`에
+HIGH-2 단위 테스트 3개(+3, 876→879 — POSTPARTUM_01/03 각각 옵션 밖
+값 + 진짜 정상 값 sanity). `tests/doctor-workspace.spec.mjs`에
+HIGH-2 CommonSafetyBanner 실제 렌더 테스트 2개 +
+StructuredReassessmentCard.tsx MEDIUM-2 구조적 가드 테스트 1개(+3,
+180→183).
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch 포트)
++ Playwright로 1440×900/1024×768/834×1112 3개 뷰포트 각각에서 (A)
+`result` 필드가 아예 없는 손상된 `painExamSuggestions` workspace를
+실제 PUT으로 저장한 뒤, 그 환자로 "재진 간단 문진 시작" → 새로
+생성된 재진을 재진 목록에서 클릭(HIGH-1의 실제 경로 재현), (B)
+`time_since_delivery: 'ZZZ'` 산후 컨텍스트 제출 + 자기-일관적
+`postpartum_1y: false` derived를 POST하고 목록에서 클릭(HIGH-2) —
+(A) `PatientErrorBoundary`의 "문제가 발생했습니다. 태블릿을 직원에게
+보여주세요."로 떨어지지 않고 재진 화면("재진 · 간단 추적")이 정상
+유지, (B) "특이 안전정보 없음" 허위 all-clear 0건 및 "안전정보
+일부를 읽을 수 없습니다" 정상 표시, 2개 시나리오 × 3개 뷰포트 전부
+page error 0건 확인.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 879/879, doctor-workspace 183/183, workspace-round3
+128/128, save-conflict 32/32 포함), `npm run build`/`build:preview`
+clean, `tablet core` pytest 80/80, `git diff origin/main --
+src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) —
+전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 16차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

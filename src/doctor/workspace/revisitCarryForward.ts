@@ -52,6 +52,7 @@ import type { PainCarePlan } from './carePlan'
 import { emptyPainCarePlan } from './carePlan'
 import type { SubmissionRecord } from '../../lib/serverClient'
 import type { VisitWorkspaceState } from './visitWorkspace'
+import { deserializeWorkspaceState } from './persistence'
 
 /** What 이전 판단 유지 writes, and nothing else. */
 export type CarryForwardJudgment = {
@@ -119,7 +120,12 @@ export function isTreatmentPlanBlank(value: PainFinalAssessment, carePlan: PainC
  * generic label, so nothing new is being asserted here.
  */
 export function carryForwardSourceFromSubmission(prior: SubmissionRecord | null): RevisitCarryForwardSource {
-  const ws = prior?.workspace
+  // 15차 독립 리뷰 MEDIUM-1: `prior.workspace`는 인증되지 않은 PUT이 검증
+  // 없이 저장한 원본이다 -- 이전에는 이걸 바로 읽어서 `joinNonEmpty`의
+  // `(p ?? '').trim()`이 wrong-typed(object) 필드에서 그대로 던졌다(HIGH-1과
+  // 동일한 원본 데이터, RevisitWorkspace.tsx의 priorVisitRecapLines와
+  // 자매 함수). deserializeWorkspaceState로 먼저 정화한다.
+  const ws = prior?.workspace ? deserializeWorkspaceState(prior.workspace) : null
   if (!ws) return emptyCarryForwardSource()
 
   const pain = ws.painFinalAssessment

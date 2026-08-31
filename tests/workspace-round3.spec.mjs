@@ -611,6 +611,40 @@ function assert(name, cond) {
   assert('applyJudgmentCarryForward never mentions interventionPerformedOrPlanned', !judgmentFn.includes('interventionPerformedOrPlanned'))
   assert('applyJudgmentCarryForward never mentions immediateRetestTarget', !judgmentFn.includes('immediateRetestTarget'))
   assert('applyJudgmentCarryForward never touches the care plan', !judgmentFn.includes('carePlan'))
+
+  /* -----------------------------------------------------------------------
+   * 15차 독립 리뷰 HIGH-1/MEDIUM-1: prior.workspace is an untrusted raw blob
+   * written by an unauthenticated PUT with no schema validation -- a
+   * malformed shape must never crash carryForwardSourceFromSubmission, and a
+   * wrong-typed follow-up target label must never survive into the offered
+   * carry-forward source (it must come out sanitized, not as-is garbage).
+   * ------------------------------------------------------------------- */
+  const malformedPrior = {
+    workspace: {
+      painFinalAssessment: { a: 1 },
+      herbalFinalAssessment: null,
+      painCarePlan: 'not-an-object',
+      herbalCarePlan: undefined,
+      painFollowUpTargets: [{ id: 'x', label: { nested: true }, baseline: 1, postTreatmentValue: null }],
+      herbalFollowUpTargets: 'not-an-array',
+      painExamSuggestions: [],
+      herbalClinicianObservations: [],
+    },
+  }
+  let malformedSource
+  assert('carry-forward: a malformed prior workspace does not throw', (() => {
+    try {
+      malformedSource = carryForwardSourceFromSubmission(malformedPrior)
+      return true
+    } catch {
+      return false
+    }
+  })())
+  assert('carry-forward: a malformed prior workspace degrades to a safe (non-crashing) source, not a thrown error', malformedSource !== undefined)
+  assert(
+    'carry-forward: a wrong-typed follow-up target label is sanitized (never survives as a raw object)',
+    malformedSource.followUpTargets.every((t) => typeof t.label === 'string'),
+  )
 }
 
 /* -----------------------------------------------------------------------

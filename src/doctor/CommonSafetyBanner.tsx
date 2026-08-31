@@ -107,6 +107,10 @@ const WOMEN_SAFETY_01_VALUES = new Set([
   'unknown',
 ])
 
+/** 15차 독립 리뷰 HIGH-2: DoctorView.tsx의 동명 상수와 동일. */
+const POSTPARTUM_01_VALUES = new Set(['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m', 'over_1y'])
+const POSTPARTUM_03_VALUES = new Set(['yes', 'no', 'mixed'])
+
 function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, r: Responses): boolean {
   const rawAnswer = r.reproductive_status.reproductive_status
   // 12차 독립 리뷰 HIGH-1/HIGH-2: 컨텍스트(visit_goal/modules.pregnancy·
@@ -208,6 +212,17 @@ function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknow
     if (!isPostpartumContext) return true
     const since = r.modules?.postpartum?.time_since_delivery
     const feeding = r.modules?.postpartum?.breastfeeding_status
+    // 15차 독립 리뷰 HIGH-2: DoctorView.tsx의 동명 검사와 동일한 이유/수정
+    // -- POSTPARTUM_01/03은 옵션 목록 밖 값을 낼 수 없으므로, 옵션 밖
+    // 문자열이 `.includes(...)`/`===` 비교에서 조용히 false가 되어
+    // 손상된 raw 답변으로도 "출산 후 1년 이내: 아니요/모유수유 중:
+    // 아니요"를 그대로 계산해 보여주지 않도록 먼저 걸러낸다.
+    if (
+      (typeof since === 'string' && !POSTPARTUM_01_VALUES.has(since)) ||
+      (typeof feeding === 'string' && !POSTPARTUM_03_VALUES.has(feeding))
+    ) {
+      return true
+    }
     const rawParts: string[] = []
     if (typeof since === 'string') rawParts.push(since)
     if (typeof feeding === 'string') rawParts.push(feeding)

@@ -202,6 +202,31 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     const formRender = src.indexOf('<MicroFollowUpCard')
     assert.ok(renderGuard !== -1 && formRender !== -1 && renderGuard < formRender, 'the load-error branch must return before the editable form renders')
   })
+
+  // 15차 독립 리뷰 HIGH-1: priorSubmission.workspace is an untrusted raw blob
+  // written by an unauthenticated PUT -- priorVisitRecapLines previously read
+  // it directly, so a malformed element crashed outside DoctorRecordErrorBoundary
+  // and reset the whole doctor session to the patient-facing error screen.
+  test('RevisitWorkspace.tsx 15차 HIGH-1: priorVisitRecapLines sanitizes the raw prior submission workspace via deserializeWorkspaceState before reading any field off it', () => {
+    assert.ok(src.includes("import { deserializeWorkspaceState } from './persistence'"))
+    const fnStart = src.indexOf('function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {')
+    assert.ok(fnStart !== -1)
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/deserializeWorkspaceState\(priorSubmission\.workspace\)/.test(fn), 'must sanitize before any field access')
+    const sanitizeCall = fn.indexOf('deserializeWorkspaceState(')
+    const firstFieldRead = fn.indexOf('ws?.painExamSuggestions')
+    assert.ok(sanitizeCall !== -1 && firstFieldRead !== -1 && sanitizeCall < firstFieldRead, 'sanitize must happen before ws.* is read')
+  })
+
+  // 15차 독립 리뷰 MEDIUM-2: sanitizeShape only guarantees result.status is a
+  // string, not a known ExamCheckStatus -- an unmapped value must not leak as
+  // the literal string "undefined" into the prior-visit recap text.
+  test('RevisitWorkspace.tsx 15차 MEDIUM-2: both priorVisitRecapLines and priorVisitRecapLinesFromVisitWorkspace guard EXAM_CHECK_STATUS_LABEL lookups with isValidExamStatus', () => {
+    assert.ok(src.includes("isValidExamStatus, type ExamCheckStatus } from './provenance'") || src.includes('isValidExamStatus'))
+    const occurrences = src.match(/isValidExamStatus\(i\.result\.status\)/g) || []
+    assert.ok(occurrences.length >= 2, `expected the guard in both recap-line builders, found ${occurrences.length}`)
+  })
 }
 
 // ---------- 4. JudgmentPanel.tsx judgment-save conflict wiring ----------

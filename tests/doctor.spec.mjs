@@ -2451,6 +2451,51 @@ function detailsRange(html, classMarker) {
       isUnreadableReproductiveDerived(p.responses) === false,
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 15차 독립 리뷰 HIGH-2: POSTPARTUM_01(time_since_delivery)/POSTPARTUM_03
+   * (breastfeeding_status)는 postpartum 컨텍스트에서 항상 물어보는
+   * `required: true` single_choice라서, 실제 제출은 이 값이 옵션 목록
+   * 밖일 수 없다. 옵션 밖 문자열은 `POSTPARTUM_WITHIN_1Y.includes(...)`/
+   * `=== 'yes' || === 'mixed'` 비교에서 그냥 false가 되므로, 14차가
+   * WOMEN_SAFETY_01에 적용한 것과 동일한 클래스의 fail-open이
+   * postpartum_module 분기에 그대로 남아있었다 -- 손상된 raw 답변에
+   * 대해서도 "출산 후 1년 이내: 아니요/모유수유 중: 아니요"를 계산해
+   * 보여줬다.
+   * ------------------------------------------------------------------- */
+  {
+    const postpartumFixture4 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture4.payload)
+    p.responses.modules.postpartum.time_since_delivery = 'ZZZ'
+    // coreSpec.ts가 실제로 계산했다면 옵션 밖 값에 대해 postpartum_1y는
+    // false가 된다 -- 이 test는 바로 그 "구조적으로는 자기 자신과
+    // 일치하는" 손상 케이스를 재현한다.
+    p.responses.reproductive_status.derived.postpartum_1y = false
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an out-of-option-set POSTPARTUM_01(time_since_delivery) value instead of silently recomputing postpartum_1y=false from it (15th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const postpartumFixture5 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture5.payload)
+    p.responses.modules.postpartum.breastfeeding_status = 'ZZZ'
+    p.responses.reproductive_status.derived.breastfeeding = false
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an out-of-option-set POSTPARTUM_03(breastfeeding_status) value instead of silently recomputing breastfeeding=false from it (15th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: the genuine fixture (real option-set values) must still read
+    // as consistent -- the HIGH-2 fix must not reject legitimate
+    // POSTPARTUM_01/03 answers.
+    const postpartumFixture6 = byName('산후 회복')
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive on genuine in-option-set POSTPARTUM_01/03 values (15th independent review HIGH-2 sanity check)',
+      isUnreadableReproductiveDerived(postpartumFixture6.payload.responses) === false,
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------

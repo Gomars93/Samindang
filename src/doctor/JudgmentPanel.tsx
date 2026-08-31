@@ -1,10 +1,18 @@
 /**
- * 원장 판단 기록 패널 (섹션 b/c/d). 명리 계산도, 문진 응답도 여기서 새로
- * 만들지 않는다 — 오직 원장이 화면에서 직접 타이핑한 값만 다룬다.
- * 백엔드/저장소가 없으므로 상태는 React state에만 존재하고, 새로고침하면
- * 사라진다. 이 컴포넌트는 그 사실을 화면에 명시적으로 알린다.
+ * 원장 판단 기록 패널 (섹션 b/c/d) + 진찰 소견 독립 블록. 명리 계산도, 문진
+ * 응답도 여기서 새로 만들지 않는다 — 오직 원장이 화면에서 직접 타이핑한
+ * 값만 다룬다.
+ *
+ * Doctor View 재설계 v0.2 §11.7 — 저장 상태 머신:
+ *   idle -> saving(버튼 비활성+스피너) -> saved(서버 200 수신 시각 표시)
+ *                                      -> error(사유 + 다시 시도, amber)
+ * `저장됨`은 서버 200 응답에만 붙는다 — `onSave`는 이제
+ * `Promise<{ ok: boolean; error?: string }>`를 돌려주고, `handleRecord`가
+ * 그 결과를 await해서 상태에 반영한다. fixtures 미리보기(`previewMode`)는
+ * onSave 자체가 없으므로 상태 머신 대신 상주 배지로 "저장되지 않는다"는
+ * 사실을 항상 알린다.
  */
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import {
   DEBRIEF_QUESTIONS,
   MAX_INNATE_FEATURES,
@@ -83,25 +91,56 @@ const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAU
   { value: 'UNKNOWN', label: '아직 확인 못함' },
 ]
 
+/** §11.7 저장 상태 머신이 다루는 4개 상태. */
+export type SaveStatus =
+  | { phase: 'idle' }
+  | { phase: 'saving' }
+  | { phase: 'saved'; at: Date }
+  | { phase: 'error'; message: string }
+
+/** onSave 계약 — 서버 200이면 { ok: true }, 실패하면 사유를 { ok: false, error }로 돌려준다. */
+export type SaveResult = { ok: boolean; error?: string }
+
+function SaveStatusIndicator({ status }: { status: SaveStatus }) {
+  if (status.phase === 'idle') return null
+  if (status.phase === 'saving') {
+    return (
+      <span className="doctor__saveStatus doctor__saveStatus--saving">
+        <span className="doctor__spinner" aria-hidden="true" />
+        저장 중…
+      </span>
+    )
+  }
+  if (status.phase === 'saved') {
+    return (
+      <span className="doctor__saveStatus doctor__saveStatus--saved">
+        ● 저장됨 · {status.at.toLocaleTimeString('ko-KR')}
+      </span>
+    )
+  }
+  return <span className="doctor__saveStatus doctor__saveStatus--error">저장 실패 — {status.message}</span>
+}
+
 export function JudgmentPanel({
   source,
   initialJudgment,
   onSave,
   showLbpExam = false,
   showShoulderExam = false,
+  previewMode = false,
 }: {
   source: JudgmentSourcePayload
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
   initialJudgment?: ClinicianJudgment | null
-  /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
-  onSave?: (judgment: ClinicianJudgment) => void
+  /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장하고 서버 200 결과를 돌려준다. */
+  onSave?: (judgment: ClinicianJudgment) => Promise<SaveResult>
   /**
    * LBP_V1: 이번 방문의 주호소가 허리(LBP)일 때만 true — 객관적 하지
    * 근력저하 소견 입력 컨트롤을 보여준다. 결정 §1-2: 이 값이
    * SEVERE_OR_PROGRESSIVE면 환자 자가보고 CES 문항과 무관하게
    * URGENT_REVIEW를 발생시킨다(src/spec/lbpLogic.ts). 기존 judgment 저장
    * 경로(onSave)를 그대로 재사용한다 — 별도 저장 메커니즘을 새로 만들지
-   * 않는다.
+   * 않는다(v0.2 invariant 7).
    */
   showLbpExam?: boolean
   /**
@@ -113,6 +152,12 @@ export function JudgmentPanel({
    * expedited_referral_consider를 올린다(src/spec/shoulderLogic.ts).
    */
   showShoulderExam?: boolean
+  /**
+   * v0.2 §11.6 — fixtures 미리보기 모드. 저장 상태 머신 대신 상주 배지
+   * `미리보기 — 저장되지 않음`을 항상 보여준다(onSave 자체가 없는 것과는
+   * 별개로, 명시적으로 넘겨서 의도를 분명히 한다).
+   */
+  previewMode?: boolean
 }) {
   const [judgment, setJudgment] = useState<ClinicianJudgment>(
     () => initialJudgment ?? createEmptyJudgment(source),
@@ -121,10 +166,13 @@ export function JudgmentPanel({
   const [outlineQuestion, setOutlineQuestion] = useState('')
   const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ phase: 'idle' })
 
   const hasDebrief = Object.values(debrief).some((v) => v.trim() !== '')
+  const saving = saveStatus.phase === 'saving'
 
-  function handleRecord() {
+  async function handleRecord() {
+    if (saving) return
     const withDebrief: ClinicianJudgment = { ...judgment, debrief: hasDebrief ? debrief : null }
     const result = validateJudgment(withDebrief)
     if (!result.ok) {
@@ -135,218 +183,258 @@ export function JudgmentPanel({
     setErrors([])
     const finalized = finalizeJudgment(withDebrief)
     setRecorded(finalized)
-    onSave?.(finalized)
+
+    if (!onSave) return
+
+    setSaveStatus({ phase: 'saving' })
+    try {
+      const res = await onSave(finalized)
+      if (res.ok) {
+        setSaveStatus({ phase: 'saved', at: new Date() })
+      } else {
+        setSaveStatus({ phase: 'error', message: res.error ?? '알 수 없는 오류' })
+      }
+    } catch (err) {
+      setSaveStatus({ phase: 'error', message: err instanceof Error ? err.message : '알 수 없는 오류' })
+    }
+  }
+
+  // v0.2 §11.7: Ctrl/Cmd+Enter = 기록 — 이 폼(오늘 판단 compact 폼) 내부에
+  // 포커스가 있을 때만 동작한다. 전역 키 바인딩은 만들지 않는다(Opus P4) —
+  // 이 핸들러는 이 <section> 아래로 버블링된 keydown만 받는다.
+  function handleFormKeyDown(e: KeyboardEvent<HTMLElement>) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault()
+      handleRecord()
+    }
   }
 
   return (
-    <section className="doctor__section doctor__section--judgment">
-      <h2>원장 판단 기록</h2>
-      <p className="doctor__derivedNote">
-        아래 내용은 전부 원장이 직접 입력한 판단입니다. 소프트웨어가 자동으로
-        채우거나 추천한 내용이 아닙니다.{' '}
-        {onSave
-          ? '"기록" 버튼을 누르면 이 제출건에 저장됩니다.'
-          : '예시 데이터 미리보기이므로 저장되지 않으며, 화면을 새로고침하면 사라집니다.'}
-      </p>
-
-      <div className="judgment__grid">
-        <TextList
-          label={`핵심 선천 특징 (원장 입력, 최대 ${MAX_INNATE_FEATURES}개)`}
-          values={judgment.innate_features.length ? judgment.innate_features : Array(MAX_INNATE_FEATURES).fill('')}
-          onChange={(next) => setJudgment((j) => ({ ...j, innate_features: next }))}
-        />
-        <TextList
-          label={`현재 증상과 연결되는 핵심 (원장 입력, 최대 ${MAX_SYMPTOM_LINKS}개)`}
-          values={judgment.symptom_links.length ? judgment.symptom_links : Array(MAX_SYMPTOM_LINKS).fill('')}
-          onChange={(next) => setJudgment((j) => ({ ...j, symptom_links: next }))}
-        />
-      </div>
-
-      {showLbpExam && (
-        <div className="judgment__field judgment__lbpExam">
-          <span className="judgment__label">
-            객관적 하지 근력저하 소견 (원장 진찰, LBP)
-          </span>
+    <>
+      {(showLbpExam || showShoulderExam) && (
+        <section className="doctor__section doctor__examFindings">
+          <h2>진찰 소견</h2>
           <p className="doctor__derivedNote">
-            심하거나 빠르게 진행하는 소견이면 환자 자가보고(CES 문항)와 무관하게
-            긴급 확인이 표시됩니다. 아직 진찰 전이면 선택하지 않아도 됩니다.
+            원장이 직접 진찰해서 얻은 소견만 기록합니다. 판단 폼을 열지 않고 바로
+            입력할 수 있으며, 저장은 아래 "오늘 판단"의 기록 버튼과 같은
+            경로를 씁니다.
           </p>
-          <div className="judgment__radioRow">
-            {LBP_MOTOR_DEFICIT_OPTIONS.map((opt) => (
-              <label key={opt.value} className="judgment__radioOption">
-                <input
-                  type="radio"
-                  name="lbp_objective_motor_deficit"
-                  checked={judgment.lbp_objective_motor_deficit === opt.value}
-                  onChange={() =>
-                    setJudgment((j) => ({ ...j, lbp_objective_motor_deficit: opt.value }))
-                  }
-                />
-                <span>{opt.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+
+          {showLbpExam && (
+            <div className="judgment__field judgment__lbpExam">
+              <span className="judgment__label">객관적 하지 근력저하 소견 (원장 진찰, LBP)</span>
+              <p className="doctor__derivedNote">
+                심하거나 빠르게 진행하는 소견이면 환자 자가보고(CES 문항)와 무관하게
+                긴급 확인이 표시됩니다. 아직 진찰 전이면 선택하지 않아도 됩니다.
+              </p>
+              <div className="judgment__radioRow judgment__radioRow--stacked">
+                {LBP_MOTOR_DEFICIT_OPTIONS.map((opt) => (
+                  <label key={opt.value} className="judgment__radioOption">
+                    <input
+                      type="radio"
+                      name="lbp_objective_motor_deficit"
+                      checked={judgment.lbp_objective_motor_deficit === opt.value}
+                      onChange={() => setJudgment((j) => ({ ...j, lbp_objective_motor_deficit: opt.value }))}
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showShoulderExam && (
+            <div className="judgment__field judgment__lbpExam">
+              <span className="judgment__label">객관적 회전근개 근력저하 소견 (원장 진찰, SHOULDER)</span>
+              <p className="doctor__derivedNote">
+                외상 후 새로 생긴 근력저하가 확인되면 환자 자가보고(SH03)와
+                무관하게 신속 전문의 평가/의뢰 고려가 표시됩니다. 아직 진찰
+                전이면 선택하지 않아도 됩니다.
+              </p>
+              <div className="judgment__radioRow judgment__radioRow--stacked">
+                {SHOULDER_CUFF_WEAKNESS_OPTIONS.map((opt) => (
+                  <label key={opt.value} className="judgment__radioOption">
+                    <input
+                      type="radio"
+                      name="shoulder_objective_cuff_weakness"
+                      checked={judgment.shoulder_objective_cuff_weakness === opt.value}
+                      onChange={() => setJudgment((j) => ({ ...j, shoulder_objective_cuff_weakness: opt.value }))}
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
       )}
 
-      {showShoulderExam && (
-        <div className="judgment__field judgment__lbpExam">
-          <span className="judgment__label">
-            객관적 회전근개 근력저하 소견 (원장 진찰, SHOULDER)
-          </span>
-          <p className="doctor__derivedNote">
-            외상 후 새로 생긴 근력저하가 확인되면 환자 자가보고(SH03)와
-            무관하게 신속 전문의 평가/의뢰 고려가 표시됩니다. 아직 진찰
-            전이면 선택하지 않아도 됩니다.
-          </p>
-          <div className="judgment__radioRow">
-            {SHOULDER_CUFF_WEAKNESS_OPTIONS.map((opt) => (
-              <label key={opt.value} className="judgment__radioOption">
-                <input
-                  type="radio"
-                  name="shoulder_objective_cuff_weakness"
-                  checked={judgment.shoulder_objective_cuff_weakness === opt.value}
-                  onChange={() =>
-                    setJudgment((j) => ({ ...j, shoulder_objective_cuff_weakness: opt.value }))
-                  }
-                />
-                <span>{opt.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+      <section className="doctor__section doctor__section--judgment" onKeyDown={handleFormKeyDown}>
+        <h2>원장 판단 기록</h2>
+        <p className="doctor__derivedNote">
+          아래 내용은 전부 원장이 직접 입력한 판단입니다. 소프트웨어가 자동으로
+          채우거나 추천한 내용이 아닙니다.{' '}
+          {previewMode
+            ? '예시 데이터 미리보기이므로 저장되지 않으며, 화면을 새로고침하면 사라집니다.'
+            : '"기록" 버튼을 누르면 이 제출건에 저장됩니다.'}
+        </p>
 
-      <details className="judgment__secondaryFields">
-        <summary>사주 예상 → 수정 판단 → 치료축·처방 방향 (펼쳐서 입력)</summary>
         <div className="judgment__grid">
-          <LabeledTextarea
-            label="사주만 보고 예상한 임상 문제 (원장 입력)"
-            value={judgment.saju_only_prediction}
-            onChange={(v) => setJudgment((j) => ({ ...j, saju_only_prediction: v }))}
+          <TextList
+            label={`핵심 선천 특징 (원장 입력, 최대 ${MAX_INNATE_FEATURES}개)`}
+            values={judgment.innate_features.length ? judgment.innate_features : Array(MAX_INNATE_FEATURES).fill('')}
+            onChange={(next) => setJudgment((j) => ({ ...j, innate_features: next }))}
           />
-          <LabeledTextarea
-            label="문진·맥·설·복진 후 수정된 판단 (원장 입력)"
-            value={judgment.revised_after_exam}
-            onChange={(v) => setJudgment((j) => ({ ...j, revised_after_exam: v }))}
-          />
-          <LabeledTextarea
-            label="최종 치료축 (원장 입력)"
-            value={judgment.final_treatment_axis}
-            onChange={(v) => setJudgment((j) => ({ ...j, final_treatment_axis: v }))}
-          />
-          <LabeledTextarea
-            label="처방 방향 (원장 입력, 방향만 — 자동 처방 아님)"
-            value={judgment.prescription_direction}
-            onChange={(v) => setJudgment((j) => ({ ...j, prescription_direction: v }))}
+          <TextList
+            label={`현재 증상과 연결되는 핵심 (원장 입력, 최대 ${MAX_SYMPTOM_LINKS}개)`}
+            values={judgment.symptom_links.length ? judgment.symptom_links : Array(MAX_SYMPTOM_LINKS).fill('')}
+            onChange={(next) => setJudgment((j) => ({ ...j, symptom_links: next }))}
           />
         </div>
-      </details>
 
-      <label className="judgment__toggle">
-        <input
-          type="checkbox"
-          checked={judgment.learning_case}
-          onChange={(e) => setJudgment((j) => ({ ...j, learning_case: e.target.checked }))}
-        />
-        <span>★ 학습 케이스로 표시 (원장 입력)</span>
-      </label>
-
-      {errors.length > 0 && (
-        <div className="doctor__warning">
-          {errors.map((e) => (
-            <p key={e} style={{ margin: 0 }}>
-              {e}
-            </p>
-          ))}
-        </div>
-      )}
-
-      <div className="judgment__actions">
-        <button type="button" className="judgment__recordBtn" onClick={handleRecord}>
-          기록
-        </button>
-      </div>
-
-      {recorded && (
-        <details className="doctor__raw" open>
-          <summary>기록된 판단 (JSON, 아직 저장되지 않음)</summary>
-          <pre>{JSON.stringify(recorded, null, 2)}</pre>
-        </details>
-      )}
-
-      <details className="judgment__debrief">
-        <summary>1분 디브리핑 (선택)</summary>
-        <p className="doctor__derivedNote">
-          녹취 연동은 이후 단계이며 지금은 데이터 계약만 준비되어 있습니다.
-          음성 녹음 기능은 없습니다.
-        </p>
-        {DEBRIEF_QUESTIONS.map((q, i) => {
-          const key = `q${i + 1}` as keyof DebriefAnswers
-          return (
+        <details className="judgment__secondaryFields">
+          <summary>사주 예상 → 수정 판단 → 치료축·처방 방향 (펼쳐서 입력)</summary>
+          <div className="judgment__grid">
             <LabeledTextarea
-              key={key}
-              label={q}
-              value={debrief[key]}
-              onChange={(v) => setDebrief((d) => ({ ...d, [key]: v }))}
+              label="사주만 보고 예상한 임상 문제 (원장 입력)"
+              value={judgment.saju_only_prediction}
+              onChange={(v) => setJudgment((j) => ({ ...j, saju_only_prediction: v }))}
             />
-          )
-        })}
-      </details>
+            <LabeledTextarea
+              label="문진·맥·설·복진 후 수정된 판단 (원장 입력)"
+              value={judgment.revised_after_exam}
+              onChange={(v) => setJudgment((j) => ({ ...j, revised_after_exam: v }))}
+            />
+            <LabeledTextarea
+              label="최종 치료축 (원장 입력)"
+              value={judgment.final_treatment_axis}
+              onChange={(v) => setJudgment((j) => ({ ...j, final_treatment_axis: v }))}
+            />
+            <LabeledTextarea
+              label="처방 방향 (원장 입력, 방향만 — 자동 처방 아님)"
+              value={judgment.prescription_direction}
+              onChange={(v) => setJudgment((j) => ({ ...j, prescription_direction: v }))}
+            />
+          </div>
+        </details>
 
-      <details className="judgment__outline">
-        <summary>설명 개요 (원장 전용, 참고용)</summary>
-        <p className="doctor__derivedNote">
-          원장이 입력한 내용을 그대로 재구성해서 보여줄 뿐이며, 새로운 내용을
-          추가하거나 만들어내지 않습니다.
-        </p>
-        <ol className="judgment__outlineList">
-          <li>
-            <strong>선천 특징</strong>
-            <ul>
-              {(judgment.innate_features.filter((s) => s.trim() !== '').length
-                ? judgment.innate_features.filter((s) => s.trim() !== '')
-                : ['(미입력)']
-              ).map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </li>
-          <li>
-            <strong>현재 증상 연결</strong>
-            <ul>
-              {(judgment.symptom_links.filter((s) => s.trim() !== '').length
-                ? judgment.symptom_links.filter((s) => s.trim() !== '')
-                : ['(미입력)']
-              ).map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </li>
-          <li>
-            <strong>치료 우선순위·한약 방향</strong>
-            <p>{judgment.final_treatment_axis.trim() || judgment.prescription_direction.trim() ? (
-              <>
-                {judgment.final_treatment_axis.trim() || '(미입력)'}
-                {' / '}
-                {judgment.prescription_direction.trim() || '(미입력)'}
-              </>
-            ) : (
-              '(미입력)'
-            )}</p>
-          </li>
-          <li>
-            <strong>질문</strong>
-            <textarea
-              className="judgment__textarea"
-              value={outlineQuestion}
-              onChange={(e) => setOutlineQuestion(e.target.value)}
-              placeholder="(미입력)"
-              rows={2}
-            />
-          </li>
-        </ol>
-      </details>
-    </section>
+        <label className="judgment__toggle">
+          <input
+            type="checkbox"
+            checked={judgment.learning_case}
+            onChange={(e) => setJudgment((j) => ({ ...j, learning_case: e.target.checked }))}
+          />
+          <span>★ 학습 케이스로 표시 (원장 입력)</span>
+        </label>
+
+        {errors.length > 0 && (
+          <div className="doctor__warning">
+            {errors.map((e) => (
+              <p key={e} style={{ margin: 0 }}>
+                {e}
+              </p>
+            ))}
+          </div>
+        )}
+
+        <div className="judgment__actions">
+          <button type="button" className="judgment__recordBtn" onClick={handleRecord} disabled={saving}>
+            {saving ? '기록 중…' : '기록'}
+          </button>
+          {previewMode ? (
+            <span className="doctor__saveStatus doctor__saveStatus--preview">미리보기 — 저장되지 않음</span>
+          ) : (
+            <SaveStatusIndicator status={saveStatus} />
+          )}
+          {!previewMode && saveStatus.phase === 'error' && (
+            <button type="button" className="judgment__recordBtn judgment__recordBtn--retry" onClick={handleRecord}>
+              다시 시도
+            </button>
+          )}
+        </div>
+
+        {recorded && (
+          <details className="doctor__raw" open>
+            <summary>기록된 판단 (JSON)</summary>
+            <pre>{JSON.stringify(recorded, null, 2)}</pre>
+          </details>
+        )}
+
+        <details className="judgment__debrief">
+          <summary>1분 디브리핑 (선택)</summary>
+          <p className="doctor__derivedNote">
+            녹취 연동은 이후 단계이며 지금은 데이터 계약만 준비되어 있습니다.
+            음성 녹음 기능은 없습니다.
+          </p>
+          {DEBRIEF_QUESTIONS.map((q, i) => {
+            const key = `q${i + 1}` as keyof DebriefAnswers
+            return (
+              <LabeledTextarea
+                key={key}
+                label={q}
+                value={debrief[key]}
+                onChange={(v) => setDebrief((d) => ({ ...d, [key]: v }))}
+              />
+            )
+          })}
+        </details>
+
+        <details className="judgment__outline">
+          <summary>설명 개요 (원장 전용, 참고용)</summary>
+          <p className="doctor__derivedNote">
+            원장이 입력한 내용을 그대로 재구성해서 보여줄 뿐이며, 새로운 내용을
+            추가하거나 만들어내지 않습니다.
+          </p>
+          <ol className="judgment__outlineList">
+            <li>
+              <strong>선천 특징</strong>
+              <ul>
+                {(judgment.innate_features.filter((s) => s.trim() !== '').length
+                  ? judgment.innate_features.filter((s) => s.trim() !== '')
+                  : ['(미입력)']
+                ).map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </li>
+            <li>
+              <strong>현재 증상 연결</strong>
+              <ul>
+                {(judgment.symptom_links.filter((s) => s.trim() !== '').length
+                  ? judgment.symptom_links.filter((s) => s.trim() !== '')
+                  : ['(미입력)']
+                ).map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </li>
+            <li>
+              <strong>치료 우선순위·한약 방향</strong>
+              <p>
+                {judgment.final_treatment_axis.trim() || judgment.prescription_direction.trim() ? (
+                  <>
+                    {judgment.final_treatment_axis.trim() || '(미입력)'}
+                    {' / '}
+                    {judgment.prescription_direction.trim() || '(미입력)'}
+                  </>
+                ) : (
+                  '(미입력)'
+                )}
+              </p>
+            </li>
+            <li>
+              <strong>질문</strong>
+              <textarea
+                className="judgment__textarea"
+                value={outlineQuestion}
+                onChange={(e) => setOutlineQuestion(e.target.value)}
+                placeholder="(미입력)"
+                rows={2}
+              />
+            </li>
+          </ol>
+        </details>
+      </section>
+    </>
   )
 }

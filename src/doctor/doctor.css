@@ -1059,3 +1059,312 @@
   font-weight: 700;
   color: var(--primary);
 }
+
+/* -------------------------------------------------------------------
+ * P3 — 진찰 소견 (원장 진찰 exam radio) — v0.2 §8.1/§11.7
+ * ----------------------------------------------------------------- */
+
+.doctor__examFindings {
+  background: var(--doctor-surface);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.judgment__lbpExam {
+  margin-top: 8px;
+}
+
+.judgment__radioRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 6px;
+}
+
+/* v0.2 §8.3: 세로 스택(1행 1옵션) — 좁은 컬럼/태블릿에서 줄바꿈 문제를
+   원천 제거한다. */
+.judgment__radioRow--stacked {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.judgment__radioOption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* -------------------------------------------------------------------
+ * P3 — 저장 상태 머신 (§11.7): idle -> saving -> saved | error
+ * ----------------------------------------------------------------- */
+
+.judgment__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.judgment__recordBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.judgment__recordBtn--retry {
+  background: var(--doctor-amber);
+}
+
+.doctor__saveStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.doctor__saveStatus--saving {
+  color: var(--doctor-text-muted);
+}
+
+.doctor__saveStatus--saved {
+  color: var(--doctor-green);
+}
+
+.doctor__saveStatus--error {
+  color: var(--doctor-red);
+  background: var(--doctor-red-soft);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+/* fixtures 미리보기 — 상주 배지(§11.6). 저장 상태 머신 대신 항상 보인다. */
+.doctor__saveStatus--preview {
+  color: var(--doctor-text-muted);
+  background: var(--doctor-amber-soft);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.doctor__spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--doctor-text-muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: doctor-spin 0.7s linear infinite;
+}
+
+@keyframes doctor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* -------------------------------------------------------------------
+ * P3 — 오늘 확인 목록 (§11.4)
+ * ----------------------------------------------------------------- */
+
+.doctor__checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doctor__checklist__item label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.doctor__checklist__item input[type='checkbox'] {
+  margin-top: 2px;
+}
+
+.doctor__checklist__item input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+
+.doctor__checklist__more {
+  margin-top: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--doctor-text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* 비-임상 진행 메모임을 색으로도 강조하지 않는다 — 무채색(text-muted)만. */
+.doctor__checklist__counter {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--doctor-text-muted);
+}
+
+/* -------------------------------------------------------------------
+ * P3 — 진료 완료 버튼 (§11.8)
+ * ----------------------------------------------------------------- */
+
+.doctor__completeBtn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--doctor-green);
+  color: #fff;
+  cursor: pointer;
+}
+
+.doctor__completeBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.doctor__completeError {
+  font-size: 12px;
+  color: var(--doctor-red);
+}
+
+/* -------------------------------------------------------------------
+ * P3 — EMR 열기 버튼 + 상태 dot (§11.5) — 레일 상주 블록은 이것뿐이다.
+ * ----------------------------------------------------------------- */
+
+.doctor__emrOpenRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.doctor__emrOpenBtn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border: 1px solid var(--doctor-green);
+  border-radius: 8px;
+  background: var(--doctor-surface);
+  color: var(--doctor-green);
+  cursor: pointer;
+}
+
+.doctor__emrStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--doctor-green);
+  display: inline-block;
+}
+
+.doctor__emrStatusText {
+  font-size: 12px;
+  color: var(--doctor-text-muted);
+}
+
+/* -------------------------------------------------------------------
+ * P3 — EMR 시트 (§11.5): 데스크톱 우측 슬라이드 560px / overlay,
+ * 태블릿은 하단 60% bottom sheet.
+ * ----------------------------------------------------------------- */
+
+.doctor__emrSheetOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 31, 28, 0.35);
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.doctor__emrSheet {
+  width: min(560px, 100%);
+  max-width: 100%;
+  height: 100%;
+  background: var(--doctor-surface);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  padding: 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.doctor__emrSheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.doctor__emrSheet__header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.doctor__emrSheet__close {
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--doctor-surface);
+  cursor: pointer;
+}
+
+.doctor__emrSheet__pending {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--doctor-amber-soft);
+  color: var(--doctor-amber);
+}
+
+.doctor__emrSheet__pending p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.doctor__emrSheet__pendingActions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .doctor__emrSheetOverlay {
+    align-items: flex-end;
+  }
+  .doctor__emrSheet {
+    width: 100%;
+    height: 60%;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+  }
+}
+
+/* -------------------------------------------------------------------
+ * P3 — 레일 sticky (§8.1/§10). 컬럼별 독립 overflow 스크롤은 여전히
+ * 금지(invariant 11) — overflow는 전혀 주지 않는다. `.doctor__layout`의
+ * `align-items: start`와 결합하면, 레일은 자기 콘텐츠 높이만큼만 화면에
+ * 붙어 있다가 mainCol(더 긴 컬럼)이 다 스크롤되는 지점(그리드 트랙의 끝)
+ * 에서 자연히 풀려 페이지와 함께 스크롤된다 — 예산 초과 상황에서도 억지로
+ * 잘리지 않는 graceful degradation(§7).
+ * ----------------------------------------------------------------- */
+
+@media (min-width: 1280px) {
+  .doctor__rail {
+    position: sticky;
+    top: 57px;
+    align-self: start;
+  }
+}

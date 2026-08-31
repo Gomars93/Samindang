@@ -1330,4 +1330,146 @@ function detailsRange(html, classMarker) {
  * 옮긴다(서버 목록 응답이 overview 필드의 유일한 출처이므로).
  * ===================================================================== */
 
+/* =======================================================================
+ * P3 — 레일: 오늘 확인 목록(§11.4), 진찰 소견 독립 블록(§11.2), 저장 상태
+ * 머신(§11.7, onSave 계약 변경 + 거짓 문구 제거), EMR 시트(§11.5), 진료
+ * 완료 버튼(§11.8).
+ * ===================================================================== */
+
+const judgmentPanelSrc = await readFile(
+  fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)),
+  'utf8',
+)
+const doctorViewFullSrc = await readFile(
+  fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)),
+  'utf8',
+)
+const todayChecklistSrc = await readFile(
+  fileURLToPath(new URL('../src/doctor/TodayChecklist.tsx', import.meta.url)),
+  'utf8',
+)
+
+// 16a. §11.7 거짓 문구 제거: "아직 저장되지 않음"은 어디에도 남아있지 않다.
+{
+  assert(
+    'JudgmentPanel.tsx: "아직 저장되지 않음" 거짓 문구가 완전히 제거됨',
+    !judgmentPanelSrc.includes('아직 저장되지 않음'),
+  )
+  assert('DoctorView.tsx: "아직 저장되지 않음" 문구 없음', !doctorViewFullSrc.includes('아직 저장되지 않음'))
+}
+
+// 16b. §11.7 onSave 계약: (j) => Promise<SaveResult>로 변경되었고, handleRecord가 await한다.
+{
+  assert(
+    'JudgmentPanel: onSave 시그니처가 Promise<SaveResult>를 반환하도록 선언됨',
+    judgmentPanelSrc.includes('onSave?: (judgment: ClinicianJudgment) => Promise<SaveResult>'),
+  )
+  assert('JudgmentPanel: handleRecord가 onSave를 await한다', judgmentPanelSrc.includes('await onSave(finalized)'))
+  assert(
+    'JudgmentPanel: 저장 상태 머신 4단계(idle/saving/saved/error)가 정의됨',
+    judgmentPanelSrc.includes("phase: 'idle'") &&
+      judgmentPanelSrc.includes("phase: 'saving'") &&
+      judgmentPanelSrc.includes("phase: 'saved'") &&
+      judgmentPanelSrc.includes("phase: 'error'"),
+  )
+  assert(
+    'DoctorView: onSave가 서버 200(result.ok)에서만 { ok: true }를 돌려준다',
+    doctorViewFullSrc.includes('return { ok: true }') && doctorViewFullSrc.includes('return { ok: false, error: result.error }'),
+  )
+}
+
+// 16c. §11.7 Ctrl/Cmd+Enter는 판단 폼(doctor__section--judgment) 내부에만 바인딩되고, 전역(window/document) 바인딩이 없다.
+{
+  assert(
+    'JudgmentPanel: keydown 핸들러가 판단 폼 section에 바인딩됨(전역 아님)',
+    judgmentPanelSrc.includes('doctor__section--judgment" onKeyDown={handleFormKeyDown}'),
+  )
+  assert(
+    'JudgmentPanel: window/document에 전역 키 바인딩을 추가하지 않는다',
+    !judgmentPanelSrc.includes('window.addEventListener') && !judgmentPanelSrc.includes('document.addEventListener'),
+  )
+  assert(
+    'JudgmentPanel: Ctrl/Cmd+Enter 판정 로직 존재',
+    judgmentPanelSrc.includes("e.key === 'Enter'") && judgmentPanelSrc.includes('e.metaKey || e.ctrlKey'),
+  )
+}
+
+// 16d. fixtures 미리보기: 저장 상태 머신 대신 상주 배지가 모든 fixture에서 항상 보인다.
+{
+  for (const f of DOCTOR_FIXTURES) {
+    const html = renderDoctorView(f.name)
+    assert(`fixtures 미리보기("${f.name}"): "미리보기 — 저장되지 않음" 상주 배지 렌더`, html.includes('미리보기 — 저장되지 않음'))
+  }
+}
+
+// 16e. 진찰 소견은 JudgmentPanel 안에서 "원장 판단 기록"과 분리된 독립 <section>이다.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const examIdx = html.indexOf('진찰 소견')
+  // "원장 판단 기록"이라는 문구는 명리 검토 섹션의 안내문("아래 원장 판단
+  // 기록에 원장이 직접 기록합니다")에도 인용구로 등장한다 — 실제 heading은
+  // <h2>원장 판단 기록</h2> 태그로만 잡는다.
+  const judgmentHeadingIdx = html.indexOf('<h2>원장 판단 기록</h2>')
+  assert('LBP fixture: "진찰 소견" 블록 렌더', examIdx !== -1)
+  assert('LBP fixture: "진찰 소견"이 "원장 판단 기록"보다 먼저 온다(독립 블록, 판단 폼 앞)', examIdx < judgmentHeadingIdx)
+  const examSectionOpen = html.lastIndexOf('<section', examIdx)
+  const judgmentSectionOpen = html.lastIndexOf('<section', judgmentHeadingIdx)
+  assert(
+    'LBP fixture: 진찰 소견과 원장 판단 기록이 서로 다른 <section> 태그 안에 있다(같은 section이 아님)',
+    examSectionOpen !== judgmentSectionOpen,
+  )
+  assert('LBP fixture: 객관적 하지 근력저하 소견 컨트롤이 진찰 소견 블록 안에 있다', html.indexOf('객관적 하지 근력저하') > examIdx)
+}
+
+// 16f. 오늘 확인 목록(§11.4): 권장 검사가 있는 fixture는 항목이 렌더되고,
+//      아무 것도 없는 fixture는 블록 자체가 렌더되지 않는다(빈 블록 금지).
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('LBP fixture: "오늘 확인" 블록 렌더', html.includes('>오늘 확인<'))
+  assert('LBP fixture: 권장 검사 항목(하지 근절(myotome) 근력 검사) 체크리스트에 렌더', html.includes('하지 근절(myotome) 근력 검사'))
+  assert('LBP fixture(fixtures 모드): 체크박스가 disabled', /doctor__checklist[\s\S]*?<input[^>]*type="checkbox"[^>]*disabled/.test(html))
+  assert('LBP fixture(fixtures 모드): "진행 메모" 카운터는 렌더되지 않음(체크 불가 상태에서 무의미)', !html.includes('진행 메모'))
+
+  const emptyHtml = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  assert(
+    '권장 검사/미확인 항목이 전혀 없는 fixture: "오늘 확인" 블록 자체가 렌더되지 않는다',
+    !emptyHtml.includes('>오늘 확인<'),
+  )
+}
+
+// 16g. invariant 5: TodayChecklist는 안전 계산 경로(selector)를 절대 쓰지 않는다 — 소스 레벨 회귀 가드.
+{
+  assert(
+    'TodayChecklist.tsx: deriveSafetyOverview를 호출하지 않는다(체크 상태가 안전 pill에 영향 주면 안 됨)',
+    !todayChecklistSrc.includes('deriveSafetyOverview('),
+  )
+  assert(
+    'TodayChecklist.tsx: computeSafetyModuleRows를 직접 계산하지 않는다(props로 받은 rows만 읽는다)',
+    !todayChecklistSrc.includes('computeSafetyModuleRows('),
+  )
+}
+
+// 16h. EMR 요약 열기 버튼/진료 완료 버튼은 fixtures 모드에서 절대 렌더되지 않는다.
+{
+  for (const f of DOCTOR_FIXTURES) {
+    const html = renderDoctorView(f.name)
+    assert(`fixtures 모드("${f.name}"): "EMR 요약 열기" 버튼 미렌더`, !html.includes('EMR 요약 열기'))
+    assert(`fixtures 모드("${f.name}"): "진료 완료" 버튼 미렌더`, !html.includes('>진료 완료<'))
+  }
+}
+
+// 16i. §11.5 EMR 시트 자동 덮어쓰기 금지 계약이 소스에 존재한다(편집 중이면 pending으로 보류).
+{
+  assert(
+    'DoctorView: emrEdited가 true면 자동 교체 대신 pendingEmrText로 보류한다',
+    doctorViewFullSrc.includes('if (emrEdited) {') && doctorViewFullSrc.includes('setPendingEmrText(nextText)'),
+  )
+  assert(
+    'EmrSheet.tsx: pendingNewSummary 스트립에 "내 편집 유지"/"새 요약으로 교체" 두 액션이 있다',
+    (await readFile(fileURLToPath(new URL('../src/doctor/EmrSheet.tsx', import.meta.url)), 'utf8')).includes(
+      '내 편집 유지',
+    ),
+  )
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

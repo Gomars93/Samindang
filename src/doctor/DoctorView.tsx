@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, optionLabels, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
-import { JudgmentPanel } from './JudgmentPanel'
+import { JudgmentPanel, type SaveResult } from './JudgmentPanel'
+import { TodayChecklist } from './TodayChecklist'
+import { EmrSheet } from './EmrSheet'
 import { buildEmrSummary } from './emrSummary'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import type { ClinicianJudgment } from './judgment'
@@ -810,7 +812,7 @@ function statusLabel(status: SubmissionSummary['status']): string {
 }
 
 /** 상대 시간(예: '방금 전' / '3분 전' / '2시간 전' / '1일 전'). 절대 시각은 별도로 항상 같이 보여준다. */
-function relativeTime(iso: string): string {
+export function relativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime()
   const min = Math.floor(diffMs / 60000)
   if (min < 1) return '방금 전'
@@ -891,9 +893,21 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [emrText, setEmrText] = useState('')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   // 같은 recording_id로 폴링이 다시 돌아와도 EMR 텍스트를 다시 만들지
-  // 않기 위한 최신 seed 기준점(새 recording_id가 오면 편집 중이어도
-  // 갱신됨 — 아래 seed effect 주석 참고).
+  // 않기 위한 최신 seed 기준점(새 recording_id가 오면 편집 중일 때는
+  // 자동으로 덮어쓰지 않는다 — v0.2 §11.5, 아래 seed effect 참고).
   const emrSeedRecordingIdRef = useRef<string | null>(null)
+  // v0.2 §11.5 — EMR 시트: 레일에는 버튼만 두고, 실제 편집/복사는 이
+  // overlay 시트에서 한다. emrEdited는 "사용자가 textarea를 한 번이라도
+  // 편집했는가"를 추적해 자동 덮어쓰기 여부를 가른다. pendingEmrText는
+  // 편집 중에 새 recording_id가 도착했을 때 즉시 반영하지 않고 보류해 둔
+  // 텍스트 — amber 스트립의 "새 요약으로 교체"를 누르면 이걸로 교체한다.
+  const [emrSheetOpen, setEmrSheetOpen] = useState(false)
+  const [emrEdited, setEmrEdited] = useState(false)
+  const [pendingEmrText, setPendingEmrText] = useState<string | null>(null)
+  // v0.2 §11.8 — 진료 완료 버튼(상단바, 서버 모드 + 상세 열림 시). 기존
+  // setSubmissionStatus 계약을 재사용한다(신규 서버 계약 없음).
+  const [completing, setCompleting] = useState(false)
+  const [completeError, setCompleteError] = useState<string | null>(null)
 
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
@@ -1004,6 +1018,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       setRecorderResults(null)
       setRecorderResultsError(null)
       setEmrText('')
+      setEmrEdited(false)
+      setPendingEmrText(null)
+      setEmrSheetOpen(false)
       emrSeedRecordingIdRef.current = null
       return
     }
@@ -1036,20 +1053,32 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     return () => clearTimeout(t)
   }, [readyToast])
 
-  // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
-  // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
+  // v0.2 §11.5 — 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시
+  // 만든다. **자동 덮어쓰기 금지**: 사용자가 textarea를 한 번이라도
+  // 편집했으면(emrEdited) 새 recording_id가 와도 즉시 반영하지 않고
+  // pendingEmrText에 보류한다 — 시트의 amber 스트립("새 요약 도착")에서
+  // 원장이 명시적으로 "내 편집 유지"/"새 요약으로 교체"를 고른다. 편집한
+  // 적이 없으면 기존대로 자동 seed한다.
+  // emrEdited는 의도적으로 deps에서 뺐다 — 이 effect는 "새 recording_id가
+  // 도착한 시점"에만 실행되어야 하고, 그 순간의 emrEdited 값(가장 최근
+  // 렌더의 최신 값)만 읽으면 된다. 사용자가 편집 여부를 바꿀 때마다 이
+  // effect가 다시 도는 것은 의도가 아니다.
   useEffect(() => {
     const latest = recorderResults?.[0] ?? null
     if (!latest) return
     if (emrSeedRecordingIdRef.current === latest.recording_id) return
     emrSeedRecordingIdRef.current = latest.recording_id
-    setEmrText(
-      buildEmrSummary({
-        primaryConcern: primaryConcernLabel(r),
-        structuredNote: latest.structured_note,
-        judgment: selectedRecord?.judgment ?? null,
-      }),
-    )
+    const nextText = buildEmrSummary({
+      primaryConcern: primaryConcernLabel(r),
+      structuredNote: latest.structured_note,
+      judgment: selectedRecord?.judgment ?? null,
+    })
+    if (emrEdited) {
+      setPendingEmrText(nextText)
+    } else {
+      setEmrText(nextText)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recorderResults, selectedRecord?.judgment])
 
   useEffect(() => {
@@ -1076,6 +1105,30 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         judgment: selectedRecord?.judgment ?? null,
       }),
     )
+    // 수동 재조립은 명시적 escape hatch다 — 재조립한 순간부터는 최신
+    // 상태와 다시 동기화된 것이므로 "편집 중" 표시와 보류 중이던 자동
+    // 요약을 함께 지운다.
+    setEmrEdited(false)
+    setPendingEmrText(null)
+  }
+
+  /** v0.2 §11.5 — 시트 textarea 편집. 사용자가 직접 고친 것만 emrEdited를 세운다. */
+  function handleEmrTextChange(next: string) {
+    setEmrText(next)
+    setEmrEdited(true)
+  }
+
+  /** amber 스트립 — "내 편집 유지": 보류 중이던 새 요약을 버리고 지금 텍스트를 그대로 둔다. */
+  function handleKeepMyEmrEdit() {
+    setPendingEmrText(null)
+  }
+
+  /** amber 스트립 — "새 요약으로 교체": 보류 중이던 새 요약을 적용하고 편집 상태를 초기화한다. */
+  function handleReplaceEmrWithNewSummary() {
+    if (pendingEmrText === null) return
+    setEmrText(pendingEmrText)
+    setPendingEmrText(null)
+    setEmrEdited(false)
   }
 
   async function handleCopyEmr() {
@@ -1122,9 +1175,24 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined,
   }
   const safetyOverview = showingRecord ? deriveSafetyOverview(payload, clinicianInputs) : undefined
-  const urgentModuleRows = showingRecord
-    ? computeSafetyModuleRows(payload, clinicianInputs).filter((row) => row.status === 'URGENT_REVIEW')
-    : []
+  // v0.2 §11.4: 오늘 확인 목록(TodayChecklist)이 examCodes를 읽기 위해 같은
+  // computeSafetyModuleRows 결과를 재사용한다 — 안전 계산 경로를 새로
+  // 만들지 않는다(invariant). urgentModuleRows는 이 배열의 부분집합이다.
+  const safetyRows = showingRecord ? computeSafetyModuleRows(payload, clinicianInputs) : []
+  const urgentModuleRows = safetyRows.filter((row) => row.status === 'URGENT_REVIEW')
+
+  async function handleCompleteVisit() {
+    if (!selectedId) return
+    setCompleting(true)
+    setCompleteError(null)
+    const result = await setSubmissionStatus(selectedId, 'completed')
+    setCompleting(false)
+    if (result.ok) {
+      setSelectedId(null)
+    } else {
+      setCompleteError(result.error)
+    }
+  }
 
   return (
     <div className="doctor">
@@ -1136,8 +1204,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       {/*
         v0.2 §8.1/§3: 상단바(44px) — 데이터 소스/fixture 픽커/토큰 clear/
         원본 JSON 이동은 전부 ⚙ 도구 메뉴 안으로 옮겼다(Opus N6/N7). 워크
-        스테이션 배지는 meta 영역에 남긴다. "진료 완료" 버튼은 P3 산출물이라
-        아직 자리만 비워둔다(placeholder 렌더 없음).
+        스테이션 배지는 meta 영역에 남긴다.
       */}
       <header className="doctor__topbar">
         {mode === 'server' && selectedRecord && (
@@ -1149,6 +1216,18 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           {showingServerList ? `진료 전 요약 — 제출목록 (${submissions.length})` : '진료 전 요약'}
         </h1>
         {showingServerList && newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
+        {/*
+          v0.2 §11.8 — 진료 완료 버튼: 서버 모드 + 상세 열림 시에만.
+          setSubmissionStatus(id, 'completed') 기존 계약 재사용(신규 계약
+          없음). in_consultation 자동 전이는 PO 승인 대기 항목이라 구현하지
+          않는다 — 열람 시 'viewed' 세팅만 기존대로 유지된다.
+        */}
+        {mode === 'server' && selectedRecord && (
+          <button type="button" className="doctor__completeBtn" onClick={handleCompleteVisit} disabled={completing}>
+            {completing ? '처리 중…' : '진료 완료'}
+          </button>
+        )}
+        {completeError && <span className="doctor__completeError">진료 완료 처리 실패 — {completeError}</span>}
         <div className="doctor__topbar__spacer" />
         <div className="doctor__topbar__meta">
           <span className="doctor__workstationBadge">
@@ -1325,6 +1404,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       </div>
 
       {showingRecord && (
+      <>
       <div className="doctor__layout">
       <div className="doctor__mainCol">
       <TenSecondSummary payload={payload} />
@@ -1703,68 +1783,19 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       </div>
 
       {/*
-        v0.2 §7/§8.1 Level 3 — "행동" 영역. 이 단계(P1)에서는 §11.4/§11.7의
-        압축(compact) 재설계 없이 기존 판단 기록·EMR 컴포넌트를 그대로 옮겨
-        담기만 한다(레일 예산 §8.1 충족은 P3의 컴팩트 재설계에서 성립한다).
-        아직 콘텐츠가 예산(≤560px)을 넘으므로 sticky는 적용하지 않는다 —
-        뷰포트보다 긴 sticky는 이 저장소의 기존 병목(styles.css:49~66)과
-        같은 종류의 버그이므로, 콘텐츠가 실제로 줄어드는 시점(P3) 전에는
-        피한다.
+        v0.2 §7/§8.1/§11 Level 3 — "행동" 영역. 레일 콘텐츠를 §8.1 예산
+        (≤560px 목표)에 맞춰 압축했다: 오늘 확인(체크리스트) → 진찰 소견 →
+        오늘 판단(compact) → EMR 열기 버튼. 진료 녹취·EMR 편집 자체는 더
+        이상 레일에 상주하지 않고 시트(EmrSheet, 이 컴포넌트 바깥에 별도로
+        렌더)로 옮겼다 — 레일에는 버튼 + 상태 dot만 남는다.
       */}
       <aside className="doctor__rail">
-      {mode === 'server' && selectedRecord?.visit_id && (
-        <section className="doctor__section">
-          <h2>진료 녹취·요약</h2>
-          {recorderResultsError ? (
-            <p className="doctor__warning">녹취 결과를 불러오지 못했습니다: {recorderResultsError}</p>
-          ) : !recorderResults || recorderResults.length === 0 ? (
-            <p className="doctor__empty">아직 결과 없음</p>
-          ) : (
-            <>
-              <p className="doctor__derivedLabel">
-                결과 있음 — 녹음 {recorderResults.length}건 (최신 갱신: {relativeTime(recorderResults[0].updated_at)})
-              </p>
-              {recorderResults.length > 1 && (
-                <ul className="doctor__recorderLineage">
-                  {recorderResults.map((res) => (
-                    <li key={res.recording_id}>
-                      {res.recording_id} · {relativeTime(res.updated_at)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <details className="doctor__secDetails">
-                <summary>Transcript 원문</summary>
-                <pre className="doctor__recorderTranscript">{recorderResults[0].transcript ?? '(없음)'}</pre>
-              </details>
-              <div className="judgment__field doctor__recorderEmrField">
-                <label className="judgment__label" htmlFor="emrSummaryText">
-                  EMR용 요약 (plain text, 직접 수정 가능)
-                </label>
-                <textarea
-                  id="emrSummaryText"
-                  className="judgment__textarea"
-                  rows={8}
-                  value={emrText}
-                  onChange={(e) => setEmrText(e.target.value)}
-                />
-              </div>
-              <div className="judgment__actions">
-                <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
-                  EMR용 복사
-                </button>
-                <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
-                  요약 다시 만들기
-                </button>
-                {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
-                {copyStatus === 'error' && (
-                  <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
-                )}
-              </div>
-            </>
-          )}
-        </section>
-      )}
+      <TodayChecklist
+        payload={payload}
+        rows={safetyRows}
+        interactive={mode === 'server'}
+        scopeKey={mode === 'server' ? selectedRecord?.visit_id ?? selectedId ?? undefined : undefined}
+      />
 
       <JudgmentPanel
         key={payload.session_id}
@@ -1783,20 +1814,59 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         // SHOULDER는 이미 같은 패턴으로 safety_flags 기준이었다.
         showLbpExam={payload.responses.safety_flags.lbp !== null}
         showShoulderExam={payload.responses.safety_flags.shoulder !== null}
+        previewMode={mode === 'fixtures'}
         onSave={
           mode === 'server' && selectedId
-            ? async (judgment: ClinicianJudgment) => {
+            ? async (judgment: ClinicianJudgment): Promise<SaveResult> => {
                 // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
                 // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
                 // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
                 const result = await saveJudgmentToServer(selectedId, judgment)
-                if (result.ok) setSelectedRecord(result.data)
+                if (result.ok) {
+                  setSelectedRecord(result.data)
+                  return { ok: true }
+                }
+                return { ok: false, error: result.error }
               }
             : undefined
         }
       />
+
+      {/*
+        v0.2 §11.5 — EMR 요약 열기 버튼 + 상태 dot만 레일에 둔다. recorder
+        결과가 없는 방문(초진 대부분, fixtures 전부)에는 이 버튼 자체를
+        렌더하지 않는다(빈 블록 금지).
+      */}
+      {mode === 'server' && selectedRecord?.visit_id && recorderResults && recorderResults.length > 0 && (
+        <div className="doctor__emrOpenRow">
+          <button type="button" className="doctor__emrOpenBtn" onClick={() => setEmrSheetOpen(true)}>
+            EMR 요약 열기
+          </button>
+          <span className="doctor__emrStatusDot" aria-hidden="true" />
+          <span className="doctor__emrStatusText">
+            {pendingEmrText !== null ? '새 요약 도착' : '준비됨'}
+          </span>
+        </div>
+      )}
       </aside>
       </div>
+
+      <EmrSheet
+        open={emrSheetOpen}
+        onClose={() => setEmrSheetOpen(false)}
+        recorderResults={recorderResults}
+        recorderResultsError={recorderResultsError}
+        recorderUpdatedLabel={recorderResults?.[0] ? relativeTime(recorderResults[0].updated_at) : null}
+        emrText={emrText}
+        onEmrTextChange={handleEmrTextChange}
+        onCopy={handleCopyEmr}
+        onRebuild={handleRebuildEmrSummary}
+        copyStatus={copyStatus}
+        pendingNewSummary={pendingEmrText !== null}
+        onKeepMine={handleKeepMyEmrEdit}
+        onReplaceWithNew={handleReplaceEmrWithNewSummary}
+      />
+      </>
       )}
     </div>
   )

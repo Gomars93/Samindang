@@ -73,30 +73,40 @@ function safetyGlanceItems(r: Responses, flags: DoctorPayload['flags']): { key: 
     items.push({ key: 'free_text', label: '추가 전달사항', text: '있음 — 진료 중 확인' })
   }
 
-  const otherDetailFlags: string[] = []
-  if (r.visit_goal.primary_symptom === 'other') otherDetailFlags.push('기타 주호소')
-  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 동반증상')
-  }
-  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 수면 원인')
-  }
-  if (r.modules.pain.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
-  if (r.modules.pain.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
-  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 여성 건강 상담')
-  }
-  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 임신 상담')
-  }
-  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 산후 상담')
-  }
+  const otherDetailFlags = otherDetailChecklistFlags(r)
   if (otherDetailFlags.length > 0) {
     items.push({ key: 'other_detail', label: '기타 확인', text: `${otherDetailFlags.join(', ')} — 진료 중 확인` })
   }
 
   return items
+}
+
+/**
+ * v0.2 §11.4 — "기타" 계열 flag 목록. `safetyGlanceItems`(일반 안전정보)와
+ * `TodayChecklist`(오늘 확인 목록의 "기타 확인" 자동 집계)가 서로 다른
+ * 계산을 하지 않도록 이 함수 하나로 통일한다.
+ */
+export function otherDetailChecklistFlags(r: Responses): string[] {
+  const flags: string[] = []
+  if (r.visit_goal.primary_symptom === 'other') flags.push('기타 주호소')
+  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
+    flags.push('기타 동반증상')
+  }
+  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
+    flags.push('기타 수면 원인')
+  }
+  if (r.modules.pain.primary_location === 'other') flags.push('기타 통증 부위')
+  if (r.modules.pain.radiation === 'other') flags.push('기타 방사통 부위')
+  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
+    flags.push('기타 여성 건강 상담')
+  }
+  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
+    flags.push('기타 임신 상담')
+  }
+  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
+    flags.push('기타 산후 상담')
+  }
+  return flags
 }
 
 export function SafetySection({

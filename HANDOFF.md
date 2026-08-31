@@ -6,6 +6,7 @@
 아직 PR 미생성/미머지, "DO NOT MERGE" 상태는 아니고 단순히 리뷰 전 단계).
 
 **커밋 이력(이 브랜치, 최신 순)**:
+- `fcc112b` feat(doctor): Core Reduction P6 — 상태 전수 + 메트릭 검증 테스트
 - `74d892b` fix(doctor): Core Reduction P5 — 1024×768 랜드스케이프 예산 1.9x→1.5x 복귀
 - `6724d47` feat(doctor): Core Reduction P4 (2/2) — 전역 설정 화면 신설
 - `41f7746` feat(doctor): Core Reduction P4 (1/2) — 참고 화면 아코디언 재편
@@ -14,12 +15,6 @@
 - `a4ee121` docs: Core Reduction Phase 7 UI Skill high-fidelity spec v0.1 (read-only 스펙 산출)
 - `9a46fea` fix(doctor): P0-8 isolation hardening
 - `3835b98` fix(doctor): Core Reduction P0 선행 결함 수정 7건 + P1 통합 Queue
-
-이번 세션에 P6(상태·메트릭 테스트)에 해당하는 커밋은 별도 SHA 없이
-**아직 커밋되지 않은 상태**다 — 아래 "P6" 절 작업(스켈레톤/Queue 빈
-상태/ConflictBanner 회귀/메트릭 테스트 6종)은 working tree에 존재하며,
-이 HANDOFF 갱신과 함께 커밋될 예정이다. 커밋 후 이 절의 SHA를
-`git log --oneline -1`로 확인해 채워 넣을 것.
 
 **P0~P6 전체 진행 상태**: P0(선행결함 8건)·P1(통합 Queue)·P2(V3 셸+
 레인1/2)·P3(판단·처치/다음) = 완료(`d871ce9` 이전). **P4(참고/설정
@@ -72,7 +67,7 @@ Phase 10(closing review, 독립 검수) 뿐이다.
   1450→1200. 834 portrait 스티키 압축(41px, max-height 96px 충족)·
   터치 타겟 40/40/48px·overflowX 0(3 뷰포트) 전부 재확인.
 
-### P6 (상태·메트릭 테스트) — 커밋 예정(이 HANDOFF 갱신과 함께)
+### P6 (상태·메트릭 테스트) — `fcc112b`
 
 - **Queue 빈 상태**: 문구를 "지금 확인할 항목이 없습니다."→"오늘
   예정된 문진이 없습니다."로 교체(Phase 7 §9 문구), `onGoToSettings`
@@ -112,7 +107,7 @@ Phase 10(closing review, 독립 검수) 뿐이다.
 `npm run test:all`(1000개 이상 assertion, tablet-viewport 포함) 전체
 green. FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff 확인.
 
-**Next Recommended Action**: 이번 세션 작업 커밋(P6) → Phase 9(Preview
+**Next Recommended Action**: Phase 9(Preview
 QA — 실제 헤드리스/두 브라우저 컨텍스트로 진료 화면 전체 흐름 재확인,
 특히 스켈레톤→실데이터 전환 시 레이아웃 시프트 여부) → Phase 10
 (closing review, 독립 검수). 검수 시 특히 확인할 3가지: (1)

@@ -154,3 +154,86 @@ systemic block(`HERB_APPETITE` 등, `CONSTITUTION_BASIC_QUESTIONS`/
   추가문진을 시작하고 싶다면(진짜로 "진료 중" 결정하는 흔한 임상 워크플로일
   수 있음) 이번 구현으로는 지원되지 않는다 — 필요해지면 별도 세션/토큰
   인프라 설계와 그에 따른 보안 검토가 먼저 필요하다.
+
+## 2026-08-31 — Doctor View 재설계: 안전 상태 단일 selector + 서버 목록
+## overview 계약 확정 (Opus 검수 A1/A3/A4 반영)
+
+### Context
+`docs/DOCTOR_VIEW_REDESIGN_v0.2.md`(Fable 설계, Opus 독립 검수 반영판,
+이번 커밋으로 이 브랜치에 처음 반입)의 §11.1 `deriveSafetyOverview` 단일
+selector와 §8.2 서버 목록 overview 필드를 구현(P1~P4)한 뒤, Opus가 구현
+결과를 다시 검수해 세 가지 결함을 지적했다:
+
+1. [BLOCKING] `server/store.js`의 `deriveListOverview`가 모듈별
+   disease-status 문자열(`lbp_safety_status` 등)만 읽고, 클라이언트
+   selector가 REVIEW로 반영하는 나머지 4갈래(LBP/NECK의 treatment-축
+   lock, 응답 모순, 수면장애 선별 2종)를 전혀 읽지 않아 서버 목록과
+   클라이언트 상세 화면의 안전 배지가 서로 어긋날 수 있었다.
+2. [MAJOR] 안전 문진(SAFETY_01 등)에 실제 응답이 전혀 없는 payload(레코드
+   손상/부분 제출)를 `deriveSafetyOverview`가 무조건 `CLEAR`(`안전
+   확인됨`)로 표시했다 — "확인한 적 없음"과 "확인해서 안전함"을 구분하지
+   못하는 fail-open이었다.
+3. [MAJOR] 원장이 진찰 후 입력하는 객관적 소견(LBP 하지 근력저하 등)이
+   `URGENT_REVIEW`를 만들어도 이 사실이 목록 화면 배지에는 전혀 반영되지
+   않았다 — 원장이 이미 위험을 확인한 방문이 목록에서는 평범한 행으로
+   보일 수 있었다.
+
+### Decision
+1. `server/store.js`의 `SAFETY_MODULE_STATUS_FIELDS`에
+   `treatment_safety_status`(LBP)/`neck_treatment_safety_status`(NECK)를
+   추가하고, `safety_flags.response_consistency_review` /
+   `sleep_disorder_review` / `sleep_disorder_priority_review` boolean
+   3종을 REVIEW 갈래로 명시적으로 반영한다. 클라이언트
+   `deriveSafetyOverview`(src/doctor/safetyOverview.ts)의 REVIEW 4갈래와
+   서버가 읽는 필드의 대응표를 `server/store.js` 주석에 고정한다 — 이후
+   어느 한쪽만 갈래를 추가하는 드리프트를 코드 리뷰에서 바로 발견할 수
+   있게 한다.
+2. `SafetyOverview` 타입에 `'UNKNOWN'`을 추가한다.
+   `red_flag_general !== null || rows.length > 0`(일반 안전 문항에
+   응답했거나 부위별 안전 모듈이 하나라도 계산됨)일 때만 `CLEAR`를
+   반환하고, 그 외에는 `UNKNOWN`을 반환해 fail-closed 표시(중립 회색
+   pill "안전정보 없음")로 바꾼다.
+3. `ClinicianJudgment`(src/doctor/judgment.ts)에 **원장 입력이 아니라
+   시스템 파생값**인 `derived_safety_overview` 필드를 추가한다 — 저장
+   직전 `deriveSafetyOverview(payload, clinicianInputs)`로 다시 계산해
+   채운다. `server/store.js` 목록 생성 시
+   `deriveListOverview(submission)`과 `judgment.derived_safety_overview`
+   중 **더 심각한 쪽**을 채택하되(URGENT>REVIEW>CLEAR>UNKNOWN/null),
+   **단조 상향만 허용**한다 — judgment 값이 덜 심각해도 문진 자체의
+   overview를 하향시키지 않는다(문진 fail-closed 계산이 항상 하한선).
+
+### Reason
+안전 상태 표시는 이 프로젝트에서 단일 selector로 정의된 계약(§11.1
+invariant)이므로, 그 계약을 읽는 위치(클라이언트 상세 vs 서버 목록)가
+서로 다른 결과를 낼 수 있다는 것 자체가 임상 안전 결함이다. UNKNOWN
+도입은 "빈 값/미확인"과 "확인된 음성 소견"을 구분하는 이 프로젝트의
+기존 원칙(Field의 "빈 값은 줄을 만들지 않는다", "안 물어봄 ≠
+none/unknown 응답")을 안전 상태 selector 레벨에도 동일하게 적용한
+것이다. judgment 단조 상향 규칙은 원장이 이미 확인한 위험이 목록에서
+안 보이는 사고를 막으면서도, 목록 화면이 "문진 자체의 안전 판정"이라는
+원래 성격을 잃지 않게 하는 최소 변경이다.
+
+### Alternatives Considered
+- 서버가 `deriveSafetyOverview`를 그대로 import해 재사용 — 기각. 서버
+  프로세스는 문진이 이미 계산해서 저장한 값만 읽는 것이 기존 계약
+  (`server/store.js` 파일 헤더 주석)이고, `deriveSafetyOverview`는
+  렌더 계층에서 `compute*Flags`를 다시 호출하는 selector라 서버에서
+  호출하려면 FROZEN 임상 로직을 서버로 옮기거나 복제해야 했다. "같은
+  공식을 각자 계층에서 적절한 입력으로 적용"하는 의도된 중복을
+  유지하고, 대신 대응표 주석으로 드리프트를 막는 쪽을 택했다.
+- judgment가 목록 overview를 자유롭게 덮어쓰게 허용 — 기각. 원장이
+  실수로 또는 성급하게 낮은 심각도를 입력했을 때 실제로는 위험한 문진
+  결과가 목록에서 사라지는 것은 안전 사고이므로, 단조 상향만 허용한다.
+
+### Consequences
+- (+) 목록 화면과 상세 화면의 안전 배지가 어떤 저장된 레코드에 대해서도
+  서로 어긋나지 않는다(같은 4+9갈래 계약).
+- (+) 손상되었거나 부분 제출된 레코드가 "안전 확인됨"으로 잘못 표시되는
+  일이 없다.
+- (+) 원장 진찰 소견이 목록 배지에 반영되므로, 목록만 보고도 이미
+  확인된 위험을 놓치지 않는다.
+- (−) `SAFETY_MODULE_STATUS_FIELDS`/REVIEW 4갈래 대응표는 앞으로
+  `safetyOverview.ts`의 selector 로직이 바뀔 때마다 `server/store.js`
+  주석도 함께 갱신해야 한다(자동 동기화 장치 없음, 코드 리뷰 책임).
+- 관련 문서: `docs/DOCTOR_VIEW_REDESIGN_v0.2.md` §11.1/§11.2/§8.2,
+  `docs/DOCTOR_VIEW_REDESIGN_Opus_UX_Review_v0.1.md`.

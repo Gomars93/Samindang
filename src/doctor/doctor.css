@@ -376,6 +376,46 @@
   margin: 0;
 }
 
+/* Core Reduction P4 (Phase 5 Synthesis v1.2 §2.1, Phase 7 UI spec §2.1):
+   전역 화면 전환(오늘/설정). '참고'는 record-scoped라 여기 없다 --
+   진료 화면을 연 뒤에만 의미가 있는 별도 탭(.doctor__recordTabs)이다. */
+.doctor__globalNav {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.doctor__globalNavBtn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.doctor__globalNavBtn--active {
+  background: var(--surface);
+  color: var(--primary);
+  font-weight: 800;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.doctor__globalNavBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.doctor__settingsScreen {
+  max-width: 640px;
+}
+
 .doctor__pickerRow {
   display: flex;
   align-items: center;

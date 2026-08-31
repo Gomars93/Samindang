@@ -2696,6 +2696,20 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const [linkCopyStatus, setLinkCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
+  /*
+   * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11, Phase 7 UI spec §2.1/
+   * §2.5): '설정' is a genuinely global screen (unlike '참고', which is
+   * record-scoped and stays a per-record tab -- see the orchestrator note
+   * at the top of the Phase 7 spec). Switching to it hides 오늘/진료
+   * without losing any of that state (selectedId/selectedRevisit/etc. stay
+   * exactly as they were, so returning to 오늘 resumes where staff left
+   * off). Doctor token management (including "clear") moves here from the
+   * always-visible header per §2.5 -- the unset-workstation banner and the
+   * in-flow auth-failure recovery keep their current, unconditional
+   * positions and conditions unchanged (delta C-1 / P0-8), since neither
+   * is what this screen exists to hold.
+   */
+  const [screen, setScreen] = useState<'main' | 'settings'>('main')
   // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
   // from this screen, forcing a re-render (poll effect below depends on it
   // too, so a fresh/cleared token retries immediately).
@@ -3814,17 +3828,35 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       )}
       <header className="doctor__header">
         <h1 className="doctor__title">진료 전 요약</h1>
+        {/*
+          Core Reduction P4 (Phase 5 Synthesis v1.2 §2.1): 전역 화면 전환.
+          '참고'는 여기 없다 -- record-scoped라 진료 화면을 연 뒤에만
+          의미가 있는 탭이지 전역 nav 항목이 아니다(Phase 7 스펙
+          오케스트레이터 주석). 화면을 옮겨도 오늘 목록/열린 기록/큐
+          폴링 상태는 전부 그대로 유지된다 -- 다시 '오늘'을 누르면
+          있던 자리로 돌아온다.
+        */}
+        <nav className="doctor__globalNav" aria-label="주 화면 전환">
+          <button
+            type="button"
+            className={`doctor__globalNavBtn${screen === 'main' ? ' doctor__globalNavBtn--active' : ''}`}
+            aria-current={screen === 'main' ? 'page' : undefined}
+            onClick={() => setScreen('main')}
+          >
+            오늘
+          </button>
+          <button
+            type="button"
+            className={`doctor__globalNavBtn${screen === 'settings' ? ' doctor__globalNavBtn--active' : ''}`}
+            aria-current={screen === 'settings' ? 'page' : undefined}
+            onClick={() => setScreen('settings')}
+          >
+            설정
+          </button>
+        </nav>
         <span className="doctor__workstationBadge">
           {workstationId ? `진료 워크스테이션: ${workstationId}` : '워크스테이션 설정 필요'}
         </span>
-        {mode === 'server' && hasDoctorToken && (
-          <DoctorTokenClearButton
-            onClear={() => {
-              setTokenVersion((n) => n + 1)
-              setRetryNonce((n) => n + 1)
-            }}
-          />
-        )}
         {showPreviewControls && (
           <div className="doctor__pickerRow">
             <label htmlFor="doctor-source-select">데이터 소스</label>
@@ -3897,6 +3929,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
       {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
 
+      {screen === 'main' && (
+      <>
       {mode === 'server' && serverError?.kind === 'auth' && (
         <DoctorTokenSetup
           authFailed
@@ -4685,6 +4719,53 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         disclosure boundary is new.
       */}
       </>
+      )}
+      </>
+      )}
+
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.5, Phase 7 UI spec
+        §2.5): the global 설정 screen. WorkstationSetup here is the SAME
+        component/gate as the unset-workstation banner above (§delta C-1
+        keeps that banner unconditional and unchanged) -- this is simply a
+        second, always-reachable place to find it rather than a new
+        mechanism. Doctor-token management (including "clear") moved here
+        from the header per §2.5; the fixture/data-source/workspace-scenario
+        preview pickers deliberately stay on the main screen's header
+        instead of moving here -- see DECISIONS.md's Core Reduction P4 entry
+        for why (tests/tablet-viewport.spec.mjs drives them directly via
+        `#doctor-source-select`/`#doctor-workspace-scenario-select` without
+        ever navigating through a settings screen, and rewriting that
+        rendered-layout acceptance proof's navigation flow was judged too
+        risky against this session's actual scope, especially with P5's
+        1024×768 budget fix depending on that exact file staying reliable).
+      */}
+      {screen === 'settings' && (
+        <main className="doctor__settingsScreen" aria-labelledby="settings-h1">
+          <h1 id="settings-h1">설정</h1>
+          <section className="doctor__section">
+            <h2>워크스테이션</h2>
+            <p className="doctor__derivedNote">
+              현재: {workstationId ?? '설정되지 않음'}
+            </p>
+            {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
+          </section>
+          {mode === 'server' && (
+            <section className="doctor__section">
+              <h2>원장 인증</h2>
+              {hasDoctorToken ? (
+                <DoctorTokenClearButton
+                  onClear={() => {
+                    setTokenVersion((n) => n + 1)
+                    setRetryNonce((n) => n + 1)
+                  }}
+                />
+              ) : (
+                <p className="doctor__empty">저장된 원장 인증 토큰이 없습니다.</p>
+              )}
+            </section>
+          )}
+        </main>
       )}
     </div>
   )

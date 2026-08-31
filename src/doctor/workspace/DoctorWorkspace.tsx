@@ -204,6 +204,13 @@ export function DoctorWorkspace({
     lastKnownUpdatedAtRef.current = initialRecordUpdatedAt ?? null
     setConflict(null)
     setPreConflictDraft(null)
+    // P0-8: same reasoning as conflict/preConflictDraft above -- an auth
+    // failure banner belongs to the OLD record's save attempt, never to a
+    // newly-selected one (defense in depth: every failure path already
+    // re-sets this together with saveStatus in the same branch, so this
+    // was never actually visibly stale, but an unreset per-record field is
+    // exactly the kind of thing a future refactor could silently break).
+    setLastSaveErrorKind(null)
   }
 
   // Round 18 fix (caught by real two-browser-context QA): `initialRecordUpdatedAt`

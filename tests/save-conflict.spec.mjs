@@ -124,6 +124,19 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(resetBlock.includes('setConflict(null)') && resetBlock.includes('setPreConflictDraft(null)'))
   })
 
+  // P0-8 follow-up hardening: lastSaveErrorKind is a NEW per-record piece of
+  // UI state this round added (Core Reduction P0-8) -- must join the SAME
+  // cross-patient reset block as conflict/preConflictDraft above, or an
+  // auth-failure banner from the OLD record could in principle survive a
+  // record switch (in practice every failure path already re-sets it
+  // together with saveStatus in the same branch, so this was never
+  // actually visibly stale -- this is defense in depth against a future
+  // refactor silently breaking that co-set invariant).
+  test('DoctorWorkspace.tsx: switching records also clears lastSaveErrorKind (P0-8 auth-recovery state joins the same cross-patient reset)', () => {
+    const resetBlock = src.slice(src.indexOf('if (recordKey !== lastSeenRecordKey) {'), src.indexOf('if (recordKey !== lastSeenRecordKey) {') + 1400)
+    assert.ok(resetBlock.includes('setLastSaveErrorKind(null)'))
+  })
+
   // Real two-browser-context QA (round 18) initially caught a false-positive
   // conflict here: initialRecordUpdatedAt can legitimately advance for the
   // SAME record without DoctorWorkspace ever saving anything (the "mark as

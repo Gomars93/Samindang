@@ -115,6 +115,14 @@ test('TODAY_QUEUE_BADGE_LABEL covers exactly the 4 values, NONE visually distinc
   assert.notEqual(TODAY_QUEUE_BADGE_LABEL.NONE, TODAY_QUEUE_BADGE_LABEL.CLEAR)
 })
 
+test('Phase 7 §6.2 3중 인코딩: REVIEW 글리프는 URGENT/CLEAR와 형태(원 vs 세모)가 달라야 한다 -- 색-단독 구분 금지', () => {
+  assert.ok(TODAY_QUEUE_BADGE_LABEL.REVIEW.includes('▲'), 'REVIEW badge must carry a triangle glyph, not a color-only circle')
+  assert.ok(!TODAY_QUEUE_BADGE_LABEL.URGENT.includes('▲'))
+  assert.ok(!TODAY_QUEUE_BADGE_LABEL.CLEAR.includes('▲'))
+  // screen-reader-visible text label always accompanies the glyph (never glyph-only)
+  assert.ok(TODAY_QUEUE_BADGE_LABEL.REVIEW.includes('확인 필요'))
+})
+
 // ---------- needs_attention ----------
 
 test('needs_attention is a mandatory per-row field (never omitted) and reflects the revisit source flag', () => {

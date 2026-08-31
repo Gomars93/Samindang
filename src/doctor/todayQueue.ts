@@ -44,9 +44,16 @@ import type { CrmTask } from '../crm/types'
 
 export type TodayQueueBadge = 'URGENT' | 'REVIEW' | 'CLEAR' | 'NONE'
 
+/**
+ * Phase 7 §6.1/§6.2 (3중 인코딩, 색-단독 금지): URGENT/CLEAR는 채워진 원
+ * 그대로, 확인 필요는 원과 형태가 다른 세모(▲)로 -- 같은 위험도 계열이라도
+ * 글리프 모양 자체가 달라야 색맹/저채도 화면에서도 구분된다(Phase 9 QA
+ * 발견 #1 후속 수정, VisitSummaryAside.tsx의 LANE1_STATUS_GLYPH와 동일
+ * 관례). 스크린리더용 텍스트 라벨("확인 필요")은 항상 함께 표시된다.
+ */
 export const TODAY_QUEUE_BADGE_LABEL: Record<TodayQueueBadge, string> = {
   URGENT: '🔴 URGENT',
-  REVIEW: '🟡 확인 필요',
+  REVIEW: '🟡▲ 확인 필요',
   CLEAR: '🟢 CLEAR',
   NONE: '▦ 안전 계산 없음',
 }

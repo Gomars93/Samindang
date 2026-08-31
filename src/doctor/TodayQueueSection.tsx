@@ -48,9 +48,18 @@ function truncateUuid(uuid: unknown): string {
   return uuid.length <= 8 ? uuid : `${uuid.slice(0, 8)}…`
 }
 
+// 22차 독립 리뷰 LOW: 21차의 safeStringOrFallback 스윕이 같은 파일의
+// claimed_by/owner_clinician은 고쳤지만 15줄 위의 이 지점을 놓쳤다 --
+// server/patientIdentityStore.js의 getIdentitiesByPatientUuids는 무검증
+// JSON.parse라서, 손상된 identity link 파일의 patient_name/sigma_chart_no가
+// 객체면 "[object Object] · [object Object]"를 그대로 노출했다.
+// `resolved`도 truthy 체크 대신 `=== true`로 좁혀 손상된 문자열 "false" 등이
+// resolved 분기를 타지 않도록 했다.
 function patientLabel(task: CrmTask, identities: Record<string, ResolvedPatientIdentity>): string {
   const identity = typeof task.patient_uuid === 'string' ? identities[task.patient_uuid] : undefined
-  if (identity?.resolved) return `${identity.patient_name} · ${identity.sigma_chart_no}`
+  if (identity?.resolved === true) {
+    return `${safeStringOrFallback(identity.patient_name)} · ${safeStringOrFallback(identity.sigma_chart_no)}`
+  }
   return `환자 ${truncateUuid(task.patient_uuid)}`
 }
 

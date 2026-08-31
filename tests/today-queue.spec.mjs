@@ -430,4 +430,29 @@ test('21차 LOW-1 sanity: genuine string claimed_by/owner_clinician still render
   assert.ok(html.includes('소속: 삼인당'))
 })
 
+// ---------- 9. 22차 LOW: patientLabel's resolved-identity branch must fail closed too ----------
+
+test('22차 LOW: a resolved identity with object-valued patient_name/sigma_chart_no does not leak "[object Object]"', () => {
+  const uuid = '11111111-2222-3333-4444-555555555555'
+  const identities = { [uuid]: { resolved: true, patient_name: { weird: 'object' }, sigma_chart_no: { weird: 'object' } } }
+  const html = render({ tasks: [makeTask({ patient_uuid: uuid })], loading: false, error: null, identities })
+  assert.ok(!html.includes('[object Object]'))
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('22차 LOW: resolved must be strictly true -- a truthy non-boolean "resolved" value does not take the resolved branch', () => {
+  const uuid = '22222222-2222-3333-4444-555555555555'
+  const identities = { [uuid]: { resolved: 'false', patient_name: '홍길동', sigma_chart_no: 'S-1' } }
+  const html = render({ tasks: [makeTask({ patient_uuid: uuid })], loading: false, error: null, identities })
+  assert.ok(!html.includes('홍길동'), 'a non-boolean truthy resolved value must not be treated as a genuine resolved identity')
+  assert.ok(html.includes('22222222…'))
+})
+
+test('22차 LOW sanity: a genuinely resolved identity still renders the real name/chart number', () => {
+  const uuid = '33333333-2222-3333-4444-555555555555'
+  const identities = { [uuid]: { resolved: true, patient_name: '홍길동', sigma_chart_no: 'S-1' } }
+  const html = render({ tasks: [makeTask({ patient_uuid: uuid })], loading: false, error: null, identities })
+  assert.ok(html.includes('홍길동 · S-1'))
+})
+
 console.log(`\n${passed} passed`)

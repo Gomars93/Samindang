@@ -7416,6 +7416,62 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로
 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
 
+### 22차 독립 `model:opus` 리뷰 결과 (CLOSABLE, LOW 1건 즉시 수정 후 배치 종료)
+
+Delta-focused 스코프(`29f08e3..56fe677`만)로 진행. 21차 자신의 수정
+5건(HIGH-1 `recordToPayload`, MEDIUM-2 `setSubmissionStatus`, MEDIUM-1
+`dueStateLabel`, LOW-1 `claimed_by`/`owner_clinician`, LOW-2 patient_id
+타입 체크)을 전부 코드 레벨에서 재확인했고, 21차가 "별도 live-repro 없이
+20차의 기존 라이브 증거와 조합해 커버된다"고 판단한 근거(`recordToPayload`의
+`{}` 대체가 `isDoctorPayloadShapeUsable`의 **정확히 같은** `!isPlainObject(
+payload.routing)` 분기로 떨어져, 그 뒤의 `flags`/`myungri_calculation`/
+`saju.*`/`responses` 검사는 short-circuit으로 평가조차 되지 않음)를
+독립적으로 재추적해 타당하다고 확인했다. **verdict: CLOSABLE.**
+
+리뷰가 찾은 유일한 항목은 LOW 1건 — `TodayQueueSection.tsx`의
+`patientLabel()`이 21차 자신의 `safeStringOrFallback` 스윕(같은 파일의
+`claimed_by`/`owner_clinician`)에서 15줄 위의 `identity.patient_name`/
+`identity.sigma_chart_no`를 놓쳤다(`server/patientIdentityStore.js`의
+`getIdentitiesByPatientUuids`도 무검증 `JSON.parse`라서 손상된 identity
+link 파일이면 "[object Object] · [object Object]"가 노출될 수 있었다).
+리뷰 자신이 "CLOSABLE, 이 LOW는 닫는 데 걸림돌 아님"이라고 명시했지만,
+같은 파일의 동일 패턴을 즉시 고칠 수 있는 한 줄 수정이라 21차 스윕에
+포함시켜 이번에 함께 닫았다(23차를 새로 부르지 않음) — `identity.resolved`도
+truthy 대신 `=== true`로 좁혀, 손상된 문자열 `"false"` 등이 resolved
+분기를 타지 않도록 했다.
+
+**신규 테스트**: `tests/today-queue.spec.mjs` +3(41→44 — resolved
+identity의 patient_name/sigma_chart_no가 객체여도 "[object Object]"를
+남기지 않는지, `resolved`가 boolean true가 아니면 미확인 UUID 폴백을
+쓰는지, 정상 resolved identity는 그대로 렌더되는지).
+
+**CI 플레이크 확인**: `56fe677`에서 GitHub Actions `build-and-test`가
+1차 실패했다 — `tests/server.spec.mjs`의 PRIVACY_CANARY 테스트(고정된
+`phone_last4: '9999'` 카나리가 감사 로그 전체에 절대 나타나지 않아야
+한다는 assertion)가 실패. 18차 배치 이전에도 동일 클래스의 플레이크가
+있었다(`7e4695e`, "privacy-canary '9999' collision" — 같은 테스트
+실행 중 다른 곳에서 우연히 생성된 UUID 조각/버전 번호/바이트 수 등에
+"9999" 부분열이 우연히 섞여 들어가는 데이터 우연 충돌). 이번 라운드의
+diff는 `server.spec.mjs`/감사 로그/전화번호 관련 코드를 전혀 건드리지
+않았으므로 진짜 회귀가 아니라고 판단해 실패한 job만 1회 재실행했고,
+`success`로 통과함을 확인해 판단이 맞았음을 검증했다(governing 규칙의
+"flake 재실행은 최대 1회, 다른 원인(체크아웃/설치 등)으로 죽었거나
+같은 커밋에서 이전엔 통과했던 경우"에 해당).
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — today-queue 44/44 포함, 나머지 스위트 21차와 동일 카운트
+유지), `npm run build`/`build:preview` clean, `tablet core` pytest
+80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과. GitHub Actions
+`build-and-test`/`build-and-deploy` 모두 이번 커밋의 최종 HEAD에서
+green.
+
+**배치 종료 상태**: 15~22차에 걸친 "malformed/legacy submission
+resilience" 배치를 CLOSABLE로 판단한다 — HIGH/MEDIUM 잔여 0건,
+남은 LOW 0건(발견 즉시 수정). 이 상태로 PR #24에 종료 코멘트를
+남긴다. **DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종 merge
+판단은 항상 사용자(Product Owner, Gomars93)의 몫이다.**
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

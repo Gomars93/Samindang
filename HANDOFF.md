@@ -1,58 +1,126 @@
 # Current Handoff
 
-## Objective (Core Reduction P2/P3 — V3 셸 + 레인1/2 + 판단·처치/다음, 이번 세션)
-
-**주의(2026-08-31 갱신)**: 이 파일이 그동안 Core Reduction 작업(브랜치
-`claude/feat-core-reduction`)을 전혀 반영하지 못한 채 CRM v0.3.1 round 17을
-"이번 세션"으로 두고 있었다 — CLAUDE.md 원칙대로("HANDOFF와 Git이 어긋나면
-Git이 맞다") 실제 Git 상태에 맞춰 지금 바로잡는다. 아래가 실제 최신
-상태이고, CRM round 17 이하는 "이전 세션"으로 재분류한다.
+## Objective (Core Reduction P0~P6 완료, 이번 세션 — P4/P5/P6)
 
 **브랜치**: `claude/feat-core-reduction` (origin에 push됨, `main`과 별도 —
 아직 PR 미생성/미머지, "DO NOT MERGE" 상태는 아니고 단순히 리뷰 전 단계).
 
 **커밋 이력(이 브랜치, 최신 순)**:
-- `d871ce9` Core Reduction P2(V3 셸+레인1/2) + P3(판단·처치/다음) — 이번 세션
+- `74d892b` fix(doctor): Core Reduction P5 — 1024×768 랜드스케이프 예산 1.9x→1.5x 복귀
+- `6724d47` feat(doctor): Core Reduction P4 (2/2) — 전역 설정 화면 신설
+- `41f7746` feat(doctor): Core Reduction P4 (1/2) — 참고 화면 아코디언 재편
+- `5aeb7e3` docs: HANDOFF.md를 Core Reduction P2/P3 실제 상태로 갱신 + DECISIONS.md 기록
+- `d871ce9` Core Reduction P2(V3 셸+레인1/2) + P3(판단·처치/다음)
 - `a4ee121` docs: Core Reduction Phase 7 UI Skill high-fidelity spec v0.1 (read-only 스펙 산출)
 - `9a46fea` fix(doctor): P0-8 isolation hardening
 - `3835b98` fix(doctor): Core Reduction P0 선행 결함 수정 7건 + P1 통합 Queue
 
-**이번 세션(P2/P3, `d871ce9`) 요약** — 전체 근거는 Phase 5 Synthesis v1.2 +
-Phase 7 UI spec(`a4ee121`), 커밋 메시지, `DECISIONS.md`의 2026-08-31 항목
-참고:
-- DoctorWorkspace.tsx를 V3 셸(`doctor__visitShell` = 좌측 요약 aside +
-  우측 4레인 main: 안전확인/확인/판단·처치/다음)로 재구성.
-- 레인1 안전 결론 요약 union(`src/doctor/workspace/lane1Summary.ts`, 신규)
-  — 9개 부위 SafetyPanel을 함수로 직접 호출해 반환 element의 className을
-  읽어 5값(URGENT/확인필요/계산불가/CLEAR/해당없음) 계산. herbal 파생
-  레코드에서도 동일 입력 보장(P0-1 재발 지점 정면 차단).
-- 좌측 요약(`src/doctor/workspace/VisitSummaryAside.tsx`, 신규) 5블록 +
-  834-portrait 압축 2줄 변형(matchMedia 기반).
-- §2.8 통합 리셋 키(`submission:<id>`/`fixture:<idx>:<scenario>`)를
-  DoctorView.tsx에서 한 번 계산 → DoctorRecordErrorBoundary key ·
-  DoctorWorkspace resetKey · JudgmentPanel resetKey 세 곳에 동일 전달.
-  JudgmentPanel의 독립 `key={session_id}` 제거, render-time reset 신설.
-- 프로필 자동분류 배너·세그먼트·mixed 탭 스위처 제거(§2.4) — mixed는
-  탭 없이 양쪽 자연 배치. `+ 다른 유형 입력 추가` details 신설.
-- "다음" 레인: 재평가 대상+다음 방문 확인 메모 나란히 배치, 발급을
-  기본 채널(상시)+"다른 방법"(details, 활성세션/미소비토큰 시 자동
-  펼침)으로 재구성, EMR 검토+"진료 완료" 버튼을 이 레인 "종결"로 이동.
-- 학습 케이스 disclosure(`open={learning_case===true}`), 4상태 버튼
-  글리프(✓/–/?/·) 추가.
-- **Deviation 4건**(DECISIONS.md 2026-08-31 항목에 상세): profileOverride/
-  mixedTab 폐기(→additionalTypeOpen), JudgmentPanel key→render-time
-  reset 전환, `react-test-renderer` devDependency 추가(§1.2 리셋 키
-  테스트 전용), Phase7 §3.1 portrait 미디어쿼리에 `align-items: stretch`
-  보정(스펙 원문 버그), §3.3 레인 간격 압축 + tablet-viewport 1024×768
-  랜드스케이프 예산을 1.9x로 임시 완화(P5 반응형 마감 대상으로 명시).
+이번 세션에 P6(상태·메트릭 테스트)에 해당하는 커밋은 별도 SHA 없이
+**아직 커밋되지 않은 상태**다 — 아래 "P6" 절 작업(스켈레톤/Queue 빈
+상태/ConflictBanner 회귀/메트릭 테스트 6종)은 working tree에 존재하며,
+이 HANDOFF 갱신과 함께 커밋될 예정이다. 커밋 후 이 절의 SHA를
+`git log --oneline -1`로 확인해 채워 넣을 것.
 
-**검증**: `npx tsc -b --force` / `npm run build` / `npm run test:all`
-전체 green. FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff 확인.
+**P0~P6 전체 진행 상태**: P0(선행결함 8건)·P1(통합 Queue)·P2(V3 셸+
+레인1/2)·P3(판단·처치/다음) = 완료(`d871ce9` 이전). **P4(참고/설정
+이동)·P5(반응형 마감)·P6(상태·메트릭 테스트) = 이번 세션에 완료.**
+남은 것은 Phase 9(Preview QA, 실제 헤드리스/브라우저 확인) ·
+Phase 10(closing review, 독립 검수) 뿐이다.
 
-**Next Recommended Action**: P4(참고/설정 이동) + P5(반응형 마감 — 특히
-1024×768 랜드스케이프 우측 열 그리드 재조정) + P6(상태·메트릭 테스트).
-P5 착수 시 `tests/tablet-viewport.spec.mjs`의 랜드스케이프 budget(현재
-1.9x 임시값)을 실측 재조정 후 1.5x로 되돌리는 것을 완료 기준에 포함할 것.
+### P4 (참고/설정 이동) — `41f7746` + `6724d47`
+
+- **참고 화면 재편**: '명리' 별도 탭 폐기 → '자료 보기'(→'참고')의
+  아코디언 그룹으로 흡수. `recordTab` 타입을 `'clinical' | 'reference'`
+  로 축소. 신규 `ReferenceAccordion` 컴포넌트(각 그룹 "기록 있음 n"
+  배지)로 7개 그룹 구성: 문진 원본 · 약물·병력 · 여성 안전 · 검사자료 ·
+  명리(compact+3열 감사 유지, 파일 경로 문구만 제거) · 이전 방문 원문
+  (신규, PriorVisitHistoryCard 재사용) · 명리·감사 기록(JudgmentPanel
+  전체를 감싸는 그룹 제목만 — 스키마/저장 경로/기록 버튼 무변경).
+- 동반문제 legacy 섹션: 데이터 있을 때만 렌더.
+- HerbalWorkspace.tsx "참고 자료" drawer에서 여성·생식 정보/약물·병력
+  dedup(참고 화면의 더 완전한 버전으로 통합).
+- **설정 화면 신설**: 전역 nav(오늘/설정), doctor-token 관리(clear 포함)를
+  헤더에서 이동, WorkstationSetup은 미설정 배너(delta C-1, 조건
+  무변경) 외에 설정 화면에서도 재확인 가능.
+- **Deviation 2건**(DECISIONS.md 2026-08-31 "P4" 두 항목에 상세): (1)
+  fixture/데이터소스/워크스페이스 시나리오 미리보기 픽커는 헤더에 그대로
+  두고 설정 화면으로 옮기지 않음 — `tests/tablet-viewport.spec.mjs`가
+  이 픽커를 DOM id로 직접 조작해 P5의 핵심 지표를 측정하므로, 그
+  회귀 감시 스크립트의 내비게이션 흐름까지 재작성하는 위험을 피함.
+  (2) provenance 배지 아이콘화(상시 텍스트 7종 → 아이콘+hover title,
+  범례 1곳)는 최소 7개 파일 교차 영향으로 **미구현** — 다음 세션 과제.
+
+### P5 (반응형 마감) — `74d892b`
+
+- 1024×768 랜드스케이프 예산을 P2/P3가 이월한 1.9x(1361px, 1.77x 실측)
+  임시완화에서 **1.5x(1090px, 1.42x 실측)로 복귀** — 다른 두 뷰포트와
+  동일 목표.
+- 근본 원인 진단: round-15 900-1100px 오버라이드는 여전히 발동 중이었고,
+  실제로 새로 필요했던 건 그 주변 밀도(카드 padding/gap)와 그리드
+  재배열 2건(판단·처치 3필드 3열→1행, herbal 두 heroRow를
+  `.workspace__heroRows` 그리드로 병렬 배치 — PainWorkspace.tsx가 이미
+  쓰던 패턴 재사용, 새 개념 아님) — 콘텐츠 삭제 0건.
+- **부수 발견(중요)**: `doctor.css` 소유 클래스(`.doctor__visitLane`,
+  `.doctor__nextPairRow`)를 `workspace.css`에서 오버라이드하면 media
+  query 매치와 무관하게 **조용히 무효**했다 — CSS는 동일 specificity에서
+  최종 번들 내 등장 순서로 우선순위를 정하고, 이 저장소는 `doctor.css`가
+  `workspace.css`보다 나중에 번들된다. 소유 파일로 옮겨 해결(다음에
+  비슷한 교차-파일 오버라이드를 쓸 때 이 함정을 기억할 것 —
+  `getComputedStyle`로 직접 확인하지 않으면 "효과 없음"을 계속 다른
+  값 실험으로 오인하기 쉽다).
+- `tests/tablet-viewport.spec.mjs` 갱신: 1024 budget 1.9→1.5, ceiling
+  1450→1200. 834 portrait 스티키 압축(41px, max-height 96px 충족)·
+  터치 타겟 40/40/48px·overflowX 0(3 뷰포트) 전부 재확인.
+
+### P6 (상태·메트릭 테스트) — 커밋 예정(이 HANDOFF 갱신과 함께)
+
+- **Queue 빈 상태**: 문구를 "지금 확인할 항목이 없습니다."→"오늘
+  예정된 문진이 없습니다."로 교체(Phase 7 §9 문구), `onGoToSettings`
+  콜백이 있으면 plain-text "설정 확인하기" 링크 추가(참고는
+  record-scoped라 도달 불가라 설정으로 안내).
+- **진료 로딩 스켈레톤**(신규): `selectedRecordLoading` state(기록
+  fetch 시작~settle 구간) 추가, `.doctor__visitShell doctor__skeleton`
+  — §3.2/§3.3 치수와 동일한 자리에 회색 펄스 블록(스피너 없음,
+  `prefers-reduced-motion` 대응). 오늘 Queue 게이트가 이 로딩 구간을
+  제외하도록 조건 추가(클릭 직후 stale 목록이 잠깐 보이는 문제 해소).
+- **ConflictBanner 비접힘**: 배너 자체가 `<details>`가 아님(항상
+  펼침), 초안은 닫힌 `<details>`(auto-open 아님) 뒤에서만 노출 —
+  회귀 테스트 2건 추가.
+- **auth 인라인 대체**: 기존 구현(P0-8) 확인만, 신규 구현 없음 —
+  이번 세션에 `tests/visit-summary-aside.spec.mjs`(신규)로 좌측 요약
+  worst-case fixture(부위 3+계산불가+auth 만료) 렌더 테스트 추가.
+- **메트릭 테스트**(Phase 5 §5, 신규):
+  - 3 뷰포트 horizontal overflow 0 — `tablet-viewport.spec.mjs`가 이미
+    담당(반복 안 함).
+  - 좌측 요약 상한/절단 규칙 최악 fixture — `visit-summary-aside.spec.mjs`
+    7개 assertion.
+  - 기본 major section 4 — `doctor.spec.mjs`에 `.doctor__visitLane`
+    개수 어서션 추가.
+  - 진입 조합 0 — 3개 fixture(pain/herbal/women)에 걸쳐 프로필 배너/
+    세그먼트 DOM 부재 재확인(DoctorView 전체 페이지 레벨).
+  - 기록 필드 접근 불가 0 — "여성 건강 주호소" 대표 fixture로 참고
+    화면 8개 아코디언 그룹 전부 + 그룹별 실제 필드값(WOMEN_SAFETY_01·
+    사주 기둥·JudgmentPanel 핵심 필드·원본 JSON dump) 렌더 확인.
+  - 기본 free-text 증가 0 — `tablet-viewport.spec.mjs`의
+    `EXPECTED_OPEN_INPUTS=4` 계약이 소스에 그대로 남아있는지 구조 확인.
+  - 신규 테스트 파일 2개(`today-queue-unified-ui.spec.mjs` 10건,
+    `visit-summary-aside.spec.mjs` 7건) + 기존 3개 파일에 assertion
+    추가(`doctor.spec.mjs` +29, `save-conflict.spec.mjs` +2,
+    `doctor-workspace.spec.mjs` 문구 재작성 2건).
+
+**검증(P4/P5/P6 전체)**: `npx tsc -b --force` / `npm run build` /
+`npm run test:all`(1000개 이상 assertion, tablet-viewport 포함) 전체
+green. FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff 확인.
+
+**Next Recommended Action**: 이번 세션 작업 커밋(P6) → Phase 9(Preview
+QA — 실제 헤드리스/두 브라우저 컨텍스트로 진료 화면 전체 흐름 재확인,
+특히 스켈레톤→실데이터 전환 시 레이아웃 시프트 여부) → Phase 10
+(closing review, 독립 검수). 검수 시 특히 확인할 3가지: (1)
+`workspace__finalAssessment__fields--primary`의 1024 구간 3열(~210px)
+타이핑감 실제 QA, (2) provenance 배지 아이콘화 착수 여부 판단, (3)
+fixture/데이터소스 픽커의 설정 화면 이동을 `tablet-viewport.spec.mjs`
+재작성과 함께 마무리할지 여부(PO 판단 필요 — CLAUDE.md Escalation
+Rules 해당 없음, 단순 스코프 우선순위 문제).
 착수 전 이 저장소의 PR 생성/리뷰 절차(ChatGPT 독립 검수 등, CLAUDE.md
 Team Roles 참고) 여부를 사용자에게 확인.
 

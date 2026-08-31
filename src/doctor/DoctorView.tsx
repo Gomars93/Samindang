@@ -2550,6 +2550,16 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const [retryNonce, setRetryNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
+  /**
+   * Core Reduction P6 (Phase 7 UI spec §9): true only across the window
+   * between picking a row in 오늘 and that submission's detail actually
+   * arriving -- lets the record-fetch effect below distinguish "nothing
+   * selected yet" (오늘 stays visible) from "selected, still loading" (the
+   * skeleton renders instead of either the stale 오늘 list or a blank gap)
+   * without changing the fetch effect's own success/error/cancellation
+   * handling at all.
+   */
+  const [selectedRecordLoading, setSelectedRecordLoading] = useState(false)
   // Round 3 Phase C(longitudinal linkage). Fetched from the same exact
   // patient_id this submission's own record carries -- never derived from
   // name/phone/DOB. Reset to null on every selection change so a slow
@@ -2903,9 +2913,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   useEffect(() => {
     if (mode !== 'server' || !selectedId) {
       setSelectedRecord(null)
+      setSelectedRecordLoading(false)
       return
     }
     let cancelled = false
+    setSelectedRecordLoading(true)
     setUnreadReadyIds((prev) => {
       if (!prev.has(selectedId)) return prev
       const next = new Set(prev)
@@ -2914,6 +2926,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     })
     getSubmission(selectedId).then((result) => {
       if (cancelled) return
+      setSelectedRecordLoading(false)
       if (result.ok) {
         setSelectedRecord(result.data)
         // Round 18: only mark 'viewed' if the record's server-reported
@@ -3967,7 +3980,14 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         single gate, and the stricter one is the one that was already
         correct for the other two thirds of this same list).
       */}
-      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && (
+      {/*
+        Core Reduction P6 (Phase 7 UI spec §9): while a submission is being
+        fetched (selectedRecordLoading), neither 오늘 (stale list, wrong
+        content for what was just clicked) nor a blank gap renders --
+        the skeleton just below takes this slot instead, so this Queue
+        gate now also excludes that window.
+      */}
+      {mode === 'server' && !selectedRecord && !selectedRecordLoading && !selectedRevisit && !serverError && (
         <TodayUnifiedQueueSection
           rows={todayQueueRows}
           submissionsById={submissionsById}
@@ -3976,6 +3996,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           crmLoading={crmTasksLoading}
           listLoading={listLoading}
           unreadReadyIds={unreadReadyIds}
+          onGoToSettings={() => setScreen('settings')}
           onOpenSubmission={(id) => {
             setSelectedId(id)
             setSelectedRevisit(null)
@@ -4014,6 +4035,34 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             onRetry: () => setRetryNonce((n) => n + 1),
           }}
         />
+      )}
+
+      {/*
+        Core Reduction P6 (Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤"):
+        §3.2/§3.3 치수와 동일한 회색 펄스 블록 -- 본문 중앙 스피너는
+        operate.md가 명시적으로 금지한다("the tool should disappear into
+        the task", 로딩 자체를 하나의 스펙터클로 만들지 않는다). 좌측
+        요약(aside, §3.2 5블록)과 우측 4레인(§2.3) 자리를 그 실제 구조
+        그대로 두고 내용만 펄스 블록으로 대체 -- 레이아웃이 데이터
+        도착과 동시에 요약→작업 열 순서 그대로 자리를 잡아, 스켈레톤이
+        사라지는 순간 화면이 다시 튀지 않는다.
+      */}
+      {mode === 'server' && selectedRecordLoading && !selectedRevisit && !serverError && (
+        <div className="doctor__visitShell doctor__skeleton" aria-hidden="true" aria-label="진료 기록 불러오는 중">
+          <aside className="doctor__visitSummary doctor__skeleton__aside">
+            <div className="doctor__skeleton__block doctor__skeleton__block--identity" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--chief" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--delta" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--lane1" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--save" />
+          </aside>
+          <main className="doctor__visitWork">
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--lane1" />
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--lane2" />
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--judgment" />
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--next" />
+          </main>
+        </div>
       )}
 
       {selectedRevisit && (

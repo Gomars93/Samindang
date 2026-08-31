@@ -129,6 +129,7 @@ export function TodayUnifiedQueueSection({
   crmLoading,
   listLoading,
   unreadReadyIds,
+  onGoToSettings,
 }: {
   rows: TodayQueueRow[]
   submissionsById: Map<string, SubmissionSummary>
@@ -145,6 +146,16 @@ export function TodayUnifiedQueueSection({
   listLoading: boolean
   /** Submission ids whose EMR-ready result arrived since the clinician last looked at the list -- same dot the old 제출목록 section rendered. */
   unreadReadyIds: Set<string>
+  /**
+   * Core Reduction P6 (Phase 7 UI spec §9): the empty-Queue state names a
+   * next action rather than sitting blank (operate.md's empty-state
+   * principle) -- 설정 is the only screen actually reachable from here
+   * with nothing selected yet ('참고' is record-scoped and does not exist
+   * without an open record, per the Phase 7 spec's own orchestrator note).
+   * Optional so existing callers/tests that never pass it keep rendering
+   * the plain text with no link, unchanged.
+   */
+  onGoToSettings?: () => void
 }) {
   const active = rows.filter((r) => !r.completed)
   const completed = rows.filter((r) => r.completed)
@@ -232,7 +243,17 @@ export function TodayUnifiedQueueSection({
       {(crmLoading || listLoading) && active.length === 0 ? (
         <p className="doctor__empty">불러오는 중…</p>
       ) : active.length === 0 ? (
-        <p className="doctor__empty">지금 확인할 항목이 없습니다.</p>
+        <p className="doctor__empty">
+          오늘 예정된 문진이 없습니다.
+          {onGoToSettings && (
+            <>
+              {' '}
+              <button type="button" className="doctor__emptyLink" onClick={onGoToSettings}>
+                설정 확인하기
+              </button>
+            </>
+          )}
+        </p>
       ) : (
         <div className="doctor__grid doctor__todayQueue__grid">{active.map(renderRow)}</div>
       )}

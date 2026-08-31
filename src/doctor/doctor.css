@@ -268,6 +268,76 @@
   margin: 0 0 8px;
 }
 
+/*
+ * Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤": §3.2/§3.3 치수와 동일한
+ * 자리에 회색 펄스 블록만 채운다 -- 중앙 스피너 금지(operate.md).
+ * `.doctor__skeleton__aside`는 §3.2 5블록 높이(60/40/24/56/20px) 그대로,
+ * 레인 블록은 §3.3이 가리키는 최소 콘텐츠 높이의 근사치(정확한 실측값이
+ * 아니라 "이 정도 크기의 것이 곧 온다"는 신호일 뿐이므로 콘텐츠가 도착한
+ * 뒤 값이 달라져도 레이아웃 시프트 자체를 없애는 것이 목적은 아니다).
+ */
+.doctor__skeleton__block,
+.doctor__skeleton__lane {
+  background: var(--surface-muted, #eef2f7);
+  border-radius: 8px;
+  animation: doctor__skeletonPulse 1.5s ease-in-out infinite;
+}
+
+.doctor__skeleton__aside {
+  gap: 10px;
+}
+
+.doctor__skeleton__block--identity {
+  height: 60px;
+}
+.doctor__skeleton__block--chief {
+  height: 40px;
+}
+.doctor__skeleton__block--delta {
+  height: 24px;
+}
+.doctor__skeleton__block--lane1 {
+  height: 56px;
+}
+.doctor__skeleton__block--save {
+  height: 20px;
+}
+
+.doctor__skeleton__lane {
+  margin-top: 16px;
+}
+.doctor__skeleton__lane--lane1 {
+  height: 90px;
+  margin-top: 0;
+}
+.doctor__skeleton__lane--lane2 {
+  height: 220px;
+}
+.doctor__skeleton__lane--judgment {
+  height: 160px;
+}
+.doctor__skeleton__lane--next {
+  height: 200px;
+}
+
+@keyframes doctor__skeletonPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doctor__skeleton__block,
+  .doctor__skeleton__lane {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
 /* §2.6-3 "지난번 추적" 고정 1줄 -- 원장 기록(FOLLOW_UP_TARGET) 스타일,
    좌측 열의 환자 보고("지난 대비")와 시각적으로 분리한다. */
 .doctor__lastVisitTracked {
@@ -803,6 +873,24 @@
   font-size: 13px;
   color: var(--text-muted);
   margin: 0;
+}
+
+/* Phase 7 UI spec §9: Queue 빈 상태의 안내 링크 -- 아이콘 없이 plain
+   text, 밑줄만으로 링크임을 표시한다(별도 버튼 색/배경 없음). */
+.doctor__emptyLink {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.doctor__emptyLink:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .doctor__workstationBadge {

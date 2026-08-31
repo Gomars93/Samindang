@@ -68,6 +68,41 @@ test('ConflictBanner: with draftJson null, renders no draft disclosure at all (n
   assert.ok(!html.includes('불러오기 전 내 입력 내용'))
 })
 
+// Core Reduction P6 (Phase 7 UI spec §1.3-#13/#14, §2.10 delta N-4/C-4):
+// ConflictBanner itself renders with no collapse control (always unfolded)
+// whenever a conflict is detected -- it is a plain <div role="alert">, never
+// wrapped in a <details>. Only the DRAFT preview underneath it sits behind
+// an explicit click, and that click is not an auto-expanding accordion: the
+// <details> defaults closed even when a draft exists (never `open`), so
+// nothing about a conflict pre-opens content the clinician has to close
+// again -- the draft copy path is the readonly textarea revealed by that
+// one click, not a second collapsible layer inside it.
+test('ConflictBanner itself renders with no collapse control (always unfolded) whenever a stale-write conflict is detected', () => {
+  const withDraft = renderToString(
+    React.createElement(ConflictBanner, { onReload: () => {}, draftJson: '{"a":1}' }),
+  )
+  const withoutDraft = renderToString(React.createElement(ConflictBanner, { onReload: () => {}, draftJson: null }))
+  for (const html of [withDraft, withoutDraft]) {
+    const bannerOpenTag = html.match(/^<div className="doctor__banner doctor__banner--warning"/) ?? html.match(/^<div class="doctor__banner doctor__banner--warning"/)
+    assert.ok(bannerOpenTag, 'the outer banner element is a plain div, not a <details>')
+    // the FIRST <details> in the markup (if any) must belong to the draft
+    // sub-section, never wrap the banner's own alert content above it.
+    const firstDetailsIdx = html.indexOf('<details')
+    const alertRoleIdx = html.indexOf('role="alert"')
+    assert.ok(alertRoleIdx !== -1 && (firstDetailsIdx === -1 || alertRoleIdx < firstDetailsIdx))
+  }
+})
+
+test('ConflictBanner draft content stays behind an explicit click-to-reveal action rather than auto-expanding, even though the banner around it is always unfolded', () => {
+  const html = renderToString(
+    React.createElement(ConflictBanner, { onReload: () => {}, draftJson: '{"a":1}' }),
+  )
+  const detailsIdx = html.indexOf('<details')
+  const detailsTag = html.slice(detailsIdx, html.indexOf('>', detailsIdx) + 1)
+  assert.ok(!detailsTag.includes('open'), 'the draft disclosure never auto-opens, even when a real draft exists to show')
+  assert.ok(html.includes('doctor__banner__draft'))
+})
+
 test('ConflictBanner.tsx never merges anything -- no field-level merge helper/utility referenced', () => {
   const src = stripComments(fs.readFileSync('src/doctor/ConflictBanner.tsx', 'utf8'))
   assert.ok(!/merge/i.test(src), 'inventing field-level merge semantics was explicitly out of scope for this batch')

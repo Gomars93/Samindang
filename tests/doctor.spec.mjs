@@ -3213,4 +3213,127 @@ function detailsRange(html, classMarker) {
   )
 }
 
+/* -------------------------------------------------------------------------
+ * Core Reduction P6 — Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤".
+ *
+ * `selectedRecordLoading` is useEffect/useState-driven (set on the fetch
+ * effect's own start/settle), which renderToString cannot exercise (no
+ * effects run in a static SSR pass, matching save-conflict.spec.mjs's own
+ * documented reason for source-string coverage of comparable stateful
+ * logic) -- these are source-string regressions on the state wiring itself,
+ * plus a renderToString check that the skeleton's OWN markup (reachable
+ * once the surrounding condition is true) carries no spinner class and
+ * matches the aside+lane structure it stands in for.
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    '§9 skeleton: selectedRecordLoading is set true when the record-fetch effect starts (mode===server && selectedId present)',
+    /setSelectedRecordLoading\(true\)\s*\n\s*setUnreadReadyIds/.test(src),
+  )
+  assert(
+    '§9 skeleton: selectedRecordLoading is cleared as soon as getSubmission settles, before branching on result.ok',
+    /getSubmission\(selectedId\)\.then\(\(result\) => \{\s*\n\s*if \(cancelled\) return\s*\n\s*setSelectedRecordLoading\(false\)/.test(
+      src,
+    ),
+  )
+  assert(
+    '§9 skeleton: selectedRecordLoading resets to false whenever there is no selectedId to fetch (mode switch / record closed)',
+    /if \(mode !== 'server' \|\| !selectedId\) \{\s*\n\s*setSelectedRecord\(null\)\s*\n\s*setSelectedRecordLoading\(false\)/.test(
+      src,
+    ),
+  )
+  assert(
+    '§9 skeleton: the 오늘 Queue gate excludes the loading window (never shows the stale list while a click is still resolving)',
+    src.includes("mode === 'server' && !selectedRecord && !selectedRecordLoading && !selectedRevisit && !serverError"),
+  )
+  assert(
+    '§9 skeleton: the skeleton itself mirrors the V3 shell structure (aside + main, not a standalone spinner element) and is gated on the same loading flag',
+    /mode === 'server' && selectedRecordLoading && !selectedRevisit && !serverError[\s\S]{0,80}?className="doctor__visitShell doctor__skeleton"/.test(
+      src,
+    ),
+  )
+  assert(
+    '§9 skeleton: renders the aside 5-block stack (identity/chief/delta/lane1/save, §3.2) and all 4 lanes (§2.3), never a spinner class',
+    (() => {
+      const start = src.indexOf('className="doctor__visitShell doctor__skeleton"')
+      const end = src.indexOf('{selectedRevisit && (', start)
+      const block = src.slice(start, end)
+      const hasAllBlocks = [
+        'doctor__skeleton__block--identity',
+        'doctor__skeleton__block--chief',
+        'doctor__skeleton__block--delta',
+        'doctor__skeleton__block--lane1',
+        'doctor__skeleton__block--save',
+        'doctor__skeleton__lane--lane1',
+        'doctor__skeleton__lane--lane2',
+        'doctor__skeleton__lane--judgment',
+        'doctor__skeleton__lane--next',
+      ].every((cls) => block.includes(cls))
+      return hasAllBlocks && !/spinner/i.test(block)
+    })(),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P6 — Phase 5 Synthesis v1.2 §5 메트릭 검증 (Phase 7 UI
+ * spec가 정의한 화면 구조에 대한 회귀 고정). 3 뷰포트 horizontal overflow
+ * 0은 tests/tablet-viewport.spec.mjs가 이미 실측으로 담당하므로 여기서는
+ * 반복하지 않는다 -- 이 블록은 renderToString으로 확인 가능한 나머지
+ * 4개 지표를 담는다.
+ * ---------------------------------------------------------------------- */
+
+// 기본 major section 4 (진료 레인 수): 안전 확인/확인/판단·처치/다음 --
+// Phase 5 §1의 7개 mental-model 개념 중 5개(환자/확인/판단·처치/다음/
+// 그 자신)가 이 4개 레인으로 접힌다는 구조 확정 자체를 고정한다.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const laneCount = (html.match(/class="doctor__visitLane doctor__visitLane--\w+"/g) ?? []).length
+  assert('metric: 기본 major section 4 -- 진료 화면은 정확히 4개의 doctor__visitLane을 렌더한다', laneCount === 4)
+}
+
+// 진입 조합 0: 프로필 자동분류 배너/세그먼트/혼합 탭 DOM이 어느 프로필
+// 렌더에서도 등장하지 않는다(Core Reduction §2.4 제거 확정 — doctor-
+// workspace.spec.mjs가 DoctorWorkspace 단독으로 이미 검증하지만, 여기서는
+// DoctorView.tsx 전체 페이지 출력 기준으로 다시 고정한다).
+{
+  for (const name of ['허리 통증 주호소 (LBP, 확인 필요)', '수면 주호소 + 동반 소화/통증', '여성 건강 주호소']) {
+    const html = renderDoctorView(name)
+    assert(`metric: 진입 조합 0 -- "${name}" 페이지 전체에 워크스페이스 프로필 배너 없음`, !html.includes('워크스페이스 프로필'))
+    assert(`metric: 진입 조합 0 -- "${name}" 페이지 전체에 workspace__profileBar 없음`, !html.includes('workspace__profileBar'))
+    assert(`metric: 진입 조합 0 -- "${name}" 페이지 전체에 workspace__segmentedBtn 없음`, !html.includes('workspace__segmentedBtn'))
+  }
+}
+
+// 기록 필드 접근 불가 0: Core Reduction P4가 참고 화면 아코디언으로 옮긴
+// 그룹들이 실제로 렌더되는지 대표 fixture로 확인한다 -- "여성 건강
+// 주호소"는 WOMEN_SAFETY_01이 실제로 응답된 herbal-profile 레코드라 여성
+// 안전/명리/약물·병력/검사자료/문진 원본을 한 fixture로 대부분 커버한다.
+{
+  const html = renderDoctorView('여성 건강 주호소')
+  const groups = ['문진 원본', '약물·병력', '여성 안전', '검사자료', '명리', '이전 방문 원문', '명리·감사 기록', '원본 JSON']
+  for (const g of groups) {
+    assert(`metric: 기록 필드 접근 불가 0 -- 참고 화면에 "${g}" 아코디언 그룹이 렌더된다`, html.includes(g))
+  }
+  // 그룹 프레임만이 아니라 그 안의 실제 값도 도달 가능해야 한다 -- 각
+  // 그룹을 대표하는 실제 필드/값 하나씩.
+  assert('metric: 기록 필드 접근 불가 0 -- 여성 안전 그룹 안의 WOMEN_SAFETY_01 원본 응답이 렌더된다', html.includes('환자가 답한 것 (WOMEN_SAFETY_01)'))
+  assert('metric: 기록 필드 접근 불가 0 -- 명리 그룹 안의 사주 기둥이 렌더된다', html.includes('doctor__pillars'))
+  assert('metric: 기록 필드 접근 불가 0 -- 명리·감사 기록 그룹 안의 JudgmentPanel 핵심 필드가 렌더된다', html.includes('핵심 선천 특징'))
+  assert('metric: 기록 필드 접근 불가 0 -- 원본 JSON 그룹 안의 실제 payload 덤프가 렌더된다', html.includes('&quot;session_id&quot;'))
+}
+
+// 기본 free-text 증가 0: tests/tablet-viewport.spec.mjs의
+// EXPECTED_OPEN_INPUTS(=4, 판단/처치/재검 3 + §2.5 다음 방문 확인 메모 1)
+// 가 실제 헤드리스 렌더로 이미 이 지표를 담당한다 -- 여기서는 그 계약이
+// 소스에 그대로 남아있는지만 구조로 재확인한다(중복 실측 없이 드리프트
+// 감시).
+{
+  const src = await readFile(fileURLToPath(new URL('../tests/tablet-viewport.spec.mjs', import.meta.url)), 'utf8')
+  assert(
+    'metric: 기본 free-text 증가 0 -- tablet-viewport.spec.mjs가 EXPECTED_OPEN_INPUTS=4로 기본 렌더 open input 개수를 계속 감시한다',
+    /const EXPECTED_OPEN_INPUTS = 4/.test(src),
+  )
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

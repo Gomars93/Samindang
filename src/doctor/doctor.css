@@ -434,6 +434,22 @@
   color: var(--danger);
 }
 
+/* v0.2 §11.6/P7: 서버 오류(연결 불가 등 운영 문제)는 임상 URGENT 배너와
+   같은 red를 쓰지 않는다 — amber(경고, 회복 가능한 운영 문제)로
+   구분한다. `--doctor-amber*`는 `.doctor` 스코프에서 이미 선언됨. */
+.doctor__banner--warning {
+  background: var(--doctor-amber-soft);
+  border: 2px solid var(--doctor-amber);
+  color: var(--doctor-amber);
+}
+
+.doctor__banner__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
 .doctor__banner strong {
   display: block;
   font-size: 16px;
@@ -692,6 +708,74 @@
   font-size: 13px;
   color: var(--text-muted);
   margin: 0;
+}
+
+/* -------------------------------------------------------------------
+ * 로딩 스켈레톤(§11.6/P7) — 스피너 금지. 목록 행 3개 / 상세 헤더+안전+레일
+ * 윤곽. 정지 상태(빈 회색 블록)만으로도 "구조가 곧 채워진다"는 신호는
+ * 충분하고, prefers-reduced-motion 사용자를 배려해 애니메이션은 그
+ * 조건이 아닐 때만 켠다.
+ * ----------------------------------------------------------------- */
+
+.doctor__skeletonBar {
+  display: block;
+  border-radius: 6px;
+  background: var(--border);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .doctor__skeletonBar {
+    animation: doctor-skeleton-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes doctor-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.doctor__skeletonRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: default;
+}
+.doctor__skeletonBar--label {
+  width: 40%;
+  height: 14px;
+}
+.doctor__skeletonBar--value {
+  width: 70%;
+  height: 12px;
+}
+
+.doctor__detailSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 32px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+.doctor__skeletonBar--header {
+  height: 72px;
+  border-radius: 10px;
+}
+.doctor__skeletonBar--safety {
+  height: 140px;
+  border-radius: 10px;
+}
+.doctor__skeletonBar--rail {
+  height: 320px;
+  border-radius: 10px;
+  max-width: 480px;
+  align-self: flex-end;
+  width: 100%;
 }
 
 .doctor__workstationBadge {
@@ -1427,4 +1511,165 @@
 
 .doctor__rawFieldsToggle {
   margin-top: 12px;
+}
+
+/* -------------------------------------------------------------------
+ * P6 — 반응형(§8.3/§10): 1024–1279(및 그 이하) 단일 컬럼 전용 sticky
+ * 안전 pill 스트립 + 레일→bottom sheet 전환 + 48px 터치 타겟.
+ * ≥1280px에서는 전부 숨겨진다(레일이 이미 항상 보이는 sticky 컬럼).
+ * 컬럼별 독립 overflow 금지(invariant 11)는 `.doctor__mainCol`/
+ * `.doctor__rail`의 페이지 레이아웃 스크롤에 대한 규칙이다 — 아래
+ * bottom sheet는 그 두 컬럼이 아니라 그 위에 얹는 별도 오버레이
+ * chrome이며, §8.3이 명시적으로 "bottom sheet(높이 60%)"라는 자체
+ * 스크롤 영역을 요구하므로 시트 내부의 `overflow-y: auto`는 이
+ * invariant의 대상이 아니다.
+ * ----------------------------------------------------------------- */
+
+.doctor__safetyPillStrip {
+  display: none;
+}
+.doctor__railSheetHeader,
+.doctor__railSheetCloseBtn,
+.doctor__railSheetBackdrop,
+.doctor__bottomBar {
+  display: none;
+}
+
+@media (max-width: 1279px) {
+  .doctor__safetyPillStrip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    min-height: 40px;
+    padding: 6px 16px;
+    position: sticky;
+    top: 44px;
+    z-index: 15;
+    background: var(--doctor-surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .doctor__safetyPillStrip__modules,
+  .doctor__safetyPillStrip__item {
+    color: var(--doctor-text-muted);
+    font-weight: 600;
+  }
+
+  /* 레일 자체를 bottom sheet로 전환한다. 기본은 화면 밖으로 내려가 있고
+     (translateY(100%)), `--sheetOpen`일 때만 끌어올린다. */
+  .doctor__rail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 27;
+    height: 60vh;
+    max-height: 60vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: var(--doctor-surface);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+    padding: 12px 16px 24px;
+    transform: translateY(100%);
+    transition: transform 0.2s ease;
+  }
+  .doctor__rail--sheetOpen {
+    transform: translateY(0);
+  }
+
+  .doctor__railSheetHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .doctor__railSheetHeader__title {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .doctor__railSheetCloseBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: var(--doctor-bg);
+    color: var(--doctor-text);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .doctor__railSheetBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 26;
+    border: none;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+  }
+
+  .doctor__bottomBar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 25;
+    padding: 8px 16px;
+    background: var(--doctor-surface);
+    border-top: 1px solid var(--border);
+  }
+  .doctor__bottomBar__primary {
+    flex: 1 1 auto;
+    min-height: 56px;
+    border: none;
+    border-radius: 10px;
+    background: var(--doctor-green);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+}
+
+/* 터치 타겟 48×48 + 항목 간 8px — 이 구간 한정(§10 표). radio는 이미
+   세로 스택(judgment__radioRow--stacked, P3부터 기존)이라 468px 줄바꿈
+   문제와 무관하다. */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .doctor__rail button,
+  .doctor__rail input[type='checkbox'],
+  .doctor__rail .judgment__radioOption input[type='radio'] {
+    min-width: 48px;
+    min-height: 48px;
+  }
+  .doctor__rail .judgment__radioRow,
+  .doctor__rail .doctor__checklist {
+    gap: 8px;
+  }
+}
+
+/* <1024: 동일 단일 컬럼 + 상단바 2행 압축(§10 표) — pill 스트립은
+   압축된 2행 topbar 높이만큼 top 오프셋을 늘린다. */
+@media (max-width: 1023px) {
+  .doctor__topbar {
+    row-gap: 4px;
+    padding: 6px 16px;
+  }
+  .doctor__topbar__meta {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+  .doctor__safetyPillStrip {
+    top: 76px;
+  }
+  .doctor__patientHeader {
+    padding: 10px 16px;
+  }
 }

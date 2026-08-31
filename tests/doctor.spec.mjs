@@ -1444,13 +1444,23 @@ function detailsRange(html, classMarker) {
 }
 
 {
-  // 헤더 안전 pill은 항상 문서 최상단 밴드(patientHeader) 안에 있다 —
-  // 좌측 첫 안전 블록(doctor__safetySection)보다도 앞서 나온다.
+  // 헤더 안전 pill(doctor__patientHeader 안)과 P6의 sticky 안전 pill
+  // 스트립(§8.3, doctor__patientHeader보다도 먼저 — topbar 바로 다음)
+  // 둘 다 좌측 첫 안전 블록(doctor__safetySection)보다 먼저 나온다.
+  // 스트립이 patientHeader보다 앞에 오므로 문서 안에서 'doctor__safetyPill'
+  // 문자열의 첫 occurrence는 이제 스트립 쪽이다 — patientHeader 안의
+  // pill은 patientHeader 열림 태그 뒤에서 다시 찾는다.
   const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
-  const pillIdx = html.indexOf('doctor__safetyPill')
+  const patientHeaderIdx = html.indexOf('doctor__patientHeader')
+  const stripPillIdx = html.indexOf('doctor__safetyPill')
+  const headerPillIdx = html.indexOf('doctor__safetyPill', patientHeaderIdx)
   const safetySectionIdx = html.indexOf('doctor__safetySection')
-  assert('§8.4: 헤더 안전 pill이 좌측 통합 안전 블록보다 먼저 나온다', pillIdx !== -1 && safetySectionIdx !== -1 && pillIdx < safetySectionIdx)
-  assert('§8.4: 헤더 안전 pill이 doctor__patientHeader 안에 있다', html.indexOf('doctor__patientHeader') < pillIdx)
+  assert('§8.4: sticky 안전 pill 스트립(§8.3)이 doctor__patientHeader보다 먼저 나온다', stripPillIdx !== -1 && stripPillIdx < patientHeaderIdx)
+  assert(
+    '§8.4: 헤더 안전 pill이 좌측 통합 안전 블록보다 먼저 나온다',
+    headerPillIdx !== -1 && safetySectionIdx !== -1 && headerPillIdx < safetySectionIdx,
+  )
+  assert('§8.4: 헤더 안전 pill이 doctor__patientHeader 안에 있다', patientHeaderIdx !== -1 && patientHeaderIdx < headerPillIdx)
 }
 
 /* =======================================================================
@@ -1715,6 +1725,120 @@ const todayChecklistSrc = await readFile(
   const myungriSectionIdx = html.indexOf('doctor__section--myungri')
   assert('P5 이후에도 안전 블록이 전신·한약 참고보다 앞선다', safetySectionIdx !== -1 && constitutionHeadingIdx !== -1 && safetySectionIdx < constitutionHeadingIdx)
   assert('P5 이후에도 안전 블록이 명리 검토보다 앞선다', safetySectionIdx < myungriSectionIdx)
+}
+
+/* =========================================================================
+ * P6 — 반응형(§8.3/§10): sticky 안전 pill 스트립 + bottom sheet 판단
+ * 입력 + 48px 터치 타겟(CSS 존재 확인). 실제 뷰포트 전환은 브라우저가
+ * 필요하므로 SSR로는 "요소가 렌더되는지/CSS가 존재하는지"만 검증한다.
+ * ===================================================================== */
+
+const doctorCssSrc = await readFile(fileURLToPath(new URL('../src/doctor/doctor.css', import.meta.url)), 'utf8')
+
+// 19a. sticky 안전 pill 스트립: patientHeader보다 먼저 렌더되고, overview
+//      상태를 반영한다(§8.3 와이어프레임: Top bar -> pill 스트립 ->
+//      Patient Header).
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const stripIdx = html.indexOf('doctor__safetyPillStrip')
+  const patientHeaderIdx = html.indexOf('doctor__patientHeader')
+  assert('P6: sticky 안전 pill 스트립(doctor__safetyPillStrip) 렌더', stripIdx !== -1)
+  assert('P6: pill 스트립이 patientHeader보다 먼저 나온다', stripIdx < patientHeaderIdx)
+  assert('P6: pill 스트립 안에 확인 필요 pill이 있다(LBP REVIEW fixture)', html.indexOf('확인 필요', stripIdx) !== -1 && html.indexOf('확인 필요', stripIdx) < patientHeaderIdx)
+}
+
+// 19b. bottom sheet 진입점: "판단 입력" primary 버튼 + 레일 시트 헤더(닫기
+//      버튼 포함)가 렌더된다. EMR·진료 완료는 여전히 레일(=시트) 안에
+//      상주하므로(§8.3 "sheet 하단 보조 버튼") 별도 이동 없이 같은 DOM을
+//      재사용한다.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('P6: 하단 고정 "판단 입력" primary 버튼 렌더', html.includes('doctor__bottomBar__primary') && html.includes('판단 입력'))
+  assert('P6: 레일 시트 헤더("판단 입력" 타이틀 + 닫기 버튼) 렌더', html.includes('doctor__railSheetHeader') && html.includes('doctor__railSheetCloseBtn'))
+  // 시트가 처음부터 열려 있으면 안 된다(judgmentSheetOpen 초기값 false) — backdrop이 기본 렌더되지 않는다.
+  assert('P6: 초기 렌더에서 backdrop(doctor__railSheetBackdrop)이 렌더되지 않는다(시트 기본 닫힘)', !html.includes('doctor__railSheetBackdrop'))
+  assert('P6: 레일에 --sheetOpen modifier가 기본으로 붙지 않는다(닫힌 상태 기본값)', !html.includes('doctor__rail--sheetOpen'))
+}
+
+// 19c. 대응 콘텐츠 없으면 하단 버튼 미렌더 원칙은 EMR/오늘 확인에만
+//      적용된다(§11.4/§11.5) — "판단 입력" 버튼은 판단 폼이 항상
+//      존재하므로 showingRecord인 모든 fixture에서 항상 렌더된다.
+{
+  for (const f of DOCTOR_FIXTURES) {
+    const html = renderDoctorView(f.name)
+    assert(`fixtures 모드("${f.name}"): "판단 입력" 하단 버튼 항상 렌더(판단 폼은 절대 비지 않음)`, html.includes('doctor__bottomBar__primary'))
+  }
+}
+
+// 19d. 48px 터치 타겟 + 8px 항목 간 CSS가 1024–1279 구간에 한정되어
+//      존재한다(소스 레벨 확인 — 실제 계산된 스타일은 브라우저가 필요).
+{
+  const tabletTierMatch = doctorCssSrc.match(/@media \(min-width: 1024px\) and \(max-width: 1279px\) \{([\s\S]*?)\n\}/)
+  assert('doctor.css: 1024–1279 구간 한정 미디어쿼리 존재', Boolean(tabletTierMatch))
+  assert('doctor.css: 해당 구간에 min-width/min-height: 48px 터치 타겟 규칙 존재', tabletTierMatch !== null && /min-width:\s*48px/.test(tabletTierMatch[1]) && /min-height:\s*48px/.test(tabletTierMatch[1]))
+  assert('doctor.css: 해당 구간에 8px 항목 간격(gap) 규칙 존재', tabletTierMatch !== null && /gap:\s*8px/.test(tabletTierMatch[1]))
+}
+
+// 19e. 컬럼별 독립 overflow 금지 + html.doctor-mode 전역 규칙 무변경
+//      (invariant 11) — P6가 추가한 bottom sheet/backdrop은 고정
+//      오버레이 chrome이지 `.doctor__mainCol`의 컬럼이 아니므로, 그
+//      컬럼 자체에는 여전히 overflow 선언이 없어야 한다.
+{
+  const mainColBlock = doctorCssSrc.match(/\.doctor__mainCol\s*\{([^}]*)\}/)
+  assert('doctor.css: .doctor__mainCol 규칙 존재', Boolean(mainColBlock))
+  assert('doctor.css: .doctor__mainCol에 overflow(auto/scroll) 선언이 없다(invariant 11)', mainColBlock !== null && !/overflow\s*:\s*(auto|scroll)/.test(mainColBlock[1]))
+}
+
+/* =========================================================================
+ * P7 — 상태·마감: 스켈레톤(스피너 금지), 서버 오류 amber 스트립(다시
+ * 시도 + 예시 데이터로 보기), auth 오류 DoctorTokenSetup(이미 목록 화면
+ * 상단), viewport-budget은 tests/doctor-viewport-budget.spec.mjs로 분리.
+ * ===================================================================== */
+
+// 20a. 스켈레톤 컴포넌트가 소스에 존재하고, 스피너(doctor__spinner)를
+//      쓰지 않는다. listLoading/record-loading은 서버 모드 async 상태라
+//      SSR fixtures 렌더로는 재현되지 않으므로(§11.6 표 — "로딩" 행 자체가
+//      서버 모드 전용) 소스 레벨로 확인한다.
+{
+  assert('DoctorView.tsx: ListSkeleton 컴포넌트 정의됨(목록 스켈레톤, 행 3개)', doctorViewFullSrc.includes('function ListSkeleton()'))
+  assert('DoctorView.tsx: ListRowSkeleton이 3번 렌더된다(행 3개)', (doctorViewFullSrc.match(/<ListRowSkeleton \/>/g) || []).length === 3)
+  assert('DoctorView.tsx: DetailSkeleton 컴포넌트 정의됨(상세 스켈레톤, 헤더+안전+레일)', doctorViewFullSrc.includes('function DetailSkeleton()'))
+  assert(
+    'DoctorView.tsx: 목록 로딩 시 스피너 텍스트("불러오는 중…") 대신 ListSkeleton을 쓴다',
+    doctorViewFullSrc.includes('<ListSkeleton />') && !doctorViewFullSrc.includes('>불러오는 중…</p>'),
+  )
+  assert('DoctorView.tsx: 스켈레톤 렌더 경로에 doctor__spinner(스피너) 클래스를 쓰지 않는다', !/function (List|Detail)(Row)?Skeleton[\s\S]*?doctor__spinner/.test(doctorViewFullSrc))
+}
+
+// 20b. 서버 오류 amber 스트립: doctor__banner--warning(red 아님) +
+//      "다시 시도" + "예시 데이터로 보기" 인라인 액션(fixtures 전환).
+{
+  assert('DoctorView.tsx: 서버 오류 배너가 doctor__banner--warning(amber)을 쓴다 — 임상 URGENT(red)와 구분', doctorViewFullSrc.includes('doctor__banner doctor__banner--warning'))
+  assert('DoctorView.tsx: 서버 오류 배너에 "다시 시도" 버튼 존재', doctorViewFullSrc.includes('다시 시도'))
+  assert('DoctorView.tsx: 서버 오류 배너에 "예시 데이터로 보기" 인라인 액션 존재', doctorViewFullSrc.includes('예시 데이터로 보기'))
+  {
+    // "예시 데이터로 보기"는 위 주석 설명(§3 인용)과 실제 버튼 라벨 둘 다에
+    // 등장한다 — 버튼 라벨(마지막 occurrence)을 기준으로 확인한다.
+    const previewLabelIdx = doctorViewFullSrc.lastIndexOf('예시 데이터로 보기')
+    const setModeIdx = doctorViewFullSrc.lastIndexOf("setMode('fixtures')", previewLabelIdx)
+    assert(
+      "DoctorView.tsx: \"예시 데이터로 보기\" 버튼 바로 앞(같은 button 블록)에서 setMode('fixtures')를 호출한다",
+      previewLabelIdx !== -1 && setModeIdx !== -1 && previewLabelIdx - setModeIdx < 300,
+    )
+  }
+}
+
+// 20c. auth 오류 → 목록 화면 상단 DoctorTokenSetup — 이미 그렇다(§11.6
+//      확인만). 레일이 없는 시점(목록 화면)에 카드가 뜬다는 계약을
+//      소스 레벨로 재확인한다.
+{
+  const authBannerIdx = doctorViewFullSrc.indexOf("serverError?.kind === 'auth'")
+  assert('DoctorView.tsx: auth 오류 분기 존재', authBannerIdx !== -1)
+  const doctorTokenSetupIdx = doctorViewFullSrc.indexOf('<DoctorTokenSetup', authBannerIdx)
+  assert('DoctorView.tsx: auth 오류 시 DoctorTokenSetup 카드를 렌더한다', doctorTokenSetupIdx !== -1 && doctorTokenSetupIdx - authBannerIdx < 200)
+  // "레일 아님" — DoctorTokenSetup 렌더 지점이 doctor__pageSection 안(목록 화면 상단)에 있고, aside(레일) 밖이다.
+  const railOpenIdx = doctorViewFullSrc.indexOf('<aside className={`doctor__rail')
+  assert('DoctorView.tsx: DoctorTokenSetup은 레일(aside) 이전(목록 화면 상단)에 렌더된다 — 레일 아님', railOpenIdx !== -1 && doctorTokenSetupIdx < railOpenIdx)
 }
 
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

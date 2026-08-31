@@ -926,6 +926,44 @@ function sortSubmissionsForList(
 }
 
 /**
+ * v0.2 §11.6/P7 — 로딩 상태는 스피너가 아니라 스켈레톤이다(§11.6 표:
+ * "목록: 행 3개 / 상세: 헤더+안전 블록+레일"). 서버 모드에서만
+ * 실행되는 async 폴링/조회(useEffect)의 로딩 구간이라 SSR
+ * fixtures 렌더 테스트로는 재현되지 않는다 — 소스에 스피너 요소가
+ * 없고 이 함수들이 실제로 쓰이는지는 tests/doctor.spec.mjs가 소스
+ * 레벨로 확인한다.
+ */
+function ListRowSkeleton() {
+  return (
+    <div className="doctorField doctor__row doctor__skeletonRow" aria-hidden="true">
+      <span className="doctor__skeletonBar doctor__skeletonBar--label" />
+      <span className="doctor__skeletonBar doctor__skeletonBar--value" />
+    </div>
+  )
+}
+
+function ListSkeleton() {
+  return (
+    <div className="doctor__grid" aria-label="목록 불러오는 중" role="status">
+      <ListRowSkeleton />
+      <ListRowSkeleton />
+      <ListRowSkeleton />
+    </div>
+  )
+}
+
+/** 상세 화면 스켈레톤 — 헤더 + 안전 블록 + 레일 3부위 윤곽만. */
+function DetailSkeleton() {
+  return (
+    <div className="doctor__detailSkeleton" aria-label="상세 불러오는 중" role="status">
+      <div className="doctor__skeletonBar doctor__skeletonBar--header" />
+      <div className="doctor__skeletonBar doctor__skeletonBar--safety" />
+      <div className="doctor__skeletonBar doctor__skeletonBar--rail" />
+    </div>
+  )
+}
+
+/**
  * 원장/직원용 진료 전 요약 화면. 진단·치료 추천을 하지 않는다 — 환자가 답한
  * 내용과, 라벨을 명확히 붙인 파생(계산된) 사실만 정리해서 보여준다.
  *
@@ -990,6 +1028,12 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   // setSubmissionStatus 계약을 재사용한다(신규 서버 계약 없음).
   const [completing, setCompleting] = useState(false)
   const [completeError, setCompleteError] = useState<string | null>(null)
+  // v0.2 P6/§8.3 — 1024–1279(및 그 이하) 단일 컬럼에서 `.doctor__rail`을
+  // bottom sheet로 접었다 펼친다. ≥1280px에서는 CSS가 이 상태와 무관하게
+  // 레일을 항상 보이는 sticky 컬럼으로 렌더한다(아래 doctor.css 참고) —
+  // 같은 레일 DOM을 두 breakpoint가 재사용하므로 콘텐츠를 중복 렌더하지
+  // 않는다.
+  const [judgmentSheetOpen, setJudgmentSheetOpen] = useState(false)
 
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
@@ -1382,6 +1426,41 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </details>
       </header>
 
+      {/*
+        v0.2 §8.3/P6 — 1024–1279(및 그 이하) 단일 컬럼 전용 sticky 안전
+        pill 스트립(40px). ≥1280px에서는 CSS로 숨긴다(doctor.css).
+        Patient Header보다 먼저(위) 둬서 헤더가 스크롤아웃된 뒤에도
+        topbar와 함께 이 스트립만 남도록 한다(§8.3 와이어프레임 순서:
+        Top bar → 안전 pill 스트립 → Patient Header). 헤더 자체를
+        sticky로 만들면 데스크톱 레이아웃(§7 "컬럼별 overflow 금지,
+        페이지 스크롤")과 충돌하므로 이 좁은 뷰포트 전용 보조 스트립으로
+        분리했다.
+      */}
+      {showingRecord && (
+        <div className="doctor__safetyPillStrip" role="status">
+          {safetyOverview === 'URGENT' && (
+            <span className="doctor__safetyPill doctor__safetyPill--urgent_review">{STATUS_ICON.URGENT_REVIEW} 긴급 확인</span>
+          )}
+          {safetyOverview === 'REVIEW' && (
+            <span className="doctor__safetyPill doctor__safetyPill--review_required">{STATUS_ICON.REVIEW_REQUIRED} 확인 필요</span>
+          )}
+          {safetyOverview === 'CLEAR' && <span className="doctor__safetyPill doctor__safetyPill--clear">✓ 안전 확인됨</span>}
+          {safetyOverview === 'UNKNOWN' && <span className="doctor__safetyPill doctor__safetyPill--unknown">— 안전정보 없음</span>}
+          {(safetyOverview === 'URGENT' || safetyOverview === 'REVIEW') && (
+            <span className="doctor__safetyPillStrip__modules">
+              {safetyRows
+                .filter((row) => row.status !== 'CLEAR')
+                .map((row) => row.label)
+                .join(' · ')}
+            </span>
+          )}
+          {flags.response_consistency_review && <span className="doctor__safetyPillStrip__item">응답 모순</span>}
+          {safetyRows.some((row) => row.lockedNotes.length > 0) && (
+            <span className="doctor__safetyPillStrip__item" aria-hidden="true">🔒 잠금</span>
+          )}
+        </div>
+      )}
+
       {showingRecord && (
         <PatientHeader payload={payload} overview={safetyOverview} responseConsistencyReview={flags.response_consistency_review} />
       )}
@@ -1399,28 +1478,56 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           />
         )}
 
+        {/*
+          v0.2 §11.6/P7: 서버 오류는 amber — 임상 URGENT(red)와 시각적으로
+          혼동되면 안 된다(운영 문제 ≠ 환자 안전 문제). "다시 시도" 외에
+          "예시 데이터로 보기"를 인라인으로 둔다 — 장애 중에도 화면
+          동작(레이아웃/기능)을 확인할 수 있는 복구 동선(§3 표: fixture
+          픽커는 ⚙ 도구 메뉴로 옮겼지만 이 동선만은 예외로 유지).
+        */}
         {mode === 'server' && serverError && serverError.kind !== 'auth' && (
-          <div className="doctor__banner doctor__banner--danger">
+          <div className="doctor__banner doctor__banner--warning">
             <strong>서버에 연결할 수 없습니다</strong>
             <p>
               {serverError.message} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
               VITE_SAMINDANG_SERVER_URL 설정이 맞는지 확인하세요. 그동안 예시
               데이터로 화면을 확인할 수 있습니다.
             </p>
-            <button type="button" className="judgment__recordBtn" onClick={() => setRetryNonce((n) => n + 1)}>
-              다시 시도
-            </button>
+            <div className="doctor__banner__actions">
+              <button type="button" className="judgment__recordBtn" onClick={() => setRetryNonce((n) => n + 1)}>
+                다시 시도
+              </button>
+              <button
+                type="button"
+                className="judgment__recordBtn"
+                onClick={() => {
+                  setMode('fixtures')
+                  setSelectedId(null)
+                  setSelectedRecord(null)
+                }}
+              >
+                예시 데이터로 보기
+              </button>
+            </div>
           </div>
         )}
 
-        {showingServerList && !serverError && (
+        {/*
+          v0.2 §11.6/P7: 서버 모드에서 목록의 한 행을 클릭한 뒤
+          getSubmission이 응답하기 전까지(selectedId는 있지만 아직
+          selectedRecord가 없음) 상세 스켈레톤을 보여준다 — 그 사이에는
+          목록도 상세도 아닌 빈 화면이 잠깐 보이던 gap을 없앤다.
+        */}
+        {mode === 'server' && selectedId && !selectedRecord && !serverError && <DetailSkeleton />}
+
+        {showingServerList && !serverError && !selectedId && (
           <section className="doctor__section">
             <h2>
               제출목록 ({submissions.length})
               {newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
             </h2>
             {listLoading && submissions.length === 0 ? (
-              <p className="doctor__empty">불러오는 중…</p>
+              <ListSkeleton />
             ) : submissions.length === 0 ? (
               <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
             ) : (
@@ -1922,7 +2029,23 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         이상 레일에 상주하지 않고 시트(EmrSheet, 이 컴포넌트 바깥에 별도로
         렌더)로 옮겼다 — 레일에는 버튼 + 상태 dot만 남는다.
       */}
-      <aside className="doctor__rail">
+      <aside className={`doctor__rail${judgmentSheetOpen ? ' doctor__rail--sheetOpen' : ''}`}>
+      {/*
+        v0.2 §8.3/P6 — 1024–1279(및 그 이하)에서만 보이는 시트 닫기 바.
+        ≥1280px에서는 CSS로 숨긴다(레일이 항상 열린 sticky 컬럼이라
+        "닫기" 개념이 없음).
+      */}
+      <div className="doctor__railSheetHeader">
+        <span className="doctor__railSheetHeader__title">판단 입력</span>
+        <button
+          type="button"
+          className="doctor__railSheetCloseBtn"
+          onClick={() => setJudgmentSheetOpen(false)}
+          aria-label="판단 입력 시트 닫기"
+        >
+          ✕
+        </button>
+      </div>
       <TodayChecklist
         payload={payload}
         rows={safetyRows}
@@ -1996,6 +2119,33 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       )}
       </aside>
       </div>
+
+      {/*
+        v0.2 §8.3/§10/P6 — 1024–1279(및 그 이하) 단일 컬럼 전용: 레일을
+        bottom sheet(높이 60%)로 접었다 펼치는 하단 고정 primary 버튼(56px)
+        + backdrop. ≥1280px에서는 CSS로 둘 다 숨긴다 — 레일이 이미 항상
+        보이는 sticky 컬럼이라 이 버튼/backdrop이 필요 없다. 대응 콘텐츠
+        (오늘 판단 폼)는 항상 존재하므로(§11.4 오늘 확인과 달리 판단 폼은
+        비지 않음) 이 버튼은 showingRecord일 때 항상 렌더한다(Opus M4는
+        "대응 콘텐츠 없으면 미렌더"인 EMR/오늘 확인에만 해당).
+      */}
+      {showingRecord && (
+        <>
+          {judgmentSheetOpen && (
+            <button
+              type="button"
+              className="doctor__railSheetBackdrop"
+              aria-label="판단 입력 시트 닫기"
+              onClick={() => setJudgmentSheetOpen(false)}
+            />
+          )}
+          <div className="doctor__bottomBar">
+            <button type="button" className="doctor__bottomBar__primary" onClick={() => setJudgmentSheetOpen(true)}>
+              판단 입력
+            </button>
+          </div>
+        </>
+      )}
 
       <EmrSheet
         open={emrSheetOpen}

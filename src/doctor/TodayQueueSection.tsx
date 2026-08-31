@@ -54,10 +54,27 @@ function patientLabel(task: CrmTask, identities: Record<string, ResolvedPatientI
   return `환자 ${truncateUuid(task.patient_uuid)}`
 }
 
+// 21차 독립 리뷰 MEDIUM-1: DoctorView.tsx의 formatTimestamp(20차)와 동일한
+// 클래스 -- task.due_at이 문자열이지만 파싱 불가하면(손상/레거시 CRM 데이터,
+// listCrmTasks는 배열/원소 shape만 검증하고 필드 타입은 검증하지 않는다)
+// 리터럴 "Invalid Date"를 그대로 노출했다.
+function formatTimestamp(value: unknown): string {
+  if (typeof value !== 'string') return '확인 필요'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '확인 필요' : d.toLocaleString('ko-KR')
+}
+
+// 21차 독립 리뷰 LOW-1: claimed_by/owner_clinician도 MessagingPanel.tsx의
+// attempt_count/error_code(20차)와 동일한 클래스 -- 손상된 값(객체 등)이면
+// template literal이 "[object Object]"를 그대로 노출했다.
+function safeStringOrFallback(value: unknown): string {
+  return typeof value === 'string' ? value : '확인 필요'
+}
+
 function dueStateLabel(task: CrmTask, nowIso: string): string {
   if (!task.due_at) return ''
-  const overdue = task.due_at < nowIso
-  const when = new Date(task.due_at).toLocaleString('ko-KR')
+  const overdue = typeof task.due_at === 'string' && task.due_at < nowIso
+  const when = formatTimestamp(task.due_at)
   return overdue ? `기한 지남 · ${when}` : `기한 ${when}`
 }
 
@@ -111,8 +128,8 @@ export function TodayQueueSection({ tasks, loading, error, identities = {}, onId
               </span>
               <span className="doctorField__value">
                 {isValidTaskStatus(task.status) ? CRM_TASK_STATUS_LABEL[task.status] : '확인 필요'}
-                {task.claimed_by ? ` · 담당: ${task.claimed_by}` : ''}
-                {task.owner_clinician ? ` · 소속: ${task.owner_clinician}` : ''}
+                {task.claimed_by ? ` · 담당: ${safeStringOrFallback(task.claimed_by)}` : ''}
+                {task.owner_clinician ? ` · 소속: ${safeStringOrFallback(task.owner_clinician)}` : ''}
                 {task.due_at ? ` · ${dueStateLabel(task, now)}` : ''}
               </span>
               <span

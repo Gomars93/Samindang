@@ -18,6 +18,7 @@ import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
 import {
   DoctorView,
   isDoctorPayloadShapeUsable,
+  recordToPayload,
   DoctorRecordFallback,
   frequencyField,
   aggravatingField,
@@ -1393,6 +1394,56 @@ function detailsRange(html, classMarker) {
 {
   for (const f of DOCTOR_FIXTURES) {
     assert(`resilience: fixture "${f.name}" passes isDoctorPayloadShapeUsable`, isDoctorPayloadShapeUsable(f.payload) === true)
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 21차 독립 리뷰 HIGH-1: `recordToPayload`(SubmissionRecord -> DoctorPayload)는
+ * DoctorView의 렌더 본문에서 `isDoctorPayloadShapeUsable`보다 먼저,
+ * 무조건 호출된다 -- record.submission이 null/객체가 아니면
+ * `s.questionnaire_version` 등 필드 접근에서 그대로 throw했다. 이 throw는
+ * DoctorRecordFallback(안전한 착지 화면)에 도달하기도 전에
+ * PatientErrorBoundary까지 뚫고 올라가 원장 화면 전체가 환자용 화면으로
+ * 바뀐다 -- 20차가 고친 클래스보다 한 단계 앞선, 더 심각한 지점.
+ * ---------------------------------------------------------------------- */
+{
+  const validPayload = byName('허리 통증 주호소 (LBP, 확인 필요)').payload
+  const validRecord = {
+    id: 'r-recordToPayload',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    status: 'new',
+    patient_label: '(QA) recordToPayload',
+    patient_id: 'patient-recordToPayload',
+    submission: {
+      questionnaire_version: validPayload.questionnaire_version,
+      session_id: validPayload.session_id,
+      responses: validPayload.responses,
+      flags: validPayload.flags,
+      routing: validPayload.routing,
+      metadata: validPayload.metadata,
+    },
+    myungri: validPayload.myungri_calculation,
+    judgment: null,
+  }
+  assert(
+    'resilience recordToPayload: a genuine record produces a payload that passes isDoctorPayloadShapeUsable (sanity)',
+    isDoctorPayloadShapeUsable(recordToPayload(validRecord)) === true,
+  )
+
+  for (const bad of [null, undefined, 'garbage-string', 123, [], true]) {
+    let threw = false
+    let payload = null
+    try {
+      payload = recordToPayload({ ...validRecord, submission: bad })
+    } catch {
+      threw = true
+    }
+    assert(`resilience recordToPayload HIGH-1: record.submission=${JSON.stringify(bad)} does not throw`, threw === false)
+    assert(
+      `resilience recordToPayload HIGH-1: record.submission=${JSON.stringify(bad)} yields a payload isDoctorPayloadShapeUsable rejects (fails closed to DoctorRecordFallback, not an uncatchable crash upstream of it)`,
+      payload !== null && isDoctorPayloadShapeUsable(payload) === false,
+    )
   }
 }
 

@@ -816,4 +816,53 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 }
 
+// ---------- 13. 21차 독립 리뷰 (delta-focused closing gate on round 20's own delta) ----------
+{
+  const src = fs.readFileSync('src/lib/serverClient.ts', 'utf8')
+
+  test('serverClient.ts 21차 MEDIUM-2: setSubmissionStatus guards its response container before feeding the same selectedRecord sink getSubmission (20차) protects', () => {
+    const fnStart = src.indexOf('export function setSubmissionStatus(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(result\.data == null \|\| typeof result\.data !== 'object'\) return invalidResponseShape\(\)/.test(fn))
+  })
+}
+
+{
+  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx 21차 HIGH-1: recordToPayload guards record.submission being a non-null plain object before destructuring it (the render-body call site that runs before isDoctorPayloadShapeUsable)', () => {
+    const fnStart = src.indexOf('export function recordToPayload(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.match(fn, /const s = isPlainObject\(record\.submission\) \? record\.submission : \{\}/)
+  })
+
+  test('DoctorView.tsx 21차 LOW-2: the MedicationCourseSection mount inside DoctorRecordFallback type-gates patient_id (typeof === "string"), not just a truthy check', () => {
+    assert.match(
+      src,
+      /\{typeof record\?\.patient_id === 'string' && record\.patient_id && \(\s*<MedicationCourseSection key=\{record\.patient_id\} patientUuid=\{record\.patient_id\} \/>\s*\)\}/,
+    )
+  })
+}
+
+{
+  const src = fs.readFileSync('src/doctor/TodayQueueSection.tsx', 'utf8')
+
+  test('TodayQueueSection.tsx 21차 MEDIUM-1: dueStateLabel routes task.due_at through the guarded formatTimestamp helper, not a raw new Date(...).toLocaleString(\'ko-KR\') (no "Invalid Date" leak for corrupted CRM due_at)', () => {
+    assert.match(src, /function formatTimestamp\(value: unknown\): string \{/)
+    assert.doesNotMatch(src, /new Date\([^)]*\)\.toLocaleString\('ko-KR'\)/)
+    const fnStart = src.indexOf('function dueStateLabel(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.match(fn, /formatTimestamp\(task\.due_at\)/)
+  })
+
+  test('TodayQueueSection.tsx 21차 LOW-1: claimed_by/owner_clinician render through safeStringOrFallback, not raw template-literal interpolation (no "[object Object]" leak)', () => {
+    assert.match(src, /function safeStringOrFallback\(value: unknown\): string \{/)
+    assert.match(src, /담당: \$\{safeStringOrFallback\(task\.claimed_by\)\}/)
+    assert.match(src, /소속: \$\{safeStringOrFallback\(task\.owner_clinician\)\}/)
+  })
+}
+
 console.log(`\n${passed} save-conflict assertions passed.`)

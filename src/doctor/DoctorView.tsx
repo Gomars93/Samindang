@@ -2169,8 +2169,18 @@ export function primaryModuleFields(
 }
 
 /** SubmissionRecord(서버) -> 화면이 이미 알고 있는 DoctorPayload 모양으로 변환. */
-function recordToPayload(record: SubmissionRecord): DoctorPayload {
-  const s = record.submission as Record<string, unknown>
+export function recordToPayload(record: SubmissionRecord): DoctorPayload {
+  // 21차 독립 리뷰 HIGH-1: `record.submission`이 null/객체가 아니면
+  // `s.questionnaire_version` 등 필드 접근에서 그대로 throw했다 -- 이
+  // 함수는 DoctorView의 렌더 본문에서 `isDoctorPayloadShapeUsable`보다
+  // 먼저, 무조건 호출되므로 그 throw는 DoctorRecordFallback(안전한
+  // 착지 화면)에 도달하기도 전에 PatientErrorBoundary까지 뚫고
+  // 올라간다. `submission`이 객체가 아니면 빈 객체로 대체해 아래
+  // 필드들이 전부 undefined가 되게 하고, isDoctorPayloadShapeUsable이
+  // 그 결과를 보고 자연스럽게 false를 반환해(routing/flags 등이
+  // isPlainObject를 통과 못함) DoctorRecordFallback으로 fail-close
+  // 하도록 한다 -- 새 검증 경로를 만들지 않고 기존 게이트에 위임.
+  const s = isPlainObject(record.submission) ? record.submission : {}
   return {
     questionnaire_version: s.questionnaire_version as string,
     session_id: (s.session_id as string) ?? record.id,
@@ -2284,7 +2294,12 @@ export function DoctorRecordFallback({ record }: { record: SubmissionRecord | nu
         동시에 두 인스턴스가 뜨지 않는다. CRM/투약 코스 추적을 이 기록의
         구조 문제 때문에 완전히 막을 이유가 없다.
       */}
-      {record?.patient_id && <MedicationCourseSection key={record.patient_id} patientUuid={record.patient_id} />}
+      {/* 21차 독립 리뷰 LOW-2: truthy 체크만으로는 비문자열(예: 객체) patient_id도
+          통과시켜 listEpisodesByPatient 등에 쓰레기 fetch key로 흘러가고 CRM
+          섹션이 조용히 빈/오류 상태로 저하됐다 -- 문자열일 때만 마운트한다. */}
+      {typeof record?.patient_id === 'string' && record.patient_id && (
+        <MedicationCourseSection key={record.patient_id} patientUuid={record.patient_id} />
+      )}
     </div>
   )
 }

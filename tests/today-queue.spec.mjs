@@ -392,4 +392,42 @@ test('20차 LOW-1 sanity: a genuine string patient_uuid still renders the data-p
   assert.ok(html.includes('시그마 연결'))
 })
 
+// ---------- 8. 21차 MEDIUM-1/LOW-1: due_at/claimed_by/owner_clinician must fail closed, not leak raw garbage ----------
+
+test('21차 MEDIUM-1: a non-string due_at does not render the literal "Invalid Date"', () => {
+  const html = render({ tasks: [makeTask({ due_at: { weird: 'object' } })], loading: false, error: null })
+  assert.ok(!html.includes('Invalid Date'), 'a non-string due_at must not leak "Invalid Date"')
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('21차 MEDIUM-1: an unparseable string due_at does not render the literal "Invalid Date"', () => {
+  const html = render({ tasks: [makeTask({ due_at: 'not-a-real-date' })], loading: false, error: null })
+  assert.ok(!html.includes('Invalid Date'))
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('21차 MEDIUM-1 sanity: a genuine due_at still renders a real formatted date, not "확인 필요"', () => {
+  const html = render({ tasks: [makeTask({ due_at: '2026-09-01T00:00:00.000Z' })], loading: false, error: null })
+  assert.ok(!html.includes('확인 필요'))
+  assert.ok(!html.includes('Invalid Date'))
+})
+
+test('21차 LOW-1: a non-string claimed_by does not leak "[object Object]"', () => {
+  const html = render({ tasks: [makeTask({ claimed_by: { weird: 'object' } })], loading: false, error: null })
+  assert.ok(!html.includes('[object Object]'))
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('21차 LOW-1: a non-string owner_clinician does not leak "[object Object]"', () => {
+  const html = render({ tasks: [makeTask({ owner_clinician: { weird: 'object' } })], loading: false, error: null })
+  assert.ok(!html.includes('[object Object]'))
+  assert.ok(html.includes('확인 필요'))
+})
+
+test('21차 LOW-1 sanity: genuine string claimed_by/owner_clinician still render normally', () => {
+  const html = render({ tasks: [makeTask({ claimed_by: '김원장', owner_clinician: '삼인당' })], loading: false, error: null })
+  assert.ok(html.includes('담당: 김원장'))
+  assert.ok(html.includes('소속: 삼인당'))
+})
+
 console.log(`\n${passed} passed`)

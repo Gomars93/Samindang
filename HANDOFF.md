@@ -7331,6 +7331,91 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT
 PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
 
+### 21차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료, delta-focused)
+
+20차와 동일하게 delta-focused 스코프(`9d2be91..29f08e3`만, 직접
+호출부/소비자 포함, 전체 재스캔 금지, CI 재사용)로 진행. 20차 자신의
+수정은 전부 정확하다고 확인하면서도 HIGH 1건 + MEDIUM 2건 + LOW 2건을
+찾아냈다.
+
+**(HIGH-1, 20차보다 한 단계 더 앞선 지점) `recordToPayload()`가
+`record.submission`을 전혀 검증하지 않고 그대로 destructure했다.**
+이 함수는 `DoctorView`의 렌더 본문에서 **`isDoctorPayloadShapeUsable`
+호출보다 먼저, 무조건** 실행된다(`const payload = recordToPayload(
+selectedRecord)` → 그 다음에야 `payloadShapeOk = isDoctorPayloadShapeUsable(
+payload)`). `record.submission`이 null이거나 객체가 아니면
+`s.questionnaire_version` 등 필드 접근에서 그대로 throw했고, 이
+throw는 **`DoctorRecordFallback`(20차가 방금 안전하게 만든 착지
+화면)에 도달하기도 전에** `DoctorRecordErrorBoundary`를 뚫고
+`PatientErrorBoundary`(`src/App.tsx`)까지 올라가 원장 화면 전체가
+환자용 화면으로 바뀐다 — 20차가 막은 것보다 더 이른 지점에서 같은
+결과를 낳는, 사실상 더 심각한 finding. `server/store.js`의
+`readRecord`가 여전히 무검증 `JSON.parse`이고, `listSubmissions`
+자체가 `r.submission?.metadata`로 optional-chain한다는 사실이 이
+필드가 보장되지 않음을 서버 코드 스스로 증명한다 — 정상 서버 코드
+경로(손상된 저장 파일)에서 재현 가능.
+
+**근본 수정**: `record.submission`이 `isPlainObject`를 통과하지 못하면
+빈 객체(`{}`)로 대체 — 그 결과 `routing`/`flags` 등이 전부
+`undefined`가 되어 `isDoctorPayloadShapeUsable`이 **기존 게이트
+그대로** false를 반환하고 `DoctorRecordFallback`으로 자연스럽게
+fail-close된다(새 검증 경로를 만들지 않고 기존 게이트에 위임).
+
+**(MEDIUM-2) `setSubmissionStatus()`도 20차가 `getSubmission`에 추가한
+것과 동일한 `selectedRecord` sink로 흘러가는데 컨테이너 가드가
+없었다** — 바로 아래 두 함수 차이로 20차 자신이 놓친 형제 지점.
+
+**(MEDIUM-1) `TodayQueueSection.tsx`(19/20차가 이미 두 번 손댄 파일)의
+`dueStateLabel`이 여전히 `new Date(task.due_at).toLocaleString('ko-KR')`
+raw 호출이었다** — 20차의 `formatTimestamp` 스윕이 `DoctorView.tsx`
+안에서는 완전했지만(남은 호출부 0개를 테스트로 고정) 클래스 전체가
+아니라 파일 하나만 봤다는 것을 드러낸 지점. 저장된 CRM task 데이터가
+손상되면 "기한 Invalid Date"를 노출.
+
+**(LOW-1) 같은 파일의 `claimed_by`/`owner_clinician`도 20차가
+`MessagingPanel.tsx`에 적용한 `safeCount`/`safeErrorCode`와 동일한
+클래스의 raw template-literal interpolation이었다.**
+
+**(LOW-2) `DoctorRecordFallback`의 `MedicationCourseSection` mount가
+`record?.patient_id &&`로 truthy만 확인했다** — 비문자열 truthy
+patient_id는 크래시하지 않지만(MedicationCourseSection이 이 값을
+JSX child로 렌더하지 않고 fetch key로만 씀) CRM 섹션이 조용히 빈/오류
+상태로 저하된다. 문자열 타입 체크로 강화.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 `recordToPayload`를
+export해 실제 호출 테스트 13개(+13 — null/undefined/문자열/숫자/배열/
+불리언 6종의 `submission` 값이 전부 throw하지 않고 `isDoctorPayloadShapeUsable`이
+false로 판정하는 payload를 만드는지, 정상 레코드는 true를 만드는지).
+`tests/today-queue.spec.mjs`에 6개(+6, 35→41 — 비문자열/파싱불가
+due_at이 "Invalid Date" 대신 "확인 필요", 정상 due_at은 그대로,
+비문자열 claimed_by/owner_clinician이 "[object Object]" 대신 "확인
+필요", 정상 문자열은 그대로). `tests/save-conflict.spec.mjs`에
+구조적 가드 테스트 4개(+4, 74→79 — setSubmissionStatus 컨테이너 가드,
+recordToPayload의 isPlainObject 가드, patient_id 타입 체크, TodayQueueSection의
+formatTimestamp/safeStringOrFallback 적용).
+
+**실사용 재검증**: 새 live-repro를 따로 만들지 않았다 — `recordToPayload`가
+`submission`을 `{}`로 대체하면 `routing`이 `undefined`가 되어
+`isDoctorPayloadShapeUsable`의 **정확히 같은 분기**(`!isPlainObject(
+payload.routing)`)로 false가 되는데, 이 분기가 `DoctorRecordFallback`을
+안전하게 렌더한다는 것은 20차의 `tests/.r20-live-repro.mjs`가 이미
+`submission.routing = null`로 라이브 확인했다(다른 상위 경로로 같은
+다운스트림 분기에 도달하는 것). 이번 라운드의 신규 unit test가
+`recordToPayload` 자체는 절대 throw하지 않는다는 것을, 20차의 라이브
+테스트가 그 결과가 안전하게 렌더된다는 것을 각각 증명해 조합상
+end-to-end로 커버된다 — 별도 브라우저 세션 없이도 충분하다고 판단.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — save-conflict 79/79, doctor 900/900, today-queue 41/41
+포함), `npm run build`/`build:preview` clean, `tablet core` pytest
+80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 22차 독립 `model:opus`
+리뷰를 delta-focused로 새로 호출한다. CLEAN이면 PR #24에 이 배치의
+종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로
+유지 — 최종 merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

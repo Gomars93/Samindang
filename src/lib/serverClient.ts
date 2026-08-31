@@ -181,9 +181,15 @@ export function setSubmissionStatus(
   id: string,
   status: SubmissionSummary['status'],
 ): Promise<ServerResult<SubmissionRecord>> {
-  return request(`/api/submissions/${id}/status`, {
+  // 21차 독립 리뷰 MEDIUM-2: getSubmission과 동일한 sink(selectedRecord)로
+  // 흘러가는데도 컨테이너 가드가 없었다.
+  return request<SubmissionRecord>(`/api/submissions/${id}/status`, {
     method: 'POST',
     body: JSON.stringify({ status }),
+  }).then((result) => {
+    if (!result.ok) return result
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result
   })
 }
 

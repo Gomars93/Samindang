@@ -121,8 +121,25 @@ function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknow
   if (expectedSource === 'postpartum_module' && d.source !== 'postpartum_module') return true
   if (expectedSource === 'other' && d.source !== 'WOMEN_SAFETY_01' && d.source !== null) return true
 
+  // 13차 독립 리뷰 LOW-3: raw 응답이 존재하는데(null/undefined 아님) 배열이
+  // 아니면 deriveReproductiveStatus는 절대 처리하지 못한다 -- 이 경우
+  // source: null은 "미해당"이 아니라 "환자가 답했지만 계산되지 못함"이다.
+  // DoctorView.tsx의 동명 함수와 동일한 이유/수정: 이전엔 이 조합이 아래
+  // source별 분기 어디에도 걸리지 않고 마지막 `return false`까지 통과해
+  // "정상"으로 판정됐다 -- safetyGlanceItems의 임신/수유 항목이 조용히
+  // 생략되고 "읽을 수 없음" 경고도 뜨지 않아, 실제로 보고된(그러나
+  // 처리되지 못한) 응답이 있다는 사실 자체가 사라졌다.
+  if (rawAnswer !== null && rawAnswer !== undefined && !Array.isArray(rawAnswer) && d.source == null) {
+    return true
+  }
+
   if (d.source === 'WOMEN_SAFETY_01') {
-    if (!Array.isArray(rawAnswer)) return false
+    // 13차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+    // `if (Array.isArray(answer))`일 때만 source:'WOMEN_SAFETY_01'을
+    // 만든다 -- 이 source이면서 raw 응답이 배열이 아닌 상태는 정의상
+    // 손상된 조합이다. 이전 구현은 `return false`("정상")로 조용히
+    // 통과시켰다 -- DoctorView.tsx의 동명 함수와 동일한 이유/수정.
+    if (!Array.isArray(rawAnswer)) return true
     if (!Array.isArray(d.raw)) return true
     const rawSet = new Set(rawAnswer)
     if (rawSet.size === 1 && rawSet.has('unknown')) {

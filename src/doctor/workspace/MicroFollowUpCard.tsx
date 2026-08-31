@@ -13,15 +13,19 @@
  * or Safety Mini-Gate question.
  */
 import type { MicroFollowUpCandidateItem, MicroFollowUpResponse } from './microFollowUp'
-import { microFollowUpNeedsAttention } from './microFollowUp'
+import { microFollowUpNeedsAttention, readableMicroFollowUpResponse } from './microFollowUp'
 
 export function MicroFollowUpCard({
   candidates,
-  response,
+  response: rawResponse,
 }: {
   candidates: MicroFollowUpCandidateItem[]
   response: MicroFollowUpResponse | null
 }) {
+  // 13차 독립 리뷰 MEDIUM-1: rawResponse는 서버가 검증 없이 저장한
+  // MicroFollowUpResponse를 그대로 넘겨받는다 -- 원소/leaf 단위로 다시
+  // 검증한다(microFollowUp.ts의 readableMicroFollowUpResponse 참고).
+  const response = readableMicroFollowUpResponse(rawResponse)
   if (candidates.length === 0 && !response) return null
   const needsAttention = response ? microFollowUpNeedsAttention(response) : false
 
@@ -39,8 +43,8 @@ export function MicroFollowUpCard({
             {candidates.map((c) => (
               <div key={c.id} className="workspace__microFollowUp__row">
                 <strong>{c.label}</strong>
-                <span>{c.previousBaseline.trim() ? `이전 baseline: ${c.previousBaseline.trim()}` : '이전 baseline: 기록 없음'}</span>
-                {c.previousPostTreatmentValue.trim() && <span>이전 치료직후: {c.previousPostTreatmentValue.trim()}</span>}
+                <span>{c.baselineText}</span>
+                {c.postTreatmentText && <span>이전 치료직후: {c.postTreatmentText}</span>}
               </div>
             ))}
           </div>

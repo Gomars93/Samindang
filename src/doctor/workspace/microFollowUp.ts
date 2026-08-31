@@ -29,12 +29,16 @@
  * stay fully separate identity boundaries even though they both end up
  * calling the same `saveResponse`.
  */
+import { sanitizeArray, sanitizeShape } from './sanitize'
+import { readablePriorVisitFollowUpTarget } from './longitudinal'
+
 export type MicroFollowUpCandidateItem = {
   id: string
   label: string
-  /** The prior visit's own recorded values, carried forward as read-only context -- never re-labeled as if newly computed today. */
-  previousBaseline: string
-  previousPostTreatmentValue: string
+  /** 이미 조립된 "이전 baseline: ..." 문구 -- 빈 값(진짜 미기록)은 "기록 없음", 손상된 값은 실패 토큰으로 구분한다. */
+  baselineText: string
+  /** null이면 렌더하지 않음(진짜 미기록) -- wrong-typed면 실패 토큰 문자열. */
+  postTreatmentText: string | null
 }
 
 /**
@@ -50,20 +54,26 @@ export type MicroFollowUpCandidateItem = {
  * function`, `.trim is not a function` were both live-reproduced). Accept
  * `unknown` and validate every layer instead of trusting the declared
  * `FollowUpTarget[]` type.
+ *
+ * 13차 독립 리뷰 LOW-2: 이전 구현은 "필드가 없음"과 "필드가 wrong-typed로
+ * 손상됨"을 둘 다 빈 문자열 `''`로 뭉개서, `previousBaseline.trim()`이
+ * 항상 falsy가 되어 두 경우 모두 "기록 없음"으로 표시했다 -- 그러나 실제로
+ * 손상된 값은 "기록이 없다"는 사실이 아니라 "무엇이 있었는지 알 수 없다"는
+ * 사실이다. longitudinal.ts의 `readablePriorVisitFollowUpTarget`이 이미
+ * PriorVisitHistoryCard용으로 이 정확한 구분을 구현해뒀으므로(동일한
+ * FollowUpTarget shape) 새로 만들지 않고 재사용한다.
  */
 export function microFollowUpCandidatesFromPriorTargets(prior: unknown): MicroFollowUpCandidateItem[] {
   const arr = Array.isArray(prior) ? prior : []
-  const items: MicroFollowUpCandidateItem[] = []
-  for (const raw of arr.slice(0, 3)) {
-    const t = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-    items.push({
-      id: typeof t.id === 'string' ? t.id : `unreadable-${items.length}`,
-      label: typeof t.label === 'string' ? t.label : '확인 필요(값 형식 오류)',
-      previousBaseline: typeof t.baseline === 'string' ? t.baseline : '',
-      previousPostTreatmentValue: typeof t.postTreatmentValue === 'string' ? t.postTreatmentValue : '',
-    })
-  }
-  return items
+  return arr.slice(0, 3).map((raw, index) => {
+    const readable = readablePriorVisitFollowUpTarget(raw, index)
+    return {
+      id: readable.id,
+      label: readable.label,
+      baselineText: readable.baselineText,
+      postTreatmentText: readable.postTreatmentText,
+    }
+  })
 }
 
 export type MicroFollowUpTargetRating = {
@@ -97,6 +107,37 @@ export function emptyMicroFollowUpResponse(visitId: string, patientId: string): 
     adverseEffectReported: false,
     adverseEffectNote: '',
     submitted_at: '',
+  }
+}
+
+const MICRO_FOLLOW_UP_TARGET_RATING_TEMPLATE: MicroFollowUpTargetRating = {
+  targetId: '',
+  label: '',
+  patientReportedValue: '',
+}
+
+/**
+ * 13차 독립 리뷰 MEDIUM-1: `MicroFollowUpResponse`는 환자 자신의 기기(공개,
+ * doctor-token 없는 `#follow-up=<token>` 경로)나 직원 대면 대필로 저장되고,
+ * `server/microFollowUpStore.js`는 컨테이너만 방어할 뿐(`overallChange ??
+ * ''`) 원소/leaf는 검증하지 않는다 -- 레거시/손상된 저장 파일이면
+ * `targetRatings`가 배열이 아니거나 `label`이 wrong-typed거나
+ * `overallChange`/`newSymptomNote`/`adverseEffectNote`가 문자열이 아닐 때
+ * MicroFollowUpCard의 `.trim()`/React child 렌더가 그대로 크래시했다(round
+ * 12가 이 카드의 "이전 방문 후보" 절반은 고쳤지만 "오늘 환자 응답" 절반은
+ * 그대로 남겨뒀다). deriveReproductiveStatus류와 동일하게, 여기서도
+ * "값이 없음"과 "값이 손상됨"을 구분하지 않는다 -- 둘 다 안전한 빈
+ * 기본값으로 fail-close한다(이 카드는 참고용 raw 텍스트일 뿐 안전
+ * computation에 관여하지 않으므로 무해하다).
+ */
+export function readableMicroFollowUpResponse(value: unknown): MicroFollowUpResponse | null {
+  if (value === null || value === undefined) return null
+  const empty = emptyMicroFollowUpResponse('', '')
+  const sanitized = sanitizeShape(empty, value)
+  const raw = value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  return {
+    ...sanitized,
+    targetRatings: sanitizeArray(MICRO_FOLLOW_UP_TARGET_RATING_TEMPLATE, raw.targetRatings),
   }
 }
 

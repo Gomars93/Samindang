@@ -20,18 +20,96 @@
  * saved through its own route, never mixed with judgment's read-modify-
  * write cycle.
  */
-import type { PhysicalExamSuggestion } from './examSuggestion'
+import { emptyExamResult, type PhysicalExamSuggestion } from './examSuggestion'
 import type { HerbalPatternCandidate } from './patternCandidate'
-import type { ClinicianObservationItem } from './clinicianObservation'
-import type { FollowUpTarget, HerbalFinalAssessment, PainFinalAssessment, NextReassessmentPlan } from './finalAssessment'
+import { emptyClinicianObservation, type ClinicianObservationItem } from './clinicianObservation'
+import {
+  followUpTarget,
+  type FollowUpTarget,
+  type HerbalFinalAssessment,
+  type PainFinalAssessment,
+  type NextReassessmentPlan,
+} from './finalAssessment'
 import { emptyPainFinalAssessment, emptyHerbalFinalAssessment, emptyNextReassessmentPlan } from './finalAssessment'
 import type { PainCarePlan, HerbalCarePlan } from './carePlan'
 import { emptyPainCarePlan, emptyHerbalCarePlan } from './carePlan'
-import type { StructuredReassessment } from './reassessmentExam'
+import { reassessmentExamItemFromPrevious, type StructuredReassessment, type PreviousExamValue } from './reassessmentExam'
 import { emptyStructuredReassessment } from './reassessmentExam'
 import type { RehabSuggestion } from './rehabSuggestion'
 import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { emptyAdditionalConcernPromotion } from './additionalConcern'
+import { sanitizeArray, sanitizeShape, isSanitizeRecord } from './sanitize'
+
+const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
+const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
+  id: '',
+  title: '',
+  priority: 'MUST_CHECK',
+  reasonFacts: [],
+  source: 'SUGGESTED',
+  result: emptyExamResult(),
+}
+const PATTERN_CANDIDATE_TEMPLATE: HerbalPatternCandidate = {
+  id: '',
+  displayName: '',
+  supportingFacts: [],
+  contradictingFacts: [],
+  unknownChecks: [],
+  source: 'SUGGESTED',
+  status: 'PENDING_REVIEW',
+  clinicianNote: '',
+}
+const CLINICIAN_OBSERVATION_TEMPLATE: ClinicianObservationItem = emptyClinicianObservation('', 'OTHER', '')
+const REHAB_SUGGESTION_TEMPLATE: RehabSuggestion = {
+  id: '',
+  title: '',
+  goal: '',
+  rationale: '',
+  sourceFacts: [],
+  contraindicationFacts: [],
+  source: 'SUGGESTED',
+  status: 'SUGGESTED',
+  clinicianFinalInstruction: '',
+}
+const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
+  '',
+  '',
+  null,
+)
+const PREVIOUS_EXAM_VALUE_TEMPLATE: PreviousExamValue = {
+  status: 'NOT_YET_CHECKED',
+  laterality: null,
+  note: '',
+  recordedAt: null,
+}
+
+/**
+ * 13차 독립 리뷰 자체 회귀분석 (workspace-round3.spec.mjs의 기존 round-trip
+ * 테스트가 발견): `sanitizeShape`의 null-템플릿 분기는 `string | null`
+ * 필드(recordedAt 등)만 염두에 두고 만들어져 rawVal이 string/number/null일
+ * 때만 통과시킨다 -- `previous: PreviousExamValue | null`처럼 템플릿
+ * 기본값 자체가 null인 "중첩 객체 또는 null" 필드는 raw가 진짜 객체여도
+ * (예: {status:'POSITIVE', laterality:'RIGHT', ...}) 이 분기를 통과하지
+ * 못해 조용히 null로 떨어뜨린다 -- 즉 HIGH-2 수정 자체가 매 요청마다
+ * previous(이전 소견의 raw fact)를 지워버리는 새 정보 손실을 만들었다.
+ * previous는 여기서만 쓰이는 구체적 shape을 알고 있으므로 별도로
+ * 처리한다.
+ */
+function sanitizeReassessmentItem(raw: unknown): StructuredReassessment['items'][number] {
+  const item = sanitizeShape(REASSESSMENT_ITEM_TEMPLATE, raw)
+  const rawPrevious = isSanitizeRecord(raw) ? raw.previous : undefined
+  return {
+    ...item,
+    previous: isSanitizeRecord(rawPrevious) ? sanitizeShape(PREVIOUS_EXAM_VALUE_TEMPLATE, rawPrevious) : null,
+  }
+}
+
+/** items[]는 element별로 sanitize하고, 나머지 필드는 sanitizeShape에 맡긴다. */
+function sanitizeStructuredReassessment(empty: StructuredReassessment, raw: unknown): StructuredReassessment {
+  const base = sanitizeShape(empty, raw)
+  const rawItems = isSanitizeRecord(raw) ? raw.items : undefined
+  return { ...base, items: Array.isArray(rawItems) ? rawItems.map(sanitizeReassessmentItem) : [] }
+}
 
 /**
  * Bumped only if a future change makes an old persisted shape unreadable.
@@ -90,10 +168,6 @@ export function emptyWorkspaceState(): WorkspaceState {
   }
 }
 
-function isArray(v: unknown): v is unknown[] {
-  return Array.isArray(v)
-}
-
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
@@ -112,60 +186,20 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
   if (!isRecord(raw)) return empty
   return {
     schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : empty.schema_version,
-    painExamSuggestions: isArray(raw.painExamSuggestions)
-      ? (raw.painExamSuggestions as PhysicalExamSuggestion[])
-      : empty.painExamSuggestions,
-    painFinalAssessment: isRecord(raw.painFinalAssessment)
-      ? { ...empty.painFinalAssessment, ...(raw.painFinalAssessment as Partial<PainFinalAssessment>) }
-      : empty.painFinalAssessment,
-    painFollowUpTargets: isArray(raw.painFollowUpTargets)
-      ? (raw.painFollowUpTargets as FollowUpTarget[])
-      : empty.painFollowUpTargets,
-    herbalPatternCandidates: isArray(raw.herbalPatternCandidates)
-      ? (raw.herbalPatternCandidates as HerbalPatternCandidate[])
-      : empty.herbalPatternCandidates,
-    herbalClinicianObservations: isArray(raw.herbalClinicianObservations)
-      ? (raw.herbalClinicianObservations as ClinicianObservationItem[])
-      : empty.herbalClinicianObservations,
-    herbalFinalAssessment: isRecord(raw.herbalFinalAssessment)
-      ? { ...empty.herbalFinalAssessment, ...(raw.herbalFinalAssessment as Partial<HerbalFinalAssessment>) }
-      : empty.herbalFinalAssessment,
-    herbalFollowUpTargets: isArray(raw.herbalFollowUpTargets)
-      ? (raw.herbalFollowUpTargets as FollowUpTarget[])
-      : empty.herbalFollowUpTargets,
-    painCarePlan: isRecord(raw.painCarePlan)
-      ? { ...empty.painCarePlan, ...(raw.painCarePlan as Partial<PainCarePlan>) }
-      : empty.painCarePlan,
-    herbalCarePlan: isRecord(raw.herbalCarePlan)
-      ? { ...empty.herbalCarePlan, ...(raw.herbalCarePlan as Partial<HerbalCarePlan>) }
-      : empty.herbalCarePlan,
-    nextReassessmentPlan: isRecord(raw.nextReassessmentPlan)
-      ? { ...empty.nextReassessmentPlan, ...(raw.nextReassessmentPlan as Partial<NextReassessmentPlan>) }
-      : empty.nextReassessmentPlan,
-    painReassessment: isRecord(raw.painReassessment)
-      ? {
-          ...empty.painReassessment,
-          ...(raw.painReassessment as Partial<StructuredReassessment>),
-          items: isArray((raw.painReassessment as Record<string, unknown>).items)
-            ? ((raw.painReassessment as Record<string, unknown>).items as StructuredReassessment['items'])
-            : empty.painReassessment.items,
-        }
-      : empty.painReassessment,
-    herbalReassessment: isRecord(raw.herbalReassessment)
-      ? {
-          ...empty.herbalReassessment,
-          ...(raw.herbalReassessment as Partial<StructuredReassessment>),
-          items: isArray((raw.herbalReassessment as Record<string, unknown>).items)
-            ? ((raw.herbalReassessment as Record<string, unknown>).items as StructuredReassessment['items'])
-            : empty.herbalReassessment.items,
-        }
-      : empty.herbalReassessment,
-    painRehabSuggestions: isArray(raw.painRehabSuggestions)
-      ? (raw.painRehabSuggestions as RehabSuggestion[])
-      : empty.painRehabSuggestions,
-    additionalConcernPromotion: isRecord(raw.additionalConcernPromotion)
-      ? { ...empty.additionalConcernPromotion, ...(raw.additionalConcernPromotion as Partial<AdditionalConcernPromotionState>) }
-      : empty.additionalConcernPromotion,
+    painExamSuggestions: sanitizeArray(EXAM_SUGGESTION_TEMPLATE, raw.painExamSuggestions),
+    painFinalAssessment: sanitizeShape(empty.painFinalAssessment, raw.painFinalAssessment),
+    painFollowUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.painFollowUpTargets),
+    herbalPatternCandidates: sanitizeArray(PATTERN_CANDIDATE_TEMPLATE, raw.herbalPatternCandidates),
+    herbalClinicianObservations: sanitizeArray(CLINICIAN_OBSERVATION_TEMPLATE, raw.herbalClinicianObservations),
+    herbalFinalAssessment: sanitizeShape(empty.herbalFinalAssessment, raw.herbalFinalAssessment),
+    herbalFollowUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.herbalFollowUpTargets),
+    painCarePlan: sanitizeShape(empty.painCarePlan, raw.painCarePlan),
+    herbalCarePlan: sanitizeShape(empty.herbalCarePlan, raw.herbalCarePlan),
+    nextReassessmentPlan: sanitizeShape(empty.nextReassessmentPlan, raw.nextReassessmentPlan),
+    painReassessment: sanitizeStructuredReassessment(empty.painReassessment, raw.painReassessment),
+    herbalReassessment: sanitizeStructuredReassessment(empty.herbalReassessment, raw.herbalReassessment),
+    painRehabSuggestions: sanitizeArray(REHAB_SUGGESTION_TEMPLATE, raw.painRehabSuggestions),
+    additionalConcernPromotion: sanitizeShape(empty.additionalConcernPromotion, raw.additionalConcernPromotion),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

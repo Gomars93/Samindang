@@ -171,9 +171,16 @@ export function PainWorkspace({
   // 환자가 구조적으로 이 범위 밖의 값을 답할 수 없다 -- finite number 검사만으로는
   // 999/-4 같은 범위 밖 값이 그대로 "원점수"로 렌더돼(확인 필요 표시 없이)
   // 실제로 답하지 않은 값을 지어낼 수 있었다.
+  // 13차 독립 리뷰 LOW-4: NumericScale 문항은 0~10 정수 눈금만 만들 수
+  // 있으므로 5.5 같은 비정수 값도 12차와 동일한 이유로 손상 데이터다 --
+  // 범위 검사만으로는 정수성을 보장하지 못해 놓쳤다.
   const recoveryScoreUnreadable =
     recoveryScore != null &&
-    (typeof recoveryScore !== 'number' || !Number.isFinite(recoveryScore) || recoveryScore < 0 || recoveryScore > 10)
+    (typeof recoveryScore !== 'number' ||
+      !Number.isFinite(recoveryScore) ||
+      !Number.isInteger(recoveryScore) ||
+      recoveryScore < 0 ||
+      recoveryScore > 10)
 
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)

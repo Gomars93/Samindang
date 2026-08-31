@@ -17,6 +17,7 @@ import {
   microFollowUpCandidatesFromPriorTargets,
   microFollowUpNeedsAttention,
   emptyMicroFollowUpResponse,
+  readableMicroFollowUpResponse,
 } from './.workspace-round3-microfollowup-bundle.mjs'
 import {
   applyFollowUpTargetsCarryForward,
@@ -28,7 +29,7 @@ import {
   isJudgmentBlank,
   isTreatmentPlanBlank,
 } from './.workspace-round3-carryforward-bundle.mjs'
-import { emptyVisitWorkspaceState } from './.workspace-round3-visitworkspace-bundle.mjs'
+import { emptyVisitWorkspaceState, deserializeVisitWorkspaceState } from './.workspace-round3-visitworkspace-bundle.mjs'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -137,6 +138,87 @@ function assert(name, cond) {
     }
     return ok
   })())
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 HIGH-2: the tests above only ever proved CONTAINER-level
+   * safety (array-vs-not, record-vs-not) -- server/store.js stores a PUT
+   * body verbatim with no schema validation, so an individual ARRAY ELEMENT
+   * or a nested record's own LEAF can be wrong-typed while the container
+   * itself is structurally fine (e.g. painFollowUpTargets[0].baseline = 7,
+   * a number). The old deserializeWorkspaceState passed such elements
+   * through untouched, and that reached emrPreview.ts's `.trim()` etc.
+   * downstream and crashed the entire clinical record view. This proves
+   * element/leaf-level sanitization: a malformed element degrades safely,
+   * length/order are preserved (never silently dropped), and a genuinely
+   * well-formed sibling element in the SAME array survives with its real
+   * data intact.
+   * ------------------------------------------------------------------- */
+  {
+    const raw = {
+      painFollowUpTargets: [
+        { id: 't1', label: '허리 통증 강도', baseline: 7, postTreatmentValue: null },
+        { id: 42, label: '움직임', baseline: '3/10', postTreatmentValue: '2/10' },
+      ],
+      painExamSuggestions: [
+        {
+          id: 'e1',
+          title: 'SLR 검사',
+          priority: 'CONTEXTUAL',
+          reasonFacts: 'not-an-array',
+          source: 'SUGGESTED',
+          result: { status: 'NOT_YET_CHECKED', laterality: null, note: 42, recordedAt: { nested: true } },
+        },
+      ],
+    }
+    let threw = false
+    let loaded
+    try {
+      loaded = deserializeWorkspaceState(raw)
+    } catch {
+      threw = true
+    }
+    assert('13차 HIGH-2: a workspace with element/leaf-level wrong-typed data never throws', !threw)
+
+    assert(
+      '13차 HIGH-2: painFollowUpTargets keeps both elements (length/order preserved, nothing silently dropped)',
+      loaded.painFollowUpTargets.length === 2,
+    )
+    assert(
+      '13차 HIGH-2: a wrong-typed baseline (number) in element 0 degrades to the safe string default, not the raw number',
+      loaded.painFollowUpTargets[0].baseline === '',
+    )
+    assert(
+      '13차 HIGH-2: a null postTreatmentValue (should be string) degrades to the safe string default',
+      loaded.painFollowUpTargets[0].postTreatmentValue === '',
+    )
+    assert(
+      '13차 HIGH-2: element 0\'s genuinely well-formed label survives untouched alongside its corrupted sibling field',
+      loaded.painFollowUpTargets[0].label === '허리 통증 강도',
+    )
+    assert(
+      '13차 HIGH-2: a wrong-typed id (number) in element 1 degrades to the safe string default',
+      loaded.painFollowUpTargets[1].id === '',
+    )
+    assert(
+      '13차 HIGH-2: element 1 is a genuinely well-formed sibling element -- every one of its real fields survives intact, proving the fix does not collapse the whole array to defaults just because a DIFFERENT element was corrupted',
+      loaded.painFollowUpTargets[1].label === '움직임' &&
+        loaded.painFollowUpTargets[1].baseline === '3/10' &&
+        loaded.painFollowUpTargets[1].postTreatmentValue === '2/10',
+    )
+
+    assert(
+      '13차 HIGH-2: painExamSuggestions[0].reasonFacts (wrong-typed, not an array) degrades to []',
+      Array.isArray(loaded.painExamSuggestions[0].reasonFacts) && loaded.painExamSuggestions[0].reasonFacts.length === 0,
+    )
+    assert(
+      '13차 HIGH-2: painExamSuggestions[0].result (a nested record) is itself sanitized leaf-by-leaf -- wrong-typed note/recordedAt degrade to safe defaults',
+      loaded.painExamSuggestions[0].result.note === '' && loaded.painExamSuggestions[0].result.recordedAt === null,
+    )
+    assert(
+      '13차 HIGH-2: painExamSuggestions[0]\'s genuinely well-formed title/priority survive',
+      loaded.painExamSuggestions[0].title === 'SLR 검사' && loaded.painExamSuggestions[0].priority === 'CONTEXTUAL',
+    )
+  }
 }
 
 /* ---------------- Phase E: reassessment never auto-copies previous into today's result ---------------- */
@@ -281,9 +363,29 @@ function assert(name, cond) {
   const candidates = microFollowUpCandidatesFromPriorTargets(fourTargets)
   assert('micro follow-up candidates cap at 3 per the North Star 30-60s budget', candidates.length === 3)
   assert('micro follow-up candidates keep the clinician\'s own prior order, no re-ranking', candidates.map((c) => c.id).join(',') === 't1,t2,t3')
-  assert('micro follow-up candidate carries the prior baseline/postTreatmentValue as read-only context', candidates[0].previousBaseline === '7' && candidates[0].previousPostTreatmentValue === '5')
+  assert(
+    'micro follow-up candidate carries the prior baseline/postTreatmentValue as read-only context',
+    candidates[0].baselineText === '이전 baseline: 7' && candidates[0].postTreatmentText === '5',
+  )
 
   assert('microFollowUpCandidatesFromPriorTargets on an empty prior list returns []', microFollowUpCandidatesFromPriorTargets([]).length === 0)
+
+  // 13차 독립 리뷰 LOW-2: "필드가 없음"(진짜 미기록)과 "필드가 wrong-typed로
+  // 손상됨"은 서로 다른 사실이며 같은 빈 문자열로 뭉개면 안 된다.
+  const missingVsCorrupted = microFollowUpCandidatesFromPriorTargets([
+    { id: 'm1', label: '진짜 미기록', baseline: undefined, postTreatmentValue: undefined },
+    { id: 'm2', label: '손상된 값', baseline: { nested: true }, postTreatmentValue: 42 },
+  ])
+  assert(
+    'a genuinely never-recorded baseline renders as "기록 없음", not a fail-closed token',
+    missingVsCorrupted[0].baselineText === '이전 baseline: 기록 없음' && missingVsCorrupted[0].postTreatmentText === null,
+  )
+  assert(
+    'a wrong-typed (corrupted) baseline/postTreatmentValue renders a distinct fail-closed token, never "[object Object]"/"42" nor silently "기록 없음"',
+    missingVsCorrupted[1].baselineText.includes('확인 필요') &&
+      !missingVsCorrupted[1].baselineText.includes('[object Object]') &&
+      missingVsCorrupted[1].postTreatmentText === '확인 필요(값 형식 오류)',
+  )
 
   const fresh = emptyMicroFollowUpResponse('visit-1', 'patient-1')
   assert('a fresh MicroFollowUpResponse starts with no attention flags', !microFollowUpNeedsAttention(fresh))
@@ -294,6 +396,59 @@ function assert(name, cond) {
   const adverseEffect = { ...fresh, adverseEffectReported: true }
   assert('adverseEffectReported alone triggers microFollowUpNeedsAttention', microFollowUpNeedsAttention(adverseEffect))
   assert('overallChange text alone (no symptom/adverse flags) does NOT trigger needsAttention', !microFollowUpNeedsAttention({ ...fresh, overallChange: '많이 좋아짐' }))
+
+  // 13차 독립 리뷰 MEDIUM-1: readableMicroFollowUpResponse sanitizes the
+  // patient-submitted MicroFollowUpResponse (the sibling half of the
+  // candidates fix above) leaf-by-leaf -- a legacy/hand-crafted stored
+  // response with wrong-typed fields must degrade to safe defaults, never
+  // throw, and null/undefined input (no response yet) must stay null.
+  assert('readableMicroFollowUpResponse(null) stays null (no response yet, not "corrupted")', readableMicroFollowUpResponse(null) === null)
+  assert('readableMicroFollowUpResponse(undefined) stays null', readableMicroFollowUpResponse(undefined) === null)
+
+  const readableFresh = readableMicroFollowUpResponse(fresh)
+  assert(
+    'readableMicroFollowUpResponse passes through a genuinely well-formed response unchanged',
+    readableFresh.visit_id === 'visit-1' && readableFresh.patient_id === 'patient-1' && readableFresh.targetRatings.length === 0,
+  )
+
+  const corruptedResponse = {
+    visit_id: 'visit-2',
+    patient_id: 'patient-2',
+    targetRatings: 'not-an-array',
+    overallChange: { nested: true },
+    newSymptomReported: 'yes',
+    newSymptomNote: 42,
+    adverseEffectReported: true,
+    adverseEffectNote: null,
+    submitted_at: '2026-01-01T00:00:00.000Z',
+  }
+  const readableCorrupted = readableMicroFollowUpResponse(corruptedResponse)
+  assert(
+    'readableMicroFollowUpResponse never throws on a malformed stored response and degrades every wrong-typed leaf to a safe default (never "[object Object]")',
+    Array.isArray(readableCorrupted.targetRatings) &&
+      readableCorrupted.targetRatings.length === 0 &&
+      readableCorrupted.overallChange === '' &&
+      readableCorrupted.newSymptomReported === false &&
+      readableCorrupted.newSymptomNote === '' &&
+      readableCorrupted.adverseEffectNote === '',
+  )
+  assert(
+    'readableMicroFollowUpResponse keeps a genuinely boolean field (adverseEffectReported=true) instead of collapsing every field to its default',
+    readableCorrupted.adverseEffectReported === true,
+  )
+
+  const corruptedTargetRatings = readableMicroFollowUpResponse({
+    ...fresh,
+    targetRatings: [{ targetId: 't1', label: 'A', patientReportedValue: '5' }, { targetId: 42, label: null, patientReportedValue: {} }],
+  })
+  assert(
+    'readableMicroFollowUpResponse sanitizes each targetRatings element independently -- one wrong-typed rating does not drop or crash the whole array, and a well-formed sibling element survives intact',
+    corruptedTargetRatings.targetRatings.length === 2 &&
+      corruptedTargetRatings.targetRatings[0].patientReportedValue === '5' &&
+      corruptedTargetRatings.targetRatings[1].targetId === '' &&
+      corruptedTargetRatings.targetRatings[1].label === '' &&
+      corruptedTargetRatings.targetRatings[1].patientReportedValue === '',
+  )
 
   const src = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/microFollowUp.ts', import.meta.url)), 'utf8')
   assert(
@@ -456,6 +611,49 @@ function assert(name, cond) {
   assert('applyJudgmentCarryForward never mentions interventionPerformedOrPlanned', !judgmentFn.includes('interventionPerformedOrPlanned'))
   assert('applyJudgmentCarryForward never mentions immediateRetestTarget', !judgmentFn.includes('immediateRetestTarget'))
   assert('applyJudgmentCarryForward never touches the care plan', !judgmentFn.includes('carePlan'))
+}
+
+/* -----------------------------------------------------------------------
+ * 13차 독립 리뷰 HIGH-2 (visitWorkspace.ts mirror): a no-submission revisit
+ * workspace is stored through its own unauthenticated PUT route
+ * (/api/visits/:id/workspace) with the same lack of schema validation as
+ * the submission-owned workspace -- deserializeVisitWorkspaceState must
+ * sanitize element/leaf data the same way persistence.ts's
+ * deserializeWorkspaceState does above, not just the container shape.
+ * ------------------------------------------------------------------- */
+{
+  const raw = {
+    followUpTargets: [
+      { id: 'today-only', label: '오늘 고른 항목', baseline: 5, postTreatmentValue: '' },
+      { id: 'ok', label: '정상 항목', baseline: '', postTreatmentValue: '' },
+    ],
+    reassessment: { items: 'not-an-array', finalReassessmentNote: 7, recordedAt: null },
+  }
+  let threw = false
+  let loaded
+  try {
+    loaded = deserializeVisitWorkspaceState(raw)
+  } catch {
+    threw = true
+  }
+  assert('13차 HIGH-2 (visitWorkspace.ts): a workspace with element/leaf-level wrong-typed data never throws', !threw)
+  assert('13차 HIGH-2 (visitWorkspace.ts): followUpTargets keeps both elements', loaded.followUpTargets.length === 2)
+  assert(
+    '13차 HIGH-2 (visitWorkspace.ts): a wrong-typed baseline (number) degrades to the safe string default',
+    loaded.followUpTargets[0].baseline === '',
+  )
+  assert(
+    '13차 HIGH-2 (visitWorkspace.ts): the well-formed sibling element survives untouched',
+    loaded.followUpTargets[1].id === 'ok' && loaded.followUpTargets[1].label === '정상 항목',
+  )
+  assert(
+    '13차 HIGH-2 (visitWorkspace.ts): reassessment.items (wrong-typed, not an array) degrades to []',
+    Array.isArray(loaded.reassessment.items) && loaded.reassessment.items.length === 0,
+  )
+  assert(
+    '13차 HIGH-2 (visitWorkspace.ts): reassessment.finalReassessmentNote (wrong-typed number) degrades to the safe string default',
+    loaded.reassessment.finalReassessmentNote === '',
+  )
 }
 
 console.log(`\n${passCount} workspace round-3 assertions passed.`)

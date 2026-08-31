@@ -6514,6 +6514,133 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 13차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+13차 리뷰는 12차 커밋을 대상으로, HIGH 1건 + MEDIUM 3건 + LOW 4건을
+찾아냈다. HIGH-1은 12차와 동일한 계열의 새로운 fail-open(다른 raw
+형태), HIGH-2는 이 배치가 지금까지 "container만 방어했지 leaf는
+안 했다"는 새로운 클래스의 취약점을 여러 곳에서 동시에 드러냈다.
+
+**(HIGH-1) `coreSpec.ts`의 `deriveReproductiveStatus`는
+`Array.isArray(answer)`일 때만 `source: 'WOMEN_SAFETY_01'`을 만든다 —
+이 source이면서 raw 응답이 배열이 아닌 상태는 정의상 손상된 조합인데,
+이전 구현은 `if (Array.isArray(rawAnswer))` 블록 밖으로 falling
+through해 아무 검사 없이 "정상"으로 통과시켰다.** 레거시 단일-선택
+문자열 응답(예: `reproductive_status: 'pregnant'`)에 대해 derived를
+전부 false로 채운 레코드가 실제 보고된 임신을 "임신 중: 아니요"로
+지어낼 수 있었다(인증되지 않은 POST로도 도달 가능). `DoctorView.tsx`/
+`CommonSafetyBanner.tsx` 양쪽의 `isUnreadableReproductiveDerived`에
+`if (!Array.isArray(rawAnswer)) return true` 가드 추가.
+
+**(HIGH-2) `deserializeWorkspaceState`/`deserializeVisitWorkspaceState`가
+CONTAINER(배열/객체 여부)만 검증하고 개별 원소/중첩 leaf는 검증하지
+않았다.** `server/store.js`는 인증되지 않은 PUT body를 검증 없이
+그대로 저장하므로, `painFollowUpTargets[0].baseline = 7`(숫자) 같은
+레코드가 그대로 통과해 `emrPreview.ts`의 `.trim()` 등에서 크래시하고
+`DoctorRecordErrorBoundary`가 CommonSafetyBanner/모든 SafetyPanel까지
+함께 감싸므로 전체 임상 화면이 날아갔다. **근본 수정**: 신규
+`src/doctor/workspace/sanitize.ts`(`sanitizeShape`/`sanitizeArray`) —
+알려진-정상 템플릿을 기준으로 원소/leaf 각각의 런타임 타입이 실제로
+일치할 때만 raw 값을 복사하고, 그 외엔 조용히 템플릿 기본값으로
+degrade(절대 throw 없음, 배열 길이/순서는 보존). `persistence.ts`/
+`visitWorkspace.ts`의 `deserializeWorkspaceState`/
+`deserializeVisitWorkspaceState`를 이 헬퍼로 전면 재작성.
+**자체 회귀 발견**: 이 재작성 직후 기존 round-trip 테스트가 깨졌다 —
+`sanitizeShape`의 null-템플릿 분기는 `string | null`류만 염두에 뒀지,
+`previous: PreviousExamValue | null`처럼 템플릿 기본값 자체가 null인
+"중첩 객체 또는 null" 필드는 raw가 진짜 객체여도 이 분기를 통과하지
+못해 조용히 null로 떨어뜨렸다(HIGH-2 수정 자체가 재검(reassessment)의
+`previous` 원본 소견을 매번 지우는 새 정보 손실을 만들 뻔했다) —
+`previous` 전용 템플릿(`PREVIOUS_EXAM_VALUE_TEMPLATE`)으로 별도
+처리해 커밋 전에 잡았다.
+
+**(MEDIUM-1) `MicroFollowUpResponse`(환자 자신의 기기나 직원 대필로
+저장, 컨테이너만 방어)의 "오늘 환자 응답" 절반이 12차에서 놓쳤다 —
+"이전 방문 후보" 절반만 고쳤었다.** `targetRatings`가 배열이 아니거나
+`overallChange`/`newSymptomNote`/`adverseEffectNote`가 wrong-typed면
+`MicroFollowUpCard`가 그대로 크래시했다. `microFollowUp.ts`에
+`readableMicroFollowUpResponse`(sanitize.ts 재사용) 추가, 카드는
+`rawResponse` prop을 받아 렌더 직전에 정화.
+
+**(MEDIUM-2/MEDIUM-3) `asArray<string>(...)`는 컨테이너가 배열인지만
+검사할 뿐 원소 타입은 보장하지 않는다.** `routing.secondary_screens`/
+`saju.policy.pending_approval` 배열의 wrong-typed 원소가
+`.join(', ')`을 그대로 통과해 "[object Object]"를 노출했다(4개
+호출부: secondary_screens join, MyungriCompactCard의 pendingLabels,
+명리 검토 grid의 pending_approval join, JudgmentPanel에 넘기는
+myungri_pending_approval). 신규 `readableStringArray` 헬퍼(원소별로
+string이 아니면 실패 토큰으로 대체 후 join) 4곳 모두 적용.
+
+**(LOW-1) `saju.flags.hour_unknown`가 boolean이 아니면(레거시 레코드는
+`flags` 자체가 `{}`일 수 있음) 이전 구현은 falsy 값이면 무조건
+"출생시간 확인됨"으로 단정했다.** 명시적 `=== true`/`=== false`일
+때만 각각을 말하고, 그 외엔 실패 토큰.
+
+**(LOW-2) `microFollowUpCandidatesFromPriorTargets`는 "필드가 없음"과
+"필드가 wrong-typed로 손상됨"을 둘 다 빈 문자열로 뭉개, 손상된 값도
+"기록 없음"으로 표시했다.** `longitudinal.ts`의
+`readablePriorVisitFollowUpTarget`(round 12가 이미 이 정확한 구분을
+구현해둠)을 재사용하도록 재구성 — 진짜 미기록은 "기록 없음", 손상은
+별도 실패 토큰.
+
+**(LOW-3) raw 응답이 존재하는데(예: 레거시 문자열) 배열이 아니면
+`deriveReproductiveStatus`는 절대 처리하지 못해 `source: null`이
+되는데, 이 값은 "미해당"이 아니라 "환자가 답했지만 계산되지 못함"이다
+— 이전 구현은 이 조합을 "정상"으로 통과시켜 여성 안전정보 카드
+전체가 조용히 사라지고(환자가 실제로 답한 원본을 원장이 볼 수 없게
+됨) LBP/NECK/SHOULDER 안전 게이트도 이 raw 응답을 못 본 것처럼
+통과했다.** `isUnreadableReproductiveDerived`에 "raw가 non-null·
+non-array이고 source가 null"이면 손상으로 판정하는 가드 추가(양쪽
+사본), `DoctorView.tsx`의 여성 안전정보 렌더 조건도 `Array.isArray`
+단독 체크에서 "raw가 null/undefined가 아니면"으로 넓혀 섹션 자체는
+계속 보이게 함.
+
+**(LOW-4) LBP_12는 NumericScale 문항으로 0~10 정수 눈금만 만들 수
+있는데, 12차의 범위 검사(0~10)만으로는 5.5 같은 in-range 비정수
+값이 그대로 "원점수"로 렌더됐다.** `recoveryScoreUnreadable`에
+`Number.isInteger` 검사 추가.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 HIGH-1/LOW-3 단위
+테스트 3개(비배열 raw + WOMEN_SAFETY_01, 비배열 raw + source:null,
+진짜 null raw는 false-positive 없음 sanity), LOW-3 렌더 조건 구조
+확인 1개, MEDIUM-2 `MyungriCompactCard` 직접 렌더 1개, LOW-1
+`MyungriCompactCard` 직접 렌더 4개(누락/wrong-typed/true/false),
+MEDIUM-2/3 구조 확인 3개(+12, 860→872). `tests/doctor-workspace.spec.mjs`에
+HIGH-1/LOW-3 `CommonSafetyBanner` 전체 렌더 2개, LOW-4 비정수/정수
+2개(+4, 171→175). `tests/workspace-round3.spec.mjs`에 LOW-2
+미기록-vs-손상 구분 2개, MEDIUM-1 `readableMicroFollowUpResponse`
+6개, HIGH-2 element/leaf-level 검증 9개(persistence.ts) + 5개
+(visitWorkspace.ts)(+24, 101→125).
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch 포트)
++ Playwright로 1440×900/1024×768/834×1112 3개 뷰포트 각각에서 (A)
+레거시 단일-선택 문자열 raw + WOMEN_SAFETY_01 source claiming
+all-false(HIGH-1), (B) 레거시 문자열 raw + source:null(LOW-3, 여성
+안전정보 카드가 REFERENCE 탭에만 있고 CommonSafetyBanner는 CLINICAL
+탭에만 있어 둘을 같은 페이지 스냅샷 하나로 동시에 확인할 수 없다는
+걸 스크립트 버그로 먼저 만났다가 두 탭을 순서대로 클릭해 각각
+확인하도록 스크립트를 고쳐 재검증), (C) `painFollowUpTargets`/
+`painExamSuggestions`/`painReassessment.items[0].previous`가
+element/leaf 단위로 손상된 workspace를 실제 PUT
+`/api/submissions/:id/workspace`로 저장(HIGH-2) 레코드를 POST/PUT하고
+목록에서 클릭 — (A)(B) "특이 안전정보 없음" 허위 all-clear 0건 및
+"안전정보 일부를 읽을 수 없습니다"/여성 안전정보 섹션 정상 표시,
+(C) `DoctorRecordErrorBoundary` fallback으로 떨어지지 않고 "[object
+Object]" 노출 없이 정상 임상 화면 유지(재검 항목의 `previous`도
+살아남음 확인), 3개 시나리오 × 3개 뷰포트 전부 page error 0건 확인.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 872/872, doctor-workspace 175/175,
+workspace-round3 125/125 포함), `npm run build`/`build:preview`
+clean, `tablet core` pytest 80/80, `git diff origin/main --
+src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부
+통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 14차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

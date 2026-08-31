@@ -222,6 +222,19 @@ function asArray<T>(value: unknown): T[] {
 }
 
 /**
+ * 13차 독립 리뷰 MEDIUM-2/MEDIUM-3: `asArray<string>(...)`는 컨테이너가
+ * 배열인지만 검사할 뿐 원소 타입은 보장하지 않는다(TS 제네릭은 런타임에
+ * 아무 것도 강제하지 않음) -- `routing.secondary_screens`/
+ * `saju.policy.pending_approval`처럼 검증되지 않은 저장 데이터에서 온
+ * 배열을 그대로 `.join(', ')`하면 wrong-typed 원소가 "[object Object]"로
+ * 그대로 노출된다. 원소별로 string이 아니면 실패 토큰으로 대체한 뒤
+ * join한다.
+ */
+function readableStringArray(values: unknown[]): string[] {
+  return values.map((v) => (typeof v === 'string' ? v : UNREADABLE_COMPUTED_VALUE))
+}
+
+/**
  * `?? []`/asArray는 필드 자체가 빠졌거나 잘못된 타입인 경우만 막는다 --
  * 배열 "안"의 각 원소가 문자열이 아니면(레거시 데이터에서 숫자/null/객체가
  * 섞여 들어올 수 있음) 여전히 위험하다. lbpAdapter.ts/neckAdapter.ts(둘 다
@@ -310,27 +323,48 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
   if (expectedSource === 'postpartum_module' && d.source !== 'postpartum_module') return true
   if (expectedSource === 'other' && d.source !== 'WOMEN_SAFETY_01' && d.source !== null) return true
 
+  // 13차 독립 리뷰 LOW-3: raw 응답이 존재하는데(null/undefined 아님) 배열이
+  // 아니면 deriveReproductiveStatus는 절대 처리하지 못한다(WOMEN_SAFETY_01
+  // source는 오직 Array.isArray(answer)일 때만 만들어짐) -- 이 경우
+  // source: null은 "미해당"이 아니라 "환자가 답했지만 계산되지 못함"이다.
+  // 이전 구현은 이 조합을 "정상"(source: null = 미해당)으로 통과시켜
+  // 여성 안전정보 카드 전체가 조용히 사라지고(환자가 실제로 답한 원본을
+  // 원장이 볼 수 없게 됨) LBP/NECK/SHOULDER 안전 게이트도 이 raw 응답을
+  // 못 본 것처럼 통과했다.
+  const rawTopLevel = r.reproductive_status.reproductive_status
+  if (rawTopLevel !== null && rawTopLevel !== undefined && !Array.isArray(rawTopLevel) && d.source == null) {
+    return true
+  }
+
   if (d.source === 'WOMEN_SAFETY_01') {
     const rawAnswer = r.reproductive_status.reproductive_status
-    if (Array.isArray(rawAnswer)) {
-      if (!Array.isArray(d.raw)) return true
-      const rawSet = new Set(rawAnswer)
-      if (rawSet.size === 1 && rawSet.has('unknown')) {
-        if (d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null) return true
-      } else {
-        if (rawSet.has('pregnant') && d.pregnant !== true) return true
-        if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
-        if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
-        if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
-        // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/
-        // postpartum_1y/breastfeeding은 pregnancy_possible과 달리 다른
-        // 모듈의 정당한 override 경로가 없으므로, derived가 true인데 raw가
-        // 그 값을 포함하지 않으면 무조건 모순이다(실제 보고되지 않은
-        // 임신/수유 사실을 지어낸 것 -- 반대 방향으로도 fail-open이었다).
-        if (d.pregnant === true && !rawSet.has('pregnant')) return true
-        if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
-        if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
-      }
+    // 13차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+    // `if (Array.isArray(answer))`일 때만 source:'WOMEN_SAFETY_01'을
+    // 만든다(coreSpec.ts:3854-3878) -- 즉 이 source이면서 raw 응답이
+    // 배열이 아닌 상태는 deriveReproductiveStatus가 절대 만들 수 없는,
+    // 정의상 손상된 조합이다. 이전 구현은 `if (Array.isArray(rawAnswer))`
+    // 블록 밖으로 falling through해 아무 검사 없이 "정상"으로 통과시켰다
+    // -- 레거시 단일-선택 문자열 답변(예: rawAnswer='pregnant')에 대해
+    // derived를 전부 false로 채운 레코드가 실제 보고된 임신을 "임신 중:
+    // 아니요"로 지어낼 수 있었다(인증되지 않은 POST로도 도달 가능).
+    if (!Array.isArray(rawAnswer)) return true
+    if (!Array.isArray(d.raw)) return true
+    const rawSet = new Set(rawAnswer)
+    if (rawSet.size === 1 && rawSet.has('unknown')) {
+      if (d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null) return true
+    } else {
+      if (rawSet.has('pregnant') && d.pregnant !== true) return true
+      if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
+      if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
+      if (rawSet.has('pregnancy_possible') && d.pregnancy_possible !== true) return true
+      // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/
+      // postpartum_1y/breastfeeding은 pregnancy_possible과 달리 다른
+      // 모듈의 정당한 override 경로가 없으므로, derived가 true인데 raw가
+      // 그 값을 포함하지 않으면 무조건 모순이다(실제 보고되지 않은
+      // 임신/수유 사실을 지어낸 것 -- 반대 방향으로도 fail-open이었다).
+      if (d.pregnant === true && !rawSet.has('pregnant')) return true
+      if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
+      if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
     }
   } else if (d.source === 'pregnancy_module') {
     // 11차 독립 리뷰 MEDIUM-1: coreSpec.ts deriveReproductiveStatus는
@@ -598,10 +632,18 @@ export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calc
   }
 
   const dayStem = dayPillar.charAt(0)
-  const birthInfoLine = saju.flags.hour_unknown
-    ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
-    : '출생시간 확인됨 · 4주 8자'
-  const pendingLabels = asArray<string>(saju.policy.pending_approval).map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
+  // 13차 독립 리뷰 LOW-1: `saju.flags.hour_unknown`가 boolean이 아니면
+  // (레거시 레코드는 flags 자체가 {}일 수 있음) 이전 구현은 falsy 값이면
+  // 무조건 "출생시간 확인됨"으로 단정했다 -- 실제로는 그 필드가 없다는
+  // 뜻일 뿐인데 시간이 확인됐다는 사실을 지어낸 것이다. 명시적 boolean일
+  // 때만 둘 중 하나를 말하고, 그 외엔 실패 토큰을 보여준다.
+  const birthInfoLine =
+    saju.flags?.hour_unknown === true
+      ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
+      : saju.flags?.hour_unknown === false
+        ? '출생시간 확인됨 · 4주 8자'
+        : UNREADABLE_COMPUTED_VALUE
+  const pendingLabels = readableStringArray(asArray(saju.policy.pending_approval)).map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
   const yearPillar = computedText(saju.pillars?.year) ?? UNREADABLE_COMPUTED_VALUE
   const monthPillar = computedText(saju.pillars?.month) ?? UNREADABLE_COMPUTED_VALUE
   const hourPillar = computedText(saju.pillars?.hour) ?? '미상'
@@ -3533,7 +3575,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         <p className="doctor__derivedNote">
           시스템 라우팅 — 주호소 모듈: {computedText(routing.primary_module) ?? '없음'} / 동반 화면:{' '}
           {asArray<string>(routing.secondary_screens).length > 0
-            ? asArray<string>(routing.secondary_screens).join(', ')
+            ? readableStringArray(asArray(routing.secondary_screens)).join(', ')
             : '없음'}
         </p>
         <div className="doctor__chiefPrimary">
@@ -3719,12 +3761,22 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         9차 독립 리뷰 HIGH-2: `derived?.source != null` 하나만으로는 손상된
         derived(예: raw가 재계산 안 된 stale 값)가 정상인 것처럼 계산
         박스를 그대로 보여준다 -- isUnreadableReproductiveDerived(r)가
-        true면(실제 WOMEN_SAFETY_01 응답이 배열로 존재하는 한) 섹션 자체는
-        계속 보여주되(환자가 답한 원본은 계속 노출) 계산 박스만 명시적
-        "읽을 수 없음" 알림으로 대체한다.
+        true면(실제 WOMEN_SAFETY_01 응답이 존재하는 한, 배열이든 아니든)
+        섹션 자체는 계속 보여주되(환자가 답한 원본은 계속 노출) 계산 박스만
+        명시적 "읽을 수 없음" 알림으로 대체한다.
+
+        13차 독립 리뷰 LOW-3: 이전엔 raw가 배열일 때만 이 조건을 만족했다 --
+        레거시 단일-선택 문자열처럼 raw가 존재하지만 배열이 아닌 경우
+        isUnreadableReproductiveDerived(r)는 이제 true를 반환하지만(위
+        LOW-3 수정), 이 렌더 조건이 여전히 Array.isArray만 확인하면 섹션
+        전체가 조용히 사라져 환자가 실제로 답한 원본을 원장이 볼 수 없다.
+        raw가 null/undefined가 아니기만 하면(배열 여부 무관) 섹션을 보여주고
+        원본은 계속 노출한다.
       */}
       {(r.reproductive_status?.derived?.source != null ||
-        (isUnreadableReproductiveDerived(r) && Array.isArray(r.reproductive_status?.reproductive_status))) && (
+        (isUnreadableReproductiveDerived(r) &&
+          r.reproductive_status?.reproductive_status !== null &&
+          r.reproductive_status?.reproductive_status !== undefined)) && (
         <section className="doctor__section">
           <h2>여성 안전정보</h2>
           <div className="doctor__grid">
@@ -3841,7 +3893,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             {asArray<string>(saju.policy.pending_approval).length > 0 && (
               <p className="doctor__warning doctor__warning--pending">
                 주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {asArray<string>(saju.policy.pending_approval).join(', ')}.
+                값이 바뀔 수 있습니다. 대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}.
                 원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
                 docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
               </p>
@@ -3939,7 +3991,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           myungri_algorithm_version: saju.policy.algorithm_version,
           myungri_library_version: saju.engine.library_version,
           myungri_status: saju.status,
-          myungri_pending_approval: asArray<string>(saju.policy.pending_approval),
+          myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
         initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}

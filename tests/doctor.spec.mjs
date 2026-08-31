@@ -1294,6 +1294,32 @@ function detailsRange(html, classMarker) {
   assert('female patient fixture with WOMEN_SAFETY_01 answered: 여성 안전정보 section renders', html.includes('여성 안전정보'))
 }
 
+/*
+ * 13차 독립 리뷰 LOW-3: the 여성 안전정보 card's render condition used to be
+ * `derived?.source != null || (isUnreadableReproductiveDerived(r) &&
+ * Array.isArray(raw))` -- a raw answer that exists but is not an array
+ * (legacy single-select) combined with derived.source===null made BOTH
+ * halves false, so the whole section (including the patient's own raw
+ * answer) silently vanished instead of showing the "읽을 수 없음" notice.
+ * DoctorView.tsx doesn't accept an arbitrary patched payload prop (only
+ * initialFixtureIndex into the fixed DOCTOR_FIXTURES set), so this is
+ * proven structurally against the source, matching this suite's established
+ * fallback for code paths that aren't independently renderable (see the
+ * 12th independent review HIGH-3 test below for the same pattern).
+ */
+{
+  const doctorViewSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    '13차 독립 리뷰 LOW-3: 여성 안전정보 render gate no longer requires Array.isArray on the raw answer -- any non-null/non-undefined raw answer keeps the section visible when isUnreadableReproductiveDerived(r) is true',
+    doctorViewSrc.includes(
+      "(isUnreadableReproductiveDerived(r) &&\n          r.reproductive_status?.reproductive_status !== null &&\n          r.reproductive_status?.reproductive_status !== undefined)",
+    ),
+  )
+}
+
 /* =====================================================================
    Round 11 (Doctor Preview v2 -- 10-second clinical view). The record used
    to render as one long vertical page: clinical workspace, then the whole
@@ -2265,6 +2291,83 @@ function detailsRange(html, classMarker) {
       isUnreadableReproductiveDerived(p.responses) === true,
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus only ever
+   * produces source==='WOMEN_SAFETY_01' when Array.isArray(answer) is true
+   * -- that source paired with a non-array raw answer (a legacy
+   * single-select string, e.g. 'pregnant') is a combination
+   * deriveReproductiveStatus itself can never produce. The previous
+   * implementation fell through the Array.isArray(rawAnswer) guard and
+   * treated it as "consistent", letting an actually-reported pregnancy be
+   * rendered as an explicit "임신 중: 아니요" negative.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture10 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture10.payload)
+    p.responses.reproductive_status.reproductive_status = 'pregnant'
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: 'pregnant',
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects source="WOMEN_SAFETY_01" paired with a non-array raw answer (legacy single-select) -- deriveReproductiveStatus can never produce this combination (13th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 LOW-3: a raw reproductive answer that exists (non-null,
+   * non-undefined) but is not an array -- so deriveReproductiveStatus's
+   * `Array.isArray(answer)` check fails and it produces the same
+   * source:null/all-null object it would for a patient who was never asked
+   * -- is NOT "doesn't apply", it is "answered but never processed". The
+   * previous implementation treated source:null as always meaning
+   * "genuinely not applicable" regardless of whether a raw answer existed,
+   * silently dropping the patient's own reported (legacy-format) answer.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture11 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture11.payload)
+    p.responses.reproductive_status.reproductive_status = 'pregnant'
+    p.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a non-array raw answer that exists paired with derived.source===null -- this is "answered but unprocessed", not "doesn\'t apply" (13th independent review LOW-3)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: a genuinely never-asked patient (raw is null, not merely
+    // non-array) with source:null must still read as consistent/readable --
+    // the LOW-3 fix must not turn every male-patient/no-report record into
+    // a false "cannot read" warning.
+    const lbpFixture12 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture12.payload)
+    p.responses.reproductive_status.reproductive_status = null
+    p.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive when raw is genuinely null (never asked/answered) and source is null (13th independent review LOW-3 sanity check)',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -2353,6 +2456,66 @@ function detailsRange(html, classMarker) {
       !line.text.includes('[object Object]') && line.text.includes('확인 필요(값 형식 오류)'),
     )
   }
+
+  /* ---------------------------------------------------------------------
+   * 13차 독립 리뷰 MEDIUM-2: `asArray<string>(saju.policy.pending_approval)`
+   * only validates the container is an array -- an individual element that
+   * is wrong-typed (e.g. an object) passed straight through .join(', ')
+   * would render "[object Object]" in the 계산주의 line. readableStringArray
+   * now maps each non-string element to the fail-closed token first.
+   * --------------------------------------------------------------------- */
+  {
+    const saju = structuredClone(baseSaju)
+    saju.policy.pending_approval = ['day_boundary', { corrupted: true }, 42]
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never leaks "[object Object]" from a wrong-typed element inside saju.policy.pending_approval -- shows the fail-closed token for that element instead (13th independent review MEDIUM-2)',
+      !html.includes('[object Object]') && html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+
+  /* ---------------------------------------------------------------------
+   * 13차 독립 리뷰 LOW-1: `saju.flags.hour_unknown`가 boolean이 아니면
+   * (레거시 레코드는 flags 자체가 {}일 수 있음) 이전 구현은 falsy 값이면
+   * 무조건 "출생시간 확인됨"으로 단정했다. 명시적 boolean일 때만 그
+   * 사실을 말하고, 그 외엔 실패 토큰을 보여준다.
+   * --------------------------------------------------------------------- */
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = {}
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never fabricates "출생시간 확인됨" when saju.flags.hour_unknown is missing (not boolean) -- shows the fail-closed token instead (13th independent review LOW-1)',
+      !html.includes('출생시간 확인됨') && html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = { hour_unknown: 'yes' }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never fabricates a birth-time fact from a wrong-typed (string) hour_unknown -- shows the fail-closed token instead (13th independent review LOW-1)',
+      !html.includes('출생시간 확인됨') && !html.includes('출생시간 미상') && html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = { hour_unknown: true }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard shows the genuine 출생시간 미상 line when hour_unknown is really boolean true',
+      html.includes('출생시간 미상'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = { hour_unknown: false }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard shows the genuine 출생시간 확인됨 line when hour_unknown is really boolean false',
+      html.includes('출생시간 확인됨'),
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -2395,6 +2558,30 @@ function detailsRange(html, classMarker) {
     /function computedText\(value: unknown\): string \| null \{[\s\S]{0,200}return UNREADABLE_COMPUTED_VALUE/.test(
       doctorViewSrc,
     ),
+  )
+
+  /*
+   * 13차 독립 리뷰 MEDIUM-2/MEDIUM-3: `asArray<string>(...)`는 컨테이너가
+   * 배열인지만 검사할 뿐 원소 타입은 보장하지 않는다 -- routing.
+   * secondary_screens/saju.policy.pending_approval처럼 검증되지 않은 저장
+   * 데이터에서 온 배열을 그대로 .join(', ')하면 wrong-typed 원소가
+   * "[object Object]"로 그대로 노출된다. MyungriCompactCard의 pendingLabels
+   * 는 이미 위에서 behavioral하게 검증했으므로, DoctorView.tsx 메인 렌더
+   * 블록에만 있는 나머지 3개 호출부(secondary_screens join, 명리 검토
+   * grid의 pending_approval join, JudgmentPanel에 넘기는
+   * myungri_pending_approval)는 구조 확인으로 보완한다.
+   */
+  assert(
+    'resilience: routing.secondary_screens join이 readableStringArray를 거친다 (bare asArray().join() 대신, 13th independent review MEDIUM-2)',
+    doctorViewSrc.includes("readableStringArray(asArray(routing.secondary_screens)).join(', ')"),
+  )
+  assert(
+    'resilience: 명리 검토 grid의 pending_approval join이 readableStringArray를 거친다 (13th independent review MEDIUM-3)',
+    doctorViewSrc.includes("대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}."),
+  )
+  assert(
+    'resilience: JudgmentPanel에 넘기는 myungri_pending_approval이 readableStringArray를 거친다 (13th independent review MEDIUM-3)',
+    doctorViewSrc.includes('myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),'),
   )
 }
 

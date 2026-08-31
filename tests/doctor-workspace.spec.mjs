@@ -838,6 +838,54 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
   })
 
   /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus only ever
+   * produces source==='WOMEN_SAFETY_01' when the raw WOMEN_SAFETY_01 answer
+   * is an array -- a legacy single-select string answer paired with that
+   * source is a combination the real computation could never produce.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner 13차 HIGH-1: derived.source="WOMEN_SAFETY_01" paired with a non-array raw answer (legacy single-select) fabricates a false all-clear and DOES trigger the "cannot read" notice', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.reproductive_status = 'pregnant'
+    mutated.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: 'pregnant',
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 LOW-3: a raw reproductive answer that exists (non-null)
+   * but is not an array -- so deriveReproductiveStatus's Array.isArray
+   * check fails and it produces the exact same source:null/all-null object
+   * it would for a patient who was never asked at all -- is "answered but
+   * never processed", not "doesn't apply". The previous implementation
+   * treated source:null as always meaning genuinely not-applicable, so this
+   * combination silently rendered as the plain all-clear message, hiding
+   * the fact that the patient actually reported something.
+   * ------------------------------------------------------------------- */
+  test('CommonSafetyBanner 13차 LOW-3: a non-array raw reproductive answer that exists, with derived.source left null (never computed for this shape), DOES trigger the "cannot read" notice instead of the plain all-clear message', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.reproductive_status.reproductive_status = 'pregnant'
+    mutated.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
+    assert.ok(!html.includes('특이 안전정보 없음'))
+    assert.ok(html.includes('안전정보 일부를 읽을 수 없습니다'))
+  })
+
+  /* -----------------------------------------------------------------------
    * 9차 독립 리뷰 자체 회귀분석 (이 라운드 자체 수정에서 발견): 7개 플래그
    * 전부를 재계산하도록 isFlagsConsistentWithResponses를 확장하면서
    * r.safety_flags.red_flag_general / r.modules.gi / r.modules.bowel /
@@ -1267,6 +1315,32 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     const html = renderWith(base, { payload: mutated })
     assert.ok(!html.includes('-4 / 10'))
     assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 LOW-4: LBP_12는 NumericScale 문항으로 0~10 정수 눈금만
+   * 만들 수 있다 -- 12차의 범위 검사(0~10)만으로는 5.5 같은 in-range지만
+   * 비정수인 값이 그대로 "원점수"로 렌더돼(확인 필요 표시 없이) 실제로
+   * 답하지 않은 값을 지어낼 수 있었다.
+   * ------------------------------------------------------------------- */
+  test('PainWorkspace LOW-4 (13th review): an in-range but non-integer (5.5) modules.lbp.recovery_expectation is never displayed as a real reported score', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules.lbp.recovery_expectation = 5.5
+    const html = renderWith(base, { payload: mutated })
+    assert.ok(!html.includes('5.5 / 10'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  test('PainWorkspace LOW-4 (13th review): a genuine integer (7) modules.lbp.recovery_expectation still renders normally (the LOW-4 fix does not false-positive on real scores)', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules.lbp.recovery_expectation = 7
+    const html = renderWith(base, { payload: mutated })
+    // React SSR inserts a hydration-boundary comment between adjacent JSX
+    // expression/text siblings ({recoveryScore} then literal " / 10"), so
+    // the rendered HTML is "7<!-- --> / 10", not the literal string "7 / 10".
+    assert.ok(html.includes('>7<!-- --> / 10'))
+    assert.ok(html.includes('원점수'))
+    assert.ok(!html.includes('확인 필요(값 형식 오류)'))
   })
 }
 

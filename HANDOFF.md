@@ -7222,6 +7222,115 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 20차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료, delta-focused closing gate)
+
+Gomars93가 PR #24 코멘트로 지시: 20차부터는 매번 저장소 전체를 다시
+훑는 비용이 큰 "전체 재검토" 패턴 대신, **delta-focused closing
+gate**로 전환한다 — (1) 직전(19차) 리뷰의 HIGH/MEDIUM이 실제로
+닫혔는지, (2) `03c3231..9d2be919` 변경 코드/테스트와 그 직접
+호출부/소비자, (3) 이 delta가 직접 건드리는 불변식(cross-patient/visit
+stale-state 격리, 손상된 원소/객체 fail-closed, error-boundary-external
+렌더 경로, mutation `.catch()` 복구, no-write-on-view)만 좁혀서 본다.
+전체 `npm run test:all` 재실행 대신 이미 그린인 CI(9d2be919의
+build-and-test/build-and-deploy)를 근거로 삼되, assertion이 vacuous해
+보이거나 targeted reproduction이 필요하면 예외적으로 실행한다. 이번
+라운드는 이미 launch되어 있던(구 방식) 리뷰 에이전트를 즉시 이
+스코프로 redirect해 진행했다.
+
+**(HIGH-1, 이 delta-focused 스코프 안에서도 "error-boundary-external
+render path" 불변식에 정확히 해당) `getSubmission()`이 완전히 무가드
+passthrough였다.** `server/store.js`의 `getSubmission`은
+`readRecord()`를 그대로 반환하고, `readRecord()`는 디스크 JSON을
+`JSON.parse`만 할 뿐 어떤 필드도 검증하지 않는다 — 즉 손으로 수정된
+`.data/submissions/<id>.json` 파일이 있으면 이 finding은 **정상 서버
+코드 경로에서 그대로 재현된다**(19차 HIGH-1처럼 버전 skew에서만
+재현되는 것과 다르다). 이 결과는 `DoctorRecordFallback`(error
+boundary 자신의 `fallback` prop 그 자체)에서 `record.patient_label`/
+`record.status`를 bare JSX child로 렌더한다 — React는 fallback 렌더
+도중의 throw를 잡지 못하므로, 상태가 객체(`{code:'x'}`)이거나
+patient_label이 객체이면 그 throw가 `DoctorRecordErrorBoundary`를 뚫고
+`PatientErrorBoundary`(`src/App.tsx`)까지 올라가 원장 화면 전체가
+환자용 "문제가 발생했습니다" 화면으로 바뀐다.
+
+**(MEDIUM-1) 같은 지점에서 `created_at`이 없거나 형식이 다르면
+`new Date(...).toLocaleString('ko-KR')`가 throw하지는 않지만 리터럴
+"Invalid Date"를 그대로 노출했다**(governing task 정책 5 위반).
+
+**(MEDIUM-2) 같은 지점의 `{record.status}`가 raw enum을 그대로
+렌더했다** — `statusLabel()`(제출목록에서도 쓰는 함수) 자체의
+`default: return status`도 알려지지 않은 값을 그대로 echo했다.
+
+**근본 수정**: `getSubmission()`에 컨테이너 가드(`invalidResponseShape()`)
+추가. `DoctorView.tsx`에 `formatTimestamp`/`safeStringOrFallback`
+헬퍼를 신설하고 `statusLabel`을 `unknown` 파라미터로 넓혀 `default`를
+'확인 필요'로 fail-closed시켰다. `DoctorRecordFallback`의
+patient_label/created_at/status 세 줄을 전부 이 헬퍼들로 교체했다.
+**같은 파일 안의 형제 지점도 함께 스윕**했다 — 제출목록 행의
+`s.patient_label`/`new Date(s.created_at)...`, EMR-ready 토스트의
+`readyToast.patientLabel`, 재진 큐 행의 `rv.createdAt`, 발급된
+follow-up 링크의 `issuedSession.expiresAt` 전부 동일 클래스였다.
+`relativeTime()`도 `unknown`을 받아 비문자열/파싱불가 입력에
+"NaN일 전" 대신 빈 문자열로 fail-closed하도록 강화했다.
+
+**(LOW-1) `TodayQueueSection.tsx`(19차가 이미 수정한 파일)의
+`identities[task.patient_uuid]` 조회와 `data-patient-uuid`/`title`
+DOM 속성이 여전히 무가드였다** — `patientLabel()` 자신의 조회는
+19차가 고쳤지만 형제 지점을 놓쳤다. 문자열일 때만 조회/속성을
+채우도록 수정.
+
+**(LOW-2) `MessagingPanel.tsx`의 `attempt_count`/`max_attempts`/
+`error_code`가 18차가 고친 channel/status 라벨과 달리 여전히 raw
+template-literal interpolation이었다** — 손상된 레코드에서
+"(undefined/undefined회 시도)"나 "[object Object]"가 노출될 수 있었다.
+`safeCount`/`safeErrorCode` 가드 추가.
+
+**(LOW-3) `queueRevisitMessage`/`retryRevisitMessage`/
+`cancelRevisitMessage`도 응답 컨테이너를 검증하지 않았다** — LOW-6와
+동일 클래스. 셋 다 컨테이너 가드 추가.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 `DoctorRecordFallback`
+실제 렌더 테스트 4개(+4 — status/patient_label이 객체일 때 "확인 필요",
+created_at 손상 시 "Invalid Date" 대신 "확인 필요", 알려지지 않은
+status 문자열이 그대로 새지 않고 "확인 필요") + 기존 "shows the known
+status" assertion을 raw enum('viewed')이 아니라 한국어 라벨('확인함')
+기대값으로 갱신(이 라운드 자신의 fix로 인해 깨졌던 낡은 assertion).
+`tests/today-queue.spec.mjs`에 4개(+4, 31→35 — 비문자열 patient_uuid가
+링크 액션을 렌더하지 않는지, data-patient-uuid/title에
+"[object Object]"가 새지 않는지, 정상 문자열은 그대로 동작하는지).
+`tests/save-conflict.spec.mjs`에 구조적 가드 테스트 11개(+11, 63→74 —
+getSubmission/3개 메시징 함수 컨테이너 가드, statusLabel/
+formatTimestamp/safeStringOrFallback/relativeTime 존재 및 fail-closed
+동작, DoctorRecordFallback이 이 헬퍼들을 실제로 쓰는지, 남은
+`new Date(...).toLocaleString('ko-KR')` 호출부가 0개인지, 제출목록/
+readyToast의 safeStringOrFallback 적용, MessagingPanel의 safeCount/
+safeErrorCode 적용).
+
+**실사용 재검증**: 이번 HIGH-1은 19차의 나머지 finding들과 달리
+정상 서버 코드 경로(`server/store.js`의 `readRecord`가 디스크 JSON을
+검증 없이 그대로 반환)에서 재현 가능하므로, `tests/.r20-live-repro.mjs`
+(신규, gitignore의 `tests/.r20-*` 패턴)로 **진짜 손상된 저장 파일**을
+만들어 라이브 재현했다 — 제출 후 `.data/submissions/<id>.json`을 직접
+열어 `status`를 객체로, `patient_label`을 객체로, `created_at`을
+삭제하고, `submission.routing`도 `null`로 만들어(`isDoctorPayloadShapeUsable`이
+`payloadShapeOk`를 false로 만들어야 `DoctorRecordFallback`이 실제로
+렌더된다 — 처음 시도에서는 이걸 놓쳐 정상 tab content가 렌더되며
+"확인 필요"가 안 보여 자체 재현이 실패했고, 원인을 찾아 corruption
+범위를 넓힌 뒤 재실행해 통과를 확인했다) 1440×900/1024×768/834×1112
+3개 뷰포트 + 제출목록 뷰에서 page error 0건, 원시 "[object Object]"/
+"undefined"/"Invalid Date" 누출 0건, 명시적 "확인 필요" 표시를 모두
+라이브로 확인했다.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — save-conflict 74/74, doctor 887/887, today-queue 35/35
+포함), `npm run build`/`build:preview` clean, `tablet core` pytest
+80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 21차 독립 `model:opus`
+리뷰를 새로 호출한다(Gomars93 지시대로 delta-focused). CLEAN이면
+PR #24에 이 배치의 종료 상태 코멘트를 남긴다. DO NOT MERGE, DO NOT
+PUSH MAIN 그대로 유지 — 최종 merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

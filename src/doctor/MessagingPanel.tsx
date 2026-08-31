@@ -75,6 +75,18 @@ function statusLabelOrFallback(status: unknown): string {
     : '확인 필요'
 }
 
+// 20차 독립 리뷰 LOW-2: 18차가 이 렌더 지점의 channel/status는 가드했지만
+// attempt_count/max_attempts/error_code는 그대로 남아있었다 -- 손상/레거시
+// 레코드에서 카운터가 없거나 error_code가 문자열이 아니면 "(undefined/
+// undefined회 시도)"나 "[object Object]"가 그대로 노출됐다(governing task
+// 정책 5 위반).
+function safeCount(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '확인 필요'
+}
+function safeErrorCode(value: unknown): string {
+  return typeof value === 'string' ? value : '확인 필요'
+}
+
 export function MessagingPanel({ visitId, patientId, followUpToken, link }: MessagingPanelProps) {
   const [phone, setPhone] = useState('')
   const [messages, setMessages] = useState<MessageRecord[] | null>(null)
@@ -192,7 +204,7 @@ export function MessagingPanel({ visitId, patientId, followUpToken, link }: Mess
                 {channelLabelOrFallback(m.channel)}
                 {m.fallback_channel ? ` → ${channelLabelOrFallback(m.fallback_channel)} 대체 발송` : ''} —{' '}
                 {statusLabelOrFallback(m.status)}
-                {m.status === 'FAILED' || m.status === 'QUEUED' ? ` (${m.attempt_count}/${m.max_attempts}회 시도)` : ''}
+                {m.status === 'FAILED' || m.status === 'QUEUED' ? ` (${safeCount(m.attempt_count)}/${safeCount(m.max_attempts)}회 시도)` : ''}
                 {/* error_code is already a sanitized machine-readable class
                     (never a raw provider response -- see MessageRecord's own
                     field doc), safe to show staff as-is. Surfacing it here
@@ -200,7 +212,7 @@ export function MessagingPanel({ visitId, patientId, followUpToken, link }: Mess
                     provider-side template/config problem
                     (provider_http_4xx/bizm_channel_unverified) from a
                     transient network issue worth just retrying. */}
-                {m.status === 'FAILED' && m.error_code ? ` — 오류: ${m.error_code}` : ''}
+                {m.status === 'FAILED' && m.error_code ? ` — 오류: ${safeErrorCode(m.error_code)}` : ''}
               </span>
               {(m.status === 'FAILED' || m.status === 'QUEUED') && (
                 <button

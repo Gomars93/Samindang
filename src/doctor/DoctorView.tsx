@@ -2256,9 +2256,18 @@ export function DoctorRecordFallback({ record }: { record: SubmissionRecord | nu
         </p>
         {record && (
           <ul>
-            {record.patient_label && <li>환자: {record.patient_label}</li>}
-            <li>제출 시각: {new Date(record.created_at).toLocaleString('ko-KR')}</li>
-            <li>상태: {record.status}</li>
+            {/*
+              20차 독립 리뷰 HIGH-1/MEDIUM-1/MEDIUM-2: 이 세 줄은 이
+              fallback(error boundary 자신의 fallback prop) 안에서
+              렌더된다 -- React는 fallback 렌더 도중의 throw를 잡지
+              못하므로, 이 컴포넌트 자체가 이 배치가 만든 "안전한 착지
+              화면"이다. record는 SubmissionRecord 타입이지만 그건
+              컴파일 타임 가정일 뿐 -- 손상/레거시 저장 파일에서 온
+              record는 이 필드들이 그 타입과 다를 수 있다.
+            */}
+            {record.patient_label && <li>환자: {safeStringOrFallback(record.patient_label)}</li>}
+            <li>제출 시각: {formatTimestamp(record.created_at)}</li>
+            <li>상태: {statusLabel(record.status)}</li>
           </ul>
         )}
         <p>
@@ -2282,7 +2291,14 @@ export function DoctorRecordFallback({ record }: { record: SubmissionRecord | nu
 
 const POLL_MS = 5000
 
-function statusLabel(status: SubmissionSummary['status']): string {
+// 20차 독립 리뷰 MEDIUM-2: `status`가 서버 응답 경로에서 컨테이너/원소
+// 검증은 통과했지만 그 자체가 알려진 4개 값 중 하나라는 보장은 없다
+// (예: 손상/레거시 레코드). 이전엔 `default: return status`로 원본 값을
+// 그대로 노출했다 -- 알려진 값이 아니면(문자열이 아닌 경우 포함) "확인
+// 필요"로 fail-closed한다. 이 함수의 유일한 두 호출부
+// (DoctorRecordFallback, 제출목록)에는 이제 이 함수만 거치면 되므로
+// 파라미터를 unknown으로 넓혔다.
+function statusLabel(status: unknown): string {
   switch (status) {
     case 'new':
       return '신규'
@@ -2293,13 +2309,35 @@ function statusLabel(status: SubmissionSummary['status']): string {
     case 'completed':
       return '완료'
     default:
-      return status
+      return '확인 필요'
   }
 }
 
+// 20차 독립 리뷰 HIGH-1/MEDIUM-1 계열: 아래 두 헬퍼는 이 파일에서
+// created_at/patient_label을 렌더링하는 모든 지점(DoctorRecordFallback
+// 포함 -- error boundary의 fallback prop 자체라 여기서 throw하면 어떤
+// boundary도 못 잡는다)이 공유한다. 서버가 항상 유효한 값을 보내는
+// 정상 경로에서는 재현되지 않지만, 손상/레거시 저장 파일이나 버전
+// skew에서는 이 필드들의 타입/형식이 보장되지 않는다.
+function formatTimestamp(value: unknown): string {
+  if (typeof value !== 'string') return '확인 필요'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '확인 필요' : d.toLocaleString('ko-KR')
+}
+
+function safeStringOrFallback(value: unknown): string {
+  return typeof value === 'string' ? value : '확인 필요'
+}
+
 /** 상대 시간(예: '방금 전' / '3분 전' / '2시간 전' / '1일 전'). 절대 시각은 별도로 항상 같이 보여준다. */
-function relativeTime(iso: string): string {
+function relativeTime(iso: unknown): string {
+  // 20차 독립 리뷰: iso가 문자열이 아니거나 파싱 불가면 이전엔 NaN 연산이
+  // 그대로 흘러 "NaN일 전"이라는 원시 값을 노출했다(governing task 정책
+  // 5 위반) -- 절대 시각(formatTimestamp)이 이미 "확인 필요"로 옆에
+  // 표시되므로, 이 보조 텍스트는 빈 문자열로 조용히 생략한다.
+  if (typeof iso !== 'string') return ''
   const diffMs = Date.now() - new Date(iso).getTime()
+  if (Number.isNaN(diffMs)) return ''
   const min = Math.floor(diffMs / 60000)
   if (min < 1) return '방금 전'
   if (min < 60) return `${min}분 전`
@@ -2538,7 +2576,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               id: firstId,
               patientLabel:
                 newlyReady.length === 1
-                  ? (result.data.find((s) => s.id === firstId)?.patient_label ?? '')
+                  ? // 20차 독립 리뷰: patient_label 렌더 지점과 동일한 클래스 --
+                    // listSubmissions는 원소가 객체임은 보장하지만 patient_label의
+                    // 타입까지는 검증하지 않는다. readyToast.patientLabel은
+                    // 3155에서 그대로 렌더된다.
+                    safeStringOrFallback(result.data.find((s) => s.id === firstId)?.patient_label ?? '')
                   : `${newlyReady.length}건`,
             })
           }
@@ -3248,7 +3290,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                     {unreadReadyIds.has(s.id) && (
                       <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
                     )}
-                    {s.patient_label}{' '}
+                    {safeStringOrFallback(s.patient_label)}{' '}
                     {s.requires_staff_check === 'unknown'
                       ? '⚠ 확인 필요(계산값 읽기 불가)'
                       : s.requires_staff_check
@@ -3256,7 +3298,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                         : ''}
                   </span>
                   <span className="doctorField__value">
-                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
+                    {/* 20차 독립 리뷰: fallback과 동일한 클래스 -- listSubmissions는
+                        원소가 객체임은 보장하지만 patient_label/created_at의
+                        타입까지는 검증하지 않는다. */}
+                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({formatTimestamp(s.created_at)})
                     {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
                   </span>
                 </button>
@@ -3294,7 +3339,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                   {rv.needsAttention && ' · 추가 확인 필요'}
                 </span>
                 <span className="doctorField__value">
-                  {relativeTime(rv.createdAt)} ({new Date(rv.createdAt).toLocaleString('ko-KR')})
+                  {relativeTime(rv.createdAt)} ({formatTimestamp(rv.createdAt)})
                   {/* Round 8 operational metadata -- never clinical. */}
                   {/*
                    * 17차 독립 리뷰 FINDING-4: server/followUpSessionStore.js의
@@ -3478,7 +3523,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             return (
             <div className="doctor__revisitSession__issued">
               <p>
-                환자용 링크 (만료: {new Date(issuedSession.expiresAt).toLocaleString('ko-KR')})
+                환자용 링크 (만료: {formatTimestamp(issuedSession.expiresAt)})
               </p>
               {followUpLink === null ? (
                 <p className="doctor__revisitSession__error" role="alert">

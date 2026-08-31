@@ -721,4 +721,99 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 }
 
+// ---------- 12. 20차 독립 리뷰 (delta-focused closing gate) ----------
+// HIGH-1/MEDIUM-1/MEDIUM-2: DoctorRecordFallback (error-boundary-external
+// render path) reads getSubmission()'s raw output -- the one doctor read
+// path the 19차 "exhaustive sweep" left completely unguarded. Genuine
+// render-level proof of the fallback fix lives in tests/doctor.spec.mjs
+// (DoctorRecordFallback is bundled there); this section covers the
+// non-renderable serverClient.ts/MessagingPanel.tsx pieces of the same
+// round using the established structural-regex fallback.
+{
+  const src = fs.readFileSync('src/lib/serverClient.ts', 'utf8')
+
+  test('serverClient.ts 20차 HIGH-1: getSubmission guards its response container before DoctorRecordFallback (error-boundary-external) reads it', () => {
+    const fnStart = src.indexOf('export function getSubmission(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(result\.data == null \|\| typeof result\.data !== 'object'\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 20차 LOW-3: queueRevisitMessage/retryRevisitMessage/cancelRevisitMessage each guard their response container before MessagingPanel.tsx\'s upsertMessage pushes it into state', () => {
+    for (const fnName of ['queueRevisitMessage', 'retryRevisitMessage', 'cancelRevisitMessage']) {
+      const fnStart = src.indexOf(`export function ${fnName}(`)
+      assert.ok(fnStart !== -1, `${fnName} must exist`)
+      const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+      const fn = src.slice(fnStart, fnEnd === -1 ? fnStart + 1000 : fnEnd)
+      assert.ok(
+        /if \(result\.data == null \|\| typeof result\.data !== 'object'\) return invalidResponseShape\(\)/.test(fn),
+        `${fnName} must guard its response container`,
+      )
+    }
+  })
+}
+
+{
+  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx 20차 MEDIUM-2: statusLabel falls back to "확인 필요" for an unrecognized/non-string status instead of echoing the raw value', () => {
+    const fnStart = src.indexOf('function statusLabel(status: unknown): string {')
+    assert.ok(fnStart !== -1, 'statusLabel must accept unknown, not the old SubmissionSummary[\'status\']-typed signature')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.match(fn, /default:\s*\n\s*return '확인 필요'/)
+  })
+
+  test('DoctorView.tsx 20차 HIGH-1/MEDIUM-1: formatTimestamp/safeStringOrFallback exist and fail closed to "확인 필요" for non-string/invalid input', () => {
+    assert.match(src, /function formatTimestamp\(value: unknown\): string \{/)
+    assert.match(src, /function safeStringOrFallback\(value: unknown\): string \{/)
+  })
+
+  test('DoctorView.tsx 20차 HIGH-1/MEDIUM-1/MEDIUM-2: DoctorRecordFallback routes patient_label/created_at/status through the guarded helpers, not raw field access', () => {
+    const fnStart = src.indexOf('export function DoctorRecordFallback(')
+    const fnEnd = src.indexOf('\nconst POLL_MS', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.match(fn, /safeStringOrFallback\(record\.patient_label\)/)
+    assert.match(fn, /formatTimestamp\(record\.created_at\)/)
+    assert.match(fn, /statusLabel\(record\.status\)/)
+  })
+
+  test('DoctorView.tsx 20차: every remaining `new Date(...).toLocaleString(\'ko-KR\')` call site was replaced with formatTimestamp (no raw "Invalid Date" leak sites left)', () => {
+    assert.equal((src.match(/new Date\([^)]*\)\.toLocaleString\('ko-KR'\)/g) ?? []).length, 0)
+  })
+
+  test('DoctorView.tsx 20차: relativeTime accepts unknown and fails closed to empty string on a non-string/invalid value (no "NaN일 전" leak)', () => {
+    const fnStart = src.indexOf('function relativeTime(iso: unknown): string {')
+    assert.ok(fnStart !== -1, 'relativeTime must accept unknown, not the old string-typed signature')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.match(fn, /if \(typeof iso !== 'string'\) return ''/)
+  })
+
+  test('DoctorView.tsx 20차: the submissions-list row routes patient_label through safeStringOrFallback (same fail-closed class as DoctorRecordFallback)', () => {
+    assert.match(src, /\{safeStringOrFallback\(s\.patient_label\)\}\{' '\}/)
+  })
+
+  test('DoctorView.tsx 20차: the readyToast.patientLabel (rendered raw at the EMR-ready toast) also routes through safeStringOrFallback', () => {
+    assert.match(src, /safeStringOrFallback\(result\.data\.find\(\(s\) => s\.id === firstId\)\?\.patient_label \?\? ''\)/)
+  })
+}
+
+{
+  const src = fs.readFileSync('src/doctor/MessagingPanel.tsx', 'utf8')
+
+  test('MessagingPanel.tsx 20차 LOW-2: attempt_count/max_attempts render through safeCount, not raw template-literal interpolation (no "(undefined/undefined회 시도)" leak)', () => {
+    assert.match(src, /function safeCount\(value: unknown\): string \{/)
+    assert.match(
+      src,
+      /\$\{safeCount\(m\.attempt_count\)\}\/\$\{safeCount\(m\.max_attempts\)\}회 시도/,
+    )
+  })
+
+  test('MessagingPanel.tsx 20차 LOW-2: error_code renders through safeErrorCode, not raw template-literal interpolation (no "[object Object]" leak)', () => {
+    assert.match(src, /function safeErrorCode\(value: unknown\): string \{/)
+    assert.match(src, /오류: \$\{safeErrorCode\(m\.error_code\)\}/)
+  })
+}
+
 console.log(`\n${passed} save-conflict assertions passed.`)

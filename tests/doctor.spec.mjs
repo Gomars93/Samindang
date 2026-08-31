@@ -2869,7 +2869,9 @@ function detailsRange(html, classMarker) {
   assert('resilience fallback: shows the "cannot display" heading', html.includes('상세 임상 화면을 표시할 수 없습니다'))
   assert('resilience fallback: explicitly states it does not guess a clinical profile', html.includes('추정해서 보여주지'))
   assert('resilience fallback: shows the known patient_label', html.includes('홍길동'))
-  assert('resilience fallback: shows the known status', html.includes('viewed'))
+  // 20차 독립 리뷰 MEDIUM-2: status는 이제 raw enum이 아니라 statusLabel()을
+  // 거친 한국어 라벨로 렌더된다 -- 'viewed' -> '확인함'.
+  assert('resilience fallback: shows the known status as its Korean label, not the raw enum', html.includes('확인함'))
   assert('resilience fallback: never mentions pain/herbal/mixed view-profile labels', !/통증|한약·전신|혼합/.test(html))
 
   const recordWithoutPatient = { ...recordWithPatient, patient_id: undefined }
@@ -2881,6 +2883,45 @@ function detailsRange(html, classMarker) {
 
   const htmlNoRecord = renderToString(React.createElement(DoctorRecordFallback, { record: undefined }))
   assert('resilience fallback: record=undefined still renders without throwing', htmlNoRecord.includes('상세 임상 화면을 표시할 수 없습니다'))
+
+  /* -----------------------------------------------------------------------
+   * 20차 독립 리뷰 HIGH-1/MEDIUM-1/MEDIUM-2: this fallback is rendered BOTH
+   * as DoctorRecordErrorBoundary's normal child AND as its own `fallback`
+   * prop -- React cannot catch a throw during fallback rendering, so a
+   * corrupted/legacy stored record whose patient_label/status/created_at
+   * don't match SubmissionRecord's compile-time type used to crash here
+   * uncatchably (propagating past this boundary to PatientErrorBoundary,
+   * replacing the whole doctor workspace with the patient-facing screen).
+   * These prove the fix: every field type this component reads is now
+   * defended, not just the ones covered above.
+   * -------------------------------------------------------------------- */
+  const corruptedStatus = { ...recordWithPatient, status: { code: 'weird' } }
+  const htmlCorruptedStatus = renderToString(React.createElement(DoctorRecordFallback, { record: corruptedStatus }))
+  assert(
+    'resilience fallback HIGH-1: an object status does not throw (React child requires string/number), falls back to "확인 필요"',
+    htmlCorruptedStatus.includes('확인 필요'),
+  )
+
+  const corruptedPatientLabel = { ...recordWithPatient, patient_label: { name: 'x' } }
+  const htmlCorruptedPatientLabel = renderToString(React.createElement(DoctorRecordFallback, { record: corruptedPatientLabel }))
+  assert(
+    'resilience fallback HIGH-1: an object patient_label does not throw, falls back to "확인 필요" instead of rendering the object',
+    htmlCorruptedPatientLabel.includes('확인 필요') && !htmlCorruptedPatientLabel.includes('[object Object]'),
+  )
+
+  const missingCreatedAt = { ...recordWithPatient, created_at: undefined }
+  const htmlMissingCreatedAt = renderToString(React.createElement(DoctorRecordFallback, { record: missingCreatedAt }))
+  assert(
+    'resilience fallback MEDIUM-1: a missing/invalid created_at renders "확인 필요", never the literal "Invalid Date"',
+    htmlMissingCreatedAt.includes('확인 필요') && !htmlMissingCreatedAt.includes('Invalid Date'),
+  )
+
+  const unrecognizedStatus = { ...recordWithPatient, status: 'archived_legacy_value' }
+  const htmlUnrecognizedStatus = renderToString(React.createElement(DoctorRecordFallback, { record: unrecognizedStatus }))
+  assert(
+    'resilience fallback MEDIUM-2: a string status outside the known enum falls back to "확인 필요", not the raw string leaked verbatim',
+    htmlUnrecognizedStatus.includes('확인 필요') && !htmlUnrecognizedStatus.includes('archived_legacy_value'),
+  )
 }
 
 /* -------------------------------------------------------------------------

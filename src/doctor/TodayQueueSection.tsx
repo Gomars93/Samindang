@@ -100,7 +100,10 @@ export function TodayQueueSection({ tasks, loading, error, identities = {}, onId
               className={`doctorField doctor__todayQueue__row doctor__todayQueue__row--${
                 isValidTaskType(task.task_type) ? task.task_type.toLowerCase() : 'unknown'
               }`}
-              data-patient-uuid={task.patient_uuid}
+              // 20차 독립 리뷰 LOW-1: patient_uuid가 문자열이 아니면 DOM
+              // 속성값으로 stringify되어 "[object Object]"가 노출됐다 --
+              // patientLabel(round 19)과 동일한 이유로 문자열일 때만 넘긴다.
+              data-patient-uuid={typeof task.patient_uuid === 'string' ? task.patient_uuid : undefined}
             >
               <span className="doctorField__label">
                 {isValidTaskType(task.task_type) ? CRM_TASK_TYPE_LABEL[task.task_type] : '확인 필요'} ·{' '}
@@ -112,15 +115,20 @@ export function TodayQueueSection({ tasks, loading, error, identities = {}, onId
                 {task.owner_clinician ? ` · 소속: ${task.owner_clinician}` : ''}
                 {task.due_at ? ` · ${dueStateLabel(task, now)}` : ''}
               </span>
-              <span className="doctorField__value doctorField__value--muted" title={task.patient_uuid}>
+              <span
+                className="doctorField__value doctorField__value--muted"
+                title={typeof task.patient_uuid === 'string' ? task.patient_uuid : undefined}
+              >
                 {patientLabel(task, identities)}
               </span>
-              {!identities[task.patient_uuid]?.resolved && onIdentityLinked && (
-                <PatientIdentityLinkAction
-                  patientUuid={task.patient_uuid}
-                  onLinked={onIdentityLinked}
-                />
-              )}
+              {/* 20차 독립 리뷰 LOW-1: `identities[task.patient_uuid]`도 patientLabel과
+                  동일한 key-collision 이유로 문자열일 때만 조회한다 -- 링크
+                  액션 자체도 유효한 문자열 patient_uuid가 있을 때만 의미가 있다. */}
+              {typeof task.patient_uuid === 'string' &&
+                !identities[task.patient_uuid]?.resolved &&
+                onIdentityLinked && (
+                  <PatientIdentityLinkAction patientUuid={task.patient_uuid} onLinked={onIdentityLinked} />
+                )}
             </div>
           ))}
         </div>

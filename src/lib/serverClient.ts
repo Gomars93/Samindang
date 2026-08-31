@@ -164,7 +164,17 @@ export type SubmissionRecord = {
 }
 
 export function getSubmission(id: string): Promise<ServerResult<SubmissionRecord>> {
-  return request(`/api/submissions/${id}`)
+  // 20차 독립 리뷰 HIGH-1: 이 함수는 검증 없는 bare passthrough였다 --
+  // DoctorRecordFallback(error boundary 자신의 fallback prop)이 이
+  // 결과를 그대로 렌더하므로, 컨테이너가 손상되면 React가 잡을 수 없는
+  // 위치에서 크래시했다. 컨테이너만 방어한다(개별 필드 타입은
+  // DoctorView.tsx의 렌더 지점에서 formatTimestamp/statusLabel/
+  // safeStringOrFallback으로 각각 방어).
+  return request<SubmissionRecord>(`/api/submissions/${id}`).then((result) => {
+    if (!result.ok) return result
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result
+  })
 }
 
 export function setSubmissionStatus(
@@ -930,7 +940,7 @@ export function queueRevisitMessage(
   visitId: string,
   params: { patientId: string; phone: string; followUpToken: string; link: string; channel?: MessageChannel },
 ): Promise<ServerResult<MessageRecord>> {
-  return request(`/api/visits/${encodeURIComponent(visitId)}/messages`, {
+  return request<MessageRecord>(`/api/visits/${encodeURIComponent(visitId)}/messages`, {
     method: 'POST',
     body: JSON.stringify({
       patient_id: params.patientId,
@@ -939,6 +949,14 @@ export function queueRevisitMessage(
       link: params.link,
       channel: params.channel,
     }),
+  }).then((result) => {
+    if (!result.ok) return result
+    // 20차 독립 리뷰 LOW-3: MessagingPanel.tsx의 upsertMessage가
+    // `result.data`를 검증 없이 그대로 메시지 목록 state에 밀어넣는다 --
+    // 그 다음 렌더에서 `m.message_id` 등 필드 접근이 그대로 throw할 수
+    // 있었다. retryRevisitMessage/cancelRevisitMessage도 동일.
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result
   })
 }
 
@@ -957,12 +975,22 @@ export function listVisitMessages(visitId: string): Promise<ServerResult<{ messa
 }
 
 export function retryRevisitMessage(messageId: string, phone: string, link: string): Promise<ServerResult<MessageRecord>> {
-  return request(`/api/messages/${encodeURIComponent(messageId)}/retry`, {
+  // 20차 독립 리뷰 LOW-3: queueRevisitMessage와 동일한 이유.
+  return request<MessageRecord>(`/api/messages/${encodeURIComponent(messageId)}/retry`, {
     method: 'POST',
     body: JSON.stringify({ phone, link }),
+  }).then((result) => {
+    if (!result.ok) return result
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result
   })
 }
 
 export function cancelRevisitMessage(messageId: string): Promise<ServerResult<MessageRecord>> {
-  return request(`/api/messages/${encodeURIComponent(messageId)}/cancel`, { method: 'POST' })
+  // 20차 독립 리뷰 LOW-3: queueRevisitMessage와 동일한 이유.
+  return request<MessageRecord>(`/api/messages/${encodeURIComponent(messageId)}/cancel`, { method: 'POST' }).then((result) => {
+    if (!result.ok) return result
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result
+  })
 }

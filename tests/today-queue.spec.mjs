@@ -352,4 +352,44 @@ test('19차 LOW-9 sanity: a genuine string patient_uuid still truncates and rend
   assert.ok(!html.includes('확인 필요'))
 })
 
+// ---------- 7. 20차 LOW-1: non-string patient_uuid must not collide with the identities map or leak "[object Object]" into DOM attributes ----------
+// A non-string patient_uuid coerces to a string key when used to index
+// `identities` (JS object key coercion) -- round 19 fixed patientLabel's
+// own lookup for this, but the identities[...] check gating
+// PatientIdentityLinkAction, and the data-patient-uuid/title DOM
+// attributes, were still unguarded raw uses of the same value.
+
+test('20차 LOW-1: a non-string patient_uuid never renders the identity-link action (nothing valid to link)', () => {
+  const html = render({
+    tasks: [makeTask({ patient_uuid: { evil: 'object' } })],
+    loading: false,
+    error: null,
+    onIdentityLinked: () => {},
+  })
+  assert.ok(!html.includes('시그마 연결'), 'a non-string patient_uuid must not render the link action')
+})
+
+test('20차 LOW-1: a non-string patient_uuid never leaks "[object Object]" into the data-patient-uuid attribute', () => {
+  const html = render({ tasks: [makeTask({ patient_uuid: { evil: 'object' } })], loading: false, error: null })
+  assert.ok(!html.includes('[object Object]'), 'a non-string patient_uuid must not stringify into a DOM attribute')
+})
+
+test('20차 LOW-1: a non-string patient_uuid never leaks "[object Object]" into the title attribute', () => {
+  const html = render({ tasks: [makeTask({ patient_uuid: { evil: 'object' } })], loading: false, error: null })
+  assert.ok(!/title="\[object Object\]"/.test(html))
+})
+
+test('20차 LOW-1 sanity: a genuine string patient_uuid still renders the data-patient-uuid/title attributes and the link action', () => {
+  const uuid = '99999999-2222-3333-4444-555555555555'
+  const html = render({
+    tasks: [makeTask({ patient_uuid: uuid })],
+    loading: false,
+    error: null,
+    onIdentityLinked: () => {},
+  })
+  assert.ok(html.includes(`data-patient-uuid="${uuid}"`))
+  assert.ok(html.includes(`title="${uuid}"`))
+  assert.ok(html.includes('시그마 연결'))
+})
+
 console.log(`\n${passed} passed`)

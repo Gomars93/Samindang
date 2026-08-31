@@ -34,11 +34,25 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { CommonSafetyBanner } from '../CommonSafetyBanner'
 import { ConflictBanner } from '../ConflictBanner'
+import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment } from '../judgment'
 import { PainWorkspace } from './PainWorkspace'
 import { HerbalWorkspace } from './HerbalWorkspace'
+import {
+  AnkleFootSafetyPanel,
+} from '../AnkleFootSafetyPanel'
+import { TmjSafetyPanel } from '../TmjSafetyPanel'
+import { HipSafetyPanel } from '../HipSafetyPanel'
+import {
+  ElbowSafetyPanel,
+  KneeSafetyPanel,
+  LbpSafetyPanel,
+  NeckSafetyPanel,
+  ShoulderSafetyPanel,
+  WristHandSafetyPanel,
+} from '../DoctorView'
 import { deriveViewProfile, VIEW_PROFILE_LABEL, type DoctorViewProfile } from './viewProfile'
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { HerbalPatternCandidate } from './patternCandidate'
@@ -155,6 +169,11 @@ export function DoctorWorkspace({
   // discards it from the screen, so this is what stands between that and
   // silently losing the clinician's typing.
   const [preConflictDraft, setPreConflictDraft] = useState<WorkspaceState | null>(null)
+  // P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): the
+  // failure `kind` from the most recent unsuccessful save (never touched
+  // by a conflict, which has its own dedicated UI) -- 'auth' shows the
+  // inline token-reentry recovery instead of the generic "저장 실패" text.
+  const [lastSaveErrorKind, setLastSaveErrorKind] = useState<'auth' | 'network' | 'other' | null>(null)
 
   // Reset the manual profile override / mixed-tab choice / all
   // clinician-entered workspace state whenever the underlying record
@@ -250,6 +269,31 @@ export function DoctorWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialRecordUpdatedAt])
 
+  // The actual save attempt -- extracted so it can be called both from the
+  // debounced autosave effect below AND directly from the P0-8 "인증 만료 —
+  // 토큰 다시 입력" recovery action (re-entering a token does not itself
+  // touch `workspaceState`, so it cannot rely on the effect's own
+  // dependency change to fire a retry).
+  async function performSave() {
+    if (!submissionId || !onSaveWorkspace) return
+    const toSave: WorkspaceState = { ...workspaceState, updated_at: new Date().toISOString() }
+    setSaveStatus('saving')
+    const result = await onSaveWorkspace(toSave, lastKnownUpdatedAtRef.current)
+    if (result.ok) {
+      lastSavedRef.current = toSave
+      lastKnownUpdatedAtRef.current = result.updatedAt
+      setLastSaveErrorKind(null)
+      setSaveStatus('saved')
+    } else if (result.conflict) {
+      setPreConflictDraft(toSave)
+      setConflict(result.conflict)
+      setSaveStatus('conflict')
+    } else {
+      setLastSaveErrorKind(result.kind ?? 'other')
+      setSaveStatus('error')
+    }
+  }
+
   // Debounced autosave: fires SAVE_DEBOUNCE_MS after the last edit, only in
   // server mode (submissionId + onSaveWorkspace both present), and never
   // for the state transition caused by switching records (skipNextSaveRef)
@@ -268,21 +312,7 @@ export function DoctorWorkspace({
     if (workspaceStateEquals(workspaceState, lastSavedRef.current)) return
 
     setSaveStatus('saving')
-    const timer = setTimeout(async () => {
-      const toSave: WorkspaceState = { ...workspaceState, updated_at: new Date().toISOString() }
-      const result = await onSaveWorkspace(toSave, lastKnownUpdatedAtRef.current)
-      if (result.ok) {
-        lastSavedRef.current = toSave
-        lastKnownUpdatedAtRef.current = result.updatedAt
-        setSaveStatus('saved')
-      } else if (result.conflict) {
-        setPreConflictDraft(toSave)
-        setConflict(result.conflict)
-        setSaveStatus('conflict')
-      } else {
-        setSaveStatus('error')
-      }
-    }, SAVE_DEBOUNCE_MS)
+    const timer = setTimeout(performSave, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceState, submissionId, conflict])
@@ -335,8 +365,6 @@ export function DoctorWorkspace({
   const painNode = (
     <PainWorkspace
       payload={payload}
-      lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
-      shoulderObjectiveCuffWeakness={shoulderObjectiveCuffWeakness}
       examSuggestions={workspaceState.painExamSuggestions}
       onChangeExamSuggestion={(next) =>
         setWorkspaceState((s) => ({
@@ -408,6 +436,27 @@ export function DoctorWorkspace({
   const herbalPanelId = useId()
   const tabRefs = useRef<Record<'pain' | 'herbal', HTMLButtonElement | null>>({ pain: null, herbal: null })
 
+  // P0-1 follow-up (tablet-viewport.spec.mjs layout-budget regression):
+  // the "안전 확인" heading + hint paragraph must not render as pure noise
+  // when NONE of the 9 regions apply to this record (e.g. a genuinely
+  // herbal-only patient) -- every panel below already silently renders
+  // nothing in that case, but the WRAPPING heading/hint text is not
+  // itself gated by any panel, so without this check it always showed
+  // even with zero panel content underneath, adding height with no
+  // information (previously impossible: PainWorkspace only ever mounted
+  // this block for a profile where at least the primary region applied).
+  const anySafetyRegionApplicable = [
+    'lbp',
+    'neck',
+    'shoulder',
+    'knee',
+    'elbow',
+    'wrist_hand',
+    'hip',
+    'ankle_foot',
+    'tmj',
+  ].some((region) => (payload.responses.safety_flags as Record<string, unknown> | undefined)?.[region] != null)
+
   function handleTabKeyDown(e: KeyboardEvent) {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return
     e.preventDefault()
@@ -426,6 +475,39 @@ export function DoctorWorkspace({
   return (
     <div className="workspace" data-view-profile={activeProfile}>
       <CommonSafetyBanner payload={payload} />
+
+      {/*
+        P0-1 (Core Reduction Phase 6 gate, Phase 3 Opus review §3-3/§5-1):
+        promoted here from PainWorkspace so these render regardless of
+        view_profile -- a herbal-derived patient with a real regional
+        safety concern (safety_flags.<region> !== null) must still see it.
+        Before this move, view_profile gated a safety SURFACE, not just a
+        clinical-content surface (profile gate != safety_flags gate,
+        Phase 3 §5-1 fail-open class). Each panel below still gates itself
+        on its own safety_flags.<region>, so a record this region does not
+        concern renders nothing -- moving the mount point changes WHO sees
+        an applicable panel, not WHEN a panel considers itself applicable.
+        Rendered exactly once, here, regardless of activeProfile --
+        PainWorkspace no longer mounts these (see its own history comment)
+        to avoid a double-render under the 'pain'/'mixed' profiles.
+      */}
+      {anySafetyRegionApplicable && (
+        <section className="workspace__block workspace__block--safety">
+          <h3>안전 확인</h3>
+          <p className="workspace__block__hint">
+            현재 계산된 flag와 안전 잠금 의미를 그대로 표시합니다 — 새 cutoff나 해석을 추가하지 않습니다.
+          </p>
+          <LbpSafetyPanel payload={payload} lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit} />
+          <HipSafetyPanel payload={payload} />
+          <NeckSafetyPanel payload={payload} />
+          <ShoulderSafetyPanel payload={payload} shoulderObjectiveCuffWeakness={shoulderObjectiveCuffWeakness} />
+          <KneeSafetyPanel payload={payload} />
+          <ElbowSafetyPanel payload={payload} />
+          <WristHandSafetyPanel payload={payload} />
+          <AnkleFootSafetyPanel payload={payload} />
+          <TmjSafetyPanel payload={payload} />
+        </section>
+      )}
 
       {conflict && (
         <ConflictBanner
@@ -523,13 +605,31 @@ export function DoctorWorkspace({
       )}
 
       {submissionId && onSaveWorkspace && (
-        <p className="workspace__saveStatus" role="status" data-status={saveStatus}>
+        <div className="workspace__saveStatus" role="status" data-status={saveStatus}>
           {saveStatus === 'saving' && '저장 중…'}
           {saveStatus === 'saved' && '저장됨'}
-          {saveStatus === 'error' && '저장 실패 — 다시 시도해주세요 (아래 내용은 아직 서버에 반영되지 않았습니다)'}
+          {/*
+            P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): a
+            401/403 (expired/missing doctor token) is fixable right here --
+            re-entering the token and retrying never requires leaving the
+            clinical screen. A plain network/other failure keeps the
+            existing generic text (unchanged).
+          */}
+          {saveStatus === 'error' && lastSaveErrorKind === 'auth' && (
+            <DoctorTokenSetup
+              authFailed
+              onSet={() => {
+                setLastSaveErrorKind(null)
+                void performSave()
+              }}
+            />
+          )}
+          {saveStatus === 'error' &&
+            lastSaveErrorKind !== 'auth' &&
+            '저장 실패 — 다시 시도해주세요 (아래 내용은 아직 서버에 반영되지 않았습니다)'}
           {saveStatus === 'conflict' && '저장 중단됨 — 위 안내를 확인해주세요'}
           {saveStatus === 'idle' && ' '}
-        </p>
+        </div>
       )}
     </div>
   )

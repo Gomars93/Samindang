@@ -3010,4 +3010,107 @@ function detailsRange(html, classMarker) {
   )
 }
 
+/* -------------------------------------------------------------------------
+ * P0-3 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-2 "MOVE"): the
+ * revisit issuance section ("재진 간단 문진") used to render ABOVE the
+ * clinical tabs -- i.e. above CommonSafetyBanner, which lives at the top of
+ * the clinical tab's DoctorWorkspace inside DoctorRecordErrorBoundary
+ * (Phase 3 §5-1: "안전 배너가 스크롤 아래"). It must now render strictly
+ * AFTER the closing </DoctorRecordErrorBoundary> tag -- position only, the
+ * section's own content/condition/handlers are unchanged (still gated on
+ * mode==='server' && selectedRecord?.patient_id, still the same handlers).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  const boundaryCloseIdx = src.indexOf('</DoctorRecordErrorBoundary>')
+  const revisitSessionIdx = src.indexOf('doctor__revisitSession')
+  assert(
+    'P0-3: the revisit issuance section (재진 간단 문진) renders after </DoctorRecordErrorBoundary>, not before it',
+    boundaryCloseIdx !== -1 && revisitSessionIdx !== -1 && boundaryCloseIdx < revisitSessionIdx,
+  )
+  assert(
+    'P0-3: the revisit issuance section is still gated on the exact same condition as before the move',
+    /\{mode === 'server' && selectedRecord\?\.patient_id && \(\s*<section className="doctor__section doctor__revisitSession">/.test(
+      src,
+    ),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * P0-5 (Core Reduction Phase 6 gate / Phase 3 Opus review §4-a): the
+ * submissions list was an archive with no "this is done" action (only
+ * 'viewed' was ever written). "진료 완료" reuses the EXISTING
+ * VALID_STATUSES contract (setSubmissionStatus -> server/store.js's
+ * setStatus) unchanged -- no new status value, and it must NOT introduce an
+ * automatic 'in_consultation' transition (HUMAN DECISION #2 stays
+ * untouched/out of scope).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  const fnStart = src.indexOf('async function handleCompleteSubmission()')
+  assert('P0-5: handleCompleteSubmission exists', fnStart !== -1)
+  const fnBody = src.slice(fnStart, fnStart + 900)
+  assert(
+    'P0-5: handleCompleteSubmission calls setSubmissionStatus(selectedId, \'completed\') -- the existing VALID_STATUSES contract, no new status value',
+    /setSubmissionStatus\(selectedId, 'completed'\)/.test(fnBody),
+  )
+  assert(
+    'P0-5: handleCompleteSubmission never writes \'in_consultation\' (no auto-transition -- HUMAN DECISION #2 stays out of scope)',
+    !fnBody.includes("'in_consultation'"),
+  )
+  assert(
+    'P0-5: the "진료 완료" button exists in the header area, gated on server mode + an open record',
+    /\{mode === 'server' && selectedRecord && selectedId && \(\s*<button[\s\S]{0,300}?onClick=\{handleCompleteSubmission\}/.test(
+      src,
+    ),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6, 단순화
+ * 금지선 5-1 "안전 입력이 비기본 탭에"): the LBP/SHOULDER objective exam
+ * findings must be editable from the 진료 (clinical) tab, next to the
+ * regional SafetyPanels they feed -- not only from '자료 보기'. Save path
+ * unchanged: still ClinicianJudgment.lbp_objective_motor_deficit /
+ * shoulder_objective_cuff_weakness, still through saveJudgment (PUT
+ * /api/submissions/:id/judgment).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'P0-2: ObjectiveExamFindingsCard is imported and rendered in the clinical tab, after <DoctorWorkspace and before the reference tab',
+    src.includes("import { ObjectiveExamFindingsCard } from './ObjectiveExamFindingsCard'") &&
+      (() => {
+        const workspaceIdx = src.indexOf('<DoctorWorkspace')
+        const cardIdx = src.indexOf('<ObjectiveExamFindingsCard')
+        const referenceTabIdx = src.indexOf("<div hidden={recordTab !== 'reference'}>")
+        return workspaceIdx !== -1 && cardIdx !== -1 && referenceTabIdx !== -1 && workspaceIdx < cardIdx && cardIdx < referenceTabIdx
+      })(),
+  )
+  assert(
+    'P0-2: ObjectiveExamFindingsCard uses the SAME nullish safety_flags.<region> applicability signal as JudgmentPanel\'s showLbpExam/showShoulderExam (6th independent review HIGH-1/MEDIUM-1)',
+    /<ObjectiveExamFindingsCard[\s\S]{0,400}?showLbp=\{payload\.responses\.safety_flags\.lbp != null\}[\s\S]{0,200}?showShoulder=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(
+      src,
+    ),
+  )
+  assert(
+    'P0-2: handleSaveObjectiveExamField saves through saveJudgmentToServer (the SAME judgment persistence path, no new endpoint/data contract)',
+    (() => {
+      const fnStart = src.indexOf('async function handleSaveObjectiveExamField(')
+      if (fnStart === -1) return false
+      const fnEnd = src.indexOf('const showingServerList', fnStart)
+      const fn = src.slice(fnStart, fnEnd)
+      return fn.includes('saveJudgmentToServer(selectedId, next, expectedUpdatedAt)') && fn.includes('createEmptyJudgment(source)')
+    })(),
+  )
+  const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    'P0-2: JudgmentPanel keeps a READ-ONLY echo of both fields (still gated on showLbpExam/showShoulderExam) -- information is not lost, only the editable control moved',
+    panelSrc.includes('{showLbpExam && (') &&
+      panelSrc.includes('{showShoulderExam && (') &&
+      !/type="radio"\s*\n\s*name="lbp_objective_motor_deficit"/.test(panelSrc) &&
+      !/type="radio"\s*\n\s*name="shoulder_objective_cuff_weakness"/.test(panelSrc),
+  )
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

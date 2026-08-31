@@ -93,13 +93,21 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(effectStart !== -1 && effectEnd !== -1, 'the autosave effect must exist with the expected dependency array')
     const effectBody = src.slice(effectStart, effectEnd)
     const guardIndex = effectBody.indexOf('if (conflict) return')
-    const timeoutIndex = effectBody.indexOf('setTimeout(async () => {')
+    // P0-8 (Core Reduction Phase 6 gate): the actual save attempt is now
+    // extracted into `performSave` (so the P0-8 auth-recovery action can
+    // call it directly, not only the debounce timer) -- the effect just
+    // schedules it.
+    const timeoutIndex = effectBody.indexOf('setTimeout(performSave, SAVE_DEBOUNCE_MS)')
     assert.ok(guardIndex !== -1 && timeoutIndex !== -1)
     assert.ok(guardIndex < timeoutIndex, 'the conflict guard must run BEFORE any save attempt is scheduled')
   })
 
   test('DoctorWorkspace.tsx: a conflict outcome stops the effect from touching lastSavedRef (the unsaved draft is never marked saved)', () => {
-    const branch = src.slice(src.indexOf('} else if (result.conflict) {'), src.indexOf('} else {\n        setSaveStatus(\'error\')'))
+    // P0-8 (Core Reduction Phase 6 gate): the save logic moved from an
+    // inline setTimeout callback into the extracted `performSave` function
+    // (one indentation level shallower) -- the end delimiter below tracks
+    // that shift; `else {` here is performSave's own generic-failure branch.
+    const branch = src.slice(src.indexOf('} else if (result.conflict) {'), src.indexOf('} else {\n      setLastSaveErrorKind'))
     assert.ok(branch.length > 0)
     assert.ok(!branch.includes('lastSavedRef.current = toSave'), 'lastSavedRef must only advance on a genuinely accepted save')
     assert.ok(branch.includes('setConflict(result.conflict)') && branch.includes('setPreConflictDraft(toSave)'))
@@ -149,6 +157,37 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(/lastSavedRef\.current = fresh/.test(effect), 'lastSavedRef must advance to the SAME fresh content, not just the token')
     assert.ok(/setWorkspaceState\(fresh\)/.test(effect), 'workspaceState itself must be replaced with the fresh content -- the exact HIGH finding this guards against')
     assert.ok(/skipNextSaveRef\.current = true/.test(effect), 'must not immediately re-PUT the just-adopted content back at the server')
+  })
+
+  // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
+  // auth-failure inline recovery ----------
+  test('DoctorWorkspace.tsx: imports DoctorTokenSetup and shows it inline (not the generic text) specifically for kind===\'auth\'', () => {
+    assert.ok(src.includes("import { DoctorTokenSetup } from '../DoctorTokenSetup'"))
+    assert.ok(/lastSaveErrorKind === 'auth' && \(\s*<DoctorTokenSetup/.test(src))
+  })
+
+  test("DoctorWorkspace.tsx: a generic (non-auth) save failure keeps the existing '저장 실패' text, not the token recovery", () => {
+    assert.ok(/lastSaveErrorKind !== 'auth' &&\s*'저장 실패 — 다시 시도해주세요/.test(src))
+  })
+
+  test('DoctorWorkspace.tsx: performSave records the failure kind on a generic error, and clears it on success', () => {
+    const fnStart = src.indexOf('async function performSave() {')
+    const fnEnd = src.indexOf('// Debounced autosave')
+    assert.ok(fnStart !== -1 && fnEnd !== -1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/setLastSaveErrorKind\(null\)/.test(fn), 'a successful save must clear any earlier error-kind state')
+    assert.ok(/setLastSaveErrorKind\(result\.kind \?\? 'other'\)/.test(fn), 'a generic failure must record the failure kind (not just flip to the error status)')
+  })
+
+  test('DoctorWorkspace.tsx: re-entering the token retries the save directly (does not just clear the error and wait for another edit)', () => {
+    const recoveryBlock = src.slice(src.indexOf('<DoctorTokenSetup'), src.indexOf('<DoctorTokenSetup') + 400)
+    assert.ok(/onSet=\{\(\) => \{\s*setLastSaveErrorKind\(null\)\s*void performSave\(\)/.test(recoveryBlock))
+  })
+
+  test('DoctorView.tsx: the workspace-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {
+    const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+    const block = viewSrc.slice(viewSrc.indexOf('onSaveWorkspace={'), viewSrc.indexOf('onSaveWorkspace={') + 2200)
+    assert.ok(/return \{ ok: false, kind: result\.kind \}/.test(block))
   })
 }
 
@@ -329,6 +368,64 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     )
     assert.ok(!/lastKnownJudgmentRef\.current = \{ judgment: finalized/.test(successBranch))
   })
+
+  // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
+  // auth-failure inline recovery ----------
+  test('JudgmentPanel.tsx: imports DoctorTokenSetup and shows it inline specifically for kind===\'auth\' (distinct from the generic errors list)', () => {
+    assert.ok(src.includes("import { DoctorTokenSetup } from './DoctorTokenSetup'"))
+    assert.ok(/saveErrorKind === 'auth' && \(\s*<DoctorTokenSetup/.test(src))
+  })
+
+  test('JudgmentPanel.tsx: handleRecord distinguishes the auth-kind failure from a generic one -- only the generic one appends to the errors list', () => {
+    const fnStart = src.indexOf('async function handleRecord() {')
+    const fnEnd = src.indexOf('function handleReloadFromConflict')
+    const fn = src.slice(fnStart, fnEnd)
+    const authBranch = fn.slice(fn.indexOf("} else if (outcome.kind === 'auth') {"), fn.indexOf('} else {\n      setSaveErrorKind'))
+    assert.ok(authBranch.length > 0, 'a dedicated auth-kind branch must exist')
+    assert.ok(!authBranch.includes('setErrors('), 'the auth branch must not also push the generic "저장 실패" text')
+    const genericBranch = fn.slice(fn.indexOf('} else {\n      setSaveErrorKind'), fn.indexOf('} else {\n      setSaveErrorKind') + 200)
+    assert.ok(genericBranch.includes("setErrors(['저장 실패 — 다시 시도해주세요'])"))
+  })
+
+  test('JudgmentPanel.tsx: a successful save and a conflict outcome both clear any earlier auth-recovery state', () => {
+    const fnStart = src.indexOf('async function handleRecord() {')
+    const fnEnd = src.indexOf('function handleReloadFromConflict')
+    const fn = src.slice(fnStart, fnEnd)
+    const successBranch = fn.slice(fn.indexOf('if (outcome.ok) {'), fn.indexOf('} else if (outcome.conflict) {'))
+    const conflictBranch = fn.slice(fn.indexOf('} else if (outcome.conflict) {'), fn.indexOf("} else if (outcome.kind === 'auth') {"))
+    assert.ok(successBranch.includes('setSaveErrorKind(null)'))
+    assert.ok(conflictBranch.includes('setSaveErrorKind(null)'))
+  })
+
+  test('DoctorView.tsx: the judgment-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {
+    const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+    // P0-2 added an earlier, unrelated `onSave={` (ObjectiveExamFindingsCard)
+    // above <JudgmentPanel -- anchor the search after the JudgmentPanel tag
+    // so this keeps checking JudgmentPanel's OWN onSave callback.
+    const judgmentTagIdx = viewSrc.indexOf('<JudgmentPanel')
+    const onSaveIdx = viewSrc.indexOf('onSave={', judgmentTagIdx)
+    const block = viewSrc.slice(onSaveIdx, onSaveIdx + 1600)
+    assert.ok(/return \{ ok: false as const, kind: result\.kind \}/.test(block))
+  })
+}
+
+// ---------- 4.6. P0-7 (Core Reduction Phase 6 gate): the "기록된 판단" label
+// must not lie about save state. Phase 3 Opus review's REMOVE list flagged
+// this as a flatly false label -- in server mode (onSave present),
+// handleRecord's onSave already durably saved the record by the time
+// `recorded` is set, so "아직 저장되지 않음" (not yet saved) unconditionally
+// contradicted the save-state note rendered just above it. Only the
+// fixtures/preview path (no onSave) is genuinely ephemeral.
+{
+  const src = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
+
+  test('JudgmentPanel.tsx: the "기록된 판단" JSON summary label depends on whether onSave (server persistence) is present, not an unconditional "아직 저장되지 않음"', () => {
+    const summaryLine = src.slice(src.indexOf('<summary>기록된 판단'), src.indexOf('</summary>', src.indexOf('<summary>기록된 판단')))
+    assert.ok(summaryLine.length > 0, 'the summary line must exist')
+    assert.ok(/onSave \? /.test(summaryLine), 'must branch on whether onSave (server persistence) was provided')
+    assert.ok(summaryLine.includes('서버에 저장됨'), 'server mode must say it really was saved')
+    assert.ok(summaryLine.includes('아직 저장되지 않음'), 'fixtures/preview mode (no onSave) keeps the genuinely-true ephemeral note')
+  })
 }
 
 // ---------- 4.5. DoctorView.tsx: the "mark as viewed" sibling-write fix ----------
@@ -366,7 +463,11 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 
   test('DoctorView.tsx: judgment save reads errorBody.current and passes current.judgment through as-is (ClinicianJudgment | null, matching JudgmentPanel\'s reload fallback)', () => {
-    const block = src.slice(src.indexOf('onSave={'), src.indexOf('onSave={') + 1400)
+    // P0-2 added an earlier, unrelated `onSave={` (ObjectiveExamFindingsCard)
+    // above <JudgmentPanel -- anchor the search after the JudgmentPanel tag.
+    const judgmentTagIdx = src.indexOf('<JudgmentPanel')
+    const onSaveIdx = src.indexOf('onSave={', judgmentTagIdx)
+    const block = src.slice(onSaveIdx, onSaveIdx + 1400)
     assert.ok(block.includes('result.errorBody?.current'))
     assert.ok(block.includes('current.judgment'))
   })
@@ -475,9 +576,17 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 
   test('DoctorView.tsx 17차 FINDING-4: the revisit queue row guards DELIVERY_MODE_LABEL against an unmapped deliveryMode value', () => {
+    // P1 (Core Reduction Phase 6 gate): this row's rendering moved from
+    // DoctorView.tsx into src/doctor/TodayUnifiedQueueSection.tsx (the
+    // unified "오늘" Queue) -- same guard, new file, new local variable
+    // name (`source` -- the RevisitQueueItem looked up by visit id -- in
+    // place of the old inline `rv`).
+    const unifiedSrc = fs.readFileSync('src/doctor/TodayUnifiedQueueSection.tsx', 'utf8')
     assert.ok(
-      /rv\.deliveryMode && Object\.prototype\.hasOwnProperty\.call\(DELIVERY_MODE_LABEL, rv\.deliveryMode\) && \(/.test(src),
-      'must validate rv.deliveryMode is a known DELIVERY_MODE_LABEL key before indexing it, never leaking a literal "undefined"',
+      /source\?\.deliveryMode &&\s*\n\s*Object\.prototype\.hasOwnProperty\.call\(DELIVERY_MODE_LABEL, source\.deliveryMode\) &&/.test(
+        unifiedSrc,
+      ),
+      'must validate source.deliveryMode is a known DELIVERY_MODE_LABEL key before indexing it, never leaking a literal "undefined"',
     )
   })
 }
@@ -790,8 +899,18 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.match(fn, /if \(typeof iso !== 'string'\) return ''/)
   })
 
-  test('DoctorView.tsx 20차: the submissions-list row routes patient_label through safeStringOrFallback (same fail-closed class as DoctorRecordFallback)', () => {
-    assert.match(src, /\{safeStringOrFallback\(s\.patient_label\)\}\{' '\}/)
+  test('DoctorView.tsx 20차: the submissions-list row routes patient_label through a fail-closed guard (same class as DoctorRecordFallback)', () => {
+    // P1 (Core Reduction Phase 6 gate): this row moved into the unified
+    // "오늘" Queue's row-builder (src/doctor/todayQueue.ts) -- same
+    // fail-closed discipline (never renders a non-string/empty
+    // patient_label raw), a locally-inlined guard rather than the
+    // reused `safeStringOrFallback` helper (that helper stays local to
+    // DoctorView.tsx; todayQueue.ts is a standalone pure module).
+    const todayQueueSrc = fs.readFileSync('src/doctor/todayQueue.ts', 'utf8')
+    assert.match(
+      todayQueueSrc,
+      /typeof s\.patient_label === 'string' && s\.patient_label\.trim\(\) !== '' \? s\.patient_label : '확인 필요'/,
+    )
   })
 
   test('DoctorView.tsx 20차: the readyToast.patientLabel (rendered raw at the EMR-ready toast) also routes through safeStringOrFallback', () => {

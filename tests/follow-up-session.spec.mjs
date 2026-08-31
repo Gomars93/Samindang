@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { createApp } from '../server/index.js'
 import { createStore } from '../server/store.js'
 import { createFollowUpSessionStore, hashToken, isValidTokenFormat } from '../server/followUpSessionStore.js'
+import { createPatientIdentityStore } from '../server/patientIdentityStore.js'
 
 let passCount = 0
 function assert(name, cond) {
@@ -1386,6 +1387,73 @@ async function main() {
       assert('the stale-precondition refusal hands back the CURRENT (v2) record, proving v3 never landed', v3.current?.workspace?.note === 'v2')
     } finally {
       await rm(casRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 2.11 (P0-6, Core Reduction Phase 6 gate / Phase 3 Opus review
+     §4-a integration blocker #1): listRevisitQueue() must attach a
+     resolved patient identity per row -- patient_id EXACT match against
+     patientIdentityStore only, never name/phone (Phase 3 §5-8). Before
+     this, a revisit row carried only the raw patient_id UUID, which the
+     review named as the reason a unified "오늘" queue could not be built
+     on top of it.
+     ===================================================================== */
+  {
+    const idRoot = await mkdtemp(path.join(tmpdir(), 'samindang-followup-identity-'))
+    try {
+      const dataDir = path.join(idRoot, 'submissions')
+      const identityStore = createStore(dataDir)
+      // server/store.js's listRevisitQueue instantiates its OWN
+      // createPatientIdentityStore pointed at path.join(dataDir, '..',
+      // 'crm-identity') -- this test writes through a second instance
+      // aimed at the exact same directory (file-based storage, so two
+      // instances sharing one directory is the same convention every
+      // other sibling store in server/store.js already relies on) to
+      // prove the store-level wiring actually reaches that directory,
+      // not just that the type-level plumbing compiles.
+      const identities = createPatientIdentityStore(path.join(dataDir, '..', 'crm-identity'))
+
+      const linkedVisit = await identityStore.createVisit({ patient_id: 'p0-6-linked-patient', submission_id: null })
+      const unlinkedVisit = await identityStore.createVisit({ patient_id: 'p0-6-unlinked-patient', submission_id: null })
+
+      await identities.linkPatientIdentity({
+        patientUuid: 'p0-6-linked-patient',
+        chartNo: 'P06-0001',
+        patientName: 'TEST-NAME-P06',
+        confirmedBy: 'test',
+        now: new Date().toISOString(),
+      })
+
+      const queue = await identityStore.listRevisitQueue()
+      const linkedRow = queue.find((r) => r.visit_id === linkedVisit.id)
+      const unlinkedRow = queue.find((r) => r.visit_id === unlinkedVisit.id)
+
+      assert('P0-6: a revisit row always carries a resolved_identity field (never omitted)', 'resolved_identity' in linkedRow && 'resolved_identity' in unlinkedRow)
+      assert(
+        'P0-6: a linked patient_id resolves to the real sigma_chart_no/patient_name',
+        linkedRow.resolved_identity.resolved === true &&
+          linkedRow.resolved_identity.sigma_chart_no === 'P06-0001' &&
+          linkedRow.resolved_identity.patient_name === 'TEST-NAME-P06',
+      )
+      assert(
+        'P0-6: an unlinked patient_id resolves to an explicit {resolved:false}, never a fabricated/guessed identity',
+        unlinkedRow.resolved_identity.resolved === false && typeof unlinkedRow.resolved_identity.reason === 'string',
+      )
+
+      // A DIFFERENT patient_id must never resolve to the linked identity
+      // even if some other field looked similar -- the only key is the
+      // exact patient_id string (Phase 3 §5-8: name/phone matching is
+      // absolutely forbidden).
+      const otherVisit = await identityStore.createVisit({ patient_id: 'p0-6-linked-patient-but-not-quite', submission_id: null })
+      const queue2 = await identityStore.listRevisitQueue()
+      const otherRow = queue2.find((r) => r.visit_id === otherVisit.id)
+      assert(
+        'P0-6: identity resolution is an EXACT patient_id match only -- a near-miss id is never resolved',
+        otherRow.resolved_identity.resolved === false,
+      )
+    } finally {
+      await rm(idRoot, { recursive: true, force: true })
     }
   }
 

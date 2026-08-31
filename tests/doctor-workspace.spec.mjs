@@ -196,17 +196,95 @@ test('herbal scenario: systemic content shown, final assessment present', () => 
 
 /* ---------- Round 11: the 10-second clinical view ----------
    The default workspace must be a clinical action screen. These pin the
-   four layers and the things that must no longer occupy the default view. */
-test('round 11: the default workspace renders the four layers in order', () => {
+   four layers and the things that must no longer occupy the default view.
+
+   P0-1 (Core Reduction Phase 6 gate) re-pins this order: the regional
+   SafetyPanels were promoted OUT of PainWorkspace's hero/glance layer to
+   the DoctorWorkspace level (immediately after CommonSafetyBanner, before
+   the profile bar/glance card) so they render regardless of view_profile
+   -- see DoctorWorkspace.tsx. Safety now comes BEFORE the glance card,
+   not after it. */
+test('round 11/P0-1: the default workspace renders safety, then the glance card, judgment and next action in order', () => {
   const html = render(PAIN_SCENARIO_1)
-  const glance = html.indexOf('workspace__hero')
   const safety = html.indexOf('workspace__block--safety')
+  const glance = html.indexOf('workspace__hero')
   const judgment = html.indexOf('원장 최종 판단')
   const nextAction = html.indexOf('workspace__nextAction')
-  assert.ok(glance !== -1 && safety !== -1 && judgment !== -1 && nextAction !== -1, 'all four layers render')
-  assert.ok(glance < safety, 'the glance card comes first')
-  assert.ok(safety < judgment, 'safety is above the clinician action area')
+  assert.ok(safety !== -1 && glance !== -1 && judgment !== -1 && nextAction !== -1, 'all four layers render')
+  assert.ok(safety < glance, 'safety (promoted to DoctorWorkspace level) comes before the glance card')
+  assert.ok(glance < judgment, 'the glance card is above the clinician action area')
   assert.ok(judgment < nextAction, 'next action closes the flow')
+})
+
+/* ---------- P0-1 (Core Reduction Phase 6 gate, delta risk #1): the
+   regional SafetyPanels must render on a herbal-derived screen too --
+   the gate on visibility is `safety_flags.<region> !== null`, never
+   `view_profile`. Before this fix, these 9 panels only ever mounted
+   inside PainWorkspace, which never renders under the herbal profile --
+   a profile-gated safety surface (Phase 3 Opus review §5-1's fail-open
+   class). These tests pin: (a) the safety block mounts under EVERY
+   profile including herbal, (b) it never double-renders now that
+   PainWorkspace's own copy is gone, and (c) a record whose routing
+   signals disagree with its safety_flags (derives 'herbal' while still
+   carrying a real, non-null safety_flags.<region> -- version-skew/
+   legacy-data class, not a normal production shape) still surfaces that
+   region's real computed content, proving the gate really is
+   region-level and not profile-level. ---------------------------------- */
+test('P0-1: the safety block (안전 확인) mounts for pain/mixed profiles (a real applicable region exists)', () => {
+  for (const [name, scenario] of [
+    ['pain', PAIN_SCENARIO_1],
+    ['mixed', MIXED_SCENARIO_1],
+  ]) {
+    const html = render(scenario)
+    assert.ok(html.includes('workspace__block--safety'), `${name}: safety block wrapper renders`)
+    assert.ok(html.includes('안전 확인'), `${name}: safety block heading renders`)
+  }
+})
+
+// tablet-viewport.spec.mjs layout-budget follow-up: a genuinely
+// herbal-only record (no pain module, so all 9 safety_flags.<region> are
+// correctly null) must NOT render the "안전 확인" heading + hint with zero
+// panel content underneath -- that would be pure noise/added height with
+// no information, not "profile-independent visibility". The gate is
+// region-applicability, not view_profile -- see the fail-open test below
+// for the case where a herbal-derived record DOES have an applicable
+// region and the block correctly still renders.
+test('P0-1: the safety block renders NOTHING (no empty-heading noise) for a genuinely herbal-only scenario with no applicable region', () => {
+  const html = render(HERBAL_SCENARIO_1)
+  assert.ok(!html.includes('workspace__block--safety'), 'no safety block wrapper when zero regions apply')
+})
+
+test('P0-1: the safety block never double-renders (PainWorkspace no longer mounts its own copy)', () => {
+  for (const scenario of [PAIN_SCENARIO_1, MIXED_SCENARIO_1]) {
+    const html = render(scenario)
+    const count = html.split('workspace__block--safety').length - 1
+    assert.equal(count, 1, `${scenario.label}: exactly one workspace__block--safety wrapper, found ${count}`)
+  }
+  // HERBAL_SCENARIO_1 legitimately renders it ZERO times (see the test
+  // above) -- "never double" here means "never more than one", so assert
+  // that directly rather than assuming exactly one.
+  const herbalCount = render(HERBAL_SCENARIO_1).split('workspace__block--safety').length - 1
+  assert.ok(herbalCount <= 1, `HERBAL_SCENARIO_1: at most one workspace__block--safety wrapper, found ${herbalCount}`)
+})
+
+test('P0-1 fail-open guard: a herbal-derived payload whose routing disagrees with a real safety_flags.lbp still renders the LBP panel', () => {
+  // Simulates the exact class Phase 3 Opus review §5-1 flagged: routing
+  // (view_profile's only input) says "no pain content", but
+  // responses.safety_flags.lbp is still a real, already-computed,
+  // non-null value (e.g. version skew between when a record's routing was
+  // last derived and when its safety_flags were computed) -- built from a
+  // REAL pain scenario's already-valid safety_flags/modules.lbp, mutating
+  // only the routing signals deriveViewProfile reads.
+  const mutated = structuredClone(PAIN_SCENARIO_1.payload)
+  assert.ok(mutated.responses.safety_flags.lbp != null, 'sanity: the source scenario really has a computed LBP flag')
+  mutated.routing.primary_module = null
+  mutated.routing.additional_module = null
+  mutated.routing.questionnaire_mode = 'herbal_addon'
+  const html = renderToString(
+    React.createElement(DoctorWorkspace, { payload: mutated, synthetic: PAIN_SCENARIO_1.synthetic }),
+  )
+  assert.ok(html.includes('data-view-profile="herbal"'), 'sanity: this payload really derives to the herbal profile')
+  assert.ok(html.includes('안전 확인 — 허리(LBP)'), 'the LBP safety panel still renders its real content under the herbal profile')
 })
 
 test('round 11: the mandatory-looking Clinical Loop checklist is gone from the default view', () => {

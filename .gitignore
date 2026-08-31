@@ -129,6 +129,9 @@ tests/.crm-medication-course-bundle.mjs
 # esbuild bundle used by tests/today-queue.spec.mjs (regenerated, not source)
 tests/.today-queue-bundle.cjs
 
+# esbuild bundle used by tests/today-queue-unified.spec.mjs (regenerated, not source)
+tests/.today-queue-unified-bundle.mjs
+
 # esbuild bundle used by tests/save-conflict.spec.mjs (regenerated, not source)
 tests/.conflict-banner-bundle.cjs
 

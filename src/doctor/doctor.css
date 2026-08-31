@@ -477,6 +477,26 @@
   background: #f6ece9;
 }
 
+/* P0-6 (Core Reduction Phase 6 gate): the revisit row's main click target
+   is now a nested <button> inside the .doctorField.doctor__row <div> (a
+   <button> can no longer BE the row -- it would illegally contain
+   PatientIdentityLinkAction's own interactive controls when the identity
+   is unresolved). Resets button chrome so it still lays out and reads
+   exactly like the plain row it replaces. */
+.doctor__revisitRow__openBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
 /* CRM v0.3.1 round 13: read-only Today Queue rows -- deliberately no
    cursor:pointer (unlike .doctor__row), since these rows have no click
    handler this round. */

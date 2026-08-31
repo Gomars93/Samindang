@@ -140,4 +140,10 @@ export function finalizeJudgment(j: ClinicianJudgment): ClinicianJudgment {
 export type JudgmentSaveOutcome =
   | { ok: true; updatedAt: string }
   | { ok: false; conflict: { current: ClinicianJudgment | null; currentUpdatedAt: string } }
-  | { ok: false; conflict?: undefined }
+  // P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): same
+  // `kind` addition as WorkspaceSaveOutcome (workspace/persistence.ts) --
+  // lets JudgmentPanel show an inline "인증 만료 — 토큰 다시 입력" recovery
+  // instead of the generic "저장 실패" text when the failure is
+  // serverClient.ts's 'auth' kind (401/403). Optional, so this stays
+  // backward-compatible with every existing `{ ok: false }` caller.
+  | { ok: false; conflict?: undefined; kind?: 'auth' | 'network' | 'other' }

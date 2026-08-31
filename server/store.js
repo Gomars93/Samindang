@@ -9,6 +9,7 @@ import { createRecorderResultStore } from './recorderResultStore.js'
 import { createMicroFollowUpStore } from './microFollowUpStore.js'
 import { createFollowUpSessionStore } from './followUpSessionStore.js'
 import { createStationStore } from './stationStore.js'
+import { createPatientIdentityStore } from './patientIdentityStore.js'
 
 const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed'])
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
@@ -71,6 +72,59 @@ function isFlagsUsable(flags, r) {
   if (typeof flags !== 'object' || flags === null || Array.isArray(flags)) return false
   if (!REQUIRED_FLAG_KEYS.every((key) => typeof flags[key] === 'boolean')) return false
   return isFlagsConsistentWithResponses(flags, r)
+}
+
+// P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3): the unified
+// "오늘" Queue's 4-value badge for a SUBMISSION row -- 'URGENT' / 'REVIEW' /
+// 'CLEAR' / 'NONE' (client renders NONE as "▦ 안전 계산 없음", grey/hatched,
+// never confusable with CLEAR). This reads ONLY already-stored, tablet-
+// submission-time-computed values -- it NEVER imports or recomputes
+// src/spec/*Logic.ts/*Adapter.ts (FROZEN). Exact field names matter: a typo
+// here would silently swallow that region's real URGENT_REVIEW into "no
+// data" fail-open -- tests/today-queue-badge.spec.mjs's field-name-typo
+// guard exercises every one of these 9 keys individually.
+const SAFETY_STATUS_FIELD_BY_REGION = {
+  lbp: 'lbp_safety_status',
+  neck: 'neck_safety_status',
+  shoulder: 'shoulder_safety_status',
+  knee: 'knee_safety_status',
+  elbow: 'elbow_safety_status',
+  wrist_hand: 'wrist_hand_safety_status',
+  hip: 'hip_safety_status',
+  ankle_foot: 'ankle_foot_safety_status',
+  tmj: 'tmj_safety_status',
+}
+const VALID_SAFETY_STATUS_VALUES = new Set(['CLEAR', 'REVIEW_REQUIRED', 'URGENT_REVIEW'])
+
+function deriveSafetyBadge(flags, r) {
+  // isFlagsUsable already fails closed on a missing/wrong-typed/
+  // internally-inconsistent flags object -- a record we cannot trust is
+  // 'REVIEW' ("확인 필요"), never silently 'CLEAR' or 'NONE'
+  // (fail-open would be exactly the class Phase 3 Opus review's §5-1/
+  // Phase 6 gate B-1 exist to prevent).
+  if (!isFlagsUsable(flags, r)) return 'REVIEW'
+
+  const safetyFlags = r?.safety_flags
+  const regionStatuses = []
+  if (safetyFlags != null && typeof safetyFlags === 'object' && !Array.isArray(safetyFlags)) {
+    for (const region of Object.keys(SAFETY_STATUS_FIELD_BY_REGION)) {
+      const regionFlags = safetyFlags[region]
+      if (regionFlags != null && typeof regionFlags === 'object' && !Array.isArray(regionFlags)) {
+        const status = regionFlags[SAFETY_STATUS_FIELD_BY_REGION[region]]
+        if (VALID_SAFETY_STATUS_VALUES.has(status)) regionStatuses.push(status)
+      }
+    }
+  }
+
+  const requiresStaffCheck = flags.requires_staff_check === true
+  if (requiresStaffCheck || regionStatuses.includes('URGENT_REVIEW')) return 'URGENT'
+  if (regionStatuses.includes('REVIEW_REQUIRED')) return 'REVIEW'
+  if (regionStatuses.length > 0) return 'CLEAR'
+  // 상태 문자열이 하나도 없는 레코드 -- legacy(이 필드가 생기기 전
+  // 제출본)이거나, 이 방문에 9개 통증 부위 중 어느 것도 해당하지 않는
+  // 경우(예: 순수 herbal) 둘 다 포함한다 -- requires_staff_check(일반
+  // 안전 flag, 부위 무관)만으로 판단한다.
+  return 'NONE'
 }
 
 // Round 17 (restart-safe / multi-process correctness): thrown by
@@ -187,6 +241,14 @@ export function createStore(
   })
   // stations/도 같은 형제 경로 패턴(round 8: 클리닉 태블릿 스테이션).
   const stations = createStationStore(path.join(dataDir, '..', 'stations'))
+  // crm-identity/도 같은 형제 경로 패턴 -- server/index.js가 CRM Today
+  // Queue용으로 만드는 것과 정확히 같은 디렉터리를 가리키는 별도 인스턴스
+  // (round 14 patientIdentityStore.js, 파일 기반이라 두 인스턴스가 같은
+  // 디렉터리를 향해도 안전 -- 이 파일의 다른 형제 store들과 동일한 패턴).
+  // P0-6(Core Reduction Phase 6 gate): listRevisitQueue()가 resolved
+  // identity를 동봉하기 위해 필요 -- patient_id 정확 일치로만 조회한다
+  // (이름/전화 매칭 절대 금지, Phase 3 §5-8과 동일한 원칙).
+  const patientIdentityStore = createPatientIdentityStore(path.join(dataDir, '..', 'crm-identity'))
 
   async function ensureDir() {
     await mkdir(dataDir, { recursive: true })
@@ -298,6 +360,9 @@ export function createStore(
           requires_staff_check: isFlagsUsable(r.submission?.flags, r.submission?.responses)
             ? r.submission.flags.requires_staff_check
             : 'unknown',
+          // P1 (Core Reduction Phase 6 gate): unified Queue badge -- see
+          // deriveSafetyBadge's own doc comment.
+          safety_badge: deriveSafetyBadge(r.submission?.flags, r.submission?.responses),
           recorder_ready: Boolean(visit?.recording_id),
         })
       } catch {
@@ -984,6 +1049,21 @@ export function createStore(
       const session = await followUpSessions.getActiveForVisit(v.id)
       const response = await microFollowUp.getResponse(v.id)
       const assignedStation = await stations.findStationForVisit(v.id)
+      // P0-6 (Core Reduction Phase 6 gate / Phase 3 Opus review §4-a
+      // integration blocker #1): this queue used to carry only the raw
+      // patient_id UUID -- no name/chart_no anywhere -- which is exactly
+      // why a unified "오늘" queue could not be built on top of it. Resolved
+      // ONLY by v.patient_id EXACT match against patientIdentityStore's
+      // 1:1 link (never name/phone matching -- Phase 3 §5-8). Unresolved
+      // is returned explicitly (never omitted/guessed) so the caller can
+      // show "신원 확인 필요" instead of a fabricated or silently-blank name.
+      const hasUsablePatientId = typeof v.patient_id === 'string' && v.patient_id.trim() !== ''
+      const identityLink = hasUsablePatientId
+        ? await patientIdentityStore.getIdentityByPatientUuid(v.patient_id)
+        : null
+      const resolvedIdentity = identityLink
+        ? { resolved: true, sigma_chart_no: identityLink.sigma_chart_no, patient_name: identityLink.patient_name }
+        : { resolved: false, reason: hasUsablePatientId ? 'no_mapping' : 'no_patient_id' }
       let status
       if (response) {
         status = 'COMPLETED'
@@ -1008,6 +1088,7 @@ export function createStore(
         created_at: v.created_at,
         updated_at: v.updated_at,
         status,
+        resolved_identity: resolvedIdentity,
         needs_attention: Boolean(response?.newSymptomReported || response?.adverseEffectReported),
         // Round 8 operational metadata (never clinical): how this session's
         // link is meant to reach the patient, which station (if any) is

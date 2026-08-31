@@ -26,17 +26,6 @@
  *  - collapsed prior-visit RAW history (Phase C)
  */
 import {
-  AnkleFootSafetyPanel,
-} from '../AnkleFootSafetyPanel'
-import { TmjSafetyPanel } from '../TmjSafetyPanel'
-import { HipSafetyPanel } from '../HipSafetyPanel'
-import {
-  ElbowSafetyPanel,
-  KneeSafetyPanel,
-  LbpSafetyPanel,
-  NeckSafetyPanel,
-  ShoulderSafetyPanel,
-  WristHandSafetyPanel,
   aggravatingField,
   aggravatingSummaryText,
   durationFrequencyText,
@@ -48,7 +37,6 @@ import {
 } from '../DoctorView'
 import { Field } from '../DoctorView'
 import type { DoctorPayload } from '../types'
-import type { ClinicianJudgment } from '../judgment'
 import { ExamSuggestionList } from './ExamSuggestionList'
 import { SupportContradictionPanel } from './SupportContradictionPanel'
 import { PainFinalAssessmentCard } from './FinalAssessmentCard'
@@ -85,8 +73,6 @@ import { MicroFollowUpCard } from './MicroFollowUpCard'
 
 export function PainWorkspace({
   payload,
-  lbpObjectiveMotorDeficit,
-  shoulderObjectiveCuffWeakness,
   examSuggestions,
   onChangeExamSuggestion,
   onAddExamToReassessment,
@@ -109,8 +95,6 @@ export function PainWorkspace({
   microFollowUpResponse,
 }: {
   payload: DoctorPayload
-  lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
-  shoulderObjectiveCuffWeakness?: ClinicianJudgment['shoulder_objective_cuff_weakness']
   examSuggestions: PhysicalExamSuggestion[]
   onChangeExamSuggestion: (next: PhysicalExamSuggestion) => void
   onAddExamToReassessment?: (item: PhysicalExamSuggestion) => void
@@ -281,27 +265,17 @@ export function PainWorkspace({
       <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
 
       {/*
-        LAYER 1 continued -- safety. These panels are the only non-glance
-        content that stays unconditionally visible: they are the answer to
-        "is there a safety issue?", which the 10-second read must never
-        require a click to reach. Each panel renders nothing for a region
-        this record does not concern, so in practice this is one panel.
+        LAYER 1 continued -- safety. P0-1 (Core Reduction Phase 6 gate):
+        the regional SafetyPanels used to mount HERE, which meant a
+        herbal-derived patient (view_profile !== 'pain', so this
+        component never mounted at all) could have a real, computed
+        regional safety concern with no surface anywhere on the default
+        screen -- profile gate != safety_flags gate (Phase 3 Opus review
+        §5-1, fail-open class). They now mount once at the DoctorWorkspace
+        level, immediately after CommonSafetyBanner, regardless of
+        activeProfile -- see DoctorWorkspace.tsx. Deliberately NOT
+        reintroduced here to avoid a double render under 'pain'/'mixed'.
       */}
-      <section className="workspace__block workspace__block--safety">
-        <h3>안전 확인</h3>
-        <p className="workspace__block__hint">
-          현재 계산된 flag와 안전 잠금 의미를 그대로 표시합니다 — 새 cutoff나 해석을 추가하지 않습니다.
-        </p>
-        <LbpSafetyPanel payload={payload} lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit} />
-        <HipSafetyPanel payload={payload} />
-        <NeckSafetyPanel payload={payload} />
-        <ShoulderSafetyPanel payload={payload} shoulderObjectiveCuffWeakness={shoulderObjectiveCuffWeakness} />
-        <KneeSafetyPanel payload={payload} />
-        <ElbowSafetyPanel payload={payload} />
-        <WristHandSafetyPanel payload={payload} />
-        <AnkleFootSafetyPanel payload={payload} />
-        <TmjSafetyPanel payload={payload} />
-      </section>
 
       {/*
         LAYER 2 -- 오늘 확인할 것. Rendered ONLY when it actually holds

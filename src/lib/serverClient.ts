@@ -12,6 +12,7 @@ import type {
   InputProvenance,
   IssuedFollowUpSession,
   RevisitQueueItem,
+  RevisitResolvedIdentity,
   RevisitStatus,
   StationInfo,
 } from '../doctor/workspace/followUpSession'
@@ -123,6 +124,12 @@ export type SubmissionSummary = {
   requires_staff_check: boolean | 'unknown'
   // recorder-results가 이 방문에 적어도 하나 도착했다는 실제 서버 상태(추정 아님).
   recorder_ready: boolean
+  // P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3): 통합 "오늘"
+  // Queue 배지 -- server/store.js의 deriveSafetyBadge가 이미 저장된 값만
+  // 읽어 파생한다(새 임상 계산 없음, FROZEN import 없음). 'unknown'과 같은
+  // 이유로 여기서도 union 타입으로 값을 강제하지 않는다 -- 렌더 지점
+  // (DoctorView.tsx)이 알려진 4값이 아니면 안전한 기본값으로 fail-close한다.
+  safety_badge?: 'URGENT' | 'REVIEW' | 'CLEAR' | 'NONE'
 }
 
 export function listSubmissions(): Promise<ServerResult<SubmissionSummary[]>> {
@@ -494,12 +501,37 @@ export function getFollowUpSessionStatus(visitId: string): Promise<ServerResult<
   })
 }
 
+// P0-6 (Core Reduction Phase 6 gate): defensively re-validates
+// resolved_identity's shape instead of trusting it wholesale -- same
+// exhaustive-element-shape discipline as filterValidObjectElements below
+// (a malformed/legacy element must fail closed to "unresolved", never be
+// passed through as if it were a real name/chart_no).
+function normalizeRevisitResolvedIdentity(v: unknown): RevisitResolvedIdentity {
+  if (v != null && typeof v === 'object') {
+    const obj = v as Record<string, unknown>
+    if (obj.resolved === true && typeof obj.sigma_chart_no === 'string' && typeof obj.patient_name === 'string') {
+      return { resolved: true, sigma_chart_no: obj.sigma_chart_no, patient_name: obj.patient_name }
+    }
+    if (obj.resolved === false) {
+      return { resolved: false, reason: typeof obj.reason === 'string' ? obj.reason : 'no_mapping' }
+    }
+  }
+  return { resolved: false, reason: 'no_mapping' }
+}
+
 type RevisitQueueWire = Array<{
   visit_id: string
   patient_id: string
   created_at: string
   updated_at: string
   status: RevisitStatus
+  // P0-6 (Core Reduction Phase 6 gate): server/store.js's listRevisitQueue
+  // now attaches this (patient_id EXACT match against patientIdentityStore
+  // only -- never name/phone). Left as `unknown` here on purpose --
+  // normalizeRevisitResolvedIdentity above is the single point that
+  // re-validates it, same "don't trust the wire shape" discipline as
+  // filterValidObjectElements.
+  resolved_identity?: unknown
   needs_attention: boolean
   delivery_mode: DeliveryMode | null
   station_name: string | null
@@ -532,6 +564,7 @@ export function listRevisitQueue(): Promise<ServerResult<RevisitQueueItem[]>> {
         createdAt: r.created_at,
         updatedAt: r.updated_at,
         status: r.status,
+        resolvedIdentity: normalizeRevisitResolvedIdentity(r.resolved_identity),
         needsAttention: r.needs_attention,
         deliveryMode: r.delivery_mode ?? null,
         stationName: r.station_name ?? null,

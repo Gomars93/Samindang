@@ -45,6 +45,7 @@ import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import type { StructuredReassessment } from './reassessmentExam'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import type { PatientHistoryResult } from './longitudinal'
+import { asPriorVisitArray } from './longitudinal'
 import { PriorVisitHistoryCard } from './PriorVisitHistoryCard'
 import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
@@ -141,7 +142,12 @@ export function HerbalWorkspace({
     { qid: 'HERB_THIRST', label: '갈증', value: r.constitution_basics.thirst_level },
   ]
   const populatedSystemic = systemicFields.filter((f) => !isEmptyValue(f.value as never))
-  const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(priorVisits?.visits[0]?.herbalFollowUpTargets ?? [])
+  // 12차 독립 리뷰 MEDIUM-3: priorVisits.visits 자체가 배열이 아닐 수 있다
+  // (검증 없이 저장된 workspace) -- `priorVisits?.visits[0]`은 visits가
+  // undefined/null이면 `[0]` non-optional 인덱싱에서 그대로 throw한다.
+  const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
+    asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0]?.herbalFollowUpTargets,
+  )
 
   function handleAdoptToFinal(candidate: HerbalPatternCandidate) {
     const existing = finalAssessment.finalPatternOrMechanism.trim()

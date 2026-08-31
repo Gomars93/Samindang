@@ -29,8 +29,6 @@
  * stay fully separate identity boundaries even though they both end up
  * calling the same `saveResponse`.
  */
-import type { FollowUpTarget } from './finalAssessment'
-
 export type MicroFollowUpCandidateItem = {
   id: string
   label: string
@@ -43,14 +41,29 @@ export type MicroFollowUpCandidateItem = {
  * Built from the previous visit's own FollowUpTarget[] -- caps at 3 per
  * the North Star's "1-3 targets, 30-60s" budget. Keeps the clinician's own
  * prior ordering; does not re-rank or select which targets "matter most".
+ *
+ * 12차 독립 리뷰 MEDIUM-3: `prior` ultimately comes from
+ * `PatientHistoryResult`, which the server returns from an unauthenticated-
+ * PUT-stored workspace with no runtime validation -- a legacy/hand-crafted
+ * record can have this be a non-array, or contain elements missing
+ * `baseline`/`postTreatmentValue` entirely (`.slice(...).map is not a
+ * function`, `.trim is not a function` were both live-reproduced). Accept
+ * `unknown` and validate every layer instead of trusting the declared
+ * `FollowUpTarget[]` type.
  */
-export function microFollowUpCandidatesFromPriorTargets(prior: FollowUpTarget[]): MicroFollowUpCandidateItem[] {
-  return prior.slice(0, 3).map((t) => ({
-    id: t.id,
-    label: t.label,
-    previousBaseline: t.baseline,
-    previousPostTreatmentValue: t.postTreatmentValue,
-  }))
+export function microFollowUpCandidatesFromPriorTargets(prior: unknown): MicroFollowUpCandidateItem[] {
+  const arr = Array.isArray(prior) ? prior : []
+  const items: MicroFollowUpCandidateItem[] = []
+  for (const raw of arr.slice(0, 3)) {
+    const t = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+    items.push({
+      id: typeof t.id === 'string' ? t.id : `unreadable-${items.length}`,
+      label: typeof t.label === 'string' ? t.label : '확인 필요(값 형식 오류)',
+      previousBaseline: typeof t.baseline === 'string' ? t.baseline : '',
+      previousPostTreatmentValue: typeof t.postTreatmentValue === 'string' ? t.postTreatmentValue : '',
+    })
+  }
+  return items
 }
 
 export type MicroFollowUpTargetRating = {

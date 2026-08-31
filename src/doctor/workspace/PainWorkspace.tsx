@@ -77,6 +77,7 @@ import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { deriveAdditionalConcernSummary } from './additionalConcern'
 import { AdditionalConcernCard } from './AdditionalConcernCard'
 import type { PatientHistoryResult } from './longitudinal'
+import { asPriorVisitArray } from './longitudinal'
 import { PriorVisitHistoryCard } from './PriorVisitHistoryCard'
 import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
@@ -166,14 +167,24 @@ export function PainWorkspace({
   // 환자가 답하지 않은 값을 진짜 원점수처럼 보이게 지어낸다("확인 필요"
   // 표시 없이). isEmptyValue는 객체/배열을 "비어있지 않음"으로만
   // 취급할 뿐 타입은 검증하지 않으므로 이 경로를 막지 못한다.
+  // 12차 독립 리뷰 LOW-3: LBP_12는 min:0/max:10인 numeric_scale 문항이라
+  // 환자가 구조적으로 이 범위 밖의 값을 답할 수 없다 -- finite number 검사만으로는
+  // 999/-4 같은 범위 밖 값이 그대로 "원점수"로 렌더돼(확인 필요 표시 없이)
+  // 실제로 답하지 않은 값을 지어낼 수 있었다.
   const recoveryScoreUnreadable =
-    recoveryScore != null && (typeof recoveryScore !== 'number' || !Number.isFinite(recoveryScore))
+    recoveryScore != null &&
+    (typeof recoveryScore !== 'number' || !Number.isFinite(recoveryScore) || recoveryScore < 0 || recoveryScore > 10)
 
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)
 
   const additionalConcern = deriveAdditionalConcernSummary(routing)
-  const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(priorVisits?.visits[0]?.painFollowUpTargets ?? [])
+  // 12차 독립 리뷰 MEDIUM-3: priorVisits.visits 자체가 배열이 아닐 수 있다
+  // (검증 없이 저장된 workspace) -- `priorVisits?.visits[0]`은 visits가
+  // undefined/null이면 `[0]` non-optional 인덱싱에서 그대로 throw한다.
+  const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
+    asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0]?.painFollowUpTargets,
+  )
 
   const emrText = buildPainWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),

@@ -56,7 +56,14 @@ import {
   type SubmissionRecord,
   type VisitRecord,
 } from '../../lib/serverClient'
-import { readablePriorVisitPrimaryConcern } from './longitudinal'
+import {
+  asPriorVisitArray,
+  readablePriorVisitDateLabel,
+  readablePriorVisitFollowUpTarget,
+  readablePriorVisitPrimaryConcern,
+  readablePriorVisitReassessmentStatusLabel,
+  readablePriorVisitText,
+} from './longitudinal'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
@@ -302,7 +309,16 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     )
   }
 
-  const latestPrior = priorHistory?.visits[0] ?? null
+  // 12차 독립 리뷰 MEDIUM-3: priorHistory.visits 자체가 배열이 아닐 수
+  // 있다 -- `priorHistory?.visits[0]`은 visits가 undefined/null이면 `[0]`
+  // non-optional 인덱싱에서 그대로 throw한다. 배열 원소 자체가
+  // null/문자열 등 wrong-typed일 수도 있어(PriorVisitHistoryCard.tsx와
+  // 동일한 이유) 한 번 더 걸러낸다.
+  const latestPriorRaw = asPriorVisitArray<unknown>(priorHistory?.visits)[0]
+  const latestPrior =
+    latestPriorRaw !== null && typeof latestPriorRaw === 'object'
+      ? (latestPriorRaw as PatientHistoryResult['visits'][number])
+      : null
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     latestPrior ? latestPrior.followUpTargets : [],
   )
@@ -365,53 +381,74 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       <section className="workspace__block">
         <h3>이전 방문 참고 <span className="workspace__block__hint">읽기 전용 · 오늘 데이터로 표시하지 않습니다</span></h3>
         {!latestPrior && <p className="workspace__empty">이 환자의 이전 문진 방문 기록이 없습니다.</p>}
-        {latestPrior && (
-          <div className="workspace__revisit__priorRecap">
-            <p className="workspace__priorVisit__date">
-              최근 방문: {new Date(latestPrior.createdAt).toLocaleDateString('ko-KR')}
-              {readablePriorVisitPrimaryConcern(latestPrior.primaryConcern)
-                ? ` · ${readablePriorVisitPrimaryConcern(latestPrior.primaryConcern)}`
-                : ''}
-            </p>
-            {(latestPrior.painFinalAssessmentSummary || latestPrior.herbalFinalAssessmentSummary) && (
-              <p className="workspace__priorVisit__assessment">
-                <strong>이전 최종 판단</strong>{' '}
-                {[latestPrior.painFinalAssessmentSummary, latestPrior.herbalFinalAssessmentSummary].filter(Boolean).join(' / ')}
-              </p>
-            )}
-            {latestPrior.followUpTargets.length > 0 && (
-              <div className="workspace__priorVisit__targets">
-                {latestPrior.followUpTargets.map((t) => (
-                  <div key={t.id} className="workspace__priorVisit__targetRow">
-                    <strong>{t.label}</strong>
-                    <span>{t.baseline.trim() ? `이전 baseline: ${t.baseline.trim()}` : '이전 baseline: 기록 없음'}</span>
-                    {t.postTreatmentValue.trim() && <span>이전 치료직후: {t.postTreatmentValue.trim()}</span>}
+        {latestPrior &&
+          (() => {
+            // 12차 독립 리뷰 MEDIUM-3: 이 블록 전체가 인증되지 않은 PUT으로
+            // 검증 없이 저장된 workspace를 그대로 읽는다 --
+            // PriorVisitHistoryCard.tsx와 동일한 이유로 배열 컨테이너/개별
+            // target/재평가 계획 필드를 각각 방어한다.
+            const finalAssessmentSummary = [
+              readablePriorVisitText(latestPrior.painFinalAssessmentSummary),
+              readablePriorVisitText(latestPrior.herbalFinalAssessmentSummary),
+            ]
+              .filter((v): v is string => Boolean(v))
+              .join(' / ')
+            const targets = asPriorVisitArray<unknown>(latestPrior.followUpTargets).map((t, i) =>
+              readablePriorVisitFollowUpTarget(t, i),
+            )
+            const planValue: unknown = latestPrior.nextReassessmentPlan
+            const plan =
+              planValue !== null && typeof planValue === 'object' ? (planValue as Record<string, unknown>) : null
+            const planShowable = plan !== null && plan.status !== 'UNSET'
+            const planStatusLabel = plan ? readablePriorVisitReassessmentStatusLabel(plan.status) : null
+            const planNote = plan ? readablePriorVisitText(plan.note) : null
+            return (
+              <div className="workspace__revisit__priorRecap">
+                <p className="workspace__priorVisit__date">
+                  최근 방문: {readablePriorVisitDateLabel(latestPrior.createdAt)}
+                  {readablePriorVisitPrimaryConcern(latestPrior.primaryConcern)
+                    ? ` · ${readablePriorVisitPrimaryConcern(latestPrior.primaryConcern)}`
+                    : ''}
+                </p>
+                {finalAssessmentSummary && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전 최종 판단</strong> {finalAssessmentSummary}
+                  </p>
+                )}
+                {targets.length > 0 && (
+                  <div className="workspace__priorVisit__targets">
+                    {targets.map((t) => (
+                      <div key={t.id} className="workspace__priorVisit__targetRow">
+                        <strong>{t.label}</strong>
+                        <span>{t.baselineText}</span>
+                        {t.postTreatmentText && <span>이전 치료직후: {t.postTreatmentText}</span>}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+                {examLines.length > 0 && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전 진찰/관찰 소견</strong> {examLines.join('; ')}
+                  </p>
+                )}
+                {observationLines.length > 0 && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전 설진/맥진/복진 등</strong> {observationLines.join('; ')}
+                  </p>
+                )}
+                {carePlanLines.length > 0 && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전 관리 계획</strong> {carePlanLines.join('; ')}
+                  </p>
+                )}
+                {planShowable && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전에 계획한 다음 재평가</strong> {planNote || planStatusLabel}
+                  </p>
+                )}
               </div>
-            )}
-            {examLines.length > 0 && (
-              <p className="workspace__priorVisit__assessment">
-                <strong>이전 진찰/관찰 소견</strong> {examLines.join('; ')}
-              </p>
-            )}
-            {observationLines.length > 0 && (
-              <p className="workspace__priorVisit__assessment">
-                <strong>이전 설진/맥진/복진 등</strong> {observationLines.join('; ')}
-              </p>
-            )}
-            {carePlanLines.length > 0 && (
-              <p className="workspace__priorVisit__assessment">
-                <strong>이전 관리 계획</strong> {carePlanLines.join('; ')}
-              </p>
-            )}
-            {latestPrior.nextReassessmentPlan && latestPrior.nextReassessmentPlan.status !== 'UNSET' && (
-              <p className="workspace__priorVisit__assessment">
-                <strong>이전에 계획한 다음 재평가</strong> {latestPrior.nextReassessmentPlan.note || latestPrior.nextReassessmentPlan.status}
-              </p>
-            )}
-          </div>
-        )}
+            )
+          })()}
       </section>
 
       <section className="workspace__block workspace__revisit__carryForward">

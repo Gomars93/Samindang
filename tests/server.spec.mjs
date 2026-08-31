@@ -1483,6 +1483,37 @@ async function main() {
       headers: { origin: 'https://evil.example.com' },
     })
     assert('GET /api/patients/:id/history without doctor auth (evil Origin) -> 403, same guard as every other doctor route', resNoAuth.status === 403)
+
+    /* 12차 독립 리뷰 MEDIUM-3: workspace는 인증되지 않은 PUT
+     * /api/submissions/:id/workspace가 검증 없이 저장한 값이라
+     * painFollowUpTargets/herbalFollowUpTargets 자체가 배열이 아닐 수
+     * 있다 -- 이전에는 `?? []`만 있어 `[...painTargets, ...herbalTargets]`
+     * 스프레드가 그대로 "TypeError: ... is not iterable"을 던져
+     * 이 엔드포인트 전체를 500으로 만들 수 있었다. */
+    const subC = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-c', responses: {}, metadata: { primary_concern: '요통' } },
+      myungri: null,
+      patient_label: 'hist-patient-c',
+    })
+    await histStore.saveWorkspace(
+      subC.id,
+      emptyWorkspaceFor({ painFollowUpTargets: 'not-an-array', herbalFollowUpTargets: { corrupted: true } }),
+    )
+    const resMalformed = await fetch(`${histBase}/api/patients/${encodeURIComponent(subC.patient_id)}/history`)
+    assert(
+      'history: a wrong-typed (non-array) painFollowUpTargets/herbalFollowUpTargets in a stored workspace never 500s the endpoint (12th independent review MEDIUM-3)',
+      resMalformed.status === 200,
+    )
+    const bodyMalformed = await resMalformed.json()
+    assert(
+      'history: wrong-typed follow-up-target fields fall back to an empty array, not a crash or a fabricated value',
+      Array.isArray(bodyMalformed.visits[0].pain_follow_up_targets) &&
+        bodyMalformed.visits[0].pain_follow_up_targets.length === 0 &&
+        Array.isArray(bodyMalformed.visits[0].herbal_follow_up_targets) &&
+        bodyMalformed.visits[0].herbal_follow_up_targets.length === 0 &&
+        Array.isArray(bodyMalformed.visits[0].follow_up_targets) &&
+        bodyMalformed.visits[0].follow_up_targets.length === 0,
+    )
     } finally {
       await stopServer(histServer)
       await rm(histRoot, { recursive: true, force: true })

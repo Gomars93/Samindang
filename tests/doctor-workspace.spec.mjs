@@ -1123,6 +1123,151 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(!html.includes('[object Object]'))
     assert.ok(html.includes('확인 필요(값 형식 오류)'))
   })
+
+  /* -----------------------------------------------------------------------
+   * 12차 독립 리뷰 MEDIUM-3: PriorVisitHistoryCard가 읽는 `history`
+   * 전체가 인증되지 않은 PUT /api/submissions/:id/workspace가 검증 없이
+   * 저장한 workspace에서 온다 -- 11차는 primaryConcern 한 필드만 방어했다.
+   * target 배열 자체가 배열이 아니거나, target의 baseline/postTreatmentValue
+   * 필드가 아예 없거나(레거시 shape), createdAt이 wrong-typed거나,
+   * nextReassessmentPlan.status가 알려지지 않은 값이면 크래시하거나
+   * 가짜 1970-01-01 날짜를 지어냈다.
+   * ------------------------------------------------------------------- */
+  test('PriorVisitHistoryCard MEDIUM-3 (12th review): followUpTargets not an array never crashes the card', () => {
+    const priorVisits = {
+      patientId: 'patient-1',
+      visits: [
+        {
+          visitId: 'visit-1',
+          submissionId: 'sub-1',
+          createdAt: new Date().toISOString(),
+          primaryConcern: null,
+          painFollowUpTargets: 'not-an-array',
+          herbalFollowUpTargets: 'not-an-array',
+          followUpTargets: 'not-an-array',
+          painFinalAssessmentSummary: null,
+          herbalFinalAssessmentSummary: null,
+          nextReassessmentPlan: null,
+        },
+      ],
+    }
+    const html = renderWith(base, { priorVisits })
+    assert.ok(html.includes('이전 방문 기록'))
+  })
+
+  test('PriorVisitHistoryCard MEDIUM-3 (12th review): a follow-up target missing baseline/postTreatmentValue entirely (legacy shape) never crashes and shows 기록 없음, not a fabricated value', () => {
+    const priorVisits = {
+      patientId: 'patient-1',
+      visits: [
+        {
+          visitId: 'visit-1',
+          submissionId: 'sub-1',
+          createdAt: new Date().toISOString(),
+          primaryConcern: null,
+          painFollowUpTargets: [{ id: 't1', label: '통증 강도' }],
+          herbalFollowUpTargets: [],
+          followUpTargets: [{ id: 't1', label: '통증 강도' }],
+          painFinalAssessmentSummary: null,
+          herbalFinalAssessmentSummary: null,
+          nextReassessmentPlan: null,
+        },
+      ],
+    }
+    const html = renderWith(base, { priorVisits })
+    assert.ok(html.includes('통증 강도'))
+    assert.ok(html.includes('이전 baseline: 기록 없음'))
+  })
+
+  test('PriorVisitHistoryCard MEDIUM-3 (12th review): a follow-up target with a wrong-typed (object) label never renders "[object Object]" and shows the fail-closed label instead', () => {
+    const priorVisits = {
+      patientId: 'patient-1',
+      visits: [
+        {
+          visitId: 'visit-1',
+          submissionId: 'sub-1',
+          createdAt: new Date().toISOString(),
+          primaryConcern: null,
+          painFollowUpTargets: [{ id: 't1', label: { corrupted: true }, baseline: '', postTreatmentValue: '' }],
+          herbalFollowUpTargets: [],
+          followUpTargets: [],
+          painFinalAssessmentSummary: null,
+          herbalFinalAssessmentSummary: null,
+          nextReassessmentPlan: null,
+        },
+      ],
+    }
+    const html = renderWith(base, { priorVisits })
+    assert.ok(!html.includes('[object Object]'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  test('PriorVisitHistoryCard MEDIUM-3 (12th review): a wrong-typed createdAt never fabricates a fake 1970-01-01 date or leaks "Invalid Date"', () => {
+    const priorVisits = {
+      patientId: 'patient-1',
+      visits: [
+        {
+          visitId: 'visit-1',
+          submissionId: 'sub-1',
+          createdAt: { corrupted: true },
+          primaryConcern: null,
+          painFollowUpTargets: [],
+          herbalFollowUpTargets: [],
+          followUpTargets: [],
+          painFinalAssessmentSummary: null,
+          herbalFinalAssessmentSummary: null,
+          nextReassessmentPlan: null,
+        },
+      ],
+    }
+    const html = renderWith(base, { priorVisits })
+    assert.ok(!html.includes('1970'))
+    assert.ok(!html.includes('Invalid Date'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  test('PriorVisitHistoryCard MEDIUM-3 (12th review): an unknown nextReassessmentPlan.status never renders a silently blank line', () => {
+    const priorVisits = {
+      patientId: 'patient-1',
+      visits: [
+        {
+          visitId: 'visit-1',
+          submissionId: 'sub-1',
+          createdAt: new Date().toISOString(),
+          primaryConcern: null,
+          painFollowUpTargets: [],
+          herbalFollowUpTargets: [],
+          followUpTargets: [],
+          painFinalAssessmentSummary: null,
+          herbalFinalAssessmentSummary: null,
+          nextReassessmentPlan: { status: 'ZZZ_UNKNOWN', targetDate: '', afterVisitCount: null, note: '' },
+        },
+      ],
+    }
+    const html = renderWith(base, { priorVisits })
+    assert.ok(html.includes('이전에 계획한 다음 재평가'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  /* -----------------------------------------------------------------------
+   * 12차 독립 리뷰 LOW-3: LBP_12는 min:0/max:10 numeric_scale이라 환자가
+   * 구조적으로 이 범위 밖 값을 답할 수 없다 -- finite number 검사만으로는
+   * 999/-4 같은 범위 밖 값이 실제 원점수처럼 그대로 렌더됐다.
+   * ------------------------------------------------------------------- */
+  test('PainWorkspace LOW-3 (12th review): an out-of-range (999) modules.lbp.recovery_expectation is never displayed as a real reported score', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules.lbp.recovery_expectation = 999
+    const html = renderWith(base, { payload: mutated })
+    assert.ok(!html.includes('999 / 10'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
+
+  test('PainWorkspace LOW-3 (12th review): a negative (-4) modules.lbp.recovery_expectation is never displayed as a real reported score', () => {
+    const mutated = structuredClone(base.payload)
+    mutated.responses.modules.lbp.recovery_expectation = -4
+    const html = renderWith(base, { payload: mutated })
+    assert.ok(!html.includes('-4 / 10'))
+    assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  })
 }
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

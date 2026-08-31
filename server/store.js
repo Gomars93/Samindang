@@ -429,8 +429,16 @@ export function createStore(
         const record = await readRecord(v.submission_id)
         if (!record) continue
         const workspace = record.workspace ?? null
-        const painTargets = workspace?.painFollowUpTargets ?? []
-        const herbalTargets = workspace?.herbalFollowUpTargets ?? []
+        // 12차 독립 리뷰 MEDIUM-3: workspace는 인증되지 않은 PUT
+        // /api/submissions/:id/workspace가 검증 없이 저장한 값이라
+        // painFollowUpTargets/herbalFollowUpTargets 자체가 배열이 아닐 수
+        // 있다 -- `?? []`는 null/undefined만 잡을 뿐이라, 아래
+        // `[...painTargets, ...herbalTargets]` 스프레드가 그대로
+        // "TypeError: ... is not iterable"을 던져 이 엔드포인트 전체가
+        // 500이 될 수 있었다(아래 revisit 분기의 Array.isArray 방어와
+        // 동일한 기준으로 맞춘다).
+        const painTargets = Array.isArray(workspace?.painFollowUpTargets) ? workspace.painFollowUpTargets : []
+        const herbalTargets = Array.isArray(workspace?.herbalFollowUpTargets) ? workspace.herbalFollowUpTargets : []
         summaries.push({
           visit_id: v.id,
           submission_id: v.submission_id,

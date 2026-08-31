@@ -9,7 +9,8 @@
  * (follow-up target baseline/post-treatment values, final assessment free
  * text, the next-reassessment plan they set) — never anything inferred.
  */
-import type { FollowUpTarget, NextReassessmentPlan } from './finalAssessment'
+import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
+import type { FollowUpTarget, NextReassessmentPlan, NextReassessmentPlanStatus } from './finalAssessment'
 
 export type PriorVisitSummary = {
   visitId: string
@@ -56,4 +57,72 @@ export function readablePriorVisitPrimaryConcern(value: unknown): string | null 
   if (value === null || value === undefined) return null
   if (typeof value !== 'string') return PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
   return value
+}
+
+/** primaryConcern과 동일한 규칙의 범용 버전 -- final assessment 요약/재평가 메모 등에도 재사용한다. */
+export function readablePriorVisitText(value: unknown): string | null {
+  return readablePriorVisitPrimaryConcern(value)
+}
+
+/**
+ * 12차 독립 리뷰 MEDIUM-3: 위 MEDIUM-2 수정은 `primaryConcern` 한 필드만
+ * 방어했지만, `history`(GET /api/patients/:id/history)가 반환하는
+ * `visits`/각 방문의 follow-up target 배열/최종 판단 요약/다음 재평가
+ * 계획은 전부 같은 신뢰 경계(인증되지 않은 PUT
+ * /api/submissions/:id/workspace가 검증 없이 저장한 workspace)에서 온다.
+ * 배열 컨테이너가 배열이 아니거나(`.length`/`.map` 크래시), target의
+ * label/baseline/postTreatmentValue가 wrong-typed거나(`.trim()` 크래시,
+ * "[object Object]" 노출), createdAt이 wrong-typed면(가짜 1970-01-01 날짜
+ * 또는 "Invalid Date") 이전 방문 카드/재진 요약 전체가 죽거나 지어낸
+ * 값을 보여줄 수 있었다 -- 이 카드는 이전 방문의 raw 기록을 참고용으로만
+ * 보여주는 화면이므로, 개별 target/날짜/계획 단위로 실패를 격리한다.
+ */
+export function asPriorVisitArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
+export type ReadableFollowUpTarget = {
+  id: string
+  label: string
+  /** "이전 baseline: ..." 형태로 이미 조립된 문구 (빈 값도 "기록 없음"으로 표현). */
+  baselineText: string
+  /** null이면 렌더하지 않음(진짜 미기록) -- wrong-typed면 실패 토큰 문자열. */
+  postTreatmentText: string | null
+}
+
+export function readablePriorVisitFollowUpTarget(value: unknown, index: number): ReadableFollowUpTarget {
+  const t = value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  const id = typeof t.id === 'string' ? t.id : `unreadable-${index}`
+  const label = typeof t.label === 'string' ? t.label : PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
+  const baseline = t.baseline
+  const baselineText =
+    baseline === undefined || baseline === null
+      ? '이전 baseline: 기록 없음'
+      : typeof baseline === 'string'
+        ? baseline.trim()
+          ? `이전 baseline: ${baseline.trim()}`
+          : '이전 baseline: 기록 없음'
+        : `이전 baseline: ${PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL}`
+  const postTreatment = t.postTreatmentValue
+  const postTreatmentText =
+    postTreatment === undefined || postTreatment === null
+      ? null
+      : typeof postTreatment === 'string'
+        ? postTreatment.trim() || null
+        : PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
+  return { id, label, baselineText, postTreatmentText }
+}
+
+/** createdAt이 유효한 날짜 문자열이 아니면 가짜 1970-01-01/"Invalid Date" 대신 실패 토큰을 반환한다. */
+export function readablePriorVisitDateLabel(createdAt: unknown): string {
+  if (typeof createdAt !== 'string') return PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
+  const d = new Date(createdAt)
+  if (Number.isNaN(d.getTime())) return PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
+  return d.toLocaleDateString('ko-KR')
+}
+
+/** NextReassessmentPlan.status가 알려진 값이 아니면(레거시/손상) 조용히 비우는 대신 실패 토큰을 반환한다. */
+export function readablePriorVisitReassessmentStatusLabel(status: unknown): string {
+  if (typeof status !== 'string') return PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
+  return NEXT_REASSESSMENT_PLAN_STATUS_LABEL[status as NextReassessmentPlanStatus] ?? PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
 }

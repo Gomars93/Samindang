@@ -98,6 +98,29 @@ const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m
 
 function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, r: Responses): boolean {
   const rawAnswer = r.reproductive_status.reproductive_status
+  // 12차 독립 리뷰 HIGH-1/HIGH-2: 컨텍스트(visit_goal/modules.pregnancy·
+  // postpartum)로부터 "실제로 있어야 하는 source"를 먼저 결정한 뒤,
+  // 관찰된 d.source가 그 값과 정확히 일치하는지 먼저 확인한다 -- 이전
+  // 구현은 source별 분기(if)만 검사해서 (a) 세 값 중 어느 것과도
+  // 일치하지 않는 wrong-typed/엉뚱한 source가 마지막 `return false`까지
+  // 통과해 "정상"으로 판정되고(HIGH-1), (b) 컨텍스트가 실제로 임신/
+  // 산후인데 source가 WOMEN_SAFETY_01이거나 null인 "반대 방향" 불일치는
+  // 전혀 검사하지 않는(HIGH-2) 두 공백을 모두 남겼다. DoctorView.tsx의
+  // 동명 함수와 동일한 계산식.
+  const isPregnancyContext =
+    r.visit_goal?.visit_goal === 'women' &&
+    r.visit_goal?.women_goal === 'pregnancy' &&
+    r.modules?.pregnancy?.status === 'pregnant'
+  const isPostpartumContext = r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'postpartum'
+  const expectedSource: 'pregnancy_module' | 'postpartum_module' | 'other' = isPostpartumContext
+    ? 'postpartum_module'
+    : isPregnancyContext
+      ? 'pregnancy_module'
+      : 'other'
+  if (expectedSource === 'pregnancy_module' && d.source !== 'pregnancy_module') return true
+  if (expectedSource === 'postpartum_module' && d.source !== 'postpartum_module') return true
+  if (expectedSource === 'other' && d.source !== 'WOMEN_SAFETY_01' && d.source !== null) return true
+
   if (d.source === 'WOMEN_SAFETY_01') {
     if (!Array.isArray(rawAnswer)) return false
     if (!Array.isArray(d.raw)) return true

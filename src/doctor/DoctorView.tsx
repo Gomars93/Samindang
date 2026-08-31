@@ -284,6 +284,32 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
   // CommonSafetyBanner.tsx의 동명 검사와 동일한 계산식/예외
   // (pregnancy_possible의 PREGNANCY_01==='possible' 모듈 오버라이드는
   // 한쪽 방향만 예외로 둔다).
+  // 12차 독립 리뷰 HIGH-1/HIGH-2: coreSpec.ts deriveReproductiveStatus가
+  // 실제로 만들 수 있는 source는 정확히 세 값(WOMEN_SAFETY_01/
+  // pregnancy_module/postpartum_module) + null(예: 남성 환자처럼
+  // WOMEN_SAFETY_01 자체가 적용되지 않는 경우)뿐이다. 컨텍스트(visit_goal/
+  // modules.pregnancy·postpartum)로부터 "실제로 있어야 하는 source"를 먼저
+  // 결정한 뒤, 관찰된 d.source가 그 값과 정확히 일치하는지 먼저 확인한다 --
+  // 이전(9~11차) 구현은 source별로 각자 분기(if/else if)만 검사해서
+  // (a) 세 값 중 어느 것과도 일치하지 않는 wrong-typed/엉뚱한 source가
+  // 모든 분기를 통과해 "정상"으로 판정되고(HIGH-1), (b) 컨텍스트가 실제로
+  // 임신/산후인데 source가 WOMEN_SAFETY_01이거나 null인 "반대 방향" 불일치는
+  // 전혀 검사하지 않는(HIGH-2) 두 공백을 모두 남겼다. 둘 다 실제로
+  // 보고되지 않은 임신/수유 음성 소견을 지어낼 수 있었다.
+  const isPregnancyContext =
+    r.visit_goal?.visit_goal === 'women' &&
+    r.visit_goal?.women_goal === 'pregnancy' &&
+    r.modules?.pregnancy?.status === 'pregnant'
+  const isPostpartumContext = r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'postpartum'
+  const expectedSource: 'pregnancy_module' | 'postpartum_module' | 'other' = isPostpartumContext
+    ? 'postpartum_module'
+    : isPregnancyContext
+      ? 'pregnancy_module'
+      : 'other'
+  if (expectedSource === 'pregnancy_module' && d.source !== 'pregnancy_module') return true
+  if (expectedSource === 'postpartum_module' && d.source !== 'postpartum_module') return true
+  if (expectedSource === 'other' && d.source !== 'WOMEN_SAFETY_01' && d.source !== null) return true
+
   if (d.source === 'WOMEN_SAFETY_01') {
     const rawAnswer = r.reproductive_status.reproductive_status
     if (Array.isArray(rawAnswer)) {
@@ -311,16 +337,9 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
     // key==='pregnancy'(visit_goal==='women' && women_goal==='pregnancy')
     // && PREGNANCY_01==='pregnant'일 때만 이 source를 만들고, 그 결과는
     // 항상 고정된 하나의 형태({raw:['pregnant'], pregnant:true,
-    // pregnancy_possible:false, postpartum_1y:null, breastfeeding:null})다
-    // -- 9/10차는 이 source 전체를 검사 대상에서 제외했지만, 실제로는
-    // r.modules.pregnancy.status(=PREGNANCY_01)로 재계산 가능하다.
-    // 이 컨텍스트가 아니거나 고정 형태와 다르면 실제 보고되지 않은
-    // 임신 사실을 지어낸 것이다.
-    const isPregnancyContext =
-      r.visit_goal?.visit_goal === 'women' &&
-      r.visit_goal?.women_goal === 'pregnancy' &&
-      r.modules?.pregnancy?.status === 'pregnant'
-    if (!isPregnancyContext) return true
+    // pregnancy_possible:false, postpartum_1y:null, breastfeeding:null})다.
+    // 컨텍스트 검사는 위 expectedSource에서 이미 끝났으므로 여기서는 그
+    // 고정 형태와의 일치만 확인한다.
     if (
       !Array.isArray(d.raw) ||
       d.raw.length !== 1 ||
@@ -336,9 +355,8 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
     // coreSpec.ts deriveReproductiveStatus: key==='postpartum'일 때만 이
     // source를 만들고, postpartum_1y/breastfeeding은 각각
     // POSTPARTUM_01/03(=r.modules.postpartum.time_since_delivery/
-    // breastfeeding_status)에서 결정론적으로 재계산된다.
-    const isPostpartumContext = r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'postpartum'
-    if (!isPostpartumContext) return true
+    // breastfeeding_status)에서 결정론적으로 재계산된다. 컨텍스트 검사는
+    // 위 expectedSource에서 이미 끝났다.
     const since = r.modules?.postpartum?.time_since_delivery
     const feeding = r.modules?.postpartum?.breastfeeding_status
     const rawParts: string[] = []
@@ -506,6 +524,29 @@ export function isFlagsUsable(flags: unknown, r: DoctorPayload['responses']): bo
   return isFlagsConsistentWithResponses(flags, r)
 }
 
+// 12차 독립 리뷰 MEDIUM-1: saju(myungri_calculation)는 server/index.js가
+// `body.myungri_calculation ?? null`로 검증 없이 저장하고,
+// isDoctorPayloadShapeUsable은 top-level 키(status/policy/engine/flags)만
+// 검사할 뿐 pillars/normalized/unresolved_reason 같은 leaf는 절대
+// 검증하지 않는다 -- wrong-typed leaf를 그대로 문자열 보간/React child로
+// 흘려보내면 "[object Object]" 노출이나 크래시로 이어진다. optionLabel
+// (labels.ts)과 동일한 원칙을 여기서도 적용: string/number가 아니면
+// 명시적 실패 토큰을 반환한다.
+const UNREADABLE_COMPUTED_VALUE = '확인 필요(값 형식 오류)'
+
+function computedText(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  return UNREADABLE_COMPUTED_VALUE
+}
+
+/** 날짜 구성요소(년/월/일)용 -- 유효한 값이면 2자리로 0-padding, 아니면 실패 토큰. */
+function datePartText(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value).padStart(2, '0')
+  if (typeof value === 'string' && value !== '') return value
+  return UNREADABLE_COMPUTED_VALUE
+}
+
 /** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
 export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   text: string
@@ -516,8 +557,9 @@ export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
     return { text: '계산 완료 (정책 승인 대기 — 값 변경 가능)', tone: 'warning' }
   }
   if (saju.status === 'partial') return { text: '부분 계산 (시주 미상)', tone: 'warning' }
+  const reason = computedText(saju.unresolved_reason)
   return {
-    text: `계산 불가${saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}`,
+    text: `계산 불가${reason ? ` — ${reason}` : ''}`,
     tone: 'unresolved',
   }
 }
@@ -534,29 +576,41 @@ const PENDING_APPROVAL_LABELS: Record<string, string> = {
  * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
  */
 export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
-  if (!saju.pillars?.day) {
+  // 12차 독립 리뷰 HIGH-3: `!saju.pillars?.day`는 truthy 체크일 뿐이라
+  // day가 존재하지만 wrong-typed(예: number)면 그대로 통과해 아래
+  // `.charAt(0)`에서 "TypeError: ... .charAt is not a function"으로
+  // 전체 임상 화면(DoctorRecordErrorBoundary가 CommonSafetyBanner/모든
+  // SafetyPanel까지 함께 감싸고 있음)을 날린다. day가 진짜 없는 경우
+  // ("계산 불가", 예: 원본 저장 이전의 레거시 레코드)와 있지만
+  // wrong-typed인 경우("확인 필요")를 구분한다.
+  const dayPillar = saju.pillars?.day
+  if (typeof dayPillar !== 'string') {
+    const isCorrupted = dayPillar !== null && dayPillar !== undefined
+    const reason = computedText(saju.unresolved_reason)
     return (
       <div className="doctor__msSummary doctor__msSummary--myungri">
         <strong className="doctor__msSummary__title">명리 핵심</strong>
         <p className="doctor__msSummary__line">
-          계산 불가{saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+          {isCorrupted ? UNREADABLE_COMPUTED_VALUE : `계산 불가${reason ? ` — ${reason}` : ''}`}
         </p>
       </div>
     )
   }
 
-  const dayStem = saju.pillars.day.charAt(0)
+  const dayStem = dayPillar.charAt(0)
   const birthInfoLine = saju.flags.hour_unknown
     ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
     : '출생시간 확인됨 · 4주 8자'
   const pendingLabels = asArray<string>(saju.policy.pending_approval).map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
+  const yearPillar = computedText(saju.pillars?.year) ?? UNREADABLE_COMPUTED_VALUE
+  const monthPillar = computedText(saju.pillars?.month) ?? UNREADABLE_COMPUTED_VALUE
+  const hourPillar = computedText(saju.pillars?.hour) ?? '미상'
 
   return (
     <div className="doctor__msSummary doctor__msSummary--myungri">
       <strong className="doctor__msSummary__title">명리 핵심</strong>
       <p className="doctor__msSummary__line">
-        원국: 연{saju.pillars.year} 월{saju.pillars.month} 일{saju.pillars.day} 시
-        {saju.pillars.hour ?? '미상'}
+        원국: 연{yearPillar} 월{monthPillar} 일{dayPillar} 시{hourPillar}
       </p>
       <p className="doctor__msSummary__line">일간: {dayStem}</p>
       <p className="doctor__msSummary__line">출생정보: {birthInfoLine}</p>
@@ -3477,7 +3531,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       <section className="doctor__section">
         <h2>주호소</h2>
         <p className="doctor__derivedNote">
-          시스템 라우팅 — 주호소 모듈: {routing.primary_module ?? '없음'} / 동반 화면:{' '}
+          시스템 라우팅 — 주호소 모듈: {computedText(routing.primary_module) ?? '없음'} / 동반 화면:{' '}
           {asArray<string>(routing.secondary_screens).length > 0
             ? asArray<string>(routing.secondary_screens).join(', ')
             : '없음'}
@@ -3510,7 +3564,14 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       */}
       <section className="doctor__section">
         <h2>추가 상세상담</h2>
-        {routing.additional_module ? (
+        {/*
+          12차 독립 리뷰 LOW-1: truthy 체크(`routing.additional_module ?`)는
+          wrong-typed 객체(`{}`)도 "있음"으로 통과시켜, 진료 탭의
+          deriveAdditionalConcernSummary(이미 타입 검사를 거쳐 null을
+          반환)와 모순되는 "추가 상세상담" 섹션(빈 값)을 보여줬다 --
+          workspace/additionalConcern.ts와 동일한 타입 검사로 맞춘다.
+        */}
+        {typeof routing.additional_module === 'string' && routing.additional_module !== '' ? (
           <>
             <div className="doctor__chiefPrimary">
               <span className="doctor__chiefPrimary__label">추가 상세상담</span>
@@ -3579,7 +3640,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
       <section className="doctor__section">
         <h2 className="doctor__section__h2--sub">
-          상세 증상{routing.primary_module ? ` — ${routing.primary_module}` : ''}
+          상세 증상{computedText(routing.primary_module) ? ` — ${computedText(routing.primary_module)}` : ''}
         </h2>
         {routing.primary_module === 'Sleep' &&
           (() => {
@@ -3727,7 +3788,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             <h3>원본 출생정보 — 환자 입력</h3>
             <div className="doctorField">
               <span className="doctorField__label">생년월일 (입력 그대로)</span>
-              <span className="doctorField__value">{r.birth_info.birth_date ?? '—'}</span>
+              <span className="doctorField__value">{computedText(r.birth_info.birth_date) ?? '—'}</span>
             </div>
             <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
             <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
@@ -3743,7 +3804,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             {saju.status !== 'resolved' && (
               <p className="doctor__warning">
                 상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
-                {saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+                {computedText(saju.unresolved_reason) ? ` — ${computedText(saju.unresolved_reason)}` : ''}
               </p>
             )}
             {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
@@ -3752,28 +3813,28 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <div className="doctor__pillars">
                 <div className="doctor__pillar">
                   <span>연주</span>
-                  <strong>{saju.pillars.year}</strong>
+                  <strong>{computedText(saju.pillars.year) ?? UNREADABLE_COMPUTED_VALUE}</strong>
                 </div>
                 <div className="doctor__pillar">
                   <span>월주</span>
-                  <strong>{saju.pillars.month}</strong>
+                  <strong>{computedText(saju.pillars.month) ?? UNREADABLE_COMPUTED_VALUE}</strong>
                 </div>
                 <div className="doctor__pillar">
                   <span>일주</span>
-                  <strong>{saju.pillars.day}</strong>
+                  <strong>{computedText(saju.pillars.day) ?? UNREADABLE_COMPUTED_VALUE}</strong>
                 </div>
                 <div className="doctor__pillar">
                   <span>시주</span>
-                  <strong>{saju.pillars.hour ?? '미상'}</strong>
+                  <strong>{computedText(saju.pillars.hour) ?? '미상'}</strong>
                 </div>
               </div>
             )}
 
             {saju.normalized?.solarDate && (
               <p className="doctor__derivedNote">
-                정규화된 양력 날짜: {saju.normalized.solarDate.year}-
-                {String(saju.normalized.solarDate.month).padStart(2, '0')}-
-                {String(saju.normalized.solarDate.day).padStart(2, '0')} / 상태: {saju.status}
+                정규화된 양력 날짜: {datePartText(saju.normalized.solarDate.year)}-
+                {datePartText(saju.normalized.solarDate.month)}-
+                {datePartText(saju.normalized.solarDate.day)} / 상태: {saju.status}
               </p>
             )}
 

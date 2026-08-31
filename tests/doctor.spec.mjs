@@ -27,6 +27,8 @@ import {
   ShoulderSafetyPanel,
   KneeSafetyPanel,
   isUnreadableReproductiveDerived,
+  MyungriCompactCard,
+  sajuStatusLine,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -1642,8 +1644,11 @@ function detailsRange(html, classMarker) {
     /saju\.normalized\?\.solarDate/.test(src),
   )
   assert(
-    'resilience: MyungriCompactCard checks saju.pillars?.day (not just saju.pillars) before calling .charAt on it',
-    /if \(!saju\.pillars\?\.day\)/.test(src),
+    // 12차 독립 리뷰 HIGH-3: truthy 체크(`!saju.pillars?.day`)는 day가
+    // 존재하지만 wrong-typed(예: number)면 통과시켜 .charAt(0)에서 그대로
+    // 크래시했다 -- 타입 검사(`typeof dayPillar !== 'string'`)로 교체.
+    'resilience: MyungriCompactCard checks typeof saju.pillars?.day === "string" (not just truthy) before calling .charAt on it',
+    /const dayPillar = saju\.pillars\?\.day\s*\n\s*if \(typeof dayPillar !== 'string'\)/.test(src),
   )
   assert(
     'resilience: primaryModuleFields Sleep case guards m.sleep.menopause before reading its MS_* leaves',
@@ -2169,6 +2174,228 @@ function detailsRange(html, classMarker) {
       isUnreadableReproductiveDerived(p.responses) === true,
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 12차 독립 리뷰 HIGH-1: derived.source가 세 값(WOMEN_SAFETY_01/
+   * pregnancy_module/postpartum_module) + null 중 무엇과도 일치하지 않는
+   * wrong-typed/엉뚱한 값이면, 이전 구현은 어떤 if/else if 분기에도 안
+   * 걸려 마지막 `return false`까지 통과했다 -- 즉 "정상"으로 판정되어
+   * lbpAdapter.ts의 mapPregnancyStatus가 pregnant/pregnancy_possible을
+   * false로 읽어, 실제 임신/수유를 보고한 환자에게 명시적 음성 소견을
+   * 지어낼 수 있었다.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture8 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture8.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant', 'breastfeeding']
+    p.responses.reproductive_status.derived = {
+      source: ['WOMEN_SAFETY_01'],
+      raw: ['pregnant', 'breastfeeding'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a wrong-typed (array) derived.source instead of matching no branch and falling through as "consistent" (12th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture9 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture9.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant']
+    p.responses.reproductive_status.derived = {
+      source: 'women_safety_01',
+      raw: ['pregnant'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a near-miss bogus string derived.source (12th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 12차 독립 리뷰 HIGH-2: 이전 구현은 "source가 pregnancy_module/
+   * postpartum_module이면 컨텍스트가 실제로 그런가"만 검사했지, 반대
+   * 방향("컨텍스트가 실제로 임신/산후인데 source가 WOMEN_SAFETY_01이거나
+   * null인가")은 전혀 검사하지 않았다 -- 실제 임신/산후 컨텍스트에서
+   * source를 WOMEN_SAFETY_01로 남겨두고 모든 필드를 false로 채운
+   * stale/조작된 레코드가 그대로 "정상"으로 통과해 동일한 허위 음성
+   * 소견을 만들 수 있었다.
+   * ------------------------------------------------------------------- */
+  {
+    const pregnancyFixture3 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture3.payload)
+    // 실제 임신 컨텍스트(visit_goal.women_goal==='pregnancy' &&
+    // modules.pregnancy.status==='pregnant')는 그대로 두고, source만
+    // WOMEN_SAFETY_01로 바꿔 컨텍스트↔source 반대 방향 불일치를 만든다.
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a genuine pregnancy context whose source is claimed to be WOMEN_SAFETY_01 instead of pregnancy_module (12th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const postpartumFixture3 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture3.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a genuine postpartum context whose source is claimed to be WOMEN_SAFETY_01 instead of postpartum_module (12th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 12차 독립 리뷰 HIGH-3/MEDIUM-1: MyungriCompactCard/sajuStatusLine은
+ * saju(myungri_calculation)의 pillars/normalized/unresolved_reason을
+ * 검증 없이 렌더한다 -- server/index.js가 `body.myungri_calculation ??
+ * null`로 저장하고 isDoctorPayloadShapeUsable은 top-level 키만 검사할 뿐
+ * 이 leaf들은 검증하지 않는다. pillars.day가 wrong-typed(number)면
+ * `!saju.pillars?.day`(truthy 체크)를 통과해 `.charAt(0)`에서 그대로
+ * 크래시했고(HIGH-3, DoctorRecordErrorBoundary가 CommonSafetyBanner/모든
+ * SafetyPanel까지 함께 감싸므로 전체 임상 화면이 날아간다), pillars.year/
+ * normalized.solarDate.month 등이 wrong-typed면 "[object Object]"를 그대로
+ * 노출했다(MEDIUM-1).
+ * ---------------------------------------------------------------------- */
+{
+  const baseSaju = byName('허리 통증 주호소 (LBP, 확인 필요)').payload.myungri_calculation
+
+  {
+    const saju = structuredClone(baseSaju)
+    saju.pillars.day = 42
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never crashes when saju.pillars.day is wrong-typed (number) -- shows the explicit fail-closed label instead of calling .charAt on a non-string (12th independent review HIGH-3)',
+      html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.pillars.day = { corrupted: true }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never crashes when saju.pillars.day is wrong-typed (object) (12th independent review HIGH-3)',
+      html.includes('확인 필요(값 형식 오류)') && !html.includes('[object Object]'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.pillars.year = ['甲', '子']
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never fabricates a plausible-looking pillar from a wrong-typed (array) saju.pillars.year -- shows the fail-closed label instead (12th independent review MEDIUM-1)',
+      html.includes('확인 필요(값 형식 오류)') && !html.includes('甲子'),
+    )
+  }
+  {
+    // normalized.solarDate/pillars(전체 그리드)는 MyungriCompactCard가
+    // 아니라 DoctorView.tsx의 "명리 검토"(judgment__reviewGrid) 인라인
+    // 블록에서만 렌더된다 -- 그 블록은 별도 컴포넌트로 export되어 있지
+    // 않아 독립적으로 렌더할 수 없으므로, datePartText가 실제 그 호출부에
+    // 쓰였는지 구조 확인으로 보완한다(behavioral 검증은 실사용
+    // 재검증(live Playwright repro)으로 수행).
+    const doctorViewSrc = await readFile(
+      fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)),
+      'utf8',
+    )
+    assert(
+      'resilience: DoctorView.tsx\'s "명리 검토" 정규화된 양력 날짜 줄이 datePartText를 통해 year/month/day를 렌더한다 (bare String().padStart() 대신, 12차 독립 리뷰 MEDIUM-1)',
+      /정규화된 양력 날짜: \{datePartText\(saju\.normalized\.solarDate\.year\)\}-\s*\n\s*\{datePartText\(saju\.normalized\.solarDate\.month\)\}-\s*\n\s*\{datePartText\(saju\.normalized\.solarDate\.day\)\}/.test(
+        doctorViewSrc,
+      ),
+    )
+    assert(
+      'resilience: DoctorView.tsx\'s "명리 검토" 연/월/일/시주 그리드가 computedText를 통해 pillars.year/month/day/hour를 렌더한다(12차 독립 리뷰 MEDIUM-1)',
+      /<strong>\{computedText\(saju\.pillars\.year\) \?\? UNREADABLE_COMPUTED_VALUE\}<\/strong>/.test(doctorViewSrc) &&
+        /<strong>\{computedText\(saju\.pillars\.month\) \?\? UNREADABLE_COMPUTED_VALUE\}<\/strong>/.test(
+          doctorViewSrc,
+        ) &&
+        /<strong>\{computedText\(saju\.pillars\.day\) \?\? UNREADABLE_COMPUTED_VALUE\}<\/strong>/.test(
+          doctorViewSrc,
+        ),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.status = 'unresolved'
+    saju.pillars = null
+    saju.unresolved_reason = { corrupted: true }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never leaks "[object Object]" from a wrong-typed saju.unresolved_reason (12th independent review MEDIUM-1)',
+      !html.includes('[object Object]'),
+    )
+    const line = sajuStatusLine(saju)
+    assert(
+      'resilience: sajuStatusLine never leaks "[object Object]" from a wrong-typed saju.unresolved_reason',
+      !line.text.includes('[object Object]') && line.text.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 12차 독립 리뷰 HIGH-4/MEDIUM-2/LOW-1: DoctorView.tsx는
+ * routing.primary_module/routing.additional_module을 검증 없이 직접
+ * React 자식/템플릿 리터럴로 렌더한다(server/index.js가 `routing:
+ * body.routing ?? null`로 저장, isDoctorPayloadShapeUsable은
+ * isPlainObject(payload.routing)만 확인할 뿐 leaf는 검증하지 않는다).
+ * wrong-typed 객체는 "Objects are not valid as a React child" 예외를
+ * 던져 CommonSafetyBanner/모든 SafetyPanel을 포함한 전체 임상 화면을
+ * 날렸고(HIGH-4), 배열은 React가 그대로 이어붙이거나(주호소 모듈:
+ * PainSleep) 템플릿 리터럴에서 CSV로 새서(상세 증상 — Pain,Sleep)
+ * 임상 텍스트에 원시 배열이 그대로 노출됐다(MEDIUM-2). LOW-1은
+ * `routing.additional_module`의 truthy 체크가 wrong-typed 객체도
+ * "있음"으로 통과시켜, 진료 탭(additionalConcern.ts, 타입 검사로 이미
+ * null 반환)과 자료 탭이 같은 레코드에서 서로 모순되는 걸 막는다.
+ * DoctorView.tsx 메인 렌더 블록은 별도 컴포넌트로 export되어 있지 않아
+ * (MyungriCompactCard와 달리) 독립적으로 렌더할 수 없으므로, 실제 수정이
+ * 소스에 반영됐는지 구조 확인으로 검증한다 -- behavioral 검증은 실사용
+ * 재검증(live Playwright repro)으로 수행.
+ * ---------------------------------------------------------------------- */
+{
+  const doctorViewSrc = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: DoctorView.tsx의 "시스템 라우팅 — 주호소 모듈" 줄이 computedText(routing.primary_module)을 거친다 (bare routing.primary_module 대신, 12th independent review HIGH-4/MEDIUM-2)',
+    /시스템 라우팅 — 주호소 모듈: \{computedText\(routing\.primary_module\) \?\? '없음'\}/.test(doctorViewSrc),
+  )
+  assert(
+    'resilience: DoctorView.tsx의 "상세 증상" 소제목이 computedText(routing.primary_module)을 거친다 (bare routing.primary_module 대신, 12th independent review HIGH-4/MEDIUM-2)',
+    /상세 증상\{computedText\(routing\.primary_module\) \? ` — \$\{computedText\(routing\.primary_module\)\}` : ''\}/.test(
+      doctorViewSrc,
+    ),
+  )
+  assert(
+    'resilience: DoctorView.tsx의 "추가 상세상담" 섹션이 typeof routing.additional_module === "string" 타입 검사를 쓴다 (truthy 체크 대신, 12th independent review LOW-1)',
+    /typeof routing\.additional_module === 'string' && routing\.additional_module !== ''/.test(doctorViewSrc),
+  )
+  assert(
+    'resilience: computedText는 string/number가 아니면(그리고 null/undefined도 아니면) 명시적 실패 토큰을 반환하고, 원문을 String()으로 지어내지 않는다',
+    /function computedText\(value: unknown\): string \| null \{[\s\S]{0,200}return UNREADABLE_COMPUTED_VALUE/.test(
+      doctorViewSrc,
+    ),
+  )
 }
 
 /* -------------------------------------------------------------------------

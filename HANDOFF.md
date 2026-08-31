@@ -6376,6 +6376,144 @@ src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) —
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 12차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+12차 리뷰는 11차 커밋(`0496db5`)을 대상으로, 4개 HIGH를 포함해 지금까지
+가장 큰 규모의 새 결함을 찾아냈다 — 그중 2건은 실제로 라이브 검증된
+**허위 all-clear**(임신/수유를 실제로 보고한 환자에게 명시적 음성 소견을
+지어냄)였고, 2건은 전체 임상 화면을 날리는 크래시였다.
+
+**(HIGH-1) `derived.source`가 세 값(WOMEN_SAFETY_01/pregnancy_module/
+postpartum_module) + null 중 무엇과도 일치하지 않으면, 이전 구현은 모든
+if/else if 분기를 통과해 마지막 `return false`("정상")에 도달했다.**
+`reproductive_status = ['pregnant','breastfeeding']`(실제 보고)이면서
+`derived.source = ['WOMEN_SAFETY_01']`(wrong-typed 배열)이고 모든 필드가
+false인 레코드를 라이브로 POST하자, 이전 코드는 "특이 안전정보 없음"과
+LBP "치료 안전: 안전"을 실제로 렌더했다 — 이 배치가 막으려는 정확히 그
+fail-open이다.
+
+**(HIGH-2) 반대 방향(컨텍스트가 실제로 임신/산후인데 source가
+WOMEN_SAFETY_01이거나 null인 경우)은 전혀 검사하지 않았다.** 11차가
+"source→컨텍스트" 방향만 검사했지 "컨텍스트→source" 방향은 놓쳤다 — 실제
+임신 컨텍스트(`visit_goal.women_goal==='pregnancy'` &&
+`modules.pregnancy.status==='pregnant'`)에서 `derived.source`를
+WOMEN_SAFETY_01로 남겨두고 모든 필드를 false로 채운 stale/조작된
+레코드가 동일한 허위 음성 소견을 만들 수 있었다.
+
+**근본 수정 (HIGH-1/HIGH-2 공통)**: `DoctorView.tsx`의
+`isUnreadableReproductiveDerived`와 `CommonSafetyBanner.tsx`의 로컬
+사본을 재구성 — 컨텍스트(visit_goal/modules.pregnancy·postpartum)로부터
+"실제로 있어야 하는 source"(`pregnancy_module`/`postpartum_module`/
+`WOMEN_SAFETY_01 또는 null`)를 먼저 계산한 뒤, 관찰된 `d.source`가 그
+값과 정확히 일치하는지 먼저 확인하도록 변경. 이 한 번의 재구성이
+양방향(HIGH-1의 "엉뚱한 source", HIGH-2의 "컨텍스트와 반대인 source")을
+동시에 닫는다.
+
+**(HIGH-3) `MyungriCompactCard`의 `!saju.pillars?.day`는 truthy 체크일
+뿐이라, `day`가 존재하지만 wrong-typed(예: number)면 통과해
+`.charAt(0)`에서 그대로 크래시했다.** `DoctorRecordErrorBoundary`가
+CommonSafetyBanner/모든 SafetyPanel까지 함께 감싸고 있어, 명리 pillar
+하나가 손상되면 전체 임상 화면이 날아간다. `typeof dayPillar !==
+'string'`으로 교체하고, "day가 진짜 없음"(계산 불가)과 "있지만
+wrong-typed"(확인 필요)를 구분.
+
+**(HIGH-4) `routing.primary_module`이 검증 없이 React 자식으로 렌더돼
+wrong-typed 객체가 "Objects are not valid as a React child" 예외를
+던지고, 이 카드 하나가 아니라 전체 임상 화면을 날렸다.** round 10이
+`additional_module`에 적용한 것과 동일한 취약점이 형제 필드
+`primary_module`에는 적용되지 않았던 것.
+
+**(MEDIUM-1) 명리 검토 화면의 `unresolved_reason`/`normalized.solarDate`/
+`pillars.year·month·hour`가 전부 검증 없이 렌더됐다.** `pillars.year`가
+배열이면(`['甲','子']`) "甲子"처럼 실제로 보고되지 않은 그럴듯한 간지를
+지어냈고, `normalized.solarDate.month`가 객체면 `String(value)`가
+"[object Object]"를 그대로 노출했다(round 11 HIGH-1이 고친 것과 동일한
+anti-pattern이 `birth_info.birth_date`/명리 블록에는 남아있었음).
+`computedText`/`datePartText` 헬퍼로 통일.
+
+**(HIGH-4/MEDIUM-1/LOW-1 공통 근본 수정)**: `DoctorView.tsx`에
+`computedText(value)`(string/number 그대로, null/undefined는 빈 값,
+그 외엔 명시적 실패 토큰) 헬퍼를 추가해 `routing.primary_module`(주호소
+모듈 줄, 상세 증상 소제목), `saju.pillars.year/month/hour`,
+`saju.unresolved_reason`, `birth_info.birth_date`(명리 검토의 원본
+출생정보 열)에 일괄 적용. 날짜 성분 전용 `datePartText`도 추가해
+`normalized.solarDate.year/month/day`의 bare `String().padStart()`를
+대체.
+
+**(MEDIUM-2) `routing.primary_module`이 배열이면 React가 그대로
+이어붙이거나(`PainSleep`) 템플릿 리터럴이 CSV로 새서(`Pain,Sleep`)
+임상 텍스트에 원시 배열이 노출됐다.** 위 `computedText` 적용으로 함께
+닫힘(배열은 "확인 필요" 토큰으로 대체).
+
+**(MEDIUM-3) 이전 방문 longitudinal 데이터 전체(`history.visits`,
+follow-up target 배열, `createdAt`, `nextReassessmentPlan.status`)가
+인증되지 않은 PUT이 검증 없이 저장한 workspace에서 그대로 온다 — 11차는
+`primaryConcern` 한 필드만 방어했다.** target 배열 자체가 배열이
+아니거나(`.slice().map is not a function`), target이 `baseline`/
+`postTreatmentValue` 필드 자체가 없는 레거시 shape면(`.trim is not a
+function`) 크래시했고, `createdAt`이 wrong-typed면 가짜
+1970-01-01/"Invalid Date"를 노출했다. 서버 쪽도 취약: `server/store.js`의
+`getPatientHistory`가 `painFollowUpTargets ?? []`만으로 방어해(타입
+검사 없음) `[...painTargets, ...herbalTargets]` 스프레드가
+"TypeError: ... is not iterable"을 던져 엔드포인트 전체를 500으로 만들
+수 있었다.
+
+**근본 수정**: `src/doctor/workspace/longitudinal.ts`에
+`asPriorVisitArray`/`readablePriorVisitFollowUpTarget`/
+`readablePriorVisitDateLabel`/`readablePriorVisitReassessmentStatusLabel`/
+`readablePriorVisitText` 헬퍼를 추가해 `PriorVisitHistoryCard.tsx`/
+`RevisitWorkspace.tsx`/`microFollowUp.ts`(`microFollowUpCandidatesFromPriorTargets`,
+시그니처를 `FollowUpTarget[]`에서 `unknown`으로 바꿔 내부에서 전부
+검증) 세 곳 모두에 일괄 적용. `server/store.js`는
+`Array.isArray(workspace?.painFollowUpTargets) ? ... : []`로 타입
+검사를 추가(no-submission revisit 분기가 이미 쓰던 것과 동일 기준).
+
+**(LOW-1) `routing.additional_module`의 truthy 체크가 wrong-typed
+객체도 "있음"으로 통과시켜, 진료 탭(additionalConcern.ts, 이미 타입
+검사로 null 반환)과 자료 탭이 같은 레코드에서 서로 모순됐다.** `typeof
+routing.additional_module === 'string' && routing.additional_module
+!== ''`로 교체(additionalConcern.ts와 동일 기준).
+
+**(LOW-3) LBP_12(min:0/max:10 numeric_scale)의 `recovery_expectation`이
+finite number 검사만으로는 999/-4 같은 범위 밖 값을 실제 원점수처럼
+그대로 렌더했다.** `PainWorkspace.tsx`의 `recoveryScoreUnreadable`에
+`< 0 || > 10` 범위 검사 추가.
+
+**신규 회귀 테스트**: `tests/doctor.spec.mjs`에 HIGH-1/HIGH-2 직접
+단위 테스트 4개(bogus source 배열/근사-불일치 문자열, 반대 방향
+컨텍스트 불일치 2개), `MyungriCompactCard`/`sajuStatusLine` 직접 렌더로
+HIGH-3/MEDIUM-1 7개, `routing.primary_module`/`additional_module` 관련
+구조 확인 4개(+15, 845→860). `tests/doctor-workspace.spec.mjs`에
+MEDIUM-3(followUpTargets
+비배열/레거시 target shape/wrong-typed label/wrong-typed createdAt/
+알 수 없는 재평가 status 5개) + LOW-3(범위 밖 999/-4 2개) 추가(+7,
+164→171). `tests/server.spec.mjs`에 `getPatientHistory`의
+wrong-typed follow-up-target 배열이 500이 아니라 200 + 빈 배열
+폴백을 반환하는지 확인하는 HTTP 레벨 테스트 2개 추가(230→232).
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch 포트)
++ Playwright로 1440×900/1024×768/834×1112 3개 뷰포트 각각에서 (A)
+실제 임신/수유 보고 + bogus 배열 source(HIGH-1), (B) 실제 임신
+컨텍스트 + WOMEN_SAFETY_01로 남은 source(HIGH-2), (C)
+`saju.pillars.day` wrong-typed(HIGH-3), (D) `routing.primary_module`
+wrong-typed 객체(HIGH-4), (E) `routing.primary_module` 배열(MEDIUM-2)
+레코드를 POST하고 목록에서 클릭 — (A)(B) "특이 안전정보 없음" 허위
+all-clear 0건 및 "안전정보 일부를 읽을 수 없습니다" 배너 정상 표시,
+(C)(D) `DoctorRecordErrorBoundary` fallback으로 떨어지지 않고 정상
+임상 화면 유지, (E) "Pain,Sleep"/"PainSleep" 원시 배열 노출 0건, 5개
+시나리오 × 3개 뷰포트 전부 page error 0건 확인.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 860/860, doctor-workspace 171/171, server 232
+포함), `npm run build`/`build:preview` clean, `tablet core` pytest
+80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 13차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

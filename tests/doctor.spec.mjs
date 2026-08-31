@@ -1472,4 +1472,52 @@ const todayChecklistSrc = await readFile(
   )
 }
 
+/* =======================================================================
+ * P4 — 문진 핵심(§4 Level2): 유의미 응답 우선 + 원시 응답 전체 펼치기.
+ * ===================================================================== */
+
+// 17a. LBP fixture: 상세 증상(문진 핵심) 섹션이 "원시 응답 전체 보기" 펼치기를 갖고,
+//      그 안에 전체 필드가 원래 순서 그대로 다시 렌더된다(데이터 손실 없음, 의도된 중복).
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('LBP fixture: "문진 핵심" 섹션 제목 렌더', html.includes('문진 핵심'))
+  assert('LBP fixture: "원시 응답 전체 보기" 펼치기 렌더', html.includes('원시 응답 전체 보기'))
+
+  // 새 DOM 기준 중복 감사(13i 등가): LBP_01 질문 문구는 "문진 핵심"(유의미
+  // 응답 우선 그룹)과 "원시 응답 전체 보기"(원본 순서) 양쪽에 정확히 한 번씩,
+  // 총 2번 나온다 — 의도된 중복이며 그 이상/이하는 회귀다. (문구 자체는 2c의
+  // "LBP fixture: LBP_01 question text renders" 어서션과 같은 리터럴이다.)
+  const lbp01Question = '허리 통증이나 불편감이 가장 멀리'
+  const count = html.split(lbp01Question).length - 1
+  assert('중복 감사(새 DOM 기준): LBP_01 질문 문구는 정확히 2번(문진 핵심 + 원시 전체 보기)', count === 2)
+}
+
+// 17b. "문진 핵심"의 양성/구체 응답은 Body-strong(doctorField__value--strong) 클래스를 갖는다.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('LBP fixture: doctorField__value--strong 클래스가 렌더됨(양성 응답 강조)', html.includes('doctorField__value--strong'))
+}
+
+// 17c. "추가 상세상담" 블록도 같은 규칙(문진 핵심과 동일 §4 Level2)을 따른다 —
+//      원시 응답 전체 보기 펼치기가 그 블록 안에도 존재한다.
+{
+  const html = renderDoctorView('허리 통증 주호소 + 추가 상세상담(수면) + 참고 증상(소화·기타)')
+  const additionalIdx = html.indexOf('추가 상세상담')
+  const rawToggleIdx = html.indexOf('원시 응답 전체 보기', additionalIdx)
+  assert('v2.1 fixture: 추가 상세상담 블록 안에도 "원시 응답 전체 보기" 펼치기가 있다', rawToggleIdx !== -1)
+}
+
+// 17d. "안 물어봄 = 미렌더" 규칙은 그대로다 — P4 재정렬이 primaryModuleFields가
+//      아예 반환하지 않는 다른 모듈의 질문 문구를 새로 렌더하기 시작하지
+//      않았는지 확인한다(예: Sleep 주호소 fixture에는 LBP 전용 질문이 전혀
+//      없어야 한다 — "원시 응답 전체 보기"가 생겼다고 안 물어본 질문까지
+//      끌어오면 안 된다).
+{
+  const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  assert(
+    'Sleep 주호소 fixture: LBP 전용 질문 문구(LBP_01)는 어디에도 렌더되지 않는다(안 물어봄 = 미렌더 유지)',
+    !html.includes('허리 통증이나 불편감이 가장 멀리'),
+  )
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

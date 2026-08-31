@@ -46,10 +46,13 @@ function Field({
   qid,
   value,
   label,
+  strong = false,
 }: {
   qid: string
   value: AnswerValue | undefined
   label?: string
+  /** v0.2 §9.3/P4 — "문진 핵심"의 양성/구체 응답을 Body-strong(15px/700)으로 강조한다. */
+  strong?: boolean
 }) {
   if (value === null || value === undefined) return null
   if (typeof value === 'string' && value.trim() === '') return null
@@ -64,7 +67,11 @@ function Field({
   return (
     <div className="doctorField">
       <span className="doctorField__label">{displayLabel}</span>
-      <span className={`doctorField__value${isEmptyAnswer ? ' doctorField__value--muted' : ''}`}>
+      <span
+        className={`doctorField__value${isEmptyAnswer ? ' doctorField__value--muted' : ''}${
+          strong && !isEmptyAnswer ? ' doctorField__value--strong' : ''
+        }`}
+      >
         {text}
       </span>
     </div>
@@ -152,6 +159,40 @@ function isEmptyValue(value: AnswerValue | null | undefined): boolean {
   if (Array.isArray(value)) return value.length === 0
   if (typeof value === 'string') return value.trim() === ''
   return false
+}
+
+/**
+ * v0.2 §4 Level2/P4 — "유의미 응답 우선" 정렬의 기준. `Field` 컴포넌트가
+ * 값 하나만 보고 내리는 "안 물어봄(미렌더)/none·unknown(muted)/그 외(양성·
+ * 구체)" 판정을 그룹 정렬을 위해 미리 한 번 더 계산한다 — 새 판정 규칙이
+ * 아니라 Field의 기존 로직을 재사용한 것뿐이다(중복 계산이지만 계산
+ * 자체는 FROZEN 임상 로직이 아니라 이 렌더 계층의 표시 규칙이다).
+ */
+function fieldSignificance(value: AnswerValue | undefined): 'meaningful' | 'muted' | 'empty' {
+  if (value === null || value === undefined) return 'empty'
+  if (typeof value === 'string' && value.trim() === '') return 'empty'
+  if (Array.isArray(value) && value.length === 0) return 'empty'
+  const isEmptyAnswer = Array.isArray(value)
+    ? value.length === 1 && (value[0] === 'none' || value[0] === 'unknown')
+    : value === 'none' || value === 'unknown'
+  return isEmptyAnswer ? 'muted' : 'meaningful'
+}
+
+type ModuleField = { qid: string; value: AnswerValue }
+
+/**
+ * "양성/구체 응답 → 우선 표시, none/unknown → muted 후순위" 정렬(§4 Level2).
+ * "안 물어봄 = 미렌더" 규칙은 건드리지 않는다 — empty 값도 그대로 배열에
+ * 남겨서 Field 자신이 null을 반환하게 둔다(순서만 바꾸는 것이지, 여기서
+ * 새로 필터링하지 않는다). Array.prototype.sort는 안정 정렬이므로 같은
+ * 그룹 안에서는 원래 순서가 유지된다.
+ */
+function sortFieldsBySignificance(fields: ModuleField[]): ModuleField[] {
+  const rank = (f: ModuleField) => {
+    const sig = fieldSignificance(f.value)
+    return sig === 'meaningful' ? 0 : sig === 'muted' ? 1 : 2
+  }
+  return [...fields].sort((a, b) => rank(a) - rank(b))
 }
 
 /** 요약 카드용 "기간 · 빈도" 한 줄. 둘 다 없으면 줄 자체를 생략한다. */
@@ -778,6 +819,35 @@ function primaryModuleFields(
     default:
       return []
   }
+}
+
+/**
+ * v0.2 §4 Level2/P4 — "문진 핵심" 필드 그룹. 유의미 응답(양성/구체)을
+ * Body-strong으로 먼저 보여주고, muted(none/unknown)는 뒤로 미룬다. 원본
+ * 순서 그대로의 전체 목록은 "원시 응답 전체 보기" 펼치기 안에 별도로 둔다
+ * (데이터 손실 없음 — 유의미 응답은 위/아래 두 곳에 의도적으로 중복
+ * 렌더된다, 기존 "10초 요약" 카드와 같은 종류의 중복 패턴).
+ */
+function ModuleFieldGroup({ fields }: { fields: ModuleField[] }) {
+  if (fields.length === 0) return null
+  const sorted = sortFieldsBySignificance(fields)
+  return (
+    <>
+      <div className="doctor__grid">
+        {sorted.map((f) => (
+          <Field key={f.qid} qid={f.qid} value={f.value} strong />
+        ))}
+      </div>
+      <details className="doctor__secDetails doctor__rawFieldsToggle">
+        <summary>원시 응답 전체 보기</summary>
+        <div className="doctor__grid">
+          {fields.map((f) => (
+            <Field key={f.qid} qid={f.qid} value={f.value} />
+          ))}
+        </div>
+      </details>
+    </>
+  )
 }
 
 /** SubmissionRecord(서버) -> 화면이 이미 알고 있는 DoctorPayload 모양으로 변환. */
@@ -1522,11 +1592,9 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               {optionLabel('ADDITIONAL_DETAIL_01', routing.additional_detail_concern)}
             </span>
           </div>
-          <div className="doctor__grid">
-            {primaryModuleFields(routing.additional_module, r.modules, routing.additional_module_detail).map((f) => (
-              <Field key={f.qid} qid={f.qid} value={f.value} />
-            ))}
-          </div>
+          <ModuleFieldGroup
+            fields={primaryModuleFields(routing.additional_module, r.modules, routing.additional_module_detail)}
+          />
         </section>
       )}
 
@@ -1580,7 +1648,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       <section className="doctor__section">
         <h2 className="doctor__section__h2--sub">
-          상세 증상{routing.primary_module ? ` — ${routing.primary_module}` : ''}
+          문진 핵심{routing.primary_module ? ` — ${routing.primary_module}` : ''}
         </h2>
         {routing.primary_module === 'Sleep' &&
           (() => {
@@ -1597,14 +1665,17 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               </div>
             )
           })()}
-        <div className="doctor__grid">
-          {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).map((f) => (
-            <Field key={f.qid} qid={f.qid} value={f.value} />
-          ))}
-          {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).length === 0 && (
-            <p className="doctor__empty">이번 방문에는 해당 상세 Module이 없습니다.</p>
-          )}
-        </div>
+        {(() => {
+          const fields = primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail)
+          if (fields.length === 0) {
+            return (
+              <div className="doctor__grid">
+                <p className="doctor__empty">이번 방문에는 해당 상세 Module이 없습니다.</p>
+              </div>
+            )
+          }
+          return <ModuleFieldGroup fields={fields} />
+        })()}
       </section>
 
       <section className="doctor__section">

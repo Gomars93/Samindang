@@ -1368,3 +1368,17 @@
     align-self: start;
   }
 }
+
+/* -------------------------------------------------------------------
+ * P4 — 문진 핵심: 유의미 응답 우선(Body-strong, §9.3) + 원시 응답 전체
+ * 펼치기(progressive disclosure, §7).
+ * ----------------------------------------------------------------- */
+
+.doctorField__value--strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.doctor__rawFieldsToggle {
+  margin-top: 12px;
+}

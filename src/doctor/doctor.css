@@ -1431,6 +1431,56 @@
   color: var(--text-muted);
 }
 
+/* Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11, Phase 7 UI spec §2.4):
+   참고 화면의 그룹 아코디언. 기본 접힘, "기록 있음 n" 배지가 접힌 채로도
+   내용 유무를 알린다(§2.10 delta C-4). */
+.doctor__refAccordion {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.doctor__refAccordion:first-of-type {
+  border-top: none;
+}
+
+.doctor__refAccordion > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+
+.doctor__refAccordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.doctor__refAccordion__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.doctor__refAccordion__badge {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-muted, #eef2f7);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.doctor__refAccordion__body {
+  margin-top: 12px;
+}
+
+.doctor__refAccordion__body > .doctor__section:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
 /* ---------- Medication/Herbal-course batch ---------- */
 .medCourse {
   margin-top: 14px;

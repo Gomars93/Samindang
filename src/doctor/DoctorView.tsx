@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
@@ -36,6 +36,8 @@ import {
   type SubmissionSummary,
 } from '../lib/serverClient'
 import type { PatientHistoryResult } from './workspace/longitudinal'
+import { asPriorVisitArray } from './workspace/longitudinal'
+import { PriorVisitHistoryCard } from './workspace/PriorVisitHistoryCard'
 import type { MicroFollowUpResponse } from './workspace/microFollowUp'
 import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
 import { DELIVERY_MODE_LABEL } from './workspace/followUpSession'
@@ -117,6 +119,41 @@ export function Field({
         {text}
       </span>
     </div>
+  )
+}
+
+/**
+ * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11 / Phase 7 UI spec §2.4):
+ * 참고 화면의 각 그룹은 하나의 아코디언으로 묶이고, "기록 있음 n" 배지가
+ * 접힘 상태에서도 내용 유무를 알려준다 -- §2.10 delta C-4가 명시적으로
+ * 허용하는 "동등 이상의 상시 가시 표식"이지, 예외적으로 숨김 규칙을
+ * 어기는 게 아니다(Phase 7 §1.3-#11 테스트 계약). `count`가 0이면
+ * "기록 없음"으로 표시해 빈 아코디언을 열어보게 만들지 않는다 -- 값
+ * 자체는 접힌 상태에서도 그대로 렌더되므로(renderToString 기준 SSR
+ * 마크업에 항상 존재) 이 배지는 순수하게 "미리 알려주는 신호"일 뿐,
+ * 숨김의 유일한 근거가 아니다.
+ */
+function ReferenceAccordion({
+  title,
+  count,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  title: string
+  count: number
+  defaultOpen?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <details className={`doctor__refAccordion${className ? ` ${className}` : ''}`} open={defaultOpen}>
+      <summary>
+        <span className="doctor__refAccordion__title">{title}</span>
+        <span className="doctor__refAccordion__badge">{count > 0 ? `기록 있음 ${count}` : '기록 없음'}</span>
+      </summary>
+      <div className="doctor__refAccordion__body">{children}</div>
+    </details>
   )
 }
 
@@ -1818,6 +1855,90 @@ function constitutionFields(r: Responses) {
 }
 
 /**
+ * Core Reduction P4 -- 참고 화면 "문진 원본" 아코디언의 "기록 있음 n" 배지
+ * 값. 여기 담긴 하위 섹션(환자 기본/주호소/추가 상세상담/참고 증상/
+ * 동반문제/상세 증상/전신·한약 참고) 중 실제로 값이 있는 섹션 개수를 센다
+ * -- 필드 하나하나의 개수가 아니라 "그룹 몇 개가 채워졌는지"를 보여주는
+ * 편이 원장이 한눈에 훑기에 더 유용하다는 판단(§9-#11 배지 계약은 정확한
+ * 산식을 지정하지 않는다, 값이 있음/없음을 반영하기만 하면 된다).
+ */
+export function referenceRawGroupCount(r: Responses, routing: DoctorPayload['routing']): number {
+  let n = 0
+  if (!isEmptyValue(r.patient.patient_name) || !isEmptyValue(r.patient.patient_sex) || !isEmptyValue(r.patient.phone_last4)) n += 1
+  if (!isEmptyValue(r.visit_goal.chief_duration) || !isEmptyValue(r.visit_goal.chief_impact)) n += 1
+  if (typeof routing.additional_module === 'string' && routing.additional_module !== '') n += 1
+  if (referenceSymptomKeys(routing).length > 0) n += 1
+  if (secondaryChipsData(r).length > 0) n += 1
+  if (primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).length > 0) n += 1
+  if (constitutionFields(r).some((f) => !isEmptyValue(f.value))) n += 1
+  return n
+}
+
+/** Core Reduction P4 -- "약물·병력" 아코디언 배지: 채워진 필드 개수(0~6). */
+export function medicationHistoryGroupCount(r: Responses): number {
+  return [
+    r.medication.medication_use,
+    r.medication.medication_types,
+    r.medical_history.medical_history_flags,
+    r.allergy.allergy_yn,
+    r.allergy.allergy_detail,
+    r.surgery_history.surgery_yn,
+  ].filter((v) => !isEmptyValue(v)).length
+}
+
+/**
+ * Core Reduction P4 -- "여성 안전" 아코디언 배지. 이 아코디언 자체가
+ * 이미 데이터 존재 조건(derived.source != null 또는 읽을 수 없는 레거시
+ * 원본 존재)으로 게이트되므로 최소 1, 계산된 4개 사실이 실제로 읽을 수
+ * 있으면 그만큼 더한다.
+ */
+export function womenSafetyGroupCount(r: Responses): number {
+  if (isUnreadableReproductiveDerived(r)) return 1
+  const d = r.reproductive_status?.derived
+  if (!d || d.source == null) return 1
+  return 1 + [d.pregnant, d.pregnancy_possible, d.postpartum_1y, d.breastfeeding].filter((v) => v === true || v === false).length
+}
+
+/** Core Reduction P4 -- "검사자료" 아코디언 배지: 채워진 필드 개수(0~2). */
+export function testDataGroupCount(r: Responses): number {
+  return [r.recent_tests.recent_test_flag, r.free_text.free_text_yn].filter((v) => !isEmptyValue(v)).length
+}
+
+/** Core Reduction P4 -- "명리" 아코디언 배지: 계산된 사주 기둥 개수(0~4). */
+export function myungriGroupCount(saju: DoctorPayload['myungri_calculation']): number {
+  if (!saju.pillars) return 0
+  return [saju.pillars.year, saju.pillars.month, saju.pillars.day, saju.pillars.hour].filter(
+    (p) => p != null && p !== '',
+  ).length
+}
+
+/** Core Reduction P4 -- "이전 방문 원문" 아코디언 배지: 조회된 이전 방문 건수. */
+export function priorVisitsGroupCount(priorVisits: PatientHistoryResult | null | undefined): number {
+  return asPriorVisitArray<unknown>(priorVisits?.visits).length
+}
+
+/**
+ * Core Reduction P4 -- "명리·감사 기록"(JudgmentPanel) 아코디언 배지: 이미
+ * 서버에 저장된 판단 중 채워진 항목 개수. JudgmentPanel 자체가 관리하는
+ * in-progress 편집 상태는 이 함수가 볼 수 없다(별도 컴포넌트) -- 배지는
+ * "이미 기록된 값"만 반영하며, 다른 그룹들의 배지가 서버/fixture의 저장된
+ * 값을 반영하는 것과 같은 성격이다.
+ */
+export function judgmentRecordedFieldCount(judgment: ClinicianJudgment | null | undefined): number {
+  if (!judgment) return 0
+  let n = 0
+  n += judgment.innate_features.filter((s) => s.trim() !== '').length
+  n += judgment.symptom_links.filter((s) => s.trim() !== '').length
+  if (judgment.saju_only_prediction.trim() !== '') n += 1
+  if (judgment.revised_after_exam.trim() !== '') n += 1
+  if (judgment.final_treatment_axis.trim() !== '') n += 1
+  if (judgment.prescription_direction.trim() !== '') n += 1
+  if (judgment.learning_case === true) n += 1
+  if (judgment.debrief && Object.values(judgment.debrief).some((v) => v.trim() !== '')) n += 1
+  return n
+}
+
+/**
  * MENOPAUSE_SLEEP v0.2 Compact 요약을 raw enum 나열이 아니라 진료용 문장으로 보여준다.
  * Gate를 통과하지 못했으면(남성, 또는 여성이라도 gate_context가 null/'no') null —
  * 이 경우 원래 Sleep Field 목록만 보이고 이 블록 자체가 생기지 않는다.
@@ -2532,8 +2653,17 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
    * costing state. Tests that assert on rendered markup therefore keep
    * covering the whole record; the browser QA measures what is visible.
    */
-  const [recordTab, setRecordTab] = useState<'clinical' | 'reference' | 'myungri'>('clinical')
-  function openRecordTab(tab: 'clinical' | 'reference' | 'myungri') {
+  /*
+   * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11, Phase 7 UI spec §2.4):
+   * the separate '명리' tab is retired -- its content (MyungriCompactCard +
+   * "명리 검토" review grid) now renders as one more accordion INSIDE the
+   * '참고' surface (formerly labeled '자료 보기'), alongside the raw
+   * questionnaire groups it always sat next to. Nothing here deletes
+   * content or changes the profile gate (viewProfile !== 'pain') that
+   * decided whether it existed at all -- only the tab it lived under.
+   */
+  const [recordTab, setRecordTab] = useState<'clinical' | 'reference'>('clinical')
+  function openRecordTab(tab: 'clinical' | 'reference') {
     setRecordTab(tab)
   }
   // Opening a different record always starts back on the clinical surface --
@@ -3896,10 +4026,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       ) : (
       <>
       {/*
-        Round 11: the record's three surfaces. 진료 is the clinical action
-        screen and the default; the other two hold everything that used to
-        stack underneath it. Myungri only exists as a surface at all when
-        the profile is not pain (the standing Phase 2 invariant).
+        Round 11 (Core Reduction P4 relabels this "참고", Phase 5 Synthesis
+        v1.2 §2.11): the record's two surfaces. 진료 is the clinical action
+        screen and the default; 참고 holds everything that used to stack
+        underneath it, now organized as accordion groups (§2.4) rather than
+        a further tab -- Myungri's own accordion inside 참고 only exists
+        when the profile is not pain (the standing Phase 2 invariant), same
+        gate as before.
       */}
       <nav className="doctor__recordTabs" role="tablist" aria-label="환자 기록 화면">
         <button
@@ -3918,19 +4051,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           className={`doctor__recordTab${recordTab === 'reference' ? ' doctor__recordTab--active' : ''}`}
           onClick={() => openRecordTab('reference')}
         >
-          자료 보기
+          참고
         </button>
-        {viewProfile !== 'pain' && (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={recordTab === 'myungri'}
-            className={`doctor__recordTab${recordTab === 'myungri' ? ' doctor__recordTab--active' : ''}`}
-            onClick={() => openRecordTab('myungri')}
-          >
-            명리
-          </button>
-        )}
       </nav>
 
       <div hidden={recordTab !== 'clinical'}>
@@ -4029,6 +4151,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         <p className="doctor__modeBadge">진료 문진 — {questionnaireModeLabel(routing)}</p>
       )}
 
+      <ReferenceAccordion title="문진 원본" count={referenceRawGroupCount(r, routing)}>
       <section className="doctor__section">
         <h2>환자 기본</h2>
         <div className="doctor__grid">
@@ -4134,11 +4257,21 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         )}
       </section>
 
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "동반문제 legacy는
+        데이터 있을 때만" -- this whole section is a hardcoded-compat display
+        for the retired SECONDARY_01 flow (new questionnaires never write to
+        it, per the note below), so an empty "동반문제 없음" placeholder for
+        every current-format record was pure noise. Only rendering it when
+        there is legacy data left removes that noise without touching the
+        13f test's populated case (secondaryChipsData(r).length > 0 there).
+      */}
+      {secondaryChipsData(r).length > 0 && (
       <section className="doctor__section">
         <h2>동반문제</h2>
         <p className="doctor__derivedNote">
-          이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다. 새 문진은 위 "추가
-          상세상담"/"참고 증상"으로 대체되어 이 구역이 항상 비어 있습니다.
+          이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다 — 새 문진은 위 "추가
+          상세상담"/"참고 증상"으로 대체되었습니다.
         </p>
         <div className="doctor__secChips">
           {secondaryChipsData(r).map((c) => (
@@ -4147,7 +4280,6 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <span className="doctor__secChip__text">{c.answerText || '—'}</span>
             </span>
           ))}
-          {secondaryChipsData(r).length === 0 && <p className="doctor__empty">동반문제 없음</p>}
         </div>
         {secondaryModuleFields(r).length > 0 && (
           <details className="doctor__secDetails">
@@ -4161,6 +4293,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           </details>
         )}
       </section>
+      )}
 
       <section className="doctor__section">
         <h2 className="doctor__section__h2--sub">
@@ -4219,7 +4352,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           })()}
         </section>
       )}
+      </ReferenceAccordion>
 
+      <ReferenceAccordion title="약물·병력" count={medicationHistoryGroupCount(r)}>
       <section className="doctor__section">
         <h2>약물·병력·알레르기·수술</h2>
         <div className="doctor__grid">
@@ -4231,6 +4366,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           <Field qid="SURGERY_01" value={r.surgery_history.surgery_yn} />
         </div>
       </section>
+      </ReferenceAccordion>
 
       {/*
         Round 2 Phase 3 (same fix as HerbalWorkspace's 여성·생식 정보):
@@ -4259,6 +4395,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         (isUnreadableReproductiveDerived(r) &&
           r.reproductive_status?.reproductive_status !== null &&
           r.reproductive_status?.reproductive_status !== undefined)) && (
+        <ReferenceAccordion title="여성 안전" count={womenSafetyGroupCount(r)}>
         <section className="doctor__section">
           <h2>여성 안전정보</h2>
           <div className="doctor__grid">
@@ -4286,8 +4423,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             </div>
           )}
         </section>
+        </ReferenceAccordion>
       )}
 
+      <ReferenceAccordion title="검사자료" count={testDataGroupCount(r)}>
       <section className="doctor__section">
         <h2>검사자료 / 원장에게 하고 싶은 말</h2>
         <div className="doctor__grid">
@@ -4295,18 +4434,44 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           <Field qid="FREE_01" value={r.free_text.free_text_yn} />
         </div>
       </section>
+      </ReferenceAccordion>
+
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "이전 방문 원문"
+        accordion -- read-only, presentational (PriorVisitHistoryCard already
+        returns null when there is nothing to show), safe to also render
+        here even though the same card still renders inside the clinical
+        레인 "다음" drawer (that drawer was not flagged for dedup, unlike the
+        여성 안전/약물·병력 sections below the Myungri accordion, which WERE
+        duplicated inside HerbalWorkspaceNext's own drawer and have been
+        removed there in favor of this one, fuller copy -- see
+        HerbalWorkspace.tsx's own comment at that removal).
+      */}
+      <ReferenceAccordion title="이전 방문 원문" count={priorVisitsGroupCount(mode === 'server' ? priorVisits : undefined)}>
+        {viewProfile === 'mixed' ? (
+          <>
+            <PriorVisitHistoryCard history={mode === 'server' ? priorVisits : undefined} profile="pain" />
+            <PriorVisitHistoryCard history={mode === 'server' ? priorVisits : undefined} profile="herbal" />
+          </>
+        ) : (
+          <PriorVisitHistoryCard
+            history={mode === 'server' ? priorVisits : undefined}
+            profile={viewProfile === 'herbal' ? 'herbal' : 'pain'}
+          />
+        )}
+      </ReferenceAccordion>
 
       {/*
         PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지
         않는다. Round 11 goes further -- Myungri is not merely below the
         clinical workspace, it is a separate surface that the clinical flow
         never renders, per the standing rule that it must be completely
-        separated from it.
+        separated from it. Core Reduction P4: it is still a separate
+        accordion GROUP inside 참고, just no longer a separate TAB.
       */}
-      </div>
 
       {viewProfile !== 'pain' && (
-      <div hidden={recordTab !== 'myungri'}>
+      <ReferenceAccordion title="명리" count={myungriGroupCount(saju)}>
       <MyungriCompactCard saju={saju} />
 
       <section className="doctor__section doctor__section--myungri">
@@ -4376,8 +4541,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <p className="doctor__warning doctor__warning--pending">
                 주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
                 값이 바뀔 수 있습니다. 대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}.
-                원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
-                docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
+                원장이 확정하면 값이 바뀔 수 있습니다.
               </p>
             )}
           </div>
@@ -4407,10 +4571,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           기록&rdquo;에 원장이 직접 기록합니다.
         </p>
       </section>
-      </div>
+      </ReferenceAccordion>
       )}
 
-      <div hidden={recordTab !== 'reference'}>
       {/*
         Core Reduction P3 (Phase 5 Synthesis v1.2 §2.3 "다음/종결"): 진료
         녹취·요약(EMR 검토) moved into the 진료 탭의 다음 레인 alongside the
@@ -4418,6 +4581,23 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         above `return`) -- same condition, same handlers, position only.
       */}
 
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): JudgmentPanel's
+        remaining fields (선천 특징/증상 연결/사주 예상→치료축·처방/1분
+        디브리핑/설명 개요/학습 케이스) get a distinct group title here --
+        "명리·감사 기록" -- so this never reads as the same thing as the
+        진료 화면의 "판단·처치" lane's FinalAssessmentCard (a different
+        component, a different lane, a different purpose: that one is the
+        derived-profile clinical assessment the clinician acts on today,
+        this one is the free-form 사주/감사 note trail). ClinicianJudgment's
+        schema, its PUT save path, its "기록" button and its save-state
+        handling below are byte-for-byte unchanged -- only the surrounding
+        group label and accordion boundary are new.
+      */}
+      <ReferenceAccordion
+        title="명리·감사 기록"
+        count={judgmentRecordedFieldCount(mode === 'server' ? selectedRecord?.judgment ?? null : null)}
+      >
       <JudgmentPanel
         resetKey={unifiedResetKey}
         source={{
@@ -4461,11 +4641,24 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             : undefined
         }
       />
+      </ReferenceAccordion>
 
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "원본 JSON" 그룹 --
+        "진단 성격 명시"란, 이 pretty-printed dump가 임상 판단 근거가
+        아니라 기술 지원/버그 재현용 원자료라는 점을 원장에게도 분명히
+        한다는 뜻이다(위의 다른 아코디언들은 전부 사람이 읽는 형태로 이미
+        가공된 값이고, 이것만 예외).
+      */}
+      <ReferenceAccordion title="원본 JSON" count={1}>
       <details className="doctor__raw">
         <summary>원본 응답 보기 (JSON)</summary>
+        <p className="doctor__derivedNote">
+          기술 지원/버그 재현을 위한 원자료입니다 — 임상 판단에 사용하지 마세요.
+        </p>
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
+      </ReferenceAccordion>
       </div>
       </>
       )}

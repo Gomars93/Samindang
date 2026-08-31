@@ -181,7 +181,10 @@ for (const f of DOCTOR_FIXTURES) {
     'v2.1 fixture: reference symptoms never render as a diagnosis (only the informational note text, no red/danger banner class nearby)',
     !/doctor__banner--danger[\s\S]{0,50}참고 증상|참고 증상[\s\S]{0,50}doctor__banner--danger/.test(html),
   )
-  assert('v2.1 fixture: 동반문제 section shows the legacy-compat empty state (동반문제 없음)', /동반문제<\/h2>[\s\S]{0,400}동반문제 없음/.test(html))
+  assert(
+    'v2.1 fixture: Core Reduction P4 — the 동반문제 legacy section does not render at all when there is no legacy SECONDARY_01 data (동반문제 legacy는 데이터 있을 때만)',
+    !html.includes('<h2>동반문제</h2>'),
+  )
 }
 
 /* ---------------------------------------------------------------------
@@ -1336,7 +1339,12 @@ function detailsRange(html, classMarker) {
   const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
 
   // The surfaces exist and 진료 is the one selected on open.
-  assert('round 11: the record offers a 진료 / 자료 보기 surface switch', html.includes('doctor__recordTabs') && html.includes('자료 보기'))
+  // Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): '자료 보기' is
+  // relabeled '참고' and now also holds the content that used to live under
+  // a separate '명리' tab, as accordion groups (see the herbal-record block
+  // below) -- the switch itself, and its behavior as "everything not
+  // 진료", is otherwise unchanged from round 11.
+  assert('round 11 (P4 relabel): the record offers a 진료 / 참고 surface switch', html.includes('doctor__recordTabs') && html.includes('참고'))
   const clinicalTabIdx = html.indexOf('doctor__recordTab--active')
   assert('round 11: 진료 is the surface selected on open', clinicalTabIdx !== -1 && html.slice(clinicalTabIdx, clinicalTabIdx + 120).includes('진료'))
 

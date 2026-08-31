@@ -566,14 +566,22 @@ const emptyPainFinalAssessment = () => ({
   recordedAt: null,
 })
 
-test('reproductive section is hidden when WOMEN_SAFETY_01 was never asked/answered (legacy constitution route, HERBAL_SCENARIO_1)', () => {
+// Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): 여성·생식 정보 no
+// longer renders inside DoctorWorkspace's herbal "참고 자료" drawer at all,
+// regardless of WOMEN_SAFETY_01 -- it was a duplicate of the fuller version
+// (with the derived pregnancy/postpartum calc box) that now lives ONLY in
+// DoctorView.tsx's 참고 screen "여성 안전" accordion. These two tests used
+// to pin the drawer's OWN conditional rendering of that duplicate; rewritten
+// (not deleted) to pin its full removal from this component instead, for
+// both the "never answered" and "answered" fixtures.
+test('reproductive section never renders inside the herbal workspace reference drawer, even when WOMEN_SAFETY_01 was never asked/answered (legacy constitution route, HERBAL_SCENARIO_1)', () => {
   const html = render(HERBAL_SCENARIO_1)
   assert.ok(!html.includes('여성·생식 정보'))
 })
 
-test('reproductive section shows when WOMEN_SAFETY_01 was answered, even with a "none" answer (HERBAL_SCENARIO_2)', () => {
+test('reproductive section never renders inside the herbal workspace reference drawer even when WOMEN_SAFETY_01 was answered -- it is deduped to DoctorView.tsx\'s 참고 screen accordion only (HERBAL_SCENARIO_2)', () => {
   const html = render(HERBAL_SCENARIO_2)
-  assert.ok(html.includes('여성·생식 정보'))
+  assert.ok(!html.includes('여성·생식 정보'))
 })
 
 test('round 14: production mode (no synthetic clinicianObservations) collapses the checklist to one summary line naming every item', () => {

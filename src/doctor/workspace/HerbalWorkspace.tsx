@@ -4,14 +4,21 @@
  * header comment: DoctorWorkspace.tsx now owns the shell's lane
  * boundaries, so this file exports `HerbalWorkspaceLane2` (오늘 한눈에 +
  * 오늘 확인할 것/핵심 병기 후보) and `HerbalWorkspaceNext` (재평가 대상/다음
- * 방문 확인 메모 + 다음 액션 + 관리 계획 disclosure + reference drawer,
- * including 여성·생식 정보/약물·병력 which already lived in that reference
- * drawer). `HerbalFinalAssessmentCard` moved out entirely -- it renders
- * directly in DoctorWorkspace.tsx's shared 판단·처치 lane (§2.4).
+ * 방문 확인 메모 + 다음 액션 + 관리 계획 disclosure + reference drawer).
+ * `HerbalFinalAssessmentCard` moved out entirely -- it renders directly in
+ * DoctorWorkspace.tsx's shared 판단·처치 lane (§2.4).
+ *
+ * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): the reference drawer's
+ * 여성·생식 정보/약물·병력 sections were dropped from here -- they
+ * duplicated the fuller versions (with the derived pregnancy/postpartum
+ * calc box) that already live in DoctorView.tsx's 참고 screen accordions,
+ * and Phase 7 explicitly calls for resolving that duplication in favor of
+ * the fuller copy. Nothing was deleted: both sections are still reachable,
+ * one click away, in 참고.
  *
  * Systemic/herbal information stays prioritized first; Myungri remains
  * completely outside the clinical workspace (governing task Phase 2/4.4
- * invariant, unchanged -- see DoctorView.tsx's separate 명리 surface).
+ * invariant, unchanged -- see DoctorView.tsx's separate 명리 accordion).
  */
 import { Field, isEmptyValue, isFlagsUsable, primaryConcernLabel, safetyIssueCategories } from '../DoctorView'
 import type { DoctorPayload } from '../types'
@@ -203,9 +210,6 @@ export function HerbalWorkspaceNext({
   priorVisits?: PatientHistoryResult | null
 }) {
   const r = payload.responses
-  const hasReproductiveData =
-    (r.reproductive_status?.derived?.source ?? null) !== null ||
-    Array.isArray(r.reproductive_status?.reproductive_status)
 
   const emrText = buildHerbalWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
@@ -255,23 +259,16 @@ export function HerbalWorkspaceNext({
       </details>
 
       <details className="workspace__optional workspace__optional--reference">
-        <summary>참고 자료 (환자 배경 · 이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
-        {hasReproductiveData && (
-          <section className="workspace__block">
-            <h3>여성·생식 정보</h3>
-            <div className="doctor__grid">
-              <Field qid="WOMEN_SAFETY_01" label="환자가 답한 것" value={r.reproductive_status.reproductive_status as never} />
-            </div>
-          </section>
-        )}
-        <section className="workspace__block">
-          <h3>약물·병력</h3>
-          <div className="doctor__grid">
-            <Field qid="MED_USE" value={r.medication.medication_use} />
-            <Field qid="MED_TYPES" value={r.medication.medication_types} />
-            <Field qid="HISTORY_01" value={r.medical_history.medical_history_flags as never} />
-          </div>
-        </section>
+        <summary>참고 자료 (이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
+        {/*
+          Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): 여성·생식
+          정보/약물·병력은 DoctorView.tsx의 참고 화면에 이미 별도
+          아코디언으로 존재한다(그쪽은 파생 계산 박스까지 포함하는 더
+          완전한 버전 -- 여기서는 raw 필드만 반복했었다). 두 곳에 같은
+          내용이 있던 중복을 여기서 해소하고, 더 완전한 쪽(참고 화면)
+          하나로 합친다 -- 이 drawer의 나머지(이전 방문/환자 전달문/EMR
+          미리보기)는 dedup 대상이 아니므로 그대로 둔다.
+        */}
         <PriorVisitHistoryCard history={priorVisits} profile="herbal" />
         <PatientCarePlanPreviewCard title="환자 전달용 관리 계획" text={patientCarePlanText} />
         <EmrPreviewCard text={emrText} />

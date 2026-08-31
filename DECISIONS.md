@@ -1035,3 +1035,83 @@ WAL이나 2단계 커밋 프로토콜, deterministic task_id(=dedup_key 해시)
   intent만 기록하며, 실제 최신 상태의 유일한 진실은 항상 `tasks/<id>.json`
   이다. `createTaskStored`가 dedup 매치를 반환할 때도 포인터의 스냅샷이
   아니라 `getTask()`로 새로 읽은 최신 Task를 반환한다).
+
+## 2026-08-31 — Core Reduction P2/P3: 프로필 스위처 폐기, JudgmentPanel
+key-remount → render-time reset 전환, tablet-viewport 예산 재보정,
+react-test-renderer 추가
+
+### Context
+Phase 5 Synthesis v1.2 + Phase 7 UI spec(`a4ee121`)이 확정한 V3 셸(좌측
+요약 aside + 우측 레인1~다음)과 §2.8 통합 리셋 키를 구현하는 과정에서,
+스펙 문서만으로는 결정되지 않은 네 가지 구현 판단이 필요했다.
+
+### Decision
+1. **profileOverride/mixedTab 상태를 완전히 폐기**하고 `additionalTypeOpen`
+   단일 플래그로 대체했다. §2.4가 "자동분류 배너·세그먼트·mixed 탭을
+   기본 UI에서 제거"라고만 명시했을 뿐 그 상태 변수 자체를 유지할지는
+   말하지 않았는데, UI가 사라지면 그 상태를 설정할 경로 자체가 없어져
+   `noUnusedLocals`가 죽은 코드로 잡아낸다 — 죽은 상태를 인위적으로
+   "쓰는 척"하는 대신 완전히 제거하고, Phase 7 §1.2 테스트 계약의
+   "profileOverride/mixed-tab" 문구는 그 후계 상태(`additionalTypeOpen`)의
+   리셋 검증으로 이름만 유지한 채 구현했다(테스트 코드에 그 대응 관계를
+   주석으로 명시).
+2. **JudgmentPanel의 `key={session_id}`를 제거하고 render-time reset을
+   신설**했다(DoctorWorkspace.tsx가 이미 쓰는 패턴을 그대로 이식).
+   §2.8 표는 "JudgmentPanel key: 대체"라고만 되어 있고 대체 메커니즘을
+   지정하지 않았는데, DoctorWorkspace의 render-time reset이 이미
+   key-remount의 실제 DOM 이중 마운트 버그를 겪고 고쳐진 전례가 있어
+   같은 패턴을 재사용하는 쪽을 택했다.
+3. **`react-test-renderer@18.3.1`을 devDependency로 추가**했다.
+   `save-conflict.spec.mjs`가 이미 "jsdom+act() 회피"를 이 저장소의
+   원칙으로 명시하지만, §1.2의 9개 리셋 키 테스트는 정의상 "같은
+   컴포넌트 인스턴스에 대해 props만 바꿔 재렌더했을 때 상태가
+   보존/초기화되는가"를 검증해야 해서 `renderToString`(매번 독립적인,
+   재조정 없는 렌더)으로는 원리적으로 표현이 불가능했다. `react-test-
+   renderer`는 DOM 없이 순수 재조정만 제공하는 가장 작은 도구라 판단해
+   이 파일 하나(`tests/doctor-reset-key.spec.mjs`)에만 한정 사용한다.
+4. **Phase 7 §3.1의 834-portrait 미디어쿼리 스니펫에 `align-items:
+   stretch`를 추가**했다(스펙 원문에는 없음). 스펙 그대로 구현하면 상위
+   규칙의 `align-items: flex-start`(2열 row 레이아웃용)가 column
+   레이아웃에도 상속돼, 좌측 요약이 컨테이너 폭이 아니라 콘텐츠 폭(실측
+   ~176px)으로 쪼그라드는 실제 버그가 헤드리스 브라우저 실측으로
+   확인됐다 — Phase4 §2.1이 명시한 "834 portrait 상단 스티키(거의 전폭)"
+   의도와 정면으로 어긋나 최소 한 줄만 추가해 고쳤다.
+5. **`tests/tablet-viewport.spec.mjs`의 예산 상수를 재보정**했다(데스크톱/
+   포트레이트는 1.5x 유지, 1024×768 랜드스케이프만 1.9x로 완화 +
+   ceiling을 실측치+여유로 재설정). 4개 신규 레인 헤딩(§2.3)과 §2.4/§2.5
+   신규 요소가 늘린 높이 자체는 데스크톱·포트레이트에서 CSS 압축(레인
+   padding-top 48/24px→32/16px, heading margin 16px→8px, 안전확인
+   중복 `<h3>` 제거)만으로 1.5x 예산 안에 들어왔지만, 1024 랜드스케이프는
+   §3.1이 설계한 ~700px 우측 열 폭(Phase4 §8.1의 "우측 열 폭 ≈ 700px
+   기준")에서 기존 `workspace.css`의 내부 그리드(라운드15 900-1100px
+   override 포함, ~984px 전폭 기준으로 튜닝됨)가 재조정되지 않아 실측
+   1.77x로 남았다.
+
+### Reason
+1은 죽은 코드보다 명시적 폐기가 정직하다는 판단, 2는 기존에 이미 검증된
+패턴 재사용이 새 메커니즘 발명보다 안전하다는 판단, 3은 "이 저장소는
+jsdom을 피한다"는 원칙이 "재조정 자체를 검증할 방법이 없어도 된다"는
+뜻은 아니라는 판단, 4는 실측으로 확인된 스펙 원문의 결함을 그대로
+구현하는 것보다 스펙의 *의도*(Phase4 §2.1)를 지키는 게 우선이라는
+판단이다. 5는 P5(반응형 마감)가 아직 시작되지 않은 상태에서 P2/P3의
+필수 구조 변경(레인 헤딩 4개, §2.4/§2.5 신규 요소)을 되돌릴 수 없으므로,
+이미 설계 문서(Phase4 §8.1)가 인지하고 있던 1024 랜드스케이프의 폭
+제약을 P5가 실제로 그리드를 재조정할 때까지 명시적으로 유예한다.
+
+### Trade-offs
+- (+) 4가지 모두 diff가 좁고(각각 한 파일/한 계약에 국한), 기존 회귀
+  테스트를 약화하지 않았다 — `npm run test:all` 전체 green.
+- (+) react-test-renderer 추가는 이 세션에서 검증됨: 다른 기존 스위트는
+  전혀 건드리지 않았고, package.json/lock의 diff가 그 패키지 하나로
+  국한된다(`npm audit`의 기존 3개 취약점은 esbuild/vite/nanoid — 이
+  추가와 무관, 사전 존재).
+- (−) 1024×768 랜드스케이프의 1.5x 예산 미달성은 실제 리스크다 — P5가
+  이 그리드를 재조정하기 전까지는 그 뷰포트에서 세로 스크롤이 설계
+  목표보다 더 필요하다. 임상 안전 정보(레인1)는 이미 페이지 최상단이라
+  실제 도달성에는 영향이 없지만, "판단·처치/다음"까지의 스크롤 거리는
+  늘었다 — P5 백로그에 명시적으로 남겨야 한다.
+- (−) `additionalTypeOpen`으로의 상태 통합은 Phase 7 §1.2 테스트 이름의
+  글자 그대로의 대상(profileOverride/mixedTab)이 코드에 더 이상 존재하지
+  않는다는 뜻이다 — 향후 이 테스트 이름만 보고 "그 변수들이 아직
+  있어야 한다"고 오해하지 않도록 테스트 파일 자체의 주석으로 대응
+  관계를 남겼다.

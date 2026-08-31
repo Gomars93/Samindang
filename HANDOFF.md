@@ -1,6 +1,64 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 17 — Restart-safe / Multi-process Correctness Batch, 이번 세션)
+## Objective (Core Reduction P2/P3 — V3 셸 + 레인1/2 + 판단·처치/다음, 이번 세션)
+
+**주의(2026-08-31 갱신)**: 이 파일이 그동안 Core Reduction 작업(브랜치
+`claude/feat-core-reduction`)을 전혀 반영하지 못한 채 CRM v0.3.1 round 17을
+"이번 세션"으로 두고 있었다 — CLAUDE.md 원칙대로("HANDOFF와 Git이 어긋나면
+Git이 맞다") 실제 Git 상태에 맞춰 지금 바로잡는다. 아래가 실제 최신
+상태이고, CRM round 17 이하는 "이전 세션"으로 재분류한다.
+
+**브랜치**: `claude/feat-core-reduction` (origin에 push됨, `main`과 별도 —
+아직 PR 미생성/미머지, "DO NOT MERGE" 상태는 아니고 단순히 리뷰 전 단계).
+
+**커밋 이력(이 브랜치, 최신 순)**:
+- `d871ce9` Core Reduction P2(V3 셸+레인1/2) + P3(판단·처치/다음) — 이번 세션
+- `a4ee121` docs: Core Reduction Phase 7 UI Skill high-fidelity spec v0.1 (read-only 스펙 산출)
+- `9a46fea` fix(doctor): P0-8 isolation hardening
+- `3835b98` fix(doctor): Core Reduction P0 선행 결함 수정 7건 + P1 통합 Queue
+
+**이번 세션(P2/P3, `d871ce9`) 요약** — 전체 근거는 Phase 5 Synthesis v1.2 +
+Phase 7 UI spec(`a4ee121`), 커밋 메시지, `DECISIONS.md`의 2026-08-31 항목
+참고:
+- DoctorWorkspace.tsx를 V3 셸(`doctor__visitShell` = 좌측 요약 aside +
+  우측 4레인 main: 안전확인/확인/판단·처치/다음)로 재구성.
+- 레인1 안전 결론 요약 union(`src/doctor/workspace/lane1Summary.ts`, 신규)
+  — 9개 부위 SafetyPanel을 함수로 직접 호출해 반환 element의 className을
+  읽어 5값(URGENT/확인필요/계산불가/CLEAR/해당없음) 계산. herbal 파생
+  레코드에서도 동일 입력 보장(P0-1 재발 지점 정면 차단).
+- 좌측 요약(`src/doctor/workspace/VisitSummaryAside.tsx`, 신규) 5블록 +
+  834-portrait 압축 2줄 변형(matchMedia 기반).
+- §2.8 통합 리셋 키(`submission:<id>`/`fixture:<idx>:<scenario>`)를
+  DoctorView.tsx에서 한 번 계산 → DoctorRecordErrorBoundary key ·
+  DoctorWorkspace resetKey · JudgmentPanel resetKey 세 곳에 동일 전달.
+  JudgmentPanel의 독립 `key={session_id}` 제거, render-time reset 신설.
+- 프로필 자동분류 배너·세그먼트·mixed 탭 스위처 제거(§2.4) — mixed는
+  탭 없이 양쪽 자연 배치. `+ 다른 유형 입력 추가` details 신설.
+- "다음" 레인: 재평가 대상+다음 방문 확인 메모 나란히 배치, 발급을
+  기본 채널(상시)+"다른 방법"(details, 활성세션/미소비토큰 시 자동
+  펼침)으로 재구성, EMR 검토+"진료 완료" 버튼을 이 레인 "종결"로 이동.
+- 학습 케이스 disclosure(`open={learning_case===true}`), 4상태 버튼
+  글리프(✓/–/?/·) 추가.
+- **Deviation 4건**(DECISIONS.md 2026-08-31 항목에 상세): profileOverride/
+  mixedTab 폐기(→additionalTypeOpen), JudgmentPanel key→render-time
+  reset 전환, `react-test-renderer` devDependency 추가(§1.2 리셋 키
+  테스트 전용), Phase7 §3.1 portrait 미디어쿼리에 `align-items: stretch`
+  보정(스펙 원문 버그), §3.3 레인 간격 압축 + tablet-viewport 1024×768
+  랜드스케이프 예산을 1.9x로 임시 완화(P5 반응형 마감 대상으로 명시).
+
+**검증**: `npx tsc -b --force` / `npm run build` / `npm run test:all`
+전체 green. FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff 확인.
+
+**Next Recommended Action**: P4(참고/설정 이동) + P5(반응형 마감 — 특히
+1024×768 랜드스케이프 우측 열 그리드 재조정) + P6(상태·메트릭 테스트).
+P5 착수 시 `tests/tablet-viewport.spec.mjs`의 랜드스케이프 budget(현재
+1.9x 임시값)을 실측 재조정 후 1.5x로 되돌리는 것을 완료 기준에 포함할 것.
+착수 전 이 저장소의 PR 생성/리뷰 절차(ChatGPT 독립 검수 등, CLAUDE.md
+Team Roles 참고) 여부를 사용자에게 확인.
+
+---
+
+## Objective (CRM v0.3.1 round 17 — Restart-safe / Multi-process Correctness Batch, 이전 세션)
 Gomars93가 PR #24 댓글로 지시(GitHub-relayed comment). round 16(audit+purge,
 CLOSED) 다음으로 가장 위험도 높은 non-clinical 파일럿 리스크: "기존
 Doctor/CRM/재진 워크플로 전체에 걸친 restart-safe / multi-process 정합성

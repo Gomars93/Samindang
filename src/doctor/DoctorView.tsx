@@ -179,6 +179,61 @@ function durationFrequencyText(r: Responses, primaryModule: string | null): stri
   return durText ?? freqText
 }
 
+function sexLabel(sex: AnswerValue | undefined): string | null {
+  if (sex === 'male') return '남성'
+  if (sex === 'female') return '여성'
+  return null
+}
+
+/**
+ * v0.2 §4 Level 1 — Patient Header 밴드. 이름·끝4자리·성별/나이(파생)만
+ * 노출한다. **차트번호·직전 방문·NRS는 표시하지 않는다** (invariant 8 —
+ * Sigma 연동 필드/이력 데이터 모델이 아직 없다). 안전 종합 pill과 응답
+ * 모순 배지는 P2에서 `deriveSafetyOverview`에 연결한다 — 이 컴포넌트는
+ * 그 값을 optional prop으로만 받고, 아직 넘어오지 않으면(P1) 아무것도
+ * 렌더하지 않는다.
+ */
+function PatientHeader({
+  payload,
+  overview,
+  responseConsistencyReview,
+}: {
+  payload: DoctorPayload
+  overview?: 'URGENT' | 'REVIEW' | 'CLEAR'
+  responseConsistencyReview?: boolean
+}) {
+  const r = payload.responses
+  const age = ageFromDoctorPayload(r)
+  const sex = sexLabel(r.patient.patient_sex)
+  const durFreq = durationFrequencyText(r, payload.routing.primary_module)
+
+  return (
+    <div className="doctor__patientHeader">
+      <div className="doctor__patientHeader__identity">
+        <strong>{r.patient.patient_name || '—'}</strong>
+        <span>· {r.patient.phone_last4 || '----'}</span>
+        {sex && <span>· {sex}</span>}
+        {typeof age === 'number' && (
+          <span>
+            {sex ? '' : '· '}
+            {age}세 <span className="doctor__patientHeader__calcTag">계산</span>
+          </span>
+        )}
+        {overview === 'URGENT' && <span className="doctor__safetyPill doctor__safetyPill--urgent_review">⚠ 긴급 확인</span>}
+        {overview === 'REVIEW' && <span className="doctor__safetyPill doctor__safetyPill--review_required">⚠ 확인 필요</span>}
+        {overview === 'CLEAR' && <span className="doctor__safetyPill doctor__safetyPill--clear">✓ 안전 확인됨</span>}
+        {responseConsistencyReview && (
+          <span className="doctor__safetyPill doctor__safetyPill--review_required">⚠ 응답 모순 — 확인 필요</span>
+        )}
+      </div>
+      <div className="doctor__patientHeader__row">
+        <span className="doctor__patientHeader__chief">{primaryConcernLabel(r)}</span>
+      </div>
+      {durFreq && <span className="doctor__patientHeader__durFreq">{durFreq}</span>}
+    </div>
+  )
+}
+
 /** Pain은 요약 카드에서만 짧은 고정 문구를 쓴다(스펙 §PART1 rule 3). */
 function aggravatingSummaryText(primaryModule: string | null, m: Responses['modules']): string | null {
   const agg = aggravatingField(primaryModule, m)
@@ -1827,6 +1882,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
   const viewedRef = useRef<Set<string>>(new Set())
+  // ⚙ 도구 메뉴의 "원본 데이터 보기"가 스크롤해서 열어주는 대상.
+  const rawJsonRef = useRef<HTMLDetailsElement>(null)
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
   // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
   // from this screen, forcing a re-render (poll effect below depends on it
@@ -2068,6 +2125,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const showingServerList = mode === 'server' && !selectedRecord
   const newCount = submissions.filter((s) => s.status === 'new').length
 
+  const showingRecord = mode === 'fixtures' || Boolean(selectedRecord)
+
   return (
     <div className="doctor">
       {readyToast && (
@@ -2075,126 +2134,164 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           {readyToast.patientLabel} — EMR 복사 준비됨
         </div>
       )}
-      <header className="doctor__header">
-        <h1 className="doctor__title">진료 전 요약</h1>
-        <span className="doctor__workstationBadge">
-          {workstationId ? `진료 워크스테이션: ${workstationId}` : '워크스테이션 설정 필요'}
-        </span>
-        {mode === 'server' && hasDoctorToken && (
-          <DoctorTokenClearButton
-            onClear={() => {
+      {/*
+        v0.2 §8.1/§3: 상단바(44px) — 데이터 소스/fixture 픽커/토큰 clear/
+        원본 JSON 이동은 전부 ⚙ 도구 메뉴 안으로 옮겼다(Opus N6/N7). 워크
+        스테이션 배지는 meta 영역에 남긴다. "진료 완료" 버튼은 P3 산출물이라
+        아직 자리만 비워둔다(placeholder 렌더 없음).
+      */}
+      <header className="doctor__topbar">
+        {mode === 'server' && selectedRecord && (
+          <button type="button" className="doctor__topbar__back" onClick={() => setSelectedId(null)}>
+            ← 목록
+          </button>
+        )}
+        <h1 className="doctor__topbar__title">
+          {showingServerList ? `진료 전 요약 — 제출목록 (${submissions.length})` : '진료 전 요약'}
+        </h1>
+        {showingServerList && newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
+        <div className="doctor__topbar__spacer" />
+        <div className="doctor__topbar__meta">
+          <span className="doctor__workstationBadge">
+            {workstationId ? `WS-${workstationId}` : '워크스테이션 설정 필요'}
+          </span>
+          {mode === 'server' && selectedRecord?.visit_id && (
+            <span className="doctor__activeVisitBadge">현재 진료 중으로 표시됨</span>
+          )}
+        </div>
+        <details className="doctor__toolsMenu">
+          <summary className="doctor__toolsMenu__trigger" aria-label="도구 메뉴">
+            ⚙
+          </summary>
+          <div className="doctor__toolsMenu__panel">
+            <div className="doctor__pickerRow">
+              <label htmlFor="doctor-source-select">데이터 소스</label>
+              <select
+                id="doctor-source-select"
+                value={mode}
+                onChange={(e) => {
+                  const next = e.target.value as 'fixtures' | 'server'
+                  setMode(next)
+                  setSelectedId(null)
+                  setSelectedRecord(null)
+                }}
+              >
+                <option value="fixtures">예시 데이터(fixtures)</option>
+                <option value="server">서버 제출목록</option>
+              </select>
+            </div>
+            {mode === 'fixtures' && (
+              <div className="doctor__pickerRow">
+                <label htmlFor="doctor-fixture-select">미리보기용 예시 데이터</label>
+                <select
+                  id="doctor-fixture-select"
+                  value={fixtureIndex}
+                  onChange={(e) => setFixtureIndex(Number(e.target.value))}
+                >
+                  {DOCTOR_FIXTURES.map((f, i) => (
+                    <option key={f.name} value={i}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {mode === 'server' && hasDoctorToken && (
+              <DoctorTokenClearButton
+                onClear={() => {
+                  setTokenVersion((n) => n + 1)
+                  setRetryNonce((n) => n + 1)
+                }}
+              />
+            )}
+            {showingRecord && (
+              <button
+                type="button"
+                className="judgment__recordBtn"
+                onClick={() => {
+                  const el = rawJsonRef.current
+                  if (!el) return
+                  el.open = true
+                  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }}
+              >
+                원본 데이터 보기
+              </button>
+            )}
+          </div>
+        </details>
+      </header>
+
+      {showingRecord && <PatientHeader payload={payload} />}
+
+      <div className="doctor__pageSection">
+        {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
+
+        {mode === 'server' && serverError?.kind === 'auth' && (
+          <DoctorTokenSetup
+            authFailed
+            onSet={() => {
               setTokenVersion((n) => n + 1)
               setRetryNonce((n) => n + 1)
             }}
           />
         )}
-        <div className="doctor__pickerRow">
-          <label htmlFor="doctor-source-select">데이터 소스</label>
-          <select
-            id="doctor-source-select"
-            value={mode}
-            onChange={(e) => {
-              const next = e.target.value as 'fixtures' | 'server'
-              setMode(next)
-              setSelectedId(null)
-              setSelectedRecord(null)
-            }}
-          >
-            <option value="fixtures">예시 데이터(fixtures)</option>
-            <option value="server">서버 제출목록</option>
-          </select>
-        </div>
-        {mode === 'fixtures' && (
-          <div className="doctor__pickerRow">
-            <label htmlFor="doctor-fixture-select">미리보기용 예시 데이터</label>
-            <select
-              id="doctor-fixture-select"
-              value={fixtureIndex}
-              onChange={(e) => setFixtureIndex(Number(e.target.value))}
-            >
-              {DOCTOR_FIXTURES.map((f, i) => (
-                <option key={f.name} value={i}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+
+        {mode === 'server' && serverError && serverError.kind !== 'auth' && (
+          <div className="doctor__banner doctor__banner--danger">
+            <strong>서버에 연결할 수 없습니다</strong>
+            <p>
+              {serverError.message} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
+              VITE_SAMINDANG_SERVER_URL 설정이 맞는지 확인하세요. 그동안 예시
+              데이터로 화면을 확인할 수 있습니다.
+            </p>
+            <button type="button" className="judgment__recordBtn" onClick={() => setRetryNonce((n) => n + 1)}>
+              다시 시도
+            </button>
           </div>
         )}
-        {mode === 'server' && selectedRecord && (
-          <button type="button" className="judgment__recordBtn" onClick={() => setSelectedId(null)}>
-            목록으로
-          </button>
+
+        {showingServerList && !serverError && (
+          <section className="doctor__section">
+            <h2>
+              제출목록 ({submissions.length})
+              {newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
+            </h2>
+            {listLoading && submissions.length === 0 ? (
+              <p className="doctor__empty">불러오는 중…</p>
+            ) : submissions.length === 0 ? (
+              <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
+            ) : (
+              <div className="doctor__grid">
+                {submissions.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
+                    onClick={() => setSelectedId(s.id)}
+                  >
+                    <span className="doctorField__label">
+                      {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
+                      {unreadReadyIds.has(s.id) && (
+                        <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
+                      )}
+                      {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
+                    </span>
+                    <span className="doctorField__value">
+                      {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
+                      {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         )}
-        {mode === 'server' && selectedRecord?.visit_id && (
-          <span className="doctor__activeVisitBadge">현재 진료 중으로 표시됨</span>
-        )}
-      </header>
+      </div>
 
-      {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
-
-      {mode === 'server' && serverError?.kind === 'auth' && (
-        <DoctorTokenSetup
-          authFailed
-          onSet={() => {
-            setTokenVersion((n) => n + 1)
-            setRetryNonce((n) => n + 1)
-          }}
-        />
-      )}
-
-      {mode === 'server' && serverError && serverError.kind !== 'auth' && (
-        <div className="doctor__banner doctor__banner--danger">
-          <strong>서버에 연결할 수 없습니다</strong>
-          <p>
-            {serverError.message} — 로컬 핸드오프 서버(server/index.js)가 실행 중인지,
-            VITE_SAMINDANG_SERVER_URL 설정이 맞는지 확인하세요. 그동안 예시
-            데이터로 화면을 확인할 수 있습니다.
-          </p>
-          <button type="button" className="judgment__recordBtn" onClick={() => setRetryNonce((n) => n + 1)}>
-            다시 시도
-          </button>
-        </div>
-      )}
-
-      {showingServerList && !serverError && (
-        <section className="doctor__section">
-          <h2>
-            제출목록 ({submissions.length})
-            {newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
-          </h2>
-          {listLoading && submissions.length === 0 ? (
-            <p className="doctor__empty">불러오는 중…</p>
-          ) : submissions.length === 0 ? (
-            <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
-          ) : (
-            <div className="doctor__grid">
-              {submissions.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
-                  onClick={() => setSelectedId(s.id)}
-                >
-                  <span className="doctorField__label">
-                    {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
-                    {unreadReadyIds.has(s.id) && (
-                      <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
-                    )}
-                    {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
-                  </span>
-                  <span className="doctorField__value">
-                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
-                    {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {(mode === 'fixtures' || selectedRecord) && (
-      <>
+      {showingRecord && (
+      <div className="doctor__layout">
+      <div className="doctor__mainCol">
       <TenSecondSummary payload={payload} />
 
       {flags.requires_staff_check && (
@@ -2309,74 +2406,76 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         참고 증상은 절대 진단처럼 보이면 안 되고, 기존 urgent safety
         panel보다 강조되지 않는다(§23) -- muted/작은 chip으로만 표시한다.
       */}
-      <section className="doctor__section">
-        <h2>추가 상세상담</h2>
-        {routing.additional_module ? (
-          <>
-            <div className="doctor__chiefPrimary">
-              <span className="doctor__chiefPrimary__label">추가 상세상담</span>
-              <span className="doctor__chiefPrimary__value">
-                {optionLabel('ADDITIONAL_DETAIL_01', routing.additional_detail_concern)}
+      {/*
+        v0.2 §3: 항상-빈 legacy 섹션 3종은 데이터가 있을 때만 렌더한다 —
+        새 문진에서는 구조적으로 항상 비어 있는 섹션이 매번 자리를 차지하지
+        않게 한다. "없음" 안내문 자체를 지우는 것이지, 값이 있을 때의
+        표시(§PART4 칩 등)는 그대로다.
+      */}
+      {routing.additional_module && (
+        <section className="doctor__section">
+          <h2>추가 상세상담</h2>
+          <div className="doctor__chiefPrimary">
+            <span className="doctor__chiefPrimary__label">추가 상세상담</span>
+            <span className="doctor__chiefPrimary__value">
+              {optionLabel('ADDITIONAL_DETAIL_01', routing.additional_detail_concern)}
+            </span>
+          </div>
+          <div className="doctor__grid">
+            {primaryModuleFields(routing.additional_module, r.modules, routing.additional_module_detail).map((f) => (
+              <Field key={f.qid} qid={f.qid} value={f.value} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {referenceSymptomKeys(routing).length > 0 && (
+        <section className="doctor__section">
+          <h2>참고 증상</h2>
+          <p className="doctor__derivedNote">
+            환자가 선택한 참고용 정보입니다 — 진단이나 객관적 소견이 아니며, 필요 시 진료 중 확인하세요.
+          </p>
+          <div className="doctor__secChips">
+            {referenceSymptomKeys(routing).map((k) => (
+              <span key={k} className="doctor__secChip doctor__secChip--reference">
+                <strong>{optionLabel('REFERENCE_SYMPTOMS_01', k)}</strong>
               </span>
-            </div>
-            <div className="doctor__grid">
-              {primaryModuleFields(routing.additional_module, r.modules, routing.additional_module_detail).map(
-                (f) => (
+            ))}
+          </div>
+          {referenceSymptomKeys(routing).includes('other') && (
+            <p className="doctor__derivedNote">기타 참고증상 있음 — 진료 중 확인</p>
+          )}
+        </section>
+      )}
+
+      {secondaryChipsData(r).length > 0 && (
+        <section className="doctor__section">
+          <h2>동반문제</h2>
+          <p className="doctor__derivedNote">
+            이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다. 새 문진은 위 "추가
+            상세상담"/"참고 증상"으로 대체되어 이 구역이 대부분 비어 있습니다.
+          </p>
+          <div className="doctor__secChips">
+            {secondaryChipsData(r).map((c) => (
+              <span key={c.key} className="doctor__secChip" title={c.answerText}>
+                <strong>{c.categoryLabel}</strong>
+                <span className="doctor__secChip__text">{c.answerText || '—'}</span>
+              </span>
+            ))}
+          </div>
+          {secondaryModuleFields(r).length > 0 && (
+            <details className="doctor__secDetails">
+              <summary>자세히</summary>
+              <div className="doctor__grid">
+                <Field qid="SECONDARY_01" value={r.secondary_concerns.secondary_concerns as string[] | null} />
+                {secondaryModuleFields(r).map((f) => (
                   <Field key={f.qid} qid={f.qid} value={f.value} />
-                ),
-              )}
-            </div>
-          </>
-        ) : (
-          <p className="doctor__empty">추가 상세상담 없음</p>
-        )}
-      </section>
-
-      <section className="doctor__section">
-        <h2>참고 증상</h2>
-        <p className="doctor__derivedNote">
-          환자가 선택한 참고용 정보입니다 — 진단이나 객관적 소견이 아니며, 필요 시 진료 중 확인하세요.
-        </p>
-        <div className="doctor__secChips">
-          {referenceSymptomKeys(routing).map((k) => (
-            <span key={k} className="doctor__secChip doctor__secChip--reference">
-              <strong>{optionLabel('REFERENCE_SYMPTOMS_01', k)}</strong>
-            </span>
-          ))}
-          {referenceSymptomKeys(routing).length === 0 && <p className="doctor__empty">참고 증상 없음</p>}
-        </div>
-        {referenceSymptomKeys(routing).includes('other') && (
-          <p className="doctor__derivedNote">기타 참고증상 있음 — 진료 중 확인</p>
-        )}
-      </section>
-
-      <section className="doctor__section">
-        <h2>동반문제</h2>
-        <p className="doctor__derivedNote">
-          이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다. 새 문진은 위 "추가
-          상세상담"/"참고 증상"으로 대체되어 이 구역이 항상 비어 있습니다.
-        </p>
-        <div className="doctor__secChips">
-          {secondaryChipsData(r).map((c) => (
-            <span key={c.key} className="doctor__secChip" title={c.answerText}>
-              <strong>{c.categoryLabel}</strong>
-              <span className="doctor__secChip__text">{c.answerText || '—'}</span>
-            </span>
-          ))}
-          {secondaryChipsData(r).length === 0 && <p className="doctor__empty">동반문제 없음</p>}
-        </div>
-        {secondaryModuleFields(r).length > 0 && (
-          <details className="doctor__secDetails">
-            <summary>자세히</summary>
-            <div className="doctor__grid">
-              <Field qid="SECONDARY_01" value={r.secondary_concerns.secondary_concerns as string[] | null} />
-              {secondaryModuleFields(r).map((f) => (
-                <Field key={f.qid} qid={f.qid} value={f.value} />
-              ))}
-            </div>
-          </details>
-        )}
-      </section>
+                ))}
+              </div>
+            </details>
+          )}
+        </section>
+      )}
 
       <section className="doctor__section">
         <h2 className="doctor__section__h2--sub">
@@ -2576,6 +2675,22 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </p>
       </section>
 
+      <details className="doctor__raw" ref={rawJsonRef}>
+        <summary>원본 응답 보기 (JSON)</summary>
+        <pre>{JSON.stringify(payload, null, 2)}</pre>
+      </details>
+      </div>
+
+      {/*
+        v0.2 §7/§8.1 Level 3 — "행동" 영역. 이 단계(P1)에서는 §11.4/§11.7의
+        압축(compact) 재설계 없이 기존 판단 기록·EMR 컴포넌트를 그대로 옮겨
+        담기만 한다(레일 예산 §8.1 충족은 P3의 컴팩트 재설계에서 성립한다).
+        아직 콘텐츠가 예산(≤560px)을 넘으므로 sticky는 적용하지 않는다 —
+        뷰포트보다 긴 sticky는 이 저장소의 기존 병목(styles.css:49~66)과
+        같은 종류의 버그이므로, 콘텐츠가 실제로 줄어드는 시점(P3) 전에는
+        피한다.
+      */}
+      <aside className="doctor__rail">
       {mode === 'server' && selectedRecord?.visit_id && (
         <section className="doctor__section">
           <h2>진료 녹취·요약</h2>
@@ -2655,12 +2770,8 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             : undefined
         }
       />
-
-      <details className="doctor__raw">
-        <summary>원본 응답 보기 (JSON)</summary>
-        <pre>{JSON.stringify(payload, null, 2)}</pre>
-      </details>
-      </>
+      </aside>
+      </div>
       )}
     </div>
   )

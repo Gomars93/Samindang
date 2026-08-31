@@ -166,7 +166,11 @@ for (const f of DOCTOR_FIXTURES) {
     'v2.1 fixture: reference symptoms never render as a diagnosis (only the informational note text, no red/danger banner class nearby)',
     !/doctor__banner--danger[\s\S]{0,50}참고 증상|참고 증상[\s\S]{0,50}doctor__banner--danger/.test(html),
   )
-  assert('v2.1 fixture: 동반문제 section shows the legacy-compat empty state (동반문제 없음)', /동반문제<\/h2>[\s\S]{0,400}동반문제 없음/.test(html))
+  // Doctor View redesign v0.2 §3: legacy 동반문제 섹션은 데이터가 있을 때만
+  // 렌더한다(항상-빈 섹션 상주 금지) — 이 fixture는 새 방식(추가 상세상담/
+  // 참고 증상)만 쓰므로 legacy secondary_concerns가 비어 있고, 섹션 자체가
+  // 통째로 렌더되지 않아야 한다(예전처럼 "동반문제 없음" 안내문을 보여주지 않는다).
+  assert('v2.1 fixture: legacy 동반문제 section is entirely absent when empty (§3)', !html.includes('>동반문제<'))
 }
 
 /* ---------------------------------------------------------------------
@@ -1183,13 +1187,17 @@ function detailsRange(html, classMarker) {
   }
 }
 
-// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 3번 —
-//      새 10초 요약 카드, 기존 주호소 섹션, 기존 명리 검토의 "현재 문진 요약" 열.
+// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 4번 —
+//      Doctor View 재설계 v0.2 §4 Patient Header 밴드(신규, 기간·빈도 한 줄),
+//      10초 요약 카드, 기존 주호소 섹션, 기존 명리 검토의 "현재 문진 요약" 열.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   const durationLabel = optionLabel('VISIT_03_SYMPTOM_DURATION', '1_3m')
   const count = html.split(durationLabel).length - 1
-  assert('duplication audit: duration label renders exactly 3 times (summary + 주호소 + myungri column)', count === 3)
+  assert(
+    'duplication audit: duration label renders exactly 4 times (patient header + summary + 주호소 + myungri column)',
+    count === 4,
+  )
 }
 
 /* ---------------------------------------------------------------------

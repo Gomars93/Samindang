@@ -2,42 +2,240 @@
  * 원장/직원용 요약 화면 전용 스타일. 데스크톱(마우스) 기준이며 환자용
  * 태블릿 스타일(src/styles.css)의 72px 터치 타겟 등은 재사용하지 않는다.
  * 전부 .doctor 스코프 안에서만 적용되므로 환자 화면에는 영향이 없다.
+ *
+ * Doctor View 재설계 v0.2 (docs/DOCTOR_VIEW_REDESIGN_v0.2.md) §9.4 —
+ * 신규/변경 색 토큰은 전부 `.doctor` 스코프의 `--doctor-*` 접두어로만
+ * 선언한다. `:root`(src/styles.css, 환자 앱과 공유)는 이 파일에서도,
+ * 다른 어떤 파일에서도 변경하지 않는다 — invariant 11. `html.doctor-mode`
+ * 전역 규칙(src/styles.css)도 무변경.
  */
+
+@font-face {
+  font-family: 'Pretendard';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('pretendard/dist/web/static/woff2/Pretendard-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Pretendard';
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url('pretendard/dist/web/static/woff2/Pretendard-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Pretendard';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('pretendard/dist/web/static/woff2/Pretendard-Bold.woff2') format('woff2');
+}
 
 .doctor {
   --warning: #8a6d23;
   --warning-soft: #f3ead2;
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 28px 40px 96px;
+
+  /* §9.4 색 토큰 (값 그대로) */
+  --doctor-bg: #fafaf8;
+  --doctor-surface: #ffffff;
+  --doctor-text: #1a1f1c;
+  --doctor-text-muted: #5c635e;
+  --doctor-green: #1e6b4f;
+  --doctor-mint: #ddf0e7;
+  --doctor-amber: #8a6d23;
+  --doctor-amber-soft: #f3ead2;
+  --doctor-red: #b3261e;
+  --doctor-red-soft: #f6ece9;
+
+  background: var(--doctor-bg);
+  color: var(--doctor-text);
+  min-height: 100%;
+  padding: 0 0 96px;
+  /* §9.3: Pretendard self-host, 400/600/700 3종. 폰트 로드 실패(네트워크
+     차단 등) 시 시스템 sans-serif로 자연 강등 — 실패 자체가 레이아웃을
+     깨지 않는다(font-display: swap). */
   font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
-  color: var(--text);
   font-size: 15px;
   line-height: 1.5;
 }
 
-.doctor__header {
+/* -------------------------------------------------------------------
+ * 상단바 (44px) + 환자 헤더 밴드 (72px) — v0.2 §8.1
+ * ----------------------------------------------------------------- */
+
+.doctor__topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-bottom: 24px;
-  /* 병목 10: 상세화면이 길어도 "목록으로" 등 상단 주요 액션에 다시
-     스크롤해 올라가지 않고 닿을 수 있게 한다(최소 수정, 레이아웃 재설계
-     아님). --bg로 불투명 배경을 줘서 아래 내용이 비쳐 보이지 않게 한다. */
+  gap: 8px 16px;
+  min-height: 44px;
+  padding: 6px 32px;
   position: sticky;
   top: 0;
-  z-index: 10;
-  background: var(--bg);
-  padding-top: 12px;
-  padding-bottom: 8px;
+  z-index: 20;
+  background: var(--doctor-surface);
+  border-bottom: 1px solid var(--border);
 }
 
-.doctor__title {
-  font-size: 24px;
+.doctor__topbar__back {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--doctor-surface);
+  color: var(--doctor-text);
+  cursor: pointer;
+}
+
+.doctor__topbar__title {
+  font-size: 16px;
   font-weight: 700;
   margin: 0;
+  white-space: nowrap;
+}
+
+.doctor__topbar__spacer {
+  flex: 1 1 auto;
+}
+
+.doctor__topbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--doctor-text-muted);
+}
+
+.doctor__toolsMenu {
+  position: relative;
+}
+
+.doctor__toolsMenu__trigger {
+  list-style: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--doctor-surface);
+  user-select: none;
+}
+.doctor__toolsMenu__trigger::-webkit-details-marker {
+  display: none;
+}
+
+.doctor__toolsMenu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--doctor-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.doctor__patientHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 32px;
+  background: var(--doctor-surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.doctor__patientHeader__identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--doctor-text);
+}
+
+.doctor__patientHeader__identity strong {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.doctor__patientHeader__calcTag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--doctor-green);
+  background: var(--doctor-mint);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.doctor__patientHeader__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.doctor__patientHeader__chief {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.doctor__patientHeader__durFreq {
+  font-size: 13px;
+  color: var(--doctor-text-muted);
+}
+
+/* -------------------------------------------------------------------
+ * 2컬럼 grid — v0.2 §7/§9.1/§10. 콘텐츠 max 1320px, gutter 24, 좌우 32.
+ * 컬럼별 독립 overflow 스크롤 금지(invariant 11) — 항상 단일 페이지 스크롤.
+ * ----------------------------------------------------------------- */
+
+.doctor__layout {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 24px 32px 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (min-width: 1280px) {
+  .doctor__layout {
+    grid-template-columns: 6fr 6fr;
+  }
+}
+
+@media (min-width: 1440px) {
+  .doctor__layout {
+    grid-template-columns: 7fr 5fr;
+  }
+}
+
+.doctor__mainCol {
+  min-width: 0;
+}
+
+/* 그리드 밖(목록/설정 카드/서버 오류 등) 전체너비 블록의 좌우 여백을
+   `.doctor__layout`과 맞춘다. */
+.doctor__pageSection {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 20px 32px 0;
+}
+
+.doctor__rail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .doctor__pickerRow {
@@ -395,7 +593,8 @@
 
 .doctor__toast {
   position: fixed;
-  top: 16px;
+  /* v0.2 §8.1/Opus N9: 상단바(44px) 아래로 내려 겹침을 피한다. */
+  top: 56px;
   right: 16px;
   z-index: 50;
   padding: 10px 16px;

@@ -99,6 +99,46 @@ const ROOT = join(__dirname, '..')
 }
 
 /* =========================================================================
+ * 3b. Doctor View 재설계 v0.2 A2/Opus BLOCKING: Pretendard(및 DoctorView 전체)
+ *     가 환자 엔트리 번들에 유입되면 안 된다. `React.lazy`(App.tsx)로 code
+ *     split한 뒤 실제 `npm run build` 산출물을 검사해 확인한다(소스 추론이
+ *     아니라 빌드 결과 자체를 본다) -- 위 3번 블록이 직전에 일반 프로덕션
+ *     빌드(`npx vite build`, preview mode 아님)를 만들어 둔 상태를 그대로
+ *     이어서 쓴다.
+ * ========================================================================= */
+
+{
+  const html = readFileSync(join(ROOT, 'dist', 'index.html'), 'utf8')
+  // 엔트리 HTML이 직접 참조하는(=반드시 다운로드되는) JS/CSS 에셋만 추린다.
+  // DoctorView 청크는 동적 import이므로 여기 나열되지 않아야 한다.
+  const entryAssetPaths = [...html.matchAll(/(?:src|href)="([^"]+\/assets\/[^"]+)"/g)].map((m) => m[1])
+  assert('환자 엔트리 index.html: DoctorView 청크를 직접 참조(modulepreload 등)하지 않는다', !entryAssetPaths.some((p) => p.includes('DoctorView')))
+
+  const entryFiles = entryAssetPaths.map((p) => join(ROOT, 'dist', p.replace(/^\//, '')))
+  const entryContents = entryFiles.map((f) => readFileSync(f, 'utf8'))
+
+  assert(
+    '환자 엔트리 CSS/JS 전체: @font-face 없음 — Pretendard가 patient 엔트리 청크에 없다(대소문자 무시)',
+    !entryContents.some((c) => /@font-face/i.test(c) && /pretendard/i.test(c)),
+  )
+  assert(
+    '환자 엔트리 CSS/JS 전체: "Pretendard Variable"(doctor 전용 폰트 패밀리명) 문자열이 없다',
+    !entryContents.some((c) => c.includes('Pretendard Variable')),
+  )
+  // 동적 subset은 92개 조각으로 나뉘어 파일 수 기준 임계치가 부적절하다
+  // (프로젝트 지시사항의 "파일 수가 많으므로 임계치 방식이 더 맞으면"에
+  // 대한 판단: 여기서는 "0건이어야 한다"는 정확한 계약이 성립하므로 임계치
+  // 대신 정확한 0건 어서션을 쓴다 — Pretendard 파일이 patient 엔트리 청크에
+  // 조금이라도 섞이면 회귀다).
+  const entryWoff2Refs = entryContents.flatMap((c) => [...c.matchAll(/[\w./-]+\.woff2/g)].map((m) => m[0]))
+  assert('환자 엔트리 CSS/JS 전체: .woff2 참조 0건', entryWoff2Refs.length === 0)
+
+  const distFiles = execSync("find dist/assets -type f", { cwd: ROOT }).toString().trim().split('\n')
+  const pretendardWoff2Files = distFiles.filter((f) => /PretendardVariable.*\.woff2$/.test(f))
+  assert('빌드 산출물: Pretendard variable subset woff2 파일 자체는 존재한다(doctor 청크용, 완전히 안 만들어진 게 아님을 확인)', pretendardWoff2Files.length > 0)
+}
+
+/* =========================================================================
  * 4. NO-PHI / server-unconfigured guarantee: with VITE_SAMINDANG_SERVER_URL
  *    unset (exactly the preview build's env), every server-facing function
  *    resolves to the "not configured" result WITHOUT ever calling fetch.

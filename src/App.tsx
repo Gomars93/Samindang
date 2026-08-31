@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { HelpModal } from './components/HelpModal'
 import { IdleWarningModal } from './components/IdleWarningModal'
 import { PatientErrorBoundary } from './components/PatientErrorBoundary'
 import { PreviewBanner } from './components/PreviewBanner'
 import { ScreenShell } from './components/ScreenShell'
-import { DoctorView } from './doctor/DoctorView'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
 import {
   QuestionBody,
@@ -62,6 +61,18 @@ const newSessionId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `sess-${Date.now()}`
+
+/**
+ * v0.2 A2/Opus BLOCKING(2.34MB 유입): `DoctorView`(원장용, Pretendard
+ * self-host CSS를 포함)를 정적 import하면 환자 앱 진입 청크에 원장 전용
+ * 코드/폰트가 전부 같이 번들된다 — 환자 태블릿은 이 화면을 절대 열지
+ * 않는데도(`isDoctorView`는 URL 해시로만 갈린다) 다운로드해야 했다.
+ * `React.lazy` + `Suspense`로 분리해 doctor 전용 청크(및 그 청크가
+ * import하는 doctor.css/Pretendard variable font)가 `#doctor` 해시로
+ * 실제 진입할 때만 로드되게 한다. 이 파일 안에서 DoctorView로 갈리는
+ * 분기는 아래 한 곳(`isDoctorView`)뿐이다.
+ */
+const DoctorView = lazy(() => import('./doctor/DoctorView').then((m) => ({ default: m.DoctorView })))
 
 /** 문진(question phase) 전용 유휴 타임아웃. 완료 화면/원장 화면에는 절대 적용하지 않는다. */
 const IDLE_MINUTES = Number(import.meta.env.VITE_SAMINDANG_IDLE_MINUTES) || 10
@@ -402,7 +413,14 @@ function AppContent() {
   /* ---------- render ---------- */
 
   if (isDoctorView) {
-    return <DoctorView />
+    // Suspense fallback은 doctor 청크 다운로드(보통 수백ms) 동안만 잠깐
+    // 보인다 — DoctorView 자체의 목록/상세 스켈레톤(P7)과는 별개 계층.
+    // doctor.css/Pretendard를 끌어오지 않는 순수 텍스트만 사용한다.
+    return (
+      <Suspense fallback={<p style={{ padding: 24 }}>불러오는 중…</p>}>
+        <DoctorView />
+      </Suspense>
+    )
   }
 
   if (phase === 'start') {

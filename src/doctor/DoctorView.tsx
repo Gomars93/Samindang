@@ -2618,8 +2618,20 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         setPatientIdentities({})
       }
     }
-    poll()
-    const timer = setInterval(poll, POLL_MS)
+    // 17차 독립 리뷰 FINDING-1: poll()은 catch 없이 호출됐다 --
+    // listRevisitQueue/listStations는 이제 serverClient.ts에서
+    // Array.isArray로 방어되어 더 이상 throw하지 않지만, 이 화면이 상시
+    // 실행하는 poll()이 어떤 이유로든 reject하면 그 자체가 이후의
+    // listCrmTasks 호출을 막아 CRM Today Queue가 새로고침 실패를 전혀
+    // 알리지 못한 채 오래된 목록을 계속 authoritative처럼 보여주는 결과로
+    // 이어진다(바로 위 round 13 주석이 명시적으로 금지하는 상황) -- 다음
+    // interval에서 재시도할 수 있도록 조용히 흡수한다(사용자에게 노출할
+    // 새 에러 상태는 없음 -- crmTasksError는 listCrmTasks 자체의 실패
+    // 분기가 이미 담당).
+    poll().catch(() => {})
+    const timer = setInterval(() => {
+      poll().catch(() => {})
+    }, POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
@@ -2691,10 +2703,21 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       return
     }
     let cancelled = false
-    getPatientHistory(patientId, selectedRecord?.visit_id).then((result) => {
-      if (cancelled) return
-      if (result.ok) setPriorVisits(result.data)
-    })
+    // 17차 독립 리뷰 FINDING-2: getPatientHistory는 이제 serverClient.ts에서
+    // 방어되어 더 이상 throw하지 않지만, catch 없는 `.then()` 호출은 어떤
+    // 이유로든 reject하면 priorVisits가 null로 남아 실제로는 이전 방문이
+    // 있는 환자가 "이전 방문 없음"으로 조용히 보이는(fail-silent) 결과로
+    // 이어진다 -- `.catch`를 추가해 그 실패도 명시적으로 null(=안 보여줌)로
+    // 귀결되도록 한다(이 카드는 비임상 참고용이라 별도의 에러 배너는 두지
+    // 않는다).
+    getPatientHistory(patientId, selectedRecord?.visit_id)
+      .then((result) => {
+        if (cancelled) return
+        if (result.ok) setPriorVisits(result.data)
+      })
+      .catch(() => {
+        if (!cancelled) setPriorVisits(null)
+      })
     return () => {
       cancelled = true
     }
@@ -2953,16 +2976,24 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     const name = newStationName.trim()
     if (!name) return
     setStationError(null)
-    const result = await registerStation(name)
-    if (!result.ok) {
-      setStationError(result.error)
-      return
+    // 17차 독립 리뷰 FINDING-3: 이 호출에 try/catch가 없어서, 서버가 응답
+    // 형식을 벗어난 값을 보내면(버전 skew) registerStation()이 reject하고
+    // 이 함수 전체가 조용히 throw했다 -- stationError는 null로 남고
+    // 직원은 "새 태블릿 등록"을 눌렀는데도 아무 피드백을 못 받았다.
+    try {
+      const result = await registerStation(name)
+      if (!result.ok) {
+        setStationError(result.error)
+        return
+      }
+      // Shown exactly once. Staff opens this on the tablet itself; the tablet
+      // stores the credential and scrubs it from its own URL (see App.tsx).
+      setNewStationPairing({ name: result.data.name, link: stationPairingLink(result.data.credential) })
+      setNewStationName('')
+      await refreshStations()
+    } catch {
+      setStationError('태블릿 등록에 실패했습니다. 다시 시도해 주세요.')
     }
-    // Shown exactly once. Staff opens this on the tablet itself; the tablet
-    // stores the credential and scrubs it from its own URL (see App.tsx).
-    setNewStationPairing({ name: result.data.name, link: stationPairingLink(result.data.credential) })
-    setNewStationName('')
-    await refreshStations()
   }
 
   // THE front-desk action: assign this already-open patient's new revisit to
@@ -2983,6 +3014,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       } else {
         setRevisitActionError(result.error)
       }
+    } catch {
+      // 17차 독립 리뷰 FINDING-3: 이전엔 catch가 없어서, 서버가 응답
+      // 형식을 벗어난 값을 보내면(버전 skew) assignRevisitToStation()이
+      // reject하고 이 catch가 없어 revisitActionError가 세팅되지 않은 채
+      // 조용히 끝났다 -- 직원이 "이 태블릿에 배정"을 눌렀는데 아무 일도
+      // 일어나지 않은 것처럼 보였다.
+      setRevisitActionError('태블릿 배정에 실패했습니다. 다시 시도해 주세요.')
     } finally {
       setAssignPending(false)
     }
@@ -3218,7 +3256,18 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                 <span className="doctorField__value">
                   {relativeTime(rv.createdAt)} ({new Date(rv.createdAt).toLocaleString('ko-KR')})
                   {/* Round 8 operational metadata -- never clinical. */}
-                  {rv.deliveryMode && ` · ${DELIVERY_MODE_LABEL[rv.deliveryMode]}`}
+                  {/*
+                   * 17차 독립 리뷰 FINDING-4: server/followUpSessionStore.js의
+                   * normalizeDeliveryMode는 저장(write) 시점에만 실행되고
+                   * 읽기(read) 시점에는 재검증하지 않는다 -- 손으로 수정된
+                   * 세션 파일이나 예전 버전이 남긴 값이 있으면
+                   * DELIVERY_MODE_LABEL[rv.deliveryMode]가 알려진 키가
+                   * 아니어서 undefined를 반환하고, 이 template literal이
+                   * 그 값을 리터럴 "undefined"로 그대로 노출한다.
+                   */}
+                  {rv.deliveryMode && Object.prototype.hasOwnProperty.call(DELIVERY_MODE_LABEL, rv.deliveryMode) && (
+                    ` · ${DELIVERY_MODE_LABEL[rv.deliveryMode]}`
+                  )}
                   {rv.stationName && ` · ${rv.stationName}`}
                   {rv.inputProvenance === 'STAFF_ASSISTED' && ` · ${INPUT_PROVENANCE_LABEL.STAFF_ASSISTED}`}
                 </span>

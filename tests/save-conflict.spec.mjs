@@ -393,8 +393,91 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     const fnEnd = src.indexOf('\n}', fnStart)
     const fn = src.slice(fnStart, fnEnd)
     assert.ok(
-      /visits:\s*\(Array\.isArray\(result\.data\.visits\)\s*\?\s*result\.data\.visits\s*:\s*\[\]\)\.map\(/.test(fn),
-      'must guard Array.isArray before calling .map on the wire visits field',
+      /visits:\s*\(Array\.isArray\(result\.data\.visits\)\s*\?\s*result\.data\.visits\s*:\s*\[\]\)\s*\n\s*\.filter\(/.test(fn),
+      'must guard Array.isArray before calling .filter/.map on the wire visits field',
+    )
+  })
+
+  // 17차 독립 리뷰 FINDING-2: 16차의 Array.isArray 가드는 `visits` 자체가
+  // 배열이 아닌 경우만 막았을 뿐, `result.data`가 null이거나 `visits`의
+  // 개별 원소가 null인 경우는 여전히 throw했다.
+  test('serverClient.ts 17차 FINDING-2: getPatientHistory guards result.data itself being null/non-object, and filters out null/non-object elements before mapping', () => {
+    const fnStart = src.indexOf('export function getPatientHistory(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(
+      /if \(result\.data == null \|\| typeof result\.data !== 'object'\) \{\s*\n\s*return \{ ok: false,/.test(fn),
+      'must guard result.data itself being null/non-object before accessing any field on it',
+    )
+    assert.ok(
+      /\.filter\(\(v\): v is PatientHistoryWire\['visits'\]\[number\] => v != null && typeof v === 'object'\)/.test(fn),
+      'must filter out null/non-object visit elements before mapping their fields',
+    )
+  })
+
+  // 17차 독립 리뷰 FINDING-1: getPatientHistory에 16차가 추가한
+  // Array.isArray 가드의 형제 지점 -- listRevisitQueue/listStations는
+  // DoctorView.tsx의 상시 poll()에서 호출되는데, 배열이 아닌 wire body가
+  // 여기서 그대로 throw하면 poll() 전체(listCrmTasks 포함)가 매 interval
+  // 마다 실패해 CRM Today Queue가 새로고침 실패를 전혀 알리지 못한 채
+  // 오래된 목록을 계속 authoritative처럼 보여줬다.
+  test('serverClient.ts 17차 FINDING-1: listRevisitQueue never lets a non-array wire body throw inside the response mapper', () => {
+    const fnStart = src.indexOf('export function listRevisitQueue(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(
+      /if \(!Array\.isArray\(result\.data\)\) return \{ ok: false,/.test(fn),
+      'must guard Array.isArray on the wire body before calling .map',
+    )
+  })
+
+  test('serverClient.ts 17차 FINDING-1: listStations never lets a non-array `stations` field throw inside the response mapper', () => {
+    const fnStart = src.indexOf('export function listStations(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(
+      /if \(!Array\.isArray\(result\.data\?\.stations\)\) return \{ ok: false,/.test(fn),
+      'must guard Array.isArray on the wire stations field before calling .map',
+    )
+  })
+}
+
+// ---------- 6. DoctorView.tsx: 17차 독립 리뷰 (uncaught async effects) ----------
+// The doctor queue poll() and its sibling handlers were invoked with no
+// .catch anywhere -- if a response mapper threw (the exact class of bug
+// serverClient.ts is now guarded against above, but also any genuinely
+// unexpected future failure), the failure was silently swallowed instead
+// of reaching an existing fail-closed/error-surfacing path.
+{
+  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx 17차 FINDING-1: the Doctor Queue poll() is invoked with .catch on both the initial call and every interval tick', () => {
+    const effectStart = src.indexOf('async function poll() {\n      const result = await listRevisitQueue()')
+    const effectEnd = src.indexOf('}, [mode, retryNonce, tokenVersion])', effectStart)
+    const effect = src.slice(effectStart, effectEnd)
+    const catchCount = (effect.match(/poll\(\)\.catch\(/g) || []).length
+    assert.ok(catchCount >= 2, `expected poll().catch(...) on both the initial call and the setInterval tick, found ${catchCount}`)
+  })
+
+  test('DoctorView.tsx 17차 FINDING-2: the prior-visit history fetch has a .catch that fails closed to priorVisits=null', () => {
+    const effectStart = src.indexOf('getPatientHistory(patientId, selectedRecord?.visit_id)')
+    const effectEnd = src.indexOf('}, [mode, selectedRecord?.patient_id, selectedRecord?.visit_id])')
+    const effect = src.slice(effectStart, effectEnd)
+    assert.ok(effect.includes('.catch(() => {'), 'must have a .catch handler')
+    assert.ok(/if \(!cancelled\) setPriorVisits\(null\)/.test(effect), 'a rejected fetch must still resolve to a definite null, not leave stale state')
+  })
+
+  test('DoctorView.tsx 17차 FINDING-3: handleRegisterStation and handleAssignToStation both surface an error instead of failing silently on a rejected call', () => {
+    const registerFn = src.slice(src.indexOf('async function handleRegisterStation() {'), src.indexOf('async function handleAssignToStation() {'))
+    assert.ok(/catch \{\s*\n\s*setStationError\(/.test(registerFn), 'handleRegisterStation must set stationError on a rejected registerStation() call')
+    const assignFn = src.slice(src.indexOf('async function handleAssignToStation() {'), src.indexOf('async function handleResetStation('))
+    assert.ok(/catch \{\s*\n\s*\/\/[\s\S]*?setRevisitActionError\(/.test(assignFn), 'handleAssignToStation must set revisitActionError on a rejected assignRevisitToStation() call')
+  })
+
+  test('DoctorView.tsx 17차 FINDING-4: the revisit queue row guards DELIVERY_MODE_LABEL against an unmapped deliveryMode value', () => {
+    assert.ok(
+      /rv\.deliveryMode && Object\.prototype\.hasOwnProperty\.call\(DELIVERY_MODE_LABEL, rv\.deliveryMode\) && \(/.test(src),
+      'must validate rv.deliveryMode is a known DELIVERY_MODE_LABEL key before indexing it, never leaking a literal "undefined"',
     )
   })
 }

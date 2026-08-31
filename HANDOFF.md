@@ -6930,6 +6930,79 @@ src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 17차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+17차 리뷰는 16차 커밋(`c4bef81`)을 대상으로, 16차 자신의 두 fix는
+모두 정확하다고 확인하면서도 MEDIUM 1건 + LOW 3건을 찾아냈다.
+MEDIUM은 16차가 고친 것과 정확히 같은 클래스의 버그가 같은 파일 안의
+형제 함수 두 곳에 그대로 남아있던 경우다 — round 15/16과 이어지는
+동일 패턴("고친 메커니즘의 자매 지점").
+
+**(MEDIUM, 16차 fix의 미완성 부분) `serverClient.ts`의
+`getPatientHistory`에만 `Array.isArray` 가드가 추가됐고, 동일한
+무가드 `.map()` 패턴을 쓰는 `listRevisitQueue`/`listStations`는
+그대로 남아있었다.** 이 두 함수는 `DoctorView.tsx`의 상시 실행
+`poll()`(재진 목록 + 원내 태블릿 + CRM Today Queue를 매 interval마다
+갱신)의 첫 두 단계에서 호출되는데, `poll()` 자체가 `.catch` 없이
+호출됐다 — 배열이 아닌 wire body가 여기서 그대로 throw하면 `poll()`
+전체(이후의 `listCrmTasks` 포함)가 매 interval마다 실패하고, CRM
+Today Queue가 새로고침 실패를 전혀 알리지 못한 채 오래된 목록을
+"지금의 authoritative 목록"인 것처럼 계속 보여준다 — round 13이
+CRM Today Queue에 명시적으로 요구한 staleness 규칙(주석 참고)을
+정면으로 위반한다. **근본 수정**: `listRevisitQueue`/`listStations`에도
+동일한 `Array.isArray` 가드를 추가하고, `poll()` 호출 자체에도
+`.catch(() => {})`를 이중으로 씌워(16차의 두 겹 방어 패턴과 동일)
+어떤 이유로든 reject해도 다음 interval에서 조용히 재시도하도록 했다.
+
+**LOW 3건도 함께 고쳤다(governing task 정책 1/5과 직결되는 저심각도
+fail-silent 흠결이라 이번 배치 예산 안에서 처리):**
+- `getPatientHistory`의 `Array.isArray` 가드는 `visits` 자체가
+  배열이 아닌 경우만 막았을 뿐, `result.data`가 null이거나 `visits`의
+  개별 원소가 null인 경우는 여전히 throw했다 — 유일한 호출부
+  (`DoctorView.tsx`의 이전 방문 이력 조회)가 `.catch` 없이
+  호출되므로, 실제로는 이전 방문이 있는 환자가 "이전 방문 없음"으로
+  조용히 보였다(fail-silent). `result.data` null 가드 + 개별 원소
+  `.filter(...)` 추가, 호출부에 `.catch(() => setPriorVisits(null))`
+  추가.
+- `handleRegisterStation`/`handleAssignToStation`(원내 태블릿
+  등록/배정)은 서버 응답이 형식을 벗어나면(버전 skew)
+  `registerStation`/`assignRevisitToStation`이 reject해도 아무
+  에러 상태를 세팅하지 않아, 직원이 버튼을 눌러도 아무 피드백 없이
+  조용히 실패했다. 두 핸들러 모두 `catch`를 추가해 `stationError`/
+  `revisitActionError`를 세팅.
+- 재진 목록 행의 `` `· ${DELIVERY_MODE_LABEL[rv.deliveryMode]}` ``는
+  template literal이라서, `server/followUpSessionStore.js`의
+  `normalizeDeliveryMode`가 저장(write) 시점에만 실행되고 읽기 시점엔
+  재검증하지 않으므로 손으로 수정된/오래된 세션 파일의 값이 알려진
+  키가 아니면 리터럴 "undefined"를 그대로 노출했다(governing task
+  정책 5 위반). `Object.prototype.hasOwnProperty.call(DELIVERY_MODE_LABEL,
+  rv.deliveryMode)` 가드 추가.
+
+**신규 회귀 테스트**: `tests/save-conflict.spec.mjs`에 구조적 가드
+테스트 7개(+7, 34→41 — serverClient.ts의 `listRevisitQueue`/
+`listStations`/`getPatientHistory` 강화된 가드 3개, DoctorView.tsx의
+`poll().catch`/prior-visit-history `.catch`/두 station 핸들러의
+`catch`/deliveryMode 가드 4개). 이번에도 `RevisitWorkspace.tsx`가
+아니라 `DoctorView.tsx`/`serverClient.ts` 안의 non-JSX 로직/JSX
+템플릿이 대상이라, 기존 파일들이 이미 쓰고 있는 구조적 정규식 테스트
+패턴을 그대로 따랐다.
+
+**실사용 재검증**: MEDIUM/LOW 전부 정상 서버 응답 경로에서는 재현
+불가능(서버는 항상 배열/알려진 delivery_mode를 보냄)하므로 — 16차의
+MEDIUM-1과 동일한 판단 근거 — 별도의 live-repro 시나리오를 만들지
+않고 구조적 테스트로만 커버했다.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — save-conflict 41/41 포함, 나머지 스위트 16차와 동일한
+카운트 유지), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 18차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

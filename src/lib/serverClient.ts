@@ -285,28 +285,34 @@ export function getPatientHistory(
   const qs = excludeVisitId ? `?excludeVisitId=${encodeURIComponent(excludeVisitId)}` : ''
   return request<PatientHistoryWire>(`/api/patients/${encodeURIComponent(patientId)}/history${qs}`).then((result) => {
     if (!result.ok) return result
+    // 17차 독립 리뷰 FINDING-2: 16차의 Array.isArray 가드는 `visits`
+    // 자체가 배열이 아닌 경우만 막았을 뿐, `result.data`가 null이거나
+    // `visits`의 개별 원소가 null인 경우는 여전히 `.patient_id`/
+    // `v.visit_id` 접근에서 그대로 throw했다 -- 이 함수의 유일한 다른
+    // 호출부(DoctorView.tsx의 이전 방문 이력 조회)는 `.catch` 없이
+    // 호출되므로, 그 reject가 조용히 사라지고 실제로는 이전 방문이 있는
+    // 환자가 "이전 방문 없음"으로 보였다(fail-silent, fail-closed 아님).
+    if (result.data == null || typeof result.data !== 'object') {
+      return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
+    }
     return {
       ok: true,
       data: {
         patientId: result.data.patient_id ?? patientId,
-        // 16차 독립 리뷰 MEDIUM-1: 서버가 언제나 배열을 보낸다는 보장에
-        // 의존하지 않는다 -- 버전 skew/프록시 등으로 `visits`가 배열이
-        // 아니면 이전엔 `.map`이 그대로 throw해 이 함수의 반환 Promise가
-        // reject됐고, 호출부(RevisitWorkspace.tsx의 `load()`)는 그 reject를
-        // 잡지 않아 로딩 스피너가 영원히 멈추지 않았다(고안된 fail-closed
-        // loadError 경로로 아예 도달하지 못함).
-        visits: (Array.isArray(result.data.visits) ? result.data.visits : []).map((v) => ({
-          visitId: v.visit_id,
-          submissionId: v.submission_id,
-          createdAt: v.created_at,
-          primaryConcern: v.primary_concern,
-          painFollowUpTargets: v.pain_follow_up_targets,
-          herbalFollowUpTargets: v.herbal_follow_up_targets,
-          followUpTargets: v.follow_up_targets,
-          painFinalAssessmentSummary: v.pain_final_assessment_summary,
-          herbalFinalAssessmentSummary: v.herbal_final_assessment_summary,
-          nextReassessmentPlan: v.next_reassessment_plan,
-        })),
+        visits: (Array.isArray(result.data.visits) ? result.data.visits : [])
+          .filter((v): v is PatientHistoryWire['visits'][number] => v != null && typeof v === 'object')
+          .map((v) => ({
+            visitId: v.visit_id,
+            submissionId: v.submission_id,
+            createdAt: v.created_at,
+            primaryConcern: v.primary_concern,
+            painFollowUpTargets: v.pain_follow_up_targets,
+            herbalFollowUpTargets: v.herbal_follow_up_targets,
+            followUpTargets: v.follow_up_targets,
+            painFinalAssessmentSummary: v.pain_final_assessment_summary,
+            herbalFinalAssessmentSummary: v.herbal_final_assessment_summary,
+            nextReassessmentPlan: v.next_reassessment_plan,
+          })),
       },
     }
   })
@@ -425,6 +431,15 @@ type RevisitQueueWire = Array<{
 export function listRevisitQueue(): Promise<ServerResult<RevisitQueueItem[]>> {
   return request<RevisitQueueWire>('/api/visits/revisits').then((result) => {
     if (!result.ok) return result
+    // 17차 독립 리뷰 FINDING-1: getPatientHistory에 16차가 추가한
+    // Array.isArray 가드의 형제 지점 -- 이 함수는 DoctorView.tsx의 상시
+    // poll() 첫 await라서, 배열이 아닌 wire body가 여기서 그대로 throw하면
+    // poll() 전체(이후의 listStations/listCrmTasks/listPatientIdentities
+    // 포함)가 매 interval마다 반복 실패하고, poll()이 catch 없이 호출돼
+    // 아무 에러 상태도 세팅되지 않는다 -- 오래된 CRM Today Queue가 새로고침
+    // 실패를 전혀 알리지 않은 채 "지금의 authoritative 목록"인 것처럼 계속
+    // 렌더된다(이 파일의 다른 곳이 명시적으로 금지하는 바로 그 상황).
+    if (!Array.isArray(result.data)) return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
     return {
       ok: true,
       data: result.data.map((r) => ({
@@ -479,6 +494,9 @@ function mapStation(s: StationWire): StationInfo {
 export function listStations(): Promise<ServerResult<StationInfo[]>> {
   return request<{ stations: StationWire[] }>('/api/stations').then((result) => {
     if (!result.ok) return result
+    // 17차 독립 리뷰 FINDING-1: listRevisitQueue와 동일한 이유/수정 -- 이
+    // 함수도 DoctorView.tsx의 상시 poll()에서 호출된다.
+    if (!Array.isArray(result.data?.stations)) return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
     return { ok: true, data: result.data.stations.map(mapStation) }
   })
 }

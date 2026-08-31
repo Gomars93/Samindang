@@ -524,8 +524,25 @@ function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: Answe
 /**
  * LBP_V1 안전 확인 패널. SafetyGlance(일반 red flag)와 별개 — 인터럽트하지
  * 않는다(LBP_04 URGENT 값만 STAFF_CHECK_TRIGGERS로 별도 인터럽트, coreSpec.ts
- * 참고). `payload.routing.primary_module_detail !== 'LBP'`면 아무것도
- * 렌더링하지 않는다.
+ * 참고).
+ *
+ * 게이트를 `payload.responses.safety_flags.lbp !== null`로 판정한다
+ * (Doctor View Opus UX Review v0.1 §B3 fix — 예전엔
+ * `primary_module_detail !== 'LBP'`였음). Tablet UX v2.1 §16 도입 이후
+ * `primary_module_detail`은 오직 **주호소 자체가 pain**인 환자에게만 'LBP'가
+ * 채워진다(coreSpec.ts `buildRoutingPayload`: `primary_module_detail:
+ * isPrimaryPain ? painRegionalDetailLabel(r) : null`) — 주호소가 비-통증(수면/
+ * 피로 등)이고 "추가 상세상담(Additional Detailed Concern)"으로 통증(허리)을
+ * 선택한 환자는 LBP_01-14를 실제로 응답하고 `additional_module_detail`이
+ * 'LBP'가 되지만 `primary_module_detail`은 계속 null이다. 그 리터럴로 계속
+ * 게이트하면 이런 환자의 LBP safety(양성이었을 수도 있는)가 원장 화면에서
+ * 아예 안 보이는 결함이 생긴다. `safety_flags.lbp`는 `IS_PRIMARY_LBP`
+ * (`IS_PRIMARY_PAIN(r) && PAIN_01 === 'low_back_pelvis'`, `IS_PRIMARY_PAIN`은
+ * primary pain이든 additional-detail pain이든 모두 포함)로 계산되므로
+ * (coreSpec.ts `buildResponsePayload`), 이 게이트는 기존 primary-LBP
+ * 시나리오에서는 완전히 동일하게 동작하고(그때는 `safety_flags.lbp !== null`
+ * ⟺ `primary_module_detail === 'LBP'`였음) additional-detail-LBP 환자에서만
+ * 추가로 렌더링된다 — 순수 additive, 회귀 없음.
  *
  * clinician_objective_motor_deficit은 이 화면이 아니라 JudgmentPanel에서
  * 입력·저장되므로(기존 judgment 저장 경로 재사용, 별도 저장 메커니즘 없음)
@@ -539,7 +556,7 @@ function LbpSafetyPanel({
   payload: DoctorPayload
   lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
 }) {
-  if (payload.routing.primary_module_detail !== 'LBP') return null
+  if (payload.responses.safety_flags.lbp === null) return null
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
@@ -2641,7 +2658,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           myungri_pending_approval: saju.policy.pending_approval,
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
-        showLbpExam={routing.primary_module_detail === 'LBP'}
+        // LbpSafetyPanel과 동일한 §B3 게이트(위 docstring 참고) — additional-
+        // detail-LBP 환자의 진찰 소견(객관적 하지 근력저하) 입력란도 함께
+        // 렌더되어야 한다.
+        showLbpExam={payload.responses.safety_flags.lbp !== null}
         showShoulderExam={payload.responses.safety_flags.shoulder !== null}
         onSave={
           mode === 'server' && selectedId

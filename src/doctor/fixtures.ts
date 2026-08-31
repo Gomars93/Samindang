@@ -1371,4 +1371,43 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     SLEEP_02: '1_2_days',
     SLEEP_03: ['none'],
   }),
+
+  // Doctor View Opus UX Review v0.1 §B3 regression: 주호소가 비-통증(수면)이고
+  // 추가 상세상담으로 통증(허리)을 선택한 환자. LBP_01-14를 실제로 응답하므로
+  // safety_flags.lbp는 non-null이지만, 주호소 자체는 pain이 아니므로
+  // routing.primary_module_detail은 계속 null이다(additional_module_detail이
+  // 'LBP'가 됨, 위 LBP fixture와 값 대부분을 동일하게 맞춰 같은
+  // REVIEW_REQUIRED 결과를 재현한다) -- LbpSafetyPanel/showLbpExam이
+  // primary_module_detail 리터럴로 게이트되면 이 환자의 LBP 안전 정보가
+  // 원장 화면에서 통째로 사라진다.
+  buildFixture('수면 주호소 + 추가 상세상담(허리 통증, LBP 안전확인 게이트 회귀)', {
+    ID_01: '오하늬',
+    ID_03: 'female',
+    BIRTH_01: '19850310',
+    VISIT_00_INTENT: 'symptom_consult',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    ADDITIONAL_DETAIL_01: 'pain',
+    SAFETY_01: ['none'],
+    SLEEP_01: ['sleep_onset'],
+    SLEEP_02: '1_2_days',
+    SLEEP_03: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'lower_limb',
+    LBP_01: 'BUTTOCK',
+    LBP_02: ['NUMBNESS'],
+    LBP_03: 'BILATERAL',
+    LBP_04: ['NONE'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'YES',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 6,
+    LBP_13: 'SOMEWHAT',
+    LBP_14: 'SOME',
+  }),
 ]

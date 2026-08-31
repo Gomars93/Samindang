@@ -1267,3 +1267,133 @@ diag 스크립트로 매 라운드 실제 렌더 높이를 측정하며 반복�
   압축(12→8px 등)했다 — 시각적으로 이 구간만 살짝 더 촘촘해 보일 수
   있으나, 안전 정보(레인1)와 배지/글리프 등 3중 인코딩 요소는 전혀
   건드리지 않았다.
+
+## 2026-08-31 — Core Reduction Phase 10 closing review 지적 해소
+(BLOCKER-1 + MAJOR-2 + MAJOR-3 + m4) + 남은 MINOR 항목 공개
+
+### Context
+`docs/CORE_REDUCTION_PHASE10_CLOSING_v0.1.md`(Opus 독립 재검증, `09dab91`)가
+BLOCKER 1건·MAJOR 2건·MINOR 11건을 지적했다. 이번 fix 배치는 그 문서가
+지시한 4건(BLOCKER-1, MAJOR-2, MAJOR-3, m4)만 수정 범위로 하고, 나머지
+MINOR 중 m3/m5/m10은 이번에 처음 문서화하는 기존 deviation으로 공개하고,
+m1/m2는 known limitation으로 짧게 기록한다(코드 변경 없음, 판단만 기록).
+
+### Decision — 4건 수정
+1. **BLOCKER-1** (`src/doctor/todayQueue.ts`/`TodayUnifiedQueueSection.tsx`):
+   `tierOf()`와 active/completed 분리 둘 다에서 `needsAttention`을
+   `completed`보다 먼저 검사하도록 순서를 바꿨다 — micro follow-up
+   `response`가 있으면 같은 revisit이 `status===COMPLETED`와
+   `needsAttention===true`를 동시에 가질 수 있는데(server/store.js), 기존
+   코드는 이 조합을 tier 4(완료)로 보내 "오늘 (N)" 카운트와 항상-보이는
+   그리드에서 제외했다. 이제 이 조합은 tier 0(URGENT 동급)으로 승격되어
+   completed 그룹에 절대 들어가지 않는다.
+2. **MAJOR-2** (`src/doctor/CommonSafetyBanner.tsx`/
+   `src/doctor/workspace/lane1Summary.ts`): `hasUnreadableSafetyField`를
+   export하고 `computeLane1Summary`의 union에 별도 축으로 편입했다 —
+   `medication_use` 등이 손상돼 SafetyGlance가 "안전정보 일부를 읽을 수
+   없습니다"를 렌더해도 좌측 lane1 칩은 기존에 🟢 CLEAR로 남을 수 있었다
+   (fail-open, Phase 10이 실증). 이 축은 최소 `계산불가`를 강제하되
+   (CLEAR 금지), 그 자체로 URGENT를 올리지는 않는다("읽을 수 없음"은
+   위험 단정이 아니라 계산 불가라서).
+3. **MAJOR-3** (`src/doctor/workspace/VisitSummaryAside.tsx`/
+   `src/doctor/workspace/DoctorWorkspace.tsx`): 좌측 요약 ⑤블록
+   (`max-height:20px; overflow:hidden`)에 `DoctorTokenSetup` 배너 전체
+   (≥100px)를 직접 렌더해 입력창·저장 버튼이 클리핑돼 있었다. Phase 7
+   §3.2 문언대로 ⑤블록을 1줄 액션("인증 만료 — 토큰 다시 입력")으로
+   바꾸고, 클릭 시 실제 토큰 폼은 좌측 요약 예산 밖 — 우측 작업 열
+   레인1 섹션 상단(`<h2 id="lane1-h2">안전 확인</h2>` 바로 아래) — 에서
+   전개하도록 `DoctorWorkspace.tsx`가 `tokenReentryOpen` state로 소유·
+   렌더한다. `VisitSummaryAside`는 더 이상 `DoctorTokenSetup`을
+   import/렌더하지 않는다.
+4. **m4** (`src/doctor/ObjectiveExamFindingsCard.tsx`): `lbp`/`shoulder`/
+   `lbpStatus`/`shoulderStatus`/`authError` local state가 `useState(initialLbp
+   ?? undefined)`처럼 마운트 시점 값만 읽고 이후 `initialLbp`/
+   `initialShoulder` prop 변경(기록 전환)을 무시했다 — `DoctorWorkspace.tsx`가
+   이 카드를 key로 리마운트하지 않는 render-time-reset 체계이므로, 아무도
+   이 state를 정리해주지 않아 이전 환자의 라디오 선택이 다음 환자 화면에
+   그대로 남을 수 있었다(URGENT_REVIEW/신속 전문의 평가 고려를 유발하는
+   안전 입력이라 위험도가 낮지 않음). `DoctorWorkspace.tsx`가 이미 자신의
+   `workspaceState` 리셋에 쓰는 것과 같은 `recordKey`를 `resetKey` prop으로
+   전달하고, 카드 내부에서 동일한 render-time-reset 패턴(key-remount
+   아님)으로 5개 state 전부를 매 기록 전환마다 initial 값으로 재시드한다.
+
+### Reason
+네 건 모두 Phase 10 closing review 문서가 명시한 "수정 지시"를 그대로
+구현했다 — 새 개념/새 UI 패턴을 도입하지 않고, 이미 이 저장소에 있는
+패턴(union 축 추가, render-time-reset, 1줄 액션+예산 밖 전개)을 재사용했다.
+
+### Alternatives Considered (MAJOR-3)
+토큰 폼을 좌측 요약 안에 그대로 두고 `max-height`만 늘리는 방법은
+Phase 7 §3.2가 명시한 "5블록 고정 높이 예산"(다른 네 블록까지 밀려나거나
+좌측 요약 전체가 다른 뷰포트에서 예산을 넘김) 자체를 깨뜨리므로 기각했다.
+
+### Trade-offs
+- (+) `npm run test:all` 전체 green, `tsc -b`/`vite build` 성공, FROZEN
+  (`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff.
+- (+) 신규 헤드리스 real-Chrome 테스트
+  (`tests/visit-summary-auth-recovery-headless.spec.mjs`)가 MAJOR-3의
+  토큰 `<input>`이 실제 브라우저에서 `clientHeight > 0`임과 좌측 요약
+  높이가 폼 전개 전후로 불변임을 직접 측정으로 증명한다 — 문자열
+  렌더 비교만으로는 증명 불가능했던 클리핑 버그 자체의 재발 방지.
+- (−) MAJOR-3 수정으로 인증 복구가 1클릭 더 늘었다(버튼 클릭 → 폼 노출
+  → 입력 → 저장, 기존은 클릭 없이 바로 폼이 보였음/보이려고 했음 — 단
+  클리핑돼 실제로는 쓸 수 없었으므로 실질적 UX 저하는 아니다).
+
+### Known limitations 공개 (m1, m2 — 코드 변경 없음)
+- **m1** — 원장 진찰 결과가 URGENT/확인 필요 등 disease-safety 잠금을
+  유발하지 않으면서도 치료(치료 계획/시술) 단계에서만 별도 주의가
+  필요한 "treatment-only lock"(예: 임신 중 특정 시술 금기)은 좌측 요약의
+  🔒 아이콘 로직(`VisitSummaryAside.tsx`의 `locked` 계산, lane1 union
+  상태만 참조)에 반영되지 않는다 — 이 배치 범위 밖, 별도 설계 필요.
+- **m2** — Today Queue의 제출건 배지(`todayQueue.ts`의
+  `normalizeSubmissionBadge(s.safety_badge)`, 서버가 제출 시점에 미리
+  계산해 저장한 값)와 진료 화면 좌측 요약의 lane1 union
+  (`lane1Summary.ts`, 클라이언트가 매 렌더마다 CommonSafetyBanner +
+  region SafetyPanel 결과로 재계산)은 서로 다른 코드 경로·다른 시점의
+  계산이라 판정 규칙이 완전히 동일하지 않다 — 예를 들어 이번 배치의
+  MAJOR-2 수정(`hasUnreadableSafetyField` 축)은 lane1 union에만
+  반영됐고 Queue 배지 쪽 계산에는 전파되지 않았다(동일 클래스의 손상된
+  `medication_use`가 있어도 Queue 목록의 배지 자체는 이번 수정과
+  무관하게 그대로다). 두 경로를 하나로 합치는 것은 별도 아키텍처 작업.
+
+### deviation 공개 (m3, m5, m10 — 기존 상태, 이번에 문서화)
+- **m3** (`src/doctor/DoctorView.tsx`/`RevisitWorkspace.tsx`) — 여러
+  주석(`DoctorView.tsx` 3064줄 등)과 테스트 이름이 "unified key가
+  `submission:<id>`에서 `visit:<visit_id>`로 전환된다"고 서술하지만,
+  `visit:<visit_id>` 형태의 문자열 키는 실제 production 코드 어디에도
+  literal로 존재하지 않는다. `DoctorWorkspace.tsx`의 `recordKey`는
+  `resetKey ?? submissionId ?? payload.session_id`(항상 `submission:`/
+  `fixture:` 접두사)이고, `RevisitWorkspace`는 문자열 키 비교가 아니라
+  전혀 다른 메커니즘 — 자신의 `[visitId, patientId]` `useEffect` 의존성
+  배열 — 로 리셋한다(`DoctorView.tsx`가 `<RevisitWorkspace>`에 `key`도
+  주지 않는다). `{selectedRevisit && (...)}` / `{!selectedRevisit && ...}`
+  두 분기가 상호배타적으로 렌더되므로("제출건 화면"과 "재진 화면"이
+  동시에 존재한 적이 없다) 결과적 동작(환자 전환 시 반드시 리셋됨)은
+  스펙의 의도와 동등하지만, "`visit:` 접두사를 가진 하나의 통합 문자열
+  키"가 실제로 만들어지는 곳은 없다 — 두 개의 서로 다른 리셋 메커니즘이
+  상호배타 분기로 나뉘어 있을 뿐이다. `tests/doctor-reset-key.spec.mjs`의
+  RevisitWorkspace 테스트 자체가 이미 이 정확한 구조("RevisitWorkspace
+  itself is unkeyed")를 검증하고 있어 동작 회귀는 아니다.
+- **m5** (`src/doctor/DoctorView.tsx`/`doctor.css`) — Phase 7 §8.1은
+  834 portrait에서 진료(V3 셸) 화면은 `.doctor__visitSummary`의 96px
+  상단 스티키 바가 `.doctor__header`의 기존 전역 스티키를 **대체**해야
+  하며, "두 스티키가 동시에 쌓이지 않도록 진료 화면은 `.doctor__header`를
+  렌더하지 않는다"고 명시한다. 그러나 `DoctorView.tsx`는
+  `<header className="doctor__header">`를 화면 종류와 무관하게 항상
+  렌더하고, `doctor.css`의 `.doctor__header`도 `position: sticky`를
+  미디어쿼리 없이 항상 적용한다 — 즉 834 portrait에서 진료 화면을 열면
+  전역 헤더 스티키와 좌측 요약 스티키 두 개가 동시에 쌓인다(§8.1이
+  금지한 "중복 sticky 스택" 상태 그대로). Phase 9 시각 QA는 이 조합에서
+  실제 레이아웃 깨짐(겹침/잘림)까지는 발견하지 못했지만, §8.1의 문자
+  그대로의 요구(헤더 미렌더)는 미이행 상태로 남아 있다는 사실을
+  공개한다 — 이번 배치 범위 밖.
+- **m10** — 프리뷰 fixture 시나리오 라벨/키의 문구가 Phase 7 스펙
+  문서의 예시 문구와 토씨 단위로 다른 곳이 있다(의미·동작은 동일,
+  "SYNTHETIC · ..." 접두사 등 표기 스타일 차이). 테스트가 이 정확한
+  문자열에 의존하지 않으므로 동작 회귀는 아니지만, 스펙 문서와 fixture
+  문구가 완전히 동기화돼 있지는 않다는 사실을 공개한다.
+- **m10** — 프리뷰 fixture 시나리오 라벨/키의 문구가 Phase 7 스펙 문서의
+  예시 문구와 토씨 단위로 다른 곳이 있다(의미·동작은 동일, "SYNTHETIC ·
+  ..." 접두사 등 표기 스타일 차이). 테스트가 이 정확한 문자열에 의존하지
+  않으므로 동작 회귀는 아니지만, 스펙 문서와 fixture 문구가 완전히
+  동기화돼 있지는 않다는 사실을 공개한다.

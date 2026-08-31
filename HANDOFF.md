@@ -1,6 +1,102 @@
 # Current Handoff
 
-## Objective (Core Reduction P0~P6 완료, 이번 세션 — P4/P5/P6)
+## Objective (Core Reduction Phase 10 closing review 지적 해소, 이번 세션)
+
+**브랜치**: `claude/feat-core-reduction` (origin push됨, PR 미생성 —
+Phase 10 delta 재심사 전에는 PR을 열지 않는다).
+
+**진행 상태**: P0~P6(위 이전 절 참고) → Phase 9(Preview QA, 21/21 PASS,
+수정 커밋 없음, `c8a27c8`) → 배지 글리프 형태 구분 fix(`aadf0a6`) →
+Phase 10 closing review 1차(`09dab91`, 문서만, 판정 FAIL — BLOCKER 1·
+MAJOR 2·MINOR 11) → **이번 세션: BLOCKER-1 + MAJOR-2 + MAJOR-3 + m4
+수정(`08b2e8e`) + 이 문서/`DECISIONS.md`/Phase9 문서 갱신.**
+
+### 이번 세션에 수정한 4건 (`08b2e8e`)
+
+`docs/CORE_REDUCTION_PHASE10_CLOSING_v0.1.md`의 "수정 지시"를 구현
+명세로 그대로 따랐다 — 리팩터·polish는 하지 않았다.
+
+- **BLOCKER-1** (`src/doctor/todayQueue.ts`의 `tierOf()` +
+  `TodayUnifiedQueueSection.tsx`의 active/completed 분리): 둘 다
+  `needsAttention`을 `completed`보다 먼저 검사하도록 순서를 바꿨다 —
+  micro follow-up `response`가 있으면 같은 revisit이
+  `status===COMPLETED`와 `needsAttention===true`를 동시에 가질 수
+  있는데(server/store.js), 기존 코드는 이 조합을 무조건 "완료"
+  `<details>` 안으로 접어 "오늘 (N)" 카운트에서 빠뜨렸다. 이제 tier
+  0(URGENT 동급)으로 승격돼 completed 그룹에 절대 들어가지 않는다.
+  테스트: `tests/today-queue-unified.spec.mjs`(+2, tierOf 유닛),
+  `tests/today-queue-unified-ui.spec.mjs`(+2, DOM 위치 —
+  `doctor__todayQueue__completed` details 밖에 렌더되는지 정규식으로
+  직접 확인).
+- **MAJOR-2** (`src/doctor/CommonSafetyBanner.tsx`의
+  `hasUnreadableSafetyField` export + `src/doctor/workspace/
+  lane1Summary.ts`의 union): 손상된 `medication_use` 등으로 SafetyGlance가
+  "안전정보 일부를 읽을 수 없습니다"를 렌더해도 좌측 lane1 칩은 기존에
+  🟢 CLEAR로 남을 수 있었다(fail-open, Phase 10이 실증). 이제 별도 축으로
+  편입돼 최소 `계산불가`를 강제하되(CLEAR 금지) 그 자체로 URGENT를
+  올리지는 않는다. 테스트: `tests/lane1-summary.spec.mjs`(+3, 유닛),
+  `tests/doctor-workspace.spec.mjs`(+1, `medication_use` 오염 payload
+  통합 테스트 — 칩이 `doctor__lane1Chip--clear`가 아님을 확인).
+- **MAJOR-3** (`src/doctor/workspace/VisitSummaryAside.tsx` +
+  `DoctorWorkspace.tsx`): 좌측 요약 ⑤블록(`max-height:20px;
+  overflow:hidden`)에 `DoctorTokenSetup` 배너 전체(≥100px)가 직접
+  렌더돼 입력창·저장 버튼이 클리핑돼 있었다. Phase 7 §3.2 문언대로
+  ⑤블록을 1줄 액션("인증 만료 — 토큰 다시 입력")으로 바꾸고, 클릭 시
+  실제 토큰 폼은 좌측 요약 예산 밖 — 우측 작업 열 레인1 섹션 상단(`<h2
+  id="lane1-h2">안전 확인</h2>` 바로 아래) — 에서 `DoctorWorkspace.tsx`가
+  `tokenReentryOpen` state로 소유·렌더한다. `VisitSummaryAside`는 더
+  이상 `DoctorTokenSetup`을 import/렌더하지 않는다. 테스트:
+  `tests/visit-summary-aside.spec.mjs`(갱신 2건 — 1줄 액션 렌더/
+  onOpenTokenReentry 콜백 검증), `tests/save-conflict.spec.mjs`(auth
+  복구 관련 소스-문자열 테스트 재작성), 신규
+  `tests/visit-summary-auth-recovery-headless.spec.mjs`(+8, 실제
+  Chrome 헤드리스로 토큰 `<input>`의 `clientHeight > 0` + 좌측 요약
+  높이가 폼 전개 전후로 불변임을 직접 측정 — `npm run
+  test:visit-summary-auth-recovery-headless`, `test:all`에 포함).
+- **m4** (`src/doctor/ObjectiveExamFindingsCard.tsx`): `lbp`/`shoulder`/
+  `lbpStatus`/`shoulderStatus`/`authError` local state가
+  `useState(initialLbp ?? undefined)`처럼 마운트 시점 값만 읽어 기록
+  전환(`initialLbp`/`initialShoulder` prop 변경) 시 이전 환자의 라디오
+  선택이 남을 수 있었다(URGENT_REVIEW/신속 전문의 평가 고려를 유발하는
+  안전 입력). `DoctorWorkspace.tsx`가 자신의 `workspaceState` 리셋에
+  쓰는 것과 같은 `recordKey`를 `resetKey` prop으로 전달받아, 카드
+  내부에서 동일한 render-time-reset 패턴(key-remount 아님)으로 5개
+  state 전부를 매 기록 전환마다 재시드한다. 테스트:
+  `tests/doctor-reset-key.spec.mjs`(+2 — 기록 전환 시 라디오 미선택
+  복귀 + save-status/authError도 함께 리셋되는지 소스 단정).
+
+**검증**: `npx tsc -b --force` clean, `npm run build` clean, `npm run
+test:all` 전체 green(1회 `test:server`의 PRIVACY_CANARY 플레이크 —
+UUID에 우연히 "9999" 부분열 포함, `HANDOFF.md` 기존에 이미 기록된 동일
+클래스 플레이크 — 1회 재실행으로 통과 확인, 이 배치의 diff와 무관), FROZEN
+(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff.
+
+### 문서 갱신 (이번 세션, 이 커밋 또는 이후 별도 docs 커밋)
+
+- `DECISIONS.md`: 위 4건 수정 결정 기록 + m3(`visit:` 접두사 통합 키
+  미실재 — 두 컴포넌트가 상호배타 분기로 동등 결과)·m5(`.doctor__header`
+  가 진료 화면에서도 항상 렌더/sticky돼 §8.1이 금지한 이중 스티키 스택
+  상태)·m10(fixture 라벨 문언이 스펙 예시와 토씨 차이)을 deviation으로
+  공개. m1(치료 전용 lock 🔒 미반영)·m2(Queue 배지가 서버 시점 계산이라
+  이번 MAJOR-2 lane1 수정이 전파되지 않음)는 known limitation으로 기록.
+- `docs/CORE_REDUCTION_PHASE9_VISUAL_QA_v0.1.md` 발견 #1(배지 글리프
+  색-단독 구분)에 "해결됨(`aadf0a6`)" 추가.
+- 이 절(`HANDOFF.md`).
+
+### 남은 것
+
+Phase 10 delta 재심사(v0.2) — Opus 독립 재검증이 이번 4건 fix가 실제로
+지적을 해소했는지 diff 기준으로 확인해야 한다. 통과하면 최종 보고
+(메트릭 최종표 완성, visible concept 재계수 등 Phase 10 문서의 "최종
+보고에서 수행" 항목들) 및 PR 생성 여부를 사용자와 상의. 이번 세션은
+스스로 PR을 만들거나 main에 push하지 않는다.
+
+MINOR 나머지(m6~m9, m11 — 이번 배치에서 다루지 않음, Phase 10 문서의
+"known-limitation 기록" 대상): 코드 변경 없음, 이번 세션 범위 밖.
+
+---
+
+## Objective (Core Reduction P0~P6 완료, 이전 세션 — P4/P5/P6)
 
 **브랜치**: `claude/feat-core-reduction` (origin에 push됨, `main`과 별도 —
 아직 PR 미생성/미머지, "DO NOT MERGE" 상태는 아니고 단순히 리뷰 전 단계).
@@ -106,6 +202,11 @@ Phase 10(closing review, 독립 검수) 뿐이다.
 **검증(P4/P5/P6 전체)**: `npx tsc -b --force` / `npm run build` /
 `npm run test:all`(1000개 이상 assertion, tablet-viewport 포함) 전체
 green. FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff 확인.
+
+**아래 "Next Recommended Action"은 이 절 작성 시점(P4/P5/P6 직후)의
+기록이며 그대로 보존한다 — 실제로는 Phase 9(`c8a27c8`, 21/21 PASS) →
+Phase 10 1차(`09dab91`, FAIL) → 이번 세션의 fix(`08b2e8e`)까지 이미
+진행됐다. 최신 상태는 맨 위 절 참고.**
 
 **Next Recommended Action**: Phase 9(Preview
 QA — 실제 헤드리스/두 브라우저 컨텍스트로 진료 화면 전체 흐름 재확인,

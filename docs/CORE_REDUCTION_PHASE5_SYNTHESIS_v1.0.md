@@ -1,4 +1,11 @@
-# Core Reduction Phase 5 — Fable Synthesis (Final Architecture) v1.1
+# Core Reduction Phase 5 — Fable Synthesis (Final Architecture) v1.2
+
+> **v1.1 → v1.2 (delta 재심사 조건 C-1~C-4 + N-3~N-6 반영):** m14 지적 철회
+> (row 4 현행 유지·row 9 KEEP 환원 — 항등식 조건 제거) · 좌측 요약 절단 규칙
+> (Phase 4 §8.1) · Phase 4 본문 supersede (§8.3) · §2.10 규칙 문구 정합+학습 케이스
+> 행 · §2.3 신선도 (b)안(행 유지+stale 명시)으로 변경 · §2.6-3 N≥2/판독 불가 규칙 ·
+> §2.8 DoctorWorkspace key 병기. **delta 판정: 조건부 PASS — P0/P1 즉시 착수 승인,
+> P2 전 본 조건 반영 완료(이 버전).**
 
 > 확정: Fable. 입력: Phase 2/3/4 + 저장소 제약 + **Phase 6 Gate 심사(FAIL, B1~4·
 > M5~11·m12~14 — `CORE_REDUCTION_PHASE6_GATE_v0.1.md`) 전면 반영.**
@@ -46,9 +53,11 @@
   **안전 계산이 없는 행에 안전 결론을 단언하지 않는다.**
 - **`needs_attention`(신규 증상·이상반응 환자 보고) = 행 수준 필수 마커** `⚠ 추가
   확인 필요` — PATIENT_FACT이지만 안전 관련이므로 접힘·생략 불가.
-- **신선도 규칙 확정(최엄격 통일)**: 소스별 폴링 실패 시 해당 소스의 행을 stale로
-  유지하지 않고 제거하되, 그 자리에 **명시적 안내 행** `"[새 문진/재검/연락·확인]
-  목록을 불러오지 못했습니다 — 다시 시도"`를 남긴다. 침묵 소실·stale 위장 모두 금지.
+- **신선도 규칙 확정 (delta N-3 반영, (b)안)**: 소스별 폴링 실패 시 **기존 행을
+  유지**하되 해당 소스 그룹에 stale 표식 `⟳ 갱신 실패 · 마지막 확인 HH:MM` +
+  `다시 시도`를 상시 표기한다 — 대기 환자 행이 시야에서 사라지는 가용성 손실 없이
+  침묵 소실 0·stale 위장 0을 충족. CRM 소스의 현행 "실패 시 비움" 의미는 이 표식이
+  대체한다(비운 자리에도 동일 안내 행).
 - 4조건(resolved identity 선행 / 신선도 / 행 유형 배지+재진 부기 / 환자 1행+펼침 N)
   은 v1.0 그대로.
 
@@ -84,6 +93,9 @@
    drawer 강등이 아니라 **레인2 최상단 고정 1줄** `지난번 추적: <라벨> — 기준값
    <raw>` (이전 기록 존재 시; 오늘 재검 입력의 문맥 제공). 원장 기록(FOLLOW_UP_
    TARGET 스타일)로 표시 — 좌측 열의 환자 보고("지난 대비")와 시각 구분.
+   **(delta N-5)** N≥2개면 1줄 내 `·` 나열, 3개 초과 표시 불가 시 `외 N` + 참고
+   앵커(항목 침묵 소실 금지). `longitudinal.ts`의 판독 불가 전용 라벨은 **원문
+   그대로** 표기 — "기록 없음"처럼 보이게 압축 금지 (UNKNOWN ≠ NO).
 
 ### 2.7 발급·메시징 (게이트 M-7 — disclosure 철회)
 - **발급(기본 채널)은 "다음" 영역 안에서 상시 노출** — P0-3(안전 배너 아래)만
@@ -105,7 +117,7 @@
 | ErrorBoundary `key` | **대체** — 통합 리셋 키로 교체 (visit 포함, 게이트 지적 해소) |
 | `loadEpochRef` (MedicationCourse) | 그대로 |
 | `patientIdentitiesSeqRef` | 그대로 |
-| DoctorWorkspace render-time reset | **유지·확장** — 비교 키를 통합 리셋 키로, 초기화 목록에 §2.4 "추가 입력 열림" 상태 포함 (key-remount 방식 금지 — DOM 이중 마운트 전례) |
+| DoctorWorkspace render-time reset | **유지·확장** — 비교 키를 통합 리셋 키로, 초기화 목록에 §2.4 "추가 입력 열림" 상태 포함 (key-remount 방식 금지 — DOM 이중 마운트 전례). **(delta N-6) `DoctorView.tsx:3714`의 DoctorWorkspace 자체 `key={session_id}`는 제거하고 render-time reset이 통합 리셋 키로 단독 책임진다** |
 | MessagingPanel phone 리셋 | 그대로 (visitId → 통합 키) |
 | RevisitWorkspace 전량 리셋 | **통합** — 동일 셸에서 통합 리셋 키 하나의 경로로 수렴 (submission↔visit 전환 = 키 변경 = 전량 리셋) |
 | MedicationCourse draft 초기화 | 그대로 |
@@ -116,7 +128,9 @@ autosave/저장 실패의 `kind === 'auth'`를 구분하여, 좌측 열 저장 �
 내 복구). 일반 실패는 현행 "저장 실패 — 다시 시도" 유지.
 
 ### 2.10 자동 펼침 절대 규칙 (게이트 M-6)
-> **모든 HIDE/disclosure 항목은 `open={내용 있음}` 조건과 짝을 이룬다. 예외 없음.**
+> **(delta C-4) 모든 HIDE/disclosure 항목은 `open={내용 있음}` 조건 — 또는 동등
+> 이상의 상시 가시 표식(예: `기록 있음 n` 배지) — 과 반드시 짝을 이룬다. 둘 다
+> 없는 숨김은 금지.**
 
 | 항목 | open 조건식 |
 |---|---|
@@ -130,6 +144,8 @@ autosave/저장 실패의 `kind === 'auth'`를 구분하여, 좌측 열 저장 �
 | 참고 내 각 아코디언 | 저장값 존재 시 해당 그룹 배지 표시 (`기록 있음 n`) |
 | 메시징 attempt/error 상세 | `실패 상태` |
 | ConflictBanner 초안 | 배너 자체 비접힘, 초안은 "복사" 버튼 |
+| 학습 케이스 disclosure (row 81) | `judgment.learning_case === true` |
+| 참고 아코디언 (재기재) | `기록 있음 n` 배지 = C-4가 허용하는 상시 가시 표식 형태 |
 
 ### 2.11 v1.0에서 불변인 확정 (게이트 검증 통과 항목)
 숨김/이동 목록(프로필 배너·questionnaire_mode·라우팅 노트·동반문제 legacy·JSON·
@@ -144,9 +160,9 @@ JudgmentPanel 해체 이동 + 라벨 오류 수정 · provenance 아이콘+범�
 | # | 변경 내용 |
 |---|---|
 | 2·3 (재진/CRM 행) | 배지 `▦ 안전 계산 없음` 고정 + **needs_attention `⚠ 추가 확인 필요` 마커 신설(접힘 불가)** — B-1 |
-| 4 (워크스테이션) | 배너 조건 "미설정 **또는 (미설정+current-visit 존재)**" — m14 |
+| 4 (워크스테이션) | **(delta C-1) 현행 유지 — 변경 없음** (미설정 시에만 배너). m14 지적은 철회 처리: `current-visit`는 코드에 없는 개념이었음 |
+| 9 (진료 중 배지) | **(delta C-1) HIDE 철회 → KEEP** — 상단바 meta에 현행 유지. row 4 현행 유지와 함께 workstation 충돌 가시성 논점 자체를 해소 |
 | 5 (토큰) | Reason에 §2.9 진료 중 auth 복구 경로 병기 — M-10 |
-| 9 (진료 중 배지) | HIDE 유지하되 m14 배너 조건과 연동 |
 | 11/13/16 (발급·메시징) | disclosure → **"다음" 내 상시 노출(기본 채널)** + 세부만 details(자동 펼침 조건) — M-7/M-6 |
 | 14 (QR) | Reason: PERSONAL_QR 선택 시 필수 표면, 조건부 렌더 유지 — m13 |
 | 36 (SafetyGlance) | 레인1 요약 상태 5값 규칙(§2.2)으로 병합 — M-5 |

@@ -280,6 +280,24 @@ function isNonEmptyObject(value: unknown): boolean {
 // 파일이 아니므로 값이 바뀔 수 있지만, 바뀌면 이 재계산도 함께 갱신해야 한다).
 const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m']
 
+/**
+ * 14차 독립 리뷰 HIGH-2: coreSpec.ts의 WOMEN_SAFETY_01 질문(`multi_choice`,
+ * `required: true`)이 실제로 만들 수 있는 값의 전체 집합 -- FROZEN 파일이
+ * 아니므로 값이 바뀌면 이 목록도 함께 갱신해야 한다. `isAnswered`
+ * (src/screens/QuestionScreen.tsx)는 `Array.isArray(value) &&
+ * value.length > 0`을 요구하므로, 빈 배열은 이 앱을 통해서는 절대 저장될
+ * 수 없는 값이다 -- 즉 `[]`는 "미해당"이 아니라 손상이다.
+ */
+const WOMEN_SAFETY_01_VALUES = new Set([
+  'pregnant',
+  'pregnancy_possible',
+  'postpartum_1y',
+  'breastfeeding',
+  'menopause',
+  'none',
+  'unknown',
+])
+
 export function isUnreadableReproductiveDerived(r: Responses): boolean {
   // 레거시 레코드는 reproductive_status 최상위 키 자체가 없을 수 있다
   // (그 필드가 생기기 전 제출본) -- 옵셔널 체이닝 없이 바로
@@ -348,6 +366,22 @@ export function isUnreadableReproductiveDerived(r: Responses): boolean {
     // derived를 전부 false로 채운 레코드가 실제 보고된 임신을 "임신 중:
     // 아니요"로 지어낼 수 있었다(인증되지 않은 POST로도 도달 가능).
     if (!Array.isArray(rawAnswer)) return true
+    // 14차 독립 리뷰 HIGH-2: WOMEN_SAFETY_01은 `required: true`인
+    // multi_choice라서 앱을 거친 실제 제출은 이 배열이 절대 비어있을 수
+    // 없다(QuestionScreen.tsx의 isAnswered가 length > 0을 요구) -- 빈
+    // 배열/문자열이 아닌 원소/유효하지 않은 옵션값은 전부 손상이다. 이전
+    // 구현은 멤버십(`rawSet.has(...)`)만 검사해서, 원소가 전부 무효하거나
+    // 배열 자체가 비어있으면 모든 `rawSet.has(...)` 검사가 그냥 false가
+    // 되어 아무 모순도 발견하지 못한 채 통과했다 -- 그 결과 derived의
+    // pregnant/postpartum_1y/breastfeeding이 전부 false인 계산 박스가
+    // `[]`/`["zzz"]`/`[{}]` 같은 손상된 raw 응답에 대해서도 "해당 없음"과
+    // 화면상 구별 불가능하게 렌더됐다(governing task 정책 2 위반).
+    if (
+      rawAnswer.length === 0 ||
+      (rawAnswer as unknown[]).some((v) => typeof v !== 'string' || !WOMEN_SAFETY_01_VALUES.has(v))
+    ) {
+      return true
+    }
     if (!Array.isArray(d.raw)) return true
     const rawSet = new Set(rawAnswer)
     if (rawSet.size === 1 && rawSet.has('unknown')) {

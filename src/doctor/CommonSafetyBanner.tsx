@@ -96,6 +96,17 @@ function isUnreadableStringArray(value: unknown): boolean {
 // 파일이 아니므로 값이 바뀔 수 있지만, 바뀌면 이 재계산도 함께 갱신해야 한다).
 const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m']
 
+/** 14차 독립 리뷰 HIGH-2: DoctorView.tsx의 동명 상수와 동일. */
+const WOMEN_SAFETY_01_VALUES = new Set([
+  'pregnant',
+  'pregnancy_possible',
+  'postpartum_1y',
+  'breastfeeding',
+  'menopause',
+  'none',
+  'unknown',
+])
+
 function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknown>, r: Responses): boolean {
   const rawAnswer = r.reproductive_status.reproductive_status
   // 12차 독립 리뷰 HIGH-1/HIGH-2: 컨텍스트(visit_goal/modules.pregnancy·
@@ -140,6 +151,18 @@ function isReproductiveDerivedInconsistentWithRawAnswer(d: Record<string, unknow
     // 손상된 조합이다. 이전 구현은 `return false`("정상")로 조용히
     // 통과시켰다 -- DoctorView.tsx의 동명 함수와 동일한 이유/수정.
     if (!Array.isArray(rawAnswer)) return true
+    // 14차 독립 리뷰 HIGH-2: DoctorView.tsx의 동명 검사와 동일한 이유/수정
+    // -- WOMEN_SAFETY_01은 `required: true`인 multi_choice라서 앱을 거친
+    // 실제 제출은 이 배열이 절대 비어있을 수 없다(QuestionScreen.tsx의
+    // isAnswered가 length > 0을 요구). 이전 구현은 멤버십만 검사해서
+    // `[]`/`["zzz"]`/`[{}]` 같은 손상된 raw가 모든 `rawSet.has(...)`
+    // 검사를 그냥 false로 통과시켜 "정상"으로 판정됐다.
+    if (
+      rawAnswer.length === 0 ||
+      (rawAnswer as unknown[]).some((v) => typeof v !== 'string' || !WOMEN_SAFETY_01_VALUES.has(v))
+    ) {
+      return true
+    }
     if (!Array.isArray(d.raw)) return true
     const rawSet = new Set(rawAnswer)
     if (rawSet.size === 1 && rawSet.has('unknown')) {

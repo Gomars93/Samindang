@@ -2368,6 +2368,89 @@ function detailsRange(html, classMarker) {
       isUnreadableReproductiveDerived(p.responses) === false,
     )
   }
+
+  /* -----------------------------------------------------------------------
+   * 14차 독립 리뷰 HIGH-2: WOMEN_SAFETY_01은 coreSpec.ts에서 `required: true`
+   * `multi_choice`이고, QuestionScreen.tsx의 isAnswered가
+   * `Array.isArray(value) && value.length > 0`을 요구하므로 앱을 거친 실제
+   * 제출은 이 배열이 절대 비어있거나 무효한 원소를 가질 수 없다 -- `[]`/
+   * `["zzz"]`(옵션 목록에 없는 값)/`[{}]`(원소가 문자열이 아님)는 전부
+   * deriveReproductiveStatus가 절대 만들 수 없는 손상이다. 이전 구현은
+   * 멤버십만 검사해서(`rawSet.has(...)`) 이 세 경우 모두 어떤 검사도
+   * 걸리지 않고 "정상"으로 통과시켰다 -- 화면에서 `["none"]`(진짜 미해당)과
+   * 구별 불가능했다(governing task 정책 2 위반).
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture13 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture13.payload)
+    p.responses.reproductive_status.reproductive_status = []
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: [],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an empty WOMEN_SAFETY_01 raw array -- QuestionScreen.tsx\'s isAnswered can never produce this through the app, so it is corruption, not "해당 없음" (14th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture14 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture14.payload)
+    p.responses.reproductive_status.reproductive_status = ['zzz']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['zzz'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a WOMEN_SAFETY_01 raw array containing a value outside the declared option set (14th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture15 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture15.payload)
+    p.responses.reproductive_status.reproductive_status = [{}]
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: [{}],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a WOMEN_SAFETY_01 raw array containing a non-string element (14th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: a genuine negative (["none"]) must still read as consistent --
+    // the HIGH-2 fix must not turn a real "해당 없음" answer into a false
+    // "cannot read" warning.
+    const lbpFixture16 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture16.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive on a genuine ["none"] answer (14th independent review HIGH-2 sanity check)',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
 }
 
 /* -------------------------------------------------------------------------

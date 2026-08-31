@@ -29,9 +29,25 @@ import type { FollowUpTarget, HerbalFinalAssessment, PainFinalAssessment, NextRe
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
 import type { PainCarePlan, HerbalCarePlan } from './carePlan'
 import type { ReassessmentExamItem, StructuredReassessment } from './reassessmentExam'
-import { EXAM_CHECK_STATUS_LABEL, LATERALITY_LABEL } from './provenance'
+import { EXAM_CHECK_STATUS_LABEL, LATERALITY_LABEL, type ExamCheckStatus, type Laterality } from './provenance'
 
 const CRLF = '\r\n'
+
+/**
+ * 14차 독립 리뷰 MEDIUM-2: `result.status`/`result.laterality`는
+ * sanitizeShape의 typeof-매칭을 거치므로 "문자열이기만 하면"(status) 또는
+ * "문자열/숫자/null이기만 하면"(laterality, null-템플릿 분기) 그대로
+ * 통과한다 -- `EXAM_CHECK_STATUS_LABEL[status]`/`LATERALITY_LABEL
+ * [laterality]`가 알려진 키가 아니면 `undefined`를 반환하고, 그 값이 원장이
+ * 그대로 복사해 붙여넣는 EMR 텍스트에 리터럴 "undefined"로 노출됐다. 알려진
+ * 키인지 먼저 확인한다.
+ */
+function isValidExamStatus(status: unknown): status is ExamCheckStatus {
+  return typeof status === 'string' && Object.prototype.hasOwnProperty.call(EXAM_CHECK_STATUS_LABEL, status)
+}
+function isValidLaterality(laterality: unknown): laterality is Laterality {
+  return typeof laterality === 'string' && Object.prototype.hasOwnProperty.call(LATERALITY_LABEL, laterality)
+}
 
 function followUpTargetsLine(targets: FollowUpTarget[]): string {
   return targets
@@ -46,22 +62,34 @@ function followUpTargetsLine(targets: FollowUpTarget[]): string {
 
 function examFindingsLines(items: PhysicalExamSuggestion[]): string[] {
   return items
-    .filter((i) => i.result.status !== 'NOT_YET_CHECKED') // rule 2: never render a pending item as a negative
+    // rule 2: never render a pending item as a negative -- and, per the
+    // same "never fabricate a finding" principle, a status this composer
+    // cannot even recognize is treated the same as NOT_YET_CHECKED: omit
+    // it, never print a raw/undefined value into the EMR text.
+    .filter((i) => isValidExamStatus(i.result.status) && i.result.status !== 'NOT_YET_CHECKED')
     .map((i) => {
-      const lat = i.result.laterality && i.result.laterality !== 'NOT_APPLICABLE' ? ` (${LATERALITY_LABEL[i.result.laterality]})` : ''
+      const status = i.result.status as ExamCheckStatus
+      const lat =
+        isValidLaterality(i.result.laterality) && i.result.laterality !== 'NOT_APPLICABLE'
+          ? ` (${LATERALITY_LABEL[i.result.laterality]})`
+          : ''
       const note = i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''
-      return `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status]}${lat}${note}`
+      return `${i.title}: ${EXAM_CHECK_STATUS_LABEL[status]}${lat}${note}`
     })
 }
 
 function reassessmentFindingsLines(items: ReassessmentExamItem[]): string[] {
   // rule 4: only `result` (today's), never `previous`.
   return items
-    .filter((i) => i.result.status !== 'NOT_YET_CHECKED')
+    .filter((i) => isValidExamStatus(i.result.status) && i.result.status !== 'NOT_YET_CHECKED')
     .map((i) => {
-      const lat = i.result.laterality && i.result.laterality !== 'NOT_APPLICABLE' ? ` (${LATERALITY_LABEL[i.result.laterality]})` : ''
+      const status = i.result.status as ExamCheckStatus
+      const lat =
+        isValidLaterality(i.result.laterality) && i.result.laterality !== 'NOT_APPLICABLE'
+          ? ` (${LATERALITY_LABEL[i.result.laterality]})`
+          : ''
       const note = i.result.note.trim() ? ` — ${i.result.note.trim()}` : ''
-      return `${i.title}: ${EXAM_CHECK_STATUS_LABEL[i.result.status]}${lat}${note}`
+      return `${i.title}: ${EXAM_CHECK_STATUS_LABEL[status]}${lat}${note}`
     })
 }
 

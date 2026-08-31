@@ -20,8 +20,8 @@
  * saved through its own route, never mixed with judgment's read-modify-
  * write cycle.
  */
-import { emptyExamResult, type PhysicalExamSuggestion } from './examSuggestion'
-import type { HerbalPatternCandidate } from './patternCandidate'
+import { emptyExamResult, type PhysicalExamSuggestion, type ExamSuggestionReason } from './examSuggestion'
+import type { HerbalPatternCandidate, PatternEvidenceFact } from './patternCandidate'
 import { emptyClinicianObservation, type ClinicianObservationItem } from './clinicianObservation'
 import {
   followUpTarget,
@@ -35,10 +35,11 @@ import type { PainCarePlan, HerbalCarePlan } from './carePlan'
 import { emptyPainCarePlan, emptyHerbalCarePlan } from './carePlan'
 import { reassessmentExamItemFromPrevious, type StructuredReassessment, type PreviousExamValue } from './reassessmentExam'
 import { emptyStructuredReassessment } from './reassessmentExam'
-import type { RehabSuggestion } from './rehabSuggestion'
+import type { RehabSuggestion, RehabSourceFact } from './rehabSuggestion'
 import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { emptyAdditionalConcernPromotion } from './additionalConcern'
-import { sanitizeArray, sanitizeShape, isSanitizeRecord } from './sanitize'
+import type { Provenance } from './provenance'
+import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } from './sanitize'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -81,6 +82,50 @@ const PREVIOUS_EXAM_VALUE_TEMPLATE: PreviousExamValue = {
   laterality: null,
   note: '',
   recordedAt: null,
+}
+
+/**
+ * 14차 독립 리뷰 HIGH-1: `ExamSuggestionReason`/`PatternEvidenceFact`/
+ * `RehabSourceFact`는 전부 동일한 `{text, provenance}` shape이다 -- exam
+ * suggestion/pattern candidate/rehab suggestion 템플릿 안에 중첩된
+ * `reasonFacts`/`supportingFacts`/`contradictingFacts`/`sourceFacts`/
+ * `contraindicationFacts` 배열은 `sanitizeShape`의 배열 분기(컨테이너만
+ * 확인, 원소는 그대로 통과)를 거치므로 원소가 wrong-typed면(`[null]`,
+ * `[{}]`) `f.text`에서 크래시하거나("Cannot read properties of null")
+ * React가 객체를 자식으로 렌더하려다 던졌다("Objects are not valid as a
+ * React child") -- `previous`와 동일한 클래스의 "중첩 배열은 sanitizeShape가
+ * 검증하지 못한다" 공백이다. 원소별로 `sanitizeShape`를 명시적으로 적용.
+ */
+const FACT_TEMPLATE: { text: string; provenance: Provenance } = {
+  text: '확인 필요(값 형식 오류)',
+  provenance: 'SUGGESTED',
+}
+
+function sanitizeExamSuggestion(raw: unknown): PhysicalExamSuggestion {
+  const item = sanitizeShape(EXAM_SUGGESTION_TEMPLATE, raw)
+  const r = isSanitizeRecord(raw) ? raw : {}
+  return { ...item, reasonFacts: sanitizeArray(FACT_TEMPLATE, r.reasonFacts) as ExamSuggestionReason[] }
+}
+
+function sanitizePatternCandidate(raw: unknown): HerbalPatternCandidate {
+  const item = sanitizeShape(PATTERN_CANDIDATE_TEMPLATE, raw)
+  const r = isSanitizeRecord(raw) ? raw : {}
+  return {
+    ...item,
+    supportingFacts: sanitizeArray(FACT_TEMPLATE, r.supportingFacts) as PatternEvidenceFact[],
+    contradictingFacts: sanitizeArray(FACT_TEMPLATE, r.contradictingFacts) as PatternEvidenceFact[],
+    unknownChecks: sanitizeStringArray(r.unknownChecks),
+  }
+}
+
+function sanitizeRehabSuggestion(raw: unknown): RehabSuggestion {
+  const item = sanitizeShape(REHAB_SUGGESTION_TEMPLATE, raw)
+  const r = isSanitizeRecord(raw) ? raw : {}
+  return {
+    ...item,
+    sourceFacts: sanitizeArray(FACT_TEMPLATE, r.sourceFacts) as RehabSourceFact[],
+    contraindicationFacts: sanitizeArray(FACT_TEMPLATE, r.contraindicationFacts) as RehabSourceFact[],
+  }
 }
 
 /**
@@ -186,10 +231,12 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
   if (!isRecord(raw)) return empty
   return {
     schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : empty.schema_version,
-    painExamSuggestions: sanitizeArray(EXAM_SUGGESTION_TEMPLATE, raw.painExamSuggestions),
+    painExamSuggestions: Array.isArray(raw.painExamSuggestions) ? raw.painExamSuggestions.map(sanitizeExamSuggestion) : [],
     painFinalAssessment: sanitizeShape(empty.painFinalAssessment, raw.painFinalAssessment),
     painFollowUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.painFollowUpTargets),
-    herbalPatternCandidates: sanitizeArray(PATTERN_CANDIDATE_TEMPLATE, raw.herbalPatternCandidates),
+    herbalPatternCandidates: Array.isArray(raw.herbalPatternCandidates)
+      ? raw.herbalPatternCandidates.map(sanitizePatternCandidate)
+      : [],
     herbalClinicianObservations: sanitizeArray(CLINICIAN_OBSERVATION_TEMPLATE, raw.herbalClinicianObservations),
     herbalFinalAssessment: sanitizeShape(empty.herbalFinalAssessment, raw.herbalFinalAssessment),
     herbalFollowUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.herbalFollowUpTargets),
@@ -198,7 +245,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     nextReassessmentPlan: sanitizeShape(empty.nextReassessmentPlan, raw.nextReassessmentPlan),
     painReassessment: sanitizeStructuredReassessment(empty.painReassessment, raw.painReassessment),
     herbalReassessment: sanitizeStructuredReassessment(empty.herbalReassessment, raw.herbalReassessment),
-    painRehabSuggestions: sanitizeArray(REHAB_SUGGESTION_TEMPLATE, raw.painRehabSuggestions),
+    painRehabSuggestions: Array.isArray(raw.painRehabSuggestions) ? raw.painRehabSuggestions.map(sanitizeRehabSuggestion) : [],
     additionalConcernPromotion: sanitizeShape(empty.additionalConcernPromotion, raw.additionalConcernPromotion),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }

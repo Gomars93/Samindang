@@ -61,3 +61,17 @@ export function sanitizeArray<T extends Record<string, unknown>>(template: T, ra
   if (!Array.isArray(raw)) return []
   return raw.map((item) => sanitizeShape(template, item))
 }
+
+/**
+ * 14차 독립 리뷰 HIGH-1: `sanitizeShape`의 배열 분기는 컨테이너만 확인할
+ * 뿐(위 주석 참고), 문자열 배열(예: `unknownChecks: string[]`) 필드는
+ * `sanitizeArray`(레코드 템플릿 전용)로도 검증할 수 없었다 -- 원소가
+ * wrong-typed면(`[null]`/`[{}]`) 그대로 통과해 React가 "Objects are not
+ * valid as a React child"를 던지거나 undefined를 그대로 렌더했다. 원소별로
+ * string이 아니면 실패 토큰으로 대체한다(DoctorView.tsx의
+ * readableStringArray와 동일한 규칙).
+ */
+export function sanitizeStringArray(raw: unknown, fallback = '확인 필요(값 형식 오류)'): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((v) => (typeof v === 'string' ? v : fallback))
+}

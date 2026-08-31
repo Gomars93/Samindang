@@ -6641,6 +6641,108 @@ src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 14차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+14차 리뷰는 13차 커밋(`3c8e8f7`)을 대상으로, HIGH 2건 + MEDIUM 2건 +
+LOW 3건을 찾아냈다. 두 HIGH 모두 13차가 도입한 새 메커니즘(sanitize.ts,
+WOMEN_SAFETY_01 non-array 가드) 자체의 공백을 드러냈다 — "고쳤다고
+믿었던 것"이 실제로는 부분적으로만 고쳐졌던 사례다.
+
+**(HIGH-1) `sanitizeShape`의 배열 분기는 컨테이너(Array.isArray)만
+검증하고 원소는 그대로 통과시킨다 -- exam suggestion/pattern
+candidate/rehab suggestion 템플릿 안에 중첩된 `reasonFacts`/
+`supportingFacts`/`contradictingFacts`/`sourceFacts`/
+`contraindicationFacts`(`{text, provenance}[]`)와 `unknownChecks`
+(`string[]`)는 13차의 element/leaf 검증에서 빠졌다.** 실제로 4가지
+크래시가 재현됐다: 원소가 `null`/`undefined`면 `f.text`에서
+"Cannot read properties of null/undefined", 원소가 plain object면
+`unknownChecks.map(c => <li>{c}</li>)`가 "Objects are not valid as a
+React child"를 던졌다 — `DoctorRecordErrorBoundary`가 CommonSafetyBanner/
+모든 SafetyPanel까지 함께 감싸므로 전체 임상 화면이 날아갔다. 13차의
+`previous: PreviousExamValue | null` 자체 회귀와 정확히 같은 클래스의
+공백("중첩 배열은 sanitizeShape가 검증하지 못한다")이 이번엔 6개
+필드에 걸쳐 있었다. **근본 수정**: `sanitize.ts`에 `sanitizeStringArray`
+헬퍼 추가(문자열이 아닌 원소를 실패 토큰으로 대체), `persistence.ts`에
+공유 `FACT_TEMPLATE`과 `sanitizeExamSuggestion`/`sanitizePatternCandidate`/
+`sanitizeRehabSuggestion` 커스텀 아이템 sanitizer 3개 추가(13차의
+`sanitizeReassessmentItem`과 동일한 패턴 — 컨테이너는 `sanitizeShape`에
+맡기고, 알려진 구체적 shape을 가진 중첩 필드는 명시적으로 재정의).
+`deserializeWorkspaceState`의 `painExamSuggestions`/
+`herbalPatternCandidates`/`painRehabSuggestions` 세 필드 전부 이
+커스텀 sanitizer로 교체.
+
+**(HIGH-2) `isUnreadableReproductiveDerived`(양쪽 사본)는
+`source === 'WOMEN_SAFETY_01'`일 때 raw 배열의 멤버십만 검사하고
+(`rawSet.has(...)`), 배열이 비어있거나 원소가 문자열이 아니거나
+옵션 목록에 없는 값이어도 검사하지 않았다.** WOMEN_SAFETY_01은
+coreSpec.ts에서 `required: true`인 `multi_choice`이고
+QuestionScreen.tsx의 `isAnswered`가 `Array.isArray(value) &&
+value.length > 0`을 요구하므로, 앱을 거친 실제 제출은 이 배열이 절대
+비어있을 수 없다 — `[]`/`["zzz"]`(옵션에 없는 값)/`[{}]`(원소가
+객체)는 전부 deriveReproductiveStatus가 만들 수 없는 손상이다.
+이전 구현은 이 세 경우 모두 모든 `rawSet.has(...)` 검사가 그냥
+false가 되어 아무 모순도 발견하지 못한 채 "정상"으로 통과시켰다 —
+`pregnant`/`postpartum_1y`/`breastfeeding`이 전부 false인 계산
+박스가 손상된 raw 응답에 대해서도 진짜 `["none"]`(해당 없음)과 화면상
+구별 불가능했다(governing task 정책 2 위반, 가장 위험한 종류의
+fail-open). **근본 수정**: `WOMEN_SAFETY_01_VALUES`(coreSpec.ts
+WOMEN_SAFETY_01의 옵션 값 7개 — FROZEN 파일이 아니므로 옵션이
+바뀌면 이 목록도 함께 갱신 필요) 상수를 `DoctorView.tsx`/
+`CommonSafetyBanner.tsx` 양쪽에 추가하고, `WOMEN_SAFETY_01` 분기에
+`rawAnswer.length === 0 || rawAnswer.some(v => typeof v !== 'string'
+|| !WOMEN_SAFETY_01_VALUES.has(v))` 가드 추가.
+
+**(MEDIUM-2) `emrPreview.ts`의 `result.status`/`result.laterality`는
+sanitizeShape의 typeof-매칭만 거치므로(status는 아무 문자열, laterality는
+문자열/숫자/null 전부 통과) `EXAM_CHECK_STATUS_LABEL[status]`/
+`LATERALITY_LABEL[laterality]`가 알려진 키가 아니면 `undefined`를
+반환했고, 그 값이 원장이 그대로 복사해 붙여넣는 EMR 텍스트에 리터럴
+"undefined"로 노출됐다.** 또한 그 손상된 status가
+`!== 'NOT_YET_CHECKED'` 필터를 그냥 통과해 "확인된 소견"인 것처럼
+취급됐다(governing task 정책 1/5 동시 위반). `isValidExamStatus`/
+`isValidLaterality` 가드 추가 — 필터에서 알려지지 않은 status를
+NOT_YET_CHECKED와 동일하게 취급(둘 다 생략, 지어내지 않음), laterality가
+알려지지 않으면 접미사만 생략(finding 자체는 유효한 status면 계속 표시).
+
+**LOW-1(`sanitizeShape`의 null-템플릿 분기가 `string|null`과
+`number|null`을 구분하지 않음)/LOW-2(`optionLabel`이 닫힌 옵션
+질문에서도 미매핑 토큰을 원문 그대로 렌더)/LOW-3(PatternCandidateCard/
+NextActionCard의 알 수 없는 enum 값이 빈 배지/드롭된 필드로 조용히
+렌더)는 이번 배치에서 수정하지 않고 기록만 남긴다** — 셋 다 크래시나
+사실 지어내기가 아니라 저심각도 표시 흠결이고(LOW-2/3은 12~13차가
+이미 여러 곳에서 받아들인 "알려지지 않은 enum 값은 원문 그대로/조용히
+생략"과 동일한 성격의 잔여 공백), HIGH/MEDIUM에 예산을 우선 배정했다.
+
+**신규 회귀 테스트**: `tests/doctor-workspace.spec.mjs`에 HIGH-1 실제
+렌더 크래시 재현 3개(exam suggestion/pattern candidate/rehab
+suggestion, 각각 손상된 원소 옆 정상 원소가 살아남는지 함께 확인),
+MEDIUM-2 EMR 텍스트 "undefined" 누출 방지 2개(+5, 175→180).
+`tests/doctor.spec.mjs`에 HIGH-2 단위 테스트 4개(빈 배열/무효
+옵션값/비문자열 원소/진짜 `["none"]` sanity)(+4, 872→876).
+
+**실사용 재검증**: 실제 `node server/index.js` + `vite`(scratch 포트)
++ Playwright로 1440×900/1024×768/834×1112 3개 뷰포트 각각에서 (A)
+`painExamSuggestions`/`painRehabSuggestions`의 fact 배열이
+element-level로 손상된 workspace를 실제 PUT
+`/api/submissions/:id/workspace`로 저장(HIGH-1), (B) 빈
+WOMEN_SAFETY_01 raw 배열 + source claiming all-false(HIGH-2) 레코드를
+POST/PUT하고 목록에서 클릭 — (A) `DoctorRecordErrorBoundary` fallback으로
+떨어지지 않고 "[object Object]" 노출 없이 정상 임상 화면 유지 +
+손상된 원소 옆 정상 원소 생존 확인, (B) "특이 안전정보 없음" 허위
+all-clear 0건 및 "안전정보 일부를 읽을 수 없습니다" 정상 표시, 2개
+시나리오 × 3개 뷰포트 전부 page error 0건 확인.
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — doctor 876/876, doctor-workspace 180/180 포함), `npm run
+build`/`build:preview` clean, `tablet core` pytest 80/80, `git diff
+origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN
+유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 15차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

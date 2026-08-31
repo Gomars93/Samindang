@@ -349,6 +349,72 @@ test('EMR preview never contains the literal 원장 최종 판단 empty-state as
   assert.ok(/Assessment:\s*(&#10;|\r|\n|<)/.test(emrTextOnly) || emrTextOnly.trim().endsWith('Assessment:'))
 })
 
+/* -----------------------------------------------------------------------
+ * 14차 독립 리뷰 MEDIUM-2: `result.status`/`result.laterality`는
+ * sanitizeShape의 typeof-매칭만 거치므로 알려지지 않은 문자열/숫자도 그대로
+ * 통과한다 -- `EXAM_CHECK_STATUS_LABEL[status]`/`LATERALITY_LABEL
+ * [laterality]`가 그 키를 모르면 undefined를 반환하고, 원장이 그대로
+ * 복사해 붙여넣는 EMR 텍스트에 리터럴 "undefined"가 노출됐다. 또한 그
+ * garbage 상태는 `!== 'NOT_YET_CHECKED'` 필터를 그냥 통과해 "확인된 소견"인
+ * 것처럼 취급됐다.
+ * ------------------------------------------------------------------- */
+test('14차 MEDIUM-2: a wrong-typed (garbage string) exam result.status never leaks the literal "undefined" into the EMR text, and is not treated as a recorded finding', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    painExamSuggestions: [
+      {
+        id: 'e1',
+        title: '가비지 상태 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'ZZZ', laterality: null, note: '', recordedAt: null },
+      },
+      {
+        id: 'e2',
+        title: '정상 소견 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'NEGATIVE', laterality: 'LEFT', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  const emrIdx = html.indexOf('workspace__emrPreview__text')
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+  assert.ok(!emrTextOnly.includes('undefined'), 'a garbage status must never leak the literal "undefined" into EMR text')
+  assert.ok(!emrTextOnly.includes('가비지 상태 검사'), 'an item whose status cannot be recognized must not be listed as a recorded finding')
+  assert.ok(emrTextOnly.includes('정상 소견 검사'), 'a genuinely well-formed sibling finding must still appear')
+  assert.ok(emrTextOnly.includes('음성/정상'), 'the well-formed finding\'s real label must appear')
+})
+
+test('14차 MEDIUM-2: a wrong-typed (number) exam result.laterality never leaks the literal "undefined" into the EMR text', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    painExamSuggestions: [
+      {
+        id: 'e1',
+        title: '가비지 좌우 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'POSITIVE', laterality: 7, note: '', recordedAt: null },
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  const emrIdx = html.indexOf('workspace__emrPreview__text')
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+  assert.ok(!emrTextOnly.includes('undefined'))
+  assert.ok(emrTextOnly.includes('가비지 좌우 검사'), 'the finding itself (a genuinely valid POSITIVE status) still appears -- only the unreadable laterality suffix is omitted')
+  assert.ok(emrTextOnly.includes('양성/이상 소견'))
+})
+
 // ---------- 5. accessibility ----------
 test('exam suggestion status buttons expose aria-pressed', () => {
   const html = render(PAIN_SCENARIO_1)
@@ -566,6 +632,88 @@ test('EMR preview reconstructs correctly from a persisted WorkspaceState passed 
   // same label) must not appear, since the only exam item reloaded here is
   // already POSITIVE, not NOT_YET_CHECKED.
   assert.ok(!html.includes('아직 확인 안 됨 ·'))
+})
+
+/* -----------------------------------------------------------------------
+ * 14차 독립 리뷰 HIGH-1: `sanitizeShape`의 배열 분기는 컨테이너만 검증하고
+ * 원소는 그대로 통과시키므로, exam suggestion/pattern candidate/rehab
+ * suggestion 템플릿 안에 중첩된 fact 배열(reasonFacts/supportingFacts/
+ * contradictingFacts/sourceFacts/contraindicationFacts, `unknownChecks`)의
+ * 원소가 wrong-typed면(`[null]`, `[{}]`) 실제 렌더가 그대로 던졌다
+ * ("Cannot read properties of null", "Objects are not valid as a React
+ * child"). 이 테스트들은 `renderWith`가 던지지 않는다는 것 자체가
+ * 증거다(그렇지 않으면 이 테스트 프로세스가 그대로 죽는다) -- 그리고
+ * 손상된 원소와 나란히 있는 진짜 정상 원소는 살아남는지도 함께 확인한다.
+ * ------------------------------------------------------------------- */
+test('14차 HIGH-1: painExamSuggestions[0].reasonFacts with null/undefined/object elements never crashes the render', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    painExamSuggestions: [
+      {
+        id: 'e1',
+        title: 'SLR 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [null, undefined, { a: 1 }, { text: '정상 소견 생존', provenance: 'PATIENT_FACT' }],
+        source: 'SUGGESTED',
+        result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  assert.ok(html.includes('SLR 검사'))
+  assert.ok(html.includes('정상 소견 생존'), '진짜 정상 원소는 손상된 형제 원소와 무관하게 살아남아야 한다')
+  assert.ok(!html.includes('[object Object]'))
+})
+
+test('14차 HIGH-1: herbalPatternCandidates[0].supportingFacts/contradictingFacts/unknownChecks with malformed elements never crashes the render', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    herbalPatternCandidates: [
+      {
+        id: 'p1',
+        displayName: '기허 (SYNTHETIC)',
+        supportingFacts: [null, { text: '지지 소견 생존', provenance: 'PATIENT_FACT' }],
+        contradictingFacts: [{}, { text: '반증 소견 생존', provenance: 'PATIENT_FACT' }],
+        unknownChecks: [null, 42, '확인할 것 생존'],
+        source: 'SUGGESTED',
+        status: 'PENDING_REVIEW',
+        clinicianNote: '',
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(HERBAL_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  assert.ok(html.includes('기허 (SYNTHETIC)'))
+  assert.ok(html.includes('지지 소견 생존'))
+  assert.ok(html.includes('반증 소견 생존'))
+  assert.ok(html.includes('확인할 것 생존'))
+  assert.ok(!html.includes('[object Object]'))
+})
+
+test('14차 HIGH-1: painRehabSuggestions[0].sourceFacts/contraindicationFacts with malformed elements never crashes the render', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    painRehabSuggestions: [
+      {
+        id: 'r1',
+        title: '재활 제안 (SYNTHETIC)',
+        goal: '',
+        rationale: '',
+        sourceFacts: [null, { text: '근거 소견 생존', provenance: 'PATIENT_FACT' }],
+        contraindicationFacts: [{ bad: true }, { text: '금기 소견 생존', provenance: 'PATIENT_FACT' }],
+        source: 'SUGGESTED',
+        status: 'SUGGESTED',
+        clinicianFinalInstruction: '',
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  assert.ok(html.includes('재활 제안 (SYNTHETIC)'))
+  assert.ok(html.includes('근거 소견 생존'))
+  assert.ok(html.includes('금기 소견 생존'))
+  assert.ok(!html.includes('[object Object]'))
 })
 
 test('save status region renders (idle) once submissionId+onSaveWorkspace are both present, absent otherwise', () => {

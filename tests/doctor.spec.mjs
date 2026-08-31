@@ -1648,4 +1648,73 @@ const todayChecklistSrc = await readFile(
   )
 }
 
+/* =========================================================================
+ * P5 — 참고 접기: 명리 compact + 3열 감사 뷰 통합, 방어 문구 보존.
+ * ===================================================================== */
+
+// 18a. 명리 compact 카드 + "▸ 상세 감사 뷰" 펼치기가 하나의 섹션 안에
+//      공존한다 — MyungriCompactCard(방어 문구 포함)와 3열 감사 뷰가
+//      더 이상 별도 섹션 2개로 이중화되어 있지 않다.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const myungriSectionIdx = html.indexOf('doctor__section--myungri')
+  assert('명리 검토 섹션(doctor__section--myungri) 렌더', myungriSectionIdx !== -1)
+  const compactIdx = html.indexOf('doctor__msSummary--myungri', myungriSectionIdx)
+  const auditIdx = html.indexOf('doctor__myungriAudit', myungriSectionIdx)
+  assert('P5: compact 카드(doctor__msSummary--myungri)가 명리 검토 섹션 안에 있다', compactIdx !== -1 && compactIdx > myungriSectionIdx)
+  assert('P5: "▸ 상세 감사 뷰" 펼치기(doctor__myungriAudit)가 같은 섹션 안에 있다', auditIdx !== -1 && auditIdx > myungriSectionIdx)
+  assert('P5: compact 카드가 감사 뷰 펼치기보다 먼저 나온다(요약 먼저, 상세는 펼쳐서)', compactIdx < auditIdx)
+  assert('P5: "▸ 상세 감사 뷰" summary 문구 렌더', html.includes('▸ 상세 감사 뷰'))
+  // 방어 문구 보존(Opus N11) — MyungriCompactCard가 이미 담당하므로 그대로 유지되는지 확인.
+  assert('P5: "오행 분포: 해석 규칙 미확정" 방어 문구 보존', html.includes('오행 분포: 해석 규칙 미확정'))
+  assert('P5: "한열조습: 해석 규칙 미확정" 방어 문구 보존', html.includes('한열조습: 해석 규칙 미확정'))
+  assert('P5: "계산 완료 ≠ 임상 해석 완료" 방어 문구 보존(3열 감사 뷰 안)', html.includes('계산 완료 ≠'))
+  // 감사 뷰 폴드 안에 3열 그리드(judgment__reviewGrid)가 그대로 있다 —
+  // 콘텐츠 자체는 삭제가 아니라 이동임을 확인.
+  const reviewGridIdx = html.indexOf('judgment__reviewGrid', myungriSectionIdx)
+  assert('P5: 3열 감사 뷰(judgment__reviewGrid)가 doctor__myungriAudit 펼치기 안에 있다', reviewGridIdx !== -1 && reviewGridIdx > auditIdx)
+}
+
+// 18b. 정책 대기 amber 경고 문구는 펼치기 여부와 무관하게 항상 보인다 —
+//      doctor__myungriAudit(감사 뷰) 밖, 명리 검토 섹션 최상위에 위치.
+{
+  const pendingFixture = DOCTOR_FIXTURES.find((f) => f.payload.myungri_calculation.policy.pending_approval.length > 0)
+  assert('정책 대기(pending_approval) fixture가 존재한다', Boolean(pendingFixture))
+  if (pendingFixture) {
+    const html = renderDoctorView(pendingFixture.name)
+    const auditIdx = html.indexOf('doctor__myungriAudit')
+    const pendingIdx = html.indexOf('doctor__warning--pending')
+    assert('P5: 정책 대기 amber 경고(doctor__warning--pending) 렌더', pendingIdx !== -1)
+    assert('P5: 정책 대기 경고가 "▸ 상세 감사 뷰" 펼치기보다 먼저(밖에) 나온다 — 접혀 있어도 항상 보임', auditIdx !== -1 && pendingIdx < auditIdx)
+  }
+}
+
+// 18c. 전신·한약 참고: 기존 preview+details 패턴 유지 + Level 4 "참고"
+//      그룹(명리 검토 바로 앞)으로 이동 — 더 이상 "문진 핵심" 바로
+//      아래(Level 2 한복판)에 있지 않다.
+{
+  const html = renderDoctorView('체질·보약')
+  const constDetailsIdx = html.indexOf('doctor__constDetails')
+  const myungriSectionIdx = html.indexOf('doctor__section--myungri')
+  const primaryModuleIdx = html.indexOf('문진 핵심')
+  assert('전신·한약 참고(doctor__constDetails) 렌더', constDetailsIdx !== -1)
+  assert('P5: 전신·한약 참고가 문진 핵심보다 뒤에 있다(Level 2 한복판에서 이동)', constDetailsIdx > primaryModuleIdx)
+  assert('P5: 전신·한약 참고가 명리 검토 섹션 바로 앞(Level 4 참고 그룹)에 있다', constDetailsIdx !== -1 && myungriSectionIdx !== -1 && constDetailsIdx < myungriSectionIdx)
+}
+
+// 18d. §8.4 순서 불변식은 P5 이후에도 유지된다 — 안전 블록이 명리보다
+//      여전히 앞선다(위 §8.4 테스트와 별개로, 이동한 전신·한약 참고까지
+//      포함한 전체 재확인).
+{
+  // 전신·한약 참고는 값이 없으면 doctor__constDetails(<details>) 자체를
+  // 만들지 않으므로(§3 "빈 값은 줄을 만들지 않는다"), 이 순서 확인은
+  // 항상 렌더되는 "전신·한약 참고" 제목 텍스트로 한다.
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const safetySectionIdx = html.indexOf('doctor__safetySection')
+  const constitutionHeadingIdx = html.indexOf('전신·한약 참고')
+  const myungriSectionIdx = html.indexOf('doctor__section--myungri')
+  assert('P5 이후에도 안전 블록이 전신·한약 참고보다 앞선다', safetySectionIdx !== -1 && constitutionHeadingIdx !== -1 && safetySectionIdx < constitutionHeadingIdx)
+  assert('P5 이후에도 안전 블록이 명리 검토보다 앞선다', safetySectionIdx < myungriSectionIdx)
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

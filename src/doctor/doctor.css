@@ -665,12 +665,21 @@
 }
 
 .doctor__secDetails summary,
-.doctor__constDetails summary {
+.doctor__constDetails summary,
+.doctor__myungriAudit summary {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-muted);
   margin-top: 6px;
+}
+
+/* v0.2 P5: 명리 compact 카드 + 3열 감사 뷰 통합 — 감사 뷰는 접힘 기본. */
+.doctor__myungriAudit {
+  margin-top: 10px;
+}
+.doctor__myungriAudit[open] summary {
+  margin-bottom: 10px;
 }
 
 .doctor__derivedNote {

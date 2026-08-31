@@ -1720,32 +1720,6 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       </section>
 
       <section className="doctor__section">
-        <h2 className="doctor__section__h2--sub">전신·한약 참고</h2>
-        {(() => {
-          const fields = constitutionFields(r)
-          const populated = fields.filter((f) => !isEmptyValue(f.value))
-          const body = (
-            <div className="doctor__grid">
-              {fields.map((f) => (
-                <Field key={f.qid} qid={f.qid} value={f.value} />
-              ))}
-            </div>
-          )
-          if (populated.length === 0) return body
-          const preview = populated
-            .slice(0, 3)
-            .map((f) => answerLabel(f.qid, f.value))
-            .join(' · ')
-          return (
-            <details className="doctor__constDetails">
-              <summary>{preview}</summary>
-              {body}
-            </details>
-          )
-        })()}
-      </section>
-
-      <section className="doctor__section">
         <h2>약물·병력·알레르기·수술</h2>
         <div className="doctor__grid">
           <Field qid="MED_USE" value={r.medication.medication_use} />
@@ -1787,105 +1761,152 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
-      <MyungriCompactCard saju={saju} />
-
-      <section className="doctor__section doctor__section--myungri">
-        <h2>명리 검토</h2>
-        <p className="doctor__derivedLabel">
-          왼쪽은 환자가 입력한 원본 정보, 오른쪽은 그 입력값으로부터 결정적으로
-          계산된 사실입니다. 두 열은 서로 다른 것이며, 해석(십신·용신 등)은
-          어디에도 포함하지 않습니다.
-        </p>
-
-        <div className="judgment__reviewGrid">
-          <div className="judgment__reviewCol">
-            <h3>원본 출생정보 — 환자 입력</h3>
-            <div className="doctorField">
-              <span className="doctorField__label">생년월일 (입력 그대로)</span>
-              <span className="doctorField__value">{r.birth_info.birth_date ?? '—'}</span>
-            </div>
-            <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
-            <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
-            <Field qid="BIRTH_03" label="출생시간대" value={r.birth_info.birth_time_branch} />
-            <Field qid="BIRTH_03A" label="시간 확신도" value={r.birth_info.birth_time_confidence} />
-          </div>
-
-          <span className="judgment__reviewArrow" aria-hidden="true">→</span>
-
-          <div className="judgment__reviewCol">
-            <h3>계산된 사실 — 시스템이 계산한 것</h3>
-
-            {saju.status !== 'resolved' && (
-              <p className="doctor__warning">
-                상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
-                {saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
-              </p>
-            )}
-            {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
-
-            {saju.pillars && (
-              <div className="doctor__pillars">
-                <div className="doctor__pillar">
-                  <span>연주</span>
-                  <strong>{saju.pillars.year}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>월주</span>
-                  <strong>{saju.pillars.month}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>일주</span>
-                  <strong>{saju.pillars.day}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>시주</span>
-                  <strong>{saju.pillars.hour ?? '미상'}</strong>
-                </div>
-              </div>
-            )}
-
-            {saju.normalized && (
-              <p className="doctor__derivedNote">
-                정규화된 양력 날짜: {saju.normalized.solarDate.year}-
-                {String(saju.normalized.solarDate.month).padStart(2, '0')}-
-                {String(saju.normalized.solarDate.day).padStart(2, '0')} / 상태: {saju.status}
-              </p>
-            )}
-
-            {saju.policy.pending_approval.length > 0 && (
-              <p className="doctor__warning doctor__warning--pending">
-                주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {saju.policy.pending_approval.join(', ')}.
-                원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
-                docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
-              </p>
-            )}
-          </div>
-
-          <span className="judgment__reviewArrow" aria-hidden="true">→</span>
-
-          <div className="judgment__reviewCol">
-            <h3>현재 문진 요약</h3>
-            <div className="doctorField">
-              <span className="doctorField__label">주호소</span>
-              <span className="doctorField__value">{primaryConcernLabel(r)}</span>
-            </div>
-            <Field qid="VISIT_03_SYMPTOM_DURATION" label="기간" value={r.visit_goal.chief_duration} />
-            <Field qid="VISIT_04_SYMPTOM_IMPACT" label="일상 영향" value={r.visit_goal.chief_impact} />
-            {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail)
-              .slice(0, 3)
-              .map((f) => (
+      {/*
+        v0.2 §4 Level 4 "참고" 그룹 — 명리 검토보다 먼저 두되, 둘 다 위
+        Level 2 임상 근거(안전/문진 핵심/추가 상세상담/약물·병력)보다는
+        뒤에 위치한다(invariant 2는 "안전"에 대해서만 요구하므로 이 순서
+        자체는 위반이 아니다). P5: 이전에는 "문진 핵심" 바로 아래(Level 2
+        한복판)에 있었다 — 참고 정보를 임상 근거와 같은 줄에 두면 위계가
+        흐려진다.
+      */}
+      <section className="doctor__section">
+        <h2 className="doctor__section__h2--sub">전신·한약 참고</h2>
+        {(() => {
+          const fields = constitutionFields(r)
+          const populated = fields.filter((f) => !isEmptyValue(f.value))
+          const body = (
+            <div className="doctor__grid">
+              {fields.map((f) => (
                 <Field key={f.qid} qid={f.qid} value={f.value} />
               ))}
-          </div>
-        </div>
+            </div>
+          )
+          if (populated.length === 0) return body
+          const preview = populated
+            .slice(0, 3)
+            .map((f) => answerLabel(f.qid, f.value))
+            .join(' · ')
+          return (
+            <details className="doctor__constDetails">
+              <summary>{preview}</summary>
+              {body}
+            </details>
+          )
+        })()}
+      </section>
 
-        <p className="doctor__calcVsInterpret">
-          ※ 위 &ldquo;계산된 사실&rdquo;은 사주 원국(연/월/일/시주) 산출이
-          끝났다는 뜻일 뿐, 임상 해석이 끝났다는 뜻이 아닙니다. 계산 완료 ≠
-          임상 해석 완료. 임상 해석(십신·용신 등 판단)은 아래 &ldquo;원장 판단
-          기록&rdquo;에 원장이 직접 기록합니다.
-        </p>
+      {/*
+        v0.2 §4/§3 P5: MyungriCompactCard + "명리 검토" 3열 감사 뷰
+        이중화를 compact 카드 1개로 통합한다(Opus N11) — "오행 분포/
+        한열조습: 해석 규칙 미확정 · 원장 판단 영역"과 "계산 완료 ≠ 임상
+        해석 완료" 방어 문구는 반드시 보존. 3열 감사 뷰(원본→계산→요약)는
+        "▸ 상세 감사 뷰" 펼치기 안으로 옮기되, 정책 대기 amber 경고
+        문구(`doctor__warning--pending`)는 펼치기 여부와 무관하게 항상
+        보이도록 fold 밖(compact 카드 바로 아래)에 둔다 — 접혀 있어도
+        "야자시/조자시 정책 미확정" 사실은 놓치면 안 되는 정보다.
+      */}
+      <section className="doctor__section doctor__section--myungri">
+        <h2>명리 검토</h2>
+        <MyungriCompactCard saju={saju} />
+
+        {saju.policy.pending_approval.length > 0 && (
+          <p className="doctor__warning doctor__warning--pending">
+            주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
+            값이 바뀔 수 있습니다. 대기 항목: {saju.policy.pending_approval.join(', ')}.
+            원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
+            docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
+          </p>
+        )}
+
+        <details className="doctor__myungriAudit">
+          <summary>▸ 상세 감사 뷰</summary>
+          <p className="doctor__derivedLabel">
+            왼쪽은 환자가 입력한 원본 정보, 오른쪽은 그 입력값으로부터 결정적으로
+            계산된 사실입니다. 두 열은 서로 다른 것이며, 해석(십신·용신 등)은
+            어디에도 포함하지 않습니다.
+          </p>
+
+          <div className="judgment__reviewGrid">
+            <div className="judgment__reviewCol">
+              <h3>원본 출생정보 — 환자 입력</h3>
+              <div className="doctorField">
+                <span className="doctorField__label">생년월일 (입력 그대로)</span>
+                <span className="doctorField__value">{r.birth_info.birth_date ?? '—'}</span>
+              </div>
+              <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
+              <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
+              <Field qid="BIRTH_03" label="출생시간대" value={r.birth_info.birth_time_branch} />
+              <Field qid="BIRTH_03A" label="시간 확신도" value={r.birth_info.birth_time_confidence} />
+            </div>
+
+            <span className="judgment__reviewArrow" aria-hidden="true">→</span>
+
+            <div className="judgment__reviewCol">
+              <h3>계산된 사실 — 시스템이 계산한 것</h3>
+
+              {saju.status !== 'resolved' && (
+                <p className="doctor__warning">
+                  상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
+                  {saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+                </p>
+              )}
+              {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
+
+              {saju.pillars && (
+                <div className="doctor__pillars">
+                  <div className="doctor__pillar">
+                    <span>연주</span>
+                    <strong>{saju.pillars.year}</strong>
+                  </div>
+                  <div className="doctor__pillar">
+                    <span>월주</span>
+                    <strong>{saju.pillars.month}</strong>
+                  </div>
+                  <div className="doctor__pillar">
+                    <span>일주</span>
+                    <strong>{saju.pillars.day}</strong>
+                  </div>
+                  <div className="doctor__pillar">
+                    <span>시주</span>
+                    <strong>{saju.pillars.hour ?? '미상'}</strong>
+                  </div>
+                </div>
+              )}
+
+              {saju.normalized && (
+                <p className="doctor__derivedNote">
+                  정규화된 양력 날짜: {saju.normalized.solarDate.year}-
+                  {String(saju.normalized.solarDate.month).padStart(2, '0')}-
+                  {String(saju.normalized.solarDate.day).padStart(2, '0')} / 상태: {saju.status}
+                </p>
+              )}
+            </div>
+
+            <span className="judgment__reviewArrow" aria-hidden="true">→</span>
+
+            <div className="judgment__reviewCol">
+              <h3>현재 문진 요약</h3>
+              <div className="doctorField">
+                <span className="doctorField__label">주호소</span>
+                <span className="doctorField__value">{primaryConcernLabel(r)}</span>
+              </div>
+              <Field qid="VISIT_03_SYMPTOM_DURATION" label="기간" value={r.visit_goal.chief_duration} />
+              <Field qid="VISIT_04_SYMPTOM_IMPACT" label="일상 영향" value={r.visit_goal.chief_impact} />
+              {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail)
+                .slice(0, 3)
+                .map((f) => (
+                  <Field key={f.qid} qid={f.qid} value={f.value} />
+                ))}
+            </div>
+          </div>
+
+          <p className="doctor__calcVsInterpret">
+            ※ 위 &ldquo;계산된 사실&rdquo;은 사주 원국(연/월/일/시주) 산출이
+            끝났다는 뜻일 뿐, 임상 해석이 끝났다는 뜻이 아닙니다. 계산 완료 ≠
+            임상 해석 완료. 임상 해석(십신·용신 등 판단)은 아래 &ldquo;원장 판단
+            기록&rdquo;에 원장이 직접 기록합니다.
+          </p>
+        </details>
       </section>
 
       <details className="doctor__raw" ref={rawJsonRef}>

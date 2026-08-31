@@ -12,8 +12,14 @@
  */
 import type { SafetyModuleRow } from './safetyModules'
 
-const STATUS_ICON: Record<SafetyModuleRow['status'], string> = {
-  URGENT_REVIEW: '⚠',
+// v0.2 A8/Opus MINOR: URGENT과 REVIEW를 같은 글리프(⚠)로 표시하면 3중
+// 인코딩(§9.4 "색+형태+텍스트")의 "형태" 축이 실질적으로 사라진다 — 색맹
+// 대비 상황에서 색만으로 두 상태를 구분해야 했다. URGENT_REVIEW는 ⛔로
+// 분리해 형태 자체가 다르게 한다(헤더 pill·목록 배지도 동일하게
+// STATUS_ICON을 이 파일에서 재노출해 단일 출처를 유지한다 — DoctorView.tsx
+// PatientHeader/목록 배지는 이 상수를 문자열로 재사용).
+export const STATUS_ICON: Record<SafetyModuleRow['status'], string> = {
+  URGENT_REVIEW: '⛔',
   REVIEW_REQUIRED: '⚠',
   CLEAR: '✓',
 }
@@ -30,6 +36,17 @@ function RowSummaryLine({ row }: { row: SafetyModuleRow }) {
       <span className="doctor__safetyRow__icon" aria-hidden="true">
         {STATUS_ICON[row.status]}
       </span>
+      {/*
+        v0.2 A8/Opus MINOR: CLEAR 행은 한 줄로 접혀 있고(§11.3) 별도 화살표
+        마커가 없어 "이게 펼쳐지는 줄"이라는 단서가 URGENT/REVIEW 대비
+        약했다 — 접힘 상태를 나타내는 ▸를 붙인다(REVIEW/URGENT는 이미
+        기본 펼침이거나 접기 컨트롤이 아예 없으므로 해당 없음).
+      */}
+      {row.status === 'CLEAR' && (
+        <span className="doctor__safetyRow__disclosureHint" aria-hidden="true">
+          ▸
+        </span>
+      )}
       {/* "안전 확인 — <라벨>" 문구는 기존 개별 패널 제목과 동일한 형태를
           유지한다 — 텍스트 계약을 불필요하게 바꾸지 않기 위함. 템플릿
           리터럴 하나로 합쳐서 렌더한다 — 정적 텍스트와 표현식을 나누면

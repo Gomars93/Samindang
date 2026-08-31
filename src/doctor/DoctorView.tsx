@@ -30,6 +30,7 @@ import { ageFromDoctorPayload } from '../spec/lbpAdapter'
 import { SafetySection } from './SafetySection'
 import { deriveSafetyOverview } from './safetyOverview'
 import { computeSafetyModuleRows, type SafetyClinicianInputs } from './safetyModules'
+import { STATUS_ICON } from './SafetyModuleRowView'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
@@ -226,7 +227,7 @@ function PatientHeader({
   responseConsistencyReview,
 }: {
   payload: DoctorPayload
-  overview?: 'URGENT' | 'REVIEW' | 'CLEAR'
+  overview?: 'URGENT' | 'REVIEW' | 'CLEAR' | 'UNKNOWN'
   responseConsistencyReview?: boolean
 }) {
   const r = payload.responses
@@ -246,9 +247,20 @@ function PatientHeader({
             {age}세 <span className="doctor__patientHeader__calcTag">계산</span>
           </span>
         )}
-        {overview === 'URGENT' && <span className="doctor__safetyPill doctor__safetyPill--urgent_review">⚠ 긴급 확인</span>}
-        {overview === 'REVIEW' && <span className="doctor__safetyPill doctor__safetyPill--review_required">⚠ 확인 필요</span>}
+        {overview === 'URGENT' && (
+          <span className="doctor__safetyPill doctor__safetyPill--urgent_review">{STATUS_ICON.URGENT_REVIEW} 긴급 확인</span>
+        )}
+        {overview === 'REVIEW' && (
+          <span className="doctor__safetyPill doctor__safetyPill--review_required">{STATUS_ICON.REVIEW_REQUIRED} 확인 필요</span>
+        )}
         {overview === 'CLEAR' && <span className="doctor__safetyPill doctor__safetyPill--clear">✓ 안전 확인됨</span>}
+        {/*
+          v0.2 A3/Opus MAJOR(fail-open 미응답): 안전 문진 자체에 응답이
+          전혀 없는 상태(UNKNOWN)를 "안전 확인됨"으로 잘못 보여주지 않는다.
+          mint/초록 계열을 쓰지 않는 중립 회색 pill — "확인함"이 아니라
+          "확인할 근거가 아직 없음"임을 색으로도 구분한다.
+        */}
+        {overview === 'UNKNOWN' && <span className="doctor__safetyPill doctor__safetyPill--unknown">— 안전정보 없음</span>}
         {responseConsistencyReview && (
           <span className="doctor__safetyPill doctor__safetyPill--review_required">⚠ 응답 모순 — 확인 필요</span>
         )}
@@ -1429,12 +1441,23 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                             {unreadReadyIds.has(s.id) && (
                               <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
                             )}
-                            {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
+                            {/*
+                              v0.2 A8/Opus MINOR: `requires_staff_check`
+                              전용 구 배지("⚠ 안전 확인 필요")는 아래
+                              `s.overview` 배지(모듈 URGENT까지 반영하는
+                              단일 출처)와 같은 정보를 중복 표시했다 —
+                              overview 배지로 통일하고 제거한다.
+                            */}
+                            {s.patient_label}
                             {s.overview === 'URGENT' && (
-                              <span className="doctor__listOverview doctor__listOverview--urgent">긴급 확인</span>
+                              <span className="doctor__listOverview doctor__listOverview--urgent">
+                                {STATUS_ICON.URGENT_REVIEW} 긴급 확인
+                              </span>
                             )}
                             {s.overview === 'REVIEW' && (
-                              <span className="doctor__listOverview doctor__listOverview--review">확인 필요</span>
+                              <span className="doctor__listOverview doctor__listOverview--review">
+                                {STATUS_ICON.REVIEW_REQUIRED} 확인 필요
+                              </span>
                             )}
                           </span>
                           <span className="doctorField__value">
@@ -1455,7 +1478,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                               className="doctorField doctor__row"
                               onClick={() => setSelectedId(s.id)}
                             >
-                              <span className="doctorField__label">{s.patient_label}</span>
+                              <span className="doctorField__label">
+                                {s.patient_label}
+                                {/*
+                                  v0.2 A8/Opus MINOR: 완료 그룹도 overview
+                                  배지를 유지한다(강조만 낮춤,
+                                  `--completed` modifier) — 완료된 방문이라도
+                                  안전 확인 이력 자체가 사라지면 안 된다.
+                                */}
+                                {s.overview === 'URGENT' && (
+                                  <span className="doctor__listOverview doctor__listOverview--urgent doctor__listOverview--completed">
+                                    {STATUS_ICON.URGENT_REVIEW} 긴급 확인
+                                  </span>
+                                )}
+                                {s.overview === 'REVIEW' && (
+                                  <span className="doctor__listOverview doctor__listOverview--review doctor__listOverview--completed">
+                                    {STATUS_ICON.REVIEW_REQUIRED} 확인 필요
+                                  </span>
+                                )}
+                              </span>
                               <span className="doctorField__value">
                                 {statusLabel(s.status)} · {relativeTime(s.created_at)} (
                                 {new Date(s.created_at).toLocaleString('ko-KR')})
@@ -1889,10 +1930,23 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         onSave={
           mode === 'server' && selectedId
             ? async (judgment: ClinicianJudgment): Promise<SaveResult> => {
+                // v0.2 A4/Opus MAJOR: 저장 직전, 방금 입력된(아직
+                // selectedRecord에 반영되지 않은) 진찰 소견을 반영해
+                // deriveSafetyOverview를 다시 계산한다 — 위 `clinicianInputs`
+                // (렌더용)는 selectedRecord?.judgment 기준이라 이번 저장으로
+                // 새로 바뀐 값보다 한 박자 stale하므로 재사용하지 않는다.
+                const freshClinicianInputs: SafetyClinicianInputs = {
+                  lbpObjectiveMotorDeficit: judgment.lbp_objective_motor_deficit,
+                  shoulderObjectiveCuffWeakness: judgment.shoulder_objective_cuff_weakness,
+                }
+                const judgmentToSave: ClinicianJudgment = {
+                  ...judgment,
+                  derived_safety_overview: deriveSafetyOverview(payload, freshClinicianInputs),
+                }
                 // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
                 // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
                 // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
-                const result = await saveJudgmentToServer(selectedId, judgment)
+                const result = await saveJudgmentToServer(selectedId, judgmentToSave)
                 if (result.ok) {
                   setSelectedRecord(result.data)
                   return { ok: true }

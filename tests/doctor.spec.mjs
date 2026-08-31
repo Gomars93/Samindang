@@ -139,6 +139,35 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2c-1b. Doctor View 재설계 v0.2 A5/Opus B3 regression: 주호소가 비-통증
+ *        (수면)인데 추가 상세상담으로 LBP_01-14를 응답한 환자.
+ *        safety_flags.lbp는 non-null이지만 routing.primary_module_detail은
+ *        계속 null이다(additional_module_detail만 'LBP') — 안전 확인
+ *        리스트/진찰 소견 radio가 primary_module_detail 리터럴로
+ *        게이트되면 이 환자의 LBP 안전 정보가 원장 화면에서 통째로
+ *        사라진다. P2가 safety_flags.<module> !== null 게이트로 통합 안전
+ *        리스트를 도입하면서 구조적으로 이미 해소됐음을 여기서 고정한다
+ *        (claude/fix-lbp-safety-panel-gate 브랜치의 독립 fixture/테스트와
+ *        no-op 수렴을 의도).
+ * ------------------------------------------------------------------- */
+
+{
+  const name = '수면 주호소 + 추가 상세상담(허리 통증, LBP 안전확인 게이트 회귀)'
+  const f = byName(name)
+  assert('B3 regression fixture: primary_module_detail is null (primary concern is sleep, not pain)', f.payload.routing.primary_module_detail === null)
+  assert('B3 regression fixture: additional_module_detail is LBP', f.payload.routing.additional_module_detail === 'LBP')
+  assert('B3 regression fixture: safety_flags.lbp is non-null despite primary_module_detail being null', f.payload.responses.safety_flags.lbp !== null)
+  assert(
+    'B3 regression fixture: lbp_safety_status is REVIEW_REQUIRED (bilateral + NUMBNESS, same pattern as primary-LBP fixture)',
+    f.payload.responses.safety_flags.lbp?.lbp_safety_status === 'REVIEW_REQUIRED',
+  )
+
+  const html = renderDoctorView(name)
+  assert('B3 regression: 안전 확인 — 허리(LBP) row renders despite null primary_module_detail', html.includes('안전 확인 — 허리'))
+  assert('B3 regression: LBP exam input (객관적 하지 근력저하 소견) renders in JudgmentPanel', html.includes('객관적 하지 근력저하 소견'))
+}
+
+/* ---------------------------------------------------------------------
  * 2c-2. Tablet UX v2.1 §11-§24: Primary/Additional Detailed Concern/
  *       Reference Symptoms render as three distinct DoctorView sections.
  * ------------------------------------------------------------------- */
@@ -1300,6 +1329,105 @@ function detailsRange(html, classMarker) {
     "deriveSafetyOverview: flags.response_consistency_review === true -> overview === 'REVIEW'",
     deriveSafetyOverview(withInconsistency) === 'REVIEW',
   )
+}
+
+/* =======================================================================
+ * Doctor View 재설계 v0.2 A6/Opus MAJOR — overview 테스트 커버리지.
+ * 15a(HIP/TMJ)/15b(LBP REVIEW)에 이어, 나머지 6개 모듈(LBP/NECK/SHOULDER/
+ * KNEE/ELBOW/WRIST_HAND) 각각 실제 concrete urgent 트리거 fixture로
+ * URGENT를 확인하고, bumpToReview(치료 lock만으로 REVIEW로 올라가는)
+ * 갈래와 sleep_disorder 2갈래를 각각 확인한다.
+ * ===================================================================== */
+
+// 15e. 6개 모듈 각각 concrete urgent 트리거 -> overview === 'URGENT'.
+{
+  const cases = [
+    ['허리 통증 주호소 (LBP, CES 응급)', 'LBP'],
+    ['목 통증 주호소 (NECK, 신경학적 응급)', 'NECK'],
+    ['어깨 통증 주호소 (SHOULDER, 외상 변형 응급)', 'SHOULDER'],
+    ['무릎 통증 주호소 (KNEE, 변형 응급)', 'KNEE'],
+    ['팔꿈치 통증 주호소 (ELBOW, 변형 응급)', 'ELBOW'],
+    ['손목 통증 주호소 (WRIST_HAND, 변형 응급)', 'WRIST_HAND'],
+  ]
+  for (const [name, label] of cases) {
+    const f = byName(name)
+    assert(
+      `deriveSafetyOverview: ${label} concrete urgent 트리거 -> overview === 'URGENT'`,
+      deriveSafetyOverview(f.payload) === 'URGENT',
+    )
+  }
+}
+
+// 15f. bumpToReview 갈래 — disease status는 CLEAR지만 treatment lock만
+//      걸린 경우도 overview === 'REVIEW'다(모듈 행 레벨과 동일 규칙을
+//      overview에서도 재확인). LBP/NECK 각 1건.
+{
+  const lbpPregnant = DOCTOR_FIXTURES.find(
+    (f) => f.payload.responses.safety_flags.lbp?.lbp_safety_status === 'CLEAR' && f.payload.responses.safety_flags.lbp?.treatment_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert('bumpToReview 갈래 fixture 존재(LBP: disease CLEAR + treatment REVIEW_REQUIRED)', Boolean(lbpPregnant))
+  if (lbpPregnant) {
+    assert(
+      "deriveSafetyOverview: LBP disease CLEAR + treatment REVIEW_REQUIRED -> overview === 'REVIEW' (bumpToReview)",
+      deriveSafetyOverview(lbpPregnant.payload) === 'REVIEW',
+    )
+  }
+
+  const neckLocked = byName('목 통증 주호소 (NECK, 골다공증 병력 — 치료 안전만 확인 필요)')
+  assert(
+    'bumpToReview 갈래 fixture(NECK): disease CLEAR + treatment REVIEW_REQUIRED',
+    neckLocked.payload.responses.safety_flags.neck?.neck_safety_status === 'CLEAR' &&
+      neckLocked.payload.responses.safety_flags.neck?.neck_treatment_safety_status === 'REVIEW_REQUIRED',
+  )
+  assert(
+    "deriveSafetyOverview: NECK disease CLEAR + treatment REVIEW_REQUIRED -> overview === 'REVIEW' (bumpToReview)",
+    deriveSafetyOverview(neckLocked.payload) === 'REVIEW',
+  )
+}
+
+// 15g. sleep_disorder 2갈래(§11.1) 각 1건 -> overview === 'REVIEW'.
+{
+  const base = byName('수면 주호소 + 동반 소화/통증')
+  assert("기저 fixture 자체는 sleep_disorder_review가 false다", base.payload.flags.sleep_disorder_review === false)
+  assert("기저 fixture 자체는 sleep_disorder_priority_review가 false다", base.payload.flags.sleep_disorder_priority_review === false)
+
+  const withSleepReview = { ...base.payload, flags: { ...base.payload.flags, sleep_disorder_review: true } }
+  assert(
+    "deriveSafetyOverview: flags.sleep_disorder_review === true -> overview === 'REVIEW'",
+    deriveSafetyOverview(withSleepReview) === 'REVIEW',
+  )
+
+  const withSleepPriorityReview = { ...base.payload, flags: { ...base.payload.flags, sleep_disorder_priority_review: true } }
+  assert(
+    "deriveSafetyOverview: flags.sleep_disorder_priority_review === true -> overview === 'REVIEW'",
+    deriveSafetyOverview(withSleepPriorityReview) === 'REVIEW',
+  )
+}
+
+/* =======================================================================
+ * v0.2 A3/Opus MAJOR — 안전 문진 미응답 fail-open 수정: red_flag_general이
+ * 전부 null이고 부위별 안전 모듈이 하나도 계산되지 않은 payload는
+ * 'CLEAR'가 아니라 'UNKNOWN'이어야 한다("확인한 적 없음" ≠ "확인해서
+ * 안전함").
+ * ===================================================================== */
+{
+  const name = '안전 문진 미응답 (레코드 손상/부분 제출 가정)'
+  const f = byName(name)
+  assert('UNKNOWN fixture: red_flag_general === null', f.payload.responses.safety_flags.red_flag_general === null)
+  assert(
+    'UNKNOWN fixture: 부위별 안전 모듈이 전부 null(어떤 모듈도 계산되지 않음)',
+    ['lbp', 'hip', 'neck', 'shoulder', 'knee', 'elbow', 'wrist_hand', 'ankle_foot', 'tmj'].every(
+      (k) => f.payload.responses.safety_flags[k] === null,
+    ),
+  )
+  assert(
+    "deriveSafetyOverview: red_flag_general===null && 모듈 전부 null -> overview === 'UNKNOWN' (fail-open 수정)",
+    deriveSafetyOverview(f.payload) === 'UNKNOWN',
+  )
+
+  const html = renderDoctorView(name)
+  assert('UNKNOWN 안전 미응답: 헤더에 "안전 확인됨"이 렌더되지 않는다(fail-open 회귀 가드)', !html.includes('안전 확인됨'))
+  assert('UNKNOWN 안전 미응답: 헤더에 중립 "안전정보 없음" pill이 렌더된다', html.includes('안전정보 없음'))
 }
 
 /* =======================================================================

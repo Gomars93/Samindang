@@ -64,6 +64,22 @@ export type ClinicianJudgment = {
    * 아닌 환자는 항상 undefined.
    */
   shoulder_objective_cuff_weakness?: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'
+  /**
+   * Doctor View 재설계 v0.2 A4/Opus MAJOR: **원장이 직접 입력하는 값이
+   * 아니다** — 위 `lbp_objective_motor_deficit`/
+   * `shoulder_objective_cuff_weakness` 진찰 소견을 반영해 저장 직전에
+   * `deriveSafetyOverview(payload, clinicianInputs)`(src/doctor/
+   * safetyOverview.ts §11.1)로 다시 계산한 **시스템 파생값**이다. 목록
+   * 화면(`server/store.js`)이 문진 자체의 `deriveListOverview` 결과와
+   * 이 값 중 더 심각한 쪽을 단조 상향으로만 채택하는 데 쓴다 — 원장이
+   * 진찰에서 확인한 URGENT 소견이 목록에서 평범한 행으로 보이는 사고를
+   * 막기 위함(예: LBP 하지 근력저하 "심함"). ClinicianJudgment 안에
+   * 두지만 "원장 입력" provenance가 아니라 "시스템 계산" provenance다 —
+   * 이 파일 헤더의 Shadow Mode 원칙과 다른 결이지만, 저장 경로를
+   * 재사용하기 위한 실용적 위치 선택이며 UI에서 원장 입력으로 표시하지
+   * 않는다.
+   */
+  derived_safety_overview?: 'URGENT' | 'REVIEW' | 'CLEAR' | 'UNKNOWN'
 }
 
 /** createEmptyJudgment 입력 — 어떤 계산/문진 스냅샷을 참조하는지에 대한 provenance만. */

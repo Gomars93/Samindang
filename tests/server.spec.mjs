@@ -201,6 +201,217 @@ async function main() {
       assert('안전 사유가 전혀 없으면 목록 overview는 CLEAR', found?.overview === 'CLEAR')
     }
 
+    /* ---------------- A1: treatment_safety_status/neck_treatment_safety_status
+       + response_consistency_review/sleep_disorder_* REVIEW 갈래 (v0.2 A1) ---------------- */
+    {
+      // lbp disease CLEAR + treatment_safety_status REVIEW_REQUIRED만 있어도
+      // 목록 overview는 REVIEW다 (bumpToReview와 동일한 갈래를 목록에서도).
+      const lbpTreatmentPayload = validPayload({
+        session_id: 'sess-a1-lbp-treatment',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '1111' },
+          safety_flags: { lbp: { lbp_safety_status: 'CLEAR', treatment_safety_status: 'REVIEW_REQUIRED' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(lbpTreatmentPayload),
+      })
+      const { id } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.id === id)
+      assert('A1: lbp disease CLEAR + treatment_safety_status REVIEW_REQUIRED -> 목록 overview는 REVIEW', found?.overview === 'REVIEW')
+    }
+
+    {
+      // response_consistency_review === true -> REVIEW (safety_flags 최상위,
+      // 모듈 객체 안이 아니다 — computeFlags 스프레드).
+      const consistencyPayload = validPayload({
+        session_id: 'sess-a1-consistency',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '2222' },
+          safety_flags: { response_consistency_review: true },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(consistencyPayload),
+      })
+      const { id } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.id === id)
+      assert('A1: response_consistency_review === true -> 목록 overview는 REVIEW', found?.overview === 'REVIEW')
+    }
+
+    {
+      // sleep_disorder_priority_review === true -> REVIEW.
+      const sleepPriorityPayload = validPayload({
+        session_id: 'sess-a1-sleep-priority',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '3333' },
+          safety_flags: { sleep_disorder_priority_review: true },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(sleepPriorityPayload),
+      })
+      const { id } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      const found = list.find((s) => s.id === id)
+      assert('A1: sleep_disorder_priority_review === true -> 목록 overview는 REVIEW', found?.overview === 'REVIEW')
+    }
+
+    /* ---------------- A6(d): 9개 안전 모듈 필드명 루프 — 오타 가드 ---------------- */
+    {
+      const moduleFields = [
+        ['lbp', 'lbp_safety_status'],
+        ['hip', 'hip_safety_status'],
+        ['neck', 'neck_safety_status'],
+        ['shoulder', 'shoulder_safety_status'],
+        ['knee', 'knee_safety_status'],
+        ['elbow', 'elbow_safety_status'],
+        ['wrist_hand', 'wrist_hand_safety_status'],
+        ['ankle_foot', 'ankle_foot_safety_status'],
+        ['tmj', 'tmj_safety_status'],
+      ]
+      for (const [moduleKey, fieldName] of moduleFields) {
+        const payload = validPayload({
+          session_id: `sess-a6-loop-${moduleKey}`,
+          flags: { requires_staff_check: false },
+          responses: {
+            patient: { patient_name: '홍길동', phone_last4: '4444' },
+            safety_flags: { [moduleKey]: { [fieldName]: 'URGENT_REVIEW' } },
+          },
+        })
+        const postRes = await fetch(`${base}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const { id } = await postRes.json()
+        const list = await (await fetch(`${base}/api/submissions`)).json()
+        const found = list.find((s) => s.id === id)
+        assert(`A6(d) 필드명 루프: safety_flags.${moduleKey}.${fieldName}='URGENT_REVIEW' -> 목록 overview는 URGENT`, found?.overview === 'URGENT')
+      }
+    }
+
+    /* ---------------- A4: judgment.derived_safety_overview 단조 상향 ---------------- */
+    {
+      // judgment의 URGENT가 REVIEW 서버 overview를 상향한다.
+      const reviewPayload = validPayload({
+        session_id: 'sess-a4-upgrade',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '5555' },
+          safety_flags: { lbp: { lbp_safety_status: 'REVIEW_REQUIRED', treatment_safety_status: 'CLEAR' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(reviewPayload),
+      })
+      const { id } = await postRes.json()
+
+      const preJudgmentList = await (await fetch(`${base}/api/submissions`)).json()
+      assert('A4: judgment 저장 전에는 REVIEW 그대로', preJudgmentList.find((s) => s.id === id)?.overview === 'REVIEW')
+
+      await fetch(`${base}/api/submissions/${id}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          schema_version: '1.0.0',
+          recorded_at: new Date().toISOString(),
+          source: { session_id: 'sess-a4-upgrade', questionnaire_version: '1.0' },
+          innate_features: [],
+          symptom_links: [],
+          saju_only_prediction: '',
+          revised_after_exam: '',
+          final_treatment_axis: '',
+          prescription_direction: '',
+          learning_case: false,
+          debrief: null,
+          transcript_import: null,
+          derived_safety_overview: 'URGENT',
+        }),
+      })
+      const afterList = await (await fetch(`${base}/api/submissions`)).json()
+      assert(
+        "A4: judgment.derived_safety_overview='URGENT'가 서버 REVIEW를 URGENT로 상향한다(단조 상향)",
+        afterList.find((s) => s.id === id)?.overview === 'URGENT',
+      )
+    }
+
+    {
+      // judgment가 없으면(저장한 적 없음) 기존과 동일하게 deriveListOverview 값 그대로.
+      const clearPayload = validPayload({
+        session_id: 'sess-a4-no-judgment',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '6666' },
+          safety_flags: { lbp: { lbp_safety_status: 'CLEAR', treatment_safety_status: 'CLEAR' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(clearPayload),
+      })
+      const { id } = await postRes.json()
+      const list = await (await fetch(`${base}/api/submissions`)).json()
+      assert('A4: judgment 없으면 목록 overview는 deriveListOverview 값 그대로(CLEAR)', list.find((s) => s.id === id)?.overview === 'CLEAR')
+    }
+
+    {
+      // judgment CLEAR가 서버 REVIEW를 하향하지 못한다.
+      const reviewPayload = validPayload({
+        session_id: 'sess-a4-no-downgrade',
+        flags: { requires_staff_check: false },
+        responses: {
+          patient: { patient_name: '홍길동', phone_last4: '7777' },
+          safety_flags: { lbp: { lbp_safety_status: 'REVIEW_REQUIRED', treatment_safety_status: 'CLEAR' } },
+        },
+      })
+      const postRes = await fetch(`${base}/api/submissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(reviewPayload),
+      })
+      const { id } = await postRes.json()
+
+      await fetch(`${base}/api/submissions/${id}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          schema_version: '1.0.0',
+          recorded_at: new Date().toISOString(),
+          source: { session_id: 'sess-a4-no-downgrade', questionnaire_version: '1.0' },
+          innate_features: [],
+          symptom_links: [],
+          saju_only_prediction: '',
+          revised_after_exam: '',
+          final_treatment_axis: '',
+          prescription_direction: '',
+          learning_case: false,
+          debrief: null,
+          transcript_import: null,
+          derived_safety_overview: 'CLEAR',
+        }),
+      })
+      const afterList = await (await fetch(`${base}/api/submissions`)).json()
+      assert(
+        "A4: judgment.derived_safety_overview='CLEAR'가 서버 REVIEW를 하향하지 못한다(단조 상향만)",
+        afterList.find((s) => s.id === id)?.overview === 'REVIEW',
+      )
+    }
+
     /* ---------------- CORS / origin guard on doctor routes ---------------- */
     {
       const evilRes = await fetch(`${base}/api/submissions`, {

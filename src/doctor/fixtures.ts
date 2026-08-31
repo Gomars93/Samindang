@@ -1371,4 +1371,303 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     SLEEP_02: '1_2_days',
     SLEEP_03: ['none'],
   }),
+
+  // Doctor View Opus UX Review v0.1 §B3 regression (v0.2 A5): 주호소가
+  // 비-통증(수면)이고 추가 상세상담으로 통증(허리)을 선택한 환자.
+  // LBP_01-14를 실제로 응답하므로 safety_flags.lbp는 non-null이지만,
+  // 주호소 자체는 pain이 아니므로 routing.primary_module_detail은 계속
+  // null이다(additional_module_detail이 'LBP'가 됨) -- 안전 확인 리스트/
+  // 진찰 소견 radio가 primary_module_detail 리터럴로 게이트되면 이
+  // 환자의 LBP 안전 정보가 원장 화면에서 통째로 사라진다. 이 회귀는
+  // v0.2 P2(안전 통합 리스트가 safety_flags.<module> !== null로 게이트)
+  // 도입 시점에 구조적으로 이미 해소됐고, showLbpExam도 동일 기준을 쓴다
+  // -- 이 fixture는 그 사실을 회귀 테스트로 고정한다(claude/fix-lbp-safety-panel-gate
+  // 브랜치의 독립 fixture와 값 대부분을 동일하게 맞춰 no-op 수렴을
+  // 의도했다).
+  buildFixture('수면 주호소 + 추가 상세상담(허리 통증, LBP 안전확인 게이트 회귀)', {
+    ID_01: '오하늬',
+    ID_03: 'female',
+    BIRTH_01: '19850310',
+    VISIT_00_INTENT: 'symptom_consult',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    ADDITIONAL_DETAIL_01: 'pain',
+    SAFETY_01: ['none'],
+    SLEEP_01: ['sleep_onset'],
+    SLEEP_02: '1_2_days',
+    SLEEP_03: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'lower_limb',
+    LBP_01: 'BUTTOCK',
+    LBP_02: ['NUMBNESS'],
+    LBP_03: 'BILATERAL',
+    LBP_04: ['NONE'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'YES',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 6,
+    LBP_13: 'SOMEWHAT',
+    LBP_14: 'SOME',
+  }),
+
+  /* ---------------------------------------------------------------------
+   * Doctor View 재설계 v0.2 A6/Opus MAJOR: deriveSafetyOverview 테스트
+   * 커버리지 — LBP/NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND 6개 모듈 각각 실제
+   * "unconditional URGENT_REVIEW" 트리거 값(각 *Logic.ts의 concrete
+   * urgent set)으로 URGENT_REVIEW를 만드는 fixture. 위 REVIEW fixture들과
+   * 값 대부분을 동일하게 맞추고 트리거 필드 하나만 바꿔, "이 fixture가
+   * URGENT인 이유는 오직 그 필드"임을 분명히 한다. HIP/TMJ는 이미 위쪽에
+   * URGENT fixture가 있다(15a) — 여기서 나머지 6개를 채운다.
+   * ------------------------------------------------------------------- */
+
+  // LBP: LBP_04(CES) = URINARY_RETENTION(URGENT_CES_VALUES) -> lbpSafetyStatus URGENT_REVIEW.
+  // 실제 환자 플로우라면 STAFF_CHECK_TRIGGERS.LBP_04가 제출 전에 인터럽트하지만,
+  // 이 fixture는 (HIP/TMJ URGENT fixture와 동일하게) "제출된 payload"
+  // 레벨에서 computeLbpFlags/deriveSafetyOverview가 URGENT를 놓치지 않는지만
+  // 검증한다.
+  buildFixture('허리 통증 주호소 (LBP, CES 응급)', {
+    ID_01: '조현우',
+    ID_03: 'male',
+    BIRTH_01: '19700615',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'lower_limb',
+    LBP_01: 'BUTTOCK',
+    LBP_02: ['NUMBNESS'],
+    LBP_03: 'BILATERAL',
+    LBP_04: ['URINARY_RETENTION'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'YES',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 6,
+    LBP_13: 'SOMEWHAT',
+    LBP_14: 'SOME',
+  }),
+
+  // NECK: NECK_02 = RAPIDLY_WORSENING_LIMB_WEAKNESS(N02_URGENT) -> neckSafetyStatus URGENT_REVIEW.
+  buildFixture('목 통증 주호소 (NECK, 신경학적 응급)', {
+    ID_01: '박서준',
+    ID_03: 'male',
+    BIRTH_01: '19800101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'upper_limb',
+    NECK_01: 'NO',
+    NECK_02: ['RAPIDLY_WORSENING_LIMB_WEAKNESS'],
+    NECK_02A: 'STABLE',
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_06: 'RIGHT',
+    NECK_07: 'HAND_FINGERS',
+    NECK_08: 'RIGHT',
+    NECK_09: ['PARESTHESIA'],
+    NECK_10: 'YES',
+    NECK_10A: 'NO',
+    NECK_11: 'YES',
+    NECK_12: 'YES',
+    NS01: 'NECK_DOMINANT',
+    SH01: 'NO',
+    SH04: 'NO',
+    SH05: 'NO',
+  }),
+
+  // NECK: 완전 valid-negative disease state(neckSafetyStatus CLEAR, tests/
+  // neck.spec.mjs BASE_CLEAR와 동일한 조합) + HISTORY_01=osteoporosis(골다공증)
+  // -> historyDomainReview가 neck_treatment_safety_status만
+  // REVIEW_REQUIRED로 올린다(disease는 CLEAR — bumpToReview 갈래).
+  // NECK의 pregnancyDomainReview는 LBP와 달리 미응답을 fail-closed하지
+  // 않으므로(neckLogic.ts 주석 참고) 병력 축으로 같은 "disease CLEAR +
+  // treatment REVIEW_REQUIRED" 조합을 재현한다.
+  buildFixture('목 통증 주호소 (NECK, 골다공증 병력 — 치료 안전만 확인 필요)', {
+    ID_01: '김서연',
+    ID_03: 'female',
+    BIRTH_01: '19600512',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'mild',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    HISTORY_01: ['osteoporosis'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    NECK_01: 'NO',
+    NECK_02: ['NONE'],
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_07: 'NECK_ONLY',
+    NECK_09: ['NONE'],
+    NECK_10: 'NO',
+    NS01: 'NECK_DOMINANT',
+    SH01: 'NO',
+    SH04: 'NO',
+    SH05: 'NO',
+  }),
+
+  // SHOULDER: SH02 = DEFORMITY_OR_STILL_OUT(SH02_URGENT) -> shoulderSafetyStatus URGENT_REVIEW.
+  buildFixture('어깨 통증 주호소 (SHOULDER, 외상 변형 응급)', {
+    ID_01: '이도현',
+    ID_03: 'male',
+    BIRTH_01: '19850615',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: 'within_1w',
+    VISIT_04_SYMPTOM_IMPACT: 'severe',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'neck_shoulder',
+    PAIN_02: ['sharp', 'movement_related'],
+    PAIN_04: 'none',
+    NS01: 'SHOULDER_DOMINANT',
+    NECK_01: 'NO',
+    NECK_02: ['NONE'],
+    NECK_03A: 'NO',
+    NECK_03B: 'NO',
+    NECK_04: ['NONE'],
+    NECK_05: ['NONE'],
+    NECK_10: 'NO',
+    SH01: 'YES',
+    SH02: ['DEFORMITY_OR_STILL_OUT'],
+    SH03: 'YES',
+    SH04: 'NO',
+    SH05: 'NO',
+    SH06: 'NO',
+    SH07: 'RIGHT',
+    SH08: 'YES',
+    SH09: 'NO',
+  }),
+
+  // KNEE: KNEE_02 = GROSS_DEFORMITY_OR_STILL_OUT(KNEE02_URGENT) -> kneeSafetyStatus URGENT_REVIEW.
+  buildFixture('무릎 통증 주호소 (KNEE, 변형 응급)', {
+    ID_01: '최지훈',
+    ID_03: 'male',
+    BIRTH_01: '19600101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: '1_3m',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'knee',
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'none',
+    KNEE_01: 'NO',
+    KNEE_02: ['GROSS_DEFORMITY_OR_STILL_OUT'],
+    KNEE_02A: 'NO',
+    KNEE_05: 'NO',
+    KNEE_06: 'YES',
+    KNEE_06A: ['NONE'],
+    KNEE_06B: ['NONE'],
+    KNEE_07: 'NO',
+    KNEE_08: ['NONE'],
+    KNEE_09: 'RIGHT',
+    KNEE_10: 'ANTERIOR',
+    KNEE_11: ['STAIRS'],
+    KNEE_12: 'UP_TO_30_MIN',
+    KNEE_13: 'NO',
+    KNEE_14: 'NO',
+  }),
+
+  // ELBOW: ELBOW_02 = GROSS_DEFORMITY_OR_STILL_OUT(ELBOW02_URGENT) -> elbowSafetyStatus URGENT_REVIEW.
+  buildFixture('팔꿈치 통증 주호소 (ELBOW, 변형 응급)', {
+    ID_01: '한도윤',
+    ID_03: 'male',
+    BIRTH_01: '19900101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: 'within_1w',
+    VISIT_04_SYMPTOM_IMPACT: 'severe',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'arm_hand',
+    PAIN_02: ['sharp', 'movement_related'],
+    PAIN_04: 'none',
+    ELBOW_00: 'ELBOW',
+    ELBOW_01: 'YES',
+    ELBOW_02: ['GROSS_DEFORMITY_OR_STILL_OUT'],
+    ELBOW_02A: 'NO',
+    ELBOW_03: 'NO',
+    ELBOW_04: 'NO',
+    ELBOW_05: 'NO',
+    ELBOW_06: 'NO',
+    ELBOW_07: 'NO',
+    ELBOW_08: 'NONE',
+    ELBOW_09: 'NO',
+    ELBOW_10: ['NONE'],
+    ELBOW_11: ['NONE'],
+    ELBOW_12: 'ANTERIOR',
+    ELBOW_13: 'RIGHT',
+    ELBOW_14: ['GRIPPING'],
+    ELBOW_15: 'NO',
+  }),
+
+  // WRIST_HAND: WH_02 = GROSS_DEFORMITY_OR_STILL_OUT(WH02_URGENT) -> wristHandSafetyStatus URGENT_REVIEW.
+  buildFixture('손목 통증 주호소 (WRIST_HAND, 변형 응급)', {
+    ID_01: '서지우',
+    ID_03: 'female',
+    BIRTH_01: '19880615',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'pain',
+    VISIT_03_SYMPTOM_DURATION: 'within_1w',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    SAFETY_01: ['none'],
+    PAIN_01: 'arm_hand',
+    PAIN_02: ['aching', 'numbness'],
+    PAIN_04: 'none',
+    ELBOW_00: 'WRIST_HAND',
+    WH_01: 'NO',
+    WH_02: ['GROSS_DEFORMITY_OR_STILL_OUT'],
+    WH_06: ['NONE'],
+    WH_07: 'NONE',
+    WH_08: 'NONE',
+    WH_08A: ['NONE'],
+    WH_09: 'RADIAL_WRIST_THUMB_SIDE',
+    WH_14: 'RIGHT',
+  }),
+
+  // Doctor View 재설계 v0.2 A3/Opus MAJOR(fail-open 미응답) 회귀 fixture:
+  // SAFETY_01(공통 red flag, 실제 문진에서는 required:true)을 의도적으로
+  // 답하지 않고, 주호소도 비-통증(수면)이라 어떤 부위 안전 모듈도 계산되지
+  // 않는다 -- red_flag_general === null && safety_flags 부위 모듈 전부
+  // null. 정상적인 완주 제출에서는 나오지 않아야 하는 조합이지만(SAFETY_01
+  // required), 손상되었거나 부분 제출된 과거 레코드를 흉내낸다.
+  // deriveSafetyOverview가 이런 payload를 "안전 확인됨"(CLEAR)으로 잘못
+  // 표시하지 않고 'UNKNOWN'으로 fail-closed 표시하는지 검증하는 데 쓴다.
+  buildFixture('안전 문진 미응답 (레코드 손상/부분 제출 가정)', {
+    ID_01: '무응답',
+    ID_03: 'female',
+    BIRTH_01: '19900101',
+    VISIT_01: 'symptom',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+    VISIT_03_SYMPTOM_DURATION: '1_3m',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SECONDARY_01: ['none'],
+    // SAFETY_01 의도적으로 미설정 (null 유지) — 이 fixture의 핵심.
+  }),
 ]

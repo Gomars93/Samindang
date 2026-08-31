@@ -24,6 +24,10 @@ const VALID_STATUSES = new Set(['new', 'viewed', 'in_consultation', 'completed']
 // 저장된 레코드가 이 shape을 갖추지 못했으면(과거 레코드, 또는 최소
 // 테스트 payload) overview는 `null`로 보류한다 — 없는 필드를 임의로
 // CLEAR로 단정하지 않는다.
+// module.<field> 문자열 값을 읽는 필드 9종(disease-level 각 부위) +
+// treatment-level 2종(LBP/NECK만 disease와 별개 축을 갖는다 — lbpLogic.ts/
+// neckLogic.ts의 treatment_safety_status/neck_treatment_safety_status,
+// bumpToReview와 동일한 "치료 안전은 REVIEW까지만, URGENT 없음" 전제).
 const SAFETY_MODULE_STATUS_FIELDS = [
   'lbp_safety_status',
   'hip_safety_status',
@@ -34,8 +38,28 @@ const SAFETY_MODULE_STATUS_FIELDS = [
   'wrist_hand_safety_status',
   'ankle_foot_safety_status',
   'tmj_safety_status',
+  'treatment_safety_status', // LBP treatment axis (lbpLogic.ts TreatmentSafetyStatus, 'CLEAR'|'REVIEW_REQUIRED')
+  'neck_treatment_safety_status', // NECK treatment axis (neckLogic.ts NeckTreatmentSafetyStatus, 'CLEAR'|'REVIEW_REQUIRED')
 ]
 
+/**
+ * 클라이언트 `deriveSafetyOverview`(src/doctor/safetyOverview.ts §11.1)의
+ * REVIEW 4갈래 ↔ 이 함수가 읽는 저장된 필드 대응표(같은 공식, 서로 다른
+ * 계층에서 각자의 입력에 적용 — 위 파일 헤더 코멘트 참고):
+ *
+ *   deriveSafetyOverview 갈래                              | 여기서 읽는 필드
+ *   ------------------------------------------------------ | ------------------------------------------
+ *   any(module.status === 'REVIEW_REQUIRED')                | SAFETY_MODULE_STATUS_FIELDS 중 하나라도 'REVIEW_REQUIRED'
+ *     (disease status 자체가 REVIEW_REQUIRED인 경우)        |   (예: lbp_safety_status === 'REVIEW_REQUIRED')
+ *   any(module.status === 'REVIEW_REQUIRED')                | treatment_safety_status/neck_treatment_safety_status
+ *     (bumpToReview — treatment lock만 걸린 경우, disease는  |   === 'REVIEW_REQUIRED' (disease status가 CLEAR여도
+ *     CLEAR)                                                 |   treatment가 REVIEW면 행 상태가 올라가는 것과 동일)
+ *   flags.response_consistency_review                       | safetyFlags.response_consistency_review === true
+ *   flags.sleep_disorder_priority_review                    | safetyFlags.sleep_disorder_priority_review === true
+ *     || flags.sleep_disorder_review                        |   || safetyFlags.sleep_disorder_review === true
+ *
+ * 전부 "저장된 boolean/문자열을 그대로 읽기"만 한다 — 새 계산 없음.
+ */
 function deriveListOverview(submission) {
   const requiresStaffCheck = submission?.flags?.requires_staff_check
   // requires_staff_check는 이 shape 중 가장 오래된 필드다(모듈 안전
@@ -62,8 +86,34 @@ function deriveListOverview(submission) {
   }
 
   if (statuses.includes('URGENT_REVIEW')) return 'URGENT'
-  if (statuses.includes('REVIEW_REQUIRED')) return 'REVIEW'
+  if (
+    statuses.includes('REVIEW_REQUIRED') ||
+    safetyFlags.response_consistency_review === true ||
+    safetyFlags.sleep_disorder_priority_review === true ||
+    safetyFlags.sleep_disorder_review === true
+  ) {
+    return 'REVIEW'
+  }
   return 'CLEAR'
+}
+
+// Doctor View 재설계 v0.2 A4/Opus MAJOR: 원장이 진찰 소견을 입력하면
+// (ClinicianJudgment.derived_safety_overview — src/doctor/judgment.ts, 원장
+// 입력이 아니라 그 입력을 반영해 다시 계산한 시스템 파생값) 목록 배지가
+// 이를 반영해야 한다(예: LBP 하지 근력저하 "심함" 입력 시 목록에서 그
+// 방문이 더 이상 평범해 보이면 안 된다). 단, judgment는 문진 저장 시점의
+// deriveListOverview보다 **덜 심각한 값으로 목록을 낮출 수는 없다** —
+// 단조 상향(monotonic upgrade)만 허용한다(문진 fail-closed 계산이 항상
+// 하한선이라는 §11.1 전제를 목록 화면에서도 유지).
+const OVERVIEW_SEVERITY = { URGENT: 3, REVIEW: 2, CLEAR: 1, UNKNOWN: 0 }
+
+function combineListOverview(submissionOverview, judgmentOverview) {
+  if (judgmentOverview == null || !(judgmentOverview in OVERVIEW_SEVERITY)) {
+    return submissionOverview
+  }
+  const submissionRank = submissionOverview != null ? (OVERVIEW_SEVERITY[submissionOverview] ?? 0) : 0
+  const judgmentRank = OVERVIEW_SEVERITY[judgmentOverview]
+  return judgmentRank > submissionRank ? judgmentOverview : submissionOverview
 }
 // createSubmission의 session_id 중복 검사+생성을 이 키 하나로 직렬화한다.
 const SESSION_INDEX_LOCK_KEY = '__session_index__'
@@ -198,7 +248,7 @@ export function createStore(dataDir) {
           primary_concern: r.submission?.metadata?.primary_concern ?? null,
           requires_staff_check: r.submission?.flags?.requires_staff_check ?? false,
           recorder_ready: Boolean(visit?.recording_id),
-          overview: deriveListOverview(r.submission),
+          overview: combineListOverview(deriveListOverview(r.submission), r.judgment?.derived_safety_overview),
         })
       } catch {
         // 손상되거나 쓰는 중(.tmp 아님)인 파일은 목록에서 건너뛴다

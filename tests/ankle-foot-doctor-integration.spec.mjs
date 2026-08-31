@@ -26,13 +26,21 @@ test('DoctorWorkspace contains ANKLE_FOOT panel wiring exactly once', () => {
   // lose this surface. PainWorkspace.tsx no longer mounts it at all (see
   // the companion assertion below) -- exactly one wiring site, moved, not
   // duplicated.
+  //
+  // Core Reduction P2 (Phase 7 §1.1, lane1Summary.ts): DoctorWorkspace now
+  // calls every region panel as a PLAIN FUNCTION (`AnkleFootSafetyPanel({
+  // payload })`), not JSX (`<AnkleFootSafetyPanel .../>`) -- this lets
+  // lane1Summary.ts read the exact React element each panel decided to
+  // render (its className) to compute the union summary, reusing that
+  // decision instead of re-deriving it. The element is then placed
+  // directly into the JSX tree below, so it still renders exactly once.
   const workspaceSrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
-  const matches = workspaceSrc.match(/<AnkleFootSafetyPanel payload=\{payload\} \/>/g) ?? []
+  const matches = workspaceSrc.match(/AnkleFootSafetyPanel\(\{ payload \}\)/g) ?? []
   assert.equal(matches.length, 1)
 
   const painSrc = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
   assert.ok(
-    !/<AnkleFootSafetyPanel/.test(painSrc),
+    !/AnkleFootSafetyPanel/.test(painSrc),
     'PainWorkspace must not also mount it (would double-render under pain/mixed profiles)',
   )
 })

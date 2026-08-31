@@ -126,3 +126,44 @@ export function readablePriorVisitReassessmentStatusLabel(status: unknown): stri
   if (typeof status !== 'string') return PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
   return NEXT_REASSESSMENT_PLAN_STATUS_LABEL[status as NextReassessmentPlanStatus] ?? PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL
 }
+
+/**
+ * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.6-3, delta N-5, Phase 7
+ * §2.3 lane2 최상단 고정 1줄 "지난번 추적"): Opus's concept ⑥ ("이전 추적
+ * 항목(라벨+기준값 raw)" 복원) as one line at the top of lane2, sourced
+ * from the MOST RECENT prior visit's profile-agnostic `followUpTargets`
+ * union (never re-concatenating pain/herbal here -- that union already
+ * exists precisely so a caller does not have to guess which profile the
+ * prior visit was).
+ *
+ * N≥2 items join with `·` on the one line; beyond 3 the line names the
+ * first 3 and reports the rest as a count (delta N-5's "표시 불가 시 외 N"
+ * -- the caller renders the actual reference-jump affordance, this
+ * function only counts). A wrong-typed/unreadable target's raw value
+ * renders as `readablePriorVisitFollowUpTarget`'s own explicit failure
+ * token, never silently compressed into "기록 없음" (UNKNOWN ≠ NO).
+ */
+export type LastVisitTrackedLine = { text: string; overflowCount: number }
+
+const LAST_VISIT_TRACKED_MAX_SHOWN = 3
+
+export function lastVisitTrackedLine(priorVisits: PatientHistoryResult | null | undefined): LastVisitTrackedLine | null {
+  const visits = asPriorVisitArray<PriorVisitSummary>(priorVisits?.visits)
+  const last = visits[0]
+  if (!isRecordLike(last)) return null
+  const rawTargets = asPriorVisitArray<unknown>((last as PriorVisitSummary).followUpTargets)
+  if (rawTargets.length === 0) return null
+  const shown = rawTargets.slice(0, LAST_VISIT_TRACKED_MAX_SHOWN).map((raw, i) => {
+    const t = readablePriorVisitFollowUpTarget(raw, i)
+    const rawValue = t.baselineText.replace(/^이전 baseline:\s*/, '')
+    return `${t.label} — 기준값 ${rawValue}`
+  })
+  return {
+    text: shown.join(' · '),
+    overflowCount: Math.max(0, rawTargets.length - LAST_VISIT_TRACKED_MAX_SHOWN),
+  }
+}
+
+function isRecordLike(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object'
+}

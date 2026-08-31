@@ -78,13 +78,23 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
 {
   const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
 
-  test('DoctorWorkspace.tsx: imports and renders ConflictBanner right after CommonSafetyBanner', () => {
+  test('DoctorWorkspace.tsx: imports ConflictBanner and renders it above the V3 shell, before CommonSafetyBanner (Phase 7 §7.1: 레인 밖, 화면 상단)', () => {
     assert.ok(src.includes("import { ConflictBanner } from '../ConflictBanner'"))
-    const safety = src.indexOf('<CommonSafetyBanner')
+    // Core Reduction P2 (Phase 5 Synthesis v1.2 §2.1, Phase 7 UI spec
+    // §7.1): ConflictBanner is an operational data-safety warning, not a
+    // clinical one -- it now renders OUTSIDE every lane, at the very top
+    // of the screen (before `.doctor__visitShell`/CommonSafetyBanner), per
+    // §7.1's warning-hierarchy table ("4. stale/conflict | 레인 밖, 화면
+    // 상단"). It used to render just after CommonSafetyBanner, inside the
+    // workspace-profile area that no longer exists (§2.4 retires the
+    // profile switcher entirely) -- see the P2/P3 test elsewhere pinning
+    // that removal.
     const banner = src.indexOf('{conflict && (')
-    const profileBar = src.indexOf('workspace__profileBar')
-    assert.ok(safety !== -1 && banner !== -1 && profileBar !== -1)
-    assert.ok(safety < banner && banner < profileBar, 'ConflictBanner must render between safety and the profile switcher')
+    const shell = src.indexOf('doctor__visitShell')
+    const safety = src.indexOf('<CommonSafetyBanner')
+    assert.ok(banner !== -1 && shell !== -1 && safety !== -1)
+    assert.ok(banner < shell && shell < safety, 'ConflictBanner must render before the V3 shell, which itself renders before CommonSafetyBanner')
+    assert.ok(!src.includes('workspace__profileBar'), 'the profile switcher this banner used to sit next to no longer exists (§2.4)')
   })
 
   test('DoctorWorkspace.tsx: autosave effect fails closed on a pending conflict (no retry until reload)', () => {
@@ -174,13 +184,22 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
 
   // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
   // auth-failure inline recovery ----------
-  test('DoctorWorkspace.tsx: imports DoctorTokenSetup and shows it inline (not the generic text) specifically for kind===\'auth\'', () => {
-    assert.ok(src.includes("import { DoctorTokenSetup } from '../DoctorTokenSetup'"))
-    assert.ok(/lastSaveErrorKind === 'auth' && \(\s*<DoctorTokenSetup/.test(src))
+  //
+  // Core Reduction P2 (Phase 5 Synthesis v1.2 §3.2 block ⑤, §2.9): the
+  // visible save-status surface (including this auth recovery) moved into
+  // VisitSummaryAside.tsx's block ⑤ -- DoctorWorkspace.tsx now only owns
+  // the STATE (lastSaveErrorKind) and hands VisitSummaryAside a
+  // `onRetryAfterTokenSet` callback that does the actual
+  // clear-then-retry, rather than rendering `<DoctorTokenSetup>` itself.
+  const asideSrc = fs.readFileSync('src/doctor/workspace/VisitSummaryAside.tsx', 'utf8')
+
+  test('VisitSummaryAside.tsx: imports DoctorTokenSetup and shows it inline (not the generic text) specifically for kind===\'auth\'', () => {
+    assert.ok(asideSrc.includes("import { DoctorTokenSetup } from '../DoctorTokenSetup'"))
+    assert.ok(/saveStatus === 'error' && lastSaveErrorKind === 'auth'\) \{\s*\/\/[\s\S]{0,300}?saveRow = <DoctorTokenSetup/.test(asideSrc))
   })
 
-  test("DoctorWorkspace.tsx: a generic (non-auth) save failure keeps the existing '저장 실패' text, not the token recovery", () => {
-    assert.ok(/lastSaveErrorKind !== 'auth' &&\s*'저장 실패 — 다시 시도해주세요/.test(src))
+  test("VisitSummaryAside.tsx: a generic (non-auth) save failure keeps the existing '저장 실패' text, not the token recovery", () => {
+    assert.ok(/saveRow = '저장 실패 — 다시 시도해주세요'/.test(asideSrc))
   })
 
   test('DoctorWorkspace.tsx: performSave records the failure kind on a generic error, and clears it on success', () => {
@@ -192,9 +211,13 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(/setLastSaveErrorKind\(result\.kind \?\? 'other'\)/.test(fn), 'a generic failure must record the failure kind (not just flip to the error status)')
   })
 
-  test('DoctorWorkspace.tsx: re-entering the token retries the save directly (does not just clear the error and wait for another edit)', () => {
-    const recoveryBlock = src.slice(src.indexOf('<DoctorTokenSetup'), src.indexOf('<DoctorTokenSetup') + 400)
-    assert.ok(/onSet=\{\(\) => \{\s*setLastSaveErrorKind\(null\)\s*void performSave\(\)/.test(recoveryBlock))
+  test('DoctorWorkspace.tsx: re-entering the token (via VisitSummaryAside\'s onRetryAfterTokenSet) retries the save directly (does not just clear the error and wait for another edit)', () => {
+    const recoveryBlock = src.slice(src.indexOf('onRetryAfterTokenSet={'), src.indexOf('onRetryAfterTokenSet={') + 200)
+    assert.ok(/onRetryAfterTokenSet=\{\(\) => \{\s*setLastSaveErrorKind\(null\)\s*void performSave\(\)/.test(recoveryBlock))
+  })
+
+  test("VisitSummaryAside.tsx: the DoctorTokenSetup recovery's onSet calls the parent's onRetryAfterTokenSet", () => {
+    assert.ok(/onSet=\{\(\) => onRetryAfterTokenSet\?\.\(\)\}/.test(asideSrc))
   })
 
   test('DoctorView.tsx: the workspace-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {

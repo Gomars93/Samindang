@@ -107,6 +107,23 @@ export const EXAM_CHECK_STATUS_LABEL: Record<ExamCheckStatus, string> = {
   NOT_YET_CHECKED: '아직 확인 안 됨',
 }
 
+/**
+ * Core Reduction P2 (Phase 7 UI spec §6.3): the button that RECORDS one of
+ * these four states must not rely on color alone -- each gets its own
+ * glyph prefix in the button label. Deliberately a SEPARATE map from
+ * EXAM_CHECK_STATUS_LABEL above: that map is also used in narrative
+ * sentences ("이전 소견: 양성/이상 소견", EMR carry-forward text via
+ * RevisitWorkspace.tsx) where a bare glyph prefix would read as noise --
+ * only the interactive status buttons (ExamSuggestionCard.tsx,
+ * StructuredReassessmentCard.tsx) prefix with this.
+ */
+export const EXAM_CHECK_STATUS_GLYPH: Record<ExamCheckStatus, string> = {
+  POSITIVE: '✓',
+  NEGATIVE: '–',
+  UNCLEAR: '?',
+  NOT_YET_CHECKED: '·',
+}
+
 /** True only for a real clinician-entered result — never true for "not yet checked". */
 export function isExamChecked(status: ExamCheckStatus): boolean {
   return status !== 'NOT_YET_CHECKED'

@@ -102,6 +102,7 @@ const SHOULDER_CUFF_WEAKNESS_LABEL: Record<string, string> = Object.fromEntries(
 
 export function JudgmentPanel({
   source,
+  resetKey,
   initialJudgment,
   initialUpdatedAt,
   onSave,
@@ -109,14 +110,26 @@ export function JudgmentPanel({
   showShoulderExam = false,
 }: {
   source: JudgmentSourcePayload
+  /**
+   * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.8, delta N-6, Phase 7
+   * §1.2-#9): the unified shell reset key (`submission:<id>` /
+   * `fixture:<...>`). This panel used to fully remount on record switch
+   * via DoctorView's `key={payload.session_id}` -- that independent key is
+   * retired, and this component now owns a render-time reset (mirroring
+   * DoctorWorkspace.tsx's own pattern) driven by this prop instead, so a
+   * record switch resets it in lockstep with the rest of the shell rather
+   * than via a second, independently-typed key-remount mechanism. Falls
+   * back to `source.session_id` when omitted, matching the pre-P2 identity
+   * this panel used before the unified key existed.
+   */
+  resetKey?: string
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
   initialJudgment?: ClinicianJudgment | null
   /**
    * Round 18: the submission record's server-authoritative `updated_at` at
    * the moment this judgment was loaded -- sent as the CAS precondition on
-   * the first "기록" click. This component fully remounts on record switch
-   * (DoctorView's `key={payload.session_id}`), so unlike DoctorWorkspace
-   * there is no mid-life reseed to guard against here.
+   * the first "기록" click. Adopted fresh on every render-time reset below
+   * (see `resetKey`), same as `initialWorkspaceState`/`initialJudgment`.
    */
   initialUpdatedAt?: string | null
   /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
@@ -176,6 +189,32 @@ export function JudgmentPanel({
   // untouched either way, they just need a valid token before "기록" can
   // succeed again.
   const [saveErrorKind, setSaveErrorKind] = useState<'auth' | 'network' | 'other' | null>(null)
+
+  // Core Reduction P2 (Phase 5 Synthesis v1.2 §2.8, delta N-6): render-time
+  // reset, replacing the retired `key={payload.session_id}` remount --
+  // same pattern as DoctorWorkspace.tsx's own reset (a plain state update
+  // during render, guarded by comparing against the last-seen key), not a
+  // React `key` swap. Every piece of this panel's local state resets here:
+  // the in-progress judgment/debrief draft, the "기록된 판단" echo, any
+  // pending conflict/its preserved draft, and the P0-8 auth-error banner --
+  // all of it belongs to the OLD record and must never bleed into a newly
+  // selected one.
+  const effectiveResetKey = resetKey ?? source.session_id
+  const [lastSeenJudgmentKey, setLastSeenJudgmentKey] = useState(effectiveResetKey)
+  if (effectiveResetKey !== lastSeenJudgmentKey) {
+    setLastSeenJudgmentKey(effectiveResetKey)
+    const freshJudgment = initialJudgment ?? createEmptyJudgment(source)
+    const freshDebrief = initialJudgment?.debrief ?? emptyDebrief
+    setJudgment(freshJudgment)
+    setDebrief(freshDebrief)
+    setOutlineQuestion('')
+    setRecorded(initialJudgment ?? null)
+    setErrors([])
+    setConflict(null)
+    setSaveErrorKind(null)
+    lastKnownUpdatedAtRef.current = initialUpdatedAt ?? null
+    lastKnownJudgmentRef.current = { judgment: freshJudgment, debrief: freshDebrief }
+  }
 
   function isDraftPristine() {
     return (
@@ -398,14 +437,26 @@ export function JudgmentPanel({
         </div>
       </details>
 
-      <label className="judgment__toggle">
-        <input
-          type="checkbox"
-          checked={judgment.learning_case}
-          onChange={(e) => setJudgment((j) => ({ ...j, learning_case: e.target.checked }))}
-        />
-        <span>★ 학습 케이스로 표시 (원장 입력)</span>
-      </label>
+      {/*
+        Phase 7 §1.3-#15/§2.10 (delta N-4): every disclosure needs an
+        `open={}` condition tied to whether it holds content -- this one is
+        the row-81 학습 케이스 체크 itself (Phase 1 audit row 81), so its
+        own value (`learning_case === true`) is that condition. Collapsed
+        by default (the common case, an ordinary visit); a record already
+        marked as a learning case stays visibly marked without an extra
+        click.
+      */}
+      <details className="judgment__learningCase" open={judgment.learning_case === true}>
+        <summary>학습 케이스 {judgment.learning_case && <span className="judgment__learningCase__flag">★ 표시됨</span>}</summary>
+        <label className="judgment__toggle">
+          <input
+            type="checkbox"
+            checked={judgment.learning_case}
+            onChange={(e) => setJudgment((j) => ({ ...j, learning_case: e.target.checked }))}
+          />
+          <span>★ 학습 케이스로 표시 (원장 입력)</span>
+        </label>
+      </details>
 
       {/*
         P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): a

@@ -287,6 +287,23 @@ test('P0-1 fail-open guard: a herbal-derived payload whose routing disagrees wit
   assert.ok(html.includes('안전 확인 — 허리(LBP)'), 'the LBP safety panel still renders its real content under the herbal profile')
 })
 
+// Phase 7 §1.1-#5: the SAME fail-open class, pinned at the lane1 UNION
+// summary level (VisitSummaryAside's chip) rather than only at the raw
+// panel-render level above -- the union must read this region's real
+// computed status, never silently fall back to 해당없음/CLEAR just
+// because the record derives 'herbal'.
+test('P0-1/§1.1-#5 fail-open guard: the lane1 union summary chip reflects a herbal-derived payload\'s real applicable region, never 해당없음', () => {
+  const mutated = structuredClone(PAIN_SCENARIO_1.payload)
+  mutated.routing.primary_module = null
+  mutated.routing.additional_module = null
+  mutated.routing.questionnaire_mode = 'herbal_addon'
+  const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: PAIN_SCENARIO_1.synthetic }))
+  assert.ok(html.includes('data-view-profile="herbal"'), 'sanity: this payload really derives to the herbal profile')
+  assert.ok(!html.includes('doctor__lane1Chip--na'), 'the union summary must not read 해당없음 when a real region applies')
+  const chipMatch = html.match(/doctor__lane1Chip doctor__lane1Chip--(\w+)/)
+  assert.ok(chipMatch, 'a lane1 status chip renders at all')
+})
+
 test('round 11: the mandatory-looking Clinical Loop checklist is gone from the default view', () => {
   for (const scenario of [PAIN_SCENARIO_1, HERBAL_SCENARIO_1, MIXED_SCENARIO_1]) {
     const html = render(scenario)
@@ -499,15 +516,29 @@ test('exam suggestion status buttons expose aria-pressed', () => {
   assert.ok(html.includes('aria-pressed="true"') || html.includes('aria-pressed="false"'))
 })
 
-test('mixed scenario tabs expose role="tab" and aria-selected', () => {
+// Core Reduction P2/P3 (Phase 5 Synthesis v1.2 §2.4): the mixed pain/herbal
+// tab switcher and the profile segmented control are BOTH retired from the
+// default UI -- a mixed record now naturally places both profiles' content
+// in every lane (no tabs), and there is no more manual "view as a
+// different single profile" override. These two tests pin the removal
+// (rewritten, not deleted, per this round's testing rule) alongside the
+// P2/P3 tests elsewhere that pin what replaced them (both profiles' lane2
+// content, the shared 판단·처치 lane with its own "+ 다른 유형 입력 추가"
+// toggle).
+test('mixed scenario: no pain/herbal tab switcher (§2.4 removal) -- both profiles render naturally, no role="tab"', () => {
   const html = render(MIXED_SCENARIO_1)
-  assert.ok(html.includes('role="tab"'))
-  assert.ok(html.includes('aria-selected="true"'))
+  assert.ok(!html.includes('role="tab"'), 'the mixed pain/herbal tab switcher no longer exists')
+  assert.ok(html.includes('workspace__examSuggestions'), 'pain lane2 content renders')
+  assert.ok(html.includes('workspace__observationChecklist'), 'herbal lane2 content renders alongside it')
 })
 
-test('profile switcher exposes role="group" with aria-pressed buttons', () => {
-  const html = render(PAIN_SCENARIO_1)
-  assert.ok(html.includes('워크스페이스 프로필'))
+test('profile segmented control (§2.4 "자동 분류" banner/세그먼트) no longer renders on any profile', () => {
+  for (const scenario of [PAIN_SCENARIO_1, HERBAL_SCENARIO_1, MIXED_SCENARIO_1]) {
+    const html = render(scenario)
+    assert.ok(!html.includes('워크스페이스 프로필'), `${scenario.label}: no profile switcher label`)
+    assert.ok(!html.includes('workspace__profileBar'), `${scenario.label}: no profile bar wrapper`)
+    assert.ok(!html.includes('workspace__segmentedBtn'), `${scenario.label}: no segmented control buttons`)
+  }
 })
 
 // ---------- 6. follow-up / reassessment ----------
@@ -608,9 +639,16 @@ test('round 14: the Herbal final-assessment card opens 판단/처치/재검 and 
   // ...and 치법 -- the herbal analogue of 치료 초점 -- moves behind a
   // closed disclosure rather than being a fourth open textarea.
   assert.ok(html.includes('치법 — 필요할 때 입력'))
-  const secondary = html.match(/<details[^>]*workspace__finalAssessment__secondary[^>]*>/g) ?? []
-  assert.equal(secondary.length, 1, 'exactly one secondary disclosure on the herbal card')
-  assert.ok(!/open/.test(secondary[0]), 'an empty 치법 must start closed')
+  // Core Reduction P3 (§2.4): HERBAL_SCENARIO_2 derives the 'mixed' profile
+  // (both pain and herbal content apply), so the 판단·처치 lane now shows
+  // BOTH Final Assessment cards -- Pain's own secondary disclosure ("치료
+  // 초점 — 필요할 때 입력") legitimately co-exists with Herbal's ("치법 —
+  // ..."). Isolate the ONE disclosure whose summary is specifically 치법
+  // instead of counting every `__secondary` disclosure on the page.
+  const allSecondary = [...html.matchAll(/<details[^>]*workspace__finalAssessment__secondary[^>]*>/g)]
+  const herbalSecondary = allSecondary.find((m) => html.slice(m.index, m.index + 300).includes('치법 — 필요할 때 입력'))
+  assert.ok(herbalSecondary, 'a 치법 secondary disclosure exists')
+  assert.ok(!/open/.test(herbalSecondary[0]), 'an empty 치법 must start closed')
 })
 
 test('round 14: a 치법 that already holds text opens its disclosure on render', () => {
@@ -627,9 +665,13 @@ test('round 14: a 치법 that already holds text opens its disclosure on render'
     },
   })
   assert.ok(html.includes('기존에 기록된 치법'))
-  const secondary = html.match(/<details[^>]*workspace__finalAssessment__secondary[^>]*>/g) ?? []
-  assert.equal(secondary.length, 1)
-  assert.ok(/open/.test(secondary[0]), 'a populated 치법 may never be hidden behind a closed disclosure')
+  // Core Reduction P3 (§2.4): see the previous test's comment -- HERBAL_SCENARIO_2
+  // derives 'mixed', so Pain's own (empty, closed) secondary disclosure
+  // co-exists with this populated Herbal one.
+  const allSecondary = [...html.matchAll(/<details[^>]*workspace__finalAssessment__secondary[^>]*>/g)]
+  const herbalSecondary = allSecondary.find((m) => html.slice(m.index, m.index + 400).includes('기존에 기록된 치법'))
+  assert.ok(herbalSecondary, 'a 치법 secondary disclosure containing the recorded text exists')
+  assert.ok(/open/.test(herbalSecondary[0]), 'a populated 치법 may never be hidden behind a closed disclosure')
 })
 
 test('no manual-override banner on first render (profile matches auto-derived by default)', () => {
@@ -638,13 +680,15 @@ test('no manual-override banner on first render (profile matches auto-derived by
   assert.ok(!html.includes('수동 보기'))
 })
 
-test('mixed scenario: tablist/tabpanel a11y wiring (role, aria-controls/aria-labelledby, roving tabindex)', () => {
+// Core Reduction P2/P3 (§2.4): superseded by the "no pain/herbal tab
+// switcher" test above -- there is no more tablist/tabpanel a11y wiring to
+// pin because the mixed pain/herbal tab switcher itself was retired, not
+// merely restyled. Kept (rewritten, not deleted) as an explicit regression
+// guard against the wiring quietly coming back.
+test('mixed scenario: no tablist/tabpanel wiring remains (the pain/herbal tab switcher was retired, not merely restyled)', () => {
   const html = render(MIXED_SCENARIO_1)
-  assert.ok(html.includes('role="tablist"'))
-  assert.ok(html.includes('role="tabpanel"'))
-  assert.ok(/aria-controls="[^"]+"/.test(html))
-  assert.ok(/aria-labelledby="[^"]+"/.test(html))
-  assert.ok(html.includes('tabIndex') || html.includes('tabindex="0"'))
+  assert.ok(!html.includes('role="tablist"'))
+  assert.ok(!html.includes('role="tabpanel"'))
 })
 
 test('adopt-to-final convenience button only appears for an ACCEPTED candidate, not PENDING_REVIEW', () => {
@@ -1672,5 +1716,154 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     assert.ok(!html.includes('확인 필요(값 형식 오류)'))
   })
 }
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P3 — Phase 7 UI spec §1.3 자동 펼침 (delta C-4). Renderable
+ * (renderToString) subset of the disclosure-open-condition contract --
+ * interactive ones (§2.7 발급 다른 방법; the "clicked once and closed"
+ * half of #5) live in tests/doctor-reset-key.spec.mjs (react-test-renderer)
+ * or as source checks alongside the P0-3 issuance tests in
+ * tests/doctor.spec.mjs, since this file only ever renders DoctorWorkspace
+ * directly (never a full DoctorView with server-mode issuance state).
+ * ---------------------------------------------------------------------- */
+
+// ---------- §1.3-#4 ----------
+test('반대편 유형 입력 세트(+다른 유형 입력 추가) auto-opens when the opposite field set already holds a saved value on a pain-derived record', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'opposite-open-test',
+    initialWorkspaceState: {
+      herbalFinalAssessment: {
+        finalPatternOrMechanism: '기허 (반대편 저장값)',
+        treatmentPrinciple: '',
+        prescriptionPlanNote: '',
+        symptomsToTrack: '',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  assert.ok(html.includes('data-view-profile="pain"'), 'sanity: this record derives pain, so herbal is the OPPOSITE set')
+  const idx = html.indexOf('doctor__oppositeType')
+  assert.ok(idx !== -1, 'the opposite-type details exists')
+  const tagEnd = html.indexOf('>', idx)
+  assert.ok(/\bopen\b/.test(html.slice(html.lastIndexOf('<details', idx), tagEnd + 1)), 'it auto-opens because the opposite (herbal) side already has a saved value')
+  assert.ok(html.includes('기허 (반대편 저장값)'), 'the saved opposite content itself is visible, not hidden behind a closed disclosure')
+})
+
+// ---------- §1.3-#5 ----------
+test('반대편 유형 입력 세트 stays collapsed by default when the opposite field set has no saved value', () => {
+  const html = render(PAIN_SCENARIO_1)
+  const idx = html.indexOf('doctor__oppositeType')
+  assert.ok(idx !== -1)
+  const tagEnd = html.indexOf('>', idx)
+  const tag = html.slice(html.lastIndexOf('<details', idx), tagEnd + 1)
+  assert.ok(!/\bopen\b/.test(tag), 'no saved opposite content -> starts closed (the "1회 클릭으로 접근 불가 0" half is pinned interactively in tests/doctor-reset-key.spec.mjs)')
+})
+
+// ---------- §1.3-#6 (현행 계승, regression pin) ----------
+test('관리 계획 disclosure opens when isCarePlanEmpty is false OR plan.status !== UNSET (현행 계승)', () => {
+  const openViaCarePlan = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'careplan-open-1',
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: '집에서 스트레칭', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: '',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  const idx1 = openViaCarePlan.indexOf('관리 계획 · 다음 재평가')
+  const tag1 = openViaCarePlan.slice(openViaCarePlan.lastIndexOf('<details', idx1), openViaCarePlan.indexOf('>', idx1) + 1)
+  assert.ok(/\bopen\b/.test(tag1), 'isCarePlanEmpty=false alone opens the disclosure')
+
+  const openViaPlanStatus = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'careplan-open-2',
+    initialWorkspaceState: { nextReassessmentPlan: { status: 'CLINICIAN_DECIDES', targetDate: '', afterVisitCount: null, note: '' } },
+  })
+  const idx2 = openViaPlanStatus.indexOf('관리 계획 · 다음 재평가')
+  const tag2 = openViaPlanStatus.slice(openViaPlanStatus.lastIndexOf('<details', idx2), openViaPlanStatus.indexOf('>', idx2) + 1)
+  assert.ok(/\bopen\b/.test(tag2), "plan.status !== 'UNSET' alone (empty care plan otherwise) also opens the disclosure")
+})
+
+// ---------- §1.3-#7 (현행 계승, regression pin) ----------
+test('오늘 재검 목록 renders open when items.length > 0 and collapsed when items.length === 0 (현행 계승)', () => {
+  const closed = render(PAIN_SCENARIO_1)
+  const closedIdx = closed.indexOf('오늘 재검(Structured Reassessment) — 필요할 때 펼치기')
+  const closedTag = closed.slice(closed.lastIndexOf('<details', closedIdx), closed.indexOf('>', closedIdx) + 1)
+  assert.ok(!/\bopen\b/.test(closedTag), 'items.length === 0 -> collapsed')
+
+  const open = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'reassess-open',
+    initialWorkspaceState: {
+      painReassessment: {
+        items: [
+          {
+            id: 'r1', title: '재검 항목', previous: null,
+            result: { status: 'NOT_YET_CHECKED', laterality: 'NOT_APPLICABLE', note: '', recordedAt: null },
+          },
+        ],
+      },
+    },
+  })
+  const openIdx = open.indexOf('오늘 재검(Structured Reassessment) — 필요할 때 펼치기')
+  const openTag = open.slice(open.lastIndexOf('<details', openIdx), open.indexOf('>', openIdx) + 1)
+  assert.ok(/\bopen\b/.test(openTag), 'items.length > 0 -> open')
+})
+
+// ---------- §1.3-#8 (현행 계승, regression pin -- MicroFollowUpCard.tsx:33) ----------
+test('MicroFollowUp 상세 opens exactly when needsAttention is true, matching the existing microFollowUpNeedsAttention() gate', () => {
+  const withAttention = renderWith(PAIN_SCENARIO_1, {
+    microFollowUpResponse: {
+      visit_id: 'v1', patient_id: 'p1', targetRatings: [], overallChange: '', newSymptomReported: true,
+      newSymptomNote: '새로운 통증', adverseEffectReported: false, adverseEffectNote: '', submitted_at: '2026-01-01T00:00:00.000Z',
+    },
+  })
+  const idx = withAttention.indexOf('간단 재확인(Micro Follow-up)')
+  const tag = withAttention.slice(withAttention.lastIndexOf('<details', idx), withAttention.indexOf('>', idx) + 1)
+  assert.ok(/\bopen\b/.test(tag), 'newSymptomReported=true -> needsAttention -> auto-open')
+
+  const withoutAttention = renderWith(PAIN_SCENARIO_1, {
+    microFollowUpResponse: {
+      visit_id: 'v1', patient_id: 'p1', targetRatings: [], overallChange: '괜찮아짐', newSymptomReported: false,
+      newSymptomNote: '', adverseEffectReported: false, adverseEffectNote: '', submitted_at: '2026-01-01T00:00:00.000Z',
+    },
+  })
+  const idx2 = withoutAttention.indexOf('간단 재확인(Micro Follow-up)')
+  const tag2 = withoutAttention.slice(withoutAttention.lastIndexOf('<details', idx2), withoutAttention.indexOf('>', idx2) + 1)
+  assert.ok(!/\bopen\b/.test(tag2), 'no attention flags -> collapsed even though a response exists')
+})
+
+// ---------- §1.3-#10 ----------
+test('재활 제안 disclosure-equivalent renders only when candidate items exist, absent when the candidate list is empty (§2.10 C-4: an always-visible presence check satisfies the same "never hidden without a marker" rule a <details open=""> would)', () => {
+  const withCandidates = renderWith(PAIN_SCENARIO_1, {
+    synthetic: {
+      ...PAIN_SCENARIO_1.synthetic,
+      rehabSuggestions: [
+        {
+          id: 'r1', title: '재활 제안 (SYNTHETIC)', goal: '', rationale: '', sourceFacts: [], contraindicationFacts: [],
+          source: 'SUGGESTED', status: 'SUGGESTED', clinicianFinalInstruction: '',
+        },
+      ],
+    },
+  })
+  assert.ok(withCandidates.includes('재활/운동 제안'), 'the section renders when a candidate exists')
+
+  const withoutCandidates = renderWith(PAIN_SCENARIO_1, { synthetic: { ...PAIN_SCENARIO_1.synthetic, rehabSuggestions: [] } })
+  assert.ok(!withoutCandidates.includes('재활/운동 제안'), 'the section is absent (not an empty open shell) when there are no candidates')
+})
+
+// ---------- §1.3-#16 (신규 disclosure 전수 커버리지, 정적 목록 대조) ----------
+test('every disclosure element Core Reduction P2/P3 introduced has a corresponding open-condition test in this suite (no orphaned <details> without an open={} assertion)', () => {
+  // The 5 disclosures Phase 5 Synthesis v1.2 introduced/changed this round:
+  //   1. §2.4 반대편 유형 입력 세트 (doctor__oppositeType)      -- tested above (#4/#5)
+  //   2. §2.7 발급 "다른 방법" (doctor__nextIssuance__altMethods) -- source-tested in tests/doctor.spec.mjs
+  //   3. §2.10 학습 케이스 (judgment__learningCase)              -- tested below (#15)
+  // (재활 제안/병기 후보는 <details>가 아니라 존재-시에만-렌더 형태로 구현했으므로
+  //  이 정적 목록에서 제외 -- 위 #10 테스트가 그 형태에 맞는 동등 검증을 담당한다.)
+  const workspaceSrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  assert.ok(/className="workspace__optional doctor__oppositeType"\s*\n\s*open=\{/.test(workspaceSrc), '#1: doctor__oppositeType has an open={} condition')
+  const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+  assert.ok(/doctor__nextIssuance__altMethods"\s*open=\{altMethodsAutoOpen\}/.test(viewSrc), '#2: doctor__nextIssuance__altMethods has an open={} condition')
+  const judgmentSrc = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
+  assert.ok(/className="judgment__learningCase" open=\{/.test(judgmentSrc), '#3: judgment__learningCase has an open={} condition')
+})
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

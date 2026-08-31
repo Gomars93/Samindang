@@ -1233,16 +1233,19 @@ function detailsRange(html, classMarker) {
   }
 }
 
-// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 2번 —
-//      기존 주호소 섹션, 명리 검토의 "현재 문진 요약" 열. PR #24부터 herbal
-//      hero는 duration을 별도로 보여주지 않으므로(herbal 프로필의 10초
-//      요약은 전신 증상 우선 -- pain hero만 duration을 보여준다) 예상
-//      횟수가 이전 3회에서 2회로 줄었다 -- 이는 의도된 아키텍처 변경이다.
+// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 3번 —
+//      기존 주호소 섹션, 명리 검토의 "현재 문진 요약" 열, 그리고 Core
+//      Reduction P2부터는 진료 탭 V3 셸의 좌측 요약 ②주호소·기간 블록
+//      (Phase 7 §3.2, 상시 노출) -- 이는 의도된 아키텍처 변경이다: 좌측
+//      요약은 스크롤 없이 항상 보이는 것이 바로 이 배치의 목적이다. PR
+//      #24부터 herbal hero는 duration을 별도로 보여주지 않으므로(herbal
+//      프로필의 10초 요약은 전신 증상 우선 -- pain hero만 duration을
+//      보여준다) 그 경로에서는 하나 늘지 않는다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   const durationLabel = optionLabel('VISIT_03_SYMPTOM_DURATION', '1_3m')
   const count = html.split(durationLabel).length - 1
-  assert('duplication audit: duration label renders exactly 2 times (주호소 + myungri column)', count === 2)
+  assert('duplication audit: duration label renders exactly 3 times (좌측 요약 + 주호소 + myungri column)', count === 3)
 }
 
 /* ---------------------------------------------------------------------
@@ -2994,15 +2997,25 @@ function detailsRange(html, classMarker) {
     'resilience: the detailed record view is wrapped in DoctorRecordErrorBoundary',
     /<DoctorRecordErrorBoundary\s/.test(src) && src.includes('</DoctorRecordErrorBoundary>'),
   )
+  // Core Reduction P2 (delta N-6, Phase 5 Synthesis v1.2 §2.8): the
+  // boundary key is now the SAME unifiedResetKey DoctorWorkspace's
+  // `resetKey` prop and JudgmentPanel's `resetKey` prop both read -- one
+  // computation instead of three independently-typed key expressions that
+  // could silently drift apart.
   assert(
-    'resilience: server-mode boundary key is derived from the selected record id',
-    /key=\{mode === 'server' \? \(selectedRecord\?\.id \?\? 'none'\) : /.test(src),
+    'resilience: unifiedResetKey is computed once (submission:<id> in server mode, fixture:<index>:<scenario> in fixtures mode)',
+    /const unifiedResetKey =\s*\n\s*mode === 'server' \? `submission:\$\{selectedRecord\?\.id \?\? 'none'\}` : `fixture:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`/.test(
+      src,
+    ),
   )
   assert(
-    'resilience: fixtures-mode boundary key changes with both fixtureIndex and workspaceScenarioId ' +
-      '(switching fixture/scenario must remount and clear any stale error state -- a constant key would ' +
-      "leave one fixture's error banner stuck over the next fixture's healthy content)",
-    /: `fixtures:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`\}/.test(src),
+    'resilience: server-mode boundary key is the unified reset key',
+    /key=\{unifiedResetKey\}/.test(src),
+  )
+  assert(
+    'resilience: DoctorWorkspace and JudgmentPanel both receive the SAME unifiedResetKey as their resetKey prop ' +
+      '(a record switch must reset the shell, the error boundary, and the judgment panel in lockstep)',
+    (src.match(/resetKey=\{unifiedResetKey\}/g) ?? []).length >= 2,
   )
   assert(
     'resilience: !payloadShapeOk renders DoctorRecordFallback instead of the normal tab content',
@@ -3013,26 +3026,40 @@ function detailsRange(html, classMarker) {
 /* -------------------------------------------------------------------------
  * P0-3 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-2 "MOVE"): the
  * revisit issuance section ("재진 간단 문진") used to render ABOVE the
- * clinical tabs -- i.e. above CommonSafetyBanner, which lives at the top of
- * the clinical tab's DoctorWorkspace inside DoctorRecordErrorBoundary
- * (Phase 3 §5-1: "안전 배너가 스크롤 아래"). It must now render strictly
- * AFTER the closing </DoctorRecordErrorBoundary> tag -- position only, the
- * section's own content/condition/handlers are unchanged (still gated on
+ * clinical tabs -- i.e. above CommonSafetyBanner (Phase 3 §5-1: "안전
+ * 배너가 스크롤 아래"). Core Reduction P3 (Phase 5 Synthesis v1.2 §2.7)
+ * moves it again, this time INSIDE the 진료 탭의 다음 레인 -- built as
+ * `nextLaneFooterNode` (DoctorView-owned state) and handed to
+ * DoctorWorkspace as the `nextLaneFooter` prop, which that shell renders
+ * inside `.doctor__visitLane--next` (after 레인1 안전 확인, never before
+ * it) rather than DoctorView rendering the section as a direct sibling of
+ * `</DoctorRecordErrorBoundary>` any more -- position only, the section's
+ * own content/condition/handlers are unchanged (still gated on
  * mode==='server' && selectedRecord?.patient_id, still the same handlers).
  * ---------------------------------------------------------------------- */
 {
   const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
-  const boundaryCloseIdx = src.indexOf('</DoctorRecordErrorBoundary>')
-  const revisitSessionIdx = src.indexOf('doctor__revisitSession')
   assert(
-    'P0-3: the revisit issuance section (재진 간단 문진) renders after </DoctorRecordErrorBoundary>, not before it',
-    boundaryCloseIdx !== -1 && revisitSessionIdx !== -1 && boundaryCloseIdx < revisitSessionIdx,
+    'P0-3/P3: the revisit issuance section is built as nextLaneFooterNode and handed to DoctorWorkspace as nextLaneFooter',
+    src.includes('const nextLaneFooterNode =') && /nextLaneFooter=\{nextLaneFooterNode\}/.test(src),
   )
   assert(
-    'P0-3: the revisit issuance section is still gated on the exact same condition as before the move',
-    /\{mode === 'server' && selectedRecord\?\.patient_id && \(\s*<section className="doctor__section doctor__revisitSession">/.test(
-      src,
-    ),
+    'P0-3/P3: the revisit issuance section is still gated on the exact same condition as before the move',
+    /const nextLaneFooterNode =\s*\n\s*mode === 'server' && selectedRecord\?\.patient_id \? \(/.test(src) &&
+      src.includes('<section className="doctor__section doctor__revisitSession doctor__nextIssuance">'),
+  )
+  const workspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'P0-3/P3: DoctorWorkspace renders {nextLaneFooter} inside the 다음 레인 (doctor__visitLane--next), after 레인1 안전 확인 -- never above CommonSafetyBanner',
+    (() => {
+      const lane1Idx = workspaceSrc.indexOf('doctor__visitLane--lane1')
+      const nextLaneIdx = workspaceSrc.indexOf('doctor__visitLane--next')
+      const footerIdx = workspaceSrc.indexOf('{nextLaneFooter}')
+      return lane1Idx !== -1 && nextLaneIdx !== -1 && footerIdx !== -1 && lane1Idx < nextLaneIdx && nextLaneIdx < footerIdx
+    })(),
   )
 }
 
@@ -3059,7 +3086,11 @@ function detailsRange(html, classMarker) {
     !fnBody.includes("'in_consultation'"),
   )
   assert(
-    'P0-5: the "진료 완료" button exists in the header area, gated on server mode + an open record',
+    // Core Reduction P3 (§2.3/§2.7 "종결"): the button moved out of the
+    // always-visible header into the 진료 탭의 다음 레인(nextLaneFooterNode),
+    // next to the EMR review it now sits beside -- same condition, same
+    // handler, position only.
+    'P0-5/P3: the "진료 완료" button exists (now inside the 다음 레인 "종결" section), gated on server mode + an open record',
     /\{mode === 'server' && selectedRecord && selectedId && \(\s*<button[\s\S]{0,300}?onClick=\{handleCompleteSubmission\}/.test(
       src,
     ),
@@ -3077,20 +3108,34 @@ function detailsRange(html, classMarker) {
  * ---------------------------------------------------------------------- */
 {
   const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  // Core Reduction P2: ObjectiveExamFindingsCard itself moved INSIDE
+  // DoctorWorkspace.tsx's 레인2("확인") -- DoctorView.tsx no longer renders
+  // the component directly, it only supplies the save handler via the
+  // `onSaveObjectiveExam` prop (same handleSaveObjectiveExamField, same
+  // condition as before this round's move).
   assert(
-    'P0-2: ObjectiveExamFindingsCard is imported and rendered in the clinical tab, after <DoctorWorkspace and before the reference tab',
-    src.includes("import { ObjectiveExamFindingsCard } from './ObjectiveExamFindingsCard'") &&
+    'P0-2/P2: DoctorView.tsx no longer renders <ObjectiveExamFindingsCard> directly -- it passes onSaveObjectiveExam to DoctorWorkspace instead',
+    !src.includes('<ObjectiveExamFindingsCard') &&
+      /onSaveObjectiveExam=\{mode === 'server' && selectedId \? handleSaveObjectiveExamField : undefined\}/.test(src),
+  )
+  const workspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'P0-2/P2: ObjectiveExamFindingsCard is imported and rendered inside DoctorWorkspace.tsx\'s 레인2 ("확인"), after 레인1 안전 확인',
+    workspaceSrc.includes("import { ObjectiveExamFindingsCard") &&
       (() => {
-        const workspaceIdx = src.indexOf('<DoctorWorkspace')
-        const cardIdx = src.indexOf('<ObjectiveExamFindingsCard')
-        const referenceTabIdx = src.indexOf("<div hidden={recordTab !== 'reference'}>")
-        return workspaceIdx !== -1 && cardIdx !== -1 && referenceTabIdx !== -1 && workspaceIdx < cardIdx && cardIdx < referenceTabIdx
+        const lane1Idx = workspaceSrc.indexOf('doctor__visitLane--lane1')
+        const lane2Idx = workspaceSrc.indexOf('doctor__visitLane--lane2')
+        const cardIdx = workspaceSrc.indexOf('<ObjectiveExamFindingsCard')
+        return lane1Idx !== -1 && lane2Idx !== -1 && cardIdx !== -1 && lane1Idx < lane2Idx && lane2Idx < cardIdx
       })(),
   )
   assert(
     'P0-2: ObjectiveExamFindingsCard uses the SAME nullish safety_flags.<region> applicability signal as JudgmentPanel\'s showLbpExam/showShoulderExam (6th independent review HIGH-1/MEDIUM-1)',
     /<ObjectiveExamFindingsCard[\s\S]{0,400}?showLbp=\{payload\.responses\.safety_flags\.lbp != null\}[\s\S]{0,200}?showShoulder=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(
-      src,
+      workspaceSrc,
     ),
   )
   assert(
@@ -3110,6 +3155,53 @@ function detailsRange(html, classMarker) {
       panelSrc.includes('{showShoulderExam && (') &&
       !/type="radio"\s*\n\s*name="lbp_objective_motor_deficit"/.test(panelSrc) &&
       !/type="radio"\s*\n\s*name="shoulder_objective_cuff_weakness"/.test(panelSrc),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P3 — Phase 7 UI spec §1.3-#1/#2/#3 (§2.7 발급 "다른 방법"
+ * 자동 펼침). nextLaneFooterNode only ever builds in server mode with an
+ * open submission (mode==='server' && selectedRecord?.patient_id) --
+ * doctor.spec.mjs's renderDoctorView() helper runs in fixtures mode, which
+ * can never reach that branch, so these are structural (source) checks,
+ * the same style this file already uses for every other issuance-state
+ * assertion in this section (see the P0-3 block above).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    '§1.3-#1/#2: activeSession and unconsumedToken are both derived from issuedSession !== null (the one in-memory signal this codebase holds for "a one-time patient link is outstanding")',
+    src.includes('const activeSession = issuedSession !== null') && src.includes('const unconsumedToken = issuedSession !== null'),
+  )
+  assert(
+    '§1.3-#1/#2: altMethodsAutoOpen is their OR, and the "다른 방법" details reads it as its open condition',
+    src.includes('const altMethodsAutoOpen = activeSession || unconsumedToken') &&
+      /className="doctor__nextIssuance__altMethods" open=\{altMethodsAutoOpen\}/.test(src),
+  )
+  assert(
+    '§1.3-#3: with neither an active session nor an unconsumed token (issuedSession initial state is null), altMethodsAutoOpen evaluates false -- the details starts collapsed on the default (no-issuance-yet) path',
+    src.includes(
+      "const [issuedSession, setIssuedSession] = useState<\n    { visitId: string; token: string; expiresAt: string; targetCount: number } | null\n  >(null)",
+    ) || /useState<\s*\{ visitId: string; token: string; expiresAt: string; targetCount: number \} \| null\s*>\(null\)/.test(src),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P3 — Phase 7 UI spec §1.3-#15 (§2.10, delta N-4): 학습
+ * 케이스 disclosure(Phase 1 audit row 81) opens exactly when
+ * judgment.learning_case === true.
+ * ---------------------------------------------------------------------- */
+{
+  const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    '§1.3-#15: judgment__learningCase disclosure open condition is exactly judgment.learning_case === true',
+    /className="judgment__learningCase" open=\{judgment\.learning_case === true\}/.test(panelSrc),
+  )
+  assert(
+    '§1.3-#15: the checkbox itself (row 81) still lives inside that disclosure, unchanged',
+    /<details className="judgment__learningCase" open=\{judgment\.learning_case === true\}>[\s\S]{0,400}?type="checkbox"[\s\S]{0,100}?checked=\{judgment\.learning_case\}/.test(
+      panelSrc,
+    ),
   )
 }
 

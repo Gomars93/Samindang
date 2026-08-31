@@ -406,4 +406,16 @@ test('MedicationCourseSection: reasonCodeLabel/taskStatusLabel fall back to "확
   )
 })
 
+// Phase 7 UI spec §1.3-#9 (Core Reduction P2/P3, 현행 계승): 투약 코스
+// details open when courses.length > 0. Pre-existing behavior, untouched
+// by this round -- pinned here as the regression guard §1's test-name
+// contract asks for, and noting the actual implementation is stronger
+// than the spec's literal `open={courses.length > 0}`: a clinician's own
+// manual collapse (`manualOpen`) takes precedence once set, so a reload
+// never force-reopens a section they deliberately closed.
+test('MedicationCourseSection: 투약 코스 details opens when courses exist (courses.length > 0), auto-expand heuristic pre-existing and untouched', () => {
+  assert.match(src, /const \[manualOpen, setManualOpen\] = useState<boolean \| null>\(null\)/)
+  assert.match(src, /const detailsOpen = manualOpen \?\? Boolean\(courses && courses\.length > 0\)/)
+})
+
 console.log(`\n${passed} MedicationCourseSection load-epoch structural assertions passed.`)

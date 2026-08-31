@@ -6,6 +6,7 @@
  */
 import { useId } from 'react'
 import {
+  EXAM_CHECK_STATUS_GLYPH,
   EXAM_CHECK_STATUS_LABEL,
   LATERALITY_LABEL,
   PROVENANCE_BADGE,
@@ -68,7 +69,7 @@ function ReassessmentItemCard({
               })
             }
           >
-            {EXAM_CHECK_STATUS_LABEL[s]}
+            <span aria-hidden="true">{EXAM_CHECK_STATUS_GLYPH[s]}</span> {EXAM_CHECK_STATUS_LABEL[s]}
           </button>
         ))}
       </div>

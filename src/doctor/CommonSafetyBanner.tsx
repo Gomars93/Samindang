@@ -626,6 +626,22 @@ function answerLabelFor(qid: string, value: AnswerValue | undefined): string {
 }
 
 /**
+ * Core Reduction P2 (Phase 7 §2.2/§1.1): the lane1 union summary
+ * (src/doctor/workspace/lane1Summary.ts) needs the exact same "does the
+ * common danger banner fire" boolean this component already computes for
+ * its own top block, without re-deriving flagsUsable/requires_staff_check
+ * a second time (that duplication is itself the class of drift Phase 6
+ * warns about). Exported so lane1Summary.ts can import it directly instead
+ * of forking a third copy of isFlagsUsable.
+ */
+export function commonSafetyBannerActive(payload: DoctorPayload): boolean {
+  const r = payload.responses
+  const { flags } = payload
+  const flagsUsable = isFlagsUsable(flags, r)
+  return !flagsUsable || (flagsUsable && Boolean(flags.requires_staff_check))
+}
+
+/**
  * Common Safety — always rendered above any workspace tab, in every
  * view_profile (pain/herbal/mixed). Never gated behind a tab: a safety
  * flag must never be one click away from being missed (governing task

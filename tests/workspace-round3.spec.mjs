@@ -451,9 +451,16 @@ function assert(name, cond) {
   )
 
   const src = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/microFollowUp.ts', import.meta.url)), 'utf8')
+  // Core Reduction P2 (Phase 5 Synthesis v1.2 §2.3, Phase 7 §3.2 block ③
+  // "지난 대비"): microFollowUpQuoteLine() reads both fields ONE more time
+  // each, purely to pick WHICH already-existing string to quote first on
+  // the left-column summary line -- it computes no new threshold or
+  // clinical meaning from them (needsAttention itself is untouched), so
+  // the guard's limit moves from 6 to 8 rather than being weakened
+  // wholesale.
   assert(
-    'microFollowUp.ts source contains no threshold/branching logic on newSymptomReported or adverseEffectReported beyond the needsAttention flag',
-    (src.match(/newSymptomReported|adverseEffectReported/g) ?? []).length <= 6,
+    'microFollowUp.ts source contains no threshold/branching logic on newSymptomReported or adverseEffectReported beyond the needsAttention flag and the P2 quote-line picker',
+    (src.match(/newSymptomReported|adverseEffectReported/g) ?? []).length <= 8,
   )
 }
 

@@ -138,6 +138,32 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2c-1b. Doctor View Opus UX Review v0.1 §B3 regression: primary concern is
+ *        non-pain (sleep) but the patient answered LBP_01-14 via Additional
+ *        Detailed Concern. safety_flags.lbp is non-null even though
+ *        routing.primary_module_detail stays null (only
+ *        additional_module_detail is 'LBP') -- LbpSafetyPanel/showLbpExam
+ *        must gate on safety_flags.lbp, not the primary_module_detail
+ *        literal, or this patient's LBP safety info silently disappears.
+ * ------------------------------------------------------------------- */
+
+{
+  const name = '수면 주호소 + 추가 상세상담(허리 통증, LBP 안전확인 게이트 회귀)'
+  const f = byName(name)
+  assert('B3 regression fixture: primary_module_detail is null (primary concern is sleep, not pain)', f.payload.routing.primary_module_detail === null)
+  assert('B3 regression fixture: additional_module_detail is LBP', f.payload.routing.additional_module_detail === 'LBP')
+  assert('B3 regression fixture: safety_flags.lbp is non-null despite primary_module_detail being null', f.payload.responses.safety_flags.lbp !== null)
+  assert(
+    'B3 regression fixture: lbp_safety_status is REVIEW_REQUIRED (bilateral + NUMBNESS, same pattern as primary-LBP fixture)',
+    f.payload.responses.safety_flags.lbp?.lbp_safety_status === 'REVIEW_REQUIRED',
+  )
+
+  const html = renderDoctorView(name)
+  assert('B3 regression: 안전 확인 — 허리(LBP) panel renders despite null primary_module_detail', html.includes('안전 확인 — 허리'))
+  assert('B3 regression: LBP exam input (객관적 하지 근력저하 소견) renders in JudgmentPanel', html.includes('객관적 하지 근력저하 소견'))
+}
+
+/* ---------------------------------------------------------------------
  * 2c-2. Tablet UX v2.1 §11-§24: Primary/Additional Detailed Concern/
  *       Reference Symptoms render as three distinct DoctorView sections.
  * ------------------------------------------------------------------- */

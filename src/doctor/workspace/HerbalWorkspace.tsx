@@ -123,23 +123,35 @@ export function HerbalWorkspaceLane2({
             </div>
           ))}
         </div>
-        <div className="workspace__heroRow">
-          <span>상담 목적</span>
-          <strong>{primaryConcernLabel(r)}</strong>
-        </div>
-        <div className="workspace__heroRow">
-          <span>안전이슈</span>
-          <strong
-            className={!flagsUsable || safetyCats.length > 0 ? 'workspace__heroRow__value--danger' : undefined}
-          >
-            {!flagsUsable
-              ? '확인 필요 — 계산값 읽기 불가'
-              : safetyCats.length > 0
-                ? safetyCats.join(', ')
-                : safetyAnswered
-                  ? '없음'
-                  : '미확인'}
-          </strong>
+        {/*
+          P5 (Core Reduction, Phase 5 Synthesis v1.2 §6): wrapped in the
+          SAME `.workspace__heroRows` container PainWorkspace.tsx already
+          uses for its own conditional detail rows (not a new pattern) --
+          purely structural, no field/label/content change. At the
+          1024-1279px 그리드 재배열 breakpoint this lets the two rows sit
+          side by side instead of stacking, removing one full row of
+          height from the tallest card in this lane; every other viewport
+          keeps the original stacked flex-column layout unchanged.
+        */}
+        <div className="workspace__heroRows">
+          <div className="workspace__heroRow">
+            <span>상담 목적</span>
+            <strong>{primaryConcernLabel(r)}</strong>
+          </div>
+          <div className="workspace__heroRow">
+            <span>안전이슈</span>
+            <strong
+              className={!flagsUsable || safetyCats.length > 0 ? 'workspace__heroRow__value--danger' : undefined}
+            >
+              {!flagsUsable
+                ? '확인 필요 — 계산값 읽기 불가'
+                : safetyCats.length > 0
+                  ? safetyCats.join(', ')
+                  : safetyAnswered
+                    ? '없음'
+                    : '미확인'}
+            </strong>
+          </div>
         </div>
       </section>
 

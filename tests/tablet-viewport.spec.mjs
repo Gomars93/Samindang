@@ -51,24 +51,28 @@ import path from 'node:path'
 // baseline with the same "a little above measured" headroom the original
 // round-15 comment describes.
 //
-// tablet landscape 1024x768 is the one exception, and is left at a wider
-// INTERIM budget/ceiling rather than silently forced under 1.5:
-// §3.1's own grid table fixes this breakpoint's right (content) column at
-// only ≈700px (260px aside + 24px gutter + 24px×2 padding out of 1024px --
+// tablet landscape 1024x768 (P5 closes the gap P2/P3 left open here): §3.1's
+// own grid table fixes this breakpoint's right (content) column at only
+// ≈700px (260px aside + 24px gutter + 24px×2 padding out of 1024px --
 // Phase 4 §8.1's own "우측 열 폭 ≈ 700px 기준"), a full ~28% narrower than
 // this same content occupied before the V3 shell (the aside did not exist
-// yet). The internal grids this measures (workspace.css's hero/systemic/
-// final-assessment layouts, including round 15's own 900-1100px
-// tablet-landscape override) were tuned for the OLD full-width ~984px
-// column and were not part of this round's scope (P2/P3) -- retuning them
-// for the new ~700px column is exactly Phase 5 Synthesis v1.2 §6's P5
-// (반응형 마감) responsibility. Measured 1361px/768px = 1.77x here; the
-// budget below is set with headroom above that specific, disclosed
-// interim number so a FURTHER regression still fails loudly, without
-// pretending this breakpoint already meets the 1.5x target it does not.
+// yet). Round 15's 900-1100px tablet-landscape overrides (workspace.css)
+// were tuned for that OLD full-width ~984px column and still fired at
+// 1024px viewport width, but everything ELSE around them -- lane/next-pair
+// spacing, final-assessment/hero/checklist padding and gaps, the 3-field
+// primary grid staying 2-column when 677px of room fits it in one row
+// instead -- was still sized for the wider column P2/P3 had not yet
+// retuned (measured 1361px/768px = 1.77x, over budget). P5 retunes exactly
+// those (doctor.css/workspace.css's own matching 1024-1279px media query,
+// scoped so 1280+ and 834 portrait are untouched) -- content/field count is
+// unchanged, only density and one grid rearrangement (the two always-
+// present hero summary rows sit side by side instead of stacked). Measured
+// 1090px/768px = 1.42x, back under the same 1.5x budget every other
+// viewport already met, with the same "a little above measured" ceiling
+// headroom as the other two rows.
 const VIEWPORTS = [
   { name: 'desktop 1440x900', width: 1440, height: 900, ceiling: 1300, budget: 1.5 },
-  { name: 'tablet landscape 1024x768', width: 1024, height: 768, ceiling: 1450, budget: 1.9 },
+  { name: 'tablet landscape 1024x768', width: 1024, height: 768, ceiling: 1200, budget: 1.5 },
   { name: 'tablet portrait 834x1112', width: 834, height: 1112, ceiling: 1700, budget: 1.5 },
 ]
 const MIN_TARGET = 36

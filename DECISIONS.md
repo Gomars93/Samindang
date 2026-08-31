@@ -1196,3 +1196,74 @@ Done("relevant tests 통과", "테스트 우회 금지")과 정면으로 충돌�
   걸쳐 있고 각각 전용 회귀 테스트가 이미 있어, 이번 세션에 남은
   범위(P5 예산 재조정 + P6 상태·메트릭 테스트)를 안전하게 끝내는 것을
   우선했다. 다음 착수 과제로 명시한다.
+
+## 2026-08-31 — Core Reduction P5: 1024×768 랜드스케이프 예산을 1.9x
+임시완화에서 1.5x로 복귀, 근본 원인은 CSS cascade 순서였음
+
+### Context
+P2/P3(`d871ce9`)가 명시적으로 이월한 과제 — 1024×768 landscape에서
+측정된 1.77x(1361px)가 `tests/tablet-viewport.spec.mjs`의 임시 1.9x
+완화값으로만 통과하던 것을 실측 기반으로 1.5x(다른 두 뷰포트와 동일
+목표)로 되돌린다.
+
+### Decision
+1. **원인 진단**: 헤드리스 Chrome으로 실제 렌더 트리를 측정해보니
+   (`.doctor__visitWork`의 실측 폭 677px, §3.1 표의 700px 추정과 근접)
+   기존 round-15 900-1100px 오버라이드(`workspace.css`)는 1024px
+   viewport에서 여전히 발동하고 있어 "그 부분이 새지 않았다"가 확인됐다
+   — 새지 않은 건 그 *주변*의 나머지 밀도(카드 padding/gap, 레인 사이
+   간격, "판단·처치" 3필드가 2열에 갇혀 불필요하게 한 행을 더 쓰는 것
+   등)였다.
+2. **그리드 재배열 3가지(콘텐츠 삭제 없음)**:
+   - `workspace__finalAssessment__fields--primary`: 이 좁은 폭 구간에서
+     2열(→2행) 대신 desktop과 같은 3열(→1행)로 되돌려 한 행을 통째로
+     제거. round 15가 3열을 기각한 이유(~984px 기준 3열=~310px "타이핑에
+     빡빡함")가 이 구간(~677px 기준 3열=~210px)에는 그대로 적용되지
+     않는다는 판단하에, 이미 834 portrait의 전체폭 단일열(~380px)보다
+     좁긴 하지만 rows=2 텍스트영역에 감당 가능한 수준으로 봄(trade-off로
+     아래 기록).
+   - HerbalWorkspace.tsx의 "상담 목적"/"안전이슈" 두 heroRow를
+     PainWorkspace.tsx가 이미 쓰던 `.workspace__heroRows` 래퍼로 감싸고
+     (새 패턴 아님, 기존 패턴 재사용), 이 구간에서만 `display:grid`로 두
+     행을 나란히 배치 — 한 행 제거.
+   - 나머지는 padding/margin/gap 밀도 조정(레인 간격, finalAssessment/
+     hero/block/followUp 카드 내부 여백).
+3. **근본 원인 하나 더 발견·수정**: `.doctor__visitLane`/
+   `.doctor__nextPairRow`(둘 다 `doctor.css` 소유)에 대한 첫 시도의
+   오버라이드를 `workspace.css`에 작성했더니 **조용히 무효**했다 —
+   `getComputedStyle`로 직접 확인해보니 media query 매치 여부와 무관하게
+   동일 specificity에서는 최종 번들 내 등장 순서가 이긴다는 CSS
+   규칙대로, `doctor.css`가 `workspace.css`보다 번들에서 나중에 오는 이
+   저장소의 실제 빌드 순서 때문에 `workspace.css`의 오버라이드가
+   `doctor.css`의 무조건 규칙에 매번 졌다. 수정: 그 두 클래스에 대한
+   오버라이드를 소유 파일(`doctor.css`)로 옮기고, 해당 파일 안에서 기존
+   규칙보다 뒤에 배치.
+4. **`tests/tablet-viewport.spec.mjs` 갱신**: 1024 랜드스케이프 budget을
+   1.9→1.5, ceiling을 1450→1200(실측 1090px에 다른 두 행과 동일한
+   여유폭)으로 되돌리고, 주석을 1.77x→1.42x 실측 결과로 갱신.
+
+### Reason
+CSS 미디어쿼리는 selector specificity를 바꾸지 않는다 — "media query
+안에 있다"는 사실 자체가 우선순위를 주지 않고, 동일 specificity에서는
+여전히 "스타일시트 안에서 어느 게 나중에 오는가"로 결정된다는 걸
+실측(getComputedStyle)으로 직접 재확인하지 않았다면 첫 시도의 무효한
+오버라이드를 "효과가 없다"로 오인하고 계속 다른 값을 시도했을 것 —
+diag 스크립트로 매 라운드 실제 렌더 높이를 측정하며 반복한 것이 이
+근본 원인을 드러냈다.
+
+### Trade-offs
+- (+) 세 뷰포트 전부 동일 1.5x 예산 통과(desktop 1.41x/1024 1.42x/
+  portrait 1.43x), overflowX 0, 터치 타겟 40/40/48px, 항상 열린 입력
+  4개, 체크리스트 접힘 상태 — `npm run test:tablet-viewport` 24
+  assertion 전부 green.
+- (+) 필드/라벨/콘텐츠 삭제 0건 — 그리드 열 수 재배열과 밀도(padding/
+  gap/margin)만 조정.
+- (−) `workspace__finalAssessment__fields--primary`가 이 구간에서
+  ~210px 폭 3열이 되어, round 15가 명시적으로 "타이핑에 빡빡하다"고
+  판단했던 310px보다 더 좁다 — 다음 실제 QA(Phase 9)에서 실제 태블릿
+  손가락 타이핑감을 확인할 것을 권장(텍스트 자체는 rows=2 고정이라
+  터치 타겟 최소 높이 요구사항과는 무관).
+- (−) 레인 간격을 834/1280/1440과 다르게 1024 구간에서만 한 번 더
+  압축(12→8px 등)했다 — 시각적으로 이 구간만 살짝 더 촘촘해 보일 수
+  있으나, 안전 정보(레인1)와 배지/글리프 등 3중 인코딩 요소는 전혀
+  건드리지 않았다.

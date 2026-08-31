@@ -1637,3 +1637,36 @@
   border-top: 1px dashed var(--border);
   padding-top: 10px;
 }
+
+/*
+ * P5 (Core Reduction, Phase 5 Synthesis v1.2 §6 / Phase 7 UI spec §3.1):
+ * re-tightens `doctor__*`-owned lane/next-pair spacing specifically for
+ * the narrow-aside 1024 breakpoint (~677-700px real content column,
+ * §3.1's own table) -- 1280+ and 834 portrait keep the existing 16/24/32
+ * rhythm unchanged, since only this range measured over its 1.5x budget.
+ * Placed in THIS file (not workspace.css) and after these classes' base
+ * rules on purpose: `.doctor__visitLane`/`.doctor__nextPairRow` are
+ * defined here, and CSS resolves equal-specificity rules by final
+ * position in the bundled stylesheet -- an override placed in
+ * workspace.css for a doctor.css-owned class silently lost to this
+ * file's unconditional rule (doctor.css bundles after workspace.css),
+ * confirmed via getComputedStyle before moving it here to match every
+ * other `workspace__*` override in the same media condition
+ * (workspace.css handles those, since it owns them).
+ */
+@media (min-width: 1024px) and (max-width: 1279px), (min-width: 834px) and (max-width: 1279px) and (orientation: landscape) {
+  .doctor__visitLane {
+    padding-top: 8px;
+    margin-top: 10px;
+  }
+  .doctor__visitLane:first-child {
+    padding-top: 14px;
+  }
+  .doctor__visitLane > h2 {
+    margin: 0 0 4px;
+  }
+  .doctor__nextPairRow {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+}

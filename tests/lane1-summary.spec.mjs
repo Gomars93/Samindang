@@ -122,6 +122,37 @@ test('the left-column truncation rule never causes a URGENT-severity region to b
   assert.equal(truncated2.overflowCount, 1)
 })
 
+// ---------- MAJOR-2 (Phase 10 closing review): hasUnreadableSafetyField axis ----------
+
+test('MAJOR-2: an unreadable common safety field (malformed medication_use) blocks CLEAR (계산불가), even when the common banner is quiet and every region is CLEAR', () => {
+  const payload = payloadWithBanner(false)
+  payload.responses = structuredClone(payload.responses)
+  payload.responses.medication.medication_use = 'corrupted-legacy-value' // not one of yes/unknown/none
+  const regions = [region('lbp', '허리', 'clear'), region('neck', '목', 'clear'), region('shoulder', '어깨', 'clear')]
+  const summary = computeLane1Summary(payload, regions)
+  assert.notEqual(summary.status, 'CLEAR')
+  assert.equal(summary.status, '계산불가')
+  assert.equal(summary.unreadableSafetyField, true)
+})
+
+test('MAJOR-2: an unreadable common safety field does NOT by itself raise URGENT -- it stays 계산불가, not URGENT, when the common banner itself is quiet', () => {
+  const payload = payloadWithBanner(false)
+  payload.responses = structuredClone(payload.responses)
+  payload.responses.medication.medication_use = 'corrupted-legacy-value'
+  const regions = [region('lbp', '허리', 'clear')]
+  const summary = computeLane1Summary(payload, regions)
+  assert.equal(summary.status, '계산불가')
+  assert.notEqual(summary.status, 'URGENT')
+})
+
+test('MAJOR-2: a readable payload (no unreadable safety field) reports unreadableSafetyField=false and can still reach CLEAR', () => {
+  const payload = payloadWithBanner(false)
+  const regions = [region('lbp', '허리', 'clear')]
+  const summary = computeLane1Summary(payload, regions)
+  assert.equal(summary.unreadableSafetyField, false)
+  assert.equal(summary.status, 'CLEAR')
+})
+
 test('an unrecognized/malformed region element status fails closed to unavailable, never to CLEAR', () => {
   const payload = payloadWithBanner(false)
   const regions = [{ key: 'lbp', label: '허리', element: React.createElement('div', { className: 'doctor__lbpSafety doctor__lbpSafety--somethingUnknown' }) }]

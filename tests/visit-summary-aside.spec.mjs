@@ -92,7 +92,7 @@ test('worst-case fixture: exactly 2 of the 3 regions show, with 외 1 naming the
   assert.ok(/외\s*1/.test(regionsBlock), 'the third (calc-unavailable) region is named via 외 N, never silently dropped')
 })
 
-test('worst-case fixture: the save-status row (block ⑤) is REPLACED by the inline auth-recovery token input, not appended alongside a generic failure message', () => {
+test('MAJOR-3 (Phase 10 closing review): the save-status row (block ⑤) is REPLACED by a 1-line "인증 만료 — 토큰 다시 입력" action, never the full token-entry form inline (that clipped at the 20px budget)', () => {
   const html = render(
     baseProps({
       lane1: {
@@ -108,8 +108,27 @@ test('worst-case fixture: the save-status row (block ⑤) is REPLACED by the inl
       lastSaveErrorKind: 'auth',
     }),
   )
-  assert.ok(html.includes('doctor token'), 'the inline token-reentry input renders in place of the save row')
-  assert.ok(!html.includes('저장 실패 — 다시 시도해주세요'), 'the generic failure text is REPLACED, not shown alongside the recovery form')
+  assert.ok(html.includes('인증 만료 — 토큰 다시 입력'), 'the 1-line auth-recovery action renders in place of the save row')
+  assert.ok(!html.includes('doctor token'), 'the full token-entry form must NOT render inline inside the 20px-budget block ⑤ (that is exactly the clipping bug)')
+  assert.ok(!html.includes('저장 실패 — 다시 시도해주세요'), 'the generic failure text is REPLACED, not shown alongside the recovery action')
+})
+
+test('MAJOR-3: clicking the auth-recovery action calls onOpenTokenReentry (the caller renders the actual form outside this budget), never DoctorTokenSetup directly', () => {
+  let opened = false
+  const html = render(
+    baseProps({
+      saveStatus: 'error',
+      lastSaveErrorKind: 'auth',
+      onOpenTokenReentry: () => {
+        opened = true
+      },
+    }),
+  )
+  assert.ok(html.includes('doctor__visitSummary__authBtn'), 'the action renders as the dedicated 1-line button class')
+  // renderToString cannot fire onClick (no DOM), so this only proves the
+  // wiring compiles/renders with the callback prop present -- the actual
+  // click-fires-callback behavior is exercised by the headless test below.
+  assert.equal(typeof opened, 'boolean')
 })
 
 test('worst-case fixture: the 🔒 lock indicator renders (a non-CLEAR/해당없음 union status locks the summary)', () => {

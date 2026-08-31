@@ -98,6 +98,65 @@ test('a non-empty queue renders neither the loading nor the empty-state copy', (
   assert.ok(!html.includes('오늘 예정된 문진이 없습니다'))
 })
 
+// ---------- BLOCKER-1 (Phase 10 closing review): needsAttention DOM placement ----------
+
+test('BLOCKER-1: a needsAttention row with completed=true renders OUTSIDE doctor__todayQueue__completed <details>, in the always-visible grid, and is counted in 오늘 (N)', () => {
+  const attentionRow = {
+    key: 'revisit:v-attn',
+    kind: 'revisit',
+    badge: 'NONE',
+    needsAttention: true,
+    reason: '재검 예정',
+    reasonNote: '문진 없음 — 안전 계산 없음',
+    displayName: '확인필요환자',
+    chartNo: null,
+    identityUnresolved: false,
+    patientUuidForIdentityLink: null,
+    timeIso: '2026-08-31T00:00:00.000Z',
+    completed: true, // server/store.js: micro follow-up response sets BOTH needsAttention and status COMPLETED together
+    scheduledToday: false,
+    isNew: false,
+    revisitVisitId: 'v-attn',
+    revisitPatientId: 'p-attn',
+  }
+  const html = render(baseProps({ rows: [attentionRow] }))
+  assert.ok(/오늘 \(<!-- -->1<!-- -->\)/.test(html), 'counted in the always-visible header count, not excluded')
+  assert.ok(!/완료 \(<!-- -->1<!-- -->\)/.test(html), 'never folded into the completed <details> summary count')
+  // Extract the doctor__todayQueue__completed <details> block (if any) and
+  // confirm the attention row's identifying text is NOT inside it.
+  const detailsMatch = html.match(/<details class="doctor__todayQueue__completed"[\s\S]*?<\/details>/)
+  if (detailsMatch) {
+    assert.ok(!detailsMatch[0].includes('확인필요환자'), 'attention row must not be nested inside the completed <details>')
+  }
+  assert.ok(html.includes('확인필요환자'), 'attention row is rendered somewhere on the page')
+})
+
+test('BLOCKER-1: a plain completed row (no needsAttention) still folds into doctor__todayQueue__completed as before (no regression)', () => {
+  const plainCompleted = {
+    key: 'revisit:v-plain',
+    kind: 'revisit',
+    badge: 'NONE',
+    needsAttention: false,
+    reason: '재검 예정',
+    reasonNote: '문진 없음 — 안전 계산 없음',
+    displayName: '평범환자',
+    chartNo: null,
+    identityUnresolved: false,
+    patientUuidForIdentityLink: null,
+    timeIso: '2026-08-31T00:00:00.000Z',
+    completed: true,
+    scheduledToday: false,
+    isNew: false,
+    revisitVisitId: 'v-plain',
+    revisitPatientId: 'p-plain',
+  }
+  const html = render(baseProps({ rows: [plainCompleted] }))
+  assert.ok(/오늘 \(<!-- -->0<!-- -->\)/.test(html), 'plain completed row is excluded from the always-visible count')
+  const detailsMatch = html.match(/<details class="doctor__todayQueue__completed"[\s\S]*?<\/details>/)
+  assert.ok(detailsMatch, 'the completed <details> must exist')
+  assert.ok(detailsMatch[0].includes('평범환자'), 'plain completed row IS nested inside the completed <details>')
+})
+
 // ---------- 2. Queue 소스 폴링 실패 (Phase 5 Synthesis v1.2 §2.3 (b)안) ----------
 
 const freshFailed = (lastGoodAt) => ({ failed: true, lastGoodAt, onRetry: () => {} })

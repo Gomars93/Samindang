@@ -304,6 +304,23 @@ test('P0-1/§1.1-#5 fail-open guard: the lane1 union summary chip reflects a her
   assert.ok(chipMatch, 'a lane1 status chip renders at all')
 })
 
+test('MAJOR-2 (Phase 10 closing review): a corrupted medication_use payload makes SafetyGlance warn "안전정보 일부를 읽을 수 없습니다" while the lane1 chip must NOT read CLEAR (fail-open, live-demonstrated)', () => {
+  const mutated = structuredClone(PAIN_SCENARIO_1.payload)
+  mutated.responses.medication.medication_use = 'corrupted-legacy-value'
+  const html = render({ ...PAIN_SCENARIO_1, payload: mutated })
+  assert.ok(
+    html.includes('안전정보 일부를 읽을 수 없습니다'),
+    'sanity: the full-record SafetyGlance really does warn about this corrupted field',
+  )
+  assert.ok(
+    !html.includes('doctor__lane1Chip--clear'),
+    'the left-hand lane1 chip must never read CLEAR while the full record warns beside it',
+  )
+  const chipMatch = html.match(/doctor__lane1Chip doctor__lane1Chip--(\w+)/)
+  assert.ok(chipMatch, 'a lane1 status chip renders at all')
+  assert.equal(chipMatch[1], 'unavailable', 'the chip must read 계산불가 (--unavailable), matching the union axis')
+})
+
 test('round 11: the mandatory-looking Clinical Loop checklist is gone from the default view', () => {
   for (const scenario of [PAIN_SCENARIO_1, HERBAL_SCENARIO_1, MIXED_SCENARIO_1]) {
     const html = render(scenario)

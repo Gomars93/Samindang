@@ -331,4 +331,88 @@ test('lane1 summary union recomputes on every render-time reset boundary (submis
   assert.notEqual(secondChip.props.className, firstStatusClass, "the previous record's union status class must not survive onto the new record")
 })
 
+// ---------- m4 (Phase 10 closing review): ObjectiveExamFindingsCard isolation ----------
+test('m4: ObjectiveExamFindingsCard\'s own radio selection (LBP objective motor deficit) does not leak into the next patient across the unified reset key transition', () => {
+  // PAIN_SCENARIO_1 answers real LBP_* questions (safety_flags.lbp != null),
+  // so showLbp is true and this card's radiogroup actually renders. Neither
+  // scenario passes lbpObjectiveMotorDeficit as an external prop, so the
+  // card's OWN internal `useState` starts unchecked -- any checked radio
+  // seen below can only have come from the manual click this test performs,
+  // never from a server-provided initial value.
+  const findLbpRadios = (renderer) =>
+    renderer.root.findAll((node) => node.props && node.props.name === 'objective_exam_lbp_motor_deficit')
+
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic, resetKey: 'submission:A' }),
+    )
+  })
+  const radiosBefore = findLbpRadios(renderer)
+  assert.equal(radiosBefore.length, 3, 'sanity: the 3-option LBP objective motor deficit radiogroup renders')
+  assert.ok(radiosBefore.every((r) => r.props.checked === false), 'sanity: nothing pre-selected before the manual click')
+
+  // Simulate the clinician selecting "심하거나 빠르게 진행함" (index 1 --
+  // LBP_MOTOR_DEFICIT_OPTIONS[1] = SEVERE_OR_PROGRESSIVE), a safety-
+  // affecting selection (feeds URGENT_REVIEW).
+  act(() => {
+    radiosBefore[1].props.onChange({})
+  })
+  const radiosAfterClick = findLbpRadios(renderer)
+  assert.equal(radiosAfterClick[1].props.checked, true, 'sanity: the manual selection took effect')
+
+  // Switch to a different patient via the unified reset key alone (same
+  // payload/synthetic on purpose, isolating this card's OWN reset from any
+  // side effect of also swapping safety_flags/regions).
+  act(() => {
+    renderer.update(
+      React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic, resetKey: 'submission:B' }),
+    )
+  })
+  const radiosAfterSwitch = findLbpRadios(renderer)
+  assert.ok(
+    radiosAfterSwitch.every((r) => r.props.checked === false),
+    "the previous patient's LBP objective motor deficit selection must not survive onto the next patient (m4 -- was previously leaking via a frozen useState initial value)",
+  )
+})
+
+test('m4: ObjectiveExamFindingsCard also clears its save-status/authError state (not just the radio value) across the unified reset key transition', () => {
+  const findLbpRadios = (renderer) =>
+    renderer.root.findAll((node) => node.props && node.props.name === 'objective_exam_lbp_motor_deficit')
+  const findSaveStatus = (renderer) =>
+    renderer.root.findAll((node) => node.props && node.props['data-status'] !== undefined && node.props.role === 'status')
+
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic, resetKey: 'submission:A' }),
+    )
+  })
+  // No onSave is wired in this fixtures-preview harness (matches
+  // DoctorView.tsx's own real convention -- onSaveObjectiveExam is only
+  // wired in server mode), so the save-status row never appears here; this
+  // test instead pins the OTHER half of m4's fix directly against the
+  // component source (the render-time-reset block resets lbpStatus/
+  // shoulderStatus/authError together with lbp/shoulder, not just the
+  // latter) -- renderToString/test-renderer cannot itself force a real
+  // saving/auth-error round trip without a live onSave, so the source
+  // assertion is the honest way to pin this half.
+  assert.equal(findSaveStatus(renderer).length, 0, 'sanity: no save-status row without onSave wired')
+  const src = fs.readFileSync('src/doctor/ObjectiveExamFindingsCard.tsx', 'utf8')
+  const resetBlock = src.slice(src.indexOf('if (resetKey !== lastSeenResetKey)'), src.indexOf('if (resetKey !== lastSeenResetKey)') + 300)
+  assert.ok(/setLbpStatus\('idle'\)/.test(resetBlock), 'lbpStatus must reset alongside lbp')
+  assert.ok(/setShoulderStatus\('idle'\)/.test(resetBlock), 'shoulderStatus must reset alongside shoulder')
+  assert.ok(/setAuthError\(false\)/.test(resetBlock), 'authError must reset too -- a stale auth banner from the last patient must not persist')
+
+  act(() => {
+    renderer.update(
+      React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic, resetKey: 'submission:B' }),
+    )
+  })
+  assert.ok(
+    findLbpRadios(renderer).every((r) => r.props.checked === false),
+    'sanity: the reset key transition itself still succeeded in this render',
+  )
+})
+
 console.log(`\n${passed} doctor-reset-key assertions passed.`)

@@ -310,7 +310,17 @@ function isUnreadableMedicationTypes(value: unknown): boolean {
  * 문자열 배열이 아니면 safetyGlanceItems가 그 값을 그대로
  * answerLabel에 넘겨 "[object Object]"류를 노출할 수 있다.
  */
-function hasUnreadableSafetyField(r: Responses, flags: DoctorPayload['flags']): boolean {
+/**
+ * MAJOR-2 (Phase 10 closing review): exported so lane1Summary.ts can fold
+ * this in as its own union axis instead of only checking flagsUsable/
+ * requires_staff_check -- without it, a record whose SafetyGlance renders
+ * "안전정보 일부를 읽을 수 없습니다" (e.g. malformed medication_use) could
+ * still read as 🟢 CLEAR on the left-hand lane1 chip while the full record
+ * view warns beside it (fail-open, demonstrated live with a medication_use
+ * payload). "읽을 수 없음" is a calc-unavailable signal, not a danger
+ * verdict -- it must block CLEAR but must NOT by itself raise URGENT.
+ */
+export function hasUnreadableSafetyField(r: Responses, flags: DoctorPayload['flags']): boolean {
   return (
     isUnreadableYesNoUnknown(r.medication.medication_use, YES_UNKNOWN_NONE) ||
     isUnreadableYesNoUnknown(r.allergy.allergy_yn, YES_UNKNOWN_NONE) ||

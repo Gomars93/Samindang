@@ -195,6 +195,14 @@ function crmGroupRow(
  * original relative order within a tier (see file header).
  */
 function tierOf(row: TodayQueueRow): number {
+  // needsAttention must outrank `completed` -- a micro follow-up response
+  // can mark a row both COMPLETED (status) and needsAttention (a flagged
+  // answer needing staff review) at the same time. If `completed` were
+  // checked first, every such row would fall into tier 4 and get folded
+  // into the "완료" <details>, silently hiding it from the always-visible
+  // count -- exactly the BLOCKER-1 regression this ordering exists to
+  // prevent. Tier 0 (URGENT-equivalent) keeps it active and counted.
+  if (row.needsAttention) return 0
   if (row.completed) return 4
   if (row.badge === 'URGENT') return 0
   if (row.scheduledToday) return 1

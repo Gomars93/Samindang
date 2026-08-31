@@ -217,6 +217,35 @@ test('CRM rows are never completed (listActionableTasks already excludes termina
   assert.equal(rows[0].completed, false)
 })
 
+// ---------- BLOCKER-1 (Phase 10 closing review): needsAttention must never fold ----------
+
+test('BLOCKER-1: a revisit with status COMPLETED + needsAttention true stays completed=true but sorts to tier 0 (URGENT-equivalent), never folded', () => {
+  // server/store.js: a micro follow-up `response` existing is exactly the
+  // condition that sets BOTH needsAttention AND status COMPLETED on the
+  // same revisit -- this combination is the realistic case, not a
+  // synthetic one. `completed` itself stays true (it still reflects
+  // server status faithfully); it is tier/fold placement that must not
+  // treat this row as done-and-out-of-sight.
+  const rows = buildTodayQueueRows({
+    ...empty,
+    revisits: [revisit({ status: 'COMPLETED', needsAttention: true })],
+  })
+  assert.equal(rows[0].completed, true)
+  assert.equal(rows[0].needsAttention, true)
+})
+
+test('BLOCKER-1: needsAttention+COMPLETED sorts ahead of a plain (non-attention) completed row, matching URGENT tier', () => {
+  const rows = buildTodayQueueRows({
+    ...empty,
+    revisits: [
+      revisit({ visitId: 'plain-completed', status: 'COMPLETED', needsAttention: false }),
+      revisit({ visitId: 'attention-completed', status: 'COMPLETED', needsAttention: true }),
+    ],
+  })
+  assert.equal(rows[0].revisitVisitId, 'attention-completed')
+  assert.equal(rows[1].revisitVisitId, 'plain-completed')
+})
+
 // ---------- sort tiers: URGENT -> 오늘 예정 -> 신규 -> 나머지 -> 완료 ----------
 
 test('sort: URGENT beats everything else regardless of source kind', () => {

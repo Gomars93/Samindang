@@ -26,6 +26,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { CommonSafetyBanner } from '../CommonSafetyBanner'
 import { ConflictBanner } from '../ConflictBanner'
+import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import { ObjectiveExamFindingsCard, type ObjectiveExamField } from '../ObjectiveExamFindingsCard'
 import { VisitSummaryAside } from './VisitSummaryAside'
 import { PainFinalAssessmentCard, HerbalFinalAssessmentCard } from './FinalAssessmentCard'
@@ -218,6 +219,15 @@ export function DoctorWorkspace({
   // by a conflict, which has its own dedicated UI) -- 'auth' shows the
   // inline token-reentry recovery instead of the generic "저장 실패" text.
   const [lastSaveErrorKind, setLastSaveErrorKind] = useState<'auth' | 'network' | 'other' | null>(null)
+  // MAJOR-3 (Phase 10 closing review): block ⑤ in VisitSummaryAside is a
+  // fixed 20px-budget row -- it can only ever hold a 1-line action
+  // ("인증 만료 — 토큰 다시 입력"), never the full DoctorTokenSetup banner
+  // (>=100px, was silently clipping there). This tracks whether that action
+  // has been clicked; the actual token form renders OUTSIDE the left
+  // summary's budget, at the top of the right work column's lane1 section
+  // below, exactly where Phase 7 §3.2's "1줄 인라인 액션" note says recovery
+  // belongs.
+  const [tokenReentryOpen, setTokenReentryOpen] = useState(false)
   // Core Reduction P3 (Phase 5 Synthesis v1.2 §2.4/§2.10): "+ 다른 유형
   // 입력 추가" -- a manual reveal of the OPPOSITE profile's Final
   // Assessment fieldset in 판단·처치. The `<details>` still auto-opens
@@ -269,6 +279,10 @@ export function DoctorWorkspace({
     // was never actually visibly stale, but an unreset per-record field is
     // exactly the kind of thing a future refactor could silently break).
     setLastSaveErrorKind(null)
+    // MAJOR-3: same reasoning as lastSaveErrorKind directly above -- an
+    // open token-reentry form belongs to the OLD record's failed save, not
+    // a newly-selected one.
+    setTokenReentryOpen(false)
   }
 
   // Round 18 fix (caught by real two-browser-context QA): `initialRecordUpdatedAt`
@@ -308,6 +322,7 @@ export function DoctorWorkspace({
       lastSavedRef.current = toSave
       lastKnownUpdatedAtRef.current = result.updatedAt
       setLastSaveErrorKind(null)
+      setTokenReentryOpen(false)
       setSaveStatus('saved')
     } else if (result.conflict) {
       setPreConflictDraft(toSave)
@@ -462,15 +477,31 @@ export function DoctorWorkspace({
           lane1={lane1Summary}
           saveStatus={submissionId && onSaveWorkspace ? saveStatus : undefined}
           lastSaveErrorKind={lastSaveErrorKind}
-          onRetryAfterTokenSet={() => {
-            setLastSaveErrorKind(null)
-            void performSave()
-          }}
+          onOpenTokenReentry={() => setTokenReentryOpen(true)}
         />
 
         <main className="doctor__visitWork" aria-label="진료 작업">
           <section className="doctor__visitLane doctor__visitLane--lane1" aria-labelledby="lane1-h2">
             <h2 id="lane1-h2">안전 확인</h2>
+            {/*
+              MAJOR-3 (Phase 10 closing review): the left-hand summary's ⑤
+              block only ever has a 20px budget for a 1-line "인증 만료 —
+              토큰 다시 입력" action (VisitSummaryAside.tsx) -- the actual
+              DoctorTokenSetup form (>=100px) renders here instead, at the
+              top of the right work column's lane1 section, outside that
+              budget entirely, only once the clinician has clicked the
+              action.
+            */}
+            {lastSaveErrorKind === 'auth' && tokenReentryOpen && (
+              <DoctorTokenSetup
+                authFailed
+                onSet={() => {
+                  setTokenReentryOpen(false)
+                  setLastSaveErrorKind(null)
+                  void performSave()
+                }}
+              />
+            )}
             <CommonSafetyBanner payload={payload} />
             {anySafetyRegionApplicable && (
               <section className="workspace__block workspace__block--safety">
@@ -504,6 +535,11 @@ export function DoctorWorkspace({
               initialLbp={lbpObjectiveMotorDeficit}
               initialShoulder={shoulderObjectiveCuffWeakness}
               onSave={onSaveObjectiveExam}
+              // m4 (Phase 10 closing review): the same unified reset key this
+              // component's own workspaceState uses above (recordKey) --
+              // without it, this card's radio selections/save status
+              // silently carried over from the previous patient.
+              resetKey={recordKey}
             />
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
               <PainWorkspaceLane2

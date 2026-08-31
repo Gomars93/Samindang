@@ -43,6 +43,7 @@ export function ObjectiveExamFindingsCard({
   initialLbp,
   initialShoulder,
   onSave,
+  resetKey,
 }: {
   showLbp: boolean
   showShoulder: boolean
@@ -60,12 +61,41 @@ export function ObjectiveExamFindingsCard({
     field: ObjectiveExamField,
     value: string,
   ) => Promise<{ ok: true } | { ok: false; kind: 'auth' | 'network' | 'other' }>
+  /**
+   * m4 (Phase 10 closing review): this card's own radio selections/save
+   * status/authError are safety-relevant (URGENT_REVIEW/
+   * expedited_referral_consider both key off them) but used to be plain
+   * `useState(initialLbp ?? undefined)` -- React only reads that initial
+   * value on the FIRST mount, so on every later render (including a
+   * record switch) it silently ignores a changed `initialLbp`/
+   * `initialShoulder` prop and keeps showing the PREVIOUS patient's radio
+   * selection. DoctorWorkspace.tsx never keys/remounts this component (see
+   * its own "render-time reset, not key-based remount" history comment),
+   * so nothing else was clearing this state either -- a real leak between
+   * patients on a safety-affecting input. Passing the SAME unified
+   * `recordKey`/`resetKey` DoctorWorkspace.tsx already threads through its
+   * own render-time-reset lets this card apply the identical pattern
+   * locally: compare against the last-seen key during render and, if it
+   * changed, re-seed every field from the (now-current) initial* props
+   * before this render paints anything.
+   */
+  resetKey?: string
 }) {
   const [lbp, setLbp] = useState(initialLbp ?? undefined)
   const [shoulder, setShoulder] = useState(initialShoulder ?? undefined)
   const [lbpStatus, setLbpStatus] = useState<SaveStatus>('idle')
   const [shoulderStatus, setShoulderStatus] = useState<SaveStatus>('idle')
   const [authError, setAuthError] = useState(false)
+
+  const [lastSeenResetKey, setLastSeenResetKey] = useState(resetKey)
+  if (resetKey !== lastSeenResetKey) {
+    setLastSeenResetKey(resetKey)
+    setLbp(initialLbp ?? undefined)
+    setShoulder(initialShoulder ?? undefined)
+    setLbpStatus('idle')
+    setShoulderStatus('idle')
+    setAuthError(false)
+  }
 
   if (!showLbp && !showShoulder) return null
 

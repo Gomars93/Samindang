@@ -157,8 +157,15 @@ export function TodayUnifiedQueueSection({
    */
   onGoToSettings?: () => void
 }) {
-  const active = rows.filter((r) => !r.completed)
-  const completed = rows.filter((r) => r.completed)
+  // BLOCKER-1 (Phase 10 closing review): a micro follow-up response can
+  // mark a row both `completed` (status COMPLETED, per server/store.js)
+  // AND `needsAttention` (a flagged answer needing staff review) at the
+  // same time. needsAttention must outrank `completed` here -- otherwise
+  // every such row falls into the "완료" <details> and disappears from
+  // the always-visible "오늘 (N)" count, exactly the regression the
+  // baseline flat list never had (it always showed these rows).
+  const active = rows.filter((r) => r.needsAttention || !r.completed)
+  const completed = rows.filter((r) => !r.needsAttention && r.completed)
 
   function renderRow(row: TodayQueueRow) {
     // Reuses TodayQueueSection's own row class (`.doctor__todayQueue__row`)

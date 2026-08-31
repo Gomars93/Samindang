@@ -12,7 +12,6 @@
  * `overflow:hidden` is a safety net, not the truncation mechanism itself.
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import {
   formatCalcUnavailableSuffix,
   relatedRegionLabels,
@@ -76,7 +75,7 @@ export function VisitSummaryAside({
    */
   saveStatus,
   lastSaveErrorKind,
-  onRetryAfterTokenSet,
+  onOpenTokenReentry,
 }: {
   patientName: string
   chartNo?: string | null
@@ -87,7 +86,16 @@ export function VisitSummaryAside({
   lane1: Lane1Summary
   saveStatus?: VisitSummarySaveStatus
   lastSaveErrorKind?: 'auth' | 'network' | 'other' | null
-  onRetryAfterTokenSet?: () => void
+  /**
+   * MAJOR-3 (Phase 10 closing review): block ⑤'s fixed 20px budget can only
+   * ever hold a 1-line action, never the full DoctorTokenSetup banner
+   * (>=100px, was silently clipping there before this fix) -- clicking
+   * this asks the CALLER to render that form outside the left summary's
+   * budget entirely (DoctorWorkspace.tsx renders it at the top of the
+   * right work column's lane1 section). This component never renders the
+   * token form itself.
+   */
+  onOpenTokenReentry?: () => void
 }) {
   const compact = usePortraitCompact()
   const locked = lane1.status === 'URGENT' || lane1.status === '확인 필요' || lane1.status === '계산불가'
@@ -100,9 +108,16 @@ export function VisitSummaryAside({
   let saveRow: ReactNode = ' '
   if (saveStatus && saveStatus !== 'idle') {
     if (saveStatus === 'error' && lastSaveErrorKind === 'auth') {
-      // §2.9/§3.2: replaces the save line entirely (never an added line) --
-      // in-flow token re-entry without leaving 진료.
-      saveRow = <DoctorTokenSetup authFailed onSet={() => onRetryAfterTokenSet?.()} />
+      // MAJOR-3 (Phase 10 closing review) / §2.9/§3.2: replaces the save
+      // line entirely (never an added line) -- but as a single-line ACTION
+      // within the 20px budget, not the full token-entry banner itself
+      // (that renders elsewhere, outside this budget, once clicked; see
+      // onOpenTokenReentry's doc comment above).
+      saveRow = (
+        <button type="button" className="doctor__visitSummary__authBtn" onClick={() => onOpenTokenReentry?.()}>
+          인증 만료 — 토큰 다시 입력
+        </button>
+      )
     } else if (saveStatus === 'saving') {
       saveRow = '저장 중…'
     } else if (saveStatus === 'saved') {

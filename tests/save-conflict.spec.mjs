@@ -220,39 +220,55 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
   // auth-failure inline recovery ----------
   //
-  // Core Reduction P2 (Phase 5 Synthesis v1.2 §3.2 block ⑤, §2.9): the
-  // visible save-status surface (including this auth recovery) moved into
-  // VisitSummaryAside.tsx's block ⑤ -- DoctorWorkspace.tsx now only owns
-  // the STATE (lastSaveErrorKind) and hands VisitSummaryAside a
-  // `onRetryAfterTokenSet` callback that does the actual
-  // clear-then-retry, rather than rendering `<DoctorTokenSetup>` itself.
+  // MAJOR-3 (Phase 10 closing review): block ⑤'s fixed 20px budget can only
+  // ever hold VisitSummaryAside's own 1-line "인증 만료 — 토큰 다시 입력"
+  // action -- the full `<DoctorTokenSetup>` banner (>=100px) was silently
+  // clipping there and is not shown inline any more. Clicking the action
+  // calls `onOpenTokenReentry`, which DoctorWorkspace.tsx wires to open the
+  // actual token form OUTSIDE the left summary's budget, at the top of the
+  // right work column's lane1 section.
   const asideSrc = fs.readFileSync('src/doctor/workspace/VisitSummaryAside.tsx', 'utf8')
 
-  test('VisitSummaryAside.tsx: imports DoctorTokenSetup and shows it inline (not the generic text) specifically for kind===\'auth\'', () => {
-    assert.ok(asideSrc.includes("import { DoctorTokenSetup } from '../DoctorTokenSetup'"))
-    assert.ok(/saveStatus === 'error' && lastSaveErrorKind === 'auth'\) \{\s*\/\/[\s\S]{0,300}?saveRow = <DoctorTokenSetup/.test(asideSrc))
+  test('VisitSummaryAside.tsx: block ⑤ auth failure renders a 1-line action button, never the full DoctorTokenSetup form inline (that clipped at 20px)', () => {
+    assert.ok(!asideSrc.includes("import { DoctorTokenSetup } from '../DoctorTokenSetup'"), 'DoctorTokenSetup must no longer be imported/rendered here')
+    assert.ok(
+      /saveStatus === 'error' && lastSaveErrorKind === 'auth'\) \{\s*\/\/[\s\S]{0,400}?saveRow = \(\s*<button type="button" className="doctor__visitSummary__authBtn"/.test(asideSrc),
+      'the auth branch must render the 1-line action button, not DoctorTokenSetup',
+    )
+    assert.ok(asideSrc.includes('인증 만료 — 토큰 다시 입력'), 'Phase 7 §3.2 literal wording')
   })
 
   test("VisitSummaryAside.tsx: a generic (non-auth) save failure keeps the existing '저장 실패' text, not the token recovery", () => {
     assert.ok(/saveRow = '저장 실패 — 다시 시도해주세요'/.test(asideSrc))
   })
 
-  test('DoctorWorkspace.tsx: performSave records the failure kind on a generic error, and clears it on success', () => {
+  test('DoctorWorkspace.tsx: performSave records the failure kind on a generic error, and clears it (plus any open token-reentry form) on success', () => {
     const fnStart = src.indexOf('async function performSave() {')
     const fnEnd = src.indexOf('// Debounced autosave')
     assert.ok(fnStart !== -1 && fnEnd !== -1)
     const fn = src.slice(fnStart, fnEnd)
     assert.ok(/setLastSaveErrorKind\(null\)/.test(fn), 'a successful save must clear any earlier error-kind state')
+    assert.ok(/setTokenReentryOpen\(false\)/.test(fn), 'a successful save must also close any open token-reentry form (MAJOR-3)')
     assert.ok(/setLastSaveErrorKind\(result\.kind \?\? 'other'\)/.test(fn), 'a generic failure must record the failure kind (not just flip to the error status)')
   })
 
-  test('DoctorWorkspace.tsx: re-entering the token (via VisitSummaryAside\'s onRetryAfterTokenSet) retries the save directly (does not just clear the error and wait for another edit)', () => {
-    const recoveryBlock = src.slice(src.indexOf('onRetryAfterTokenSet={'), src.indexOf('onRetryAfterTokenSet={') + 200)
-    assert.ok(/onRetryAfterTokenSet=\{\(\) => \{\s*setLastSaveErrorKind\(null\)\s*void performSave\(\)/.test(recoveryBlock))
-  })
-
-  test("VisitSummaryAside.tsx: the DoctorTokenSetup recovery's onSet calls the parent's onRetryAfterTokenSet", () => {
-    assert.ok(/onSet=\{\(\) => onRetryAfterTokenSet\?\.\(\)\}/.test(asideSrc))
+  test('DoctorWorkspace.tsx: clicking the auth-recovery action (VisitSummaryAside\'s onOpenTokenReentry) opens the token form at the top of the lane1 section, outside the left summary\'s budget', () => {
+    assert.ok(
+      /onOpenTokenReentry=\{\(\) => setTokenReentryOpen\(true\)\}/.test(src),
+      'VisitSummaryAside must be wired to open the form, not to retry directly itself',
+    )
+    const lane1Start = src.indexOf('<section className="doctor__visitLane doctor__visitLane--lane1"')
+    const lane1SafetyBanner = src.indexOf('<CommonSafetyBanner payload={payload} />')
+    assert.ok(lane1Start !== -1 && lane1SafetyBanner !== -1 && lane1Start < lane1SafetyBanner)
+    const lane1Head = src.slice(lane1Start, lane1SafetyBanner)
+    assert.ok(
+      /lastSaveErrorKind === 'auth' && tokenReentryOpen && \(\s*<DoctorTokenSetup/.test(lane1Head),
+      'the actual DoctorTokenSetup form must render at the top of the lane1 section, gated on both the failure kind and the click-to-open state',
+    )
+    assert.ok(
+      /onSet=\{\(\) => \{\s*setTokenReentryOpen\(false\)\s*setLastSaveErrorKind\(null\)\s*void performSave\(\)/.test(lane1Head),
+      're-entering the token must close the form, clear the error, and retry the save directly',
+    )
   })
 
   test('DoctorView.tsx: the workspace-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {

@@ -184,6 +184,26 @@
   color: var(--text-muted);
 }
 
+/* MAJOR-3 (Phase 10 closing review): block ⑤'s 1-line auth-recovery
+   action -- plain-text link styling (no button chrome), matching
+   .doctor__emptyLink's own convention, so it stays inside the 20px
+   budget above instead of the full DoctorTokenSetup banner. */
+.doctor__visitSummary__authBtn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.doctor__visitSummary__authBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* §3.2 834 portrait 압축 2줄 (VisitSummaryAside.tsx의 compact 분기). */
 .doctor__visitSummary--compact {
   flex-direction: row;

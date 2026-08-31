@@ -7097,6 +7097,131 @@ origin/main -- src/spec/*Logic.ts src/spec/*Adapter.ts` 0 lines(FROZEN
 코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
 merge 판단은 항상 사용자(Product Owner).
 
+### 19차 독립 `model:opus` 리뷰 결과 및 수정 (NOT CLOSABLE → 수정 완료)
+
+19차 리뷰는 18차 커밋(`03c3231`)을 대상으로, 18차 자신의 수정 12건은
+전부 정확하다고 확인하면서도 HIGH 1건 + MEDIUM 5건 + LOW 3건을 찾아냈다.
+HIGH-1은 15~18차와는 다른 새로운 클래스였고, MEDIUM-4/5는 18차까지
+없었던 "throw는 안 하지만 조용히 오래된 데이터를 남긴다"는 완전히 다른
+결함 클래스였다.
+
+**(HIGH-1, 이 배치 전체에서 가장 심각) `Array.isArray()`는 배열
+"모양"만 보장할 뿐 배열 원소 하나하나의 모양은 보장하지 않는다.**
+16~18차가 `listEpisodesByPatient`/`listCrmTasks`/`listStations` 등에
+추가한 모든 `Array.isArray(result.data?.x)` 가드는 원소 자체가
+`null`/원시값이어도 그대로 통과시켰고, 그 다음 `.map()`/개별 필드
+접근에서 그대로 throw했다. 특히 `listEpisodesByPatient`/
+`listEpisodeTasks`/`listMedicationCoursesByEpisode`의 결과는
+`MedicationCourseSection.tsx`를 거쳐 **`DoctorRecordFallback`
+(DoctorRecordErrorBoundary 자신의 `fallback` prop) 안에서도 렌더된다**
+— React는 fallback 렌더 도중의 throw를 잡지 못하므로, 이 배치가 손상된
+레코드를 위해 만든 안전한 착지 화면 자체가 다시 크래시할 수 있었다(18차가
+"가장 심각한 구조적 공백"으로 지목한 지점이 완전히 닫히지 않았던 것).
+
+**근본 수정**: `serverClient.ts`에 `filterValidObjectElements<T>(arr)`
+공유 헬퍼(`v != null && typeof v === 'object'`)를 추가하고,
+`listEpisodesByPatient`/`listEpisodeTasks`/`listMedicationCoursesByEpisode`/
+`getRecorderResults`/`listCrmTasks`/`listVisitMessages`/`listSubmissions`/
+`listRevisitQueue`/`listStations` 9개 함수 전부에 컨테이너 검증 뒤
+원소 단위 필터링을 추가했다(`getPatientHistory`는 17차에서 이미 이
+패턴을 갖고 있었다).
+
+**(LOW-8) `listPatientIdentities`도 같은 클래스** — `identities`는
+uuid로 키가 잡힌 맵이라 `Array.isArray`가 아니라 `Object.entries`로
+각 값을 개별 필터링해야 했다. 값 하나가 null/원시값이면 그 uuid
+항목만 제외하고 나머지는 그대로 반환하도록 수정.
+
+**(MEDIUM-4) `getMicroFollowUpResponse`가 wire body를 전혀 검증하지
+않고 그대로 통과시켰다** — `DoctorView.tsx`가 `result.data.response`에
+바로 접근하므로, `result.data`가 null/객체가 아니면 그대로 throw했다.
+컨테이너 검증 추가.
+
+**(LOW-6) `createEpisode`/`createMedicationCourse`도 응답 컨테이너를
+전혀 검증하지 않았다** — `MedicationCourseSection.tsx`의
+`handleCreateEpisode`/`handleCreateCourse`가 `result.data`/
+`result.data.course`를 검증 없이 스프레드/필드 접근한다. 둘 다 컨테이너
+가드 추가.
+
+**(LOW-7) `getFollowUpSessionStatus`도 동일 — 현재 `src/`에서 죽은
+코드로 확인했지만(호출부 없음) 스윕의 완결성을 위해 함께 방어.**
+
+**(MEDIUM-3) `MedicationCourseSection.tsx`의 `EPISODE_STATUS_LABEL[ep.status]`/
+`CRM_REASON_CODE_LABEL[t.reason_code]`/`CRM_TASK_STATUS_LABEL[t.status]`
+직접 인덱싱** — 18차가 `TodayQueueSection.tsx`에 적용한 것과 정확히
+같은 클래스(알 수 없는 값 → `undefined` → 조용히 빈 칸, governing task
+정책 5 위반). `episodeStatusLabel`/`reasonCodeLabel`/`taskStatusLabel`
+가드 함수 3개 추가.
+
+**(MEDIUM-4/5, 새로운 결함 클래스) `DoctorView.tsx`의 `priorVisits`/
+`microFollowUpResponse` fetch 효과가 `ok:false`일 때 아무것도 하지
+않았다.** 지금까지의 "catch 없는 `.then()`이 reject하면 조용히
+사라진다"는 클래스와는 다르다 — 여기선 promise가 정상적으로
+resolve하는데(`ok:false`는 throw가 아니라 정상 반환값이다) 그
+성공(?) 분기 안의 `if (result.ok) setState(...)`에 `else`가 없어서,
+직전 환자/방문에서 성공적으로 불러온 값이 새 환자/방문 화면에도 그대로
+남는다(cross-patient/cross-visit stale leak, governing task 정책 4
+위반). `setPriorVisits(result.ok ? result.data : null)` /
+`setMicroFollowUpResponse(result.ok ? result.data.response : null)`로
+수정 — 기존 `.catch`(17차/19차 자체 추가분)는 그대로 유지해 throw
+경로도 계속 방어한다.
+
+**(LOW-9) `TodayQueueSection.tsx`의 `truncateUuid`가 `task.patient_uuid`가
+문자열이 아니면 `.length`/`.slice`에서 그대로 throw했다** — 이 컴포넌트는
+error boundary 밖에서 마운트된다. `typeof uuid !== 'string'` 가드 추가,
+`patientLabel`의 `identities[task.patient_uuid]` 조회도 문자열일 때만
+수행하도록 방어(비문자열 키가 우연히 다른 항목과 충돌하지 않도록).
+
+**신규 회귀 테스트**: `tests/save-conflict.spec.mjs`에 구조적 가드
+테스트 10개(+10, 53→63 — `filterValidObjectElements` 존재/9개 함수
+적용/`listPatientIdentities`의 값별 필터/`getFollowUpSessionStatus`/
+`getMicroFollowUpResponse`/`createEpisode`/`createMedicationCourse`
+컨테이너 가드/`DoctorView.tsx`의 priorVisits·microFollowUpResponse
+ok:false 리셋 2개). `tests/medication-course-ui.spec.mjs`에 6개(+6,
+23→29 — `.catch(` 개수를 0→7로 재조정하며 각 catch의 epoch-guard
+anchor 검증, `episodeStatusLabel`/`reasonCodeLabel`/`taskStatusLabel`
+가드 검증; 이 과정에서 18차 이전에 이미 있던 "picker는
+`EPISODE_STATUS_LABEL[ep.status]`를 직접 쓴다"는 낡은 assertion도
+`episodeStatusLabel(ep.status)`로 갱신했다 — 19차 자신의 fix로 인해
+깨졌던 기존 테스트를 되살린 것). `tests/today-queue.spec.mjs`에 4개(+4,
+27→31 — 비문자열 patient_uuid가 크래시하지 않고 "환자 확인 필요"를
+보여주는지, 숫자 patient_uuid도 동일한지, 비문자열 키가 identities
+맵과 우연히 충돌하지 않는지, 정상 문자열 UUID는 여전히 정상 렌더되는지).
+
+또한 `MedicationCourseSection.tsx`의 `handleCreateCheckTask`/
+`handleShiftStart`도 LOW-6와 정확히 같은 클래스(무가드 `.then().finally()`,
+`.catch` 없음)라 리뷰가 명시하지 않았음에도 같은 스윕에서 함께 고쳤다 —
+같은 파일 안에 4개 mutating handler가 있는데 2개만 고치면 다음 라운드가
+"나머지 2곳도 형제 함수"라고 또 지적할 것이 뻔했다.
+
+**실사용 재검증**: HIGH-1/LOW-6/7/8/MEDIUM-3은 16~18차와 동일한 근거로
+— 정상 서버 코드(`crmStore.js`/`store.js`/`stationStore.js`)는 항상
+컨테이너·원소 모두 구조가 맞는 값만 배열에 push하므로(예:
+`listEpisodesByPatient`는 `if (episode && episode.patient_uuid ===
+patient_uuid) out.push(episode)`로 이미 진짜 객체만 push) 정상 서버
+응답 경로에서는 재현 불가능 — 별도 라이브 시나리오 없이 구조적 테스트로만
+커버했다. **MEDIUM-4/5는 성격이 다르다** — `ok:false`는 5xx/네트워크
+단절만으로도 정상적으로 발생하므로, `tests/.r19-live-repro.mjs`(신규,
+gitignore의 기존 `tests/.r*` 패턴에 포함)로 `/api/patients/*/history`와
+`/api/visits/*/micro-follow-up`을 실제 500으로 응답하게 강제하고
+1440×900/1024×768/834×1112 3개 뷰포트에서 page error 0건 + 원시
+"[object Object]"/"undefined" 누출 0건을 라이브로 확인했다(풍부한
+prior-visit CONTENT가 실제로 A→B로 새는 시각적 재현까지는, 이 서버가
+신규 제출마다 항상 새 patient_id를 발급하고 기존 patient_id 재사용은
+재진 워크플로우 조립이 필요해 비용 대비 효과가 낮다고 판단해 만들지
+않았다 — 대신 정확한 코드 모양은 save-conflict.spec.mjs의 anchor
+테스트로 기계적으로 고정했다).
+
+**재검증**: `npx tsc -b --force` clean, `npm run test:all`(exit 0,
+FAIL 0건 — save-conflict 63/63, medication-course-ui 29/29, today-queue
+31/31 포함), `npm run build`/`build:preview` clean, `tablet core`
+pytest 80/80, `git diff origin/main -- src/spec/*Logic.ts
+src/spec/*Adapter.ts` 0 lines(FROZEN 유지) — 전부 통과.
+
+**다음 단계**: 이번 수정 커밋을 push하고, 20차 독립 `model:opus`
+리뷰를 새로 호출한다. CLEAN이면 PR #24에 이 배치의 종료 상태
+코멘트를 남긴다. DO NOT MERGE, DO NOT PUSH MAIN 그대로 유지 — 최종
+merge 판단은 항상 사용자(Product Owner).
+
 ## Current Branch
 `feat/doctor-clinical-workspace` (PR #24, DO NOT MERGE). **이 절
 자체는 Medication/Herbal CRM 배치가 CLOSED되던 시점(`5ede4ac`)의

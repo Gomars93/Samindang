@@ -76,9 +76,32 @@ test('MedicationCourseSection: exactly 4 .finally( call sites total, regardless 
   assert.equal(finallyCount, 4, `expected exactly 4 .finally( call sites, found ${finallyCount} -- a new one may be missing its epoch guard`)
 })
 
-test('MedicationCourseSection: no .catch( or await async-completion shape exists (neither is covered by the .then/.finally guards above)', () => {
-  assert.equal((src.match(/\.catch\(/g) ?? []).length, 0, 'a .catch() is an async completion point too and must be epoch-guarded like every .then()')
+// 19차 독립 리뷰 HIGH-2/MEDIUM-3~5: this test used to pin `.catch(` at 0,
+// on the theory that a rejected promise here only ever left `busy` stuck
+// (annoying but not unsafe) since every .then/.finally was already
+// epoch-guarded. The 19차 review found that's false for the load-error/
+// action-error PATH specifically: a bare `.then().finally()` with no
+// `.catch()` means a network rejection (not just an `ok:false` response)
+// silently vanishes -- no loadError/actionError is ever set, so the button
+// or screen looks like it did nothing, same class of bug already fixed for
+// handleRegisterStation/handleAssignToStation in DoctorView.tsx (17차).
+// Fixed by adding a `.catch()` to all 7 async completion points in this
+// file (the two reloadEpisodeData chains, the main effect's own
+// listEpisodesByPatient call, and each of the four mutating action
+// handlers) -- so `.catch(` is now pinned at 7, not 0, and each must be
+// epoch-guarded exactly like the pre-existing .then/.finally guards.
+test('MedicationCourseSection: no await async-completion shape exists (not covered by the .then/.finally/.catch guards)', () => {
   assert.equal((src.match(/\bawait\s/g) ?? []).length, 0, 'an await-based completion point bypasses every .then-shaped assertion in this file')
+})
+
+test('MedicationCourseSection: exactly 7 .catch( call sites total, one per async completion point (19차 HIGH-2/MEDIUM-3~5 fix)', () => {
+  const catchCount = (src.match(/\.catch\(/g) ?? []).length
+  assert.equal(catchCount, 7, `expected exactly 7 .catch( call sites, found ${catchCount} -- a new async completion point may be missing its error-surfacing catch`)
+})
+
+test('MedicationCourseSection: every .catch(() => {...}) callback opens with the epoch guard as its first statement (19차 fix)', () => {
+  const anchoredCatchGuardCount = (src.match(/\.catch\(\(\) => \{\s*(?:\/\/[^\n]*\n\s*)*if \(loadEpochRef\.current === epoch\) set(?:LoadError|ActionError)\(/g) ?? []).length
+  assert.equal(anchoredCatchGuardCount, 7, `expected all 7 .catch(() => {...}) callbacks to open with the epoch guard, found ${anchoredCatchGuardCount}`)
 })
 
 // 6th closing-review finding (NIT): the .then/.finally/.catch/await
@@ -337,15 +360,49 @@ test('MedicationCourseSection: each picker entry calls handleSelectEpisode(ep) o
   assert.match(src, /onClick=\{\(\) => handleSelectEpisode\(ep\)\}/)
 })
 
+// 19차 독립 리뷰 MEDIUM-3: `EPISODE_STATUS_LABEL[ep.status]` indexed the
+// label map directly -- an unknown/corrupted `status` value produced
+// `undefined`, rendered as a silently blank spot in the picker rather than
+// an explicit "확인 필요". Replaced with the same guarded-lookup pattern
+// already established for DELIVERY_MODE_LABEL/CHANNEL_LABEL/STATUS_LABEL/
+// CRM_TASK_TYPE_LABEL etc. in earlier rounds.
 test('MedicationCourseSection: the picker uses only existing non-clinical Episode metadata (status/created/owner), no invented labels', () => {
-  assert.match(src, /\{EPISODE_STATUS_LABEL\[ep\.status\]\} · \{formatDate\(ep\.created_at\)\}/)
+  assert.match(src, /\{episodeStatusLabel\(ep\.status\)\} · \{formatDate\(ep\.created_at\)\}/)
   assert.match(src, /\{ep\.owner_clinician \? ` · \$\{ep\.owner_clinician\}` : ''\}/)
+})
+
+test('MedicationCourseSection: episodeStatusLabel falls back to "확인 필요" for a non-string or unrecognized status instead of rendering blank/undefined (19차 MEDIUM-3)', () => {
+  assert.match(
+    src,
+    /function episodeStatusLabel\(status: unknown\): string \{\s*return typeof status === 'string' && Object\.prototype\.hasOwnProperty\.call\(EPISODE_STATUS_LABEL, status\)\s*\? EPISODE_STATUS_LABEL\[status as Episode\['status'\]\]\s*: '확인 필요'\s*\}/,
+  )
 })
 
 test('MedicationCourseSection: handleSelectEpisode captures its own load epoch before triggering reloadEpisodeData, like the other mutating/navigating actions', () => {
   assert.match(
     src,
     /function handleSelectEpisode\(ep: Episode\) \{\s*const epoch = loadEpochRef\.current\s*setEpisodeId\(ep\.episode_id\)\s*setCourses\(null\)\s*setTasks\(null\)\s*reloadEpisodeData\(ep\.episode_id, epoch\)\s*\}/,
+  )
+})
+
+// 19차 독립 리뷰 MEDIUM-3 (계속): 체크 작업 카드의 reason/status도
+// EPISODE_STATUS_LABEL과 동일하게 label map을 직접 인덱싱했다 -- 알 수
+// 없는 reason_code/status는 undefined가 되어 조용히 빈 칸으로 렌더됐다.
+test('MedicationCourseSection: check-task cards use reasonCodeLabel/taskStatusLabel guards, not direct label-map indexing (19차 MEDIUM-3)', () => {
+  assert.match(src, /<span>\{reasonCodeLabel\(t\.reason_code\)\}<\/span>/)
+  assert.match(src, /taskStatusLabel\(t\.status\)/)
+  assert.doesNotMatch(src, /\{CRM_REASON_CODE_LABEL\[t\.reason_code\]\}/)
+  assert.doesNotMatch(src, /CRM_TASK_STATUS_LABEL\[t\.status\]/)
+})
+
+test('MedicationCourseSection: reasonCodeLabel/taskStatusLabel fall back to "확인 필요" for a non-string or unrecognized value (19차 MEDIUM-3)', () => {
+  assert.match(
+    src,
+    /function reasonCodeLabel\(code: unknown\): string \{\s*return typeof code === 'string' && Object\.prototype\.hasOwnProperty\.call\(CRM_REASON_CODE_LABEL, code\)\s*\? CRM_REASON_CODE_LABEL\[code as CrmTask\['reason_code'\]\]\s*: '확인 필요'\s*\}/,
+  )
+  assert.match(
+    src,
+    /function taskStatusLabel\(status: unknown\): string \{\s*return typeof status === 'string' && Object\.prototype\.hasOwnProperty\.call\(CRM_TASK_STATUS_LABEL, status\)\s*\? CRM_TASK_STATUS_LABEL\[status as CrmTask\['status'\]\]\s*: '확인 필요'\s*\}/,
   )
 })
 

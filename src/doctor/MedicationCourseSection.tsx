@@ -45,6 +45,29 @@ const EPISODE_STATUS_LABEL: Record<Episode['status'], string> = {
   LOST: '연락두절',
 }
 
+/**
+ * 19차 독립 리뷰 MEDIUM-3: TodayQueueSection.tsx(18차)/MessagingPanel.tsx
+ * (18차)에 이미 적용한 것과 동일한 가드 -- 서버가 검증 없이 그대로
+ * 보내는 wire 값이 알려지지 않은 enum이면 label map 조회가 undefined가
+ * 되어 bare JSX child로는 조용히 빈 칸을 렌더한다(손상된 값을 숨기는
+ * fail-silent -- 이 배치가 막으려는 것과 같은 부류).
+ */
+function episodeStatusLabel(status: unknown): string {
+  return typeof status === 'string' && Object.prototype.hasOwnProperty.call(EPISODE_STATUS_LABEL, status)
+    ? EPISODE_STATUS_LABEL[status as Episode['status']]
+    : '확인 필요'
+}
+function reasonCodeLabel(code: unknown): string {
+  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(CRM_REASON_CODE_LABEL, code)
+    ? CRM_REASON_CODE_LABEL[code as CrmTask['reason_code']]
+    : '확인 필요'
+}
+function taskStatusLabel(status: unknown): string {
+  return typeof status === 'string' && Object.prototype.hasOwnProperty.call(CRM_TASK_STATUS_LABEL, status)
+    ? CRM_TASK_STATUS_LABEL[status as CrmTask['status']]
+    : '확인 필요'
+}
+
 function formatDate(value: string | null): string {
   if (!value) return '미기록'
   return value.length >= 10 ? value.slice(0, 10) : value
@@ -109,15 +132,27 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
   const loadEpochRef = useRef(0)
 
   function reloadEpisodeData(epId: string, epoch: number) {
-    listMedicationCoursesByEpisode(epId).then((result) => {
-      if (loadEpochRef.current !== epoch) return
-      if (result.ok) setCourses(result.data.courses)
-      else setLoadError(result.error)
-    })
-    listEpisodeTasks(epId).then((result) => {
-      if (loadEpochRef.current !== epoch) return
-      if (result.ok) setTasks(result.data.tasks)
-    })
+    // 19차 독립 리뷰 HIGH-2: 이 두 `.then()` 체인에 catch가 없었다 --
+    // 원소 자체는 이제 serverClient.ts에서 걸러지지만(HIGH-1), 어떤
+    // 예기치 않은 이유로든 reject하면 `courses`/`tasks`가 이전 에피소드의
+    // 값으로 조용히 남는다.
+    listMedicationCoursesByEpisode(epId)
+      .then((result) => {
+        if (loadEpochRef.current !== epoch) return
+        if (result.ok) setCourses(result.data.courses)
+        else setLoadError(result.error)
+      })
+      .catch(() => {
+        if (loadEpochRef.current === epoch) setLoadError('투약/한약 코스를 불러오지 못했습니다.')
+      })
+    listEpisodeTasks(epId)
+      .then((result) => {
+        if (loadEpochRef.current !== epoch) return
+        if (result.ok) setTasks(result.data.tasks)
+      })
+      .catch(() => {
+        if (loadEpochRef.current === epoch) setLoadError('확인 작업 목록을 불러오지 못했습니다.')
+      })
   }
 
   useEffect(() => {
@@ -146,29 +181,34 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
     setCheckDraftByCourse({})
     setShiftDraftByCourse({})
     setManualOpen(null)
-    listEpisodesByPatient(patientUuid).then((result) => {
-      if (loadEpochRef.current !== epoch) return
-      if (!result.ok) {
-        setLoadError(result.error)
-        return
-      }
-      setEpisodes(result.data.episodes)
-      // Episode↔Medication association integrity batch (owner-review
-      // finding): the old `find(ACTIVE) ?? episodes[0]` silently picked the
-      // OLDEST episode whenever more than one existed (listEpisodesByPatient
-      // sorts ascending by created_at) -- a new MedicationCourse could land
-      // under an Episode the clinician never chose. Auto-select only when
-      // unambiguous: a single Episode total, or a single ACTIVE one among
-      // several non-active ones. Two or more ACTIVE Episodes (or two or
-      // more non-active ones with none ACTIVE) leaves episodeId null so the
-      // render below shows an explicit picker instead of guessing.
-      const activeEpisodes = result.data.episodes.filter((e) => e.status === 'ACTIVE')
-      const chosen = result.data.episodes.length === 1 ? result.data.episodes[0] : activeEpisodes.length === 1 ? activeEpisodes[0] : null
-      if (chosen) {
-        setEpisodeId(chosen.episode_id)
-        reloadEpisodeData(chosen.episode_id, epoch)
-      }
-    })
+    // 19차 독립 리뷰 HIGH-2: 이 `.then()` 체인에 catch가 없었다.
+    listEpisodesByPatient(patientUuid)
+      .then((result) => {
+        if (loadEpochRef.current !== epoch) return
+        if (!result.ok) {
+          setLoadError(result.error)
+          return
+        }
+        setEpisodes(result.data.episodes)
+        // Episode↔Medication association integrity batch (owner-review
+        // finding): the old `find(ACTIVE) ?? episodes[0]` silently picked the
+        // OLDEST episode whenever more than one existed (listEpisodesByPatient
+        // sorts ascending by created_at) -- a new MedicationCourse could land
+        // under an Episode the clinician never chose. Auto-select only when
+        // unambiguous: a single Episode total, or a single ACTIVE one among
+        // several non-active ones. Two or more ACTIVE Episodes (or two or
+        // more non-active ones with none ACTIVE) leaves episodeId null so the
+        // render below shows an explicit picker instead of guessing.
+        const activeEpisodes = result.data.episodes.filter((e) => e.status === 'ACTIVE')
+        const chosen = result.data.episodes.length === 1 ? result.data.episodes[0] : activeEpisodes.length === 1 ? activeEpisodes[0] : null
+        if (chosen) {
+          setEpisodeId(chosen.episode_id)
+          reloadEpisodeData(chosen.episode_id, epoch)
+        }
+      })
+      .catch(() => {
+        if (loadEpochRef.current === epoch) setLoadError('에피소드 목록을 불러오지 못했습니다.')
+      })
     // Review finding (LOW): a bumped epoch alone fences setState calls, but
     // does nothing on unmount -- the unmounting instance's own ref object is
     // frozen at its last epoch, so its still-in-flight promises would pass
@@ -203,6 +243,13 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
         } else {
           setActionError(result.error)
         }
+      })
+      .catch(() => {
+        // 19차 독립 리뷰 LOW-6: handleRegisterStation(17차)/
+        // handleAssignToStation(17차)과 동일한 이유 -- catch가 없으면
+        // rejection이 조용히 사라져 actionError가 세팅되지 않은 채 버튼이
+        // 아무 반응 없이 끝난 것처럼 보였다.
+        if (loadEpochRef.current === epoch) setActionError('에피소드 생성에 실패했습니다. 다시 시도해 주세요.')
       })
       .finally(() => {
         if (loadEpochRef.current === epoch) setBusy(false)
@@ -252,6 +299,10 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           setActionError(result.error)
         }
       })
+      .catch(() => {
+        // 19차 독립 리뷰 LOW-6: handleCreateEpisode와 동일한 이유.
+        if (loadEpochRef.current === epoch) setActionError('투약/한약 코스 생성에 실패했습니다. 다시 시도해 주세요.')
+      })
       .finally(() => {
         if (loadEpochRef.current === epoch) setBusy(false)
       })
@@ -280,6 +331,11 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           setActionError(result.error)
         }
       })
+      .catch(() => {
+        // 19차 독립 리뷰 LOW-6와 동일한 클래스: 이 handler도 catch가
+        // 없으면 rejection이 조용히 사라진다.
+        if (loadEpochRef.current === epoch) setActionError('확인 작업 생성에 실패했습니다. 다시 시도해 주세요.')
+      })
       .finally(() => {
         if (loadEpochRef.current === epoch) setBusy(false)
       })
@@ -307,6 +363,11 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
         } else {
           setActionError(result.error)
         }
+      })
+      .catch(() => {
+        // 19차 독립 리뷰 LOW-6와 동일한 클래스: 이 handler도 catch가
+        // 없으면 rejection이 조용히 사라진다.
+        if (loadEpochRef.current === epoch) setActionError('시작일 변경에 실패했습니다. 다시 시도해 주세요.')
       })
       .finally(() => {
         if (loadEpochRef.current === epoch) setBusy(false)
@@ -348,7 +409,7 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
           {episodes.map((ep) => (
             <li key={ep.episode_id}>
               <button type="button" className="judgment__recordBtn" onClick={() => handleSelectEpisode(ep)}>
-                {EPISODE_STATUS_LABEL[ep.status]} · {formatDate(ep.created_at)}
+                {episodeStatusLabel(ep.status)} · {formatDate(ep.created_at)}
                 {ep.owner_clinician ? ` · ${ep.owner_clinician}` : ''}
               </button>
             </li>
@@ -389,9 +450,9 @@ export function MedicationCourseSection({ patientUuid }: { patientUuid: string }
                 {courseTasks.length === 0 && <li className="workspace__empty">예약된 확인 작업이 없습니다.</li>}
                 {courseTasks.map((t) => (
                   <li key={t.task_id} className="medCourse__taskRow">
-                    <span>{CRM_REASON_CODE_LABEL[t.reason_code]}</span>
+                    <span>{reasonCodeLabel(t.reason_code)}</span>
                     <span>
-                      {OPEN_STATUSES.includes(t.status) ? `예정일 ${formatDate(t.due_at)}` : CRM_TASK_STATUS_LABEL[t.status]}
+                      {OPEN_STATUSES.includes(t.status) ? `예정일 ${formatDate(t.due_at)}` : taskStatusLabel(t.status)}
                     </span>
                   </li>
                 ))}

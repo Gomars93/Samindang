@@ -321,4 +321,35 @@ test('18차 LOW-8 sanity: genuine in-enum task_type/reason_code/status values st
   assert.ok(!html.includes('확인 필요'))
 })
 
+// ---------- 6. 19차 LOW-9: non-string patient_uuid must not crash .length/.slice ----------
+// A corrupted/legacy CrmTask record can carry a non-string patient_uuid
+// (null, a number, an object) -- this component mounts outside
+// DoctorRecordErrorBoundary, so a throw here would have no ancestor
+// boundary to catch it (per the round-19 review's HIGH-1 finding on the
+// same class of gap in MedicationCourseSection.tsx).
+
+test('19차 LOW-9: a non-string patient_uuid does not crash (no .length/.slice throw) and renders an explicit fail-closed label instead', () => {
+  const html = render({ tasks: [makeTask({ patient_uuid: null })], loading: false, error: null })
+  assert.ok(html.includes('환자 확인 필요'), 'must show an explicit fail-closed label for the patient identifier, not throw')
+})
+
+test('19차 LOW-9: a non-string patient_uuid (number) also fails closed instead of crashing', () => {
+  const html = render({ tasks: [makeTask({ patient_uuid: 12345 })], loading: false, error: null })
+  assert.ok(html.includes('환자 확인 필요'))
+})
+
+test('19차 LOW-9: a non-string patient_uuid never looks up the identities map (which is keyed by string) before falling back', () => {
+  const identities = { '12345': { resolved: true, patient_name: '홍길동', sigma_chart_no: 'S-1' } }
+  const html = render({ tasks: [makeTask({ patient_uuid: 12345 })], loading: false, error: null, identities })
+  assert.ok(!html.includes('홍길동'), 'a non-string patient_uuid must never coincidentally match a string-keyed identity entry')
+  assert.ok(html.includes('환자 확인 필요'))
+})
+
+test('19차 LOW-9 sanity: a genuine string patient_uuid still truncates and renders normally', () => {
+  const uuid = '11111111-2222-3333-4444-555555555555'
+  const html = render({ tasks: [makeTask({ patient_uuid: uuid })], loading: false, error: null })
+  assert.ok(html.includes('11111111…'))
+  assert.ok(!html.includes('확인 필요'))
+})
+
 console.log(`\n${passed} passed`)

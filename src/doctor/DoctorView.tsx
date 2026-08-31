@@ -2724,7 +2724,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     getPatientHistory(patientId, selectedRecord?.visit_id)
       .then((result) => {
         if (cancelled) return
-        if (result.ok) setPriorVisits(result.data)
+        // 19차 독립 리뷰 MEDIUM-5: 이전엔 `ok:false`일 때 아무것도 하지
+        // 않아, 직전 환자에게서 성공적으로 불러온 priorVisits가 새 환자
+        // 화면에도 그대로 남아있었다(cross-patient stale leak, governing
+        // task 정책 4 위반) -- 명시적으로 null로 되돌린다.
+        setPriorVisits(result.ok ? result.data : null)
       })
       .catch(() => {
         if (!cancelled) setPriorVisits(null)
@@ -2743,10 +2747,18 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       return
     }
     let cancelled = false
-    getMicroFollowUpResponse(visitId).then((result) => {
-      if (cancelled) return
-      if (result.ok) setMicroFollowUpResponse(result.data.response)
-    })
+    // 19차 독립 리뷰 MEDIUM-4: catch가 없었고, `ok:false`일 때 아무것도
+    // 하지 않아 직전 방문의 microFollowUpResponse가 새 방문 화면에도
+    // 그대로 남아있었다(cross-patient/cross-visit stale leak, governing
+    // task 정책 4 위반) -- priorVisits 옆의 동일한 fix와 같은 패턴.
+    getMicroFollowUpResponse(visitId)
+      .then((result) => {
+        if (cancelled) return
+        setMicroFollowUpResponse(result.ok ? result.data.response : null)
+      })
+      .catch(() => {
+        if (!cancelled) setMicroFollowUpResponse(null)
+      })
     return () => {
       cancelled = true
     }

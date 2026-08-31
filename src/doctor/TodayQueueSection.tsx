@@ -40,12 +40,16 @@ export type TodayQueueSectionProps = {
   onIdentityLinked?: (patientUuid: string, identity: ResolvedPatientIdentity) => void
 }
 
-function truncateUuid(uuid: string): string {
+// 19차 독립 리뷰 LOW-9: `patient_uuid`가 문자열이 아니면 `.length`/
+// `.slice`에서 그대로 throw했다 -- 이 컴포넌트는 error boundary 밖에서
+// 마운트된다.
+function truncateUuid(uuid: unknown): string {
+  if (typeof uuid !== 'string') return '확인 필요'
   return uuid.length <= 8 ? uuid : `${uuid.slice(0, 8)}…`
 }
 
 function patientLabel(task: CrmTask, identities: Record<string, ResolvedPatientIdentity>): string {
-  const identity = identities[task.patient_uuid]
+  const identity = typeof task.patient_uuid === 'string' ? identities[task.patient_uuid] : undefined
   if (identity?.resolved) return `${identity.patient_name} · ${identity.sigma_chart_no}`
   return `환자 ${truncateUuid(task.patient_uuid)}`
 }

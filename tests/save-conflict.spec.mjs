@@ -608,4 +608,117 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 }
 
+// ---------- 10. src/lib/serverClient.ts: 19차 독립 리뷰 (element-level filtering + single-object hardening) ----------
+// 18차가 컨테이너(배열/객체) 자체의 모양은 검증했지만, `Array.isArray()`는
+// 배열 원소 하나하나의 모양까지는 보장하지 않는다 -- 원소가 null/원시값이면
+// 통과한 뒤 개별 필드 접근에서 그대로 throw했다. 19차는 이 gap을 닫는
+// filterValidObjectElements<T>() 헬퍼를 도입하고, 남아있던 단일-객체
+// 응답(createEpisode/createMedicationCourse/getMicroFollowUpResponse)까지
+// 컨테이너 검증을 확장했다.
+{
+  const src = fs.readFileSync('src/lib/serverClient.ts', 'utf8')
+
+  test('serverClient.ts 19차: a shared filterValidObjectElements<T>() helper exists for element-level filtering', () => {
+    assert.ok(/function filterValidObjectElements<T>\(arr: unknown\[\]\): T\[\] \{/.test(src))
+    assert.ok(/return arr\.filter\(\(v\): v is T => v != null && typeof v === 'object'\)/.test(src))
+  })
+
+  test('serverClient.ts 19차 HIGH-1: every array-returning list*/get* function filters element shape, not just container shape', () => {
+    for (const [fnName, field, type] of [
+      ['listEpisodesByPatient', 'episodes', 'Episode'],
+      ['listEpisodeTasks', 'tasks', 'CrmTask'],
+      ['listMedicationCoursesByEpisode', 'courses', 'MedicationCourseRecord'],
+      ['getRecorderResults', 'results', undefined],
+      ['listCrmTasks', 'tasks', 'CrmTask'],
+      ['listVisitMessages', 'messages', undefined],
+      ['listSubmissions', undefined, undefined],
+    ]) {
+      const fnStart = src.indexOf(`export function ${fnName}(`)
+      assert.ok(fnStart !== -1, `${fnName} must exist`)
+      const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+      const fn = src.slice(fnStart, fnEnd === -1 ? fnStart + 2000 : fnEnd)
+      assert.ok(
+        /filterValidObjectElements</.test(fn),
+        `${fnName} must filter its array elements via filterValidObjectElements, not just Array.isArray the container`,
+      )
+    }
+  })
+
+  test('serverClient.ts 19차 HIGH-1: listRevisitQueue and listStations also filter element shape before their own .map() runs', () => {
+    for (const fnName of ['listRevisitQueue', 'listStations']) {
+      const fnStart = src.indexOf(`export function ${fnName}(`)
+      assert.ok(fnStart !== -1, `${fnName} must exist`)
+      const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+      const fn = src.slice(fnStart, fnEnd === -1 ? fnStart + 2000 : fnEnd)
+      assert.ok(/filterValidObjectElements</.test(fn), `${fnName} must filter element shape before mapping`)
+    }
+  })
+
+  test('serverClient.ts 19차 LOW-8: listPatientIdentities filters each per-uuid value being a non-null object, not just the container', () => {
+    const fnStart = src.indexOf('export function listPatientIdentities(')
+    const fnEnd = src.indexOf('\n}', fnStart)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(value != null && typeof value === 'object'\) cleaned\[uuid\] = value/.test(fn))
+  })
+
+  test('serverClient.ts 19차 LOW-7: getFollowUpSessionStatus guards its single-object response container', () => {
+    const fnStart = src.indexOf('export function getFollowUpSessionStatus(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(s != null && typeof s !== 'object'\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 19차 MEDIUM-4: getMicroFollowUpResponse guards its response container before DoctorView.tsx accesses result.data.response', () => {
+    const fnStart = src.indexOf('export function getMicroFollowUpResponse(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(result\.data == null \|\| typeof result\.data !== 'object'\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 19차 LOW-6: createEpisode guards its single-object response container before handleCreateEpisode spreads/reads it', () => {
+    const fnStart = src.indexOf('export function createEpisode(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/if \(result\.data == null \|\| typeof result\.data !== 'object'\) return invalidResponseShape\(\)/.test(fn))
+  })
+
+  test('serverClient.ts 19차 LOW-6: createMedicationCourse guards its `course` field before handleCreateCourse reads result.data.course', () => {
+    const fnStart = src.indexOf('export function createMedicationCourse(')
+    const fnEnd = src.indexOf('\nexport function', fnStart + 1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/result\.data\.course == null \|\| typeof result\.data\.course !== 'object'/.test(fn))
+  })
+}
+
+// ---------- 11. src/doctor/DoctorView.tsx: 19차 독립 리뷰 MEDIUM-4/5 (cross-patient/visit stale leak on ok:false) ----------
+// A DIFFERENT bug class than "uncaught rejection" (already covered by
+// section 8 above): here the promise resolves NORMALLY with `ok:false`
+// (not a throw), so a bare `if (result.ok) setState(...)` with no else
+// silently leaves a PREVIOUS patient's/visit's data on screen.
+{
+  const src = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx 19차 MEDIUM-5: the priorVisits effect resets to null on ok:false, not just on a thrown rejection', () => {
+    const effectStart = src.indexOf('getPatientHistory(patientId, selectedRecord?.visit_id)')
+    const effectEnd = src.indexOf('}, [mode, selectedRecord?.patient_id, selectedRecord?.visit_id])', effectStart)
+    const effect = src.slice(effectStart, effectEnd)
+    assert.ok(
+      /setPriorVisits\(result\.ok \? result\.data : null\)/.test(effect),
+      'expected the ok:false branch to explicitly reset priorVisits to null, not leave a prior patient\'s data on screen',
+    )
+    assert.ok(effect.includes('.catch(() => {'), 'must still catch a thrown rejection too (a different completion shape)')
+  })
+
+  test('DoctorView.tsx 19차 MEDIUM-4: the microFollowUpResponse effect resets to null on ok:false, not just on a thrown rejection', () => {
+    const effectStart = src.indexOf('getMicroFollowUpResponse(visitId)')
+    const effectEnd = src.indexOf('}, [mode, selectedRecord?.visit_id])', effectStart)
+    const effect = src.slice(effectStart, effectEnd)
+    assert.ok(
+      /setMicroFollowUpResponse\(result\.ok \? result\.data\.response : null\)/.test(effect),
+      'expected the ok:false branch to explicitly reset microFollowUpResponse to null, not leave a prior visit\'s data on screen',
+    )
+    assert.ok(effect.includes('.catch(() => {'), 'must still catch a thrown rejection too (a different completion shape)')
+  })
+}
+
 console.log(`\n${passed} save-conflict assertions passed.`)

@@ -43,6 +43,21 @@ function invalidResponseShape(): { ok: false; error: string; kind: 'other' } {
   return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
 }
 
+/**
+ * 19차 독립 리뷰 HIGH-1: `Array.isArray`는 배열임만 보장할 뿐 원소의
+ * shape은 보장하지 않는다 -- `{tasks:[null]}`/`{episodes:[123]}` 같은
+ * 값은 18차의 Array.isArray 가드를 그대로 통과했고, 소비하는 컴포넌트
+ * (MedicationCourseSection.tsx)가 각 원소의 필드(`t.status`,
+ * `e.status`, `course.course_id` 등)에 그대로 접근해 throw했다 -- 그
+ * 컴포넌트는 DoctorRecordFallback(에러 바운더리 자신의 fallback prop)
+ * 안에서도 렌더되므로, 그 throw는 React가 잡을 수 없는 지점에서
+ * 일어나 화면 전체가 하얗게 죽는다. getPatientHistory가 이미 쓰던
+ * "null/객체가 아닌 원소는 제거" 패턴을 공유 헬퍼로 승격한다.
+ */
+function filterValidObjectElements<T>(arr: unknown[]): T[] {
+  return arr.filter((v): v is T => v != null && typeof v === 'object')
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -122,7 +137,10 @@ export function listSubmissions(): Promise<ServerResult<SubmissionSummary[]>> {
   return request<SubmissionSummary[]>('/api/submissions').then((result) => {
     if (!result.ok) return result
     if (!Array.isArray(result.data)) return invalidResponseShape()
-    return result
+    // 19차 독립 리뷰 HIGH-1: 원소 자체가 null이면
+    // `submissions.filter((s) => s.status === 'new')`(DoctorView.tsx 렌더
+    // 본문에서 무조건 호출됨)에서 그대로 throw했다.
+    return { ok: true, data: filterValidObjectElements<SubmissionSummary>(result.data) }
   })
 }
 
@@ -259,7 +277,9 @@ export function getRecorderResults(visitId: string): Promise<ServerResult<{ resu
     (result) => {
       if (!result.ok) return result
       if (!Array.isArray(result.data?.results)) return invalidResponseShape()
-      return result
+      // 19차 독립 리뷰 HIGH-1: 다른 목록 함수들과 동일한 이유 -- 원소 자체가
+      // null이면 렌더 시 필드 접근에서 throw했다.
+      return { ok: true, data: { results: filterValidObjectElements<RecorderResult>(result.data.results) } }
     },
   )
 }
@@ -274,7 +294,15 @@ export function getRecorderResults(visitId: string): Promise<ServerResult<{ resu
 export function getMicroFollowUpResponse(
   visitId: string,
 ): Promise<ServerResult<{ response: import('../doctor/workspace/microFollowUp').MicroFollowUpResponse | null }>> {
-  return request(`/api/visits/${encodeURIComponent(visitId)}/micro-follow-up`)
+  return request<{ response: unknown }>(`/api/visits/${encodeURIComponent(visitId)}/micro-follow-up`).then((result) => {
+    if (!result.ok) return result
+    // 19차 독립 리뷰 MEDIUM-4: `result.data`가 null/객체가 아니면 이전엔
+    // 호출부(DoctorView.tsx)의 `result.data.response` 접근에서 그대로
+    // throw했다. `response` 필드 자체는 null이 유효한 값(아직 응답 없음)
+    // 이므로 그 값 자체는 재검증하지 않는다 -- 컨테이너만 방어한다.
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result as ServerResult<{ response: import('../doctor/workspace/microFollowUp').MicroFollowUpResponse | null }>
+  })
 }
 
 export function saveMicroFollowUpResponse(
@@ -436,7 +464,13 @@ type FollowUpSessionStatusWire = {
 export function getFollowUpSessionStatus(visitId: string): Promise<ServerResult<FollowUpSessionInfo | null>> {
   return request<FollowUpSessionStatusWire>(`/api/visits/${encodeURIComponent(visitId)}/follow-up-session`).then((result) => {
     if (!result.ok) return result
-    const s = result.data.session
+    // 19차 독립 리뷰 LOW-7: `session`이 null/객체가 아닌데도 truthy인 원시값
+    // (예: 문자열/숫자)이면 이전엔 `s.status` 등에서 그대로 throw했다 -- 이
+    // 함수를 실제로 호출하는 코드는 현재 src/ 어디에도 없지만("exhaustive
+    // sweep" 주장을 정확히 하려면 이 함수도 빠뜨려선 안 된다), 다른 목록
+    // 함수들과 동일한 방어를 갖춘다.
+    const s = result.data?.session
+    if (s != null && typeof s !== 'object') return invalidResponseShape()
     return {
       ok: true,
       data: s ? { status: s.status, issuedAt: s.issued_at, expiresAt: s.expires_at, targets: s.targets } : null,
@@ -472,9 +506,11 @@ export function listRevisitQueue(): Promise<ServerResult<RevisitQueueItem[]>> {
     // 실패를 전혀 알리지 않은 채 "지금의 authoritative 목록"인 것처럼 계속
     // 렌더된다(이 파일의 다른 곳이 명시적으로 금지하는 바로 그 상황).
     if (!Array.isArray(result.data)) return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
+    // 19차 독립 리뷰 HIGH-1: 원소 자체가 null이면 아래 .map()의 필드 접근
+    // (r.visit_id 등)에서 그대로 throw했다.
     return {
       ok: true,
-      data: result.data.map((r) => ({
+      data: filterValidObjectElements<RevisitQueueWire[number]>(result.data).map((r) => ({
         visitId: r.visit_id,
         patientId: r.patient_id,
         createdAt: r.created_at,
@@ -529,7 +565,9 @@ export function listStations(): Promise<ServerResult<StationInfo[]>> {
     // 17차 독립 리뷰 FINDING-1: listRevisitQueue와 동일한 이유/수정 -- 이
     // 함수도 DoctorView.tsx의 상시 poll()에서 호출된다.
     if (!Array.isArray(result.data?.stations)) return { ok: false, error: '서버 응답 형식이 올바르지 않습니다.', kind: 'other' }
-    return { ok: true, data: result.data.stations.map(mapStation) }
+    // 19차 독립 리뷰 HIGH-1: 원소 자체가 null이면 mapStation() 내부의 필드
+    // 접근에서 그대로 throw했다.
+    return { ok: true, data: filterValidObjectElements<StationWire>(result.data.stations).map(mapStation) }
   })
 }
 
@@ -605,7 +643,10 @@ export function listCrmTasks(params?: {
   return request<{ tasks: CrmTask[] }>(`/api/crm/tasks${suffix}`).then((result) => {
     if (!result.ok) return result
     if (!Array.isArray(result.data?.tasks)) return invalidResponseShape()
-    return result
+    // 19차 독립 리뷰 HIGH-1: 원소 자체가 null이면 TodayQueueSection.tsx의
+    // 필드 접근(task.task_id 등)에서 그대로 throw했다 -- 이 컴포넌트는
+    // error boundary 밖에서 마운트된다.
+    return { ok: true, data: { tasks: filterValidObjectElements<CrmTask>(result.data.tasks) } }
   })
 }
 
@@ -627,7 +668,9 @@ export function listEpisodesByPatient(patientUuid: string): Promise<ServerResult
   return request<{ episodes: Episode[] }>(`/api/crm/episodes?${qs.toString()}`).then((result) => {
     if (!result.ok) return result
     if (!Array.isArray(result.data?.episodes)) return invalidResponseShape()
-    return result
+    // 19차 독립 리뷰 HIGH-1: 배열 원소 자체가 null/원시값이면 원소별 필드
+    // 접근에서 그대로 throw했다.
+    return { ok: true, data: { episodes: filterValidObjectElements<Episode>(result.data.episodes) } }
   })
 }
 
@@ -641,9 +684,16 @@ export function listEpisodesByPatient(patientUuid: string): Promise<ServerResult
  * preserves the old server-minted-id behavior for any other caller.
  */
 export function createEpisode(patientUuid: string, ownerClinician?: string, episodeId?: string): Promise<ServerResult<Episode>> {
-  return request('/api/crm/episodes', {
+  return request<Episode>('/api/crm/episodes', {
     method: 'POST',
     body: JSON.stringify({ patient_uuid: patientUuid, owner_clinician: ownerClinician, episode_id: episodeId }),
+  }).then((result) => {
+    if (!result.ok) return result
+    // 19차 독립 리뷰 LOW-6: getMicroFollowUpResponse와 동일한 이유 --
+    // MedicationCourseSection.tsx의 handleCreateEpisode가 `result.data`를
+    // 컨테이너 검증 없이 바로 스프레드/필드 접근한다.
+    if (result.data == null || typeof result.data !== 'object') return invalidResponseShape()
+    return result
   })
 }
 
@@ -654,7 +704,8 @@ export function listEpisodeTasks(episodeId: string): Promise<ServerResult<{ task
   return request<{ tasks: CrmTask[] }>(`/api/crm/episodes/${encodeURIComponent(episodeId)}/tasks`).then((result) => {
     if (!result.ok) return result
     if (!Array.isArray(result.data?.tasks)) return invalidResponseShape()
-    return result
+    // 19차 독립 리뷰 HIGH-1: listEpisodesByPatient와 동일한 이유.
+    return { ok: true, data: { tasks: filterValidObjectElements<CrmTask>(result.data.tasks) } }
   })
 }
 
@@ -680,7 +731,8 @@ export function listMedicationCoursesByEpisode(
   ).then((result) => {
     if (!result.ok) return result
     if (!Array.isArray(result.data?.courses)) return invalidResponseShape()
-    return result
+    // 19차 독립 리뷰 HIGH-1: listEpisodesByPatient와 동일한 이유.
+    return { ok: true, data: { courses: filterValidObjectElements<MedicationCourseRecord>(result.data.courses) } }
   })
 }
 
@@ -714,7 +766,7 @@ export function createMedicationCourse(params: {
   medicationStartAt?: string | null
   plannedDurationDays?: number | null
 }): Promise<ServerResult<{ course: MedicationCourseRecord; deduped: boolean }>> {
-  return request('/api/crm/medication-courses', {
+  return request<{ course: unknown; deduped: boolean }>('/api/crm/medication-courses', {
     method: 'POST',
     body: JSON.stringify({
       episode_id: params.episodeId,
@@ -727,6 +779,14 @@ export function createMedicationCourse(params: {
       medication_start_at: params.medicationStartAt ?? null,
       planned_duration_days: params.plannedDurationDays ?? null,
     }),
+  }).then((result) => {
+    if (!result.ok) return result
+    // 19차 독립 리뷰 LOW-6: createEpisode와 동일한 이유 -- handleCreateCourse가
+    // `result.data.course`를 검증 없이 바로 필드 접근/스프레드한다.
+    if (result.data == null || typeof result.data !== 'object' || result.data.course == null || typeof result.data.course !== 'object') {
+      return invalidResponseShape()
+    }
+    return result as ServerResult<{ course: MedicationCourseRecord; deduped: boolean }>
   })
 }
 
@@ -813,7 +873,15 @@ export function listPatientIdentities(
     if (!result.ok) return result
     const identities = result.data?.identities
     if (identities == null || typeof identities !== 'object' || Array.isArray(identities)) return invalidResponseShape()
-    return result
+    // 19차 독립 리뷰 LOW-8: 맵 자체는 검증했지만 개별 값이 null/객체가
+    // 아닐 수 있다 -- 현재 소비부(TodayQueueSection.tsx)는 optional
+    // chaining(`?.resolved`)으로 우연히 안전하지만, 그 방어에만 기대지
+    // 않고 여기서도 걸러낸다.
+    const cleaned: Record<string, ResolvedPatientIdentity> = {}
+    for (const [uuid, value] of Object.entries(identities)) {
+      if (value != null && typeof value === 'object') cleaned[uuid] = value
+    }
+    return { ok: true, data: { identities: cleaned } }
   })
 }
 
@@ -881,7 +949,9 @@ export function listVisitMessages(visitId: string): Promise<ServerResult<{ messa
     (result) => {
       if (!result.ok) return result
       if (!Array.isArray(result.data?.messages)) return invalidResponseShape()
-      return result
+      // 19차 독립 리뷰 HIGH-1: 원소 자체가 null이면 MessagingPanel.tsx의
+      // 필드 접근(m.channel 등)에서 그대로 throw했다.
+      return { ok: true, data: { messages: filterValidObjectElements<MessageRecord>(result.data.messages) } }
     },
   )
 }

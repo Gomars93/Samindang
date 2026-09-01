@@ -57,6 +57,7 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
           onChange={(v) => onChange(v)}
           maxLength={question.maxLength}
           placeholder={question.placeholder}
+          unknownOption={question.unknownOption}
         />
       )}
 

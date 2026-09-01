@@ -9,7 +9,7 @@
 // 지정해야만 만들어진다 (server/index.js의 POST /api/visits, patient_id
 // 존재 검증 포함 — visitExistsForPatient).
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 function visitPath(visitsDir, id) {
@@ -22,11 +22,31 @@ async function atomicWrite(filePath, data) {
   await rename(tmp, filePath)
 }
 
+// Round 17: same reasoning as server/store.js's identical helper -- keeps
+// `updated_at` strictly monotonic across successive writes to one visit
+// record even within the same millisecond, so saveVisitWorkspace's
+// optional expectedUpdatedAt CAS precondition (and setRecorderPointer,
+// which touches the same field on the same record) can't silently defeat
+// each other's conflict detection.
+function nextUpdatedAt(previous) {
+  const now = new Date()
+  const previousMs = previous ? new Date(previous).getTime() : NaN
+  // Closing-review finding: guard against a malformed `previous` (NaN) --
+  // see server/store.js's identical helper for the full reasoning (a
+  // corrupt updated_at must stay self-healing, not throw on every save).
+  if (Number.isFinite(previousMs) && now.toISOString() <= previous) {
+    return new Date(previousMs + 1).toISOString()
+  }
+  return now.toISOString()
+}
+
 // ponytail: store.js의 withLock과 모양은 같지만 일부러 별도 인스턴스로
 // 둔다 — visit 생성은 submission id 락 공간과 무관한 별개의 키 공간이라
 // 같은 맵을 공유해도 얻는 게 없고, store.js 내부 Map을 export하면 결합도만
 // 늘어난다. 두 파일 다 "이 프로세스가 데이터 디렉터리를 혼자 소유한다"는
-// 같은 전제 위에 있다(server.js 문서화된 전제와 동일).
+// 같은 전제 위에 있다(server.js 문서화된 전제와 동일). Round 17부터 이
+// 전제는 server/ownerLock.js가 CLI 부팅 시점에 실제로 강제한다 -- 자세한
+// 내용은 store.js의 동일 주석 참고.
 const locks = new Map()
 function withLock(key, fn) {
   const prev = locks.get(key) ?? Promise.resolve()
@@ -105,6 +125,13 @@ export function createVisitStore(visitsDir) {
         // 그건 의도적으로 남겨둔 다음 스프린트의 갭이다.
         judgment_ref: submission_id ? 'submission' : null,
         emr_summary: null,
+        // Round 3 (revisit linkage): the visit-owned clinician workspace, used
+        // ONLY when this visit has no submission_id (a no-questionnaire
+        // revisit). When submission_id is set, the submission's own
+        // `workspace` field (server/store.js's saveWorkspace) remains the
+        // single source of truth -- this field stays null for those visits,
+        // never a duplicate copy (see saveVisitWorkspace below).
+        workspace: null,
       }
       await atomicWrite(visitPath(visitsDir, id), record)
       return record
@@ -113,6 +140,56 @@ export function createVisitStore(visitsDir) {
 
   async function getVisit(id) {
     return readVisit(id)
+  }
+
+  // Round 3 (revisit linkage): same read-modify-write-under-lock shape as
+  // store.js's saveWorkspace, but for a visit that has no submission (a
+  // no-questionnaire revisit) -- this is the visit's OWN workspace, never
+  // written into the previous visit/submission's record.
+  //
+  // Round 4 review fix: single-source-of-truth enforcement moved down to
+  // THIS layer, not just the HTTP route -- a submission-backed visit's
+  // workspace must only ever be written through store.js's saveWorkspace
+  // (PUT /api/submissions/:id/workspace). Rejecting only at the route would
+  // leave any other future caller of this store function free to write a
+  // second, divergent copy. Returns a discriminated result rather than the
+  // old bare-`record`-or-`null` shape so the caller can tell "not found"
+  // apart from "found but wrong kind of visit".
+  // Round 17: `expectedUpdatedAt` is an OPTIONAL compare-and-swap
+  // precondition, identical contract to server/store.js's
+  // saveJudgment/saveWorkspace (see their doc comment) -- absent, this is
+  // the original unconditional last-write-wins save; supplied and stale,
+  // this returns `{ok:false, reason:'conflict', current: record}` instead
+  // of silently overwriting a newer write, carrying the fresh record so
+  // the caller never needs a second read.
+  async function saveVisitWorkspace(id, workspace, { expectedUpdatedAt } = {}) {
+    return withLock(id, async () => {
+      const record = await readVisit(id)
+      if (!record) return { ok: false, reason: 'not_found' }
+      if (record.submission_id !== null) return { ok: false, reason: 'submission_backed' }
+      if (expectedUpdatedAt != null && record.updated_at !== expectedUpdatedAt) {
+        return { ok: false, reason: 'conflict', current: record }
+      }
+      record.workspace = workspace
+      record.updated_at = nextUpdatedAt(record.updated_at)
+      await atomicWrite(visitPath(visitsDir, id), record)
+      return { ok: true, record }
+    })
+  }
+
+  // Round 4 review fix (startRevisit atomicity): rollback-only primitive.
+  // Never exposed via any HTTP route -- store.js's startRevisit is the only
+  // caller, used exclusively to undo a visit it just created in this same
+  // request when the follow-up token issuance that must accompany it fails,
+  // so a caller can never observe a no-submission revisit visit with no
+  // token. Best-effort: if the delete itself fails, the caller still
+  // surfaces the original error rather than masking it.
+  async function deleteVisitForRollbackOnly(id) {
+    return withLock(id, async () => {
+      await unlink(visitPath(visitsDir, id)).catch((err) => {
+        if (err.code !== 'ENOENT') throw err
+      })
+    })
   }
 
   // recorder-results POST가 성공할 때마다 이 visit이 "가장 최근에 가리키는"
@@ -125,7 +202,7 @@ export function createVisitStore(visitsDir) {
       const record = await readVisit(id)
       if (!record) return null
       record.recording_id = recording_id
-      record.updated_at = new Date().toISOString()
+      record.updated_at = nextUpdatedAt(record.updated_at)
       await atomicWrite(visitPath(visitsDir, id), record)
       return record
     })
@@ -137,7 +214,13 @@ export function createVisitStore(visitsDir) {
     for (const f of files) {
       try {
         const v = JSON.parse(await readFile(path.join(visitsDir, f), 'utf8'))
-        records.push({ id: v.id, patient_id: v.patient_id, created_at: v.created_at, submission_id: v.submission_id })
+        records.push({
+          id: v.id,
+          patient_id: v.patient_id,
+          created_at: v.created_at,
+          updated_at: v.updated_at ?? v.created_at,
+          submission_id: v.submission_id,
+        })
       } catch {
         // 손상되거나 쓰는 중(.tmp 아님)인 파일은 목록에서 건너뛴다
       }
@@ -146,5 +229,64 @@ export function createVisitStore(visitsDir) {
     return records
   }
 
-  return { createVisit, getVisit, listVisits, visitExistsForPatient, setRecorderPointer }
+  // Round 3 Phase C(longitudinal linkage): 정확히 이 patient_id와 일치하는
+  // visit만 돌려준다 — 이름/전화/생년월일 기반 매칭은 이 함수 어디에도
+  // 없다(파일에 이미 존재하는 patient_id 문자열의 엄격한 동등 비교뿐).
+  // patientId가 falsy면 빈 배열(안전한 기본값).
+  async function listVisitsForPatient(patientId) {
+    if (!patientId) return []
+    const files = await listFiles()
+    const records = []
+    for (const f of files) {
+      try {
+        const v = JSON.parse(await readFile(path.join(visitsDir, f), 'utf8'))
+        if (v.patient_id === patientId) {
+          // workspace included so store.js's getPatientHistory can summarize
+          // a no-submission revisit's own visit-owned workspace without a
+          // second read per visit (round 4 review fix: longitudinal
+          // continuity across revisits).
+          records.push({
+            id: v.id,
+            patient_id: v.patient_id,
+            created_at: v.created_at,
+            submission_id: v.submission_id,
+            workspace: v.workspace ?? null,
+          })
+        }
+      } catch {
+        // 손상되거나 쓰는 중인 파일은 건너뛴다
+      }
+    }
+    records.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    return records
+  }
+
+  /** 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 없어도 조용히 넘어간다.
+   * Independent-review finding: *.json만 지우면 크래시로 남은 *.json.tmp
+   * 고아 파일(atomicWrite의 rename 직전에 죽은 경우 -- 임상 메모를 담고
+   * 있을 수 있음)이 "전체 삭제"를 약속한 뒤에도 디스크에 남는다.
+   * recorderResultStore.purgeAll처럼 디렉터리 자체를 rm -rf해 파일명
+   * 패턴과 무관하게 확실히 비운다. */
+  async function purgeAll() {
+    let count = 0
+    try {
+      count = (await listFiles()).length
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+    }
+    await rm(visitsDir, { recursive: true, force: true })
+    return count
+  }
+
+  return {
+    createVisit,
+    getVisit,
+    listVisits,
+    listVisitsForPatient,
+    visitExistsForPatient,
+    setRecorderPointer,
+    saveVisitWorkspace,
+    deleteVisitForRollbackOnly,
+    purgeAll,
+  }
 }

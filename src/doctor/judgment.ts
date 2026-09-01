@@ -129,3 +129,15 @@ export function finalizeJudgment(j: ClinicianJudgment): ClinicianJudgment {
     symptom_links: j.symptom_links.filter((s) => s.trim() !== ''),
   }
 }
+
+/**
+ * Round 18 (stale-write conflict wiring) -- same contract shape as
+ * WorkspaceSaveOutcome in workspace/persistence.ts, kept as a sibling type
+ * here rather than a shared generic because ClinicianJudgment's conflict
+ * `current` can legitimately be `null` (no judgment has ever been saved for
+ * this submission yet), which WorkspaceState's cannot.
+ */
+export type JudgmentSaveOutcome =
+  | { ok: true; updatedAt: string }
+  | { ok: false; conflict: { current: ClinicianJudgment | null; currentUpdatedAt: string } }
+  | { ok: false; conflict?: undefined }

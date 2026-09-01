@@ -1,0 +1,119 @@
+name: Deploy Doctor Workspace Preview
+
+# Real (not static-mockup) Doctor Clinical Workspace preview for PR #24.
+# NO-PHI / READ-ONLY-DEMO: identical safety guarantees to the main patient
+# preview (pages-preview.yml) -- VITE_SAMINDANG_SERVER_URL is intentionally
+# left unset (isServerConfigured() -> false), so DoctorView.tsx can only
+# ever run in "fixtures" mode here (server mode is unreachable without a
+# configured URL). VITE_PREVIEW_MODE=true renders the on-screen preview
+# banner. It mirrors the currently-live GitHub Pages root and adds both
+# /doctor-pr/ and /followup/, so the main patient preview remains untouched
+# byte-for-byte.
+#
+# /followup/ is a stable, NO-PHI GitHub Pages rehearsal path for the real
+# BizM Alimtalk template's button URL (see src/lib/publicFollowUpUrl.ts's
+# header and bizmAdapter.js's header on the `#{followup_token}`-in-URL
+# button pattern BizM's own template UI expects). VITE_SAMINDANG_SERVER_URL
+# stays unset here too -- opening a `#follow-up=<token>` URL under this path
+# can only ever reach FollowUpScreen's own honest "서버가 설정되지
+# 않았습니다" state (src/lib/followUpClient.ts's isFollowUpServerConfigured),
+# never a real network call, so this is safe to keep publicly reachable at a
+# stable URL indefinitely as a template-development/rehearsal target -- it
+# is NOT production and must never be treated as one (no real backend is, or
+# ever will be, reachable from this specific Pages deployment).
+
+on:
+  push:
+    branches: [feat/doctor-clinical-workspace]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}doctor-pr/
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build Doctor Workspace under /Samindang/doctor-pr/
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+          VITE_PAGES_BASE_PATH: '/Samindang/doctor-pr/'
+
+      - name: Stage doctor-pr build
+        run: mv dist dist-doctor-pr
+
+      - name: Build patient follow-up endpoint under /Samindang/followup/
+        run: npm run build:preview
+        env:
+          VITE_PREVIEW_MODE: 'true'
+          VITE_SAMINDANG_SERVER_URL: ''
+          VITE_PAGES_BASE_PATH: '/Samindang/followup/'
+
+      - name: Inject doctor landing redirect into doctor-pr build
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'dist-doctor-pr/index.html';
+            let html = fs.readFileSync(p, 'utf8');
+            const redirect = '<script>if (!location.hash) location.hash = \"doctor\";</script>';
+            html = html.replace('</head>', redirect + '</head>');
+            fs.writeFileSync(p, html);
+          "
+
+      - name: Mirror currently-live site root
+        run: |
+          mkdir -p combined
+          wget --mirror --page-requisites --no-parent -e robots=off \
+            -nH --cut-dirs=1 -P combined \
+            https://gomars93.github.io/Samindang/
+          echo "--- mirrored root ---"
+          find combined -maxdepth 2 -type f | sort | head -100
+
+      - name: Add Doctor Workspace build under /doctor-pr/
+        run: |
+          mkdir -p combined/doctor-pr
+          cp -r dist-doctor-pr/. combined/doctor-pr/
+          echo "--- doctor preview ---"
+          ls -lh combined/doctor-pr/
+
+      - name: Add patient follow-up build under /followup/
+        run: |
+          mkdir -p combined/followup
+          cp -r dist/. combined/followup/
+          echo "--- followup preview ---"
+          ls -lh combined/followup/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: combined
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Print preview URLs
+        run: |
+          echo "Doctor Workspace: ${{ steps.deployment.outputs.page_url }}doctor-pr/"
+          echo "Patient follow-up (BizM Alimtalk template dev/rehearsal target): ${{ steps.deployment.outputs.page_url }}followup/#follow-up=<test-token>"

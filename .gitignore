@@ -42,6 +42,10 @@ tests/.emr-summary-bundle.mjs
 # TypeScript incremental build artifacts
 *.tsbuildinfo
 
+# Python bytecode cache (tablet core/ pytest suite) — not source
+__pycache__/
+*.pyc
+
 # runtime patient data written by server/index.js (SAMINDANG_DATA_DIR default) —
 # never commit real submissions. This also covers .data/audit.log (the
 # operational audit log, see server/audit.js) — already caught by the
@@ -98,3 +102,56 @@ tests/.multi-choice-bundle.cjs
 
 # esbuild bundle used by tests/preview-build.spec.mjs (regenerated, not source)
 tests/.preview-server-client-bundle.mjs
+
+# esbuild bundles used by tests/doctor-workspace.spec.mjs (regenerated, not source)
+tests/.doctor-workspace-fixtures-bundle.mjs
+tests/.doctor-workspace-bundle.cjs
+# esbuild bundles used by tests/doctor-view-profile-matrix.spec.mjs (regenerated, not source)
+tests/.view-profile-matrix-corespec-bundle.mjs
+tests/.view-profile-matrix-viewprofile-bundle.mjs
+
+# esbuild bundles used by tests/workspace-round3.spec.mjs (regenerated, not source)
+tests/.workspace-round3-persistence-bundle.mjs
+tests/.workspace-round3-reassessment-bundle.mjs
+tests/.workspace-round3-patientpreview-bundle.mjs
+tests/.workspace-round3-careplan-bundle.mjs
+tests/.workspace-round3-additionalconcern-bundle.mjs
+tests/.workspace-round3-microfollowup-bundle.mjs
+tests/.workspace-round3-carryforward-bundle.mjs
+tests/.workspace-round3-visitworkspace-bundle.mjs
+
+# esbuild bundles used by tests/crm-schema.spec.mjs (regenerated, not source)
+tests/.crm-types-bundle.mjs
+tests/.crm-task-engine-bundle.mjs
+tests/.crm-episode-bundle.mjs
+tests/.crm-medication-course-bundle.mjs
+
+# esbuild bundle used by tests/today-queue.spec.mjs (regenerated, not source)
+tests/.today-queue-bundle.cjs
+
+# esbuild bundle used by tests/save-conflict.spec.mjs (regenerated, not source)
+tests/.conflict-banner-bundle.cjs
+
+# esbuild bundles used by tests/public-followup-url.spec.mjs (regenerated, not source)
+tests/.public-followup-url-configured-bundle.mjs
+tests/.public-followup-url-unconfigured-bundle.mjs
+
+# ad hoc scratch repro bundles/scripts from an in-progress independent review
+# round (not test infra, not source -- safe to delete once that review
+# finishes). Wildcarded since the review may still be generating more.
+# Each round gets its own prefix (round number) since rounds can overlap.
+tests/.r6-*
+tests/.r7-*
+tests/.r8-*
+tests/.r9-*
+tests/.r10-*
+tests/.r11-*
+tests/.r12-*
+tests/.r13-*
+tests/.r14-*
+tests/.r15-*
+tests/.r16-*
+tests/.r17-*
+tests/.r18-*
+tests/.r19-*
+tests/.r20-*

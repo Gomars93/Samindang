@@ -242,6 +242,246 @@ async function main() {
       )
     }
 
+    /* ---------------- workspace PUT stores + persists, submission/myungri/judgment unchanged (Doctor Clinical Workspace round 2 Phase 2) ---------------- */
+    {
+      const beforeWorkspace = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      assert('record has workspace key (null initially)', beforeWorkspace.workspace === null)
+
+      const workspace = {
+        schema_version: '1.0.0',
+        painExamSuggestions: [
+          {
+            id: 'slr',
+            title: 'SLR',
+            priority: 'MUST_CHECK',
+            reasonFacts: [],
+            source: 'SUGGESTED',
+            result: { status: 'POSITIVE', laterality: 'LEFT', note: 'test note', recordedAt: new Date().toISOString() },
+          },
+        ],
+        painFinalAssessment: {
+          finalWorkingAssessment: 'wk-a',
+          treatmentFocus: '',
+          interventionPerformedOrPlanned: '',
+          immediateRetestTarget: '',
+          recordedAt: new Date().toISOString(),
+        },
+        painFollowUpTargets: [],
+        herbalPatternCandidates: [],
+        herbalClinicianObservations: [],
+        herbalFinalAssessment: {
+          finalPatternOrMechanism: '',
+          treatmentPrinciple: '',
+          prescriptionPlanNote: '',
+          symptomsToTrack: '',
+          recordedAt: null,
+        },
+        herbalFollowUpTargets: [],
+        updated_at: new Date().toISOString(),
+      }
+      const putRes = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(workspace),
+      })
+      assert('PUT workspace -> 200', putRes.status === 200)
+
+      const getRes = await fetch(`${base}/api/submissions/${createdId}`)
+      const record = await getRes.json()
+      assert(
+        'workspace persisted on GET',
+        record.workspace && record.workspace.painFinalAssessment.finalWorkingAssessment === 'wk-a',
+      )
+      assert(
+        'workspace persisted exam result round-trips exactly (status/laterality/note)',
+        record.workspace.painExamSuggestions[0].result.status === 'POSITIVE' &&
+          record.workspace.painExamSuggestions[0].result.laterality === 'LEFT' &&
+          record.workspace.painExamSuggestions[0].result.note === 'test note',
+      )
+      assert(
+        'workspace save leaves submission unchanged',
+        (() => {
+          try {
+            assert2.deepStrictEqual(record.submission, recordBefore.submission)
+            return true
+          } catch {
+            return false
+          }
+        })(),
+      )
+      assert(
+        'workspace save leaves myungri unchanged',
+        (() => {
+          try {
+            assert2.deepStrictEqual(record.myungri, recordBefore.myungri)
+            return true
+          } catch {
+            return false
+          }
+        })(),
+      )
+      assert(
+        'workspace save leaves the previously-saved judgment unchanged',
+        record.judgment && record.judgment.innate_features[0] === 'a',
+      )
+
+      const unauthedRes = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+        body: JSON.stringify(workspace),
+      })
+      assert('PUT workspace without doctor auth -> 403 (same guard as judgment)', unauthedRes.status === 403)
+
+      const missingRes = await fetch(`${base}/api/submissions/00000000-0000-0000-0000-000000000000/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(workspace),
+      })
+      assert('PUT workspace for unknown id -> 404', missingRes.status === 404)
+    }
+
+    /* ---------------- Round 17: optional x-expected-updated-at CAS
+       precondition on judgment/workspace saves. Absent, unconditional
+       last-write-wins exactly as every test above already exercises;
+       supplied and matching, succeeds; supplied and stale (someone else's
+       write landed since the caller last read), refused with 409 and the
+       server-authoritative current record handed back so the client can
+       merge/re-apply without a second round trip. ---------------- */
+    {
+      const currentBefore = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      const staleUpdatedAt = currentBefore.updated_at
+
+      const judgmentV2 = {
+        recorded_at: new Date().toISOString(),
+        source: { session_id: 'sess-1', questionnaire_version: '1.0' },
+        innate_features: ['cas-v2'],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      }
+      const casMatchRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': staleUpdatedAt },
+        body: JSON.stringify(judgmentV2),
+      })
+      assert('PUT judgment with a MATCHING x-expected-updated-at -> 200 (precondition holds)', casMatchRes.status === 200)
+      const afterV2 = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      assert('the matching-precondition judgment save actually took effect', afterV2.judgment.innate_features[0] === 'cas-v2')
+      assert('a successful save changes updated_at (staleUpdatedAt is now genuinely stale)', afterV2.updated_at !== staleUpdatedAt)
+
+      const judgmentV3 = { ...judgmentV2, innate_features: ['cas-v3-should-be-refused'] }
+      const casStaleRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        // Deliberately reusing the NOW-STALE updated_at from before the v2
+        // save above -- simulates a second Doctor Workspace tab (or a
+        // stale GET) whose in-memory copy predates v2's write.
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': staleUpdatedAt },
+        body: JSON.stringify(judgmentV3),
+      })
+      assert('PUT judgment with a STALE x-expected-updated-at -> 409 (lost-update refused, not silently overwritten)', casStaleRes.status === 409)
+      const casStaleBody = await casStaleRes.json()
+      assert('the 409 body reports conflict', casStaleBody.error === 'conflict')
+      assert(
+        'the 409 body hands back the CURRENT (v2) record, not the caller\'s stale view -- server-authoritative state wins',
+        casStaleBody.current?.judgment?.innate_features?.[0] === 'cas-v2',
+      )
+      const afterRefusedWrite = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      assert('the refused v3 write never actually landed -- v2 is still the persisted judgment', afterRefusedWrite.judgment.innate_features[0] === 'cas-v2')
+
+      // Same contract on the workspace route, using the fresh updated_at
+      // the judgment save above just produced.
+      const currentAfterJudgment = await (await fetch(`${base}/api/submissions/${createdId}`)).json()
+      const workspaceCasBody = { schema_version: '1.0.0', painFinalAssessment: { finalWorkingAssessment: 'cas-workspace-v2' } }
+      const workspaceCasMatch = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': currentAfterJudgment.updated_at },
+        body: JSON.stringify(workspaceCasBody),
+      })
+      assert('PUT workspace with a MATCHING x-expected-updated-at -> 200', workspaceCasMatch.status === 200)
+
+      const workspaceCasStale = await fetch(`${base}/api/submissions/${createdId}/workspace`, {
+        method: 'PUT',
+        // Reuses the now-stale pre-workspace-save updated_at.
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': currentAfterJudgment.updated_at },
+        body: JSON.stringify({ schema_version: '1.0.0', painFinalAssessment: { finalWorkingAssessment: 'should-be-refused' } }),
+      })
+      assert('PUT workspace with a STALE x-expected-updated-at -> 409', workspaceCasStale.status === 409)
+      const workspaceCasStaleBody = await workspaceCasStale.json()
+      assert(
+        'the workspace 409 hands back the current record with the ACCEPTED workspace save, not the refused one',
+        workspaceCasStaleBody.current?.workspace?.painFinalAssessment?.finalWorkingAssessment === 'cas-workspace-v2',
+      )
+
+      // Omitting the header entirely is still unconditional last-write-wins
+      // -- no behavior change for every caller that doesn't opt in.
+      const noHeaderRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...judgmentV2, innate_features: ['no-precondition-save'] }),
+      })
+      assert('PUT judgment with NO x-expected-updated-at header -> 200, unconditional as before (backward-compatible default)', noHeaderRes.status === 200)
+    }
+
+    /* ---------------- Round 17 closing-review finding: nextUpdatedAt
+       monotonicity had ZERO test coverage even though it is what makes the
+       whole CAS precondition above actually work -- `new Date().
+       toISOString()` only has millisecond resolution, and under fast
+       back-to-back saves (confirmed empirically: this exact scenario is
+       what made `npm run test:all` flaky before the fix) two real,
+       distinct writes to one record CAN complete within the same
+       millisecond, producing an identical updated_at and silently
+       defeating the CAS check (a stale precondition would be wrongly
+       ACCEPTED). Fire a burst of rapid saves with NO artificial delay and
+       assert every updated_at strictly differs from the one before it,
+       and that a precondition captured from an EARLIER save in the burst
+       is still correctly refused as stale after later ones land. ---------------- */
+    {
+      const burstJudgment = (n) => ({
+        recorded_at: new Date().toISOString(),
+        source: { session_id: 'sess-1', questionnaire_version: '1.0' },
+        innate_features: [`burst-${n}`],
+        symptom_links: [],
+        saju_only_prediction: '',
+        revised_after_exam: '',
+        final_treatment_axis: '',
+        prescription_direction: '',
+        learning_case: false,
+        debrief: null,
+        transcript_import: null,
+      })
+      const updatedAts = []
+      for (let n = 0; n < 20; n++) {
+        const res = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(burstJudgment(n)),
+        })
+        const record = await res.json()
+        updatedAts.push(record.updated_at)
+      }
+      const allDistinct = new Set(updatedAts).size === updatedAts.length
+      assert('nextUpdatedAt: 20 rapid back-to-back saves with no delay all produce a strictly distinct updated_at (no same-millisecond collision)', allDistinct)
+      const strictlyIncreasing = updatedAts.every((v, i) => i === 0 || v > updatedAts[i - 1])
+      assert('nextUpdatedAt: the sequence of updated_at values is strictly increasing (monotonic, not just distinct/shuffled)', strictlyIncreasing)
+
+      // A precondition captured from an EARLY save in that same rapid
+      // burst must still be correctly recognized as stale after later
+      // saves landed -- proving the CAS check actually distinguishes them,
+      // not just that the values happen to differ.
+      const staleFromBurst = updatedAts[0]
+      const rejectedRes = await fetch(`${base}/api/submissions/${createdId}/judgment`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-expected-updated-at': staleFromBurst },
+        body: JSON.stringify(burstJudgment('should-be-refused')),
+      })
+      assert('nextUpdatedAt: a precondition captured from the FIRST save in a rapid burst is correctly refused as stale once later saves landed', rejectedRes.status === 409)
+    }
+
     /* ---------------- restart persistence ---------------- */
     {
       await stopServer(server)
@@ -500,6 +740,50 @@ async function main() {
       const recB = await (await fetch(`${base}/api/submissions/${b.id}`)).json()
       assert('judgment saved on submission A appears on A', recA.judgment?.innate_features[0] === 'only-on-a')
       assert('judgment saved on submission A does NOT appear on B', recB.judgment === null)
+
+      /* -------- workspace isolation across the same two submissions (round 2 Phase 2) -------- */
+      const emptyHerbalFinal = {
+        finalPatternOrMechanism: '',
+        treatmentPrinciple: '',
+        prescriptionPlanNote: '',
+        symptomsToTrack: '',
+        recordedAt: null,
+      }
+      const workspaceFor = (label) => ({
+        schema_version: '1.0.0',
+        painExamSuggestions: [],
+        painFinalAssessment: {
+          finalWorkingAssessment: label,
+          treatmentFocus: '',
+          interventionPerformedOrPlanned: '',
+          immediateRetestTarget: '',
+          recordedAt: new Date().toISOString(),
+        },
+        painFollowUpTargets: [],
+        herbalPatternCandidates: [],
+        herbalClinicianObservations: [],
+        herbalFinalAssessment: emptyHerbalFinal,
+        herbalFollowUpTargets: [],
+        updated_at: new Date().toISOString(),
+      })
+
+      await fetch(`${base}/api/submissions/${a.id}/workspace`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(workspaceFor('workspace-only-on-a')),
+      })
+
+      const recA2 = await (await fetch(`${base}/api/submissions/${a.id}`)).json()
+      const recB2 = await (await fetch(`${base}/api/submissions/${b.id}`)).json()
+      assert(
+        'workspace saved on submission A appears on A',
+        recA2.workspace?.painFinalAssessment.finalWorkingAssessment === 'workspace-only-on-a',
+      )
+      assert('workspace saved on submission A does NOT appear on B', recB2.workspace === null)
+      assert(
+        "workspace save on A leaves A's earlier judgment (from this same block) untouched",
+        recA2.judgment?.innate_features[0] === 'only-on-a',
+      )
     }
 
     /* ---------------- record shape: version traceability ---------------- */
@@ -1075,6 +1359,274 @@ async function main() {
     }
   }
 
+  /* ---------------- longitudinal patient history (round 3 Phase C) ---------------- */
+  {
+    // The main `server`/`base` from the top-level try block was already
+    // stopped above (see the `finally` that closes it) -- this block needs
+    // its own live HTTP server, so it gets its own temp dir/server pair,
+    // same shape as the retention block above but with real HTTP calls.
+    const histRoot = await mkdtemp(path.join(tmpdir(), 'samindang-history-'))
+    const histDataDir = path.join(histRoot, 'submissions')
+    const { server: histServer, base: histBase } = await startServer(histDataDir)
+    try {
+    const histStore = createStore(histDataDir)
+
+    const emptyWorkspaceFor = (overrides) => ({
+      schema_version: '1.1.0',
+      painExamSuggestions: [],
+      painFinalAssessment: { finalWorkingAssessment: '', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: null },
+      painFollowUpTargets: [],
+      herbalPatternCandidates: [],
+      herbalClinicianObservations: [],
+      herbalFinalAssessment: { finalPatternOrMechanism: '', treatmentPrinciple: '', prescriptionPlanNote: '', symptomsToTrack: '', recordedAt: null },
+      herbalFollowUpTargets: [],
+      painCarePlan: { currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: '', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: '', recordedAt: null },
+      herbalCarePlan: { currentManagementGoal: '', medicationPlanNote: '', homeLifestyleManagement: '', symptomsToObserve: '', adverseEffectContactInstruction: '', nextVisitCheckItem: '', recordedAt: null },
+      nextReassessmentPlan: { status: 'UNSET', targetDate: '', afterVisitCount: null, note: '' },
+      painReassessment: { items: [], finalReassessmentNote: '', recordedAt: null },
+      herbalReassessment: { items: [], finalReassessmentNote: '', recordedAt: null },
+      painRehabSuggestions: [],
+      additionalConcernPromotion: { status: 'NOT_FLAGGED', clinicianNote: '', promotedAt: null },
+      updated_at: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    })
+
+    // Patient P's FIRST visit: a real submission with a workspace carrying
+    // follow-up targets / final assessment / a next-reassessment plan.
+    const subA = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-a', responses: {}, metadata: { primary_concern: '요통' } },
+      myungri: null,
+      patient_label: 'hist-patient-a',
+    })
+    const patientId = subA.patient_id
+    await histStore.saveWorkspace(
+      subA.id,
+      emptyWorkspaceFor({
+        painFinalAssessment: { finalWorkingAssessment: '단순 요통 1차 판단', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+        painFollowUpTargets: [{ id: 'ft1', label: 'LBP_12', baseline: '7', postTreatmentValue: '5' }],
+        nextReassessmentPlan: { status: 'DATE', targetDate: '2026-02-01', afterVisitCount: null, note: '2주 뒤 재검' },
+      }),
+    )
+
+    // Patient Q: a completely different patient/submission, used both as an
+    // "other patient" isolation check and as the underlying submission a
+    // second visit for patient P can point at (this codebase's tablet path
+    // always mints a fresh patient_id per submission -- see visitStore.js's
+    // identity-rule comment -- so a *returning* patient's actual follow-up
+    // questionnaire is not yet wired end to end; the visit-level linkage
+    // below stands in for that until that flow exists).
+    const subQ = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-q', responses: {}, metadata: { primary_concern: '어깨통증' } },
+      myungri: null,
+      patient_label: 'hist-patient-q',
+    })
+    await histStore.saveWorkspace(
+      subQ.id,
+      emptyWorkspaceFor({
+        painFinalAssessment: { finalWorkingAssessment: '환자 Q 전용 판단 -- 절대 P에게 노출되면 안 됨', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-05T00:00:00.000Z' },
+      }),
+    )
+
+    // Patient P's SECOND visit, pointing at a fresh submission of its own
+    // (subB) -- exercises the same patient_id appearing across two
+    // DIFFERENT submission records.
+    const subB = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-b', responses: {}, metadata: { primary_concern: '요통' } },
+      myungri: null,
+      patient_label: 'hist-patient-a-visit2',
+    })
+    await histStore.saveWorkspace(
+      subB.id,
+      emptyWorkspaceFor({
+        painFinalAssessment: { finalWorkingAssessment: '2차 방문 판단', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-02-01T00:00:00.000Z' },
+        painFollowUpTargets: [{ id: 'ft1', label: 'LBP_12', baseline: '5', postTreatmentValue: '3' }],
+      }),
+    )
+    const visitB = await histStore.createVisit({ patient_id: patientId, submission_id: subB.id })
+
+    // An OLDER visit for patient P with NO submission at all (e.g. a
+    // documented-gap "재진" created via POST /api/visits with no
+    // questionnaire) -- must be safely skipped, not crash.
+    await histStore.createVisit({ patient_id: patientId, submission_id: null })
+
+    const res = await fetch(`${histBase}/api/patients/${encodeURIComponent(patientId)}/history?excludeVisitId=${encodeURIComponent(subA.visit_id)}`)
+    assert('GET /api/patients/:id/history -> 200', res.status === 200)
+    const body = await res.json()
+    assert('history response patient_id matches the requested patient exactly', body.patient_id === patientId)
+    assert(
+      'history: excludeVisitId removed patient P\'s own current visit, submission-less visit safely skipped -> exactly 1 remaining',
+      body.visits.length === 1,
+    )
+    const only = body.visits[0]
+    assert('history: the one remaining visit is patient P\'s SECOND visit (subB), not the excluded first one', only.visit_id === visitB.id)
+    assert('history: pain_follow_up_targets carries the RAW baseline/postTreatmentValue text, no computed delta', only.pain_follow_up_targets[0].baseline === '5' && only.pain_follow_up_targets[0].postTreatmentValue === '3')
+    assert('history: pain_final_assessment_summary is patient P\'s own text', only.pain_final_assessment_summary === '2차 방문 판단')
+    assert('history: response body never contains patient Q\'s final assessment text', !JSON.stringify(body).includes('환자 Q 전용 판단'))
+
+    const resNoExclude = await fetch(`${histBase}/api/patients/${encodeURIComponent(patientId)}/history`)
+    const bodyNoExclude = await resNoExclude.json()
+    assert(
+      'history without excludeVisitId: both of patient P\'s submission-backed visits are returned, submission-less one skipped',
+      bodyNoExclude.visits.length === 2,
+    )
+
+    const resOther = await fetch(`${histBase}/api/patients/${encodeURIComponent(subQ.patient_id)}/history`)
+    const bodyOther = await resOther.json()
+    assert('history for patient Q returns only patient Q\'s own visit, never patient P\'s', bodyOther.visits.length === 1 && bodyOther.visits[0].submission_id === subQ.id)
+
+    const resUnknown = await fetch(`${histBase}/api/patients/${encodeURIComponent('00000000-0000-0000-0000-000000000000')}/history`)
+    assert('history for an unknown/never-seen patient_id -> 200 with an empty visits[] (not 404, not a crash)', resUnknown.status === 200)
+    const bodyUnknown = await resUnknown.json()
+    assert('history for unknown patient_id: visits is an empty array', Array.isArray(bodyUnknown.visits) && bodyUnknown.visits.length === 0)
+
+    const resNoAuth = await fetch(`${histBase}/api/patients/${encodeURIComponent(patientId)}/history`, {
+      headers: { origin: 'https://evil.example.com' },
+    })
+    assert('GET /api/patients/:id/history without doctor auth (evil Origin) -> 403, same guard as every other doctor route', resNoAuth.status === 403)
+
+    /* 12차 독립 리뷰 MEDIUM-3: workspace는 인증되지 않은 PUT
+     * /api/submissions/:id/workspace가 검증 없이 저장한 값이라
+     * painFollowUpTargets/herbalFollowUpTargets 자체가 배열이 아닐 수
+     * 있다 -- 이전에는 `?? []`만 있어 `[...painTargets, ...herbalTargets]`
+     * 스프레드가 그대로 "TypeError: ... is not iterable"을 던져
+     * 이 엔드포인트 전체를 500으로 만들 수 있었다. */
+    const subC = await histStore.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'sess-hist-c', responses: {}, metadata: { primary_concern: '요통' } },
+      myungri: null,
+      patient_label: 'hist-patient-c',
+    })
+    await histStore.saveWorkspace(
+      subC.id,
+      emptyWorkspaceFor({ painFollowUpTargets: 'not-an-array', herbalFollowUpTargets: { corrupted: true } }),
+    )
+    const resMalformed = await fetch(`${histBase}/api/patients/${encodeURIComponent(subC.patient_id)}/history`)
+    assert(
+      'history: a wrong-typed (non-array) painFollowUpTargets/herbalFollowUpTargets in a stored workspace never 500s the endpoint (12th independent review MEDIUM-3)',
+      resMalformed.status === 200,
+    )
+    const bodyMalformed = await resMalformed.json()
+    assert(
+      'history: wrong-typed follow-up-target fields fall back to an empty array, not a crash or a fabricated value',
+      Array.isArray(bodyMalformed.visits[0].pain_follow_up_targets) &&
+        bodyMalformed.visits[0].pain_follow_up_targets.length === 0 &&
+        Array.isArray(bodyMalformed.visits[0].herbal_follow_up_targets) &&
+        bodyMalformed.visits[0].herbal_follow_up_targets.length === 0 &&
+        Array.isArray(bodyMalformed.visits[0].follow_up_targets) &&
+        bodyMalformed.visits[0].follow_up_targets.length === 0,
+    )
+    } finally {
+      await stopServer(histServer)
+      await rm(histRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* ---------------- micro follow-up (round 3 Phase D) ---------------- */
+  {
+    const mfuRoot = await mkdtemp(path.join(tmpdir(), 'samindang-microfollowup-'))
+    const mfuDataDir = path.join(mfuRoot, 'submissions')
+    const { server: mfuServer, base: mfuBase } = await startServer(mfuDataDir)
+    try {
+      const created = await (
+        await fetch(`${mfuBase}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-mfu-1' })),
+        })
+      ).json()
+      const record = await (await fetch(`${mfuBase}/api/submissions/${created.id}`)).json()
+      const visitId = record.visit_id
+
+      const beforeRes = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`)
+      const before = await beforeRes.json()
+      assert('GET micro-follow-up before any save -> 200 with response: null', beforeRes.status === 200 && before.response === null)
+
+      const postRes = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetRatings: [{ targetId: 'ft1', label: 'LBP_12', patientReportedValue: '4' }],
+          overallChange: '조금 좋아짐',
+          newSymptomReported: true,
+          newSymptomNote: '어깨도 아픔',
+          adverseEffectReported: false,
+          adverseEffectNote: '',
+        }),
+      })
+      const posted = await postRes.json()
+      assert('POST micro-follow-up -> 201', postRes.status === 201)
+      assert('POST micro-follow-up response carries the visit_id it was saved under', posted.visit_id === visitId)
+      assert('POST micro-follow-up response carries the visit\'s own patient_id, not a client-supplied one', posted.patient_id === record.patient_id)
+      assert('POST micro-follow-up preserves targetRatings exactly', posted.targetRatings.length === 1 && posted.targetRatings[0].patientReportedValue === '4')
+      assert('POST micro-follow-up preserves newSymptomReported/Note', posted.newSymptomReported === true && posted.newSymptomNote === '어깨도 아픔')
+
+      const afterRes = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`)
+      const after = await afterRes.json()
+      assert('GET micro-follow-up after save returns the saved response, not null', after.response !== null && after.response.overallChange === '조금 좋아짐')
+
+      const missingVisit = await fetch(`${mfuBase}/api/visits/00000000-0000-0000-0000-000000000000/micro-follow-up`)
+      assert('GET micro-follow-up for an unknown visit_id -> 404', missingVisit.status === 404)
+      const missingVisitPost = await fetch(`${mfuBase}/api/visits/00000000-0000-0000-0000-000000000000/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      assert('POST micro-follow-up for an unknown visit_id -> 404', missingVisitPost.status === 404)
+
+      // Round 6 review fix (idempotent acceptance): saveResponse is now
+      // write-once per visit_id (see microFollowUpStore.js's doc comment),
+      // so this sanitization check needs its OWN fresh visit -- `visitId`
+      // above already has a saved response and would just return it
+      // unchanged rather than exercising the malformed-input coercion path.
+      const createdForMalformed = await (
+        await fetch(`${mfuBase}/api/submissions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(validPayload({ session_id: 'sess-mfu-malformed' })),
+        })
+      ).json()
+      const recordForMalformed = await (await fetch(`${mfuBase}/api/submissions/${createdForMalformed.id}`)).json()
+      const malformedPost = await fetch(`${mfuBase}/api/visits/${recordForMalformed.visit_id}/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ targetRatings: 'not-an-array', newSymptomReported: 'yes' }),
+      })
+      const malformedBody = await malformedPost.json()
+      assert('POST micro-follow-up with malformed targetRatings -> 201 with [] (never throws/500s)', malformedPost.status === 201 && Array.isArray(malformedBody.targetRatings) && malformedBody.targetRatings.length === 0)
+      assert('POST micro-follow-up coerces a non-boolean newSymptomReported to a real boolean', malformedBody.newSymptomReported === true)
+
+      // A second POST for the SAME (already-saved) visitId is now a no-op
+      // replay -- it must return the FIRST response unchanged, never
+      // silently overwrite it with different content.
+      const secondPostSameVisit = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetRatings: [{ targetId: 'ft1', label: 'LBP_12', patientReportedValue: 'SHOULD NOT OVERWRITE' }],
+          overallChange: '나빠짐',
+          newSymptomReported: false,
+          newSymptomNote: '',
+          adverseEffectReported: false,
+          adverseEffectNote: '',
+        }),
+      })
+      const secondPostBody = await secondPostSameVisit.json()
+      assert('POST micro-follow-up: a second save for the same visit_id is write-once and returns the FIRST response unchanged', secondPostSameVisit.status === 201 && secondPostBody.targetRatings[0].patientReportedValue === '4')
+      assert('POST micro-follow-up: the second attempt\'s conflicting text never made it into storage', !JSON.stringify(secondPostBody).includes('SHOULD NOT OVERWRITE'))
+
+      const noAuth = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, { headers: { origin: 'https://evil.example.com' } })
+      assert('GET micro-follow-up without doctor auth (evil Origin) -> 403, same guard as every other doctor route', noAuth.status === 403)
+      const noAuthPost = await fetch(`${mfuBase}/api/visits/${visitId}/micro-follow-up`, {
+        method: 'POST',
+        headers: { origin: 'https://evil.example.com', 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      assert('POST micro-follow-up without doctor auth (evil Origin) -> 403', noAuthPost.status === 403)
+    } finally {
+      await stopServer(mfuServer)
+      await rm(mfuRoot, { recursive: true, force: true })
+    }
+  }
+
   /* ---------------- patient path cannot list/read submissions ---------------- */
   {
     const appSrc = await readFile(fileURLToPath(new URL('../src/App.tsx', import.meta.url)), 'utf8')
@@ -1086,11 +1638,64 @@ async function main() {
     const serverIndexSrc = await readFile(fileURLToPath(new URL('../server/index.js', import.meta.url)), 'utf8')
     const requireDoctorCalls = (serverIndexSrc.match(/!requireDoctor\(req\)/g) ?? []).length
     // 기존 10개(submissions x4 + visits x4 + current-visit GET + current-visit/clear) +
-    // Task 2에서 POST/GET /api/visits/:id/recorder-results 2개 추가되어 12개가 됐다.
+    // Task 2에서 POST/GET /api/visits/:id/recorder-results 2개 추가되어 12개가 됐고,
+    // Doctor Clinical Workspace round 2 Phase 2에서 PUT /api/submissions/:id/workspace
+    // 1개가 추가되어 13개가 됐다(judgment 라우트와 동일한 doctor-only 가드 패턴).
+    // Round 3 Phase C에서 GET /api/patients/:patientId/history 1개가 추가되어
+    // 14개가 됐다(같은 doctor-only 가드, exact patient_id match만 사용).
+    // Round 3 Phase D에서 POST/GET /api/visits/:id/micro-follow-up 2개가
+    // 추가되어 16개가 됐다(recorder-results와 동일한 doctor-only 가드 패턴 --
+    // 환자 태블릿에서 직접 호출하지 않는다, microFollowUp.ts의 OPERATIONAL
+    // INTEGRATION REQUIRED 주석 참고).
+    // Round 3(revisit linkage)에서 6개가 추가되어 22개가 됐다: PUT
+    // /api/visits/:id/workspace, GET /api/visits/revisits, POST
+    // /api/patients/:patientId/start-revisit, GET/POST(reissue)/POST(invalidate)
+    // /api/visits/:id/follow-up-session 계열 -- 전부 같은 doctor-only 가드.
+    // 공개 환자용 /api/follow-up-session/:token(GET/POST) 2개는 의도적으로
+    // 이 목록에 포함되지 않는다(patient POST /api/submissions와 같은 위치의
+    // 공개 엔드포인트 -- followUpSessionStore.js의 토큰 검증이 인증을 대신한다).
     // isLocalOnly는 완전히 제거됐다(server/auth.js).
+    // Round 8(clinic tablet stations)에서 4개가 추가되어 26개가 됐다:
+    // POST/GET /api/stations, POST /api/stations/:id/assign, POST
+    // /api/stations/:id/reset -- 전부 접수/직원용이라 같은 doctor-only 가드.
+    // 태블릿 자신의 라우트 2개(GET /api/station/assignment, POST
+    // /api/station/complete)는 의도적으로 이 목록에 포함되지 않는다: 기기
+    // credential로 인증하는 환자 대면 기기용 엔드포인트이며, 공개 환자용
+    // /api/follow-up-session/:token과 동일한 위치다(stationStore.js의
+    // credential 검증이 인증을 대신한다).
+    // CRM v0.3.1 Round 6(persistence)에서 7개(라우트 코드 블록 기준 -- 일부는
+    // 여러 HTTP 라우트를 한 requireDoctor 가드 아래 묶어서 처리한다)가
+    // 추가되어 33개가 됐다: POST /api/crm/episodes, GET
+    // /api/crm/episodes/:id, GET /api/crm/episodes/:id/tasks, POST
+    // /api/crm/episodes/:id/{pause,complete,reopen}(한 블록), POST
+    // /api/crm/tasks, GET /api/crm/tasks/:id, POST
+    // /api/crm/tasks/:id/{resolve,snooze,cancel,supersede,claim,seen}(한
+    // 블록) -- 전부 같은 doctor-only 가드이며 CRM UI는 아직 없다(이번
+    // 라운드는 의도적으로 서버 persistence만).
+    // CRM v0.3.1 Round 11(Today Queue read path)에서 1개가 추가되어
+    // 34개가 됐다: GET /api/crm/tasks(컬렉션, Today Queue 소스) -- 같은
+    // doctor-only 가드, CRM UI는 여전히 없다.
+    // CRM v0.3.1 Round 14(Sigma identity linkage)에서 2개가 추가되어
+    // 36개가 됐다: POST /api/crm/patient-identity(명시적 확인 링크 생성),
+    // GET /api/crm/patient-identities(Today Queue enrichment 배치 조회) --
+    // 같은 doctor-only 가드.
+    // Quick Revisit 발송(SOLAPI 스캐폴드)에서 4개가 추가되어 40개가 됐다:
+    // POST/GET /api/visits/:id/messages, POST /api/messages/:id/retry,
+    // POST /api/messages/:id/cancel -- 전부 같은 doctor-only 가드. 공개
+    // provider 콜백 POST /api/messages/webhook은 의도적으로 이 목록에
+    // 포함되지 않는다(provider_message_id 자체가 추측 불가능한 값이라
+    // 이것이 인증을 대신한다 -- 태블릿/스테이션 공개 라우트와 동일한 위치).
+    // Medication/Herbal-course batch에서 6개가 추가되어 46개가 됐다:
+    // GET /api/crm/episodes?patient_uuid(환자별 Episode 조회),
+    // GET /api/crm/episodes/:id/medication-courses,
+    // POST /api/crm/medication-courses,
+    // GET /api/crm/medication-courses/:id,
+    // POST /api/crm/medication-courses/:id/check-tasks,
+    // POST /api/crm/medication-courses/:id/shift-start -- 전부 같은
+    // doctor-only 가드.
     assert(
-      'server has exactly the 12 doctor-guarded routes calling requireDoctor (submissions x4 + visits x6 + current-visit GET + current-visit/clear)',
-      requireDoctorCalls === 12,
+      'server has exactly the 46 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x16 + messaging x4)',
+      requireDoctorCalls === 46,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',
@@ -1116,6 +1721,83 @@ async function main() {
       auditLogIgnored = false
     }
     assert('default audit log path (.data/audit.log) is gitignored', auditLogIgnored)
+  }
+
+  /* ---------------- 8th independent review MEDIUM-2: listSubmissions
+   * requires_staff_check tri-state (unit-level, store.js directly) ----------------
+   * submission.flags is computed client-side and stored verbatim (see
+   * createApp's POST /api/submissions handler) -- listSubmissions used to
+   * coerce an unusable flags object to `?? false`, making the triage badge
+   * in the doctor queue silently claim "no red flag" for a record whose
+   * flags are actually unreadable. isFlagsUsable(server/store.js) now
+   * makes this field tri-state: boolean when flags is structurally usable,
+   * the string 'unknown' otherwise. */
+  {
+    const m2Root = await mkdtemp(path.join(tmpdir(), 'samindang-m2-flags-'))
+    const m2DataDir = path.join(m2Root, 'submissions')
+    try {
+      const m2Store = createStore(m2DataDir)
+      const wellFormed = await m2Store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: 'm2-well-formed',
+          // 9차 독립 리뷰 HIGH-1 이후 isFlagsConsistentWithResponses가
+          // 7개 플래그 전부를 responses로부터 재계산해 대조하므로, 이
+          // fixture의 responses는 general_red:true를 실제로 뒷받침해야
+          // 한다(그 외 6개 플래그는 모두 false이므로 나머지 필드는
+          // 비워둬도 기대값과 일치한다).
+          responses: { safety_flags: { red_flag_general: ['fever'] } },
+          flags: {
+            general_red: true,
+            gi_needs_review: false,
+            bowel_needs_review: false,
+            sleep_disorder_review: false,
+            sleep_disorder_priority_review: false,
+            response_consistency_review: false,
+            requires_staff_check: true,
+          },
+        },
+        myungri: null,
+        patient_label: 'well-formed patient',
+      })
+      const hollow = await m2Store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: 'm2-hollow',
+          responses: {},
+          flags: {},
+        },
+        myungri: null,
+        patient_label: 'hollow patient',
+      })
+      const missing = await m2Store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: 'm2-missing',
+          responses: {},
+          // flags entirely absent -- a pre-flags-field legacy record.
+        },
+        myungri: null,
+        patient_label: 'missing-flags patient',
+      })
+
+      const listed = await m2Store.listSubmissions()
+      const byId = Object.fromEntries(listed.map((s) => [s.id, s]))
+      assert(
+        'store.js MEDIUM-2: well-formed flags -> requires_staff_check is the real boolean (true)',
+        byId[wellFormed.id].requires_staff_check === true,
+      )
+      assert(
+        'store.js MEDIUM-2: hollow flags ({}) -> requires_staff_check is the string "unknown", never coerced to false',
+        byId[hollow.id].requires_staff_check === 'unknown',
+      )
+      assert(
+        'store.js MEDIUM-2: missing flags (undefined) -> requires_staff_check is "unknown", never coerced to false',
+        byId[missing.id].requires_staff_check === 'unknown',
+      )
+    } finally {
+      await rm(m2Root, { recursive: true, force: true })
+    }
   }
 
   /* ---------------- doctor-endpoint guard (unit-level, fake remoteAddress) ---------------- */

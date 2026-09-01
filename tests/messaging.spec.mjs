@@ -1,0 +1,824 @@
+// Quick Revisit outbound messaging regression suite. Plain node, no test
+// framework -- same convention as tests/crm-store.spec.mjs /
+// tests/audit-registry.spec.mjs: assert() prints "OK: <name>" and throws on
+// failure.
+//
+// Scope: this batch is explicitly API-credential-free -- everything here
+// exercises a mock transport (no env vars set, which is the real state of
+// this deployment today, resolves to BizM's own mock -- see
+// server/bizmAdapter.js's resolveBizmProviderState and
+// messagingTransport.js's resolveMessagingProviderName; BizM is the
+// default/selected provider as of the BizM batch) plus the full
+// persistence/retry/status/webhook contract around it. Live wire-format
+// correctness for either provider is EXTERNAL CREDENTIAL PENDING/UNVERIFIED
+// and out of scope here -- see tests/messaging-bizm.spec.mjs for BizM-
+// specific provider-selection/fallback-map coverage and
+// server/bizmAdapter.js's own header. SOLAPI's own fallback contract
+// (still fully implemented, just no longer the default) is exercised
+// explicitly further below by constructing a store with an explicit SOLAPI
+// transport.
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { createApp } from '../server/index.js'
+import { auditLogPath } from '../server/audit.js'
+import { resolveSolapiProviderState, createSolapiTransport } from '../server/solapiAdapter.js'
+import { createMessagingStore, hashToken } from '../server/messagingStore.js'
+import { resolveWebhookSecret, signWebhookBody } from '../server/messagingTransport.js'
+
+let passCount = 0
+function assert(name, cond) {
+  if (!cond) throw new Error(`FAIL: ${name}`)
+  passCount++
+  console.log(`OK: ${name}`)
+}
+
+async function startServer(opts) {
+  const server = createApp(opts)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  return { server, base: `http://127.0.0.1:${port}` }
+}
+function stopServer(server) {
+  return new Promise((resolve) => server.close(resolve))
+}
+
+const DOCTOR_TOKEN = 'messaging-test-token'
+const AUTH_HEADERS = { 'content-type': 'application/json', 'x-doctor-token': DOCTOR_TOKEN }
+
+async function postJson(url, body, headers = AUTH_HEADERS) {
+  const res = await fetch(url, { method: 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  return { status: res.status, body: await res.json() }
+}
+async function getJson(url, headers = AUTH_HEADERS) {
+  const res = await fetch(url, { headers })
+  return { status: res.status, body: await res.json() }
+}
+
+async function readAuditLines(logPath) {
+  let raw
+  try {
+    raw = await readFile(logPath, 'utf8')
+  } catch (err) {
+    if (err.code === 'ENOENT') return []
+    throw err
+  }
+  return raw.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+}
+
+async function main() {
+  /* =====================================================================
+     Part 0: resolveSolapiProviderState -- the 3-state gate itself, no
+     server/HTTP involved.
+     ===================================================================== */
+  {
+    assert(
+      'provider state: no credentials -> PENDING_CREDENTIALS (the real state of this deployment today)',
+      resolveSolapiProviderState({}) === 'PENDING_CREDENTIALS',
+    )
+    assert(
+      'provider state: partial credentials (missing sender number) -> still PENDING_CREDENTIALS',
+      resolveSolapiProviderState({ SOLAPI_API_KEY: 'k', SOLAPI_API_SECRET: 's' }) === 'PENDING_CREDENTIALS',
+    )
+    const fullCreds = { SOLAPI_API_KEY: 'k', SOLAPI_API_SECRET: 's', SOLAPI_SENDER_NUMBER: '01000000000' }
+    assert('provider state: full credentials, no force-mock -> LIVE', resolveSolapiProviderState(fullCreds) === 'LIVE')
+    assert(
+      'provider state: full credentials + SAMINDANG_SOLAPI_FORCE_MOCK=true -> MOCK',
+      resolveSolapiProviderState({ ...fullCreds, SAMINDANG_SOLAPI_FORCE_MOCK: 'true' }) === 'MOCK',
+    )
+  }
+
+  /* =====================================================================
+     Part 1: messagingStore unit-level -- dedup/idempotency, retry backoff
+     scheduling, fallback, webhook contract, cancel guard. Uses the store
+     directly (default mock transport, no server/HTTP) for tight control
+     over timing assertions.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-store-'))
+    try {
+      const store = createMessagingStore(dataRoot)
+
+      // Idempotency: two queueRevisitMessage calls with the same
+      // (visitId, purpose) return the SAME record, the second marked
+      // deduped -- a doctor double-tapping "발송" must never send twice.
+      const q1 = await store.queueRevisitMessage({ visitId: 'visit-dedup-1', patientId: 'patient-1', phone: '01011112222', followUpToken: 'tok-a' })
+      assert('dedup: first queue is not deduped', q1.deduped === false)
+      assert('dedup: first queue succeeds against the normal mock transport (SENT)', q1.record.status === 'SENT')
+      const q2 = await store.queueRevisitMessage({ visitId: 'visit-dedup-1', patientId: 'patient-1', phone: '01011112222', followUpToken: 'tok-a' })
+      assert('dedup: second queue for the same visit_id+purpose IS deduped', q2.deduped === true)
+      assert('dedup: second queue returns the SAME message_id', q2.record.message_id === q1.record.message_id)
+
+      // Message-integrity-batch finding (HIGH, owner-flagged): a dedup hit
+      // for the SAME visit_id but a DIFFERENT followUpToken must fail
+      // closed instead of silently handing back the stale record -- see
+      // queueRevisitMessage's hash-comparison check. Not a cross-patient
+      // leak (same visit_id throughout), but silently returning the old
+      // record here would leave the durable follow_up_token_hash
+      // pointing at a capability that no longer matches whatever contact
+      // tuple a caller (server/index.js) might now cache for automatic
+      // retries.
+      let mismatchThrew = null
+      try {
+        await store.queueRevisitMessage({ visitId: 'visit-dedup-1', patientId: 'patient-1', phone: '01011112222', followUpToken: 'tok-a-DIFFERENT' })
+      } catch (err) {
+        mismatchThrew = err
+      }
+      assert('dedup conflict: a DIFFERENT followUpToken for the SAME visit_id throws MessagingConflictError', mismatchThrew?.name === 'MessagingConflictError')
+      const q1AfterMismatch = await store.getMessage(q1.record.message_id)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (hash)', q1AfterMismatch.follow_up_token_hash === q1.record.follow_up_token_hash)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (version)', q1AfterMismatch.version === q1.record.version)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (updated_at)', q1AfterMismatch.updated_at === q1.record.updated_at)
+      assert('dedup conflict: the durable record is completely UNCHANGED by the rejected attempt (attempt_count)', q1AfterMismatch.attempt_count === q1.record.attempt_count)
+      assert('dedup conflict: no new/second message was ever created for this visit_id', (await store.listMessagesForVisit('visit-dedup-1')).length === 1)
+
+      // follow_up_token_hash is a hash, never the plaintext token.
+      assert('privacy: follow_up_token_hash is not the raw token', q1.record.follow_up_token_hash !== 'tok-a')
+      assert('privacy: follow_up_token_hash matches hashToken(rawToken)', q1.record.follow_up_token_hash === hashToken('tok-a'))
+      assert('privacy: the persisted record has no "phone" field at all', !('phone' in q1.record))
+
+      // Cancel guard (checked here while q1 is still freshly SENT, before
+      // the late-webhook block below moves it to FAILED): cannot cancel a
+      // message that has already been sent.
+      let cancelSentThrew = false
+      try {
+        await store.cancelMessage(q1.record.message_id)
+      } catch (err) {
+        cancelSentThrew = err.name === 'MessagingConflictError'
+      }
+      assert('cancel: cannot cancel an already-SENT message', cancelSentThrew)
+
+      // Retry/backoff: phone ending '9998' is the mock transport's
+      // deterministic RETRYABLE-transient-failure sentinel (every channel).
+      const before = Date.now()
+      const q3 = await store.queueRevisitMessage({ visitId: 'visit-retry-1', patientId: 'patient-2', phone: '01000009998', followUpToken: 'tok-b' })
+      assert('retry: a retryable failure leaves the message QUEUED (not FAILED) with attempts remaining', q3.record.status === 'QUEUED')
+      assert('retry: attempt_count is 1 after the first failed attempt', q3.record.attempt_count === 1)
+      assert('retry: next_retry_at is set', typeof q3.record.next_retry_at === 'string')
+      const delayMs = new Date(q3.record.next_retry_at).getTime() - before
+      assert('retry: first backoff delay is ~30s (RETRY_DELAYS_MS[0])', delayMs > 25_000 && delayMs < 35_000)
+
+      const manualRetry1 = await store.retryMessage(q3.record.message_id, { phone: '01000009998' })
+      assert('retry: manual retry #2 still QUEUED (still failing, attempts remain)', manualRetry1.status === 'QUEUED')
+      assert('retry: attempt_count is 2 after the second failed attempt', manualRetry1.attempt_count === 2)
+      const manualRetry2 = await store.retryMessage(q3.record.message_id, { phone: '01000009998' })
+      assert('retry: attempt_count is 3 after the third failed attempt', manualRetry2.attempt_count === 3)
+      const manualRetry3 = await store.retryMessage(q3.record.message_id, { phone: '01000009998' })
+      assert('retry: attempt_count reaches max_attempts (4) on the fourth failed attempt', manualRetry3.attempt_count === 4)
+      assert('retry: status is FAILED once max_attempts is reached', manualRetry3.status === 'FAILED')
+      assert('retry: next_retry_at is cleared once FAILED', manualRetry3.next_retry_at === null)
+
+      let exhaustedThrew = false
+      try {
+        await store.retryMessage(q3.record.message_id, { phone: '01000009998' })
+      } catch (err) {
+        exhaustedThrew = err.name === 'MessagingConflictError'
+      }
+      assert('retry: retrying an already-FAILED (attempts exhausted) message throws MessagingConflictError', exhaustedThrew)
+
+      // BizM batch: BizM (the default provider as of this batch) has no
+      // verified SMS/LMS fallback contract (see bizmAdapter.js's header),
+      // so a phone ending '9999' -- BizM's mock Alimtalk-unreachable
+      // sentinel -- goes straight to FAILED with no fallback attempt at
+      // all, unlike the pre-BizM-batch SOLAPI-default behavior (still
+      // verified separately just below).
+      const q4 = await store.queueRevisitMessage({ visitId: 'visit-fallback-1', patientId: 'patient-3', phone: '01000009999', followUpToken: 'tok-c' })
+      assert('BizM default: no verified fallback -- phone ending 9999 goes straight to FAILED', q4.record.status === 'FAILED')
+      assert('BizM default: fallback_channel stays null (no fallback attempted)', q4.record.fallback_channel === null)
+      assert('BizM default: attempt_count is only 1 (fails closed on the first attempt, not retried)', q4.record.attempt_count === 1)
+      assert('BizM default: the record actually says BIZM (provider identity, not a leftover SOLAPI default)', q4.record.provider === 'BIZM')
+
+      // Message-integrity-batch finding (MEDIUM, independent review):
+      // retryMessage() previously never updated follow_up_token_hash even
+      // when a manual retry re-supplies a genuinely DIFFERENT followUpToken
+      // for the same message -- unit-level proof at the store boundary
+      // (the HTTP-level equivalent, via a real reissued token, lives in
+      // Part 2's "retry-hash" tests below).
+      const q4b = await store.queueRevisitMessage({ visitId: 'visit-retry-hash-1', patientId: 'patient-hash', phone: '01000009998', followUpToken: 'tok-hash-original' })
+      assert('retry-hash unit: original hash matches the queue-time token', q4b.record.follow_up_token_hash === hashToken('tok-hash-original'))
+      const retryNoNewToken = await store.retryMessage(q4b.record.message_id, { phone: '01000009998' })
+      assert('retry-hash unit: a retry that omits followUpToken leaves the hash unchanged', retryNoNewToken.follow_up_token_hash === hashToken('tok-hash-original'))
+      const retryWithNewTokenUnit = await store.retryMessage(q4b.record.message_id, { phone: '01000009998', followUpToken: 'tok-hash-DIFFERENT' })
+      assert('retry-hash unit: a retry with a genuinely different followUpToken updates the durable hash', retryWithNewTokenUnit.follow_up_token_hash === hashToken('tok-hash-DIFFERENT'))
+      assert('retry-hash unit: the hash is no longer the original token\'s', retryWithNewTokenUnit.follow_up_token_hash !== hashToken('tok-hash-original'))
+
+      // Webhook contract.
+      const q5 = await store.queueRevisitMessage({ visitId: 'visit-webhook-1', patientId: 'patient-4', phone: '01033334444', followUpToken: 'tok-d' })
+      assert('webhook setup: message SENT with a provider_message_id', q5.record.status === 'SENT' && typeof q5.record.provider_message_id === 'string')
+
+      const unknownWebhook = await store.handleDeliveryWebhook({ providerMessageId: 'mock_does_not_exist', delivered: true })
+      assert('webhook: an unknown provider_message_id is a silent no-op, never an error', unknownWebhook.ok === true && unknownWebhook.matched === false)
+
+      const deliveredWebhook = await store.handleDeliveryWebhook({ providerMessageId: q5.record.provider_message_id, delivered: true })
+      assert('webhook: a delivered=true webhook for a known id transitions SENT -> DELIVERED', deliveredWebhook.record.status === 'DELIVERED')
+
+      const staleWebhookAfterDelivered = await store.handleDeliveryWebhook({ providerMessageId: q5.record.provider_message_id, delivered: false, errorCode: 'stale' })
+      assert(
+        'webhook: a second webhook for an already-DELIVERED message is left unchanged (only ever moves a message OUT of SENT once)',
+        staleWebhookAfterDelivered.unchanged === true,
+      )
+      const stillDelivered = await store.getMessage(q5.record.message_id)
+      assert('webhook: the record itself is still DELIVERED after the stale second webhook', stillDelivered.status === 'DELIVERED')
+
+      // A late webhook must never override an already-FAILED record: a
+      // first delivered:false webhook moves q1 (still SENT from the dedup
+      // block above) to FAILED, then a second, later delivered:true
+      // webhook for the SAME provider_message_id must leave it FAILED,
+      // not "resurrect" it to DELIVERED.
+      const failWebhook = await store.handleDeliveryWebhook({ providerMessageId: q1.record.provider_message_id, delivered: false, errorCode: 'handset_unreachable' })
+      assert('late-webhook setup: a delivered:false webhook moves SENT -> FAILED', failWebhook.record.status === 'FAILED')
+      const lateWebhookOnFailed = await store.handleDeliveryWebhook({ providerMessageId: q1.record.provider_message_id, delivered: true })
+      assert('late-webhook: a late delivered:true webhook for an already-FAILED message is left unchanged, not resurrected', lateWebhookOnFailed.unchanged === true)
+      const stillFailed = await store.getMessage(q1.record.message_id)
+      assert('late-webhook: the record itself is still FAILED after the late webhook', stillFailed.status === 'FAILED')
+
+      // Cancel guard, continued: CAN cancel a QUEUED message waiting on its
+      // next backoff retry.
+      const q6 = await store.queueRevisitMessage({ visitId: 'visit-cancel-1', patientId: 'patient-5', phone: '01000009998', followUpToken: 'tok-e' })
+      assert('cancel setup: message is QUEUED (transient failure, retries remain)', q6.record.status === 'QUEUED')
+      const cancelled = await store.cancelMessage(q6.record.message_id)
+      assert('cancel: a QUEUED message awaiting retry can be cancelled', cancelled.status === 'CANCELLED')
+      assert('cancel: next_retry_at is cleared on cancel', cancelled.next_retry_at === null)
+      const dueAfterCancel = await store.runDueRetries(async () => '01000009998')
+      const stillCancelled = await store.getMessage(q6.record.message_id)
+      assert('cancel: a cancelled message is never picked up by the automatic retry sweep', stillCancelled.status === 'CANCELLED')
+      void dueAfterCancel
+
+      // listMessagesForVisit / purgeAll basic shape.
+      const forVisit = await store.listMessagesForVisit('visit-dedup-1')
+      assert('listMessagesForVisit: returns exactly the one message queued for that visit', forVisit.length === 1 && forVisit[0].message_id === q1.record.message_id)
+      assert('listMessagesForVisit: no entry ever carries a "phone" field', forVisit.every((m) => !('phone' in m)))
+
+      const purgedCount = await store.purgeAll()
+      // q1, q3, q4, q4b, q5, q6 each created one distinct message file (q2
+      // was a deduped re-request of q1's own visit_id, no second file; the
+      // rejected dedup-conflict/mismatch attempts above never created a
+      // file at all).
+      assert('purgeAll: purges every message file this test created (6, not 7 -- q2 was a dedup of q1)', purgedCount === 6)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 1.4 (BizM batch): SOLAPI's own automatic same-request fallback
+     (Alimtalk -> SMS) is still fully implemented and still works exactly
+     as before -- it is simply no longer the DEFAULT provider (see the
+     BizM-default assertions in Part 1 above). Verified here by explicitly
+     constructing a store with an explicit SOLAPI transport (no env vars,
+     so it resolves to SOLAPI's own mock, PENDING_CREDENTIALS).
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-solapi-legacy-'))
+    try {
+      const solapiStore = createMessagingStore(dataRoot, { transport: createSolapiTransport({}) })
+      const solapiFallback = await solapiStore.queueRevisitMessage({
+        visitId: 'visit-solapi-fallback-1',
+        patientId: 'patient-solapi-1',
+        phone: '01000009999',
+        followUpToken: 'tok-solapi-fallback',
+      })
+      assert('SOLAPI legacy: overall status is SENT (the SMS fallback attempt succeeded)', solapiFallback.record.status === 'SENT')
+      assert(
+        'SOLAPI legacy: channel is still KAKAO_ALIMTALK (the fallback never overwrites the primary channel)',
+        solapiFallback.record.channel === 'KAKAO_ALIMTALK',
+      )
+      assert('SOLAPI legacy: fallback_channel is recorded as SMS', solapiFallback.record.fallback_channel === 'SMS')
+      assert('SOLAPI legacy: attempt_count is only 1 (one logical attempt, not two)', solapiFallback.record.attempt_count === 1)
+      assert('SOLAPI legacy: record.provider is SOLAPI', solapiFallback.record.provider === 'SOLAPI')
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 1.5: closing-review regression coverage (two HIGH findings from
+     the independent review of the first version of this batch):
+       (a) queueRevisitMessage previously called attemptSend with
+           `{ phone, linkUrl: null, buildText: null }` while attemptSend
+           destructured `{ phone, text }` -- `text` was silently undefined
+           on every single send, so the transport never actually received
+           the follow-up link. A spy transport here inspects exactly what
+           reaches `send()`, which the mock-transport-based tests above
+           cannot do (the mock only reports ok/fail, never echoes its
+           input back).
+       (b) queueRevisitMessage's check-then-create (findByDedupKey then
+           atomicWrite) previously ran with NO lock, so two concurrent
+           calls for the same visit_id could both create a record sharing
+           one dedup_key and both send the patient a real message.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-closing-review-'))
+    try {
+      // (a) text-delivery: a spy transport that just records every call.
+      const sendCalls = []
+      const spyTransport = {
+        async send(args) {
+          sendCalls.push(args)
+          return { ok: true, providerMessageId: `spy_${sendCalls.length}`, channelUsed: args.channel }
+        },
+      }
+      const spyStore = createMessagingStore(path.join(dataRoot, 'text-delivery'), { transport: spyTransport })
+
+      const REAL_TEXT = '[삼인당한의원] 재진 확인 문진 안내\n아래 링크를 눌러 몇 가지만 답해 주세요.\nhttps://example.invalid/#follow-up=tok-text-check'
+      await spyStore.queueRevisitMessage({ visitId: 'visit-text-1', patientId: 'patient-text-1', phone: '01011112222', followUpToken: 'tok-text-check', text: REAL_TEXT })
+      assert('text-delivery: the initial queue send actually reaches the transport with the real text', sendCalls.length === 1 && sendCalls[0].text === REAL_TEXT)
+      assert('text-delivery: the transport never receives undefined for text', sendCalls[0].text !== undefined)
+
+      // Force a retryable failure to reach the manual retry path with a
+      // DIFFERENT text, confirming retryMessage's own `text` argument
+      // (not some stale cached value) is what's actually sent.
+      const failThenRetryTransport = {
+        calls: 0,
+        async send(args) {
+          failThenRetryTransport.calls += 1
+          sendCalls.push(args)
+          if (failThenRetryTransport.calls === 1) return { ok: false, errorCode: 'spy_forced_retry', retryable: true, fallbackEligible: false }
+          return { ok: true, providerMessageId: 'spy_retry_ok', channelUsed: args.channel }
+        },
+      }
+      const retryStore = createMessagingStore(path.join(dataRoot, 'text-delivery-retry'), { transport: failThenRetryTransport })
+      const qRetry = await retryStore.queueRevisitMessage({ visitId: 'visit-text-2', patientId: 'patient-text-2', phone: '01033334444', followUpToken: 'tok-text-retry', text: 'first attempt text' })
+      assert('text-delivery retry setup: first attempt failed retryable, still QUEUED', qRetry.record.status === 'QUEUED')
+      const retried = await retryStore.retryMessage(qRetry.record.message_id, { phone: '01033334444', text: 'second attempt text' })
+      assert('text-delivery: manual retry sends its OWN text argument, not the original queue call\'s', retried.status === 'SENT')
+      const retryCallTexts = sendCalls.filter((c) => c.text === 'first attempt text' || c.text === 'second attempt text').map((c) => c.text)
+      assert('text-delivery: both the original and the retried text actually reached the transport', retryCallTexts.includes('first attempt text') && retryCallTexts.includes('second attempt text'))
+
+      // (b) concurrency: two simultaneous queue calls for the SAME
+      // visit_id must produce exactly one real record and exactly one
+      // real send -- the second must be deduped, not race past the check.
+      const concurrentTransport = {
+        sends: 0,
+        async send(args) {
+          concurrentTransport.sends += 1
+          return { ok: true, providerMessageId: `concurrent_${concurrentTransport.sends}`, channelUsed: args.channel }
+        },
+      }
+      const concurrentStore = createMessagingStore(path.join(dataRoot, 'concurrency'), { transport: concurrentTransport })
+      const [c1, c2] = await Promise.all([
+        concurrentStore.queueRevisitMessage({ visitId: 'visit-concurrent-1', patientId: 'patient-concurrent-1', phone: '01055556666', followUpToken: 'tok-concurrent', text: 'concurrent text' }),
+        concurrentStore.queueRevisitMessage({ visitId: 'visit-concurrent-1', patientId: 'patient-concurrent-1', phone: '01055556666', followUpToken: 'tok-concurrent', text: 'concurrent text' }),
+      ])
+      assert('concurrency: exactly one of the two concurrent queue calls is deduped', [c1.deduped, c2.deduped].filter(Boolean).length === 1)
+      assert('concurrency: both calls resolve to the SAME message_id', c1.record.message_id === c2.record.message_id)
+      const allForVisit = await concurrentStore.listMessagesForVisit('visit-concurrent-1')
+      assert('concurrency: exactly one record exists on disk for this visit_id (not two)', allForVisit.length === 1)
+      assert('concurrency: the transport was actually invoked exactly once -- the patient was sent exactly one real message', concurrentTransport.sends === 1)
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 2: HTTP boundary -- routes, auth, privacy, audit.
+     ===================================================================== */
+  {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-http-'))
+    const dataDir = path.join(dataRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+      const start = (await postJson(`${base}/api/patients/${visit.patient_id}/start-revisit`, {})).body
+
+      // Auth: doctor routes carry the same Origin-allowlist defense-in-depth
+      // layer as every other doctor route (see server/index.js's doctorRoute
+      // gate) -- this test suite calls over 127.0.0.1, which requireDoctor()
+      // itself always treats as trusted (loopback IS the real boundary in
+      // this pilot's threat model, see auth.js's header comment), so the
+      // only way to exercise a genuine 403 here is a disallowed browser
+      // Origin, exactly like tests/station.spec.mjs's own "evil Origin"
+      // checks.
+      const evil = { origin: 'https://evil.example.com' }
+      const LINK = 'https://example.invalid/#follow-up=http-test-token'
+      // BizM-batch independent-review finding (MEDIUM): queueRevisitMessage/
+      // retryMessage now verify the SUPPLIED follow-up token actually
+      // resolves (via store.resolveFollowUpSession) to the SAME visit_id
+      // the message is being sent/retried for -- see server/index.js's
+      // "follow_up_token does not belong to this visit"/"...this message's
+      // visit" checks.
+      // 2nd independent-review finding (MEDIUM): the queue route ALSO now
+      // requires link's own embedded #follow-up= token to equal the
+      // separately-supplied `follow_up_token` field exactly (see
+      // server/index.js's "link does not carry the same follow_up_token"
+      // check) -- link is what BizM's button1 actually delivers to the
+      // patient, so a mismatched link used to sail through untouched. The
+      // shared LINK constant above carries a fake, never-issued token
+      // ('http-test-token') that deliberately never matches any real
+      // `follow_up_token` -- it is now reserved for the dedicated
+      // link/token-mismatch test below and for auth/malformed-link checks
+      // that short-circuit before the mismatch check is ever reached. Every
+      // other queue/retry call that expects to proceed past it uses this
+      // helper to build a link whose embedded token matches on purpose.
+      const linkFor = (token) => `https://example.invalid/#follow-up=${token}`
+      const noAuth = await fetch(`${base}/api/visits/${start.visit.id}/messages`, {
+        method: 'POST',
+        headers: { ...evil, 'content-type': 'application/json' },
+        body: JSON.stringify({ patient_id: visit.patient_id, phone: '01055556666', follow_up_token: start.token, link: LINK }),
+      })
+      assert('auth: POST .../messages (evil Origin) -> 403', noAuth.status === 403)
+      const noAuthList = await fetch(`${base}/api/visits/${start.visit.id}/messages`, { headers: evil })
+      assert('auth: GET .../messages (evil Origin) -> 403', noAuthList.status === 403)
+
+      // Validation.
+      const missingFields = await postJson(`${base}/api/visits/${start.visit.id}/messages`, { patient_id: visit.patient_id })
+      assert('validation: missing phone/follow_up_token/link -> 400', missingFields.status === 400)
+      const missingLink = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+      })
+      assert('validation: missing link specifically -> 400 (this is the exact HIGH-1 closing-review regression)', missingLink.status === 400)
+      const malformedLink = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: 'javascript:alert(1)',
+      })
+      assert('validation: a link not shaped like a real follow-up capability URL -> 400', malformedLink.status === 400)
+      // 2nd independent-review finding (MEDIUM): link's own embedded token
+      // must equal the separately-supplied follow_up_token -- LINK above
+      // deliberately carries a token ('http-test-token') that never matches
+      // any real follow_up_token, so this is the dedicated test for that
+      // exact check (server/index.js's "link does not carry the same
+      // follow_up_token" 400).
+      const linkTokenMismatch = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: LINK,
+      })
+      // Message-integrity-batch finding (NIT from closing verification):
+      // these five queue-route validation tests previously asserted only
+      // status===400, never the response `error` string -- a future
+      // reordering of the route's else-if chain could make one of them
+      // pass at the WRONG branch without any test catching the drift. Now
+      // asserting the exact expected error message alongside status for
+      // each, matching the literal strings in server/index.js's queue
+      // route.
+      assert('validation: link embeds a DIFFERENT token than follow_up_token -> 400', linkTokenMismatch.status === 400)
+      assert('validation: link/token mismatch -> the exact expected error branch', linkTokenMismatch.body.error === 'link does not carry the same follow_up_token')
+
+      const unknownPatient = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: 'not-a-real-patient-id',
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: linkFor(start.token),
+      })
+      assert('validation: unknown patient_id -> 400', unknownPatient.status === 400)
+      assert('validation: unknown patient_id -> the exact expected error branch', unknownPatient.body.error === 'unknown patient_id')
+
+      // Validation: visit_id/patient_id mismatch (a real patient_id, but
+      // not the one this visit_id actually belongs to).
+      const otherPatientVisit = (await postJson(`${base}/api/visits`, {})).body
+      const mismatched = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: otherPatientVisit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: linkFor(start.token),
+      })
+      assert('validation: visit_id belonging to a DIFFERENT patient_id -> 400', mismatched.status === 400)
+      assert('validation: visit_id/patient_id mismatch -> the exact expected error branch', mismatched.body.error === 'visit_id does not belong to patient_id')
+
+      // BizM-batch independent-review finding (MEDIUM): a real,
+      // resolvable follow_up_token that does not belong to THIS visit_id
+      // must be rejected -- otherwise a doctor client could deliver visit
+      // B's live one-time capability link to visit A's patient (the
+      // MessageRecord's own follow_up_token_hash would then hash the token
+      // actually sent, but nothing would have verified it belongs to the
+      // visit_id the record claims to be for).
+      const otherStart = (await postJson(`${base}/api/patients/${otherPatientVisit.patient_id}/start-revisit`, {})).body
+      const wrongVisitToken = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: otherStart.token,
+        link: linkFor(otherStart.token),
+      })
+      assert('validation: a real follow_up_token issued for a DIFFERENT visit_id -> 400', wrongVisitToken.status === 400)
+      assert('validation: wrong-visit token -> the exact expected error branch', wrongVisitToken.body.error === 'follow_up_token does not belong to this visit')
+      const neverIssuedToken = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: 'never-issued-token-xyz',
+        link: linkFor('never-issued-token-xyz'),
+      })
+      assert('validation: a follow_up_token that was never issued at all -> 400', neverIssuedToken.status === 400)
+      assert('validation: never-issued token -> the exact expected error branch', neverIssuedToken.body.error === 'follow_up_token does not belong to this visit')
+
+      // Happy path queue + list.
+      const queued = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: linkFor(start.token),
+      })
+      assert('queue: 201 on first queue', queued.status === 201)
+      assert('queue: response has no "phone" key anywhere', !('phone' in queued.body))
+      assert('queue: response has no "link" key anywhere', !('link' in queued.body))
+      assert('queue: status is SENT via the mock transport', queued.body.status === 'SENT')
+
+      const dedupRes = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: start.token,
+        link: linkFor(start.token),
+      })
+      assert('queue: a second identical queue call -> 200 (deduped), not a new 201', dedupRes.status === 200)
+      assert('queue: dedup returns the same message_id', dedupRes.body.message_id === queued.body.message_id)
+
+      const listRes = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
+      assert('list: 200 and exactly one message for this visit', listRes.status === 200 && listRes.body.messages.length === 1)
+      assert('list: no message in the list carries a "phone" key', listRes.body.messages.every((m) => !('phone' in m)))
+
+      // Message-integrity-batch (owner-flagged HIGH): a re-POST for the
+      // SAME visit but a DIFFERENT, still-valid (doctor-reissued)
+      // follow_up_token/link must fail closed with 409 -- never silently
+      // hand back the stale record while the transient retry cache gets
+      // overwritten with a capability the durable record's own
+      // follow_up_token_hash does not reflect. `queued` above is already
+      // terminal (SENT), which is exactly the scenario a naive dedup-hit
+      // would otherwise paper over.
+      const reissuedForConflict = await postJson(`${base}/api/visits/${start.visit.id}/follow-up-session/reissue`, {})
+      assert('conflict setup: reissue succeeds and returns a genuinely different token', reissuedForConflict.status === 200 && reissuedForConflict.body.token !== start.token)
+      const conflictRes = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01055556666',
+        follow_up_token: reissuedForConflict.body.token,
+        link: linkFor(reissuedForConflict.body.token),
+      })
+      assert('conflict: same visit + a DIFFERENT valid token after a record exists -> 409, never a silent stale dedup', conflictRes.status === 409)
+      assert('conflict: the exact expected error branch', conflictRes.body.error === 'follow_up_token does not match the message already queued for this visit')
+
+      const afterConflict = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
+      assert('conflict: still exactly one message for this visit (no second record created)', afterConflict.body.messages.length === 1)
+      const recordAfterConflict = afterConflict.body.messages.find((m) => m.message_id === queued.body.message_id)
+      assert('conflict: durable record follow_up_token_hash UNCHANGED -- still the ORIGINAL token', recordAfterConflict.follow_up_token_hash === hashToken(start.token))
+      assert('conflict: durable record follow_up_token_hash is NOT the rejected replacement token', recordAfterConflict.follow_up_token_hash !== hashToken(reissuedForConflict.body.token))
+      assert('conflict: durable record status/attempt_count untouched by the rejected conflict', recordAfterConflict.status === queued.body.status && recordAfterConflict.attempt_count === queued.body.attempt_count)
+
+      // Manual retry route + cancel route, auth-gated the same way.
+      const retryVisit = (await postJson(`${base}/api/visits`, {})).body
+      const retryStart = (await postJson(`${base}/api/patients/${retryVisit.patient_id}/start-revisit`, {})).body
+      const retryQueue = await postJson(`${base}/api/visits/${retryStart.visit.id}/messages`, {
+        patient_id: retryVisit.patient_id,
+        phone: '01000009998',
+        follow_up_token: retryStart.token,
+        link: linkFor(retryStart.token),
+      })
+      assert('retry-http setup: QUEUED after a transient mock failure', retryQueue.body.status === 'QUEUED')
+      const retryNoAuth = await fetch(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
+        method: 'POST',
+        headers: { ...evil, 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '01000009998', link: LINK }),
+      })
+      assert('auth: POST .../retry (evil Origin) -> 403', retryNoAuth.status === 403)
+      const retryMissingPhone = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { link: LINK })
+      assert('retry-http: missing phone -> 400', retryMissingPhone.status === 400)
+      const retryMissingLink = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998' })
+      assert('retry-http: missing link -> 400', retryMissingLink.status === 400)
+      // BizM-batch independent-review finding (MEDIUM), retry-route side:
+      // re-supplying a real token issued for a DIFFERENT visit on a manual
+      // retry must be rejected -- and must NOT touch the message record at
+      // all (still QUEUED, attempt_count untouched), since a rejected
+      // request never reaches attemptSend.
+      const wrongVisitForRetry = (await postJson(`${base}/api/visits`, {})).body
+      const wrongStartForRetry = (await postJson(`${base}/api/patients/${wrongVisitForRetry.patient_id}/start-revisit`, {})).body
+      const retryWrongVisit = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
+        phone: '01000009998',
+        link: linkFor(wrongStartForRetry.token),
+      })
+      assert('retry-http: a real follow_up_token issued for a DIFFERENT visit -> 400, not accepted', retryWrongVisit.status === 400)
+      const afterWrongRetry = await getJson(`${base}/api/visits/${retryStart.visit.id}/messages`)
+      const untouchedRecord = afterWrongRetry.body.messages.find((m) => m.message_id === retryQueue.body.message_id)
+      assert('retry-http: the rejected wrong-visit retry never touched the record (still QUEUED)', untouchedRecord.status === 'QUEUED')
+      assert('retry-http: the rejected wrong-visit retry did not increment attempt_count', untouchedRecord.attempt_count === 1)
+
+      const retryOk = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, { phone: '01000009998', link: linkFor(retryStart.token) })
+      assert('retry-http: 200 with phone+link supplied', retryOk.status === 200)
+      assert('retry-http: attempt_count incremented', retryOk.body.attempt_count === 2)
+
+      // Message-integrity-batch finding (MEDIUM, independent review):
+      // retryMessage() previously never updated follow_up_token_hash even
+      // when a manual retry genuinely re-supplies a DIFFERENT (reissued)
+      // token for the same visit -- the durable record's hash would then
+      // silently drift from the capability actually just sent, the same
+      // class of defect queueRevisitMessage's dedup-hash-check closes for
+      // the initial queue. Reissue once more (still the same visit,
+      // invalidating retryStart.token -- not reused after this point) and
+      // retry with the NEW token; the record's hash must now reflect it.
+      const reissuedForRetryHash = await postJson(`${base}/api/visits/${retryStart.visit.id}/follow-up-session/reissue`, {})
+      assert('retry-hash setup: reissue returns a genuinely different token', reissuedForRetryHash.status === 200 && reissuedForRetryHash.body.token !== retryStart.token)
+      const retryWithNewToken = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/retry`, {
+        phone: '01000009998',
+        link: linkFor(reissuedForRetryHash.body.token),
+      })
+      assert('retry-hash: retry with a genuinely different valid token succeeds', retryWithNewToken.status === 200)
+      assert('retry-hash: durable follow_up_token_hash now reflects the NEW token actually sent, not the original', retryWithNewToken.body.follow_up_token_hash === hashToken(reissuedForRetryHash.body.token))
+      assert('retry-hash: durable follow_up_token_hash is no longer the OLD (original queue-time) token', retryWithNewToken.body.follow_up_token_hash !== hashToken(retryStart.token))
+
+      const cancelRes = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/cancel`, undefined)
+      assert('cancel-http: 200, CANCELLED', cancelRes.status === 200 && cancelRes.body.status === 'CANCELLED')
+      const cancelAgain = await postJson(`${base}/api/messages/${retryQueue.body.message_id}/cancel`, undefined)
+      assert('cancel-http: cancelling an already-CANCELLED message -> 409', cancelAgain.status === 409)
+
+      // Webhook route: public (no doctor token needed) but NOT
+      // unauthenticated -- closing-review finding (HIGH SECURITY): every
+      // request must carry a valid HMAC-SHA256 signature over the raw
+      // body (x-solapi-signature), computed against resolveWebhookSecret()
+      // (falls back to a fixed mock secret when no real
+      // SOLAPI_WEBHOOK_SECRET is configured, which is this test process's
+      // real state -- so signature verification is genuinely exercised,
+      // never skipped). A provider_message_id alone was never meant to be
+      // an authentication secret.
+      const webhookSecret = resolveWebhookSecret()
+      function signedWebhookHeaders(rawBody) {
+        return { 'content-type': 'application/json', 'x-solapi-signature': signWebhookBody(rawBody, webhookSecret) }
+      }
+
+      const noSigBody = JSON.stringify({ provider_message_id: 'mock_unknown_id_entirely', delivered: true })
+      const webhookNoSignature = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: noSigBody,
+      })
+      assert('webhook-http: missing x-solapi-signature -> 401 (this is the exact HIGH-security closing-review regression)', webhookNoSignature.status === 401)
+
+      const webhookWrongSignature = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-solapi-signature': signWebhookBody(noSigBody, 'a-completely-wrong-secret') },
+        body: noSigBody,
+      })
+      assert('webhook-http: wrong signature -> 401', webhookWrongSignature.status === 401)
+
+      const webhookUnknown = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: signedWebhookHeaders(noSigBody),
+        body: noSigBody,
+      })
+      assert('webhook-http: reachable with no doctor token at all -> 200 once correctly signed', webhookUnknown.status === 200)
+      const webhookBody = await webhookUnknown.json()
+      assert('webhook-http: unknown id -> ok:true (no-op, never an error)', webhookBody.ok === true)
+
+      const missingIdBody = JSON.stringify({ delivered: true })
+      const webhookMissingId = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: signedWebhookHeaders(missingIdBody),
+        body: missingIdBody,
+      })
+      assert('webhook-http: missing provider_message_id (correctly signed) -> 400', webhookMissingId.status === 400)
+
+      const knownIdBody = JSON.stringify({ provider_message_id: queued.body.provider_message_id, delivered: true })
+      const webhookKnown = await fetch(`${base}/api/messages/webhook`, {
+        method: 'POST',
+        headers: signedWebhookHeaders(knownIdBody),
+        body: knownIdBody,
+      })
+      assert('webhook-http: known provider_message_id (correctly signed) -> 200', webhookKnown.status === 200)
+      const afterWebhook = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
+      const updated = afterWebhook.body.messages.find((m) => m.message_id === queued.body.message_id)
+      assert('webhook-http: the matching message transitioned to DELIVERED', updated.status === 'DELIVERED')
+
+      // Closing-review finding #5 (attempt identity across retry): a
+      // fresh SENT message (id A), pushed to FAILED by a delivered:false
+      // webhook, then manually retried to a SECOND success (id B) --
+      // record.provider_message_id now holds ONLY B. A late webhook
+      // replaying the ORIGINAL id A must be a safe no-op, never able to
+      // reach back and mutate the record via its now-superseded id.
+      const identityVisit = (await postJson(`${base}/api/visits`, {})).body
+      const identityStart = (await postJson(`${base}/api/patients/${identityVisit.patient_id}/start-revisit`, {})).body
+      const identityQueue = await postJson(`${base}/api/visits/${identityStart.visit.id}/messages`, {
+        patient_id: identityVisit.patient_id,
+        phone: '01077778888',
+        follow_up_token: identityStart.token,
+        link: linkFor(identityStart.token),
+      })
+      assert('attempt-identity setup: initial send SENT with provider_message_id A', identityQueue.status === 201 && identityQueue.body.status === 'SENT')
+      const idA = identityQueue.body.provider_message_id
+      const idAFailBody = JSON.stringify({ provider_message_id: idA, delivered: false, error_code: 'handset_unreachable' })
+      const idAFailRes = await fetch(`${base}/api/messages/webhook`, { method: 'POST', headers: signedWebhookHeaders(idAFailBody), body: idAFailBody })
+      assert('attempt-identity setup: webhook moves it SENT -> FAILED', idAFailRes.status === 200)
+      const afterIdAFail = await getJson(`${base}/api/visits/${identityStart.visit.id}/messages`)
+      assert('attempt-identity setup: confirmed FAILED before retry', afterIdAFail.body.messages.find((m) => m.message_id === identityQueue.body.message_id).status === 'FAILED')
+      const identityRetried = await postJson(`${base}/api/messages/${identityQueue.body.message_id}/retry`, { phone: '01077778888', link: linkFor(identityStart.token) })
+      assert('attempt-identity: manual retry succeeds with a NEW provider_message_id B', identityRetried.status === 200 && identityRetried.body.status === 'SENT')
+      const idB = identityRetried.body.provider_message_id
+      assert('attempt-identity: B is a genuinely different id from A', idB !== idA && typeof idB === 'string')
+      const lateIdAWebhookBody = JSON.stringify({ provider_message_id: idA, delivered: true })
+      const lateIdAWebhookRes = await fetch(`${base}/api/messages/webhook`, { method: 'POST', headers: signedWebhookHeaders(lateIdAWebhookBody), body: lateIdAWebhookBody })
+      assert('attempt-identity: a late webhook replaying the SUPERSEDED id A -> 200 no-op (never matches, record now holds B)', lateIdAWebhookRes.status === 200)
+      const afterLateIdA = await getJson(`${base}/api/visits/${identityStart.visit.id}/messages`)
+      const finalIdentityRecord = afterLateIdA.body.messages.find((m) => m.message_id === identityQueue.body.message_id)
+      assert('attempt-identity: the record is untouched by the id-A replay -- still SENT (from the id-B retry), not reverted by the stale id-A payload', finalIdentityRecord.status === 'SENT')
+      assert('attempt-identity: the record still carries id B, not A', finalIdentityRecord.provider_message_id === idB)
+
+      // Audit: audit.log never contains a phone number substring, and the
+      // three new events all appear at least once from the flows above.
+      const lines = await readAuditLines(auditLogPath(dataDir))
+      const rawAudit = JSON.stringify(lines)
+      assert('audit privacy: audit.log JSON contains no seeded phone number substring', !rawAudit.includes('01055556666') && !rawAudit.includes('01000009998'))
+      assert('audit: message_queued appears at least once', lines.some((l) => l.event === 'message_queued'))
+      assert('audit: message_retried appears at least once', lines.some((l) => l.event === 'message_retried'))
+      assert('audit: message_cancelled appears at least once', lines.some((l) => l.event === 'message_cancelled'))
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+
+  /* =====================================================================
+     Part 3: message-integrity-batch -- 1st independent review finding
+     (MEDIUM, test coverage): Part 2's queue-vs-reissue conflict test used
+     an already-SENT (terminal) record, whose messagingContactCache entry
+     is deleted the moment it stops being QUEUED -- so that test could
+     never actually detect cache poisoning (the cache was already empty
+     by the time the conflict fired, for reasons unrelated to the fix).
+     This block proves the REAL property the owner asked for: a REJECTED
+     dedup-token-mismatch must never let a later AUTOMATIC retry send
+     using the mismatched contact tuple. It uses its own isolated server
+     (own data root + a shrunk SAMINDANG_MESSAGE_RETRY_INTERVAL_MS) so the
+     shortened sweep interval cannot cause unrelated QUEUED fixtures
+     elsewhere in this file to auto-retry mid-test.
+     ===================================================================== */
+  {
+    const previousIntervalEnv = process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS
+    process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS = '50'
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'samindang-messaging-integrity-'))
+    const dataDir = path.join(dataRoot, 'submissions')
+    const { server, base } = await startServer({ dataDir, doctorToken: DOCTOR_TOKEN })
+    try {
+      const visit = (await postJson(`${base}/api/visits`, {})).body
+      const start = (await postJson(`${base}/api/patients/${visit.patient_id}/start-revisit`, {})).body
+      // Phone suffix '9998' is the mock transport's deterministic
+      // RETRYABLE-transient-failure sentinel -- keeps this record QUEUED
+      // (never SENT), so messagingContactCache genuinely still holds a
+      // live tuple for the automatic sweep below to read.
+      const queued = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        phone: '01000009998',
+        follow_up_token: start.token,
+        link: `https://example.invalid/#follow-up=${start.token}`,
+      })
+      assert('integrity setup: stays QUEUED after a transient mock failure (original tuple now cached)', queued.status === 201 && queued.body.status === 'QUEUED')
+
+      const reissued = await postJson(`${base}/api/visits/${start.visit.id}/follow-up-session/reissue`, {})
+      assert('integrity setup: reissue returns a genuinely different token', reissued.status === 200 && reissued.body.token !== start.token)
+      const conflict = await postJson(`${base}/api/visits/${start.visit.id}/messages`, {
+        patient_id: visit.patient_id,
+        // Deliberately a DIFFERENT phone than the original queue call --
+        // if this mismatched tuple ever reached messagingContactCache,
+        // the automatic retry below would use IT instead.
+        phone: '01099998888',
+        follow_up_token: reissued.body.token,
+        link: `https://example.invalid/#follow-up=${reissued.body.token}`,
+      })
+      assert('integrity: a DIFFERENT valid token for the SAME visit -> 409, must never touch the cache', conflict.status === 409)
+
+      // The record's own next_retry_at is still ~30s out (RETRY_DELAYS_MS[0])
+      // regardless of how often the sweep interval ticks -- shrinking the
+      // sweep interval alone does not make a message DUE sooner. Backdate
+      // it directly on disk (same technique tests/messaging-bizm.spec.mjs's
+      // Part 4b already uses for runDueRetries -- this store exposes no
+      // clock-injection knob) so the next (now-frequent) sweep tick picks
+      // this message up almost immediately instead of after a real 30s.
+      const messageFilePath = path.join(dataRoot, 'messaging', `${queued.body.message_id}.json`)
+      const onDiskRecord = JSON.parse(await readFile(messageFilePath, 'utf8'))
+      onDiskRecord.next_retry_at = new Date(Date.now() - 1000).toISOString()
+      await writeFile(messageFilePath, JSON.stringify(onDiskRecord, null, 2), 'utf8')
+
+      // Let the real automatic-retry sweep fire (interval shrunk above)
+      // and confirm it used the ORIGINAL cached tuple. The mock
+      // transport's phone-suffix rule makes this directly observable:
+      // '01099998888' (the rejected phone) does NOT end in a failure
+      // sentinel, so if the cache had been poisoned with it the retry
+      // would now show SENT; the ORIGINAL phone still ends in '9998', so
+      // an untouched cache means this automatic retry deterministically
+      // fails again the same way, staying QUEUED.
+      // Poll until the attempt has both STARTED (attempt_count advanced)
+      // AND SETTLED (status is no longer the transient in-flight
+      // 'SENDING' attemptSend briefly writes before the transport call
+      // resolves) -- otherwise a poll could catch the record mid-write.
+      let afterSweep = null
+      for (let i = 0; i < 80 && !afterSweep; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        const listed = await getJson(`${base}/api/visits/${start.visit.id}/messages`)
+        const record = listed.body.messages.find((m) => m.message_id === queued.body.message_id)
+        if (record.attempt_count > queued.body.attempt_count && record.status !== 'SENDING') afterSweep = record
+      }
+      assert('integrity: the real automatic-retry sweep actually ran and settled (attempt_count advanced)', afterSweep !== null)
+      assert('integrity: the automatic retry still used the ORIGINAL cached tuple -- still QUEUED via the deterministic 9998 failure, never SENT via the rejected phone', afterSweep.status === 'QUEUED')
+      assert('integrity: durable follow_up_token_hash is STILL the ORIGINAL token after the sweep', afterSweep.follow_up_token_hash === hashToken(start.token))
+    } finally {
+      await stopServer(server)
+      await rm(dataRoot, { recursive: true, force: true })
+      if (previousIntervalEnv === undefined) delete process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS
+      else process.env.SAMINDANG_MESSAGE_RETRY_INTERVAL_MS = previousIntervalEnv
+    }
+  }
+
+  console.log(`\n${passCount} messaging assertions passed.`)
+}
+
+main().catch((err) => {
+  console.error(err)
+  process.exitCode = 1
+})

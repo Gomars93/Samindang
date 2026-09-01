@@ -342,6 +342,46 @@ for (const [label, allowlist] of Object.entries(PORTRAIT_ALLOWLISTS)) {
   assert('App.tsx: setResponses(...) is called at least at the wipe + restart + normal-answer + addon-activate sites', setResponsesCalls.length >= 4)
   const resetCalls = setResponsesCalls.filter((arg) => arg.startsWith('emptyResponses('))
   assert('App.tsx: at least 2 setResponses(...) call sites reset via emptyResponses() (privacy wipe + restart), never a spread of the previous object', resetCalls.length >= 2)
+
+  // Tablet UX v2.3 §8-9/§13 convergence transplant: tests/integration.spec.mjs's
+  // W6/W7/W11 exercise a hand-copied MIRROR of these setAnswer() patches
+  // (applyLbp01bShim/applyLbp01Change/applyLbp10aShim), not the real App.tsx
+  // source -- so those tests would stay green even if the real patch here
+  // silently broke (e.g. dropping the LBP_03 half would desync FROZEN
+  // computeLegState's leg_symptom_present to UNKNOWN for every "없어요"
+  // patient without any integration test noticing). These source-level
+  // checks close that gap by asserting the ACTUAL App.tsx text, following
+  // the same source-assertion pattern used above for HERBAL_ADDON_FIELD.
+  assert(
+    'App.tsx CRITICAL: the LBP_01B_LEG_SCREEN "없어요" patch fills BOTH LBP_02=[NONE] AND LBP_03=NONE together (the FROZEN computeLegState leg_symptom_present=NO contract requires both, not just one)',
+    /value === 'no'\s*\n\s*\?\s*\{[^}]*LBP_02:\s*\['NONE'\][^}]*LBP_03:\s*'NONE'[^}]*\}/.test(appSrc),
+  )
+  assert(
+    'App.tsx: the LBP_01B_LEG_SCREEN "없어요" patch also sets LBP_LEG_AUTOFILL_FIELD so the navigation-skip provenance check has something to key off',
+    /\?\s*\{[^}]*LBP_02:\s*\['NONE'\][^}]*\[LBP_LEG_AUTOFILL_FIELD\]:\s*'yes'[^}]*\}/.test(appSrc),
+  )
+  assert(
+    'App.tsx CRITICAL: the LBP_10A_ONSET_AGE patch derives LBP_10 by actually calling mapLbpOnsetDecadeToBefore45(value), not a hardcoded/guessed value',
+    /LBP_10:\s*mapLbpOnsetDecadeToBefore45\(value\)/.test(appSrc),
+  )
+  assert(
+    'App.tsx: nextQuestion()/goBack() actually call the real shouldAutoAdvancePast (imported from coreSpec.ts), not a local reimplementation',
+    (appSrc.match(/shouldAutoAdvancePast\(/g) || []).length >= 2,
+  )
+
+  // Closing-review fix: styles.css unconditionally hides
+  // .bodyMap__selectedLabel/.bodyMap__selectedChip in wide landscape
+  // (the railSelection rail is meant to replace them) -- but if
+  // railSelection were only computed when a value already exists, a
+  // patient who has not yet tapped a zone would see NO prompt anywhere
+  // in landscape (no center label, no chip, no rail text), and the
+  // rail's aria-live region would arrive pre-filled on first selection
+  // instead of announcing a mutation. railSelection must therefore be
+  // non-null for every body_map screen regardless of whether value is
+  // already a string.
+  const railSelectionMatch = appSrc.match(/const railSelection =\s*\n\s*current\.layout === 'body_map' \? \(([\s\S]*?)\n\s*\) : null/)
+  assert('App.tsx CRITICAL: railSelection is non-null for every body_map screen (not gated on typeof value === \'string\'), so landscape always has a prompt even before any zone is tapped', Boolean(railSelectionMatch))
+  assert('App.tsx CRITICAL: railSelection falls back to the unselected prompt text ("부위를 선택해주세요") when no value is chosen yet, matching BodyMap.tsx\'s own selectedLabel fallback', Boolean(railSelectionMatch) && /부위를 선택해주세요/.test(railSelectionMatch[1]))
 }
 
 /* =========================================================================

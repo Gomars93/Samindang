@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
-import { answerLabel, optionLabel, optionLabels, questionLabel } from './labels'
+import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
+import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { buildEmrSummary } from './emrSummary'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import type { ClinicianJudgment } from './judgment'
@@ -11,19 +12,50 @@ import type { AnswerValue } from '../types'
 import {
   activateVisit,
   clearActiveVisit,
+  getMicroFollowUpResponse,
+  getPatientHistory,
   getRecorderResults,
   getSubmission,
+  assignRevisitToStation,
+  invalidateFollowUpSession,
+  listCrmTasks,
+  listPatientIdentities,
+  listRevisitQueue,
+  listStations,
   listSubmissions,
+  registerStation,
+  reissueFollowUpSession,
+  resetStation,
   saveJudgment as saveJudgmentToServer,
+  saveWorkspaceState as saveWorkspaceStateToServer,
   setSubmissionStatus,
+  startRevisit,
   type RecorderResult,
+  type ResolvedPatientIdentity,
   type SubmissionRecord,
   type SubmissionSummary,
 } from '../lib/serverClient'
+import type { PatientHistoryResult } from './workspace/longitudinal'
+import type { MicroFollowUpResponse } from './workspace/microFollowUp'
+import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
+import { DELIVERY_MODE_LABEL, INPUT_PROVENANCE_LABEL, REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+import type { CrmTask } from '../crm/types'
+import { TodayQueueSection } from './TodayQueueSection'
+
+// Round 9: the first tablet that is not already serving a patient. A busy
+// tablet cannot be assigned (the server refuses it with 409 station_busy --
+// see server/stationStore.js), so it must never be the default selection.
+function firstFreeStationId(stations: StationInfo[]): string {
+  return stations.find((s) => !s.assignment)?.stationId ?? ''
+}
+import { FollowUpQrCode } from './workspace/FollowUpQrCode'
+import { MessagingPanel } from './MessagingPanel'
+import { RevisitWorkspace } from './workspace/RevisitWorkspace'
 import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
+import { buildPublicFollowUpLink } from '../lib/publicFollowUpUrl'
 import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
 import {
@@ -41,14 +73,16 @@ import { computeElbowFlags, elbowSafetyLocked, type ElbowComputedFields } from '
 import { toElbowStateFromDoctorPayload } from '../spec/elbowAdapter'
 import { computeWristHandFlags, wristHandSafetyLocked, type WristHandComputedFields } from '../spec/wristHandLogic'
 import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
-import { AnkleFootSafetyPanel } from './AnkleFootSafetyPanel'
-import { TmjSafetyPanel } from './TmjSafetyPanel'
-import { HipSafetyPanel } from './HipSafetyPanel'
+import { DoctorWorkspace } from './workspace/DoctorWorkspace'
+import { MedicationCourseSection } from './MedicationCourseSection'
+import { deserializeWorkspaceState } from './workspace/persistence'
+import { deriveViewProfile } from './workspace/viewProfile'
+import { WORKSPACE_SCENARIOS } from './workspace/workspaceFixtures'
 import './doctor.css'
 
 export { DOCTOR_SECTION_ORDER }
 
-type Responses = DoctorPayload['responses']
+export type Responses = DoctorPayload['responses']
 
 /**
  * 값 하나를 (질문 id 기준으로) 라벨을 붙여 렌더링한다.
@@ -56,7 +90,7 @@ type Responses = DoctorPayload['responses']
  * - 'none'/'unknown'(환자가 실제로 답한 값)은 흐리게 표시해 "안 물어봄"과
  *   구분한다. 절대 같은 모양으로 보이면 안 된다.
  */
-function Field({
+export function Field({
   qid,
   value,
   label,
@@ -85,9 +119,17 @@ function Field({
   )
 }
 
-function boolLabel(v: boolean | null): string {
-  if (v === null) return '확인되지 않음'
-  return v ? '예' : '아니요'
+/**
+ * 9차 독립 리뷰 HIGH-2 후속: 이 함수를 호출하는 여성 안전정보 카드는 이제
+ * isUnreadableReproductiveDerived로 먼저 걸러지므로 실전에서 wrong-typed
+ * 값이 여기까지 오지 않지만, 그 가드가 없는 다른 호출부가 나중에 생겨도
+ * `=== true`/`=== false`가 아닌 값(예: 문자열 'yes')을 "아니요"로
+ * 지어내지 않도록 시그니처 자체를 방어적으로 둔다.
+ */
+function boolLabel(v: unknown): string {
+  if (v === true) return '예'
+  if (v === false) return '아니요'
+  return '확인되지 않음'
 }
 
 function sourceLabel(source: Responses['reproductive_status']['derived']['source']): string {
@@ -103,7 +145,7 @@ function sourceLabel(source: Responses['reproductive_status']['derived']['source
   }
 }
 
-function primaryConcernLabel(r: Responses): string {
+export function primaryConcernLabel(r: Responses): string {
   const goal = r.visit_goal.visit_goal
   if (goal === 'symptom') return answerLabel('VISIT_02_SYMPTOM_MAIN', r.visit_goal.primary_symptom)
   if (goal === 'women') return answerLabel('VISIT_02_WOMEN', r.visit_goal.women_goal)
@@ -119,57 +161,371 @@ function primaryConcernLabel(r: Responses): string {
  * 유일한 출처다. 여기 없는 모듈(Bowel/Urinary/Women/Pregnancy/Postpartum/
  * constitution 등)은 신뢰할 수 있는 단일 필드가 없어 의도적으로 생략한다.
  */
-function frequencyField(
+export function frequencyField(
   primaryModule: string | null,
   m: Responses['modules'],
 ): { qid: string; value: AnswerValue } | null {
   switch (primaryModule) {
     case 'Sleep':
-      return { qid: 'SLEEP_02', value: m.sleep.frequency_per_week }
+      return m.sleep ? { qid: 'SLEEP_02', value: m.sleep.frequency_per_week } : null
     case 'Bowel':
-      return { qid: 'BOWEL_02', value: m.bowel.frequency }
+      return m.bowel ? { qid: 'BOWEL_02', value: m.bowel.frequency } : null
     case 'Urinary':
-      return { qid: 'URINARY_02', value: m.urinary.burden_frequency }
+      return m.urinary ? { qid: 'URINARY_02', value: m.urinary.burden_frequency } : null
     default:
       return null
   }
 }
 
-function aggravatingField(
+export function aggravatingField(
   primaryModule: string | null,
   m: Responses['modules'],
 ): { qid: string; value: AnswerValue } | null {
   switch (primaryModule) {
     case 'Sleep':
-      return { qid: 'SLEEP_03', value: m.sleep.awakening_reasons }
+      return m.sleep ? { qid: 'SLEEP_03', value: m.sleep.awakening_reasons } : null
     case 'GI':
-      return { qid: 'GI_02', value: m.gi.meal_relation }
+      return m.gi ? { qid: 'GI_02', value: m.gi.meal_relation } : null
     case 'Pain': {
-      const qualities = ((m.pain.pain_qualities as string[] | null) ?? []).filter(
+      if (!m.pain) return null
+      const qualities = asArray<string>(m.pain.pain_qualities).filter(
         (q) => q === 'movement_related' || q === 'rest_pain',
       )
       return qualities.length > 0 ? { qid: 'PAIN_02', value: qualities } : null
     }
     case 'Fatigue':
-      return { qid: 'FATIGUE_02', value: m.fatigue.worst_time }
+      return m.fatigue ? { qid: 'FATIGUE_02', value: m.fatigue.worst_time } : null
     case 'Stress':
-      return { qid: 'STRESS_03', value: m.stress.associated_symptoms }
+      return m.stress ? { qid: 'STRESS_03', value: m.stress.associated_symptoms } : null
     case 'Weight':
-      return { qid: 'WEIGHT_02', value: m.weight.contributing_factors }
+      return m.weight ? { qid: 'WEIGHT_02', value: m.weight.contributing_factors } : null
     default:
       return null
   }
 }
 
-function isEmptyValue(value: AnswerValue | null | undefined): boolean {
+export function isEmptyValue(value: AnswerValue | null | undefined): boolean {
   if (value === null || value === undefined) return true
   if (Array.isArray(value)) return value.length === 0
   if (typeof value === 'string') return value.trim() === ''
   return false
 }
 
+/**
+ * 레거시/손상된 제출은 배열이어야 할 필드가 문자열/객체 등 다른 타입으로
+ * 저장돼 있을 수 있다(`?? []`만으로는 안 막힘 -- 값 자체가 존재하고
+ * truthy면 그대로 통과한다). 배열이 아니면 무조건 빈 배열로 취급한다 --
+ * "값이 있다"고 추정하지 않고 "확인된 목록이 없다"로 fail-closed.
+ */
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
+/**
+ * 13차 독립 리뷰 MEDIUM-2/MEDIUM-3: `asArray<string>(...)`는 컨테이너가
+ * 배열인지만 검사할 뿐 원소 타입은 보장하지 않는다(TS 제네릭은 런타임에
+ * 아무 것도 강제하지 않음) -- `routing.secondary_screens`/
+ * `saju.policy.pending_approval`처럼 검증되지 않은 저장 데이터에서 온
+ * 배열을 그대로 `.join(', ')`하면 wrong-typed 원소가 "[object Object]"로
+ * 그대로 노출된다. 원소별로 string이 아니면 실패 토큰으로 대체한 뒤
+ * join한다.
+ */
+function readableStringArray(values: unknown[]): string[] {
+  return values.map((v) => (typeof v === 'string' ? v : UNREADABLE_COMPUTED_VALUE))
+}
+
+/**
+ * `?? []`/asArray는 필드 자체가 빠졌거나 잘못된 타입인 경우만 막는다 --
+ * 배열 "안"의 각 원소가 문자열이 아니면(레거시 데이터에서 숫자/null/객체가
+ * 섞여 들어올 수 있음) 여전히 위험하다. lbpAdapter.ts/neckAdapter.ts(둘 다
+ * frozen)의 `mapMajorHistory`가 `medical_history_flags`의 각 원소에
+ * `.toUpperCase()`를 무조건 호출하므로, 그 필드를 쓰는 패널의 게이트는
+ * "배열이면서 모든 원소가 문자열"까지 확인해야 안전하다.
+ */
+function isNullOrStringArray(value: unknown): boolean {
+  if (value == null) return true
+  return Array.isArray(value) && value.every((v) => typeof v === 'string')
+}
+
+/**
+ * 실제 제출은 `buildResponsePayload`가 각 모듈 하위 키를 전부(응답 안 한
+ * 것도 `null`로) 채워서 만들기 때문에, 서브모듈이 "존재는 하지만 완전히
+ * 빈 객체"인 경우는 실제 제출 흐름에서 나올 수 없다 -- 레거시/손상된
+ * 데이터에서만 나온다. 빈 객체를 그대로 통과시키면 모든 leaf가
+ * `undefined`가 되어 "확인 안 됨"이 전부 "아니요"로 렌더되는 fail-open이
+ * 생긴다(이 배치가 막으려는 것과 정확히 같은 문제). 서브모듈에 키가
+ * 하나도 없으면 빈 것과 동일하게 취급한다.
+ */
+function isNonEmptyObject(value: unknown): boolean {
+  return isPlainObject(value) && Object.keys(value).length > 0
+}
+
+/**
+ * 9차 독립 리뷰 HIGH-2: `!payload.responses.reproductive_status.derived`
+ * (truthy 체크)로 "임신/수유 관련 안전정보를 읽을 수 없다"를 판정하던
+ * 곳들(LBP/NECK/SHOULDER SafetyPanel 게이트, 아래 여성 안전정보 카드)이
+ * 8차가 CommonSafetyBanner.tsx에 추가한 것과 같은 헛점을 그대로 가지고
+ * 있었다 -- deriveReproductiveStatus(coreSpec.ts)는 절대 null을 반환하지
+ * 않으므로(남성/미응답이면 `{source:null, ...전부 null}` 객체), `derived`
+ * 가 truthy이기만 하면 그 안의 pregnant/pregnancy_possible 등이
+ * wrong-typed 값이어도 그대로 통과해 lbpAdapter.ts(frozen)
+ * mapPregnancyStatus가 그걸 `=== true`/`=== null` 두 경우만 특별 취급하고
+ * 나머지는 전부 "명시적으로 아니요"로 접어버린다(치료 안전 CLEAR로
+ * 오판, FROZEN 파일 자체는 건드리지 않고 호출부 게이트에서 막는다).
+ * CommonSafetyBanner.tsx의 동명 헬퍼와 동일한 이유로 로컬 사본을 둔다
+ * (HerbalWorkspace.tsx는 이미 DoctorView.tsx를 직접 import하는 기존
+ * 관례가 있어 이 함수를 export해서 재사용한다).
+ */
+// coreSpec.ts deriveReproductiveStatus의 POSTPARTUM_WITHIN_1Y와 동일 (FROZEN
+// 파일이 아니므로 값이 바뀔 수 있지만, 바뀌면 이 재계산도 함께 갱신해야 한다).
+const POSTPARTUM_WITHIN_1Y = ['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m']
+
+/**
+ * 14차 독립 리뷰 HIGH-2: coreSpec.ts의 WOMEN_SAFETY_01 질문(`multi_choice`,
+ * `required: true`)이 실제로 만들 수 있는 값의 전체 집합 -- FROZEN 파일이
+ * 아니므로 값이 바뀌면 이 목록도 함께 갱신해야 한다. `isAnswered`
+ * (src/screens/QuestionScreen.tsx)는 `Array.isArray(value) &&
+ * value.length > 0`을 요구하므로, 빈 배열은 이 앱을 통해서는 절대 저장될
+ * 수 없는 값이다 -- 즉 `[]`는 "미해당"이 아니라 손상이다.
+ */
+const WOMEN_SAFETY_01_VALUES = new Set([
+  'pregnant',
+  'pregnancy_possible',
+  'postpartum_1y',
+  'breastfeeding',
+  'menopause',
+  'none',
+  'unknown',
+])
+
+/**
+ * 15차 독립 리뷰 HIGH-2: coreSpec.ts POSTPARTUM_01/POSTPARTUM_03의 옵션 값
+ * 전체 집합 -- FROZEN 파일이 아니므로 옵션이 바뀌면 이 목록도 함께 갱신
+ * 필요.
+ */
+const POSTPARTUM_01_VALUES = new Set(['within_6_weeks', '6w_to_3m', '3_to_6m', '6_to_12m', 'over_1y'])
+const POSTPARTUM_03_VALUES = new Set(['yes', 'no', 'mixed'])
+/**
+ * 16차 독립 리뷰 HIGH-1: coreSpec.ts PREGNANCY_01의 옵션 값 전체 집합 --
+ * FROZEN 파일이 아니므로 옵션이 바뀌면 이 목록도 함께 갱신 필요.
+ */
+const PREGNANCY_01_VALUES = new Set(['pregnant', 'possible', 'trying', 'fertility', 'unknown'])
+
+export function isUnreadableReproductiveDerived(r: Responses): boolean {
+  // 레거시 레코드는 reproductive_status 최상위 키 자체가 없을 수 있다
+  // (그 필드가 생기기 전 제출본) -- 옵셔널 체이닝 없이 바로
+  // r.reproductive_status.derived에 접근하면 여기서 throw되어 Doctor UI
+  // 전체가 죽는다.
+  if (typeof r.reproductive_status !== 'object' || r.reproductive_status === null) return true
+  const derived = r.reproductive_status.derived
+  if (typeof derived !== 'object' || derived === null || Array.isArray(derived)) return true
+  const d = derived as Record<string, unknown>
+  if (Array.isArray(r.reproductive_status.reproductive_status) && d.source == null) return true
+  const boolOrNullFields = ['pregnant', 'pregnancy_possible', 'postpartum_1y', 'breastfeeding'] as const
+  if (boolOrNullFields.some((key) => d[key] !== null && typeof d[key] !== 'boolean')) return true
+  // 9차 독립 리뷰 HIGH-3: 구조는 정상이지만 실제 WOMEN_SAFETY_01 응답과
+  // 모순되는 stale derived(재계산 안 됨)도 손상으로 취급한다 --
+  // CommonSafetyBanner.tsx의 동명 검사와 동일한 계산식/예외
+  // (pregnancy_possible의 PREGNANCY_01==='possible' 모듈 오버라이드는
+  // 한쪽 방향만 예외로 둔다).
+  // 12차 독립 리뷰 HIGH-1/HIGH-2: coreSpec.ts deriveReproductiveStatus가
+  // 실제로 만들 수 있는 source는 정확히 세 값(WOMEN_SAFETY_01/
+  // pregnancy_module/postpartum_module) + null(예: 남성 환자처럼
+  // WOMEN_SAFETY_01 자체가 적용되지 않는 경우)뿐이다. 컨텍스트(visit_goal/
+  // modules.pregnancy·postpartum)로부터 "실제로 있어야 하는 source"를 먼저
+  // 결정한 뒤, 관찰된 d.source가 그 값과 정확히 일치하는지 먼저 확인한다 --
+  // 이전(9~11차) 구현은 source별로 각자 분기(if/else if)만 검사해서
+  // (a) 세 값 중 어느 것과도 일치하지 않는 wrong-typed/엉뚱한 source가
+  // 모든 분기를 통과해 "정상"으로 판정되고(HIGH-1), (b) 컨텍스트가 실제로
+  // 임신/산후인데 source가 WOMEN_SAFETY_01이거나 null인 "반대 방향" 불일치는
+  // 전혀 검사하지 않는(HIGH-2) 두 공백을 모두 남겼다. 둘 다 실제로
+  // 보고되지 않은 임신/수유 음성 소견을 지어낼 수 있었다.
+  const isPregnancyContext =
+    r.visit_goal?.visit_goal === 'women' &&
+    r.visit_goal?.women_goal === 'pregnancy' &&
+    r.modules?.pregnancy?.status === 'pregnant'
+  const isPostpartumContext = r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'postpartum'
+  const expectedSource: 'pregnancy_module' | 'postpartum_module' | 'other' = isPostpartumContext
+    ? 'postpartum_module'
+    : isPregnancyContext
+      ? 'pregnancy_module'
+      : 'other'
+  if (expectedSource === 'pregnancy_module' && d.source !== 'pregnancy_module') return true
+  if (expectedSource === 'postpartum_module' && d.source !== 'postpartum_module') return true
+  if (expectedSource === 'other' && d.source !== 'WOMEN_SAFETY_01' && d.source !== null) return true
+
+  // 13차 독립 리뷰 LOW-3: raw 응답이 존재하는데(null/undefined 아님) 배열이
+  // 아니면 deriveReproductiveStatus는 절대 처리하지 못한다(WOMEN_SAFETY_01
+  // source는 오직 Array.isArray(answer)일 때만 만들어짐) -- 이 경우
+  // source: null은 "미해당"이 아니라 "환자가 답했지만 계산되지 못함"이다.
+  // 이전 구현은 이 조합을 "정상"(source: null = 미해당)으로 통과시켜
+  // 여성 안전정보 카드 전체가 조용히 사라지고(환자가 실제로 답한 원본을
+  // 원장이 볼 수 없게 됨) LBP/NECK/SHOULDER 안전 게이트도 이 raw 응답을
+  // 못 본 것처럼 통과했다.
+  const rawTopLevel = r.reproductive_status.reproductive_status
+  if (rawTopLevel !== null && rawTopLevel !== undefined && !Array.isArray(rawTopLevel) && d.source == null) {
+    return true
+  }
+
+  if (d.source === 'WOMEN_SAFETY_01') {
+    const rawAnswer = r.reproductive_status.reproductive_status
+    // 13차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+    // `if (Array.isArray(answer))`일 때만 source:'WOMEN_SAFETY_01'을
+    // 만든다(coreSpec.ts:3854-3878) -- 즉 이 source이면서 raw 응답이
+    // 배열이 아닌 상태는 deriveReproductiveStatus가 절대 만들 수 없는,
+    // 정의상 손상된 조합이다. 이전 구현은 `if (Array.isArray(rawAnswer))`
+    // 블록 밖으로 falling through해 아무 검사 없이 "정상"으로 통과시켰다
+    // -- 레거시 단일-선택 문자열 답변(예: rawAnswer='pregnant')에 대해
+    // derived를 전부 false로 채운 레코드가 실제 보고된 임신을 "임신 중:
+    // 아니요"로 지어낼 수 있었다(인증되지 않은 POST로도 도달 가능).
+    if (!Array.isArray(rawAnswer)) return true
+    // 14차 독립 리뷰 HIGH-2: WOMEN_SAFETY_01은 `required: true`인
+    // multi_choice라서 앱을 거친 실제 제출은 이 배열이 절대 비어있을 수
+    // 없다(QuestionScreen.tsx의 isAnswered가 length > 0을 요구) -- 빈
+    // 배열/문자열이 아닌 원소/유효하지 않은 옵션값은 전부 손상이다. 이전
+    // 구현은 멤버십(`rawSet.has(...)`)만 검사해서, 원소가 전부 무효하거나
+    // 배열 자체가 비어있으면 모든 `rawSet.has(...)` 검사가 그냥 false가
+    // 되어 아무 모순도 발견하지 못한 채 통과했다 -- 그 결과 derived의
+    // pregnant/postpartum_1y/breastfeeding이 전부 false인 계산 박스가
+    // `[]`/`["zzz"]`/`[{}]` 같은 손상된 raw 응답에 대해서도 "해당 없음"과
+    // 화면상 구별 불가능하게 렌더됐다(governing task 정책 2 위반).
+    if (
+      rawAnswer.length === 0 ||
+      (rawAnswer as unknown[]).some((v) => typeof v !== 'string' || !WOMEN_SAFETY_01_VALUES.has(v))
+    ) {
+      return true
+    }
+    if (!Array.isArray(d.raw)) return true
+    const rawSet = new Set(rawAnswer)
+    // 16차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+    // key==='pregnancy' && PREGNANCY_01==='possible'일 때 WOMEN_SAFETY_01
+    // 응답에 'pregnancy_possible'이 없어도 pregnancy_possible을 true로
+    // override한다(임신 준비/난임 상담에서 안전 정보 누락 방지) -- 그런데
+    // 지금까지의 모든 raw-derived 일관성 검사는 이 override 방향을 전혀
+    // 검사하지 않았다(rawSet.has('pregnancy_possible')만 확인). 그 결과
+    // PREGNANCY_01==='possible' 컨텍스트에서 손상된 derived.pregnancy_possible
+    // =false가 실제 override로 만들어진 true와 화면상 구별되지 않고 "정상"
+    // 판정을 받았다 -- FROZEN lbpAdapter/neckAdapter가 pregnancy_status를
+    // POSSIBLE 대신 NO로 계산하는 안전 오류로 직결된다(governing task 정책
+    // 1/2 위반). PREGNANCY_01 값 자체가 옵션 밖이면(레거시/손상) 먼저
+    // "읽을 수 없음"으로 fail.
+    const pregnancyStatus = r.modules?.pregnancy?.status
+    if (typeof pregnancyStatus === 'string' && !PREGNANCY_01_VALUES.has(pregnancyStatus)) return true
+    const pregnancyPossibleFromModule =
+      r.visit_goal?.visit_goal === 'women' && r.visit_goal?.women_goal === 'pregnancy' && pregnancyStatus === 'possible'
+    if (rawSet.size === 1 && rawSet.has('unknown')) {
+      if (d.pregnant !== null || d.postpartum_1y !== null || d.breastfeeding !== null) return true
+      if (d.pregnancy_possible !== (pregnancyPossibleFromModule ? true : null)) return true
+    } else {
+      if (rawSet.has('pregnant') && d.pregnant !== true) return true
+      if (rawSet.has('postpartum_1y') && d.postpartum_1y !== true) return true
+      if (rawSet.has('breastfeeding') && d.breastfeeding !== true) return true
+      // 16차 HIGH-1 수정: pregnancy_possible의 기대값을 이제 raw 멤버십
+      // 또는 module override 둘 중 하나로 정확히 정의할 수 있으므로,
+      // 이전의 "한쪽 방향만 확인"(rawSet.has(...) && d... !== true) 대신
+      // 양방향 정확한 동등 비교로 교체한다.
+      const expectedPregnancyPossible = rawSet.has('pregnancy_possible') || pregnancyPossibleFromModule
+      if (d.pregnancy_possible !== expectedPregnancyPossible) return true
+      // 10차 독립 리뷰 LOW-1: 반대 방향도 확인한다 -- pregnant/
+      // postpartum_1y/breastfeeding은 pregnancy_possible과 달리 다른
+      // 모듈의 정당한 override 경로가 없으므로, derived가 true인데 raw가
+      // 그 값을 포함하지 않으면 무조건 모순이다(실제 보고되지 않은
+      // 임신/수유 사실을 지어낸 것 -- 반대 방향으로도 fail-open이었다).
+      if (d.pregnant === true && !rawSet.has('pregnant')) return true
+      if (d.postpartum_1y === true && !rawSet.has('postpartum_1y')) return true
+      if (d.breastfeeding === true && !rawSet.has('breastfeeding')) return true
+    }
+  } else if (d.source === 'pregnancy_module') {
+    // 11차 독립 리뷰 MEDIUM-1: coreSpec.ts deriveReproductiveStatus는
+    // key==='pregnancy'(visit_goal==='women' && women_goal==='pregnancy')
+    // && PREGNANCY_01==='pregnant'일 때만 이 source를 만들고, 그 결과는
+    // 항상 고정된 하나의 형태({raw:['pregnant'], pregnant:true,
+    // pregnancy_possible:false, postpartum_1y:null, breastfeeding:null})다.
+    // 컨텍스트 검사는 위 expectedSource에서 이미 끝났으므로 여기서는 그
+    // 고정 형태와의 일치만 확인한다.
+    if (
+      !Array.isArray(d.raw) ||
+      d.raw.length !== 1 ||
+      d.raw[0] !== 'pregnant' ||
+      d.pregnant !== true ||
+      d.pregnancy_possible !== false ||
+      d.postpartum_1y !== null ||
+      d.breastfeeding !== null
+    ) {
+      return true
+    }
+  } else if (d.source === 'postpartum_module') {
+    // coreSpec.ts deriveReproductiveStatus: key==='postpartum'일 때만 이
+    // source를 만들고, postpartum_1y/breastfeeding은 각각
+    // POSTPARTUM_01/03(=r.modules.postpartum.time_since_delivery/
+    // breastfeeding_status)에서 결정론적으로 재계산된다. 컨텍스트 검사는
+    // 위 expectedSource에서 이미 끝났다.
+    const since = r.modules?.postpartum?.time_since_delivery
+    const feeding = r.modules?.postpartum?.breastfeeding_status
+    // 15차 독립 리뷰 HIGH-2: POSTPARTUM_01/03은 `required: true`인
+    // single_choice라서(postpartum 컨텍스트에서 항상 물어봄) 실제 제출은
+    // 이 값이 옵션 목록 밖일 수 없다 -- 옵션 밖 문자열은
+    // `POSTPARTUM_WITHIN_1Y.includes(...)`/`=== 'yes' || === 'mixed'`
+    // 비교에서 그냥 false가 되므로, 이전 구현은 이런 손상된 raw 답변에
+    // 대해서도 "출산 후 1년 이내: 아니요 / 모유수유 중: 아니요"를 그대로
+    // 계산해서 보여줬다 -- WOMEN_SAFETY_01과 동일한 클래스의 fail-open을
+    // 산후 컨텍스트에서 재현한 것.
+    if (
+      (typeof since === 'string' && !POSTPARTUM_01_VALUES.has(since)) ||
+      (typeof feeding === 'string' && !POSTPARTUM_03_VALUES.has(feeding))
+    ) {
+      return true
+    }
+    const rawParts: string[] = []
+    if (typeof since === 'string') rawParts.push(since)
+    if (typeof feeding === 'string') rawParts.push(feeding)
+    const expectedRaw = rawParts.length > 0 ? rawParts : null
+    const expectedPostpartum1y = typeof since === 'string' ? POSTPARTUM_WITHIN_1Y.includes(since) : null
+    const expectedBreastfeeding = typeof feeding === 'string' ? feeding === 'yes' || feeding === 'mixed' : null
+    const rawMatches =
+      expectedRaw === null
+        ? d.raw === null
+        : Array.isArray(d.raw) &&
+          d.raw.length === expectedRaw.length &&
+          expectedRaw.every((v, i) => (d.raw as unknown[])[i] === v)
+    if (
+      d.pregnant !== null ||
+      d.pregnancy_possible !== null ||
+      d.postpartum_1y !== expectedPostpartum1y ||
+      d.breastfeeding !== expectedBreastfeeding ||
+      !rawMatches
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 5차 독립 리뷰 HIGH-2: 각 SafetyPanel의 게이트가 "이 부위는 이 레코드와
+ * 무관하다"(정상, 조용히 아무것도 안 그림 -- 예: LBP 레코드에서 어깨 패널)와
+ * "이 부위는 이 레코드와 관련 있지만 저장된 응답 일부가 없거나 손상돼
+ * 안전 상태를 계산할 수 없다"(레거시/손상 데이터)를 똑같이 `return null`
+ * 하나로 뭉뚱그리고 있었다 -- 그래서 후자가 "이 부위는 안전 확인할 것이
+ * 없다"로 오인될 수 있었다(이 배치가 막으려는 정확히 그 fail-open: 계산이
+ * 안 됐을 뿐인데 화면은 "특이 안전정보 없음"처럼 보임). 이 컴포넌트는
+ * 계산된 안전 상태를 절대 추정/대체하지 않고 "확인 필요"만 명시적으로
+ * 알린다 -- 각 게이트는 "무관함" 조건과 "손상됨" 조건을 분리해서, 후자일
+ * 때만 이걸 렌더링해야 한다.
+ */
+function SafetyDataUnavailableNotice({ label }: { label: string }) {
+  return (
+    <div className="doctor__lbpSafety doctor__lbpSafety--unavailable">
+      <span className="doctor__safetyGlance__title">안전 확인 — {label}</span>
+      <p className="doctor__derivedNote">
+        저장된 응답 일부가 없거나 형식이 예상과 달라(레거시/손상 데이터로 보임) 안전 상태를 자동으로 계산할 수 없습니다 — 원장 확인 필요.
+      </p>
+    </div>
+  )
+}
+
 /** 요약 카드용 "기간 · 빈도" 한 줄. 둘 다 없으면 줄 자체를 생략한다. */
-function durationFrequencyText(r: Responses, primaryModule: string | null): string | null {
+export function durationFrequencyText(r: Responses, primaryModule: string | null): string | null {
   const duration = r.visit_goal.chief_duration
   const durText = isEmptyValue(duration) ? null : answerLabel('VISIT_03_SYMPTOM_DURATION', duration)
   const freq = frequencyField(primaryModule, r.modules)
@@ -180,7 +536,7 @@ function durationFrequencyText(r: Responses, primaryModule: string | null): stri
 }
 
 /** Pain은 요약 카드에서만 짧은 고정 문구를 쓴다(스펙 §PART1 rule 3). */
-function aggravatingSummaryText(primaryModule: string | null, m: Responses['modules']): string | null {
+export function aggravatingSummaryText(primaryModule: string | null, m: Responses['modules']): string | null {
   const agg = aggravatingField(primaryModule, m)
   if (!agg) return null
   if (primaryModule === 'Pain') {
@@ -191,7 +547,7 @@ function aggravatingSummaryText(primaryModule: string | null, m: Responses['modu
   return answerLabel(agg.qid, agg.value)
 }
 
-function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
+export function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
   const cats: string[] = []
   if (flags.general_red) cats.push('공통 위험신호')
   if (flags.gi_needs_review) cats.push('소화 문진')
@@ -204,18 +560,123 @@ function safetyIssueCategories(flags: DoctorPayload['flags']): string[] {
   return cats
 }
 
+/**
+ * 7차 독립 리뷰 HIGH-1: `flags`(coreSpec.ts `computeFlags`)는 태블릿에서
+ * 제출 시점에 클라이언트가 계산해 보내고, 서버는 그대로 저장할 뿐
+ * 재검증하지 않는다(server/index.js: `flags: body.flags ?? null`) — 지금까지
+ * 이 배치의 모든 라운드가 `responses`만 강화했고 `flags`는 `isPlainObject`
+ * 인지만 확인했다. `computeFlags`는 항상 이 7개 boolean 키를 전부 만드므로,
+ * 하나라도 없거나 boolean이 아니면 레거시/버전 skew/손상이다 -- 그런데
+ * `flags.requires_staff_check`/`flags.general_red` 등을 무조건 신뢰하면,
+ * 환자가 실제로 SAFETY_01에 응급 신호를 보고했어도 안전 배너/안전이슈
+ * 지표가 전부 "없음"으로 보일 수 있다(크래시도, 침묵도 아니고 명시적
+ * 오판 -- 이 배치가 막으려는 것 중 가장 심각한 형태).
+ */
+const REQUIRED_FLAG_KEYS = [
+  'general_red',
+  'gi_needs_review',
+  'bowel_needs_review',
+  'sleep_disorder_review',
+  'sleep_disorder_priority_review',
+  'response_consistency_review',
+  'requires_staff_check',
+] as const
+
+/**
+ * 8차 독립 리뷰 HIGH-3: 7개 키가 전부 boolean이어도(구조적으로 정상) 실제
+ * responses와 모순되면(예: 수기 편집/버전 skew로 responses는 고쳤지만
+ * flags를 재계산하지 않은 레코드) `general_red` 등을 그대로 신뢰할 수
+ * 없다. coreSpec.ts computeFlags의 정확한 계산식(SAFETY_01의 non-none
+ * 응답 여부, GI_03/BOWEL_03 === 'yes')과 동일하게 재계산해 대조한다 --
+ * 이 세 필드는 항상 같은 값으로 매핑되므로(coreSpec.ts:4866/4871의
+ * `unable_to_eat_or_drink: r['GI_03']`/`blood_or_black_stool:
+ * r['BOWEL_03']`) 정상 제출에서는 false positive가 날 수 없다.
+ */
+function isFlagsConsistentWithResponses(flags: Record<string, unknown>, r: DoctorPayload['responses']): boolean {
+  // 레거시 레코드는 safety_flags/modules/reproductive_status 최상위 키
+  // 자체가 통째로 없을 수 있다(그 필드가 생기기 전에 제출된 데이터) --
+  // 옵셔널 체이닝 없이 바로 접근하면 여기서 throw되어 Doctor UI 전체가
+  // 죽는다(9차 리뷰 자체 회귀분석에서 발견, ankle-foot-doctor-panel
+  // 테스트로 재현됨).
+  const generalRedExpected = asArray<string>(r.safety_flags?.red_flag_general).some((v) => v !== 'none')
+  if (flags.general_red !== generalRedExpected) return false
+  const giExpected = r.modules?.gi?.unable_to_eat_or_drink === 'yes'
+  if (flags.gi_needs_review !== giExpected) return false
+  const bowelExpected = r.modules?.bowel?.blood_or_black_stool === 'yes'
+  if (flags.bowel_needs_review !== bowelExpected) return false
+  // 9차 독립 리뷰 HIGH-1: 위 3개만 검사하면 나머지 4개 키
+  // (requires_staff_check/sleep_disorder_review/
+  // sleep_disorder_priority_review/response_consistency_review)는
+  // 여전히 검증 없이 신뢰된다 -- 이 3개가 responses와 일치해도
+  // requires_staff_check가 그 OR값과 다르거나(coreSpec.ts:4069), MS_05/
+  // MS_01/WOMEN_SAFETY_01로 계산되는 나머지 3개가 실제 응답과 모순되면
+  // 여전히 손상된 flags다. computeFlags(coreSpec.ts:4035-4071)와 동일한
+  // 계산식으로 나머지 4개도 재계산해 대조한다.
+  const requiresStaffCheckExpected = generalRedExpected || giExpected || bowelExpected
+  if (flags.requires_staff_check !== requiresStaffCheckExpected) return false
+
+  const sleepScreen = r.modules?.sleep?.menopause?.sleep_disorder_screen
+  const sleepScreenArr = Array.isArray(sleepScreen) ? sleepScreen : []
+  const sleepDisorderReviewExpected =
+    sleepScreenArr.includes('loud_snoring') || sleepScreenArr.includes('restless_legs_pattern')
+  if (flags.sleep_disorder_review !== sleepDisorderReviewExpected) return false
+  const sleepDisorderPriorityReviewExpected =
+    sleepScreenArr.includes('witnessed_apnea') || sleepScreenArr.includes('choking_gasping')
+  if (flags.sleep_disorder_priority_review !== sleepDisorderPriorityReviewExpected) return false
+
+  const ms01 = r.modules?.sleep?.menopause?.stage
+  const womenSafety = r.reproductive_status?.reproductive_status
+  const womenSafetyHas = (v: string) => Array.isArray(womenSafety) && womenSafety.includes(v)
+  const responseConsistencyReviewExpected =
+    (ms01 === 'amenorrhea_12m_plus' && (womenSafetyHas('pregnant') || womenSafetyHas('pregnancy_possible'))) ||
+    (ms01 === 'still_regular' && womenSafetyHas('menopause'))
+  if (flags.response_consistency_review !== responseConsistencyReviewExpected) return false
+
+  return true
+}
+
+export function isFlagsUsable(flags: unknown, r: DoctorPayload['responses']): boolean {
+  if (!isPlainObject(flags)) return false
+  if (!REQUIRED_FLAG_KEYS.every((key) => typeof flags[key] === 'boolean')) return false
+  return isFlagsConsistentWithResponses(flags, r)
+}
+
+// 12차 독립 리뷰 MEDIUM-1: saju(myungri_calculation)는 server/index.js가
+// `body.myungri_calculation ?? null`로 검증 없이 저장하고,
+// isDoctorPayloadShapeUsable은 top-level 키(status/policy/engine/flags)만
+// 검사할 뿐 pillars/normalized/unresolved_reason 같은 leaf는 절대
+// 검증하지 않는다 -- wrong-typed leaf를 그대로 문자열 보간/React child로
+// 흘려보내면 "[object Object]" 노출이나 크래시로 이어진다. optionLabel
+// (labels.ts)과 동일한 원칙을 여기서도 적용: string/number가 아니면
+// 명시적 실패 토큰을 반환한다.
+const UNREADABLE_COMPUTED_VALUE = '확인 필요(값 형식 오류)'
+
+function computedText(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  return UNREADABLE_COMPUTED_VALUE
+}
+
+/** 날짜 구성요소(년/월/일)용 -- 유효한 값이면 2자리로 0-padding, 아니면 실패 토큰. */
+function datePartText(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value).padStart(2, '0')
+  if (typeof value === 'string' && value !== '') return value
+  return UNREADABLE_COMPUTED_VALUE
+}
+
 /** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
-function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
+export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   text: string
   tone: 'neutral' | 'warning' | 'unresolved'
 } {
   if (saju.status === 'resolved') {
-    if (saju.policy.pending_approval.length === 0) return { text: '계산 완료', tone: 'neutral' }
+    if (asArray(saju.policy.pending_approval).length === 0) return { text: '계산 완료', tone: 'neutral' }
     return { text: '계산 완료 (정책 승인 대기 — 값 변경 가능)', tone: 'warning' }
   }
   if (saju.status === 'partial') return { text: '부분 계산 (시주 미상)', tone: 'warning' }
+  const reason = computedText(saju.unresolved_reason)
   return {
-    text: `계산 불가${saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}`,
+    text: `계산 불가${reason ? ` — ${reason}` : ''}`,
     tone: 'unresolved',
   }
 }
@@ -231,30 +692,50 @@ const PENDING_APPROVAL_LABELS: Record<string, string> = {
  * 재배열일 뿐이다. 오행 분포·한열조습처럼 엔진이 계산하지 않는 값은 절대
  * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
  */
-function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
-  if (!saju.pillars) {
+export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
+  // 12차 독립 리뷰 HIGH-3: `!saju.pillars?.day`는 truthy 체크일 뿐이라
+  // day가 존재하지만 wrong-typed(예: number)면 그대로 통과해 아래
+  // `.charAt(0)`에서 "TypeError: ... .charAt is not a function"으로
+  // 전체 임상 화면(DoctorRecordErrorBoundary가 CommonSafetyBanner/모든
+  // SafetyPanel까지 함께 감싸고 있음)을 날린다. day가 진짜 없는 경우
+  // ("계산 불가", 예: 원본 저장 이전의 레거시 레코드)와 있지만
+  // wrong-typed인 경우("확인 필요")를 구분한다.
+  const dayPillar = saju.pillars?.day
+  if (typeof dayPillar !== 'string') {
+    const isCorrupted = dayPillar !== null && dayPillar !== undefined
+    const reason = computedText(saju.unresolved_reason)
     return (
       <div className="doctor__msSummary doctor__msSummary--myungri">
         <strong className="doctor__msSummary__title">명리 핵심</strong>
         <p className="doctor__msSummary__line">
-          계산 불가{saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+          {isCorrupted ? UNREADABLE_COMPUTED_VALUE : `계산 불가${reason ? ` — ${reason}` : ''}`}
         </p>
       </div>
     )
   }
 
-  const dayStem = saju.pillars.day.charAt(0)
-  const birthInfoLine = saju.flags.hour_unknown
-    ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
-    : '출생시간 확인됨 · 4주 8자'
-  const pendingLabels = saju.policy.pending_approval.map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
+  const dayStem = dayPillar.charAt(0)
+  // 13차 독립 리뷰 LOW-1: `saju.flags.hour_unknown`가 boolean이 아니면
+  // (레거시 레코드는 flags 자체가 {}일 수 있음) 이전 구현은 falsy 값이면
+  // 무조건 "출생시간 확인됨"으로 단정했다 -- 실제로는 그 필드가 없다는
+  // 뜻일 뿐인데 시간이 확인됐다는 사실을 지어낸 것이다. 명시적 boolean일
+  // 때만 둘 중 하나를 말하고, 그 외엔 실패 토큰을 보여준다.
+  const birthInfoLine =
+    saju.flags?.hour_unknown === true
+      ? '출생시간 미상 · 3주 6자 기준 (시주 제외)'
+      : saju.flags?.hour_unknown === false
+        ? '출생시간 확인됨 · 4주 8자'
+        : UNREADABLE_COMPUTED_VALUE
+  const pendingLabels = readableStringArray(asArray(saju.policy.pending_approval)).map((k) => PENDING_APPROVAL_LABELS[k] ?? k)
+  const yearPillar = computedText(saju.pillars?.year) ?? UNREADABLE_COMPUTED_VALUE
+  const monthPillar = computedText(saju.pillars?.month) ?? UNREADABLE_COMPUTED_VALUE
+  const hourPillar = computedText(saju.pillars?.hour) ?? '미상'
 
   return (
     <div className="doctor__msSummary doctor__msSummary--myungri">
       <strong className="doctor__msSummary__title">명리 핵심</strong>
       <p className="doctor__msSummary__line">
-        원국: 연{saju.pillars.year} 월{saju.pillars.month} 일{saju.pillars.day} 시
-        {saju.pillars.hour ?? '미상'}
+        원국: 연{yearPillar} 월{monthPillar} 일{dayPillar} 시{hourPillar}
       </p>
       <p className="doctor__msSummary__line">일간: {dayStem}</p>
       <p className="doctor__msSummary__line">출생정보: {birthInfoLine}</p>
@@ -268,210 +749,13 @@ function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation
 }
 
 /**
- * "10초 요약" 카드. §PART1 규칙을 그대로 구현 — 데이터가 없으면 그 줄 자체를
- * 만들지 않는다(해석/보간 없음). payload 안의 값만 조합한다.
+ * 10초 요약/안전정보 카드는 PR #24부터 src/doctor/CommonSafetyBanner.tsx +
+ * src/doctor/workspace/PainWorkspace.tsx / HerbalWorkspace.tsx로 이동했다
+ * (Doctor Clinical Workspace shell). 이 파일에 있던 TenSecondSummary /
+ * safetyGlanceItems / SafetyGlance는 그쪽에서 동일한 계산 입력을 그대로
+ * 재사용해 다시 구현되었으므로 여기서는 삭제한다 -- 계산 로직(위 export된
+ * 헬퍼들)은 하나도 바뀌지 않았고, 렌더링 위치만 옮겨졌다.
  */
-function TenSecondSummary({ payload }: { payload: DoctorPayload }) {
-  const r = payload.responses
-  const { flags, routing } = payload
-  const saju = payload.myungri_calculation
-
-  const durFreq = durationFrequencyText(r, routing.primary_module)
-  const aggravatingText = aggravatingSummaryText(routing.primary_module, r.modules)
-  const secondaryKeys = ((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).filter(
-    (k) => k !== 'none',
-  )
-  const secondaryLabels = optionLabels('SECONDARY_01', secondaryKeys).slice(0, 2)
-  const safetyCats = safetyIssueCategories(flags)
-  const safetyAnswered = !isEmptyValue(r.safety_flags.red_flag_general)
-  const sajuLine = sajuStatusLine(saju)
-
-  return (
-    <section className="doctor__tenSec" aria-label="10초 요약">
-      <div className="doctor__tenSec__row">
-        <span className="doctor__tenSecChip">
-          <span className="doctor__tenSecChip__label">주호소</span>
-          <span className="doctor__tenSecChip__value">{primaryConcernLabel(r)}</span>
-        </span>
-
-        {durFreq && (
-          <span className="doctor__tenSecChip">
-            <span className="doctor__tenSecChip__label">기간/빈도</span>
-            <span className="doctor__tenSecChip__value">{durFreq}</span>
-          </span>
-        )}
-
-        {aggravatingText && (
-          <span className="doctor__tenSecChip">
-            <span className="doctor__tenSecChip__label">핵심 악화·유발요인</span>
-            <span className="doctor__tenSecChip__value">{aggravatingText}</span>
-          </span>
-        )}
-
-        {secondaryLabels.length > 0 && (
-          <span className="doctor__tenSecChip">
-            <span className="doctor__tenSecChip__label">동반문제</span>
-            <span className="doctor__tenSecChip__value">{secondaryLabels.join(', ')}</span>
-          </span>
-        )}
-
-        {safetyCats.length > 0 && (
-          <span className="doctor__tenSecChip doctor__tenSecChip--danger">
-            <span className="doctor__tenSecChip__label">안전이슈</span>
-            <span className="doctor__tenSecChip__value">{safetyCats.join(', ')}</span>
-          </span>
-        )}
-        {safetyCats.length === 0 && safetyAnswered && (
-          <span className="doctor__tenSecChip doctor__tenSecChip--muted">
-            <span className="doctor__tenSecChip__label">안전이슈</span>
-            <span className="doctor__tenSecChip__value">없음</span>
-          </span>
-        )}
-
-        <span className={`doctor__tenSecChip doctor__tenSecChip--${sajuLine.tone}`}>
-          <span className="doctor__tenSecChip__label">명리 계산</span>
-          <span className="doctor__tenSecChip__value">{sajuLine.text}</span>
-        </span>
-      </div>
-    </section>
-  )
-}
-
-/** §PART2 "안전정보 한눈에" — 복용약/병력/임신·수유/알레르기 중 실제 값이 있는 것만, 위험신호는 배너를 가리키는 짧은 포인터만. */
-function safetyGlanceItems(
-  r: Responses,
-  flags: DoctorPayload['flags'],
-): { key: string; label: string; text: string }[] {
-  const items: { key: string; label: string; text: string }[] = []
-
-  const medUse = r.medication.medication_use
-  if (medUse === 'yes' || medUse === 'unknown') {
-    const types = answerLabel('MED_TYPES', r.medication.medication_types)
-    items.push({
-      key: 'medication',
-      label: '복용약',
-      text: `${answerLabel('MED_USE', medUse)}${types ? ` — ${types}` : ''}`,
-    })
-  }
-
-  const historyFlags = ((r.medical_history.medical_history_flags as string[] | null) ?? []).filter(
-    (v) => v !== 'none',
-  )
-  if (historyFlags.length > 0) {
-    items.push({ key: 'history', label: '주요 병력', text: optionLabels('HISTORY_01', historyFlags).join(', ') })
-  }
-
-  const derived = r.reproductive_status.derived
-  if (derived.pregnant || derived.pregnancy_possible || derived.postpartum_1y || derived.breastfeeding) {
-    const parts = [
-      derived.pregnant && '임신 중',
-      derived.pregnancy_possible && '임신 가능성',
-      derived.postpartum_1y && '출산 후 1년 이내',
-      derived.breastfeeding && '모유수유 중',
-    ].filter((v): v is string => Boolean(v))
-    items.push({ key: 'reproductive', label: '임신/수유', text: parts.join(', ') })
-  }
-
-  if (r.allergy.allergy_yn === 'yes') {
-    items.push({
-      key: 'allergy',
-      label: '알레르기',
-      text: answerLabel('ALLERGY_02', r.allergy.allergy_detail) || '있음',
-    })
-  }
-
-  // 위험신호는 배너에서 이미 전체 내용을 보여준다 — 여기서는 같은 문장을
-  // 반복하지 않고, 위에 배너가 있다는 것만 짧게 가리킨다.
-  if (flags.requires_staff_check) {
-    items.push({ key: 'redflag', label: '위험신호', text: '있음 — 위 안전 확인 배너 참고' })
-  }
-
-  // MENOPAUSE_SLEEP MS_05: 진단명 노출 없이 원장 확인용으로만 표시한다(delta 3장).
-  if (flags.sleep_disorder_priority_review) {
-    items.push({
-      key: 'sleep_disorder_priority',
-      label: '수면장애 선별',
-      text: `우선 확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
-    })
-  } else if (flags.sleep_disorder_review) {
-    items.push({
-      key: 'sleep_disorder',
-      label: '수면장애 선별',
-      text: `확인 필요 — ${answerLabel('MS_05', r.modules.sleep.menopause.sleep_disorder_screen)}`,
-    })
-  }
-
-  if (flags.response_consistency_review) {
-    items.push({
-      key: 'response_consistency',
-      label: '응답 확인 필요',
-      text: '생리 상태(MS_01)와 임신/폐경 관련 응답이 서로 다릅니다 — 자동 수정하지 않음',
-    })
-  }
-
-  /**
-   * Routing/UX v2 §20-21: 자유입력을 줄인 대신 clinician confirmation cue를
-   * 강화한다. 환자 선택만으로 진단/객관적 소견을 만들지 않고 "확인
-   * 필요"/"진료 중 확인" 수준으로만 표시한다. 기존 urgent safety
-   * panel/redflag보다 강하게 보이면 안 되므로 이 함수의 기존 항목들
-   * 뒤에(가장 낮은 우선순위로) 추가한다 -- §21 우선순위(1.safety/urgent
-   * 2.medication/allergy 3.surgery/history 4.추가 전달사항 5.기타 상세)
-   * 중 1~2는 위에 이미 있고, 여기서는 3~5만 이 순서로 덧붙인다.
-   */
-  if (r.surgery_history.surgery_yn === 'yes') {
-    items.push({ key: 'surgery', label: '수술·입원력', text: '있음 — 종류/시기 확인' })
-  }
-
-  if (r.free_text.free_text_yn === 'yes') {
-    items.push({ key: 'free_text', label: '추가 전달사항', text: '있음 — 진료 중 확인' })
-  }
-
-  // "기타" 선택 확인 필요 항목들을 하나의 배지로 묶는다 -- 필드마다 따로
-  // 배지를 만들면 노란 배지가 난립한다(§21).
-  const otherDetailFlags: string[] = []
-  if (r.visit_goal.primary_symptom === 'other') otherDetailFlags.push('기타 주호소')
-  if (((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 동반증상')
-  }
-  if (((r.modules.sleep.awakening_reasons as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 수면 원인')
-  }
-  if (r.modules.pain.primary_location === 'other') otherDetailFlags.push('기타 통증 부위')
-  if (r.modules.pain.radiation === 'other') otherDetailFlags.push('기타 방사통 부위')
-  if (((r.modules.women.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 여성 건강 상담')
-  }
-  if (((r.modules.pregnancy.concerns as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 임신 상담')
-  }
-  if (((r.modules.postpartum.problems as string[] | null) ?? []).includes('other')) {
-    otherDetailFlags.push('기타 산후 상담')
-  }
-  if (otherDetailFlags.length > 0) {
-    items.push({ key: 'other_detail', label: '기타 확인', text: `${otherDetailFlags.join(', ')} — 진료 중 확인` })
-  }
-
-  return items
-}
-
-function SafetyGlance({ r, flags }: { r: Responses; flags: DoctorPayload['flags'] }) {
-  const items = safetyGlanceItems(r, flags)
-  if (items.length === 0) {
-    return <p className="doctor__safetyGlance doctor__safetyGlance--empty">특이 안전정보 없음</p>
-  }
-  return (
-    <div className="doctor__safetyGlance">
-      <span className="doctor__safetyGlance__title">안전정보 한눈에</span>
-      <div className="doctor__safetyGlance__items">
-        {items.map((it) => (
-          <span key={it.key} className="doctor__safetyChip">
-            <strong>{it.label}</strong> {it.text}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 const LBP_SAFETY_STATUS_LABEL: Record<LbpComputedFields['lbp_safety_status'], string> = {
   CLEAR: '안전',
@@ -532,14 +816,42 @@ function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: Answe
  * 여기서는 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
  * (fixtures) 항상 "아직 진찰 전"으로 취급한다.
  */
-function LbpSafetyPanel({
+export function LbpSafetyPanel({
   payload,
   lbpObjectiveMotorDeficit,
 }: {
   payload: DoctorPayload
   lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit']
 }) {
-  if (payload.routing.primary_module_detail !== 'LBP') return null
+  // "이 레코드는 LBP와 무관하다"(조용히 아무것도 안 그림)와 "LBP와
+  // 관련은 있지만 계산에 필요한 하위 데이터가 손상/누락됐다"(명시적
+  // 확인 필요 알림)를 분리한다 -- 5차 독립 리뷰 HIGH-2.
+  //
+  // applicability 신호는 safety_flags.lbp(coreSpec.ts:
+  // `IS_PRIMARY_LBP(r) ? computeLbpFlags(...) : null`)여야 한다 --
+  // `routing.primary_module_detail`이 아니다. `IS_PRIMARY_LBP`는
+  // `IS_PRIMARY_PAIN(r) && PAIN_01 === 'low_back_pelvis'`이고
+  // `IS_PRIMARY_PAIN`은 `primaryConcernKey==='pain' ||
+  // hasDetailedConcern(r,'pain')` -- 즉 주호소가 아니라 "Additional
+  // Detailed Concern"으로 pain/허리를 선택한 환자도 safety_flags.lbp가
+  // 계산되지만 `primary_module_detail`은 그 경로에서 null로 남는다(그
+  // 값은 `additional_module_detail`에만 채워짐). 그래서 이전 게이트는
+  // 이미 계산된 실제 URGENT_REVIEW/REVIEW_REQUIRED조차 화면에서 완전히
+  // 지워버렸다 -- 6차 독립 리뷰 HIGH-1(다른 8개 패널은 전부
+  // safety_flags.<region>을 쓰므로 LBP만 유일한 예외였다).
+  if (payload.responses.safety_flags.lbp == null) return null
+
+  // lbpAdapter.ts(frozen)의 mapPregnancyStatus는 reproductive_status.derived
+  // 를, mapMajorHistory는 medical_history.medical_history_flags의 각
+  // 원소가 문자열이라고 무조건 가정한다 -- 둘 다 없으면(레거시 데이터)
+  // 그 함수들 안에서 던진다.
+  if (
+    !isNonEmptyObject(payload.responses.modules.lbp) ||
+    isUnreadableReproductiveDerived(payload.responses) ||
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags)
+  ) {
+    return <SafetyDataUnavailableNotice label="허리(LBP)" />
+  }
 
   const age = ageFromDoctorPayload(payload.responses)
   const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
@@ -724,8 +1036,26 @@ function suggestedNeckExamCodes(
  * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
  * JudgmentPanel에 대응 필드를 추가하지 않았다.
  */
-function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.neck === null) return null
+export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  // safety_flags.neck는 이 레코드가 NECK/SHOULDER 부위와 관련 있는지의
+  // applicability 신호다(위 클래스 doc comment 참고) -- null이면 조용히
+  // 아무것도 안 그린다(무관함, 정상). 그 외 조건은 "관련은 있지만 계산
+  // 불가"이므로 명시적 알림을 그린다 -- 5차 독립 리뷰 HIGH-2.
+  if (payload.responses.safety_flags.neck == null) return null
+
+  // neckAdapter.ts(frozen)의 mapPregnancyStatus/mapMajorHistory도 LBP와
+  // 같은 두 필드를 무조건 가정한다 -- 위 LbpSafetyPanel과 동일한 이유.
+  // mapMedication도 medication.medication_types의 각 원소에
+  // .toUpperCase()를 무조건 호출한다(5차 독립 리뷰 HIGH-1) -- 원소가
+  // 문자열이 아니면(레거시 데이터) 던진다.
+  if (
+    !isNonEmptyObject(payload.responses.modules.neck) ||
+    isUnreadableReproductiveDerived(payload.responses) ||
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
+    !isNullOrStringArray(payload.responses.medication.medication_types)
+  ) {
+    return <SafetyDataUnavailableNotice label="목(NECK)" />
+  }
 
   const state = toNeckStateFromDoctorPayload(payload.responses)
   const flags = computeNeckFlags(state)
@@ -863,14 +1193,45 @@ function suggestedShoulderExamCodes(
  * 회전근개 약화)만 JudgmentPanel의 `shoulder_objective_cuff_weakness`를
  * 읽어 반영한다(§11).
  */
-function ShoulderSafetyPanel({
+export function ShoulderSafetyPanel({
   payload,
   shoulderObjectiveCuffWeakness,
 }: {
   payload: DoctorPayload
   shoulderObjectiveCuffWeakness: ClinicianJudgment['shoulder_objective_cuff_weakness']
 }) {
-  if (payload.responses.safety_flags.shoulder === null) return null
+  // safety_flags.shoulder is the applicability signal (same convention as
+  // NeckSafetyPanel) -- null means this record genuinely does not concern
+  // the shoulder, so stay silent. Anything else below is "applicable but
+  // not computable" and must show an explicit notice, not silence (5th
+  // independent review HIGH-2).
+  if (payload.responses.safety_flags.shoulder == null) return null
+
+  // shoulderAdapter.ts internally calls toNeckStateFromDoctorPayload (shared
+  // neck_shoulder safety logic, frozen) -- computing shoulder state without
+  // modules.neck present crashes inside that frozen adapter, so this gate
+  // must require both submodules, not just modules.shoulder. That frozen
+  // path also reaches neckAdapter's mapPregnancyStatus/mapMajorHistory/
+  // mapMedication, so it needs the same reproductive_status.derived/
+  // medical_history_flags/medication_types checks as NeckSafetyPanel
+  // itself (5th independent review HIGH-1: mapMedication's per-element
+  // .toUpperCase() on medication_types was missed in round 4).
+  if (
+    !isNonEmptyObject(payload.responses.modules.shoulder) ||
+    !isNonEmptyObject(payload.responses.modules.neck) ||
+    isUnreadableReproductiveDerived(payload.responses) ||
+    !isNullOrStringArray(payload.responses.medical_history.medical_history_flags) ||
+    !isNullOrStringArray(payload.responses.medication.medication_types) ||
+    // 8차 독립 리뷰 HIGH-1: 아래 toShoulderStateFromDoctorPayload가
+    // payload.flags.general_red를 그대로 신뢰하는데, flags가 레거시/손상
+    // 데이터라 그 값이 항상 false-typed undefined가 되면 실제 core 응급
+    // red flag가 있어도 "안전"으로 조용히 뒤집힌다(policy 2/3 위반) --
+    // 7차가 CommonSafetyBanner/hero metric에는 이 가드를 달았지만 이
+    // SafetyPanel들은 빠뜨렸다.
+    !isFlagsUsable(payload.flags, payload.responses)
+  ) {
+    return <SafetyDataUnavailableNotice label="어깨(SHOULDER)" />
+  }
 
   const state = toShoulderStateFromDoctorPayload(
     payload.responses,
@@ -1009,8 +1370,16 @@ function suggestedKneeExamCodes(
  * plan §3.2/§5.5) -- Wells/SLR/신경혈관 결과의 persistence schema는 아직
  * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
-function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.knee === null) return null
+export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
+  if (payload.responses.safety_flags.knee == null) return null
+  // 8차 독립 리뷰 HIGH-1: 아래 toKneeStateFromDoctorPayload가
+  // payload.flags.general_red를 그대로 신뢰한다 -- flags가 usable하지
+  // 않으면 실제 core 응급 red flag가 있어도 "안전"으로 조용히 뒤집힌다.
+  if (!isNonEmptyObject(payload.responses.modules.knee) || !isFlagsUsable(payload.flags, payload.responses)) {
+    return <SafetyDataUnavailableNotice label="무릎(KNEE)" />
+  }
 
   const state = toKneeStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeKneeFlags(state)
@@ -1148,8 +1517,15 @@ function suggestedElbowExamCodes(
  * plan §3.2/§5.6) -- Wells류의 persistence schema가 아직 CLOSED되지
  * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
  */
-function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.elbow === null) return null
+export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
+  if (payload.responses.safety_flags.elbow == null) return null
+  // 8차 독립 리뷰 HIGH-1: toElbowStateFromDoctorPayload가
+  // payload.flags.general_red를 그대로 신뢰한다.
+  if (!isNonEmptyObject(payload.responses.modules.elbow) || !isFlagsUsable(payload.flags, payload.responses)) {
+    return <SafetyDataUnavailableNotice label="팔꿈치(ELBOW)" />
+  }
 
   const state = toElbowStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeElbowFlags(state)
@@ -1297,8 +1673,15 @@ function suggestedWristHandExamCodes(
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다
  * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
  */
-function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
-  if (payload.responses.safety_flags.wrist_hand === null) return null
+export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
+  // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
+  // 리뷰 HIGH-2, LbpSafetyPanel/NeckSafetyPanel과 동일한 원칙.
+  if (payload.responses.safety_flags.wrist_hand == null) return null
+  // 8차 독립 리뷰 HIGH-1: toWristHandStateFromDoctorPayload가
+  // payload.flags.general_red를 그대로 신뢰한다.
+  if (!isNonEmptyObject(payload.responses.modules.wrist_hand) || !isFlagsUsable(payload.flags, payload.responses)) {
+    return <SafetyDataUnavailableNotice label="손목/손(WRIST/HAND)" />
+  }
 
   const state = toWristHandStateFromDoctorPayload(payload.responses, payload.flags.general_red)
   const flags = computeWristHandFlags(state)
@@ -1358,19 +1741,19 @@ function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
 
 /** 동반문제 카테고리(sleep/digestion/...) -> 짧은 화면 응답을 어디서 읽을지. */
 const SECONDARY_MODULE_VALUE: Record<string, (sm: Responses['secondary_modules']) => AnswerValue> = {
-  sleep: (sm) => sm.sleep.problems,
-  digestion: (sm) => sm.gi.problems,
-  bowel: (sm) => sm.bowel.problems,
-  pain: (sm) => sm.pain.locations,
-  urinary: (sm) => sm.urinary.problems,
-  fatigue: (sm) => sm.fatigue.patterns,
-  stress: (sm) => sm.stress.problems,
-  women: (sm) => sm.women.problems,
-  weight: (sm) => sm.weight.goal,
+  sleep: (sm) => sm.sleep?.problems ?? null,
+  digestion: (sm) => sm.gi?.problems ?? null,
+  bowel: (sm) => sm.bowel?.problems ?? null,
+  pain: (sm) => sm.pain?.locations ?? null,
+  urinary: (sm) => sm.urinary?.problems ?? null,
+  fatigue: (sm) => sm.fatigue?.patterns ?? null,
+  stress: (sm) => sm.stress?.problems ?? null,
+  women: (sm) => sm.women?.problems ?? null,
+  weight: (sm) => sm.weight?.goal ?? null,
 }
 
 function secondaryModuleFields(r: Responses) {
-  const keys = ((r.secondary_concerns.secondary_concerns as string[] | null) ?? []) as string[]
+  const keys = asArray<string>(r.secondary_concerns.secondary_concerns)
   return keys
     .filter((k) => k !== 'none' && SECONDARY_SHORT_SCREENS[k])
     .map((k) => {
@@ -1383,7 +1766,7 @@ function secondaryModuleFields(r: Responses) {
 /** §PART4 동반문제 칩: 카테고리 라벨 + 짧은 화면 응답 요약(2개 제한은 SECONDARY_01의 max로 이미 강제됨). */
 function secondaryChipsData(r: Responses) {
   return secondaryModuleFields(r).map((f, i) => {
-    const keys = ((r.secondary_concerns.secondary_concerns as string[] | null) ?? []).filter(
+    const keys = asArray<string>(r.secondary_concerns.secondary_concerns).filter(
       (k) => k !== 'none' && SECONDARY_SHORT_SCREENS[k],
     )
     const key = keys[i]
@@ -1401,8 +1784,7 @@ function secondaryChipsData(r: Responses) {
  * flag다 -- 'none'은 표시하지 않는다(선택 안 함과 동일하게 취급).
  */
 function referenceSymptomKeys(routing: DoctorPayload['routing']): string[] {
-  const raw = (routing.reference_symptoms as string[] | null) ?? []
-  return raw.filter((k) => k !== 'none')
+  return asArray<string>(routing.reference_symptoms).filter((k) => k !== 'none')
 }
 
 /**
@@ -1440,7 +1822,8 @@ function constitutionFields(r: Responses) {
  * 이 경우 원래 Sleep Field 목록만 보이고 이 블록 자체가 생기지 않는다.
  */
 function menopauseSleepSummaryLines(sleep: Responses['modules']['sleep']): string[] | null {
-  const ms = sleep.menopause
+  const ms = sleep?.menopause
+  if (!ms) return null
   if (ms.gate_context !== 'yes' && ms.gate_context !== 'unsure') return null
 
   const lines: string[] = []
@@ -1476,52 +1859,66 @@ function menopauseSleepSummaryLines(sleep: Responses['modules']['sleep']): strin
  * 'Pain' 리터럴로 여러 곳을 분기하므로 절대 재사용하지 않는다
  * (LBP_INTEGRATION_PLAN_DRAFT.md §9/S9).
  */
-function primaryModuleFields(
+export function primaryModuleFields(
   primaryModule: string | null,
   m: Responses['modules'],
   primaryModuleDetail: string | null = null,
 ) {
   switch (primaryModule) {
-    case 'Sleep':
+    case 'Sleep': {
+      if (!m.sleep) return []
+      const ms = m.sleep.menopause
       return [
         { qid: 'SLEEP_01', value: m.sleep.problems },
         { qid: 'SLEEP_02', value: m.sleep.frequency_per_week },
         { qid: 'SLEEP_03', value: m.sleep.awakening_reasons },
-        { qid: 'MS_GATE_01', value: m.sleep.menopause.gate_context },
-        { qid: 'MS_01', value: m.sleep.menopause.stage },
-        { qid: 'MS_02', value: m.sleep.menopause.night_vms_frequency },
-        { qid: 'MS_03', value: m.sleep.menopause.rumination_frequency },
-        { qid: 'MS_04', value: m.sleep.menopause.total_sleep_time },
-        { qid: 'MS_05', value: m.sleep.menopause.sleep_disorder_screen },
-        { qid: 'MS_06', value: m.sleep.menopause.awakenings },
-        { qid: 'MS_07', value: m.sleep.menopause.return_to_sleep },
+        ...(ms
+          ? [
+              { qid: 'MS_GATE_01', value: ms.gate_context },
+              { qid: 'MS_01', value: ms.stage },
+              { qid: 'MS_02', value: ms.night_vms_frequency },
+              { qid: 'MS_03', value: ms.rumination_frequency },
+              { qid: 'MS_04', value: ms.total_sleep_time },
+              { qid: 'MS_05', value: ms.sleep_disorder_screen },
+              { qid: 'MS_06', value: ms.awakenings },
+              { qid: 'MS_07', value: ms.return_to_sleep },
+            ]
+          : []),
       ]
-    case 'GI':
+    }
+    case 'GI': {
+      if (!m.gi) return []
       return [
         { qid: 'GI_01', value: m.gi.problems },
         { qid: 'GI_02', value: m.gi.meal_relation },
         { qid: 'GI_03', value: m.gi.unable_to_eat_or_drink },
       ]
-    case 'Bowel':
+    }
+    case 'Bowel': {
+      if (!m.bowel) return []
       return [
         { qid: 'BOWEL_01', value: m.bowel.problems },
         { qid: 'BOWEL_02', value: m.bowel.frequency },
         { qid: 'BOWEL_03', value: m.bowel.blood_or_black_stool },
         { qid: 'BOWEL_04', value: m.bowel.straining },
       ]
-    case 'Urinary':
+    }
+    case 'Urinary': {
+      if (!m.urinary) return []
       return [
         { qid: 'URINARY_01', value: m.urinary.problems },
         { qid: 'URINARY_02', value: m.urinary.burden_frequency },
         { qid: 'URINARY_03', value: m.urinary.nocturia_count },
         { qid: 'URINARY_04', value: m.urinary.leakage_pattern },
       ]
-    case 'Pain':
+    }
+    case 'Pain': {
+      if (!m.pain) return []
       return [
         { qid: 'PAIN_01', value: m.pain.primary_location },
         { qid: 'PAIN_02', value: m.pain.pain_qualities },
         { qid: 'PAIN_04', value: m.pain.radiation },
-        ...(primaryModuleDetail === 'LBP'
+        ...(primaryModuleDetail === 'LBP' && m.lbp
           ? [
               { qid: 'LBP_01', value: m.lbp.distal_extent },
               { qid: 'LBP_02', value: m.lbp.leg_neuro_symptoms },
@@ -1547,7 +1944,7 @@ function primaryModuleFields(
          * patient's HIP_00-06 raw answers must stay visible alongside LBP's
          * regardless of the (unchanged, LBP-only) `primaryModuleDetail` tag.
          */
-        ...(m.pain.primary_location === 'low_back_pelvis'
+        ...(m.pain.primary_location === 'low_back_pelvis' && m.hip
           ? [
               { qid: 'HIP_00', value: m.hip.region_discriminator },
               { qid: 'HIP_01', value: m.hip.recent_trauma },
@@ -1567,7 +1964,7 @@ function primaryModuleFields(
          * NECK 원시 응답이 이 필드 목록에서 사라진다 — NeckSafetyPanel과
          * 동일한 이유의 동일한 수정.
          */
-        ...(m.pain.primary_location === 'neck_shoulder'
+        ...(m.pain.primary_location === 'neck_shoulder' && m.neck
           ? [
               { qid: 'NECK_01', value: m.neck.recent_significant_trauma },
               { qid: 'NECK_02', value: m.neck.cord_concern_screen },
@@ -1591,7 +1988,7 @@ function primaryModuleFields(
          * `m.pain.primary_location === 'neck_shoulder'`로 게이트 -- SH01-05는
          * NS01이 NECK_DOMINANT여도 항상 응답되어 있다(F1).
          */
-        ...(m.pain.primary_location === 'neck_shoulder'
+        ...(m.pain.primary_location === 'neck_shoulder' && m.shoulder
           ? [
               { qid: 'NS01', value: m.shoulder.primary_focus },
               { qid: 'SH01', value: m.shoulder.recent_trauma },
@@ -1613,7 +2010,7 @@ function primaryModuleFields(
          * `m.pain.primary_location === 'knee'` 게이트가 항상 동일한 결과를
          * 낸다 -- LBP/NECK/SHOULDER처럼 두 게이트가 어긋날 여지가 없다.
          */
-        ...(m.pain.primary_location === 'knee'
+        ...(m.pain.primary_location === 'knee' && m.knee
           ? [
               { qid: 'KNEE_01', value: m.knee.recent_trauma_or_sudden_load },
               { qid: 'KNEE_02', value: m.knee.deformity_neurovascular_screen },
@@ -1645,7 +2042,7 @@ function primaryModuleFields(
          * 못 봤으니 응답이 없다) 안전하다 -- KNEE류의 F1 primary-tag 어긋남
          * 문제와는 다른 종류이며, 별도 게이트가 필요하지 않다.
          */
-        ...(m.pain.primary_location === 'arm_hand'
+        ...(m.pain.primary_location === 'arm_hand' && m.elbow
           ? [
               { qid: 'ELBOW_00', value: m.elbow.region_discriminator },
               { qid: 'ELBOW_01', value: m.elbow.recent_trauma_or_sudden_load },
@@ -1677,7 +2074,7 @@ function primaryModuleFields(
          * ELBOW block above (`ELBOW_00`), reading the same shared router
          * value from `m.elbow.region_discriminator` (Fable plan §11).
          */
-        ...(m.pain.primary_location === 'arm_hand'
+        ...(m.pain.primary_location === 'arm_hand' && m.wrist_hand
           ? [
               { qid: 'WH_01', value: m.wrist_hand.recent_trauma },
               { qid: 'WH_02', value: m.wrist_hand.deformity_neurovascular_open_injury_screen },
@@ -1706,7 +2103,7 @@ function primaryModuleFields(
          * tag but never saw TMJ_01-05 (T2), so those fields render safely
          * as raw-null.
          */
-        ...(m.pain.primary_location === 'head_face_jaw'
+        ...(m.pain.primary_location === 'head_face_jaw' && m.tmj
           ? [
               { qid: 'HFJ_00', value: m.tmj.region_discriminator },
               { qid: 'TMJ_01', value: m.tmj.trauma_dislocation_screen },
@@ -1717,50 +2114,73 @@ function primaryModuleFields(
             ]
           : []),
       ]
-    case 'Fatigue':
+    }
+    case 'Fatigue': {
+      if (!m.fatigue) return []
       return [
         { qid: 'FATIGUE_01', value: m.fatigue.patterns },
         { qid: 'FATIGUE_02', value: m.fatigue.worst_time },
         { qid: 'FATIGUE_03', value: m.fatigue.recovery_after_rest },
       ]
-    case 'Stress':
+    }
+    case 'Stress': {
+      if (!m.stress) return []
       return [
         { qid: 'STRESS_01', value: m.stress.problems },
         { qid: 'STRESS_03', value: m.stress.associated_symptoms },
       ]
-    case 'Women':
+    }
+    case 'Women': {
+      if (!m.women) return []
       return [
         { qid: 'WOMEN_01', value: m.women.problems },
         { qid: 'WOMEN_02', value: m.women.menstrual_status },
         { qid: 'WOMEN_03', value: m.women.menopause_symptoms },
       ]
-    case 'Pregnancy':
+    }
+    case 'Pregnancy': {
+      if (!m.pregnancy) return []
       return [
         { qid: 'PREGNANCY_01', value: m.pregnancy.status },
         { qid: 'PREGNANCY_02', value: m.pregnancy.trimester },
         { qid: 'PREGNANCY_03', value: m.pregnancy.concerns },
       ]
-    case 'Postpartum':
+    }
+    case 'Postpartum': {
+      if (!m.postpartum) return []
       return [
         { qid: 'POSTPARTUM_01', value: m.postpartum.time_since_delivery },
         { qid: 'POSTPARTUM_02', value: m.postpartum.problems },
         { qid: 'POSTPARTUM_03', value: m.postpartum.breastfeeding_status },
       ]
-    case 'Weight':
+    }
+    case 'Weight': {
+      if (!m.weight) return []
       return [
         { qid: 'WEIGHT_01', value: m.weight.goal },
         { qid: 'WEIGHT_02', value: m.weight.contributing_factors },
         { qid: 'WEIGHT_03', value: m.weight.recent_weight_change },
         { qid: 'WEIGHT_04', value: m.weight.previous_attempts },
       ]
+    }
     default:
       return []
   }
 }
 
 /** SubmissionRecord(서버) -> 화면이 이미 알고 있는 DoctorPayload 모양으로 변환. */
-function recordToPayload(record: SubmissionRecord): DoctorPayload {
-  const s = record.submission as Record<string, unknown>
+export function recordToPayload(record: SubmissionRecord): DoctorPayload {
+  // 21차 독립 리뷰 HIGH-1: `record.submission`이 null/객체가 아니면
+  // `s.questionnaire_version` 등 필드 접근에서 그대로 throw했다 -- 이
+  // 함수는 DoctorView의 렌더 본문에서 `isDoctorPayloadShapeUsable`보다
+  // 먼저, 무조건 호출되므로 그 throw는 DoctorRecordFallback(안전한
+  // 착지 화면)에 도달하기도 전에 PatientErrorBoundary까지 뚫고
+  // 올라간다. `submission`이 객체가 아니면 빈 객체로 대체해 아래
+  // 필드들이 전부 undefined가 되게 하고, isDoctorPayloadShapeUsable이
+  // 그 결과를 보고 자연스럽게 false를 반환해(routing/flags 등이
+  // isPlainObject를 통과 못함) DoctorRecordFallback으로 fail-close
+  // 하도록 한다 -- 새 검증 경로를 만들지 않고 기존 게이트에 위임.
+  const s = isPlainObject(record.submission) ? record.submission : {}
   return {
     questionnaire_version: s.questionnaire_version as string,
     session_id: (s.session_id as string) ?? record.id,
@@ -1772,9 +2192,128 @@ function recordToPayload(record: SubmissionRecord): DoctorPayload {
   }
 }
 
+// malformed/legacy submission resilience 배치: `recordToPayload`가 위에서
+// `as DoctorPayload[...]`로 그냥 타입만 씌운 값은 실제로는 null/누락일 수
+// 있다 -- `routing: null`(하위호환 저장 경로, server/index.js의
+// `routing: body.routing ?? null` 참고)이나 손으로 만든/손상된
+// `responses` 하나만 있어도, 이 파일의 수십 곳(`deriveViewProfile`,
+// `primaryConcernLabel`, 각 부위 SafetyPanel, JudgmentPanel의 props 등)이
+// 예외 없이 그 값을 그대로 읽어 렌더링 도중 던진다. 이 값들은 전부
+// `buildResponsePayload`/`buildRoutingPayload`/`computeSaju`(coreSpec.ts/
+// saju/index.ts) 한 번의 호출로 통째로 만들어지는 atomic한 객체라서, 실제
+// 제출 흐름을 거친 레코드는 이 최상위 키들이 전부 있거나 전부 없다 --
+// 부분적으로만 있는 경우는 레거시 스키마/손상/수기로 만든 요청뿐이다.
+// 그래서 "전부 있는지"만 확인하면 되고(개별 leaf 필드까지 들어가지 않아도
+// 됨), 새 임상 프로필/사실을 추론하지 않는다 -- 그냥 "이 레코드로 상세
+// 화면을 안전하게 그릴 수 있는가"만 판단한다.
+const REQUIRED_RESPONSE_KEYS = [
+  'patient',
+  'visit_goal',
+  'primary_concern',
+  'additional_detail_concern',
+  'reference_symptoms',
+  'secondary_concerns',
+  'safety_flags',
+  'modules',
+  'secondary_modules',
+  'constitution_basics',
+  'medication',
+  'medical_history',
+  'allergy',
+  'surgery_history',
+  'reproductive_status',
+  'recent_tests',
+  'birth_info',
+  'free_text',
+] as const
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function isDoctorPayloadShapeUsable(payload: DoctorPayload): boolean {
+  if (!isPlainObject(payload.routing)) return false
+  if (!isPlainObject(payload.flags)) return false
+  const saju = payload.myungri_calculation as unknown
+  if (!isPlainObject(saju)) return false
+  if (!isPlainObject(saju.policy) || !isPlainObject(saju.engine) || !isPlainObject(saju.flags)) return false
+  if (typeof saju.status !== 'string') return false
+  const r = payload.responses as unknown
+  if (!isPlainObject(r)) return false
+  return REQUIRED_RESPONSE_KEYS.every((key) => isPlainObject(r[key]))
+}
+
+/**
+ * 상세 임상 화면을 안전하게 그릴 수 없을 때(구조 검사 실패, 또는
+ * `DoctorRecordErrorBoundary`가 예상 못한 예외를 잡았을 때) 보여주는 중립
+ * fallback -- 실제로 확인된 값(환자 라벨/제출 시각/상태)만 그대로 보여주고,
+ * 어떤 임상 프로필·판단도 추정해서 채우지 않는다. 목록으로 돌아가는
+ * 버튼은 이 컴포넌트 밖(항상 렌더링되는 헤더)에 이미 있다. CRM/투약 코스
+ * 섹션은 아래에서 patient_id만으로 이 컴포넌트가 직접 렌더링한다 --
+ * 정상 경로(payloadShapeOk===true)의 원래 렌더 위치는 이 fallback이 보일
+ * 때는 애초에 마운트되지 않으므로, 여기서 만들지 않으면 이 fallback이
+ * 스스로 약속하는 "CRM 섹션은 계속 쓸 수 있다"가 거짓이 된다.
+ */
+export function DoctorRecordFallback({ record }: { record: SubmissionRecord | null | undefined }) {
+  return (
+    <div>
+      <div className="doctor__banner doctor__banner--warning" role="alert">
+        <strong>이 기록의 상세 임상 화면을 표시할 수 없습니다</strong>
+        <p>
+          제출 자료가 불완전하거나 예상한 형식과 다릅니다(레거시 형식이거나
+          손상된 제출로 보입니다). 임상 프로필이나 판단을 추정해서 보여주지
+          않습니다 — 아래 알려진 정보만 확인할 수 있습니다.
+        </p>
+        {record && (
+          <ul>
+            {/*
+              20차 독립 리뷰 HIGH-1/MEDIUM-1/MEDIUM-2: 이 세 줄은 이
+              fallback(error boundary 자신의 fallback prop) 안에서
+              렌더된다 -- React는 fallback 렌더 도중의 throw를 잡지
+              못하므로, 이 컴포넌트 자체가 이 배치가 만든 "안전한 착지
+              화면"이다. record는 SubmissionRecord 타입이지만 그건
+              컴파일 타임 가정일 뿐 -- 손상/레거시 저장 파일에서 온
+              record는 이 필드들이 그 타입과 다를 수 있다.
+            */}
+            {record.patient_label && <li>환자: {safeStringOrFallback(record.patient_label)}</li>}
+            <li>제출 시각: {formatTimestamp(record.created_at)}</li>
+            <li>상태: {statusLabel(record.status)}</li>
+          </ul>
+        )}
+        <p>
+          아래 CRM/투약 코스 섹션은 이 기록과 무관하게 계속 사용할 수
+          있습니다. 상단의 &ldquo;목록으로&rdquo;를 눌러 다른 제출건을 선택할
+          수도 있습니다.
+        </p>
+      </div>
+      {/*
+        malformed/legacy submission resilience 배치: patient_id만 있으면
+        되는(payload/routing/responses와 무관한) 안전한 기능이라 이 fallback
+        에서 독립적으로 렌더링한다 -- 정상 경로(아래 tab 콘텐츠 안,
+        payloadShapeOk===true일 때만 마운트됨)의 렌더와는 서로 배타적이라
+        동시에 두 인스턴스가 뜨지 않는다. CRM/투약 코스 추적을 이 기록의
+        구조 문제 때문에 완전히 막을 이유가 없다.
+      */}
+      {/* 21차 독립 리뷰 LOW-2: truthy 체크만으로는 비문자열(예: 객체) patient_id도
+          통과시켜 listEpisodesByPatient 등에 쓰레기 fetch key로 흘러가고 CRM
+          섹션이 조용히 빈/오류 상태로 저하됐다 -- 문자열일 때만 마운트한다. */}
+      {typeof record?.patient_id === 'string' && record.patient_id && (
+        <MedicationCourseSection key={record.patient_id} patientUuid={record.patient_id} />
+      )}
+    </div>
+  )
+}
+
 const POLL_MS = 5000
 
-function statusLabel(status: SubmissionSummary['status']): string {
+// 20차 독립 리뷰 MEDIUM-2: `status`가 서버 응답 경로에서 컨테이너/원소
+// 검증은 통과했지만 그 자체가 알려진 4개 값 중 하나라는 보장은 없다
+// (예: 손상/레거시 레코드). 이전엔 `default: return status`로 원본 값을
+// 그대로 노출했다 -- 알려진 값이 아니면(문자열이 아닌 경우 포함) "확인
+// 필요"로 fail-closed한다. 이 함수의 유일한 두 호출부
+// (DoctorRecordFallback, 제출목록)에는 이제 이 함수만 거치면 되므로
+// 파라미터를 unknown으로 넓혔다.
+function statusLabel(status: unknown): string {
   switch (status) {
     case 'new':
       return '신규'
@@ -1785,13 +2324,35 @@ function statusLabel(status: SubmissionSummary['status']): string {
     case 'completed':
       return '완료'
     default:
-      return status
+      return '확인 필요'
   }
 }
 
+// 20차 독립 리뷰 HIGH-1/MEDIUM-1 계열: 아래 두 헬퍼는 이 파일에서
+// created_at/patient_label을 렌더링하는 모든 지점(DoctorRecordFallback
+// 포함 -- error boundary의 fallback prop 자체라 여기서 throw하면 어떤
+// boundary도 못 잡는다)이 공유한다. 서버가 항상 유효한 값을 보내는
+// 정상 경로에서는 재현되지 않지만, 손상/레거시 저장 파일이나 버전
+// skew에서는 이 필드들의 타입/형식이 보장되지 않는다.
+function formatTimestamp(value: unknown): string {
+  if (typeof value !== 'string') return '확인 필요'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '확인 필요' : d.toLocaleString('ko-KR')
+}
+
+function safeStringOrFallback(value: unknown): string {
+  return typeof value === 'string' ? value : '확인 필요'
+}
+
 /** 상대 시간(예: '방금 전' / '3분 전' / '2시간 전' / '1일 전'). 절대 시각은 별도로 항상 같이 보여준다. */
-function relativeTime(iso: string): string {
+function relativeTime(iso: unknown): string {
+  // 20차 독립 리뷰: iso가 문자열이 아니거나 파싱 불가면 이전엔 NaN 연산이
+  // 그대로 흘러 "NaN일 전"이라는 원시 값을 노출했다(governing task 정책
+  // 5 위반) -- 절대 시각(formatTimestamp)이 이미 "확인 필요"로 옆에
+  // 표시되므로, 이 보조 텍스트는 빈 문자열로 조용히 생략한다.
+  if (typeof iso !== 'string') return ''
   const diffMs = Date.now() - new Date(iso).getTime()
+  if (Number.isNaN(diffMs)) return ''
   const min = Math.floor(diffMs / 60000)
   if (min < 1) return '방금 전'
   if (min < 60) return `${min}분 전`
@@ -1809,14 +2370,46 @@ function relativeTime(iso: string): string {
  * (server/index.js가 LAN에서 떠 있을 때만). 서버 모드는 실패해도 예시
  * 데이터로 안전하게 되돌아간다.
  */
-export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: number } = {}) {
+/*
+ * Round 13: preview/QA controls do not belong on a real clinical screen.
+ * The fixture picker, the SYNTHETIC scenario picker and the data-source
+ * switch are development and QA affordances -- in a clinic they are noise
+ * competing with the record, and worse, they invite a clinician to
+ * accidentally leave the real submission list.
+ *
+ * They are gated on the repo's existing preview-context convention
+ * (`import.meta.env.DEV || VITE_PREVIEW_MODE === 'true'`, the same test
+ * PatientCompleteScreen already uses), so they stay fully available where
+ * QA needs them -- the dev server and the deployed PR preview -- and
+ * disappear from a production clinic build.
+ *
+ * `initialFixtureIndex` is also treated as a preview signal: it is only
+ * ever passed by the fixture-rendering test harness, and honouring it
+ * keeps those suites exercising the same component the clinic runs.
+ */
+function isDoctorPreviewContext(): boolean {
+  const env = (import.meta as { env?: Record<string, unknown> }).env ?? {}
+  return env.DEV === true || env.VITE_PREVIEW_MODE === 'true'
+}
+
+export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: number } = {}) {
   useEffect(() => {
     document.documentElement.classList.add('doctor-mode')
     return () => document.documentElement.classList.remove('doctor-mode')
   }, [])
 
-  const [mode, setMode] = useState<'fixtures' | 'server'>('fixtures')
-  const [fixtureIndex, setFixtureIndex] = useState(initialFixtureIndex)
+  // A clinic build has no data-source switch, so it must start on the real
+  // submission list rather than stranding the clinician in fixture data.
+  const showPreviewControls = isDoctorPreviewContext() || initialFixtureIndex !== undefined
+  const [mode, setMode] = useState<'fixtures' | 'server'>(showPreviewControls ? 'fixtures' : 'server')
+  const [fixtureIndex, setFixtureIndex] = useState(initialFixtureIndex ?? 0)
+  // PR #24 Phase 12: SYNTHETIC/NO-PHI Doctor Workspace scenarios (with
+  // illustrative exam-suggestion/pattern-candidate/evidence/observation
+  // data attached) -- opt-in only, default '' means "off, use the plain
+  // fixture above with no synthetic decision-support data" so production
+  // rendering behavior (no `synthetic` passed to DoctorWorkspace) is
+  // unaffected unless a reviewer explicitly picks one.
+  const [workspaceScenarioId, setWorkspaceScenarioId] = useState('')
 
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>([])
   const [serverError, setServerError] = useState<{ message: string; kind: 'auth' | 'network' | 'other' } | null>(
@@ -1826,6 +2419,120 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   const [retryNonce, setRetryNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
+  // Round 3 Phase C(longitudinal linkage). Fetched from the same exact
+  // patient_id this submission's own record carries -- never derived from
+  // name/phone/DOB. Reset to null on every selection change so a slow
+  // network response for a previous patient can never be misattributed to
+  // the one now on screen (guarded below by the `cancelled` flag too).
+  const [priorVisits, setPriorVisits] = useState<PatientHistoryResult | null>(null)
+  // Round 3 Phase D(micro follow-up). This visit's own short check-in
+  // response, if one was ever saved for it -- either through a doctor/
+  // staff session, or (since round 4) submitted directly by the patient's
+  // own device via the one-time `#follow-up=<token>` link (see
+  // microFollowUp.ts's doc comment for the two separate write paths).
+  const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
+  // Round 3(revisit linkage): Doctor Queue for no-submission revisit
+  // visits, polled alongside `submissions` but kept in a SEPARATE list --
+  // never merged into listSubmissions()'s own contract (see server/store.js's
+  // listRevisitQueue doc comment). Selecting a revisit row is mutually
+  // exclusive with selecting a submission row (see the two onClick handlers
+  // below, each clears the other's selection).
+  const [revisits, setRevisits] = useState<RevisitQueueItem[]>([])
+  // CRM v0.3.1 round 13: Today Queue. `crmTasks === null` means "no
+  // currently-valid fetch to show" (initial load, or a failed refetch that
+  // was explicitly cleared) -- deliberately stricter than the revisits
+  // polling above, which leaves stale data in place on a failed poll. A
+  // stale CRM queue must never masquerade as the current authoritative
+  // queue after a refresh/error/disconnect.
+  const [crmTasks, setCrmTasks] = useState<CrmTask[] | null>(null)
+  const [crmTasksLoading, setCrmTasksLoading] = useState(false)
+  const [crmTasksError, setCrmTasksError] = useState<string | null>(null)
+  // CRM v0.3.1 round 14: Sigma identity enrichment (display-only name +
+  // chart number) for the Today Queue, keyed by patient_uuid. Empty object
+  // is the safe default -- TodayQueueSection falls back to the truncated
+  // UUID for any patient_uuid missing from this map, so an empty/cleared
+  // map is never mistaken for "resolved to nothing."
+  const [patientIdentities, setPatientIdentities] = useState<Record<string, ResolvedPatientIdentity>>({})
+  // Independent-review finding (#4): a slower, already-in-flight poll's
+  // identity fetch could resolve AFTER a newer optimistic update from
+  // onIdentityLinked below and clobber it back to the pre-link state.
+  // Bumped synchronously by onIdentityLinked; a poll only applies its
+  // identity result if nothing bumped this between issuing the fetch and
+  // it resolving -- otherwise it's discarded and the next poll (POLL_MS
+  // later) picks up the current, now-consistent state instead.
+  const patientIdentitiesSeqRef = useRef(0)
+  const [selectedRevisit, setSelectedRevisit] = useState<{ visitId: string; patientId: string } | null>(null)
+  // Round 6 review fix (duplicate-start prevention): disables "재진 간단
+  // 문진 시작" while a request is in flight, so a double-click/impatient
+  // re-click can't fire two overlapping requests from the UI side. The
+  // server also now dedupes a rapid repeat call itself (server/store.js's
+  // startRevisit), so this is defense in depth, not the only guard.
+  const [startRevisitPending, setStartRevisitPending] = useState(false)
+  // Round 8 (delivery-channel-agnostic Micro Follow-up): how staff intends
+  // this session's link to reach the patient. CLINIC_TABLET is the default
+  // because it is the elderly-friendly in-clinic path the clinic actually
+  // runs on -- QR is the smartphone-capable fallback, not the primary.
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('CLINIC_TABLET')
+  const [stations, setStations] = useState<StationInfo[]>([])
+  const [selectedStationId, setSelectedStationId] = useState<string>('')
+  /*
+   * Round 11 (Doctor Preview v2 -- 10-second clinical view): the record
+   * used to render as ONE long vertical page -- clinical workspace, then
+   * the whole questionnaire transcript, then meds/history, then Myungri,
+   * then the recorder/EMR block, then the legacy judgment form, then the
+   * raw JSON payload. Everything the clinician needed in the first ten
+   * seconds was buried in an archive.
+   *
+   * The record is now three surfaces. `진료` is the default and holds
+   * ONLY the clinical action flow. `자료` holds the reference material --
+   * still complete, still editable, just not in the way. `명리` is fully
+   * separated from the clinical workspace, per the standing rule that it
+   * must never sit inside it.
+   *
+   * Nothing here deletes stored data: every block that moved is reachable
+   * in one click, and the underlying record/persistence is untouched.
+   *
+   * Inactive surfaces stay MOUNTED behind `hidden` rather than being
+   * unmounted. Two reasons, and the first is the one that matters:
+   * a half-typed EMR summary or judgment entry must survive a glance at
+   * another surface and back. The second is that `hidden` already achieves
+   * what this round is actually asked for -- the default view's *visible*
+   * information and scroll length -- so unmounting would buy nothing while
+   * costing state. Tests that assert on rendered markup therefore keep
+   * covering the whole record; the browser QA measures what is visible.
+   */
+  const [recordTab, setRecordTab] = useState<'clinical' | 'reference' | 'myungri'>('clinical')
+  function openRecordTab(tab: 'clinical' | 'reference' | 'myungri') {
+    setRecordTab(tab)
+  }
+  // Opening a different record always starts back on the clinical surface --
+  // otherwise patient B would silently inherit patient A's "I was reading
+  // the archive" position.
+  useEffect(() => {
+    setRecordTab('clinical')
+  }, [selectedId, workspaceScenarioId, mode])
+  // Round 9: a busy tablet cannot be assigned (the server refuses it with
+  // 409 station_busy), so it must not be the default selection either.
+  const selectedStationBusy = stations.some((st) => st.stationId === selectedStationId && Boolean(st.assignment))
+  const [assignPending, setAssignPending] = useState(false)
+  const [assignedStationName, setAssignedStationName] = useState<string | null>(null)
+  // The one-time station pairing link, held ONLY in memory from the moment
+  // registration returns it -- the server never returns this device
+  // credential again (only its hash is stored), exactly like the patient
+  // capability token.
+  const [newStationPairing, setNewStationPairing] = useState<{ name: string; link: string } | null>(null)
+  const [newStationName, setNewStationName] = useState('')
+  const [stationError, setStationError] = useState<string | null>(null)
+  // Local-only: the one-time patient link, held ONLY in this component's
+  // memory from the moment "재진 간단 문진 시작"/"재발급" returns it. The
+  // server never returns the raw token again after that single response
+  // (see serverClient.ts's startRevisit/reissueFollowUpSession doc
+  // comments) -- a page reload genuinely loses this, by design.
+  const [issuedSession, setIssuedSession] = useState<
+    { visitId: string; token: string; expiresAt: string; targetCount: number } | null
+  >(null)
+  const [revisitActionError, setRevisitActionError] = useState<string | null>(null)
+  const [linkCopyStatus, setLinkCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
   // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
@@ -1884,7 +2591,11 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               id: firstId,
               patientLabel:
                 newlyReady.length === 1
-                  ? (result.data.find((s) => s.id === firstId)?.patient_label ?? '')
+                  ? // 20차 독립 리뷰: patient_label 렌더 지점과 동일한 클래스 --
+                    // listSubmissions는 원소가 객체임은 보장하지만 patient_label의
+                    // 타입까지는 검증하지 않는다. readyToast.patientLabel은
+                    // 3155에서 그대로 렌더된다.
+                    safeStringOrFallback(result.data.find((s) => s.id === firstId)?.patient_label ?? '')
                   : `${newlyReady.length}건`,
             })
           }
@@ -1896,8 +2607,99 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       setListLoading(false)
     }
 
-    poll()
-    const timer = setInterval(poll, POLL_MS)
+    // 18차 독립 리뷰 HIGH-2: listSubmissions()는 이제 wire body가 배열이
+    // 아니면 스스로 fail-closed(ok:false)로 반환하지만, poll() 자체는
+    // 여전히 catch 없이 호출됐다 -- 어떤 예기치 않은 이유로든 reject하면
+    // setListLoading(false)가 실행되지 않아 제출목록이 "불러오는 중…"에
+    // 영원히 멈췄다. 17차가 재진/CRM poll에 적용한 것과 동일한 이중 방어.
+    poll().catch(() => {
+      if (!cancelled) setListLoading(false)
+    })
+    const timer = setInterval(() => {
+      poll().catch(() => {
+        if (!cancelled) setListLoading(false)
+      })
+    }, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [mode, retryNonce, tokenVersion])
+
+  // Round 3(revisit linkage): Doctor Queue polling for no-submission
+  // revisit visits, same cadence as the submissions poll above so a
+  // WAITING_FOR_PATIENT row flips to COMPLETED without a manual refresh.
+  useEffect(() => {
+    if (mode !== 'server') return
+    let cancelled = false
+    async function poll() {
+      const result = await listRevisitQueue()
+      if (cancelled) return
+      if (result.ok) setRevisits(result.data)
+      // Round 8: stations poll on the same cadence so an assigned tablet's
+      // row reflects reality (assigned / freed) without a manual refresh.
+      const stationResult = await listStations()
+      if (cancelled) return
+      if (stationResult.ok) {
+        setStations(stationResult.data)
+        setSelectedStationId((current) => current || firstFreeStationId(stationResult.data))
+      }
+      // CRM v0.3.1 round 13: Today Queue, same polling cadence. Unlike the
+      // two polls above, a failed fetch here explicitly clears crmTasks to
+      // null (never leaves a stale queue displayed as current) -- see the
+      // crmTasks state declaration's comment for why this queue is held to
+      // a stricter staleness rule.
+      setCrmTasksLoading(true)
+      const crmResult = await listCrmTasks()
+      if (cancelled) return
+      setCrmTasksLoading(false)
+      if (crmResult.ok) {
+        setCrmTasks(crmResult.data.tasks)
+        setCrmTasksError(null)
+        // Round 14: identity enrichment is derived from THIS fetch's own
+        // task list, never from whatever the previous poll happened to
+        // show -- so a task that just left the queue can't keep a stale
+        // resolved name attached to a row that no longer exists. Skipped
+        // entirely when there are no tasks (nothing to resolve).
+        const uuids = [...new Set(crmResult.data.tasks.map((t) => t.patient_uuid))]
+        if (uuids.length === 0) {
+          setPatientIdentities({})
+        } else {
+          const seq = patientIdentitiesSeqRef.current
+          const identityResult = await listPatientIdentities(uuids)
+          if (cancelled) return
+          // Replaced wholesale (never merged) on success, and cleared
+          // entirely on failure -- a failed identity fetch must never
+          // leave a previous poll's resolved name displayed as current,
+          // same staleness rule as crmTasks itself. The safe fallback
+          // (truncated UUID) is what TodayQueueSection renders for any
+          // uuid missing from this map. Skipped if a newer optimistic
+          // update (onIdentityLinked) landed while this fetch was in
+          // flight -- see patientIdentitiesSeqRef's declaration.
+          if (patientIdentitiesSeqRef.current === seq) {
+            setPatientIdentities(identityResult.ok ? identityResult.data.identities : {})
+          }
+        }
+      } else {
+        setCrmTasks(null)
+        setCrmTasksError(crmResult.error)
+        setPatientIdentities({})
+      }
+    }
+    // 17차 독립 리뷰 FINDING-1: poll()은 catch 없이 호출됐다 --
+    // listRevisitQueue/listStations는 이제 serverClient.ts에서
+    // Array.isArray로 방어되어 더 이상 throw하지 않지만, 이 화면이 상시
+    // 실행하는 poll()이 어떤 이유로든 reject하면 그 자체가 이후의
+    // listCrmTasks 호출을 막아 CRM Today Queue가 새로고침 실패를 전혀
+    // 알리지 못한 채 오래된 목록을 계속 authoritative처럼 보여주는 결과로
+    // 이어진다(바로 위 round 13 주석이 명시적으로 금지하는 상황) -- 다음
+    // interval에서 재시도할 수 있도록 조용히 흡수한다(사용자에게 노출할
+    // 새 에러 상태는 없음 -- crmTasksError는 listCrmTasks 자체의 실패
+    // 분기가 이미 담당).
+    poll().catch(() => {})
+    const timer = setInterval(() => {
+      poll().catch(() => {})
+    }, POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
@@ -1921,9 +2723,32 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       if (cancelled) return
       if (result.ok) {
         setSelectedRecord(result.data)
-        if (!viewedRef.current.has(selectedId)) {
+        // Round 18: only mark 'viewed' if the record's server-reported
+        // status is still 'new' -- viewedRef alone is per-tab in-memory
+        // state, so a SECOND tab opening the same already-viewed submission
+        // (e.g. a staff member glancing at a patient a doctor already has
+        // open) previously had no way to know that and re-issued the exact
+        // same status write anyway. That write is a no-op on `status` but
+        // still bumps updated_at (store.js's setStatus), so it was pure
+        // unforced version churn -- purely opening a submission a second
+        // tab already viewed could spuriously conflict that first tab's
+        // next save, with neither tab having edited anything yet.
+        if (result.data.status === 'new' && !viewedRef.current.has(selectedId)) {
           viewedRef.current.add(selectedId)
-          setSubmissionStatus(selectedId, 'viewed')
+          // This status write bumps the record's updated_at the
+          // same as any other save (store.js's setStatus uses the same
+          // nextUpdatedAt helper as saveJudgment/saveWorkspace) -- without
+          // folding the fresh record back into selectedRecord here,
+          // selectedRecord.updated_at stays pinned to the PRE-write value
+          // for the rest of this record's lifetime in this tab, and the
+          // very first CAS-guarded workspace/judgment save would then
+          // always 409 against this component's OWN "mark as viewed"
+          // write -- a false conflict with a single clinician in a single
+          // tab, caught by real two-browser-context QA.
+          setSubmissionStatus(selectedId, 'viewed').then((statusResult) => {
+            if (cancelled) return
+            if (statusResult.ok) setSelectedRecord(statusResult.data)
+          })
         }
       } else {
         setServerError({ message: result.error, kind: result.kind })
@@ -1933,6 +2758,68 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       cancelled = true
     }
   }, [mode, selectedId])
+
+  // Round 3 Phase C(longitudinal linkage): once the selected submission's
+  // own patient_id is known, fetch that exact patient's other visits (RAW
+  // facts only -- src/doctor/workspace/PriorVisitHistoryCard.tsx never
+  // computes an improvement/percentage from this). Records saved before
+  // patient_id existed have no linkage target, so priorVisits stays null.
+  useEffect(() => {
+    const patientId = mode === 'server' ? selectedRecord?.patient_id : undefined
+    if (mode !== 'server' || !patientId) {
+      setPriorVisits(null)
+      return
+    }
+    let cancelled = false
+    // 17차 독립 리뷰 FINDING-2: getPatientHistory는 이제 serverClient.ts에서
+    // 방어되어 더 이상 throw하지 않지만, catch 없는 `.then()` 호출은 어떤
+    // 이유로든 reject하면 priorVisits가 null로 남아 실제로는 이전 방문이
+    // 있는 환자가 "이전 방문 없음"으로 조용히 보이는(fail-silent) 결과로
+    // 이어진다 -- `.catch`를 추가해 그 실패도 명시적으로 null(=안 보여줌)로
+    // 귀결되도록 한다(이 카드는 비임상 참고용이라 별도의 에러 배너는 두지
+    // 않는다).
+    getPatientHistory(patientId, selectedRecord?.visit_id)
+      .then((result) => {
+        if (cancelled) return
+        // 19차 독립 리뷰 MEDIUM-5: 이전엔 `ok:false`일 때 아무것도 하지
+        // 않아, 직전 환자에게서 성공적으로 불러온 priorVisits가 새 환자
+        // 화면에도 그대로 남아있었다(cross-patient stale leak, governing
+        // task 정책 4 위반) -- 명시적으로 null로 되돌린다.
+        setPriorVisits(result.ok ? result.data : null)
+      })
+      .catch(() => {
+        if (!cancelled) setPriorVisits(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mode, selectedRecord?.patient_id, selectedRecord?.visit_id])
+
+  // Round 3 Phase D(micro follow-up): fetch this visit's own short
+  // check-in response, if one exists, keyed to this visit_id only.
+  useEffect(() => {
+    const visitId = mode === 'server' ? selectedRecord?.visit_id : undefined
+    if (mode !== 'server' || !visitId) {
+      setMicroFollowUpResponse(null)
+      return
+    }
+    let cancelled = false
+    // 19차 독립 리뷰 MEDIUM-4: catch가 없었고, `ok:false`일 때 아무것도
+    // 하지 않아 직전 방문의 microFollowUpResponse가 새 방문 화면에도
+    // 그대로 남아있었다(cross-patient/cross-visit stale leak, governing
+    // task 정책 4 위반) -- priorVisits 옆의 동일한 fix와 같은 패턴.
+    getMicroFollowUpResponse(visitId)
+      .then((result) => {
+        if (cancelled) return
+        setMicroFollowUpResponse(result.ok ? result.data.response : null)
+      })
+      .catch(() => {
+        if (!cancelled) setMicroFollowUpResponse(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mode, selectedRecord?.visit_id])
 
   // ClinicAI 연결점: 서버 모드에서 제출건을 열면(그리고 visit_id가 있으면)
   // 그 방문을 "이 workstation에서 진료 중"으로 표시한다. 닫거나(목록으로/
@@ -1950,19 +2837,33 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
   }, [mode, selectedRecord?.visit_id, workstationId])
 
   const fixture = DOCTOR_FIXTURES[fixtureIndex]
-  const payload = mode === 'server' && selectedRecord ? recordToPayload(selectedRecord) : fixture.payload
+  const activeScenario = WORKSPACE_SCENARIOS.find((s) => s.id === workspaceScenarioId) ?? null
+  const payload =
+    mode === 'server' && selectedRecord
+      ? recordToPayload(selectedRecord)
+      : (activeScenario?.payload ?? fixture.payload)
   const r = payload.responses
-  const { flags, routing } = payload
+  const { routing } = payload
   const saju = payload.myungri_calculation
+  // malformed/legacy submission resilience 배치: 아래 상세 렌더링 블록
+  // 전체가 이 값에 게이트된다 -- false면 deriveViewProfile 자체도 절대
+  // 호출하지 않는다(routing이 null이면 이 호출 자체가 던진다).
+  const payloadShapeOk = isDoctorPayloadShapeUsable(payload)
+  const viewProfile = payloadShapeOk ? deriveViewProfile(payload).derived : null
 
   // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
   // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
   useEffect(() => {
+    // malformed/legacy submission resilience 배치: 레코드 A -> B 전환처럼
+    // 둘 다 visit_id를 갖는 경우(둘 다 이 if를 안 타는 경우)에도 A의
+    // recorderResults/emrText/emrSeedRecordingIdRef가 B의 화면에 잠깐이라도
+    // 남아있으면 안 된다 -- 이 effect는 [mode, selectedRecord?.visit_id]가
+    // 바뀔 때마다 실행되므로, 무조건 리셋한 뒤에만 새 poll을 시작한다.
+    setRecorderResults(null)
+    setRecorderResultsError(null)
+    setEmrText('')
+    emrSeedRecordingIdRef.current = null
     if (mode !== 'server' || !selectedRecord?.visit_id) {
-      setRecorderResults(null)
-      setRecorderResultsError(null)
-      setEmrText('')
-      emrSeedRecordingIdRef.current = null
       return
     }
     const visitId = selectedRecord.visit_id
@@ -1979,8 +2880,13 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       }
     }
 
-    poll()
-    const timer = setInterval(poll, POLL_MS)
+    // 18차 독립 리뷰 LOW-7: getRecorderResults()는 이제 `results`가 배열이
+    // 아니면 스스로 fail-closed로 반환하지만, poll() 자체는 catch가 없어
+    // 다른 예기치 않은 실패가 조용히 사라질 수 있었다.
+    poll().catch(() => {})
+    const timer = setInterval(() => {
+      poll().catch(() => {})
+    }, POLL_MS)
     return () => {
       cancelled = true
       clearInterval(timer)
@@ -1996,7 +2902,15 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
   // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
   // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
+  // malformed/legacy submission resilience 배치: 이 effect는 JSX 게이트(위
+  // payloadShapeOk ? ... 분기)와 무관하게 항상 실행된다 -- hook은 조건부로
+  // 건너뛸 수 없다. primaryConcernLabel(r)은 r.visit_goal.visit_goal을
+  // 무조건 읽으므로, payloadShapeOk가 false인 레코드에서 recorder 결과가
+  // 먼저 도착하면(EMR 패널 자체는 화면에 없어도) 이 effect가 부모
+  // DoctorView 안에서 직접 던진다 -- DoctorRecordErrorBoundary는 자신의
+  // 자식 렌더만 잡으므로 이 예외는 그 경계를 완전히 우회한다.
   useEffect(() => {
+    if (!payloadShapeOk) return
     const latest = recorderResults?.[0] ?? null
     if (!latest) return
     if (emrSeedRecordingIdRef.current === latest.recording_id) return
@@ -2008,7 +2922,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         judgment: selectedRecord?.judgment ?? null,
       }),
     )
-  }, [recorderResults, selectedRecord?.judgment])
+  }, [payloadShapeOk, recorderResults, selectedRecord?.judgment])
 
   useEffect(() => {
     if (copyStatus === 'idle') return
@@ -2060,13 +2974,198 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
     }
   }
 
-  const generalFlagLabels = optionLabels(
-    'SAFETY_01',
-    ((r.safety_flags.red_flag_general as string[] | null) ?? []).filter((v) => v !== 'none'),
-  )
-
   const showingServerList = mode === 'server' && !selectedRecord
   const newCount = submissions.filter((s) => s.status === 'new').length
+
+  // Round 3(revisit linkage): "재진 간단 문진 시작". Uses the EXPLICIT
+  // patient_id already carried by the currently-open submission record --
+  // never derived from name/phone/DOB (same identity boundary as every
+  // other revisit-creation path in this codebase).
+  async function handleStartRevisit() {
+    if (!selectedRecord?.patient_id) return
+    if (startRevisitPending) return
+    setStartRevisitPending(true)
+    setRevisitActionError(null)
+    try {
+      const result = await startRevisit(selectedRecord.patient_id, deliveryMode)
+      if (result.ok) {
+        setIssuedSession({
+          visitId: result.data.visit.id,
+          token: result.data.session.token,
+          expiresAt: result.data.session.expiresAt,
+          targetCount: result.data.session.targets.length,
+        })
+        setLinkCopyStatus('idle')
+        setRetryNonce((n) => n + 1)
+      } else {
+        setRevisitActionError(result.error)
+      }
+    } catch {
+      // 18차 독립 리뷰 LOW-6: handleRegisterStation/handleAssignToStation의
+      // 17차 fix와 동일한 이유 -- try/finally뿐이면 rejection이 조용히
+      // 사라져 revisitActionError가 세팅되지 않은 채 버튼이 아무 반응 없이
+      // 끝난 것처럼 보였다.
+      setRevisitActionError('재진 시작에 실패했습니다. 다시 시도해 주세요.')
+    } finally {
+      setStartRevisitPending(false)
+    }
+  }
+
+  async function handleReissueSession() {
+    if (!issuedSession) return
+    try {
+      const result = await reissueFollowUpSession(issuedSession.visitId)
+      if (result.ok) {
+        setIssuedSession({
+          visitId: issuedSession.visitId,
+          token: result.data.token,
+          expiresAt: result.data.expiresAt,
+          targetCount: result.data.targets.length,
+        })
+        setLinkCopyStatus('idle')
+      } else {
+        setRevisitActionError(result.error)
+      }
+    } catch {
+      // 18차 독립 리뷰 LOW-6: handleStartRevisit과 동일한 이유 -- 이전엔
+      // try/catch 자체가 없어 rejection이 완전히 조용히 사라졌다.
+      setRevisitActionError('링크 재발급에 실패했습니다. 다시 시도해 주세요.')
+    }
+  }
+
+  async function handleInvalidateSession() {
+    if (!issuedSession) return
+    const result = await invalidateFollowUpSession(issuedSession.visitId)
+    if (result.ok) {
+      setIssuedSession(null)
+      setRetryNonce((n) => n + 1)
+    } else {
+      setRevisitActionError(result.error)
+    }
+  }
+
+  // BizM batch: no longer derived from window.location.origin/pathname --
+  // see src/lib/publicFollowUpUrl.ts's header for why a stable, explicitly
+  // configured base is required for a real BizM Alimtalk template button
+  // URL. Returns null when that base is not configured; every call site
+  // below must render an explicit "설정되지 않음" state rather than ever
+  // falling back to a guessed URL.
+  function patientFollowUpLink(token: string): string | null {
+    return buildPublicFollowUpLink(token)
+  }
+
+  /* ---------- Round 8: clinic tablet stations (reception surface) ---------- */
+
+  function stationPairingLink(credential: string): string {
+    return `${window.location.origin}${window.location.pathname}#station-setup=${credential}`
+  }
+
+  async function refreshStations() {
+    const result = await listStations()
+    if (result.ok) {
+      setStations(result.data)
+      // Keep a sensible default selected so the common case is one click.
+      setSelectedStationId((current) => current || firstFreeStationId(result.data))
+    }
+  }
+
+  async function handleRegisterStation() {
+    const name = newStationName.trim()
+    if (!name) return
+    setStationError(null)
+    // 17차 독립 리뷰 FINDING-3: 이 호출에 try/catch가 없어서, 서버가 응답
+    // 형식을 벗어난 값을 보내면(버전 skew) registerStation()이 reject하고
+    // 이 함수 전체가 조용히 throw했다 -- stationError는 null로 남고
+    // 직원은 "새 태블릿 등록"을 눌렀는데도 아무 피드백을 못 받았다.
+    try {
+      const result = await registerStation(name)
+      if (!result.ok) {
+        setStationError(result.error)
+        return
+      }
+      // Shown exactly once. Staff opens this on the tablet itself; the tablet
+      // stores the credential and scrubs it from its own URL (see App.tsx).
+      setNewStationPairing({ name: result.data.name, link: stationPairingLink(result.data.credential) })
+      setNewStationName('')
+      await refreshStations()
+    } catch {
+      setStationError('태블릿 등록에 실패했습니다. 다시 시도해 주세요.')
+    }
+  }
+
+  // THE front-desk action: assign this already-open patient's new revisit to
+  // a specific tablet. patient_id comes from the record already on screen --
+  // never matched from a name/phone/DOB, and the tablet never picks a
+  // patient itself.
+  async function handleAssignToStation() {
+    if (!selectedRecord?.patient_id || !selectedStationId || assignPending) return
+    setAssignPending(true)
+    setRevisitActionError(null)
+    try {
+      const result = await assignRevisitToStation(selectedStationId, selectedRecord.patient_id, 'CLINIC_TABLET')
+      if (result.ok) {
+        setAssignedStationName(result.data.stationName)
+        setIssuedSession(null)
+        setRetryNonce((n) => n + 1)
+        await refreshStations()
+      } else {
+        setRevisitActionError(result.error)
+      }
+    } catch {
+      // 17차 독립 리뷰 FINDING-3: 이전엔 catch가 없어서, 서버가 응답
+      // 형식을 벗어난 값을 보내면(버전 skew) assignRevisitToStation()이
+      // reject하고 이 catch가 없어 revisitActionError가 세팅되지 않은 채
+      // 조용히 끝났다 -- 직원이 "이 태블릿에 배정"을 눌렀는데 아무 일도
+      // 일어나지 않은 것처럼 보였다.
+      setRevisitActionError('태블릿 배정에 실패했습니다. 다시 시도해 주세요.')
+    } finally {
+      setAssignPending(false)
+    }
+  }
+
+  async function handleResetStation(stationId: string) {
+    setStationError(null)
+    const result = await resetStation(stationId)
+    if (!result.ok) {
+      setStationError(result.error)
+      return
+    }
+    setAssignedStationName(null)
+    await refreshStations()
+  }
+
+  async function handleCopyPatientLink() {
+    if (!issuedSession) return
+    const link = patientFollowUpLink(issuedSession.token)
+    if (link === null) {
+      setLinkCopyStatus('error')
+      return
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(link)
+        setLinkCopyStatus('copied')
+        return
+      }
+      throw new Error('clipboard unavailable')
+    } catch {
+      // 클립보드 API가 없는 환경(HTTP/구형 브라우저)을 위한 폴백 — 기존
+      // EMR 복사 폴백과 동일한 패턴.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = link
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+        setLinkCopyStatus('copied')
+      } catch {
+        setLinkCopyStatus('error')
+      }
+    }
+  }
 
   return (
     <div className="doctor">
@@ -2088,23 +3187,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             }}
           />
         )}
-        <div className="doctor__pickerRow">
-          <label htmlFor="doctor-source-select">데이터 소스</label>
-          <select
-            id="doctor-source-select"
-            value={mode}
-            onChange={(e) => {
-              const next = e.target.value as 'fixtures' | 'server'
-              setMode(next)
-              setSelectedId(null)
-              setSelectedRecord(null)
-            }}
-          >
-            <option value="fixtures">예시 데이터(fixtures)</option>
-            <option value="server">서버 제출목록</option>
-          </select>
-        </div>
-        {mode === 'fixtures' && (
+        {showPreviewControls && (
+          <div className="doctor__pickerRow">
+            <label htmlFor="doctor-source-select">데이터 소스</label>
+            <select
+              id="doctor-source-select"
+              value={mode}
+              onChange={(e) => {
+                const next = e.target.value as 'fixtures' | 'server'
+                setMode(next)
+                setSelectedId(null)
+                setSelectedRecord(null)
+              }}
+            >
+              <option value="fixtures">예시 데이터(fixtures)</option>
+              <option value="server">서버 제출목록</option>
+            </select>
+          </div>
+        )}
+        {showPreviewControls && mode === 'fixtures' && (
           <div className="doctor__pickerRow">
             <label htmlFor="doctor-fixture-select">미리보기용 예시 데이터</label>
             <select
@@ -2115,6 +3216,25 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               {DOCTOR_FIXTURES.map((f, i) => (
                 <option key={f.name} value={i}>
                   {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {showPreviewControls && mode === 'fixtures' && (
+          <div className="doctor__pickerRow">
+            <label htmlFor="doctor-workspace-scenario-select">
+              Doctor Workspace 시나리오 (SYNTHETIC · NO-PHI)
+            </label>
+            <select
+              id="doctor-workspace-scenario-select"
+              value={workspaceScenarioId}
+              onChange={(e) => setWorkspaceScenarioId(e.target.value)}
+            >
+              <option value="">(없음 — 위 fixture 그대로, decision-support 데이터 없음)</option>
+              {WORKSPACE_SCENARIOS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
                 </option>
               ))}
             </select>
@@ -2173,17 +3293,30 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
                   key={s.id}
                   type="button"
                   className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
-                  onClick={() => setSelectedId(s.id)}
+                  onClick={() => {
+                    setSelectedId(s.id)
+                    setSelectedRevisit(null)
+                    setIssuedSession(null)
+                    setRevisitActionError(null)
+                  }}
                 >
                   <span className="doctorField__label">
                     {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
                     {unreadReadyIds.has(s.id) && (
                       <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
                     )}
-                    {s.patient_label} {s.requires_staff_check ? '⚠ 안전 확인 필요' : ''}
+                    {safeStringOrFallback(s.patient_label)}{' '}
+                    {s.requires_staff_check === 'unknown'
+                      ? '⚠ 확인 필요(계산값 읽기 불가)'
+                      : s.requires_staff_check
+                        ? '⚠ 안전 확인 필요'
+                        : ''}
                   </span>
                   <span className="doctorField__value">
-                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({new Date(s.created_at).toLocaleString('ko-KR')})
+                    {/* 20차 독립 리뷰: fallback과 동일한 클래스 -- listSubmissions는
+                        원소가 객체임은 보장하지만 patient_label/created_at의
+                        타입까지는 검증하지 않는다. */}
+                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({formatTimestamp(s.created_at)})
                     {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
                   </span>
                 </button>
@@ -2193,64 +3326,447 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </section>
       )}
 
-      {(mode === 'fixtures' || selectedRecord) && (
-      <>
-      <TenSecondSummary payload={payload} />
-
-      {flags.requires_staff_check && (
-        <div className="doctor__banner doctor__banner--danger">
-          <strong>안전 확인 필요</strong>
-          <p>
-            환자가 아래 내용을 문진에서 보고했습니다. 이는 진단이 아니며, 진료
-            전 직원/원장의 확인이 필요합니다.
-          </p>
-          <ul>
-            {generalFlagLabels.length > 0 && (
-              <li>공통 위험 신호(SAFETY_01): {generalFlagLabels.join(', ')}</li>
-            )}
-            {flags.gi_needs_review && (
-              <li>
-                소화 문진(GI_03) 응답: &ldquo;
-                {answerLabel('GI_03', r.modules.gi.unable_to_eat_or_drink)}&rdquo;
-              </li>
-            )}
-            {flags.bowel_needs_review && (
-              <li>
-                대변 문진(BOWEL_03) 응답: &ldquo;
-                {answerLabel('BOWEL_03', r.modules.bowel.blood_or_black_stool)}&rdquo;
-              </li>
-            )}
-          </ul>
-        </div>
+      {/*
+        Round 3(revisit linkage): "Doctor Queue" for no-submission revisit
+        visits -- deliberately a SEPARATE section from 제출목록 above (never
+        called a "submission" -- see the North Star's own wording). Hidden
+        entirely when a submission or revisit is already open, same
+        visibility rule as showingServerList.
+      */}
+      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && revisits.length > 0 && (
+        <section className="doctor__section">
+          <h2>재진 목록 ({revisits.length})</h2>
+          <div className="doctor__grid">
+            {revisits.map((rv) => (
+              <button
+                key={rv.visitId}
+                type="button"
+                className={`doctorField doctor__row${rv.needsAttention ? ' doctor__row--new' : ''}`}
+                onClick={() => {
+                  setSelectedRevisit({ visitId: rv.visitId, patientId: rv.patientId })
+                  setSelectedId(null)
+                  setIssuedSession(null)
+                  setRevisitActionError(null)
+                }}
+              >
+                <span className="doctorField__label">
+                  {REVISIT_STATUS_LABEL[rv.status]}
+                  {rv.needsAttention && ' · 추가 확인 필요'}
+                </span>
+                <span className="doctorField__value">
+                  {relativeTime(rv.createdAt)} ({formatTimestamp(rv.createdAt)})
+                  {/* Round 8 operational metadata -- never clinical. */}
+                  {/*
+                   * 17차 독립 리뷰 FINDING-4: server/followUpSessionStore.js의
+                   * normalizeDeliveryMode는 저장(write) 시점에만 실행되고
+                   * 읽기(read) 시점에는 재검증하지 않는다 -- 손으로 수정된
+                   * 세션 파일이나 예전 버전이 남긴 값이 있으면
+                   * DELIVERY_MODE_LABEL[rv.deliveryMode]가 알려진 키가
+                   * 아니어서 undefined를 반환하고, 이 template literal이
+                   * 그 값을 리터럴 "undefined"로 그대로 노출한다.
+                   */}
+                  {rv.deliveryMode && Object.prototype.hasOwnProperty.call(DELIVERY_MODE_LABEL, rv.deliveryMode) && (
+                    ` · ${DELIVERY_MODE_LABEL[rv.deliveryMode]}`
+                  )}
+                  {rv.stationName && ` · ${rv.stationName}`}
+                  {rv.inputProvenance === 'STAFF_ASSISTED' && ` · ${INPUT_PROVENANCE_LABEL.STAFF_ASSISTED}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
 
-      <SafetyGlance r={r} flags={flags} />
+      {/*
+        CRM v0.3.1 round 13: read-only Today Queue. Unlike 재진 목록 above,
+        this section stays visible (with its own compact empty state) even
+        when crmTasks is empty, so the clinician has a stable place to check
+        rather than a section that silently disappears. TodayQueueSection is
+        purely presentational -- no click handlers, no /seen call, no
+        client-side re-sort of the server-ordered list.
+      */}
+      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && (
+        <TodayQueueSection
+          tasks={crmTasks}
+          loading={crmTasksLoading}
+          error={crmTasksError}
+          identities={patientIdentities}
+          onIdentityLinked={(uuid, identity) => {
+            // Round 14 identity batch: update immediately on a successful
+            // confirm rather than waiting up to POLL_MS for the next poll
+            // to reflect it -- the acceptance criteria requires the row
+            // to refresh right away. Bump the sequence ref first so any
+            // identity fetch already in flight discards its (now stale)
+            // result instead of overwriting this optimistic update --
+            // see patientIdentitiesSeqRef's declaration.
+            patientIdentitiesSeqRef.current += 1
+            setPatientIdentities((prev) => ({ ...prev, [uuid]: identity }))
+          }}
+        />
+      )}
 
-      <LbpSafetyPanel
+      {selectedRevisit && (
+        <>
+          <button
+            type="button"
+            className="judgment__recordBtn"
+            onClick={() => {
+              setSelectedRevisit(null)
+              setIssuedSession(null)
+              setRevisitActionError(null)
+            }}
+          >
+            ← 목록으로
+          </button>
+          <RevisitWorkspace visitId={selectedRevisit.visitId} patientId={selectedRevisit.patientId} />
+        </>
+      )}
+
+      {!selectedRevisit && (mode === 'fixtures' || selectedRecord) && (
+      <>
+      {/*
+        Round 3(revisit linkage): the single doctor/staff action that
+        creates the revisit visit + derives candidate targets (from this
+        patient's own prior Follow-up Targets, max 3, no ranking) + issues
+        a one-time capability token, all in one step (see
+        server/store.js's startRevisit). Only offered from an open
+        submission (mode==='server' && selectedRecord) since that's the
+        only place patient_id is already on screen -- never derived from
+        name/phone/DOB.
+      */}
+      {mode === 'server' && selectedRecord?.patient_id && (
+        <section className="doctor__section doctor__revisitSession">
+          <h2>재진 간단 문진 (Micro Follow-up)</h2>
+
+          {/*
+            Round 8: delivery mode is chosen FIRST, because it decides what
+            the rest of this panel does -- assign a clinic tablet, show a
+            QR, or (staff-assisted / pre-visit) just issue the link. It is
+            operational metadata only: the questions, the Follow-up Targets,
+            and everything clinical are identical down every channel.
+          */}
+          <div className="doctor__revisitSession__modes" role="group" aria-label="전달 방식">
+            {(Object.keys(DELIVERY_MODE_LABEL) as DeliveryMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={deliveryMode === m}
+                className={`workspace__followUpChip${deliveryMode === m ? ' workspace__followUpChip--active' : ''}`}
+                onClick={() => {
+                  setDeliveryMode(m)
+                  setAssignedStationName(null)
+                }}
+              >
+                {DELIVERY_MODE_LABEL[m]}
+              </button>
+            ))}
+          </div>
+
+          {deliveryMode === 'CLINIC_TABLET' ? (
+            <div className="doctor__revisitSession__issued">
+              {stations.length === 0 ? (
+                <p className="doctor__revisitSession__hint">
+                  등록된 원내 태블릿이 없습니다 — 아래 "원내 태블릿 관리"에서 먼저 등록해 주세요.
+                </p>
+              ) : (
+                <>
+                  <label className="doctorField__label" htmlFor="doctor-station-select">
+                    배정할 태블릿
+                  </label>
+                  <select
+                    id="doctor-station-select"
+                    value={selectedStationId}
+                    onChange={(e) => setSelectedStationId(e.target.value)}
+                  >
+                    {/* Round 9: a busy tablet is not selectable. The server
+                        refuses it (409 station_busy) because the tablet stops
+                        polling once a patient has the questions open, so a
+                        takeover could not actually replace what is on that
+                        physical screen -- staff must complete or reset it
+                        first. Disabling the option makes the rule visible
+                        instead of letting the click fail. */}
+                    {stations.map((s) => (
+                      <option key={s.stationId} value={s.stationId} disabled={Boolean(s.assignment)}>
+                        {s.name}
+                        {s.assignment ? ' (사용 중 — 아래에서 초기화 후 배정)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="doctor__revisitSession__actions">
+                    <button
+                      type="button"
+                      className="judgment__recordBtn"
+                      onClick={handleAssignToStation}
+                      disabled={assignPending || !selectedStationId || selectedStationBusy}
+                    >
+                      {assignPending ? '배정 중…' : '이 태블릿에 배정'}
+                    </button>
+                  </div>
+                  {assignedStationName && (
+                    <p className="doctor__revisitSession__hint">
+                      「{assignedStationName}」에 배정되었습니다 — 환자에게 그 태블릿을 건네주세요. 환자는 이름·전화번호를
+                      입력하지 않습니다.
+                    </p>
+                  )}
+                  <p className="doctor__revisitSession__hint">
+                    사용 중인 태블릿에는 배정할 수 없습니다 — 아래 「원내 태블릿 관리」에서 초기화한 뒤 배정하세요.
+                    초기화하면 그 태블릿이 들고 있던 링크는 즉시 무효화됩니다.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : !issuedSession ? (
+            <>
+              <button
+                type="button"
+                className="judgment__recordBtn"
+                onClick={handleStartRevisit}
+                disabled={startRevisitPending}
+              >
+                {startRevisitPending ? '처리 중…' : '재진 간단 문진 시작'}
+              </button>
+              <p className="doctor__revisitSession__hint">
+                직전 방문의 추적 항목(최대 3개)을 바탕으로 환자용 1회용 링크를 발급합니다.
+              </p>
+            </>
+          ) : (() => {
+            // Computed once here (not re-called at every use site below) so
+            // the QR/code display, copy-link button, and MessagingPanel's
+            // `link` prop can never disagree on whether the public base is
+            // configured -- see src/lib/publicFollowUpUrl.ts's header.
+            const followUpLink = patientFollowUpLink(issuedSession.token)
+            return (
+            <div className="doctor__revisitSession__issued">
+              <p>
+                환자용 링크 (만료: {formatTimestamp(issuedSession.expiresAt)})
+              </p>
+              {followUpLink === null ? (
+                <p className="doctor__revisitSession__error" role="alert">
+                  공개 후속 링크 기본 URL이 설정되지 않았습니다 — 관리자에게
+                  VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL 환경변수 설정을 요청하세요. 그때까지는 링크
+                  복사·QR·문자/알림톡 발송을 사용할 수 없습니다.
+                </p>
+              ) : (
+                <>
+                  {deliveryMode === 'PERSONAL_QR' && <FollowUpQrCode url={followUpLink} />}
+                  <code className="doctor__revisitSession__link">{followUpLink}</code>
+                </>
+              )}
+              {issuedSession.targetCount === 0 && (
+                <p className="doctor__revisitSession__hint">
+                  이 환자는 이전 방문에 기록된 추적 항목이 없습니다 — 재확인 항목 없이 전반적 변화 · 새로운 증상 ·
+                  이상반응만 묻는 링크가 발급되었습니다.
+                </p>
+              )}
+              {deliveryMode === 'STAFF_ASSISTED' && (
+                <p className="doctor__revisitSession__hint">
+                  환자가 기기를 쓰기 어려운 경우, 직원이 이 링크를 열어 같은 질문을 읽어드리고 환자가 말한 답을 그대로
+                  입력합니다. 답변은 여전히 <strong>환자가 보고한 사실</strong>이며, 원장이 관찰한 소견이 아닙니다.
+                </p>
+              )}
+              {deliveryMode === 'PREVISIT_LINK' && (
+                <p className="doctor__revisitSession__hint">
+                  내원 전 전달용 링크입니다. 아래에서 문자/카카오 알림톡으로 바로 발송하거나, 이 링크를 직접 복사해
+                  전달할 수 있습니다.
+                </p>
+              )}
+              <div className="doctor__revisitSession__actions">
+                <button type="button" className="judgment__recordBtn" onClick={handleCopyPatientLink}>
+                  {linkCopyStatus === 'copied' ? '복사됨' : linkCopyStatus === 'error' ? '복사 실패' : '링크 복사'}
+                </button>
+                <button type="button" className="judgment__recordBtn" onClick={handleReissueSession}>
+                  재발급
+                </button>
+                <button type="button" className="judgment__recordBtn" onClick={handleInvalidateSession}>
+                  무효화
+                </button>
+              </div>
+              {selectedRecord?.patient_id && followUpLink !== null && (
+                <MessagingPanel
+                  visitId={issuedSession.visitId}
+                  patientId={selectedRecord.patient_id}
+                  followUpToken={issuedSession.token}
+                  link={followUpLink}
+                />
+              )}
+            </div>
+            )
+          })()}
+          {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}
+
+          {/*
+            Round 8: station management. Registration hands back a device
+            credential exactly once, rendered as a one-time pairing link
+            that staff opens ON the tablet -- never stored anywhere here.
+          */}
+          <details className="doctor__revisitSession__stations">
+            <summary>원내 태블릿 관리 ({stations.length})</summary>
+            <div className="doctor__revisitSession__stationList">
+              {stations.map((s) => (
+                <div key={s.stationId} className="doctor__revisitSession__stationRow">
+                  <span>
+                    {s.name} — {s.assignment ? '환자 배정됨' : '대기 중'}
+                  </span>
+                  {s.assignment && (
+                    <button type="button" className="judgment__recordBtn" onClick={() => handleResetStation(s.stationId)}>
+                      대기 화면으로 되돌리기
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="doctor__revisitSession__actions">
+                <input
+                  type="text"
+                  className="workspace__noteInput"
+                  value={newStationName}
+                  onChange={(e) => setNewStationName(e.target.value)}
+                  placeholder="예: 접수 태블릿 1"
+                  aria-label="새 태블릿 이름"
+                />
+                <button type="button" className="judgment__recordBtn" onClick={handleRegisterStation}>
+                  태블릿 등록
+                </button>
+              </div>
+              {newStationPairing && (
+                <div className="doctor__revisitSession__issued">
+                  <p>
+                    「{newStationPairing.name}」 등록 링크 — <strong>이 화면을 벗어나면 다시 볼 수 없습니다.</strong> 해당
+                    태블릿에서 이 주소를 한 번만 열어주세요.
+                  </p>
+                  <code className="doctor__revisitSession__link">{newStationPairing.link}</code>
+                </div>
+              )}
+              {stationError && <p className="doctor__revisitSession__error">{stationError}</p>}
+            </div>
+          </details>
+        </section>
+      )}
+      {/*
+        malformed/legacy submission resilience 배치: 아래 nav+tab 콘텐츠
+        전체(임상/참고/명리 세 표면 + JudgmentPanel + 원본 JSON)는
+        payloadShapeOk에 게이트된다 -- 명리/참고 표면이 "profile이
+        pain이 아닐 때만" 의미가 있는 것처럼, 이 구조 자체가 애초에
+        구조가 온전한 payload를 전제하기 때문에 하나로 묶어서 판단한다.
+        DoctorRecordErrorBoundary는 이 구조 검사가 못 잡은 예외(개별
+        부위 SafetyPanel 내부의 미처 확인 못 한 필드 등)에 대한 2차
+        안전망 -- key를 화면에 실제로 그려지는 payload의 정체성(server
+        모드는 selectedRecord.id, fixtures 모드는 fixtureIndex +
+        workspaceScenarioId)으로 둬서, 다른 레코드/시나리오로 전환하면
+        이전 에러 상태가 새 payload로 새지 않고 완전히 새로 mount된다.
+      */}
+      <DoctorRecordErrorBoundary
+        key={mode === 'server' ? (selectedRecord?.id ?? 'none') : `fixtures:${fixtureIndex}:${workspaceScenarioId}`}
+        fallback={<DoctorRecordFallback record={mode === 'server' ? selectedRecord : undefined} />}
+      >
+      {!payloadShapeOk ? (
+        <DoctorRecordFallback record={mode === 'server' ? selectedRecord : undefined} />
+      ) : (
+      <>
+      {/*
+        Round 11: the record's three surfaces. 진료 is the clinical action
+        screen and the default; the other two hold everything that used to
+        stack underneath it. Myungri only exists as a surface at all when
+        the profile is not pain (the standing Phase 2 invariant).
+      */}
+      <nav className="doctor__recordTabs" role="tablist" aria-label="환자 기록 화면">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={recordTab === 'clinical'}
+          className={`doctor__recordTab${recordTab === 'clinical' ? ' doctor__recordTab--active' : ''}`}
+          onClick={() => openRecordTab('clinical')}
+        >
+          진료
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={recordTab === 'reference'}
+          className={`doctor__recordTab${recordTab === 'reference' ? ' doctor__recordTab--active' : ''}`}
+          onClick={() => openRecordTab('reference')}
+        >
+          자료 보기
+        </button>
+        {viewProfile !== 'pain' && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={recordTab === 'myungri'}
+            className={`doctor__recordTab${recordTab === 'myungri' ? ' doctor__recordTab--active' : ''}`}
+            onClick={() => openRecordTab('myungri')}
+          >
+            명리
+          </button>
+        )}
+      </nav>
+
+      <div hidden={recordTab !== 'clinical'}>
+      {/*
+        key={payload.session_id}: DoctorWorkspace owns its own local state
+        (profile override, mixed-mode active tab) seeded from the payload
+        on mount. Without this key, switching the underlying record (a
+        different real submission, or a different SYNTHETIC preview
+        scenario/fixture) would keep the PREVIOUS record's already-mounted
+        instance and its stale tab/profile choice -- same reasoning as the
+        key on PainWorkspace/HerbalWorkspace inside DoctorWorkspace, and
+        the pre-existing key on JudgmentPanel below.
+      */}
+      <DoctorWorkspace
         payload={payload}
         lbpObjectiveMotorDeficit={
           mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
         }
-      />
-
-      <HipSafetyPanel payload={payload} />
-
-      <NeckSafetyPanel payload={payload} />
-
-      <ShoulderSafetyPanel
-        payload={payload}
         shoulderObjectiveCuffWeakness={
           mode === 'server' ? selectedRecord?.judgment?.shoulder_objective_cuff_weakness : undefined
         }
+        synthetic={mode === 'fixtures' ? (activeScenario?.synthetic ?? undefined) : undefined}
+        submissionId={mode === 'server' ? selectedId ?? undefined : undefined}
+        initialWorkspaceState={mode === 'server' ? selectedRecord?.workspace ?? null : undefined}
+        initialRecordUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
+        priorVisits={mode === 'server' ? priorVisits : undefined}
+        microFollowUpResponse={mode === 'server' ? microFollowUpResponse : undefined}
+        onSaveWorkspace={
+          mode === 'server' && selectedId
+            ? async (state, expectedUpdatedAt) => {
+                const result = await saveWorkspaceStateToServer(selectedId, state, expectedUpdatedAt ?? undefined)
+                // selectedRecord갱신: 재열람 시(같은 세션 안에서 selectedId를 다시
+                // 고를 때) 이미 저장된 workspace를 stale하지 않게 반영한다 — 기존
+                // saveJudgmentToServer onSave 콜백과 동일한 이유(위 judgment 콜백
+                // 주석 참고).
+                if (result.ok) {
+                  setSelectedRecord(result.data)
+                  return { ok: true, updatedAt: result.data.updated_at }
+                }
+                // Round 18: a 409 stale-write conflict carries the server's
+                // CURRENT record in errorBody.current (server/index.js's
+                // saveWorkspace route) -- hand it back as a typed conflict so
+                // DoctorWorkspace can offer an explicit reload instead of
+                // silently retrying or overwriting. Any other failure
+                // (network/auth/etc.) falls through to the plain error path,
+                // unchanged from before this round.
+                const current = result.errorBody?.current as SubmissionRecord | undefined
+                if (current) {
+                  return {
+                    ok: false,
+                    conflict: { current: deserializeWorkspaceState(current.workspace), currentUpdatedAt: current.updated_at },
+                  }
+                }
+                return { ok: false }
+              }
+            : undefined
+        }
       />
 
-      <KneeSafetyPanel payload={payload} />
+      {mode === 'server' && selectedRecord?.patient_id && (
+        <MedicationCourseSection key={selectedRecord.patient_id} patientUuid={selectedRecord.patient_id} />
+      )}
 
-      <ElbowSafetyPanel payload={payload} />
-      <WristHandSafetyPanel payload={payload} />
-      <AnkleFootSafetyPanel payload={payload} />
-      <TmjSafetyPanel payload={payload} />
+      </div>
 
+      <div hidden={recordTab !== 'reference'}>
+      <p className="doctor__referenceNote">
+        아래는 참고 자료입니다 — 진료 화면에서 내려온 것일 뿐 사라진 것은 없고, 내용도 그대로 편집됩니다.
+      </p>
       {/*
         Tablet UX v2.2 §33: 현재 questionnaire mode를 작게 표시한다 --
         진단/임상 판단이 아닌 운영 참고 메타데이터이며, 위 safety
@@ -2269,19 +3785,30 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           <Field qid="ID_01" label="성함" value={r.patient.patient_name} />
           <Field qid="ID_02" label="휴대폰 끝 4자리" value={r.patient.phone_last4} />
           <Field qid="ID_03" label="성별" value={r.patient.patient_sex} />
-          <Field qid="BIRTH_01" label="생년월일" value={r.birth_info.birth_date} />
-          <Field qid="BIRTH_02" value={r.birth_info.birth_calendar_type} />
-          <Field qid="BIRTH_02A" value={r.birth_info.lunar_leap_month} />
-          <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
-          <Field qid="BIRTH_03A" value={r.birth_info.birth_time_confidence} />
+          {/*
+            PR #24 Phase 2 invariant: pain 프로필은 출생시간/명리 관련
+            내용을 노출하지 않는다 -- 출생정보(BIRTH_*)는 herbal/mixed일
+            때만 보인다.
+          */}
+          {viewProfile !== 'pain' && (
+            <>
+              <Field qid="BIRTH_01" label="생년월일" value={r.birth_info.birth_date} />
+              <Field qid="BIRTH_02" value={r.birth_info.birth_calendar_type} />
+              <Field qid="BIRTH_02A" value={r.birth_info.lunar_leap_month} />
+              <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
+              <Field qid="BIRTH_03A" value={r.birth_info.birth_time_confidence} />
+            </>
+          )}
         </div>
       </section>
 
       <section className="doctor__section">
         <h2>주호소</h2>
         <p className="doctor__derivedNote">
-          시스템 라우팅 — 주호소 모듈: {routing.primary_module ?? '없음'} / 동반 화면:{' '}
-          {routing.secondary_screens.length > 0 ? routing.secondary_screens.join(', ') : '없음'}
+          시스템 라우팅 — 주호소 모듈: {computedText(routing.primary_module) ?? '없음'} / 동반 화면:{' '}
+          {asArray<string>(routing.secondary_screens).length > 0
+            ? readableStringArray(asArray(routing.secondary_screens)).join(', ')
+            : '없음'}
         </p>
         <div className="doctor__chiefPrimary">
           <span className="doctor__chiefPrimary__label">주호소</span>
@@ -2311,7 +3838,14 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
       */}
       <section className="doctor__section">
         <h2>추가 상세상담</h2>
-        {routing.additional_module ? (
+        {/*
+          12차 독립 리뷰 LOW-1: truthy 체크(`routing.additional_module ?`)는
+          wrong-typed 객체(`{}`)도 "있음"으로 통과시켜, 진료 탭의
+          deriveAdditionalConcernSummary(이미 타입 검사를 거쳐 null을
+          반환)와 모순되는 "추가 상세상담" 섹션(빈 값)을 보여줬다 --
+          workspace/additionalConcern.ts와 동일한 타입 검사로 맞춘다.
+        */}
+        {typeof routing.additional_module === 'string' && routing.additional_module !== '' ? (
           <>
             <div className="doctor__chiefPrimary">
               <span className="doctor__chiefPrimary__label">추가 상세상담</span>
@@ -2380,7 +3914,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
 
       <section className="doctor__section">
         <h2 className="doctor__section__h2--sub">
-          상세 증상{routing.primary_module ? ` — ${routing.primary_module}` : ''}
+          상세 증상{computedText(routing.primary_module) ? ` — ${computedText(routing.primary_module)}` : ''}
         </h2>
         {routing.primary_module === 'Sleep' &&
           (() => {
@@ -2407,31 +3941,34 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
-      <section className="doctor__section">
-        <h2 className="doctor__section__h2--sub">전신·한약 참고</h2>
-        {(() => {
-          const fields = constitutionFields(r)
-          const populated = fields.filter((f) => !isEmptyValue(f.value))
-          const body = (
-            <div className="doctor__grid">
-              {fields.map((f) => (
-                <Field key={f.qid} qid={f.qid} value={f.value} />
-              ))}
-            </div>
-          )
-          if (populated.length === 0) return body
-          const preview = populated
-            .slice(0, 3)
-            .map((f) => answerLabel(f.qid, f.value))
-            .join(' · ')
-          return (
-            <details className="doctor__constDetails">
-              <summary>{preview}</summary>
-              {body}
-            </details>
-          )
-        })()}
-      </section>
+      {/* PR #24 Phase 2 invariant: pain 프로필은 herbal 전용 전신 정보를 노출하지 않는다. */}
+      {viewProfile !== 'pain' && (
+        <section className="doctor__section">
+          <h2 className="doctor__section__h2--sub">전신·한약 참고</h2>
+          {(() => {
+            const fields = constitutionFields(r)
+            const populated = fields.filter((f) => !isEmptyValue(f.value))
+            const body = (
+              <div className="doctor__grid">
+                {fields.map((f) => (
+                  <Field key={f.qid} qid={f.qid} value={f.value} />
+                ))}
+              </div>
+            )
+            if (populated.length === 0) return body
+            const preview = populated
+              .slice(0, 3)
+              .map((f) => answerLabel(f.qid, f.value))
+              .join(' · ')
+            return (
+              <details className="doctor__constDetails">
+                <summary>{preview}</summary>
+                {body}
+              </details>
+            )
+          })()}
+        </section>
+      )}
 
       <section className="doctor__section">
         <h2>약물·병력·알레르기·수술</h2>
@@ -2445,27 +3982,61 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
-      <section className="doctor__section">
-        <h2>여성 안전정보</h2>
-        <div className="doctor__grid">
-          <Field
-            qid="WOMEN_SAFETY_01"
-            label="환자가 답한 것 (WOMEN_SAFETY_01)"
-            value={r.reproductive_status.reproductive_status as string[] | null}
-          />
-        </div>
-        <div className="doctor__derivedBox">
-          <p className="doctor__derivedLabel">
-            시스템이 계산한 것 — 출처: {sourceLabel(r.reproductive_status.derived.source)}
-          </p>
-          <ul>
-            <li>임신 중: {boolLabel(r.reproductive_status.derived.pregnant)}</li>
-            <li>임신 가능성: {boolLabel(r.reproductive_status.derived.pregnancy_possible)}</li>
-            <li>출산 후 1년 이내: {boolLabel(r.reproductive_status.derived.postpartum_1y)}</li>
-            <li>모유수유 중: {boolLabel(r.reproductive_status.derived.breastfeeding)}</li>
-          </ul>
-        </div>
-      </section>
+      {/*
+        Round 2 Phase 3 (same fix as HerbalWorkspace's 여성·생식 정보):
+        derived.source is non-null only when WOMEN_SAFETY_01 was actually
+        asked/answered, or the postpartum/pregnancy module already supplied
+        a derived fact -- for a male patient (or any patient where nothing
+        reproductive was ever recorded) this is null, and showing a card
+        full of "확인되지 않음" bullets is pure clutter, not information.
+
+        9차 독립 리뷰 HIGH-2: `derived?.source != null` 하나만으로는 손상된
+        derived(예: raw가 재계산 안 된 stale 값)가 정상인 것처럼 계산
+        박스를 그대로 보여준다 -- isUnreadableReproductiveDerived(r)가
+        true면(실제 WOMEN_SAFETY_01 응답이 존재하는 한, 배열이든 아니든)
+        섹션 자체는 계속 보여주되(환자가 답한 원본은 계속 노출) 계산 박스만
+        명시적 "읽을 수 없음" 알림으로 대체한다.
+
+        13차 독립 리뷰 LOW-3: 이전엔 raw가 배열일 때만 이 조건을 만족했다 --
+        레거시 단일-선택 문자열처럼 raw가 존재하지만 배열이 아닌 경우
+        isUnreadableReproductiveDerived(r)는 이제 true를 반환하지만(위
+        LOW-3 수정), 이 렌더 조건이 여전히 Array.isArray만 확인하면 섹션
+        전체가 조용히 사라져 환자가 실제로 답한 원본을 원장이 볼 수 없다.
+        raw가 null/undefined가 아니기만 하면(배열 여부 무관) 섹션을 보여주고
+        원본은 계속 노출한다.
+      */}
+      {(r.reproductive_status?.derived?.source != null ||
+        (isUnreadableReproductiveDerived(r) &&
+          r.reproductive_status?.reproductive_status !== null &&
+          r.reproductive_status?.reproductive_status !== undefined)) && (
+        <section className="doctor__section">
+          <h2>여성 안전정보</h2>
+          <div className="doctor__grid">
+            <Field
+              qid="WOMEN_SAFETY_01"
+              label="환자가 답한 것 (WOMEN_SAFETY_01)"
+              value={(r.reproductive_status?.reproductive_status ?? null) as string[] | null}
+            />
+          </div>
+          {isUnreadableReproductiveDerived(r) ? (
+            <p className="doctor__derivedNote doctor__derivedNote--unavailable">
+              시스템이 계산한 임신/수유 안전정보를 읽을 수 없습니다(레거시/손상 데이터로 보임) — 원장 확인 필요
+            </p>
+          ) : (
+            <div className="doctor__derivedBox">
+              <p className="doctor__derivedLabel">
+                시스템이 계산한 것 — 출처: {sourceLabel(r.reproductive_status.derived.source)}
+              </p>
+              <ul>
+                <li>임신 중: {boolLabel(r.reproductive_status.derived.pregnant)}</li>
+                <li>임신 가능성: {boolLabel(r.reproductive_status.derived.pregnancy_possible)}</li>
+                <li>출산 후 1년 이내: {boolLabel(r.reproductive_status.derived.postpartum_1y)}</li>
+                <li>모유수유 중: {boolLabel(r.reproductive_status.derived.breastfeeding)}</li>
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="doctor__section">
         <h2>검사자료 / 원장에게 하고 싶은 말</h2>
@@ -2475,6 +4046,17 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         </div>
       </section>
 
+      {/*
+        PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지
+        않는다. Round 11 goes further -- Myungri is not merely below the
+        clinical workspace, it is a separate surface that the clinical flow
+        never renders, per the standing rule that it must be completely
+        separated from it.
+      */}
+      </div>
+
+      {viewProfile !== 'pain' && (
+      <div hidden={recordTab !== 'myungri'}>
       <MyungriCompactCard saju={saju} />
 
       <section className="doctor__section doctor__section--myungri">
@@ -2490,7 +4072,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             <h3>원본 출생정보 — 환자 입력</h3>
             <div className="doctorField">
               <span className="doctorField__label">생년월일 (입력 그대로)</span>
-              <span className="doctorField__value">{r.birth_info.birth_date ?? '—'}</span>
+              <span className="doctorField__value">{computedText(r.birth_info.birth_date) ?? '—'}</span>
             </div>
             <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
             <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
@@ -2506,7 +4088,7 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
             {saju.status !== 'resolved' && (
               <p className="doctor__warning">
                 상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
-                {saju.unresolved_reason ? ` — ${saju.unresolved_reason}` : ''}
+                {computedText(saju.unresolved_reason) ? ` — ${computedText(saju.unresolved_reason)}` : ''}
               </p>
             )}
             {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
@@ -2515,35 +4097,35 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
               <div className="doctor__pillars">
                 <div className="doctor__pillar">
                   <span>연주</span>
-                  <strong>{saju.pillars.year}</strong>
+                  <strong>{computedText(saju.pillars.year) ?? UNREADABLE_COMPUTED_VALUE}</strong>
                 </div>
                 <div className="doctor__pillar">
                   <span>월주</span>
-                  <strong>{saju.pillars.month}</strong>
+                  <strong>{computedText(saju.pillars.month) ?? UNREADABLE_COMPUTED_VALUE}</strong>
                 </div>
                 <div className="doctor__pillar">
                   <span>일주</span>
-                  <strong>{saju.pillars.day}</strong>
+                  <strong>{computedText(saju.pillars.day) ?? UNREADABLE_COMPUTED_VALUE}</strong>
                 </div>
                 <div className="doctor__pillar">
                   <span>시주</span>
-                  <strong>{saju.pillars.hour ?? '미상'}</strong>
+                  <strong>{computedText(saju.pillars.hour) ?? '미상'}</strong>
                 </div>
               </div>
             )}
 
-            {saju.normalized && (
+            {saju.normalized?.solarDate && (
               <p className="doctor__derivedNote">
-                정규화된 양력 날짜: {saju.normalized.solarDate.year}-
-                {String(saju.normalized.solarDate.month).padStart(2, '0')}-
-                {String(saju.normalized.solarDate.day).padStart(2, '0')} / 상태: {saju.status}
+                정규화된 양력 날짜: {datePartText(saju.normalized.solarDate.year)}-
+                {datePartText(saju.normalized.solarDate.month)}-
+                {datePartText(saju.normalized.solarDate.day)} / 상태: {saju.status}
               </p>
             )}
 
-            {saju.policy.pending_approval.length > 0 && (
+            {asArray<string>(saju.policy.pending_approval).length > 0 && (
               <p className="doctor__warning doctor__warning--pending">
                 주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {saju.policy.pending_approval.join(', ')}.
+                값이 바뀔 수 있습니다. 대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}.
                 원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
                 docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
               </p>
@@ -2575,7 +4157,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           기록&rdquo;에 원장이 직접 기록합니다.
         </p>
       </section>
+      </div>
+      )}
 
+      <div hidden={recordTab !== 'reference'}>
       {mode === 'server' && selectedRecord?.visit_id && (
         <section className="doctor__section">
           <h2>진료 녹취·요약</h2>
@@ -2638,19 +4223,34 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
           myungri_algorithm_version: saju.policy.algorithm_version,
           myungri_library_version: saju.engine.library_version,
           myungri_status: saju.status,
-          myungri_pending_approval: saju.policy.pending_approval,
+          myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),
         }}
         initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
-        showLbpExam={routing.primary_module_detail === 'LBP'}
-        showShoulderExam={payload.responses.safety_flags.shoulder !== null}
+        initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
+        /* 6차 독립 리뷰 HIGH-1/MEDIUM-1: LbpSafetyPanel과 동일한 applicability
+           신호(safety_flags.<region>, nullish 비교)로 통일 -- routing 태그나
+           strict !== null은 additional-detail 경로/레거시 undefined 키에서
+           잘못된 값을 낸다. */
+        showLbpExam={payload.responses.safety_flags.lbp != null}
+        showShoulderExam={payload.responses.safety_flags.shoulder != null}
         onSave={
           mode === 'server' && selectedId
-            ? async (judgment: ClinicianJudgment) => {
+            ? async (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => {
                 // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
                 // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
                 // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
-                const result = await saveJudgmentToServer(selectedId, judgment)
-                if (result.ok) setSelectedRecord(result.data)
+                const result = await saveJudgmentToServer(selectedId, judgment, expectedUpdatedAt ?? undefined)
+                if (result.ok) {
+                  setSelectedRecord(result.data)
+                  return { ok: true as const, updatedAt: result.data.updated_at }
+                }
+                // Round 18: same 409-conflict translation as the workspace
+                // save callback above -- see its comment.
+                const current = result.errorBody?.current as SubmissionRecord | undefined
+                if (current) {
+                  return { ok: false as const, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
+                }
+                return { ok: false as const }
               }
             : undefined
         }
@@ -2660,6 +4260,10 @@ export function DoctorView({ initialFixtureIndex = 0 }: { initialFixtureIndex?: 
         <summary>원본 응답 보기 (JSON)</summary>
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
+      </div>
+      </>
+      )}
+      </DoctorRecordErrorBoundary>
       </>
       )}
     </div>

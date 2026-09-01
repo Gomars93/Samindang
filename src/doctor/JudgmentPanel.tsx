@@ -4,7 +4,7 @@
  * 백엔드/저장소가 없으므로 상태는 React state에만 존재하고, 새로고침하면
  * 사라진다. 이 컴포넌트는 그 사실을 화면에 명시적으로 알린다.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DEBRIEF_QUESTIONS,
   MAX_INNATE_FEATURES,
@@ -14,8 +14,10 @@ import {
   validateJudgment,
   type ClinicianJudgment,
   type DebriefAnswers,
+  type JudgmentSaveOutcome,
   type JudgmentSourcePayload,
 } from './judgment'
+import { ConflictBanner } from './ConflictBanner'
 
 function TextList({
   label,
@@ -86,6 +88,7 @@ const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAU
 export function JudgmentPanel({
   source,
   initialJudgment,
+  initialUpdatedAt,
   onSave,
   showLbpExam = false,
   showShoulderExam = false,
@@ -93,8 +96,16 @@ export function JudgmentPanel({
   source: JudgmentSourcePayload
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
   initialJudgment?: ClinicianJudgment | null
+  /**
+   * Round 18: the submission record's server-authoritative `updated_at` at
+   * the moment this judgment was loaded -- sent as the CAS precondition on
+   * the first "기록" click. This component fully remounts on record switch
+   * (DoctorView's `key={payload.session_id}`), so unlike DoctorWorkspace
+   * there is no mid-life reseed to guard against here.
+   */
+  initialUpdatedAt?: string | null
   /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
-  onSave?: (judgment: ClinicianJudgment) => void
+  onSave?: (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => Promise<JudgmentSaveOutcome>
   /**
    * LBP_V1: 이번 방문의 주호소가 허리(LBP)일 때만 true — 객관적 하지
    * 근력저하 소견 입력 컨트롤을 보여준다. 결정 §1-2: 이 값이
@@ -121,10 +132,92 @@ export function JudgmentPanel({
   const [outlineQuestion, setOutlineQuestion] = useState('')
   const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
+  const lastKnownUpdatedAtRef = useRef<string | null>(initialUpdatedAt ?? null)
+  // Round 18: the last `judgment`/`debrief` state this panel considers
+  // NOT locally edited -- i.e. the pristine baseline `isDraftPristine()`
+  // diffs live state against, updated on mount, on a successful save (to
+  // the live pre-finalize state, not the finalized/persisted one -- see
+  // handleRecord), on reload, and by the sync effect below. This is no
+  // longer literally "what matches the server" after a save (the server
+  // holds `finalized`, which stamps recorded_at); it only needs to answer
+  // "has the clinician typed anything since we last knew where we stood,"
+  // which is what safely gates adopting a newer external version (see that
+  // effect's comment for why this matters).
+  const lastKnownJudgmentRef = useRef<{ judgment: ClinicianJudgment; debrief: DebriefAnswers }>({
+    judgment: initialJudgment ?? createEmptyJudgment(source),
+    debrief: initialJudgment?.debrief ?? emptyDebrief,
+  })
+  // Round 18: non-null exactly when the server rejected the last "기록"
+  // click as stale. Nothing auto-retries here (this save is already
+  // explicit-click-only, not debounced) -- the clinician must review the
+  // banner and either reload or re-click "기록" after reloading.
+  const [conflict, setConflict] = useState<{ current: ClinicianJudgment | null; currentUpdatedAt: string } | null>(
+    null,
+  )
+
+  function isDraftPristine() {
+    return (
+      JSON.stringify(judgment) === JSON.stringify(lastKnownJudgmentRef.current.judgment) &&
+      JSON.stringify(debrief) === JSON.stringify(lastKnownJudgmentRef.current.debrief)
+    )
+  }
+
+  // Round 18 fix (caught by real two-browser-context QA): `initialUpdatedAt`
+  // legitimately advances for the SAME submission without any judgment
+  // save -- most reliably the automatic "mark as viewed" status write that
+  // fires the instant a submission is opened, or an independent
+  // DoctorWorkspace autosave on the same submission.
+  //
+  // Closing-review finding (HIGH, shared with DoctorWorkspace.tsx's
+  // identical fix): adopting the newer TOKEN alone, without also adopting
+  // the CONTENT it came with, lets a later "기록" click pass CAS while
+  // still submitting whatever STALE `judgment` this panel had -- silently
+  // overwriting a real concurrent write to the SAME submission's `judgment`
+  // field (another tab, or this tab's own round-trip through DoctorView).
+  // Fixed the same way: adopt the token and the fresh `initialJudgment`
+  // TOGETHER, and only when this panel's own draft is pristine (matches
+  // `lastKnownJudgmentRef`, i.e. nothing typed since the last known-good
+  // state) -- never overwrite the clinician's in-progress typing, and never
+  // adopt a token while quietly keeping content that might now be stale
+  // relative to a different writer.
+  //
+  // Empirical fix (caught by re-running the real-browser QA against the
+  // closing review's exact repro, not by reasoning alone): this effect
+  // must depend ONLY on `initialUpdatedAt`, never on `judgment`/`debrief`
+  // themselves. `handleReloadFromConflict` also calls `setJudgment`/
+  // `setDebrief` -- if this effect also re-ran on every judgment/debrief
+  // change, that very reload would immediately re-trigger it, and since
+  // `initialUpdatedAt` (DoctorView's OWN prop, untouched by this panel's
+  // purely-local reload) is still the OLD stale value while
+  // `lastKnownUpdatedAtRef.current` now correctly holds the fresh
+  // `conflict.currentUpdatedAt`, the effect's inequality check (`!==`, not
+  // "is initialUpdatedAt actually NEWER") would pass and silently regress
+  // the just-reloaded token back down to the stale prop -- undoing the
+  // reload and reproducing the exact 409-loop this mechanism exists to
+  // prevent. `isDraftPristine()` still reads the current `judgment`/
+  // `debrief` via closure every time the effect actually runs; they do not
+  // need to be dependencies for that.
+  useEffect(() => {
+    if (initialUpdatedAt == null || initialUpdatedAt === lastKnownUpdatedAtRef.current) return
+    if (!isDraftPristine()) return
+    const freshJudgment = initialJudgment ?? createEmptyJudgment(source)
+    const freshDebrief = initialJudgment?.debrief ?? emptyDebrief
+    lastKnownUpdatedAtRef.current = initialUpdatedAt
+    lastKnownJudgmentRef.current = { judgment: freshJudgment, debrief: freshDebrief }
+    setJudgment(freshJudgment)
+    setDebrief(freshDebrief)
+    setRecorded(initialJudgment ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUpdatedAt])
 
   const hasDebrief = Object.values(debrief).some((v) => v.trim() !== '')
 
-  function handleRecord() {
+  async function handleRecord() {
+    // Round 18 (closing review, MEDIUM): fail closed on a pending conflict
+    // exactly like DoctorWorkspace/RevisitWorkspace's autosave effects --
+    // the clinician must explicitly reload before any further save attempt
+    // instead of "기록" silently retrying with a stale precondition.
+    if (conflict) return
     const withDebrief: ClinicianJudgment = { ...judgment, debrief: hasDebrief ? debrief : null }
     const result = validateJudgment(withDebrief)
     if (!result.ok) {
@@ -134,8 +227,54 @@ export function JudgmentPanel({
     }
     setErrors([])
     const finalized = finalizeJudgment(withDebrief)
-    setRecorded(finalized)
-    onSave?.(finalized)
+    if (!onSave) {
+      setRecorded(finalized)
+      return
+    }
+    const outcome = await onSave(finalized, lastKnownUpdatedAtRef.current)
+    if (outcome.ok) {
+      setRecorded(finalized)
+      setConflict(null)
+      lastKnownUpdatedAtRef.current = outcome.updatedAt
+      // Round 18 closing-review fix (MEDIUM): snapshot the LIVE pre-finalize
+      // `judgment`/`debrief` here, never `finalized`. `finalizeJudgment`
+      // stamps a fresh `recorded_at` and prunes empty array entries, but
+      // this success path never calls `setJudgment(finalized)` -- the
+      // visible form state stays exactly what the clinician typed. Snapshotting
+      // `finalized` instead made `isDraftPristine()`'s comparison permanently
+      // false after the FIRST successful save (the live judgment's
+      // `recorded_at` can never again match the ref's stamped one), which
+      // silently disabled the version-sync effect below for the rest of this
+      // panel's life -- reintroducing the exact false-conflict bug this
+      // mechanism exists to prevent on every subsequent save. Snapshotting
+      // the live values keeps pristine-comparison meaningful indefinitely.
+      lastKnownJudgmentRef.current = { judgment, debrief }
+    } else if (outcome.conflict) {
+      // Round 18: fail closed -- `recorded` deliberately stays whatever it
+      // was before this click (never shows `finalized` as "기록됨" when it
+      // was actually rejected). `judgment`/`debrief` state is untouched, so
+      // the clinician's typed values are still right there on screen.
+      setConflict(outcome.conflict)
+    } else {
+      setErrors(['저장 실패 — 다시 시도해주세요'])
+    }
+  }
+
+  // Round 18: the only recovery action -- loads the server's current
+  // judgment verbatim (or a blank form if nobody had saved one yet) and
+  // clears the conflict. The clinician's own draft stays visible in
+  // ConflictBanner until this fires.
+  function handleReloadFromConflict() {
+    if (!conflict) return
+    const next = conflict.current ?? createEmptyJudgment(source)
+    const nextDebrief = next.debrief ?? emptyDebrief
+    setJudgment(next)
+    setDebrief(nextDebrief)
+    setRecorded(conflict.current)
+    lastKnownUpdatedAtRef.current = conflict.currentUpdatedAt
+    lastKnownJudgmentRef.current = { judgment: next, debrief: nextDebrief }
+    setConflict(null)
+    setErrors([])
   }
 
   return (
@@ -148,6 +287,13 @@ export function JudgmentPanel({
           ? '"기록" 버튼을 누르면 이 제출건에 저장됩니다.'
           : '예시 데이터 미리보기이므로 저장되지 않으며, 화면을 새로고침하면 사라집니다.'}
       </p>
+
+      {conflict && (
+        <ConflictBanner
+          onReload={handleReloadFromConflict}
+          draftJson={JSON.stringify({ ...judgment, debrief: hasDebrief ? debrief : null }, null, 2)}
+        />
+      )}
 
       <div className="judgment__grid">
         <TextList

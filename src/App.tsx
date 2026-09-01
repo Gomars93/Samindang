@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getBodyMapZoneLabel } from './components/BodyMap'
 import { HelpModal } from './components/HelpModal'
 import { IdleWarningModal } from './components/IdleWarningModal'
 import { PatientErrorBoundary } from './components/PatientErrorBoundary'
 import { PreviewBanner } from './components/PreviewBanner'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
+import { FollowUpScreen } from './screens/FollowUpScreen'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
 import {
   QuestionBody,
@@ -15,20 +17,26 @@ import {
 import { StaffCheckScreen } from './screens/StaffCheckScreen'
 import { StaffHerbalAddonHold } from './screens/StaffHerbalAddonHold'
 import { StartScreen } from './screens/StartScreen'
+import { StationScreen } from './screens/StationScreen'
 import { isServerConfigured, submitQuestionnaire } from './lib/serverClient'
+import { setStationCredential } from './lib/stationClient'
 import { computeSaju } from './saju'
 import {
   ALL_QUESTIONS,
   HERBAL_ADDON_FIELD,
+  LBP_LEG_AUTOFILL_FIELD,
+  LBP_ONSET_DECADE_FIELD,
   STAFF_CHECK_TRIGGERS,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
   buildSajuInput,
   computeFlags,
+  mapLbpOnsetDecadeToBefore45,
   primaryConcernKey,
   pruneStaleResponses,
   questionnaireMode,
+  shouldAutoAdvancePast,
   visibleQuestions,
 } from './spec/coreSpec'
 import type { AnswerValue, Question, Responses } from './types'
@@ -56,6 +64,13 @@ const emptyResponses = (): Responses => ({
   // 만들 뿐 이전 Responses를 절대 스프레드하지 않는다 -- 이 줄은 그
   // 보장을 명시적으로 코드에 남겨 감사 가능하게 하기 위함이다).
   [HERBAL_ADDON_FIELD]: null,
+  // Tablet UX v2.3 §13: LBP_ONSET_DECADE_FIELD도 같은 이유로 non-question
+  // metadata라 자동 초기화되지 않는다 -- 동일하게 명시적으로 null 처리.
+  [LBP_ONSET_DECADE_FIELD]: null,
+  // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP_LEG_AUTOFILL_FIELD도
+  // 같은 이유로 non-question metadata라 자동 초기화되지 않는다 --
+  // 동일하게 명시적으로 null 처리.
+  [LBP_LEG_AUTOFILL_FIELD]: null,
 })
 
 const newSessionId = () =>
@@ -88,13 +103,91 @@ export default function App() {
   )
 }
 
+/**
+ * Round 3(revisit linkage): `#follow-up=<token>` hash route. Deliberately a
+ * SEPARATE parse from #doctor -- the opaque capability token is the only
+ * thing this ever extracts from the URL, never anything that could be
+ * mistaken for a patient identifier (see FollowUpScreen.tsx's own doc
+ * comment on the security boundary this maintains).
+ */
+function parseFollowUpToken(hash: string): string | null {
+  const match = hash.match(/^#follow-up=(.+)$/)
+  if (!match) return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
+
+/**
+ * Round 8: `#station-setup=<credential>` is the ONE-TIME pairing link a
+ * staff member opens on a clinic tablet to bind it to a registered
+ * station. The credential is immediately moved into localStorage and
+ * scrubbed from the URL (the same replaceState hygiene FollowUpScreen
+ * applies to the patient capability token), then the tablet lands on the
+ * plain `#station` kiosk route it will stay on from then on.
+ */
+function parseStationSetupCredential(hash: string): string | null {
+  const match = hash.match(/^#station-setup=(.+)$/)
+  if (!match) return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
+
 function AppContent() {
   const [isDoctorView, setIsDoctorView] = useState(
     () => typeof window !== 'undefined' && window.location.hash.startsWith('#doctor'),
   )
+  // Station kiosk mode. Set once at mount from the URL and never cleared
+  // for this mount's lifetime -- a tablet left on the station route stays
+  // there all day.
+  const [isStationView] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const setupCredential = parseStationSetupCredential(window.location.hash)
+    if (setupCredential) {
+      setStationCredential(setupCredential)
+      // Scrub the credential out of the visible URL/history immediately --
+      // it is a long-lived device secret and must not sit in the address
+      // bar or the tablet's own history.
+      const cleanUrl = `${window.location.pathname}${window.location.search}#station`
+      window.history.replaceState({ samindangStation: true }, '', cleanUrl)
+      return true
+    }
+    return window.location.hash.startsWith('#station')
+  })
+  const [followUpToken, setFollowUpToken] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) : null,
+  )
+  // Round 6 review fix (token scrub from React memory): FollowUpScreen's
+  // own replaceState/pushState (see its doc comment) already scrub the raw
+  // token out of the visible URL and browser history once the patient
+  // submits -- but that never fires `hashchange`, so `followUpToken` above
+  // used to just sit there holding the plaintext secret in this
+  // component's memory for the rest of the page's life. `onCompleted`
+  // below lets FollowUpScreen tell us to release it (setFollowUpToken
+  // (null)) right after a successful submit. `followUpActive` is a
+  // SEPARATE flag for "are we still on the follow-up route at all" -- it
+  // is set once and never cleared for the life of this mount, so nulling
+  // the token does not also make the render check below fall through and
+  // unmount FollowUpScreen (which would lose its own completion/"done"
+  // screen state, exactly the privacy wall this is supposed to preserve).
+  const [followUpActive, setFollowUpActive] = useState(
+    () => (typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) !== null : false),
+  )
 
   useEffect(() => {
-    const onHashChange = () => setIsDoctorView(window.location.hash.startsWith('#doctor'))
+    const onHashChange = () => {
+      setIsDoctorView(window.location.hash.startsWith('#doctor'))
+      const next = parseFollowUpToken(window.location.hash)
+      if (next !== null) {
+        setFollowUpToken(next)
+        setFollowUpActive(true)
+      }
+    }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
@@ -290,10 +383,23 @@ function AppContent() {
 
   /* ---------- navigation ---------- */
 
+  // Tablet UX v2.3 §8-9/§13 (PR #23 follow-up correction): navigation-layer
+  // auto-skip for LBP_02/LBP_03 (when the LBP_01B_LEG_SCREEN shim auto-filled
+  // them) and LBP_10 (always, once LBP_10A_ONSET_AGE has taken over). This
+  // is deliberately separate from `visibleQuestions`/showIf -- those stay
+  // completely unchanged so pruneStaleResponses keeps treating these
+  // screens as normal, answered, visible questions (the FROZEN adapter
+  // reads their stored values exactly as before). Only what actually gets
+  // *rendered* to the patient changes; see shouldAutoAdvancePast in
+  // coreSpec.ts for the exact skip conditions and safety writeup.
   const nextQuestion = (from: string, r: Responses): Question | undefined => {
     const list = visibleQuestions(r)
-    const idx = list.findIndex((q) => q.id === from)
-    return idx >= 0 ? list[idx + 1] : list[0]
+    const fromIdx = list.findIndex((q) => q.id === from)
+    let idx = fromIdx >= 0 ? fromIdx + 1 : 0
+    while (idx < list.length && shouldAutoAdvancePast(list[idx], r)) {
+      idx += 1
+    }
+    return list[idx]
   }
 
   const goNext = () => {
@@ -315,11 +421,16 @@ function AppContent() {
 
   const goBack = () => {
     if (current && current.id.startsWith('MS_')) setPanelBackCount((c) => c + 1)
-    // show_if 변경으로 더 이상 표시되지 않는 화면은 건너뛴다
+    // show_if 변경으로 더 이상 표시되지 않는 화면은 건너뛴다. Under normal
+    // forward navigation, an auto-skipped question (shouldAutoAdvancePast)
+    // is never pushed onto `visited` in the first place -- nextQuestion
+    // already skips past it -- so this extra check is a defensive mirror
+    // of that same navigation-layer skip, not the primary mechanism.
     const stack = [...visited]
     while (stack.length > 0) {
       const prev = stack.pop() as string
-      if (visible.some((q) => q.id === prev)) {
+      const prevQuestion = visible.find((q) => q.id === prev)
+      if (prevQuestion && !shouldAutoAdvancePast(prevQuestion, responses)) {
         setVisited(stack)
         setCurrentId(prev)
         return
@@ -329,11 +440,57 @@ function AppContent() {
   }
 
   const setAnswer = (q: Question, value: AnswerValue) => {
+    let patch: Responses = { ...responses, [q.id]: value }
+
+    // Tablet UX v2.3 §8-9 (PR #23 follow-up correction): LBP leg-symptom
+    // compact-confirm presentation shim. LBP_02/LBP_03 stay unconditionally
+    // visible (showIf unchanged) so pruneStaleResponses never nulls this
+    // write -- see the LBP_01B_LEG_SCREEN question definition in
+    // coreSpec.ts for the full safety writeup. "없어요" pre-fills the
+    // exact FROZEN-required NONE/NONE pair AND sets LBP_LEG_AUTOFILL_FIELD
+    // so nextQuestion/goBack (below) skip rendering LBP_02/LBP_03 to the
+    // patient entirely; "있어요"/"잘 모르겠어요" clears both the pre-fill
+    // and the provenance flag so the patient answers LBP_02/LBP_03 fresh
+    // (and sees both screens normally).
+    if (q.id === 'LBP_01B_LEG_SCREEN') {
+      patch =
+        value === 'no'
+          ? { ...patch, LBP_02: ['NONE'], LBP_03: 'NONE', [LBP_LEG_AUTOFILL_FIELD]: 'yes' }
+          : { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+    }
+    // Changing LBP_01 away from 'BACK_ONLY' after the leg-symptom shim
+    // auto-filled LBP_02/LBP_03 (shim answered 'no') leaves those two
+    // fields stale -- LBP_02/LBP_03's own showIf never depends on LBP_01,
+    // so pruneStaleResponses can't catch this on its own. Only clears the
+    // shim's own auto-fill (checked against the OLD, pre-patch state) --
+    // genuinely patient-answered LBP_02/LBP_03 (shim was 'yes'/'unknown',
+    // or a non-BACK_ONLY route) are never touched here. Also clears the
+    // provenance flag, since there's nothing left to auto-skip.
+    if (q.id === 'LBP_01' && responses['LBP_01'] === 'BACK_ONLY' && responses['LBP_01B_LEG_SCREEN'] === 'no' && value !== 'BACK_ONLY') {
+      patch = { ...patch, LBP_02: null, LBP_03: null, [LBP_LEG_AUTOFILL_FIELD]: null }
+    }
+    // Provenance guard: if LBP_02/LBP_03 are ever answered directly (only
+    // reachable if the shim's auto-fill was never active in the first
+    // place, since an active auto-fill means these screens are skipped in
+    // navigation -- see shouldAutoAdvancePast), clear the provenance flag
+    // so a genuine patient answer is never later mistaken for the shim's
+    // own auto-fill and silently skipped.
+    if (q.id === 'LBP_02' || q.id === 'LBP_03') {
+      patch = { ...patch, [LBP_LEG_AUTOFILL_FIELD]: null }
+    }
+
+    // Tablet UX v2.3 §13 (real-device QA follow-up §4-5): LBP onset-decade
+    // -> existing LBP_10 YES/NO/UNKNOWN compatibility mapping (see
+    // mapLbpOnsetDecadeToBefore45's own comment in coreSpec.ts for the
+    // FROZEN-threshold safety reasoning, incl. why 40s fails closed to
+    // UNKNOWN). LBP_10 stays unconditionally visible alongside LBP_10A
+    // (same showIf), so this pre-fill also survives pruneStaleResponses.
+    if (q.id === 'LBP_10A_ONSET_AGE') {
+      patch = { ...patch, LBP_10: mapLbpOnsetDecadeToBefore45(value), [LBP_ONSET_DECADE_FIELD]: value }
+    }
+
     // 상위 선택이 바뀌면 더 이상 표시되지 않는 화면의 응답을 즉시 정리한다.
-    const { responses: pruned, removed } = pruneStaleResponses({
-      ...responses,
-      [q.id]: value,
-    })
+    const { responses: pruned, removed } = pruneStaleResponses(patch)
 
     setResponses(pruned)
     setMeta((m) => {
@@ -401,6 +558,19 @@ function AppContent() {
 
   /* ---------- render ---------- */
 
+  if (isStationView) {
+    return <StationScreen />
+  }
+
+  if (followUpActive) {
+    // token is intentionally NOT part of the key here: nulling it (via
+    // onCompleted, once submission succeeds) must not remount this
+    // component and lose its own "done" screen state. FollowUpScreen
+    // itself freezes the token value it was first mounted with (see its
+    // own doc comment) and never re-reads a later-nulled prop.
+    return <FollowUpScreen token={followUpToken} onCompleted={() => setFollowUpToken(null)} />
+  }
+
   if (isDoctorView) {
     return <DoctorView />
   }
@@ -453,6 +623,31 @@ function AppContent() {
   const value = responses[current.id]
   const answered = !current.required || isAnswered(current, value)
   const showConfirm = needsConfirmButton()
+  // Tablet UX v2.3 §11-12: Body Map 화면에서 landscape 우측 rail에 "지금
+  // 뭘 선택했는지"를 항상 보여준다(스크롤과 무관). ScreenShell 자체는
+  // BodyMap 내부를 모르므로, 여기서 미리 계산해 짧은 텍스트만 넘긴다.
+  //
+  // CRITICAL (closing review fix): landscape에서는 styles.css가
+  // .bodyMap__selectedLabel/.bodyMap__selectedChip을 항상 숨기고 이
+  // rail이 그 자리를 대신한다 -- 값이 없을 때(아직 아무 부위도 선택
+  // 안 함)도 반드시 무언가를 렌더링해야 한다. 아니면 BodyMap.tsx의
+  // "부위를 선택해주세요" 안내가 landscape에서 완전히 사라지고(첫
+  // 화면에 아무 안내도 없음), 이 aria-live 영역도 첫 선택 시 "새로
+  // 나타나며 채워지는" 것이 되어 스크린리더가 그 첫 변경을 announce하지
+  // 않는다(기존에 존재하던 live region의 "내용 변경"만 announce됨).
+  // typeof value === 'string' 여부와 무관하게 body_map 화면이면 항상
+  // non-null을 반환해 rail이 처음부터 안정적인 live region으로 존재하게
+  // 한다.
+  const railSelection =
+    current.layout === 'body_map' ? (
+      typeof value === 'string' ? (
+        <>
+          선택한 부위: <strong>{getBodyMapZoneLabel(value)}</strong>
+        </>
+      ) : (
+        '부위를 선택해주세요'
+      )
+    ) : null
 
   return (
     <>
@@ -466,6 +661,7 @@ function AppContent() {
         // 유지하고, 짧은 카테고리 선택 화면(grid2/compact3/body_map)만
         // 더 넓게 쓴다.
         wideContent={current.layout != null && current.layout !== 'list'}
+        railSelection={railSelection}
         canGoBack={visited.length > 0}
         onBack={goBack}
         onHelp={() => {

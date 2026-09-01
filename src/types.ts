@@ -67,6 +67,15 @@ export type Question = {
   /** numeric 전용 */
   maxLength?: number
   placeholder?: string
+  /**
+   * Tablet UX v2.3 §13: numeric/short_text 질문에 "잘 모르겠어요" 같은
+   * 명시적 skip 버튼을 추가할 때 사용(예: LBP 발병 나이). 지정된 sentinel
+   * value가 그대로 responses에 저장된다 -- 자유 텍스트 파싱/추측이 아니라
+   * 환자가 명시적으로 누른 버튼의 결과이므로 malformed-input 우려가 없다.
+   * 미지정 시(대부분의 numeric/short_text 질문) 기존과 완전히 동일하게
+   * 렌더링된다 -- 순수 additive, opt-in.
+   */
+  unknownOption?: { value: string; label: string }
   /** numeric_scale 전용 */
   scale?: { min: number; max: number; minLabel: string; maxLabel: string }
   /**

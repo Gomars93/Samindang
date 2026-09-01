@@ -15,7 +15,22 @@ import {
   finalizeJudgment,
 } from './.doctor-judgment-bundle.mjs'
 import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
-import { DoctorView } from './.doctor-view-bundle.cjs'
+import {
+  DoctorView,
+  isDoctorPayloadShapeUsable,
+  recordToPayload,
+  DoctorRecordFallback,
+  frequencyField,
+  aggravatingField,
+  primaryModuleFields,
+  LbpSafetyPanel,
+  NeckSafetyPanel,
+  ShoulderSafetyPanel,
+  KneeSafetyPanel,
+  isUnreadableReproductiveDerived,
+  MyungriCompactCard,
+  sajuStatusLine,
+} from './.doctor-view-bundle.cjs'
 
 let passCount = 0
 
@@ -923,6 +938,30 @@ for (const f of DOCTOR_FIXTURES) {
   // correct "label" (there is nothing to translate); confirm the helper
   // doesn't crash and doesn't invent a label for those.
   assert('optionLabel falls back to raw value for free-text questions', optionLabel('ID_01', '김민준') === '김민준')
+
+  /*
+   * 10차 독립 리뷰 HIGH-1/HIGH-2/MEDIUM-2: AnswerValue의 타입
+   * (string|number|string[]|null)은 검증되지 않은 저장 JSON에서 온
+   * 값이므로 레거시/손상 데이터는 이를 지키지 않을 수 있다 -- 이전
+   * 구현은 무조건 String(value)로 바꿔 "[object Object]"를 그대로
+   * 반환했고, 이게 EMR 미리보기(실제 의무기록 붙여넣기 텍스트)/환자
+   * 전달용 치료 계획/CommonSafetyBanner의 공통 위험 신호 배너까지
+   * 흘러들어갔다(실제 라이브 리프로로 확인됨). string|number가 아니면
+   * 원문을 지어내지 않고 명시적 실패 토큰을 반환해야 한다.
+   */
+  assert(
+    'optionLabel never String()-coerces a wrong-typed (object) value into "[object Object]" (10th independent review HIGH-1/HIGH-2/MEDIUM-2)',
+    optionLabel('SAFETY_01', { corrupted: true }) !== '[object Object]' &&
+      !optionLabel('SAFETY_01', { corrupted: true }).includes('object Object'),
+  )
+  assert(
+    'optionLabel returns an explicit fail-closed token for a wrong-typed value, not a fabricated label',
+    optionLabel('SAFETY_01', { corrupted: true }).includes('확인 필요'),
+  )
+  assert(
+    'optionLabels never leaks "[object Object]" for a wrong-typed array element',
+    !optionLabels('SAFETY_01', [{ corrupted: true }]).join(',').includes('object Object'),
+  )
 }
 
 /* ---------------------------------------------------------------------
@@ -1083,38 +1122,49 @@ function detailsRange(html, classMarker) {
   return [openIdx, closeIdx]
 }
 
-// 13a. 6개 요약 카테고리가 안전 배너보다 먼저, 그리고 서로 순서대로 나온다.
+// 13a. PR #24 Doctor Clinical Workspace shell: Common Safety renders before
+//      the workspace hero, and the hero renders before the first regular
+//      section (환자 기본). '수면 주호소 + 동반 소화/통증'은 pain 모듈을
+//      전혀 열지 않으므로(primaryConcernKey==='sleep') herbal 프로필로
+//      라우팅된다 -- 이 fixture로 herbal hero의 순서를 검증한다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
-  const labels = ['주호소', '기간/빈도', '핵심 악화·유발요인', '동반문제', '안전이슈', '명리 계산']
-  const idx = labels.map((l) => html.indexOf(l))
-  idx.forEach((i, n) => assert(`10초 요약: category "${labels[n]}" present`, i !== -1))
-  for (let i = 1; i < idx.length; i++) {
-    assert(`10초 요약: "${labels[i - 1]}" before "${labels[i]}"`, idx[i - 1] < idx[i])
-  }
+  const commonSafetyIdx = html.indexOf('doctor__commonSafety')
+  const heroIdx = html.indexOf('workspace__hero')
   const firstSectionIdx = html.indexOf('환자 기본')
-  assert('10초 요약: entire card is before the first regular section (환자 기본)', idx[idx.length - 1] < firstSectionIdx)
+  assert('workspace: Common Safety block present', commonSafetyIdx !== -1)
+  assert('workspace: hero block present', heroIdx !== -1)
+  assert('workspace: Common Safety renders before the hero', commonSafetyIdx < heroIdx)
+  assert('workspace: hero renders before the first regular section (환자 기본)', heroIdx < firstSectionIdx)
+  assert('workspace: herbal hero shows 상담 목적', html.includes('상담 목적'))
+  assert('workspace: herbal hero shows 안전이슈 indicator', html.includes('안전이슈'))
 }
 
-// 13b. requires_staff_check 픽스처: 요약 카드의 안전이슈 줄이 비어있지 않고
-//      상세 안전 배너보다 먼저 나오며, 안전정보 한눈에 블록에 항목이 있다.
+// 13b. requires_staff_check 픽스처: Common Safety(위험 배너 + 안전정보
+//      한눈에)가 워크스페이스 hero보다 먼저 나온다 -- PR #24 Phase 2
+//      invariant("Common Safety는 절대 탭/hero 뒤에 숨지 않는다")가 실제
+//      렌더 순서로 지켜지는지 확인한다.
 {
   const html = renderDoctorView('안전 확인 필요')
-  const summarySafetyIdx = html.indexOf('안전이슈')
   // 픽스처 선택 드롭다운에도 "안전 확인 필요"라는 fixture 이름이 나오므로,
   // 배너 본문에만 있는 고유 문구로 위치를 잡는다.
   const bannerIdx = html.indexOf('환자가 아래 내용을 문진에서 보고했습니다')
-  assert('safety fixture: summary card 안전이슈 present', summarySafetyIdx !== -1)
-  assert('safety fixture: summary card 안전이슈 before detailed danger banner', summarySafetyIdx < bannerIdx)
+  const heroIdx = html.indexOf('workspace__hero')
+  assert('safety fixture: detailed danger banner present', bannerIdx !== -1)
+  assert('safety fixture: danger banner renders before the hero', bannerIdx !== -1 && bannerIdx < heroIdx)
   assert('safety fixture: 안전정보 한눈에 renders at least one item', html.includes('doctor__safetyChip'))
 }
 
-// 13c. 안전 이슈 없는 픽스처: "안전이슈 없음"이 muted로만 표시되고 danger 배너 클래스는 전혀 없다.
+// 13c. 안전 이슈 없는 픽스처: danger 배너 클래스가 전혀 없고, hero의
+//      안전이슈 표시가 "없음"(문진에서 SAFETY_01에 답은 했지만 위험신호
+//      없음)으로 나온다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   assert('benign fixture: no doctor__banner--danger anywhere', !html.includes('doctor__banner--danger'))
-  assert('benign fixture: summary card shows muted 안전이슈 chip', html.includes('doctor__tenSecChip--muted'))
-  assert('benign fixture: summary card 안전이슈 text says 없음', html.includes('안전이슈') && html.includes('없음'))
+  assert('benign fixture: hero 안전이슈 present', html.includes('안전이슈'))
+  const safetyIdx = html.indexOf('안전이슈')
+  const nearby = html.slice(safetyIdx, safetyIdx + 200)
+  assert('benign fixture: nearby hero 안전이슈 value says 없음', nearby.includes('없음'))
 }
 
 // 13d. status === 'partial' 픽스처: 요약 카드 명리 줄에 상태가 드러나고,
@@ -1183,13 +1233,16 @@ function detailsRange(html, classMarker) {
   }
 }
 
-// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 3번 —
-//      새 10초 요약 카드, 기존 주호소 섹션, 기존 명리 검토의 "현재 문진 요약" 열.
+// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 2번 —
+//      기존 주호소 섹션, 명리 검토의 "현재 문진 요약" 열. PR #24부터 herbal
+//      hero는 duration을 별도로 보여주지 않으므로(herbal 프로필의 10초
+//      요약은 전신 증상 우선 -- pain hero만 duration을 보여준다) 예상
+//      횟수가 이전 3회에서 2회로 줄었다 -- 이는 의도된 아키텍처 변경이다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   const durationLabel = optionLabel('VISIT_03_SYMPTOM_DURATION', '1_3m')
   const count = html.split(durationLabel).length - 1
-  assert('duplication audit: duration label renders exactly 3 times (summary + 주호소 + myungri column)', count === 3)
+  assert('duplication audit: duration label renders exactly 2 times (주호소 + myungri column)', count === 2)
 }
 
 /* ---------------------------------------------------------------------
@@ -1224,6 +1277,1737 @@ function detailsRange(html, classMarker) {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   assert('SSR (no localStorage): workstation badge shows "설정 필요", not a stale id', html.includes('워크스테이션 설정 필요'))
   assert('SSR (no localStorage): workstation setup banner renders (localStorage absence handled safely, no throw)', html.includes('워크스테이션 설정 필요'))
+}
+
+// 14. Round 2 Phase 3: DoctorView's own (below-workspace) "여성 안전정보"
+//     section only renders when reproductive_status.derived.source is
+//     non-null -- a male patient (or any patient with nothing reproductive
+//     recorded) must not see an empty "확인되지 않음" card. Same fix/same
+//     signal as HerbalWorkspace's own conditional section, applied here
+//     because this round's visual QA screenshot caught the identical
+//     problem in this separate, pre-existing legacy section.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('male patient fixture: 여성 안전정보 section is absent (nothing reproductive recorded)', !html.includes('여성 안전정보'))
+}
+{
+  const html = renderDoctorView('여성 건강 주호소')
+  assert('female patient fixture with WOMEN_SAFETY_01 answered: 여성 안전정보 section renders', html.includes('여성 안전정보'))
+}
+
+/*
+ * 13차 독립 리뷰 LOW-3: the 여성 안전정보 card's render condition used to be
+ * `derived?.source != null || (isUnreadableReproductiveDerived(r) &&
+ * Array.isArray(raw))` -- a raw answer that exists but is not an array
+ * (legacy single-select) combined with derived.source===null made BOTH
+ * halves false, so the whole section (including the patient's own raw
+ * answer) silently vanished instead of showing the "읽을 수 없음" notice.
+ * DoctorView.tsx doesn't accept an arbitrary patched payload prop (only
+ * initialFixtureIndex into the fixed DOCTOR_FIXTURES set), so this is
+ * proven structurally against the source, matching this suite's established
+ * fallback for code paths that aren't independently renderable (see the
+ * 12th independent review HIGH-3 test below for the same pattern).
+ */
+{
+  const doctorViewSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    '13차 독립 리뷰 LOW-3: 여성 안전정보 render gate no longer requires Array.isArray on the raw answer -- any non-null/non-undefined raw answer keeps the section visible when isUnreadableReproductiveDerived(r) is true',
+    doctorViewSrc.includes(
+      "(isUnreadableReproductiveDerived(r) &&\n          r.reproductive_status?.reproductive_status !== null &&\n          r.reproductive_status?.reproductive_status !== undefined)",
+    ),
+  )
+}
+
+/* =====================================================================
+   Round 11 (Doctor Preview v2 -- 10-second clinical view). The record used
+   to render as one long vertical page: clinical workspace, then the whole
+   questionnaire transcript, then meds/history, then Myungri, then the
+   recorder/EMR block, then the legacy judgment form, then the raw JSON.
+   It is now three surfaces, and only the clinical one is visible by
+   default. Nothing was deleted -- these tests pin BOTH halves of that.
+   ===================================================================== */
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+
+  // The surfaces exist and 진료 is the one selected on open.
+  assert('round 11: the record offers a 진료 / 자료 보기 surface switch', html.includes('doctor__recordTabs') && html.includes('자료 보기'))
+  const clinicalTabIdx = html.indexOf('doctor__recordTab--active')
+  assert('round 11: 진료 is the surface selected on open', clinicalTabIdx !== -1 && html.slice(clinicalTabIdx, clinicalTabIdx + 120).includes('진료'))
+
+  /* ---- what must NOT be on the default surface. Each of these is
+     rendered inside a hidden panel, so "not default-visible" is checked by
+     finding it AFTER the point where the reference surface begins. ---- */
+  const referenceStart = html.indexOf('doctor__referenceNote')
+  assert('round 11: the reference surface exists', referenceStart !== -1)
+
+  const rawJsonIdx = html.indexOf('원본 응답 보기 (JSON)')
+  assert('round 11: the raw JSON payload is NOT on the default clinical surface', rawJsonIdx > referenceStart)
+
+  const transcriptIdx = html.indexOf('환자 기본')
+  assert('round 11: the raw questionnaire transcript is NOT on the default clinical surface', transcriptIdx > referenceStart)
+
+  const medsIdx = html.indexOf('약물·병력·알레르기·수술')
+  assert('round 11: medication/history detail is NOT on the default clinical surface', medsIdx > referenceStart)
+
+  /* ---- ...but every one of them is still rendered, one click away. ---- */
+  assert('round 11: the raw JSON payload still exists (moved, not deleted)', rawJsonIdx !== -1)
+  assert('round 11: the questionnaire detail still exists (moved, not deleted)', transcriptIdx !== -1)
+  assert('round 11: medication/history detail still exists (moved, not deleted)', medsIdx !== -1)
+
+  /* ---- safety must stay above every ordinary clinical block. ---- */
+  const safetyIdx = html.indexOf('doctor__commonSafety')
+  const judgmentIdx = html.indexOf('원장 최종 판단')
+  assert('round 11: Common Safety still renders on the default clinical surface', safetyIdx !== -1 && safetyIdx < referenceStart)
+  assert('round 11: safety comes before the clinician action area', safetyIdx < judgmentIdx)
+}
+
+{
+  /* ---- Myungri is a SEPARATE surface, never inside the clinical flow.
+     For a herbal/mixed record it exists as its own panel; for a pain
+     record it does not exist at all (the standing Phase 2 invariant). ---- */
+  const herbal = renderDoctorView('수면 주호소 + 동반 소화/통증')
+  const herbalReferenceStart = herbal.indexOf('doctor__referenceNote')
+  const myungriIdx = herbal.indexOf('명리 검토')
+  assert('round 11: a herbal record still has its Myungri content', myungriIdx !== -1)
+  assert('round 11: Myungri is NOT on the default clinical surface', myungriIdx > herbalReferenceStart)
+  assert('round 11: the clinical workspace itself contains no Myungri block', !herbal.includes('workspace__myungri'))
+
+  const pain = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('round 11: a pain record offers no Myungri surface at all', !pain.includes('명리 검토'))
+}
+
+/* =========================================================================
+ * Malformed/legacy submission resilience batch: `isDoctorPayloadShapeUsable`
+ * is the single gate deciding whether DoctorView attempts its normal
+ * detailed rendering (which reads dozens of nested fields unconditionally,
+ * e.g. deriveViewProfile(payload), primaryConcernLabel(r), routing.*,
+ * saju.policy.*) or falls back to a neutral "record incomplete" shell.
+ * Every real fixture must pass it (else this batch would have broken
+ * normal rendering), and deleting any ONE of the top-level keys it checks
+ * must independently fail it (a mutation-style guard against the check
+ * silently drifting out of sync with what DoctorView actually reads).
+ * ======================================================================= */
+
+{
+  for (const f of DOCTOR_FIXTURES) {
+    assert(`resilience: fixture "${f.name}" passes isDoctorPayloadShapeUsable`, isDoctorPayloadShapeUsable(f.payload) === true)
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 21차 독립 리뷰 HIGH-1: `recordToPayload`(SubmissionRecord -> DoctorPayload)는
+ * DoctorView의 렌더 본문에서 `isDoctorPayloadShapeUsable`보다 먼저,
+ * 무조건 호출된다 -- record.submission이 null/객체가 아니면
+ * `s.questionnaire_version` 등 필드 접근에서 그대로 throw했다. 이 throw는
+ * DoctorRecordFallback(안전한 착지 화면)에 도달하기도 전에
+ * PatientErrorBoundary까지 뚫고 올라가 원장 화면 전체가 환자용 화면으로
+ * 바뀐다 -- 20차가 고친 클래스보다 한 단계 앞선, 더 심각한 지점.
+ * ---------------------------------------------------------------------- */
+{
+  const validPayload = byName('허리 통증 주호소 (LBP, 확인 필요)').payload
+  const validRecord = {
+    id: 'r-recordToPayload',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    status: 'new',
+    patient_label: '(QA) recordToPayload',
+    patient_id: 'patient-recordToPayload',
+    submission: {
+      questionnaire_version: validPayload.questionnaire_version,
+      session_id: validPayload.session_id,
+      responses: validPayload.responses,
+      flags: validPayload.flags,
+      routing: validPayload.routing,
+      metadata: validPayload.metadata,
+    },
+    myungri: validPayload.myungri_calculation,
+    judgment: null,
+  }
+  assert(
+    'resilience recordToPayload: a genuine record produces a payload that passes isDoctorPayloadShapeUsable (sanity)',
+    isDoctorPayloadShapeUsable(recordToPayload(validRecord)) === true,
+  )
+
+  for (const bad of [null, undefined, 'garbage-string', 123, [], true]) {
+    let threw = false
+    let payload = null
+    try {
+      payload = recordToPayload({ ...validRecord, submission: bad })
+    } catch {
+      threw = true
+    }
+    assert(`resilience recordToPayload HIGH-1: record.submission=${JSON.stringify(bad)} does not throw`, threw === false)
+    assert(
+      `resilience recordToPayload HIGH-1: record.submission=${JSON.stringify(bad)} yields a payload isDoctorPayloadShapeUsable rejects (fails closed to DoctorRecordFallback, not an uncatchable crash upstream of it)`,
+      payload !== null && isDoctorPayloadShapeUsable(payload) === false,
+    )
+  }
+}
+
+{
+  const base = byName('허리 통증 주호소 (LBP, 확인 필요)').payload
+  assert('resilience: sanity -- the base fixture itself passes', isDoctorPayloadShapeUsable(base) === true)
+
+  // Whole-namespace loss (the exact bug this batch fixes -- routing: null,
+  // or a hand-built/legacy responses object missing entire namespaces).
+  assert('resilience: routing=null is rejected', isDoctorPayloadShapeUsable({ ...base, routing: null }) === false)
+  assert('resilience: routing=undefined is rejected', isDoctorPayloadShapeUsable({ ...base, routing: undefined }) === false)
+  assert('resilience: flags=null is rejected', isDoctorPayloadShapeUsable({ ...base, flags: null }) === false)
+  assert('resilience: responses=null is rejected', isDoctorPayloadShapeUsable({ ...base, responses: null }) === false)
+  assert('resilience: responses={} (all namespaces missing) is rejected', isDoctorPayloadShapeUsable({ ...base, responses: {} }) === false)
+  assert(
+    'resilience: myungri_calculation=null is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: null }) === false,
+  )
+  assert(
+    'resilience: myungri_calculation missing .policy is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: { ...base.myungri_calculation, policy: undefined } }) === false,
+  )
+  assert(
+    'resilience: myungri_calculation missing .engine is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: { ...base.myungri_calculation, engine: undefined } }) === false,
+  )
+  assert(
+    'resilience: myungri_calculation.status not a string is rejected',
+    isDoctorPayloadShapeUsable({ ...base, myungri_calculation: { ...base.myungri_calculation, status: 123 } }) === false,
+  )
+
+  // Mutation guard: each individual `responses` namespace the file's own
+  // render code reads unconditionally (r.patient, r.visit_goal, r.modules,
+  // etc.) must independently be required -- deleting just one must still
+  // fail the check, proving the required-keys list actually covers it
+  // rather than only catching the all-or-nothing case above.
+  const requiredResponseKeys = [
+    'patient',
+    'visit_goal',
+    'primary_concern',
+    'additional_detail_concern',
+    'reference_symptoms',
+    'secondary_concerns',
+    'safety_flags',
+    'modules',
+    'secondary_modules',
+    'constitution_basics',
+    'medication',
+    'medical_history',
+    'allergy',
+    'surgery_history',
+    'reproductive_status',
+    'recent_tests',
+    'birth_info',
+    'free_text',
+  ]
+  for (const key of requiredResponseKeys) {
+    const mutated = { ...base.responses }
+    delete mutated[key]
+    const payload = { ...base, responses: mutated }
+    assert(`resilience: responses missing "${key}" alone is rejected`, isDoctorPayloadShapeUsable(payload) === false)
+  }
+
+  // An array where an object is expected must also be rejected (guards
+  // against a malformed body that JSON-parses fine but has the wrong
+  // shape for a specific field, not just a missing one).
+  assert(
+    'resilience: routing as an array (not an object) is rejected',
+    isDoctorPayloadShapeUsable({ ...base, routing: [] }) === false,
+  )
+}
+
+/* =========================================================================
+ * Independent-review regression (2nd Opus review of commit 109e024): the
+ * gate above only checks that each top-level `responses.*` namespace IS a
+ * plain object -- by design it never inspects leaves inside them (that was
+ * this batch's whole point: no leaf-level clinical inference). The review
+ * proved by direct execution that a payload can pass the gate while still
+ * being hollow enough (e.g. responses.modules = {}, routing = {} with no
+ * secondary_screens, myungri_calculation with no normalized/pending_approval)
+ * to crash several inline expressions in DoctorView's own render body --
+ * uncatchable by DoctorRecordErrorBoundary, since these are plain JS
+ * expressions evaluated as part of DoctorView's own function call, not a
+ * separate child component's render. The fix was defensive reads at each
+ * site (optional chaining / `?? []` fallbacks), not a stricter gate --
+ * these tests reproduce the review's exact probes against the fixed code
+ * so a future edit that removes one of those guards fails here.
+ * ======================================================================= */
+
+{
+  const hollowModules = {}
+  for (const primaryModule of ['Sleep', 'Bowel', 'Urinary', 'GI', 'Pain', 'Fatigue', 'Stress', 'Weight']) {
+    let threw = false
+    try {
+      frequencyField(primaryModule, hollowModules)
+      aggravatingField(primaryModule, hollowModules)
+    } catch {
+      threw = true
+    }
+    assert(`resilience: frequencyField/aggravatingField(${primaryModule}, {}) does not throw on a hollow modules namespace`, threw === false)
+  }
+  assert(
+    'resilience: frequencyField(Sleep, {}) returns null rather than reading m.sleep.frequency_per_week off a missing submodule',
+    frequencyField('Sleep', hollowModules) === null,
+  )
+  assert(
+    'resilience: aggravatingField(Pain, {}) returns null rather than reading m.pain.pain_qualities off a missing submodule',
+    aggravatingField('Pain', hollowModules) === null,
+  )
+}
+
+{
+  const requiredResponseKeys = [
+    'patient',
+    'visit_goal',
+    'primary_concern',
+    'additional_detail_concern',
+    'reference_symptoms',
+    'secondary_concerns',
+    'safety_flags',
+    'modules',
+    'secondary_modules',
+    'constitution_basics',
+    'medication',
+    'medical_history',
+    'allergy',
+    'surgery_history',
+    'reproductive_status',
+    'recent_tests',
+    'birth_info',
+    'free_text',
+  ]
+  const responses = Object.fromEntries(requiredResponseKeys.map((k) => [k, {}]))
+  // A shape the LAN server will accept as-is (server/index.js only requires
+  // questionnaire_version: string and truthy responses) with every
+  // namespace the gate checks present, but every leaf inside them missing --
+  // exactly the class of legacy/hand-crafted record the review reproduced.
+  const hollowPayload = {
+    session_id: 'resilience-hollow-leaves',
+    questionnaire_version: '1.0',
+    responses,
+    flags: {},
+    routing: {},
+    myungri_calculation: { policy: {}, engine: {}, flags: {}, status: 'resolved' },
+  }
+  assert(
+    'resilience: a hollow-but-namespace-complete payload still passes the gate ' +
+      '(the gate cannot and should not reject this -- leaf-level defenses in the render are what has to hold)',
+    isDoctorPayloadShapeUsable(hollowPayload) === true,
+  )
+
+  const r = hollowPayload.responses
+  const { routing } = hollowPayload
+  // Real code, not a re-implementation of the guard: this exercises the
+  // actual exported `frequencyField`/`aggravatingField` against the hollow
+  // `r.modules` object (a bare `{}`), which is exactly what the 2nd
+  // independent review reproduced by direct execution against 109e024.
+  const behavioralProbes = [
+    ['frequencyField(routing.primary_module, r.modules)', () => frequencyField(routing.primary_module, r.modules)],
+    ['aggravatingField(routing.primary_module, r.modules)', () => aggravatingField(routing.primary_module, r.modules)],
+  ]
+  for (const [label, fn] of behavioralProbes) {
+    let threw = false
+    try {
+      fn()
+    } catch {
+      threw = true
+    }
+    assert(`resilience: ${label} does not throw for a hollow-but-gate-passing payload`, threw === false)
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 2nd independent review (closing review of 824c864) found that the leaf
+ * fixes above covered only the two call sites the 1st review happened to
+ * name, and reproduced a live crash inside `primaryModuleFields` (12
+ * `routing.primary_module` values, 11 of which read an `m.<submodule>` that
+ * can be legitimately absent) plus `menopauseSleepSummaryLines` (reads
+ * `sleep.menopause` unconditionally) -- both are called directly from
+ * DoctorView's own render body, so a throw there is NOT caught by
+ * DoctorRecordErrorBoundary (same uncatchable-inline-expression class as
+ * the original bug). `primaryModuleFields` is exported specifically so this
+ * suite can call the REAL function against a hollow `m`, not re-implement
+ * its guard here.
+ * ---------------------------------------------------------------------- */
+{
+  const ALL_PRIMARY_MODULES = [
+    'Sleep', 'GI', 'Bowel', 'Urinary', 'Pain', 'Fatigue', 'Stress', 'Women', 'Pregnancy', 'Postpartum', 'Weight',
+  ]
+  // m = {} : every submodule missing. Every primaryModule value must return
+  // a safe (possibly empty) array, never throw.
+  for (const mod of ALL_PRIMARY_MODULES) {
+    let threw = false
+    let result
+    try {
+      result = primaryModuleFields(mod, {}, null)
+    } catch {
+      threw = true
+    }
+    assert(`resilience: primaryModuleFields('${mod}', {}, null) does not throw on a fully hollow modules object`, threw === false)
+    assert(`resilience: primaryModuleFields('${mod}', {}, null) returns an array`, Array.isArray(result))
+  }
+  // m.pain present but m.lbp/m.hip/m.neck/m.shoulder/m.knee/m.elbow/
+  // m.wrist_hand/m.tmj all missing, primaryModuleDetail='LBP' -- reproduces
+  // exactly the shape a legacy LBP submission that never got its regional
+  // sub-answers persisted would have. The base PAIN_01/02/04 fields must
+  // still come back; none of the region-specific blocks may throw.
+  {
+    let threw = false
+    let result
+    try {
+      result = primaryModuleFields('Pain', { pain: { primary_location: 'low_back_pelvis' } }, 'LBP')
+    } catch {
+      threw = true
+    }
+    assert('resilience: primaryModuleFields Pain case with m.pain present but every region submodule missing does not throw', threw === false)
+    assert(
+      'resilience: primaryModuleFields Pain case still returns the base PAIN_01/02/04 fields when region submodules are missing',
+      Array.isArray(result) && result.some((f) => f.qid === 'PAIN_01'),
+    )
+    assert(
+      'resilience: primaryModuleFields Pain case omits LBP_* fields rather than inventing them when m.lbp is missing',
+      !result.some((f) => f.qid.startsWith('LBP_')),
+    )
+  }
+  // m.sleep present but m.sleep.menopause missing -- the exact shape that
+  // crashed menopauseSleepSummaryLines/primaryModuleFields's MS_* fields in
+  // the closing review's repro (fixture 0 with modules.sleep = {}).
+  {
+    let threw = false
+    let result
+    try {
+      result = primaryModuleFields('Sleep', { sleep: { problems: null } }, null)
+    } catch {
+      threw = true
+    }
+    assert('resilience: primaryModuleFields Sleep case with m.sleep present but m.sleep.menopause missing does not throw', threw === false)
+    assert(
+      'resilience: primaryModuleFields Sleep case omits MS_* fields rather than inventing them when m.sleep.menopause is missing',
+      Array.isArray(result) && !result.some((f) => f.qid.startsWith('MS_')),
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Structural guards for the inline JSX leaf reads that can't be exercised
+ * as standalone pure functions (they're single-use expressions inside
+ * DoctorView's own JSX, not extracted helpers) -- confirms the fix in
+ * 824c864/this round is actually still wired into the source, not just
+ * present in a function this suite happens to import. Uses the same
+ * source-regex technique already established for the boundary key checks
+ * below, rather than re-implementing the guard logic here (the mistake the
+ * closing review found in the previous version of this test).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: a shared asArray() helper guards against both missing AND wrong-typed array fields (not just `?? []`, which lets a non-array truthy value through)',
+    /function asArray<T>\(value: unknown\): T\[\] \{\s*\n\s*return Array\.isArray\(value\)/.test(src),
+  )
+  assert(
+    'resilience: routing.secondary_screens is read through asArray(), not a bare `?? []`',
+    /asArray<string>\(routing\.secondary_screens\)/.test(src),
+  )
+  assert(
+    'resilience: saju.policy.pending_approval is read through asArray() at every render/JudgmentPanel-prop site',
+    (src.match(/asArray(?:<string>)?\(saju\.policy\.pending_approval\)/g) ?? []).length >= 3,
+  )
+  assert(
+    'resilience: r.reproductive_status.derived is optional-chained before .source is read',
+    /r\.reproductive_status\?\.derived\?\.source/.test(src),
+  )
+  assert(
+    'resilience: saju.normalized?.solarDate is optional-chained before its .year/.month/.day are read',
+    /saju\.normalized\?\.solarDate/.test(src),
+  )
+  assert(
+    // 12차 독립 리뷰 HIGH-3: truthy 체크(`!saju.pillars?.day`)는 day가
+    // 존재하지만 wrong-typed(예: number)면 통과시켜 .charAt(0)에서 그대로
+    // 크래시했다 -- 타입 검사(`typeof dayPillar !== 'string'`)로 교체.
+    'resilience: MyungriCompactCard checks typeof saju.pillars?.day === "string" (not just truthy) before calling .charAt on it',
+    /const dayPillar = saju\.pillars\?\.day\s*\n\s*if \(typeof dayPillar !== 'string'\)/.test(src),
+  )
+  assert(
+    'resilience: primaryModuleFields Sleep case guards m.sleep.menopause before reading its MS_* leaves',
+    /const ms = m\.sleep\.menopause\s*\n\s*return \[/.test(src) && /\.\.\.\(ms\s*\n\s*\? \[/.test(src),
+  )
+  assert(
+    'resilience: menopauseSleepSummaryLines (a separate function from primaryModuleFields, used by the 10-second-summary card) also guards sleep?.menopause before reading its gate_context/stage/etc leaves',
+    /const ms = sleep\?\.menopause\s*\n\s*if \(!ms\) return null/.test(src),
+  )
+  assert(
+    'resilience: a shared asArray() -- isNonEmptyObject() -- helper exists guarding against a submodule that is technically present but completely empty (a shape real submissions cannot produce, since buildResponsePayload always fills every key even when unanswered -- an empty object only happens from legacy/hand-crafted data, and leaving it through renders every leaf as undefined, which several panels display as a definitive "아니요"/negative rather than "확인 필요")',
+    /function isNonEmptyObject\(value: unknown\): boolean \{\s*\n\s*return isPlainObject\(value\) && Object\.keys\(value\)\.length > 0/.test(
+      src,
+    ),
+  )
+  assert(
+    'resilience: a shared isNullOrStringArray() helper exists guarding array ELEMENTS, not just the array container -- lbpAdapter.ts/neckAdapter.ts (frozen) call .toUpperCase() unconditionally on each medical_history_flags element',
+    /function isNullOrStringArray\(value: unknown\): boolean \{/.test(src) &&
+      /return Array\.isArray\(value\) && value\.every\(\(v\) => typeof v === 'string'\)/.test(src),
+  )
+  assert(
+    'resilience: a SafetyDataUnavailableNotice component exists (DoctorView.tsx) so "region not applicable" (silent null) and "region applicable but not computable" (explicit notice) are never conflated -- 5th independent review HIGH-2',
+    /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(src) &&
+      /안전 상태를 자동으로 계산할 수 없습니다/.test(src),
+  )
+  assert(
+    "resilience: every simple regional SafetyPanel gate (Knee/Elbow/WristHand) splits applicability (safety_flags.<region> == null -> silent null) from malformed-data (modules.<region> empty -> explicit SafetyDataUnavailableNotice, never silence) -- a legacy record with safety_flags.<region> entirely absent must stay silent, but one with safety_flags.<region> present and modules.<region> empty must show the notice, not nothing",
+    ['knee', 'elbow', 'wrist_hand'].every((region) =>
+      new RegExp(
+        `safety_flags\\.${region} == null\\) return null\\s*\\n[\\s\\S]*?if \\(!isNonEmptyObject\\(payload\\.responses\\.modules\\.${region}\\) \\|\\| !isFlagsUsable\\(payload\\.flags, payload\\.responses\\)\\) \\{\\s*\\n\\s*return <SafetyDataUnavailableNotice`,
+      ).test(src),
+    ),
+  )
+  assert(
+    'resilience: NeckSafetyPanel splits applicability (safety_flags.neck == null -> silent null) from malformed-data, and additionally requires reproductive_status.derived, a null-or-string-array medical_history_flags, AND a null-or-string-array medication.medication_types (5th independent review HIGH-1: neckAdapter.ts frozen mapMedication calls .toUpperCase() on each medication_types element, missed by round 4) -- all four crash inside frozen neckAdapter.ts functions, and the malformed branch must render an explicit notice, not silence (HIGH-2)',
+    /safety_flags\.neck == null\) return null/.test(src) &&
+      /!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*isUnreadableReproductiveDerived\(payload\.responses\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+        src,
+      ),
+  )
+  assert(
+    'resilience: ShoulderSafetyPanel splits applicability (safety_flags.shoulder == null -> silent null) from malformed-data, and additionally requires modules.neck (not just modules.shoulder), reproductive_status.derived, medical_history_flags, AND medication.medication_types (transitively via frozen shoulderAdapter.ts calling neckAdapter.ts) -- the malformed branch must render an explicit notice, not silence',
+    /safety_flags\.shoulder == null\) return null/.test(src) &&
+      /!isNonEmptyObject\(payload\.responses\.modules\.shoulder\) \|\|\s*\n\s*!isNonEmptyObject\(payload\.responses\.modules\.neck\) \|\|\s*\n\s*isUnreadableReproductiveDerived\(payload\.responses\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medication\.medication_types\) \|\|[\s\S]*?!isFlagsUsable\(payload\.flags, payload\.responses\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+        src,
+      ),
+  )
+  assert(
+    'resilience: the LbpSafetyPanel gate uses safety_flags.lbp (not routing.primary_module_detail) as its applicability signal -- safety_flags.lbp is computed whenever IS_PRIMARY_LBP holds, which also covers the Additional Detailed Concern route where primary_module_detail stays null (6th independent review HIGH-1) -- and separately splits malformed-data (modules.lbp/reproductive_status.derived/medical_history_flags -> explicit SafetyDataUnavailableNotice, not silence)',
+    /safety_flags\.lbp == null\) return null/.test(src) &&
+      /!isNonEmptyObject\(payload\.responses\.modules\.lbp\) \|\|\s*\n\s*isUnreadableReproductiveDerived\(payload\.responses\) \|\|\s*\n\s*!isNullOrStringArray\(payload\.responses\.medical_history\.medical_history_flags\)\s*\n\s*\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+        src,
+      ),
+  )
+  assert(
+    'resilience: showLbpExam/showShoulderExam on JudgmentPanel use the same nullish safety_flags.<region> applicability signal as their SafetyPanel gates -- routing tags or strict !== null give wrong answers on the Additional Detailed Concern route / legacy undefined keys (6th independent review HIGH-1/MEDIUM-1)',
+    /showLbpExam=\{payload\.responses\.safety_flags\.lbp != null\}/.test(src) &&
+      /showShoulderExam=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(src),
+  )
+  assert(
+    "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
+    /primaryModuleDetail === 'LBP' && m\.lbp\s*\n\s*\? \[/.test(src),
+  )
+  assert(
+    'resilience: every other Pain-case region sub-block additionally requires its own submodule (m.hip/m.neck/m.shoulder/m.knee/m.elbow/m.wrist_hand/m.tmj), not just the primary_location tag',
+    ['m.hip', 'm.neck', 'm.shoulder', 'm.knee', 'm.elbow', 'm.wrist_hand', 'm.tmj'].every((sub) =>
+      new RegExp(`primary_location === '[a-z_]+' && ${sub.replace('.', '\\.')}\\s*\\n\\s*\\? \\[`).test(src),
+    ),
+  )
+  assert(
+    'resilience: SECONDARY_MODULE_VALUE lambdas optional-chain into each submodule (sm.sleep?., sm.gi?., etc.) rather than assuming it exists',
+    /sleep: \(sm\) => sm\.sleep\?\.problems \?\? null/.test(src) && /weight: \(sm\) => sm\.weight\?\.goal \?\? null/.test(src),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * 3rd independent review: HipSafetyPanel.tsx/TmjSafetyPanel.tsx/
+ * AnkleFootSafetyPanel.tsx are separate files (not DoctorView.tsx) with the
+ * exact same strict `safety_flags.<region> === null` gate bug -- a legacy
+ * record where that key is entirely absent (undefined, not null) reads
+ * responses.modules.<region>.* unconditionally right after.
+ *
+ * 5th independent review HIGH-2: each also now splits applicability
+ * (safety_flags.<region> == null -> silent null) from malformed-data
+ * (modules.<region> empty -> explicit SafetyDataUnavailableNotice, never
+ * silence).
+ * ---------------------------------------------------------------------- */
+{
+  const hipSrc = await readFile(fileURLToPath(new URL('../src/doctor/HipSafetyPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: HipSafetyPanel splits applicability (safety_flags.hip == null -> silent null) from malformed-data (modules.hip empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
+    /safety_flags\.hip == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.hip\) \|\| !isFlagsUsable\(payload\.flags, payload\.responses\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      hipSrc,
+    ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(hipSrc),
+  )
+
+  const tmjSrc = await readFile(fileURLToPath(new URL('../src/doctor/TmjSafetyPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: TmjSafetyPanel splits applicability (safety_flags.tmj == null -> silent null) from malformed-data (modules.tmj empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
+    /safety_flags\.tmj == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.tmj\) \|\| !isFlagsUsable\(payload\.flags, payload\.responses\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      tmjSrc,
+    ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(tmjSrc),
+  )
+
+  const ankleSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/AnkleFootSafetyPanel.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'resilience: AnkleFootSafetyPanel splits applicability (safety_flags.ankle_foot == null -> silent null) from malformed-data (modules.ankle_foot empty -> explicit SafetyDataUnavailableNotice) and defines its own local copy of that component',
+    /safety_flags\.ankle_foot == null\) return null\s*\n\s*if \(!isNonEmptyObject\(payload\.responses\.modules\.ankle_foot\) \|\| !isFlagsUsable\(payload\.flags, payload\.responses\)\) \{\s*\n\s*return <SafetyDataUnavailableNotice/.test(
+      ankleSrc,
+    ) && /function SafetyDataUnavailableNotice\(\{ label \}: \{ label: string \}\) \{/.test(ankleSrc),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * 5th independent review HIGH-1/HIGH-2 -- behavioral proof, not just
+ * source-regex: render the REAL LbpSafetyPanel/NeckSafetyPanel/
+ * ShoulderSafetyPanel components against a real fixture mutated to be
+ * "applicable but corrupt" (safety_flags.<region> stays a genuinely
+ * computed non-null value -- exactly what a legacy pre-`derived` or
+ * pre-`medication_types`-validation record looks like) and assert the
+ * explicit "확인 필요"-style notice text is actually PRESENT in the
+ * rendered HTML -- not merely that render didn't throw. A test asserting
+ * only `!threw` would have passed on the pre-fix code too (it silently
+ * returned null), which is exactly the bug HIGH-2 identified.
+ * ---------------------------------------------------------------------- */
+{
+  const lbpFixture = byName('허리 통증 주호소 (LBP, 확인 필요)')
+  const neckFixture = byName('목 통증 주호소 (NECK, 확인 필요)')
+  const shoulderFixture = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+
+  const UNAVAILABLE_TEXT = '안전 상태를 자동으로 계산할 수 없습니다'
+
+  // HIGH-2: reproductive_status.derived missing/null, everything else intact
+  // (including a real, already-computed safety_flags.<region> status) must
+  // show the explicit notice, not silently render nothing.
+  {
+    const p = structuredClone(lbpFixture.payload)
+    p.responses.reproductive_status.derived = null
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel with reproductive_status.derived=null (applicable LBP record, real computed safety_flags.lbp) renders the explicit unavailable notice, not silence',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const p = structuredClone(neckFixture.payload)
+    p.responses.reproductive_status.derived = null
+    const html = renderToString(React.createElement(NeckSafetyPanel, { payload: p }))
+    assert(
+      'resilience behavioral: NeckSafetyPanel with reproductive_status.derived=null renders the explicit unavailable notice, not silence',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  // HIGH-1: medication.medication_types containing a non-string element --
+  // frozen neckAdapter.ts's mapMedication calls .toUpperCase() on each
+  // element unconditionally (missed by round 4, which only guarded
+  // medical_history_flags's identical pattern).
+  {
+    const p = structuredClone(neckFixture.payload)
+    p.responses.medication.medication_use = 'yes'
+    p.responses.medication.medication_types = ['psych', 7, null, { a: 1 }]
+    const html = renderToString(React.createElement(NeckSafetyPanel, { payload: p }))
+    assert(
+      'resilience behavioral: NeckSafetyPanel with medication_types containing non-string elements renders the explicit unavailable notice instead of throwing (5th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const p = structuredClone(shoulderFixture.payload)
+    p.responses.medication.medication_use = 'yes'
+    p.responses.medication.medication_types = ['blood_thinner', 42]
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel with medication_types containing a non-string element (transitively via frozen neckAdapter.ts) renders the explicit unavailable notice instead of throwing',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  // Sanity: the "genuinely not applicable" path must still stay silent
+  // (empty render), proving the HIGH-2 fix did not turn every non-match
+  // into a visible notice -- only the "applicable but corrupt" case should.
+  // Applicability is safety_flags.lbp (post-6th-review-fix), not
+  // routing.primary_module_detail -- so null out the former to simulate
+  // a genuinely LBP-unrelated record.
+  {
+    const p = structuredClone(lbpFixture.payload)
+    p.responses.safety_flags.lbp = null
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel for a record where LBP genuinely does not apply (safety_flags.lbp == null) still renders nothing (not the notice) -- applicability and malformed-data must stay distinct outcomes',
+      html === '' && !html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  // 6th independent review HIGH-1: a record that reached LBP via the
+  // Additional Detailed Concern route (routing.primary_module_detail stays
+  // null on that route; only routing.additional_module_detail is set) but
+  // has a REAL, already-computed safety_flags.lbp (e.g. URGENT_REVIEW from
+  // cauda-equina red flags) must still render that computed status -- not
+  // silently disappear because the gate used to key off
+  // primary_module_detail instead of safety_flags.lbp.
+  {
+    const p = structuredClone(lbpFixture.payload)
+    p.routing.primary_module_detail = null
+    p.routing.additional_module_detail = 'LBP'
+    // safety_flags.lbp is untouched -- still the fixture's real computed
+    // REVIEW_REQUIRED status, exactly as coreSpec.ts would compute it for
+    // this route (IS_PRIMARY_LBP depends on hasDetailedConcern, not on
+    // primary_module_detail).
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel renders the real computed safety_flags.lbp status even when routing.primary_module_detail is null (Additional Detailed Concern route) -- gate must key off safety_flags.lbp, not the routing tag (6th independent review HIGH-1)',
+      html.includes('안전 확인') && html.includes('허리(LBP)') && !html.includes(UNAVAILABLE_TEXT) && html !== '',
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 8th independent review HIGH-1: ShoulderSafetyPanel/KneeSafetyPanel (and
+   * by the same fix, ElbowSafetyPanel/WristHandSafetyPanel/HipSafetyPanel.
+   * tsx/TmjSafetyPanel.tsx/AnkleFootSafetyPanel.tsx) pass
+   * `payload.flags.general_red` straight into their region's
+   * `core_safety_already_urgent` state -- with hollow/legacy `flags`,
+   * `general_red` reads as `undefined` (falsy), so a record whose core
+   * SAFETY_01 red flag genuinely computed URGENT_REVIEW could render as an
+   * affirmative "안전" instead. Every one of these panels now also
+   * requires `isFlagsUsable(payload.flags, payload.responses)` before
+   * computing anything -- proven here by behavioral render, not just
+   * source-regex, on the two panels this bundle re-exports.
+   * ---------------------------------------------------------------------- */
+  {
+    const shoulderFixture2 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture2.payload)
+    p.flags = {}
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel with hollow flags ({}) renders the explicit unavailable notice instead of computing a safety status from an unreadable general_red (8th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const kneeFixture = byName('무릎 통증 주호소 (KNEE, 고관절 연관통 의심)')
+    const p = structuredClone(kneeFixture.payload)
+    p.flags = {}
+    const html = renderToString(React.createElement(KneeSafetyPanel, { payload: p }))
+    assert(
+      'resilience behavioral: KneeSafetyPanel with hollow flags ({}) renders the explicit unavailable notice instead of computing a safety status from an unreadable general_red (8th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 8th independent review HIGH-3: flags can be structurally valid (all 7
+   * keys boolean) yet semantically stale relative to responses (a
+   * hand-edited/version-skewed record whose flags were never recomputed).
+   * isFlagsUsable now recomputes general_red/gi_needs_review/
+   * bowel_needs_review from responses and rejects a mismatch.
+   * ---------------------------------------------------------------------- */
+  {
+    const shoulderFixture3 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture3.payload)
+    // Structurally-valid flags (all 7 keys booleans) but general_red is
+    // asserted true while the real SAFETY_01 responses report no red flag
+    // -- exactly the "stale flags" scenario HIGH-3 describes.
+    p.flags.general_red = true
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel treats structurally-valid but responses-inconsistent flags (general_red=true contradicting real SAFETY_01=none) as unusable, not as a trustworthy urgent signal (8th independent review HIGH-3)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 9th independent review HIGH-1: round 8's isFlagsConsistentWithResponses
+   * only recomputed general_red/gi_needs_review/bowel_needs_review --
+   * requires_staff_check (a pure OR of those three, coreSpec.ts:4069) and
+   * the 3 remaining keys (sleep_disorder_review/sleep_disorder_priority_
+   * review/response_consistency_review, all recomputable from MS_05/MS_01/
+   * WOMEN_SAFETY_01) were left unchecked. A record whose general_red/gi/
+   * bowel are each individually correct but whose requires_staff_check
+   * doesn't match their OR is provably corrupt yet passed round 8's check.
+   * ---------------------------------------------------------------------- */
+  {
+    const shoulderFixture4 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture4.payload)
+    // general_red/gi_needs_review/bowel_needs_review are all individually
+    // correct (still match the real 'none' SAFETY_01 answer) -- only
+    // requires_staff_check is stale, hiding what should be a staff-check
+    // banner. Round 8's check alone would call this flags object usable.
+    p.flags.requires_staff_check = true
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel treats a requires_staff_check that contradicts general_red||gi_needs_review||bowel_needs_review as unusable, even when those three fields are each individually correct (9th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+  {
+    const shoulderFixture5 = byName('어깨 통증 주호소 (SHOULDER, 신속 의뢰 고려)')
+    const p = structuredClone(shoulderFixture5.payload)
+    p.responses.modules.sleep = {
+      ...(p.responses.modules.sleep ?? {}),
+      menopause: { ...(p.responses.modules.sleep?.menopause ?? {}), sleep_disorder_screen: ['witnessed_apnea'] },
+    }
+    // A real witnessed_apnea report should set sleep_disorder_priority_review
+    // true (coreSpec.ts computeFlags) -- leaving it stale false here hides a
+    // genuine priority sleep-disorder screen finding, the direction round 8
+    // could not detect since it never looked at MS_05 at all.
+    p.flags.sleep_disorder_priority_review = false
+    const html = renderToString(
+      React.createElement(ShoulderSafetyPanel, { payload: p, shoulderObjectiveCuffWeakness: null }),
+    )
+    assert(
+      'resilience behavioral: ShoulderSafetyPanel treats sleep_disorder_priority_review=false as unusable when MS_05 reports witnessed_apnea (a real finding round 8 never cross-checked) (9th independent review HIGH-1)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 9th independent review HIGH-2/HIGH-3: reproductive_status.derived can
+   * never be null in a real submission, and prior rounds' truthiness gate
+   * (`!payload.responses.reproductive_status.derived`) let a structurally
+   * valid but STALE derived object (never recomputed after WOMEN_SAFETY_01
+   * changed) pass straight through into lbpAdapter.ts's (frozen)
+   * mapPregnancyStatus, which converts anything that isn't `true`/`null`
+   * into an explicit "not pregnant" -- fabricating a false treatment-safety
+   * clearance for a genuinely reported pregnancy. isUnreadableReproductive
+   * Derived now also recomputes pregnant/postpartum_1y/breastfeeding from
+   * the raw WOMEN_SAFETY_01 answer when derived.source==='WOMEN_SAFETY_01'.
+   * ---------------------------------------------------------------------- */
+  {
+    const lbpFixture2 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture2.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant']
+    // Structurally valid derived (all fields correctly typed) but stale --
+    // raw still reflects some earlier, different answer, and pregnant
+    // was never recomputed to true.
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['menopause'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    const html = renderToString(
+      React.createElement(LbpSafetyPanel, { payload: p, lbpObjectiveMotorDeficit: null }),
+    )
+    assert(
+      'resilience behavioral: LbpSafetyPanel renders the explicit unavailable notice (not a computed 치료 안전 status) when reproductive_status.derived is structurally valid but stale relative to a real reported pregnancy (9th independent review HIGH-2/HIGH-3)',
+      html.includes(UNAVAILABLE_TEXT),
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 10th independent review LOW-1: isUnreadableReproductiveDerived's raw-vs-
+   * derived consistency check (added in round 9 for HIGH-3) was
+   * one-directional -- it only caught "raw asserts X but derived denies it".
+   * The reverse ("derived asserts X but raw never reported it") returned
+   * "consistent", so a stale derived object could FABRICATE a pregnancy/
+   * postpartum/breastfeeding fact that was never actually reported (this
+   * batch's core invariant #2: never invent a clinical fact). pregnant/
+   * postpartum_1y/breastfeeding have no legitimate cross-module override
+   * (unlike pregnancy_possible, which PREGNANCY_01==='possible' can
+   * legitimately set true even without WOMEN_SAFETY_01 asserting it), so
+   * this direction is unconditionally checked now.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture3 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture3.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived catches a derived.pregnant=true that raw never reported (10th independent review LOW-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture4 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture4.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: true,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived catches a derived.postpartum_1y=true that raw never reported',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: a genuinely consistent derived (matches raw exactly) is still accepted.
+    const lbpFixture5 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture5.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['pregnant'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does not false-positive on a genuinely consistent derived object',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 11th independent review MEDIUM-1: rounds 9/10 exempted
+   * derived.source==='pregnancy_module'/'postpartum_module' entirely from
+   * the raw-vs-derived consistency check, reasoning they "cannot be
+   * recomputed from this field" -- but coreSpec.ts's deriveReproductiveStatus
+   * (lines ~3820-3891) DOES compute both deterministically:
+   * pregnancy_module only ever fires when visit_goal.women_goal==='pregnancy'
+   * AND modules.pregnancy.status==='pregnant' (PREGNANCY_01), always
+   * producing the fixed shape {raw:['pregnant'], pregnant:true,
+   * pregnancy_possible:false, postpartum_1y:null, breastfeeding:null}.
+   * postpartum_module only fires when visit_goal.women_goal==='postpartum',
+   * with postpartum_1y/breastfeeding recomputed from
+   * modules.postpartum.time_since_delivery/breastfeeding_status
+   * (POSTPARTUM_01/03). A record claiming either source outside its real
+   * context, or with a shape that doesn't match what those raw fields
+   * actually recompute to, fabricates a pregnancy/postpartum fact that was
+   * never reported.
+   * ------------------------------------------------------------------- */
+  {
+    const pregnancyFixture = byName('임신 상담')
+    assert(
+      'resilience: isUnreadableReproductiveDerived accepts the genuine pregnancy_module derived object exactly as coreSpec.ts computed it (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(pregnancyFixture.payload.responses) === false,
+    )
+  }
+  {
+    // Same well-formed pregnancy_module shape, but spliced onto a record
+    // whose visit_goal is NOT the pregnancy module (a plain LBP fixture) --
+    // this is exactly the fabrication this fix closes.
+    const lbpFixture6 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture6.payload)
+    p.responses.reproductive_status.derived = {
+      source: 'pregnancy_module',
+      raw: ['pregnant'],
+      pregnant: true,
+      pregnancy_possible: false,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a derived.source="pregnancy_module" claimed outside any pregnancy visit context (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Genuine pregnancy context, but the shape deviates from the one fixed
+    // shape coreSpec.ts always produces for this source.
+    const pregnancyFixture2 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture2.payload)
+    p.responses.reproductive_status.derived.breastfeeding = true
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a pregnancy_module derived object that deviates from the one fixed shape coreSpec.ts always produces for it',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const postpartumFixture = byName('산후 회복')
+    assert(
+      'resilience: isUnreadableReproductiveDerived accepts the genuine postpartum_module derived object exactly as coreSpec.ts recomputed it from POSTPARTUM_01/03 (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(postpartumFixture.payload.responses) === false,
+    )
+  }
+  {
+    const lbpFixture7 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture7.payload)
+    p.responses.reproductive_status.derived = {
+      source: 'postpartum_module',
+      raw: ['6w_to_3m', 'yes'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: true,
+      breastfeeding: true,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a derived.source="postpartum_module" claimed outside any postpartum visit context (11th independent review MEDIUM-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Genuine postpartum context, but postpartum_1y contradicts what
+    // POSTPARTUM_01='6w_to_3m' actually recomputes to (must be true).
+    const postpartumFixture2 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture2.payload)
+    p.responses.reproductive_status.derived.postpartum_1y = false
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a postpartum_module derived.postpartum_1y that contradicts what POSTPARTUM_01 actually recomputes to',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 12차 독립 리뷰 HIGH-1: derived.source가 세 값(WOMEN_SAFETY_01/
+   * pregnancy_module/postpartum_module) + null 중 무엇과도 일치하지 않는
+   * wrong-typed/엉뚱한 값이면, 이전 구현은 어떤 if/else if 분기에도 안
+   * 걸려 마지막 `return false`까지 통과했다 -- 즉 "정상"으로 판정되어
+   * lbpAdapter.ts의 mapPregnancyStatus가 pregnant/pregnancy_possible을
+   * false로 읽어, 실제 임신/수유를 보고한 환자에게 명시적 음성 소견을
+   * 지어낼 수 있었다.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture8 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture8.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant', 'breastfeeding']
+    p.responses.reproductive_status.derived = {
+      source: ['WOMEN_SAFETY_01'],
+      raw: ['pregnant', 'breastfeeding'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a wrong-typed (array) derived.source instead of matching no branch and falling through as "consistent" (12th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture9 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture9.payload)
+    p.responses.reproductive_status.reproductive_status = ['pregnant']
+    p.responses.reproductive_status.derived = {
+      source: 'women_safety_01',
+      raw: ['pregnant'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a near-miss bogus string derived.source (12th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 12차 독립 리뷰 HIGH-2: 이전 구현은 "source가 pregnancy_module/
+   * postpartum_module이면 컨텍스트가 실제로 그런가"만 검사했지, 반대
+   * 방향("컨텍스트가 실제로 임신/산후인데 source가 WOMEN_SAFETY_01이거나
+   * null인가")은 전혀 검사하지 않았다 -- 실제 임신/산후 컨텍스트에서
+   * source를 WOMEN_SAFETY_01로 남겨두고 모든 필드를 false로 채운
+   * stale/조작된 레코드가 그대로 "정상"으로 통과해 동일한 허위 음성
+   * 소견을 만들 수 있었다.
+   * ------------------------------------------------------------------- */
+  {
+    const pregnancyFixture3 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture3.payload)
+    // 실제 임신 컨텍스트(visit_goal.women_goal==='pregnancy' &&
+    // modules.pregnancy.status==='pregnant')는 그대로 두고, source만
+    // WOMEN_SAFETY_01로 바꿔 컨텍스트↔source 반대 방향 불일치를 만든다.
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a genuine pregnancy context whose source is claimed to be WOMEN_SAFETY_01 instead of pregnancy_module (12th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const postpartumFixture3 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture3.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a genuine postpartum context whose source is claimed to be WOMEN_SAFETY_01 instead of postpartum_module (12th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus only ever
+   * produces source==='WOMEN_SAFETY_01' when Array.isArray(answer) is true
+   * -- that source paired with a non-array raw answer (a legacy
+   * single-select string, e.g. 'pregnant') is a combination
+   * deriveReproductiveStatus itself can never produce. The previous
+   * implementation fell through the Array.isArray(rawAnswer) guard and
+   * treated it as "consistent", letting an actually-reported pregnancy be
+   * rendered as an explicit "임신 중: 아니요" negative.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture10 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture10.payload)
+    p.responses.reproductive_status.reproductive_status = 'pregnant'
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: 'pregnant',
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects source="WOMEN_SAFETY_01" paired with a non-array raw answer (legacy single-select) -- deriveReproductiveStatus can never produce this combination (13th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 13차 독립 리뷰 LOW-3: a raw reproductive answer that exists (non-null,
+   * non-undefined) but is not an array -- so deriveReproductiveStatus's
+   * `Array.isArray(answer)` check fails and it produces the same
+   * source:null/all-null object it would for a patient who was never asked
+   * -- is NOT "doesn't apply", it is "answered but never processed". The
+   * previous implementation treated source:null as always meaning
+   * "genuinely not applicable" regardless of whether a raw answer existed,
+   * silently dropping the patient's own reported (legacy-format) answer.
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture11 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture11.payload)
+    p.responses.reproductive_status.reproductive_status = 'pregnant'
+    p.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a non-array raw answer that exists paired with derived.source===null -- this is "answered but unprocessed", not "doesn\'t apply" (13th independent review LOW-3)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: a genuinely never-asked patient (raw is null, not merely
+    // non-array) with source:null must still read as consistent/readable --
+    // the LOW-3 fix must not turn every male-patient/no-report record into
+    // a false "cannot read" warning.
+    const lbpFixture12 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture12.payload)
+    p.responses.reproductive_status.reproductive_status = null
+    p.responses.reproductive_status.derived = {
+      source: null,
+      raw: null,
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive when raw is genuinely null (never asked/answered) and source is null (13th independent review LOW-3 sanity check)',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 14차 독립 리뷰 HIGH-2: WOMEN_SAFETY_01은 coreSpec.ts에서 `required: true`
+   * `multi_choice`이고, QuestionScreen.tsx의 isAnswered가
+   * `Array.isArray(value) && value.length > 0`을 요구하므로 앱을 거친 실제
+   * 제출은 이 배열이 절대 비어있거나 무효한 원소를 가질 수 없다 -- `[]`/
+   * `["zzz"]`(옵션 목록에 없는 값)/`[{}]`(원소가 문자열이 아님)는 전부
+   * deriveReproductiveStatus가 절대 만들 수 없는 손상이다. 이전 구현은
+   * 멤버십만 검사해서(`rawSet.has(...)`) 이 세 경우 모두 어떤 검사도
+   * 걸리지 않고 "정상"으로 통과시켰다 -- 화면에서 `["none"]`(진짜 미해당)과
+   * 구별 불가능했다(governing task 정책 2 위반).
+   * ------------------------------------------------------------------- */
+  {
+    const lbpFixture13 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture13.payload)
+    p.responses.reproductive_status.reproductive_status = []
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: [],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an empty WOMEN_SAFETY_01 raw array -- QuestionScreen.tsx\'s isAnswered can never produce this through the app, so it is corruption, not "해당 없음" (14th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture14 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture14.payload)
+    p.responses.reproductive_status.reproductive_status = ['zzz']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['zzz'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a WOMEN_SAFETY_01 raw array containing a value outside the declared option set (14th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const lbpFixture15 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture15.payload)
+    p.responses.reproductive_status.reproductive_status = [{}]
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: [{}],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a WOMEN_SAFETY_01 raw array containing a non-string element (14th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: a genuine negative (["none"]) must still read as consistent --
+    // the HIGH-2 fix must not turn a real "해당 없음" answer into a false
+    // "cannot read" warning.
+    const lbpFixture16 = byName('허리 통증 주호소 (LBP, 확인 필요)')
+    const p = structuredClone(lbpFixture16.payload)
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive on a genuine ["none"] answer (14th independent review HIGH-2 sanity check)',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 15차 독립 리뷰 HIGH-2: POSTPARTUM_01(time_since_delivery)/POSTPARTUM_03
+   * (breastfeeding_status)는 postpartum 컨텍스트에서 항상 물어보는
+   * `required: true` single_choice라서, 실제 제출은 이 값이 옵션 목록
+   * 밖일 수 없다. 옵션 밖 문자열은 `POSTPARTUM_WITHIN_1Y.includes(...)`/
+   * `=== 'yes' || === 'mixed'` 비교에서 그냥 false가 되므로, 14차가
+   * WOMEN_SAFETY_01에 적용한 것과 동일한 클래스의 fail-open이
+   * postpartum_module 분기에 그대로 남아있었다 -- 손상된 raw 답변에
+   * 대해서도 "출산 후 1년 이내: 아니요/모유수유 중: 아니요"를 계산해
+   * 보여줬다.
+   * ------------------------------------------------------------------- */
+  {
+    const postpartumFixture4 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture4.payload)
+    p.responses.modules.postpartum.time_since_delivery = 'ZZZ'
+    // coreSpec.ts가 실제로 계산했다면 옵션 밖 값에 대해 postpartum_1y는
+    // false가 된다 -- 이 test는 바로 그 "구조적으로는 자기 자신과
+    // 일치하는" 손상 케이스를 재현한다.
+    p.responses.reproductive_status.derived.postpartum_1y = false
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an out-of-option-set POSTPARTUM_01(time_since_delivery) value instead of silently recomputing postpartum_1y=false from it (15th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    const postpartumFixture5 = byName('산후 회복')
+    const p = structuredClone(postpartumFixture5.payload)
+    p.responses.modules.postpartum.breastfeeding_status = 'ZZZ'
+    p.responses.reproductive_status.derived.breastfeeding = false
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an out-of-option-set POSTPARTUM_03(breastfeeding_status) value instead of silently recomputing breastfeeding=false from it (15th independent review HIGH-2)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: the genuine fixture (real option-set values) must still read
+    // as consistent -- the HIGH-2 fix must not reject legitimate
+    // POSTPARTUM_01/03 answers.
+    const postpartumFixture6 = byName('산후 회복')
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive on genuine in-option-set POSTPARTUM_01/03 values (15th independent review HIGH-2 sanity check)',
+      isUnreadableReproductiveDerived(postpartumFixture6.payload.responses) === false,
+    )
+  }
+
+  /* -----------------------------------------------------------------------
+   * 16차 독립 리뷰 HIGH-1: coreSpec.ts deriveReproductiveStatus는
+   * key==='pregnancy' && PREGNANCY_01==='possible'일 때 WOMEN_SAFETY_01
+   * 응답에 'pregnancy_possible'이 없어도 pregnancy_possible을 true로
+   * override한다(난임/임신 준비 상담에서 안전 정보 누락 방지) -- 지금까지의
+   * 모든 raw-derived 일관성 검사는 이 override 방향을 전혀 검사하지 않아,
+   * 손상된 derived.pregnancy_possible=false/null이 실제 override로 만들어진
+   * true와 화면상 구별되지 않고 "정상" 판정을 받았다.
+   * ------------------------------------------------------------------- */
+  {
+    const pregnancyFixture1 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture1.payload)
+    p.responses.modules.pregnancy.status = 'possible'
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      // coreSpec.ts가 실제로 계산했다면 PREGNANCY_01==='possible' override로
+      // true가 되어야 한다 -- 이 test는 그 override를 무시한 손상된 false를
+      // 재현한다.
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a corrupted derived.pregnancy_possible=false when PREGNANCY_01==="possible" should have overridden it to true (16th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Same override, but through the WOMEN_SAFETY_01===['unknown']-only
+    // branch, whose expected pregnancy_possible was previously hardcoded to
+    // null regardless of the module override.
+    const pregnancyFixture2 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture2.payload)
+    p.responses.modules.pregnancy.status = 'possible'
+    p.responses.reproductive_status.reproductive_status = ['unknown']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['unknown'],
+      pregnant: null,
+      pregnancy_possible: null,
+      postpartum_1y: null,
+      breastfeeding: null,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects a corrupted derived.pregnancy_possible=null in the unknown-only branch when PREGNANCY_01==="possible" should have overridden it to true (16th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+  {
+    // Sanity: the genuine override-produced shape (pregnancy_possible=true
+    // despite raw never including it) must NOT be rejected.
+    const pregnancyFixture3 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture3.payload)
+    p.responses.modules.pregnancy.status = 'possible'
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: true,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived does NOT false-positive on the genuine PREGNANCY_01==="possible" module-override shape (16th independent review HIGH-1 sanity check)',
+      isUnreadableReproductiveDerived(p.responses) === false,
+    )
+  }
+  {
+    // An out-of-option-set PREGNANCY_01 value must also fail closed (same
+    // class of guard as POSTPARTUM_01/03 in round 15).
+    const pregnancyFixture4 = byName('임신 상담')
+    const p = structuredClone(pregnancyFixture4.payload)
+    p.responses.modules.pregnancy.status = 'ZZZ'
+    p.responses.reproductive_status.reproductive_status = ['none']
+    p.responses.reproductive_status.derived = {
+      source: 'WOMEN_SAFETY_01',
+      raw: ['none'],
+      pregnant: false,
+      pregnancy_possible: false,
+      postpartum_1y: false,
+      breastfeeding: false,
+    }
+    assert(
+      'resilience: isUnreadableReproductiveDerived rejects an out-of-option-set PREGNANCY_01(modules.pregnancy.status) value (16th independent review HIGH-1)',
+      isUnreadableReproductiveDerived(p.responses) === true,
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 12차 독립 리뷰 HIGH-3/MEDIUM-1: MyungriCompactCard/sajuStatusLine은
+ * saju(myungri_calculation)의 pillars/normalized/unresolved_reason을
+ * 검증 없이 렌더한다 -- server/index.js가 `body.myungri_calculation ??
+ * null`로 저장하고 isDoctorPayloadShapeUsable은 top-level 키만 검사할 뿐
+ * 이 leaf들은 검증하지 않는다. pillars.day가 wrong-typed(number)면
+ * `!saju.pillars?.day`(truthy 체크)를 통과해 `.charAt(0)`에서 그대로
+ * 크래시했고(HIGH-3, DoctorRecordErrorBoundary가 CommonSafetyBanner/모든
+ * SafetyPanel까지 함께 감싸므로 전체 임상 화면이 날아간다), pillars.year/
+ * normalized.solarDate.month 등이 wrong-typed면 "[object Object]"를 그대로
+ * 노출했다(MEDIUM-1).
+ * ---------------------------------------------------------------------- */
+{
+  const baseSaju = byName('허리 통증 주호소 (LBP, 확인 필요)').payload.myungri_calculation
+
+  {
+    const saju = structuredClone(baseSaju)
+    saju.pillars.day = 42
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never crashes when saju.pillars.day is wrong-typed (number) -- shows the explicit fail-closed label instead of calling .charAt on a non-string (12th independent review HIGH-3)',
+      html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.pillars.day = { corrupted: true }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never crashes when saju.pillars.day is wrong-typed (object) (12th independent review HIGH-3)',
+      html.includes('확인 필요(값 형식 오류)') && !html.includes('[object Object]'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.pillars.year = ['甲', '子']
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never fabricates a plausible-looking pillar from a wrong-typed (array) saju.pillars.year -- shows the fail-closed label instead (12th independent review MEDIUM-1)',
+      html.includes('확인 필요(값 형식 오류)') && !html.includes('甲子'),
+    )
+  }
+  {
+    // normalized.solarDate/pillars(전체 그리드)는 MyungriCompactCard가
+    // 아니라 DoctorView.tsx의 "명리 검토"(judgment__reviewGrid) 인라인
+    // 블록에서만 렌더된다 -- 그 블록은 별도 컴포넌트로 export되어 있지
+    // 않아 독립적으로 렌더할 수 없으므로, datePartText가 실제 그 호출부에
+    // 쓰였는지 구조 확인으로 보완한다(behavioral 검증은 실사용
+    // 재검증(live Playwright repro)으로 수행).
+    const doctorViewSrc = await readFile(
+      fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)),
+      'utf8',
+    )
+    assert(
+      'resilience: DoctorView.tsx\'s "명리 검토" 정규화된 양력 날짜 줄이 datePartText를 통해 year/month/day를 렌더한다 (bare String().padStart() 대신, 12차 독립 리뷰 MEDIUM-1)',
+      /정규화된 양력 날짜: \{datePartText\(saju\.normalized\.solarDate\.year\)\}-\s*\n\s*\{datePartText\(saju\.normalized\.solarDate\.month\)\}-\s*\n\s*\{datePartText\(saju\.normalized\.solarDate\.day\)\}/.test(
+        doctorViewSrc,
+      ),
+    )
+    assert(
+      'resilience: DoctorView.tsx\'s "명리 검토" 연/월/일/시주 그리드가 computedText를 통해 pillars.year/month/day/hour를 렌더한다(12차 독립 리뷰 MEDIUM-1)',
+      /<strong>\{computedText\(saju\.pillars\.year\) \?\? UNREADABLE_COMPUTED_VALUE\}<\/strong>/.test(doctorViewSrc) &&
+        /<strong>\{computedText\(saju\.pillars\.month\) \?\? UNREADABLE_COMPUTED_VALUE\}<\/strong>/.test(
+          doctorViewSrc,
+        ) &&
+        /<strong>\{computedText\(saju\.pillars\.day\) \?\? UNREADABLE_COMPUTED_VALUE\}<\/strong>/.test(
+          doctorViewSrc,
+        ),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.status = 'unresolved'
+    saju.pillars = null
+    saju.unresolved_reason = { corrupted: true }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never leaks "[object Object]" from a wrong-typed saju.unresolved_reason (12th independent review MEDIUM-1)',
+      !html.includes('[object Object]'),
+    )
+    const line = sajuStatusLine(saju)
+    assert(
+      'resilience: sajuStatusLine never leaks "[object Object]" from a wrong-typed saju.unresolved_reason',
+      !line.text.includes('[object Object]') && line.text.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+
+  /* ---------------------------------------------------------------------
+   * 13차 독립 리뷰 MEDIUM-2: `asArray<string>(saju.policy.pending_approval)`
+   * only validates the container is an array -- an individual element that
+   * is wrong-typed (e.g. an object) passed straight through .join(', ')
+   * would render "[object Object]" in the 계산주의 line. readableStringArray
+   * now maps each non-string element to the fail-closed token first.
+   * --------------------------------------------------------------------- */
+  {
+    const saju = structuredClone(baseSaju)
+    saju.policy.pending_approval = ['day_boundary', { corrupted: true }, 42]
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never leaks "[object Object]" from a wrong-typed element inside saju.policy.pending_approval -- shows the fail-closed token for that element instead (13th independent review MEDIUM-2)',
+      !html.includes('[object Object]') && html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+
+  /* ---------------------------------------------------------------------
+   * 13차 독립 리뷰 LOW-1: `saju.flags.hour_unknown`가 boolean이 아니면
+   * (레거시 레코드는 flags 자체가 {}일 수 있음) 이전 구현은 falsy 값이면
+   * 무조건 "출생시간 확인됨"으로 단정했다. 명시적 boolean일 때만 그
+   * 사실을 말하고, 그 외엔 실패 토큰을 보여준다.
+   * --------------------------------------------------------------------- */
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = {}
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never fabricates "출생시간 확인됨" when saju.flags.hour_unknown is missing (not boolean) -- shows the fail-closed token instead (13th independent review LOW-1)',
+      !html.includes('출생시간 확인됨') && html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = { hour_unknown: 'yes' }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard never fabricates a birth-time fact from a wrong-typed (string) hour_unknown -- shows the fail-closed token instead (13th independent review LOW-1)',
+      !html.includes('출생시간 확인됨') && !html.includes('출생시간 미상') && html.includes('확인 필요(값 형식 오류)'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = { hour_unknown: true }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard shows the genuine 출생시간 미상 line when hour_unknown is really boolean true',
+      html.includes('출생시간 미상'),
+    )
+  }
+  {
+    const saju = structuredClone(baseSaju)
+    saju.flags = { hour_unknown: false }
+    const html = renderToString(React.createElement(MyungriCompactCard, { saju }))
+    assert(
+      'resilience: MyungriCompactCard shows the genuine 출생시간 확인됨 line when hour_unknown is really boolean false',
+      html.includes('출생시간 확인됨'),
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * 12차 독립 리뷰 HIGH-4/MEDIUM-2/LOW-1: DoctorView.tsx는
+ * routing.primary_module/routing.additional_module을 검증 없이 직접
+ * React 자식/템플릿 리터럴로 렌더한다(server/index.js가 `routing:
+ * body.routing ?? null`로 저장, isDoctorPayloadShapeUsable은
+ * isPlainObject(payload.routing)만 확인할 뿐 leaf는 검증하지 않는다).
+ * wrong-typed 객체는 "Objects are not valid as a React child" 예외를
+ * 던져 CommonSafetyBanner/모든 SafetyPanel을 포함한 전체 임상 화면을
+ * 날렸고(HIGH-4), 배열은 React가 그대로 이어붙이거나(주호소 모듈:
+ * PainSleep) 템플릿 리터럴에서 CSV로 새서(상세 증상 — Pain,Sleep)
+ * 임상 텍스트에 원시 배열이 그대로 노출됐다(MEDIUM-2). LOW-1은
+ * `routing.additional_module`의 truthy 체크가 wrong-typed 객체도
+ * "있음"으로 통과시켜, 진료 탭(additionalConcern.ts, 타입 검사로 이미
+ * null 반환)과 자료 탭이 같은 레코드에서 서로 모순되는 걸 막는다.
+ * DoctorView.tsx 메인 렌더 블록은 별도 컴포넌트로 export되어 있지 않아
+ * (MyungriCompactCard와 달리) 독립적으로 렌더할 수 없으므로, 실제 수정이
+ * 소스에 반영됐는지 구조 확인으로 검증한다 -- behavioral 검증은 실사용
+ * 재검증(live Playwright repro)으로 수행.
+ * ---------------------------------------------------------------------- */
+{
+  const doctorViewSrc = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: DoctorView.tsx의 "시스템 라우팅 — 주호소 모듈" 줄이 computedText(routing.primary_module)을 거친다 (bare routing.primary_module 대신, 12th independent review HIGH-4/MEDIUM-2)',
+    /시스템 라우팅 — 주호소 모듈: \{computedText\(routing\.primary_module\) \?\? '없음'\}/.test(doctorViewSrc),
+  )
+  assert(
+    'resilience: DoctorView.tsx의 "상세 증상" 소제목이 computedText(routing.primary_module)을 거친다 (bare routing.primary_module 대신, 12th independent review HIGH-4/MEDIUM-2)',
+    /상세 증상\{computedText\(routing\.primary_module\) \? ` — \$\{computedText\(routing\.primary_module\)\}` : ''\}/.test(
+      doctorViewSrc,
+    ),
+  )
+  assert(
+    'resilience: DoctorView.tsx의 "추가 상세상담" 섹션이 typeof routing.additional_module === "string" 타입 검사를 쓴다 (truthy 체크 대신, 12th independent review LOW-1)',
+    /typeof routing\.additional_module === 'string' && routing\.additional_module !== ''/.test(doctorViewSrc),
+  )
+  assert(
+    'resilience: computedText는 string/number가 아니면(그리고 null/undefined도 아니면) 명시적 실패 토큰을 반환하고, 원문을 String()으로 지어내지 않는다',
+    /function computedText\(value: unknown\): string \| null \{[\s\S]{0,200}return UNREADABLE_COMPUTED_VALUE/.test(
+      doctorViewSrc,
+    ),
+  )
+
+  /*
+   * 13차 독립 리뷰 MEDIUM-2/MEDIUM-3: `asArray<string>(...)`는 컨테이너가
+   * 배열인지만 검사할 뿐 원소 타입은 보장하지 않는다 -- routing.
+   * secondary_screens/saju.policy.pending_approval처럼 검증되지 않은 저장
+   * 데이터에서 온 배열을 그대로 .join(', ')하면 wrong-typed 원소가
+   * "[object Object]"로 그대로 노출된다. MyungriCompactCard의 pendingLabels
+   * 는 이미 위에서 behavioral하게 검증했으므로, DoctorView.tsx 메인 렌더
+   * 블록에만 있는 나머지 3개 호출부(secondary_screens join, 명리 검토
+   * grid의 pending_approval join, JudgmentPanel에 넘기는
+   * myungri_pending_approval)는 구조 확인으로 보완한다.
+   */
+  assert(
+    'resilience: routing.secondary_screens join이 readableStringArray를 거친다 (bare asArray().join() 대신, 13th independent review MEDIUM-2)',
+    doctorViewSrc.includes("readableStringArray(asArray(routing.secondary_screens)).join(', ')"),
+  )
+  assert(
+    'resilience: 명리 검토 grid의 pending_approval join이 readableStringArray를 거친다 (13th independent review MEDIUM-3)',
+    doctorViewSrc.includes("대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}."),
+  )
+  assert(
+    'resilience: JudgmentPanel에 넘기는 myungri_pending_approval이 readableStringArray를 거친다 (13th independent review MEDIUM-3)',
+    doctorViewSrc.includes('myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),'),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * 3rd independent review: CommonSafetyBanner.tsx had 7 bare `?? []` fallbacks
+ * that stop a MISSING array field but let a wrong-typed (string/object)
+ * truthy value straight through -- `.filter()` on a string throws, and
+ * `.includes('other')` on a string silently substring-matches and FABRICATES
+ * a "기타 확인" safety item that was never actually reported (fail-open,
+ * which this batch's policy forbids more than a crash). All 7 sites must
+ * route through the file's own asArray() helper.
+ * ---------------------------------------------------------------------- */
+{
+  const bannerSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/CommonSafetyBanner.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'resilience: CommonSafetyBanner.tsx defines its own asArray() helper (Array.isArray check, not just a nullish fallback)',
+    /function asArray<T>\(value: unknown\): T\[\] \{\s*\n\s*return Array\.isArray\(value\)/.test(bannerSrc),
+  )
+  assert(
+    'resilience: no bare `?? []` array fallback remains in CommonSafetyBanner.tsx (all routed through asArray())',
+    !/\?\? \[\]/.test(bannerSrc),
+  )
+  const mustUseAsArray = [
+    'r.medical_history.medical_history_flags',
+    'r.secondary_concerns.secondary_concerns',
+    'r.modules.sleep?.awakening_reasons',
+    'r.modules.women?.problems',
+    'r.modules.pregnancy?.concerns',
+    'r.modules.postpartum?.problems',
+    'r.safety_flags?.red_flag_general',
+  ]
+  for (const field of mustUseAsArray) {
+    assert(
+      `resilience: CommonSafetyBanner.tsx reads ${field} through asArray()`,
+      bannerSrc.includes(`asArray<string>(${field})`),
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * DoctorRecordFallback: the neutral shell shown when the check above fails.
+ * Must never invent a clinical profile/fact, must show only values already
+ * present on the list-level record (patient_label/created_at/status), and
+ * must still render the CRM/MedicationCourseSection entry point when a
+ * patient_id is available (the one part of the screen that stays usable
+ * regardless of how broken the submission payload is).
+ * ---------------------------------------------------------------------- */
+
+{
+  const recordWithPatient = {
+    id: 'r1',
+    created_at: '2026-01-02T03:04:05.000Z',
+    updated_at: '2026-01-02T03:04:05.000Z',
+    status: 'viewed',
+    patient_label: '(QA) 홍길동',
+    patient_id: 'patient-uuid-1',
+    submission: {},
+    myungri: null,
+    judgment: null,
+  }
+  const html = renderToString(React.createElement(DoctorRecordFallback, { record: recordWithPatient }))
+  assert('resilience fallback: shows the "cannot display" heading', html.includes('상세 임상 화면을 표시할 수 없습니다'))
+  assert('resilience fallback: explicitly states it does not guess a clinical profile', html.includes('추정해서 보여주지'))
+  assert('resilience fallback: shows the known patient_label', html.includes('홍길동'))
+  // 20차 독립 리뷰 MEDIUM-2: status는 이제 raw enum이 아니라 statusLabel()을
+  // 거친 한국어 라벨로 렌더된다 -- 'viewed' -> '확인함'.
+  assert('resilience fallback: shows the known status as its Korean label, not the raw enum', html.includes('확인함'))
+  assert('resilience fallback: never mentions pain/herbal/mixed view-profile labels', !/통증|한약·전신|혼합/.test(html))
+
+  const recordWithoutPatient = { ...recordWithPatient, patient_id: undefined }
+  const htmlNoPatient = renderToString(React.createElement(DoctorRecordFallback, { record: recordWithoutPatient }))
+  assert(
+    'resilience fallback: without patient_id, still renders the banner without throwing',
+    htmlNoPatient.includes('상세 임상 화면을 표시할 수 없습니다'),
+  )
+
+  const htmlNoRecord = renderToString(React.createElement(DoctorRecordFallback, { record: undefined }))
+  assert('resilience fallback: record=undefined still renders without throwing', htmlNoRecord.includes('상세 임상 화면을 표시할 수 없습니다'))
+
+  /* -----------------------------------------------------------------------
+   * 20차 독립 리뷰 HIGH-1/MEDIUM-1/MEDIUM-2: this fallback is rendered BOTH
+   * as DoctorRecordErrorBoundary's normal child AND as its own `fallback`
+   * prop -- React cannot catch a throw during fallback rendering, so a
+   * corrupted/legacy stored record whose patient_label/status/created_at
+   * don't match SubmissionRecord's compile-time type used to crash here
+   * uncatchably (propagating past this boundary to PatientErrorBoundary,
+   * replacing the whole doctor workspace with the patient-facing screen).
+   * These prove the fix: every field type this component reads is now
+   * defended, not just the ones covered above.
+   * -------------------------------------------------------------------- */
+  const corruptedStatus = { ...recordWithPatient, status: { code: 'weird' } }
+  const htmlCorruptedStatus = renderToString(React.createElement(DoctorRecordFallback, { record: corruptedStatus }))
+  assert(
+    'resilience fallback HIGH-1: an object status does not throw (React child requires string/number), falls back to "확인 필요"',
+    htmlCorruptedStatus.includes('확인 필요'),
+  )
+
+  const corruptedPatientLabel = { ...recordWithPatient, patient_label: { name: 'x' } }
+  const htmlCorruptedPatientLabel = renderToString(React.createElement(DoctorRecordFallback, { record: corruptedPatientLabel }))
+  assert(
+    'resilience fallback HIGH-1: an object patient_label does not throw, falls back to "확인 필요" instead of rendering the object',
+    htmlCorruptedPatientLabel.includes('확인 필요') && !htmlCorruptedPatientLabel.includes('[object Object]'),
+  )
+
+  const missingCreatedAt = { ...recordWithPatient, created_at: undefined }
+  const htmlMissingCreatedAt = renderToString(React.createElement(DoctorRecordFallback, { record: missingCreatedAt }))
+  assert(
+    'resilience fallback MEDIUM-1: a missing/invalid created_at renders "확인 필요", never the literal "Invalid Date"',
+    htmlMissingCreatedAt.includes('확인 필요') && !htmlMissingCreatedAt.includes('Invalid Date'),
+  )
+
+  const unrecognizedStatus = { ...recordWithPatient, status: 'archived_legacy_value' }
+  const htmlUnrecognizedStatus = renderToString(React.createElement(DoctorRecordFallback, { record: unrecognizedStatus }))
+  assert(
+    'resilience fallback MEDIUM-2: a string status outside the known enum falls back to "확인 필요", not the raw string leaked verbatim',
+    htmlUnrecognizedStatus.includes('확인 필요') && !htmlUnrecognizedStatus.includes('archived_legacy_value'),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Structural guard: DoctorView.tsx must actually gate its detailed render
+ * on this check and wrap it in the error-boundary backstop -- proves the
+ * wiring itself (not just the pure function in isolation) is present, and
+ * catches a future edit that silently removes the gate while leaving the
+ * exported function behind.
+ * ---------------------------------------------------------------------- */
+
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'resilience: DoctorView computes payloadShapeOk from isDoctorPayloadShapeUsable before deriving the view profile',
+    /const payloadShapeOk = isDoctorPayloadShapeUsable\(payload\)/.test(src) &&
+      /const viewProfile = payloadShapeOk \? deriveViewProfile\(payload\)\.derived : null/.test(src),
+  )
+  assert(
+    'resilience: the detailed record view is wrapped in DoctorRecordErrorBoundary',
+    /<DoctorRecordErrorBoundary\s/.test(src) && src.includes('</DoctorRecordErrorBoundary>'),
+  )
+  assert(
+    'resilience: server-mode boundary key is derived from the selected record id',
+    /key=\{mode === 'server' \? \(selectedRecord\?\.id \?\? 'none'\) : /.test(src),
+  )
+  assert(
+    'resilience: fixtures-mode boundary key changes with both fixtureIndex and workspaceScenarioId ' +
+      '(switching fixture/scenario must remount and clear any stale error state -- a constant key would ' +
+      "leave one fixture's error banner stuck over the next fixture's healthy content)",
+    /: `fixtures:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`\}/.test(src),
+  )
+  assert(
+    'resilience: !payloadShapeOk renders DoctorRecordFallback instead of the normal tab content',
+    /\{!payloadShapeOk \? \(\s*<DoctorRecordFallback/.test(src),
+  )
 }
 
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

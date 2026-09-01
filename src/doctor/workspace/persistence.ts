@@ -273,4 +273,11 @@ export function workspaceStateEquals(a: WorkspaceState, b: WorkspaceState): bool
 export type WorkspaceSaveOutcome =
   | { ok: true; updatedAt: string }
   | { ok: false; conflict: { current: WorkspaceState; currentUpdatedAt: string } }
-  | { ok: false; conflict?: undefined }
+  // P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): `kind`
+  // lets the caller distinguish an expired/missing doctor token (401/403 --
+  // serverClient.ts's ServerResult already classifies this as 'auth') from
+  // any other failure, so DoctorWorkspace can offer an inline "인증 만료 —
+  // 토큰 다시 입력" recovery right here instead of the generic "저장
+  // 실패" text. Optional so every pre-existing caller that never set it
+  // keeps returning the exact same `{ ok: false }` shape as before.
+  | { ok: false; conflict?: undefined; kind?: 'auth' | 'network' | 'other' }

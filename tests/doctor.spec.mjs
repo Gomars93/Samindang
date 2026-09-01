@@ -181,7 +181,10 @@ for (const f of DOCTOR_FIXTURES) {
     'v2.1 fixture: reference symptoms never render as a diagnosis (only the informational note text, no red/danger banner class nearby)',
     !/doctor__banner--danger[\s\S]{0,50}참고 증상|참고 증상[\s\S]{0,50}doctor__banner--danger/.test(html),
   )
-  assert('v2.1 fixture: 동반문제 section shows the legacy-compat empty state (동반문제 없음)', /동반문제<\/h2>[\s\S]{0,400}동반문제 없음/.test(html))
+  assert(
+    'v2.1 fixture: Core Reduction P4 — the 동반문제 legacy section does not render at all when there is no legacy SECONDARY_01 data (동반문제 legacy는 데이터 있을 때만)',
+    !html.includes('<h2>동반문제</h2>'),
+  )
 }
 
 /* ---------------------------------------------------------------------
@@ -1233,16 +1236,19 @@ function detailsRange(html, classMarker) {
   }
 }
 
-// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 2번 —
-//      기존 주호소 섹션, 명리 검토의 "현재 문진 요약" 열. PR #24부터 herbal
-//      hero는 duration을 별도로 보여주지 않으므로(herbal 프로필의 10초
-//      요약은 전신 증상 우선 -- pain hero만 duration을 보여준다) 예상
-//      횟수가 이전 3회에서 2회로 줄었다 -- 이는 의도된 아키텍처 변경이다.
+// 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 3번 —
+//      기존 주호소 섹션, 명리 검토의 "현재 문진 요약" 열, 그리고 Core
+//      Reduction P2부터는 진료 탭 V3 셸의 좌측 요약 ②주호소·기간 블록
+//      (Phase 7 §3.2, 상시 노출) -- 이는 의도된 아키텍처 변경이다: 좌측
+//      요약은 스크롤 없이 항상 보이는 것이 바로 이 배치의 목적이다. PR
+//      #24부터 herbal hero는 duration을 별도로 보여주지 않으므로(herbal
+//      프로필의 10초 요약은 전신 증상 우선 -- pain hero만 duration을
+//      보여준다) 그 경로에서는 하나 늘지 않는다.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   const durationLabel = optionLabel('VISIT_03_SYMPTOM_DURATION', '1_3m')
   const count = html.split(durationLabel).length - 1
-  assert('duplication audit: duration label renders exactly 2 times (주호소 + myungri column)', count === 2)
+  assert('duplication audit: duration label renders exactly 3 times (좌측 요약 + 주호소 + myungri column)', count === 3)
 }
 
 /* ---------------------------------------------------------------------
@@ -1333,7 +1339,12 @@ function detailsRange(html, classMarker) {
   const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
 
   // The surfaces exist and 진료 is the one selected on open.
-  assert('round 11: the record offers a 진료 / 자료 보기 surface switch', html.includes('doctor__recordTabs') && html.includes('자료 보기'))
+  // Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): '자료 보기' is
+  // relabeled '참고' and now also holds the content that used to live under
+  // a separate '명리' tab, as accordion groups (see the herbal-record block
+  // below) -- the switch itself, and its behavior as "everything not
+  // 진료", is otherwise unchanged from round 11.
+  assert('round 11 (P4 relabel): the record offers a 진료 / 참고 surface switch', html.includes('doctor__recordTabs') && html.includes('참고'))
   const clinicalTabIdx = html.indexOf('doctor__recordTab--active')
   assert('round 11: 진료 is the surface selected on open', clinicalTabIdx !== -1 && html.slice(clinicalTabIdx, clinicalTabIdx + 120).includes('진료'))
 
@@ -2994,19 +3005,350 @@ function detailsRange(html, classMarker) {
     'resilience: the detailed record view is wrapped in DoctorRecordErrorBoundary',
     /<DoctorRecordErrorBoundary\s/.test(src) && src.includes('</DoctorRecordErrorBoundary>'),
   )
+  // Core Reduction P2 (delta N-6, Phase 5 Synthesis v1.2 §2.8): the
+  // boundary key is now the SAME unifiedResetKey DoctorWorkspace's
+  // `resetKey` prop and JudgmentPanel's `resetKey` prop both read -- one
+  // computation instead of three independently-typed key expressions that
+  // could silently drift apart.
   assert(
-    'resilience: server-mode boundary key is derived from the selected record id',
-    /key=\{mode === 'server' \? \(selectedRecord\?\.id \?\? 'none'\) : /.test(src),
+    'resilience: unifiedResetKey is computed once (submission:<id> in server mode, fixture:<index>:<scenario> in fixtures mode)',
+    /const unifiedResetKey =\s*\n\s*mode === 'server' \? `submission:\$\{selectedRecord\?\.id \?\? 'none'\}` : `fixture:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`/.test(
+      src,
+    ),
   )
   assert(
-    'resilience: fixtures-mode boundary key changes with both fixtureIndex and workspaceScenarioId ' +
-      '(switching fixture/scenario must remount and clear any stale error state -- a constant key would ' +
-      "leave one fixture's error banner stuck over the next fixture's healthy content)",
-    /: `fixtures:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`\}/.test(src),
+    'resilience: server-mode boundary key is the unified reset key',
+    /key=\{unifiedResetKey\}/.test(src),
+  )
+  assert(
+    'resilience: DoctorWorkspace and JudgmentPanel both receive the SAME unifiedResetKey as their resetKey prop ' +
+      '(a record switch must reset the shell, the error boundary, and the judgment panel in lockstep)',
+    (src.match(/resetKey=\{unifiedResetKey\}/g) ?? []).length >= 2,
   )
   assert(
     'resilience: !payloadShapeOk renders DoctorRecordFallback instead of the normal tab content',
     /\{!payloadShapeOk \? \(\s*<DoctorRecordFallback/.test(src),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * P0-3 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-2 "MOVE"): the
+ * revisit issuance section ("재진 간단 문진") used to render ABOVE the
+ * clinical tabs -- i.e. above CommonSafetyBanner (Phase 3 §5-1: "안전
+ * 배너가 스크롤 아래"). Core Reduction P3 (Phase 5 Synthesis v1.2 §2.7)
+ * moves it again, this time INSIDE the 진료 탭의 다음 레인 -- built as
+ * `nextLaneFooterNode` (DoctorView-owned state) and handed to
+ * DoctorWorkspace as the `nextLaneFooter` prop, which that shell renders
+ * inside `.doctor__visitLane--next` (after 레인1 안전 확인, never before
+ * it) rather than DoctorView rendering the section as a direct sibling of
+ * `</DoctorRecordErrorBoundary>` any more -- position only, the section's
+ * own content/condition/handlers are unchanged (still gated on
+ * mode==='server' && selectedRecord?.patient_id, still the same handlers).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    'P0-3/P3: the revisit issuance section is built as nextLaneFooterNode and handed to DoctorWorkspace as nextLaneFooter',
+    src.includes('const nextLaneFooterNode =') && /nextLaneFooter=\{nextLaneFooterNode\}/.test(src),
+  )
+  assert(
+    'P0-3/P3: the revisit issuance section is still gated on the exact same condition as before the move',
+    /const nextLaneFooterNode =\s*\n\s*mode === 'server' && selectedRecord\?\.patient_id \? \(/.test(src) &&
+      src.includes('<section className="doctor__section doctor__revisitSession doctor__nextIssuance">'),
+  )
+  const workspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'P0-3/P3: DoctorWorkspace renders {nextLaneFooter} inside the 다음 레인 (doctor__visitLane--next), after 레인1 안전 확인 -- never above CommonSafetyBanner',
+    (() => {
+      const lane1Idx = workspaceSrc.indexOf('doctor__visitLane--lane1')
+      const nextLaneIdx = workspaceSrc.indexOf('doctor__visitLane--next')
+      const footerIdx = workspaceSrc.indexOf('{nextLaneFooter}')
+      return lane1Idx !== -1 && nextLaneIdx !== -1 && footerIdx !== -1 && lane1Idx < nextLaneIdx && nextLaneIdx < footerIdx
+    })(),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * P0-5 (Core Reduction Phase 6 gate / Phase 3 Opus review §4-a): the
+ * submissions list was an archive with no "this is done" action (only
+ * 'viewed' was ever written). "진료 완료" reuses the EXISTING
+ * VALID_STATUSES contract (setSubmissionStatus -> server/store.js's
+ * setStatus) unchanged -- no new status value, and it must NOT introduce an
+ * automatic 'in_consultation' transition (HUMAN DECISION #2 stays
+ * untouched/out of scope).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  const fnStart = src.indexOf('async function handleCompleteSubmission()')
+  assert('P0-5: handleCompleteSubmission exists', fnStart !== -1)
+  const fnBody = src.slice(fnStart, fnStart + 900)
+  assert(
+    'P0-5: handleCompleteSubmission calls setSubmissionStatus(selectedId, \'completed\') -- the existing VALID_STATUSES contract, no new status value',
+    /setSubmissionStatus\(selectedId, 'completed'\)/.test(fnBody),
+  )
+  assert(
+    'P0-5: handleCompleteSubmission never writes \'in_consultation\' (no auto-transition -- HUMAN DECISION #2 stays out of scope)',
+    !fnBody.includes("'in_consultation'"),
+  )
+  assert(
+    // Core Reduction P3 (§2.3/§2.7 "종결"): the button moved out of the
+    // always-visible header into the 진료 탭의 다음 레인(nextLaneFooterNode),
+    // next to the EMR review it now sits beside -- same condition, same
+    // handler, position only.
+    'P0-5/P3: the "진료 완료" button exists (now inside the 다음 레인 "종결" section), gated on server mode + an open record',
+    /\{mode === 'server' && selectedRecord && selectedId && \(\s*<button[\s\S]{0,300}?onClick=\{handleCompleteSubmission\}/.test(
+      src,
+    ),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6, 단순화
+ * 금지선 5-1 "안전 입력이 비기본 탭에"): the LBP/SHOULDER objective exam
+ * findings must be editable from the 진료 (clinical) tab, next to the
+ * regional SafetyPanels they feed -- not only from '자료 보기'. Save path
+ * unchanged: still ClinicianJudgment.lbp_objective_motor_deficit /
+ * shoulder_objective_cuff_weakness, still through saveJudgment (PUT
+ * /api/submissions/:id/judgment).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  // Core Reduction P2: ObjectiveExamFindingsCard itself moved INSIDE
+  // DoctorWorkspace.tsx's 레인2("확인") -- DoctorView.tsx no longer renders
+  // the component directly, it only supplies the save handler via the
+  // `onSaveObjectiveExam` prop (same handleSaveObjectiveExamField, same
+  // condition as before this round's move).
+  assert(
+    'P0-2/P2: DoctorView.tsx no longer renders <ObjectiveExamFindingsCard> directly -- it passes onSaveObjectiveExam to DoctorWorkspace instead',
+    !src.includes('<ObjectiveExamFindingsCard') &&
+      /onSaveObjectiveExam=\{mode === 'server' && selectedId \? handleSaveObjectiveExamField : undefined\}/.test(src),
+  )
+  const workspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'P0-2/P2: ObjectiveExamFindingsCard is imported and rendered inside DoctorWorkspace.tsx\'s 레인2 ("확인"), after 레인1 안전 확인',
+    workspaceSrc.includes("import { ObjectiveExamFindingsCard") &&
+      (() => {
+        const lane1Idx = workspaceSrc.indexOf('doctor__visitLane--lane1')
+        const lane2Idx = workspaceSrc.indexOf('doctor__visitLane--lane2')
+        const cardIdx = workspaceSrc.indexOf('<ObjectiveExamFindingsCard')
+        return lane1Idx !== -1 && lane2Idx !== -1 && cardIdx !== -1 && lane1Idx < lane2Idx && lane2Idx < cardIdx
+      })(),
+  )
+  assert(
+    'P0-2: ObjectiveExamFindingsCard uses the SAME nullish safety_flags.<region> applicability signal as JudgmentPanel\'s showLbpExam/showShoulderExam (6th independent review HIGH-1/MEDIUM-1)',
+    /<ObjectiveExamFindingsCard[\s\S]{0,400}?showLbp=\{payload\.responses\.safety_flags\.lbp != null\}[\s\S]{0,200}?showShoulder=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(
+      workspaceSrc,
+    ),
+  )
+  assert(
+    'P0-2: handleSaveObjectiveExamField saves through saveJudgmentToServer (the SAME judgment persistence path, no new endpoint/data contract)',
+    (() => {
+      const fnStart = src.indexOf('async function handleSaveObjectiveExamField(')
+      if (fnStart === -1) return false
+      // 독립 검수 HIGH-2: 바로 다음 함수(handleReloadObjectiveExamConflict)를
+      // 경계로 쓴다 -- 이전 경계 문자열('const showingServerList')은 이미
+      // 이 파일 어디에도 존재하지 않아 indexOf가 -1을 반환했고(=이 함수부터
+      // 파일 끝까지를 통째로 봄), 그래서 saveJudgmentToServer 호출 횟수
+      // 카운트가 다른 곳(JudgmentPanel의 onSave)의 호출까지 같이 세고
+      // 있었다.
+      const fnEnd = src.indexOf('function handleReloadObjectiveExamConflict(', fnStart)
+      const fn = src.slice(fnStart, fnEnd)
+      // 독립 검수 HIGH-2: 이전에는 여기서 stale-write 409를 서버의 current
+      // judgment로 rebase해 자동으로 한 번 더 저장했다(별도 `attempt()`
+      // 클로저 + `expectedUpdatedAt` 파라미터). 그 자동 retry/merge를
+      // 제거하면서 CAS 기준을 selectedRecord에서 직접 읽는 단일 호출로
+      // 바뀌었다 -- 여전히 SAME saveJudgmentToServer 경로/데이터 계약이고,
+      // 새 endpoint가 아니라는 이 테스트의 취지는 그대로 유지된다.
+      return (
+        fn.includes('saveJudgmentToServer(selectedId, next, selectedRecord?.updated_at)') &&
+        fn.includes('createEmptyJudgment(source)') &&
+        (fn.match(/saveJudgmentToServer\(/g) ?? []).length === 1
+      )
+    })(),
+  )
+  const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    'P0-2: JudgmentPanel keeps a READ-ONLY echo of both fields (still gated on showLbpExam/showShoulderExam) -- information is not lost, only the editable control moved',
+    panelSrc.includes('{showLbpExam && (') &&
+      panelSrc.includes('{showShoulderExam && (') &&
+      !/type="radio"\s*\n\s*name="lbp_objective_motor_deficit"/.test(panelSrc) &&
+      !/type="radio"\s*\n\s*name="shoulder_objective_cuff_weakness"/.test(panelSrc),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P3 — Phase 7 UI spec §1.3-#1/#2/#3 (§2.7 발급 "다른 방법"
+ * 자동 펼침). nextLaneFooterNode only ever builds in server mode with an
+ * open submission (mode==='server' && selectedRecord?.patient_id) --
+ * doctor.spec.mjs's renderDoctorView() helper runs in fixtures mode, which
+ * can never reach that branch, so these are structural (source) checks,
+ * the same style this file already uses for every other issuance-state
+ * assertion in this section (see the P0-3 block above).
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    '§1.3-#1/#2: activeSession and unconsumedToken are both derived from issuedSession !== null (the one in-memory signal this codebase holds for "a one-time patient link is outstanding")',
+    src.includes('const activeSession = issuedSession !== null') && src.includes('const unconsumedToken = issuedSession !== null'),
+  )
+  assert(
+    '§1.3-#1/#2: altMethodsAutoOpen is their OR, and the "다른 방법" details reads it as its open condition',
+    src.includes('const altMethodsAutoOpen = activeSession || unconsumedToken') &&
+      /className="doctor__nextIssuance__altMethods" open=\{altMethodsAutoOpen\}/.test(src),
+  )
+  assert(
+    '§1.3-#3: with neither an active session nor an unconsumed token (issuedSession initial state is null), altMethodsAutoOpen evaluates false -- the details starts collapsed on the default (no-issuance-yet) path',
+    src.includes(
+      "const [issuedSession, setIssuedSession] = useState<\n    { visitId: string; token: string; expiresAt: string; targetCount: number } | null\n  >(null)",
+    ) || /useState<\s*\{ visitId: string; token: string; expiresAt: string; targetCount: number \} \| null\s*>\(null\)/.test(src),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P3 — Phase 7 UI spec §1.3-#15 (§2.10, delta N-4): 학습
+ * 케이스 disclosure(Phase 1 audit row 81) opens exactly when
+ * judgment.learning_case === true.
+ * ---------------------------------------------------------------------- */
+{
+  const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')
+  assert(
+    '§1.3-#15: judgment__learningCase disclosure open condition is exactly judgment.learning_case === true',
+    /className="judgment__learningCase" open=\{judgment\.learning_case === true\}/.test(panelSrc),
+  )
+  assert(
+    '§1.3-#15: the checkbox itself (row 81) still lives inside that disclosure, unchanged',
+    /<details className="judgment__learningCase" open=\{judgment\.learning_case === true\}>[\s\S]{0,400}?type="checkbox"[\s\S]{0,100}?checked=\{judgment\.learning_case\}/.test(
+      panelSrc,
+    ),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P6 — Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤".
+ *
+ * `selectedRecordLoading` is useEffect/useState-driven (set on the fetch
+ * effect's own start/settle), which renderToString cannot exercise (no
+ * effects run in a static SSR pass, matching save-conflict.spec.mjs's own
+ * documented reason for source-string coverage of comparable stateful
+ * logic) -- these are source-string regressions on the state wiring itself,
+ * plus a renderToString check that the skeleton's OWN markup (reachable
+ * once the surrounding condition is true) carries no spinner class and
+ * matches the aside+lane structure it stands in for.
+ * ---------------------------------------------------------------------- */
+{
+  const src = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  assert(
+    '§9 skeleton: selectedRecordLoading is set true when the record-fetch effect starts (mode===server && selectedId present)',
+    /setSelectedRecordLoading\(true\)\s*\n\s*setUnreadReadyIds/.test(src),
+  )
+  assert(
+    '§9 skeleton: selectedRecordLoading is cleared as soon as getSubmission settles, before branching on result.ok',
+    /getSubmission\(selectedId\)\.then\(\(result\) => \{\s*\n\s*if \(cancelled\) return\s*\n\s*setSelectedRecordLoading\(false\)/.test(
+      src,
+    ),
+  )
+  assert(
+    '§9 skeleton: selectedRecordLoading resets to false whenever there is no selectedId to fetch (mode switch / record closed)',
+    /if \(mode !== 'server' \|\| !selectedId\) \{\s*\n\s*setSelectedRecord\(null\)\s*\n\s*setSelectedRecordLoading\(false\)/.test(
+      src,
+    ),
+  )
+  assert(
+    '§9 skeleton: the 오늘 Queue gate excludes the loading window (never shows the stale list while a click is still resolving)',
+    src.includes("mode === 'server' && !selectedRecord && !selectedRecordLoading && !selectedRevisit && !serverError"),
+  )
+  assert(
+    '§9 skeleton: the skeleton itself mirrors the V3 shell structure (aside + main, not a standalone spinner element) and is gated on the same loading flag',
+    /mode === 'server' && selectedRecordLoading && !selectedRevisit && !serverError[\s\S]{0,80}?className="doctor__visitShell doctor__skeleton"/.test(
+      src,
+    ),
+  )
+  assert(
+    '§9 skeleton: renders the aside 5-block stack (identity/chief/delta/lane1/save, §3.2) and all 4 lanes (§2.3), never a spinner class',
+    (() => {
+      const start = src.indexOf('className="doctor__visitShell doctor__skeleton"')
+      const end = src.indexOf('{selectedRevisit && (', start)
+      const block = src.slice(start, end)
+      const hasAllBlocks = [
+        'doctor__skeleton__block--identity',
+        'doctor__skeleton__block--chief',
+        'doctor__skeleton__block--delta',
+        'doctor__skeleton__block--lane1',
+        'doctor__skeleton__block--save',
+        'doctor__skeleton__lane--lane1',
+        'doctor__skeleton__lane--lane2',
+        'doctor__skeleton__lane--judgment',
+        'doctor__skeleton__lane--next',
+      ].every((cls) => block.includes(cls))
+      return hasAllBlocks && !/spinner/i.test(block)
+    })(),
+  )
+}
+
+/* -------------------------------------------------------------------------
+ * Core Reduction P6 — Phase 5 Synthesis v1.2 §5 메트릭 검증 (Phase 7 UI
+ * spec가 정의한 화면 구조에 대한 회귀 고정). 3 뷰포트 horizontal overflow
+ * 0은 tests/tablet-viewport.spec.mjs가 이미 실측으로 담당하므로 여기서는
+ * 반복하지 않는다 -- 이 블록은 renderToString으로 확인 가능한 나머지
+ * 4개 지표를 담는다.
+ * ---------------------------------------------------------------------- */
+
+// 기본 major section 4 (진료 레인 수): 안전 확인/확인/판단·처치/다음 --
+// Phase 5 §1의 7개 mental-model 개념 중 5개(환자/확인/판단·처치/다음/
+// 그 자신)가 이 4개 레인으로 접힌다는 구조 확정 자체를 고정한다.
+{
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  const laneCount = (html.match(/class="doctor__visitLane doctor__visitLane--\w+"/g) ?? []).length
+  assert('metric: 기본 major section 4 -- 진료 화면은 정확히 4개의 doctor__visitLane을 렌더한다', laneCount === 4)
+}
+
+// 진입 조합 0: 프로필 자동분류 배너/세그먼트/혼합 탭 DOM이 어느 프로필
+// 렌더에서도 등장하지 않는다(Core Reduction §2.4 제거 확정 — doctor-
+// workspace.spec.mjs가 DoctorWorkspace 단독으로 이미 검증하지만, 여기서는
+// DoctorView.tsx 전체 페이지 출력 기준으로 다시 고정한다).
+{
+  for (const name of ['허리 통증 주호소 (LBP, 확인 필요)', '수면 주호소 + 동반 소화/통증', '여성 건강 주호소']) {
+    const html = renderDoctorView(name)
+    assert(`metric: 진입 조합 0 -- "${name}" 페이지 전체에 워크스페이스 프로필 배너 없음`, !html.includes('워크스페이스 프로필'))
+    assert(`metric: 진입 조합 0 -- "${name}" 페이지 전체에 workspace__profileBar 없음`, !html.includes('workspace__profileBar'))
+    assert(`metric: 진입 조합 0 -- "${name}" 페이지 전체에 workspace__segmentedBtn 없음`, !html.includes('workspace__segmentedBtn'))
+  }
+}
+
+// 기록 필드 접근 불가 0: Core Reduction P4가 참고 화면 아코디언으로 옮긴
+// 그룹들이 실제로 렌더되는지 대표 fixture로 확인한다 -- "여성 건강
+// 주호소"는 WOMEN_SAFETY_01이 실제로 응답된 herbal-profile 레코드라 여성
+// 안전/명리/약물·병력/검사자료/문진 원본을 한 fixture로 대부분 커버한다.
+{
+  const html = renderDoctorView('여성 건강 주호소')
+  const groups = ['문진 원본', '약물·병력', '여성 안전', '검사자료', '명리', '이전 방문 원문', '명리·감사 기록', '원본 JSON']
+  for (const g of groups) {
+    assert(`metric: 기록 필드 접근 불가 0 -- 참고 화면에 "${g}" 아코디언 그룹이 렌더된다`, html.includes(g))
+  }
+  // 그룹 프레임만이 아니라 그 안의 실제 값도 도달 가능해야 한다 -- 각
+  // 그룹을 대표하는 실제 필드/값 하나씩.
+  assert('metric: 기록 필드 접근 불가 0 -- 여성 안전 그룹 안의 WOMEN_SAFETY_01 원본 응답이 렌더된다', html.includes('환자가 답한 것 (WOMEN_SAFETY_01)'))
+  assert('metric: 기록 필드 접근 불가 0 -- 명리 그룹 안의 사주 기둥이 렌더된다', html.includes('doctor__pillars'))
+  assert('metric: 기록 필드 접근 불가 0 -- 명리·감사 기록 그룹 안의 JudgmentPanel 핵심 필드가 렌더된다', html.includes('핵심 선천 특징'))
+  assert('metric: 기록 필드 접근 불가 0 -- 원본 JSON 그룹 안의 실제 payload 덤프가 렌더된다', html.includes('&quot;session_id&quot;'))
+}
+
+// 기본 free-text 증가 0: tests/tablet-viewport.spec.mjs의
+// EXPECTED_OPEN_INPUTS(=4, 판단/처치/재검 3 + §2.5 다음 방문 확인 메모 1)
+// 가 실제 헤드리스 렌더로 이미 이 지표를 담당한다 -- 여기서는 그 계약이
+// 소스에 그대로 남아있는지만 구조로 재확인한다(중복 실측 없이 드리프트
+// 감시).
+{
+  const src = await readFile(fileURLToPath(new URL('../tests/tablet-viewport.spec.mjs', import.meta.url)), 'utf8')
+  assert(
+    'metric: 기본 free-text 증가 0 -- tablet-viewport.spec.mjs가 EXPECTED_OPEN_INPUTS=4로 기본 렌더 open input 개수를 계속 감시한다',
+    /const EXPECTED_OPEN_INPUTS = 4/.test(src),
   )
 }
 

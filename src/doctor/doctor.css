@@ -7,6 +7,10 @@
 .doctor {
   --warning: #8a6d23;
   --warning-soft: #f3ead2;
+  /* Core Reduction Phase 7 §6.1: CLEAR가 URGENT의 danger 색과 채도만으로
+     겹치지 않도록 별도 저채도 로컬 토큰을 둔다 -- 기존 --warning 패턴과
+     동일하게 .doctor 스코프에만 추가, :root는 건드리지 않는다. */
+  --safe: #2e7d4f;
   max-width: 1080px;
   margin: 0 auto;
   padding: 28px 40px 96px;
@@ -14,6 +18,428 @@
   color: var(--text);
   font-size: 15px;
   line-height: 1.5;
+}
+
+/*
+ * Core Reduction P2 (Phase 7 UI spec §3.1): 진료 화면 한정 -- 이 셸이
+ * 존재할 때만 .doctor의 1080px 캡/좌우 padding을 무효화하고,
+ * .doctor__visitShell 자신의 padding(아래)이 좌우 여백을 전담한다. 오늘/
+ * 참고/설정 화면(.doctor__visitShell이 없는 상태)은 기존 1080px 단일
+ * 컬럼 그대로 유지된다.
+ */
+.doctor:has(.doctor__visitShell) {
+  max-width: none;
+  padding: 28px 0 96px;
+}
+
+/* ---------------------------------------------------------------------
+ * V3 셸 -- §2.3 DOM 구획 / §3.1 grid.
+ * ------------------------------------------------------------------- */
+.doctor__visitShell {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 0 24px;
+}
+@media (min-width: 1280px) {
+  .doctor__visitShell {
+    gap: 32px;
+    padding: 0 32px;
+  }
+}
+@media (min-width: 1440px) {
+  .doctor__visitShell {
+    gap: 40px;
+    padding: 0 48px;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+}
+
+.doctor__visitSummary {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  background: var(--surface);
+  line-height: 1.3;
+}
+@media (min-width: 1280px) {
+  .doctor__visitSummary {
+    flex-basis: 300px;
+  }
+}
+@media (min-width: 1440px) {
+  .doctor__visitSummary {
+    flex-basis: 340px;
+  }
+}
+.doctor__visitWork {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 1023px) and (orientation: portrait) {
+  .doctor__visitShell {
+    flex-direction: column;
+    /* Deviation from Phase 7 §3.1's literal snippet: that block does not
+       reset align-items, so the outer rule's `align-items: flex-start`
+       (meant for the 2-column ROW layout) carries into this COLUMN
+       layout, where it shrinks both children to their content width
+       instead of stretching them full-width -- measured as a ~176px-wide
+       "sticky bar" instead of the spec's own intended near-full-width top
+       bar (Phase4 §2.1 "834 portrait 상단 스티키"). `stretch` is what the
+       row layout already gets implicitly from flex's default. */
+    align-items: stretch;
+    gap: 0;
+    padding: 0 16px;
+  }
+  .doctor__visitSummary {
+    flex-basis: auto;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    max-height: 96px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+}
+
+/* §3.2 좌측 요약 5블록 고정 높이 예산 -- overflow:hidden은 규칙 위반 시의
+   안전망일 뿐, 실제 절단(최대 2개 부위+외N, 계산불가 접미)은 렌더 로직이
+   값 단위로 수행한다 (VisitSummaryAside.tsx). */
+.doctor__visitSummary__identity {
+  max-height: 60px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.doctor__visitSummary__name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.doctor__visitSummary__meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.doctor__visitSummary__chief {
+  max-height: 40px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.doctor__visitSummary__chiefValue {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.doctor__visitSummary__chiefMeta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.doctor__visitSummary__delta {
+  max-height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doctor__patientFact {
+  font-size: 13px;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text-muted);
+  background: var(--primary-soft);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.doctor__visitSummary__lane1 {
+  max-height: 56px;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.doctor__visitSummary__regions,
+.doctor__visitSummary__lock {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.doctor__visitSummary__evidenceLink {
+  font-size: 12px;
+  color: var(--primary);
+}
+.doctor__visitSummary__save {
+  max-height: 20px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* MAJOR-3 (Phase 10 closing review): block ⑤'s 1-line auth-recovery
+   action -- plain-text link styling (no button chrome), matching
+   .doctor__emptyLink's own convention, so it stays inside the 20px
+   budget above instead of the full DoctorTokenSetup banner. */
+.doctor__visitSummary__authBtn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.doctor__visitSummary__authBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* §3.2 834 portrait 압축 2줄 (VisitSummaryAside.tsx의 compact 분기). */
+.doctor__visitSummary--compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 16px;
+}
+.doctor__visitSummary__compactRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* §6.1 레인1 요약 상태 5값 -- 색+글리프+형태 3중 인코딩, 색-단독 금지. */
+.doctor__lane1Chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.doctor__lane1Chip--urgent {
+  color: var(--danger);
+  border: 2px solid var(--danger);
+  background: #f6ece9;
+}
+.doctor__lane1Chip--review {
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  background: var(--warning-soft);
+}
+.doctor__lane1Chip--unavailable {
+  color: var(--text-muted);
+  border: 1px dashed var(--text-muted);
+  background: transparent;
+  font-weight: 600;
+  font-style: italic;
+}
+.doctor__lane1Chip--clear {
+  color: var(--safe);
+  border: 1px solid var(--safe);
+  font-weight: 500;
+}
+.doctor__lane1Chip--na {
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/*
+ * §3.3 레인 사이/내부 세로 리듬. tablet-viewport.spec.mjs의 1.5-viewport
+ * 높이 예산(round 15 acceptance)에 맞춰 §3.3 원안(48/24px)보다 살짝
+ * 압축했다 -- P5(반응형 마감)에서 실측 기반으로 다시 조정할 수 있는 값이며,
+ * 여기서는 새 레인 헤딩 4개가 추가한 높이를 예산 안으로 되돌리는 최소
+ * 조정이다(deviation, 보고에 명시).
+ */
+.doctor__visitLane {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 24px;
+}
+.doctor__visitLane:first-child {
+  border-top: none;
+  padding-top: 32px;
+  margin-top: 0;
+}
+.doctor__visitLane > h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: 0.03em;
+  margin: 0 0 8px;
+}
+
+/*
+ * Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤": §3.2/§3.3 치수와 동일한
+ * 자리에 회색 펄스 블록만 채운다 -- 중앙 스피너 금지(operate.md).
+ * `.doctor__skeleton__aside`는 §3.2 5블록 높이(60/40/24/56/20px) 그대로,
+ * 레인 블록은 §3.3이 가리키는 최소 콘텐츠 높이의 근사치(정확한 실측값이
+ * 아니라 "이 정도 크기의 것이 곧 온다"는 신호일 뿐이므로 콘텐츠가 도착한
+ * 뒤 값이 달라져도 레이아웃 시프트 자체를 없애는 것이 목적은 아니다).
+ */
+.doctor__skeleton__block,
+.doctor__skeleton__lane {
+  background: var(--surface-muted, #eef2f7);
+  border-radius: 8px;
+  animation: doctor__skeletonPulse 1.5s ease-in-out infinite;
+}
+
+.doctor__skeleton__aside {
+  gap: 10px;
+}
+
+.doctor__skeleton__block--identity {
+  height: 60px;
+}
+.doctor__skeleton__block--chief {
+  height: 40px;
+}
+.doctor__skeleton__block--delta {
+  height: 24px;
+}
+.doctor__skeleton__block--lane1 {
+  height: 56px;
+}
+.doctor__skeleton__block--save {
+  height: 20px;
+}
+
+.doctor__skeleton__lane {
+  margin-top: 16px;
+}
+.doctor__skeleton__lane--lane1 {
+  height: 90px;
+  margin-top: 0;
+}
+.doctor__skeleton__lane--lane2 {
+  height: 220px;
+}
+.doctor__skeleton__lane--judgment {
+  height: 160px;
+}
+.doctor__skeleton__lane--next {
+  height: 200px;
+}
+
+@keyframes doctor__skeletonPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doctor__skeleton__block,
+  .doctor__skeleton__lane {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
+/* §2.6-3 "지난번 추적" 고정 1줄 -- 원장 기록(FOLLOW_UP_TARGET) 스타일,
+   좌측 열의 환자 보고("지난 대비")와 시각적으로 분리한다. */
+.doctor__lastVisitTracked {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-muted);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 0 16px;
+}
+
+/* §2.5 재평가 대상 / 다음 방문 확인 메모 나란히 배치. */
+.doctor__nextPairRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 900px) {
+  .doctor__nextPairRow {
+    grid-template-columns: 1fr;
+  }
+}
+.doctor__nextPairRow__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+.doctor__nextVisitCheckMemo {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* §2.4 "+ 다른 유형 입력 추가" 토글. */
+.doctor__oppositeType > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+/* §2.7 발급 기본 채널(상시) / 다른 방법(details). */
+.doctor__nextIssuance__basic {
+  margin-bottom: 12px;
+}
+.doctor__nextIssuance__altMethods > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* §2.10 학습 케이스 disclosure. */
+.judgment__learningCase > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.judgment__learningCase__flag {
+  color: var(--warning);
+  margin-left: 6px;
+}
+
+/* §8.2 터치 타겟 -- .doctor__visitShell 신규 범위 한정, 기존
+   .workspace__statusBtn(36px) 등 이미 배포된 다른 화면 크기는 그대로. */
+.doctor__visitShell button,
+.doctor__visitShell [role='button'],
+.doctor__visitShell .workspace__statusBtn,
+.doctor__visitShell .workspace__lateralityBtn,
+.doctor__visitShell .workspace__followUpChip {
+  min-height: 44px;
+}
+@media (max-width: 1023px) {
+  .doctor__visitShell button,
+  .doctor__visitShell [role='button'],
+  .doctor__visitShell .workspace__statusBtn,
+  .doctor__visitShell .workspace__lateralityBtn,
+  .doctor__visitShell .workspace__followUpChip {
+    min-height: 48px;
+  }
 }
 
 .doctor__header {
@@ -38,6 +464,46 @@
   font-size: 24px;
   font-weight: 700;
   margin: 0;
+}
+
+/* Core Reduction P4 (Phase 5 Synthesis v1.2 §2.1, Phase 7 UI spec §2.1):
+   전역 화면 전환(오늘/설정). '참고'는 record-scoped라 여기 없다 --
+   진료 화면을 연 뒤에만 의미가 있는 별도 탭(.doctor__recordTabs)이다. */
+.doctor__globalNav {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.doctor__globalNavBtn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.doctor__globalNavBtn--active {
+  background: var(--surface);
+  color: var(--primary);
+  font-weight: 800;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.doctor__globalNavBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.doctor__settingsScreen {
+  max-width: 640px;
 }
 
 .doctor__pickerRow {
@@ -429,6 +895,24 @@
   margin: 0;
 }
 
+/* Phase 7 UI spec §9: Queue 빈 상태의 안내 링크 -- 아이콘 없이 plain
+   text, 밑줄만으로 링크임을 표시한다(별도 버튼 색/배경 없음). */
+.doctor__emptyLink {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.doctor__emptyLink:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .doctor__workstationBadge {
   display: inline-block;
   padding: 3px 10px;
@@ -475,6 +959,26 @@
 .doctor__row--new {
   border-color: var(--danger);
   background: #f6ece9;
+}
+
+/* P0-6 (Core Reduction Phase 6 gate): the revisit row's main click target
+   is now a nested <button> inside the .doctorField.doctor__row <div> (a
+   <button> can no longer BE the row -- it would illegally contain
+   PatientIdentityLinkAction's own interactive controls when the identity
+   is unresolved). Resets button chrome so it still lays out and reads
+   exactly like the plain row it replaces. */
+.doctor__revisitRow__openBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 /* CRM v0.3.1 round 13: read-only Today Queue rows -- deliberately no
@@ -1075,6 +1579,56 @@
   color: var(--text-muted);
 }
 
+/* Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11, Phase 7 UI spec §2.4):
+   참고 화면의 그룹 아코디언. 기본 접힘, "기록 있음 n" 배지가 접힌 채로도
+   내용 유무를 알린다(§2.10 delta C-4). */
+.doctor__refAccordion {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.doctor__refAccordion:first-of-type {
+  border-top: none;
+}
+
+.doctor__refAccordion > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+
+.doctor__refAccordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.doctor__refAccordion__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.doctor__refAccordion__badge {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-muted, #eef2f7);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.doctor__refAccordion__body {
+  margin-top: 12px;
+}
+
+.doctor__refAccordion__body > .doctor__section:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
 /* ---------- Medication/Herbal-course batch ---------- */
 .medCourse {
   margin-top: 14px;
@@ -1190,4 +1744,37 @@
   gap: 8px;
   border-top: 1px dashed var(--border);
   padding-top: 10px;
+}
+
+/*
+ * P5 (Core Reduction, Phase 5 Synthesis v1.2 §6 / Phase 7 UI spec §3.1):
+ * re-tightens `doctor__*`-owned lane/next-pair spacing specifically for
+ * the narrow-aside 1024 breakpoint (~677-700px real content column,
+ * §3.1's own table) -- 1280+ and 834 portrait keep the existing 16/24/32
+ * rhythm unchanged, since only this range measured over its 1.5x budget.
+ * Placed in THIS file (not workspace.css) and after these classes' base
+ * rules on purpose: `.doctor__visitLane`/`.doctor__nextPairRow` are
+ * defined here, and CSS resolves equal-specificity rules by final
+ * position in the bundled stylesheet -- an override placed in
+ * workspace.css for a doctor.css-owned class silently lost to this
+ * file's unconditional rule (doctor.css bundles after workspace.css),
+ * confirmed via getComputedStyle before moving it here to match every
+ * other `workspace__*` override in the same media condition
+ * (workspace.css handles those, since it owns them).
+ */
+@media (min-width: 1024px) and (max-width: 1279px), (min-width: 834px) and (max-width: 1279px) and (orientation: landscape) {
+  .doctor__visitLane {
+    padding-top: 8px;
+    margin-top: 10px;
+  }
+  .doctor__visitLane:first-child {
+    padding-top: 14px;
+  }
+  .doctor__visitLane > h2 {
+    margin: 0 0 4px;
+  }
+  .doctor__nextPairRow {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
 }

@@ -18,6 +18,7 @@ import {
   type JudgmentSourcePayload,
 } from './judgment'
 import { ConflictBanner } from './ConflictBanner'
+import { DoctorTokenSetup } from './DoctorTokenSetup'
 
 function TextList({
   label,
@@ -73,20 +74,35 @@ function LabeledTextarea({
 
 const emptyDebrief: DebriefAnswers = { q1: '', q2: '', q3: '', q4: '' }
 
-const LBP_MOTOR_DEFICIT_OPTIONS: { value: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'; label: string }[] = [
+// P0-2 (Core Reduction Phase 6 gate): exported -- the editable radio
+// controls that used to live here moved to
+// ./ObjectiveExamFindingsCard.tsx (rendered in the clinical tab, next to
+// the regional SafetyPanels), which reuses these SAME option/label
+// definitions rather than forking a second copy. This file keeps a
+// read-only echo of the current value instead (see LBP_MOTOR_DEFICIT_LABEL/
+// SHOULDER_CUFF_WEAKNESS_LABEL below, used in the JSX further down).
+export const LBP_MOTOR_DEFICIT_OPTIONS: { value: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'; label: string }[] = [
   { value: 'NONE', label: '없음' },
   { value: 'SEVERE_OR_PROGRESSIVE', label: '심하거나 빠르게 진행함' },
   { value: 'UNKNOWN', label: '아직 확인 못함' },
 ]
 
-const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'; label: string }[] = [
+export const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'; label: string }[] = [
   { value: 'NONE', label: '없음' },
   { value: 'NEW_WEAKNESS_AFTER_TRAUMA', label: '외상 후 새로 생긴 근력저하 확인됨' },
   { value: 'UNKNOWN', label: '아직 확인 못함' },
 ]
 
+const LBP_MOTOR_DEFICIT_LABEL: Record<string, string> = Object.fromEntries(
+  LBP_MOTOR_DEFICIT_OPTIONS.map((o) => [o.value, o.label]),
+)
+const SHOULDER_CUFF_WEAKNESS_LABEL: Record<string, string> = Object.fromEntries(
+  SHOULDER_CUFF_WEAKNESS_OPTIONS.map((o) => [o.value, o.label]),
+)
+
 export function JudgmentPanel({
   source,
+  resetKey,
   initialJudgment,
   initialUpdatedAt,
   onSave,
@@ -94,14 +110,26 @@ export function JudgmentPanel({
   showShoulderExam = false,
 }: {
   source: JudgmentSourcePayload
+  /**
+   * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.8, delta N-6, Phase 7
+   * §1.2-#9): the unified shell reset key (`submission:<id>` /
+   * `fixture:<...>`). This panel used to fully remount on record switch
+   * via DoctorView's `key={payload.session_id}` -- that independent key is
+   * retired, and this component now owns a render-time reset (mirroring
+   * DoctorWorkspace.tsx's own pattern) driven by this prop instead, so a
+   * record switch resets it in lockstep with the rest of the shell rather
+   * than via a second, independently-typed key-remount mechanism. Falls
+   * back to `source.session_id` when omitted, matching the pre-P2 identity
+   * this panel used before the unified key existed.
+   */
+  resetKey?: string
   /** 서버에 이미 저장된 판단이 있으면 재오픈 시 여기로 넘겨서 되살린다. */
   initialJudgment?: ClinicianJudgment | null
   /**
    * Round 18: the submission record's server-authoritative `updated_at` at
    * the moment this judgment was loaded -- sent as the CAS precondition on
-   * the first "기록" click. This component fully remounts on record switch
-   * (DoctorView's `key={payload.session_id}`), so unlike DoctorWorkspace
-   * there is no mid-life reseed to guard against here.
+   * the first "기록" click. Adopted fresh on every render-time reset below
+   * (see `resetKey`), same as `initialWorkspaceState`/`initialJudgment`.
    */
   initialUpdatedAt?: string | null
   /** 서버 제출을 보고 있을 때만 넘어온다 — 기록 성공 시 PUT :id/judgment로 저장한다. */
@@ -154,6 +182,39 @@ export function JudgmentPanel({
   const [conflict, setConflict] = useState<{ current: ClinicianJudgment | null; currentUpdatedAt: string } | null>(
     null,
   )
+  // P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): the
+  // failure `kind` from the most recent unsuccessful "기록" click.
+  // 'auth' shows the inline token-reentry recovery instead of adding to
+  // the generic `errors` list -- the clinician's typed judgment is
+  // untouched either way, they just need a valid token before "기록" can
+  // succeed again.
+  const [saveErrorKind, setSaveErrorKind] = useState<'auth' | 'network' | 'other' | null>(null)
+
+  // Core Reduction P2 (Phase 5 Synthesis v1.2 §2.8, delta N-6): render-time
+  // reset, replacing the retired `key={payload.session_id}` remount --
+  // same pattern as DoctorWorkspace.tsx's own reset (a plain state update
+  // during render, guarded by comparing against the last-seen key), not a
+  // React `key` swap. Every piece of this panel's local state resets here:
+  // the in-progress judgment/debrief draft, the "기록된 판단" echo, any
+  // pending conflict/its preserved draft, and the P0-8 auth-error banner --
+  // all of it belongs to the OLD record and must never bleed into a newly
+  // selected one.
+  const effectiveResetKey = resetKey ?? source.session_id
+  const [lastSeenJudgmentKey, setLastSeenJudgmentKey] = useState(effectiveResetKey)
+  if (effectiveResetKey !== lastSeenJudgmentKey) {
+    setLastSeenJudgmentKey(effectiveResetKey)
+    const freshJudgment = initialJudgment ?? createEmptyJudgment(source)
+    const freshDebrief = initialJudgment?.debrief ?? emptyDebrief
+    setJudgment(freshJudgment)
+    setDebrief(freshDebrief)
+    setOutlineQuestion('')
+    setRecorded(initialJudgment ?? null)
+    setErrors([])
+    setConflict(null)
+    setSaveErrorKind(null)
+    lastKnownUpdatedAtRef.current = initialUpdatedAt ?? null
+    lastKnownJudgmentRef.current = { judgment: freshJudgment, debrief: freshDebrief }
+  }
 
   function isDraftPristine() {
     return (
@@ -235,6 +296,7 @@ export function JudgmentPanel({
     if (outcome.ok) {
       setRecorded(finalized)
       setConflict(null)
+      setSaveErrorKind(null)
       lastKnownUpdatedAtRef.current = outcome.updatedAt
       // Round 18 closing-review fix (MEDIUM): snapshot the LIVE pre-finalize
       // `judgment`/`debrief` here, never `finalized`. `finalizeJudgment`
@@ -254,8 +316,15 @@ export function JudgmentPanel({
       // was before this click (never shows `finalized` as "기록됨" when it
       // was actually rejected). `judgment`/`debrief` state is untouched, so
       // the clinician's typed values are still right there on screen.
+      setSaveErrorKind(null)
       setConflict(outcome.conflict)
+    } else if (outcome.kind === 'auth') {
+      // P0-8: distinct from the generic errors list below -- the inline
+      // DoctorTokenSetup recovery renders instead of (not in addition to)
+      // the "저장 실패" text.
+      setSaveErrorKind('auth')
     } else {
+      setSaveErrorKind(outcome.kind ?? 'other')
       setErrors(['저장 실패 — 다시 시도해주세요'])
     }
   }
@@ -308,59 +377,38 @@ export function JudgmentPanel({
         />
       </div>
 
+      {/*
+        P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6,
+        단순화 금지선 5-1 "안전 입력이 비기본 탭에"): these two objective
+        exam findings used to be EDITABLE only here, in the 자료 보기 tab
+        -- while their safety effect (URGENT_REVIEW / expedited_referral)
+        shows up in the 진료 tab's safety panels. The editable controls
+        moved to ObjectiveExamFindingsCard (rendered in the clinical tab,
+        immediately next to LbpSafetyPanel/ShoulderSafetyPanel) so the
+        clinician sets the finding right where they see its effect, with
+        its own immediate save -- this stays a READ-ONLY echo (still
+        showLbpExam/showShoulderExam-gated, same applicability signal) so
+        nothing disappears from this record's full picture. Save path is
+        unchanged: still `ClinicianJudgment.lbp_objective_motor_deficit`/
+        `shoulder_objective_cuff_weakness`, still synced into `judgment`
+        below whenever a fresh server record is adopted (the pre-existing
+        version-sync effect), so "기록" in this tab still reflects and
+        persists whatever value was set in the clinical tab.
+      */}
       {showLbpExam && (
-        <div className="judgment__field judgment__lbpExam">
-          <span className="judgment__label">
-            객관적 하지 근력저하 소견 (원장 진찰, LBP)
-          </span>
-          <p className="doctor__derivedNote">
-            심하거나 빠르게 진행하는 소견이면 환자 자가보고(CES 문항)와 무관하게
-            긴급 확인이 표시됩니다. 아직 진찰 전이면 선택하지 않아도 됩니다.
-          </p>
-          <div className="judgment__radioRow">
-            {LBP_MOTOR_DEFICIT_OPTIONS.map((opt) => (
-              <label key={opt.value} className="judgment__radioOption">
-                <input
-                  type="radio"
-                  name="lbp_objective_motor_deficit"
-                  checked={judgment.lbp_objective_motor_deficit === opt.value}
-                  onChange={() =>
-                    setJudgment((j) => ({ ...j, lbp_objective_motor_deficit: opt.value }))
-                  }
-                />
-                <span>{opt.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <p className="judgment__field doctor__derivedNote">
+          객관적 하지 근력저하 소견 (원장 진찰, LBP):{' '}
+          {LBP_MOTOR_DEFICIT_LABEL[judgment.lbp_objective_motor_deficit ?? ''] ?? '아직 진찰 전'}
+          {' — 입력은 진료 탭의 안전 패널 옆에서.'}
+        </p>
       )}
 
       {showShoulderExam && (
-        <div className="judgment__field judgment__lbpExam">
-          <span className="judgment__label">
-            객관적 회전근개 근력저하 소견 (원장 진찰, SHOULDER)
-          </span>
-          <p className="doctor__derivedNote">
-            외상 후 새로 생긴 근력저하가 확인되면 환자 자가보고(SH03)와
-            무관하게 신속 전문의 평가/의뢰 고려가 표시됩니다. 아직 진찰
-            전이면 선택하지 않아도 됩니다.
-          </p>
-          <div className="judgment__radioRow">
-            {SHOULDER_CUFF_WEAKNESS_OPTIONS.map((opt) => (
-              <label key={opt.value} className="judgment__radioOption">
-                <input
-                  type="radio"
-                  name="shoulder_objective_cuff_weakness"
-                  checked={judgment.shoulder_objective_cuff_weakness === opt.value}
-                  onChange={() =>
-                    setJudgment((j) => ({ ...j, shoulder_objective_cuff_weakness: opt.value }))
-                  }
-                />
-                <span>{opt.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <p className="judgment__field doctor__derivedNote">
+          객관적 회전근개 근력저하 소견 (원장 진찰, SHOULDER):{' '}
+          {SHOULDER_CUFF_WEAKNESS_LABEL[judgment.shoulder_objective_cuff_weakness ?? ''] ?? '아직 진찰 전'}
+          {' — 입력은 진료 탭의 안전 패널 옆에서.'}
+        </p>
       )}
 
       <details className="judgment__secondaryFields">
@@ -389,14 +437,36 @@ export function JudgmentPanel({
         </div>
       </details>
 
-      <label className="judgment__toggle">
-        <input
-          type="checkbox"
-          checked={judgment.learning_case}
-          onChange={(e) => setJudgment((j) => ({ ...j, learning_case: e.target.checked }))}
-        />
-        <span>★ 학습 케이스로 표시 (원장 입력)</span>
-      </label>
+      {/*
+        Phase 7 §1.3-#15/§2.10 (delta N-4): every disclosure needs an
+        `open={}` condition tied to whether it holds content -- this one is
+        the row-81 학습 케이스 체크 itself (Phase 1 audit row 81), so its
+        own value (`learning_case === true`) is that condition. Collapsed
+        by default (the common case, an ordinary visit); a record already
+        marked as a learning case stays visibly marked without an extra
+        click.
+      */}
+      <details className="judgment__learningCase" open={judgment.learning_case === true}>
+        <summary>학습 케이스 {judgment.learning_case && <span className="judgment__learningCase__flag">★ 표시됨</span>}</summary>
+        <label className="judgment__toggle">
+          <input
+            type="checkbox"
+            checked={judgment.learning_case}
+            onChange={(e) => setJudgment((j) => ({ ...j, learning_case: e.target.checked }))}
+          />
+          <span>★ 학습 케이스로 표시 (원장 입력)</span>
+        </label>
+      </details>
+
+      {/*
+        P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9): a
+        401/403 (expired/missing doctor token) is fixable right here --
+        re-entering the token clears this recovery card; the clinician's
+        typed judgment is untouched, they just click "기록" again.
+      */}
+      {saveErrorKind === 'auth' && (
+        <DoctorTokenSetup authFailed onSet={() => setSaveErrorKind(null)} />
+      )}
 
       {errors.length > 0 && (
         <div className="doctor__warning">
@@ -416,7 +486,17 @@ export function JudgmentPanel({
 
       {recorded && (
         <details className="doctor__raw" open>
-          <summary>기록된 판단 (JSON, 아직 저장되지 않음)</summary>
+          {/*
+            P0-7 (Core Reduction Phase 6 gate / Phase 3 Opus review "REMOVE"
+            list): this used to say "아직 저장되지 않음" (not yet saved)
+            unconditionally, even in server mode where handleRecord's onSave
+            just succeeded and this record IS durably saved -- a flatly
+            false label sitting right next to the accurate save-state note
+            above (line ~286). Only the fixtures/preview path (no onSave)
+            is genuinely ephemeral; the label now matches which path this
+            actually is instead of asserting the fixtures-only fact always.
+          */}
+          <summary>기록된 판단 (JSON{onSave ? ' — 서버에 저장됨' : ' — 아직 저장되지 않음(미리보기, 새로고침하면 사라짐)'})</summary>
           <pre>{JSON.stringify(recorded, null, 2)}</pre>
         </details>
       )}

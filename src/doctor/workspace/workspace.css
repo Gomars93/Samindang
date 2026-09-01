@@ -1574,3 +1574,112 @@
     grid-column: 1 / -1;
   }
 }
+
+/*
+ * P5 (Core Reduction, Phase 5 Synthesis v1.2 §6 / Phase 7 UI spec §3.1):
+ * the round-15 breakpoints above (900-1100px, 720px) were tuned against
+ * the OLD full-width ~984px content column -- they key off VIEWPORT width
+ * as a stand-in for "how much room does this grid actually have," which
+ * silently broke once the V3 shell (Core Reduction P2) put a ~260-340px
+ * aside next to this content: at exactly the viewport this repo tests
+ * (1024x768 landscape), the real rendered width of `.doctor__visitWork`
+ * is ~677px (measured), not ~984px -- §3.1's own table derives the same
+ * number (1024 - 24 gutter - 24x2 padding - 260 aside = 700px). The
+ * round-15 2-column primary-fields override above still fires in this
+ * range (900<=1024<=1100), so that part was never the gap; what stayed
+ * un-retuned was everything ELSE still sized for the wider column:
+ * finalAssessment padding/gaps, the §2.5 nextPairRow gap, and the
+ * per-lane vertical rhythm (§3.3). This block re-tightens exactly those,
+ * scoped to the same viewport range §3.1 defines for the narrow-aside
+ * 1024 breakpoint (1024-1279px, or a landscape tablet narrower than
+ * 1024) -- 1280+ and 834 portrait are untouched (they already pass their
+ * own 1.5x budget with margin) and no field, label, or content is
+ * removed, only density.
+ */
+@media (min-width: 1024px) and (max-width: 1279px), (min-width: 834px) and (max-width: 1279px) and (orientation: landscape) {
+  /*
+   * `.doctor__visitLane`/`.doctor__nextPairRow` are `doctor__*`-prefixed
+   * classes owned by doctor.css (this file only defines `workspace__*`) --
+   * their P5 density overrides live there instead, in a matching media
+   * query placed after those classes' base rules, so same-file cascade
+   * order (not just this query matching) is what makes them win. A first
+   * attempt at overriding them from here silently lost to doctor.css's
+   * unconditional rules because Vite's bundle happens to place doctor.css
+   * after workspace.css, and two rules of equal specificity resolve by
+   * final position in the bundle regardless of which one sits inside a
+   * media query -- confirmed via getComputedStyle at 1024px before moving
+   * them (padding-top read back as doctor.css's unconditional 32px, not
+   * this file's then-14px).
+   */
+  .workspace__finalAssessment {
+    padding: 10px 14px;
+  }
+  .workspace__finalAssessment__badge {
+    margin-bottom: 8px;
+  }
+  .workspace__finalAssessment__fields {
+    gap: 8px;
+  }
+  .workspace__finalAssessment__field textarea {
+    padding: 6px 8px;
+  }
+  .workspace__hero {
+    padding: 10px 14px;
+  }
+  .workspace__systemicGrid,
+  .workspace__heroRow {
+    gap: 6px;
+  }
+  .workspace__block {
+    padding: 10px 14px;
+  }
+  /*
+   * The round-15 2-column override two blocks above was tuned for a
+   * ~984px-wide card (each column ~480px, three columns would have been
+   * ~310px -- "tight for typing"). At this breakpoint's real ~677-700px
+   * column, three fields already fit in the SAME ~677px the 2-column
+   * layout was using, just arranged as one row instead of two -- each
+   * column is narrower (~210px) than round 15's rejected 310px, but the
+   * fields are short single-line judgments (rows=2) that were already
+   * comfortable at 834-portrait's own ~380px full-width columns, so
+   * ~210px is a real but acceptable trade for removing a full row of
+   * height from the tallest always-visible card in this lane.
+   */
+  .workspace__finalAssessment__fields--primary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .workspace__finalAssessment__fields--primary > :last-child {
+    grid-column: auto;
+  }
+  /*
+   * §6 그리드 재배열: PainWorkspace's/HerbalWorkspace's `.workspace__hero`
+   * already-existing `.workspace__heroRows` wrapper stacks its rows in a
+   * single column at every other viewport (unchanged there) -- at this
+   * breakpoint's narrow ~677-700px column, laying same-height detail rows
+   * side by side removes a full row from the tallest card in 레인2
+   * without touching any label, value or field.
+   */
+  .workspace__heroRows {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0 12px;
+  }
+  .workspace__heroRows .workspace__heroRow {
+    padding: 4px 0;
+  }
+  .workspace__hero__head {
+    margin-bottom: 8px;
+  }
+  .workspace__layerLabel {
+    margin: 4px 0 0;
+  }
+  .workspace__followUp {
+    padding: 8px 12px;
+  }
+  .workspace__followUp h4 {
+    margin: 0 0 6px;
+  }
+  .workspace__block h3 {
+    margin: 0 0 4px;
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
@@ -6,7 +6,12 @@ import { JudgmentPanel } from './JudgmentPanel'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { buildEmrSummary } from './emrSummary'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
-import type { ClinicianJudgment } from './judgment'
+import {
+  createEmptyJudgment,
+  type ClinicianJudgment,
+  type JudgmentSourcePayload,
+  type ObjectiveExamSaveOutcome,
+} from './judgment'
 import type { DoctorPayload } from './types'
 import type { AnswerValue } from '../types'
 import {
@@ -36,11 +41,14 @@ import {
   type SubmissionSummary,
 } from '../lib/serverClient'
 import type { PatientHistoryResult } from './workspace/longitudinal'
+import { asPriorVisitArray } from './workspace/longitudinal'
+import { PriorVisitHistoryCard } from './workspace/PriorVisitHistoryCard'
 import type { MicroFollowUpResponse } from './workspace/microFollowUp'
 import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
-import { DELIVERY_MODE_LABEL, INPUT_PROVENANCE_LABEL, REVISIT_STATUS_LABEL } from './workspace/followUpSession'
+import { DELIVERY_MODE_LABEL } from './workspace/followUpSession'
 import type { CrmTask } from '../crm/types'
-import { TodayQueueSection } from './TodayQueueSection'
+import { TodayUnifiedQueueSection } from './TodayUnifiedQueueSection'
+import { buildTodayQueueRows } from './todayQueue'
 
 // Round 9: the first tablet that is not already serving a patient. A busy
 // tablet cannot be assigned (the server refuses it with 409 station_busy --
@@ -116,6 +124,41 @@ export function Field({
         {text}
       </span>
     </div>
+  )
+}
+
+/**
+ * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11 / Phase 7 UI spec §2.4):
+ * 참고 화면의 각 그룹은 하나의 아코디언으로 묶이고, "기록 있음 n" 배지가
+ * 접힘 상태에서도 내용 유무를 알려준다 -- §2.10 delta C-4가 명시적으로
+ * 허용하는 "동등 이상의 상시 가시 표식"이지, 예외적으로 숨김 규칙을
+ * 어기는 게 아니다(Phase 7 §1.3-#11 테스트 계약). `count`가 0이면
+ * "기록 없음"으로 표시해 빈 아코디언을 열어보게 만들지 않는다 -- 값
+ * 자체는 접힌 상태에서도 그대로 렌더되므로(renderToString 기준 SSR
+ * 마크업에 항상 존재) 이 배지는 순수하게 "미리 알려주는 신호"일 뿐,
+ * 숨김의 유일한 근거가 아니다.
+ */
+function ReferenceAccordion({
+  title,
+  count,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  title: string
+  count: number
+  defaultOpen?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <details className={`doctor__refAccordion${className ? ` ${className}` : ''}`} open={defaultOpen}>
+      <summary>
+        <span className="doctor__refAccordion__title">{title}</span>
+        <span className="doctor__refAccordion__badge">{count > 0 ? `기록 있음 ${count}` : '기록 없음'}</span>
+      </summary>
+      <div className="doctor__refAccordion__body">{children}</div>
+    </details>
   )
 }
 
@@ -1817,6 +1860,90 @@ function constitutionFields(r: Responses) {
 }
 
 /**
+ * Core Reduction P4 -- 참고 화면 "문진 원본" 아코디언의 "기록 있음 n" 배지
+ * 값. 여기 담긴 하위 섹션(환자 기본/주호소/추가 상세상담/참고 증상/
+ * 동반문제/상세 증상/전신·한약 참고) 중 실제로 값이 있는 섹션 개수를 센다
+ * -- 필드 하나하나의 개수가 아니라 "그룹 몇 개가 채워졌는지"를 보여주는
+ * 편이 원장이 한눈에 훑기에 더 유용하다는 판단(§9-#11 배지 계약은 정확한
+ * 산식을 지정하지 않는다, 값이 있음/없음을 반영하기만 하면 된다).
+ */
+export function referenceRawGroupCount(r: Responses, routing: DoctorPayload['routing']): number {
+  let n = 0
+  if (!isEmptyValue(r.patient.patient_name) || !isEmptyValue(r.patient.patient_sex) || !isEmptyValue(r.patient.phone_last4)) n += 1
+  if (!isEmptyValue(r.visit_goal.chief_duration) || !isEmptyValue(r.visit_goal.chief_impact)) n += 1
+  if (typeof routing.additional_module === 'string' && routing.additional_module !== '') n += 1
+  if (referenceSymptomKeys(routing).length > 0) n += 1
+  if (secondaryChipsData(r).length > 0) n += 1
+  if (primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail).length > 0) n += 1
+  if (constitutionFields(r).some((f) => !isEmptyValue(f.value))) n += 1
+  return n
+}
+
+/** Core Reduction P4 -- "약물·병력" 아코디언 배지: 채워진 필드 개수(0~6). */
+export function medicationHistoryGroupCount(r: Responses): number {
+  return [
+    r.medication.medication_use,
+    r.medication.medication_types,
+    r.medical_history.medical_history_flags,
+    r.allergy.allergy_yn,
+    r.allergy.allergy_detail,
+    r.surgery_history.surgery_yn,
+  ].filter((v) => !isEmptyValue(v)).length
+}
+
+/**
+ * Core Reduction P4 -- "여성 안전" 아코디언 배지. 이 아코디언 자체가
+ * 이미 데이터 존재 조건(derived.source != null 또는 읽을 수 없는 레거시
+ * 원본 존재)으로 게이트되므로 최소 1, 계산된 4개 사실이 실제로 읽을 수
+ * 있으면 그만큼 더한다.
+ */
+export function womenSafetyGroupCount(r: Responses): number {
+  if (isUnreadableReproductiveDerived(r)) return 1
+  const d = r.reproductive_status?.derived
+  if (!d || d.source == null) return 1
+  return 1 + [d.pregnant, d.pregnancy_possible, d.postpartum_1y, d.breastfeeding].filter((v) => v === true || v === false).length
+}
+
+/** Core Reduction P4 -- "검사자료" 아코디언 배지: 채워진 필드 개수(0~2). */
+export function testDataGroupCount(r: Responses): number {
+  return [r.recent_tests.recent_test_flag, r.free_text.free_text_yn].filter((v) => !isEmptyValue(v)).length
+}
+
+/** Core Reduction P4 -- "명리" 아코디언 배지: 계산된 사주 기둥 개수(0~4). */
+export function myungriGroupCount(saju: DoctorPayload['myungri_calculation']): number {
+  if (!saju.pillars) return 0
+  return [saju.pillars.year, saju.pillars.month, saju.pillars.day, saju.pillars.hour].filter(
+    (p) => p != null && p !== '',
+  ).length
+}
+
+/** Core Reduction P4 -- "이전 방문 원문" 아코디언 배지: 조회된 이전 방문 건수. */
+export function priorVisitsGroupCount(priorVisits: PatientHistoryResult | null | undefined): number {
+  return asPriorVisitArray<unknown>(priorVisits?.visits).length
+}
+
+/**
+ * Core Reduction P4 -- "명리·감사 기록"(JudgmentPanel) 아코디언 배지: 이미
+ * 서버에 저장된 판단 중 채워진 항목 개수. JudgmentPanel 자체가 관리하는
+ * in-progress 편집 상태는 이 함수가 볼 수 없다(별도 컴포넌트) -- 배지는
+ * "이미 기록된 값"만 반영하며, 다른 그룹들의 배지가 서버/fixture의 저장된
+ * 값을 반영하는 것과 같은 성격이다.
+ */
+export function judgmentRecordedFieldCount(judgment: ClinicianJudgment | null | undefined): number {
+  if (!judgment) return 0
+  let n = 0
+  n += judgment.innate_features.filter((s) => s.trim() !== '').length
+  n += judgment.symptom_links.filter((s) => s.trim() !== '').length
+  if (judgment.saju_only_prediction.trim() !== '') n += 1
+  if (judgment.revised_after_exam.trim() !== '') n += 1
+  if (judgment.final_treatment_axis.trim() !== '') n += 1
+  if (judgment.prescription_direction.trim() !== '') n += 1
+  if (judgment.learning_case === true) n += 1
+  if (judgment.debrief && Object.values(judgment.debrief).some((v) => v.trim() !== '')) n += 1
+  return n
+}
+
+/**
  * MENOPAUSE_SLEEP v0.2 Compact 요약을 raw enum 나열이 아니라 진료용 문장으로 보여준다.
  * Gate를 통과하지 못했으면(남성, 또는 여성이라도 gate_context가 null/'no') null —
  * 이 경우 원래 Sleep Field 목록만 보이고 이 블록 자체가 생기지 않는다.
@@ -2334,7 +2461,7 @@ function statusLabel(status: unknown): string {
 // boundary도 못 잡는다)이 공유한다. 서버가 항상 유효한 값을 보내는
 // 정상 경로에서는 재현되지 않지만, 손상/레거시 저장 파일이나 버전
 // skew에서는 이 필드들의 타입/형식이 보장되지 않는다.
-function formatTimestamp(value: unknown): string {
+export function formatTimestamp(value: unknown): string {
   if (typeof value !== 'string') return '확인 필요'
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? '확인 필요' : d.toLocaleString('ko-KR')
@@ -2345,7 +2472,7 @@ function safeStringOrFallback(value: unknown): string {
 }
 
 /** 상대 시간(예: '방금 전' / '3분 전' / '2시간 전' / '1일 전'). 절대 시각은 별도로 항상 같이 보여준다. */
-function relativeTime(iso: unknown): string {
+export function relativeTime(iso: unknown): string {
   // 20차 독립 리뷰: iso가 문자열이 아니거나 파싱 불가면 이전엔 NaN 연산이
   // 그대로 흘러 "NaN일 전"이라는 원시 값을 노출했다(governing task 정책
   // 5 위반) -- 절대 시각(formatTimestamp)이 이미 "확인 필요"로 옆에
@@ -2416,9 +2543,28 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     null,
   )
   const [listLoading, setListLoading] = useState(true)
+  // P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3, 신선도
+  // (b)안): per-source freshness for the unified "오늘" Queue -- a failed
+  // poll keeps the last-known list on screen (already this source's
+  // existing behavior, see the poll() below) and additionally now tracks
+  // WHEN it last actually succeeded, so TodayUnifiedQueueSection can show
+  // "⟳ 갱신 실패 · 마지막 확인 HH:MM" instead of silently pretending the
+  // stale list is current.
+  const [submissionsLastGoodAt, setSubmissionsLastGoodAt] = useState<string | null>(null)
+  const [submissionsPollFailed, setSubmissionsPollFailed] = useState(false)
   const [retryNonce, setRetryNonce] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<SubmissionRecord | null>(null)
+  /**
+   * Core Reduction P6 (Phase 7 UI spec §9): true only across the window
+   * between picking a row in 오늘 and that submission's detail actually
+   * arriving -- lets the record-fetch effect below distinguish "nothing
+   * selected yet" (오늘 stays visible) from "selected, still loading" (the
+   * skeleton renders instead of either the stale 오늘 list or a blank gap)
+   * without changing the fetch effect's own success/error/cancellation
+   * handling at all.
+   */
+  const [selectedRecordLoading, setSelectedRecordLoading] = useState(false)
   // Round 3 Phase C(longitudinal linkage). Fetched from the same exact
   // patient_id this submission's own record carries -- never derived from
   // name/phone/DOB. Reset to null on every selection change so a slow
@@ -2438,15 +2584,29 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // exclusive with selecting a submission row (see the two onClick handlers
   // below, each clears the other's selection).
   const [revisits, setRevisits] = useState<RevisitQueueItem[]>([])
-  // CRM v0.3.1 round 13: Today Queue. `crmTasks === null` means "no
-  // currently-valid fetch to show" (initial load, or a failed refetch that
-  // was explicitly cleared) -- deliberately stricter than the revisits
-  // polling above, which leaves stale data in place on a failed poll. A
-  // stale CRM queue must never masquerade as the current authoritative
-  // queue after a refresh/error/disconnect.
+  const [revisitsLastGoodAt, setRevisitsLastGoodAt] = useState<string | null>(null)
+  const [revisitsPollFailed, setRevisitsPollFailed] = useState(false)
+  // CRM v0.3.1 round 13: Today Queue. `crmTasks === null` originally meant
+  // "no currently-valid fetch to show" and included clearing it to null on
+  // EVERY failed refetch, deliberately stricter than the revisits polling
+  // above.
+  //
+  // P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3 delta N-3,
+  // 신선도 (b)안 최종 채택): that "clear on failure" behavior is REPLACED
+  // here -- a failed poll now keeps the last-known task list on screen
+  // (same rule as submissions/revisits above) instead of making the whole
+  // CRM section vanish, because the governing gate found that clearing it
+  // caused a WORSE failure mode (a waiting patient's row silently
+  // disappearing from the queue) than showing a clearly-marked stale list.
+  // `crmTasksError` + `crmLastGoodAt` together are what
+  // TodayUnifiedQueueSection uses to render the explicit stale-source
+  // banner instead. `null` now means ONLY "no fetch has ever succeeded
+  // yet" (initial load) -- once populated, it is never reset to null
+  // again by a later failure.
   const [crmTasks, setCrmTasks] = useState<CrmTask[] | null>(null)
   const [crmTasksLoading, setCrmTasksLoading] = useState(false)
   const [crmTasksError, setCrmTasksError] = useState<string | null>(null)
+  const [crmLastGoodAt, setCrmLastGoodAt] = useState<string | null>(null)
   // CRM v0.3.1 round 14: Sigma identity enrichment (display-only name +
   // chart number) for the Today Queue, keyed by patient_uuid. Empty object
   // is the safe default -- TodayQueueSection falls back to the truncated
@@ -2468,6 +2628,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // server also now dedupes a rapid repeat call itself (server/store.js's
   // startRevisit), so this is defense in depth, not the only guard.
   const [startRevisitPending, setStartRevisitPending] = useState(false)
+  // P0-5 (Core Reduction Phase 6 gate / Phase 3 Opus review §4-a "부수
+  // 발견": 제출목록은 큐가 아니라 아카이브 -- 'completed' 전환 액션 자체가
+  // 없었다, 'viewed'만 사용됨). Prevents a double-click firing two
+  // overlapping status writes, same defense-in-depth pattern as
+  // startRevisitPending above.
+  const [completeSubmissionPending, setCompleteSubmissionPending] = useState(false)
+  const [completeSubmissionError, setCompleteSubmissionError] = useState<string | null>(null)
   // Round 8 (delivery-channel-agnostic Micro Follow-up): how staff intends
   // this session's link to reach the patient. CLINIC_TABLET is the default
   // because it is the elderly-friendly in-clinic path the clinic actually
@@ -2501,8 +2668,17 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
    * costing state. Tests that assert on rendered markup therefore keep
    * covering the whole record; the browser QA measures what is visible.
    */
-  const [recordTab, setRecordTab] = useState<'clinical' | 'reference' | 'myungri'>('clinical')
-  function openRecordTab(tab: 'clinical' | 'reference' | 'myungri') {
+  /*
+   * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11, Phase 7 UI spec §2.4):
+   * the separate '명리' tab is retired -- its content (MyungriCompactCard +
+   * "명리 검토" review grid) now renders as one more accordion INSIDE the
+   * '참고' surface (formerly labeled '자료 보기'), alongside the raw
+   * questionnaire groups it always sat next to. Nothing here deletes
+   * content or changes the profile gate (viewProfile !== 'pain') that
+   * decided whether it existed at all -- only the tab it lived under.
+   */
+  const [recordTab, setRecordTab] = useState<'clinical' | 'reference'>('clinical')
+  function openRecordTab(tab: 'clinical' | 'reference') {
     setRecordTab(tab)
   }
   // Opening a different record always starts back on the clinical surface --
@@ -2535,6 +2711,20 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const [linkCopyStatus, setLinkCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const viewedRef = useRef<Set<string>>(new Set())
   const [workstationId, setWorkstationId] = useState<string | null>(() => getStoredWorkstationId())
+  /*
+   * Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11, Phase 7 UI spec §2.1/
+   * §2.5): '설정' is a genuinely global screen (unlike '참고', which is
+   * record-scoped and stays a per-record tab -- see the orchestrator note
+   * at the top of the Phase 7 spec). Switching to it hides 오늘/진료
+   * without losing any of that state (selectedId/selectedRevisit/etc. stay
+   * exactly as they were, so returning to 오늘 resumes where staff left
+   * off). Doctor token management (including "clear") moves here from the
+   * always-visible header per §2.5 -- the unset-workstation banner and the
+   * in-flow auth-failure recovery keep their current, unconditional
+   * positions and conditions unchanged (delta C-1 / P0-8), since neither
+   * is what this screen exists to hold.
+   */
+  const [screen, setScreen] = useState<'main' | 'settings'>('main')
   // tokenVersion bumps whenever the sessionStorage doctor token is set/cleared
   // from this screen, forcing a re-render (poll effect below depends on it
   // too, so a fresh/cleared token retries immediately).
@@ -2573,6 +2763,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       if (result.ok) {
         setSubmissions(result.data)
         setServerError(null)
+        setSubmissionsPollFailed(false)
+        setSubmissionsLastGoodAt(new Date().toISOString())
 
         const readyIds = new Set(result.data.filter((s) => s.recorder_ready).map((s) => s.id))
         if (knownReadyIdsRef.current === null) {
@@ -2603,6 +2795,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         }
       } else {
         setServerError({ message: result.error, kind: result.kind })
+        setSubmissionsPollFailed(true)
       }
       setListLoading(false)
     }
@@ -2635,7 +2828,16 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     async function poll() {
       const result = await listRevisitQueue()
       if (cancelled) return
-      if (result.ok) setRevisits(result.data)
+      if (result.ok) {
+        setRevisits(result.data)
+        setRevisitsPollFailed(false)
+        setRevisitsLastGoodAt(new Date().toISOString())
+      } else {
+        // P1 신선도 (b)안: 기존 행 유지(위 setRevisits 호출 자체를 생략) +
+        // stale 표식만 세운다 -- 이 poll()은 이미 실패 시 revisits를 그대로
+        // 둔다(변경 없음), 새로 하는 일은 그 사실을 화면에 명시하는 것뿐.
+        setRevisitsPollFailed(true)
+      }
       // Round 8: stations poll on the same cadence so an assigned tablet's
       // row reflects reality (assigned / freed) without a manual refresh.
       const stationResult = await listStations()
@@ -2644,11 +2846,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         setStations(stationResult.data)
         setSelectedStationId((current) => current || firstFreeStationId(stationResult.data))
       }
-      // CRM v0.3.1 round 13: Today Queue, same polling cadence. Unlike the
-      // two polls above, a failed fetch here explicitly clears crmTasks to
-      // null (never leaves a stale queue displayed as current) -- see the
-      // crmTasks state declaration's comment for why this queue is held to
-      // a stricter staleness rule.
+      // CRM v0.3.1 round 13: Today Queue, same polling cadence.
+      //
+      // P1 (delta N-3, 신선도 (b)안): a failed fetch no longer clears
+      // crmTasks to null -- see the crmTasks state declaration's comment
+      // above for why that "clear on failure" rule was replaced.
       setCrmTasksLoading(true)
       const crmResult = await listCrmTasks()
       if (cancelled) return
@@ -2656,6 +2858,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       if (crmResult.ok) {
         setCrmTasks(crmResult.data.tasks)
         setCrmTasksError(null)
+        setCrmLastGoodAt(new Date().toISOString())
         // Round 14: identity enrichment is derived from THIS fetch's own
         // task list, never from whatever the previous poll happened to
         // show -- so a task that just left the queue can't keep a stale
@@ -2681,9 +2884,14 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           }
         }
       } else {
-        setCrmTasks(null)
+        // P1 신선도 (b)안: crmTasks는 이제 여기서 지우지 않는다(이전 성공
+        // 목록을 그대로 화면에 유지) -- crmTasksError만 세워 stale 표식을
+        // 띄운다. patientIdentities는 그대로 둔다(이미 알고 있던 이름/
+        // chart_no가 갑자기 "확인 필요"로 뒤집힐 이유가 없다 -- 새로
+        // 들어온 task가 있었다면 애초에 이 poll이 성공했어야 하므로, 실패
+        // 상황에서는 화면에 남아있는 task 목록과 identities 맵이 서로
+        // 어긋날 일이 없다).
         setCrmTasksError(crmResult.error)
-        setPatientIdentities({})
       }
     }
     // 17차 독립 리뷰 FINDING-1: poll()은 catch 없이 호출됐다 --
@@ -2710,9 +2918,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   useEffect(() => {
     if (mode !== 'server' || !selectedId) {
       setSelectedRecord(null)
+      setSelectedRecordLoading(false)
       return
     }
     let cancelled = false
+    setSelectedRecordLoading(true)
     setUnreadReadyIds((prev) => {
       if (!prev.has(selectedId)) return prev
       const next = new Set(prev)
@@ -2721,6 +2931,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     })
     getSubmission(selectedId).then((result) => {
       if (cancelled) return
+      setSelectedRecordLoading(false)
       if (result.ok) {
         setSelectedRecord(result.data)
         // Round 18: only mark 'viewed' if the record's server-reported
@@ -2851,6 +3062,33 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const payloadShapeOk = isDoctorPayloadShapeUsable(payload)
   const viewProfile = payloadShapeOk ? deriveViewProfile(payload).derived : null
 
+  /*
+   * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.8, Phase 7 §1.2): the
+   * unified shell reset key -- `submission:<id>` in server mode,
+   * `fixture:<fixtureIndex>:<workspaceScenarioId>` in fixtures/preview mode
+   * (RevisitWorkspace's own `visit:<visit_id>` reset lives entirely inside
+   * that separate branch below and is out of scope for this key -- see its
+   * own render site). DoctorRecordErrorBoundary's `key` and
+   * DoctorWorkspace's `resetKey` prop both read this SAME string so a
+   * record switch resets both mechanisms in lockstep, and neither can
+   * silently drift from the other the way the old two independently-typed
+   * key expressions could.
+   */
+  const unifiedResetKey =
+    mode === 'server' ? `submission:${selectedRecord?.id ?? 'none'}` : `fixture:${fixtureIndex}:${workspaceScenarioId}`
+
+  /*
+   * Phase 7 §3.2 블록①(신원): chart_no는 CRM Today Queue enrichment가 이미
+   * 해석해둔 patientIdentities 맵(patient_id 정확 일치만, 이름/전화 매칭
+   * 금지 -- P0-6과 동일 원칙)에서만 읽는다. 이 맵은 오늘 CRM 작업이 있는
+   * 환자만 채워지므로, 그 밖의 제출은 chart_no 없이(값을 지어내지 않고)
+   * 아래에서 그대로 생략된다 -- 새 서버 조회를 이 배치에서 추가하지 않는다.
+   */
+  const resolvedIdentityForOpenRecord =
+    mode === 'server' && selectedRecord?.patient_id ? patientIdentities[selectedRecord.patient_id] : undefined
+  const chartNoForOpenRecord =
+    resolvedIdentityForOpenRecord?.resolved === true ? resolvedIdentityForOpenRecord.sigma_chart_no : null
+
   // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
   // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
   useEffect(() => {
@@ -2974,8 +3212,119 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     }
   }
 
-  const showingServerList = mode === 'server' && !selectedRecord
-  const newCount = submissions.filter((s) => s.status === 'new').length
+  // P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6):
+  // ObjectiveExamFindingsCard's save trigger -- merges `field: value` into
+  // the record's CURRENT server judgment (never the possibly-stale one
+  // this component's own JudgmentPanel instance might be mid-editing) and
+  // saves it through the exact same PUT judgment endpoint JudgmentPanel
+  // itself uses. `judgment` is server-side a single object, so this and
+  // JudgmentPanel's own "기록" click are two independent writers to the
+  // SAME field.
+  //
+  // 독립 검수 HIGH-2: 이전 버전은 409(stale write) 발생 시 서버의 current
+  // judgment 위에 이 필드의 로컬 value를 다시 merge해 자동으로 1회
+  // 재저장했다. `lbp_objective_motor_deficit`/`shoulder_objective_cuff_weakness`는
+  // 안전 판정(URGENT_REVIEW/신속 전문의 평가 고려)에 영향을 줄 수 있는
+  // clinician observation이라, 다른 탭/기기에서 방금 저장한 최신 소견을
+  // 사람 확인 없이 조용히 덮어쓸 수 있었다(두 필드가 아니라 같은 필드에
+  // 대한 두 writer가 경쟁하는 경우 포함). 자동 retry/merge를 제거하고
+  // PR #24가 JudgmentPanel/DoctorWorkspace에 이미 정착시킨 원칙 그대로
+  // conflict를 반환한다 -- ObjectiveExamFindingsCard가 ConflictBanner로
+  // 명시적으로 보여주고, 원장이 "최신 내용 불러오기"를 누른 뒤에만 값이
+  // 바뀐다(handleReloadObjectiveExamConflict 참고).
+  async function handleSaveObjectiveExamField(
+    field: 'lbp_objective_motor_deficit' | 'shoulder_objective_cuff_weakness',
+    value: string,
+  ): Promise<ObjectiveExamSaveOutcome> {
+    if (!(mode === 'server' && selectedId)) return { ok: false, kind: 'other' }
+    const source: JudgmentSourcePayload = {
+      session_id: payload.session_id,
+      questionnaire_version: payload.questionnaire_version,
+      myungri_algorithm_version: saju.policy.algorithm_version,
+      myungri_library_version: saju.engine.library_version,
+      myungri_status: saju.status,
+      myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),
+    }
+    const base = selectedRecord?.judgment ?? null
+    const next: ClinicianJudgment = { ...(base ?? createEmptyJudgment(source)), [field]: value }
+    const result = await saveJudgmentToServer(selectedId, next, selectedRecord?.updated_at)
+    if (result.ok) {
+      setSelectedRecord(result.data)
+      return { ok: true }
+    }
+    const current = result.errorBody?.current as SubmissionRecord | undefined
+    if (current) {
+      return { ok: false, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
+    }
+    return { ok: false, kind: result.kind }
+  }
+
+  // 독립 검수 HIGH-2: ObjectiveExamFindingsCard의 ConflictBanner에서
+  // "최신 내용 불러오기"를 누른 순간 호출된다. `handleSaveObjectiveExamField`는
+  // 매 저장 시도마다 CAS 기준(judgment/updated_at)을 selectedRecord에서
+  // 그대로 읽으므로(JudgmentPanel처럼 자체 ref로 추적하지 않는다), 여기서
+  // selectedRecord를 서버의 current로 맞춰주지 않으면 다음 저장 시도가
+  // 똑같은 stale 기준으로 다시 409를 만든다. 필드 값을 자동으로 합치지
+  // 않고 서버가 돌려준 current judgment/updated_at을 있는 그대로 반영할
+  // 뿐이다 -- 새로운 병합 로직이 아니다.
+  function handleReloadObjectiveExamConflict(current: ClinicianJudgment | null, currentUpdatedAt: string) {
+    setSelectedRecord((prev) => (prev ? { ...prev, judgment: current, updated_at: currentUpdatedAt } : prev))
+  }
+
+  // P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3): the unified
+  // "오늘" Queue row order -- pure UI synthesis over the three already-
+  // fetched lists (see src/doctor/todayQueue.ts's own file header for why
+  // this never merges the backend stores or imports any FROZEN clinical
+  // logic). Recomputed every render (pilot-scale data volumes, same O(n)
+  // tolerance this codebase already accepts elsewhere) rather than
+  // memoized -- simplicity over a premature optimization.
+  const todayQueueRows = buildTodayQueueRows({
+    submissions,
+    revisits,
+    crmTasks,
+    patientIdentities,
+    now: new Date().toISOString(),
+  })
+  const submissionsById = new Map(submissions.map((s) => [s.id, s] as const))
+  const revisitsByVisitId = new Map(revisits.map((r) => [r.visitId, r] as const))
+  const crmTasksByPatient = new Map<string, CrmTask[]>()
+  for (const t of crmTasks ?? []) {
+    if (t == null || typeof t !== 'object' || typeof t.patient_uuid !== 'string') continue
+    const existing = crmTasksByPatient.get(t.patient_uuid)
+    if (existing) existing.push(t)
+    else crmTasksByPatient.set(t.patient_uuid, [t])
+  }
+
+  // P0-5 (Core Reduction Phase 6 gate / Phase 3 Opus review §4-a "부수
+  // 발견": 제출목록은 큐가 아니라 아카이브 -- limit 없이 전체를 반환하고
+  // 'completed' 전환 액션이 없어 'viewed'만 있었다). Reuses the EXISTING
+  // VALID_STATUSES contract (server/store.js's setStatus) unchanged -- no
+  // new status value, no automatic 'in_consultation' transition (that
+  // remains HUMAN DECISION #2, out of this round's scope). Only offered
+  // once a real server-mode submission is open (the record must actually
+  // have been reviewed to be marked complete).
+  async function handleCompleteSubmission() {
+    if (!(mode === 'server' && selectedId)) return
+    if (completeSubmissionPending) return
+    setCompleteSubmissionPending(true)
+    setCompleteSubmissionError(null)
+    try {
+      const result = await setSubmissionStatus(selectedId, 'completed')
+      if (result.ok) {
+        setSelectedRecord(result.data)
+        // 목록 복귀는 성공했을 때만 -- 실패 시 원장이 이 화면에 그대로
+        // 남아 다시 시도할 수 있어야 한다(실패를 조용히 삼키고 넘어가지
+        // 않는다).
+        setSelectedId(null)
+      } else {
+        setCompleteSubmissionError(result.error)
+      }
+    } catch {
+      setCompleteSubmissionError('진료 완료 처리에 실패했습니다. 다시 시도해 주세요.')
+    } finally {
+      setCompleteSubmissionPending(false)
+    }
+  }
 
   // Round 3(revisit linkage): "재진 간단 문진 시작". Uses the EXPLICIT
   // patient_id already carried by the currently-open submission record --
@@ -3167,6 +3516,337 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     }
   }
 
+  /*
+   * Core Reduction P3 (Phase 5 Synthesis v1.2 §2.5/§2.7, Phase 7 §2.3
+   * "다음" 레인 tail): 발급(기본 채널 상시 노출 + "다른 방법" details) +
+   * 메시징 + 종결(EMR 검토 + P0-5 "진료 완료") -- all DoctorView-owned
+   * state (issuedSession/deliveryMode/stations/recorderResults/emrText/
+   * completeSubmission*), so it is built here and handed to
+   * DoctorWorkspace as a prop rather than DoctorWorkspace needing to know
+   * about any of this state. Same conditions, same handlers as before this
+   * round moved them -- only the position (now inside the 진료 탭) and the
+   * 다른 방법 disclosure boundary (§2.7) are new.
+   *
+   * §2.7/§1.3-#1/#2/#3: "다른 방법" auto-opens when a capability token is
+   * outstanding (`activeSession`) or has not yet been consumed
+   * (`unconsumedToken`) -- this codebase only ever holds ONE in-memory
+   * signal for "there is a one-time patient link outstanding right now"
+   * (`issuedSession`, cleared on invalidate/reload -- the server never
+   * returns a consumed token again), so both names map to that same
+   * signal rather than two independently-tracked booleans.
+   */
+  const activeSession = issuedSession !== null
+  const unconsumedToken = issuedSession !== null
+  const altMethodsAutoOpen = activeSession || unconsumedToken
+  const nextLaneFooterNode =
+    mode === 'server' && selectedRecord?.patient_id ? (
+      <>
+        <section className="doctor__section doctor__revisitSession doctor__nextIssuance">
+          <h2>재진 간단 문진 (Micro Follow-up)</h2>
+
+          {/*
+            §2.7: 기본 채널(원내 태블릿)은 상시 노출 -- 0클릭으로 도달.
+            비기본 채널로 전환하려면 아래 "다른 방법"을 펼쳐야 한다.
+          */}
+          <div className="doctor__nextIssuance__basic">
+            <p className="doctor__revisitSession__hint">기본 채널: {DELIVERY_MODE_LABEL.CLINIC_TABLET}</p>
+            <div className="doctor__revisitSession__issued">
+              {stations.length === 0 ? (
+                <p className="doctor__revisitSession__hint">
+                  등록된 원내 태블릿이 없습니다 — 아래 "원내 태블릿 관리"에서 먼저 등록해 주세요.
+                </p>
+              ) : (
+                <>
+                  <label className="doctorField__label" htmlFor="doctor-station-select">
+                    배정할 태블릿
+                  </label>
+                  <select
+                    id="doctor-station-select"
+                    value={selectedStationId}
+                    onChange={(e) => setSelectedStationId(e.target.value)}
+                  >
+                    {/* Round 9: a busy tablet is not selectable. The server
+                        refuses it (409 station_busy) because the tablet stops
+                        polling once a patient has the questions open, so a
+                        takeover could not actually replace what is on that
+                        physical screen -- staff must complete or reset it
+                        first. Disabling the option makes the rule visible
+                        instead of letting the click fail. */}
+                    {stations.map((s) => (
+                      <option key={s.stationId} value={s.stationId} disabled={Boolean(s.assignment)}>
+                        {s.name}
+                        {s.assignment ? ' (사용 중 — 아래에서 초기화 후 배정)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="doctor__revisitSession__actions">
+                    <button
+                      type="button"
+                      className="judgment__recordBtn"
+                      onClick={handleAssignToStation}
+                      disabled={assignPending || !selectedStationId || selectedStationBusy}
+                    >
+                      {assignPending ? '배정 중…' : '이 태블릿에 배정'}
+                    </button>
+                  </div>
+                  {assignedStationName && (
+                    <p className="doctor__revisitSession__hint">
+                      「{assignedStationName}」에 배정되었습니다 — 환자에게 그 태블릿을 건네주세요. 환자는 이름·전화번호를
+                      입력하지 않습니다.
+                    </p>
+                  )}
+                  <p className="doctor__revisitSession__hint">
+                    사용 중인 태블릿에는 배정할 수 없습니다 — 아래 「원내 태블릿 관리」에서 초기화한 뒤 배정하세요.
+                    초기화하면 그 태블릿이 들고 있던 링크는 즉시 무효화됩니다.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/*
+            §2.7/§1.3-#1/#2/#3: 비기본 채널(QR·직원 대신 입력·내원 전 링크)
+            + 재발급/무효화/메시징 -- activeSession || unconsumedToken이면
+            자동 펼침, 기본 경로(아무 것도 발급되지 않은 상태)에서는 접힘.
+          */}
+          <details className="doctor__nextIssuance__altMethods" open={altMethodsAutoOpen}>
+            <summary>다른 방법 (QR · 직원 대신 입력 · 내원 전 링크)</summary>
+            <div className="doctor__revisitSession__modes" role="group" aria-label="전달 방식">
+              {(Object.keys(DELIVERY_MODE_LABEL) as DeliveryMode[])
+                .filter((m) => m !== 'CLINIC_TABLET')
+                .map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={deliveryMode === m}
+                    className={`workspace__followUpChip${deliveryMode === m ? ' workspace__followUpChip--active' : ''}`}
+                    onClick={() => {
+                      setDeliveryMode(m)
+                      setAssignedStationName(null)
+                    }}
+                  >
+                    {DELIVERY_MODE_LABEL[m]}
+                  </button>
+                ))}
+            </div>
+
+            {deliveryMode === 'CLINIC_TABLET' ? (
+              <p className="doctor__revisitSession__hint">위 기본 채널(원내 태블릿)에서 배정하세요.</p>
+            ) : !issuedSession ? (
+              <>
+                <button
+                  type="button"
+                  className="judgment__recordBtn"
+                  onClick={handleStartRevisit}
+                  disabled={startRevisitPending}
+                >
+                  {startRevisitPending ? '처리 중…' : '재진 간단 문진 시작'}
+                </button>
+                <p className="doctor__revisitSession__hint">
+                  직전 방문의 추적 항목(최대 3개)을 바탕으로 환자용 1회용 링크를 발급합니다.
+                </p>
+              </>
+            ) : (() => {
+              // Computed once here (not re-called at every use site below) so
+              // the QR/code display, copy-link button, and MessagingPanel's
+              // `link` prop can never disagree on whether the public base is
+              // configured -- see src/lib/publicFollowUpUrl.ts's header.
+              const followUpLink = patientFollowUpLink(issuedSession.token)
+              return (
+              <div className="doctor__revisitSession__issued">
+                <p>
+                  환자용 링크 (만료: {formatTimestamp(issuedSession.expiresAt)})
+                </p>
+                {followUpLink === null ? (
+                  <p className="doctor__revisitSession__error" role="alert">
+                    공개 후속 링크 기본 URL이 설정되지 않았습니다 — 관리자에게
+                    VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL 환경변수 설정을 요청하세요. 그때까지는 링크
+                    복사·QR·문자/알림톡 발송을 사용할 수 없습니다.
+                  </p>
+                ) : (
+                  <>
+                    {deliveryMode === 'PERSONAL_QR' && <FollowUpQrCode url={followUpLink} />}
+                    <code className="doctor__revisitSession__link">{followUpLink}</code>
+                  </>
+                )}
+                {issuedSession.targetCount === 0 && (
+                  <p className="doctor__revisitSession__hint">
+                    이 환자는 이전 방문에 기록된 추적 항목이 없습니다 — 재확인 항목 없이 전반적 변화 · 새로운 증상 ·
+                    이상반응만 묻는 링크가 발급되었습니다.
+                  </p>
+                )}
+                {deliveryMode === 'STAFF_ASSISTED' && (
+                  <p className="doctor__revisitSession__hint">
+                    환자가 기기를 쓰기 어려운 경우, 직원이 이 링크를 열어 같은 질문을 읽어드리고 환자가 말한 답을 그대로
+                    입력합니다. 답변은 여전히 <strong>환자가 보고한 사실</strong>이며, 원장이 관찰한 소견이 아닙니다.
+                  </p>
+                )}
+                {deliveryMode === 'PREVISIT_LINK' && (
+                  <p className="doctor__revisitSession__hint">
+                    내원 전 전달용 링크입니다. 아래에서 문자/카카오 알림톡으로 바로 발송하거나, 이 링크를 직접 복사해
+                    전달할 수 있습니다.
+                  </p>
+                )}
+                <div className="doctor__revisitSession__actions">
+                  <button type="button" className="judgment__recordBtn" onClick={handleCopyPatientLink}>
+                    {linkCopyStatus === 'copied' ? '복사됨' : linkCopyStatus === 'error' ? '복사 실패' : '링크 복사'}
+                  </button>
+                  <button type="button" className="judgment__recordBtn" onClick={handleReissueSession}>
+                    재발급
+                  </button>
+                  <button type="button" className="judgment__recordBtn" onClick={handleInvalidateSession}>
+                    무효화
+                  </button>
+                </div>
+                {selectedRecord?.patient_id && followUpLink !== null && (
+                  <MessagingPanel
+                    visitId={issuedSession.visitId}
+                    patientId={selectedRecord.patient_id}
+                    followUpToken={issuedSession.token}
+                    link={followUpLink}
+                  />
+                )}
+              </div>
+              )
+            })()}
+          </details>
+          {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}
+
+          {/*
+            Round 8: station management. Registration hands back a device
+            credential exactly once, rendered as a one-time pairing link
+            that staff opens ON the tablet -- never stored anywhere here.
+          */}
+          <details className="doctor__revisitSession__stations">
+            <summary>원내 태블릿 관리 ({stations.length})</summary>
+            <div className="doctor__revisitSession__stationList">
+              {stations.map((s) => (
+                <div key={s.stationId} className="doctor__revisitSession__stationRow">
+                  <span>
+                    {s.name} — {s.assignment ? '환자 배정됨' : '대기 중'}
+                  </span>
+                  {s.assignment && (
+                    <button type="button" className="judgment__recordBtn" onClick={() => handleResetStation(s.stationId)}>
+                      대기 화면으로 되돌리기
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="doctor__revisitSession__actions">
+                <input
+                  type="text"
+                  className="workspace__noteInput"
+                  value={newStationName}
+                  onChange={(e) => setNewStationName(e.target.value)}
+                  placeholder="예: 접수 태블릿 1"
+                  aria-label="새 태블릿 이름"
+                />
+                <button type="button" className="judgment__recordBtn" onClick={handleRegisterStation}>
+                  태블릿 등록
+                </button>
+              </div>
+              {newStationPairing && (
+                <div className="doctor__revisitSession__issued">
+                  <p>
+                    「{newStationPairing.name}」 등록 링크 — <strong>이 화면을 벗어나면 다시 볼 수 없습니다.</strong> 해당
+                    태블릿에서 이 주소를 한 번만 열어주세요.
+                  </p>
+                  <code className="doctor__revisitSession__link">{newStationPairing.link}</code>
+                </div>
+              )}
+              {stationError && <p className="doctor__revisitSession__error">{stationError}</p>}
+            </div>
+          </details>
+        </section>
+
+        {/*
+          §2.3 "종결": EMR 검토(진료 녹취·요약) + P0-5 "진료 완료" 버튼을
+          한 자리에 -- 완료 직전 마지막으로 검토하는 내용과 그 확정 액션이
+          이제 서로 옆에 있다.
+        */}
+        <section className="doctor__section doctor__nextCompletion">
+          <h2>종결</h2>
+          {selectedRecord?.visit_id && (
+            <>
+              <h3>진료 녹취·요약</h3>
+              {recorderResultsError ? (
+                <p className="doctor__warning">녹취 결과를 불러오지 못했습니다: {recorderResultsError}</p>
+              ) : !recorderResults || recorderResults.length === 0 ? (
+                <p className="doctor__empty">아직 결과 없음</p>
+              ) : (
+                <>
+                  <p className="doctor__derivedLabel">
+                    결과 있음 — 녹음 {recorderResults.length}건 (최신 갱신: {relativeTime(recorderResults[0].updated_at)})
+                  </p>
+                  {recorderResults.length > 1 && (
+                    <ul className="doctor__recorderLineage">
+                      {recorderResults.map((res) => (
+                        <li key={res.recording_id}>
+                          {res.recording_id} · {relativeTime(res.updated_at)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <details className="doctor__secDetails">
+                    <summary>Transcript 원문</summary>
+                    <pre className="doctor__recorderTranscript">{recorderResults[0].transcript ?? '(없음)'}</pre>
+                  </details>
+                  <div className="judgment__field doctor__recorderEmrField">
+                    <label className="judgment__label" htmlFor="emrSummaryText">
+                      EMR용 요약 (plain text, 직접 수정 가능)
+                    </label>
+                    <textarea
+                      id="emrSummaryText"
+                      className="judgment__textarea"
+                      rows={8}
+                      value={emrText}
+                      onChange={(e) => setEmrText(e.target.value)}
+                    />
+                  </div>
+                  <div className="judgment__actions">
+                    <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
+                      EMR용 복사
+                    </button>
+                    <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
+                      요약 다시 만들기
+                    </button>
+                    {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
+                    {copyStatus === 'error' && (
+                      <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {completeSubmissionError && (
+            <p className="doctor__warning" role="alert">
+              {completeSubmissionError}
+            </p>
+          )}
+
+          {/*
+            P0-5 (Core Reduction Phase 6 gate): the one explicit "이 제출건은
+            끝났다" action -- reuses the existing VALID_STATUSES contract
+            (server/store.js's setStatus) unchanged. Does NOT auto-transition
+            through 'in_consultation' (HUMAN DECISION #2, unchanged/out of
+            scope this round).
+          */}
+          {mode === 'server' && selectedRecord && selectedId && (
+            <button
+              type="button"
+              className="judgment__recordBtn"
+              onClick={handleCompleteSubmission}
+              disabled={completeSubmissionPending}
+            >
+              {completeSubmissionPending ? '처리 중…' : '진료 완료'}
+            </button>
+          )}
+        </section>
+      </>
+    ) : undefined
+
   return (
     <div className="doctor">
       {readyToast && (
@@ -3176,17 +3856,35 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       )}
       <header className="doctor__header">
         <h1 className="doctor__title">진료 전 요약</h1>
+        {/*
+          Core Reduction P4 (Phase 5 Synthesis v1.2 §2.1): 전역 화면 전환.
+          '참고'는 여기 없다 -- record-scoped라 진료 화면을 연 뒤에만
+          의미가 있는 탭이지 전역 nav 항목이 아니다(Phase 7 스펙
+          오케스트레이터 주석). 화면을 옮겨도 오늘 목록/열린 기록/큐
+          폴링 상태는 전부 그대로 유지된다 -- 다시 '오늘'을 누르면
+          있던 자리로 돌아온다.
+        */}
+        <nav className="doctor__globalNav" aria-label="주 화면 전환">
+          <button
+            type="button"
+            className={`doctor__globalNavBtn${screen === 'main' ? ' doctor__globalNavBtn--active' : ''}`}
+            aria-current={screen === 'main' ? 'page' : undefined}
+            onClick={() => setScreen('main')}
+          >
+            오늘
+          </button>
+          <button
+            type="button"
+            className={`doctor__globalNavBtn${screen === 'settings' ? ' doctor__globalNavBtn--active' : ''}`}
+            aria-current={screen === 'settings' ? 'page' : undefined}
+            onClick={() => setScreen('settings')}
+          >
+            설정
+          </button>
+        </nav>
         <span className="doctor__workstationBadge">
           {workstationId ? `진료 워크스테이션: ${workstationId}` : '워크스테이션 설정 필요'}
         </span>
-        {mode === 'server' && hasDoctorToken && (
-          <DoctorTokenClearButton
-            onClear={() => {
-              setTokenVersion((n) => n + 1)
-              setRetryNonce((n) => n + 1)
-            }}
-          />
-        )}
         {showPreviewControls && (
           <div className="doctor__pickerRow">
             <label htmlFor="doctor-source-select">데이터 소스</label>
@@ -3245,6 +3943,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             목록으로
           </button>
         )}
+        {/*
+          Core Reduction P3 (Phase 5 Synthesis v1.2 §2.3/§2.7 "종결"): the
+          "진료 완료" action + its error line moved from this always-visible
+          header down into the 진료 탭의 다음 레인 (nextLaneFooterNode,
+          alongside the EMR review it now sits next to) -- same condition,
+          same handler, same VALID_STATUSES contract, position only.
+        */}
         {mode === 'server' && selectedRecord?.visit_id && (
           <span className="doctor__activeVisitBadge">현재 진료 중으로 표시됨</span>
         )}
@@ -3252,6 +3957,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
       {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
 
+      {screen === 'main' && (
+      <>
       {mode === 'server' && serverError?.kind === 'auth' && (
         <DoctorTokenSetup
           authFailed
@@ -3276,133 +3983,101 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         </div>
       )}
 
-      {showingServerList && !serverError && (
-        <section className="doctor__section">
-          <h2>
-            제출목록 ({submissions.length})
-            {newCount > 0 && <span className="doctor__newBadge">신규 {newCount}</span>}
-          </h2>
-          {listLoading && submissions.length === 0 ? (
-            <p className="doctor__empty">불러오는 중…</p>
-          ) : submissions.length === 0 ? (
-            <p className="doctor__empty">아직 제출된 문진이 없습니다.</p>
-          ) : (
-            <div className="doctor__grid">
-              {submissions.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`doctorField doctor__row${s.status === 'new' ? ' doctor__row--new' : ''}`}
-                  onClick={() => {
-                    setSelectedId(s.id)
-                    setSelectedRevisit(null)
-                    setIssuedSession(null)
-                    setRevisitActionError(null)
-                  }}
-                >
-                  <span className="doctorField__label">
-                    {s.status === 'new' && <span className="doctor__newDot" aria-hidden="true" />}
-                    {unreadReadyIds.has(s.id) && (
-                      <span className="doctor__newDot doctor__newDot--ready" aria-hidden="true" />
-                    )}
-                    {safeStringOrFallback(s.patient_label)}{' '}
-                    {s.requires_staff_check === 'unknown'
-                      ? '⚠ 확인 필요(계산값 읽기 불가)'
-                      : s.requires_staff_check
-                        ? '⚠ 안전 확인 필요'
-                        : ''}
-                  </span>
-                  <span className="doctorField__value">
-                    {/* 20차 독립 리뷰: fallback과 동일한 클래스 -- listSubmissions는
-                        원소가 객체임은 보장하지만 patient_label/created_at의
-                        타입까지는 검증하지 않는다. */}
-                    {statusLabel(s.status)} · {relativeTime(s.created_at)} ({formatTimestamp(s.created_at)})
-                    {s.recorder_ready && <span className="doctor__emrReadyBadge">✓ EMR 복사 준비됨</span>}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
       {/*
-        Round 3(revisit linkage): "Doctor Queue" for no-submission revisit
-        visits -- deliberately a SEPARATE section from 제출목록 above (never
-        called a "submission" -- see the North Star's own wording). Hidden
-        entirely when a submission or revisit is already open, same
-        visibility rule as showingServerList.
+        P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3): the
+        three previously-separate sections (제출목록/재진 목록/CRM Today
+        Queue) are now ONE unified "오늘" list -- UI SYNTHESIS ONLY, the
+        three backend sources/polls above are untouched. Visibility gate
+        is the STRICTEST of the three previous conditions (previously
+        제출목록 alone lacked the `!selectedRevisit` check the other two
+        already had, which would have shown it stacked above an open
+        RevisitWorkspace -- unifying into one section requires picking a
+        single gate, and the stricter one is the one that was already
+        correct for the other two thirds of this same list).
       */}
-      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && revisits.length > 0 && (
-        <section className="doctor__section">
-          <h2>재진 목록 ({revisits.length})</h2>
-          <div className="doctor__grid">
-            {revisits.map((rv) => (
-              <button
-                key={rv.visitId}
-                type="button"
-                className={`doctorField doctor__row${rv.needsAttention ? ' doctor__row--new' : ''}`}
-                onClick={() => {
-                  setSelectedRevisit({ visitId: rv.visitId, patientId: rv.patientId })
-                  setSelectedId(null)
-                  setIssuedSession(null)
-                  setRevisitActionError(null)
-                }}
-              >
-                <span className="doctorField__label">
-                  {REVISIT_STATUS_LABEL[rv.status]}
-                  {rv.needsAttention && ' · 추가 확인 필요'}
-                </span>
-                <span className="doctorField__value">
-                  {relativeTime(rv.createdAt)} ({formatTimestamp(rv.createdAt)})
-                  {/* Round 8 operational metadata -- never clinical. */}
-                  {/*
-                   * 17차 독립 리뷰 FINDING-4: server/followUpSessionStore.js의
-                   * normalizeDeliveryMode는 저장(write) 시점에만 실행되고
-                   * 읽기(read) 시점에는 재검증하지 않는다 -- 손으로 수정된
-                   * 세션 파일이나 예전 버전이 남긴 값이 있으면
-                   * DELIVERY_MODE_LABEL[rv.deliveryMode]가 알려진 키가
-                   * 아니어서 undefined를 반환하고, 이 template literal이
-                   * 그 값을 리터럴 "undefined"로 그대로 노출한다.
-                   */}
-                  {rv.deliveryMode && Object.prototype.hasOwnProperty.call(DELIVERY_MODE_LABEL, rv.deliveryMode) && (
-                    ` · ${DELIVERY_MODE_LABEL[rv.deliveryMode]}`
-                  )}
-                  {rv.stationName && ` · ${rv.stationName}`}
-                  {rv.inputProvenance === 'STAFF_ASSISTED' && ` · ${INPUT_PROVENANCE_LABEL.STAFF_ASSISTED}`}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/*
-        CRM v0.3.1 round 13: read-only Today Queue. Unlike 재진 목록 above,
-        this section stays visible (with its own compact empty state) even
-        when crmTasks is empty, so the clinician has a stable place to check
-        rather than a section that silently disappears. TodayQueueSection is
-        purely presentational -- no click handlers, no /seen call, no
-        client-side re-sort of the server-ordered list.
+        Core Reduction P6 (Phase 7 UI spec §9): while a submission is being
+        fetched (selectedRecordLoading), neither 오늘 (stale list, wrong
+        content for what was just clicked) nor a blank gap renders --
+        the skeleton just below takes this slot instead, so this Queue
+        gate now also excludes that window.
       */}
-      {mode === 'server' && !selectedRecord && !selectedRevisit && !serverError && (
-        <TodayQueueSection
-          tasks={crmTasks}
-          loading={crmTasksLoading}
-          error={crmTasksError}
-          identities={patientIdentities}
+      {mode === 'server' && !selectedRecord && !selectedRecordLoading && !selectedRevisit && !serverError && (
+        <TodayUnifiedQueueSection
+          rows={todayQueueRows}
+          submissionsById={submissionsById}
+          revisitsByVisitId={revisitsByVisitId}
+          crmTasksByPatient={crmTasksByPatient}
+          crmLoading={crmTasksLoading}
+          listLoading={listLoading}
+          unreadReadyIds={unreadReadyIds}
+          onGoToSettings={() => setScreen('settings')}
+          onOpenSubmission={(id) => {
+            setSelectedId(id)
+            setSelectedRevisit(null)
+            setIssuedSession(null)
+            setRevisitActionError(null)
+          }}
+          onOpenRevisit={(visitId, patientId) => {
+            setSelectedRevisit({ visitId, patientId })
+            setSelectedId(null)
+            setIssuedSession(null)
+            setRevisitActionError(null)
+          }}
           onIdentityLinked={(uuid, identity) => {
-            // Round 14 identity batch: update immediately on a successful
-            // confirm rather than waiting up to POLL_MS for the next poll
-            // to reflect it -- the acceptance criteria requires the row
-            // to refresh right away. Bump the sequence ref first so any
-            // identity fetch already in flight discards its (now stale)
-            // result instead of overwriting this optimistic update --
-            // see patientIdentitiesSeqRef's declaration.
+            // Revisit identity: patch the matching row in `revisits`.
+            setRevisits((prev) => prev.map((r) => (r.patientId === uuid ? { ...r, resolvedIdentity: identity } : r)))
+            // CRM identity: same optimistic-update contract round 14 already
+            // established for TodayQueueSection -- bump the sequence ref
+            // first so an identity fetch already in flight can't overwrite
+            // this with a now-stale result (see patientIdentitiesSeqRef).
             patientIdentitiesSeqRef.current += 1
             setPatientIdentities((prev) => ({ ...prev, [uuid]: identity }))
           }}
+          submissionsFreshness={{
+            failed: submissionsPollFailed,
+            lastGoodAt: submissionsLastGoodAt,
+            onRetry: () => setRetryNonce((n) => n + 1),
+          }}
+          revisitsFreshness={{
+            failed: revisitsPollFailed,
+            lastGoodAt: revisitsLastGoodAt,
+            onRetry: () => setRetryNonce((n) => n + 1),
+          }}
+          crmFreshness={{
+            failed: crmTasksError != null,
+            lastGoodAt: crmLastGoodAt,
+            onRetry: () => setRetryNonce((n) => n + 1),
+          }}
         />
+      )}
+
+      {/*
+        Core Reduction P6 (Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤"):
+        §3.2/§3.3 치수와 동일한 회색 펄스 블록 -- 본문 중앙 스피너는
+        operate.md가 명시적으로 금지한다("the tool should disappear into
+        the task", 로딩 자체를 하나의 스펙터클로 만들지 않는다). 좌측
+        요약(aside, §3.2 5블록)과 우측 4레인(§2.3) 자리를 그 실제 구조
+        그대로 두고 내용만 펄스 블록으로 대체 -- 레이아웃이 데이터
+        도착과 동시에 요약→작업 열 순서 그대로 자리를 잡아, 스켈레톤이
+        사라지는 순간 화면이 다시 튀지 않는다.
+      */}
+      {mode === 'server' && selectedRecordLoading && !selectedRevisit && !serverError && (
+        <div className="doctor__visitShell doctor__skeleton" aria-hidden="true" aria-label="진료 기록 불러오는 중">
+          <aside className="doctor__visitSummary doctor__skeleton__aside">
+            <div className="doctor__skeleton__block doctor__skeleton__block--identity" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--chief" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--delta" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--lane1" />
+            <div className="doctor__skeleton__block doctor__skeleton__block--save" />
+          </aside>
+          <main className="doctor__visitWork">
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--lane1" />
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--lane2" />
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--judgment" />
+            <div className="doctor__skeleton__lane doctor__skeleton__lane--next" />
+          </main>
+        </div>
       )}
 
       {selectedRevisit && (
@@ -3425,223 +4100,6 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       {!selectedRevisit && (mode === 'fixtures' || selectedRecord) && (
       <>
       {/*
-        Round 3(revisit linkage): the single doctor/staff action that
-        creates the revisit visit + derives candidate targets (from this
-        patient's own prior Follow-up Targets, max 3, no ranking) + issues
-        a one-time capability token, all in one step (see
-        server/store.js's startRevisit). Only offered from an open
-        submission (mode==='server' && selectedRecord) since that's the
-        only place patient_id is already on screen -- never derived from
-        name/phone/DOB.
-      */}
-      {mode === 'server' && selectedRecord?.patient_id && (
-        <section className="doctor__section doctor__revisitSession">
-          <h2>재진 간단 문진 (Micro Follow-up)</h2>
-
-          {/*
-            Round 8: delivery mode is chosen FIRST, because it decides what
-            the rest of this panel does -- assign a clinic tablet, show a
-            QR, or (staff-assisted / pre-visit) just issue the link. It is
-            operational metadata only: the questions, the Follow-up Targets,
-            and everything clinical are identical down every channel.
-          */}
-          <div className="doctor__revisitSession__modes" role="group" aria-label="전달 방식">
-            {(Object.keys(DELIVERY_MODE_LABEL) as DeliveryMode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={deliveryMode === m}
-                className={`workspace__followUpChip${deliveryMode === m ? ' workspace__followUpChip--active' : ''}`}
-                onClick={() => {
-                  setDeliveryMode(m)
-                  setAssignedStationName(null)
-                }}
-              >
-                {DELIVERY_MODE_LABEL[m]}
-              </button>
-            ))}
-          </div>
-
-          {deliveryMode === 'CLINIC_TABLET' ? (
-            <div className="doctor__revisitSession__issued">
-              {stations.length === 0 ? (
-                <p className="doctor__revisitSession__hint">
-                  등록된 원내 태블릿이 없습니다 — 아래 "원내 태블릿 관리"에서 먼저 등록해 주세요.
-                </p>
-              ) : (
-                <>
-                  <label className="doctorField__label" htmlFor="doctor-station-select">
-                    배정할 태블릿
-                  </label>
-                  <select
-                    id="doctor-station-select"
-                    value={selectedStationId}
-                    onChange={(e) => setSelectedStationId(e.target.value)}
-                  >
-                    {/* Round 9: a busy tablet is not selectable. The server
-                        refuses it (409 station_busy) because the tablet stops
-                        polling once a patient has the questions open, so a
-                        takeover could not actually replace what is on that
-                        physical screen -- staff must complete or reset it
-                        first. Disabling the option makes the rule visible
-                        instead of letting the click fail. */}
-                    {stations.map((s) => (
-                      <option key={s.stationId} value={s.stationId} disabled={Boolean(s.assignment)}>
-                        {s.name}
-                        {s.assignment ? ' (사용 중 — 아래에서 초기화 후 배정)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="doctor__revisitSession__actions">
-                    <button
-                      type="button"
-                      className="judgment__recordBtn"
-                      onClick={handleAssignToStation}
-                      disabled={assignPending || !selectedStationId || selectedStationBusy}
-                    >
-                      {assignPending ? '배정 중…' : '이 태블릿에 배정'}
-                    </button>
-                  </div>
-                  {assignedStationName && (
-                    <p className="doctor__revisitSession__hint">
-                      「{assignedStationName}」에 배정되었습니다 — 환자에게 그 태블릿을 건네주세요. 환자는 이름·전화번호를
-                      입력하지 않습니다.
-                    </p>
-                  )}
-                  <p className="doctor__revisitSession__hint">
-                    사용 중인 태블릿에는 배정할 수 없습니다 — 아래 「원내 태블릿 관리」에서 초기화한 뒤 배정하세요.
-                    초기화하면 그 태블릿이 들고 있던 링크는 즉시 무효화됩니다.
-                  </p>
-                </>
-              )}
-            </div>
-          ) : !issuedSession ? (
-            <>
-              <button
-                type="button"
-                className="judgment__recordBtn"
-                onClick={handleStartRevisit}
-                disabled={startRevisitPending}
-              >
-                {startRevisitPending ? '처리 중…' : '재진 간단 문진 시작'}
-              </button>
-              <p className="doctor__revisitSession__hint">
-                직전 방문의 추적 항목(최대 3개)을 바탕으로 환자용 1회용 링크를 발급합니다.
-              </p>
-            </>
-          ) : (() => {
-            // Computed once here (not re-called at every use site below) so
-            // the QR/code display, copy-link button, and MessagingPanel's
-            // `link` prop can never disagree on whether the public base is
-            // configured -- see src/lib/publicFollowUpUrl.ts's header.
-            const followUpLink = patientFollowUpLink(issuedSession.token)
-            return (
-            <div className="doctor__revisitSession__issued">
-              <p>
-                환자용 링크 (만료: {formatTimestamp(issuedSession.expiresAt)})
-              </p>
-              {followUpLink === null ? (
-                <p className="doctor__revisitSession__error" role="alert">
-                  공개 후속 링크 기본 URL이 설정되지 않았습니다 — 관리자에게
-                  VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL 환경변수 설정을 요청하세요. 그때까지는 링크
-                  복사·QR·문자/알림톡 발송을 사용할 수 없습니다.
-                </p>
-              ) : (
-                <>
-                  {deliveryMode === 'PERSONAL_QR' && <FollowUpQrCode url={followUpLink} />}
-                  <code className="doctor__revisitSession__link">{followUpLink}</code>
-                </>
-              )}
-              {issuedSession.targetCount === 0 && (
-                <p className="doctor__revisitSession__hint">
-                  이 환자는 이전 방문에 기록된 추적 항목이 없습니다 — 재확인 항목 없이 전반적 변화 · 새로운 증상 ·
-                  이상반응만 묻는 링크가 발급되었습니다.
-                </p>
-              )}
-              {deliveryMode === 'STAFF_ASSISTED' && (
-                <p className="doctor__revisitSession__hint">
-                  환자가 기기를 쓰기 어려운 경우, 직원이 이 링크를 열어 같은 질문을 읽어드리고 환자가 말한 답을 그대로
-                  입력합니다. 답변은 여전히 <strong>환자가 보고한 사실</strong>이며, 원장이 관찰한 소견이 아닙니다.
-                </p>
-              )}
-              {deliveryMode === 'PREVISIT_LINK' && (
-                <p className="doctor__revisitSession__hint">
-                  내원 전 전달용 링크입니다. 아래에서 문자/카카오 알림톡으로 바로 발송하거나, 이 링크를 직접 복사해
-                  전달할 수 있습니다.
-                </p>
-              )}
-              <div className="doctor__revisitSession__actions">
-                <button type="button" className="judgment__recordBtn" onClick={handleCopyPatientLink}>
-                  {linkCopyStatus === 'copied' ? '복사됨' : linkCopyStatus === 'error' ? '복사 실패' : '링크 복사'}
-                </button>
-                <button type="button" className="judgment__recordBtn" onClick={handleReissueSession}>
-                  재발급
-                </button>
-                <button type="button" className="judgment__recordBtn" onClick={handleInvalidateSession}>
-                  무효화
-                </button>
-              </div>
-              {selectedRecord?.patient_id && followUpLink !== null && (
-                <MessagingPanel
-                  visitId={issuedSession.visitId}
-                  patientId={selectedRecord.patient_id}
-                  followUpToken={issuedSession.token}
-                  link={followUpLink}
-                />
-              )}
-            </div>
-            )
-          })()}
-          {revisitActionError && <p className="doctor__revisitSession__error">{revisitActionError}</p>}
-
-          {/*
-            Round 8: station management. Registration hands back a device
-            credential exactly once, rendered as a one-time pairing link
-            that staff opens ON the tablet -- never stored anywhere here.
-          */}
-          <details className="doctor__revisitSession__stations">
-            <summary>원내 태블릿 관리 ({stations.length})</summary>
-            <div className="doctor__revisitSession__stationList">
-              {stations.map((s) => (
-                <div key={s.stationId} className="doctor__revisitSession__stationRow">
-                  <span>
-                    {s.name} — {s.assignment ? '환자 배정됨' : '대기 중'}
-                  </span>
-                  {s.assignment && (
-                    <button type="button" className="judgment__recordBtn" onClick={() => handleResetStation(s.stationId)}>
-                      대기 화면으로 되돌리기
-                    </button>
-                  )}
-                </div>
-              ))}
-              <div className="doctor__revisitSession__actions">
-                <input
-                  type="text"
-                  className="workspace__noteInput"
-                  value={newStationName}
-                  onChange={(e) => setNewStationName(e.target.value)}
-                  placeholder="예: 접수 태블릿 1"
-                  aria-label="새 태블릿 이름"
-                />
-                <button type="button" className="judgment__recordBtn" onClick={handleRegisterStation}>
-                  태블릿 등록
-                </button>
-              </div>
-              {newStationPairing && (
-                <div className="doctor__revisitSession__issued">
-                  <p>
-                    「{newStationPairing.name}」 등록 링크 — <strong>이 화면을 벗어나면 다시 볼 수 없습니다.</strong> 해당
-                    태블릿에서 이 주소를 한 번만 열어주세요.
-                  </p>
-                  <code className="doctor__revisitSession__link">{newStationPairing.link}</code>
-                </div>
-              )}
-              {stationError && <p className="doctor__revisitSession__error">{stationError}</p>}
-            </div>
-          </details>
-        </section>
-      )}
-      {/*
         malformed/legacy submission resilience 배치: 아래 nav+tab 콘텐츠
         전체(임상/참고/명리 세 표면 + JudgmentPanel + 원본 JSON)는
         payloadShapeOk에 게이트된다 -- 명리/참고 표면이 "profile이
@@ -3649,13 +4107,16 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         구조가 온전한 payload를 전제하기 때문에 하나로 묶어서 판단한다.
         DoctorRecordErrorBoundary는 이 구조 검사가 못 잡은 예외(개별
         부위 SafetyPanel 내부의 미처 확인 못 한 필드 등)에 대한 2차
-        안전망 -- key를 화면에 실제로 그려지는 payload의 정체성(server
-        모드는 selectedRecord.id, fixtures 모드는 fixtureIndex +
-        workspaceScenarioId)으로 둬서, 다른 레코드/시나리오로 전환하면
-        이전 에러 상태가 새 payload로 새지 않고 완전히 새로 mount된다.
+        안전망 -- Core Reduction P2(delta N-6)부터는 key를 통합 리셋 키
+        (unifiedResetKey, §2.8)로 둔다 -- 이전엔 이 key만 독자적으로
+        `selectedRecord.id`/`fixtureIndex:workspaceScenarioId`를 계산했는데,
+        DoctorWorkspace의 render-time reset이 보는 키와 표현식이 갈라져
+        있어 한쪽만 고치면 조용히 어긋날 수 있었다. 다른 레코드/시나리오로
+        전환하면 이전 에러 상태가 새 payload로 새지 않고 완전히 새로
+        mount되는 성질은 그대로다.
       */}
       <DoctorRecordErrorBoundary
-        key={mode === 'server' ? (selectedRecord?.id ?? 'none') : `fixtures:${fixtureIndex}:${workspaceScenarioId}`}
+        key={unifiedResetKey}
         fallback={<DoctorRecordFallback record={mode === 'server' ? selectedRecord : undefined} />}
       >
       {!payloadShapeOk ? (
@@ -3663,10 +4124,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       ) : (
       <>
       {/*
-        Round 11: the record's three surfaces. 진료 is the clinical action
-        screen and the default; the other two hold everything that used to
-        stack underneath it. Myungri only exists as a surface at all when
-        the profile is not pain (the standing Phase 2 invariant).
+        Round 11 (Core Reduction P4 relabels this "참고", Phase 5 Synthesis
+        v1.2 §2.11): the record's two surfaces. 진료 is the clinical action
+        screen and the default; 참고 holds everything that used to stack
+        underneath it, now organized as accordion groups (§2.4) rather than
+        a further tab -- Myungri's own accordion inside 참고 only exists
+        when the profile is not pain (the standing Phase 2 invariant), same
+        gate as before.
       */}
       <nav className="doctor__recordTabs" role="tablist" aria-label="환자 기록 화면">
         <button
@@ -3685,34 +4149,25 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           className={`doctor__recordTab${recordTab === 'reference' ? ' doctor__recordTab--active' : ''}`}
           onClick={() => openRecordTab('reference')}
         >
-          자료 보기
+          참고
         </button>
-        {viewProfile !== 'pain' && (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={recordTab === 'myungri'}
-            className={`doctor__recordTab${recordTab === 'myungri' ? ' doctor__recordTab--active' : ''}`}
-            onClick={() => openRecordTab('myungri')}
-          >
-            명리
-          </button>
-        )}
       </nav>
 
       <div hidden={recordTab !== 'clinical'}>
       {/*
-        key={payload.session_id}: DoctorWorkspace owns its own local state
-        (profile override, mixed-mode active tab) seeded from the payload
-        on mount. Without this key, switching the underlying record (a
-        different real submission, or a different SYNTHETIC preview
-        scenario/fixture) would keep the PREVIOUS record's already-mounted
-        instance and its stale tab/profile choice -- same reasoning as the
-        key on PainWorkspace/HerbalWorkspace inside DoctorWorkspace, and
-        the pre-existing key on JudgmentPanel below.
+        Core Reduction P2 (delta N-6): DoctorWorkspace no longer carries an
+        independent `key` here -- its own render-time reset (keyed on the
+        `resetKey` prop below, the same unifiedResetKey the
+        DoctorRecordErrorBoundary above and JudgmentPanel below both use)
+        is the sole reset mechanism, replacing the key-remount this
+        comment used to describe (a key-remount was tried and reverted in
+        an earlier round after it caused a real double-mount -- see
+        DoctorWorkspace.tsx's own history comment).
       */}
       <DoctorWorkspace
         payload={payload}
+        resetKey={unifiedResetKey}
+        chartNo={chartNoForOpenRecord}
         lbpObjectiveMotorDeficit={
           mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
         }
@@ -3725,6 +4180,14 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         initialRecordUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
         priorVisits={mode === 'server' ? priorVisits : undefined}
         microFollowUpResponse={mode === 'server' ? microFollowUpResponse : undefined}
+        onSaveObjectiveExam={mode === 'server' && selectedId ? handleSaveObjectiveExamField : undefined}
+        onReloadObjectiveExam={mode === 'server' && selectedId ? handleReloadObjectiveExamConflict : undefined}
+        medicationCourseSlot={
+          mode === 'server' && selectedRecord?.patient_id ? (
+            <MedicationCourseSection key={selectedRecord.patient_id} patientUuid={selectedRecord.patient_id} />
+          ) : undefined
+        }
+        nextLaneFooter={nextLaneFooterNode}
         onSaveWorkspace={
           mode === 'server' && selectedId
             ? async (state, expectedUpdatedAt) => {
@@ -3751,16 +4214,24 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                     conflict: { current: deserializeWorkspaceState(current.workspace), currentUpdatedAt: current.updated_at },
                   }
                 }
-                return { ok: false }
+                // P0-8: pass the failure `kind` through so DoctorWorkspace
+                // can show the inline "인증 만료" recovery specifically for
+                // a 401/403 (expired/missing doctor token), not for an
+                // ordinary network failure.
+                return { ok: false, kind: result.kind }
               }
             : undefined
         }
       />
-
-      {mode === 'server' && selectedRecord?.patient_id && (
-        <MedicationCourseSection key={selectedRecord.patient_id} patientUuid={selectedRecord.patient_id} />
-      )}
-
+      {/*
+        Core Reduction P2: ObjectiveExamFindingsCard/MedicationCourseSection
+        now render INSIDE DoctorWorkspace's V3 shell (레인2 "확인" /
+        "다음" respectively -- see the `onSaveObjectiveExam`/
+        `medicationCourseSlot` props passed above) instead of as standalone
+        siblings here. Same applicability signal
+        (`safety_flags.<region> != null`), same save handler, same
+        `key={patient_id}` (§2.8's "그대로" row) -- position only.
+      */}
       </div>
 
       <div hidden={recordTab !== 'reference'}>
@@ -3779,6 +4250,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         <p className="doctor__modeBadge">진료 문진 — {questionnaireModeLabel(routing)}</p>
       )}
 
+      <ReferenceAccordion title="문진 원본" count={referenceRawGroupCount(r, routing)}>
       <section className="doctor__section">
         <h2>환자 기본</h2>
         <div className="doctor__grid">
@@ -3884,11 +4356,21 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         )}
       </section>
 
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "동반문제 legacy는
+        데이터 있을 때만" -- this whole section is a hardcoded-compat display
+        for the retired SECONDARY_01 flow (new questionnaires never write to
+        it, per the note below), so an empty "동반문제 없음" placeholder for
+        every current-format record was pure noise. Only rendering it when
+        there is legacy data left removes that noise without touching the
+        13f test's populated case (secondaryChipsData(r).length > 0 there).
+      */}
+      {secondaryChipsData(r).length > 0 && (
       <section className="doctor__section">
         <h2>동반문제</h2>
         <p className="doctor__derivedNote">
-          이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다. 새 문진은 위 "추가
-          상세상담"/"참고 증상"으로 대체되어 이 구역이 항상 비어 있습니다.
+          이전 방식(SECONDARY_01)으로 저장된 문진의 하위호환 표시입니다 — 새 문진은 위 "추가
+          상세상담"/"참고 증상"으로 대체되었습니다.
         </p>
         <div className="doctor__secChips">
           {secondaryChipsData(r).map((c) => (
@@ -3897,7 +4379,6 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <span className="doctor__secChip__text">{c.answerText || '—'}</span>
             </span>
           ))}
-          {secondaryChipsData(r).length === 0 && <p className="doctor__empty">동반문제 없음</p>}
         </div>
         {secondaryModuleFields(r).length > 0 && (
           <details className="doctor__secDetails">
@@ -3911,6 +4392,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           </details>
         )}
       </section>
+      )}
 
       <section className="doctor__section">
         <h2 className="doctor__section__h2--sub">
@@ -3969,7 +4451,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           })()}
         </section>
       )}
+      </ReferenceAccordion>
 
+      <ReferenceAccordion title="약물·병력" count={medicationHistoryGroupCount(r)}>
       <section className="doctor__section">
         <h2>약물·병력·알레르기·수술</h2>
         <div className="doctor__grid">
@@ -3981,6 +4465,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           <Field qid="SURGERY_01" value={r.surgery_history.surgery_yn} />
         </div>
       </section>
+      </ReferenceAccordion>
 
       {/*
         Round 2 Phase 3 (same fix as HerbalWorkspace's 여성·생식 정보):
@@ -4009,6 +4494,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         (isUnreadableReproductiveDerived(r) &&
           r.reproductive_status?.reproductive_status !== null &&
           r.reproductive_status?.reproductive_status !== undefined)) && (
+        <ReferenceAccordion title="여성 안전" count={womenSafetyGroupCount(r)}>
         <section className="doctor__section">
           <h2>여성 안전정보</h2>
           <div className="doctor__grid">
@@ -4036,8 +4522,10 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             </div>
           )}
         </section>
+        </ReferenceAccordion>
       )}
 
+      <ReferenceAccordion title="검사자료" count={testDataGroupCount(r)}>
       <section className="doctor__section">
         <h2>검사자료 / 원장에게 하고 싶은 말</h2>
         <div className="doctor__grid">
@@ -4045,18 +4533,44 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           <Field qid="FREE_01" value={r.free_text.free_text_yn} />
         </div>
       </section>
+      </ReferenceAccordion>
+
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "이전 방문 원문"
+        accordion -- read-only, presentational (PriorVisitHistoryCard already
+        returns null when there is nothing to show), safe to also render
+        here even though the same card still renders inside the clinical
+        레인 "다음" drawer (that drawer was not flagged for dedup, unlike the
+        여성 안전/약물·병력 sections below the Myungri accordion, which WERE
+        duplicated inside HerbalWorkspaceNext's own drawer and have been
+        removed there in favor of this one, fuller copy -- see
+        HerbalWorkspace.tsx's own comment at that removal).
+      */}
+      <ReferenceAccordion title="이전 방문 원문" count={priorVisitsGroupCount(mode === 'server' ? priorVisits : undefined)}>
+        {viewProfile === 'mixed' ? (
+          <>
+            <PriorVisitHistoryCard history={mode === 'server' ? priorVisits : undefined} profile="pain" />
+            <PriorVisitHistoryCard history={mode === 'server' ? priorVisits : undefined} profile="herbal" />
+          </>
+        ) : (
+          <PriorVisitHistoryCard
+            history={mode === 'server' ? priorVisits : undefined}
+            profile={viewProfile === 'herbal' ? 'herbal' : 'pain'}
+          />
+        )}
+      </ReferenceAccordion>
 
       {/*
         PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지
         않는다. Round 11 goes further -- Myungri is not merely below the
         clinical workspace, it is a separate surface that the clinical flow
         never renders, per the standing rule that it must be completely
-        separated from it.
+        separated from it. Core Reduction P4: it is still a separate
+        accordion GROUP inside 참고, just no longer a separate TAB.
       */}
-      </div>
 
       {viewProfile !== 'pain' && (
-      <div hidden={recordTab !== 'myungri'}>
+      <ReferenceAccordion title="명리" count={myungriGroupCount(saju)}>
       <MyungriCompactCard saju={saju} />
 
       <section className="doctor__section doctor__section--myungri">
@@ -4126,8 +4640,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <p className="doctor__warning doctor__warning--pending">
                 주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
                 값이 바뀔 수 있습니다. 대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}.
-                원장이 확정하면 값이 바뀔 수 있습니다 — 자세한 내용은
-                docs/MYUNGRI_CALCULATION_POLICY_PENDING.md 참고.
+                원장이 확정하면 값이 바뀔 수 있습니다.
               </p>
             )}
           </div>
@@ -4157,66 +4670,35 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           기록&rdquo;에 원장이 직접 기록합니다.
         </p>
       </section>
-      </div>
+      </ReferenceAccordion>
       )}
 
-      <div hidden={recordTab !== 'reference'}>
-      {mode === 'server' && selectedRecord?.visit_id && (
-        <section className="doctor__section">
-          <h2>진료 녹취·요약</h2>
-          {recorderResultsError ? (
-            <p className="doctor__warning">녹취 결과를 불러오지 못했습니다: {recorderResultsError}</p>
-          ) : !recorderResults || recorderResults.length === 0 ? (
-            <p className="doctor__empty">아직 결과 없음</p>
-          ) : (
-            <>
-              <p className="doctor__derivedLabel">
-                결과 있음 — 녹음 {recorderResults.length}건 (최신 갱신: {relativeTime(recorderResults[0].updated_at)})
-              </p>
-              {recorderResults.length > 1 && (
-                <ul className="doctor__recorderLineage">
-                  {recorderResults.map((res) => (
-                    <li key={res.recording_id}>
-                      {res.recording_id} · {relativeTime(res.updated_at)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <details className="doctor__secDetails">
-                <summary>Transcript 원문</summary>
-                <pre className="doctor__recorderTranscript">{recorderResults[0].transcript ?? '(없음)'}</pre>
-              </details>
-              <div className="judgment__field doctor__recorderEmrField">
-                <label className="judgment__label" htmlFor="emrSummaryText">
-                  EMR용 요약 (plain text, 직접 수정 가능)
-                </label>
-                <textarea
-                  id="emrSummaryText"
-                  className="judgment__textarea"
-                  rows={8}
-                  value={emrText}
-                  onChange={(e) => setEmrText(e.target.value)}
-                />
-              </div>
-              <div className="judgment__actions">
-                <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
-                  EMR용 복사
-                </button>
-                <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
-                  요약 다시 만들기
-                </button>
-                {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
-                {copyStatus === 'error' && (
-                  <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
-                )}
-              </div>
-            </>
-          )}
-        </section>
-      )}
+      {/*
+        Core Reduction P3 (Phase 5 Synthesis v1.2 §2.3 "다음/종결"): 진료
+        녹취·요약(EMR 검토) moved into the 진료 탭의 다음 레인 alongside the
+        "진료 완료" button it now sits next to (nextLaneFooterNode, defined
+        above `return`) -- same condition, same handlers, position only.
+      */}
 
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): JudgmentPanel's
+        remaining fields (선천 특징/증상 연결/사주 예상→치료축·처방/1분
+        디브리핑/설명 개요/학습 케이스) get a distinct group title here --
+        "명리·감사 기록" -- so this never reads as the same thing as the
+        진료 화면의 "판단·처치" lane's FinalAssessmentCard (a different
+        component, a different lane, a different purpose: that one is the
+        derived-profile clinical assessment the clinician acts on today,
+        this one is the free-form 사주/감사 note trail). ClinicianJudgment's
+        schema, its PUT save path, its "기록" button and its save-state
+        handling below are byte-for-byte unchanged -- only the surrounding
+        group label and accordion boundary are new.
+      */}
+      <ReferenceAccordion
+        title="명리·감사 기록"
+        count={judgmentRecordedFieldCount(mode === 'server' ? selectedRecord?.judgment ?? null : null)}
+      >
       <JudgmentPanel
-        key={payload.session_id}
+        resetKey={unifiedResetKey}
         source={{
           session_id: payload.session_id,
           questionnaire_version: payload.questionnaire_version,
@@ -4250,21 +4732,105 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                 if (current) {
                   return { ok: false as const, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
                 }
-                return { ok: false as const }
+                // P0-8: same kind pass-through as the workspace save
+                // callback above -- lets JudgmentPanel show the inline
+                // "인증 만료" recovery specifically for a 401/403.
+                return { ok: false as const, kind: result.kind }
               }
             : undefined
         }
       />
+      </ReferenceAccordion>
 
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "원본 JSON" 그룹 --
+        "진단 성격 명시"란, 이 pretty-printed dump가 임상 판단 근거가
+        아니라 기술 지원/버그 재현용 원자료라는 점을 원장에게도 분명히
+        한다는 뜻이다(위의 다른 아코디언들은 전부 사람이 읽는 형태로 이미
+        가공된 값이고, 이것만 예외).
+      */}
+      <ReferenceAccordion title="원본 JSON" count={1}>
       <details className="doctor__raw">
         <summary>원본 응답 보기 (JSON)</summary>
+        <p className="doctor__derivedNote">
+          기술 지원/버그 재현을 위한 원자료입니다 — 임상 판단에 사용하지 마세요.
+        </p>
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
+      </ReferenceAccordion>
       </div>
       </>
       )}
       </DoctorRecordErrorBoundary>
+      {/*
+        Round 3(revisit linkage): the single doctor/staff action that
+        creates the revisit visit + derives candidate targets (from this
+        patient's own prior Follow-up Targets, max 3, no ranking) + issues
+        a one-time capability token, all in one step (see
+        server/store.js's startRevisit). Only offered from an open
+        submission (mode==='server' && selectedRecord) since that's the
+        only place patient_id is already on screen -- never derived from
+        name/phone/DOB.
+
+        P0-3 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-2
+        "MOVE"): this issuance section used to render ABOVE the clinical
+        tabs (i.e. above CommonSafetyBanner -- Phase 3 §5-1: "안전 배너가
+        스크롤 아래"). Core Reduction P3 (Phase 5 Synthesis v1.2 §2.7, delta
+        M-7): this issuance section now renders INSIDE the 진료 탭의 다음
+        레인 (nextLaneFooterNode, defined above `return`), restructured so
+        the 기본 채널(원내 태블릿)은 상시 노출이고 나머지 3개 채널·재발급·
+        무효화·메시징은 details 뒤로 접힌다(활성 세션/미소비 토큰이 있으면
+        자동 펼침) -- same condition, same fields, same handlers, only the
+        disclosure boundary is new.
+      */}
       </>
+      )}
+      </>
+      )}
+
+      {/*
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.5, Phase 7 UI spec
+        §2.5): the global 설정 screen. WorkstationSetup here is the SAME
+        component/gate as the unset-workstation banner above (§delta C-1
+        keeps that banner unconditional and unchanged) -- this is simply a
+        second, always-reachable place to find it rather than a new
+        mechanism. Doctor-token management (including "clear") moved here
+        from the header per §2.5; the fixture/data-source/workspace-scenario
+        preview pickers deliberately stay on the main screen's header
+        instead of moving here -- see DECISIONS.md's Core Reduction P4 entry
+        for why (tests/tablet-viewport.spec.mjs drives them directly via
+        `#doctor-source-select`/`#doctor-workspace-scenario-select` without
+        ever navigating through a settings screen, and rewriting that
+        rendered-layout acceptance proof's navigation flow was judged too
+        risky against this session's actual scope, especially with P5's
+        1024×768 budget fix depending on that exact file staying reliable).
+      */}
+      {screen === 'settings' && (
+        <main className="doctor__settingsScreen" aria-labelledby="settings-h1">
+          <h1 id="settings-h1">설정</h1>
+          <section className="doctor__section">
+            <h2>워크스테이션</h2>
+            <p className="doctor__derivedNote">
+              현재: {workstationId ?? '설정되지 않음'}
+            </p>
+            {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
+          </section>
+          {mode === 'server' && (
+            <section className="doctor__section">
+              <h2>원장 인증</h2>
+              {hasDoctorToken ? (
+                <DoctorTokenClearButton
+                  onClear={() => {
+                    setTokenVersion((n) => n + 1)
+                    setRetryNonce((n) => n + 1)
+                  }}
+                />
+              ) : (
+                <p className="doctor__empty">저장된 원장 인증 토큰이 없습니다.</p>
+              )}
+            </section>
+          )}
+        </main>
       )}
     </div>
   )

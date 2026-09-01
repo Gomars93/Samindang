@@ -106,6 +106,11 @@ tests/.preview-server-client-bundle.mjs
 # esbuild bundles used by tests/doctor-workspace.spec.mjs (regenerated, not source)
 tests/.doctor-workspace-fixtures-bundle.mjs
 tests/.doctor-workspace-bundle.cjs
+# esbuild bundle used by tests/lane1-summary.spec.mjs (regenerated, not source)
+tests/.lane1-summary-bundle.mjs
+# esbuild bundles used by tests/doctor-reset-key.spec.mjs (regenerated, not source)
+tests/.judgment-panel-bundle.cjs
+tests/.doctor-record-error-boundary-bundle.cjs
 # esbuild bundles used by tests/doctor-view-profile-matrix.spec.mjs (regenerated, not source)
 tests/.view-profile-matrix-corespec-bundle.mjs
 tests/.view-profile-matrix-viewprofile-bundle.mjs
@@ -128,6 +133,15 @@ tests/.crm-medication-course-bundle.mjs
 
 # esbuild bundle used by tests/today-queue.spec.mjs (regenerated, not source)
 tests/.today-queue-bundle.cjs
+
+# esbuild bundle used by tests/today-queue-unified.spec.mjs (regenerated, not source)
+tests/.today-queue-unified-bundle.mjs
+
+# esbuild bundle used by tests/today-queue-unified-ui.spec.mjs (regenerated, not source)
+tests/.today-queue-unified-ui-bundle.cjs
+
+# esbuild bundle used by tests/visit-summary-aside.spec.mjs (regenerated, not source)
+tests/.visit-summary-aside-bundle.cjs
 
 # esbuild bundle used by tests/save-conflict.spec.mjs (regenerated, not source)
 tests/.conflict-banner-bundle.cjs

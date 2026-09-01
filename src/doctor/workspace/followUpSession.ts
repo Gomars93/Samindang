@@ -58,6 +58,22 @@ export const INPUT_PROVENANCE_LABEL: Record<InputProvenance, string> = {
   STAFF_ASSISTED: '직원 대필(환자 구술)',
 }
 
+/**
+ * P0-6 (Core Reduction Phase 6 gate): resolved patient identity for a
+ * revisit row, EXACT patient_id match against patientIdentityStore only --
+ * never inferred from name/phone (Phase 3 Opus review §5-8). Deliberately
+ * duplicated here (not imported from `../../lib/serverClient`, which
+ * already carries `ResolvedPatientIdentity` for CRM Today Queue rows) to
+ * avoid a workspace<->lib circular type import -- this module stays a
+ * standalone type file, same convention as every other type here. The
+ * field names intentionally match the server wire shape so a value from
+ * either source is interchangeable at call sites (e.g.
+ * PatientIdentityLinkAction's onLinked).
+ */
+export type RevisitResolvedIdentity =
+  | { resolved: true; sigma_chart_no: string; patient_name: string }
+  | { resolved: false; reason: string }
+
 /** One row in the Doctor Queue for a no-submission revisit visit. */
 export type RevisitQueueItem = {
   visitId: string
@@ -65,6 +81,12 @@ export type RevisitQueueItem = {
   createdAt: string
   updatedAt: string
   status: RevisitStatus
+  /**
+   * P0-6: resolved server-side, patient_id EXACT match only. Never
+   * omitted -- an unresolved row is an explicit `{resolved:false}`, not a
+   * missing field, so the UI can show "신원 확인 필요" instead of guessing.
+   */
+  resolvedIdentity: RevisitResolvedIdentity
   /** Operational review flag only (new symptom / adverse effect reported) -- never a diagnostic/safety classification. */
   needsAttention: boolean
   /** Round 8 operational metadata below -- never clinical. */

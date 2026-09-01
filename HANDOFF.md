@@ -1,6 +1,291 @@
 # Current Handoff
 
-## Objective (CRM v0.3.1 round 17 — Restart-safe / Multi-process Correctness Batch, 이번 세션)
+## ⚠️ 갱신 (2026-09-01): Phase 10 delta 재심사 PASS로 종료됨 — 아래
+## "Objective (Core Reduction Phase 10 closing review 지적 해소)" 절은
+## 재심사 진행 중이던 시점의 snapshot이라 지금 기준으로는 stale하다.
+## 실제 브랜치 HEAD는 `8100fe8`("Core Reduction Phase 10 delta — PASS
+## (BLOCKER 0, MAJOR 0), gate closed") — Opus 독립 재검증이 BLOCKER-1/
+## MAJOR-2/MAJOR-3/m4 + 문서 3건 전부 해소를 확인했고, Completion Gate
+## 최종 확인문까지 받았다(`docs/CORE_REDUCTION_PHASE10_CLOSING_DELTA_v0.2.md`
+## 참고). 아래 절의 "남은 것 = Phase 10 delta 재심사" 문구는 더 이상
+## 유효하지 않다 — Core Reduction P0~P10 전체가 완료 상태다.
+##
+## 이 갱신에서 추가로 처리한 것: Phase 5 synthesis(§7)의 HUMAN DECISION
+## REQUIRED 6건 중 남아있던 #5(`nextVisitCheckItem`↔`FollowUpTarget`
+## 통일 여부)·#6(재진 화면 투약 코스 마운트)을 PO에게 직접 질의해 확정
+## (둘 다 "이번 배치 범위에서는 변경 없음" — #5는 통합 안 함 확정, #6은
+## 보류). 코드 변경 없음, 결정만 `DECISIONS.md`("Core Reduction HUMAN
+## DECISION #5/#6: PO 확정")와 `docs/CORE_REDUCTION_PHASE5_SYNTHESIS_
+## v1.0.md`§7에 기록.
+##
+## ⚠️ 갱신 (2026-09-01, 계속): HUMAN DECISION 6건 중 나머지 #1~#4도
+## PO에게 직접 확인해 정리 완료(커밋 `399e564`, `DECISIONS.md`"Core
+## Reduction HUMAN DECISION #1~#4: PO 확정" 항목 참고) — #1 CLOSED,
+## #2는 근거 불확실로 OPEN 유지, #3 CLOSED, #4는 구조 원칙만 확정하고
+## 한국어 wording은 PARTIAL OPEN. #5 CLOSED·#6 DEFER는 기존 결정 그대로.
+## 남은 HUMAN DECISION REQUIRED는 #2 전체와 #4의 wording 부분뿐이며,
+## 둘 다 이번 배치 merge를 막지 않는 후속 결정 사항이다.
+##
+## **PR 상태**: `claude/feat-core-reduction`은 이미 **PR #26**으로 열려
+## 있다 — 새 PR을 만들지 않는다. main에는 impeccable/humanize-korean
+## 스킬 설치용 별도 브랜치
+## (`claude/chore-install-humanize-korean-and-impeccable-skills`)가
+## 이미 push돼 있어 서로 무관하게 진행 중이니 혼동 금지 — 이 스킬 설치
+## 변경은 PR #26이 merge-ready 판정을 받은 뒤 별도 PR로 만든다. 이
+## 세션은 스스로 merge하거나 main에 직접 push하지 않는다.
+##
+## ⚠️ 갱신 (2026-09-01, 계속): **PR #24가 `main`에 merge됐다** (merge
+## 커밋 `5c8c0e2`, PR #24 head `4a9b2df`가 그대로 포함됨). PR #26은
+## 한때 stacked PR로 base를 PR #24의 브랜치(`feat/doctor-clinical-
+## workspace`)로 바꿨었으나, 그 브랜치가 merge되면서 **GitHub가 PR #26의
+## base를 자동으로 `main`으로 재조정(retarget)했다** — 사람이나 이
+## 세션이 직접 바꾼 게 아니다. `git merge-base d82f397(PR#26 HEAD)
+## origin/main` = `4a9b2df`(PR #24 head)와 정확히 일치하므로, PR #26이
+## 담고 있는 diff 내용 자체는 전혀 바뀌지 않았다(리베이스 불필요, 커밋
+## 재작성 없음).
+##
+## 이 retarget은 GitHub의 `edited`(base 변경) 이벤트일 뿐 `ci.yml`의
+## 기본 `pull_request` 트리거(`[opened, synchronize, reopened]`)에는
+## 걸리지 않는다 — 그래서 base가 `main`으로 바뀐 뒤에도 그 새 조합
+## (head `d82f397` × base `main`)에 대한 실제 GitHub Actions 실행 기록이
+## 없었다. 이전 head/로컬에서 확인한 green을 이 새 base 기준 CI green으로
+## 간주하면 안 된다 — 실제로 새 `synchronize` 이벤트(이 문서 갱신 커밋의
+## push)를 발생시켜 그 결과를 직접 확인해야 한다.
+##
+## 참고: `doctor-workspace-preview.yml`(Pages "Preview" 배포)은 애초에
+## `feat/doctor-clinical-workspace` 브랜치로의 push에만 반응하도록
+## 스코프돼 있다 — `claude/feat-core-reduction`/PR #26에는 이 워크플로가
+## 아예 트리거된 적이 없고 트리거될 수도 없다(브랜치 필터가 다름). 즉
+## PR #26에는 PR #24가 가졌던 것과 같은 "Preview(build-and-deploy)"
+## 체크가 GitHub check-run 목록에 구조적으로 나타나지 않는다 — 이것이
+## 결측 상태는 이 워크플로 설계 자체 때문이며, PR #26의 결함이 아니다.
+
+---
+
+## Objective (Core Reduction Phase 10 closing review 지적 해소, 이전 세션 —
+## 위 갱신 참고: 이 절 자체는 재심사 진행 중이던 시점 기록, 지금은 PASS로 종료됨)
+
+**브랜치**: `claude/feat-core-reduction` (origin push됨, PR 미생성 —
+Phase 10 delta 재심사 전에는 PR을 열지 않는다).
+
+**진행 상태**: P0~P6(위 이전 절 참고) → Phase 9(Preview QA, 21/21 PASS,
+수정 커밋 없음, `c8a27c8`) → 배지 글리프 형태 구분 fix(`aadf0a6`) →
+Phase 10 closing review 1차(`09dab91`, 문서만, 판정 FAIL — BLOCKER 1·
+MAJOR 2·MINOR 11) → **이번 세션: BLOCKER-1 + MAJOR-2 + MAJOR-3 + m4
+수정(`08b2e8e`) + 이 문서/`DECISIONS.md`/Phase9 문서 갱신.**
+
+### 이번 세션에 수정한 4건 (`08b2e8e`)
+
+`docs/CORE_REDUCTION_PHASE10_CLOSING_v0.1.md`의 "수정 지시"를 구현
+명세로 그대로 따랐다 — 리팩터·polish는 하지 않았다.
+
+- **BLOCKER-1** (`src/doctor/todayQueue.ts`의 `tierOf()` +
+  `TodayUnifiedQueueSection.tsx`의 active/completed 분리): 둘 다
+  `needsAttention`을 `completed`보다 먼저 검사하도록 순서를 바꿨다 —
+  micro follow-up `response`가 있으면 같은 revisit이
+  `status===COMPLETED`와 `needsAttention===true`를 동시에 가질 수
+  있는데(server/store.js), 기존 코드는 이 조합을 무조건 "완료"
+  `<details>` 안으로 접어 "오늘 (N)" 카운트에서 빠뜨렸다. 이제 tier
+  0(URGENT 동급)으로 승격돼 completed 그룹에 절대 들어가지 않는다.
+  테스트: `tests/today-queue-unified.spec.mjs`(+2, tierOf 유닛),
+  `tests/today-queue-unified-ui.spec.mjs`(+2, DOM 위치 —
+  `doctor__todayQueue__completed` details 밖에 렌더되는지 정규식으로
+  직접 확인).
+- **MAJOR-2** (`src/doctor/CommonSafetyBanner.tsx`의
+  `hasUnreadableSafetyField` export + `src/doctor/workspace/
+  lane1Summary.ts`의 union): 손상된 `medication_use` 등으로 SafetyGlance가
+  "안전정보 일부를 읽을 수 없습니다"를 렌더해도 좌측 lane1 칩은 기존에
+  🟢 CLEAR로 남을 수 있었다(fail-open, Phase 10이 실증). 이제 별도 축으로
+  편입돼 최소 `계산불가`를 강제하되(CLEAR 금지) 그 자체로 URGENT를
+  올리지는 않는다. 테스트: `tests/lane1-summary.spec.mjs`(+3, 유닛),
+  `tests/doctor-workspace.spec.mjs`(+1, `medication_use` 오염 payload
+  통합 테스트 — 칩이 `doctor__lane1Chip--clear`가 아님을 확인).
+- **MAJOR-3** (`src/doctor/workspace/VisitSummaryAside.tsx` +
+  `DoctorWorkspace.tsx`): 좌측 요약 ⑤블록(`max-height:20px;
+  overflow:hidden`)에 `DoctorTokenSetup` 배너 전체(≥100px)가 직접
+  렌더돼 입력창·저장 버튼이 클리핑돼 있었다. Phase 7 §3.2 문언대로
+  ⑤블록을 1줄 액션("인증 만료 — 토큰 다시 입력")으로 바꾸고, 클릭 시
+  실제 토큰 폼은 좌측 요약 예산 밖 — 우측 작업 열 레인1 섹션 상단(`<h2
+  id="lane1-h2">안전 확인</h2>` 바로 아래) — 에서 `DoctorWorkspace.tsx`가
+  `tokenReentryOpen` state로 소유·렌더한다. `VisitSummaryAside`는 더
+  이상 `DoctorTokenSetup`을 import/렌더하지 않는다. 테스트:
+  `tests/visit-summary-aside.spec.mjs`(갱신 2건 — 1줄 액션 렌더/
+  onOpenTokenReentry 콜백 검증), `tests/save-conflict.spec.mjs`(auth
+  복구 관련 소스-문자열 테스트 재작성), 신규
+  `tests/visit-summary-auth-recovery-headless.spec.mjs`(+8, 실제
+  Chrome 헤드리스로 토큰 `<input>`의 `clientHeight > 0` + 좌측 요약
+  높이가 폼 전개 전후로 불변임을 직접 측정 — `npm run
+  test:visit-summary-auth-recovery-headless`, `test:all`에 포함).
+- **m4** (`src/doctor/ObjectiveExamFindingsCard.tsx`): `lbp`/`shoulder`/
+  `lbpStatus`/`shoulderStatus`/`authError` local state가
+  `useState(initialLbp ?? undefined)`처럼 마운트 시점 값만 읽어 기록
+  전환(`initialLbp`/`initialShoulder` prop 변경) 시 이전 환자의 라디오
+  선택이 남을 수 있었다(URGENT_REVIEW/신속 전문의 평가 고려를 유발하는
+  안전 입력). `DoctorWorkspace.tsx`가 자신의 `workspaceState` 리셋에
+  쓰는 것과 같은 `recordKey`를 `resetKey` prop으로 전달받아, 카드
+  내부에서 동일한 render-time-reset 패턴(key-remount 아님)으로 5개
+  state 전부를 매 기록 전환마다 재시드한다. 테스트:
+  `tests/doctor-reset-key.spec.mjs`(+2 — 기록 전환 시 라디오 미선택
+  복귀 + save-status/authError도 함께 리셋되는지 소스 단정).
+
+**검증**: `npx tsc -b --force` clean, `npm run build` clean, `npm run
+test:all` 전체 green(1회 `test:server`의 PRIVACY_CANARY 플레이크 —
+UUID에 우연히 "9999" 부분열 포함, `HANDOFF.md` 기존에 이미 기록된 동일
+클래스 플레이크 — 1회 재실행으로 통과 확인, 이 배치의 diff와 무관), FROZEN
+(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff.
+
+### 문서 갱신 (이번 세션, 이 커밋 또는 이후 별도 docs 커밋)
+
+- `DECISIONS.md`: 위 4건 수정 결정 기록 + m3(`visit:` 접두사 통합 키
+  미실재 — 두 컴포넌트가 상호배타 분기로 동등 결과)·m5(`.doctor__header`
+  가 진료 화면에서도 항상 렌더/sticky돼 §8.1이 금지한 이중 스티키 스택
+  상태)·m10(fixture 라벨 문언이 스펙 예시와 토씨 차이)을 deviation으로
+  공개. m1(치료 전용 lock 🔒 미반영)·m2(Queue 배지가 서버 시점 계산이라
+  이번 MAJOR-2 lane1 수정이 전파되지 않음)는 known limitation으로 기록.
+- `docs/CORE_REDUCTION_PHASE9_VISUAL_QA_v0.1.md` 발견 #1(배지 글리프
+  색-단독 구분)에 "해결됨(`aadf0a6`)" 추가.
+- 이 절(`HANDOFF.md`).
+
+### 남은 것
+
+Phase 10 delta 재심사(v0.2) — Opus 독립 재검증이 이번 4건 fix가 실제로
+지적을 해소했는지 diff 기준으로 확인해야 한다. 통과하면 최종 보고
+(메트릭 최종표 완성, visible concept 재계수 등 Phase 10 문서의 "최종
+보고에서 수행" 항목들) 및 PR 생성 여부를 사용자와 상의. 이번 세션은
+스스로 PR을 만들거나 main에 push하지 않는다.
+
+MINOR 나머지(m6~m9, m11 — 이번 배치에서 다루지 않음, Phase 10 문서의
+"known-limitation 기록" 대상): 코드 변경 없음, 이번 세션 범위 밖.
+
+---
+
+## Objective (Core Reduction P0~P6 완료, 이전 세션 — P4/P5/P6)
+
+**브랜치**: `claude/feat-core-reduction` (origin에 push됨, `main`과 별도 —
+아직 PR 미생성/미머지, "DO NOT MERGE" 상태는 아니고 단순히 리뷰 전 단계).
+
+**커밋 이력(이 브랜치, 최신 순)**:
+- `fcc112b` feat(doctor): Core Reduction P6 — 상태 전수 + 메트릭 검증 테스트
+- `74d892b` fix(doctor): Core Reduction P5 — 1024×768 랜드스케이프 예산 1.9x→1.5x 복귀
+- `6724d47` feat(doctor): Core Reduction P4 (2/2) — 전역 설정 화면 신설
+- `41f7746` feat(doctor): Core Reduction P4 (1/2) — 참고 화면 아코디언 재편
+- `5aeb7e3` docs: HANDOFF.md를 Core Reduction P2/P3 실제 상태로 갱신 + DECISIONS.md 기록
+- `d871ce9` Core Reduction P2(V3 셸+레인1/2) + P3(판단·처치/다음)
+- `a4ee121` docs: Core Reduction Phase 7 UI Skill high-fidelity spec v0.1 (read-only 스펙 산출)
+- `9a46fea` fix(doctor): P0-8 isolation hardening
+- `3835b98` fix(doctor): Core Reduction P0 선행 결함 수정 7건 + P1 통합 Queue
+
+**P0~P6 전체 진행 상태**: P0(선행결함 8건)·P1(통합 Queue)·P2(V3 셸+
+레인1/2)·P3(판단·처치/다음) = 완료(`d871ce9` 이전). **P4(참고/설정
+이동)·P5(반응형 마감)·P6(상태·메트릭 테스트) = 이번 세션에 완료.**
+남은 것은 Phase 9(Preview QA, 실제 헤드리스/브라우저 확인) ·
+Phase 10(closing review, 독립 검수) 뿐이다.
+
+### P4 (참고/설정 이동) — `41f7746` + `6724d47`
+
+- **참고 화면 재편**: '명리' 별도 탭 폐기 → '자료 보기'(→'참고')의
+  아코디언 그룹으로 흡수. `recordTab` 타입을 `'clinical' | 'reference'`
+  로 축소. 신규 `ReferenceAccordion` 컴포넌트(각 그룹 "기록 있음 n"
+  배지)로 7개 그룹 구성: 문진 원본 · 약물·병력 · 여성 안전 · 검사자료 ·
+  명리(compact+3열 감사 유지, 파일 경로 문구만 제거) · 이전 방문 원문
+  (신규, PriorVisitHistoryCard 재사용) · 명리·감사 기록(JudgmentPanel
+  전체를 감싸는 그룹 제목만 — 스키마/저장 경로/기록 버튼 무변경).
+- 동반문제 legacy 섹션: 데이터 있을 때만 렌더.
+- HerbalWorkspace.tsx "참고 자료" drawer에서 여성·생식 정보/약물·병력
+  dedup(참고 화면의 더 완전한 버전으로 통합).
+- **설정 화면 신설**: 전역 nav(오늘/설정), doctor-token 관리(clear 포함)를
+  헤더에서 이동, WorkstationSetup은 미설정 배너(delta C-1, 조건
+  무변경) 외에 설정 화면에서도 재확인 가능.
+- **Deviation 2건**(DECISIONS.md 2026-08-31 "P4" 두 항목에 상세): (1)
+  fixture/데이터소스/워크스페이스 시나리오 미리보기 픽커는 헤더에 그대로
+  두고 설정 화면으로 옮기지 않음 — `tests/tablet-viewport.spec.mjs`가
+  이 픽커를 DOM id로 직접 조작해 P5의 핵심 지표를 측정하므로, 그
+  회귀 감시 스크립트의 내비게이션 흐름까지 재작성하는 위험을 피함.
+  (2) provenance 배지 아이콘화(상시 텍스트 7종 → 아이콘+hover title,
+  범례 1곳)는 최소 7개 파일 교차 영향으로 **미구현** — 다음 세션 과제.
+
+### P5 (반응형 마감) — `74d892b`
+
+- 1024×768 랜드스케이프 예산을 P2/P3가 이월한 1.9x(1361px, 1.77x 실측)
+  임시완화에서 **1.5x(1090px, 1.42x 실측)로 복귀** — 다른 두 뷰포트와
+  동일 목표.
+- 근본 원인 진단: round-15 900-1100px 오버라이드는 여전히 발동 중이었고,
+  실제로 새로 필요했던 건 그 주변 밀도(카드 padding/gap)와 그리드
+  재배열 2건(판단·처치 3필드 3열→1행, herbal 두 heroRow를
+  `.workspace__heroRows` 그리드로 병렬 배치 — PainWorkspace.tsx가 이미
+  쓰던 패턴 재사용, 새 개념 아님) — 콘텐츠 삭제 0건.
+- **부수 발견(중요)**: `doctor.css` 소유 클래스(`.doctor__visitLane`,
+  `.doctor__nextPairRow`)를 `workspace.css`에서 오버라이드하면 media
+  query 매치와 무관하게 **조용히 무효**했다 — CSS는 동일 specificity에서
+  최종 번들 내 등장 순서로 우선순위를 정하고, 이 저장소는 `doctor.css`가
+  `workspace.css`보다 나중에 번들된다. 소유 파일로 옮겨 해결(다음에
+  비슷한 교차-파일 오버라이드를 쓸 때 이 함정을 기억할 것 —
+  `getComputedStyle`로 직접 확인하지 않으면 "효과 없음"을 계속 다른
+  값 실험으로 오인하기 쉽다).
+- `tests/tablet-viewport.spec.mjs` 갱신: 1024 budget 1.9→1.5, ceiling
+  1450→1200. 834 portrait 스티키 압축(41px, max-height 96px 충족)·
+  터치 타겟 40/40/48px·overflowX 0(3 뷰포트) 전부 재확인.
+
+### P6 (상태·메트릭 테스트) — `fcc112b`
+
+- **Queue 빈 상태**: 문구를 "지금 확인할 항목이 없습니다."→"오늘
+  예정된 문진이 없습니다."로 교체(Phase 7 §9 문구), `onGoToSettings`
+  콜백이 있으면 plain-text "설정 확인하기" 링크 추가(참고는
+  record-scoped라 도달 불가라 설정으로 안내).
+- **진료 로딩 스켈레톤**(신규): `selectedRecordLoading` state(기록
+  fetch 시작~settle 구간) 추가, `.doctor__visitShell doctor__skeleton`
+  — §3.2/§3.3 치수와 동일한 자리에 회색 펄스 블록(스피너 없음,
+  `prefers-reduced-motion` 대응). 오늘 Queue 게이트가 이 로딩 구간을
+  제외하도록 조건 추가(클릭 직후 stale 목록이 잠깐 보이는 문제 해소).
+- **ConflictBanner 비접힘**: 배너 자체가 `<details>`가 아님(항상
+  펼침), 초안은 닫힌 `<details>`(auto-open 아님) 뒤에서만 노출 —
+  회귀 테스트 2건 추가.
+- **auth 인라인 대체**: 기존 구현(P0-8) 확인만, 신규 구현 없음 —
+  이번 세션에 `tests/visit-summary-aside.spec.mjs`(신규)로 좌측 요약
+  worst-case fixture(부위 3+계산불가+auth 만료) 렌더 테스트 추가.
+- **메트릭 테스트**(Phase 5 §5, 신규):
+  - 3 뷰포트 horizontal overflow 0 — `tablet-viewport.spec.mjs`가 이미
+    담당(반복 안 함).
+  - 좌측 요약 상한/절단 규칙 최악 fixture — `visit-summary-aside.spec.mjs`
+    7개 assertion.
+  - 기본 major section 4 — `doctor.spec.mjs`에 `.doctor__visitLane`
+    개수 어서션 추가.
+  - 진입 조합 0 — 3개 fixture(pain/herbal/women)에 걸쳐 프로필 배너/
+    세그먼트 DOM 부재 재확인(DoctorView 전체 페이지 레벨).
+  - 기록 필드 접근 불가 0 — "여성 건강 주호소" 대표 fixture로 참고
+    화면 8개 아코디언 그룹 전부 + 그룹별 실제 필드값(WOMEN_SAFETY_01·
+    사주 기둥·JudgmentPanel 핵심 필드·원본 JSON dump) 렌더 확인.
+  - 기본 free-text 증가 0 — `tablet-viewport.spec.mjs`의
+    `EXPECTED_OPEN_INPUTS=4` 계약이 소스에 그대로 남아있는지 구조 확인.
+  - 신규 테스트 파일 2개(`today-queue-unified-ui.spec.mjs` 10건,
+    `visit-summary-aside.spec.mjs` 7건) + 기존 3개 파일에 assertion
+    추가(`doctor.spec.mjs` +29, `save-conflict.spec.mjs` +2,
+    `doctor-workspace.spec.mjs` 문구 재작성 2건).
+
+**검증(P4/P5/P6 전체)**: `npx tsc -b --force` / `npm run build` /
+`npm run test:all`(1000개 이상 assertion, tablet-viewport 포함) 전체
+green. FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff 확인.
+
+**아래 "Next Recommended Action"은 이 절 작성 시점(P4/P5/P6 직후)의
+기록이며 그대로 보존한다 — 실제로는 Phase 9(`c8a27c8`, 21/21 PASS) →
+Phase 10 1차(`09dab91`, FAIL) → 이번 세션의 fix(`08b2e8e`)까지 이미
+진행됐다. 최신 상태는 맨 위 절 참고.**
+
+**Next Recommended Action**: Phase 9(Preview
+QA — 실제 헤드리스/두 브라우저 컨텍스트로 진료 화면 전체 흐름 재확인,
+특히 스켈레톤→실데이터 전환 시 레이아웃 시프트 여부) → Phase 10
+(closing review, 독립 검수). 검수 시 특히 확인할 3가지: (1)
+`workspace__finalAssessment__fields--primary`의 1024 구간 3열(~210px)
+타이핑감 실제 QA, (2) provenance 배지 아이콘화 착수 여부 판단, (3)
+fixture/데이터소스 픽커의 설정 화면 이동을 `tablet-viewport.spec.mjs`
+재작성과 함께 마무리할지 여부(PO 판단 필요 — CLAUDE.md Escalation
+Rules 해당 없음, 단순 스코프 우선순위 문제).
+착수 전 이 저장소의 PR 생성/리뷰 절차(ChatGPT 독립 검수 등, CLAUDE.md
+Team Roles 참고) 여부를 사용자에게 확인.
+
+---
+
+## Objective (CRM v0.3.1 round 17 — Restart-safe / Multi-process Correctness Batch, 이전 세션)
 Gomars93가 PR #24 댓글로 지시(GitHub-relayed comment). round 16(audit+purge,
 CLOSED) 다음으로 가장 위험도 높은 non-clinical 파일럿 리스크: "기존
 Doctor/CRM/재진 워크플로 전체에 걸친 restart-safe / multi-process 정합성

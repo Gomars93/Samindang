@@ -262,18 +262,38 @@ async function main() {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
     await cdp.send('Page.navigate', { url: `http://127.0.0.1:${staticPort}/#doctor` })
 
-    // Wait for the seeded rows to appear, unresolved.
+    // P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3): 제출목록/
+    // 재진 목록/CRM Today Queue가 이제 하나의 "오늘" 목록으로 합쳐졌다 --
+    // 이 테스트가 심는 두 patient_uuid는 (POST /api/visits로) 방문도
+    // 함께 생성하므로, 통합 목록에는 CRM 행 2개 "외에도" P0-6이 추가한
+    // 재진 행 2개가 함께 뜬다(둘 다 identity-resolution UI를 갖는
+    // "신원 확인 필요" + 시그마 연결 버튼 -- 서로 다른 기능). CRM 행만
+    // `[data-patient-uuid]`를 갖는다(재진 행은 안 가짐) -- 이 테스트는
+    // CRM identity-link 플로우 전용이므로 그 속성으로 정확히 스코프한다.
     await cdp.evalUntil(
-      `document.querySelectorAll('.doctor__todayQueue__row').length`,
+      `document.querySelectorAll('[data-patient-uuid]').length`,
       (n) => n >= 2,
     )
 
-    const rowText = await cdp.eval(`document.querySelector('.doctor__todayQueue__grid').textContent`)
-    const fallbackCount = (rowText.match(/환자 [0-9a-f]{8}/g) ?? []).length
-    check('e2e: before linking, both rows show the truncated-UUID fallback (nothing resolved yet)', fallbackCount === 2, `(fallbackCount=${fallbackCount}, text=${rowText.slice(0, 200)})`)
+    // 이전엔 OLD 잘린-UUID 폴백("환자 xxxxxxxx")을 셌다 -- 통합 목록은 대신
+    // 명시적 "신원 확인 필요" 라벨을 쓴다(추측/절단 금지, 의도된 사양
+    // 변경). CRM 행([data-patient-uuid])의 텍스트만 센다 -- 재진 행도
+    // 같은 문구를 쓰므로 grid 전체를 세면 이중으로 잡힌다.
+    const crmRowTexts = await cdp.eval(
+      `Array.from(document.querySelectorAll('[data-patient-uuid]')).map((el) => el.textContent)`,
+    )
+    const fallbackCount = crmRowTexts.filter((t) => t.includes('신원 확인 필요')).length
+    check(
+      'e2e: before linking, both CRM rows show the explicit "신원 확인 필요" label (nothing resolved yet)',
+      fallbackCount === 2,
+      `(fallbackCount=${fallbackCount}, texts=${JSON.stringify(crmRowTexts).slice(0, 300)})`,
+    )
 
-    const linkButtonCount = await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton').length`)
-    check('e2e: both unresolved rows show a 시그마 연결 button', linkButtonCount === 2)
+    // Scoped to `[data-patient-uuid]` (CRM rows) -- the seeded revisit rows
+    // (see comment above) also render their OWN 시그마 연결 button (P0-6),
+    // which is a different feature this test does not exercise.
+    const linkButtonCount = await cdp.eval(`document.querySelectorAll('[data-patient-uuid] .doctor__todayQueue__linkButton').length`)
+    check('e2e: both unresolved CRM rows show a 시그마 연결 button', linkButtonCount === 2)
 
     // Independent-review finding (#11): select rows by their stable
     // data-patient-uuid attribute rather than NodeList index, so this
@@ -291,8 +311,8 @@ async function main() {
 
     await cdp.eval(`document.querySelector('${rowASelector} .doctor__todayQueue__linkCancel').click()`)
     await cdp.evalUntil(`!document.querySelector('${rowASelector} .doctor__todayQueue__linkForm')`, (v) => v === true)
-    const afterCancelButtonCount = await cdp.eval(`document.querySelectorAll('.doctor__todayQueue__linkButton').length`)
-    check('e2e: cancel reverts to idle with no network call -- button reappears, still 2 unresolved rows', afterCancelButtonCount === 2)
+    const afterCancelButtonCount = await cdp.eval(`document.querySelectorAll('[data-patient-uuid] .doctor__todayQueue__linkButton').length`)
+    check('e2e: cancel reverts to idle with no network call -- button reappears, still 2 unresolved CRM rows', afterCancelButtonCount === 2)
 
     const afterCancelIdentities = await (await fetch(`${apiBase}/api/crm/patient-identities?patient_uuid=${encodeURIComponent(patientA)}`)).json()
     check('e2e: cancel created no server-side link', afterCancelIdentities.identities[patientA]?.resolved === false)
@@ -385,7 +405,7 @@ async function main() {
     // a false "persisted" result. Page.reload with ignoreCache forces a
     // genuine fresh load.
     await cdp.send('Page.reload', { ignoreCache: true })
-    await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__row').length`, (n) => n >= 2)
+    await cdp.evalUntil(`document.querySelectorAll('[data-patient-uuid]').length`, (n) => n >= 2)
     let persistsAfterReloadOk = true
     let persistsAfterReloadErr = ''
     try {
@@ -408,17 +428,20 @@ async function main() {
     for (const vp of VIEWPORTS) {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: vp.width, height: vp.height, deviceScaleFactor: 1, mobile: false })
       await cdp.send('Page.reload', { ignoreCache: true })
-      await cdp.evalUntil(`document.querySelectorAll('.doctor__todayQueue__row').length`, (n) => n >= 2)
+      await cdp.evalUntil(`document.querySelectorAll('[data-patient-uuid]').length`, (n) => n >= 2)
       // Wait for the identity poll to resolve too, so the remaining
-      // unresolved row's button has actually rendered before measuring it.
-      await cdp.evalUntil(`!!document.querySelector('.doctor__todayQueue__linkButton')`, (v) => v === true)
+      // unresolved CRM row's button has actually rendered before measuring
+      // it. Scoped to `[data-patient-uuid]` -- the seeded revisit rows'
+      // OWN (unrelated, P0-6) button would otherwise satisfy an unscoped
+      // selector first.
+      await cdp.evalUntil(`!!document.querySelector('[data-patient-uuid] .doctor__todayQueue__linkButton')`, (v) => v === true)
       const overflowX = await cdp.eval(`Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)`)
       check(`e2e viewport ${vp.name}: no horizontal overflow`, overflowX === 0, `(overflowX=${overflowX})`)
 
-      // The remaining unresolved row's button is the smallest interactive
-      // target this flow adds.
+      // The remaining unresolved CRM row's button is the smallest
+      // interactive target this flow adds.
       const btnSize = await cdp.eval(`(() => {
-        const el = document.querySelector('.doctor__todayQueue__linkButton')
+        const el = document.querySelector('[data-patient-uuid] .doctor__todayQueue__linkButton')
         if (!el) return null
         const r = el.getBoundingClientRect()
         return Math.round(Math.min(r.width, r.height))

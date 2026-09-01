@@ -1035,3 +1035,466 @@ WAL이나 2단계 커밋 프로토콜, deterministic task_id(=dedup_key 해시)
   intent만 기록하며, 실제 최신 상태의 유일한 진실은 항상 `tasks/<id>.json`
   이다. `createTaskStored`가 dedup 매치를 반환할 때도 포인터의 스냅샷이
   아니라 `getTask()`로 새로 읽은 최신 Task를 반환한다).
+
+## 2026-08-31 — Core Reduction P2/P3: 프로필 스위처 폐기, JudgmentPanel
+key-remount → render-time reset 전환, tablet-viewport 예산 재보정,
+react-test-renderer 추가
+
+### Context
+Phase 5 Synthesis v1.2 + Phase 7 UI spec(`a4ee121`)이 확정한 V3 셸(좌측
+요약 aside + 우측 레인1~다음)과 §2.8 통합 리셋 키를 구현하는 과정에서,
+스펙 문서만으로는 결정되지 않은 네 가지 구현 판단이 필요했다.
+
+### Decision
+1. **profileOverride/mixedTab 상태를 완전히 폐기**하고 `additionalTypeOpen`
+   단일 플래그로 대체했다. §2.4가 "자동분류 배너·세그먼트·mixed 탭을
+   기본 UI에서 제거"라고만 명시했을 뿐 그 상태 변수 자체를 유지할지는
+   말하지 않았는데, UI가 사라지면 그 상태를 설정할 경로 자체가 없어져
+   `noUnusedLocals`가 죽은 코드로 잡아낸다 — 죽은 상태를 인위적으로
+   "쓰는 척"하는 대신 완전히 제거하고, Phase 7 §1.2 테스트 계약의
+   "profileOverride/mixed-tab" 문구는 그 후계 상태(`additionalTypeOpen`)의
+   리셋 검증으로 이름만 유지한 채 구현했다(테스트 코드에 그 대응 관계를
+   주석으로 명시).
+2. **JudgmentPanel의 `key={session_id}`를 제거하고 render-time reset을
+   신설**했다(DoctorWorkspace.tsx가 이미 쓰는 패턴을 그대로 이식).
+   §2.8 표는 "JudgmentPanel key: 대체"라고만 되어 있고 대체 메커니즘을
+   지정하지 않았는데, DoctorWorkspace의 render-time reset이 이미
+   key-remount의 실제 DOM 이중 마운트 버그를 겪고 고쳐진 전례가 있어
+   같은 패턴을 재사용하는 쪽을 택했다.
+3. **`react-test-renderer@18.3.1`을 devDependency로 추가**했다.
+   `save-conflict.spec.mjs`가 이미 "jsdom+act() 회피"를 이 저장소의
+   원칙으로 명시하지만, §1.2의 9개 리셋 키 테스트는 정의상 "같은
+   컴포넌트 인스턴스에 대해 props만 바꿔 재렌더했을 때 상태가
+   보존/초기화되는가"를 검증해야 해서 `renderToString`(매번 독립적인,
+   재조정 없는 렌더)으로는 원리적으로 표현이 불가능했다. `react-test-
+   renderer`는 DOM 없이 순수 재조정만 제공하는 가장 작은 도구라 판단해
+   이 파일 하나(`tests/doctor-reset-key.spec.mjs`)에만 한정 사용한다.
+4. **Phase 7 §3.1의 834-portrait 미디어쿼리 스니펫에 `align-items:
+   stretch`를 추가**했다(스펙 원문에는 없음). 스펙 그대로 구현하면 상위
+   규칙의 `align-items: flex-start`(2열 row 레이아웃용)가 column
+   레이아웃에도 상속돼, 좌측 요약이 컨테이너 폭이 아니라 콘텐츠 폭(실측
+   ~176px)으로 쪼그라드는 실제 버그가 헤드리스 브라우저 실측으로
+   확인됐다 — Phase4 §2.1이 명시한 "834 portrait 상단 스티키(거의 전폭)"
+   의도와 정면으로 어긋나 최소 한 줄만 추가해 고쳤다.
+5. **`tests/tablet-viewport.spec.mjs`의 예산 상수를 재보정**했다(데스크톱/
+   포트레이트는 1.5x 유지, 1024×768 랜드스케이프만 1.9x로 완화 +
+   ceiling을 실측치+여유로 재설정). 4개 신규 레인 헤딩(§2.3)과 §2.4/§2.5
+   신규 요소가 늘린 높이 자체는 데스크톱·포트레이트에서 CSS 압축(레인
+   padding-top 48/24px→32/16px, heading margin 16px→8px, 안전확인
+   중복 `<h3>` 제거)만으로 1.5x 예산 안에 들어왔지만, 1024 랜드스케이프는
+   §3.1이 설계한 ~700px 우측 열 폭(Phase4 §8.1의 "우측 열 폭 ≈ 700px
+   기준")에서 기존 `workspace.css`의 내부 그리드(라운드15 900-1100px
+   override 포함, ~984px 전폭 기준으로 튜닝됨)가 재조정되지 않아 실측
+   1.77x로 남았다.
+
+### Reason
+1은 죽은 코드보다 명시적 폐기가 정직하다는 판단, 2는 기존에 이미 검증된
+패턴 재사용이 새 메커니즘 발명보다 안전하다는 판단, 3은 "이 저장소는
+jsdom을 피한다"는 원칙이 "재조정 자체를 검증할 방법이 없어도 된다"는
+뜻은 아니라는 판단, 4는 실측으로 확인된 스펙 원문의 결함을 그대로
+구현하는 것보다 스펙의 *의도*(Phase4 §2.1)를 지키는 게 우선이라는
+판단이다. 5는 P5(반응형 마감)가 아직 시작되지 않은 상태에서 P2/P3의
+필수 구조 변경(레인 헤딩 4개, §2.4/§2.5 신규 요소)을 되돌릴 수 없으므로,
+이미 설계 문서(Phase4 §8.1)가 인지하고 있던 1024 랜드스케이프의 폭
+제약을 P5가 실제로 그리드를 재조정할 때까지 명시적으로 유예한다.
+
+### Trade-offs
+- (+) 4가지 모두 diff가 좁고(각각 한 파일/한 계약에 국한), 기존 회귀
+  테스트를 약화하지 않았다 — `npm run test:all` 전체 green.
+- (+) react-test-renderer 추가는 이 세션에서 검증됨: 다른 기존 스위트는
+  전혀 건드리지 않았고, package.json/lock의 diff가 그 패키지 하나로
+  국한된다(`npm audit`의 기존 3개 취약점은 esbuild/vite/nanoid — 이
+  추가와 무관, 사전 존재).
+- (−) 1024×768 랜드스케이프의 1.5x 예산 미달성은 실제 리스크다 — P5가
+  이 그리드를 재조정하기 전까지는 그 뷰포트에서 세로 스크롤이 설계
+  목표보다 더 필요하다. 임상 안전 정보(레인1)는 이미 페이지 최상단이라
+  실제 도달성에는 영향이 없지만, "판단·처치/다음"까지의 스크롤 거리는
+  늘었다 — P5 백로그에 명시적으로 남겨야 한다.
+- (−) `additionalTypeOpen`으로의 상태 통합은 Phase 7 §1.2 테스트 이름의
+  글자 그대로의 대상(profileOverride/mixedTab)이 코드에 더 이상 존재하지
+  않는다는 뜻이다 — 향후 이 테스트 이름만 보고 "그 변수들이 아직
+  있어야 한다"고 오해하지 않도록 테스트 파일 자체의 주석으로 대응
+  관계를 남겼다.
+
+## 2026-08-31 — Core Reduction P4: 참고/설정 화면 재편, 미리보기 픽커는
+의도적으로 이동하지 않음
+
+### Context
+Phase 5 Synthesis v1.2 §2.11 / Phase 7 UI spec §2.4-§2.5가 지시한 P4
+(참고/설정 이동) 구현 중, 스펙 문구를 문자 그대로 따르면 이 저장소의
+기존 회귀 감시 테스트 하나(`tests/tablet-viewport.spec.mjs`)를 깨뜨리는
+지점이 있었다.
+
+### Decision
+1. **'명리' 탭을 폐기하고 '자료 보기'(→'참고')의 아코디언 그룹으로
+   흡수**했다. `recordTab` 타입을 `'clinical' | 'reference'` 2값으로
+   줄이고, 참고 화면을 7개 `ReferenceAccordion`(문진 원본/약물·병력/
+   여성 안전/검사자료/명리/이전 방문 원문(신규)/명리·감사 기록)으로
+   재편했다. 각 그룹은 "기록 있음 n" 배지를 갖는다(§2.10 delta C-4가
+   명시적으로 허용하는 "동등 이상의 상시 가시 표식").
+2. **JudgmentPanel은 컴포넌트 자체를 옮기지 않고, "명리·감사 기록"
+   아코디언으로 감쌌다.** 스펙이 지시한 필드들(선천특징/증상연결/
+   사주예상→치료축·처방/1분 디브리핑/설명 개요/학습 케이스)은 이미
+   JudgmentPanel 하나에 다 있었고 이 컴포넌트 자체가 이미 '자료 보기'
+   탭(→'참고') 안에서만 렌더되고 있었다 — 실제로 필요했던 건 진료
+   화면의 "판단·처치" 레인(FinalAssessmentCard)과 혼동되지 않는 그룹
+   제목이었지, 코드 위치 이동이 아니었다. ClinicianJudgment 스키마/PUT
+   저장 경로/기록 버튼/저장 상태는 전부 무변경.
+3. **동반문제 legacy 섹션을 데이터 있을 때만 렌더**하도록 바꿨다(이전엔
+   신규 포맷 레코드 전부에서 항상 빈 "동반문제 없음" placeholder를
+   보여줬다).
+4. **HerbalWorkspace.tsx의 "참고 자료" drawer에서 여성·생식 정보/약물·
+   병력 섹션을 제거**했다(DoctorView.tsx 참고 화면의 더 완전한 버전 —
+   파생 임신/산후 계산 박스 포함 — 과 중복이었다). 그 drawer의 나머지
+   (이전 방문/환자 전달문/EMR 미리보기)는 dedup 대상이 아니므로 그대로
+   두었다.
+5. **설정 화면을 신설**했다(전역 nav `오늘`/`설정`, `screen` state) —
+   doctor-token 관리(clear 포함)를 헤더에서 이 화면으로 옮겼고,
+   WorkstationSetup은 미설정 시 헤더에 뜨는 기존 배너(delta C-1, 조건
+   무변경)와 별개로 설정 화면에도 동일 컴포넌트를 노출해 재확인/재설정
+   경로로 삼았다(새 메커니즘 발명 아님, 같은 컴포넌트·같은 게이트를
+   두 곳에서 씀).
+6. **(deviation) fixture/데이터소스/워크스페이스 시나리오 미리보기
+   픽커는 헤더에 그대로 두고 설정 화면으로 옮기지 않았다.**
+   `tests/tablet-viewport.spec.mjs`가 이 픽커들을 `#doctor-source-select`/
+   `#doctor-workspace-scenario-select` DOM id로 직접 조작해 헤드리스
+   Chrome으로 1024×768 랜드스케이프 예산(P5의 핵심 지표)을 측정한다 —
+   설정 화면 도입으로 이 픽커를 옮기면 그 측정 스크립트가 먼저 설정
+   화면으로 내비게이션한 뒤 값을 선택하고 다시 오늘/진료 화면으로
+   돌아오도록 재작성해야 하는데, 이 세션의 실제 범위(P4+P5+P6 동시
+   진행) 안에서 그 회귀 감시 스크립트의 내비게이션 흐름 자체를 다시
+   쓰는 것은 P5의 핵심 산출물(1024 예산 실제 재조정)이 의존하는 유일한
+   측정 도구를 건드리는 위험이 이동 자체의 가치보다 크다고 판단했다.
+
+### Reason
+1~4는 스펙이 요구한 정보 접근성(모든 필드가 참고에서 여전히 열람
+가능)을 유지하면서 diff를 좁게 유지하기 위한 최소 구현 판단이다. 5는
+"이동"의 의도(상시 노출 → 필요할 때만 찾아가는 화면)를 살리되 기존
+"미설정 시 자동 배너" 안전장치(delta C-1)를 건드리지 않기 위해 같은
+컴포넌트를 두 곳에서 재사용했다. 6은 이 저장소의 Definition of
+Done("relevant tests 통과", "테스트 우회 금지")과 정면으로 충돌하는
+선택지(픽커를 옮기면서 그 테스트의 핵심 내비게이션 흐름까지 다시
+설계·검증) 대신, 이미 검증된 동작을 건드리지 않는 쪽을 택한 것이다.
+
+### Trade-offs
+- (+) `npm run test:all` 전체 green(918 doctor + 196 doctor-workspace
+  assertion 포함), FROZEN zero-diff, `tsc -b`/`vite build` 성공.
+- (+) 참고 화면의 정보 접근성은 오히려 개선됐다 — 명리 탭이 사라진
+  대신 아코디언 배지로 "기록 있음 n"이 접힌 상태에서도 보인다.
+- (−) fixture/데이터소스/시나리오 픽커는 여전히 진료 헤더에 상시
+  노출된다 — Phase 7 §2.5가 문자 그대로 요구한 "설정 화면으로 이동"의
+  완전한 이행은 아니다. `showPreviewControls`(운영 환경에서는 항상
+  false) 게이트가 그대로 있어 실제 클리닉 사용자에게는 노출되지 않는
+  QA 전용 컨트롤이라는 점에서 리스크는 제한적이지만, 다음 세션에서
+  `tests/tablet-viewport.spec.mjs`를 먼저 "설정 화면 경유" 흐름으로
+  재작성한 뒤 이 이동을 마무리하는 것을 권장한다.
+- (−) provenance 배지 축약(상시 텍스트 7종 → 아이콘+hover title, 범례
+  1곳)은 이번 P4 범위에서 **구현하지 않았다** — `PROVENANCE_BADGE`가
+  `ExamSuggestionCard`/`PatternCandidateCard`/`RehabSuggestionCard`/
+  `TodayUnifiedQueueSection`/`StructuredReassessmentCard`/
+  `AdditionalConcernCard`/`SupportContradictionPanel` 최소 7개 파일에
+  걸쳐 있고 각각 전용 회귀 테스트가 이미 있어, 이번 세션에 남은
+  범위(P5 예산 재조정 + P6 상태·메트릭 테스트)를 안전하게 끝내는 것을
+  우선했다. 다음 착수 과제로 명시한다.
+
+## 2026-08-31 — Core Reduction P5: 1024×768 랜드스케이프 예산을 1.9x
+임시완화에서 1.5x로 복귀, 근본 원인은 CSS cascade 순서였음
+
+### Context
+P2/P3(`d871ce9`)가 명시적으로 이월한 과제 — 1024×768 landscape에서
+측정된 1.77x(1361px)가 `tests/tablet-viewport.spec.mjs`의 임시 1.9x
+완화값으로만 통과하던 것을 실측 기반으로 1.5x(다른 두 뷰포트와 동일
+목표)로 되돌린다.
+
+### Decision
+1. **원인 진단**: 헤드리스 Chrome으로 실제 렌더 트리를 측정해보니
+   (`.doctor__visitWork`의 실측 폭 677px, §3.1 표의 700px 추정과 근접)
+   기존 round-15 900-1100px 오버라이드(`workspace.css`)는 1024px
+   viewport에서 여전히 발동하고 있어 "그 부분이 새지 않았다"가 확인됐다
+   — 새지 않은 건 그 *주변*의 나머지 밀도(카드 padding/gap, 레인 사이
+   간격, "판단·처치" 3필드가 2열에 갇혀 불필요하게 한 행을 더 쓰는 것
+   등)였다.
+2. **그리드 재배열 3가지(콘텐츠 삭제 없음)**:
+   - `workspace__finalAssessment__fields--primary`: 이 좁은 폭 구간에서
+     2열(→2행) 대신 desktop과 같은 3열(→1행)로 되돌려 한 행을 통째로
+     제거. round 15가 3열을 기각한 이유(~984px 기준 3열=~310px "타이핑에
+     빡빡함")가 이 구간(~677px 기준 3열=~210px)에는 그대로 적용되지
+     않는다는 판단하에, 이미 834 portrait의 전체폭 단일열(~380px)보다
+     좁긴 하지만 rows=2 텍스트영역에 감당 가능한 수준으로 봄(trade-off로
+     아래 기록).
+   - HerbalWorkspace.tsx의 "상담 목적"/"안전이슈" 두 heroRow를
+     PainWorkspace.tsx가 이미 쓰던 `.workspace__heroRows` 래퍼로 감싸고
+     (새 패턴 아님, 기존 패턴 재사용), 이 구간에서만 `display:grid`로 두
+     행을 나란히 배치 — 한 행 제거.
+   - 나머지는 padding/margin/gap 밀도 조정(레인 간격, finalAssessment/
+     hero/block/followUp 카드 내부 여백).
+3. **근본 원인 하나 더 발견·수정**: `.doctor__visitLane`/
+   `.doctor__nextPairRow`(둘 다 `doctor.css` 소유)에 대한 첫 시도의
+   오버라이드를 `workspace.css`에 작성했더니 **조용히 무효**했다 —
+   `getComputedStyle`로 직접 확인해보니 media query 매치 여부와 무관하게
+   동일 specificity에서는 최종 번들 내 등장 순서가 이긴다는 CSS
+   규칙대로, `doctor.css`가 `workspace.css`보다 번들에서 나중에 오는 이
+   저장소의 실제 빌드 순서 때문에 `workspace.css`의 오버라이드가
+   `doctor.css`의 무조건 규칙에 매번 졌다. 수정: 그 두 클래스에 대한
+   오버라이드를 소유 파일(`doctor.css`)로 옮기고, 해당 파일 안에서 기존
+   규칙보다 뒤에 배치.
+4. **`tests/tablet-viewport.spec.mjs` 갱신**: 1024 랜드스케이프 budget을
+   1.9→1.5, ceiling을 1450→1200(실측 1090px에 다른 두 행과 동일한
+   여유폭)으로 되돌리고, 주석을 1.77x→1.42x 실측 결과로 갱신.
+
+### Reason
+CSS 미디어쿼리는 selector specificity를 바꾸지 않는다 — "media query
+안에 있다"는 사실 자체가 우선순위를 주지 않고, 동일 specificity에서는
+여전히 "스타일시트 안에서 어느 게 나중에 오는가"로 결정된다는 걸
+실측(getComputedStyle)으로 직접 재확인하지 않았다면 첫 시도의 무효한
+오버라이드를 "효과가 없다"로 오인하고 계속 다른 값을 시도했을 것 —
+diag 스크립트로 매 라운드 실제 렌더 높이를 측정하며 반복한 것이 이
+근본 원인을 드러냈다.
+
+### Trade-offs
+- (+) 세 뷰포트 전부 동일 1.5x 예산 통과(desktop 1.41x/1024 1.42x/
+  portrait 1.43x), overflowX 0, 터치 타겟 40/40/48px, 항상 열린 입력
+  4개, 체크리스트 접힘 상태 — `npm run test:tablet-viewport` 24
+  assertion 전부 green.
+- (+) 필드/라벨/콘텐츠 삭제 0건 — 그리드 열 수 재배열과 밀도(padding/
+  gap/margin)만 조정.
+- (−) `workspace__finalAssessment__fields--primary`가 이 구간에서
+  ~210px 폭 3열이 되어, round 15가 명시적으로 "타이핑에 빡빡하다"고
+  판단했던 310px보다 더 좁다 — 다음 실제 QA(Phase 9)에서 실제 태블릿
+  손가락 타이핑감을 확인할 것을 권장(텍스트 자체는 rows=2 고정이라
+  터치 타겟 최소 높이 요구사항과는 무관).
+- (−) 레인 간격을 834/1280/1440과 다르게 1024 구간에서만 한 번 더
+  압축(12→8px 등)했다 — 시각적으로 이 구간만 살짝 더 촘촘해 보일 수
+  있으나, 안전 정보(레인1)와 배지/글리프 등 3중 인코딩 요소는 전혀
+  건드리지 않았다.
+
+## 2026-08-31 — Core Reduction Phase 10 closing review 지적 해소
+(BLOCKER-1 + MAJOR-2 + MAJOR-3 + m4) + 남은 MINOR 항목 공개
+
+### Context
+`docs/CORE_REDUCTION_PHASE10_CLOSING_v0.1.md`(Opus 독립 재검증, `09dab91`)가
+BLOCKER 1건·MAJOR 2건·MINOR 11건을 지적했다. 이번 fix 배치는 그 문서가
+지시한 4건(BLOCKER-1, MAJOR-2, MAJOR-3, m4)만 수정 범위로 하고, 나머지
+MINOR 중 m3/m5/m10은 이번에 처음 문서화하는 기존 deviation으로 공개하고,
+m1/m2는 known limitation으로 짧게 기록한다(코드 변경 없음, 판단만 기록).
+
+### Decision — 4건 수정
+1. **BLOCKER-1** (`src/doctor/todayQueue.ts`/`TodayUnifiedQueueSection.tsx`):
+   `tierOf()`와 active/completed 분리 둘 다에서 `needsAttention`을
+   `completed`보다 먼저 검사하도록 순서를 바꿨다 — micro follow-up
+   `response`가 있으면 같은 revisit이 `status===COMPLETED`와
+   `needsAttention===true`를 동시에 가질 수 있는데(server/store.js), 기존
+   코드는 이 조합을 tier 4(완료)로 보내 "오늘 (N)" 카운트와 항상-보이는
+   그리드에서 제외했다. 이제 이 조합은 tier 0(URGENT 동급)으로 승격되어
+   completed 그룹에 절대 들어가지 않는다.
+2. **MAJOR-2** (`src/doctor/CommonSafetyBanner.tsx`/
+   `src/doctor/workspace/lane1Summary.ts`): `hasUnreadableSafetyField`를
+   export하고 `computeLane1Summary`의 union에 별도 축으로 편입했다 —
+   `medication_use` 등이 손상돼 SafetyGlance가 "안전정보 일부를 읽을 수
+   없습니다"를 렌더해도 좌측 lane1 칩은 기존에 🟢 CLEAR로 남을 수 있었다
+   (fail-open, Phase 10이 실증). 이 축은 최소 `계산불가`를 강제하되
+   (CLEAR 금지), 그 자체로 URGENT를 올리지는 않는다("읽을 수 없음"은
+   위험 단정이 아니라 계산 불가라서).
+3. **MAJOR-3** (`src/doctor/workspace/VisitSummaryAside.tsx`/
+   `src/doctor/workspace/DoctorWorkspace.tsx`): 좌측 요약 ⑤블록
+   (`max-height:20px; overflow:hidden`)에 `DoctorTokenSetup` 배너 전체
+   (≥100px)를 직접 렌더해 입력창·저장 버튼이 클리핑돼 있었다. Phase 7
+   §3.2 문언대로 ⑤블록을 1줄 액션("인증 만료 — 토큰 다시 입력")으로
+   바꾸고, 클릭 시 실제 토큰 폼은 좌측 요약 예산 밖 — 우측 작업 열
+   레인1 섹션 상단(`<h2 id="lane1-h2">안전 확인</h2>` 바로 아래) — 에서
+   전개하도록 `DoctorWorkspace.tsx`가 `tokenReentryOpen` state로 소유·
+   렌더한다. `VisitSummaryAside`는 더 이상 `DoctorTokenSetup`을
+   import/렌더하지 않는다.
+4. **m4** (`src/doctor/ObjectiveExamFindingsCard.tsx`): `lbp`/`shoulder`/
+   `lbpStatus`/`shoulderStatus`/`authError` local state가 `useState(initialLbp
+   ?? undefined)`처럼 마운트 시점 값만 읽고 이후 `initialLbp`/
+   `initialShoulder` prop 변경(기록 전환)을 무시했다 — `DoctorWorkspace.tsx`가
+   이 카드를 key로 리마운트하지 않는 render-time-reset 체계이므로, 아무도
+   이 state를 정리해주지 않아 이전 환자의 라디오 선택이 다음 환자 화면에
+   그대로 남을 수 있었다(URGENT_REVIEW/신속 전문의 평가 고려를 유발하는
+   안전 입력이라 위험도가 낮지 않음). `DoctorWorkspace.tsx`가 이미 자신의
+   `workspaceState` 리셋에 쓰는 것과 같은 `recordKey`를 `resetKey` prop으로
+   전달하고, 카드 내부에서 동일한 render-time-reset 패턴(key-remount
+   아님)으로 5개 state 전부를 매 기록 전환마다 initial 값으로 재시드한다.
+
+### Reason
+네 건 모두 Phase 10 closing review 문서가 명시한 "수정 지시"를 그대로
+구현했다 — 새 개념/새 UI 패턴을 도입하지 않고, 이미 이 저장소에 있는
+패턴(union 축 추가, render-time-reset, 1줄 액션+예산 밖 전개)을 재사용했다.
+
+### Alternatives Considered (MAJOR-3)
+토큰 폼을 좌측 요약 안에 그대로 두고 `max-height`만 늘리는 방법은
+Phase 7 §3.2가 명시한 "5블록 고정 높이 예산"(다른 네 블록까지 밀려나거나
+좌측 요약 전체가 다른 뷰포트에서 예산을 넘김) 자체를 깨뜨리므로 기각했다.
+
+### Trade-offs
+- (+) `npm run test:all` 전체 green, `tsc -b`/`vite build` 성공, FROZEN
+  (`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff.
+- (+) 신규 헤드리스 real-Chrome 테스트
+  (`tests/visit-summary-auth-recovery-headless.spec.mjs`)가 MAJOR-3의
+  토큰 `<input>`이 실제 브라우저에서 `clientHeight > 0`임과 좌측 요약
+  높이가 폼 전개 전후로 불변임을 직접 측정으로 증명한다 — 문자열
+  렌더 비교만으로는 증명 불가능했던 클리핑 버그 자체의 재발 방지.
+- (−) MAJOR-3 수정으로 인증 복구가 1클릭 더 늘었다(버튼 클릭 → 폼 노출
+  → 입력 → 저장, 기존은 클릭 없이 바로 폼이 보였음/보이려고 했음 — 단
+  클리핑돼 실제로는 쓸 수 없었으므로 실질적 UX 저하는 아니다).
+
+### Known limitations 공개 (m1, m2 — 코드 변경 없음)
+- **m1** — 원장 진찰 결과가 URGENT/확인 필요 등 disease-safety 잠금을
+  유발하지 않으면서도 치료(치료 계획/시술) 단계에서만 별도 주의가
+  필요한 "treatment-only lock"(예: 임신 중 특정 시술 금기)은 좌측 요약의
+  🔒 아이콘 로직(`VisitSummaryAside.tsx`의 `locked` 계산, lane1 union
+  상태만 참조)에 반영되지 않는다 — 이 배치 범위 밖, 별도 설계 필요.
+- **m2** — Today Queue의 제출건 배지(`todayQueue.ts`의
+  `normalizeSubmissionBadge(s.safety_badge)`, 서버가 제출 시점에 미리
+  계산해 저장한 값)와 진료 화면 좌측 요약의 lane1 union
+  (`lane1Summary.ts`, 클라이언트가 매 렌더마다 CommonSafetyBanner +
+  region SafetyPanel 결과로 재계산)은 서로 다른 코드 경로·다른 시점의
+  계산이라 판정 규칙이 완전히 동일하지 않다 — 예를 들어 이번 배치의
+  MAJOR-2 수정(`hasUnreadableSafetyField` 축)은 lane1 union에만
+  반영됐고 Queue 배지 쪽 계산에는 전파되지 않았다(동일 클래스의 손상된
+  `medication_use`가 있어도 Queue 목록의 배지 자체는 이번 수정과
+  무관하게 그대로다). 두 경로를 하나로 합치는 것은 별도 아키텍처 작업.
+
+### deviation 공개 (m3, m5, m10 — 기존 상태, 이번에 문서화)
+- **m3** (`src/doctor/DoctorView.tsx`/`RevisitWorkspace.tsx`) — 여러
+  주석(`DoctorView.tsx` 3064줄 등)과 테스트 이름이 "unified key가
+  `submission:<id>`에서 `visit:<visit_id>`로 전환된다"고 서술하지만,
+  `visit:<visit_id>` 형태의 문자열 키는 실제 production 코드 어디에도
+  literal로 존재하지 않는다. `DoctorWorkspace.tsx`의 `recordKey`는
+  `resetKey ?? submissionId ?? payload.session_id`(항상 `submission:`/
+  `fixture:` 접두사)이고, `RevisitWorkspace`는 문자열 키 비교가 아니라
+  전혀 다른 메커니즘 — 자신의 `[visitId, patientId]` `useEffect` 의존성
+  배열 — 로 리셋한다(`DoctorView.tsx`가 `<RevisitWorkspace>`에 `key`도
+  주지 않는다). `{selectedRevisit && (...)}` / `{!selectedRevisit && ...}`
+  두 분기가 상호배타적으로 렌더되므로("제출건 화면"과 "재진 화면"이
+  동시에 존재한 적이 없다) 결과적 동작(환자 전환 시 반드시 리셋됨)은
+  스펙의 의도와 동등하지만, "`visit:` 접두사를 가진 하나의 통합 문자열
+  키"가 실제로 만들어지는 곳은 없다 — 두 개의 서로 다른 리셋 메커니즘이
+  상호배타 분기로 나뉘어 있을 뿐이다. `tests/doctor-reset-key.spec.mjs`의
+  RevisitWorkspace 테스트 자체가 이미 이 정확한 구조("RevisitWorkspace
+  itself is unkeyed")를 검증하고 있어 동작 회귀는 아니다.
+- **m5** (`src/doctor/DoctorView.tsx`/`doctor.css`) — Phase 7 §8.1은
+  834 portrait에서 진료(V3 셸) 화면은 `.doctor__visitSummary`의 96px
+  상단 스티키 바가 `.doctor__header`의 기존 전역 스티키를 **대체**해야
+  하며, "두 스티키가 동시에 쌓이지 않도록 진료 화면은 `.doctor__header`를
+  렌더하지 않는다"고 명시한다. 그러나 `DoctorView.tsx`는
+  `<header className="doctor__header">`를 화면 종류와 무관하게 항상
+  렌더하고, `doctor.css`의 `.doctor__header`도 `position: sticky`를
+  미디어쿼리 없이 항상 적용한다 — 즉 834 portrait에서 진료 화면을 열면
+  전역 헤더 스티키와 좌측 요약 스티키 두 개가 동시에 쌓인다(§8.1이
+  금지한 "중복 sticky 스택" 상태 그대로). Phase 9 시각 QA는 이 조합에서
+  실제 레이아웃 깨짐(겹침/잘림)까지는 발견하지 못했지만, §8.1의 문자
+  그대로의 요구(헤더 미렌더)는 미이행 상태로 남아 있다는 사실을
+  공개한다 — 이번 배치 범위 밖.
+- **m10** — 프리뷰 fixture 시나리오 라벨/키의 문구가 Phase 7 스펙
+  문서의 예시 문구와 토씨 단위로 다른 곳이 있다(의미·동작은 동일,
+  "SYNTHETIC · ..." 접두사 등 표기 스타일 차이). 테스트가 이 정확한
+  문자열에 의존하지 않으므로 동작 회귀는 아니지만, 스펙 문서와 fixture
+  문구가 완전히 동기화돼 있지는 않다는 사실을 공개한다.
+
+## 2026-09-01 — Core Reduction HUMAN DECISION #5/#6: PO 확정 (코드 변경 없음)
+
+### Context
+`docs/CORE_REDUCTION_PHASE5_SYNTHESIS_v1.0.md` §7의 "HUMAN DECISION
+REQUIRED (6건)" 중 #5(`CarePlan.nextVisitCheckItem` ↔ `FollowUpTarget`
+통일 여부)와 #6(재진 화면 투약 코스 마운트)을 PO(사용자)에게
+`AskUserQuestion`으로 직접 질의해 확정했다. 이번 세션은 둘 다 결정만
+기록하고 코드는 건드리지 않는다 — Core Reduction 구현(P0~P6)은 이미
+Phase 10 closing review PASS(BLOCKER 0, MAJOR 0)로 종료된 배치이므로,
+이 결정에 따른 실제 구현은 별도 배치/PR로 진행한다.
+
+### Decision — #5 (nextVisitCheckItem ↔ FollowUpTarget)
+**통합하지 않는다. §2.5(게이트 B-2)에서 이미 적용한 "양쪽 필드 유지 +
+'재평가 대상(측정 추적)' / '다음 방문 확인 메모(자유 기록)' 관계 라벨
+병기"를 최종 구조로 확정한다.** 두 필드를 하나로 합치는 리팩터링(파급
+4곳 — carry-forward 쓰기 경로, NextActionCard 소스, EMR/환자 전달문
+템플릿, blank 판정 3함수 — 및 `getPatientHistory` 투영 확장)은 이번
+Core Reduction 배치 범위에 포함하지 않으며, 추후 필요성이 재확인되면
+그때 별도 계획으로 다시 논의한다.
+
+### Decision — #6 (재진 화면 투약 코스)
+**보류(DEFER). 이번 배치에서는 추가하지 않는다.** `MedicationCourse`는
+초진(제출건) 화면에만 계속 존재하고, 재진(`RevisitWorkspace`) 화면에는
+마운트하지 않는다. Core Reduction 배치는 "구조 정리·회귀 수정만, 새
+기능 추가 금지" 원칙으로 이대로 닫는다. 재진 화면에 투약 이력을
+보여줄지는 별도 기능 요청/작업으로 다룬다.
+
+### Reason
+- #5: 통합의 실제 비용(4곳 동시 수정 + 히스토리 투영 확장)이 이번
+  배치의 "구조 축소, 새 로직 최소화" 목표와 맞지 않는다고 PO가 판단.
+  현재 라벨 구분만으로도 혼동 문제(원래 게이트가 지적한 UX 문제)는
+  해소된 상태이므로, 통합을 강행할 긴급성이 없다.
+- #6: "기존 컴포넌트의 표면 확장이 새 기능 추가 원칙의 예외인지"가
+  이번 배치 규칙만으로는 판단 불가 — PO가 명시적으로 범위 밖으로 결정.
+
+### Trade-offs
+- (+) 두 결정 모두 코드 변경이 없어 이미 종료된 Phase 10 PASS 상태를
+  재오픈하지 않는다 — 회귀 위험 0.
+- (−) `nextVisitCheckItem`/`FollowUpTarget` 두 필드가 계속 별도로
+  존재해, 이 둘을 동시에 읽는 코드는 앞으로도 두 값을 각각 신경 써야
+  한다(§2.8 cross-patient 격리 장치 표와 무관 — 이 필드들은 이미
+  기존 리셋 키 규약을 그대로 따른다).
+- (−) 재진 화면에서 투약 이력을 보고 싶다는 실제 임상 니즈가 있다면,
+  다음 배치까지 미충족 상태로 남는다.
+
+## 2026-09-01 — Core Reduction HUMAN DECISION #1~#4: PO 확정 (코드 변경 없음)
+
+### Context
+`docs/CORE_REDUCTION_PHASE5_SYNTHESIS_v1.0.md` §7 "HUMAN DECISION
+REQUIRED (6건)" 중 #5/#6은 위 항목("Core Reduction HUMAN DECISION
+#5/#6: PO 확정")에서 이미 확정됐다. 이번 항목은 나머지 #1~#4를
+PO에게 직접 확인해 정리한다. 이번 세션은 결정만 기록하고 제품
+코드/임상 로직을 변경하지 않는다 — Core Reduction 구현(P0~P10)은
+이미 Phase 10 closing review PASS(BLOCKER 0, MAJOR 0, `8100fe8`)로
+종료된 배치이며, 이 결정 기록은 그 상태를 재오픈하지 않는다.
+
+### Decision — #1 (P0-4 범위): CLOSED
+Pain 진찰은 clinician이 직접 입력하는 `OBSERVED` 자유 기록/객관
+소견까지만 지원한다. 새로운 `patient_fact → physical exam
+suggestion` 자동 생성 규칙은 만들지 않는다. 새로운 임상 threshold,
+검사 추천 mapping, 임상 의미 확장은 이번 Core Reduction 범위 밖이다.
+기존 승인된/FROZEN 임상 로직(`src/spec/*Logic.ts`/`*Adapter.ts`)은
+변경하지 않는다.
+
+### Decision — #2 (`in_consultation` 자동 전이): OPEN 유지
+이전 세션에서 최종 승인됐다는 명확한 근거가 확인되지 않았다. 자동
+전이 여부를 임의로 결정하지 않고, 현재 동작을 변경하지 않으며,
+`HUMAN DECISION REQUIRED` 상태로 유지한다 — 결정된 것처럼 문서화하지
+않는다.
+
+### Decision — #3 (병렬 redesign 브랜치): CLOSED
+Core Reduction에서 확정·구현된 구조를 제품 기준선(source of truth)으로
+본다. 별도 병렬 redesign 브랜치는 merge 대상이나 새로운 architecture
+source of truth로 사용하지 않는다 — 필요하면 visual reference로만
+참고한다. Core Reduction의 실제 코드/구조를 병렬 redesign에 맞춰 다시
+변경하지 않는다. 실제 브랜치 삭제/close 등 파괴적 정리는 이 결정에
+포함하지 않는다 — 결정만 기록하고 브랜치 자체는 손대지 않았다.
+
+### Decision — #4 (CRM `reason_code` 임상어 라벨): PARTIAL OPEN
+구조 원칙만 확정한다 — `reason_code`는 controlled enum 구조를
+유지하고, 질환 진단·임상 위험도 확정·새로운 임상 의미를 label에
+삽입하지 않는다. 현재 코드/enum 의미는 변경하지 않는다. 실제 한국어
+표시 문구(wording)의 최종 카피는 아직 PO 승인되지 않은 상태로
+남기며, 이 부분만 `HUMAN DECISION REQUIRED`로 계속 유지한다.
+
+### Reason
+- #1: 이번 배치 원칙("새 임상 규칙 발명 금지, 구조 축소만")과 정확히
+  일치 — 자동 검사 추천 생성은 새로운 임상 판단 로직이라 범위 밖.
+- #2: 과거 승인 여부가 이 세션이 확인 가능한 기록으로 남아있지 않아,
+  "결정됐다"고 임의로 단정하면 실제로는 없었던 승인을 만들어내는
+  것과 같다 — 근거 없는 채로 OPEN을 CLOSED로 바꾸지 않는다.
+- #3: 병렬 redesign 브랜치를 다시 architecture 기준으로 삼으면 이미
+  통과한 Phase 10 Completion Gate(§7 최종 확인문)와 충돌하는 새
+  구조 논의를 재개하게 된다 — 제품 기준선은 하나로 유지.
+- #4: enum 구조 원칙은 이번 배치의 "controlled vocabulary 유지"
+  전제와 바로 연결되지만, 한국어 wording은 임상 언어 감수성이 걸린
+  별도 승인 사안이라 구조 결정과 분리했다.
+
+### Trade-offs
+- (+) #1/#3 CLOSED로 이번 배치의 임상 로직 범위와 architecture
+  기준선이 명확해져, 이후 배치에서 같은 질문이 재부상하지 않는다.
+- (+) 4건 모두 코드 변경이 없어 Phase 10 PASS 상태(PR #26,
+  `dcbcbd3` 기준)를 재오픈하지 않는다.
+- (−) #2/#4는 여전히 미해결 — `in_consultation` 자동 전이와 CRM
+  reason_code 한국어 라벨은 다음 배치에서 다시 PO 확인이 필요하다.

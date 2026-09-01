@@ -149,3 +149,29 @@ export function readableMicroFollowUpResponse(value: unknown): MicroFollowUpResp
 export function microFollowUpNeedsAttention(response: MicroFollowUpResponse): boolean {
   return response.newSymptomReported || response.adverseEffectReported
 }
+
+/**
+ * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.3/§2.11, Phase 7 §3.2 block
+ * ③ "지난 대비"): the left-column summary shows one PATIENT_FACT-styled
+ * quote line, distinct from the full MicroFollowUpCard (which stays in
+ * lane2, unchanged, gated by `open={needsAttention}` above). This never
+ * invents a value the patient did not type -- it picks the single most
+ * informative already-recorded string, in a fixed priority order (an
+ * adverse-effect/new-symptom note first, since those are what
+ * needsAttention flags; then the free-text overall-change answer; then the
+ * first target rating), and returns null when nothing was ever recorded so
+ * the caller can omit the block entirely rather than render an empty quote.
+ */
+export function microFollowUpQuoteLine(response: MicroFollowUpResponse | null): string | null {
+  if (!response) return null
+  if (response.adverseEffectReported && response.adverseEffectNote.trim()) {
+    return response.adverseEffectNote.trim()
+  }
+  if (response.newSymptomReported && response.newSymptomNote.trim()) {
+    return response.newSymptomNote.trim()
+  }
+  if (response.overallChange.trim()) return response.overallChange.trim()
+  const firstRated = response.targetRatings.find((t) => t.patientReportedValue.trim() !== '')
+  if (firstRated) return `${firstRated.label}: ${firstRated.patientReportedValue.trim()}`
+  return null
+}

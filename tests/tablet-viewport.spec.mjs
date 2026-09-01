@@ -37,15 +37,52 @@ import path from 'node:path'
 // Ceilings sit a little above the measured heights so ordinary text-metric
 // variation between machines does not flap, and well under the 1.5-viewport
 // budget so a real regression cannot hide beneath them.
+//
+// Core Reduction P2 (Phase 5 Synthesis v1.2 §2.1/§2.3, Phase 7 UI spec
+// §2.3/§3.1/§3.3): the V3 shell adds four real, spec-required lane
+// headings (안전 확인/확인/판단·처치/다음, each with its own
+// aria-labelledby wiring), the §2.4 "+ 다른 유형 입력 추가" toggle, and
+// the §2.5 "다음 방문 확인 메모" field -- legitimate new content, not
+// padding bloat (the redundant inner "안전 확인" <h3> that WOULD have been
+// pure duplication was removed instead of kept and budgeted for; see
+// DoctorWorkspace.tsx's comment at workspace__block--safety). Desktop and
+// portrait re-measured comfortably under the original 1.5-viewport budget
+// with this new content; their ceilings below just reflect that new
+// baseline with the same "a little above measured" headroom the original
+// round-15 comment describes.
+//
+// tablet landscape 1024x768 (P5 closes the gap P2/P3 left open here): §3.1's
+// own grid table fixes this breakpoint's right (content) column at only
+// ≈700px (260px aside + 24px gutter + 24px×2 padding out of 1024px --
+// Phase 4 §8.1's own "우측 열 폭 ≈ 700px 기준"), a full ~28% narrower than
+// this same content occupied before the V3 shell (the aside did not exist
+// yet). Round 15's 900-1100px tablet-landscape overrides (workspace.css)
+// were tuned for that OLD full-width ~984px column and still fired at
+// 1024px viewport width, but everything ELSE around them -- lane/next-pair
+// spacing, final-assessment/hero/checklist padding and gaps, the 3-field
+// primary grid staying 2-column when 677px of room fits it in one row
+// instead -- was still sized for the wider column P2/P3 had not yet
+// retuned (measured 1361px/768px = 1.77x, over budget). P5 retunes exactly
+// those (doctor.css/workspace.css's own matching 1024-1279px media query,
+// scoped so 1280+ and 834 portrait are untouched) -- content/field count is
+// unchanged, only density and one grid rearrangement (the two always-
+// present hero summary rows sit side by side instead of stacked). Measured
+// 1090px/768px = 1.42x, back under the same 1.5x budget every other
+// viewport already met, with the same "a little above measured" ceiling
+// headroom as the other two rows.
 const VIEWPORTS = [
-  { name: 'desktop 1440x900', width: 1440, height: 900, ceiling: 1120 },
-  { name: 'tablet landscape 1024x768', width: 1024, height: 768, ceiling: 1160 },
-  { name: 'tablet portrait 834x1112', width: 834, height: 1112, ceiling: 1260 },
+  { name: 'desktop 1440x900', width: 1440, height: 900, ceiling: 1300, budget: 1.5 },
+  { name: 'tablet landscape 1024x768', width: 1024, height: 768, ceiling: 1200, budget: 1.5 },
+  { name: 'tablet portrait 834x1112', width: 834, height: 1112, ceiling: 1700, budget: 1.5 },
 ]
-const VIEWPORT_BUDGET = 1.5
 const MIN_TARGET = 36
-/** 판단 / 처치 / 재검 -- and nothing else -- is open by default. */
-const EXPECTED_OPEN_INPUTS = 3
+/**
+ * 판단 / 처치 / 재검 (3) + Core Reduction P3's §2.5 "다음 방문 확인 메모"
+ * (1, `doctor__nextVisitCheckMemo` -- always visible, paired next to
+ * 재평가 대상 per Phase 5 Synthesis v1.2 §2.5) -- and nothing else -- is
+ * open by default.
+ */
+const EXPECTED_OPEN_INPUTS = 4
 
 let passed = 0
 const check = (name, cond, extra = '') => {
@@ -287,7 +324,7 @@ try {
         ` | overflowX ${m.overflowX}px | ${m.openInputs} open inputs | smallest target ${m.smallestTarget}px`,
     )
 
-    check(`${label}: clinical workflow within ${VIEWPORT_BUDGET} viewports`, multiple <= VIEWPORT_BUDGET, `(${multiple.toFixed(2)}x)`)
+    check(`${label}: clinical workflow within ${vp.budget} viewports`, multiple <= vp.budget, `(${multiple.toFixed(2)}x)`)
     check(`${label}: workflow height does not regress`, m.workflow <= vp.ceiling, `(${m.workflow}px <= ${vp.ceiling}px)`)
     check(`${label}: no horizontal overflow`, m.overflowX === 0, `(${m.overflowX}px)`)
     check(`${label}: no interactive target under ${MIN_TARGET}px`, m.smallestTarget !== null && m.smallestTarget >= MIN_TARGET, `(${m.smallestTarget}px)`)

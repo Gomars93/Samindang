@@ -68,6 +68,41 @@ test('ConflictBanner: with draftJson null, renders no draft disclosure at all (n
   assert.ok(!html.includes('불러오기 전 내 입력 내용'))
 })
 
+// Core Reduction P6 (Phase 7 UI spec §1.3-#13/#14, §2.10 delta N-4/C-4):
+// ConflictBanner itself renders with no collapse control (always unfolded)
+// whenever a conflict is detected -- it is a plain <div role="alert">, never
+// wrapped in a <details>. Only the DRAFT preview underneath it sits behind
+// an explicit click, and that click is not an auto-expanding accordion: the
+// <details> defaults closed even when a draft exists (never `open`), so
+// nothing about a conflict pre-opens content the clinician has to close
+// again -- the draft copy path is the readonly textarea revealed by that
+// one click, not a second collapsible layer inside it.
+test('ConflictBanner itself renders with no collapse control (always unfolded) whenever a stale-write conflict is detected', () => {
+  const withDraft = renderToString(
+    React.createElement(ConflictBanner, { onReload: () => {}, draftJson: '{"a":1}' }),
+  )
+  const withoutDraft = renderToString(React.createElement(ConflictBanner, { onReload: () => {}, draftJson: null }))
+  for (const html of [withDraft, withoutDraft]) {
+    const bannerOpenTag = html.match(/^<div className="doctor__banner doctor__banner--warning"/) ?? html.match(/^<div class="doctor__banner doctor__banner--warning"/)
+    assert.ok(bannerOpenTag, 'the outer banner element is a plain div, not a <details>')
+    // the FIRST <details> in the markup (if any) must belong to the draft
+    // sub-section, never wrap the banner's own alert content above it.
+    const firstDetailsIdx = html.indexOf('<details')
+    const alertRoleIdx = html.indexOf('role="alert"')
+    assert.ok(alertRoleIdx !== -1 && (firstDetailsIdx === -1 || alertRoleIdx < firstDetailsIdx))
+  }
+})
+
+test('ConflictBanner draft content stays behind an explicit click-to-reveal action rather than auto-expanding, even though the banner around it is always unfolded', () => {
+  const html = renderToString(
+    React.createElement(ConflictBanner, { onReload: () => {}, draftJson: '{"a":1}' }),
+  )
+  const detailsIdx = html.indexOf('<details')
+  const detailsTag = html.slice(detailsIdx, html.indexOf('>', detailsIdx) + 1)
+  assert.ok(!detailsTag.includes('open'), 'the draft disclosure never auto-opens, even when a real draft exists to show')
+  assert.ok(html.includes('doctor__banner__draft'))
+})
+
 test('ConflictBanner.tsx never merges anything -- no field-level merge helper/utility referenced', () => {
   const src = stripComments(fs.readFileSync('src/doctor/ConflictBanner.tsx', 'utf8'))
   assert.ok(!/merge/i.test(src), 'inventing field-level merge semantics was explicitly out of scope for this batch')
@@ -78,13 +113,23 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
 {
   const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
 
-  test('DoctorWorkspace.tsx: imports and renders ConflictBanner right after CommonSafetyBanner', () => {
+  test('DoctorWorkspace.tsx: imports ConflictBanner and renders it above the V3 shell, before CommonSafetyBanner (Phase 7 §7.1: 레인 밖, 화면 상단)', () => {
     assert.ok(src.includes("import { ConflictBanner } from '../ConflictBanner'"))
-    const safety = src.indexOf('<CommonSafetyBanner')
+    // Core Reduction P2 (Phase 5 Synthesis v1.2 §2.1, Phase 7 UI spec
+    // §7.1): ConflictBanner is an operational data-safety warning, not a
+    // clinical one -- it now renders OUTSIDE every lane, at the very top
+    // of the screen (before `.doctor__visitShell`/CommonSafetyBanner), per
+    // §7.1's warning-hierarchy table ("4. stale/conflict | 레인 밖, 화면
+    // 상단"). It used to render just after CommonSafetyBanner, inside the
+    // workspace-profile area that no longer exists (§2.4 retires the
+    // profile switcher entirely) -- see the P2/P3 test elsewhere pinning
+    // that removal.
     const banner = src.indexOf('{conflict && (')
-    const profileBar = src.indexOf('workspace__profileBar')
-    assert.ok(safety !== -1 && banner !== -1 && profileBar !== -1)
-    assert.ok(safety < banner && banner < profileBar, 'ConflictBanner must render between safety and the profile switcher')
+    const shell = src.indexOf('doctor__visitShell')
+    const safety = src.indexOf('<CommonSafetyBanner')
+    assert.ok(banner !== -1 && shell !== -1 && safety !== -1)
+    assert.ok(banner < shell && shell < safety, 'ConflictBanner must render before the V3 shell, which itself renders before CommonSafetyBanner')
+    assert.ok(!src.includes('workspace__profileBar'), 'the profile switcher this banner used to sit next to no longer exists (§2.4)')
   })
 
   test('DoctorWorkspace.tsx: autosave effect fails closed on a pending conflict (no retry until reload)', () => {
@@ -93,13 +138,21 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(effectStart !== -1 && effectEnd !== -1, 'the autosave effect must exist with the expected dependency array')
     const effectBody = src.slice(effectStart, effectEnd)
     const guardIndex = effectBody.indexOf('if (conflict) return')
-    const timeoutIndex = effectBody.indexOf('setTimeout(async () => {')
+    // P0-8 (Core Reduction Phase 6 gate): the actual save attempt is now
+    // extracted into `performSave` (so the P0-8 auth-recovery action can
+    // call it directly, not only the debounce timer) -- the effect just
+    // schedules it.
+    const timeoutIndex = effectBody.indexOf('setTimeout(performSave, SAVE_DEBOUNCE_MS)')
     assert.ok(guardIndex !== -1 && timeoutIndex !== -1)
     assert.ok(guardIndex < timeoutIndex, 'the conflict guard must run BEFORE any save attempt is scheduled')
   })
 
   test('DoctorWorkspace.tsx: a conflict outcome stops the effect from touching lastSavedRef (the unsaved draft is never marked saved)', () => {
-    const branch = src.slice(src.indexOf('} else if (result.conflict) {'), src.indexOf('} else {\n        setSaveStatus(\'error\')'))
+    // P0-8 (Core Reduction Phase 6 gate): the save logic moved from an
+    // inline setTimeout callback into the extracted `performSave` function
+    // (one indentation level shallower) -- the end delimiter below tracks
+    // that shift; `else {` here is performSave's own generic-failure branch.
+    const branch = src.slice(src.indexOf('} else if (result.conflict) {'), src.indexOf('} else {\n      setLastSaveErrorKind'))
     assert.ok(branch.length > 0)
     assert.ok(!branch.includes('lastSavedRef.current = toSave'), 'lastSavedRef must only advance on a genuinely accepted save')
     assert.ok(branch.includes('setConflict(result.conflict)') && branch.includes('setPreConflictDraft(toSave)'))
@@ -114,6 +167,19 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   test('DoctorWorkspace.tsx: switching records clears the conflict/draft from the OLD record (no cross-patient leak)', () => {
     const resetBlock = src.slice(src.indexOf('if (recordKey !== lastSeenRecordKey) {'), src.indexOf('if (recordKey !== lastSeenRecordKey) {') + 900)
     assert.ok(resetBlock.includes('setConflict(null)') && resetBlock.includes('setPreConflictDraft(null)'))
+  })
+
+  // P0-8 follow-up hardening: lastSaveErrorKind is a NEW per-record piece of
+  // UI state this round added (Core Reduction P0-8) -- must join the SAME
+  // cross-patient reset block as conflict/preConflictDraft above, or an
+  // auth-failure banner from the OLD record could in principle survive a
+  // record switch (in practice every failure path already re-sets it
+  // together with saveStatus in the same branch, so this was never
+  // actually visibly stale -- this is defense in depth against a future
+  // refactor silently breaking that co-set invariant).
+  test('DoctorWorkspace.tsx: switching records also clears lastSaveErrorKind (P0-8 auth-recovery state joins the same cross-patient reset)', () => {
+    const resetBlock = src.slice(src.indexOf('if (recordKey !== lastSeenRecordKey) {'), src.indexOf('if (recordKey !== lastSeenRecordKey) {') + 1400)
+    assert.ok(resetBlock.includes('setLastSaveErrorKind(null)'))
   })
 
   // Real two-browser-context QA (round 18) initially caught a false-positive
@@ -149,6 +215,66 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(/lastSavedRef\.current = fresh/.test(effect), 'lastSavedRef must advance to the SAME fresh content, not just the token')
     assert.ok(/setWorkspaceState\(fresh\)/.test(effect), 'workspaceState itself must be replaced with the fresh content -- the exact HIGH finding this guards against')
     assert.ok(/skipNextSaveRef\.current = true/.test(effect), 'must not immediately re-PUT the just-adopted content back at the server')
+  })
+
+  // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
+  // auth-failure inline recovery ----------
+  //
+  // MAJOR-3 (Phase 10 closing review): block ⑤'s fixed 20px budget can only
+  // ever hold VisitSummaryAside's own 1-line "인증 만료 — 토큰 다시 입력"
+  // action -- the full `<DoctorTokenSetup>` banner (>=100px) was silently
+  // clipping there and is not shown inline any more. Clicking the action
+  // calls `onOpenTokenReentry`, which DoctorWorkspace.tsx wires to open the
+  // actual token form OUTSIDE the left summary's budget, at the top of the
+  // right work column's lane1 section.
+  const asideSrc = fs.readFileSync('src/doctor/workspace/VisitSummaryAside.tsx', 'utf8')
+
+  test('VisitSummaryAside.tsx: block ⑤ auth failure renders a 1-line action button, never the full DoctorTokenSetup form inline (that clipped at 20px)', () => {
+    assert.ok(!asideSrc.includes("import { DoctorTokenSetup } from '../DoctorTokenSetup'"), 'DoctorTokenSetup must no longer be imported/rendered here')
+    assert.ok(
+      /saveStatus === 'error' && lastSaveErrorKind === 'auth'\) \{\s*\/\/[\s\S]{0,400}?saveRow = \(\s*<button type="button" className="doctor__visitSummary__authBtn"/.test(asideSrc),
+      'the auth branch must render the 1-line action button, not DoctorTokenSetup',
+    )
+    assert.ok(asideSrc.includes('인증 만료 — 토큰 다시 입력'), 'Phase 7 §3.2 literal wording')
+  })
+
+  test("VisitSummaryAside.tsx: a generic (non-auth) save failure keeps the existing '저장 실패' text, not the token recovery", () => {
+    assert.ok(/saveRow = '저장 실패 — 다시 시도해주세요'/.test(asideSrc))
+  })
+
+  test('DoctorWorkspace.tsx: performSave records the failure kind on a generic error, and clears it (plus any open token-reentry form) on success', () => {
+    const fnStart = src.indexOf('async function performSave() {')
+    const fnEnd = src.indexOf('// Debounced autosave')
+    assert.ok(fnStart !== -1 && fnEnd !== -1)
+    const fn = src.slice(fnStart, fnEnd)
+    assert.ok(/setLastSaveErrorKind\(null\)/.test(fn), 'a successful save must clear any earlier error-kind state')
+    assert.ok(/setTokenReentryOpen\(false\)/.test(fn), 'a successful save must also close any open token-reentry form (MAJOR-3)')
+    assert.ok(/setLastSaveErrorKind\(result\.kind \?\? 'other'\)/.test(fn), 'a generic failure must record the failure kind (not just flip to the error status)')
+  })
+
+  test('DoctorWorkspace.tsx: clicking the auth-recovery action (VisitSummaryAside\'s onOpenTokenReentry) opens the token form at the top of the lane1 section, outside the left summary\'s budget', () => {
+    assert.ok(
+      /onOpenTokenReentry=\{\(\) => setTokenReentryOpen\(true\)\}/.test(src),
+      'VisitSummaryAside must be wired to open the form, not to retry directly itself',
+    )
+    const lane1Start = src.indexOf('<section className="doctor__visitLane doctor__visitLane--lane1"')
+    const lane1SafetyBanner = src.indexOf('<CommonSafetyBanner payload={payload} />')
+    assert.ok(lane1Start !== -1 && lane1SafetyBanner !== -1 && lane1Start < lane1SafetyBanner)
+    const lane1Head = src.slice(lane1Start, lane1SafetyBanner)
+    assert.ok(
+      /lastSaveErrorKind === 'auth' && tokenReentryOpen && \(\s*<DoctorTokenSetup/.test(lane1Head),
+      'the actual DoctorTokenSetup form must render at the top of the lane1 section, gated on both the failure kind and the click-to-open state',
+    )
+    assert.ok(
+      /onSet=\{\(\) => \{\s*setTokenReentryOpen\(false\)\s*setLastSaveErrorKind\(null\)\s*void performSave\(\)/.test(lane1Head),
+      're-entering the token must close the form, clear the error, and retry the save directly',
+    )
+  })
+
+  test('DoctorView.tsx: the workspace-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {
+    const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+    const block = viewSrc.slice(viewSrc.indexOf('onSaveWorkspace={'), viewSrc.indexOf('onSaveWorkspace={') + 2200)
+    assert.ok(/return \{ ok: false, kind: result\.kind \}/.test(block))
   })
 }
 
@@ -329,6 +455,64 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     )
     assert.ok(!/lastKnownJudgmentRef\.current = \{ judgment: finalized/.test(successBranch))
   })
+
+  // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
+  // auth-failure inline recovery ----------
+  test('JudgmentPanel.tsx: imports DoctorTokenSetup and shows it inline specifically for kind===\'auth\' (distinct from the generic errors list)', () => {
+    assert.ok(src.includes("import { DoctorTokenSetup } from './DoctorTokenSetup'"))
+    assert.ok(/saveErrorKind === 'auth' && \(\s*<DoctorTokenSetup/.test(src))
+  })
+
+  test('JudgmentPanel.tsx: handleRecord distinguishes the auth-kind failure from a generic one -- only the generic one appends to the errors list', () => {
+    const fnStart = src.indexOf('async function handleRecord() {')
+    const fnEnd = src.indexOf('function handleReloadFromConflict')
+    const fn = src.slice(fnStart, fnEnd)
+    const authBranch = fn.slice(fn.indexOf("} else if (outcome.kind === 'auth') {"), fn.indexOf('} else {\n      setSaveErrorKind'))
+    assert.ok(authBranch.length > 0, 'a dedicated auth-kind branch must exist')
+    assert.ok(!authBranch.includes('setErrors('), 'the auth branch must not also push the generic "저장 실패" text')
+    const genericBranch = fn.slice(fn.indexOf('} else {\n      setSaveErrorKind'), fn.indexOf('} else {\n      setSaveErrorKind') + 200)
+    assert.ok(genericBranch.includes("setErrors(['저장 실패 — 다시 시도해주세요'])"))
+  })
+
+  test('JudgmentPanel.tsx: a successful save and a conflict outcome both clear any earlier auth-recovery state', () => {
+    const fnStart = src.indexOf('async function handleRecord() {')
+    const fnEnd = src.indexOf('function handleReloadFromConflict')
+    const fn = src.slice(fnStart, fnEnd)
+    const successBranch = fn.slice(fn.indexOf('if (outcome.ok) {'), fn.indexOf('} else if (outcome.conflict) {'))
+    const conflictBranch = fn.slice(fn.indexOf('} else if (outcome.conflict) {'), fn.indexOf("} else if (outcome.kind === 'auth') {"))
+    assert.ok(successBranch.includes('setSaveErrorKind(null)'))
+    assert.ok(conflictBranch.includes('setSaveErrorKind(null)'))
+  })
+
+  test('DoctorView.tsx: the judgment-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {
+    const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+    // P0-2 added an earlier, unrelated `onSave={` (ObjectiveExamFindingsCard)
+    // above <JudgmentPanel -- anchor the search after the JudgmentPanel tag
+    // so this keeps checking JudgmentPanel's OWN onSave callback.
+    const judgmentTagIdx = viewSrc.indexOf('<JudgmentPanel')
+    const onSaveIdx = viewSrc.indexOf('onSave={', judgmentTagIdx)
+    const block = viewSrc.slice(onSaveIdx, onSaveIdx + 1600)
+    assert.ok(/return \{ ok: false as const, kind: result\.kind \}/.test(block))
+  })
+}
+
+// ---------- 4.6. P0-7 (Core Reduction Phase 6 gate): the "기록된 판단" label
+// must not lie about save state. Phase 3 Opus review's REMOVE list flagged
+// this as a flatly false label -- in server mode (onSave present),
+// handleRecord's onSave already durably saved the record by the time
+// `recorded` is set, so "아직 저장되지 않음" (not yet saved) unconditionally
+// contradicted the save-state note rendered just above it. Only the
+// fixtures/preview path (no onSave) is genuinely ephemeral.
+{
+  const src = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
+
+  test('JudgmentPanel.tsx: the "기록된 판단" JSON summary label depends on whether onSave (server persistence) is present, not an unconditional "아직 저장되지 않음"', () => {
+    const summaryLine = src.slice(src.indexOf('<summary>기록된 판단'), src.indexOf('</summary>', src.indexOf('<summary>기록된 판단')))
+    assert.ok(summaryLine.length > 0, 'the summary line must exist')
+    assert.ok(/onSave \? /.test(summaryLine), 'must branch on whether onSave (server persistence) was provided')
+    assert.ok(summaryLine.includes('서버에 저장됨'), 'server mode must say it really was saved')
+    assert.ok(summaryLine.includes('아직 저장되지 않음'), 'fixtures/preview mode (no onSave) keeps the genuinely-true ephemeral note')
+  })
 }
 
 // ---------- 4.5. DoctorView.tsx: the "mark as viewed" sibling-write fix ----------
@@ -366,7 +550,11 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 
   test('DoctorView.tsx: judgment save reads errorBody.current and passes current.judgment through as-is (ClinicianJudgment | null, matching JudgmentPanel\'s reload fallback)', () => {
-    const block = src.slice(src.indexOf('onSave={'), src.indexOf('onSave={') + 1400)
+    // P0-2 added an earlier, unrelated `onSave={` (ObjectiveExamFindingsCard)
+    // above <JudgmentPanel -- anchor the search after the JudgmentPanel tag.
+    const judgmentTagIdx = src.indexOf('<JudgmentPanel')
+    const onSaveIdx = src.indexOf('onSave={', judgmentTagIdx)
+    const block = src.slice(onSaveIdx, onSaveIdx + 1400)
     assert.ok(block.includes('result.errorBody?.current'))
     assert.ok(block.includes('current.judgment'))
   })
@@ -475,9 +663,17 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 
   test('DoctorView.tsx 17차 FINDING-4: the revisit queue row guards DELIVERY_MODE_LABEL against an unmapped deliveryMode value', () => {
+    // P1 (Core Reduction Phase 6 gate): this row's rendering moved from
+    // DoctorView.tsx into src/doctor/TodayUnifiedQueueSection.tsx (the
+    // unified "오늘" Queue) -- same guard, new file, new local variable
+    // name (`source` -- the RevisitQueueItem looked up by visit id -- in
+    // place of the old inline `rv`).
+    const unifiedSrc = fs.readFileSync('src/doctor/TodayUnifiedQueueSection.tsx', 'utf8')
     assert.ok(
-      /rv\.deliveryMode && Object\.prototype\.hasOwnProperty\.call\(DELIVERY_MODE_LABEL, rv\.deliveryMode\) && \(/.test(src),
-      'must validate rv.deliveryMode is a known DELIVERY_MODE_LABEL key before indexing it, never leaking a literal "undefined"',
+      /source\?\.deliveryMode &&\s*\n\s*Object\.prototype\.hasOwnProperty\.call\(DELIVERY_MODE_LABEL, source\.deliveryMode\) &&/.test(
+        unifiedSrc,
+      ),
+      'must validate source.deliveryMode is a known DELIVERY_MODE_LABEL key before indexing it, never leaking a literal "undefined"',
     )
   })
 }
@@ -790,8 +986,18 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.match(fn, /if \(typeof iso !== 'string'\) return ''/)
   })
 
-  test('DoctorView.tsx 20차: the submissions-list row routes patient_label through safeStringOrFallback (same fail-closed class as DoctorRecordFallback)', () => {
-    assert.match(src, /\{safeStringOrFallback\(s\.patient_label\)\}\{' '\}/)
+  test('DoctorView.tsx 20차: the submissions-list row routes patient_label through a fail-closed guard (same class as DoctorRecordFallback)', () => {
+    // P1 (Core Reduction Phase 6 gate): this row moved into the unified
+    // "오늘" Queue's row-builder (src/doctor/todayQueue.ts) -- same
+    // fail-closed discipline (never renders a non-string/empty
+    // patient_label raw), a locally-inlined guard rather than the
+    // reused `safeStringOrFallback` helper (that helper stays local to
+    // DoctorView.tsx; todayQueue.ts is a standalone pure module).
+    const todayQueueSrc = fs.readFileSync('src/doctor/todayQueue.ts', 'utf8')
+    assert.match(
+      todayQueueSrc,
+      /typeof s\.patient_label === 'string' && s\.patient_label\.trim\(\) !== '' \? s\.patient_label : '확인 필요'/,
+    )
   })
 
   test('DoctorView.tsx 20차: the readyToast.patientLabel (rendered raw at the EMR-ready toast) also routes through safeStringOrFallback', () => {
@@ -862,6 +1068,105 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.match(src, /function safeStringOrFallback\(value: unknown\): string \{/)
     assert.match(src, /담당: \$\{safeStringOrFallback\(task\.claimed_by\)\}/)
     assert.match(src, /소속: \$\{safeStringOrFallback\(task\.owner_clinician\)\}/)
+  })
+}
+
+// ---------- 독립 검수 HIGH-2: ObjectiveExamFindingsCard stale-write conflict ----------
+// (같은 클래스의 검증 방식 -- 이 스위트 헤더 코멘트 참고: useState/
+// useEffect 기반 인터랙티브 로직은 renderToString으로 이벤트를 재현할 수
+// 없어, 여기서는 구조적 source-level guard로 "자동 retry/merge가 없다"를
+// 증명하고, 실제 두 writer 경쟁 시나리오는 tests/server.spec.mjs의 CAS
+// (expected_updated_at/409) 테스트(필드 무관, judgment PUT 라우트 공통)
+// + 실제 브라우저 QA로 확인한다.
+{
+  const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx HIGH-2: handleSaveObjectiveExamField calls saveJudgmentToServer exactly once -- no automatic retry after a 409', () => {
+    const fnStart = viewSrc.indexOf('async function handleSaveObjectiveExamField(')
+    const fnEnd = viewSrc.indexOf('\n  }', fnStart)
+    const fn = viewSrc.slice(fnStart, fnEnd)
+    const calls = fn.match(/saveJudgmentToServer\(/g) ?? []
+    assert.equal(calls.length, 1, 'exactly one save attempt per call -- a second call would be the auto-retry this fix removes')
+  })
+
+  test('DoctorView.tsx HIGH-2: a 409 with a server `current` record returns a conflict outcome, never a second merged save', () => {
+    const fnStart = viewSrc.indexOf('async function handleSaveObjectiveExamField(')
+    const fnEnd = viewSrc.indexOf('\n  }', fnStart)
+    const fn = viewSrc.slice(fnStart, fnEnd)
+    assert.match(fn, /return \{ ok: false, conflict: \{ current: current\.judgment, currentUpdatedAt: current\.updated_at \} \}/)
+    // The old auto-retry shape ("rebase onto the server's CURRENT judgment
+    // and retry") must be gone -- no second `attempt(...)`/merge call in
+    // the failure branch.
+    assert.doesNotMatch(fn, /attempt\(current\.judgment/)
+  })
+
+  test('DoctorView.tsx HIGH-2: handleReloadObjectiveExamConflict adopts the server\'s current judgment/updated_at verbatim -- no field-level merge helper referenced', () => {
+    const fnStart = viewSrc.indexOf('function handleReloadObjectiveExamConflict(')
+    const fnEnd = viewSrc.indexOf('\n  }', fnStart)
+    const fn = viewSrc.slice(fnStart, fnEnd)
+    assert.match(fn, /judgment: current, updated_at: currentUpdatedAt/)
+  })
+}
+
+{
+  const cardSrc = fs.readFileSync('src/doctor/ObjectiveExamFindingsCard.tsx', 'utf8')
+
+  test('ObjectiveExamFindingsCard HIGH-2: imports and renders the shared ConflictBanner, not a bespoke conflict UI', () => {
+    assert.match(cardSrc, /import \{ ConflictBanner \} from '\.\/ConflictBanner'/)
+    assert.match(cardSrc, /<ConflictBanner/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: on a conflict result, the clinician\'s local radio selection is never reset -- only status/conflict state changes', () => {
+    const fnStart = cardSrc.indexOf('async function handleChange(')
+    const fnEnd = cardSrc.indexOf('\n  }', fnStart)
+    const fn = cardSrc.slice(fnStart, fnEnd)
+    const conflictBranchStart = fn.indexOf('else if (result.conflict)')
+    const conflictBranchEnd = fn.indexOf('} else if (result.kind', conflictBranchStart)
+    const conflictBranch = fn.slice(conflictBranchStart, conflictBranchEnd)
+    // The branch must set status/conflict state only -- it must never call
+    // applyLocal/setLbp/setShoulder (that would silently discard or
+    // overwrite the clinician's just-picked value).
+    assert.doesNotMatch(conflictBranch, /applyLocal\(/)
+    assert.match(conflictBranch, /setStatus\('conflict'\)/)
+    assert.match(conflictBranch, /setConflict\(\{/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: a fresh onChange call always clears any prior conflict for that field before attempting to save (`setConflict(null)` precedes the save)', () => {
+    const fnStart = cardSrc.indexOf('async function handleChange(')
+    const applyLocalCallIdx = cardSrc.indexOf('applyLocal(value)', fnStart)
+    const setConflictNullIdx = cardSrc.indexOf('setConflict(null)', fnStart)
+    const onSaveCallIdx = cardSrc.indexOf('await onSave(field, value)', fnStart)
+    assert.ok(applyLocalCallIdx < setConflictNullIdx && setConflictNullIdx < onSaveCallIdx)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: the resetKey (record-switch) block also clears both fields\' conflict state -- a stale conflict must not leak to the next patient', () => {
+    const resetBlockStart = cardSrc.indexOf('if (resetKey !== lastSeenResetKey)')
+    const resetBlockEnd = cardSrc.indexOf('\n  }', resetBlockStart)
+    const resetBlock = cardSrc.slice(resetBlockStart, resetBlockEnd)
+    assert.match(resetBlock, /setLbpConflict\(null\)/)
+    assert.match(resetBlock, /setShoulderConflict\(null\)/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: shoulder field has the identical conflict-handling contract as lbp (parity -- same ConflictBanner wiring, same reload handler shape)', () => {
+    const lbpConflictBanner = cardSrc.match(/\{lbpConflict && \(\s*<ConflictBanner[\s\S]*?\/>\s*\)\}/)
+    const shoulderConflictBanner = cardSrc.match(/\{shoulderConflict && \(\s*<ConflictBanner[\s\S]*?\/>\s*\)\}/)
+    assert.ok(lbpConflictBanner, 'lbp field renders a ConflictBanner when lbpConflict is set')
+    assert.ok(shoulderConflictBanner, 'shoulder field renders a ConflictBanner when shoulderConflict is set')
+    assert.match(cardSrc, /handleReloadConflict\(lbpConflict, setLbpStatus, setLbpConflict\)/)
+    assert.match(cardSrc, /handleReloadConflict\(shoulderConflict, setShoulderStatus, setShoulderConflict\)/)
+  })
+
+  test('ObjectiveExamFindingsCard MINOR-1 (post-review): reloading EITHER field\'s conflict re-seeds BOTH lbp and shoulder from the full server judgment snapshot, not just the field that conflicted -- a stale sibling radio next to its already-refreshed SafetyPanel would be a visible safety-surface inconsistency', () => {
+    const fnStart = cardSrc.indexOf('function handleReloadConflict(')
+    const fnEnd = cardSrc.indexOf('\n  }', fnStart)
+    const fn = cardSrc.slice(fnStart, fnEnd)
+    assert.match(fn, /setLbp\(\(conflict\.current\?\.lbp_objective_motor_deficit/)
+    assert.match(fn, /setShoulder\(\(conflict\.current\?\.shoulder_objective_cuff_weakness/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: the plain save-status text is suppressed while a conflict is active (never shown alongside the ConflictBanner)', () => {
+    assert.match(cardSrc, /lbpStatus !== 'idle' && lbpStatus !== 'conflict'/)
+    assert.match(cardSrc, /shoulderStatus !== 'idle' && shoulderStatus !== 'conflict'/)
   })
 }
 

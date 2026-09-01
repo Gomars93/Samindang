@@ -60,6 +60,46 @@
 ## 체크가 GitHub check-run 목록에 구조적으로 나타나지 않는다 — 이것이
 ## 결측 상태는 이 워크플로 설계 자체 때문이며, PR #26의 결함이 아니다.
 
+##
+## ⚠️ 갱신 (2026-09-01, 계속): **PR #26은 head `5a17a35`에서 동결**하고,
+## Doctor Workspace UI 다듬기는 별도 브랜치
+## `claude/feat-doctor-ui-polish`(base = `5a17a35`)에서 진행한다 — PO가
+## 범위 "전체 디자인 시스템까지" / 랜딩 "별도 브랜치·PR"로 선택. 변경
+## 파일은 `src/doctor/doctor.css`와 `src/doctor/workspace/workspace.css`
+## **두 개뿐**이며 제품 로직·TSX·임상 규칙·문구는 손대지 않았다.
+## `src/spec/*Logic.ts`/`*Adapter.ts` FROZEN zero-diff 유지.
+##
+## 이 브랜치에서 한 일(전부 실측 근거 기반):
+## - **좌측 컨텍스트 열 sticky 결함 수정.** Phase 5 §2.1 V3 셸의 전제는
+##   "우측을 스크롤해도 좌측 컨텍스트는 남는다"인데 `position: sticky`가
+##   834 portrait 미디어쿼리 안에만 있어 정작 2열인 1024/1440에서는
+##   static이었다. 판단·처치 레인까지 스크롤하면 환자명과 레인1 안전
+##   상태 칩이 화면에서 사라졌다. 수정 후 1024/1440 모두 스크롤 후에도
+##   표시됨(자체 스크롤 없음, 가로 overflow 0).
+## - **객관 소견 라디오 타겟 18px → 44px.** 이 그룹에는 CSS가 한 줄도
+##   없어 브라우저 기본 `<label>` 그대로였다. 레인1을 URGENT로 올릴 수
+##   있는 안전 입력인데 이 화면에서 가장 작은 타겟이었다.
+## - **디자인 토큰 계층 신설**(`.doctor` 스코프, `:root`는 미변경):
+##   타입 스케일 12단계 → 8단계, 색 리터럴 43개 → 0개(전부 semantic
+##   토큰), radius 7단계 → 4단계. 이 과정에서 `--danger-soft`/
+##   `--surface-muted`/`--bg-subtle`가 **어디에도 정의되지 않은 채**
+##   `var(--x, #리터럴)` 형태로만 쓰이고 있었던 것(같은 의도의 색이
+##   `#f6ece9`/`#fbf0ee` 둘로 갈린 원인)을 실제 토큰으로 정의.
+## - **상호작용 상태 보강.** `cursor: pointer` 34개에 `:hover` 규칙이
+##   0개였다. `--ds-layer-*` 상태 레이어 하나로 hover/active를 통일하고
+##   `:disabled`·포커스 링·`::selection`·caret까지 팔레트에서 가져옴.
+## - **밀도.** 추가 권장 검사 목록(스타일 없음 → 브라우저 기본 1열)을
+##   다단으로. 안전 확인 레인 929px → 703px, 내용 삭제 없음. 레인 제목
+##   15px → 17px로 카드 제목(14px)과의 층위 확보. 페이지 전체 높이는 세
+##   뷰포트 모두에서 약 215px 감소.
+##
+## 검증: `npm run test:all` exit 0 (전 스위트 green, `test:tablet-viewport`/
+## `test:layout`/`test:viewport` 포함) · `tsc -b` · `vite build` ·
+## `build:preview` · `tablet core` pytest 80 passed · 1024x768/1440x900/
+## 834x1112 실제 Chromium 렌더 실측 · `detect.mjs` 1회 실행(잔여 warning
+## 2건 = 기존 `--danger`/`--primary` 3px border-left, 저장소에 근거 주석이
+## 있는 의도적 안전 위계 장치라 보존).
+
 ---
 
 ## Objective (Core Reduction Phase 10 closing review 지적 해소, 이전 세션 —

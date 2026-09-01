@@ -25,7 +25,7 @@
    readable as a sequence instead of as a stack of equal-weight cards. */
 .workspace__layerLabel {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -56,12 +56,12 @@
   padding: 12px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
 }
 
 .workspace__profileBar__label {
   display: block;
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -70,7 +70,7 @@
 
 .workspace__profileBar__hint {
   display: block;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -81,7 +81,7 @@
   padding: 3px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
 }
 
 .workspace__segmentedBtn {
@@ -89,9 +89,9 @@
   background: transparent;
   color: var(--text-muted);
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
   min-height: 36px;
 }
@@ -123,8 +123,8 @@
   padding: 8px 14px;
   background: var(--warning-soft);
   color: var(--warning);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--ds-r-md);
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
 }
 
@@ -132,9 +132,9 @@
   border: 1px solid currentColor;
   background: transparent;
   color: inherit;
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   padding: 3px 10px;
   cursor: pointer;
 }
@@ -151,7 +151,7 @@
   padding: 4px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
 }
 
 .workspace__tabBtn {
@@ -160,9 +160,9 @@
   background: transparent;
   color: var(--text-muted);
   padding: 10px 14px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   font-weight: 800;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   cursor: pointer;
   min-height: 44px;
 }
@@ -177,7 +177,7 @@
 .workspace__hero {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   padding: 14px 16px;
 }
 
@@ -190,13 +190,13 @@
 
 .workspace__hero__head h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--ds-fs-xl);
   color: var(--primary);
   letter-spacing: -0.01em;
 }
 
 .workspace__hero__hint {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -216,7 +216,7 @@
 
 .workspace__systemCard {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   padding: 4px 2px;
 }
 
@@ -228,7 +228,7 @@
 .workspace__metric {
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   background: var(--bg);
 }
 
@@ -238,13 +238,13 @@
 }
 
 .workspace__metric--danger {
-  background: var(--danger-soft, #fbf0ee);
+  background: var(--danger-soft);
   border-color: var(--danger);
 }
 
 .workspace__metric__label {
   display: block;
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   color: var(--text-muted);
   margin-bottom: 3px;
@@ -252,7 +252,7 @@
 
 .workspace__metric__value {
   display: block;
-  font-size: 15px;
+  font-size: var(--ds-fs-lg);
   font-weight: 800;
   color: var(--primary);
   letter-spacing: -0.01em;
@@ -262,10 +262,10 @@
   display: inline-block;
   margin-left: 4px;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   background: var(--primary-soft);
   color: var(--primary);
-  font-size: 10px;
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
   vertical-align: 2px;
 }
@@ -284,7 +284,7 @@
   grid-template-columns: 160px 1fr;
   gap: 10px;
   padding: 6px 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 
 .workspace__heroRow span:first-child {
@@ -299,24 +299,24 @@
 .workspace__block {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   padding: 12px 16px;
 }
 
 .workspace__block h3 {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--primary);
 }
 
 .workspace__block__hint {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
   margin: 0 0 10px;
 }
 
 .workspace__empty {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
   margin: 0;
 }
@@ -325,21 +325,21 @@
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
 }
 
 /* ---------- exam suggestions ---------- */
 .workspace__pendingCounter {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--warning);
   background: var(--warning-soft);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 6px 10px;
   margin: 0 0 10px;
 }
@@ -354,7 +354,7 @@
 
 .workspace__examGroup h4 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -362,7 +362,7 @@
 
 .workspace__examCard {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   padding: 12px 14px;
   margin-bottom: 8px;
   background: var(--bg);
@@ -381,19 +381,19 @@
 }
 
 .workspace__examCard__title {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--text);
 }
 
 .workspace__priorityChip {
-  font-size: 10px;
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
 }
 
 .workspace__priorityChip--must_check {
-  background: var(--danger-soft, #fbf0ee);
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
@@ -403,7 +403,7 @@
 }
 
 .workspace__examCard__reason {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
   margin: 0 0 8px;
 }
@@ -421,8 +421,8 @@
   background: var(--surface);
   color: var(--text);
   padding: 7px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--ds-r-md);
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   cursor: pointer;
   min-height: 36px;
@@ -437,7 +437,7 @@
 .workspace__lateralityBtn--active {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 
 .workspace__examCard__detailRow {
@@ -448,7 +448,7 @@
 }
 
 .workspace__noteLabel {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   color: var(--text-muted);
 }
 
@@ -456,9 +456,9 @@
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   min-height: 36px;
 }
@@ -477,7 +477,7 @@
 
 .workspace__evidenceGroup h4 {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -485,7 +485,7 @@
 .workspace__evidenceGroup ul {
   margin: 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -506,7 +506,7 @@
 /* ---------- pattern candidates ---------- */
 .workspace__candidateCard {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   padding: 12px 14px;
   margin-bottom: 10px;
   background: var(--bg);
@@ -530,19 +530,19 @@
 }
 
 .workspace__candidateCard__head strong {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--text);
 }
 
 .workspace__candidateStatusTag {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   color: var(--text-muted);
 }
 
 .workspace__candidateFacts {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   margin-bottom: 6px;
 }
 
@@ -579,9 +579,9 @@
   border: 1px dashed var(--primary);
   background: transparent;
   color: var(--primary);
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 6px 12px;
   cursor: pointer;
 }
@@ -606,14 +606,14 @@
 }
 
 .workspace__observationCategory {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
 }
 
 .workspace__observationTitle {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
 }
 
@@ -633,7 +633,7 @@
 
 .workspace__observationSummary {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
   min-width: 0;
 }
@@ -660,7 +660,7 @@
 }
 
 .workspace__checkBadge {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   color: var(--text-muted);
   white-space: nowrap;
@@ -673,7 +673,7 @@
 /* ---------- myungri (collapsed) ---------- */
 .workspace__myungri {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   background: var(--surface);
   overflow: hidden;
 }
@@ -702,7 +702,7 @@
 
 .workspace__myungri__hint {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -714,18 +714,18 @@
      above already marks it as a clinician-input area, so the box itself
      can be as quiet as everything else. */
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   padding: 12px 16px;
 }
 
 .workspace__finalAssessment__badge {
   display: inline-block;
   background: var(--primary);
-  color: #fff;
-  font-size: 12px;
+  color: var(--on-primary);
+  font-size: var(--ds-fs-caption);
   font-weight: 800;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   margin-bottom: 12px;
 }
 
@@ -781,18 +781,18 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
 
 .workspace__finalAssessment__field textarea {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 400;
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 8px 10px;
   resize: vertical;
 }
@@ -806,19 +806,19 @@
 .workspace__followUp {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   padding: 12px 16px;
 }
 
 .workspace__followUp h4 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--primary);
 }
 
 .workspace__followUp__hint {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -834,8 +834,8 @@
   background: var(--bg);
   color: var(--text);
   padding: 8px 14px;
-  border-radius: 999px;
-  font-size: 13px;
+  border-radius: var(--ds-r-pill);
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   cursor: pointer;
   min-height: 36px;
@@ -844,7 +844,7 @@
 .workspace__followUpChip--active {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 
 .workspace__followUpChip:disabled {
@@ -854,7 +854,7 @@
 
 .workspace__followUp__status {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -873,7 +873,7 @@
 }
 
 .workspace__followUp__valueLabel {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -881,7 +881,7 @@
 /* ---------- save status (round 2 Phase 2) ---------- */
 .workspace__saveStatus {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
   text-align: right;
@@ -904,7 +904,7 @@
 .workspace__emrPreview {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 16px 18px;
 }
 
@@ -918,12 +918,12 @@
 
 .workspace__emrPreview__head h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--primary);
 }
 
 .workspace__emrPreview__badge {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   color: var(--text-muted);
 }
 
@@ -931,10 +931,10 @@
   width: 100%;
   box-sizing: border-box;
   font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   line-height: 1.5;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 10px;
   background: var(--bg);
   color: var(--text);
@@ -950,23 +950,23 @@
 .workspace__btn {
   border: 1px solid var(--primary);
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   padding: 9px 16px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--ds-r-md);
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   cursor: pointer;
   min-height: 40px;
 }
 
 .workspace__copyFeedback {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--primary);
   font-weight: 700;
 }
 
 .workspace__copyError {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--danger);
 }
 
@@ -974,7 +974,7 @@
 .workspace__carePlan {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 16px 18px;
 }
 
@@ -983,10 +983,10 @@
   background: var(--bg);
   color: var(--text-muted);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   margin-bottom: 12px;
 }
 
@@ -994,7 +994,7 @@
 .workspace__patientPreview {
   background: var(--surface);
   border: 1px dashed var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 16px 18px;
 }
 
@@ -1008,12 +1008,12 @@
 
 .workspace__patientPreview__head h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--primary);
 }
 
 .workspace__patientPreview__badge {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   color: var(--text-muted);
 }
 
@@ -1021,11 +1021,11 @@
   width: 100%;
   box-sizing: border-box;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.6;
   white-space: pre-wrap;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 10px 12px;
   background: var(--bg);
   color: var(--text);
@@ -1043,19 +1043,19 @@
 .workspace__reassessPlan {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 14px 18px;
 }
 
 .workspace__reassessPlan h4 {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--primary);
 }
 
 .workspace__reassessPlan__hint {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -1070,7 +1070,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
   margin-top: 10px;
@@ -1079,11 +1079,11 @@
 .workspace__reassessPlan__field input,
 .workspace__reassessPlan__field textarea {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 400;
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 8px 10px;
 }
 
@@ -1091,13 +1091,13 @@
 .workspace__priorVisit {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 10px 18px;
 }
 
 .workspace__priorVisit > summary {
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 700;
   color: var(--primary);
   padding: 6px 0;
@@ -1105,7 +1105,7 @@
 
 .workspace__priorVisit__hint {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -1118,7 +1118,7 @@
 
 .workspace__priorVisit__date {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -1133,7 +1133,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
   border-left: 2px solid var(--border);
   padding-left: 10px;
@@ -1141,7 +1141,7 @@
 
 .workspace__priorVisit__assessment {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
 }
 
@@ -1149,7 +1149,7 @@
 .workspace__additionalConcern {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 14px 18px;
 }
 
@@ -1163,12 +1163,12 @@
 
 .workspace__additionalConcern__head h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   color: var(--primary);
 }
 
 .workspace__additionalConcern__role {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -1179,7 +1179,7 @@
   flex-wrap: wrap;
   gap: 6px 16px;
   padding: 8px 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
 }
 
 .workspace__loopStatus__item {
@@ -1200,8 +1200,8 @@
   background: transparent;
   color: var(--primary);
   padding: 5px 10px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--ds-r-md);
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   cursor: pointer;
   min-height: 30px;
@@ -1215,13 +1215,13 @@
 .workspace__microFollowUp {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 10px 18px;
 }
 
 .workspace__microFollowUp > summary {
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 700;
   color: var(--primary);
   padding: 6px 0;
@@ -1234,16 +1234,16 @@
 .workspace__microFollowUp__flag {
   display: inline-block;
   background: var(--danger);
-  color: #fff;
-  font-size: 11px;
+  color: var(--on-primary);
+  font-size: var(--ds-fs-micro);
   font-weight: 800;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
 }
 
 .workspace__microFollowUp__hint {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
@@ -1262,7 +1262,7 @@
 
 .workspace__microFollowUp__label {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -1271,7 +1271,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
   border-left: 2px solid var(--border);
   padding-left: 10px;
@@ -1279,7 +1279,7 @@
 
 .workspace__microFollowUp__line {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
 }
 
@@ -1307,12 +1307,12 @@
 .workspace__optional {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
 }
 
 .workspace__optional > summary {
   padding: 8px 16px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   color: var(--text-muted);
   cursor: pointer;
@@ -1366,13 +1366,13 @@
 }
 
 .workspace__nextAction__label {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
 
 .workspace__nextAction__value {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -1403,7 +1403,7 @@
 
 .workspace__revisit__carryForward__note {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   line-height: 1.6;
   color: var(--text-muted);
 }
@@ -1414,12 +1414,12 @@
 .workspace__revisit__optional {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
 }
 
 .workspace__revisit__optional > summary {
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   color: var(--text-muted);
   cursor: pointer;
@@ -1516,7 +1516,7 @@
    "아직 기록 없음" rows occupying a full card. */
 .workspace__nextAction__emptyLine {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
 }
 
@@ -1533,9 +1533,9 @@
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   padding: 6px 12px;
   min-height: 36px;
   cursor: pointer;
@@ -1682,4 +1682,84 @@
   .workspace__block h3 {
     margin: 0 0 4px;
   }
+}
+
+
+/* =====================================================================
+ * 상호작용 상태 (interaction states)
+ *
+ * doctor.css의 상태 레이어 토큰(--ds-layer-*)을 그대로 쓴다. 워크스페이스는
+ * 항상 .doctor 안에 렌더되므로 토큰이 상속되며, 여기서 값을 다시 정의하지
+ * 않는다 -- 같은 hover가 두 파일에서 갈라지는 것이 지금까지의 drift였다.
+ * ================================================================== */
+
+.workspace__segmentedBtn,
+.workspace__tabBtn,
+.workspace__statusBtn,
+.workspace__lateralityBtn,
+.workspace__followUpChip,
+.workspace__adoptBtn,
+.workspace__detailToggle,
+.workspace__btn,
+.workspace__overrideNotice__reset {
+  transition: background-image var(--ds-dur) var(--ds-ease),
+    border-color var(--ds-dur) var(--ds-ease),
+    color var(--ds-dur) var(--ds-ease);
+}
+
+/* ---- 조용한 버튼 / 선택 칩 (연한 배경) ---- */
+.workspace__segmentedBtn:hover,
+.workspace__tabBtn:hover,
+.workspace__statusBtn:hover,
+.workspace__adoptBtn:hover,
+.workspace__detailToggle:hover,
+.workspace__overrideNotice__reset:hover,
+.workspace__followUpChip:not(.workspace__followUpChip--active):hover,
+.workspace__lateralityBtn:not(.workspace__lateralityBtn--active):hover {
+  background-image: var(--ds-layer-hover);
+}
+.workspace__segmentedBtn:active,
+.workspace__tabBtn:active,
+.workspace__statusBtn:active,
+.workspace__adoptBtn:active,
+.workspace__detailToggle:active,
+.workspace__overrideNotice__reset:active,
+.workspace__followUpChip:not(.workspace__followUpChip--active):active,
+.workspace__lateralityBtn:not(.workspace__lateralityBtn--active):active {
+  background-image: var(--ds-layer-active);
+}
+
+/* ---- 짙은 solid (--primary 위) ---- */
+.workspace__btn:hover,
+.workspace__followUpChip--active:hover,
+.workspace__lateralityBtn--active:hover {
+  background-image: var(--ds-layer-hover-inverse);
+}
+.workspace__btn:active,
+.workspace__followUpChip--active:active,
+.workspace__lateralityBtn--active:active {
+  background-image: var(--ds-layer-active-inverse);
+}
+
+/* ---- 펼침 요소 ---- */
+.workspace__optional > summary:hover,
+.workspace__revisit__optional > summary:hover,
+.workspace__priorVisit > summary:hover,
+.workspace__microFollowUp > summary:hover,
+.workspace__myungri summary:hover {
+  background-image: var(--ds-layer-hover);
+}
+
+/* ---- 비활성: 이미 있던 두 규칙(followUpChip / carryForward btn)을
+   전체 컨트롤로 넓혀 같은 값을 쓰게 한다. ---- */
+.workspace__segmentedBtn:disabled,
+.workspace__tabBtn:disabled,
+.workspace__statusBtn:disabled,
+.workspace__lateralityBtn:disabled,
+.workspace__adoptBtn:disabled,
+.workspace__detailToggle:disabled,
+.workspace__btn:disabled {
+  opacity: var(--ds-disabled-opacity);
+  cursor: not-allowed;
+  background-image: none;
 }

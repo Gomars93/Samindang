@@ -4,20 +4,134 @@
  * 전부 .doctor 스코프 안에서만 적용되므로 환자 화면에는 영향이 없다.
  */
 
+/* =====================================================================
+ * 원장 화면 디자인 토큰 (doctor-surface design tokens)
+ *
+ * 기존 --warning / --safe가 쓰던 방식 그대로, :root(환자용 styles.css)는
+ * 건드리지 않고 .doctor 스코프 안에서만 확장한다. 값은 새로 발명한 것이
+ * 아니라 이 두 스타일시트에 이미 흩어져 있던 실측 분포를 정리한 것이다:
+ *
+ *   font-size  12px 61회 / 13px 58회 / 14px 22회 / 11px 17회 / 10px 4회 ...
+ *   색 리터럴  43개 (그 중 --danger-soft / --surface-muted / --bg-subtle는
+ *              var(--x, #리터럴) 형태로 "토큰인 척" 하고 있었을 뿐,
+ *              어디에도 정의되어 있지 않아 항상 fallback으로 떨어졌다.
+ *              같은 의도의 색이 #f6ece9 / #fbf0ee 두 값으로 갈린 것도
+ *              그래서다.)
+ *   border-radius 4/6/8/10/12/14/999px 7단계
+ *
+ * 목적은 지금 화면을 다시 칠하는 게 아니라, 앞으로 새 규칙이 임의의 값을
+ * 쓰지 못하게 바닥을 까는 것이다. 임상 로직·문구·레인 구성은 건드리지
+ * 않는다.
+ * ================================================================== */
 .doctor {
+  /* ---- 타입 스케일 (product UI: 고정 px, 스텝 비율 ~1.15) ---- */
+  --ds-fs-micro: 11px;   /* 배지·단위·메타 */
+  --ds-fs-caption: 12px; /* 라벨·보조 설명 */
+  --ds-fs-body: 13px;    /* 본문·데이터 */
+  --ds-fs-base: 14px;    /* 입력·주요 라벨 */
+  --ds-fs-lg: 15px;      /* 화면 기본, 레인 헤딩 */
+  --ds-fs-xl: 17px;
+  --ds-fs-2xl: 20px;
+  --ds-fs-3xl: 24px;
+
+  /* ---- 상태 색 (semantic) ----
+     danger/warning/safe/info 네 갈래 각각 본색·연한 배경·진한 전경을
+     갖춘다. 색 단독 인코딩 금지 원칙(§6.1)은 그대로 -- 이 토큰들은
+     글리프·형태와 함께 쓰일 때의 색 값만 정의한다. */
+  --danger-soft: #f6ece9;
   --warning: #8a6d23;
   --warning-soft: #f3ead2;
+  --warning-border: #a5750f;
+  --warning-strong: #6b4d0a;
+  --warning-tint: #fbf3df;
+  --warning-rule: #d99a2b;
   /* Core Reduction Phase 7 §6.1: CLEAR가 URGENT의 danger 색과 채도만으로
-     겹치지 않도록 별도 저채도 로컬 토큰을 둔다 -- 기존 --warning 패턴과
-     동일하게 .doctor 스코프에만 추가, :root는 건드리지 않는다. */
+     겹치지 않도록 별도 저채도 로컬 토큰을 둔다. */
   --safe: #2e7d4f;
+  --safe-soft: #e4f3ea;
+  --info: #2e6da4;
+
+  /* ---- 중립 표면 ---- */
+  --surface-muted: #eef2f7; /* 표·헤더 등 한 단계 뒤로 물러난 면 */
+  --bg-subtle: #f6f6f8;     /* 프리뷰처럼 더 뒤로 물러난 면 */
+  --on-primary: #ffffff;    /* --primary / --danger 위의 글자 */
+  /* 원본 JSON 덤프 전용 반전 면. --text/--primary-soft와 값이 같지만
+     의미가 다르므로 따로 둔다 (팔레트가 바뀌어도 대비가 깨지지 않게). */
+  --ds-code-bg: #1c211e;
+  --ds-code-fg: #e6ece9;
+
+  /* ---- 상호작용 상태 ----
+     이 화면에는 cursor:pointer 요소가 34개 있는데 :hover 규칙이 0개였다.
+     아래 두 tint는 --primary(#2c3e35) 기반이라 어떤 배경 위에 얹어도
+     같은 계열로 어두워진다. */
+  --ds-hover-tint: rgba(44, 62, 53, 0.07);
+  --ds-active-tint: rgba(44, 62, 53, 0.14);
+  /* --primary / --danger처럼 이미 어두운 solid 면 위에서는 반대로 밝힌다. */
+  --ds-hover-tint-inverse: rgba(255, 255, 255, 0.14);
+  --ds-active-tint-inverse: rgba(255, 255, 255, 0.24);
+  /* 상태 레이어: background-color를 덮어쓰지 않고 그 위에 한 겹 얹는다.
+     투명 배경·흰 카드·짙은 primary 버튼에 같은 방식으로 쓸 수 있다. */
+  --ds-layer-hover: linear-gradient(var(--ds-hover-tint), var(--ds-hover-tint));
+  --ds-layer-active: linear-gradient(var(--ds-active-tint), var(--ds-active-tint));
+  --ds-layer-hover-inverse: linear-gradient(var(--ds-hover-tint-inverse), var(--ds-hover-tint-inverse));
+  --ds-layer-active-inverse: linear-gradient(var(--ds-active-tint-inverse), var(--ds-active-tint-inverse));
+  --ds-disabled-opacity: 0.45;
+  --ds-focus-ring: var(--primary);
+
+  /* ---- 모서리 ---- */
+  --ds-r-sm: 6px;
+  --ds-r-md: 8px;
+  --ds-r-lg: 12px;
+  --ds-r-pill: 999px;
+
+  /* ---- 간격 스케일 ----
+     솔직하게 말하면, 이 파일들의 실제 간격 분포는 어떤 그리드도 아니다:
+     8px 67회 / 10px 62회 / 6px 45회 / 12px 35회 / 4px 30회에 3·5·7·9·18px
+     단발이 17회 섞여 있다. 그 62개의 10px를 8이나 12로 일괄 이동시키는
+     것은 폴리시가 아니라 재설계고, CSS 주석에 명시된 "1.5 뷰포트 높이
+     예산"(tablet-viewport.spec.mjs round 15 acceptance)을 근거 없이
+     흔든다. 그래서 기존 값은 그대로 두고, 아래 스케일은 앞으로 추가되는
+     규칙이 따라야 할 기준으로 둔다. 10px는 8이나 12로 수렴시킬 후보이지
+     스케일의 한 칸이 아니다. */
+  --ds-sp-2xs: 2px;
+  --ds-sp-xs: 4px;
+  --ds-sp-sm: 6px;
+  --ds-sp-md: 8px;
+  --ds-sp-lg: 12px;
+  --ds-sp-xl: 16px;
+  --ds-sp-2xl: 24px;
+  --ds-sp-3xl: 32px;
+
+  /* ---- 최소 타겟 ----
+     마우스 36px / 클리닉 태블릿 터치 44px. 안전에 직결되는 입력
+     (객관 소견 라디오 등)은 tap-touch 쪽을 쓴다. */
+  --ds-tap: 36px;
+  --ds-tap-touch: 44px;
+
+  /* 상단 .doctor__header가 이미 sticky(top:0, --bg 불투명)이므로, 좌측
+     컨텍스트 열은 그 아래에 붙어야 헤더에 가려지지 않는다.
+     운영 빌드의 헤더 실측 높이는 66px(제목 + 오늘/설정 + 워크스테이션
+     배지 한 줄)이라 6px 여유를 둔 값이다. */
+  --ds-sticky-top: 72px;
+
+  /* ---- 모션 ---- operate.md: 150-250ms, 상태 전달용만. */
+  --ds-dur: 160ms;
+  --ds-ease: cubic-bezier(0.2, 0, 0, 1);
+
   max-width: 1080px;
   margin: 0 auto;
   padding: 28px 40px 96px;
   font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   color: var(--text);
-  font-size: 15px;
+  font-size: var(--ds-fs-lg);
   line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doctor * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 /*
@@ -30,6 +144,14 @@
 .doctor:has(.doctor__visitShell) {
   max-width: none;
   padding: 28px 0 96px;
+}
+
+/* 프리뷰/개발 빌드에서만 렌더되는 데이터 소스 피커(.doctor__pickerRow)가
+   sticky 헤더를 한 줄 더 늘려 실측 162px가 된다. 좌측 컨텍스트 열이 그
+   아래에 붙도록 오프셋만 바꾼다 -- 운영 화면에는 이 행 자체가 없으므로
+   영향이 없고, 디버그 전용 컨트롤 때문에 운영 레이아웃을 넓히지 않는다. */
+.doctor:has(.doctor__pickerRow) {
+  --ds-sticky-top: 168px;
 }
 
 /* ---------------------------------------------------------------------
@@ -61,10 +183,22 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   padding: 12px 16px;
   background: var(--surface);
   line-height: 1.3;
+  /* Phase 5 §2.1 V3 셸의 전제는 "우측 작업 열을 스크롤해도 좌측 컨텍스트는
+     남아 있다"인데, 지금까지 position:sticky가 834 portrait 미디어쿼리
+     안에만 있어서 정작 2열 레이아웃인 1024/1440에서는 static이었다.
+     판단·처치 레인까지 스크롤하면 환자명과 레인1 안전 상태 칩이 화면에서
+     완전히 사라졌다 -- 원장이 처치를 입력하는 바로 그 순간에.
+     좌측 열은 자기 내용이 이미 §3.2 높이 예산 안으로 잘려 있으므로
+     (VisitSummaryAside.tsx가 값 단위로 절단) 자체 스크롤은 만들지 않는다:
+     max-height를 뷰포트에 맞추되 넘치면 그대로 hidden으로 둔다. */
+  position: sticky;
+  top: var(--ds-sticky-top);
+  max-height: calc(100vh - var(--ds-sticky-top) - var(--ds-sp-2xl));
+  overflow: hidden;
 }
 @media (min-width: 1280px) {
   .doctor__visitSummary {
@@ -101,6 +235,8 @@
     position: sticky;
     top: 0;
     z-index: 10;
+    /* 세로 태블릿에서는 상단 스티키 바이므로 2열 레이아웃의
+       calc(100vh - ...) 예산 대신 §3.2의 96px 바 높이로 되돌린다. */
     max-height: 96px;
     overflow: hidden;
     background: var(--bg);
@@ -118,12 +254,12 @@
   gap: 2px;
 }
 .doctor__visitSummary__name {
-  font-size: 16px;
+  font-size: var(--ds-fs-xl);
   font-weight: 700;
   color: var(--text);
 }
 .doctor__visitSummary__meta {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 500;
   color: var(--text-muted);
 }
@@ -135,12 +271,12 @@
   gap: 2px;
 }
 .doctor__visitSummary__chiefValue {
-  font-size: 15px;
+  font-size: var(--ds-fs-lg);
   font-weight: 700;
   color: var(--text);
 }
 .doctor__visitSummary__chiefMeta {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 500;
   color: var(--text-muted);
 }
@@ -151,12 +287,12 @@
   white-space: nowrap;
 }
 .doctor__patientFact {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   font-style: italic;
   color: var(--text-muted);
   background: var(--primary-soft);
-  border-radius: 4px;
+  border-radius: var(--ds-r-sm);
   padding: 0 4px;
 }
 .doctor__visitSummary__lane1 {
@@ -169,17 +305,17 @@
 }
 .doctor__visitSummary__regions,
 .doctor__visitSummary__lock {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 .doctor__visitSummary__evidenceLink {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--primary);
 }
 .doctor__visitSummary__save {
   max-height: 20px;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -193,7 +329,7 @@
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--danger);
   text-decoration: underline;
@@ -216,7 +352,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -228,16 +364,16 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   letter-spacing: 0.01em;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
 }
 .doctor__lane1Chip--urgent {
   color: var(--danger);
   border: 2px solid var(--danger);
-  background: #f6ece9;
+  background: var(--danger-soft);
 }
 .doctor__lane1Chip--review {
   color: var(--warning);
@@ -280,12 +416,18 @@
   padding-top: 32px;
   margin-top: 0;
 }
+/* 레인 제목은 이 화면의 최상위 길잡이인데 15px/700/primary라, 카드
+   제목(.workspace__block h3, 14px/700/primary)과 1px 차이밖에 없어
+   "레인 안에 카드가 있다"는 층위가 읽히지 않았다. 스케일 안에서 한 칸
+   올려 17 / 14 / 12 사다리를 만든다(스텝 비율 1.21, 1.17 -- operate.md의
+   product UI 권장 범위). letter-spacing은 소제목용 트래킹이라 제목
+   크기에서는 오히려 벌어져 보여 헤딩 관례대로 조인다. */
 .doctor__visitLane > h2 {
-  font-size: 15px;
+  font-size: var(--ds-fs-xl);
   font-weight: 700;
   color: var(--primary);
-  letter-spacing: 0.03em;
-  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--ds-sp-md);
 }
 
 /*
@@ -298,8 +440,8 @@
  */
 .doctor__skeleton__block,
 .doctor__skeleton__lane {
-  background: var(--surface-muted, #eef2f7);
-  border-radius: 8px;
+  background: var(--surface-muted);
+  border-radius: var(--ds-r-md);
   animation: doctor__skeletonPulse 1.5s ease-in-out infinite;
 }
 
@@ -361,11 +503,11 @@
 /* §2.6-3 "지난번 추적" 고정 1줄 -- 원장 기록(FOLLOW_UP_TARGET) 스타일,
    좌측 열의 환자 보고("지난 대비")와 시각적으로 분리한다. */
 .doctor__lastVisitTracked {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--text);
   background: var(--surface-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-r-sm);
   padding: 6px 10px;
   margin: 0 0 16px;
 }
@@ -383,7 +525,7 @@
   }
 }
 .doctor__nextPairRow__label {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
   color: var(--text-muted);
   margin: 0 0 4px;
@@ -396,7 +538,7 @@
 /* §2.4 "+ 다른 유형 입력 추가" 토글. */
 .doctor__oppositeType > summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--primary);
 }
@@ -407,7 +549,7 @@
 }
 .doctor__nextIssuance__altMethods > summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--text);
 }
@@ -415,7 +557,7 @@
 /* §2.10 학습 케이스 disclosure. */
 .judgment__learningCase > summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
 }
 .judgment__learningCase__flag {
@@ -461,7 +603,7 @@
 }
 
 .doctor__title {
-  font-size: 24px;
+  font-size: var(--ds-fs-3xl);
   font-weight: 700;
   margin: 0;
 }
@@ -475,7 +617,7 @@
   padding: 4px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
 }
 
 .doctor__globalNavBtn {
@@ -483,9 +625,9 @@
   background: transparent;
   color: var(--text-muted);
   padding: 6px 14px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
   min-height: 36px;
 }
@@ -510,35 +652,35 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
 }
 
 .doctor__pickerRow select {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--surface);
   color: var(--text);
 }
 
 .doctor__banner {
   padding: 16px 20px;
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   margin-bottom: 24px;
 }
 
 .doctor__banner--danger {
-  background: #f6ece9;
+  background: var(--danger-soft);
   border: 2px solid var(--danger);
   color: var(--danger);
 }
 
 .doctor__banner strong {
   display: block;
-  font-size: 16px;
+  font-size: var(--ds-fs-xl);
   margin-bottom: 6px;
 }
 
@@ -556,15 +698,15 @@
    a distinct amber palette and must never visually compete with
    .doctor__banner--danger above. */
 .doctor__banner--warning {
-  background: #fbf3df;
-  border: 2px solid #a5750f;
-  color: #6b4d0a;
+  background: var(--warning-tint);
+  border: 2px solid var(--warning-border);
+  color: var(--warning-strong);
 }
 
 .doctor__banner__reloadBtn {
   margin-top: 4px;
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   border: 1px solid currentColor;
   background: transparent;
   color: inherit;
@@ -581,9 +723,9 @@
   min-height: 120px;
   margin-top: 6px;
   font-family: monospace;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   padding: 8px;
-  border-radius: 6px;
+  border-radius: var(--ds-r-sm);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
@@ -597,10 +739,10 @@
   display: inline-block;
   margin: 0 0 16px;
   padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--primary-soft, #eef2f0);
+  border-radius: var(--ds-r-pill);
+  background: var(--primary-soft);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
 }
 
@@ -614,7 +756,7 @@
 }
 
 .doctor__section h2 {
-  font-size: 15px;
+  font-size: var(--ds-fs-lg);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -624,7 +766,7 @@
 
 /* 상세 증상 / 전신·한약 참고 — 주호소보다 시각적으로 한 단계 낮은 비중. */
 .doctor__section__h2--sub {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -637,7 +779,7 @@
   margin-bottom: 16px;
   padding: 14px 18px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   background: var(--primary-soft);
 }
 
@@ -652,14 +794,14 @@
   flex-direction: column;
   gap: 1px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--ds-r-sm);
   background: var(--surface);
   border: 1px solid var(--border);
   max-width: 100%;
 }
 
 .doctor__tenSecChip__label {
-  font-size: 10px;
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -667,14 +809,14 @@
 }
 
 .doctor__tenSecChip__value {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 700;
   color: var(--text);
 }
 
 .doctor__tenSecChip--danger {
   border-color: var(--danger);
-  background: #f6ece9;
+  background: var(--danger-soft);
 }
 .doctor__tenSecChip--danger .doctor__tenSecChip__value {
   color: var(--danger);
@@ -711,7 +853,7 @@
 }
 
 .doctor__safetyGlance--empty {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
   margin: 0 0 20px;
 }
@@ -724,18 +866,18 @@
    중첩되기까지 한다. --empty와 대칭되는 명확한 danger 스타일을 준다. */
 .doctor__safetyGlance--unavailable {
   display: block;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
   color: var(--danger);
-  background: #f6ece9;
+  background: var(--danger-soft);
   border: 1px solid var(--danger);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 8px 12px;
   margin: 0 0 8px;
 }
 
 .doctor__safetyGlance__title {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -747,10 +889,10 @@
 }
 
 .doctor__safetyChip {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   padding: 5px 10px;
   border: 1px solid var(--primary);
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   background: var(--surface);
 }
 
@@ -767,7 +909,7 @@
 .doctor__lbpSafety {
   margin-bottom: 16px;
   padding: 12px 16px;
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   border: 1px solid var(--border);
   background: var(--surface);
 }
@@ -783,7 +925,7 @@
 
 .doctor__lbpSafety--urgent_review {
   border: 2px solid var(--danger);
-  background: #f6ece9;
+  background: var(--danger-soft);
 }
 
 .doctor__lbpSafety--unavailable {
@@ -791,7 +933,7 @@
 }
 
 .doctor__lbpSafety .doctor__derivedNote {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
   margin: 6px 0 0;
 }
@@ -808,12 +950,12 @@
 }
 
 .doctor__chiefPrimary__label {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
 .doctor__chiefPrimary__value {
-  font-size: 22px;
+  font-size: var(--ds-fs-2xl);
   font-weight: 700;
   color: var(--text);
 }
@@ -836,17 +978,17 @@
   max-width: 260px;
   padding: 6px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--surface);
 }
 
 .doctor__secChip strong {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--primary);
 }
 
 .doctor__secChip__text {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -864,14 +1006,14 @@
 .doctor__secDetails summary,
 .doctor__constDetails summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--text-muted);
   margin-top: 6px;
 }
 
 .doctor__derivedNote {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
   margin: -4px 0 12px;
 }
@@ -883,14 +1025,14 @@
 .doctor__derivedNote--unavailable {
   color: var(--danger);
   font-weight: 600;
-  background: #f6ece9;
+  background: var(--danger-soft);
   border: 1px solid var(--danger);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 8px 12px;
 }
 
 .doctor__empty {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
   margin: 0;
 }
@@ -902,7 +1044,7 @@
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
   text-decoration: underline;
   cursor: pointer;
@@ -916,21 +1058,21 @@
 .doctor__workstationBadge {
   display: inline-block;
   padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--surface-muted, #eef2f7);
+  border-radius: var(--ds-r-pill);
+  background: var(--surface-muted);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
 }
 
 .doctor__activeVisitBadge {
   display: inline-block;
   padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--surface-muted, #eef2f7);
+  border-radius: var(--ds-r-pill);
+  background: var(--surface-muted);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
 }
 
@@ -938,10 +1080,10 @@
   display: inline-block;
   margin-left: 10px;
   padding: 2px 9px;
-  border-radius: 999px;
+  border-radius: var(--ds-r-pill);
   background: var(--danger);
-  color: #fff;
-  font-size: 11px;
+  color: var(--on-primary);
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
   vertical-align: middle;
   text-transform: none;
@@ -952,13 +1094,13 @@
   text-align: left;
   cursor: pointer;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 10px;
 }
 
 .doctor__row--new {
   border-color: var(--danger);
-  background: #f6ece9;
+  background: var(--danger-soft);
 }
 
 /* P0-6 (Core Reduction Phase 6 gate): the revisit row's main click target
@@ -986,17 +1128,21 @@
    handler this round. */
 .doctor__todayQueue__row {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 10px;
 }
 
 .doctor__todayQueue__row--safety_review {
   border-color: var(--danger);
-  background: #f6ece9;
+  background: var(--danger-soft);
 }
 
+/* 바로 위 --safety_review와 같은 어휘로 맞춘다. 4px 컬러 border-left는
+   (a) 형제 상태와 다른 방식이라 두 상태가 한 세트로 읽히지 않았고
+   (b) 그 행만 내용을 3px 밀어 목록의 세로선을 깨뜨렸다. */
 .doctor__todayQueue__row--clinical_review {
-  border-left: 4px solid #d99a2b;
+  border-color: var(--warning-border);
+  background: var(--warning-tint);
 }
 
 .doctor__todayQueue__error {
@@ -1012,11 +1158,11 @@
 .doctor__todayQueue__linkButton {
   border: 1px solid var(--border);
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-r-sm);
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
-  color: var(--primary, #2e6da4);
+  color: var(--primary);
   cursor: pointer;
   min-height: 36px;
   margin-top: 4px;
@@ -1036,24 +1182,24 @@
   min-height: 36px;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--ds-r-sm);
+  font-size: var(--ds-fs-body);
 }
 
 .doctor__todayQueue__linkSubmit,
 .doctor__todayQueue__linkCancel {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ds-r-sm);
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
   min-height: 36px;
   cursor: pointer;
 }
 
 .doctor__todayQueue__linkSubmit {
-  background: var(--primary, #2e6da4);
-  color: #fff;
+  background: var(--primary);
+  color: var(--on-primary);
   border-color: transparent;
 }
 
@@ -1063,13 +1209,13 @@
 
 .doctor__todayQueue__linkError {
   flex-basis: 100%;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--danger);
 }
 
 .doctor__todayQueue__linkReviewText {
   flex-basis: 100%;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 
 .doctor__newDot {
@@ -1082,46 +1228,46 @@
 }
 
 .doctor__newDot--ready {
-  background: #2e7d4f;
+  background: var(--safe);
 }
 
 .doctor__emrReadyBadge {
   display: inline-block;
   margin-left: 8px;
   padding: 1px 8px;
-  border-radius: 999px;
-  background: #e4f3ea;
-  color: #2e7d4f;
-  font-size: 11px;
+  border-radius: var(--ds-r-pill);
+  background: var(--safe-soft);
+  color: var(--safe);
+  font-size: var(--ds-fs-micro);
   font-weight: 700;
 }
 
 .doctor__revisitSession {
   background: var(--primary-soft);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   padding: 16px 20px;
   margin-bottom: 16px;
 }
 
 .doctor__revisitSession__hint {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--muted);
 }
 
 .doctor__revisitSession__issued p {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--muted);
 }
 
 .doctor__revisitSession__link {
   display: block;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--surface);
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   word-break: break-all;
   margin-bottom: 10px;
 }
@@ -1150,8 +1296,8 @@
 }
 
 .doctor__revisitSession__qr img {
-  border-radius: 8px;
-  background: #fff;
+  border-radius: var(--ds-r-md);
+  background: var(--on-primary);
   padding: 8px;
 }
 
@@ -1163,7 +1309,7 @@
 
 .doctor__revisitSession__stations summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
 }
 
@@ -1180,13 +1326,13 @@
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 
 .doctor__revisitSession__error {
   margin: 10px 0 0;
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 
 .doctor__toast {
@@ -1195,10 +1341,10 @@
   right: 16px;
   z-index: 50;
   padding: 10px 16px;
-  border-radius: 8px;
-  background: #2e7d4f;
-  color: #fff;
-  font-size: 13px;
+  border-radius: var(--ds-r-md);
+  background: var(--safe);
+  color: var(--on-primary);
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
@@ -1210,21 +1356,21 @@
 }
 
 .doctor__msSummary {
-  background: var(--bg-subtle, #f6f6f8);
+  background: var(--bg-subtle);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 10px 14px;
   margin-bottom: 12px;
 }
 
 .doctor__msSummary__title {
   display: block;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   margin-bottom: 4px;
 }
 
 .doctor__msSummary__line {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   margin: 2px 0;
 }
 
@@ -1242,12 +1388,12 @@
 }
 
 .doctorField__label {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
 .doctorField__value {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 500;
 }
 
@@ -1260,12 +1406,12 @@
 .doctor__derivedBox {
   margin-top: 8px;
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--primary-soft);
 }
 
 .doctor__derivedLabel {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 700;
   color: var(--primary);
   margin: 0 0 6px;
@@ -1274,14 +1420,14 @@
 .doctor__derivedBox ul {
   margin: 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 
 .doctor__warning {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--danger);
-  background: #f6ece9;
-  border-radius: 8px;
+  background: var(--danger-soft);
+  border-radius: var(--ds-r-md);
   padding: 10px 14px;
   margin: 8px 0 0;
 }
@@ -1293,12 +1439,12 @@
   background: var(--warning-soft);
   border: 2px solid var(--warning);
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
 }
 
 .doctor__calcVsInterpret {
   margin: 14px 0 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -1317,17 +1463,17 @@
   gap: 4px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--surface);
 }
 
 .doctor__pillar span {
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   color: var(--text-muted);
 }
 
 .doctor__pillar strong {
-  font-size: 18px;
+  font-size: var(--ds-fs-xl);
 }
 
 .doctor__raw {
@@ -1336,7 +1482,7 @@
 
 .doctor__raw summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -1344,10 +1490,10 @@
 .doctor__raw pre {
   margin-top: 12px;
   padding: 16px;
-  background: #1c211e;
-  color: #e6ece9;
-  border-radius: 10px;
-  font-size: 12px;
+  background: var(--ds-code-bg);
+  color: var(--ds-code-fg);
+  border-radius: var(--ds-r-lg);
+  font-size: var(--ds-fs-caption);
   line-height: 1.5;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -1370,7 +1516,7 @@
   flex: 1 1 260px;
   padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   background: var(--surface);
 }
 
@@ -1378,7 +1524,7 @@
 .judgment__reviewArrow {
   align-self: center;
   flex: 0 0 auto;
-  font-size: 20px;
+  font-size: var(--ds-fs-2xl);
   color: var(--text-muted);
 }
 
@@ -1389,7 +1535,7 @@
 }
 
 .judgment__reviewCol h3 {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   margin: 0 0 8px;
   color: var(--primary);
@@ -1401,7 +1547,7 @@
 
 .doctor__section--judgment {
   background: var(--primary-soft);
-  border-radius: 12px;
+  border-radius: var(--ds-r-lg);
   padding: 20px 24px;
   margin-top: 8px;
 }
@@ -1420,18 +1566,122 @@
 }
 
 .judgment__label {
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
   color: var(--text-muted);
+}
+
+/*
+ * 추가 권장 검사 목록 (.doctor__lbpExam > ul).
+ *
+ * 지금까지 스타일이 한 줄도 없어 브라우저 기본값(padding-left 40px, 한 줄에
+ * 한 항목)으로 렌더됐다. 실측 결과 NECK 케이스에서 이 목록 하나가 405px --
+ * 안전 확인 레인 929px의 44%를 차지하고, 정작 원장이 입력하는 판단·처치
+ * 레인(242px)보다 1.7배 높았다. 읽기만 하는 목록이 쓰는 곳보다 크다.
+ *
+ * 항목은 짧은 검사명이라(예: "C5-T1 근절 근력 검사") 한 줄에 하나씩 둘
+ * 이유가 없다. 내용은 그대로 두고 단 수만 늘려 세로 부피를 줄인다.
+ * ------------------------------------------------------------------- */
+.doctor__lbpExam > ul {
+  margin: var(--ds-sp-xs) 0 0;
+  padding-left: 18px;
+  columns: 2;
+  column-gap: var(--ds-sp-2xl);
+  font-size: var(--ds-fs-body);
+  line-height: 1.6;
+}
+.doctor__lbpExam > ul > li {
+  /* 항목이 단 경계에서 두 조각으로 잘리면 목록으로 읽히지 않는다. */
+  break-inside: avoid;
+  margin-bottom: 2px;
+}
+@media (min-width: 1280px) {
+  .doctor__lbpExam > ul {
+    columns: 3;
+  }
+}
+@media (max-width: 720px) {
+  .doctor__lbpExam > ul {
+    columns: 1;
+  }
+}
+
+/*
+ * 객관 소견 라디오 (ObjectiveExamFindingsCard).
+ *
+ * 이 그룹에는 지금까지 CSS가 한 줄도 없었다 -- 브라우저 기본 <label>
+ * 그대로라 실측 높이 18px, 옵션 사이 간격 0, 선택 상태 표시는 라디오
+ * 점뿐이었다. 원장이 태블릿에서 손가락으로 누르는 입력이고, 여기서 고른
+ * 값이 환자 자가보고와 무관하게 레인1을 URGENT로 올릴 수 있는 안전 입력이라
+ * 이 화면에서 가장 큰 타겟 결함이었다.
+ *
+ * 다른 선택형 컨트롤(.workspace__statusBtn 등)과 같은 어휘를 쓴다:
+ * 같은 테두리·모서리·활성 배경. 새 affordance를 발명하지 않는다.
+ */
+.judgment__radioRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-sp-md);
+  margin-top: var(--ds-sp-xs);
+}
+
+.judgment__radioOption {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-sp-md);
+  min-height: var(--ds-tap-touch);
+  padding: var(--ds-sp-md) var(--ds-sp-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--ds-r-md);
+  background: var(--surface);
+  font-size: var(--ds-fs-body);
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color var(--ds-dur) var(--ds-ease),
+    background-image var(--ds-dur) var(--ds-ease),
+    border-color var(--ds-dur) var(--ds-ease);
+}
+
+.judgment__radioOption input[type='radio'] {
+  /* 기본 라디오를 그대로 쓰되(표준 어포던스 유지), 태블릿에서 눌리는
+     크기로만 키운다. */
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.judgment__radioOption:hover {
+  background-image: var(--ds-layer-hover);
+  border-color: var(--text-muted);
+}
+
+.judgment__radioOption:active {
+  background-image: var(--ds-layer-active);
+}
+
+/* 선택 상태는 라디오 점 + 배경 + 테두리 3중으로 -- 점 하나만으로는
+   태블릿을 비스듬히 볼 때 어느 쪽이 선택됐는지 읽히지 않는다. */
+.judgment__radioOption:has(input:checked) {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.judgment__radioOption:has(input:focus-visible) {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
 }
 
 .judgment__input,
 .judgment__textarea {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--surface);
   color: var(--text);
   resize: vertical;
@@ -1441,7 +1691,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 600;
   margin: 8px 0;
 }
@@ -1452,13 +1702,13 @@
 
 .judgment__recordBtn {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 700;
   padding: 10px 20px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
   cursor: pointer;
 }
 
@@ -1474,7 +1724,7 @@
 .judgment__outline summary,
 .judgment__secondaryFields summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   color: var(--text-muted);
 }
@@ -1482,7 +1732,7 @@
 .judgment__outlineList {
   margin: 12px 0 0;
   padding-left: 20px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 
 .judgment__outlineList li {
@@ -1501,17 +1751,17 @@
 .doctor__recorderLineage {
   margin: 8px 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   color: var(--text-muted);
 }
 
 .doctor__recorderTranscript {
   margin-top: 8px;
   padding: 12px 14px;
-  background: var(--bg-subtle, #f6f6f8);
+  background: var(--bg-subtle);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--ds-r-md);
+  font-size: var(--ds-fs-body);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1523,7 +1773,7 @@
 
 .doctor__recorderCopyFeedback {
   margin-left: 10px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 700;
   color: var(--primary);
 }
@@ -1540,7 +1790,7 @@
   margin: 0 0 14px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   width: fit-content;
 }
 
@@ -1552,9 +1802,9 @@
      so the switch never competes with the safety state below it. */
   color: var(--text-muted);
   padding: 7px 16px;
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   cursor: pointer;
   min-height: 38px;
 }
@@ -1563,7 +1813,7 @@
   background: var(--surface);
   color: var(--primary);
   font-weight: 800;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
@@ -1574,7 +1824,7 @@
 
 .doctor__referenceNote {
   margin: 0 0 14px;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   line-height: 1.6;
   color: var(--text-muted);
 }
@@ -1605,7 +1855,7 @@
 }
 
 .doctor__refAccordion__title {
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 700;
   color: var(--text);
 }
@@ -1613,10 +1863,10 @@
 .doctor__refAccordion__badge {
   flex: 0 0 auto;
   padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--surface-muted, #eef2f7);
+  border-radius: var(--ds-r-pill);
+  background: var(--surface-muted);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
 }
 
@@ -1634,13 +1884,13 @@
   margin-top: 14px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--ds-r-lg);
   padding: 10px 18px;
 }
 
 .medCourse > summary {
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--ds-fs-base);
   font-weight: 700;
   color: var(--primary);
   padding: 6px 0;
@@ -1655,7 +1905,7 @@
 
 .medCourse__card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ds-r-lg);
   padding: 10px 14px;
   display: flex;
   flex-direction: column;
@@ -1664,7 +1914,7 @@
 
 .medCourse__provenance {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-micro);
   color: var(--text-muted);
 }
 
@@ -1672,7 +1922,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
 }
 
@@ -1700,7 +1950,7 @@
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--text);
 }
 
@@ -1725,15 +1975,15 @@
 
 .medCourse__actions__row input[type='date'] {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ds-r-md);
   padding: 6px 8px;
 }
 
 .medCourse__shift > summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--ds-fs-caption);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -1777,4 +2027,107 @@
     gap: 10px;
     margin-bottom: 10px;
   }
+}
+
+
+/* =====================================================================
+ * 상호작용 상태 (interaction states)
+ *
+ * 이 화면에는 cursor:pointer 요소가 34개인데 :hover 규칙이 0개였다.
+ * 마우스로 쓰는 원장 화면에서 "여기 누를 수 있다"는 신호가 커서 모양
+ * 하나뿐이었다는 뜻이다(operate.md: 모든 인터랙티브 컴포넌트는 default /
+ * hover / focus / active / disabled를 갖춰야 한다).
+ *
+ * 컴포넌트마다 다른 hover를 발명하지 않는다. --ds-layer-* 상태 레이어를
+ * background-image로 한 겹 얹어, 투명·흰 카드·짙은 primary 버튼 어디서든
+ * 같은 방향으로 한 단계 반응하게 한다. 배경색 자체는 건드리지 않으므로
+ * --active 변형(선택 상태)의 색이 hover에 먹히지 않는다.
+ * ================================================================== */
+
+.doctor button,
+.doctor summary,
+.doctor [role='button'] {
+  transition: background-image var(--ds-dur) var(--ds-ease),
+    border-color var(--ds-dur) var(--ds-ease),
+    color var(--ds-dur) var(--ds-ease);
+}
+
+/* ---- 펼침 요소(summary) 14곳 공통 ---- */
+.doctor summary:hover {
+  background-image: var(--ds-layer-hover);
+}
+.doctor summary:active {
+  background-image: var(--ds-layer-active);
+}
+
+/* ---- 조용한 버튼(투명/연한 배경) ---- */
+.doctor__globalNavBtn:hover,
+.doctor__recordTab:hover,
+.doctor__banner__reloadBtn:hover,
+.doctor__todayQueue__linkButton:hover,
+.doctor__todayQueue__linkCancel:hover,
+.doctor__row:hover,
+.doctor__revisitRow__openBtn:hover {
+  background-image: var(--ds-layer-hover);
+}
+.doctor__globalNavBtn:active,
+.doctor__recordTab:active,
+.doctor__banner__reloadBtn:active,
+.doctor__todayQueue__linkButton:active,
+.doctor__todayQueue__linkCancel:active,
+.doctor__row:active,
+.doctor__revisitRow__openBtn:active {
+  background-image: var(--ds-layer-active);
+}
+
+/* ---- 짙은 solid 버튼 ---- */
+.judgment__recordBtn:hover {
+  background-image: var(--ds-layer-hover-inverse);
+}
+.judgment__recordBtn:active {
+  background-image: var(--ds-layer-active-inverse);
+}
+
+/* ---- 텍스트 링크형 ---- */
+.doctor__visitSummary__authBtn:hover,
+.doctor__emptyLink:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ---- 비활성 ----
+   이 스타일시트에는 :disabled 규칙이 하나도 없었다. 저장 중·권한 없음
+   상태에서 눌리지 않는 버튼이 눌리는 버튼과 똑같이 보였다. */
+.doctor button:disabled,
+.doctor input:disabled,
+.doctor select:disabled,
+.doctor textarea:disabled {
+  opacity: var(--ds-disabled-opacity);
+  cursor: not-allowed;
+}
+.doctor button:disabled:hover,
+.doctor button:disabled:active {
+  background-image: none;
+}
+
+/* ---- 포커스 링 ----
+   기존 규칙들이 var(--primary)를 직접 쓰고 있었는데, 링 색이 팔레트와
+   따로 놀지 않도록 토큰 한 곳으로 모은다. 여기까지 오지 못한 컨트롤
+   (입력·select·textarea)에도 같은 링을 준다. */
+.doctor input:focus-visible,
+.doctor select:focus-visible,
+.doctor textarea:focus-visible,
+.doctor a:focus-visible {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- 브라우저 기본 표면(craft-floor: "직접 그리지 않은 부분도 디자인에
+   포함된다") -- 선택 하이라이트와 캐럿까지 팔레트에서 가져온다. ---- */
+.doctor ::selection {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+.doctor input,
+.doctor textarea {
+  caret-color: var(--primary);
 }

@@ -15,6 +15,7 @@ on:
       - 'tests/lbp-action-adaptive-engine.v03.experimental.spec.mjs'
       - 'tests/lbp-care-core.v04.experimental.spec.mjs'
       - 'tests/lbp-care-core.v04.clinical-vignettes.experimental.spec.mjs'
+      - 'tests/lbp-priority-policy-comparison.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
@@ -84,3 +85,6 @@ jobs:
 
       - name: Run LBP v0.4 north-star clinical vignette observation suite
         run: node tests/lbp-care-core.v04.clinical-vignettes.experimental.spec.mjs
+
+      - name: Run LBP complex-patient priority policy comparison
+        run: node tests/lbp-priority-policy-comparison.experimental.spec.mjs

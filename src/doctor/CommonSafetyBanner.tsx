@@ -638,28 +638,24 @@ function answerLabelFor(qid: string, value: AnswerValue | undefined): string {
 /**
  * Core Reduction P2 (Phase 7 §2.2/§1.1): the lane1 union summary
  * (src/doctor/workspace/lane1Summary.ts) needs the exact same "does the
- * common danger banner fire" boolean this component already computes for
+ * common danger banner fire" signal this component already computes for
  * its own top block, without re-deriving flagsUsable/requires_staff_check
  * a second time (that duplication is itself the class of drift Phase 6
  * warns about). Exported so lane1Summary.ts can import it directly instead
  * of forking a third copy of isFlagsUsable.
- */
-export function commonSafetyBannerActive(payload: DoctorPayload): boolean {
-  const { flagsUnusable, staffCheckRequired } = commonSafetyBannerReason(payload)
-  return flagsUnusable || staffCheckRequired
-}
-
-/**
- * 독립 검수 HIGH-1: `commonSafetyBannerActive()`의 단일 boolean은 배너가
- * 떠야 하는 서로 다른 두 원인 -- (a) flags 자체를 구조적으로 못 읽음(계산
- * 자체를 신뢰할 수 없음) vs (b) flags는 정상적으로 읽었고 그 안의 generic
- * staff-review 신호(requires_staff_check)가 true -- 를 하나로 뭉갠다.
- * lane1Summary.ts가 이 둘을 서로 다른 severity(계산불가 vs 확인 필요)로
- * 표시하려면 원인을 분리해서 알아야 한다. 이 함수는 그 두 원인을 그대로
- * 노출할 뿐, 배너를 띄울지 말지의 기존 판단(둘 중 하나라도 참이면 배너는
- * 여전히 뜬다 -- commonSafetyBannerActive 참고)은 전혀 바꾸지 않는다.
+ *
+ * 독립 검수 HIGH-1: 예전에는 이 자리에 `commonSafetyBannerActive()`라는
+ * 단일 boolean 함수가 있었다 -- 배너가 떠야 하는 서로 다른 두 원인((a)
+ * flags 자체를 구조적으로 못 읽음(계산 자체를 신뢰할 수 없음) vs (b)
+ * flags는 정상적으로 읽었고 그 안의 generic staff-review 신호가 true)를
+ * 하나로 뭉개서, lane1Summary.ts가 severity를 계산불가/확인 필요로
+ * 나눠 표시할 수 없었다(그래서 둘 다 URGENT로 잘못 승격됐다). 이제
+ * `commonSafetyBannerReason()`이 그 두 원인을 그대로 분리해 반환한다 --
  * 새 임상 threshold나 새 red-flag 의미가 아니라, 이미 계산된 두 boolean을
- * 그대로 분리해 반환하는 것뿐이다.
+ * 그대로 노출하는 것뿐이다. 배너를 띄울지 말지의 판단(둘 중 하나라도
+ * 참이면 배너는 뜬다)은 `CommonSafetyBanner` 컴포넌트 자신이 여전히
+ * `isFlagsUsable`을 직접 계산해 그대로 유지한다(전혀 바뀌지 않음) --
+ * 단일 boolean 래퍼는 호출자가 없어져 제거했다.
  */
 export type CommonSafetyBannerReason = {
   /** flags가 구조적으로 무효/버전skew/응답과 모순 -- 계산 자체를 신뢰할 수 없음. */

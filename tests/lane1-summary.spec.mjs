@@ -101,6 +101,29 @@ test('lane1 summary shows 확인 필요 when a region reports review_required al
   assert.equal(summary.commonBannerDanger, false)
 })
 
+// ---------- #1d (독립 검수 MINOR-3, post-review): priority collision ----------
+// 계산불가와 확인 필요가 동시에 성립할 수 있는 두 조합을 직접 고정한다 --
+// 우선순위 코멘트(§ 파일 헤더)는 있었지만 이걸 실제로 검증하는 테스트가
+// 없었다.
+test('lane1 summary: 계산불가 beats 확인 필요 when staffCheckRequired AND a calc-unavailable region are both true simultaneously', () => {
+  const regions = [region('lbp', '허리', 'unavailable'), region('neck', '목', 'clear')]
+  const summary = computeLane1Summary(STAFF_CHECK_PAYLOAD, regions)
+  assert.equal(summary.staffCheckRequired, true)
+  assert.equal(summary.calcUnavailableLabels.length, 1)
+  assert.equal(summary.status, '계산불가')
+  assert.notEqual(summary.status, '확인 필요')
+})
+
+test('lane1 summary: 계산불가 beats 확인 필요 when flagsUnusable AND a review_required region are both true simultaneously', () => {
+  const payload = payloadWithUnusableFlags()
+  const regions = [region('lbp', '허리', 'review_required'), region('neck', '목', 'clear')]
+  const summary = computeLane1Summary(payload, regions)
+  assert.equal(summary.flagsUnusable, true)
+  assert.equal(summary.reviewLabels.length, 1)
+  assert.equal(summary.status, '계산불가')
+  assert.notEqual(summary.status, '확인 필요')
+})
+
 // ---------- #2 ----------
 test('lane1 summary is not CLEAR when any single region panel reports calc-unavailable, even if common banner and all other regions are CLEAR', () => {
   const payload = payloadWithBanner(false)

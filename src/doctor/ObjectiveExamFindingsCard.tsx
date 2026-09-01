@@ -157,14 +157,18 @@ export function ObjectiveExamFindingsCard({
   // 독립 검수 HIGH-2: 유일한 복구 액션 -- 서버의 현재 값을 있는 그대로
   // 반영하고(필드 자동 병합 없음) conflict를 지운다. 원장이 여전히 다른
   // 값을 원하면 그 다음에 다시 명시적으로 라디오를 선택해 새로 저장한다.
-  function handleReloadConflict(
-    field: ObjectiveExamField,
-    conflict: FieldConflict,
-    applyLocal: (v: string | undefined) => void,
-    setStatus: (s: SaveStatus) => void,
-    setConflict: (c: FieldConflict | null) => void,
-  ) {
-    applyLocal((conflict.current?.[field] as string | undefined) ?? undefined)
+  //
+  // 독립 검수 MINOR-1 후속: `conflict.current`는 이 conflict가 발생한
+  // 시점의 전체 judgment다 -- conflict를 일으킨 필드만 재시드하면, 화면에
+  // 나란히 있는 반대쪽 부위(예: LBP conflict를 불러왔는데 SHOULDER
+  // SafetyPanel은 이미 서버 값으로 다시 계산됐는데 이 카드의 shoulder
+  // 라디오만 옛 로컬 값에 머무름)의 라디오가 옆의 실제 안전 판정과 어긋나
+  // 보일 수 있다(쓰기 위험은 없음 -- 다음 저장은 이미 최신 selectedRecord를
+  // 기준으로 함 -- 하지만 안전 관련 표시 화면에서 눈에 보이는 불일치라
+  // 같이 고친다). 그래서 두 필드 모두 conflict.current로 재시드한다.
+  function handleReloadConflict(conflict: FieldConflict, setStatus: (s: SaveStatus) => void, setConflict: (c: FieldConflict | null) => void) {
+    setLbp((conflict.current?.lbp_objective_motor_deficit as typeof lbp) ?? undefined)
+    setShoulder((conflict.current?.shoulder_objective_cuff_weakness as typeof shoulder) ?? undefined)
     setConflict(null)
     setStatus('idle')
     onReloadConflict?.(conflict.current, conflict.currentUpdatedAt)
@@ -206,15 +210,7 @@ export function ObjectiveExamFindingsCard({
           </div>
           {lbpConflict && (
             <ConflictBanner
-              onReload={() =>
-                handleReloadConflict(
-                  'lbp_objective_motor_deficit',
-                  lbpConflict,
-                  (v) => setLbp(v as typeof lbp),
-                  setLbpStatus,
-                  setLbpConflict,
-                )
-              }
+              onReload={() => handleReloadConflict(lbpConflict, setLbpStatus, setLbpConflict)}
               draftJson={JSON.stringify({ lbp_objective_motor_deficit: lbpConflict.attemptedValue }, null, 2)}
             />
           )}
@@ -257,15 +253,7 @@ export function ObjectiveExamFindingsCard({
           </div>
           {shoulderConflict && (
             <ConflictBanner
-              onReload={() =>
-                handleReloadConflict(
-                  'shoulder_objective_cuff_weakness',
-                  shoulderConflict,
-                  (v) => setShoulder(v as typeof shoulder),
-                  setShoulderStatus,
-                  setShoulderConflict,
-                )
-              }
+              onReload={() => handleReloadConflict(shoulderConflict, setShoulderStatus, setShoulderConflict)}
               draftJson={JSON.stringify({ shoulder_objective_cuff_weakness: shoulderConflict.attemptedValue }, null, 2)}
             />
           )}

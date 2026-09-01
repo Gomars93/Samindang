@@ -1152,8 +1152,16 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     const shoulderConflictBanner = cardSrc.match(/\{shoulderConflict && \(\s*<ConflictBanner[\s\S]*?\/>\s*\)\}/)
     assert.ok(lbpConflictBanner, 'lbp field renders a ConflictBanner when lbpConflict is set')
     assert.ok(shoulderConflictBanner, 'shoulder field renders a ConflictBanner when shoulderConflict is set')
-    assert.match(cardSrc, /handleReloadConflict\(\s*'lbp_objective_motor_deficit'/)
-    assert.match(cardSrc, /handleReloadConflict\(\s*'shoulder_objective_cuff_weakness'/)
+    assert.match(cardSrc, /handleReloadConflict\(lbpConflict, setLbpStatus, setLbpConflict\)/)
+    assert.match(cardSrc, /handleReloadConflict\(shoulderConflict, setShoulderStatus, setShoulderConflict\)/)
+  })
+
+  test('ObjectiveExamFindingsCard MINOR-1 (post-review): reloading EITHER field\'s conflict re-seeds BOTH lbp and shoulder from the full server judgment snapshot, not just the field that conflicted -- a stale sibling radio next to its already-refreshed SafetyPanel would be a visible safety-surface inconsistency', () => {
+    const fnStart = cardSrc.indexOf('function handleReloadConflict(')
+    const fnEnd = cardSrc.indexOf('\n  }', fnStart)
+    const fn = cardSrc.slice(fnStart, fnEnd)
+    assert.match(fn, /setLbp\(\(conflict\.current\?\.lbp_objective_motor_deficit/)
+    assert.match(fn, /setShoulder\(\(conflict\.current\?\.shoulder_objective_cuff_weakness/)
   })
 
   test('ObjectiveExamFindingsCard HIGH-2: the plain save-status text is suppressed while a conflict is active (never shown alongside the ConflictBanner)', () => {

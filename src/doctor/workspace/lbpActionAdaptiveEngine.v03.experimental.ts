@@ -12,7 +12,9 @@
  *   state decides whether optional refinements are still needed today;
  * - SAFETY / foundational functional decisions and clinician-requested checks
  *   are never suppressed by a sufficiency shortcut;
- * - "not needed today" is explicit, not converted to NORMAL / NEGATIVE.
+ * - "not needed today" is explicit, not converted to NORMAL / NEGATIVE;
+ * - sufficiency itself is visit-scoped and is invalidated by adequate
+ *   non-response, so a stale "we know enough" flag cannot hide re-evaluation.
  *
  * IMPORTANT: managementSufficiency is deliberately supplied by the caller in
  * this experiment. No clinical mapping from exam results -> SUFFICIENT is
@@ -32,8 +34,11 @@ export type ManagementSufficiencyStatus =
   | 'INSUFFICIENT_FOR_TODAY'
   | 'UNCERTAIN'
 
+export type SufficiencyFreshness = 'CURRENT_VISIT' | 'PRIOR_VISIT' | 'UNKNOWN'
+
 export interface ManagementSufficiencyAssessment {
   status: ManagementSufficiencyStatus
+  freshness?: SufficiencyFreshness
   /** Decision Keys already resolved before this sufficiency judgement. */
   assessedAfterDecisionKeys?: LbpDecisionKey[]
   /** Human-readable audit reason; optional in synthetic fixtures. */
@@ -71,9 +76,13 @@ export interface LbpActionEngineOutputV03
   notNeededTodayChecks: LbpNotNeededTodayCheck[]
   allCandidateChecks: LbpDecisionCheckV03[]
   sufficiency: {
-    status: ManagementSufficiencyStatus
+    requestedStatus: ManagementSufficiencyStatus
+    effectiveStatus: ManagementSufficiencyStatus
+    freshness: SufficiencyFreshness
     assessmentIsClinicalRule: false
+    suppressionAllowed: boolean
     reasonKo: string
+    warningsKo: string[]
     assessedAfterDecisionKeys: LbpDecisionKey[]
   }
   scheduling: {
@@ -120,12 +129,79 @@ function isMandatoryNow(check: LbpDecisionCheckV03): boolean {
 }
 
 function normalizedSufficiency(context: LbpActionContextV03): ManagementSufficiencyAssessment {
-  return context.managementSufficiency ?? { status: 'NOT_ASSESSED' }
+  return context.managementSufficiency ?? {
+    status: 'NOT_ASSESSED',
+    freshness: 'UNKNOWN',
+    assessedAfterDecisionKeys: [],
+  }
+}
+
+function resolveEffectiveSufficiency(
+  context: LbpActionContextV03,
+  requested: ManagementSufficiencyAssessment,
+): {
+  effectiveStatus: ManagementSufficiencyStatus
+  freshness: SufficiencyFreshness
+  suppressionAllowed: boolean
+  warningsKo: string[]
+} {
+  const warningsKo: string[] = []
+  const freshness = requested.freshness ?? 'UNKNOWN'
+  const assessedAfter = requested.assessedAfterDecisionKeys ?? []
+  const adequateNonResponse =
+    context.followUp.trajectory === 'NO_MEANINGFUL_CHANGE' && context.followUp.exposure === 'ADEQUATE'
+
+  if (requested.status !== 'SUFFICIENT_FOR_TODAY') {
+    return {
+      effectiveStatus: requested.status,
+      freshness,
+      suppressionAllowed: false,
+      warningsKo,
+    }
+  }
+
+  if (freshness !== 'CURRENT_VISIT') {
+    warningsKo.push('관리전략 충분성 판정이 CURRENT_VISIT provenance가 아니므로 선택적 검사를 억제하는 근거로 사용하지 않습니다.')
+    return {
+      effectiveStatus: 'UNCERTAIN',
+      freshness,
+      suppressionAllowed: false,
+      warningsKo,
+    }
+  }
+
+  if (assessedAfter.length === 0) {
+    warningsKo.push('SUFFICIENT_FOR_TODAY가 어떤 Decision Key 해결 뒤에 판단됐는지 기록이 없어 선택적 검사를 억제하지 않습니다.')
+    return {
+      effectiveStatus: 'UNCERTAIN',
+      freshness,
+      suppressionAllowed: false,
+      warningsKo,
+    }
+  }
+
+  if (adequateNonResponse) {
+    warningsKo.push('충분한 치료/운동 노출 뒤 의미 있는 변화가 없어 이전의 "오늘 충분함" 판단을 무효화하고 재평가 후보를 다시 엽니다.')
+    return {
+      effectiveStatus: 'INSUFFICIENT_FOR_TODAY',
+      freshness,
+      suppressionAllowed: false,
+      warningsKo,
+    }
+  }
+
+  return {
+    effectiveStatus: 'SUFFICIENT_FOR_TODAY',
+    freshness,
+    suppressionAllowed: true,
+    warningsKo,
+  }
 }
 
 function stageWithSufficiency(
   candidates: LbpDecisionCheckV03[],
-  sufficiency: ManagementSufficiencyAssessment,
+  effectiveStatus: ManagementSufficiencyStatus,
+  suppressionAllowed: boolean,
 ): {
   current: LbpDecisionCheckV03[]
   deferred: LbpDeferredCheckV03[]
@@ -145,7 +221,7 @@ function stageWithSufficiency(
   // Mandatory decisions are not hidden by sufficiency or presentation budget.
   for (const candidate of mandatory) current.push(candidate)
 
-  if (sufficiency.status === 'SUFFICIENT_FOR_TODAY') {
+  if (effectiveStatus === 'SUFFICIENT_FOR_TODAY' && suppressionAllowed) {
     for (const candidate of optional) {
       notNeededToday.push({
         ...candidate,
@@ -181,19 +257,24 @@ export function evaluateLbpActionAdaptiveExperimentV03(
   context: LbpActionContextV03,
 ): LbpActionEngineOutputV03 {
   const v02 = evaluateLbpActionAdaptiveExperimentV02(context)
-  const sufficiency = normalizedSufficiency(context)
+  const requestedSufficiency = normalizedSufficiency(context)
+  const effective = resolveEffectiveSufficiency(context, requestedSufficiency)
   const candidates = v02.allCandidateChecks.map(withRole)
-  const staged = stageWithSufficiency(candidates, sufficiency)
+  const staged = stageWithSufficiency(
+    candidates,
+    effective.effectiveStatus,
+    effective.suppressionAllowed,
+  )
 
-  const assessedAfterDecisionKeys = sufficiency.assessedAfterDecisionKeys ?? []
+  const assessedAfterDecisionKeys = requestedSufficiency.assessedAfterDecisionKeys ?? []
   const reasonKo =
-    sufficiency.reasonKo ??
-    (sufficiency.status === 'SUFFICIENT_FOR_TODAY'
-      ? '실험 입력에서 오늘 관리전략이 충분한 것으로 표시되었습니다. 이 상태를 만드는 실제 임상 rule은 아직 정의하지 않았습니다.'
-      : sufficiency.status === 'INSUFFICIENT_FOR_TODAY'
-        ? '실험 입력에서 오늘 관리전략이 아직 충분하지 않은 것으로 표시되어 선택적 refinement를 계속 검토합니다.'
-        : sufficiency.status === 'UNCERTAIN'
-          ? '관리전략 충분성 자체가 불명확하여 선택적 refinement를 자동으로 폐기하지 않습니다.'
+    requestedSufficiency.reasonKo ??
+    (effective.effectiveStatus === 'SUFFICIENT_FOR_TODAY'
+      ? '실험 입력에서 현재 방문 관리전략이 충분한 것으로 표시되었습니다. 이 상태를 만드는 실제 임상 rule은 아직 정의하지 않았습니다.'
+      : effective.effectiveStatus === 'INSUFFICIENT_FOR_TODAY'
+        ? '현재 방문 관리전략이 아직 충분하지 않은 것으로 취급되어 선택적 refinement를 계속 검토합니다.'
+        : effective.effectiveStatus === 'UNCERTAIN'
+          ? '관리전략 충분성 자체가 불명확하거나 provenance가 부족하여 선택적 refinement를 자동으로 폐기하지 않습니다.'
           : '관리전략 충분성을 아직 평가하지 않았습니다.')
 
   return {
@@ -203,18 +284,23 @@ export function evaluateLbpActionAdaptiveExperimentV03(
     notNeededTodayChecks: staged.notNeededToday,
     allCandidateChecks: candidates,
     sufficiency: {
-      status: sufficiency.status,
+      requestedStatus: requestedSufficiency.status,
+      effectiveStatus: effective.effectiveStatus,
+      freshness: effective.freshness,
       assessmentIsClinicalRule: false,
+      suppressionAllowed: effective.suppressionAllowed,
       reasonKo,
+      warningsKo: effective.warningsKo,
       assessedAfterDecisionKeys,
     },
+    invariantWarningsKo: [...v02.invariantWarningsKo, ...effective.warningsKo],
     stopRule: {
       satisfied:
         v02.routinePathway !== 'AVAILABLE' ||
         (staged.current.length === 0 && staged.deferred.length === 0),
       reasonKo:
         staged.notNeededToday.length > 0
-          ? '현재 관리전략이 충분하다고 별도 판단되어 선택적 refinement를 오늘은 더 열지 않습니다. 미평가 상태는 보존되며 비반응·악화·새 단서·원장 override에서 재개방할 수 있습니다.'
+          ? '현재 방문 관리전략이 충분하다고 별도 판단되어 선택적 refinement를 오늘은 더 열지 않습니다. 미평가 상태는 보존되며 비반응·악화·새 단서·원장 override에서 재개방할 수 있습니다.'
           : staged.deferred.length > 0
             ? '현재 Decision Key를 먼저 해결한 뒤 sufficiency를 다시 판단합니다. 단순히 후보가 남았다는 이유만으로 다음 검사를 자동 연쇄하지 않습니다.'
             : v02.stopRule.reasonKo,

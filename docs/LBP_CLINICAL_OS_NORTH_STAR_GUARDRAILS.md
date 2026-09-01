@@ -29,6 +29,7 @@ The system may leave diagnostic uncertainty unresolved. It must not leave that u
 - Ask / recommend it only when the result can change safety, treatment target, rehabilitation, follow-up metric, or imaging/referral decision now or at the near-term reassessment.
 - Simple patients may legitimately have **0 additional checks**.
 - Progressive disclosure is preferred over a card wall or a long checklist.
+- A recommended non-safety check is not automatically a prohibition on routine conservative care. Distinguish **care availability** from **whether the management plan is ready for confirmation**.
 
 ### B. Click minimization over data perfection
 - Reuse tablet / prior facts; do not ask the clinician to re-enter them.
@@ -47,6 +48,7 @@ The system may leave diagnostic uncertainty unresolved. It must not leave that u
 - Hip, SIJ, neuro, walking limitation, and movement response may coexist as management-relevant contributors.
 - A working hypothesis should be allowed to remain uncertain or partially explanatory.
 - "현재 데이터로 충분히 설명되지 않음" must be a valid state; atypical patients must not be forced into a known bucket.
+- When several domains are simultaneously relevant, do not hard-code the currently experimental ordering (for example neuro first and Hip/SIJ later) as a clinically approved truth until vignette review explicitly supports it.
 
 ### E. Clinician remains in control
 - Clinician override / concern must remain available even when the automatic engine does not raise a domain.
@@ -132,7 +134,8 @@ Examples of forbidden drift:
 - demanding directional ROM values in every direction on every patient,
 - equating no click with normal,
 - showing research-layer terms such as Decision Key / tranche / sufficiency to the clinician,
-- requiring a diagnosis label before conservative management can begin.
+- requiring a diagnosis label before conservative management can begin,
+- turning every suggested check into a mandatory pre-treatment checklist.
 
 ---
 
@@ -149,6 +152,7 @@ Examples of forbidden drift:
 - clinician override
 - adequate non-response re-evaluation
 - progressive disclosure / deferred unresolved state
+- routine-care availability remains separate from whether suggested checks are still outstanding
 
 ### Intentionally NOT complete yet — MUST NOT BE FORGOTTEN
 - explainable differential / working-hypothesis engine

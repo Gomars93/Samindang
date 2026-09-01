@@ -7,6 +7,7 @@ on:
       - 'src/doctor/workspace/lbpActionAdaptiveEngine.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
+      - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
 jobs:
@@ -36,3 +37,6 @@ jobs:
 
       - name: Run LBP action-adaptive boundary regressions
         run: node tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs
+
+      - name: Run LBP action-adaptive exhaustive stress matrix
+        run: node tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs

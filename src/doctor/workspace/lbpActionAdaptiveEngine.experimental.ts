@@ -63,10 +63,7 @@ export type ContributionScreenStatus =
 
 export type WalkingToleranceStatus = 'KNOWN' | 'NOT_KNOWN' | 'NOT_RELEVANT'
 
-/**
- * Reassessment interpretation is deliberately supplied to this experiment.
- * No numeric NRS/Target Function threshold is encoded here.
- */
+/** Reassessment interpretation is supplied; no numeric threshold is encoded. */
 export type ReassessmentTrajectory =
   | 'NOT_DUE'
   | 'IMPROVING'
@@ -75,7 +72,6 @@ export type ReassessmentTrajectory =
   | 'UNCERTAIN'
 
 export type TreatmentExposure = 'ADEQUATE' | 'INADEQUATE' | 'UNKNOWN'
-
 export type VisitKind = 'INITIAL' | 'REINITIAL' | 'FOLLOW_UP'
 
 export interface LbpActionContext {
@@ -83,15 +79,15 @@ export interface LbpActionContext {
   diseaseSafetyStatus: LbpSafetyStatus
   treatmentSafetyStatus: TreatmentSafetyStatus
 
-  /** Existing patient/derived fact. UNKNOWN must never be treated as ABSENT. */
+  /** Existing patient/derived fact. UNCERTAIN must never be treated as ABSENT. */
   legSymptoms: PresentState
-  /** A patient/clinician cue that makes a nerve-root/neurodynamic check potentially actionable. */
+  /** A cue that makes a nerve-root/neurodynamic check potentially actionable. */
   radicularCue: PresentState
-  /** Walking/standing provokes leg symptoms and the presentation is functionally walking-limited. */
+  /** Walking/standing provokes leg symptoms and walking is functionally limited. */
   walkingStandingLegPattern: PresentState
   walkingTolerance: WalkingToleranceStatus
 
-  /** Cues are shallow screens, not diagnoses. They can coexist. */
+  /** Cues are shallow screens, not diagnoses. Hip and SIJ can coexist. */
   hipContributionCue: PresentState
   sijContributionCue: PresentState
 
@@ -154,6 +150,7 @@ export interface LbpActionEngineOutput {
   ruleStatus: 'DRAFT_EXPERIMENTAL'
   routinePathway: RoutinePathwayState
   treatmentFinalizationRequiresClinicianReview: boolean
+  clinicianOverrideAvailable: true
   checks: LbpActionCheck[]
   actionTags: LbpActionTag[]
   uncertaintyNotesKo: string[]
@@ -189,16 +186,48 @@ function addUniqueCheck(target: LbpActionCheck[], next: LbpActionCheck): void {
 }
 
 function isAdequateNonResponse(context: LbpActionContext): boolean {
-  return (
-    context.followUp.trajectory === 'NO_MEANINGFUL_CHANGE' &&
-    context.followUp.exposure === 'ADEQUATE'
-  )
+  return context.followUp.trajectory === 'NO_MEANINGFUL_CHANGE' && context.followUp.exposure === 'ADEQUATE'
+}
+
+function buildLegSymptomClarificationCheck(): LbpActionCheck {
+  return {
+    id: 'LBP_CHECK_CLARIFY_LEG_SYMPTOM',
+    titleKo: '하지증상 여부 짧게 확인',
+    priority: 'HIGH',
+    ruleStatus: 'DRAFT_EXPERIMENTAL',
+    reasonKo: '하지증상 여부가 불명확하면 신경학적 검사·추적을 할지 자체가 달라질 수 있어, 바로 검사 묶음으로 넘어가기보다 먼저 짧게 확인합니다.',
+    changesManagement: ['SAFETY', 'REASSESSMENT', 'REHAB_SELECTION', 'IMAGING_OR_REFERRAL'],
+    sourceFacts: [sourceFact('legSymptoms', '하지증상 여부가 불명확함', 'PATIENT_FACT')],
+    help: {
+      howKo: '허리 외에 둔부·허벅지·종아리·발로 내려가는 통증, 저림, 감각 둔함, 힘 빠짐 느낌이 실제로 있는지만 짧게 다시 확인합니다.',
+      whyKo: '불명확을 곧바로 신경학적 이상 또는 정상으로 해석하지 않고, 필요한 진찰 깊이를 결정하기 위한 최소 확인입니다.',
+    },
+  }
+}
+
+function buildDefineTargetFunctionCheck(): LbpActionCheck {
+  return {
+    id: 'LBP_CHECK_DEFINE_TARGET_FUNCTION',
+    titleKo: '목표 기능 하나 정하기',
+    priority: 'HIGH',
+    ruleStatus: 'DRAFT_EXPERIMENTAL',
+    reasonKo: '목표 기능이 없으면 오늘 치료 타깃과 다음 방문의 성공 기준을 같은 축으로 비교하기 어렵습니다.',
+    changesManagement: ['TREATMENT_TARGET', 'REASSESSMENT'],
+    sourceFacts: [sourceFact('targetFunctionAvailable', '목표 기능 기준점이 아직 없음', 'DERIVED')],
+    help: {
+      howKo: '환자가 가장 회복하고 싶은 실제 생활동작 하나를 선택합니다. 가능한 경우 0~10 수행능력과 연결합니다.',
+      whyKo: '통증점수만으로 회복을 판단하지 않고 환자가 원하는 기능의 변화를 추적하기 위한 최소 기준점입니다.',
+    },
+  }
 }
 
 function buildObjectiveNeuroCheck(context: LbpActionContext, priority: CheckPriority): LbpActionCheck {
   const sourceFacts: ActionCheckSourceFact[] = []
-  if (context.legSymptoms !== 'ABSENT') {
+  if (context.legSymptoms === 'PRESENT') {
     sourceFacts.push(sourceFact('legSymptoms', '하지 통증·저림/신경증상이 보고됨', 'PATIENT_FACT'))
+  }
+  if (context.radicularCue === 'PRESENT') {
+    sourceFacts.push(sourceFact('radicularCue', '신경근성 관여를 시사하는 하지증상 단서', 'PATIENT_FACT'))
   }
   if (context.walkingStandingLegPattern === 'PRESENT') {
     sourceFacts.push(sourceFact('walkingStandingLegPattern', '서기·걷기와 연관된 하지증상/기능제한', 'PATIENT_FACT'))
@@ -278,7 +307,7 @@ function buildLumbarMovementCheck(): LbpActionCheck {
     ruleStatus: 'DRAFT_EXPERIMENTAL',
     reasonKo: '특정 방향의 일관된 증상 증가·감소가 확인되면 운동 방향과 치료 후 다시 볼 동작이 달라질 수 있습니다.',
     changesManagement: ['REHAB_SELECTION', 'REASSESSMENT'],
-    sourceFacts: [sourceFact('legSymptoms', '현재 허리통증의 움직임 반응 확인이 아직 필요함', 'DERIVED')],
+    sourceFacts: [sourceFact('lumbarMovement', '허리 움직임에 따른 증상반응이 아직 미평가', 'DERIVED')],
     help: {
       howKo: '서서 허리를 굽히고, 뒤로 젖히고, 좌우로 기울이며 평소 증상의 재현·감소를 봅니다. 하지증상이 있다면 몸쪽으로 줄거나 더 아래로 퍼지는지도 관찰합니다.',
       whyKo: '모든 방향의 각도를 기록하기 위한 검사가 아니라, 실제 운동·재평가 방향을 바꿀 만한 증상반응이 있는지 확인하기 위한 검사입니다.',
@@ -322,12 +351,8 @@ function collectActionTags(context: LbpActionContext): LbpActionTag[] {
   const tags: LbpActionTag[] = []
   if (context.targetFunctionReproduction === 'CONCORDANT_SYMPTOM_REPRODUCTION') tags.push('TRACK_TARGET_FUNCTION')
   if (context.objectiveNeuro === 'ABNORMAL_NON_PROGRESSIVE') tags.push('NEURO_FOLLOW_UP_REQUIRED')
-  if (context.walkingStandingLegPattern === 'PRESENT' && context.walkingTolerance === 'KNOWN') {
-    tags.push('TRACK_WALKING_TOLERANCE')
-  }
-  if (context.lumbarMovement === 'IMPROVES' || context.lumbarMovement === 'CENTRALIZES') {
-    tags.push('DIRECTIONAL_REHAB_CANDIDATE')
-  }
+  if (context.walkingStandingLegPattern === 'PRESENT' && context.walkingTolerance === 'KNOWN') tags.push('TRACK_WALKING_TOLERANCE')
+  if (context.lumbarMovement === 'IMPROVES' || context.lumbarMovement === 'CENTRALIZES') tags.push('DIRECTIONAL_REHAB_CANDIDATE')
   if (context.lumbarMovement === 'PERIPHERALIZES') tags.push('DISTAL_SYMPTOM_RESPONSE_REVIEW')
   if (context.hipScreen === 'CONTRIBUTORY') tags.push('INCLUDE_HIP_AS_TREATMENT_TARGET')
   if (context.sijScreen === 'CONTRIBUTORY') tags.push('INCLUDE_SIJ_AS_TREATMENT_TARGET')
@@ -346,11 +371,7 @@ function collectUncertaintyNotes(context: LbpActionContext): string[] {
   return notes
 }
 
-/**
- * Pure experiment engine. There is deliberately no DoctorPayload adapter.
- * A future approved integration must map existing patient facts into this
- * normalized context without changing the tablet questionnaire.
- */
+/** Pure experiment engine. There is deliberately no DoctorPayload adapter. */
 export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): LbpActionEngineOutput {
   const checks: LbpActionCheck[] = []
   const reviewNotesKo: string[] = []
@@ -367,6 +388,7 @@ export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): 
       ruleStatus: 'DRAFT_EXPERIMENTAL',
       routinePathway: 'SAFETY_REVIEW_FIRST',
       treatmentFinalizationRequiresClinicianReview,
+      clinicianOverrideAvailable: true,
       checks: [],
       actionTags: collectActionTags(context),
       uncertaintyNotesKo,
@@ -379,17 +401,15 @@ export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): 
     }
   }
 
-  if (
-    context.followUp.trajectory === 'DETERIORATING' ||
-    context.followUp.newOrWorseningNeuroSymptom === 'YES'
-  ) {
-    if (context.legSymptoms !== 'ABSENT' && (context.objectiveNeuro === 'NOT_ASSESSED' || context.objectiveNeuro === 'UNCLEAR')) {
+  if (context.followUp.trajectory === 'DETERIORATING' || context.followUp.newOrWorseningNeuroSymptom === 'YES') {
+    if (context.legSymptoms === 'PRESENT' && (context.objectiveNeuro === 'NOT_ASSESSED' || context.objectiveNeuro === 'UNCLEAR')) {
       addUniqueCheck(checks, buildObjectiveNeuroCheck(context, 'BLOCKING'))
     }
     return {
       ruleStatus: 'DRAFT_EXPERIMENTAL',
       routinePathway: 'SAFETY_REFRESH_FIRST',
       treatmentFinalizationRequiresClinicianReview,
+      clinicianOverrideAvailable: true,
       checks: sortChecks(checks),
       actionTags: collectActionTags(context),
       uncertaintyNotesKo,
@@ -403,8 +423,7 @@ export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): 
   }
 
   const adequateNonResponse = isAdequateNonResponse(context)
-  const insufficientExposure =
-    context.followUp.trajectory === 'NO_MEANINGFUL_CHANGE' && context.followUp.exposure === 'INADEQUATE'
+  const insufficientExposure = context.followUp.trajectory === 'NO_MEANINGFUL_CHANGE' && context.followUp.exposure === 'INADEQUATE'
 
   if (insufficientExposure) {
     reviewNotesKo.push('의미 있는 변화가 적더라도 치료/운동 노출이 부족하므로 원인 감별 질문을 자동 확대하지 않습니다.')
@@ -412,8 +431,14 @@ export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): 
     reviewNotesKo.push('충분한 노출 뒤에도 의미 있는 변화가 적어 현재 가설의 설명력을 재검토합니다. 다만 기존 단서가 있는 미평가 영역만 우선합니다.')
   }
 
+  const legClarificationNeeded =
+    context.legSymptoms === 'UNCERTAIN' &&
+    context.radicularCue !== 'PRESENT' &&
+    context.walkingStandingLegPattern !== 'PRESENT'
+  if (legClarificationNeeded) addUniqueCheck(checks, buildLegSymptomClarificationCheck())
+
   const neuroRelevant =
-    context.legSymptoms !== 'ABSENT' ||
+    context.legSymptoms === 'PRESENT' ||
     context.radicularCue === 'PRESENT' ||
     context.walkingStandingLegPattern === 'PRESENT'
   if (neuroRelevant && (context.objectiveNeuro === 'NOT_ASSESSED' || context.objectiveNeuro === 'UNCLEAR')) {
@@ -428,14 +453,13 @@ export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): 
     addUniqueCheck(checks, buildNeurodynamicCheck())
   }
 
-  if (context.targetFunctionAvailable && context.targetFunctionReproduction === 'NOT_ASSESSED') {
+  if (!context.targetFunctionAvailable) {
+    addUniqueCheck(checks, buildDefineTargetFunctionCheck())
+  } else if (context.targetFunctionReproduction === 'NOT_ASSESSED') {
     addUniqueCheck(checks, buildTargetFunctionCheck())
   }
 
-  const simpleAxialOrMovementRelevant =
-    context.legSymptoms === 'ABSENT' ||
-    context.lumbarMovement === 'NOT_ASSESSED'
-  if (simpleAxialOrMovementRelevant && context.lumbarMovement === 'NOT_ASSESSED') {
+  if (context.lumbarMovement === 'NOT_ASSESSED') {
     addUniqueCheck(checks, buildLumbarMovementCheck())
   }
 
@@ -458,6 +482,7 @@ export function evaluateLbpActionAdaptiveExperiment(context: LbpActionContext): 
     ruleStatus: 'DRAFT_EXPERIMENTAL',
     routinePathway: 'AVAILABLE',
     treatmentFinalizationRequiresClinicianReview,
+    clinicianOverrideAvailable: true,
     checks: sortedChecks,
     actionTags: collectActionTags(context),
     uncertaintyNotesKo,

@@ -18,6 +18,7 @@ on:
       - 'tests/lbp-care-core.v04.clinical-vignettes.experimental.spec.mjs'
       - 'tests/lbp-priority-policy-comparison.experimental.spec.mjs'
       - 'tests/lbp-priority-policy-bplus.experimental.spec.mjs'
+      - 'tests/lbp-bplus-primary-care-flow.vignettes.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
@@ -101,3 +102,6 @@ jobs:
 
       - name: Run LBP B+ primary-care priority stress suite
         run: node tests/lbp-priority-policy-bplus.experimental.spec.mjs
+
+      - name: Run LBP B+ north-star primary-care flow vignettes
+        run: node tests/lbp-bplus-primary-care-flow.vignettes.experimental.spec.mjs

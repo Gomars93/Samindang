@@ -27,12 +27,38 @@
 ## 둘 다 이번 배치 merge를 막지 않는 후속 결정 사항이다.
 ##
 ## **PR 상태**: `claude/feat-core-reduction`은 이미 **PR #26**으로 열려
-## 있다(base `main`) — 새 PR을 만들지 않는다. main에는 impeccable/
-## humanize-korean 스킬 설치용 별도 브랜치
+## 있다 — 새 PR을 만들지 않는다. main에는 impeccable/humanize-korean
+## 스킬 설치용 별도 브랜치
 ## (`claude/chore-install-humanize-korean-and-impeccable-skills`)가
 ## 이미 push돼 있어 서로 무관하게 진행 중이니 혼동 금지 — 이 스킬 설치
 ## 변경은 PR #26이 merge-ready 판정을 받은 뒤 별도 PR로 만든다. 이
 ## 세션은 스스로 merge하거나 main에 직접 push하지 않는다.
+##
+## ⚠️ 갱신 (2026-09-01, 계속): **PR #24가 `main`에 merge됐다** (merge
+## 커밋 `5c8c0e2`, PR #24 head `4a9b2df`가 그대로 포함됨). PR #26은
+## 한때 stacked PR로 base를 PR #24의 브랜치(`feat/doctor-clinical-
+## workspace`)로 바꿨었으나, 그 브랜치가 merge되면서 **GitHub가 PR #26의
+## base를 자동으로 `main`으로 재조정(retarget)했다** — 사람이나 이
+## 세션이 직접 바꾼 게 아니다. `git merge-base d82f397(PR#26 HEAD)
+## origin/main` = `4a9b2df`(PR #24 head)와 정확히 일치하므로, PR #26이
+## 담고 있는 diff 내용 자체는 전혀 바뀌지 않았다(리베이스 불필요, 커밋
+## 재작성 없음).
+##
+## 이 retarget은 GitHub의 `edited`(base 변경) 이벤트일 뿐 `ci.yml`의
+## 기본 `pull_request` 트리거(`[opened, synchronize, reopened]`)에는
+## 걸리지 않는다 — 그래서 base가 `main`으로 바뀐 뒤에도 그 새 조합
+## (head `d82f397` × base `main`)에 대한 실제 GitHub Actions 실행 기록이
+## 없었다. 이전 head/로컬에서 확인한 green을 이 새 base 기준 CI green으로
+## 간주하면 안 된다 — 실제로 새 `synchronize` 이벤트(이 문서 갱신 커밋의
+## push)를 발생시켜 그 결과를 직접 확인해야 한다.
+##
+## 참고: `doctor-workspace-preview.yml`(Pages "Preview" 배포)은 애초에
+## `feat/doctor-clinical-workspace` 브랜치로의 push에만 반응하도록
+## 스코프돼 있다 — `claude/feat-core-reduction`/PR #26에는 이 워크플로가
+## 아예 트리거된 적이 없고 트리거될 수도 없다(브랜치 필터가 다름). 즉
+## PR #26에는 PR #24가 가졌던 것과 같은 "Preview(build-and-deploy)"
+## 체크가 GitHub check-run 목록에 구조적으로 나타나지 않는다 — 이것이
+## 결측 상태는 이 워크플로 설계 자체 때문이며, PR #26의 결함이 아니다.
 
 ---
 

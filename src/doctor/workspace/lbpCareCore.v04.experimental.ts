@@ -12,6 +12,12 @@
  *
  * This module DOES NOT introduce new clinical mappings. It only compresses the
  * already-computed experimental state into a smaller public contract.
+ *
+ * IMPORTANT primary-care distinction:
+ * - recommended checks are NOT automatically a treatment/care gate;
+ * - disease-safety state determines whether routine care is available;
+ * - outstanding checks determine whether the management plan is ready for
+ *   clinician confirmation without further suggested assessment.
  */
 import {
   evaluateLbpActionAdaptiveExperimentV03,
@@ -22,8 +28,8 @@ import {
 export type LbpCareCoreState =
   | 'SAFETY_REVIEW_FIRST'
   | 'SAFETY_REFRESH_FIRST'
-  | 'CHECKS_NEEDED'
-  | 'READY_TO_MANAGE'
+  | 'CHECKS_RECOMMENDED'
+  | 'READY_TO_CONFIRM_PLAN'
 
 export type LbpCareCoreCheck = {
   id: string
@@ -43,7 +49,20 @@ export type LbpCareCoreDeferredItem = {
 export interface LbpCareCoreOutput {
   ruleStatus: 'DRAFT_EXPERIMENTAL'
   state: LbpCareCoreState
-  canProceedWithManagement: boolean
+
+  /**
+   * Primary-care safety availability. Recommended non-safety checks do not by
+   * themselves turn routine conservative care into a prohibited pathway.
+   */
+  canProceedWithRoutineCare: boolean
+
+  /**
+   * True when the engine has no additional management-changing check to suggest
+   * before the clinician confirms today's management plan. This is NOT the same
+   * as diagnostic certainty.
+   */
+  managementPlanReadyForConfirmation: boolean
+
   treatmentFinalizationRequiresClinicianReview: boolean
 
   /** Only checks the clinician should see now. */
@@ -52,11 +71,12 @@ export interface LbpCareCoreOutput {
   /**
    * Explicit clinical debt. These are not NORMAL/NEGATIVE; they remain
    * unresolved and may be reopened by future non-response, worsening, new cue,
-   * or clinician concern.
+   * or clinician concern. Product UI should not surface this as a mandatory
+   * checklist by default.
    */
   unresolvedLater: LbpCareCoreDeferredItem[]
 
-  /** Management outputs already supported by the experimental engine. */
+  /** Internal management signals; Doctor UI should translate, not show raw tags. */
   actionTags: string[]
 
   reassessment: {
@@ -91,8 +111,8 @@ function deriveState(
 ): LbpCareCoreState {
   if (routinePathway === 'SAFETY_REVIEW_FIRST') return 'SAFETY_REVIEW_FIRST'
   if (routinePathway === 'SAFETY_REFRESH_FIRST') return 'SAFETY_REFRESH_FIRST'
-  if (checkCount > 0) return 'CHECKS_NEEDED'
-  return 'READY_TO_MANAGE'
+  if (checkCount > 0) return 'CHECKS_RECOMMENDED'
+  return 'READY_TO_CONFIRM_PLAN'
 }
 
 function reassessmentState(context: LbpActionContextV03): {
@@ -147,10 +167,15 @@ export function evaluateLbpCareCoreExperimentV04(
     ...research.consistencyWarningsKo,
   ].filter((value, index, values) => values.indexOf(value) === index)
 
+  const canProceedWithRoutineCare = research.routinePathway === 'AVAILABLE'
+  const managementPlanReadyForConfirmation =
+    canProceedWithRoutineCare && checksNow.length === 0
+
   return {
     ruleStatus: 'DRAFT_EXPERIMENTAL',
     state,
-    canProceedWithManagement: state === 'READY_TO_MANAGE',
+    canProceedWithRoutineCare,
+    managementPlanReadyForConfirmation,
     treatmentFinalizationRequiresClinicianReview:
       research.treatmentFinalizationRequiresClinicianReview,
     checksNow,

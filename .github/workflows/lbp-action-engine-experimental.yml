@@ -8,6 +8,7 @@ on:
       - 'src/doctor/workspace/lbpActionAdaptiveEngine.v02.experimental.ts'
       - 'src/doctor/workspace/lbpActionAdaptiveEngine.v03.experimental.ts'
       - 'src/doctor/workspace/lbpCareCore.v04.experimental.ts'
+      - 'src/doctor/workspace/lbpPriorityPolicyBPlus.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
@@ -16,6 +17,7 @@ on:
       - 'tests/lbp-care-core.v04.experimental.spec.mjs'
       - 'tests/lbp-care-core.v04.clinical-vignettes.experimental.spec.mjs'
       - 'tests/lbp-priority-policy-comparison.experimental.spec.mjs'
+      - 'tests/lbp-priority-policy-bplus.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
@@ -65,6 +67,14 @@ jobs:
           --platform=neutral
           --outfile=tests/.lbp-care-core-v04-bundle.mjs
 
+      - name: Bundle experimental B+ priority scheduler
+        run: >-
+          npx esbuild src/doctor/workspace/lbpPriorityPolicyBPlus.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-priority-policy-bplus-bundle.mjs
+
       - name: Run LBP action-adaptive stress scenarios
         run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
 
@@ -88,3 +98,6 @@ jobs:
 
       - name: Run LBP complex-patient priority policy comparison
         run: node tests/lbp-priority-policy-comparison.experimental.spec.mjs
+
+      - name: Run LBP B+ primary-care priority stress suite
+        run: node tests/lbp-priority-policy-bplus.experimental.spec.mjs

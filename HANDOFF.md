@@ -1,6 +1,19 @@
 # Current Handoff
 
-## ⚠️ 갱신 (2026-09-01): Phase 10 delta 재심사 PASS로 종료됨 — 아래
+## ⚠️ 갱신 (2026-09-01): PR #26이 PO에 의해 `main`에 merge됐다(merge
+## 커밋 `a65da34`). 이 branch(`claude/feat-doctor-ui-polish`, PR #27)의
+## base는 원래 `claude/feat-core-reduction`(PR #26 head `5a17a35`)였는데,
+## 그 branch가 GitHub에서 삭제되지 않아 PR #26 merge 후에도 자동
+## retarget이 일어나지 않았다 — 그래서 PR #27의 base를 `main`으로 직접
+## 바꿨다. `git merge-base origin/main HEAD`가 여전히 `5a17a35`라서 diff
+## 내용(스타일시트 두 개 + 이 문서)은 전혀 바뀌지 않았다.
+##
+## base 변경은 GitHub의 `edited` 이벤트라 `ci.yml`의 `pull_request` 기본
+## 트리거(`[opened, synchronize, reopened]`)에 걸리지 않는다 — PR #26
+## retarget 때와 같은 구조적 결함이다. 이 커밋이 그 새 head×base 조합에
+## 대한 실제 `synchronize` 이벤트를 발생시킨다.
+##
+## ⚠️ 갱신 (2026-09-01, 이전): Phase 10 delta 재심사 PASS로 종료됨 — 아래
 ## "Objective (Core Reduction Phase 10 closing review 지적 해소)" 절은
 ## 재심사 진행 중이던 시점의 snapshot이라 지금 기준으로는 stale하다.
 ## 실제 브랜치 HEAD는 `8100fe8`("Core Reduction Phase 10 delta — PASS

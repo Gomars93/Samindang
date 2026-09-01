@@ -48,11 +48,26 @@ The system may leave diagnostic uncertainty unresolved. It must not leave that u
 - Hip, SIJ, neuro, walking limitation, and movement response may coexist as management-relevant contributors.
 - A working hypothesis should be allowed to remain uncertain or partially explanatory.
 - "현재 데이터로 충분히 설명되지 않음" must be a valid state; atypical patients must not be forced into a known bucket.
-- When several domains are simultaneously relevant, do not hard-code the currently experimental ordering (for example neuro first and Hip/SIJ later) as a clinically approved truth until vignette review explicitly supports it.
+- When several domains are simultaneously relevant, do not hard-code the currently experimental ordering as a clinically approved truth without explicit review.
 
 ### E. Clinician remains in control
 - Clinician override / concern must remain available even when the automatic engine does not raise a domain.
 - The engine recommends; the clinician confirms the hypothesis, treatment direction, exercise, and downstream documentation.
+
+### F. B+ priority guardrail for competing checks
+When more management-relevant checks exist than should be shown at once, the experimental B+ policy follows this order of intent:
+
+1. preserve safety / meaningful tracking baseline when the candidate generator says it is relevant,
+2. preserve the patient's key functional baseline,
+3. use remaining attention for a check that can change **what is treated today** before spending it on diagnostic refinement alone,
+4. keep lower-priority refinement unresolved/deferred rather than deleting it.
+
+Important tie rule:
+- If Hip and SIJ are both treatment-target candidates and existing information does not distinguish them while only one presentation slot remains, **do not add another patient question and do not let source-code order choose one**.
+- Present a compact clinician choice between the already-generated candidates.
+- The clinician may intentionally inspect more than one via override when clinically warranted.
+
+This is a workflow-priority rule, not proof that Hip/SIJ is more important than neurodynamic testing in every patient. Candidate generation and safety semantics remain separately governed.
 
 ---
 
@@ -135,7 +150,8 @@ Examples of forbidden drift:
 - equating no click with normal,
 - showing research-layer terms such as Decision Key / tranche / sufficiency to the clinician,
 - requiring a diagnosis label before conservative management can begin,
-- turning every suggested check into a mandatory pre-treatment checklist.
+- turning every suggested check into a mandatory pre-treatment checklist,
+- adding a new patient question only to break a presentation-priority tie that the clinician can resolve from the examination context.
 
 ---
 
@@ -153,6 +169,8 @@ Examples of forbidden drift:
 - adequate non-response re-evaluation
 - progressive disclosure / deferred unresolved state
 - routine-care availability remains separate from whether suggested checks are still outstanding
+- B+ competition rule: meaningful baseline first, then treatment-target-changing information before diagnostic refinement when attention is constrained
+- Hip/SIJ equal-priority tie does not create a new patient question or arbitrary code-order winner
 
 ### Intentionally NOT complete yet — MUST NOT BE FORGOTTEN
 - explainable differential / working-hypothesis engine

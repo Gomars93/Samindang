@@ -7,7 +7,7 @@ import { evaluateLbpCareCoreExperimentV04 } from './.lbp-care-core-v04-bundle.mj
  * These fixtures stress whether the reduced primary-care contract still behaves
  * like the intended Clinical OS experience. Assertions are limited to already
  * agreed product/safety invariants. They DO NOT approve a diagnosis, exam rule,
- * treatment, rehabilitation mapping, or numerical response threshold.
+ * treatment, rehabilitation mapping, prioritization order, or numerical response threshold.
  */
 
 const base = {
@@ -96,7 +96,15 @@ function commonNorthStarAssertions(output, label, { allowClinicianOverrideOverBu
   }
 
   if (output.state === 'SAFETY_REVIEW_FIRST' || output.state === 'SAFETY_REFRESH_FIRST') {
-    assert.equal(output.canProceedWithManagement, false, `${label}: safety state cannot be management-ready`)
+    assert.equal(output.canProceedWithRoutineCare, false, `${label}: safety state cannot expose routine care as available`)
+    assert.equal(output.managementPlanReadyForConfirmation, false)
+  } else {
+    assert.equal(output.canProceedWithRoutineCare, true, `${label}: non-safety uncertainty/recommended checks must not prohibit routine primary care`)
+    assert.equal(
+      output.managementPlanReadyForConfirmation,
+      output.checksNow.length === 0,
+      `${label}: plan readiness must reflect outstanding suggested checks without becoming a care gate`,
+    )
   }
 }
 
@@ -253,12 +261,20 @@ const vignettes = [
       sijContributionCue: 'PRESENT',
     }),
     review(output) {
-      assert.equal(output.checksNow.length, 3)
-      assert.equal(output.unresolvedLater.length, 2)
+      assert.ok(output.checksNow.length <= 3)
+      const allPreserved = new Set([...ids(output.checksNow), ...ids(output.unresolvedLater)])
       assert.deepEqual(
-        new Set(ids(output.unresolvedLater)),
-        new Set(['LBP_CHECK_HIP_CONTRIBUTION', 'LBP_CHECK_SIJ_CONTRIBUTION']),
+        allPreserved,
+        new Set([
+          'LBP_CHECK_OBJECTIVE_NEURO_BASELINE',
+          'LBP_CHECK_WALKING_TOLERANCE',
+          'LBP_CHECK_NEURODYNAMIC',
+          'LBP_CHECK_HIP_CONTRIBUTION',
+          'LBP_CHECK_SIJ_CONTRIBUTION',
+        ]),
       )
+      // Intentionally do NOT assert which domains must be deferred. That is a
+      // clinical prioritization question and remains unapproved.
     },
   },
 ]
@@ -275,7 +291,8 @@ for (const vignette of vignettes) {
     id: vignette.id,
     title: vignette.title,
     state: output.state,
-    canProceedWithManagement: output.canProceedWithManagement,
+    canProceedWithRoutineCare: output.canProceedWithRoutineCare,
+    managementPlanReadyForConfirmation: output.managementPlanReadyForConfirmation,
     checksNow: output.checksNow.map((item) => item.titleKo),
     unresolvedLater: output.unresolvedLater.map((item) => `${item.titleKo} [${item.state}]`),
     actionTags: output.actionTags,
@@ -287,7 +304,7 @@ for (const vignette of vignettes) {
 console.log('\nLBP Care Core v0.4 — primary-care vignette observation snapshots')
 for (const snapshot of snapshots) {
   console.log(`\n[${snapshot.id}] ${snapshot.title}`)
-  console.log(`- state: ${snapshot.state}; management-ready: ${snapshot.canProceedWithManagement}`)
+  console.log(`- state: ${snapshot.state}; routine-care-available: ${snapshot.canProceedWithRoutineCare}; plan-ready: ${snapshot.managementPlanReadyForConfirmation}`)
   console.log(`- 지금 확인: ${snapshot.checksNow.length > 0 ? snapshot.checksNow.join(' / ') : '없음'}`)
   console.log(`- 나중에 재검토 가능: ${snapshot.unresolvedLater.length > 0 ? snapshot.unresolvedLater.join(' / ') : '없음'}`)
   console.log(`- action tags: ${snapshot.actionTags.length > 0 ? snapshot.actionTags.join(', ') : '없음'}`)

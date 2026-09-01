@@ -25,10 +25,32 @@ const test = (name, fn) => {
 }
 
 const BASE_PAYLOAD = DOCTOR_FIXTURES.find((f) => f.name === '수면 주호소 + 동반 소화/통증').payload
+// Genuinely computed via computeFlags(coreSpec.ts) from a real reported red
+// flag (SAFETY_01=sudden_severe_pain) + BOWEL_03=yes -- flags.requires_staff_check
+// is TRUE and self-consistent (unlike forcing the field directly, which
+// would make it inconsistent with the recomputed expectation and trip
+// flagsUnusable instead -- see STAFF_CHECK_PAYLOAD's own note below).
+// Every safety_flags.<region> on this fixture is null (a bowel-symptom
+// scenario, no pain module), so it also doubles as a "zero applicable
+// regions" fixture for the 확인 필요/해당없음 boundary tests.
+const STAFF_CHECK_PAYLOAD = DOCTOR_FIXTURES.find((f) => f.name === '안전 확인 필요').payload
 
 function payloadWithBanner(danger) {
   const p = structuredClone(BASE_PAYLOAD)
   p.flags = { ...p.flags, requires_staff_check: danger }
+  return p
+}
+
+/**
+ * 독립 검수 HIGH-1: `flags`가 구조적으로 완전히 비어있으면(모든 7개 필수
+ * boolean 키 부재) `isFlagsUsable`은 무조건 false -- `commonSafetyBannerReason`의
+ * `flagsUnusable` 축을 단독으로 격리해 테스트하는 가장 명확한 방법이다.
+ * BASE_PAYLOAD 자체는 원래 requires_staff_check=false(모순 없음)이므로
+ * flags를 통째로 지우는 것 외에는 아무것도 바꾸지 않는다.
+ */
+function payloadWithUnusableFlags() {
+  const p = structuredClone(BASE_PAYLOAD)
+  p.flags = {}
   return p
 }
 
@@ -39,13 +61,44 @@ function region(key, label, status) {
   return { key, label, element: React.createElement('div', { className: `doctor__lbpSafety doctor__lbpSafety--${status}` }) }
 }
 
-// ---------- #1 ----------
-test('lane1 summary shows URGENT when common danger banner fires, independent of per-region panel status', () => {
-  const payload = payloadWithBanner(true)
+// ---------- #1 (독립 검수 HIGH-1, 재작성) ----------
+// 이전 버전은 `payloadWithBanner(true)`로 requires_staff_check를 직접
+// 강제 설정했는데, 이는 실제로는 flagsUnusable을 트리거했다(강제한 값이
+// 재계산된 기대값과 모순되어 isFlagsConsistentWithResponses가 실패함) --
+// "URGENT가 뜬다"는 옛 assertion 자체가 이 혼동 위에서 우연히 통과하고
+// 있었을 뿐, generic staff-check가 실제로 URGENT를 만드는지는 검증한 적이
+// 없었다. STAFF_CHECK_PAYLOAD는 진짜 보고된 red flag로 computeFlags가
+// 계산한, 모순 없는 requires_staff_check=true다.
+test('lane1 summary shows 확인 필요 (never URGENT) when only the generic requires_staff_check signal fires, independent of per-region panel status', () => {
+  const regions = [region('lbp', '허리', 'clear'), region('neck', '목', 'clear'), region('shoulder', '어깨', 'clear')]
+  const summary = computeLane1Summary(STAFF_CHECK_PAYLOAD, regions)
+  assert.equal(summary.status, '확인 필요')
+  assert.notEqual(summary.status, 'URGENT')
+  assert.equal(summary.commonBannerDanger, true)
+  assert.equal(summary.staffCheckRequired, true)
+  assert.equal(summary.flagsUnusable, false)
+})
+
+// ---------- #1b (독립 검수 HIGH-1) ----------
+test('lane1 summary shows 계산불가 (never URGENT) when flags themselves are structurally unusable, independent of per-region panel status', () => {
+  const payload = payloadWithUnusableFlags()
   const regions = [region('lbp', '허리', 'clear'), region('neck', '목', 'clear'), region('shoulder', '어깨', 'clear')]
   const summary = computeLane1Summary(payload, regions)
-  assert.equal(summary.status, 'URGENT')
-  assert.equal(summary.commonBannerDanger, true)
+  assert.equal(summary.status, '계산불가')
+  assert.notEqual(summary.status, 'URGENT')
+  assert.equal(summary.flagsUnusable, true)
+  // flagsUsable이 false이면 staffCheckRequired는 정의상 false다(flags를
+  // 신뢰할 수 없는데 그 안의 필드를 근거로 삼을 수 없다).
+  assert.equal(summary.staffCheckRequired, false)
+})
+
+// ---------- #1c (독립 검수 HIGH-1, item 5) ----------
+test('lane1 summary shows 확인 필요 when a region reports review_required alone, with no common-banner condition active', () => {
+  const payload = payloadWithBanner(false)
+  const regions = [region('lbp', '허리', 'review_required'), region('neck', '목', 'clear')]
+  const summary = computeLane1Summary(payload, regions)
+  assert.equal(summary.status, '확인 필요')
+  assert.equal(summary.commonBannerDanger, false)
 })
 
 // ---------- #2 ----------
@@ -88,11 +141,15 @@ test('lane1 summary shows 해당없음 only when zero safety-relevant region pan
   assert.equal(summary.status, '해당없음')
   assert.equal(summary.anyRegionApplicable, false)
 
-  // Sanity: the same zero-applicable-regions record does NOT read 해당없음
-  // if the common banner independently fires (그 경우는 URGENT여야 한다).
-  const dangerPayload = payloadWithBanner(true)
-  const dangerSummary = computeLane1Summary(dangerPayload, regions)
-  assert.equal(dangerSummary.status, 'URGENT')
+  // Sanity: the same zero-applicable-regions shape does NOT read 해당없음
+  // if the common banner independently fires -- STAFF_CHECK_PAYLOAD's own
+  // safety_flags per region are ALSO all null, so this is its natural
+  // shape, not a hand-picked one. 독립 검수 HIGH-1: a generic staff-check
+  // signal reads 확인 필요 here, never URGENT or 해당없음.
+  const dangerSummary = computeLane1Summary(STAFF_CHECK_PAYLOAD, regions)
+  assert.equal(dangerSummary.status, '확인 필요')
+  assert.notEqual(dangerSummary.status, '해당없음')
+  assert.notEqual(dangerSummary.status, 'URGENT')
 })
 
 // ---------- #17 (delta C-2) ----------

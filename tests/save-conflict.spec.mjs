@@ -1071,4 +1071,95 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 }
 
+// ---------- 독립 검수 HIGH-2: ObjectiveExamFindingsCard stale-write conflict ----------
+// (같은 클래스의 검증 방식 -- 이 스위트 헤더 코멘트 참고: useState/
+// useEffect 기반 인터랙티브 로직은 renderToString으로 이벤트를 재현할 수
+// 없어, 여기서는 구조적 source-level guard로 "자동 retry/merge가 없다"를
+// 증명하고, 실제 두 writer 경쟁 시나리오는 tests/server.spec.mjs의 CAS
+// (expected_updated_at/409) 테스트(필드 무관, judgment PUT 라우트 공통)
+// + 실제 브라우저 QA로 확인한다.
+{
+  const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+
+  test('DoctorView.tsx HIGH-2: handleSaveObjectiveExamField calls saveJudgmentToServer exactly once -- no automatic retry after a 409', () => {
+    const fnStart = viewSrc.indexOf('async function handleSaveObjectiveExamField(')
+    const fnEnd = viewSrc.indexOf('\n  }', fnStart)
+    const fn = viewSrc.slice(fnStart, fnEnd)
+    const calls = fn.match(/saveJudgmentToServer\(/g) ?? []
+    assert.equal(calls.length, 1, 'exactly one save attempt per call -- a second call would be the auto-retry this fix removes')
+  })
+
+  test('DoctorView.tsx HIGH-2: a 409 with a server `current` record returns a conflict outcome, never a second merged save', () => {
+    const fnStart = viewSrc.indexOf('async function handleSaveObjectiveExamField(')
+    const fnEnd = viewSrc.indexOf('\n  }', fnStart)
+    const fn = viewSrc.slice(fnStart, fnEnd)
+    assert.match(fn, /return \{ ok: false, conflict: \{ current: current\.judgment, currentUpdatedAt: current\.updated_at \} \}/)
+    // The old auto-retry shape ("rebase onto the server's CURRENT judgment
+    // and retry") must be gone -- no second `attempt(...)`/merge call in
+    // the failure branch.
+    assert.doesNotMatch(fn, /attempt\(current\.judgment/)
+  })
+
+  test('DoctorView.tsx HIGH-2: handleReloadObjectiveExamConflict adopts the server\'s current judgment/updated_at verbatim -- no field-level merge helper referenced', () => {
+    const fnStart = viewSrc.indexOf('function handleReloadObjectiveExamConflict(')
+    const fnEnd = viewSrc.indexOf('\n  }', fnStart)
+    const fn = viewSrc.slice(fnStart, fnEnd)
+    assert.match(fn, /judgment: current, updated_at: currentUpdatedAt/)
+  })
+}
+
+{
+  const cardSrc = fs.readFileSync('src/doctor/ObjectiveExamFindingsCard.tsx', 'utf8')
+
+  test('ObjectiveExamFindingsCard HIGH-2: imports and renders the shared ConflictBanner, not a bespoke conflict UI', () => {
+    assert.match(cardSrc, /import \{ ConflictBanner \} from '\.\/ConflictBanner'/)
+    assert.match(cardSrc, /<ConflictBanner/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: on a conflict result, the clinician\'s local radio selection is never reset -- only status/conflict state changes', () => {
+    const fnStart = cardSrc.indexOf('async function handleChange(')
+    const fnEnd = cardSrc.indexOf('\n  }', fnStart)
+    const fn = cardSrc.slice(fnStart, fnEnd)
+    const conflictBranchStart = fn.indexOf('else if (result.conflict)')
+    const conflictBranchEnd = fn.indexOf('} else if (result.kind', conflictBranchStart)
+    const conflictBranch = fn.slice(conflictBranchStart, conflictBranchEnd)
+    // The branch must set status/conflict state only -- it must never call
+    // applyLocal/setLbp/setShoulder (that would silently discard or
+    // overwrite the clinician's just-picked value).
+    assert.doesNotMatch(conflictBranch, /applyLocal\(/)
+    assert.match(conflictBranch, /setStatus\('conflict'\)/)
+    assert.match(conflictBranch, /setConflict\(\{/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: a fresh onChange call always clears any prior conflict for that field before attempting to save (`setConflict(null)` precedes the save)', () => {
+    const fnStart = cardSrc.indexOf('async function handleChange(')
+    const applyLocalCallIdx = cardSrc.indexOf('applyLocal(value)', fnStart)
+    const setConflictNullIdx = cardSrc.indexOf('setConflict(null)', fnStart)
+    const onSaveCallIdx = cardSrc.indexOf('await onSave(field, value)', fnStart)
+    assert.ok(applyLocalCallIdx < setConflictNullIdx && setConflictNullIdx < onSaveCallIdx)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: the resetKey (record-switch) block also clears both fields\' conflict state -- a stale conflict must not leak to the next patient', () => {
+    const resetBlockStart = cardSrc.indexOf('if (resetKey !== lastSeenResetKey)')
+    const resetBlockEnd = cardSrc.indexOf('\n  }', resetBlockStart)
+    const resetBlock = cardSrc.slice(resetBlockStart, resetBlockEnd)
+    assert.match(resetBlock, /setLbpConflict\(null\)/)
+    assert.match(resetBlock, /setShoulderConflict\(null\)/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: shoulder field has the identical conflict-handling contract as lbp (parity -- same ConflictBanner wiring, same reload handler shape)', () => {
+    const lbpConflictBanner = cardSrc.match(/\{lbpConflict && \(\s*<ConflictBanner[\s\S]*?\/>\s*\)\}/)
+    const shoulderConflictBanner = cardSrc.match(/\{shoulderConflict && \(\s*<ConflictBanner[\s\S]*?\/>\s*\)\}/)
+    assert.ok(lbpConflictBanner, 'lbp field renders a ConflictBanner when lbpConflict is set')
+    assert.ok(shoulderConflictBanner, 'shoulder field renders a ConflictBanner when shoulderConflict is set')
+    assert.match(cardSrc, /handleReloadConflict\(\s*'lbp_objective_motor_deficit'/)
+    assert.match(cardSrc, /handleReloadConflict\(\s*'shoulder_objective_cuff_weakness'/)
+  })
+
+  test('ObjectiveExamFindingsCard HIGH-2: the plain save-status text is suppressed while a conflict is active (never shown alongside the ConflictBanner)', () => {
+    assert.match(cardSrc, /lbpStatus !== 'idle' && lbpStatus !== 'conflict'/)
+    assert.match(cardSrc, /shoulderStatus !== 'idle' && shoulderStatus !== 'conflict'/)
+  })
+}
+
 console.log(`\n${passed} save-conflict assertions passed.`)

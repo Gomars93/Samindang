@@ -3151,9 +3151,25 @@ function detailsRange(html, classMarker) {
     (() => {
       const fnStart = src.indexOf('async function handleSaveObjectiveExamField(')
       if (fnStart === -1) return false
-      const fnEnd = src.indexOf('const showingServerList', fnStart)
+      // 독립 검수 HIGH-2: 바로 다음 함수(handleReloadObjectiveExamConflict)를
+      // 경계로 쓴다 -- 이전 경계 문자열('const showingServerList')은 이미
+      // 이 파일 어디에도 존재하지 않아 indexOf가 -1을 반환했고(=이 함수부터
+      // 파일 끝까지를 통째로 봄), 그래서 saveJudgmentToServer 호출 횟수
+      // 카운트가 다른 곳(JudgmentPanel의 onSave)의 호출까지 같이 세고
+      // 있었다.
+      const fnEnd = src.indexOf('function handleReloadObjectiveExamConflict(', fnStart)
       const fn = src.slice(fnStart, fnEnd)
-      return fn.includes('saveJudgmentToServer(selectedId, next, expectedUpdatedAt)') && fn.includes('createEmptyJudgment(source)')
+      // 독립 검수 HIGH-2: 이전에는 여기서 stale-write 409를 서버의 current
+      // judgment로 rebase해 자동으로 한 번 더 저장했다(별도 `attempt()`
+      // 클로저 + `expectedUpdatedAt` 파라미터). 그 자동 retry/merge를
+      // 제거하면서 CAS 기준을 selectedRecord에서 직접 읽는 단일 호출로
+      // 바뀌었다 -- 여전히 SAME saveJudgmentToServer 경로/데이터 계약이고,
+      // 새 endpoint가 아니라는 이 테스트의 취지는 그대로 유지된다.
+      return (
+        fn.includes('saveJudgmentToServer(selectedId, next, selectedRecord?.updated_at)') &&
+        fn.includes('createEmptyJudgment(source)') &&
+        (fn.match(/saveJudgmentToServer\(/g) ?? []).length === 1
+      )
     })(),
   )
   const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')

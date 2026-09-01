@@ -147,3 +147,18 @@ export type JudgmentSaveOutcome =
   // serverClient.ts's 'auth' kind (401/403). Optional, so this stays
   // backward-compatible with every existing `{ ok: false }` caller.
   | { ok: false; conflict?: undefined; kind?: 'auth' | 'network' | 'other' }
+
+/**
+ * 독립 검수 HIGH-2: ObjectiveExamFindingsCard(원장 진찰 소견 — 안전 판정에
+ * 영향을 줄 수 있는 clinician observation)도 JudgmentPanel과 정확히 같은
+ * `judgment` 필드를 저장하는 두 번째 writer이므로, stale-write 시 자동
+ * retry/merge 대신 같은 conflict 계약을 그대로 쓴다. `JudgmentSaveOutcome`과
+ * 다른 점은 성공 시 `updatedAt`이 필요 없다는 것뿐이다 -- 이 카드는 CAS
+ * 기준을 자체 ref로 추적하지 않고 DoctorView.tsx가 소유한 selectedRecord를
+ * 매 저장마다 그대로 읽으므로, 성공 후에는 selectedRecord 갱신
+ * (setSelectedRecord)만으로 다음 시도의 기준이 이미 최신이 된다.
+ */
+export type ObjectiveExamSaveOutcome =
+  | { ok: true }
+  | { ok: false; conflict: { current: ClinicianJudgment | null; currentUpdatedAt: string } }
+  | { ok: false; conflict?: undefined; kind: 'auth' | 'network' | 'other' }

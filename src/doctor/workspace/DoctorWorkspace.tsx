@@ -38,7 +38,7 @@ import { ageFromDoctorPayload } from '../../spec/lbpAdapter'
 import { answerLabel } from '../labels'
 import './workspace.css'
 import type { DoctorPayload } from '../types'
-import type { ClinicianJudgment } from '../judgment'
+import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
 import { PainWorkspaceLane2, PainWorkspaceNext } from './PainWorkspace'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
 import {
@@ -125,6 +125,7 @@ export function DoctorWorkspace({
   initialRecordUpdatedAt,
   onSaveWorkspace,
   onSaveObjectiveExam,
+  onReloadObjectiveExam,
   priorVisits,
   microFollowUpResponse,
   medicationCourseSlot,
@@ -173,10 +174,14 @@ export function DoctorWorkspace({
    * here so it sits next to the safety surface it feeds without DoctorView
    * having to know about lane layout.
    */
-  onSaveObjectiveExam?: (
-    field: ObjectiveExamField,
-    value: string,
-  ) => Promise<{ ok: true } | { ok: false; kind: 'auth' | 'network' | 'other' }>
+  onSaveObjectiveExam?: (field: ObjectiveExamField, value: string) => Promise<ObjectiveExamSaveOutcome>
+  /**
+   * 독립 검수 HIGH-2: ObjectiveExamFindingsCard의 stale-write conflict
+   * 배너에서 "최신 내용 불러오기"를 눌렀을 때 호출된다 -- DoctorView.tsx가
+   * 소유한 selectedRecord를 서버의 current judgment/updated_at으로 맞춰,
+   * 다음 저장 시도가 같은 conflict를 반복하지 않게 한다.
+   */
+  onReloadObjectiveExam?: (current: ClinicianJudgment | null, currentUpdatedAt: string) => void
   /** Round 3 Phase C: already-fetched prior-visit RAW history for this exact patient_id, or undefined/null when unavailable (fixtures mode, no server, or nothing prior). */
   priorVisits?: PatientHistoryResult | null
   /** Round 3 Phase D: already-fetched micro follow-up response for THIS visit, or undefined/null when unavailable/not yet answered. */
@@ -535,6 +540,7 @@ export function DoctorWorkspace({
               initialLbp={lbpObjectiveMotorDeficit}
               initialShoulder={shoulderObjectiveCuffWeakness}
               onSave={onSaveObjectiveExam}
+              onReloadConflict={onReloadObjectiveExam}
               // m4 (Phase 10 closing review): the same unified reset key this
               // component's own workspaceState uses above (recordKey) --
               // without it, this card's radio selections/save status

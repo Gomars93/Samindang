@@ -6,7 +6,12 @@ import { JudgmentPanel } from './JudgmentPanel'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { buildEmrSummary } from './emrSummary'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
-import { createEmptyJudgment, type ClinicianJudgment, type JudgmentSourcePayload } from './judgment'
+import {
+  createEmptyJudgment,
+  type ClinicianJudgment,
+  type JudgmentSourcePayload,
+  type ObjectiveExamSaveOutcome,
+} from './judgment'
 import type { DoctorPayload } from './types'
 import type { AnswerValue } from '../types'
 import {
@@ -3214,19 +3219,23 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // saves it through the exact same PUT judgment endpoint JudgmentPanel
   // itself uses. `judgment` is server-side a single object, so this and
   // JudgmentPanel's own "기록" click are two independent writers to the
-  // SAME field -- on a 409 (JudgmentPanel's own "기록" landed in between),
-  // this rebases onto the server's now-current judgment and retries ONCE
-  // rather than surfacing a conflict UI for a single radio click; a
-  // second collision in that same instant is not specifically guarded
-  // (matches this codebase's existing single-retry precedent, e.g.
-  // store.js's startRevisit dedup window) and would surface as a plain
-  // save failure, not a silent loss (finalizeJudgment/validateJudgment are
-  // not needed here -- only prunes empty text arrays and stamps
-  // recorded_at, both harmless no-ops on an already-clean record).
+  // SAME field.
+  //
+  // 독립 검수 HIGH-2: 이전 버전은 409(stale write) 발생 시 서버의 current
+  // judgment 위에 이 필드의 로컬 value를 다시 merge해 자동으로 1회
+  // 재저장했다. `lbp_objective_motor_deficit`/`shoulder_objective_cuff_weakness`는
+  // 안전 판정(URGENT_REVIEW/신속 전문의 평가 고려)에 영향을 줄 수 있는
+  // clinician observation이라, 다른 탭/기기에서 방금 저장한 최신 소견을
+  // 사람 확인 없이 조용히 덮어쓸 수 있었다(두 필드가 아니라 같은 필드에
+  // 대한 두 writer가 경쟁하는 경우 포함). 자동 retry/merge를 제거하고
+  // PR #24가 JudgmentPanel/DoctorWorkspace에 이미 정착시킨 원칙 그대로
+  // conflict를 반환한다 -- ObjectiveExamFindingsCard가 ConflictBanner로
+  // 명시적으로 보여주고, 원장이 "최신 내용 불러오기"를 누른 뒤에만 값이
+  // 바뀐다(handleReloadObjectiveExamConflict 참고).
   async function handleSaveObjectiveExamField(
     field: 'lbp_objective_motor_deficit' | 'shoulder_objective_cuff_weakness',
     value: string,
-  ): Promise<{ ok: true } | { ok: false; kind: 'auth' | 'network' | 'other' }> {
+  ): Promise<ObjectiveExamSaveOutcome> {
     if (!(mode === 'server' && selectedId)) return { ok: false, kind: 'other' }
     const source: JudgmentSourcePayload = {
       session_id: payload.session_id,
@@ -3236,24 +3245,30 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       myungri_status: saju.status,
       myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),
     }
-    const attempt = async (base: ClinicianJudgment | null, expectedUpdatedAt: string | undefined) => {
-      const next: ClinicianJudgment = { ...(base ?? createEmptyJudgment(source)), [field]: value }
-      return saveJudgmentToServer(selectedId, next, expectedUpdatedAt)
-    }
-    let result = await attempt(selectedRecord?.judgment ?? null, selectedRecord?.updated_at)
-    if (!result.ok) {
-      const current = result.errorBody?.current as SubmissionRecord | undefined
-      if (current) {
-        // Stale-write (409): rebase onto the server's CURRENT judgment
-        // (whatever JudgmentPanel's own "기록" just landed) and retry once.
-        result = await attempt(current.judgment, current.updated_at)
-      }
-    }
+    const base = selectedRecord?.judgment ?? null
+    const next: ClinicianJudgment = { ...(base ?? createEmptyJudgment(source)), [field]: value }
+    const result = await saveJudgmentToServer(selectedId, next, selectedRecord?.updated_at)
     if (result.ok) {
       setSelectedRecord(result.data)
       return { ok: true }
     }
+    const current = result.errorBody?.current as SubmissionRecord | undefined
+    if (current) {
+      return { ok: false, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
+    }
     return { ok: false, kind: result.kind }
+  }
+
+  // 독립 검수 HIGH-2: ObjectiveExamFindingsCard의 ConflictBanner에서
+  // "최신 내용 불러오기"를 누른 순간 호출된다. `handleSaveObjectiveExamField`는
+  // 매 저장 시도마다 CAS 기준(judgment/updated_at)을 selectedRecord에서
+  // 그대로 읽으므로(JudgmentPanel처럼 자체 ref로 추적하지 않는다), 여기서
+  // selectedRecord를 서버의 current로 맞춰주지 않으면 다음 저장 시도가
+  // 똑같은 stale 기준으로 다시 409를 만든다. 필드 값을 자동으로 합치지
+  // 않고 서버가 돌려준 current judgment/updated_at을 있는 그대로 반영할
+  // 뿐이다 -- 새로운 병합 로직이 아니다.
+  function handleReloadObjectiveExamConflict(current: ClinicianJudgment | null, currentUpdatedAt: string) {
+    setSelectedRecord((prev) => (prev ? { ...prev, judgment: current, updated_at: currentUpdatedAt } : prev))
   }
 
   // P1 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.3): the unified
@@ -4166,6 +4181,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         priorVisits={mode === 'server' ? priorVisits : undefined}
         microFollowUpResponse={mode === 'server' ? microFollowUpResponse : undefined}
         onSaveObjectiveExam={mode === 'server' && selectedId ? handleSaveObjectiveExamField : undefined}
+        onReloadObjectiveExam={mode === 'server' && selectedId ? handleReloadObjectiveExamConflict : undefined}
         medicationCourseSlot={
           mode === 'server' && selectedRecord?.patient_id ? (
             <MedicationCourseSection key={selectedRecord.patient_id} patientUuid={selectedRecord.patient_id} />

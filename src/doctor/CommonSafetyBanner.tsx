@@ -645,10 +645,37 @@ function answerLabelFor(qid: string, value: AnswerValue | undefined): string {
  * of forking a third copy of isFlagsUsable.
  */
 export function commonSafetyBannerActive(payload: DoctorPayload): boolean {
+  const { flagsUnusable, staffCheckRequired } = commonSafetyBannerReason(payload)
+  return flagsUnusable || staffCheckRequired
+}
+
+/**
+ * 독립 검수 HIGH-1: `commonSafetyBannerActive()`의 단일 boolean은 배너가
+ * 떠야 하는 서로 다른 두 원인 -- (a) flags 자체를 구조적으로 못 읽음(계산
+ * 자체를 신뢰할 수 없음) vs (b) flags는 정상적으로 읽었고 그 안의 generic
+ * staff-review 신호(requires_staff_check)가 true -- 를 하나로 뭉갠다.
+ * lane1Summary.ts가 이 둘을 서로 다른 severity(계산불가 vs 확인 필요)로
+ * 표시하려면 원인을 분리해서 알아야 한다. 이 함수는 그 두 원인을 그대로
+ * 노출할 뿐, 배너를 띄울지 말지의 기존 판단(둘 중 하나라도 참이면 배너는
+ * 여전히 뜬다 -- commonSafetyBannerActive 참고)은 전혀 바꾸지 않는다.
+ * 새 임상 threshold나 새 red-flag 의미가 아니라, 이미 계산된 두 boolean을
+ * 그대로 분리해 반환하는 것뿐이다.
+ */
+export type CommonSafetyBannerReason = {
+  /** flags가 구조적으로 무효/버전skew/응답과 모순 -- 계산 자체를 신뢰할 수 없음. */
+  flagsUnusable: boolean
+  /** flags는 유효하고, 그 안의 generic staff-review 신호가 true. */
+  staffCheckRequired: boolean
+}
+
+export function commonSafetyBannerReason(payload: DoctorPayload): CommonSafetyBannerReason {
   const r = payload.responses
   const { flags } = payload
   const flagsUsable = isFlagsUsable(flags, r)
-  return !flagsUsable || (flagsUsable && Boolean(flags.requires_staff_check))
+  return {
+    flagsUnusable: !flagsUsable,
+    staffCheckRequired: flagsUsable && Boolean(flags.requires_staff_check),
+  }
 }
 
 /**

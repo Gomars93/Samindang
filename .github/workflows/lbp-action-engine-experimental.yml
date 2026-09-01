@@ -6,10 +6,12 @@ on:
     paths:
       - 'src/doctor/workspace/lbpActionAdaptiveEngine.experimental.ts'
       - 'src/doctor/workspace/lbpActionAdaptiveEngine.v02.experimental.ts'
+      - 'src/doctor/workspace/lbpActionAdaptiveEngine.v03.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.v02.experimental.spec.mjs'
+      - 'tests/lbp-action-adaptive-engine.v03.experimental.spec.mjs'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
 jobs:
@@ -42,6 +44,14 @@ jobs:
           --platform=neutral
           --outfile=tests/.lbp-action-adaptive-engine-v02-bundle.mjs
 
+      - name: Bundle experimental v0.3 sufficiency engine
+        run: >-
+          npx esbuild src/doctor/workspace/lbpActionAdaptiveEngine.v03.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-action-adaptive-engine-v03-bundle.mjs
+
       - name: Run LBP action-adaptive stress scenarios
         run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
 
@@ -53,3 +63,6 @@ jobs:
 
       - name: Run LBP action-adaptive v0.2 Decision Key stress suite
         run: node tests/lbp-action-adaptive-engine.v02.experimental.spec.mjs
+
+      - name: Run LBP action-adaptive v0.3 Decision Sufficiency stress suite
+        run: node tests/lbp-action-adaptive-engine.v03.experimental.spec.mjs

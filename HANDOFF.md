@@ -1,6 +1,36 @@
 # Current Handoff
 
-## Objective (Core Reduction Phase 10 closing review 지적 해소, 이번 세션)
+## ⚠️ 갱신 (2026-09-01): Phase 10 delta 재심사 PASS로 종료됨 — 아래
+## "Objective (Core Reduction Phase 10 closing review 지적 해소)" 절은
+## 재심사 진행 중이던 시점의 snapshot이라 지금 기준으로는 stale하다.
+## 실제 브랜치 HEAD는 `8100fe8`("Core Reduction Phase 10 delta — PASS
+## (BLOCKER 0, MAJOR 0), gate closed") — Opus 독립 재검증이 BLOCKER-1/
+## MAJOR-2/MAJOR-3/m4 + 문서 3건 전부 해소를 확인했고, Completion Gate
+## 최종 확인문까지 받았다(`docs/CORE_REDUCTION_PHASE10_CLOSING_DELTA_v0.2.md`
+## 참고). 아래 절의 "남은 것 = Phase 10 delta 재심사" 문구는 더 이상
+## 유효하지 않다 — Core Reduction P0~P10 전체가 완료 상태다.
+##
+## 이 갱신에서 추가로 처리한 것: Phase 5 synthesis(§7)의 HUMAN DECISION
+## REQUIRED 6건 중 남아있던 #5(`nextVisitCheckItem`↔`FollowUpTarget`
+## 통일 여부)·#6(재진 화면 투약 코스 마운트)을 PO에게 직접 질의해 확정
+## (둘 다 "이번 배치 범위에서는 변경 없음" — #5는 통합 안 함 확정, #6은
+## 보류). 코드 변경 없음, 결정만 `DECISIONS.md`("Core Reduction HUMAN
+## DECISION #5/#6: PO 확정")와 `docs/CORE_REDUCTION_PHASE5_SYNTHESIS_
+## v1.0.md`§7에 기록. HUMAN DECISION 6건 중 #1~#4는 별도 세션에서 이미
+## 논의됐으나(이 세션 기록에는 그 결정문이 없음) 이 문서/DECISIONS.md에
+## 아직 명시적으로 반영되지 않았다 — 다음 세션에서 확인 필요.
+##
+## **다음 액션**: 이 브랜치(`claude/feat-core-reduction`)는 아직 PR이
+## 없다 — main에는 impeccable/humanize-korean 스킬 설치용 별도 브랜치
+## (`claude/chore-install-humanize-korean-and-impeccable-skills`)가
+## 이미 push돼 있어 서로 무관하게 진행 중이니 혼동 금지. Core Reduction
+## PR 생성 여부는 사용자에게 별도로 확인한다 — 이 세션은 스스로 PR을
+## 만들거나 main에 push하지 않는다.
+
+---
+
+## Objective (Core Reduction Phase 10 closing review 지적 해소, 이전 세션 —
+## 위 갱신 참고: 이 절 자체는 재심사 진행 중이던 시점 기록, 지금은 PASS로 종료됨)
 
 **브랜치**: `claude/feat-core-reduction` (origin push됨, PR 미생성 —
 Phase 10 delta 재심사 전에는 PR을 열지 않는다).

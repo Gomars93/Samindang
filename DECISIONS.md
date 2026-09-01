@@ -1392,3 +1392,48 @@ Phase 7 §3.2가 명시한 "5블록 고정 높이 예산"(다른 네 블록까�
   "SYNTHETIC · ..." 접두사 등 표기 스타일 차이). 테스트가 이 정확한
   문자열에 의존하지 않으므로 동작 회귀는 아니지만, 스펙 문서와 fixture
   문구가 완전히 동기화돼 있지는 않다는 사실을 공개한다.
+
+## 2026-09-01 — Core Reduction HUMAN DECISION #5/#6: PO 확정 (코드 변경 없음)
+
+### Context
+`docs/CORE_REDUCTION_PHASE5_SYNTHESIS_v1.0.md` §7의 "HUMAN DECISION
+REQUIRED (6건)" 중 #5(`CarePlan.nextVisitCheckItem` ↔ `FollowUpTarget`
+통일 여부)와 #6(재진 화면 투약 코스 마운트)을 PO(사용자)에게
+`AskUserQuestion`으로 직접 질의해 확정했다. 이번 세션은 둘 다 결정만
+기록하고 코드는 건드리지 않는다 — Core Reduction 구현(P0~P6)은 이미
+Phase 10 closing review PASS(BLOCKER 0, MAJOR 0)로 종료된 배치이므로,
+이 결정에 따른 실제 구현은 별도 배치/PR로 진행한다.
+
+### Decision — #5 (nextVisitCheckItem ↔ FollowUpTarget)
+**통합하지 않는다. §2.5(게이트 B-2)에서 이미 적용한 "양쪽 필드 유지 +
+'재평가 대상(측정 추적)' / '다음 방문 확인 메모(자유 기록)' 관계 라벨
+병기"를 최종 구조로 확정한다.** 두 필드를 하나로 합치는 리팩터링(파급
+4곳 — carry-forward 쓰기 경로, NextActionCard 소스, EMR/환자 전달문
+템플릿, blank 판정 3함수 — 및 `getPatientHistory` 투영 확장)은 이번
+Core Reduction 배치 범위에 포함하지 않으며, 추후 필요성이 재확인되면
+그때 별도 계획으로 다시 논의한다.
+
+### Decision — #6 (재진 화면 투약 코스)
+**보류(DEFER). 이번 배치에서는 추가하지 않는다.** `MedicationCourse`는
+초진(제출건) 화면에만 계속 존재하고, 재진(`RevisitWorkspace`) 화면에는
+마운트하지 않는다. Core Reduction 배치는 "구조 정리·회귀 수정만, 새
+기능 추가 금지" 원칙으로 이대로 닫는다. 재진 화면에 투약 이력을
+보여줄지는 별도 기능 요청/작업으로 다룬다.
+
+### Reason
+- #5: 통합의 실제 비용(4곳 동시 수정 + 히스토리 투영 확장)이 이번
+  배치의 "구조 축소, 새 로직 최소화" 목표와 맞지 않는다고 PO가 판단.
+  현재 라벨 구분만으로도 혼동 문제(원래 게이트가 지적한 UX 문제)는
+  해소된 상태이므로, 통합을 강행할 긴급성이 없다.
+- #6: "기존 컴포넌트의 표면 확장이 새 기능 추가 원칙의 예외인지"가
+  이번 배치 규칙만으로는 판단 불가 — PO가 명시적으로 범위 밖으로 결정.
+
+### Trade-offs
+- (+) 두 결정 모두 코드 변경이 없어 이미 종료된 Phase 10 PASS 상태를
+  재오픈하지 않는다 — 회귀 위험 0.
+- (−) `nextVisitCheckItem`/`FollowUpTarget` 두 필드가 계속 별도로
+  존재해, 이 둘을 동시에 읽는 코드는 앞으로도 두 값을 각각 신경 써야
+  한다(§2.8 cross-patient 격리 장치 표와 무관 — 이 필드들은 이미
+  기존 리셋 키 규약을 그대로 따른다).
+- (−) 재진 화면에서 투약 이력을 보고 싶다는 실제 임상 니즈가 있다면,
+  다음 배치까지 미충족 상태로 남는다.

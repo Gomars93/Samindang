@@ -98,11 +98,19 @@ function assertCoreContract(output, label) {
     `${label}: duplicate unresolved item`,
   )
 
-  if (output.state === 'READY_TO_MANAGE') {
-    assert.equal(output.checksNow.length, 0, `${label}: ready state cannot contain current checks`)
-    assert.equal(output.canProceedWithManagement, true)
-  } else {
-    assert.equal(output.canProceedWithManagement, false)
+  if (output.state === 'READY_TO_CONFIRM_PLAN') {
+    assert.equal(output.checksNow.length, 0, `${label}: plan-ready state cannot contain current checks`)
+    assert.equal(output.canProceedWithRoutineCare, true)
+    assert.equal(output.managementPlanReadyForConfirmation, true)
+  }
+  if (output.state === 'CHECKS_RECOMMENDED') {
+    assert.ok(output.checksNow.length > 0, `${label}: checks-recommended state must contain a current check`)
+    assert.equal(output.canProceedWithRoutineCare, true, `${label}: non-safety recommended checks must not block routine primary care`)
+    assert.equal(output.managementPlanReadyForConfirmation, false)
+  }
+  if (output.state === 'SAFETY_REVIEW_FIRST' || output.state === 'SAFETY_REFRESH_FIRST') {
+    assert.equal(output.canProceedWithRoutineCare, false)
+    assert.equal(output.managementPlanReadyForConfirmation, false)
   }
 }
 
@@ -111,7 +119,7 @@ let matrixCases = 0
 let totalCurrent = 0
 let totalLater = 0
 let readyCases = 0
-let checksNeededCases = 0
+let checksRecommendedCases = 0
 
 // Core projection must be lossless relative to v0.3 dispositions while hiding
 // the research machinery from the product-facing contract.
@@ -148,8 +156,8 @@ for (const legSymptoms of cueValues) {
           matrixCases += 1
           totalCurrent += core.checksNow.length
           totalLater += core.unresolvedLater.length
-          if (core.state === 'READY_TO_MANAGE') readyCases += 1
-          if (core.state === 'CHECKS_NEEDED') checksNeededCases += 1
+          if (core.state === 'READY_TO_CONFIRM_PLAN') readyCases += 1
+          if (core.state === 'CHECKS_RECOMMENDED') checksRecommendedCases += 1
         }
       }
     }
@@ -160,7 +168,7 @@ assert.equal(matrixCases, 243)
 assert.equal(totalCurrent, 501, 'core projection should preserve the v0.3 initial current-check baseline')
 assert.equal(totalLater, 30, 'core projection should preserve v0.3 deferred clinical debt at baseline')
 assert.equal(readyCases, 16)
-assert.equal(checksNeededCases, 227)
+assert.equal(checksRecommendedCases, 227)
 
 // Safety review remains the top-level state and no hidden routine queue leaks.
 {
@@ -224,9 +232,10 @@ assert.equal(checksNeededCases, 227)
     }),
   )
   assertCoreContract(output, 'clinician override')
-  assert.equal(output.state, 'CHECKS_NEEDED')
+  assert.equal(output.state, 'CHECKS_RECOMMENDED')
   assert.equal(output.checksNow.length, 5)
   assert.ok(output.checksNow.every((item) => item.requestedByClinician))
+  assert.equal(output.canProceedWithRoutineCare, true)
 }
 
 // Synthetic current-visit sufficiency may leave optional items unresolved for
@@ -244,7 +253,7 @@ assert.equal(checksNeededCases, 227)
   })
   const output = evaluateLbpCareCoreExperimentV04(input)
   assertCoreContract(output, 'reduced sufficient state')
-  assert.equal(output.state, 'READY_TO_MANAGE')
+  assert.equal(output.state, 'READY_TO_CONFIRM_PLAN')
   assert.deepEqual(new Set(ids(output.unresolvedLater)), new Set(['LBP_CHECK_HIP_CONTRIBUTION', 'LBP_CHECK_SIJ_CONTRIBUTION']))
   assert.ok(output.unresolvedLater.every((item) => item.state === 'NOT_NEEDED_TODAY'))
 }
@@ -253,6 +262,6 @@ console.log('\nLBP Care Core v0.4 reduction stress summary')
 console.log(`- cue matrix: ${matrixCases} cases`)
 console.log(`- current checks preserved: ${totalCurrent}`)
 console.log(`- unresolved-later items preserved: ${totalLater}`)
-console.log(`- READY_TO_MANAGE baseline cases: ${readyCases}`)
-console.log(`- CHECKS_NEEDED baseline cases: ${checksNeededCases}`)
-console.log('PASS: v0.4 reduced primary-care contract preserves v0.3 behavior without exposing research-layer machinery')
+console.log(`- READY_TO_CONFIRM_PLAN baseline cases: ${readyCases}`)
+console.log(`- CHECKS_RECOMMENDED baseline cases: ${checksRecommendedCases}`)
+console.log('PASS: v0.4 reduced primary-care contract preserves v0.3 behavior without turning recommended checks into a routine-care gate')

@@ -14,7 +14,7 @@
  *   are never suppressed by a sufficiency shortcut;
  * - "not needed today" is explicit, not converted to NORMAL / NEGATIVE;
  * - sufficiency itself is visit-scoped and is invalidated by adequate
- *   non-response, so a stale "we know enough" flag cannot hide re-evaluation.
+ *   non-response or a newly unresolved foundational decision.
  *
  * IMPORTANT: managementSufficiency is deliberately supplied by the caller in
  * this experiment. No clinical mapping from exam results -> SUFFICIENT is
@@ -208,7 +208,7 @@ function stageWithSufficiency(
   notNeededToday: LbpNotNeededTodayCheck[]
 } {
   const current: LbpDecisionCheckV03[] = []
-  const deferred: LbpDeferredCheckV03[] = []
+  const deferred: LbpDeferredDecisionCheckV03[] = []
   const notNeededToday: LbpNotNeededTodayCheck[] = []
 
   const unique = candidates.filter(
@@ -260,21 +260,40 @@ export function evaluateLbpActionAdaptiveExperimentV03(
   const requestedSufficiency = normalizedSufficiency(context)
   const effective = resolveEffectiveSufficiency(context, requestedSufficiency)
   const candidates = v02.allCandidateChecks.map(withRole)
-  const staged = stageWithSufficiency(
-    candidates,
-    effective.effectiveStatus,
-    effective.suppressionAllowed,
-  )
-
   const assessedAfterDecisionKeys = requestedSufficiency.assessedAfterDecisionKeys ?? []
+  const assessedAfterSet = new Set(assessedAfterDecisionKeys)
+
+  let effectiveStatus = effective.effectiveStatus
+  let suppressionAllowed = effective.suppressionAllowed
+  const sufficiencyWarningsKo = [...effective.warningsKo]
+
+  if (suppressionAllowed) {
+    const newlyUnresolvedFoundational = candidates.filter(
+      (candidate) =>
+        (candidate.decisionRole === 'FOUNDATIONAL' || candidate.decisionRole === 'BLOCKING') &&
+        !assessedAfterSet.has(candidate.decisionKey),
+    )
+    if (newlyUnresolvedFoundational.length > 0) {
+      suppressionAllowed = false
+      effectiveStatus = 'UNCERTAIN'
+      sufficiencyWarningsKo.push(
+        `충분성 판정 이후 새로 미해결된 foundational Decision Key가 있습니다: ${newlyUnresolvedFoundational
+          .map((item) => item.decisionKey)
+          .join(', ')}. 이 결정을 먼저 확인하기 전에는 선택적 검사를 억제하지 않습니다.`,
+      )
+    }
+  }
+
+  const staged = stageWithSufficiency(candidates, effectiveStatus, suppressionAllowed)
+
   const reasonKo =
     requestedSufficiency.reasonKo ??
-    (effective.effectiveStatus === 'SUFFICIENT_FOR_TODAY'
+    (effectiveStatus === 'SUFFICIENT_FOR_TODAY'
       ? '실험 입력에서 현재 방문 관리전략이 충분한 것으로 표시되었습니다. 이 상태를 만드는 실제 임상 rule은 아직 정의하지 않았습니다.'
-      : effective.effectiveStatus === 'INSUFFICIENT_FOR_TODAY'
+      : effectiveStatus === 'INSUFFICIENT_FOR_TODAY'
         ? '현재 방문 관리전략이 아직 충분하지 않은 것으로 취급되어 선택적 refinement를 계속 검토합니다.'
-        : effective.effectiveStatus === 'UNCERTAIN'
-          ? '관리전략 충분성 자체가 불명확하거나 provenance가 부족하여 선택적 refinement를 자동으로 폐기하지 않습니다.'
+        : effectiveStatus === 'UNCERTAIN'
+          ? '관리전략 충분성 자체가 불명확하거나 provenance/새 foundational decision 때문에 선택적 refinement를 자동으로 폐기하지 않습니다.'
           : '관리전략 충분성을 아직 평가하지 않았습니다.')
 
   return {
@@ -285,15 +304,15 @@ export function evaluateLbpActionAdaptiveExperimentV03(
     allCandidateChecks: candidates,
     sufficiency: {
       requestedStatus: requestedSufficiency.status,
-      effectiveStatus: effective.effectiveStatus,
+      effectiveStatus,
       freshness: effective.freshness,
       assessmentIsClinicalRule: false,
-      suppressionAllowed: effective.suppressionAllowed,
+      suppressionAllowed,
       reasonKo,
-      warningsKo: effective.warningsKo,
+      warningsKo: sufficiencyWarningsKo,
       assessedAfterDecisionKeys,
     },
-    invariantWarningsKo: [...v02.invariantWarningsKo, ...effective.warningsKo],
+    invariantWarningsKo: [...v02.invariantWarningsKo, ...sufficiencyWarningsKo],
     stopRule: {
       satisfied:
         v02.routinePathway !== 'AVAILABLE' ||

@@ -200,9 +200,29 @@ P2 V3 셸(§2.1 좌/우 분배 + §2.8 통합 리셋 키) + 레인1/2 → P3 판
 
 1. P0-4 범위: pain 진찰 자유 기록(OBSERVED)까지만 (추천) vs 검사 제안 자동 생성
    규칙 신설(임상 규칙 발명 — 범위 밖).
+   **✅ 2026-09-01 PO 확정 — CLOSED.** Pain 진찰은 clinician이 직접 입력하는
+   `OBSERVED` 자유 기록/객관 소견까지만 지원한다. 새로운
+   `patient_fact → physical exam suggestion` 자동 생성 규칙은 만들지 않는다.
+   새로운 임상 threshold, 검사 추천 mapping, 임상 의미 확장은 이번 Core
+   Reduction 범위 밖이다. 기존 승인된/FROZEN 임상 로직은 변경하지 않는다.
+   `DECISIONS.md`의 "Core Reduction HUMAN DECISION #1~#4: PO 확정" 항목 참고.
 2. `in_consultation` 자동 전이 (기존 미결).
+   **⏳ OPEN 유지.** 이전 세션에서 최종 승인됐다는 명확한 근거가 확인되지
+   않아 임의로 결정하지 않는다. 현재 동작(수동/기존 전이 경로)을 변경하지
+   않고, `HUMAN DECISION REQUIRED` 상태를 그대로 유지한다.
 3. 병렬 redesign 브랜치 처분 (visual reference로만 사용 중).
+   **✅ 2026-09-01 PO 확정 — CLOSED.** Core Reduction에서 확정·구현된 구조를
+   제품 기준선(source of truth)으로 본다. 별도 병렬 redesign 브랜치는 merge
+   대상이나 새로운 architecture source of truth로 사용하지 않는다 — 필요하면
+   visual reference로만 참고한다. Core Reduction의 실제 코드/구조를 병렬
+   redesign에 맞춰 다시 변경하지 않는다. (브랜치 자체의 삭제/close 등
+   파괴적 정리는 이 결정에 포함되지 않는다 — 결정 기록만.)
 4. CRM reason_code 임상어 라벨 문구 확정.
+   **🟡 PARTIAL OPEN.** 구조 원칙은 확정: `reason_code`는 controlled enum
+   구조를 유지하고, 질환 진단·임상 위험도 확정·새로운 임상 의미를 label에
+   삽입하지 않는다 — 현재 코드/enum 의미는 변경하지 않는다. 다만 실제
+   한국어 표시 문구(wording)의 최종 카피는 아직 PO 승인되지 않았다 —
+   이 부분만 `HUMAN DECISION REQUIRED`로 계속 유지한다.
 5. **(신설, B-2)** `CarePlan.nextVisitCheckItem` ↔ `FollowUpTarget` 통일 여부 —
    파급 4곳(carry-forward 쓰기/NextActionCard 소스/EMR·환자 전달문 템플릿/blank
    판정 3함수) + `getPatientHistory` 투영 확장을 포함한 별도 계획 필요. 이번 범위

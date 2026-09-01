@@ -1437,3 +1437,64 @@ Core Reduction 배치 범위에 포함하지 않으며, 추후 필요성이 재�
   기존 리셋 키 규약을 그대로 따른다).
 - (−) 재진 화면에서 투약 이력을 보고 싶다는 실제 임상 니즈가 있다면,
   다음 배치까지 미충족 상태로 남는다.
+
+## 2026-09-01 — Core Reduction HUMAN DECISION #1~#4: PO 확정 (코드 변경 없음)
+
+### Context
+`docs/CORE_REDUCTION_PHASE5_SYNTHESIS_v1.0.md` §7 "HUMAN DECISION
+REQUIRED (6건)" 중 #5/#6은 위 항목("Core Reduction HUMAN DECISION
+#5/#6: PO 확정")에서 이미 확정됐다. 이번 항목은 나머지 #1~#4를
+PO에게 직접 확인해 정리한다. 이번 세션은 결정만 기록하고 제품
+코드/임상 로직을 변경하지 않는다 — Core Reduction 구현(P0~P10)은
+이미 Phase 10 closing review PASS(BLOCKER 0, MAJOR 0, `8100fe8`)로
+종료된 배치이며, 이 결정 기록은 그 상태를 재오픈하지 않는다.
+
+### Decision — #1 (P0-4 범위): CLOSED
+Pain 진찰은 clinician이 직접 입력하는 `OBSERVED` 자유 기록/객관
+소견까지만 지원한다. 새로운 `patient_fact → physical exam
+suggestion` 자동 생성 규칙은 만들지 않는다. 새로운 임상 threshold,
+검사 추천 mapping, 임상 의미 확장은 이번 Core Reduction 범위 밖이다.
+기존 승인된/FROZEN 임상 로직(`src/spec/*Logic.ts`/`*Adapter.ts`)은
+변경하지 않는다.
+
+### Decision — #2 (`in_consultation` 자동 전이): OPEN 유지
+이전 세션에서 최종 승인됐다는 명확한 근거가 확인되지 않았다. 자동
+전이 여부를 임의로 결정하지 않고, 현재 동작을 변경하지 않으며,
+`HUMAN DECISION REQUIRED` 상태로 유지한다 — 결정된 것처럼 문서화하지
+않는다.
+
+### Decision — #3 (병렬 redesign 브랜치): CLOSED
+Core Reduction에서 확정·구현된 구조를 제품 기준선(source of truth)으로
+본다. 별도 병렬 redesign 브랜치는 merge 대상이나 새로운 architecture
+source of truth로 사용하지 않는다 — 필요하면 visual reference로만
+참고한다. Core Reduction의 실제 코드/구조를 병렬 redesign에 맞춰 다시
+변경하지 않는다. 실제 브랜치 삭제/close 등 파괴적 정리는 이 결정에
+포함하지 않는다 — 결정만 기록하고 브랜치 자체는 손대지 않았다.
+
+### Decision — #4 (CRM `reason_code` 임상어 라벨): PARTIAL OPEN
+구조 원칙만 확정한다 — `reason_code`는 controlled enum 구조를
+유지하고, 질환 진단·임상 위험도 확정·새로운 임상 의미를 label에
+삽입하지 않는다. 현재 코드/enum 의미는 변경하지 않는다. 실제 한국어
+표시 문구(wording)의 최종 카피는 아직 PO 승인되지 않은 상태로
+남기며, 이 부분만 `HUMAN DECISION REQUIRED`로 계속 유지한다.
+
+### Reason
+- #1: 이번 배치 원칙("새 임상 규칙 발명 금지, 구조 축소만")과 정확히
+  일치 — 자동 검사 추천 생성은 새로운 임상 판단 로직이라 범위 밖.
+- #2: 과거 승인 여부가 이 세션이 확인 가능한 기록으로 남아있지 않아,
+  "결정됐다"고 임의로 단정하면 실제로는 없었던 승인을 만들어내는
+  것과 같다 — 근거 없는 채로 OPEN을 CLOSED로 바꾸지 않는다.
+- #3: 병렬 redesign 브랜치를 다시 architecture 기준으로 삼으면 이미
+  통과한 Phase 10 Completion Gate(§7 최종 확인문)와 충돌하는 새
+  구조 논의를 재개하게 된다 — 제품 기준선은 하나로 유지.
+- #4: enum 구조 원칙은 이번 배치의 "controlled vocabulary 유지"
+  전제와 바로 연결되지만, 한국어 wording은 임상 언어 감수성이 걸린
+  별도 승인 사안이라 구조 결정과 분리했다.
+
+### Trade-offs
+- (+) #1/#3 CLOSED로 이번 배치의 임상 로직 범위와 architecture
+  기준선이 명확해져, 이후 배치에서 같은 질문이 재부상하지 않는다.
+- (+) 4건 모두 코드 변경이 없어 Phase 10 PASS 상태(PR #26,
+  `dcbcbd3` 기준)를 재오픈하지 않는다.
+- (−) #2/#4는 여전히 미해결 — `in_consultation` 자동 전이와 CRM
+  reason_code 한국어 라벨은 다음 배치에서 다시 PO 확인이 필요하다.

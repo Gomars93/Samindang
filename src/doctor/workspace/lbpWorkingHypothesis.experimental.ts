@@ -3,18 +3,12 @@
  *
  * Explainable LBP working-hypothesis experiment.
  *
- * Original Clinical OS intent preserved:
- * - do not force a final pathoanatomic diagnosis;
- * - allow multiple contributors to coexist;
- * - show why a hypothesis is raised, what argues against it, and what remains
- *   meaningfully unknown;
- * - use hypotheses to organize management/reassessment, not to claim certainty;
+ * Original Clinical OS intent:
+ * - no forced final pathoanatomic diagnosis;
+ * - multiple contributors may coexist;
+ * - show support, contradiction, meaningful unknowns, and management meaning;
  * - safety stays upstream;
- * - no treatment or rehabilitation is automatically selected here.
- *
- * This module does NOT modify tablet, FROZEN safety logic, production Doctor UI,
- * CRM/EMR, or rehab mapping. All rows are DRAFT_EXPERIMENTAL and require later
- * clinician review before any production use.
+ * - no treatment/rehab selection in this module.
  */
 import {
   evaluateLbpActionAdaptiveExperimentV02,
@@ -69,11 +63,13 @@ export interface LbpWorkingHypothesisOutput {
   clinicianConfirmationRequired: true
 }
 
+const UNKNOWN_STATES = new Set(['NOT_ASSESSED', 'NOT_PERFORMED', 'LIMITED', 'UNCLEAR'])
+
 function isUnknownState(value: string): boolean {
-  return ['NOT_ASSESSED', 'NOT_PERFORMED', 'LIMITED', 'UNCLEAR'].includes(value)
+  return UNKNOWN_STATES.has(value)
 }
 
-function item(
+function makeItem(
   id: LbpWorkingHypothesisId,
   titleKo: string,
   supportLevel: LbpHypothesisSupportLevel,
@@ -86,7 +82,7 @@ function item(
   const contradictions = contradictionsKo.filter(Boolean)
   const unknowns = meaningfulUnknownsKo.filter(Boolean)
 
-  const levelLabel =
+  const lead =
     supportLevel === 'HIGHER_SUPPORT'
       ? '현재 자료에서 상대적으로 지지가 높습니다.'
       : supportLevel === 'CONSIDER'
@@ -94,16 +90,6 @@ function item(
         : supportLevel === 'LOWER_SUPPORT'
           ? '현재 자료에서는 우선순위가 낮아졌지만 완전히 배제되지는 않습니다.'
           : '현재 자료만으로 판단하기 어렵습니다.'
-
-  const supportSentence = supports.length > 0
-    ? ` 지지 근거는 ${supports.join(', ')}입니다.`
-    : ''
-  const contradictionSentence = contradictions.length > 0
-    ? ` 반대 또는 약화 근거는 ${contradictions.join(', ')}입니다.`
-    : ''
-  const unknownSentence = unknowns.length > 0
-    ? ` 아직 의미 있게 남은 미확인 정보는 ${unknowns.join(', ')}입니다.`
-    : ''
 
   return {
     id,
@@ -114,30 +100,28 @@ function item(
     contradictionsKo: contradictions,
     meaningfulUnknownsKo: unknowns,
     managementMeaningKo,
-    whyKo: `${levelLabel}${supportSentence}${contradictionSentence}${unknownSentence}`.trim(),
+    whyKo: [
+      lead,
+      supports.length ? `지지: ${supports.join(', ')}` : '',
+      contradictions.length ? `약화/반대: ${contradictions.join(', ')}` : '',
+      unknowns.length ? `미확인: ${unknowns.join(', ')}` : '',
+    ].filter(Boolean).join(' '),
     finalDiagnosisClaimed: false,
   }
 }
 
-function mechanicalLumbarHypothesis(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
-  const movementSupport = [
+function mechanicalLumbar(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
+  const meaningfulLumbarResponse = [
     'CONCORDANT_SYMPTOM_REPRODUCTION',
     'IMPROVES',
     'CENTRALIZES',
     'PERIPHERALIZES',
   ].includes(context.lumbarMovement)
-  const targetReproduced =
-    context.targetFunctionReproduction === 'CONCORDANT_SYMPTOM_REPRODUCTION'
 
-  if (!movementSupport && !targetReproduced && context.lumbarMovement === 'NO_CLEAR_RESPONSE') {
-    return null
-  }
+  // Target-function reproduction alone is NOT lumbar-source evidence.
+  if (!meaningfulLumbarResponse) return null
 
   const supports: string[] = []
-  const contradictions: string[] = []
-  const unknowns: string[] = []
-
-  if (targetReproduced) supports.push('환자의 목표 동작에서 익숙한 증상이 재현됨')
   if (context.lumbarMovement === 'CONCORDANT_SYMPTOM_REPRODUCTION') {
     supports.push('허리 움직임에서 익숙한 증상이 재현됨')
   }
@@ -145,85 +129,65 @@ function mechanicalLumbarHypothesis(context: LbpActionContextV02): LbpWorkingHyp
     supports.push('특정 허리 움직임에서 증상이 감소함')
   }
   if (context.lumbarMovement === 'CENTRALIZES') {
-    supports.push('허리 움직임에 따라 하지증상이 몸쪽으로 감소하는 반응이 관찰됨')
+    supports.push('허리 움직임에 따라 하지증상이 몸쪽으로 감소함')
   }
   if (context.lumbarMovement === 'PERIPHERALIZES') {
-    supports.push('허리 움직임에 따라 하지증상이 더 원위부로 증가하는 반응이 관찰됨')
-  }
-  if (context.lumbarMovement === 'NO_CLEAR_RESPONSE') {
-    contradictions.push('허리 움직임에서 뚜렷한 방향성 반응이 확인되지 않음')
-  }
-  if (isUnknownState(context.lumbarMovement)) {
-    unknowns.push('허리 움직임에 따른 익숙한 증상 반응')
-  }
-  if (isUnknownState(context.targetFunctionReproduction)) {
-    unknowns.push('목표 기능 동작에서 실제 증상 재현 여부')
+    supports.push('허리 움직임에 따라 하지증상이 더 원위부로 증가함')
   }
 
-  const level: LbpHypothesisSupportLevel = movementSupport
-    ? 'HIGHER_SUPPORT'
-    : targetReproduced
-      ? 'CONSIDER'
-      : 'INSUFFICIENT_DATA'
-
-  return item(
+  return makeItem(
     'MECHANICAL_LUMBAR_CONTRIBUTION',
-    '허리 움직임·부하와 연관된 기계적 요통 패턴',
-    level,
+    '허리 움직임과 연관된 기계적 요통 패턴',
+    'HIGHER_SUPPORT',
     supports,
-    contradictions,
-    unknowns,
+    [],
+    [],
     [
-      '목표 기능과 움직임 반응을 경과 추적의 기준으로 사용할 수 있습니다.',
-      '이 가설은 특정 조직 손상이나 영상학적 병변을 확정하지 않습니다.',
+      '허리 움직임 반응과 목표 기능을 함께 경과 추적에 활용할 수 있습니다.',
+      '이 가설은 특정 조직 손상이나 영상 병변을 확정하지 않습니다.',
     ],
   )
 }
 
-function radicularHypothesis(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
-  const cue = context.radicularCue === 'PRESENT'
+function radicular(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
   const leg = context.legSymptoms === 'PRESENT'
-  const neuroAbnormal = context.objectiveNeuro === 'ABNORMAL_NON_PROGRESSIVE'
+  const cue = context.radicularCue === 'PRESENT'
+  const objectiveAbnormal = context.objectiveNeuro === 'ABNORMAL_NON_PROGRESSIVE'
   const neurodynamicConcordant = context.neurodynamic === 'CONCORDANT_LEG_SYMPTOM'
-  const anyRelevant = cue || leg || neuroAbnormal || neurodynamicConcordant
-  if (!anyRelevant) return null
+
+  if (!leg && !cue && !objectiveAbnormal && !neurodynamicConcordant) return null
 
   const supports: string[] = []
   const contradictions: string[] = []
   const unknowns: string[] = []
 
   if (leg) supports.push('하지로 내려가는 통증·저림 등 관련 증상이 있음')
-  if (cue) supports.push('신경근성 관여를 고려하게 하는 임상 단서가 있음')
-  if (neuroAbnormal) supports.push('객관적 하지 신경학적 이상이 확인됨')
+  if (cue) supports.push('신경근성 관여를 고려하게 하는 단서가 있음')
+  if (objectiveAbnormal) supports.push('객관적 하지 신경학적 이상이 확인됨')
   if (neurodynamicConcordant) supports.push('신경가동성 검사에서 익숙한 하지증상이 재현됨')
 
   if (context.legSymptoms === 'ABSENT' && cue) {
-    contradictions.push('하지증상은 없다고 기록되어 있으나 신경근성 단서는 존재해 입력 간 모순이 있음')
-  }
-  if (context.neurodynamic === 'NEGATIVE') {
-    contradictions.push('신경가동성 검사에서 익숙한 하지증상이 재현되지 않음')
+    contradictions.push('하지증상 없음 기록과 신경근성 단서가 서로 모순됨')
   }
   if (context.objectiveNeuro === 'NORMAL') {
     contradictions.push('현재 객관적 신경학적 이상은 확인되지 않음')
   }
+  if (context.neurodynamic === 'NEGATIVE') {
+    contradictions.push('신경가동성 검사에서 익숙한 하지증상이 재현되지 않음')
+  }
 
   if (context.legSymptoms === 'UNCERTAIN') unknowns.push('하지증상의 실제 존재와 분포')
   if (isUnknownState(context.objectiveNeuro)) unknowns.push('객관적 근력·감각·반사 baseline')
-  if (isUnknownState(context.neurodynamic)) unknowns.push('신경가동성 검사에서 익숙한 하지증상 재현 여부')
+  if (isUnknownState(context.neurodynamic)) unknowns.push('신경가동성 검사 반응')
 
   let level: LbpHypothesisSupportLevel = 'CONSIDER'
-  if (leg && (neuroAbnormal || neurodynamicConcordant)) level = 'HIGHER_SUPPORT'
+  if (leg && (objectiveAbnormal || neurodynamicConcordant)) level = 'HIGHER_SUPPORT'
   if (!leg && cue) level = 'INSUFFICIENT_DATA'
-  if (
-    leg &&
-    context.objectiveNeuro === 'NORMAL' &&
-    context.neurodynamic === 'NEGATIVE' &&
-    !cue
-  ) {
+  if (leg && !cue && context.objectiveNeuro === 'NORMAL' && context.neurodynamic === 'NEGATIVE') {
     level = 'LOWER_SUPPORT'
   }
 
-  return item(
+  return makeItem(
     'RADICULAR_INVOLVEMENT',
     '신경근성 증상 관여 가능성',
     level,
@@ -232,29 +196,25 @@ function radicularHypothesis(context: LbpActionContextV02): LbpWorkingHypothesis
     unknowns,
     [
       '객관적 신경학적 baseline과 하지증상 변화를 추적할 필요가 있는지 판단하는 데 사용합니다.',
-      '신경가동성 검사 하나만으로 디스크나 특정 병변을 확정하지 않습니다.',
+      'SLR/Slump 한 검사만으로 디스크나 특정 병변을 확정하지 않습니다.',
     ],
   )
 }
 
-function walkingNeuralHypothesis(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
+function walkingRelatedNeural(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
   if (context.walkingStandingLegPattern !== 'PRESENT') return null
 
-  const supports: string[] = ['걷기·기립과 연관되어 하지증상이 나타나는 패턴이 있음']
+  const supports = ['걷기·기립과 연관되어 하지증상이 나타나는 패턴이 있음']
   const contradictions: string[] = []
   const unknowns: string[] = []
 
-  if (context.walkingTolerance === 'KNOWN') {
-    supports.push('실제 보행 가능시간·거리 baseline이 확보됨')
-  } else {
-    unknowns.push('실제 보행 가능시간·거리')
-  }
+  if (context.walkingTolerance === 'KNOWN') supports.push('실제 보행 가능시간·거리 baseline이 확보됨')
+  else unknowns.push('실제 보행 가능시간·거리')
+
   if (context.legSymptoms === 'ABSENT') {
     contradictions.push('하지증상 없음 기록과 보행-기립 하지증상 pattern이 서로 모순됨')
   }
-  if (isUnknownState(context.objectiveNeuro)) {
-    unknowns.push('객관적 하지 신경학적 baseline')
-  }
+  if (isUnknownState(context.objectiveNeuro)) unknowns.push('객관적 하지 신경학적 baseline')
 
   const level: LbpHypothesisSupportLevel =
     context.legSymptoms === 'PRESENT' && context.walkingTolerance === 'KNOWN'
@@ -263,7 +223,7 @@ function walkingNeuralHypothesis(context: LbpActionContextV02): LbpWorkingHypoth
         ? 'INSUFFICIENT_DATA'
         : 'CONSIDER'
 
-  return item(
+  return makeItem(
     'WALKING_RELATED_NEURAL_PATTERN',
     '보행·기립 연관 신경성 하지증상 패턴',
     level,
@@ -277,106 +237,71 @@ function walkingNeuralHypothesis(context: LbpActionContextV02): LbpWorkingHypoth
   )
 }
 
-function contributionHypothesis(
+function contribution(
   kind: 'HIP' | 'SIJ',
   cue: 'PRESENT' | 'ABSENT' | 'UNCERTAIN',
   screen: LbpActionContextV02['hipScreen'],
 ): LbpWorkingHypothesisItem | null {
   if (cue === 'ABSENT' && screen !== 'CONTRIBUTORY') return null
 
-  const isHip = kind === 'HIP'
-  const id: LbpWorkingHypothesisId = isHip ? 'HIP_CONTRIBUTION' : 'SIJ_CONTRIBUTION'
-  const titleKo = isHip ? '고관절의 증상·기능 기여 가능성' : '천장관절의 증상·기능 기여 가능성'
+  const hip = kind === 'HIP'
   const supports: string[] = []
   const contradictions: string[] = []
   const unknowns: string[] = []
 
-  if (cue === 'PRESENT') {
-    supports.push(isHip ? '고관절 기여를 의심하게 하는 선행 단서가 있음' : '천장관절 기여를 의심하게 하는 선행 단서가 있음')
-  }
-  if (screen === 'CONTRIBUTORY') {
-    supports.push(isHip ? '고관절 선별에서 익숙한 증상·기능과의 관련성이 확인됨' : '천장관절 선별에서 익숙한 증상·기능과의 관련성이 확인됨')
-  }
-  if (screen === 'NON_CONTRIBUTORY') {
-    contradictions.push(isHip ? '현재 고관절 선별에서는 의미 있는 기여가 확인되지 않음' : '현재 천장관절 선별에서는 의미 있는 기여가 확인되지 않음')
-  }
-  if (cue === 'UNCERTAIN') {
-    unknowns.push(isHip ? '고관절 기여 단서의 실제 존재 여부' : '천장관절 기여 단서의 실제 존재 여부')
-  }
-  if (isUnknownState(screen)) {
-    unknowns.push(isHip ? '고관절 선별에서 익숙한 증상·목표기능과의 연결' : '천장관절 선별에서 익숙한 증상·목표기능과의 연결')
-  }
+  if (cue === 'PRESENT') supports.push(hip ? '고관절 기여를 의심하게 하는 선행 단서가 있음' : '천장관절 기여를 의심하게 하는 선행 단서가 있음')
+  if (screen === 'CONTRIBUTORY') supports.push(hip ? '고관절 선별에서 익숙한 증상·기능과의 관련성이 확인됨' : '천장관절 선별에서 익숙한 증상·기능과의 관련성이 확인됨')
+  if (screen === 'NON_CONTRIBUTORY') contradictions.push(hip ? '현재 고관절 선별에서는 의미 있는 기여가 확인되지 않음' : '현재 천장관절 선별에서는 의미 있는 기여가 확인되지 않음')
+  if (cue === 'UNCERTAIN') unknowns.push(hip ? '고관절 기여 단서의 실제 존재 여부' : '천장관절 기여 단서의 실제 존재 여부')
+  if (isUnknownState(screen)) unknowns.push(hip ? '고관절 선별에서 익숙한 증상·목표기능과의 연결' : '천장관절 선별에서 익숙한 증상·목표기능과의 연결')
 
   let level: LbpHypothesisSupportLevel = 'CONSIDER'
   if (screen === 'CONTRIBUTORY') level = 'HIGHER_SUPPORT'
   if (screen === 'NON_CONTRIBUTORY') level = 'LOWER_SUPPORT'
   if (cue === 'UNCERTAIN' && isUnknownState(screen)) level = 'INSUFFICIENT_DATA'
 
-  return item(
-    id,
-    titleKo,
+  return makeItem(
+    hip ? 'HIP_CONTRIBUTION' : 'SIJ_CONTRIBUTION',
+    hip ? '고관절의 증상·기능 기여 가능성' : '천장관절의 증상·기능 기여 가능성',
     level,
     supports,
     contradictions,
     unknowns,
     [
-      isHip
-        ? '고관절을 오늘 별도 치료·재활 타깃으로 포함할지 임상의가 판단하는 근거가 됩니다.'
-        : '천장관절을 오늘 별도 치료·재활 타깃으로 포함할지 임상의가 판단하는 근거가 됩니다.',
-      `${isHip ? '고관절' : '천장관절'} 선별 하나만으로 최종 진단을 확정하지 않습니다.`,
+      hip
+        ? '고관절을 별도 치료·재활 타깃으로 포함할지 임상의가 판단하는 근거가 됩니다.'
+        : '천장관절을 별도 치료·재활 타깃으로 포함할지 임상의가 판단하는 근거가 됩니다.',
+      `${hip ? '고관절' : '천장관절'} 선별 하나만으로 최종 진단을 확정하지 않습니다.`,
     ],
   )
 }
 
-function interpretationState(
+function interpret(
   routinePathway: 'AVAILABLE' | 'SAFETY_REVIEW_FIRST' | 'SAFETY_REFRESH_FIRST',
   hypotheses: LbpWorkingHypothesisItem[],
   warnings: string[],
-): {
-  state: LbpHypothesisInterpretationState
-  primary: LbpWorkingHypothesisId | null
-} {
-  if (routinePathway !== 'AVAILABLE') {
-    return { state: 'SAFETY_FIRST', primary: null }
-  }
+): { state: LbpHypothesisInterpretationState; primary: LbpWorkingHypothesisId | null } {
+  if (routinePathway !== 'AVAILABLE') return { state: 'SAFETY_FIRST', primary: null }
 
-  const higher = hypotheses.filter((hypothesis) => hypothesis.supportLevel === 'HIGHER_SUPPORT')
-  const consider = hypotheses.filter((hypothesis) => hypothesis.supportLevel === 'CONSIDER')
-  const usable = hypotheses.filter(
-    (hypothesis) =>
-      hypothesis.supportLevel === 'HIGHER_SUPPORT' ||
-      hypothesis.supportLevel === 'CONSIDER',
-  )
+  const higher = hypotheses.filter((h) => h.supportLevel === 'HIGHER_SUPPORT')
+  const consider = hypotheses.filter((h) => h.supportLevel === 'CONSIDER')
+  const usable = hypotheses.filter((h) => h.supportLevel === 'HIGHER_SUPPORT' || h.supportLevel === 'CONSIDER')
 
-  if (warnings.length > 0 && higher.length === 0) {
-    return { state: 'INSUFFICIENTLY_EXPLAINED', primary: null }
-  }
-  if (higher.length >= 2) {
-    return { state: 'MULTIPLE_PLAUSIBLE_CONTRIBUTORS', primary: null }
-  }
-  if (higher.length === 1 && usable.length === 1) {
-    return { state: 'SINGLE_LEADING_PATTERN', primary: higher[0].id }
-  }
-  if (higher.length === 1 && consider.length > 0) {
-    return { state: 'PARTIALLY_EXPLAINED', primary: higher[0].id }
-  }
-  if (higher.length === 0 && consider.length >= 2) {
-    return { state: 'MULTIPLE_PLAUSIBLE_CONTRIBUTORS', primary: null }
-  }
-  if (higher.length === 0 && consider.length === 1) {
-    return { state: 'PARTIALLY_EXPLAINED', primary: null }
-  }
+  if (warnings.length > 0 && higher.length === 0) return { state: 'INSUFFICIENTLY_EXPLAINED', primary: null }
+  if (higher.length >= 2) return { state: 'MULTIPLE_PLAUSIBLE_CONTRIBUTORS', primary: null }
+  if (higher.length === 1 && usable.length === 1) return { state: 'SINGLE_LEADING_PATTERN', primary: higher[0].id }
+  if (higher.length === 1 && consider.length > 0) return { state: 'PARTIALLY_EXPLAINED', primary: higher[0].id }
+  if (higher.length === 0 && consider.length >= 2) return { state: 'MULTIPLE_PLAUSIBLE_CONTRIBUTORS', primary: null }
+  if (higher.length === 0 && consider.length === 1) return { state: 'PARTIALLY_EXPLAINED', primary: null }
   return { state: 'INSUFFICIENTLY_EXPLAINED', primary: null }
 }
 
-function collectGlobalUnknowns(context: LbpActionContextV02): string[] {
-  const unknowns: string[] = []
-  if (!context.targetFunctionAvailable) unknowns.push('환자가 가장 회복하고 싶은 목표 기능')
-  if (context.legSymptoms === 'UNCERTAIN') unknowns.push('하지증상 존재 여부와 분포')
-  if (context.walkingStandingLegPattern === 'PRESENT' && context.walkingTolerance !== 'KNOWN') {
-    unknowns.push('실제 보행 허용량')
-  }
-  return [...new Set(unknowns)]
+function globalUnknowns(context: LbpActionContextV02): string[] {
+  const values: string[] = []
+  if (!context.targetFunctionAvailable) values.push('환자가 가장 회복하고 싶은 목표 기능')
+  if (context.legSymptoms === 'UNCERTAIN') values.push('하지증상 존재 여부와 분포')
+  if (context.walkingStandingLegPattern === 'PRESENT' && context.walkingTolerance !== 'KNOWN') values.push('실제 보행 허용량')
+  return [...new Set(values)]
 }
 
 export function evaluateLbpWorkingHypothesisExperiment(
@@ -395,14 +320,13 @@ export function evaluateLbpWorkingHypothesisExperiment(
       interpretationState: 'SAFETY_FIRST',
       primaryHypothesisId: null,
       hypotheses: [],
-      globalMeaningfulUnknownsKo: collectGlobalUnknowns(context),
+      globalMeaningfulUnknownsKo: globalUnknowns(context),
       warningsKo,
       safetyContext: {
         routinePathway: action.routinePathway,
-        reasonKo:
-          action.routinePathway === 'SAFETY_REFRESH_FIRST'
-            ? '증상 악화 또는 새로운 신경학적 변화로 routine working hypothesis보다 안전성 재평가가 먼저입니다.'
-            : '질환 안전성 검토가 완료되기 전에는 routine working hypothesis를 우선 확정하지 않습니다.',
+        reasonKo: action.routinePathway === 'SAFETY_REFRESH_FIRST'
+          ? '악화 또는 새로운 신경학적 변화로 routine working hypothesis보다 안전성 재평가가 먼저입니다.'
+          : '질환 안전성 검토가 완료되기 전에는 routine working hypothesis를 우선 확정하지 않습니다.',
       },
       finalDiagnosisClaimed: false,
       clinicianConfirmationRequired: true,
@@ -410,21 +334,21 @@ export function evaluateLbpWorkingHypothesisExperiment(
   }
 
   const hypotheses = [
-    mechanicalLumbarHypothesis(context),
-    radicularHypothesis(context),
-    walkingNeuralHypothesis(context),
-    contributionHypothesis('HIP', context.hipContributionCue, context.hipScreen),
-    contributionHypothesis('SIJ', context.sijContributionCue, context.sijScreen),
+    mechanicalLumbar(context),
+    radicular(context),
+    walkingRelatedNeural(context),
+    contribution('HIP', context.hipContributionCue, context.hipScreen),
+    contribution('SIJ', context.sijContributionCue, context.sijScreen),
   ].filter((value): value is LbpWorkingHypothesisItem => value !== null)
 
-  const interpreted = interpretationState(action.routinePathway, hypotheses, warningsKo)
+  const interpreted = interpret(action.routinePathway, hypotheses, warningsKo)
 
   return {
     ruleStatus: 'DRAFT_EXPERIMENTAL',
     interpretationState: interpreted.state,
     primaryHypothesisId: interpreted.primary,
     hypotheses,
-    globalMeaningfulUnknownsKo: collectGlobalUnknowns(context),
+    globalMeaningfulUnknownsKo: globalUnknowns(context),
     warningsKo,
     safetyContext: {
       routinePathway: action.routinePathway,

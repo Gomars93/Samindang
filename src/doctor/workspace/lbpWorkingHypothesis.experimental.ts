@@ -6,7 +6,9 @@
  * Original Clinical OS intent:
  * - no forced final pathoanatomic diagnosis;
  * - multiple contributors may coexist;
- * - show support, contradiction, meaningful unknowns, and management meaning;
+ * - show support, weakening findings, meaningful unknowns, and management meaning;
+ * - descriptive management patterns are preferred over disease labels where the
+ *   available data cannot justify etiology;
  * - safety stays upstream;
  * - no treatment/rehab selection in this module.
  */
@@ -16,9 +18,9 @@ import {
 } from './lbpActionAdaptiveEngine.v02.experimental'
 
 export type LbpWorkingHypothesisId =
-  | 'MECHANICAL_LUMBAR_CONTRIBUTION'
+  | 'LUMBAR_MOVEMENT_RELATED_PATTERN'
   | 'RADICULAR_INVOLVEMENT'
-  | 'WALKING_RELATED_NEURAL_PATTERN'
+  | 'WALKING_STANDING_LEG_PATTERN'
   | 'HIP_CONTRIBUTION'
   | 'SIJ_CONTRIBUTION'
 
@@ -110,16 +112,17 @@ function makeItem(
   }
 }
 
-function mechanicalLumbar(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
-  const meaningfulLumbarResponse = [
+function lumbarMovementRelated(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
+  const meaningfulResponse = [
     'CONCORDANT_SYMPTOM_REPRODUCTION',
     'IMPROVES',
     'CENTRALIZES',
     'PERIPHERALIZES',
   ].includes(context.lumbarMovement)
 
-  // Target-function reproduction alone is NOT lumbar-source evidence.
-  if (!meaningfulLumbarResponse) return null
+  // Target-function reproduction alone is NOT evidence that lumbar movement is
+  // the source. A lumbar hypothesis requires an observed lumbar movement response.
+  if (!meaningfulResponse) return null
 
   const supports: string[] = []
   if (context.lumbarMovement === 'CONCORDANT_SYMPTOM_REPRODUCTION') {
@@ -136,15 +139,15 @@ function mechanicalLumbar(context: LbpActionContextV02): LbpWorkingHypothesisIte
   }
 
   return makeItem(
-    'MECHANICAL_LUMBAR_CONTRIBUTION',
-    '허리 움직임과 연관된 기계적 요통 패턴',
+    'LUMBAR_MOVEMENT_RELATED_PATTERN',
+    '허리 움직임과 연관된 증상 반응 패턴',
     'HIGHER_SUPPORT',
     supports,
     [],
     [],
     [
-      '허리 움직임 반응과 목표 기능을 함께 경과 추적에 활용할 수 있습니다.',
-      '이 가설은 특정 조직 손상이나 영상 병변을 확정하지 않습니다.',
+      '허리 움직임 반응을 오늘의 자극 선택·회피와 경과 추적에 참고할 수 있습니다.',
+      '이 패턴은 특정 조직 손상, 디스크 병변, 또는 영상학적 원인을 확정하지 않습니다.',
     ],
   )
 }
@@ -155,84 +158,85 @@ function radicular(context: LbpActionContextV02): LbpWorkingHypothesisItem | nul
   const objectiveAbnormal = context.objectiveNeuro === 'ABNORMAL_NON_PROGRESSIVE'
   const neurodynamicConcordant = context.neurodynamic === 'CONCORDANT_LEG_SYMPTOM'
 
-  if (!leg && !cue && !objectiveAbnormal && !neurodynamicConcordant) return null
+  // Leg symptoms alone are not specific enough to label as radicular. Require a
+  // radicular cue or a more specific objective/neurodynamic finding.
+  if (!cue && !objectiveAbnormal && !neurodynamicConcordant) return null
 
   const supports: string[] = []
-  const contradictions: string[] = []
+  const weakening: string[] = []
   const unknowns: string[] = []
 
   if (leg) supports.push('하지로 내려가는 통증·저림 등 관련 증상이 있음')
-  if (cue) supports.push('신경근성 관여를 고려하게 하는 단서가 있음')
+  if (cue) supports.push('신경근성 관여를 고려하게 하는 임상 단서가 있음')
   if (objectiveAbnormal) supports.push('객관적 하지 신경학적 이상이 확인됨')
   if (neurodynamicConcordant) supports.push('신경가동성 검사에서 익숙한 하지증상이 재현됨')
 
   if (context.legSymptoms === 'ABSENT' && cue) {
-    contradictions.push('하지증상 없음 기록과 신경근성 단서가 서로 모순됨')
-  }
-  if (context.objectiveNeuro === 'NORMAL') {
-    contradictions.push('현재 객관적 신경학적 이상은 확인되지 않음')
+    weakening.push('하지증상 없음 기록과 신경근성 단서가 서로 모순됨')
   }
   if (context.neurodynamic === 'NEGATIVE') {
-    contradictions.push('신경가동성 검사에서 익숙한 하지증상이 재현되지 않음')
+    weakening.push('신경가동성 검사에서 익숙한 하지증상이 재현되지 않아 추가 지지가 없음')
   }
+  // NORMAL objective neuro is deliberately NOT treated as strong contradictory
+  // evidence: radicular pain/symptoms may exist without an objective deficit.
 
   if (context.legSymptoms === 'UNCERTAIN') unknowns.push('하지증상의 실제 존재와 분포')
   if (isUnknownState(context.objectiveNeuro)) unknowns.push('객관적 근력·감각·반사 baseline')
-  if (isUnknownState(context.neurodynamic)) unknowns.push('신경가동성 검사 반응')
+  if (isUnknownState(context.neurodynamic)) unknowns.push('신경가동성 검사에서 익숙한 하지증상 재현 여부')
 
   let level: LbpHypothesisSupportLevel = 'CONSIDER'
-  if (leg && (objectiveAbnormal || neurodynamicConcordant)) level = 'HIGHER_SUPPORT'
+  if (leg && cue && (objectiveAbnormal || neurodynamicConcordant)) level = 'HIGHER_SUPPORT'
   if (!leg && cue) level = 'INSUFFICIENT_DATA'
-  if (leg && !cue && context.objectiveNeuro === 'NORMAL' && context.neurodynamic === 'NEGATIVE') {
-    level = 'LOWER_SUPPORT'
-  }
 
   return makeItem(
     'RADICULAR_INVOLVEMENT',
     '신경근성 증상 관여 가능성',
     level,
     supports,
-    contradictions,
+    weakening,
     unknowns,
     [
-      '객관적 신경학적 baseline과 하지증상 변화를 추적할 필요가 있는지 판단하는 데 사용합니다.',
+      '하지증상과 객관적 신경학적 상태를 추적할 필요가 있는지 판단하는 데 사용합니다.',
+      '정상 객관적 neuro만으로 신경근성 통증을 배제하지 않습니다.',
       'SLR/Slump 한 검사만으로 디스크나 특정 병변을 확정하지 않습니다.',
     ],
   )
 }
 
-function walkingRelatedNeural(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
+function walkingStandingPattern(context: LbpActionContextV02): LbpWorkingHypothesisItem | null {
   if (context.walkingStandingLegPattern !== 'PRESENT') return null
 
-  const supports = ['걷기·기립과 연관되어 하지증상이 나타나는 패턴이 있음']
-  const contradictions: string[] = []
+  const supports = ['걷기·기립과 연관되어 하지증상이 나타나는 패턴이 보고됨']
+  const weakening: string[] = []
   const unknowns: string[] = []
 
-  if (context.walkingTolerance === 'KNOWN') supports.push('실제 보행 가능시간·거리 baseline이 확보됨')
-  else unknowns.push('실제 보행 가능시간·거리')
-
+  if (context.walkingTolerance === 'KNOWN') {
+    supports.push('실제 보행 가능시간·거리 baseline이 확보됨')
+  } else {
+    unknowns.push('실제 보행 가능시간·거리')
+  }
   if (context.legSymptoms === 'ABSENT') {
-    contradictions.push('하지증상 없음 기록과 보행-기립 하지증상 pattern이 서로 모순됨')
+    weakening.push('하지증상 없음 기록과 보행·기립 하지증상 pattern이 서로 모순됨')
   }
   if (isUnknownState(context.objectiveNeuro)) unknowns.push('객관적 하지 신경학적 baseline')
 
+  // Walking tolerance is an outcome baseline, not evidence that the etiology is
+  // more likely. The hypothesis is deliberately descriptive rather than a
+  // stenosis/neurogenic-claudication diagnosis.
   const level: LbpHypothesisSupportLevel =
-    context.legSymptoms === 'PRESENT' && context.walkingTolerance === 'KNOWN'
-      ? 'HIGHER_SUPPORT'
-      : context.legSymptoms === 'ABSENT'
-        ? 'INSUFFICIENT_DATA'
-        : 'CONSIDER'
+    context.legSymptoms === 'ABSENT' ? 'INSUFFICIENT_DATA' : 'CONSIDER'
 
   return makeItem(
-    'WALKING_RELATED_NEURAL_PATTERN',
-    '보행·기립 연관 신경성 하지증상 패턴',
+    'WALKING_STANDING_LEG_PATTERN',
+    '보행·기립 연관 하지증상 패턴',
     level,
     supports,
-    contradictions,
+    weakening,
     unknowns,
     [
-      '보행 허용량을 기능 outcome으로 추적할 가치가 있습니다.',
-      '이 패턴만으로 척추관 협착증을 확정하거나 영상검사를 자동 요구하지 않습니다.',
+      '실제 보행 허용량을 기능 outcome으로 추적할 가치가 있습니다.',
+      '이 패턴만으로 신경성 파행 또는 척추관 협착증을 확정하지 않습니다.',
+      '이 패턴만으로 영상검사를 자동 요구하지 않습니다.',
     ],
   )
 }
@@ -246,12 +250,12 @@ function contribution(
 
   const hip = kind === 'HIP'
   const supports: string[] = []
-  const contradictions: string[] = []
+  const weakening: string[] = []
   const unknowns: string[] = []
 
   if (cue === 'PRESENT') supports.push(hip ? '고관절 기여를 의심하게 하는 선행 단서가 있음' : '천장관절 기여를 의심하게 하는 선행 단서가 있음')
   if (screen === 'CONTRIBUTORY') supports.push(hip ? '고관절 선별에서 익숙한 증상·기능과의 관련성이 확인됨' : '천장관절 선별에서 익숙한 증상·기능과의 관련성이 확인됨')
-  if (screen === 'NON_CONTRIBUTORY') contradictions.push(hip ? '현재 고관절 선별에서는 의미 있는 기여가 확인되지 않음' : '현재 천장관절 선별에서는 의미 있는 기여가 확인되지 않음')
+  if (screen === 'NON_CONTRIBUTORY') weakening.push(hip ? '현재 고관절 선별에서는 의미 있는 기여가 확인되지 않음' : '현재 천장관절 선별에서는 의미 있는 기여가 확인되지 않음')
   if (cue === 'UNCERTAIN') unknowns.push(hip ? '고관절 기여 단서의 실제 존재 여부' : '천장관절 기여 단서의 실제 존재 여부')
   if (isUnknownState(screen)) unknowns.push(hip ? '고관절 선별에서 익숙한 증상·목표기능과의 연결' : '천장관절 선별에서 익숙한 증상·목표기능과의 연결')
 
@@ -265,7 +269,7 @@ function contribution(
     hip ? '고관절의 증상·기능 기여 가능성' : '천장관절의 증상·기능 기여 가능성',
     level,
     supports,
-    contradictions,
+    weakening,
     unknowns,
     [
       hip
@@ -334,9 +338,9 @@ export function evaluateLbpWorkingHypothesisExperiment(
   }
 
   const hypotheses = [
-    mechanicalLumbar(context),
+    lumbarMovementRelated(context),
     radicular(context),
-    walkingRelatedNeural(context),
+    walkingStandingPattern(context),
     contribution('HIP', context.hipContributionCue, context.hipScreen),
     contribution('SIJ', context.sijContributionCue, context.sijScreen),
   ].filter((value): value is LbpWorkingHypothesisItem => value !== null)

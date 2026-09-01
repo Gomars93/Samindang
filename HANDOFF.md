@@ -16,16 +16,23 @@
 ## (둘 다 "이번 배치 범위에서는 변경 없음" — #5는 통합 안 함 확정, #6은
 ## 보류). 코드 변경 없음, 결정만 `DECISIONS.md`("Core Reduction HUMAN
 ## DECISION #5/#6: PO 확정")와 `docs/CORE_REDUCTION_PHASE5_SYNTHESIS_
-## v1.0.md`§7에 기록. HUMAN DECISION 6건 중 #1~#4는 별도 세션에서 이미
-## 논의됐으나(이 세션 기록에는 그 결정문이 없음) 이 문서/DECISIONS.md에
-## 아직 명시적으로 반영되지 않았다 — 다음 세션에서 확인 필요.
+## v1.0.md`§7에 기록.
 ##
-## **다음 액션**: 이 브랜치(`claude/feat-core-reduction`)는 아직 PR이
-## 없다 — main에는 impeccable/humanize-korean 스킬 설치용 별도 브랜치
+## ⚠️ 갱신 (2026-09-01, 계속): HUMAN DECISION 6건 중 나머지 #1~#4도
+## PO에게 직접 확인해 정리 완료(커밋 `399e564`, `DECISIONS.md`"Core
+## Reduction HUMAN DECISION #1~#4: PO 확정" 항목 참고) — #1 CLOSED,
+## #2는 근거 불확실로 OPEN 유지, #3 CLOSED, #4는 구조 원칙만 확정하고
+## 한국어 wording은 PARTIAL OPEN. #5 CLOSED·#6 DEFER는 기존 결정 그대로.
+## 남은 HUMAN DECISION REQUIRED는 #2 전체와 #4의 wording 부분뿐이며,
+## 둘 다 이번 배치 merge를 막지 않는 후속 결정 사항이다.
+##
+## **PR 상태**: `claude/feat-core-reduction`은 이미 **PR #26**으로 열려
+## 있다(base `main`) — 새 PR을 만들지 않는다. main에는 impeccable/
+## humanize-korean 스킬 설치용 별도 브랜치
 ## (`claude/chore-install-humanize-korean-and-impeccable-skills`)가
-## 이미 push돼 있어 서로 무관하게 진행 중이니 혼동 금지. Core Reduction
-## PR 생성 여부는 사용자에게 별도로 확인한다 — 이 세션은 스스로 PR을
-## 만들거나 main에 push하지 않는다.
+## 이미 push돼 있어 서로 무관하게 진행 중이니 혼동 금지 — 이 스킬 설치
+## 변경은 PR #26이 merge-ready 판정을 받은 뒤 별도 PR로 만든다. 이
+## 세션은 스스로 merge하거나 main에 직접 push하지 않는다.
 
 ---
 

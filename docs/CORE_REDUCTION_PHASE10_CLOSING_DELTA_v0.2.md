@@ -55,4 +55,7 @@ m1(treatment-only lock 🔒 미반영) · m2(Queue 배지↔레인1 판정 규�
 M-2 축은 lane1에만 반영, Queue 배지 미전파) · m3(`visit:` 문자열 키 미실재,
 동등 메커니즘) · m5(진료 화면 이중 sticky — §8.1 미이행) · m6~m10 ·
 N-1~N-4 · workflow 절대 높이 +17%/+30%(문서화된 trade-off) · free-text +1
-(설계상 허용) · HUMAN DECISION 6건.
+(설계상 허용) · **HUMAN DECISION — 2026-09-01 갱신: #1/#3/#5 CLOSED,
+#6 DEFER, #4는 구조 원칙만 확정(한국어 wording은 PARTIAL OPEN), #2만
+전체 OPEN 유지** (`docs/CORE_REDUCTION_PHASE5_SYNTHESIS_v1.0.md`§7,
+`DECISIONS.md` 참고 — 이 항목들은 merge를 막지 않는 후속 결정 사항).

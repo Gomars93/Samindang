@@ -208,7 +208,7 @@ function stageWithSufficiency(
   notNeededToday: LbpNotNeededTodayCheck[]
 } {
   const current: LbpDecisionCheckV03[] = []
-  const deferred: LbpDeferredDecisionCheckV03[] = []
+  const deferred: LbpDeferredCheckV03[] = []
   const notNeededToday: LbpNotNeededTodayCheck[] = []
 
   const unique = candidates.filter(

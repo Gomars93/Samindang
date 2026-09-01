@@ -54,7 +54,7 @@ The system may leave diagnostic uncertainty unresolved. It must not leave that u
 - Clinician override / concern must remain available even when the automatic engine does not raise a domain.
 - The engine recommends; the clinician confirms the hypothesis, treatment direction, exercise, and downstream documentation.
 
-### F. B+ priority guardrail for competing checks
+### F. B+ priority guardrail for competing checks — EXPERIMENTAL DESIGN LOCK
 When more management-relevant checks exist than should be shown at once, the experimental B+ policy follows this order of intent:
 
 1. preserve safety / meaningful tracking baseline when the candidate generator says it is relevant,
@@ -68,6 +68,13 @@ Important tie rule:
 - The clinician may intentionally inspect more than one via override when clinically warranted.
 
 This is a workflow-priority rule, not proof that Hip/SIJ is more important than neurodynamic testing in every patient. Candidate generation and safety semantics remain separately governed.
+
+**Lock decision after B+ flow vignette review:**
+- The B+ priority policy is now considered **design-locked for this experimental phase** after dedicated priority stress testing and 14 end-to-end primary-care flow vignettes.
+- Do not continue tuning exam priority merely to improve synthetic scores or make the engine appear more sophisticated.
+- Reopen this priority policy only if a later real clinical vignette, clinician review, usability test, or patient-flow defect demonstrates a concrete omission, unsafe ordering, or material workflow burden.
+- This lock does **not** make B+ production clinical logic. Production entry still requires the normal clinical approval, payload-adapter review, UI/real-device QA, and FROZEN zero-diff gates.
+- With exam priority locked, development attention moves to the original next milestone: **explainable working hypothesis**.
 
 ---
 
@@ -171,6 +178,7 @@ Examples of forbidden drift:
 - routine-care availability remains separate from whether suggested checks are still outstanding
 - B+ competition rule: meaningful baseline first, then treatment-target-changing information before diagnostic refinement when attention is constrained
 - Hip/SIJ equal-priority tie does not create a new patient question or arbitrary code-order winner
+- B+ end-to-end priority flow reviewed across simple, radicular, walking-limited, Hip/SIJ, multi-cue, non-response, deterioration, contradictory-input, and clinician-override vignettes
 
 ### Intentionally NOT complete yet — MUST NOT BE FORGOTTEN
 - explainable differential / working-hypothesis engine

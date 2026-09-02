@@ -83,6 +83,7 @@ import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
+import { LBP_TARGET_FUNCTION_OPTIONS } from './lbpTargetFunction'
 import { EXAM_CHECK_STATUS_LABEL, isValidExamStatus, type ExamCheckStatus } from './provenance'
 import {
   applyFollowUpTargetsCarryForward,
@@ -96,7 +97,16 @@ import {
 } from './revisitCarryForward'
 
 const SAVE_DEBOUNCE_MS = 900
-const COMBINED_FOLLOW_UP_OPTIONS = [...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS]
+// LBP v1 Batch 1 delta fix (Opus review item 1): a prior visit's carried-
+// forward Follow-up Targets can include lbp_tf_* ids (revisitCarryForward.ts's
+// trackingOnly() passes every target through regardless of id) -- those
+// must have a chip here too, or a carried lbp_tf_* target is selected with
+// no way to see/deselect it. LBP_TARGET_FUNCTION_OPTIONS goes first so its
+// group renders first, matching PainWorkspaceNext.
+const COMBINED_FOLLOW_UP_OPTIONS = [...LBP_TARGET_FUNCTION_OPTIONS, ...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS]
+const COMBINED_FOLLOW_UP_GROUPS = [
+  { label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id) },
+]
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 
@@ -560,6 +570,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         selected={workspaceState.followUpTargets}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, followUpTargets: next }))}
         showPostTreatmentField
+        groups={COMBINED_FOLLOW_UP_GROUPS}
       />
 
       {/* Round 9: collapsed by default so a routine "unchanged, continue"

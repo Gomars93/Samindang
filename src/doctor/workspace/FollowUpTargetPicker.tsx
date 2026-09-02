@@ -84,7 +84,17 @@ export function FollowUpTargetPicker({
   }
 
   const groupedIds = new Set((groups ?? []).flatMap((g) => g.ids))
-  const ungrouped = options.filter((o) => !groupedIds.has(o.id))
+  // LBP v1 Batch 1 delta fix (Opus review item 1b): a `selected` item whose
+  // id is not in `options` at all (e.g. a carried-forward LBP target
+  // function reaching a caller whose `options` doesn't include
+  // LBP_TARGET_FUNCTION_OPTIONS) must still get a chip -- otherwise it is
+  // selected with no way to see or deselect it, and if it fills the
+  // MAX_FOLLOW_UP_TARGETS budget every visible chip disables with none
+  // pressed. Structurally impossible: any such orphan is appended to the
+  // ungrouped row.
+  const optionIds = new Set(options.map((o) => o.id))
+  const orphanSelected = selected.filter((t) => !optionIds.has(t.id))
+  const ungrouped = [...options.filter((o) => !groupedIds.has(o.id)), ...orphanSelected]
 
   return (
     <section className="workspace__followUp" aria-label="재평가 대상">
@@ -100,7 +110,7 @@ export function FollowUpTargetPicker({
           )}
         </div>
       ))}
-      {(!groups || ungrouped.length > 0) && chipRow(groups ? ungrouped : options, '재평가 대상 선택')}
+      {(!groups || ungrouped.length > 0) && chipRow(ungrouped, '재평가 대상 선택')}
 
       {selected.length > 0 && (
         <div className="workspace__followUp__values">

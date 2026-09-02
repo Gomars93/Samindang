@@ -4,7 +4,7 @@
  * Docs ref: LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md §7.2/§2.2/§2.3.
  *
  * Scope, deliberately narrow (§7.5 "금지" -- no new clinical semantics
- * beyond these three rules, no scoring, no priority beyond CONTEXTUAL):
+ * beyond these four rules, no scoring, no priority beyond CONTEXTUAL):
  *   (a) 목표 동작 재현 -- always suggested for a CLEAR LBP patient (it is the
  *       anchor itself, not conditioned on any other fact).
  *   (b) FROZEN `flags.leg_symptom_present === 'YES'` -> 하지직거상/슬럼프
@@ -14,6 +14,12 @@
  *       LBP_08) -> 보행 가능시간·거리 (v0.1 engine's
  *       `buildWalkingToleranceCheck`, hand-off doc §14 "walking/standing
  *       leg pattern -> walking tolerance").
+ *   (d) FROZEN `flags.lbp_neuro_baseline_required === true`
+ *       (`computeNeuroBaselineRequired`: bilateral leg symptoms without a
+ *       concrete neuro feature) -> 하지 신경학적 기본검사(감각·반사). Opus
+ *       delta review of Batch 1 (item 5): a CLOSED connection to an
+ *       already-approved FROZEN value lane 1 already surfaces as the
+ *       "신경학적 기저검사 필요" chip -- not a new clinical judgment.
  *
  * Nothing is generated when:
  *   - `payload.responses.safety_flags.lbp == null` (not an LBP patient --
@@ -109,14 +115,17 @@ const VALID_YES_NO_UNKNOWN = new Set(['YES', 'NO', 'UNKNOWN'])
  * "generate nothing", never crash or fabricate a suggestion from a
  * wrong-typed value.
  */
-function isUsableLbpFlags(flags: unknown): flags is { lbp_safety_status: string; leg_symptom_present: string } {
+function isUsableLbpFlags(
+  flags: unknown,
+): flags is { lbp_safety_status: string; leg_symptom_present: string; lbp_neuro_baseline_required: boolean } {
   if (typeof flags !== 'object' || flags === null) return false
   const f = flags as Record<string, unknown>
   return (
     typeof f.lbp_safety_status === 'string' &&
     VALID_LBP_SAFETY_STATUS.has(f.lbp_safety_status) &&
     typeof f.leg_symptom_present === 'string' &&
-    VALID_YES_NO_UNKNOWN.has(f.leg_symptom_present)
+    VALID_YES_NO_UNKNOWN.has(f.leg_symptom_present) &&
+    typeof f.lbp_neuro_baseline_required === 'boolean'
   )
 }
 
@@ -148,6 +157,19 @@ export function generateLbpExamSuggestions(payload: DoctorPayload): PhysicalExam
     items.push(
       lbpExamItem('lbp_exam_walking_tolerance', '실제 보행 가능시간·거리 확인', [
         { text: '서 있거나 걸을수록 엉덩이·다리 증상 악화(환자 응답)', provenance: 'PATIENT_FACT' },
+      ]),
+    )
+  }
+
+  // Opus delta review item 5 (approved CLOSED FROZEN-value connection, no
+  // new semantics): FROZEN computeNeuroBaselineRequired -- bilateral leg
+  // symptoms without a concrete neuro feature -- already drives lane 1's
+  // "신경학적 기저검사 필요" chip. Strict === true (fail closed on anything
+  // else, including a wrong-typed value the guard above already rejects).
+  if (flags.lbp_neuro_baseline_required === true) {
+    items.push(
+      lbpExamItem('lbp_exam_neuro_baseline', '하지 신경학적 기본검사(감각·반사)', [
+        { text: '양쪽 다리 증상(시스템 계산 — 신경학적 기저검사 필요)', provenance: 'DERIVED' },
       ]),
     )
   }

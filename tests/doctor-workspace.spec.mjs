@@ -16,6 +16,7 @@ import fs from 'node:fs'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
 import { DoctorWorkspace } from './.doctor-workspace-bundle.cjs'
+import { FollowUpTargetPicker } from './.follow-up-target-picker-bundle.cjs'
 import {
   WORKSPACE_SCENARIOS,
   PAIN_SCENARIO_1,
@@ -785,13 +786,23 @@ test('EMR preview reconstructs correctly from a persisted WorkspaceState passed 
   // always-on "목표 동작 재현" suggestion as a genuinely NEW pending item
   // (see mergeLbpExamSuggestions) -- the counter CAN appear now; what must
   // never happen is the reloaded SLR item being counted inside it.
-  const pendingCounterMatch = html.match(/아직 확인 안 됨 · \d+건 — ([^<]*)</)
-  if (pendingCounterMatch) {
-    assert.ok(
-      !pendingCounterMatch[1].includes('SLR 검사'),
-      'the reloaded POSITIVE SLR item must never appear in the pending counter',
-    )
-  }
+  //
+  // Opus delta review item 2: a regex spanning the counter's text can never
+  // match here -- React 18 renderToString inserts `<!-- -->` comment nodes
+  // between adjacent text/expression children (actual output: `아직 확인 안
+  // 됨 · <!-- -->1<!-- -->건 — <!-- -->목표 동작 재현`), so
+  // /아직 확인 안 됨 · \d+건 — ([^<]*)</ never matches and an `if
+  // (match)`-guarded assertion silently never runs. Use indexOf/slice
+  // instead of a regex that assumes contiguous text.
+  const counterIdx = html.indexOf('아직 확인 안 됨 ·')
+  assert.ok(counterIdx !== -1, 'the pending counter must appear -- 목표 동작 재현 was merged in as a new pending item')
+  const counterEnd = html.indexOf('</p>', counterIdx)
+  const counterChunk = html.slice(counterIdx, counterEnd === -1 ? undefined : counterEnd)
+  assert.ok(counterChunk.includes('목표 동작 재현'), 'the counter names the genuinely new pending item')
+  assert.ok(
+    !counterChunk.includes('SLR 검사'),
+    'the reloaded POSITIVE SLR item must never appear in the pending counter',
+  )
 })
 
 /* -----------------------------------------------------------------------
@@ -1927,7 +1938,20 @@ test('real (non-synthetic) LBP CLEAR payload: 목표 동작 재현 card + 허리
 
 test('real (non-synthetic) LBP payload with leg symptom YES (pain scenario 2): SLR/슬럼프 auto-merges in, and is no longer offered in 확인 추가', () => {
   const html = renderWith(PAIN_SCENARIO_2, { synthetic: undefined })
-  assert.ok(html.includes('하지직거상 또는 슬럼프검사'), 'SLR/슬럼프 항목이 자동으로 병합된다')
+  // Opus delta review item 3: '하지직거상 또는 슬럼프검사' also appears as a
+  // 확인 추가 button label (LBP_CLINICIAN_ADDABLE_EXAMS), so its bare
+  // presence in the HTML cannot distinguish auto-merge from the manual-add
+  // list. Assert the auto-generated reason text instead (only the
+  // generator writes this exact PATIENT_FACT sentence), and assert the
+  // 확인 추가 button for it is gone (already-present ids are hidden there).
+  assert.ok(
+    html.includes('하지 통증·저림/신경증상 보고(환자 응답)'),
+    'SLR/슬럼프 항목이 자동 생성 사유와 함께 병합된다',
+  )
+  assert.ok(
+    !/workspace__addExamBtn[^>]*>\s*\+ 하지직거상/.test(html),
+    '이미 병합된 SLR/슬럼프는 확인 추가 목록에서 더 이상 제안되지 않는다',
+  )
 })
 
 test('허리 움직임 반응 기본값(미시행)은 눌린 상태(aria-pressed=true)로 렌더되고, 정상 소견처럼 보이지 않는다', () => {
@@ -1935,7 +1959,13 @@ test('허리 움직임 반응 기본값(미시행)은 눌린 상태(aria-pressed
   const idx = html.indexOf('허리 움직임 반응 선택')
   assert.ok(idx !== -1)
   const chunk = html.slice(idx, idx + 1200)
-  assert.ok(/미시행<\/button>/.test(chunk) || chunk.includes('>미시행<'), '미시행 chip 라벨이 렌더된다')
+  // Opus delta review item 4: the test name claims aria-pressed="true", but
+  // the previous assertion only checked the label text existed anywhere in
+  // the chunk -- assert the actual pressed-button markup.
+  assert.ok(
+    /<button[^>]*aria-pressed="true"[^>]*>미시행<\/button>/.test(chunk),
+    '미시행 chip이 aria-pressed="true"로 렌더된다',
+  )
 })
 
 test('목표 기능 그룹 라벨은 LBP 재평가 대상 picker에만 나타나고, 목표 기능 chip 9개가 모두 렌더된다', () => {
@@ -1995,6 +2025,57 @@ test('WorkspaceState.lbpDirectionalResponse: invalid persisted value degrades to
   const emrTextEnd = html.indexOf('</textarea>', emrIdx)
   const emrTextOnly = html.slice(emrIdx, emrTextEnd)
   assert.ok(!emrTextOnly.includes('허리 움직임 반응:'), '알 수 없는 값은 NOT_ASSESSED로 취급되어 EMR line이 없다')
+})
+
+// ---------- Opus delta review item 1: RevisitWorkspace carried-forward LBP target-function chips ----------
+
+test('Opus review item 1a: RevisitWorkspace.tsx wires LBP_TARGET_FUNCTION_OPTIONS + a matching groups label into its FollowUpTargetPicker', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  assert.ok(
+    /import \{ LBP_TARGET_FUNCTION_OPTIONS \} from '\.\/lbpTargetFunction'/.test(src),
+    'imports LBP_TARGET_FUNCTION_OPTIONS',
+  )
+  assert.ok(
+    /const COMBINED_FOLLOW_UP_OPTIONS = \[\.\.\.LBP_TARGET_FUNCTION_OPTIONS, \.\.\.PAIN_FOLLOW_UP_OPTIONS, \.\.\.HERBAL_FOLLOW_UP_OPTIONS\]/.test(
+      src,
+    ),
+    'a carried-forward lbp_tf_* target has a real option/chip to render, not just an orphan selection',
+  )
+  assert.ok(/groups=\{COMBINED_FOLLOW_UP_GROUPS\}/.test(src), 'passes the same 목표 기능 grouping PainWorkspaceNext uses')
+})
+
+test('Opus review item 1b: FollowUpTargetPicker renders a chip (aria-pressed="true") for a selected item whose id is NOT in `options` (structurally impossible to end up un-deselectable)', () => {
+  // Simulates exactly the bug this guards against: a carried-forward
+  // LBP target function reaching a caller whose `options` prop happens
+  // not to include it.
+  const html = renderToString(
+    React.createElement(FollowUpTargetPicker, {
+      options: [{ id: 'pain_intensity', label: '통증 강도', baseline: '', postTreatmentValue: '' }],
+      selected: [{ id: 'lbp_tf_walking', label: '걷기', baseline: '', postTreatmentValue: '' }],
+      onChange: () => {},
+    }),
+  )
+  assert.ok(
+    /<button[^>]*aria-pressed="true"[^>]*>걷기<\/button>/.test(html),
+    'the orphan-selected target function still renders as a pressed, deselectable chip',
+  )
+})
+
+test('Opus review item 1b: with MAX_FOLLOW_UP_TARGETS (3) orphan selections and empty options, all 3 still render as pressed chips (never silently unrenderable)', () => {
+  const orphan = (id, label) => ({ id, label, baseline: '', postTreatmentValue: '' })
+  const html = renderToString(
+    React.createElement(FollowUpTargetPicker, {
+      options: [],
+      selected: [orphan('lbp_tf_walking', '걷기'), orphan('lbp_tf_sitting', '앉기'), orphan('lbp_tf_standing', '서기')],
+      onChange: () => {},
+    }),
+  )
+  for (const label of ['걷기', '앉기', '서기']) {
+    assert.ok(
+      new RegExp(`<button[^>]*aria-pressed="true"[^>]*>${label}</button>`).test(html),
+      `${label} renders as a pressed chip even though it is not in options`,
+    )
+  }
 })
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

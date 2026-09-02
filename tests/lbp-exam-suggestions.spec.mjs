@@ -164,6 +164,43 @@ test('leg symptom YES -> + SLR/슬럼프', () => {
   assert.equal(slr.title, '하지직거상 또는 슬럼프검사')
 })
 
+test('lbp_neuro_baseline_required === true (bilateral leg symptom, no concrete neuro feature) -> + 하지 신경학적 기본검사', () => {
+  // computeNeuroBaselineRequired: lbp_leg_side === 'BILATERAL' with no
+  // CONCRETE_NEURO feature. Bilateral is itself a concrete leg side, so
+  // leg_symptom_present is also YES here -- both rules fire independently.
+  const payload = buildPayload({ ...CLEAR_AXIAL_BASE, LBP_01: 'BACK_ONLY', LBP_02: ['NONE'], LBP_03: 'BILATERAL' })
+  assert.equal(payload.responses.safety_flags.lbp.lbp_neuro_baseline_required, true, 'sanity: neuro baseline required')
+  assert.equal(payload.responses.safety_flags.lbp.lbp_safety_status, 'CLEAR', 'sanity: still CLEAR')
+  const items = generateLbpExamSuggestions(payload)
+  const ids = items.map((i) => i.id)
+  assert.deepEqual(
+    ids,
+    ['lbp_exam_target_function_reproduction', 'lbp_exam_neurodynamic', 'lbp_exam_neuro_baseline'],
+  )
+  const neuroBaseline = items.find((i) => i.id === 'lbp_exam_neuro_baseline')
+  assert.equal(neuroBaseline.title, '하지 신경학적 기본검사(감각·반사)')
+  assert.deepEqual(neuroBaseline.reasonFacts, [
+    { text: '양쪽 다리 증상(시스템 계산 — 신경학적 기저검사 필요)', provenance: 'DERIVED' },
+  ])
+})
+
+test('unilateral leg symptom -> lbp_neuro_baseline_required stays false, no 하지 신경학적 기본검사 auto-suggestion', () => {
+  const payload = buildPayload({ ...CLEAR_AXIAL_BASE, LBP_01: 'BACK_ONLY', LBP_02: ['NONE'], LBP_03: 'RIGHT' })
+  assert.equal(payload.responses.safety_flags.lbp.lbp_neuro_baseline_required, false, 'sanity: not required')
+  const items = generateLbpExamSuggestions(payload)
+  assert.ok(!items.some((i) => i.id === 'lbp_exam_neuro_baseline'))
+})
+
+test('merge: an auto-generated 하지 신경학적 기본검사 disappears from the 확인 추가 (manual add) candidate list', () => {
+  const payload = buildPayload({ ...CLEAR_AXIAL_BASE, LBP_01: 'BACK_ONLY', LBP_02: ['NONE'], LBP_03: 'BILATERAL' })
+  const merged = mergeLbpExamSuggestions([], payload)
+  assert.ok(merged.some((i) => i.id === 'lbp_exam_neuro_baseline'), 'sanity: auto-merged')
+  // Mirrors PainWorkspace.tsx's LbpAddExamDisclosure filter exactly.
+  const mergedIds = new Set(merged.map((i) => i.id))
+  const stillAddable = LBP_CLINICIAN_ADDABLE_EXAMS.filter((e) => !mergedIds.has(e.id))
+  assert.ok(!stillAddable.some((e) => e.id === 'lbp_exam_neuro_baseline'))
+})
+
 test('LBP_08 YES (leg symptom stays UNKNOWN, via LBP_01 UNKNOWN) -> + 보행, no SLR/슬럼프', () => {
   const payload = buildPayload({
     ...CLEAR_AXIAL_BASE,

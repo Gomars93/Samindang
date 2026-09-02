@@ -118,6 +118,8 @@ tests/.view-profile-matrix-viewprofile-bundle.mjs
 tests/.lbp-exam-suggestions-corespec-bundle.mjs
 tests/.lbp-exam-suggestions-bundle.mjs
 tests/.lbp-target-function-bundle.mjs
+# esbuild bundle used by tests/doctor-workspace.spec.mjs (regenerated, not source)
+tests/.follow-up-target-picker-bundle.cjs
 
 # esbuild bundles used by tests/workspace-round3.spec.mjs (regenerated, not source)
 tests/.workspace-round3-persistence-bundle.mjs

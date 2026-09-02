@@ -1594,6 +1594,9 @@
    hover shows the same text via the native `title` attribute. Reuses the
    card's own spacing rhythm rather than introducing a new visual language. */
 .workspace__helpToggle {
+  /* Opus delta review item 6: this stylesheet's tablet touch-target
+     convention is 36-44px (see workspace__addExamBtn's 36px min-height) --
+     24px was under that. */
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--primary);
@@ -1601,9 +1604,9 @@
   font-weight: 800;
   line-height: 1;
   border-radius: 999px;
-  width: 24px;
-  height: 24px;
-  min-height: 24px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
   padding: 0;
   cursor: pointer;
   display: inline-flex;

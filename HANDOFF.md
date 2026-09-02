@@ -1,5 +1,26 @@
 # Current Handoff
 
+## ⚠️ 갱신 (2026-09-02): 아래 "설계 판단" 단락은 commit `23b2b5d`로 해소됨 —
+## 독립 리뷰(Gomars93 계정, "Independent integration review") 커밋이
+## `STRATEGY_PRECEDENCE_ORDER`(선언 순서를 기계적 동점 처리로 쓰던 설계)를
+## **완전히 제거**하고, `strategyIntent`(5개 boolean) 입력을
+## `strategySelection: { primaryStrategy, secondaryStrategy, regulationRelevant }`
+## (이미 해석된 Primary/Secondary를 그대로 받는 구조)로 교체했다. 그 결과
+## `deferredRelevantStrategies` 필드와 동점 처리용 정밀 순서 로직 자체가
+## 코드에서 사라졌으므로, 이제 selector는 어떤 전략 우선순위도 스스로
+## 발명하지 않는다 — Primary/Secondary 결정은 이 모듈 밖(아직 미구현) 책임.
+## 추가로 Primary/Secondary 슬롯은 이제 Target Function **정확히 일치**하는
+## 항목만 후보로 삼고(불일치 항목은 `eligiblePool`/`notSelectedToday`에만
+## 감사용으로 남음), gap 판정도 "정확히 일치하는 항목 0개"로 더 엄격해졌다.
+## 이번 세션이 로컬에서 재검증: `tsc -b` PASS, `npm run build` PASS, 신규
+## 스펙 2개(수정된 버전) PASS. 브랜치/로컬 head는 이제 `23b2b5d`(원격과
+## 동일, fast-forward). 아래 "다음 단계"의 Opus delta review는 이
+## `23b2b5d`를 대상으로 진행하면 된다(리뷰 코멘트가 명시한 4개 확인
+## 항목: (a) patient-fact→strategy 의미 미도입, (b) 명시적 upstream
+## Primary/Secondary가 경계를 지키는 수정인지, (c) 정확한 Target Function
+## 일치 요구가 Regulation adjunct를 과도하게 제약하지 않는지, (d) 기존
+## hard boundary 전부 유지).
+
 ## 2026-09-02 — LBP Rehab Strategy Selector v0.1 구현 (PR #28, DRAFT)
 
 **브랜치**: `claude/feat-lbp-action-adaptive-engine-prototype` (origin push됨,

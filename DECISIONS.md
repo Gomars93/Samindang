@@ -1738,3 +1738,33 @@ RF-3/8/12·CD-2는 RESOLVED WITH ISSUE, **CD-1은 NOT RESOLVED**.
 
 ### Consequences
 - Sonnet fix → Opus closing → HANDOFF 갱신. CD-3는 Batch 2.5 진입 전 PO에게 질문.
+
+## 2026-09-02 — LBP v1 Batch 2 Opus closing PASS; Batch 2.5 선행 조건 + PO 승인 대기 항목 확정
+
+### Context
+Sonnet fix(`d092105` 체크포인트 + `c23c3d0`)가 Opus delta review 결함 1~9를
+해소했고 Opus closing review(`docs/LBP_V1_BATCH2_OPUS_CLOSING_REVIEW_v0.1.md`)가
+PASS를 냈다. 독립 probe: capability 전부 UNKNOWN → START_WITH_REGRESSION 0/20,
+readyCandidates 빈 배열; 전부 'NO' → RF 매핑대로 4개 회귀(엔진 계층 정상).
+defect 1 되돌린 mutant에서 새 테스트가 실제로 실패함을 확인(비-공허).
+
+### Decision (기록)
+1. **Batch 2 게이트 CLOSED.** PR 생성/main merge는 PO 명시 판단.
+2. **Batch 2.5 선행 필수(CD-3를 3상태 chip으로 결정하는 경우에만):** 회귀
+   채택 문구 구분자 수정(`regressionKo` 뒤 종결부호 없이 "중단·재검토:"가
+   이어져 "…휴식 지점을 사용 중단"으로 오독 가능) + 회귀 문구 회귀 테스트.
+   v1에서는 START_WITH_REGRESSION이 구조적으로 도달 불가라 비차단.
+3. **PO 승인 대기(명명, 임상 규칙 아님):** Core-20 `displayNameKo` 20개.
+   Opus 제안: DEEP_TRUNK_01 "배에 힘주기(코어 브레이싱)" → "숨 쉬면서 배에
+   살짝 힘주기"(시작 기준 "최대수축 아님"과 상충 소지, 우선 검토); DIR_03
+   "엎드려 반복 허리 젖히기"; DIR_04 "누워서·앉아서 굽히기"; EXPOSURE_03
+   "앉아 있기 단계적으로 늘리기"; 굽힘 계열 3개 동시 노출 시 혼동 검토.
+4. Core-20 원장용 필드(`startingCriteriaKo`/`acceptableResponseKo`/
+   `progressionKo`)의 잔여 영어는 환자 노출 없음 → 의도적 미변경.
+5. SYNTHETIC LBP 프리뷰에서 채택 버튼이 남는 것은 실제 제출 경로 영향 없음
+   → 선택 사항(`!synthetic && isLbpRecord`), 미적용.
+
+### Consequences
+- 다음 PO 결정: (a) CD-3, (b) displayNameKo 명명, (c) Batch 2 PR 생성 여부.
+- 그 뒤 Batch 2.5(Working Hypothesis 최소 형태 + ExamCheckStatus 6상태 +
+  [CD-3 시] capability 3상태 + §C(i)(ii)).

@@ -1,5 +1,43 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02 (최신 4): LBP v1 Batch 2 게이트 CLOSED (Opus closing PASS) — PO 결정 3건 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `c23c3d0` + 이
+문서 커밋. origin과 동일. PR 미생성(PO 지시 시). main merge는 PO 명시 승인.
+
+**Batch 2 커밋 이력**: `3eb1894`(WIP 체크포인트, 컨테이너 회수 대비) →
+`2ac30c4`(마무리: 판단·처치 레인 배치, NEURAL_01 직접지지 조건, 빈 상태 힌트)
+→ Opus delta **FAIL** 10건(`docs/LBP_V1_BATCH2_OPUS_DELTA_REVIEW_v0.1.md`) →
+`d092105`(컨테이너 재시작으로 유실 방지 WIP) → `c23c3d0`(9건 fix + 테스트)
+→ Opus closing **PASS**(`docs/LBP_V1_BATCH2_OPUS_CLOSING_REVIEW_v0.1.md`).
+검증: `test:all` PASS(exit 0), `tsc -b`/`vite build` OK, FROZEN/tablet/server
+zero-diff. 아래 "(최신 3)/(최신 2)" 절의 "fix 진행 중", "staged/미커밋"
+문구는 stale.
+
+**Batch 2가 실제 진료에서 바꾸는 것**: 요통 환자의 판단·처치 레인, 최종
+판단 카드 아래에 "재활/운동 제안"이 생긴다. 목표 기능과 맞는 Core-20 운동
+중 지금 안전한 것만 3개(+더 보기)로 보이고, 준비조건이 확인 안 된 운동은
+"확인하면 시작 가능"에 chip으로 나온다(탭으로 확인/취소). 원장이 채택하면
+운동명(한국어)+시작 용량+중단·재검토 기준이 Care Plan "집에서 할 일"에
+들어간다. 안전이 CLEAR가 아니거나 새·악화 신경증상이면 블록 전체가 접히고,
+임신 등 치료 안전 미확인이면 후보는 보이되 채택만 막힌다. 운동 게이트는
+원장의 객관적 근력저하 입력을 반영해 재계산한 안전값을 쓴다.
+
+**사람 판단 대기 — PO 결정 3건** (`DECISIONS.md` 마지막 2항목):
+1. CD-3: 준비조건 chip을 `확인함/지금은 안 됨/미확인` 3상태로 확장할지
+   (권고: Batch 2.5에서 도입 → "쉬운 단계로 시작" 계층이 살아남). v1 현재는
+   그 계층이 구조적으로 도달 불가(의도된 CD-1 결과).
+2. Core-20 한국어 표시명 20개 승인(Opus 제안 5건 포함 — 특히 DEEP_TRUNK_01
+   "배에 힘주기" → "숨 쉬면서 배에 살짝 힘주기").
+3. Batch 2까지를 PR로 올릴지(main merge 판단은 별도).
+
+**다음 행동**: PO 결정 후 Batch 2.5 — Working Hypothesis 최소 형태(원장
+선택 chip, 자동 계산 없음) + `ExamCheckStatus` 6상태(제한/미시행 추가) +
+[CD-3 시] capability 3상태 + 회귀 채택 문구 구분자 수정(Opus closing §C).
+그 뒤 Batch 3(재진 Quick Check 5문항), Batch 4(EMR 고정 6키 + CRM 최소).
+
+---
+
 ## ⚠️ 2026-09-02 (최신 3): Batch 2 커밋·검증 완료 → Opus delta FAIL(10건) → Sonnet fix 진행 중, CD-3 PO 결정 대기
 
 Git 실제 상태: `2ac30c4`(Batch 2 마무리, test:all PASS, FROZEN zero-diff)가

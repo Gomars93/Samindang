@@ -1,5 +1,34 @@
 # Current Handoff
 
+## ✅ 2026-09-02: Opus delta review 완료 — PASS (LBP Rehab Strategy Selector)
+
+PR #28 코멘트(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5506206345)
+로 실제 Opus 모델을 호출한 delta review가 완료됐다 — `a219a5a..23b2b5d` diff와
+현재 head `6fa744a`의 selector/테스트 전체를 대상으로, 브리프 §16의 10개
+질문 + 독립 리뷰 코멘트가 명시한 4개 확인 항목(a~d) 전부에 답변.
+
+**판정: PASS — concrete defect 없음.** Sonnet이 수정할 항목 없음. Closing
+review는 브랜치가 더 바뀌지 않는 한 no-op.
+
+- (a) patient-fact→strategy 임상 의미 미도입 확인 (`STRATEGY_PRECEDENCE_ORDER`
+  제거가 유일한 관련 항목이었고, 그게 삭제됨).
+- (b) Primary/Secondary를 명시적 upstream 입력으로 바꾼 것은 범위 확장이
+  아니라 브리프 §2/§9-step2가 이미 전제한 경계를 지키는 수정으로 확인.
+- (c) Target Function 정확 일치 요구가 Regulation adjunct를 과도 제약하지
+  않음 확인 — `fillRegulationSlot`은 TF 일치를 요구하지 않음. 참고용 관찰
+  2건(코드 수정 불필요): Core-20에 REGULATION 도메인 항목이 1개뿐이라
+  L300의 tie 분기는 v0.1에서 도달 불가능; Primary(2)+Secondary(1)가 예산을
+  다 쓰면 relevant regulation 후보가 `notSelectedToday`로만 남을 수 있음
+  (브리프 §9 line 157 기준 설계대로 — 버그 아님).
+- (d) 기존 hard boundary 전부 유지 — FROZEN spec/tablet zero-diff, 신규
+  exercise ID 없음, production 미연동(importer 0개), raw DoctorPayload
+  없음을 Git/CI 기준으로 직접 재검증(코멘트 narrative를 신뢰하지 않고).
+
+CLINICAL DECISION REQUIRED 블로커 없음. PR #28은 계속 DRAFT/미merge 유지 —
+merge는 여전히 Product Owner 판단.
+
+---
+
 ## ⚠️ 갱신 (2026-09-02): 아래 "설계 판단" 단락은 commit `23b2b5d`로 해소됨 —
 ## 독립 리뷰(Gomars93 계정, "Independent integration review") 커밋이
 ## `STRATEGY_PRECEDENCE_ORDER`(선언 순서를 기계적 동점 처리로 쓰던 설계)를

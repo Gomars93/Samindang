@@ -1,36 +1,55 @@
 # Current Handoff
 
-## ⚠️ 2026-09-02 (최신): Fable 역할 이관 + LBP Production v1 최소 설계 확정, Batch 1 진행 중
+## ⚠️ 2026-09-02 (최신): LBP Production v1 — Batch 1 게이트 CLOSED (Opus), Batch 2는 PO 결정 2건 대기
 
-**브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (main `01dac63`에서 분기).
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (main `01dac63`에서 분기,
+origin push됨, PR 미생성 — PR 생성/main merge는 PO 지시·승인 시).
 PR #28(`claude/feat-lbp-action-adaptive-engine-prototype`, head `b099417`)은
-research branch로 계속 DRAFT/미merge. 통째로 merge하지 않는다(PO 결정, PR #28
-코멘트 `#5508066166`, `DECISIONS.md` 2026-09-02 두 항목 참고).
+research branch로 계속 DRAFT/미merge(PO 결정).
 
-**이 세션(Fable)이 한 것**
-1. main / PR #28 / PR #25·#27·#23 실제 상태 확인 후 LBP 흐름 11단계를
-   READY/PARTIAL/MISSING/OVERDESIGNED로 분류 →
-   `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` (§1 map, §2 minimal
-   architecture, §3 remove/defer, §4 exact gaps G1~G14, §5 batch 1~4, §6 Opus
-   확인 항목, §7 Batch 1 Sonnet 브리프).
-2. `DECISIONS.md`에 PR #28 브랜치에만 있던 PO 결정 항목을 그대로 옮기고
-   Fable 설계 항목을 추가.
-3. Batch 1(Target Function chip + LBP 최소 확인 블록 + 방향 반응 필드 + ⓘ
-   help + 원장 확인 추가) 구현을 Sonnet 세션에 위임 → focused tests →
-   Opus delta review(§6 5개 항목) → fix → Opus closing 순으로 진행.
+**커밋 순서** (전부 origin과 동일):
+- `6b348fe` docs — `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`
+  (end-to-end map, minimal v1, remove/defer, gaps G1~G14, batch 1~4, Batch 1 브리프)
+- `9533414` feat — Batch 1 구현(Sonnet): 목표 기능 chip(`lbpTargetFunction.ts`,
+  기존 FollowUpTarget 옵션 재사용), LBP 확인 항목 생성기(`lbpExamSuggestions.ts`),
+  방향 반응 필드(`WorkspaceState.lbpDirectionalResponse`), ⓘ how/why, 원장
+  "확인 추가", EMR line, 테스트 `tests/lbp-exam-suggestions.spec.mjs` 등
+- `2f37946` fix — Opus delta review 6건 수정(Sonnet). 여기서 자동 규칙 4번째
+  (FROZEN `lbp_neuro_baseline_required===true` → 신경학적 기본검사) 추가
+- `d8b38ca`/`4f9f189` docs — Opus 리뷰 원문 3건 + DECISIONS 항목
+- `aa54fb9` test — closing review 잔여 1건(vacuous assertion) 수정, Opus가 준
+  기계적 기준(PAIN_SCENARIO_1에서 실패/2에서 통과) 실측 충족
 
-**핵심 판단 요약**
-- production v1로 가져오는 research 산출물 = 운동 데이터 3파일 + v0.1 엔진의
-  검사 문구뿐. v0.2/v0.3/B+/v0.4/가설 엔진/presentation = REMOVE·DEFER,
-  Strategy Selector = BYPASS.
-- Target Function = 기존 `FollowUpTarget` 옵션 확장(새 필드/화면 없음).
-- PR #25는 main이 이미 같은 결함을 해결 → 닫기 권고(PO 판단).
+**검증 증거**: `npm run test:all` 4846 PASS(exit 0), `tsc -b`/`vite build` OK,
+`git diff --stat origin/main -- src/spec index.html src/App.tsx server "tablet core"`
+비어 있음(FROZEN/tablet/server zero-diff). Opus 실제 호출 증거:
+`docs/LBP_V1_BATCH1_OPUS_DELTA_REVIEW_v0.1.md`(FAIL→6건),
+`docs/LBP_V1_BATCH1_OPUS_CLOSING_REVIEW_v0.1.md`(잔여 1건 + 기계적 종료 기준),
+`docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md`(Batch 2 선행).
+CLINICAL DECISION REQUIRED: Batch 1에서는 0건.
 
-**사람 판단이 필요한 지점(멈춘 곳)**: 없음(Batch 1은 새 임상 의미 없음).
-Opus delta review가 §6 항목에서 `CLINICAL DECISION REQUIRED`를 올리면 그때
-PO에게 올린다. Batch 2 시작 전 Eligibility Opus bounded validation 필요.
+**Batch 1이 실제 진료에서 바꾸는 것**: 요통 환자 화면 레인2에 "허리 움직임
+반응" chip(기본 미시행=정상 아님) + 자동 확인 항목(목표 동작 재현 / 다리증상
+시 SLR·슬럼프 / 보행 악화 시 보행 허용량 / 양측 다리증상 시 신경 기본검사)
++ ⓘ 도움말 + 원장 확인 추가(고관절/천장관절 등) — 안전이 CLEAR가 아니면
+자동 제안 없음. "다음" 레인 재평가 대상에 목표 기능 chip 9개(걷기·앉기·…·
+업무 복귀·기타)가 추가되어 다음 방문에 같은 동작으로 비교. 재진 화면에도
+같은 chip이 나온다.
 
-**다음 행동**: Batch 1 루프 완료 → HANDOFF 갱신 → PR 생성은 PO 지시 시.
+**사람 판단이 필요한 지점(멈춘 곳) — Batch 2 진입 전 PO 결정 2건**
+(`DECISIONS.md` 2026-09-02 마지막 항목, Fable 권고 기본값 포함):
+- CD-1: 준비조건을 아직 확인하지 않은 운동을 "쉬운 단계로 시작 가능"으로
+  보여줄지(클릭 0), "확인 전 보류 + chip 1~2탭으로 해제"로 보여줄지.
+  Fable 권고: 후자(CLOSED 문서의 "미확인→적격 숨은 변환 금지"에 부합).
+- CD-2: 치료 안전(임신 등) 미확인 환자에게 운동 후보를 보이되 채택만
+  막을지, 블록 전체를 접을지. Fable 권고: 전자.
+- 부수 PO 판단: PR #25 닫기(main이 이미 해결), Batch 1 PR 생성 여부.
+
+**다음 행동(결정과 무관하게 진행 가능)**: Batch 2 (a) — PR #28에서
+`lbpExerciseLibrary.v01`/`lbpExerciseCoreMetadata.v01`/`lbpExerciseEligibility.v01`
++ 테스트 복사 후 Opus RF-1/4/5/6/7/7b/9/10/11/12/13 적용(Sonnet) → Opus delta.
+CD-1/CD-2 결정 후 (b) adapter(재계산 safety + treatment safety 게이트)/추천
+모듈/채택 UI(RF-2/3/3b/8).
 
 ---
 

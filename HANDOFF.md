@@ -1,5 +1,134 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02: PO 결정 — Rehab Strategy Mapping production 구축 보류 +
+## Fable 역할 이관 (`DECISIONS.md` 동일 날짜 항목 참고)
+
+PR #28 코멘트(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5508066166,
+`author_association: OWNER` 확인)로 PO가 결정: 아래 selector가 Opus PASS를
+받은 것과 별개로, **production LBP v1은 이 selector를 그대로 채택하지
+않는다.** patient facts → Primary/Secondary Rehab Strategy 매핑 엔진은
+새로 만들지 않으며, production 경로는 `Safety → Target Function → 최소
+확인 → Exercise Eligibility → Target Function/임상반응이 뒷받침하는
+exercise 2~3개 → clinician 선택 → 재평가`로 단순화한다.
+`lbpRehabStrategySelector.v01.experimental.ts`는 bypass/simplification-
+refactor/defer 중 무엇을 할지 **Fable이 평가** — Sonnet은 이 위에 추가
+기능을 만들지 않는다. 동시에 ChatGPT의 product-architecture/overdesign-
+review/독립 통합 리뷰 역할이 Fable로 이관됨(Product Owner/Opus/Sonnet
+권한은 불변). 상세 근거/trade-off는 `DECISIONS.md`에 기록.
+
+**이 세션의 다음 행동**: 없음 — 코드 변경 요청이 아니라 향후 방향 결정
+기록. PR #28은 계속 DRAFT/미merge, CI green(`c26e01c`) 상태 그대로 둔다.
+
+---
+
+## ✅ 2026-09-02: Opus delta review 완료 — PASS (LBP Rehab Strategy Selector)
+
+PR #28 코멘트(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5506206345)
+로 실제 Opus 모델을 호출한 delta review가 완료됐다 — `a219a5a..23b2b5d` diff와
+현재 head `6fa744a`의 selector/테스트 전체를 대상으로, 브리프 §16의 10개
+질문 + 독립 리뷰 코멘트가 명시한 4개 확인 항목(a~d) 전부에 답변.
+
+**판정: PASS — concrete defect 없음.** Sonnet이 수정할 항목 없음. Closing
+review는 브랜치가 더 바뀌지 않는 한 no-op.
+
+- (a) patient-fact→strategy 임상 의미 미도입 확인 (`STRATEGY_PRECEDENCE_ORDER`
+  제거가 유일한 관련 항목이었고, 그게 삭제됨).
+- (b) Primary/Secondary를 명시적 upstream 입력으로 바꾼 것은 범위 확장이
+  아니라 브리프 §2/§9-step2가 이미 전제한 경계를 지키는 수정으로 확인.
+- (c) Target Function 정확 일치 요구가 Regulation adjunct를 과도 제약하지
+  않음 확인 — `fillRegulationSlot`은 TF 일치를 요구하지 않음. 참고용 관찰
+  2건(코드 수정 불필요): Core-20에 REGULATION 도메인 항목이 1개뿐이라
+  L300의 tie 분기는 v0.1에서 도달 불가능; Primary(2)+Secondary(1)가 예산을
+  다 쓰면 relevant regulation 후보가 `notSelectedToday`로만 남을 수 있음
+  (브리프 §9 line 157 기준 설계대로 — 버그 아님).
+- (d) 기존 hard boundary 전부 유지 — FROZEN spec/tablet zero-diff, 신규
+  exercise ID 없음, production 미연동(importer 0개), raw DoctorPayload
+  없음을 Git/CI 기준으로 직접 재검증(코멘트 narrative를 신뢰하지 않고).
+
+CLINICAL DECISION REQUIRED 블로커 없음. PR #28은 계속 DRAFT/미merge 유지 —
+merge는 여전히 Product Owner 판단.
+
+---
+
+## ⚠️ 갱신 (2026-09-02): 아래 "설계 판단" 단락은 commit `23b2b5d`로 해소됨 —
+## 독립 리뷰(Gomars93 계정, "Independent integration review") 커밋이
+## `STRATEGY_PRECEDENCE_ORDER`(선언 순서를 기계적 동점 처리로 쓰던 설계)를
+## **완전히 제거**하고, `strategyIntent`(5개 boolean) 입력을
+## `strategySelection: { primaryStrategy, secondaryStrategy, regulationRelevant }`
+## (이미 해석된 Primary/Secondary를 그대로 받는 구조)로 교체했다. 그 결과
+## `deferredRelevantStrategies` 필드와 동점 처리용 정밀 순서 로직 자체가
+## 코드에서 사라졌으므로, 이제 selector는 어떤 전략 우선순위도 스스로
+## 발명하지 않는다 — Primary/Secondary 결정은 이 모듈 밖(아직 미구현) 책임.
+## 추가로 Primary/Secondary 슬롯은 이제 Target Function **정확히 일치**하는
+## 항목만 후보로 삼고(불일치 항목은 `eligiblePool`/`notSelectedToday`에만
+## 감사용으로 남음), gap 판정도 "정확히 일치하는 항목 0개"로 더 엄격해졌다.
+## 이번 세션이 로컬에서 재검증: `tsc -b` PASS, `npm run build` PASS, 신규
+## 스펙 2개(수정된 버전) PASS. 브랜치/로컬 head는 이제 `23b2b5d`(원격과
+## 동일, fast-forward). 아래 "다음 단계"의 Opus delta review는 이
+## `23b2b5d`를 대상으로 진행하면 된다(리뷰 코멘트가 명시한 4개 확인
+## 항목: (a) patient-fact→strategy 의미 미도입, (b) 명시적 upstream
+## Primary/Secondary가 경계를 지키는 수정인지, (c) 정확한 Target Function
+## 일치 요구가 Regulation adjunct를 과도하게 제약하지 않는지, (d) 기존
+## hard boundary 전부 유지).
+
+## 2026-09-02 — LBP Rehab Strategy Selector v0.1 구현 (PR #28, DRAFT)
+
+**브랜치**: `claude/feat-lbp-action-adaptive-engine-prototype` (origin push됨,
+PR #28 — DRAFT, Product Owner 명시 승인 전 merge 금지).
+
+**이번 세션이 구현한 것**: `docs/LBP_REHAB_STRATEGY_SONNET_IMPLEMENTATION_
+BRIEF_v0.1.md`를 그대로 따라 `src/doctor/workspace/lbpRehabStrategySelector.
+v01.experimental.ts`(신규)를 추가했다 — 업스트림 Eligibility(START_AS_WRITTEN
+/START_WITH_REGRESSION만 소비, DEFER_NOT_READY/STOP_REVIEW는 절대 재생시키지
+않음)와 `strategyIntent`(이미 해석된 5개 boolean 관리의도, raw 환자사실에서
+파생하지 않음)를 입력으로 받아 Target Function을 앵커로 Core-20 exercise
+후보 0~3개를 고른다. 숫자 점수/가중치는 전혀 사용하지 않는다.
+
+**설계 판단 중 CLOSED 문서에 명시가 없어 이번 세션이 기계적으로 정한 것
+(Opus 델타 리뷰 필요)**: `strategyIntent`의 4개 전략 플래그가 동시에 여러
+개 true일 때 무엇을 Primary/Secondary로 할지는 `LBP_REHAB_STRATEGY_
+DECISION_v0.1.md`에 우선순위가 명시돼 있지 않다. 이번 구현은 그 문서가
+전략을 선언한 순서(`STRATEGY_PRECEDENCE_ORDER`: 증상반응 활용 → 신체·기능
+능력 회복 → 신경가동성 관리 → 단계적 노출·복귀)를 "어느 쪽이 더 위중하다"는
+임상 판단이 아니라 순수 기계적 동점 처리 규칙으로만 사용했고, 3번째 이후
+관련 전략은 삭제하지 않고 `deferredRelevantStrategies`에 그대로 보존한다
+(코드 상단 주석에 동일 내용 명시). 이 규칙 자체가 맞는지는 이번 배치
+범위를 벗어나는 새 임상 판단이 아니라고 보고 진행했으나, Opus/PO 확인이
+필요한 지점으로 남긴다.
+
+**테스트**: `tests/lbp-rehab-strategy-selector.experimental.spec.mjs`(브리프
+§13의 17개 acceptance 기준 1~16 커버 — #17 FROZEN zero-diff는 아래 git diff로
+별도 확인), `tests/lbp-rehab-strategy-selector.vignettes.experimental.spec.mjs`
+(브리프 §14의 vignette 12개 그대로). `.github/workflows/lbp-action-engine-
+experimental.yml`에 새 모듈 bundle 단계 + 두 테스트 실행 단계 추가.
+
+**로컬 검증 (이번 세션)**:
+- 신규 2개 스펙 파일 단독 실행 PASS.
+- 워크플로에 나열된 기존 18개 LBP 실험 스펙 전체(재bundle 포함) 재실행 —
+  전부 PASS, regression 없음.
+- `npx tsc -b` PASS, `npm run build`(vite build) PASS.
+- `npm run test:all` 전체 PASS.
+- `git diff` 기준 `src/spec/*Logic.ts`/`*Adapter.ts`, 태블릿 questionnaire
+  파일(`index.html`, `src/App.tsx`) zero-diff 확인.
+- 변경 파일: `.github/workflows/lbp-action-engine-experimental.yml`(수정),
+  `src/doctor/workspace/lbpRehabStrategySelector.v01.experimental.ts`(신규),
+  `tests/lbp-rehab-strategy-selector.experimental.spec.mjs`(신규),
+  `tests/lbp-rehab-strategy-selector.vignettes.experimental.spec.mjs`(신규).
+  esbuild bundle 산출물(`tests/.lbp-*-bundle.mjs`)은 이 브랜치의 기존
+  관례대로 커밋하지 않음(`.gitignore`에 개별 등록돼 있지 않지만 git
+  history에도 커밋된 적이 없는 생성물 — CI/로컬에서 매번 재생성).
+
+**CLINICAL DECISION REQUIRED 여부**: 없음. 브리프가 금지한 항목(숫자 점수,
+새 환자질문, 진단→운동 hard mapping, raw DoctorPayload, production UI/CRM/
+EMR 연동, 57개 전체 직접 랭킹, log-roll 등 신규 exercise ID 발명)은 전부
+회피했다. 위 "설계 판단" 항목만 명시적으로 검토가 필요한 지점.
+
+**다음 단계**: Opus delta review(브리프 §16의 10개 질문, 특히 #2 patient-fact
+→strategy mapping 여부와 #7 tie 처리)를 이 diff에 대해 실행 → 발견사항만
+Sonnet이 수정 → Opus closing review. PR #28은 계속 DRAFT/미merge 유지.
+
+---
+
 ## ⚠️ 갱신 (2026-09-01): Phase 10 delta 재심사 PASS로 종료됨 — 아래
 ## "Objective (Core Reduction Phase 10 closing review 지적 해소)" 절은
 ## 재심사 진행 중이던 시점의 snapshot이라 지금 기준으로는 stale하다.

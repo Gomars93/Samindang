@@ -1,0 +1,196 @@
+name: LBP Action Engine Experimental
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/doctor/workspace/lbpActionAdaptiveEngine.experimental.ts'
+      - 'src/doctor/workspace/lbpActionAdaptiveEngine.v02.experimental.ts'
+      - 'src/doctor/workspace/lbpActionAdaptiveEngine.v03.experimental.ts'
+      - 'src/doctor/workspace/lbpCareCore.v04.experimental.ts'
+      - 'src/doctor/workspace/lbpPriorityPolicyBPlus.experimental.ts'
+      - 'src/doctor/workspace/lbpWorkingHypothesis.experimental.ts'
+      - 'src/doctor/workspace/lbpHypothesisPresentation.experimental.ts'
+      - 'src/doctor/workspace/lbpExerciseLibrary.v01.experimental.ts'
+      - 'src/doctor/workspace/lbpExerciseCoreMetadata.v01.experimental.ts'
+      - 'src/doctor/workspace/lbpExerciseEligibility.v01.experimental.ts'
+      - 'src/doctor/workspace/lbpRehabStrategySelector.v01.experimental.ts'
+      - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
+      - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
+      - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
+      - 'tests/lbp-action-adaptive-engine.v02.experimental.spec.mjs'
+      - 'tests/lbp-action-adaptive-engine.v03.experimental.spec.mjs'
+      - 'tests/lbp-care-core.v04.experimental.spec.mjs'
+      - 'tests/lbp-care-core.v04.clinical-vignettes.experimental.spec.mjs'
+      - 'tests/lbp-priority-policy-comparison.experimental.spec.mjs'
+      - 'tests/lbp-priority-policy-bplus.experimental.spec.mjs'
+      - 'tests/lbp-bplus-primary-care-flow.vignettes.experimental.spec.mjs'
+      - 'tests/lbp-working-hypothesis.experimental.spec.mjs'
+      - 'tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs'
+      - 'tests/lbp-exercise-library.catalog.experimental.spec.mjs'
+      - 'tests/lbp-exercise-core-metadata.experimental.spec.mjs'
+      - 'tests/lbp-exercise-core20.vignettes.experimental.spec.mjs'
+      - 'tests/lbp-exercise-eligibility.experimental.spec.mjs'
+      - 'tests/lbp-rehab-strategy-selector.experimental.spec.mjs'
+      - 'tests/lbp-rehab-strategy-selector.vignettes.experimental.spec.mjs'
+      - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
+      - 'docs/LBP_EXERCISE_LIBRARY_CATALOG_MIGRATION_v0.1.md'
+      - 'docs/LBP_EXERCISE_CORE20_METADATA_v0.1.md'
+      - 'docs/LBP_REHAB_STRATEGY_DECISION_v0.1.md'
+      - '.github/workflows/lbp-action-engine-experimental.yml'
+
+jobs:
+  stress-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bundle experimental engine
+        run: >-
+          npx esbuild src/doctor/workspace/lbpActionAdaptiveEngine.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-action-adaptive-engine-bundle.mjs
+
+      - name: Bundle experimental v0.2 decision engine
+        run: >-
+          npx esbuild src/doctor/workspace/lbpActionAdaptiveEngine.v02.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-action-adaptive-engine-v02-bundle.mjs
+
+      - name: Bundle experimental v0.3 sufficiency engine
+        run: >-
+          npx esbuild src/doctor/workspace/lbpActionAdaptiveEngine.v03.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-action-adaptive-engine-v03-bundle.mjs
+
+      - name: Bundle experimental v0.4 care core
+        run: >-
+          npx esbuild src/doctor/workspace/lbpCareCore.v04.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-care-core-v04-bundle.mjs
+
+      - name: Bundle experimental B+ priority scheduler
+        run: >-
+          npx esbuild src/doctor/workspace/lbpPriorityPolicyBPlus.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-priority-policy-bplus-bundle.mjs
+
+      - name: Bundle experimental working hypothesis engine
+        run: >-
+          npx esbuild src/doctor/workspace/lbpWorkingHypothesis.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-working-hypothesis-bundle.mjs
+
+      - name: Bundle experimental hypothesis presentation
+        run: >-
+          npx esbuild src/doctor/workspace/lbpHypothesisPresentation.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-hypothesis-presentation-bundle.mjs
+
+      - name: Bundle experimental exercise catalog
+        run: >-
+          npx esbuild src/doctor/workspace/lbpExerciseLibrary.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-exercise-library-v01-bundle.mjs
+
+      - name: Bundle experimental core-20 exercise metadata
+        run: >-
+          npx esbuild src/doctor/workspace/lbpExerciseCoreMetadata.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-exercise-core-metadata-bundle.mjs
+
+      - name: Bundle experimental exercise eligibility contract
+        run: >-
+          npx esbuild src/doctor/workspace/lbpExerciseEligibility.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-exercise-eligibility-bundle.mjs
+
+      - name: Bundle experimental rehab strategy selector
+        run: >-
+          npx esbuild src/doctor/workspace/lbpRehabStrategySelector.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-rehab-strategy-selector-bundle.mjs
+
+      - name: Run LBP action-adaptive stress scenarios
+        run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
+
+      - name: Run LBP action-adaptive boundary regressions
+        run: node tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs
+
+      - name: Run LBP action-adaptive exhaustive stress matrix
+        run: node tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs
+
+      - name: Run LBP action-adaptive v0.2 Decision Key stress suite
+        run: node tests/lbp-action-adaptive-engine.v02.experimental.spec.mjs
+
+      - name: Run LBP action-adaptive v0.3 Decision Sufficiency stress suite
+        run: node tests/lbp-action-adaptive-engine.v03.experimental.spec.mjs
+
+      - name: Run LBP v0.4 reduced primary-care contract suite
+        run: node tests/lbp-care-core.v04.experimental.spec.mjs
+
+      - name: Run LBP v0.4 north-star clinical vignette observation suite
+        run: node tests/lbp-care-core.v04.clinical-vignettes.experimental.spec.mjs
+
+      - name: Run LBP complex-patient priority policy comparison
+        run: node tests/lbp-priority-policy-comparison.experimental.spec.mjs
+
+      - name: Run LBP B+ primary-care priority stress suite
+        run: node tests/lbp-priority-policy-bplus.experimental.spec.mjs
+
+      - name: Run LBP B+ north-star primary-care flow vignettes
+        run: node tests/lbp-bplus-primary-care-flow.vignettes.experimental.spec.mjs
+
+      - name: Run LBP explainable working-hypothesis vignettes
+        run: node tests/lbp-working-hypothesis.experimental.spec.mjs
+
+      - name: Run LBP compact hypothesis-presentation stress suite
+        run: node tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs
+
+      - name: Run LBP exercise-library catalog migration suite
+        run: node tests/lbp-exercise-library.catalog.experimental.spec.mjs
+
+      - name: Run LBP core-20 exercise metadata suite
+        run: node tests/lbp-exercise-core-metadata.experimental.spec.mjs
+
+      - name: Run LBP core-20 exercise clinical vignette observation suite
+        run: node tests/lbp-exercise-core20.vignettes.experimental.spec.mjs
+
+      - name: Run LBP structured exercise eligibility suite
+        run: node tests/lbp-exercise-eligibility.experimental.spec.mjs
+
+      - name: Run LBP rehab strategy selector suite
+        run: node tests/lbp-rehab-strategy-selector.experimental.spec.mjs
+
+      - name: Run LBP rehab strategy selector clinical vignette suite
+        run: node tests/lbp-rehab-strategy-selector.vignettes.experimental.spec.mjs

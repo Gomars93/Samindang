@@ -1,0 +1,230 @@
+# LBP Clinical OS — North Star Guardrails
+
+Status: PRODUCT / CLINICAL DESIGN GUARDRAIL — NOT PRODUCTION CLINICAL LOGIC
+
+This document exists to prevent the LBP Clinical OS from drifting while the action-adaptive engine is being prototyped.
+
+## 1. Product purpose
+
+Clinical OS is not a diagnosis encyclopedia. It is a primary-care management system that helps the clinician:
+
+1. decide whether routine musculoskeletal care can proceed safely,
+2. identify the patient's main functional problem,
+3. obtain only the additional findings that can change management,
+4. form an explainable working hypothesis without forcing diagnostic certainty,
+5. choose treatment and rehabilitation direction,
+6. track response with a small number of meaningful outcomes,
+7. reopen omitted diagnostic branches when the course is inconsistent, worsening, or non-responsive,
+8. hand the confirmed plan downstream to EMR / CRM / patient instructions with minimal duplicate work.
+
+The system may leave diagnostic uncertainty unresolved. It must not leave that uncertainty unmanaged.
+
+---
+
+## 2. Non-negotiable workflow principles
+
+### A. Keep the visit short
+- Target real clinician workflow: roughly 5–10 minutes, not a comprehensive specialist workup.
+- Do not add a question or exam merely because it improves diagnostic precision.
+- Ask / recommend it only when the result can change safety, treatment target, rehabilitation, follow-up metric, or imaging/referral decision now or at the near-term reassessment.
+- Simple patients may legitimately have **0 additional checks**.
+- Progressive disclosure is preferred over a card wall or a long checklist.
+- A recommended non-safety check is not automatically a prohibition on routine conservative care. Distinguish **care availability** from **whether the management plan is ready for confirmation**.
+
+### B. Click minimization over data perfection
+- Reuse tablet / prior facts; do not ask the clinician to re-enter them.
+- Structured click input is preferred to free text when it drives CDS.
+- Never collapse `NOT_ASSESSED`, `NOT_PERFORMED`, `LIMITED`, or `UNCERTAIN` into normal/negative.
+- Optional memo remains available, but CDS should not depend on narrative text when a structured state is practical.
+
+### C. Safety is a gate, not the whole CDS
+- Existing FROZEN LBP safety semantics remain authoritative.
+- Disease safety and treatment safety stay separate.
+- Safety-critical ambiguity can gate the routine pathway.
+- General diagnostic uncertainty should lower certainty, not erase the entire clinical-support flow.
+
+### D. Primary-care management, not forced pathoanatomic diagnosis
+- Do not force lumbar vs disc vs stenosis vs Hip vs SIJ into a mutually-exclusive diagnosis tree.
+- Hip, SIJ, neuro, walking limitation, and movement response may coexist as management-relevant contributors.
+- A working hypothesis should be allowed to remain uncertain or partially explanatory.
+- "현재 데이터로 충분히 설명되지 않음" must be a valid state; atypical patients must not be forced into a known bucket.
+- When several domains are simultaneously relevant, do not hard-code the currently experimental ordering as a clinically approved truth without explicit review.
+
+### E. Clinician remains in control
+- Clinician override / concern must remain available even when the automatic engine does not raise a domain.
+- The engine recommends; the clinician confirms the hypothesis, treatment direction, exercise, and downstream documentation.
+
+### F. B+ priority guardrail for competing checks — EXPERIMENTAL DESIGN LOCK
+When more management-relevant checks exist than should be shown at once, the experimental B+ policy follows this order of intent:
+
+1. preserve safety / meaningful tracking baseline when the candidate generator says it is relevant,
+2. preserve the patient's key functional baseline,
+3. use remaining attention for a check that can change **what is treated today** before spending it on diagnostic refinement alone,
+4. keep lower-priority refinement unresolved/deferred rather than deleting it.
+
+Important tie rule:
+- If Hip and SIJ are both treatment-target candidates and existing information does not distinguish them while only one presentation slot remains, **do not add another patient question and do not let source-code order choose one**.
+- Present a compact clinician choice between the already-generated candidates.
+- The clinician may intentionally inspect more than one via override when clinically warranted.
+
+This is a workflow-priority rule, not proof that Hip/SIJ is more important than neurodynamic testing in every patient. Candidate generation and safety semantics remain separately governed.
+
+**Lock decision after B+ flow vignette review:**
+- The B+ priority policy is now considered **design-locked for this experimental phase** after dedicated priority stress testing and 14 end-to-end primary-care flow vignettes.
+- Do not continue tuning exam priority merely to improve synthetic scores or make the engine appear more sophisticated.
+- Reopen this priority policy only if a later real clinical vignette, clinician review, usability test, or patient-flow defect demonstrates a concrete omission, unsafe ordering, or material workflow burden.
+- This lock does **not** make B+ production clinical logic. Production entry still requires the normal clinical approval, payload-adapter review, UI/real-device QA, and FROZEN zero-diff gates.
+
+### G. Working-hypothesis presentation — EXPERIMENTAL DESIGN LOCK
+The working-hypothesis engine may retain several clinically plausible contributors, but the first clinician view must not become a card wall.
+
+Presentation rules:
+- Clinical hypothesis generation and support levels are upstream. The presentation layer may **group or collapse**, but must not create, delete, upgrade, downgrade, or diagnose.
+- When two or more hypotheses have the same `HIGHER_SUPPORT` level, keep them as peers in one compact **복합 기여 가능성** block rather than selecting a code-order winner.
+- When there is no higher-support hypothesis and several `CONSIDER` hypotheses coexist, show them together as **여러 가능성 함께 고려** rather than inventing a primary diagnosis.
+- When one leading hypothesis coexists with additional `CONSIDER` hypotheses, the leading hypothesis may be expanded and the additional group collapsed by default.
+- `LOWER_SUPPORT` and `INSUFFICIENT_DATA` remain preserved behind progressive disclosure rather than occupying the routine first view.
+- Safety review remains visually and logically above routine hypothesis presentation.
+- The current experimental first-view target is **no more than two presentation blocks**. This is a UX compression rule, not a clinical cap on the number of hypotheses.
+- All underlying hypothesis evidence, weakening findings, unknowns, and management meaning remain recoverable on expansion.
+
+**Lock decision after hypothesis-presentation stress testing:**
+- The presentation projection is now **design-locked for this experimental phase** after a 3,125-case support-state matrix plus max-burden clinical vignettes.
+- The stress suite included 2,304 states with 4–5 raw hypotheses; the first view never exceeded two blocks and no hypothesis was deleted, duplicated, upgraded, downgraded, or selected as an equal-support winner by source order.
+- Do not tune the number/order of hypothesis cards further for cosmetic or synthetic-score reasons.
+- Reopen only if clinician review or real-device usability demonstrates a concrete information-hiding, unsafe emphasis, or workflow problem.
+- This lock is presentation-only and does **not** constitute production approval of the underlying hypothesis rows.
+
+---
+
+## 3. Required end-to-end clinical pipeline
+
+The project is not complete when the exam-suggestion engine is complete.
+
+### Stage 1 — Upstream facts
+- Current tablet questionnaire is read-only for this project phase.
+- Missing information should first be collected doctor-side as a Next Best Check.
+- Repeated evidence that a fact is better pre-collected is a separate future tablet agenda requiring approval.
+
+### Stage 2 — Next Best Check
+- Show only checks that may alter management.
+- Each check must explain:
+  - **how to perform it**, and
+  - **why it is being recommended for this patient**.
+- Korean-first labels; hover on desktop and tap on tablet must both work.
+
+### Stage 3 — Explainable working hypothesis
+Experimental output now supports:
+- higher support / consider / lower support / insufficient data hierarchy,
+- supporting findings,
+- weakening or contradictory findings,
+- meaningful unknowns,
+- safety context,
+- concise explanation of **why** the hypothesis is being shown,
+- multiple coexisting contributors,
+- and `현재 자료로 충분히 설명되지 않음` as a valid state.
+
+Do not infer a final diagnosis merely from one test (e.g. SLR, FABER, imaging finding). Production use still requires clinician review/approval of the actual hypothesis rows and real payload mapping.
+
+### Stage 4 — Treatment / rehabilitation direction
+- Exercise selection is based on function + irritability + response + goal, not diagnosis name alone.
+- Recommend roughly **2–3 ranked exercise candidates**; clinician usually selects **1–2**.
+- Every exercise must have starting criteria, dose, acceptable response, stop/review criteria, regression, and progression.
+- Do not invent exercise IDs that are not present in the approved rehabilitation library.
+
+### Stage 5 — Reassessment
+- Target Function is the primary longitudinal anchor; NRS is secondary.
+- Walking tolerance, distal symptoms, objective neuro, activity, adherence/exposure, etc. are supporting outcomes when relevant.
+- Do not convert unapproved examples (e.g. 2 weeks / 4 visits or numeric response cutoffs) into production thresholds.
+- Insufficient exposure must not be mislabeled as treatment failure.
+- Adequate non-response should trigger hypothesis / target / rehabilitation reassessment and may reopen previously unassessed domains.
+- Deterioration or new neurologic change refreshes safety immediately.
+
+### Stage 6 — Same-day quick recheck
+- After treatment, allow a very short recheck of 1–2 key markers where useful.
+- Typical output is improved / same / worse plus the value when available.
+- Do not represent same-day change as proof of causal diagnosis or treatment mechanism.
+
+### Stage 7 — One-click downstream handoff
+After clinician confirmation, the same confirmed clinical state should be reusable for:
+- EMR note in fixed format:
+  - `C/C | 주호소`
+  - `O/S | 발병 및 경과`
+  - `S | 주관적 소견`
+  - `O | 객관적 소견`
+  - `A | 평가`
+  - `P | 계획`
+- CRM episode / care-plan state,
+- selected rehabilitation and follow-up metric,
+- patient instructions / exercise dose / cautions / media,
+- next reassessment timing.
+
+CRM must not make clinical decisions independently.
+
+---
+
+## 4. UX guardrails
+
+Doctor UI should feel like a changing clinical stage, not a wall of cards.
+
+Preferred progression:
+
+`환자 요약 → 오늘 판단에 필요한 확인 0~몇 개 → 임상가설/이유 → 치료·운동 결정 → 빠른 재평가/기록`
+
+Examples of forbidden drift:
+- displaying all possible Hip / SIJ / neuro / lumbar checks on every patient,
+- opening another question simply because the previous answer was uncertain,
+- demanding directional ROM values in every direction on every patient,
+- equating no click with normal,
+- showing research-layer terms such as Decision Key / tranche / sufficiency to the clinician,
+- requiring a diagnosis label before conservative management can begin,
+- turning every suggested check into a mandatory pre-treatment checklist,
+- adding a new patient question only to break a presentation-priority tie that the clinician can resolve from the examination context,
+- rendering every retained working hypothesis as a separate expanded card,
+- silently dropping an equal-support hypothesis to keep the screen short.
+
+---
+
+## 5. Current prototype scope vs original North Star
+
+### Preserved / actively tested
+- Safety gate
+- Management-changing Next Best Check only
+- Simple-patient low-click path
+- Hip / SIJ parallelism
+- Neuro / walking / movement-response action branches
+- `미평가 ≠ 정상`
+- visit freshness for terminal exam states
+- clinician override
+- adequate non-response re-evaluation
+- progressive disclosure / deferred unresolved state
+- routine-care availability remains separate from whether suggested checks are still outstanding
+- B+ competition rule: meaningful baseline first, then treatment-target-changing information before diagnostic refinement when attention is constrained
+- Hip/SIJ equal-priority tie does not create a new patient question or arbitrary code-order winner
+- B+ end-to-end priority flow reviewed across simple, radicular, walking-limited, Hip/SIJ, multi-cue, non-response, deterioration, contradictory-input, and clinician-override vignettes
+- explainable experimental working-hypothesis output with support / weakening / unknown / management meaning
+- multiple plausible contributors can coexist without forced primary diagnosis
+- compact hypothesis presentation with equal-support grouping and full raw-evidence preservation
+
+### Intentionally NOT complete yet — MUST NOT BE FORGOTTEN
+- production-approved working-hypothesis rows and real payload mapping
+- ranked rehabilitation recommendation from the approved library
+- clinician confirmation flow
+- same-day post-treatment quick recheck
+- fixed-format EMR generation
+- CRM episode / reassessment state write-through
+- patient rehabilitation instructions
+- Korean-first production Doctor UI and real-device interaction
+- real DoctorPayload adapter
+
+These are downstream milestones, not optional nice-to-haves.
+
+---
+
+## 6. Acceptance question for every new feature or rule
+
+Before adding it, answer:
+
+> **Does this help the clinician safely start care, choose a meaningful management direction, track recovery, or know when to change course — without adding unnecessary work?**
+
+If the answer is no, the feature should normally not enter the LBP Clinical OS v1.

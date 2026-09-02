@@ -1498,3 +1498,79 @@ source of truth로 사용하지 않는다 — 필요하면 visual reference로�
   `dcbcbd3` 기준)를 재오픈하지 않는다.
 - (−) #2/#4는 여전히 미해결 — `in_consultation` 자동 전이와 CRM
   reason_code 한국어 라벨은 다음 배치에서 다시 PO 확인이 필요하다.
+
+## 2026-09-02 — LBP Rehab Strategy Mapping: production 구축 보류 + Fable 역할 이관 (PO 결정, PR #28 코멘트)
+
+### Context
+`docs/LBP_REHAB_STRATEGY_SONNET_IMPLEMENTATION_BRIEF_v0.1.md`에 따라 구현한
+`src/doctor/workspace/lbpRehabStrategySelector.v01.experimental.ts`(commit
+`a219a5a` → 독립 리뷰 fix `23b2b5d`)가 실제 Opus 모델 호출 delta review에서
+PASS 판정을 받은 직후, Product Owner가 PR #28에 코멘트
+(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5508066166,
+`author_association: OWNER`로 GitHub API에서 직접 확인)로 두 가지를 결정했다.
+
+### Decision — Rehab Strategy Mapping: production에서 만들지 않는다
+- 4개 Rehab Strategy 분류(증상반응 활용/신체·기능능력 회복/신경가동성 관리/
+  단계적 노출·복귀) + 호흡·이완 adjunct는 **내부 분류/설명/audit 구조로만**
+  유지한다.
+- 임상가에게 노출되는 `Primary Strategy → Secondary Strategy → Exercise`
+  워크플로 단계는 추가하지 않는다.
+- 현재 실험용 selector 계약을 만족시키기 위한 `patient facts → Primary/
+  Secondary Rehab Strategy` 매핑 엔진(이 selector의 필수 입력이지만 아직
+  미구현인 upstream 단계)은 **새로 만들지 않는다**.
+- Production LBP v1의 목표 파이프라인은 대신:
+  `Safety → Target Function → 최소 필요 확인 → Exercise Eligibility →
+  Target Function/현재 임상 반응이 직접 뒷받침하는 exercise 2~3개 →
+  clinician이 1~2개 선택 → 재평가`.
+- `lbpRehabStrategySelector.v01.experimental.ts`는 **범위가 한정된 실험적
+  산출물로서 리뷰 계약은 통과했지만, 있는 그대로 production 빌딩블록으로
+  가정하지 않는다.** v1에서 이 모듈을 우회(bypass)할지, 단순화 리팩터할지,
+  보류(defer)할지는 Fable이 평가한다. 이 selector를 보존하기 위한 upstream
+  strategy-mapping 레이어를 만들지 않는다.
+
+### Decision — 협업 역할 이관: ChatGPT → Fable
+ChatGPT가 맡던 product-architecture / overdesign-review / independent-
+integration-review / workflow-simplification / next-step-sequencing 역할을
+Fable로 이관한다. 최종 역할 구분:
+- Product Owner: 최종 product/clinical 결정 + main merge 명시 승인.
+- Fable: 최소 product architecture, overdesign gate, integration/
+  orchestration, 독립 product review, next-step sequencing, SSOT 관리.
+- Opus: 독립적 임상 의미/안전성/architecture 리뷰 + delta/closing review,
+  필요 시 `CLINICAL DECISION REQUIRED` 제기 가능.
+- Sonnet: 승인된 범위 내 구현/테스트/구체적 수정.
+- GitHub: SSOT.
+
+Fable은 Product Owner의 결정 권한, Opus의 임상 권한, 기본 구현 책임 중
+어느 것도 가지지 않는다. (이 문서 상단 "역할은 선언만으로 실행되지 않는다"
+원칙 그대로 — 실제로 그 모델/세션이 호출됐을 때만 해당 역할이 성립한다.)
+
+또한 코멘트는 "이미 CLOSED된 narrow implementation은 기본적으로 Fable을
+추가 리뷰 hop으로 넣지 않는다: Sonnet → focused tests → Opus delta →
+Sonnet fixes(필요 시만) → Opus closing. Fable은 product-architecture/
+overdesign 또는 의미 있는 integration 복잡도가 있을 때만 재투입"이라는
+token-efficiency guard를 재확인했다.
+
+### Reason
+- 현재 selector는 이미 해석된 `strategySelection`(Primary/Secondary)을
+  입력으로 요구하는데, 그 입력을 실제로 채울 patient-fact→strategy 매핑은
+  CLOSED 결정 문서에 없고 새로 만들려면 새로운 임상 판단이 필요하다 — PO가
+  "이 새 임상 판단을 만들 필요 없이 production 경로를 더 단순하게 간다"고
+  선택.
+- ChatGPT 기반 역할을 Fable로 옮기는 것은 코드/임상 로직과 무관한 순수
+  협업 프로세스 결정이라 이 세션이 재론할 사안이 아니다.
+
+### Trade-offs
+- (+) production 경로가 이미 존재하는 Eligibility/Target Function 위에서
+  더 짧아지고, 아직 미승인인 patient→strategy 매핑을 새로 발명할 필요가
+  없다.
+- (+) 이번에 만든 selector와 테스트는 폐기되지 않고 "범위가 한정된 실험,
+  검토 완료" 상태로 남아 이후 Fable 평가의 입력 자료가 된다.
+- (−) `lbpRehabStrategySelector.v01.experimental.ts`는 이번 결정으로
+  production 경로에 통합될 예정이 없다 — 이 모듈에 대한 추가 investment
+  (더 많은 vignette, 실제 payload 연결 등)는 Fable 평가 전까지 보류한다.
+
+### Consequences
+- 이 세션(Sonnet)은 이 selector 위에 추가 기능(strategy-mapping 엔진,
+  Doctor UI 연동 등)을 더 만들지 않는다.
+- 다음 production LBP v1 아키텍처 논의는 Fable 세션이 실제로 호출됐을 때
+  진행한다.

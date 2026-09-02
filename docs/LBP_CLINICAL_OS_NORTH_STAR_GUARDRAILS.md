@@ -74,7 +74,26 @@ This is a workflow-priority rule, not proof that Hip/SIJ is more important than 
 - Do not continue tuning exam priority merely to improve synthetic scores or make the engine appear more sophisticated.
 - Reopen this priority policy only if a later real clinical vignette, clinician review, usability test, or patient-flow defect demonstrates a concrete omission, unsafe ordering, or material workflow burden.
 - This lock does **not** make B+ production clinical logic. Production entry still requires the normal clinical approval, payload-adapter review, UI/real-device QA, and FROZEN zero-diff gates.
-- With exam priority locked, development attention moves to the original next milestone: **explainable working hypothesis**.
+
+### G. Working-hypothesis presentation — EXPERIMENTAL DESIGN LOCK
+The working-hypothesis engine may retain several clinically plausible contributors, but the first clinician view must not become a card wall.
+
+Presentation rules:
+- Clinical hypothesis generation and support levels are upstream. The presentation layer may **group or collapse**, but must not create, delete, upgrade, downgrade, or diagnose.
+- When two or more hypotheses have the same `HIGHER_SUPPORT` level, keep them as peers in one compact **복합 기여 가능성** block rather than selecting a code-order winner.
+- When there is no higher-support hypothesis and several `CONSIDER` hypotheses coexist, show them together as **여러 가능성 함께 고려** rather than inventing a primary diagnosis.
+- When one leading hypothesis coexists with additional `CONSIDER` hypotheses, the leading hypothesis may be expanded and the additional group collapsed by default.
+- `LOWER_SUPPORT` and `INSUFFICIENT_DATA` remain preserved behind progressive disclosure rather than occupying the routine first view.
+- Safety review remains visually and logically above routine hypothesis presentation.
+- The current experimental first-view target is **no more than two presentation blocks**. This is a UX compression rule, not a clinical cap on the number of hypotheses.
+- All underlying hypothesis evidence, weakening findings, unknowns, and management meaning remain recoverable on expansion.
+
+**Lock decision after hypothesis-presentation stress testing:**
+- The presentation projection is now **design-locked for this experimental phase** after a 3,125-case support-state matrix plus max-burden clinical vignettes.
+- The stress suite included 2,304 states with 4–5 raw hypotheses; the first view never exceeded two blocks and no hypothesis was deleted, duplicated, upgraded, downgraded, or selected as an equal-support winner by source order.
+- Do not tune the number/order of hypothesis cards further for cosmetic or synthetic-score reasons.
+- Reopen only if clinician review or real-device usability demonstrates a concrete information-hiding, unsafe emphasis, or workflow problem.
+- This lock is presentation-only and does **not** constitute production approval of the underlying hypothesis rows.
 
 ---
 
@@ -95,15 +114,17 @@ The project is not complete when the exam-suggestion engine is complete.
 - Korean-first labels; hover on desktop and tap on tablet must both work.
 
 ### Stage 3 — Explainable working hypothesis
-Future production output must include, when supported:
-- primary / higher support / consider / lower support / must exclude or an equivalently concise hierarchy,
+Experimental output now supports:
+- higher support / consider / lower support / insufficient data hierarchy,
 - supporting findings,
-- contradicting findings,
+- weakening or contradictory findings,
 - meaningful unknowns,
 - safety context,
-- and a concise explanation of **why** the hypothesis is being shown.
+- concise explanation of **why** the hypothesis is being shown,
+- multiple coexisting contributors,
+- and `현재 자료로 충분히 설명되지 않음` as a valid state.
 
-Do not infer a final diagnosis merely from one test (e.g. SLR, FABER, imaging finding).
+Do not infer a final diagnosis merely from one test (e.g. SLR, FABER, imaging finding). Production use still requires clinician review/approval of the actual hypothesis rows and real payload mapping.
 
 ### Stage 4 — Treatment / rehabilitation direction
 - Exercise selection is based on function + irritability + response + goal, not diagnosis name alone.
@@ -158,7 +179,9 @@ Examples of forbidden drift:
 - showing research-layer terms such as Decision Key / tranche / sufficiency to the clinician,
 - requiring a diagnosis label before conservative management can begin,
 - turning every suggested check into a mandatory pre-treatment checklist,
-- adding a new patient question only to break a presentation-priority tie that the clinician can resolve from the examination context.
+- adding a new patient question only to break a presentation-priority tie that the clinician can resolve from the examination context,
+- rendering every retained working hypothesis as a separate expanded card,
+- silently dropping an equal-support hypothesis to keep the screen short.
 
 ---
 
@@ -179,9 +202,12 @@ Examples of forbidden drift:
 - B+ competition rule: meaningful baseline first, then treatment-target-changing information before diagnostic refinement when attention is constrained
 - Hip/SIJ equal-priority tie does not create a new patient question or arbitrary code-order winner
 - B+ end-to-end priority flow reviewed across simple, radicular, walking-limited, Hip/SIJ, multi-cue, non-response, deterioration, contradictory-input, and clinician-override vignettes
+- explainable experimental working-hypothesis output with support / weakening / unknown / management meaning
+- multiple plausible contributors can coexist without forced primary diagnosis
+- compact hypothesis presentation with equal-support grouping and full raw-evidence preservation
 
 ### Intentionally NOT complete yet — MUST NOT BE FORGOTTEN
-- explainable differential / working-hypothesis engine
+- production-approved working-hypothesis rows and real payload mapping
 - ranked rehabilitation recommendation from the approved library
 - clinician confirmation flow
 - same-day post-treatment quick recheck

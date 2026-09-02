@@ -1819,3 +1819,31 @@ PO에게 직접 질의했다.
   진행한다(Batch 2.5b/2.5c).
 - 새 임상 의미 없음: (a)는 승인된 명명, (b)(c)는 이미 CLOSED된 CD-1/CD-3
   결정과 Opus closing review가 지정한 정확한 수정 사항의 이행.
+
+## 2026-09-02 — LBP v1 Batch 2.5a 게이트 CLOSED (Opus closing PASS)
+
+### Context
+`53a8149`(Batch 2.5a 구현) → Opus delta review **PASS 단 must-fix 3 +
+nice-to-have 1**(`docs/LBP_V1_BATCH2_5A_OPUS_DELTA_REVIEW_v0.1.md`) →
+`e8ed6ef`(4건 전부 수정, 뮤테이션 재현으로 자체 검증) → Opus closing
+**PASS**(`docs/LBP_V1_BATCH2_5A_OPUS_CLOSING_REVIEW_v0.1.md`, 결함 1~4
+RESOLVED를 독립 재현으로 확인).
+
+### Decision (기록)
+1. **Batch 2.5a 게이트 CLOSED.** CD-3(capability 3상태 확인함/지금은 안
+   됨/미확인)가 실제로 동작한다. 도달성 재확인: 준비조건 하나를 "지금은
+   안 됨"으로 찍으면 최대 8/20 운동이 "쉬운 단계로 시작"으로 열릴 수
+   있음(임상적으로 문제 없음, Batch 2 closing에서 이미 확인).
+2. **잔여 개선(비차단, 다음 batch 후보로 백로그)**: `확인하면 시작
+   가능` 섹션에서 hard requirement를 "지금은 안 됨"으로 찍은 경우와
+   regressible 조건이 미확인인 경우를 UI에서 구분해서 보여주는 구조적
+   개선(`missingHardRequirements`/`regressionRequirements` 분리 노출).
+   지금은 안내 문구로 충분히 방어됨.
+3. **다음 batch**: Batch 2.5b(`ExamCheckStatus` 6상태 — LIMITED/
+   NOT_PERFORMED 추가, 전 부위 공유 타입이라 착수 전 Fable이 영향 범위
+   설계 검토), Batch 2.5c(Working Hypothesis 최소 형태), 이후 Batch 3
+   (재진 Quick Check 5문항), Batch 4(EMR 고정 6키 + CRM 최소).
+
+### Consequences
+- PR 없이 텍스트 요약으로 계속 보고(운영 방침, 위 항목).
+- main merge는 여전히 PO 명시 승인 대상.

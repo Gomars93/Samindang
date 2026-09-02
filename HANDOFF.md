@@ -1,5 +1,39 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02 (최신 6): LBP v1 Batch 2.5a 게이트 CLOSED (Opus closing PASS)
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `e8ed6ef` + 이
+문서 커밋. origin과 동일. PR 미생성(운영 방침: 텍스트 요약 보고, 원장님이
+명시 요청 시에만 PR). main merge는 PO 명시 승인.
+
+**Batch 2.5a 커밋 이력**: `53a8149`(명칭 4건 + CD-3 capability 3상태 +
+회귀 채택 문구 구분자 수정) → Opus delta **PASS, must-fix 3 + nice-to-have 1**
+(`docs/LBP_V1_BATCH2_5A_OPUS_DELTA_REVIEW_v0.1.md`) → `e8ed6ef`(4건 수정,
+뮤테이션 재현으로 자체 검증) → Opus closing **PASS**
+(`docs/LBP_V1_BATCH2_5A_OPUS_CLOSING_REVIEW_v0.1.md`, 결함 1~4 RESOLVED
+독립 재현). 검증: `test:all` PASS, `tsc -b`/`vite build` OK, FROZEN/tablet/
+server zero-diff. 아래 "(최신 5)/(최신 4)" 절의 "진행 중"/"PO 결정 대기"
+문구는 stale.
+
+**Batch 2.5a가 실제 진료에서 바꾸는 것**: "확인하면 시작 가능" 준비조건
+chip이 확인함/지금은 안 됨/미확인 3상태가 되어, 원장이 "이 자세는 지금
+안 됨"을 실제로 기록할 수 있다(이전엔 미확인만 있어 "쉬운 단계로 시작"
+계층이 화면에 뜨지 않았음). 준비조건 하나를 지금은 안 됨으로 찍으면
+최대 8/20 운동에서 쉬운 단계 시작 카드가 열린다. 운동명 4개가 더 정확한
+한국어로 바뀌었다(예: "배에 힘주기" → "숨 쉬면서 배에 살짝 힘주기" —
+기존 이름이 시작 기준과 상충할 소지가 있었음). 쉬운 단계로 채택할 때
+Care Plan 문구의 "중단·재검토:" 앞에 문장 구분이 생겨 오독(예: "휴식
+지점을 사용 중단"으로 읽히던 것)이 없어졌다.
+
+**사람 판단 대기**: 없음.
+
+**다음 행동**: Batch 2.5b(`ExamCheckStatus` 6상태 — LIMITED/NOT_PERFORMED
+추가. 전 부위 공유 타입이라 착수 전 Fable이 영향 범위를 먼저 설계 검토),
+Batch 2.5c(Working Hypothesis 최소 형태). 그 뒤 Batch 3(재진 Quick Check
+5문항), Batch 4(EMR 고정 6키 + CRM 최소).
+
+---
+
 ## ⚠️ 2026-09-02 (최신 5): PO 결정 CD-3 승인 + 명칭 5건 확정 → Batch 2.5a 구현 시작
 
 **PO 결정** (`DECISIONS.md` 마지막 항목): CD-3 승인(Batch 2.5에서 capability

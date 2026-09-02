@@ -376,6 +376,82 @@ test('appendLbpAdoptionText appends once, is idempotent, and never automatic (pu
   assert.ok(withPriorText.includes(once))
 })
 
+// ---------- defect 3: Korean display names, never the (often English) catalog canonicalName ----------
+
+test('defect 3: every Core-20 row has a non-empty displayNameKo, and adoption text (both variants) for every row contains no Latin letters', () => {
+  assert.equal(LBP_CORE_EXERCISE_METADATA.length, 20)
+  const seen = new Set()
+  for (const meta of LBP_CORE_EXERCISE_METADATA) {
+    assert.ok(
+      typeof meta.displayNameKo === 'string' && meta.displayNameKo.trim().length > 0,
+      `${meta.exerciseId} is missing a non-empty displayNameKo`,
+    )
+    seen.add(meta.exerciseId)
+
+    const plain = buildLbpAdoptionText(meta.exerciseId)
+    assert.ok(plain, `${meta.exerciseId} buildLbpAdoptionText returned null`)
+    assert.ok(
+      !/[A-Za-z]/.test(plain),
+      `${meta.exerciseId} adoption text contains Latin letters: ${JSON.stringify(plain)}`,
+    )
+
+    // RF-8/defect 2: the regressed variant appends regressionKo -- must stay Korean too.
+    const regressed = buildLbpAdoptionText(meta.exerciseId, { regressed: true })
+    assert.ok(
+      !/[A-Za-z]/.test(regressed),
+      `${meta.exerciseId} regressed adoption text contains Latin letters: ${JSON.stringify(regressed)}`,
+    )
+  }
+  assert.equal(seen.size, 20)
+})
+
+// ---------- defect 6: UNCLEAR directional response maps to UNKNOWN, never STABLE_OR_IMPROVING ----------
+
+test('defect 6: buildLbpEligibilityContext maps lbpDirectionalResponse UNCLEAR -> distalSymptomResponse UNKNOWN (not STABLE_OR_IMPROVING); NO_CLEAR_DIRECTION still stays STABLE_OR_IMPROVING', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const unclear = buildLbpEligibilityContext(payload, 'NONE', {
+    lbpDirectionalResponse: 'UNCLEAR',
+    lbpConfirmedCapabilities: [],
+  })
+  assert.equal(unclear.distalSymptomResponse, 'UNKNOWN')
+
+  const notAssessed = buildLbpEligibilityContext(payload, 'NONE', {
+    lbpDirectionalResponse: 'NOT_ASSESSED',
+    lbpConfirmedCapabilities: [],
+  })
+  assert.equal(notAssessed.distalSymptomResponse, 'UNKNOWN')
+
+  const noClearDirection = buildLbpEligibilityContext(payload, 'NONE', {
+    lbpDirectionalResponse: 'NO_CLEAR_DIRECTION',
+    lbpConfirmedCapabilities: [],
+  })
+  assert.equal(
+    noClearDirection.distalSymptomResponse,
+    'STABLE_OR_IMPROVING',
+    'NO_CLEAR_DIRECTION is a completed direction observation, not an unclear/absent one -- must not fold into UNKNOWN',
+  )
+
+  const worsening = buildLbpEligibilityContext(payload, 'NONE', {
+    lbpDirectionalResponse: 'DISTAL_WORSENING',
+    lbpConfirmedCapabilities: [],
+  })
+  assert.equal(worsening.distalSymptomResponse, 'WORSENING')
+})
+
+// ---------- defect 8: LBP_LUMBAR_02 reachability (unexposed set must not grow silently) ----------
+
+test('defect 8: the set of Core-20 ids unreachable through TARGET_FUNCTION_ID_TO_ENUM stays exactly {LBP_LUMBAR_02}', () => {
+  const reachableEnums = new Set(Object.values(TARGET_FUNCTION_ID_TO_ENUM).filter((v) => v != null))
+  const unreachableIds = LBP_CORE_EXERCISE_METADATA.filter(
+    (meta) => !meta.targetFunctions.some((tf) => reachableEnums.has(tf)),
+  ).map((meta) => meta.exerciseId)
+  assert.deepEqual(
+    unreachableIds,
+    ['LBP_LUMBAR_02'],
+    'the unreachable set changed -- either a new v1 target-function chip must map to it, or this pin needs a deliberate update',
+  )
+})
+
 // ---------- merge: preserve clinician decisions, drop stale undecided candidates ----------
 
 test('mergeLbpRehabSuggestions: preserves an ACCEPTED decision across recompute even when the exercise later becomes DEFER/ineligible', () => {

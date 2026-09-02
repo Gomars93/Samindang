@@ -97,11 +97,27 @@ function followUpTarget(id, label) {
   return { id, label, baseline: '', postTreatmentValue: '' }
 }
 
+function examResult(status) {
+  return { status, laterality: null, note: '', recordedAt: status === 'NOT_YET_CHECKED' ? null : '2026-09-02T00:00:00.000Z' }
+}
+
+function neurodynamicExam(status) {
+  return {
+    id: 'lbp_exam_neurodynamic',
+    title: '하지직거상 또는 슬럼프검사',
+    priority: 'CONTEXTUAL',
+    reasonFacts: [],
+    source: 'SUGGESTED',
+    result: examResult(status),
+  }
+}
+
 function ws(overrides = {}) {
   return {
     lbpDirectionalResponse: 'NOT_ASSESSED',
     lbpConfirmedCapabilities: [],
     painFollowUpTargets: [],
+    painExamSuggestions: [],
     ...overrides,
   }
 }
@@ -192,6 +208,69 @@ test('target-function filter: a candidate whose Core-20 targetFunctions do not i
   const none = buildLbpRecommendationContext(payload, 'NONE', ws())
   assert.deepEqual(none.readyCandidates, [])
   assert.deepEqual(none.awaitingCapabilityCandidates, [])
+})
+
+// ---------- §8.2-1(c) integration correction: empty-state hint trigger ----------
+
+test('(c) targetFunctionGap: NONE_SELECTED when no lbp_tf_* target function is picked; CUSTOM_ONLY when only 기타 목표 동작 is picked; null once a real target function matches', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+
+  const none = buildLbpRecommendationContext(payload, 'NONE', ws())
+  assert.equal(none.targetFunctionGap, 'NONE_SELECTED')
+
+  const customOnly = buildLbpRecommendationContext(
+    payload,
+    'NONE',
+    ws({ painFollowUpTargets: [followUpTarget('lbp_tf_custom', '기타 목표 동작')] }),
+  )
+  assert.equal(customOnly.targetFunctionGap, 'CUSTOM_ONLY')
+  assert.deepEqual(customOnly.readyCandidates, [])
+  assert.deepEqual(customOnly.awaitingCapabilityCandidates, [])
+
+  const matched = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: walkingTarget }))
+  assert.equal(matched.targetFunctionGap, null)
+})
+
+// ---------- §8.2-1(b) integration correction: LBP_NEURAL_01 directlySupported ----------
+
+test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynamic is recorded POSITIVE, never unconditionally', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const sittingTarget = [followUpTarget('lbp_tf_sitting', '앉기')]
+  const baseWs = {
+    painFollowUpTargets: sittingTarget,
+    lbpConfirmedCapabilities: ['NEURAL_SLIDER_TOLERATED'],
+  }
+
+  const positive = buildLbpRecommendationContext(
+    payload,
+    'NONE',
+    ws({ ...baseWs, painExamSuggestions: [neurodynamicExam('POSITIVE')] }),
+  )
+  const neuralPositive = positive.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
+  assert.ok(neuralPositive, 'LBP_NEURAL_01 must be ready once its own capability is confirmed')
+  assert.equal(neuralPositive.directlySupported, true)
+  // rankReady buckets directlySupported first -- with only one ready
+  // candidate here it is trivially index 0, but the flag itself is what the
+  // UI (and RF-8's rendering) actually reads.
+
+  const notYetChecked = buildLbpRecommendationContext(
+    payload,
+    'NONE',
+    ws({ ...baseWs, painExamSuggestions: [neurodynamicExam('NOT_YET_CHECKED')] }),
+  )
+  const neuralNotYetChecked = notYetChecked.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
+  assert.ok(neuralNotYetChecked)
+  assert.equal(neuralNotYetChecked.directlySupported, false)
+
+  const negative = buildLbpRecommendationContext(
+    payload,
+    'NONE',
+    ws({ ...baseWs, painExamSuggestions: [neurodynamicExam('NEGATIVE')] }),
+  )
+  assert.equal(negative.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
+
+  const absent = buildLbpRecommendationContext(payload, 'NONE', ws({ ...baseWs, painExamSuggestions: [] }))
+  assert.equal(absent.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
 })
 
 // ---------- (c) CD-1: unconfirmed capability -> awaiting group -> confirm flips it ready ----------

@@ -1909,6 +1909,36 @@ test('재활 제안 disclosure-equivalent renders only when candidate items exis
   assert.ok(!withoutCandidates.includes('재활/운동 제안'), 'the section is absent (not an empty open shell) when there are no candidates')
 })
 
+// ---------- LBP v1 Batch 2 §8.2-1(a) integration correction ----------
+test('§8.2-1(a): the exercise candidate section renders inside 판단·처치 (judgment-h2), not inside 확인 (lane2-h2), and appears AFTER PainFinalAssessmentCard in document order', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    synthetic: {
+      ...PAIN_SCENARIO_1.synthetic,
+      rehabSuggestions: [
+        {
+          id: 'r1', title: '재활 제안 (SYNTHETIC)', goal: '', rationale: '', sourceFacts: [], contraindicationFacts: [],
+          source: 'SUGGESTED', status: 'SUGGESTED', clinicianFinalInstruction: '',
+        },
+      ],
+    },
+  })
+  const lane2Idx = html.indexOf('id="lane2-h2"')
+  const judgmentIdx = html.indexOf('id="judgment-h2"')
+  const nextIdx = html.indexOf('id="next-h2"')
+  const finalAssessmentIdx = html.indexOf('최종 임상 판단') // PainFinalAssessmentCard's own field label
+  const exerciseIdx = html.indexOf('재활/운동 제안')
+  assert.ok(lane2Idx !== -1 && judgmentIdx !== -1 && nextIdx !== -1 && finalAssessmentIdx !== -1 && exerciseIdx !== -1)
+  assert.ok(exerciseIdx > lane2Idx, 'sanity: exercise section renders after 레인2 starts')
+  assert.ok(
+    exerciseIdx > judgmentIdx && exerciseIdx < nextIdx,
+    'the exercise section renders inside 판단·처치 (between judgment-h2 and next-h2), never inside 레인2(확인)',
+  )
+  assert.ok(
+    exerciseIdx > finalAssessmentIdx,
+    'the exercise section renders AFTER PainFinalAssessmentCard in document order (PO canonical route: 확인 -> 치료 방향 -> Exercise Eligibility -> 운동)',
+  )
+})
+
 // ---------- §1.3-#16 (신규 disclosure 전수 커버리지, 정적 목록 대조) ----------
 test('every disclosure element Core Reduction P2/P3 introduced has a corresponding open-condition test in this suite (no orphaned <details> without an open={} assertion)', () => {
   // The 5 disclosures Phase 5 Synthesis v1.2 introduced/changed this round:
@@ -1978,6 +2008,17 @@ test('PAIN_SCENARIO_1 (leg symptom UNKNOWN, no auto-merge): 하지직거상 또�
   assert.ok(addIdx !== -1, '확인 추가 목록이 렌더된다')
   const addChunk = html.slice(addIdx, html.indexOf('</details>', addIdx))
   assert.ok(addChunk.includes('하지직거상'), '자동 병합되지 않은 SLR/슬럼프는 여전히 확인 추가 목록에 남아있다')
+})
+
+// ---------- LBP v1 Batch 2 §8.2-1(c) integration correction ----------
+test('§8.2-1(c): real (non-synthetic) LBP CLEAR payload with no 목표 기능(target function) selected renders the empty-state hint, never an empty/absent section and never a candidate card', () => {
+  const html = renderWith(PAIN_SCENARIO_1, { synthetic: undefined })
+  assert.ok(
+    html.includes('목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다'),
+    'the empty-state hint line renders when no lbp_tf_* target function is selected yet',
+  )
+  assert.ok(!html.includes('workspace__adoptBtn'), 'no candidate card (with its adopt button) renders alongside the hint')
+  assert.ok(!html.includes('확인하면 시작 가능'), 'no awaiting-capability card renders either -- the gap is the target function, not a capability')
 })
 
 test('허리 움직임 반응 기본값(미시행)은 눌린 상태(aria-pressed=true)로 렌더되고, 정상 소견처럼 보이지 않는다', () => {

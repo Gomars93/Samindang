@@ -4,9 +4,10 @@
  * §2.3). This file used to return one long JSX tree that was the entire
  * pain-profile screen; DoctorWorkspace.tsx now owns the shell's lane
  * boundaries (레인1 안전 확인 / 레인2 확인 / 판단·처치 / 다음), so this file
- * exports two plain render functions instead of a single component --
+ * exports three plain render functions instead of a single component --
  * `PainWorkspaceLane2` (오늘 한눈에 + 오늘 확인할 것, everything that used to
- * sit above the clinician's Final Assessment) and `PainWorkspaceNext`
+ * sit above the clinician's Final Assessment), `PainExerciseSection`
+ * (LBP v1 Batch 2 exercise candidates -- see below), and `PainWorkspaceNext`
  * (재평가 대상/다음 방문 확인 메모 + 다음 액션 + 관리 계획 disclosure +
  * reference drawer). The Final Assessment card itself moved OUT of this
  * file entirely -- DoctorWorkspace.tsx renders `PainFinalAssessmentCard`
@@ -14,6 +15,18 @@
  * and the "+ 다른 유형 입력 추가" toggle, since that lane's derived-profile
  * rendering rule applies identically to both profiles and does not belong
  * to either workspace file.
+ *
+ * LBP v1 Batch 2 §8.2-1(a) integration correction: the exercise
+ * candidate/adoption section (재활/운동 제안 + 확인하면 시작 가능) used to
+ * render inside `PainWorkspaceLane2`, i.e. inside 레인2(확인) -- BEFORE the
+ * clinician's Working Hypothesis/치료 방향/최종 판단. The PO's canonical
+ * pain route (architecture doc §8.1 C6) puts exercise selection AFTER the
+ * final assessment, in 판단·처치. `PainExerciseSection` below is that block
+ * extracted verbatim (including the pre-existing synthetic-scenario
+ * rendering path -- there is exactly one render site now, never two),
+ * exported so DoctorWorkspace.tsx can place it immediately after
+ * `PainFinalAssessmentCard` in the shared judgment lane. Same props as
+ * before; only the call site moved.
  *
  * Neither function is a React component (no hooks used, none needed) --
  * DoctorWorkspace.tsx calls them as plain functions, same as it already
@@ -209,13 +222,6 @@ export function PainWorkspaceLane2({
   onChangeExamSuggestion,
   onAddExamToReassessment,
   evidence = [],
-  rehabSuggestions,
-  onChangeRehabSuggestion,
-  onAdoptRehabSuggestionToCarePlan,
-  lbpRecommendationBlockedMessageKo,
-  lbpTreatmentSafetyLockedReasonKo,
-  lbpAwaitingCapabilityCandidates,
-  onConfirmLbpCapability,
   additionalConcernPromotion,
   onChangeAdditionalConcernPromotion,
   reassessment,
@@ -231,17 +237,6 @@ export function PainWorkspaceLane2({
   onChangeExamSuggestion: (next: PhysicalExamSuggestion) => void
   onAddExamToReassessment?: (item: PhysicalExamSuggestion) => void
   evidence?: EvidenceItem[]
-  rehabSuggestions: RehabSuggestion[]
-  onChangeRehabSuggestion: (next: RehabSuggestion) => void
-  /** LBP v1 Batch 2 (G10/RF-8): "adopt, never automatic" into PainCarePlan.homeActionPlan. */
-  onAdoptRehabSuggestionToCarePlan?: (suggestion: RehabSuggestion) => void
-  /** LBP v1 Batch 2 (RF-3b): non-null/non-empty means the exercise section renders this one line instead of any candidate cards. */
-  lbpRecommendationBlockedMessageKo?: string | null
-  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. */
-  lbpTreatmentSafetyLockedReasonKo?: string | null
-  /** LBP v1 Batch 2 (CD-1): candidates deferred only for an unconfirmed capability. */
-  lbpAwaitingCapabilityCandidates?: LbpRecommendationCandidate[]
-  onConfirmLbpCapability?: (capabilityId: string) => void
   additionalConcernPromotion: AdditionalConcernPromotionState
   onChangeAdditionalConcernPromotion: (next: AdditionalConcernPromotionState) => void
   reassessment: StructuredReassessment
@@ -408,41 +403,6 @@ export function PainWorkspaceLane2({
         />
       )}
 
-      {isLbp && lbpRecommendationBlockedMessageKo ? (
-        <section className="workspace__block">
-          <h3>재활/운동 제안</h3>
-          <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
-        </section>
-      ) : (
-        <>
-          {rehabSuggestions.length > 0 && (
-            <section className="workspace__block">
-              <h3>재활/운동 제안</h3>
-              {isLbp && lbpTreatmentSafetyLockedReasonKo && (
-                <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
-              )}
-              {rehabSuggestions.map((s) => (
-                <RehabSuggestionCard
-                  key={s.id}
-                  suggestion={s}
-                  onChange={onChangeRehabSuggestion}
-                  onAdoptToCarePlan={
-                    onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined
-                  }
-                  adoptDisabledReasonKo={isLbp ? (lbpTreatmentSafetyLockedReasonKo ?? undefined) : undefined}
-                />
-              ))}
-            </section>
-          )}
-          {isLbp && (
-            <LbpAwaitingCapabilitySection
-              candidates={lbpAwaitingCapabilityCandidates ?? []}
-              onConfirm={onConfirmLbpCapability}
-            />
-          )}
-        </>
-      )}
-
       {/*
         Core Reduction P2 (Phase 5 Synthesis v1.2 §2.6-1): StructuredReassessment
         moves into 레인2 ("확인") -- it used to sit between the Final
@@ -458,6 +418,104 @@ export function PainWorkspaceLane2({
         />
       </details>
     </div>
+  )
+}
+
+/**
+ * LBP v1 Batch 2 exercise candidate/adoption section, extracted out of
+ * `PainWorkspaceLane2` per architecture §8.2-1(a) so DoctorWorkspace.tsx can
+ * place it in the shared 판단·처치 lane, immediately after
+ * `PainFinalAssessmentCard`, instead of inside 레인2(확인) -- the PO's
+ * canonical route is 확인 → Working Hypothesis → 치료 방향 → Exercise
+ * Eligibility → 운동, not before the clinician's final assessment. Same
+ * render logic/props as before the move (including the pre-existing
+ * synthetic-scenario `재활/운동 제안` path -- exactly one render site).
+ */
+export function PainExerciseSection({
+  isLbp,
+  rehabSuggestions,
+  onChangeRehabSuggestion,
+  onAdoptRehabSuggestionToCarePlan,
+  lbpRecommendationBlockedMessageKo,
+  lbpTreatmentSafetyLockedReasonKo,
+  lbpAwaitingCapabilityCandidates,
+  onConfirmLbpCapability,
+  lbpTargetFunctionGap,
+}: {
+  /** LBP v1 Batch 1: only an LBP record gets the safety-lock/capability/empty-state extras below -- every other pain region renders exactly the plain SYNTHETIC-preview candidate list it always has. */
+  isLbp: boolean
+  rehabSuggestions: RehabSuggestion[]
+  onChangeRehabSuggestion: (next: RehabSuggestion) => void
+  /** LBP v1 Batch 2 (G10/RF-8): "adopt, never automatic" into PainCarePlan.homeActionPlan. */
+  onAdoptRehabSuggestionToCarePlan?: (suggestion: RehabSuggestion) => void
+  /** LBP v1 Batch 2 (RF-3b): non-null/non-empty means the exercise section renders this one line instead of any candidate cards. */
+  lbpRecommendationBlockedMessageKo?: string | null
+  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. */
+  lbpTreatmentSafetyLockedReasonKo?: string | null
+  /** LBP v1 Batch 2 (CD-1): candidates deferred only for an unconfirmed capability. */
+  lbpAwaitingCapabilityCandidates?: LbpRecommendationCandidate[]
+  onConfirmLbpCapability?: (capabilityId: string) => void
+  /** LBP v1 Batch 2 §8.2-1(c): non-null only when both candidate lists are empty because no (matching) target function is selected yet. */
+  lbpTargetFunctionGap?: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
+}) {
+  if (isLbp && lbpRecommendationBlockedMessageKo) {
+    return (
+      <section className="workspace__block">
+        <h3>재활/운동 제안</h3>
+        <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
+      </section>
+    )
+  }
+
+  // (c): both candidate lists are empty purely because no (matching) target
+  // function has been picked yet -- distinct from "picked, but genuinely no
+  // eligible exercise", which is out of this correction's scope and simply
+  // renders nothing, same as before.
+  if (
+    isLbp &&
+    lbpTargetFunctionGap &&
+    rehabSuggestions.length === 0 &&
+    (lbpAwaitingCapabilityCandidates ?? []).length === 0
+  ) {
+    return (
+      <section className="workspace__block">
+        <h3>재활/운동 제안</h3>
+        <p className="workspace__block__hint">
+          목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
+          선택하세요.
+          {lbpTargetFunctionGap === 'CUSTOM_ONLY' &&
+            ' "기타 목표 동작"은 자유 기록이라 대응하는 카탈로그 운동이 없습니다 — 목록에 있는 목표 기능도 함께 골라주세요.'}
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <>
+      {rehabSuggestions.length > 0 && (
+        <section className="workspace__block">
+          <h3>재활/운동 제안</h3>
+          {isLbp && lbpTreatmentSafetyLockedReasonKo && (
+            <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
+          )}
+          {rehabSuggestions.map((s) => (
+            <RehabSuggestionCard
+              key={s.id}
+              suggestion={s}
+              onChange={onChangeRehabSuggestion}
+              onAdoptToCarePlan={onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined}
+              adoptDisabledReasonKo={isLbp ? (lbpTreatmentSafetyLockedReasonKo ?? undefined) : undefined}
+            />
+          ))}
+        </section>
+      )}
+      {isLbp && (
+        <LbpAwaitingCapabilitySection
+          candidates={lbpAwaitingCapabilityCandidates ?? []}
+          onConfirm={onConfirmLbpCapability}
+        />
+      )}
+    </>
   )
 }
 

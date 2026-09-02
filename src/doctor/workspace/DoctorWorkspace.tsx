@@ -39,7 +39,7 @@ import { answerLabel } from '../labels'
 import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
-import { PainWorkspaceLane2, PainWorkspaceNext } from './PainWorkspace'
+import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection } from './PainWorkspace'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
 import {
   AnkleFootSafetyPanel,
@@ -597,42 +597,6 @@ export function DoctorWorkspace({
                 }
                 onAddExamToReassessment={addPainExamToReassessment}
                 evidence={synthetic?.evidence}
-                rehabSuggestions={displayedPainRehabSuggestions}
-                onChangeRehabSuggestion={(next) =>
-                  setWorkspaceState((s) => {
-                    // Upsert: a freshly live-merged LBP candidate (readiness
-                    // just recomputed above, not yet in persisted state)
-                    // must still be recordable on first status change, not
-                    // silently dropped by a map() that finds no match.
-                    const exists = s.painRehabSuggestions.some((it) => it.id === next.id)
-                    return {
-                      ...s,
-                      painRehabSuggestions: exists
-                        ? s.painRehabSuggestions.map((it) => (it.id === next.id ? next : it))
-                        : [...s.painRehabSuggestions, next],
-                    }
-                  })
-                }
-                onAdoptRehabSuggestionToCarePlan={(suggestion) =>
-                  setWorkspaceState((s) => ({
-                    ...s,
-                    painCarePlan: {
-                      ...s.painCarePlan,
-                      homeActionPlan: appendLbpAdoptionText(s.painCarePlan.homeActionPlan, suggestion),
-                      recordedAt: new Date().toISOString(),
-                    },
-                  }))
-                }
-                lbpRecommendationBlockedMessageKo={lbpRecommendation?.blockedMessageKo}
-                lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
-                lbpAwaitingCapabilityCandidates={lbpRecommendation?.awaitingCapabilityCandidates}
-                onConfirmLbpCapability={(cap) =>
-                  setWorkspaceState((s) =>
-                    s.lbpConfirmedCapabilities.includes(cap)
-                      ? s
-                      : { ...s, lbpConfirmedCapabilities: [...s.lbpConfirmedCapabilities, cap] },
-                  )
-                }
                 additionalConcernPromotion={workspaceState.additionalConcernPromotion}
                 onChangeAdditionalConcernPromotion={(next) =>
                   setWorkspaceState((s) => ({ ...s, additionalConcernPromotion: next }))
@@ -696,10 +660,58 @@ export function DoctorWorkspace({
           <section className="doctor__visitLane doctor__visitLane--judgment" aria-labelledby="judgment-h2">
             <h2 id="judgment-h2">판단·처치</h2>
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
-              <PainFinalAssessmentCard
-                value={workspaceState.painFinalAssessment}
-                onChange={(next) => setWorkspaceState((s) => ({ ...s, painFinalAssessment: next }))}
-              />
+              <>
+                <PainFinalAssessmentCard
+                  value={workspaceState.painFinalAssessment}
+                  onChange={(next) => setWorkspaceState((s) => ({ ...s, painFinalAssessment: next }))}
+                />
+                {/*
+                  LBP v1 Batch 2 §8.2-1(a): exercise candidates/adoption render
+                  here, immediately after PainFinalAssessmentCard, matching the
+                  PO's canonical route (확인 → Working Hypothesis → 치료 방향 →
+                  Exercise Eligibility → 운동) -- moved out of 레인2(확인).
+                */}
+                <PainExerciseSection
+                  isLbp={isLbpRecord}
+                  rehabSuggestions={displayedPainRehabSuggestions}
+                  onChangeRehabSuggestion={(next) =>
+                    setWorkspaceState((s) => {
+                      // Upsert: a freshly live-merged LBP candidate (readiness
+                      // just recomputed above, not yet in persisted state)
+                      // must still be recordable on first status change, not
+                      // silently dropped by a map() that finds no match.
+                      const exists = s.painRehabSuggestions.some((it) => it.id === next.id)
+                      return {
+                        ...s,
+                        painRehabSuggestions: exists
+                          ? s.painRehabSuggestions.map((it) => (it.id === next.id ? next : it))
+                          : [...s.painRehabSuggestions, next],
+                      }
+                    })
+                  }
+                  onAdoptRehabSuggestionToCarePlan={(suggestion) =>
+                    setWorkspaceState((s) => ({
+                      ...s,
+                      painCarePlan: {
+                        ...s.painCarePlan,
+                        homeActionPlan: appendLbpAdoptionText(s.painCarePlan.homeActionPlan, suggestion),
+                        recordedAt: new Date().toISOString(),
+                      },
+                    }))
+                  }
+                  lbpRecommendationBlockedMessageKo={lbpRecommendation?.blockedMessageKo}
+                  lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
+                  lbpAwaitingCapabilityCandidates={lbpRecommendation?.awaitingCapabilityCandidates}
+                  lbpTargetFunctionGap={lbpRecommendation?.targetFunctionGap}
+                  onConfirmLbpCapability={(cap) =>
+                    setWorkspaceState((s) =>
+                      s.lbpConfirmedCapabilities.includes(cap)
+                        ? s
+                        : { ...s, lbpConfirmedCapabilities: [...s.lbpConfirmedCapabilities, cap] },
+                    )
+                  }
+                />
+              </>
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
               <HerbalFinalAssessmentCard

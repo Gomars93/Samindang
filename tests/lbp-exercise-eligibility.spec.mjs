@@ -122,6 +122,18 @@ test('neuroStatus UNKNOWN + no regressible deficit (LBP_NEURAL_01, regressibleRe
   assert.equal(result.state, 'DEFER_NOT_READY')
 })
 
+// Verification gate item #5's exact phrasing: a regressible-only exercise
+// with EVERY capability already confirmed YES (regressionNeeds is empty --
+// without RF-1 this falls all the way through to the final START_AS_WRITTEN
+// return) must still DEFER on neuroStatus UNKNOWN. This is the strongest
+// form of the RF-1 regression: the previous case above still had an
+// unconfirmed capability to fall back on; this one has none.
+test('RF-1 (strongest form): LBP_LUMBAR_03 (regressible-only) with EVERY capability confirmed YES but neuroStatus UNKNOWN -> DEFER_NOT_READY, never START_AS_WRITTEN', () => {
+  const result = evaluateLbpExerciseEligibility('LBP_LUMBAR_03', context({ neuroStatus: 'UNKNOWN' }))
+  assert.equal(result.state, 'DEFER_NOT_READY')
+  assert.deepEqual(result.regressionRequirements, [], 'nothing is actually missing -- the DEFER is caused by neuroStatus alone')
+})
+
 test('capability UNKNOWN (hard requirement) -> DEFER_NOT_READY with missingHardRequirements populated', () => {
   // Post RF-7b, LOAD_READY is regressible on LOAD_02 — HIP_HINGE_CONTROL is
   // the one that stays hard.

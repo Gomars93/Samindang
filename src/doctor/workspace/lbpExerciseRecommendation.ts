@@ -144,6 +144,17 @@ export type LbpRecommendationResult = {
   treatmentSafetyLockedMessageKo: string | null
   readyCandidates: LbpRecommendationCandidate[]
   awaitingCapabilityCandidates: LbpRecommendationCandidate[]
+  /**
+   * (c) integration correction: non-null only when the record is LBP, the
+   * block is not `blocked`, and the clinician has selected no `lbp_tf_*`
+   * target function yet (`NONE_SELECTED`) or has selected only
+   * `lbp_tf_custom` (`CUSTOM_ONLY`, which maps to no Core-20
+   * `LbpExerciseTargetFunction` -- see `TARGET_FUNCTION_ID_TO_ENUM` above).
+   * Both cases mean `readyCandidates`/`awaitingCapabilityCandidates` are
+   * empty by construction (the TF filter below excludes everything), so the
+   * UI shows one hint line instead of silently rendering nothing.
+   */
+  targetFunctionGap: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
 }
 
 const EMPTY_RESULT = (
@@ -158,6 +169,7 @@ const EMPTY_RESULT = (
   treatmentSafetyLockedMessageKo,
   readyCandidates: [],
   awaitingCapabilityCandidates: [],
+  targetFunctionGap: null,
 })
 
 /**
@@ -177,10 +189,18 @@ function toCandidate(
   rule: { hardRequirements: readonly LbpExerciseCapability[]; regressibleRequirements: readonly LbpExerciseCapability[]; requiredDirectionalResponse?: string },
   result: LbpExerciseEligibilityResult,
   readiness: LbpRecommendationReadiness,
+  neurodynamicConcordant: boolean,
 ): LbpRecommendationCandidate {
   const catalogItem = getLbpExerciseById(meta.exerciseId)
   const domain = catalogItem?.domain
-  const directlySupported = rule.requiredDirectionalResponse != null || meta.exerciseId === 'LBP_NEURAL_01'
+  // (b) integration correction: LBP_NEURAL_01 is "directly supported" only
+  // when the Batch-1 exam suggestion `lbp_exam_neurodynamic` (하지직거상/
+  // 슬럼프) has been recorded POSITIVE (concordant leg-symptom
+  // reproduction) -- NOT_YET_CHECKED / NEGATIVE / UNCLEAR / the item being
+  // absent all mean "unknown", and unknown is never support (architecture
+  // §2.3). Previously this was unconditional on the exercise id alone.
+  const directlySupported =
+    rule.requiredDirectionalResponse != null || (meta.exerciseId === 'LBP_NEURAL_01' && neurodynamicConcordant)
   return {
     exerciseId: meta.exerciseId,
     title: catalogItem?.canonicalName ?? meta.exerciseId,
@@ -242,6 +262,23 @@ export function buildLbpRecommendationContext(
   }
 
   const selectedTfs = selectedTargetFunctionSet(workspaceState.painFollowUpTargets)
+  // (c): distinguish "nothing picked yet" from "only 기타 목표 동작 (custom,
+  // free-text) picked" -- the latter has real selections but none of them
+  // map to a Core-20 LbpExerciseTargetFunction (TARGET_FUNCTION_ID_TO_ENUM
+  // intentionally omits lbp_tf_custom).
+  const anyLbpTfSelected = selectedLbpTargetFunctions(workspaceState.painFollowUpTargets).length > 0
+  const targetFunctionGap: LbpRecommendationResult['targetFunctionGap'] = !anyLbpTfSelected
+    ? 'NONE_SELECTED'
+    : selectedTfs.size === 0
+      ? 'CUSTOM_ONLY'
+      : null
+
+  // (b): whether the Batch-1 neurodynamic exam (하지직거상/슬럼프) has been
+  // recorded POSITIVE this record -- the only condition under which
+  // LBP_NEURAL_01 counts as directly supported. NOT_YET_CHECKED / NEGATIVE /
+  // UNCLEAR / the item being absent all fall through to `false` below.
+  const neurodynamicExam = workspaceState.painExamSuggestions.find((i) => i.id === 'lbp_exam_neurodynamic')
+  const neurodynamicConcordant = neurodynamicExam?.result.status === 'POSITIVE'
 
   const ready: LbpRecommendationCandidate[] = []
   const awaiting: LbpRecommendationCandidate[] = []
@@ -256,7 +293,7 @@ export function buildLbpRecommendationContext(
 
     const result = evaluateLbpExerciseEligibility(meta.exerciseId, context)
     if (result.state === 'START_AS_WRITTEN' || result.state === 'START_WITH_REGRESSION') {
-      ready.push(toCandidate(meta, rule, result, 'READY'))
+      ready.push(toCandidate(meta, rule, result, 'READY', neurodynamicConcordant))
       continue
     }
     if (result.state !== 'DEFER_NOT_READY') continue // STOP_REVIEW (e.g. distal worsening) — not a candidate, not a capability question either.
@@ -275,7 +312,7 @@ export function buildLbpRecommendationContext(
       capabilities: optimisticCapabilities,
     })
     if (optimistic.state === 'START_AS_WRITTEN' || optimistic.state === 'START_WITH_REGRESSION') {
-      awaiting.push(toCandidate(meta, rule, result, 'AWAITING_CAPABILITY_CONFIRMATION'))
+      awaiting.push(toCandidate(meta, rule, result, 'AWAITING_CAPABILITY_CONFIRMATION', neurodynamicConcordant))
     }
     // Otherwise (still DEFER even with every capability confirmed — e.g. a
     // directional-response mismatch, or the RF-1 neuro-UNKNOWN gate): not a
@@ -291,6 +328,7 @@ export function buildLbpRecommendationContext(
     treatmentSafetyLockedMessageKo: lockedMessage,
     readyCandidates: rankReady(ready),
     awaitingCapabilityCandidates: awaiting,
+    targetFunctionGap,
   }
 }
 

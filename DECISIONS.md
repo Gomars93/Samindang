@@ -1765,6 +1765,22 @@ defect 1 되돌린 mutant에서 새 테스트가 실제로 실패함을 확인(�
    → 선택 사항(`!synthetic && isLbpRecord`), 미적용.
 
 ### Consequences
-- 다음 PO 결정: (a) CD-3, (b) displayNameKo 명명, (c) Batch 2 PR 생성 여부.
+- 다음 PO 결정: (a) CD-3, (b) displayNameKo 명명.
 - 그 뒤 Batch 2.5(Working Hypothesis 최소 형태 + ExamCheckStatus 6상태 +
   [CD-3 시] capability 3상태 + §C(i)(ii)).
+
+## 2026-09-02 — 운영 방침: PR 없이 텍스트 요약 보고 (PO 확정)
+
+### Decision
+앞으로 세션은 batch/decision 완료 시 **PR을 자동으로 만들지 않는다.**
+변경 내용은 이 대화(또는 텍스트 요약)로 보고한다. PR은 원장님이 명시적으로
+요청할 때만 생성한다. main merge는 기존과 동일하게 별도 명시 승인 필요.
+
+### Reason
+PO가 GitHub PR diff를 매번 확인하는 대신 자연어 요약으로 진행 상황을 파악하길
+원함. `CLAUDE.md` Review Protocol의 "PR 생성/갱신" 단계보다 이 명시적 PO
+지시가 우선한다(Decision Precedence: 최신 PO 결정 > 문서 관례).
+
+### Consequences
+- 이후 HANDOFF의 "다음 행동"에 "PR 생성"을 기본 포함하지 않는다.
+- 원장님이 "PR 만들어줘"라고 명시하면 그때 생성한다.

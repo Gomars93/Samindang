@@ -11,6 +11,7 @@ on:
       - 'src/doctor/workspace/lbpPriorityPolicyBPlus.experimental.ts'
       - 'src/doctor/workspace/lbpWorkingHypothesis.experimental.ts'
       - 'src/doctor/workspace/lbpHypothesisPresentation.experimental.ts'
+      - 'src/doctor/workspace/lbpExerciseLibrary.v01.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
@@ -23,7 +24,9 @@ on:
       - 'tests/lbp-bplus-primary-care-flow.vignettes.experimental.spec.mjs'
       - 'tests/lbp-working-hypothesis.experimental.spec.mjs'
       - 'tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs'
+      - 'tests/lbp-exercise-library.catalog.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
+      - 'docs/LBP_EXERCISE_LIBRARY_CATALOG_MIGRATION_v0.1.md'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
 jobs:
@@ -96,6 +99,14 @@ jobs:
           --platform=neutral
           --outfile=tests/.lbp-hypothesis-presentation-bundle.mjs
 
+      - name: Bundle experimental exercise catalog
+        run: >-
+          npx esbuild src/doctor/workspace/lbpExerciseLibrary.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-exercise-library-v01-bundle.mjs
+
       - name: Run LBP action-adaptive stress scenarios
         run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
 
@@ -131,3 +142,6 @@ jobs:
 
       - name: Run LBP compact hypothesis-presentation stress suite
         run: node tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs
+
+      - name: Run LBP exercise-library catalog migration suite
+        run: node tests/lbp-exercise-library.catalog.experimental.spec.mjs

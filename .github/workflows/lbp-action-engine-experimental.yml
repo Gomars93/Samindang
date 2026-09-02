@@ -10,6 +10,7 @@ on:
       - 'src/doctor/workspace/lbpCareCore.v04.experimental.ts'
       - 'src/doctor/workspace/lbpPriorityPolicyBPlus.experimental.ts'
       - 'src/doctor/workspace/lbpWorkingHypothesis.experimental.ts'
+      - 'src/doctor/workspace/lbpHypothesisPresentation.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
@@ -21,6 +22,7 @@ on:
       - 'tests/lbp-priority-policy-bplus.experimental.spec.mjs'
       - 'tests/lbp-bplus-primary-care-flow.vignettes.experimental.spec.mjs'
       - 'tests/lbp-working-hypothesis.experimental.spec.mjs'
+      - 'tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
@@ -86,6 +88,14 @@ jobs:
           --platform=neutral
           --outfile=tests/.lbp-working-hypothesis-bundle.mjs
 
+      - name: Bundle experimental hypothesis presentation
+        run: >-
+          npx esbuild src/doctor/workspace/lbpHypothesisPresentation.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-hypothesis-presentation-bundle.mjs
+
       - name: Run LBP action-adaptive stress scenarios
         run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
 
@@ -118,3 +128,6 @@ jobs:
 
       - name: Run LBP explainable working-hypothesis vignettes
         run: node tests/lbp-working-hypothesis.experimental.spec.mjs
+
+      - name: Run LBP compact hypothesis-presentation stress suite
+        run: node tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs

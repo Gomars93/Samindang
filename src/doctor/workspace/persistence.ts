@@ -209,6 +209,19 @@ export type WorkspaceState = {
    * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
    */
   lbpConfirmedCapabilities: string[]
+  /**
+   * LBP v1 Batch 2.5a (G8, CD-3, `DECISIONS.md` 2026-09-02 "CD-3 승인..."):
+   * capability ids the clinician has explicitly tap-confirmed 'NO' (지금은
+   * 안 됨) this record — the genuine negative-confirmation state CD-1's
+   * option B deliberately left unbuilt in Batch 2. Default `[]`. Kept
+   * mutually exclusive with `lbpConfirmedCapabilities` structurally by the
+   * state-update handler (`DoctorWorkspace.tsx`'s `onSetLbpCapabilityStatus`)
+   * — never enforced here on read. A capability id in neither list is
+   * UNKNOWN (default), same as before. Kept as `string[]` for the same
+   * legacy/unknown-member-harmless reason as `lbpConfirmedCapabilities`.
+   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
+   */
+  lbpDeniedCapabilities: string[]
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -232,6 +245,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     additionalConcernPromotion: emptyAdditionalConcernPromotion(),
     lbpDirectionalResponse: 'NOT_ASSESSED',
     lbpConfirmedCapabilities: [],
+    lbpDeniedCapabilities: [],
     updated_at: null,
   }
 }
@@ -274,6 +288,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
       ? raw.lbpDirectionalResponse
       : empty.lbpDirectionalResponse,
     lbpConfirmedCapabilities: sanitizeStringArray(raw.lbpConfirmedCapabilities),
+    lbpDeniedCapabilities: sanitizeStringArray(raw.lbpDeniedCapabilities),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

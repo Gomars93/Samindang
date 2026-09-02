@@ -2222,9 +2222,9 @@ test('defect 4: 3 or fewer READY candidates -> no <details> disclosure at all', 
   assert.ok(!html.includes('더 보기 ('), 'no "더 보기" disclosure is rendered for the candidate list when nothing is hidden')
 })
 
-// ---------- defect 5: capability confirmation is a toggle, not append-only ----------
+// ---------- defect 5 / CD-3: capability confirmation is a genuine 3-state, not append-only ----------
 
-test('defect 5: a confirmed capability renders as a pressed "확인됨" chip (aria-pressed="true") in a dedicated "확인된 준비 조건" row', () => {
+test('CD-3: a confirmed (YES) capability renders in the "확인된/지금은 안 됨으로 표시한 준비 조건" row with its 확인함 button pressed', () => {
   const html = renderWith(
     PAIN_SCENARIO_1,
     lbpLiveExtraProps({
@@ -2232,39 +2232,81 @@ test('defect 5: a confirmed capability renders as a pressed "확인됨" chip (ar
       painFollowUpTargets: walkingFollowUpTarget,
     }),
   )
-  assert.ok(html.includes('확인된 준비 조건'), 'the confirmed-capabilities row must render')
-  // React's server renderer inserts a `<!-- -->` comment marker between the
-  // dynamic label expression and the literal " 확인됨" text child.
+  assert.ok(html.includes('확인된/지금은 안 됨으로 표시한 준비 조건'), 'the decided-capabilities row must render')
+  const idx = html.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
+  assert.ok(idx !== -1, 'the confirmed SAFE_WALKING capability label renders')
+  const after = html.slice(idx, idx + 900)
   assert.ok(
-    /<button[^>]*aria-pressed="true"[^>]*>보조도구 포함, 안전하게 걸을 수 있음<!-- --> 확인됨<\/button>/.test(html),
-    'the confirmed SAFE_WALKING capability renders as a pressed ("확인됨") chip',
+    /<button[^>]*aria-pressed="true"[^>]*>확인함<\/button>/.test(after),
+    'the 확인함 (YES) button for a confirmed capability must be pressed',
   )
 })
 
-test('defect 5: with zero confirmed capabilities, the "확인된 준비 조건" row does not render at all', () => {
+test('CD-3: a denied (NO) capability renders with its 지금은 안 됨 button pressed, not 확인함', () => {
   const html = renderWith(
     PAIN_SCENARIO_1,
     lbpLiveExtraProps({
       lbpConfirmedCapabilities: [],
+      lbpDeniedCapabilities: ['SAFE_WALKING'],
       painFollowUpTargets: walkingFollowUpTarget,
     }),
   )
-  assert.ok(!html.includes('확인된 준비 조건'), 'no confirmed row renders when nothing has been confirmed yet')
+  assert.ok(html.includes('확인된/지금은 안 됨으로 표시한 준비 조건'), 'the decided-capabilities row must render for a denied capability too')
+  const idx = html.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
+  assert.ok(idx !== -1)
+  const after = html.slice(idx, idx + 900)
+  assert.ok(
+    /<button[^>]*aria-pressed="true"[^>]*>지금은 안 됨<\/button>/.test(after),
+    'the 지금은 안 됨 (NO) button for a denied capability must be pressed',
+  )
 })
 
-test('defect 5 (source-level): onConfirmLbpCapability is a symmetric toggle (removes on a second tap), not append-only', () => {
-  const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
-  const anchor = src.indexOf('onConfirmLbpCapability={(cap) =>')
-  assert.ok(anchor !== -1, 'onConfirmLbpCapability handler not found')
-  const body = src.slice(anchor, anchor + 500)
-  assert.ok(/\.includes\(cap\)/.test(body), 'handler checks current membership')
-  assert.ok(
-    /\.filter\(\(c\) => c !== cap\)/.test(body),
-    'handler removes the capability (filter) when it is already confirmed -- append-only would never do this',
+test('CD-3: with neither confirmed nor denied capabilities, the decided-capabilities row does not render at all', () => {
+  const html = renderWith(
+    PAIN_SCENARIO_1,
+    lbpLiveExtraProps({
+      lbpConfirmedCapabilities: [],
+      lbpDeniedCapabilities: [],
+      painFollowUpTargets: walkingFollowUpTarget,
+    }),
   )
   assert.ok(
-    /\[\.\.\.s\.lbpConfirmedCapabilities, cap\]/.test(body),
-    'handler still adds the capability when it is not yet confirmed',
+    !html.includes('확인된/지금은 안 됨으로 표시한 준비 조건'),
+    'no decided row renders when nothing has been confirmed or denied yet',
+  )
+})
+
+test('CD-3: an awaiting candidate\'s still-blocking capability renders a 3-button 확인함/지금은 안 됨/미확인 group with 미확인 pressed by default', () => {
+  const html = renderWith(
+    PAIN_SCENARIO_1,
+    lbpLiveExtraProps({
+      lbpConfirmedCapabilities: [],
+      lbpDeniedCapabilities: [],
+      painFollowUpTargets: walkingFollowUpTarget,
+    }),
+  )
+  assert.ok(html.includes('확인하면 시작 가능'), 'sanity: at least one awaiting-capability candidate is present')
+  const idx = html.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
+  assert.ok(idx !== -1)
+  const after = html.slice(idx, idx + 900)
+  assert.ok(/<button[^>]*>확인함<\/button>/.test(after), '확인함 option renders')
+  assert.ok(/<button[^>]*>지금은 안 됨<\/button>/.test(after), '지금은 안 됨 option renders')
+  assert.ok(
+    /<button[^>]*aria-pressed="true"[^>]*>미확인<\/button>/.test(after),
+    'an unconfirmed capability defaults to the 미확인 button being pressed',
+  )
+})
+
+test('CD-3 (source-level): onSetLbpCapabilityStatus is a genuine 3-way setter that keeps confirmed/denied structurally mutually exclusive', () => {
+  const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  const anchor = src.indexOf('onSetLbpCapabilityStatus={(cap, status) =>')
+  assert.ok(anchor !== -1, 'onSetLbpCapabilityStatus handler not found')
+  const body = src.slice(anchor, anchor + 1400)
+  assert.ok(/status === 'YES'/.test(body), 'handler branches on YES')
+  assert.ok(/status === 'NO'/.test(body), 'handler branches on NO')
+  assert.ok(
+    /withoutCap\(s\.lbpDeniedCapabilities\)/.test(body) && /withoutCap\(s\.lbpConfirmedCapabilities\)/.test(body),
+    'every branch removes the capability from the OTHER list, never leaving it in both',
   )
 })
 

@@ -712,18 +712,38 @@ export function DoctorWorkspace({
                   lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
                   lbpAwaitingCapabilityCandidates={lbpRecommendation?.awaitingCapabilityCandidates}
                   lbpConfirmedCapabilities={workspaceState.lbpConfirmedCapabilities}
+                  lbpDeniedCapabilities={workspaceState.lbpDeniedCapabilities}
                   lbpTargetFunctionGap={lbpRecommendation?.targetFunctionGap}
-                  // Opus delta review defect 5: a toggle, not append-only —
-                  // tapping an already-confirmed capability (the "확인된
-                  // 준비 조건" row) removes it again, so a mistaken
-                  // confirmation is reversible.
-                  onConfirmLbpCapability={(cap) =>
-                    setWorkspaceState((s) => ({
-                      ...s,
-                      lbpConfirmedCapabilities: s.lbpConfirmedCapabilities.includes(cap)
-                        ? s.lbpConfirmedCapabilities.filter((c) => c !== cap)
-                        : [...s.lbpConfirmedCapabilities, cap],
-                    }))
+                  // CD-3 (`DECISIONS.md` 2026-09-02 "CD-3 승인..."): a genuine
+                  // 3-way setter, not a YES-only toggle — 'YES' adds to
+                  // confirmed and removes from denied, 'NO' the reverse, and
+                  // 'UNKNOWN' is an explicit reset that removes the id from
+                  // both lists. The two lists are kept structurally mutually
+                  // exclusive right here (never left to the adapter/UI to
+                  // enforce by convention).
+                  onSetLbpCapabilityStatus={(cap, status) =>
+                    setWorkspaceState((s) => {
+                      const withoutCap = (list: string[]) => list.filter((c) => c !== cap)
+                      if (status === 'YES') {
+                        return {
+                          ...s,
+                          lbpConfirmedCapabilities: [...withoutCap(s.lbpConfirmedCapabilities), cap],
+                          lbpDeniedCapabilities: withoutCap(s.lbpDeniedCapabilities),
+                        }
+                      }
+                      if (status === 'NO') {
+                        return {
+                          ...s,
+                          lbpConfirmedCapabilities: withoutCap(s.lbpConfirmedCapabilities),
+                          lbpDeniedCapabilities: [...withoutCap(s.lbpDeniedCapabilities), cap],
+                        }
+                      }
+                      return {
+                        ...s,
+                        lbpConfirmedCapabilities: withoutCap(s.lbpConfirmedCapabilities),
+                        lbpDeniedCapabilities: withoutCap(s.lbpDeniedCapabilities),
+                      }
+                    })
                   }
                 />
               </>

@@ -415,6 +415,17 @@
   gap: 6px;
 }
 
+/* LBP v1 Batch 2.5a (CD-3): one capability's label + its 3-button (확인함/지금은 안 됨/미확인) status group. */
+.workspace__examCard__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .workspace__statusBtn,
 .workspace__lateralityBtn {
   border: 1px solid var(--border);

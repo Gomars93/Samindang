@@ -435,7 +435,13 @@ export function buildLbpAdoptionText(exerciseId: string, options?: { regressed?:
   const catalogItem = getLbpExerciseById(exerciseId)
   if (!meta || !catalogItem) return null
   const stopReviewJoined = meta.stopReviewKo.join('; ')
-  const regressionSuffix = options?.regressed ? ` 쉬운 단계: ${meta.regressionKo}` : ''
+  // Opus closing review §C(i): `regressionKo` rows end without terminal
+  // punctuation, so appending " 중단·재검토:" directly after them can read as
+  // the opposite of what it means (e.g. "…휴식 지점을 사용 중단·재검토:" reads
+  // as "stop using the rest point"). A trailing period here guarantees a
+  // clear sentence boundary before "중단·재검토:" regardless of whether
+  // `regressionKo` itself ends with punctuation.
+  const regressionSuffix = options?.regressed ? ` 쉬운 단계: ${meta.regressionKo}.` : ''
   return `${meta.displayNameKo} — ${meta.startingDoseKo}${regressionSuffix} 중단·재검토: ${stopReviewJoined}`
 }
 

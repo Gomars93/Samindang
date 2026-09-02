@@ -119,6 +119,7 @@ function ws(overrides = {}) {
   return {
     lbpDirectionalResponse: 'NOT_ASSESSED',
     lbpConfirmedCapabilities: [],
+    lbpDeniedCapabilities: [],
     painFollowUpTargets: [],
     painExamSuggestions: [],
     ...overrides,
@@ -405,6 +406,90 @@ test('defect 3: every Core-20 row has a non-empty displayNameKo, and adoption te
   assert.equal(seen.size, 20)
 })
 
+// ---------- Batch 2.5a Part 1: PO-approved Core-20 displayNameKo corrections (`DECISIONS.md` 2026-09-02 "CD-3 승인...") ----------
+
+test('Batch 2.5a naming: the 4 PO-approved displayNameKo corrections are applied verbatim', () => {
+  const byId = new Map(LBP_CORE_EXERCISE_METADATA.map((m) => [m.exerciseId, m.displayNameKo]))
+  assert.equal(byId.get('LBP_DEEP_TRUNK_01'), '숨 쉬면서 배에 살짝 힘주기')
+  assert.equal(byId.get('LBP_DIR_03'), '엎드려 반복 허리 젖히기')
+  assert.equal(byId.get('LBP_DIR_04'), '누워서·앉아서 굽히기')
+  assert.equal(byId.get('LBP_EXPOSURE_03'), '앉아 있기 단계적으로 늘리기')
+})
+
+// ---------- Opus closing review §C(i): regression adoption text must always have a sentence boundary before "중단·재검토:" ----------
+
+test('§C(i): buildLbpAdoptionText(id, {regressed:true}) never has "중단·재검토" immediately preceded by a non-terminal character -- a "." (or other sentence-ending mark) always sits right before it', () => {
+  assert.equal(LBP_CORE_EXERCISE_METADATA.length, 20)
+  for (const meta of LBP_CORE_EXERCISE_METADATA) {
+    const regressed = buildLbpAdoptionText(meta.exerciseId, { regressed: true })
+    assert.ok(regressed, `${meta.exerciseId} buildLbpAdoptionText returned null`)
+    assert.ok(
+      !/[^.。]\s중단·재검토/.test(regressed),
+      `${meta.exerciseId} regression clause is not sentence-terminated before " 중단·재검토:": ${JSON.stringify(regressed)}`,
+    )
+  }
+})
+
+// ---------- Opus closing review §C(ii): regression-safety regression tests ----------
+
+test('§C(ii)(a): buildLbpAdoptionText(id, {regressed:true}) includes meta.regressionKo verbatim; the non-regressed variant does not', () => {
+  for (const meta of LBP_CORE_EXERCISE_METADATA) {
+    const plain = buildLbpAdoptionText(meta.exerciseId)
+    const regressed = buildLbpAdoptionText(meta.exerciseId, { regressed: true })
+    assert.ok(
+      regressed.includes(meta.regressionKo),
+      `${meta.exerciseId} regressed adoption text must include regressionKo verbatim`,
+    )
+    assert.ok(
+      !plain.includes(meta.regressionKo),
+      `${meta.exerciseId} non-regressed adoption text must not include regressionKo`,
+    )
+  }
+})
+
+test('§C(ii)(b): a START_WITH_REGRESSION candidate -> candidateToRehabSuggestion(...).regressed === true and sourceFacts includes a "쉬운 단계:" line', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const result = buildLbpRecommendationContext(
+    payload,
+    'NONE',
+    ws({
+      painFollowUpTargets: walkingTarget,
+      // LBP_HIP_MOB_01 is regressible-only (SUPPORTED_STANDING_TOLERATED,
+      // BALANCE_WITH_SUPPORT) -- confirming both 'NO' (CD-3) drives it to
+      // START_WITH_REGRESSION rather than DEFER_NOT_READY.
+      lbpDeniedCapabilities: ['SUPPORTED_STANDING_TOLERATED', 'BALANCE_WITH_SUPPORT'],
+    }),
+  )
+  const hipMob01 = result.readyCandidates.find((c) => c.exerciseId === 'LBP_HIP_MOB_01')
+  assert.ok(hipMob01, 'LBP_HIP_MOB_01 must be READY once its regressible capabilities are confirmed NO (CD-3)')
+  assert.equal(hipMob01.eligibilityState, 'START_WITH_REGRESSION')
+  const suggestion = candidateToRehabSuggestion(hipMob01)
+  assert.equal(suggestion.regressed, true)
+  assert.ok(
+    suggestion.sourceFacts.some((f) => f.text.startsWith('쉬운 단계:')),
+    'sourceFacts must include a "쉬운 단계:" line for a START_WITH_REGRESSION candidate',
+  )
+})
+
+test('§C(ii)(c): appendLbpAdoptionText reads suggestion.regressed, never the title string, to decide whether to append the regression clause', () => {
+  const meta = LBP_CORE_EXERCISE_METADATA.find((m) => m.exerciseId === 'LBP_HIP_MOB_01')
+  // Deliberately regressed:true with a title that does NOT contain
+  // "(쉬운 단계로 시작)" -- if appendLbpAdoptionText parsed the title instead
+  // of reading the structured flag, the regression clause would be missing.
+  const suggestion = {
+    id: 'LBP_HIP_MOB_01',
+    title: '고관절 앞쪽 스트레칭',
+    goal: meta.startingDoseKo,
+    rationale: '',
+    regressed: true,
+  }
+  const text = appendLbpAdoptionText('', suggestion)
+  assert.ok(
+    text.includes(meta.regressionKo),
+    'the regression clause must appear even though the title carries no "(쉬운 단계로 시작)" marker',
+  )
+})
+
 // ---------- defect 6: UNCLEAR directional response maps to UNKNOWN, never STABLE_OR_IMPROVING ----------
 
 test('defect 6: buildLbpEligibilityContext maps lbpDirectionalResponse UNCLEAR -> distalSymptomResponse UNKNOWN (not STABLE_OR_IMPROVING); NO_CLEAR_DIRECTION still stays STABLE_OR_IMPROVING', () => {
@@ -412,18 +497,21 @@ test('defect 6: buildLbpEligibilityContext maps lbpDirectionalResponse UNCLEAR -
   const unclear = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'UNCLEAR',
     lbpConfirmedCapabilities: [],
+    lbpDeniedCapabilities: [],
   })
   assert.equal(unclear.distalSymptomResponse, 'UNKNOWN')
 
   const notAssessed = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'NOT_ASSESSED',
     lbpConfirmedCapabilities: [],
+    lbpDeniedCapabilities: [],
   })
   assert.equal(notAssessed.distalSymptomResponse, 'UNKNOWN')
 
   const noClearDirection = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'NO_CLEAR_DIRECTION',
     lbpConfirmedCapabilities: [],
+    lbpDeniedCapabilities: [],
   })
   assert.equal(
     noClearDirection.distalSymptomResponse,
@@ -434,6 +522,7 @@ test('defect 6: buildLbpEligibilityContext maps lbpDirectionalResponse UNCLEAR -
   const worsening = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'DISTAL_WORSENING',
     lbpConfirmedCapabilities: [],
+    lbpDeniedCapabilities: [],
   })
   assert.equal(worsening.distalSymptomResponse, 'WORSENING')
 })

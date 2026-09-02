@@ -112,7 +112,10 @@ function toEligibilityDirectionalResponse(v: LbpDirectionalResponse): LbpEligibi
 export function buildLbpEligibilityContext(
   payload: DoctorPayload,
   lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit'],
-  workspaceState: Pick<WorkspaceState, 'lbpDirectionalResponse' | 'lbpConfirmedCapabilities'>,
+  workspaceState: Pick<
+    WorkspaceState,
+    'lbpDirectionalResponse' | 'lbpConfirmedCapabilities' | 'lbpDeniedCapabilities'
+  >,
 ): LbpExerciseEligibilityContext {
   const age = ageFromDoctorPayload(payload.responses)
   // RF-2: the recomputed path, NOT payload.responses.safety_flags.lbp — see
@@ -150,15 +153,19 @@ export function buildLbpEligibilityContext(
 
   const directionalResponse = toEligibilityDirectionalResponse(workspaceState.lbpDirectionalResponse)
 
-  // CD-1 (PO-approved option B): a capability the clinician has not
-  // explicitly tap-confirmed this record is UNKNOWN, never inferred 'NO' —
-  // there is no negative-confirmation UI in v1 (RF-9(i): capabilities are
-  // never derived from directionalResponse either; confirmation is the only
-  // path to 'YES').
+  // CD-1 (PO-approved option B) + CD-3 (PO-approved 3-state, `DECISIONS.md`
+  // 2026-09-02 "CD-3 승인..."): a capability the clinician has not
+  // explicitly tap-confirmed either way this record is UNKNOWN. 'YES' comes
+  // from `lbpConfirmedCapabilities` (확인함), a genuine 'NO' now comes from
+  // `lbpDeniedCapabilities` (지금은 안 됨) — the two lists are kept mutually
+  // exclusive by the state-update handler (`DoctorWorkspace.tsx`'s
+  // `onSetLbpCapabilityStatus`), never here. RF-9(i) still holds:
+  // capabilities are never derived from directionalResponse.
   const confirmed = new Set(workspaceState.lbpConfirmedCapabilities)
+  const denied = new Set(workspaceState.lbpDeniedCapabilities)
   const capabilities: LbpExerciseEligibilityContext['capabilities'] = {}
   for (const cap of LBP_EXERCISE_CAPABILITY_IDS) {
-    capabilities[cap] = confirmed.has(cap) ? 'YES' : 'UNKNOWN'
+    capabilities[cap] = confirmed.has(cap) ? 'YES' : denied.has(cap) ? 'NO' : 'UNKNOWN'
   }
 
   return { routineCareAllowed, neuroStatus, distalSymptomResponse, directionalResponse, capabilities }

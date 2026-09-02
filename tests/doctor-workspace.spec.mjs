@@ -1948,10 +1948,26 @@ test('real (non-synthetic) LBP payload with leg symptom YES (pain scenario 2): S
     html.includes('하지 통증·저림/신경증상 보고(환자 응답)'),
     'SLR/슬럼프 항목이 자동 생성 사유와 함께 병합된다',
   )
-  assert.ok(
-    !/workspace__addExamBtn[^>]*>\s*\+ 하지직거상/.test(html),
-    '이미 병합된 SLR/슬럼프는 확인 추가 목록에서 더 이상 제안되지 않는다',
-  )
+  // Opus closing review: the previous regex-based negative assertion was
+  // vacuous -- LbpAddExamDisclosure renders `+ {e.title}` as two adjacent
+  // JSX children, so React 18 SSR emits a `<!-- -->` comment node between
+  // them (`+ <!-- -->하지직거상 또는 슬럼프검사`), which
+  // `/workspace__addExamBtn[^>]*>\s*\+ 하지직거상/` can never match --
+  // it passed on PAIN_SCENARIO_1 too, where SLR really IS still offered.
+  // Slice to the 확인 추가 list container instead of pattern-matching
+  // across the comment node.
+  const addIdx = html.indexOf('workspace__addExamList')
+  assert.ok(addIdx !== -1, '확인 추가 목록이 렌더된다')
+  const addChunk = html.slice(addIdx, html.indexOf('</details>', addIdx))
+  assert.ok(!addChunk.includes('하지직거상'), '이미 병합된 SLR/슬럼프는 확인 추가 목록에서 사라진다')
+})
+
+test('PAIN_SCENARIO_1 (leg symptom UNKNOWN, no auto-merge): 하지직거상 또는 슬럼프검사 IS still offered in 확인 추가 (regression guard for the vacuous-assertion fix above)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, { synthetic: undefined })
+  const addIdx = html.indexOf('workspace__addExamList')
+  assert.ok(addIdx !== -1, '확인 추가 목록이 렌더된다')
+  const addChunk = html.slice(addIdx, html.indexOf('</details>', addIdx))
+  assert.ok(addChunk.includes('하지직거상'), '자동 병합되지 않은 SLR/슬럼프는 여전히 확인 추가 목록에 남아있다')
 })
 
 test('허리 움직임 반응 기본값(미시행)은 눌린 상태(aria-pressed=true)로 렌더되고, 정상 소견처럼 보이지 않는다', () => {

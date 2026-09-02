@@ -118,6 +118,12 @@ tests/.view-profile-matrix-viewprofile-bundle.mjs
 tests/.lbp-exam-suggestions-corespec-bundle.mjs
 tests/.lbp-exam-suggestions-bundle.mjs
 tests/.lbp-target-function-bundle.mjs
+# esbuild bundles used by tests/lbp-exercise-*.spec.mjs (regenerated, not source)
+tests/.lbp-exercise-library-bundle.mjs
+tests/.lbp-exercise-core-metadata-bundle.mjs
+tests/.lbp-exercise-eligibility-bundle.mjs
+tests/.lbp-exercise-recommendation-bundle.mjs
+tests/.lbp-exercise-recommendation-corespec-bundle.mjs
 # esbuild bundle used by tests/doctor-workspace.spec.mjs (regenerated, not source)
 tests/.follow-up-target-picker-bundle.cjs
 

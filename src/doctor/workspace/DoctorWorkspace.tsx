@@ -63,6 +63,11 @@ import type { HerbalPatternCandidate } from './patternCandidate'
 import { defaultClinicianObservations, type ClinicianObservationItem } from './clinicianObservation'
 import type { EvidenceItem } from './supportEngine'
 import type { RehabSuggestion } from './rehabSuggestion'
+import {
+  buildLbpRecommendationContext,
+  mergeLbpRehabSuggestions,
+  appendLbpAdoptionText,
+} from './lbpExerciseRecommendation'
 import { reassessmentExamItemFromPrevious } from './reassessmentExam'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -455,6 +460,22 @@ export function DoctorWorkspace({
   const lane1Summary = computeLane1Summary(payload, regionInputs)
 
   // ---------------------------------------------------------------------
+  // LBP v1 Batch 2 (G9/G10): recomputed every render, exactly like
+  // lane1Summary above -- never cached/persisted itself (architecture §2.3).
+  // Guarded on `!synthetic`, mirroring seedWorkspaceState's own guard above
+  // ("Existing synthetic preview scenarios keep exact precedence -- never
+  // run the LBP generator/merge over illustrative UX fixture data") so a
+  // SYNTHETIC preview's hand-authored painRehabSuggestions is never
+  // overwritten by a live recomputation.
+  // ---------------------------------------------------------------------
+  const isLbpRecord = payload.responses.safety_flags.lbp != null
+  const lbpRecommendation =
+    !synthetic && isLbpRecord ? buildLbpRecommendationContext(payload, lbpObjectiveMotorDeficit, workspaceState) : null
+  const displayedPainRehabSuggestions = lbpRecommendation
+    ? mergeLbpRehabSuggestions(workspaceState.painRehabSuggestions, lbpRecommendation.readyCandidates)
+    : workspaceState.painRehabSuggestions
+
+  // ---------------------------------------------------------------------
   // 좌측 요약 값 조립 (§2.1/§3.2) -- read-only formatting of already-computed
   // values, never a new clinical computation.
   // ---------------------------------------------------------------------
@@ -576,12 +597,41 @@ export function DoctorWorkspace({
                 }
                 onAddExamToReassessment={addPainExamToReassessment}
                 evidence={synthetic?.evidence}
-                rehabSuggestions={workspaceState.painRehabSuggestions}
+                rehabSuggestions={displayedPainRehabSuggestions}
                 onChangeRehabSuggestion={(next) =>
+                  setWorkspaceState((s) => {
+                    // Upsert: a freshly live-merged LBP candidate (readiness
+                    // just recomputed above, not yet in persisted state)
+                    // must still be recordable on first status change, not
+                    // silently dropped by a map() that finds no match.
+                    const exists = s.painRehabSuggestions.some((it) => it.id === next.id)
+                    return {
+                      ...s,
+                      painRehabSuggestions: exists
+                        ? s.painRehabSuggestions.map((it) => (it.id === next.id ? next : it))
+                        : [...s.painRehabSuggestions, next],
+                    }
+                  })
+                }
+                onAdoptRehabSuggestionToCarePlan={(suggestion) =>
                   setWorkspaceState((s) => ({
                     ...s,
-                    painRehabSuggestions: s.painRehabSuggestions.map((it) => (it.id === next.id ? next : it)),
+                    painCarePlan: {
+                      ...s.painCarePlan,
+                      homeActionPlan: appendLbpAdoptionText(s.painCarePlan.homeActionPlan, suggestion),
+                      recordedAt: new Date().toISOString(),
+                    },
                   }))
+                }
+                lbpRecommendationBlockedMessageKo={lbpRecommendation?.blockedMessageKo}
+                lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
+                lbpAwaitingCapabilityCandidates={lbpRecommendation?.awaitingCapabilityCandidates}
+                onConfirmLbpCapability={(cap) =>
+                  setWorkspaceState((s) =>
+                    s.lbpConfirmedCapabilities.includes(cap)
+                      ? s
+                      : { ...s, lbpConfirmedCapabilities: [...s.lbpConfirmedCapabilities, cap] },
+                  )
                 }
                 additionalConcernPromotion={workspaceState.additionalConcernPromotion}
                 onChangeAdditionalConcernPromotion={(next) =>

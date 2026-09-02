@@ -863,6 +863,16 @@ test('14차 HIGH-1: herbalPatternCandidates[0].supportingFacts/contradictingFact
 })
 
 test('14차 HIGH-1: painRehabSuggestions[0].sourceFacts/contraindicationFacts with malformed elements never crashes the render', () => {
+  // LBP v1 Batch 2: PAIN_SCENARIO_1 is an LBP payload, and DoctorWorkspace
+  // now live-recomputes/merges painRehabSuggestions for LBP records
+  // (mergeLbpRehabSuggestions) whenever `synthetic` is not supplied -- a
+  // fabricated non-Core-20 id like this fixture's 'r1', still status
+  // SUGGESTED (never decided), would legitimately be recomputed away, which
+  // is correct new behavior but would make this defensive test assert on
+  // the wrong thing. PAIN_SCENARIO_3 (shoulder, non-LBP) is untouched by
+  // that merge and keeps this test's original intent -- malformed nested
+  // facts inside a persisted RehabSuggestion never crash the render --
+  // exercised exactly as before.
   const initialWorkspaceState = {
     schema_version: '1.1.0',
     painRehabSuggestions: [
@@ -880,7 +890,7 @@ test('14차 HIGH-1: painRehabSuggestions[0].sourceFacts/contraindicationFacts wi
     ],
     updated_at: null,
   }
-  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  const html = renderWith(PAIN_SCENARIO_3, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
   assert.ok(html.includes('재활 제안 (SYNTHETIC)'))
   assert.ok(html.includes('근거 소견 생존'))
   assert.ok(html.includes('금기 소견 생존'))

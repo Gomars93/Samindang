@@ -64,6 +64,8 @@ import type { StructuredReassessment } from './reassessmentExam'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import type { RehabSuggestion } from './rehabSuggestion'
 import { RehabSuggestionCard } from './RehabSuggestionCard'
+import type { LbpRecommendationCandidate } from './lbpExerciseRecommendation'
+import { LBP_EXERCISE_CAPABILITY_LABEL_KO } from './lbpEligibilityContext'
 import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { deriveAdditionalConcernSummary } from './additionalConcern'
 import { AdditionalConcernCard } from './AdditionalConcernCard'
@@ -159,6 +161,48 @@ function LbpAddExamDisclosure({
   )
 }
 
+/**
+ * LBP v1 Batch 2 (CD-1, PO-approved option B): exercises deferred ONLY
+ * because a capability the clinician has not yet tap-confirmed is UNKNOWN —
+ * never DEFER caused by a directional-response mismatch or an unresolved
+ * neuro judgment (`lbpExerciseRecommendation.ts` already filters those out
+ * before this candidate list is built). Distinct from `RehabSuggestionCard`
+ * on purpose: there is no accept/hold/reject decision to make on an item
+ * that is not yet a real suggestion — tapping a chip here only records
+ * "confirmed 'YES'" (`WorkspaceState.lbpConfirmedCapabilities`); it never
+ * silently promotes anything on its own.
+ */
+function LbpAwaitingCapabilitySection({
+  candidates,
+  onConfirm,
+}: {
+  candidates: LbpRecommendationCandidate[]
+  onConfirm?: (capabilityId: string) => void
+}) {
+  if (!onConfirm || candidates.length === 0) return null
+  return (
+    <section className="workspace__block">
+      <h3>확인하면 시작 가능</h3>
+      <p className="workspace__block__hint">
+        아래 준비 조건이 아직 확인되지 않아 보류 중입니다. 확인 안 함은 "아니오"가 아니라 "아직 확인하지
+        않음"입니다 — 확인되면(YES) 바로 추천 목록에 올라갑니다.
+      </p>
+      {candidates.map((c) => (
+        <div key={c.exerciseId} className="workspace__examCard">
+          <strong className="workspace__examCard__title">{c.title}</strong>
+          <div className="workspace__examCard__statusRow" role="group" aria-label={`${c.title} 준비 조건 확인`}>
+            {c.unconfirmedCapabilities.map((cap) => (
+              <button key={cap} type="button" className="workspace__statusBtn" onClick={() => onConfirm(cap)}>
+                + {LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} 확인함
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export function PainWorkspaceLane2({
   payload,
   examSuggestions,
@@ -167,6 +211,11 @@ export function PainWorkspaceLane2({
   evidence = [],
   rehabSuggestions,
   onChangeRehabSuggestion,
+  onAdoptRehabSuggestionToCarePlan,
+  lbpRecommendationBlockedMessageKo,
+  lbpTreatmentSafetyLockedReasonKo,
+  lbpAwaitingCapabilityCandidates,
+  onConfirmLbpCapability,
   additionalConcernPromotion,
   onChangeAdditionalConcernPromotion,
   reassessment,
@@ -184,6 +233,15 @@ export function PainWorkspaceLane2({
   evidence?: EvidenceItem[]
   rehabSuggestions: RehabSuggestion[]
   onChangeRehabSuggestion: (next: RehabSuggestion) => void
+  /** LBP v1 Batch 2 (G10/RF-8): "adopt, never automatic" into PainCarePlan.homeActionPlan. */
+  onAdoptRehabSuggestionToCarePlan?: (suggestion: RehabSuggestion) => void
+  /** LBP v1 Batch 2 (RF-3b): non-null/non-empty means the exercise section renders this one line instead of any candidate cards. */
+  lbpRecommendationBlockedMessageKo?: string | null
+  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. */
+  lbpTreatmentSafetyLockedReasonKo?: string | null
+  /** LBP v1 Batch 2 (CD-1): candidates deferred only for an unconfirmed capability. */
+  lbpAwaitingCapabilityCandidates?: LbpRecommendationCandidate[]
+  onConfirmLbpCapability?: (capabilityId: string) => void
   additionalConcernPromotion: AdditionalConcernPromotionState
   onChangeAdditionalConcernPromotion: (next: AdditionalConcernPromotionState) => void
   reassessment: StructuredReassessment
@@ -350,13 +408,39 @@ export function PainWorkspaceLane2({
         />
       )}
 
-      {rehabSuggestions.length > 0 && (
+      {isLbp && lbpRecommendationBlockedMessageKo ? (
         <section className="workspace__block">
           <h3>재활/운동 제안</h3>
-          {rehabSuggestions.map((s) => (
-            <RehabSuggestionCard key={s.id} suggestion={s} onChange={onChangeRehabSuggestion} />
-          ))}
+          <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
         </section>
+      ) : (
+        <>
+          {rehabSuggestions.length > 0 && (
+            <section className="workspace__block">
+              <h3>재활/운동 제안</h3>
+              {isLbp && lbpTreatmentSafetyLockedReasonKo && (
+                <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
+              )}
+              {rehabSuggestions.map((s) => (
+                <RehabSuggestionCard
+                  key={s.id}
+                  suggestion={s}
+                  onChange={onChangeRehabSuggestion}
+                  onAdoptToCarePlan={
+                    onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined
+                  }
+                  adoptDisabledReasonKo={isLbp ? (lbpTreatmentSafetyLockedReasonKo ?? undefined) : undefined}
+                />
+              ))}
+            </section>
+          )}
+          {isLbp && (
+            <LbpAwaitingCapabilitySection
+              candidates={lbpAwaitingCapabilityCandidates ?? []}
+              onConfirm={onConfirmLbpCapability}
+            />
+          )}
+        </>
       )}
 
       {/*

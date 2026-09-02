@@ -12,10 +12,19 @@ export function RehabSuggestionCard({
   suggestion,
   onChange,
   onAdoptToCarePlan,
+  adoptDisabledReasonKo,
 }: {
   suggestion: RehabSuggestion
   onChange: (next: RehabSuggestion) => void
   onAdoptToCarePlan?: () => void
+  /**
+   * LBP v1 Batch 2 (CD-2, PO-approved option A): when set, the candidate
+   * card itself still renders normally — only the adopt action is disabled,
+   * with this reason shown next to it. Never hide the card/section for
+   * this; only Care-Plan finalization is gated (FROZEN
+   * `treatmentSafetyLocked`, `src/spec/lbpLogic.ts`).
+   */
+  adoptDisabledReasonKo?: string
 }) {
   return (
     <div className={`workspace__candidateCard workspace__candidateCard--${suggestion.status.toLowerCase()}`}>
@@ -84,9 +93,17 @@ export function RehabSuggestionCard({
       />
 
       {suggestion.status === 'ACCEPTED' && onAdoptToCarePlan && (
-        <button type="button" className="workspace__adoptBtn" onClick={onAdoptToCarePlan}>
-          치료 계획에 가져오기 →
-        </button>
+        <>
+          <button
+            type="button"
+            className="workspace__adoptBtn"
+            onClick={onAdoptToCarePlan}
+            disabled={Boolean(adoptDisabledReasonKo)}
+          >
+            치료 계획에 가져오기 →
+          </button>
+          {adoptDisabledReasonKo && <p className="workspace__examCard__reason">{adoptDisabledReasonKo}</p>}
+        </>
       )}
     </div>
   )

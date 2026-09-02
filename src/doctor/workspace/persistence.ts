@@ -196,6 +196,18 @@ export type WorkspaceState = {
    * value. Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
    */
   lbpDirectionalResponse: LbpDirectionalResponse
+  /**
+   * LBP v1 Batch 2 (G8, CD-1): capability ids (`LbpExerciseCapability` from
+   * `lbpExerciseEligibility.ts`) the clinician has explicitly tap-confirmed
+   * 'YES' this record. Default `[]`. A capability NOT in this list is
+   * UNKNOWN, never inferred 'NO' — there is no negative-confirmation UI in
+   * v1 (PO-approved option B, `DECISIONS.md` 2026-09-02 "CD-1/CD-2 PO
+   * 결정"). Kept as `string[]` here (not the narrower capability union) so a
+   * legacy/unknown member is harmless on deserialize — validated against the
+   * real union only where it is consumed (`lbpEligibilityContext.ts`).
+   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
+   */
+  lbpConfirmedCapabilities: string[]
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -218,6 +230,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     painRehabSuggestions: [],
     additionalConcernPromotion: emptyAdditionalConcernPromotion(),
     lbpDirectionalResponse: 'NOT_ASSESSED',
+    lbpConfirmedCapabilities: [],
     updated_at: null,
   }
 }
@@ -259,6 +272,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     lbpDirectionalResponse: isValidLbpDirectionalResponse(raw.lbpDirectionalResponse)
       ? raw.lbpDirectionalResponse
       : empty.lbpDirectionalResponse,
+    lbpConfirmedCapabilities: sanitizeStringArray(raw.lbpConfirmedCapabilities),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

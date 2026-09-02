@@ -1618,3 +1618,53 @@ READY/PARTIAL/MISSING/OVERDESIGNED로 분류하고 production v1 최소 구조�
 ### Consequences
 - Batch 1 브리프는 위 문서 §7. 루프: Sonnet → focused tests → Opus delta →
   Sonnet fix → Opus closing. main merge는 PO 명시 승인.
+
+## 2026-09-02 — LBP v1 Batch 1 Opus delta review 결과 반영 + Batch 2 진입 조건 (Fable 기록, Opus 판정)
+
+### Context
+Batch 1(commit `9533414`)에 대한 실제 Opus delta review
+(`docs/LBP_V1_BATCH1_OPUS_DELTA_REVIEW_v0.1.md`)가 FAIL(구체 결함 6, CLINICAL
+DECISION REQUIRED 0)을 냈고 Sonnet이 `2f37946`에서 6건을 수정했다. 동시에
+Batch 2 선행 조건으로 실험용 Exercise Eligibility 규칙의 Opus bounded
+validation(`docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md`)을
+수행해 PASS WITH REQUIRED FIXES + PO 결정 2건(CD-1, CD-2)이 나왔다.
+
+### Decision (Opus 임상 판정, Fable이 SSOT에 고정)
+1. **자동 확인 항목 규칙 4개로 확정** (모두 CLOSED 계산값/원문 답변의 직결,
+   새 임상 의미 아님): (a) 목표 동작 재현(항상), (b) FROZEN
+   `leg_symptom_present==='YES'` → 하지직거상/슬럼프, (c) 태블릿 LBP_08
+   `claudication_walking==='YES'` → 보행 가능시간·거리, (d) FROZEN
+   `lbp_neuro_baseline_required===true` → 하지 신경학적 기본검사(감각·반사).
+   `lbp_safety_status!=='CLEAR'`이면 자동 제안 없음, 원장 "확인 추가"는 항상
+   가능. UNKNOWN은 어떤 규칙도 트리거하지 않는다.
+2. **Batch 2 운동 게이트는 재계산 safety를 쓴다.** 태블릿 제출 시점
+   `payload.responses.safety_flags.lbp`(객관적 근력저하 = undefined로 계산)가
+   아니라 `computeLbpFlags(toLbpStateFromDoctorPayload(responses,
+   lbpObjectiveMotorDeficit, age))` 결과를 `routineCareAllowed`로 쓴다.
+   `treatmentSafetyLocked`도 채택(finalization) 게이트에 반영한다. 새/악화
+   신경증상 기록 시 운동 블록은 접고 safety refresh 배너로 대체한다.
+3. **Eligibility 규칙 표는 복사 후 Opus RF-1/4/5/6/7/7b/10/11/12/13 수정을
+   적용한 뒤에만 production dependency가 된다.** 핵심: 신경상태 미확인이
+   회귀 판정에 가려지지 않게 순서 이동(RF-1), 자세 전제·낙상 안전·보행 안전은
+   hard 조건(RF-4/5/6), hip hinge 순환 의존 제거(RF-7/7b).
+4. **Batch 2는 PO 결정 CD-1(미확인 준비조건 → "쉬운 단계 시작" vs "확인 전
+   보류") 및 CD-2(치료 안전 미확인 시 채택만 차단 vs 블록 전체 접기) 전까지
+   adapter/추천 UI를 만들지 않는다.** Fable 권고 기본값: CD-1 = 확인 전 보류
+   (chip 1~2탭으로 해제), CD-2 = 후보는 보이되 채택 버튼 비활성.
+
+### Reason
+- (1)(2)(3)은 CLOSED 문서·FROZEN spec이 이미 요구하는 사항의 연결이라 Opus
+  권한 내 concrete fix. (4)는 CLOSED 문서와 v1 설계 문서 §2.3이 충돌하거나
+  FROZEN spec이 화면 처리를 규정하지 않아 PO만 정할 수 있다.
+
+### Trade-offs
+- (+) Batch 1 규칙 4개로 환자당 자동 제안 최대 4개(4개 동시 성립 조건: 양측
+  다리증상 + concrete neuro 없음 + LBP_08 YES). tranche/priority 기계 불필요
+  전제 유지.
+- (−) Batch 2 착수가 PO 결정 2건에 걸린다. 결정 전에도 규칙 표 수정(3)과
+  파일 복사는 가능하므로 별도 bounded 작업으로 선행할 수 있다.
+
+### Consequences
+- Batch 1 closing review 결과는 HANDOFF 참고. main merge는 PO 명시 승인.
+- Batch 2 착수 순서: (a) 3파일 복사 + RF 수정 + 테스트(Sonnet) → Opus delta
+  → (b) PO CD-1/CD-2 결정 → adapter/추천/채택 UI(Sonnet) → Opus closing.

@@ -6,20 +6,12 @@ const { selectLbpRehabStrategy } = selectorModule
 /**
  * PRODUCT/STRUCTURAL VIGNETTE HARNESS — not proof of clinical efficacy.
  *
- * Every input here is synthetic normalized strategyIntent/eligibility data
- * (brief §4/§7). No vignette derives a strategy from a raw patient fact,
- * diagnosis label, or DoctorPayload field.
+ * All strategy choices below are synthetic normalized upstream decisions.
+ * This harness does NOT map raw patient facts/diagnoses to strategy.
  */
 
-function intent(overrides = {}) {
-  return {
-    symptomResponseGuidedRelevant: false,
-    physicalFunctionCapacityRelevant: false,
-    neuralMobilityRelevant: false,
-    gradedExposureRelevant: false,
-    regulationRelevant: false,
-    ...overrides,
-  }
+function selection(primaryStrategy, secondaryStrategy = null, regulationRelevant = false) {
+  return { primaryStrategy, secondaryStrategy, regulationRelevant }
 }
 
 function elig(exerciseId, state, regressionRequirements = []) {
@@ -32,79 +24,75 @@ function elig(exerciseId, state, regressionRequirements = []) {
   }
 }
 
-// 1. Simple axial/functional case: one Primary, no forced Secondary, 1-2 useful candidates.
+// 1. Simple functional case: one resolved Primary, no forced Secondary, compact plan.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WORK',
-    strategyIntent: intent({ physicalFunctionCapacityRelevant: true }),
+    strategySelection: selection('PHYSICAL_FUNCTION_CAPACITY'),
     eligibility: [elig('LBP_FUNC_01', 'START_AS_WRITTEN')],
   })
   assert.equal(result.primaryStrategy, 'PHYSICAL_FUNCTION_CAPACITY')
   assert.equal(result.secondaryStrategy, null)
-  assert.ok(result.candidates.length >= 1 && result.candidates.length <= 2)
+  assert.deepEqual(result.candidates.map((c) => c.exerciseId), ['LBP_FUNC_01'])
 }
 
-// 2. Extension-favorable + walking Target Function: symptom-response coexists with capacity, no score inflation.
+// 2. Extension-response + walking plan: upstream Primary/Secondary are preserved without score inflation.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WALKING',
-    strategyIntent: intent({ symptomResponseGuidedRelevant: true, physicalFunctionCapacityRelevant: true }),
+    strategySelection: selection('SYMPTOM_RESPONSE_GUIDED_MOVEMENT', 'PHYSICAL_FUNCTION_CAPACITY'),
     eligibility: [elig('LBP_DIR_02', 'START_AS_WRITTEN'), elig('LBP_ACT_01', 'START_AS_WRITTEN')],
   })
   assert.equal(result.primaryStrategy, 'SYMPTOM_RESPONSE_GUIDED_MOVEMENT')
   assert.equal(result.secondaryStrategy, 'PHYSICAL_FUNCTION_CAPACITY')
   assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_DIR_02'), true)
   assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_ACT_01'), true)
-  for (const candidate of result.candidates) {
-    assert.equal('score' in candidate, false)
-    assert.equal('weight' in candidate, false)
-  }
+  assert.equal(JSON.stringify(result).includes('score'), false)
+  assert.equal(JSON.stringify(result).includes('weight'), false)
 }
 
-// 3. Stable leg-symptom case with an upstream eligible neural slider: neural candidate can appear.
+// 3. Stable neural-management plan with upstream eligible slider.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WALKING',
-    strategyIntent: intent({ neuralMobilityRelevant: true }),
+    strategySelection: selection('NEURAL_MOBILITY_MANAGEMENT'),
     eligibility: [elig('LBP_NEURAL_01', 'START_AS_WRITTEN')],
   })
   assert.equal(result.primaryStrategy, 'NEURAL_MOBILITY_MANAGEMENT')
   assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_NEURAL_01'), true)
 }
 
-// 4. Distal worsening represented upstream as STOP: selector cannot resurrect that exercise.
+// 4. Distal worsening encoded upstream as STOP cannot be resurrected.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WALKING',
-    strategyIntent: intent({ neuralMobilityRelevant: true }),
+    strategySelection: selection('NEURAL_MOBILITY_MANAGEMENT'),
     eligibility: [elig('LBP_NEURAL_01', 'STOP_REVIEW')],
   })
   assert.equal(result.candidates.length, 0)
+  assert.equal(result.eligiblePool.some((c) => c.exerciseId === 'LBP_NEURAL_01'), false)
   assert.equal(
     result.gaps.some((g) => g.type === 'NO_MATCHING_ELIGIBLE_EXERCISE' && g.strategy === 'NEURAL_MOBILITY_MANAGEMENT'),
     true,
   )
-  const allIds = [...result.candidates, ...result.eligiblePool].map((c) => c.exerciseId)
-  assert.equal(allIds.includes('LBP_NEURAL_01'), false)
 }
 
-// 5. Bending/lifting avoidance: graded-exposure strategy, only upstream-eligible exposure items.
+// 5. Bending/lifting return: graded exposure only consumes upstream-eligible exposure items.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'LIFTING',
-    strategyIntent: intent({ gradedExposureRelevant: true }),
+    strategySelection: selection('GRADED_EXPOSURE_RETURN'),
     eligibility: [elig('LBP_EXPOSURE_01', 'START_AS_WRITTEN')],
   })
   assert.equal(result.primaryStrategy, 'GRADED_EXPOSURE_RETURN')
-  assert.equal(result.candidates.length, 1)
-  assert.equal(result.candidates[0].exerciseId, 'LBP_EXPOSURE_01')
+  assert.deepEqual(result.candidates.map((c) => c.exerciseId), ['LBP_EXPOSURE_01'])
 }
 
-// 6. Functional Primary + Regulation relevant: Regulation stays adjunct.
+// 6. Functional Primary + Regulation: Regulation remains adjunct.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WORK',
-    strategyIntent: intent({ physicalFunctionCapacityRelevant: true, regulationRelevant: true }),
+    strategySelection: selection('PHYSICAL_FUNCTION_CAPACITY', null, true),
     eligibility: [elig('LBP_FUNC_01', 'START_AS_WRITTEN'), elig('LBP_REG_01', 'START_AS_WRITTEN')],
   })
   assert.equal(result.primaryStrategy, 'PHYSICAL_FUNCTION_CAPACITY')
@@ -112,41 +100,37 @@ function elig(exerciseId, state, regressionRequirements = []) {
   assert.equal(result.regulationAdjunctState, 'RELEVANT')
   assert.equal(result.candidates.some((c) => c.slot === 'PRIMARY' && c.exerciseId === 'LBP_FUNC_01'), true)
   assert.equal(result.candidates.some((c) => c.slot === 'REGULATION' && c.exerciseId === 'LBP_REG_01'), true)
-  assert.ok(result.candidates.length <= 3)
 }
 
-// 7. Regulation alone without a valid Primary intent: explicit unresolved state, not a fabricated functional plan.
+// 7. Regulation alone: unresolved functional plan, adjunct may still be surfaced without becoming Primary.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'SLEEP',
-    strategyIntent: intent({ regulationRelevant: true }),
+    strategySelection: selection(null, null, true),
     eligibility: [elig('LBP_REG_01', 'START_AS_WRITTEN')],
   })
   assert.equal(result.status, 'UNRESOLVED_NO_PRIMARY_STRATEGY')
   assert.equal(result.primaryStrategy, null)
-  assert.equal(result.secondaryStrategy, null)
-  // Regulation itself is not fabricated into a functional strategy.
   assert.equal(result.candidates.every((c) => c.slot === 'REGULATION'), true)
   assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_REG_01'), true)
 }
 
-// 8. Lifting/work Target Function: capacity candidates matched by Target Function.
+// 8. Lifting Target Function: exact capacity match is shown; unrelated eligible capacity item is audit-only.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'LIFTING',
-    strategyIntent: intent({ physicalFunctionCapacityRelevant: true }),
+    strategySelection: selection('PHYSICAL_FUNCTION_CAPACITY'),
     eligibility: [elig('LBP_LOAD_02', 'START_AS_WRITTEN'), elig('LBP_ACT_01', 'START_AS_WRITTEN')],
   })
-  const primary = result.candidates.filter((c) => c.slot === 'PRIMARY')
-  assert.equal(primary[0].exerciseId, 'LBP_LOAD_02')
-  assert.equal(primary[0].matchesTargetFunction, true)
+  assert.deepEqual(result.candidates.map((c) => c.exerciseId), ['LBP_LOAD_02'])
+  assert.equal(result.notSelectedToday.some((c) => c.exerciseId === 'LBP_ACT_01'), true)
 }
 
-// 9. Walking-limited older adult: capacity selection without an automatic stenosis diagnosis.
+// 9. Walking-limited older adult: capacity plan without diagnosis inference; regression preserved.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WALKING',
-    strategyIntent: intent({ physicalFunctionCapacityRelevant: true }),
+    strategySelection: selection('PHYSICAL_FUNCTION_CAPACITY'),
     eligibility: [elig('LBP_ACT_02', 'START_WITH_REGRESSION')],
   })
   assert.equal(result.candidates[0].exerciseId, 'LBP_ACT_02')
@@ -154,11 +138,11 @@ function elig(exerciseId, state, regressionRequirements = []) {
   assert.equal(JSON.stringify(result).toLowerCase().includes('stenosis'), false)
 }
 
-// 10. Selected strategy but no eligible matching item: explicit gap.
+// 10. Selected strategy with no eligible matching item returns an explicit gap.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WORK',
-    strategyIntent: intent({ gradedExposureRelevant: true }),
+    strategySelection: selection('GRADED_EXPOSURE_RETURN'),
     eligibility: [],
   })
   assert.equal(result.candidates.length, 0)
@@ -168,14 +152,15 @@ function elig(exerciseId, state, regressionRequirements = []) {
   )
 }
 
-// 11. Bed-mobility Target Function: expose the Core-20/log-roll gap rather than invent an exercise.
+// 11. Bed-mobility Target Function: unrelated eligible capacity exercise must NOT mask the Core-20/log-roll gap.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'SLEEP',
-    strategyIntent: intent({ physicalFunctionCapacityRelevant: true }),
-    eligibility: [], // no Core-20 item is eligible for this need today
+    strategySelection: selection('PHYSICAL_FUNCTION_CAPACITY'),
+    eligibility: [elig('LBP_ACT_01', 'START_AS_WRITTEN')], // eligible capacity, unrelated to SLEEP
   })
   assert.equal(result.candidates.length, 0)
+  assert.equal(result.notSelectedToday.some((c) => c.exerciseId === 'LBP_ACT_01'), true)
   assert.equal(
     result.gaps.some((g) => g.type === 'NO_MATCHING_ELIGIBLE_EXERCISE' && g.strategy === 'PHYSICAL_FUNCTION_CAPACITY'),
     true,
@@ -184,30 +169,26 @@ function elig(exerciseId, state, regressionRequirements = []) {
   assert.equal(JSON.stringify(result).toLowerCase().includes('log-roll'), false)
 }
 
-// 12. Multiple relevant strategy intents: exactly one Primary + at most one Secondary, no third peer in first plan.
+// 12. Upstream resolves exactly Primary + optional Secondary; selector never invents a third peer strategy.
 {
   const result = selectLbpRehabStrategy({
     targetFunction: 'WORK',
-    strategyIntent: intent({
-      symptomResponseGuidedRelevant: true,
-      physicalFunctionCapacityRelevant: true,
-      neuralMobilityRelevant: true,
-      gradedExposureRelevant: true,
-    }),
+    strategySelection: selection('PHYSICAL_FUNCTION_CAPACITY', 'GRADED_EXPOSURE_RETURN'),
     eligibility: [
-      elig('LBP_DIR_02', 'START_AS_WRITTEN'),
-      elig('LBP_ACT_01', 'START_AS_WRITTEN'),
-      elig('LBP_NEURAL_01', 'START_AS_WRITTEN'),
+      elig('LBP_FUNC_01', 'START_AS_WRITTEN'),
       elig('LBP_EXPOSURE_01', 'START_AS_WRITTEN'),
+      elig('LBP_NEURAL_01', 'START_AS_WRITTEN'),
+      elig('LBP_DIR_02', 'START_AS_WRITTEN'),
     ],
   })
-  assert.equal(result.primaryStrategy, 'SYMPTOM_RESPONSE_GUIDED_MOVEMENT')
-  assert.equal(result.secondaryStrategy, 'PHYSICAL_FUNCTION_CAPACITY')
-  assert.deepEqual(result.deferredRelevantStrategies, ['NEURAL_MOBILITY_MANAGEMENT', 'GRADED_EXPOSURE_RETURN'])
-  assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_NEURAL_01'), false)
-  assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_EXPOSURE_01'), false)
-  const strategiesShown = new Set(result.candidates.map((c) => c.strategy))
-  assert.ok(strategiesShown.size <= 2)
+  assert.equal(result.primaryStrategy, 'PHYSICAL_FUNCTION_CAPACITY')
+  assert.equal(result.secondaryStrategy, 'GRADED_EXPOSURE_RETURN')
+  assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_FUNC_01'), true)
+  assert.equal(result.candidates.some((c) => c.exerciseId === 'LBP_EXPOSURE_01'), true)
+  assert.equal(result.eligiblePool.some((c) => c.exerciseId === 'LBP_NEURAL_01'), false)
+  assert.equal(result.eligiblePool.some((c) => c.exerciseId === 'LBP_DIR_02'), false)
+  const peerStrategies = new Set(result.candidates.filter((c) => c.slot !== 'REGULATION').map((c) => c.strategy))
+  assert.ok(peerStrategies.size <= 2)
 }
 
 console.log('LBP Rehab Strategy Selector v0.1 — clinical/product vignettes: PASS')

@@ -3,37 +3,22 @@
  *
  * EXPERIMENTAL PURE SELECTOR ONLY — NOT A RECOMMENDER / NOT PRODUCTION CDS.
  *
- * Scope (see `docs/LBP_REHAB_STRATEGY_DECISION_v0.1.md` for the CLOSED
- * clinical authority and `docs/LBP_REHAB_STRATEGY_SONNET_IMPLEMENTATION_BRIEF_v0.1.md`
- * for the implementation contract this file follows):
- *
+ * Scope:
  * > Among exercises that upstream Eligibility has already allowed, which
- * > 2-3 candidates most directly support the patient's Target Function and
- * > the already-resolved rehab strategy for today?
+ * > small set most directly supports the patient's Target Function and an
+ * > already-resolved Primary/Secondary rehab strategy for today?
  *
- * This module does NOT:
- * - decide safety (Eligibility owns that; this module only consumes its result),
- * - diagnose,
- * - derive rehab strategy from raw patient facts, diagnosis labels, Working
- *   Hypothesis, DoctorPayload, SLR/FABER/imaging, or new questionnaire answers,
- * - use numeric scores/weights anywhere in selection.
+ * Hard boundary:
+ * - this module does NOT decide safety;
+ * - this module does NOT diagnose;
+ * - this module does NOT derive Primary/Secondary strategy from patient facts,
+ *   Working Hypothesis, DoctorPayload, SLR/FABER/imaging, or questionnaire data;
+ * - this module does NOT invent a strategy precedence rule;
+ * - this module does NOT use numeric scores/weights.
  *
- * `strategyIntent` below is a normalized synthetic input: already-resolved
- * management intents supplied to the selector, not conclusions this module
- * derives from raw clinical findings.
- *
- * Primary/Secondary tie-break note (read before changing):
- * The CLOSED decision document does not specify which strategy becomes
- * Primary when more than one `...Relevant` flag is `true` at once. This
- * module resolves that only by taking the flags in the same fixed order the
- * strategies are declared in the CLOSED decision document
- * (`STRATEGY_PRECEDENCE_ORDER` below). That order is a deterministic
- * disambiguator for this experimental contract, not a clinical claim that
- * one strategy is more important than another. Any strategy beyond the
- * first two relevant ones is never silently dropped — it is preserved in
- * `deferredRelevantStrategies` for clinician visibility, and no candidate is
- * generated for it this visit. This is called out explicitly for Opus
- * delta-review.
+ * Primary/Secondary are normalized upstream inputs. That keeps the experimental
+ * exact-exercise selector inside the CLOSED taxonomy without silently creating
+ * new patient->strategy clinical semantics.
  */
 
 import type {
@@ -53,6 +38,14 @@ export type LbpRehabStrategy =
   | 'NEURAL_MOBILITY_MANAGEMENT'
   | 'GRADED_EXPOSURE_RETURN'
 
+/** Taxonomy membership only. Array position MUST NOT be used as clinical precedence. */
+export const LBP_REHAB_STRATEGIES: readonly LbpRehabStrategy[] = [
+  'SYMPTOM_RESPONSE_GUIDED_MOVEMENT',
+  'PHYSICAL_FUNCTION_CAPACITY',
+  'NEURAL_MOBILITY_MANAGEMENT',
+  'GRADED_EXPOSURE_RETURN',
+]
+
 export const LBP_REHAB_STRATEGY_LABEL_KO: Record<LbpRehabStrategy, string> = {
   SYMPTOM_RESPONSE_GUIDED_MOVEMENT: '증상반응 활용',
   PHYSICAL_FUNCTION_CAPACITY: '신체·기능능력 회복',
@@ -62,39 +55,21 @@ export const LBP_REHAB_STRATEGY_LABEL_KO: Record<LbpRehabStrategy, string> = {
 
 export const LBP_REHAB_REGULATION_LABEL_KO = '호흡·이완 보조'
 
-/** See "Primary/Secondary tie-break note" above. */
-export const STRATEGY_PRECEDENCE_ORDER: readonly LbpRehabStrategy[] = [
-  'SYMPTOM_RESPONSE_GUIDED_MOVEMENT',
-  'PHYSICAL_FUNCTION_CAPACITY',
-  'NEURAL_MOBILITY_MANAGEMENT',
-  'GRADED_EXPOSURE_RETURN',
-]
-
 export type LbpTriBoolean = boolean | 'UNKNOWN'
 
 /**
- * Already-resolved management intents supplied to the selector. This is NOT
- * derived here from raw patient facts, diagnosis, or Working Hypothesis.
+ * Already-resolved strategy selection supplied to this exact-exercise selector.
+ * How patient facts become Primary/Secondary remains OUTSIDE this module.
  */
-export type LbpRehabStrategyIntent = {
-  symptomResponseGuidedRelevant: LbpTriBoolean
-  physicalFunctionCapacityRelevant: LbpTriBoolean
-  neuralMobilityRelevant: LbpTriBoolean
-  gradedExposureRelevant: LbpTriBoolean
+export type LbpResolvedRehabStrategySelection = {
+  primaryStrategy: LbpRehabStrategy | null
+  secondaryStrategy: LbpRehabStrategy | null
   regulationRelevant: LbpTriBoolean
 }
 
-const STRATEGY_INTENT_KEY: Record<LbpRehabStrategy, keyof LbpRehabStrategyIntent> = {
-  SYMPTOM_RESPONSE_GUIDED_MOVEMENT: 'symptomResponseGuidedRelevant',
-  PHYSICAL_FUNCTION_CAPACITY: 'physicalFunctionCapacityRelevant',
-  NEURAL_MOBILITY_MANAGEMENT: 'neuralMobilityRelevant',
-  GRADED_EXPOSURE_RETURN: 'gradedExposureRelevant',
-}
-
 /**
- * Static exercise-domain -> rehab-strategy-family projection (brief §8).
- * This is a taxonomy bridge, not a diagnosis -> exercise mapping: it never
- * looks at a patient fact, only at the exercise's own catalog domain.
+ * Static exercise-domain -> rehab-strategy-family projection.
+ * This is a taxonomy bridge only; it never interprets patient findings.
  */
 const STRATEGY_BY_DOMAIN: Record<LbpExerciseDomain, LbpRehabStrategy | 'REGULATION'> = {
   DIRECTIONAL_RESPONSE: 'SYMPTOM_RESPONSE_GUIDED_MOVEMENT',
@@ -164,7 +139,7 @@ export type LbpRehabStrategyTie = {
 
 export type LbpRehabStrategySelectorInput = {
   targetFunction: LbpExerciseTargetFunction
-  strategyIntent: LbpRehabStrategyIntent
+  strategySelection: LbpResolvedRehabStrategySelection
   /** Upstream Eligibility results. This selector never recomputes them. */
   eligibility: readonly LbpExerciseEligibilityResult[]
 }
@@ -174,14 +149,12 @@ export type LbpRehabStrategySelectorResult = {
   targetFunction: LbpExerciseTargetFunction
   primaryStrategy: LbpRehabStrategy | null
   secondaryStrategy: LbpRehabStrategy | null
-  /** Relevant strategies beyond Primary/Secondary; preserved, not deleted. */
-  deferredRelevantStrategies: readonly LbpRehabStrategy[]
   regulationAdjunctState: LbpRehabRegulationAdjunctState
-  /** At most 3 total, per brief §9 step 6. */
+  /** At most 3 total. */
   candidates: readonly LbpRehabExerciseCandidate[]
-  /** Every candidate considered for Primary/Secondary/Regulation this visit, for audit. */
+  /** Every eligible item considered in the selected strategy slots for audit. */
   eligiblePool: readonly LbpRehabExerciseCandidate[]
-  /** `eligiblePool` minus `candidates` — not implicitly negative/ineligible. */
+  /** `eligiblePool` minus `candidates` — never interpreted as ineligible/negative. */
   notSelectedToday: readonly LbpRehabExerciseCandidate[]
   tiedAtCutoff: readonly LbpRehabStrategyTie[]
   gaps: readonly LbpRehabStrategyGap[]
@@ -193,6 +166,19 @@ type PoolItem = {
   state: LbpEligibleState
   regressionRequirements: readonly LbpExerciseCapability[]
   matchesTargetFunction: boolean
+}
+
+function validateResolvedStrategySelection(selection: LbpResolvedRehabStrategySelection): void {
+  if (!selection.primaryStrategy && selection.secondaryStrategy) {
+    throw new Error('Secondary rehab strategy cannot exist without a resolved Primary strategy.')
+  }
+  if (
+    selection.primaryStrategy &&
+    selection.secondaryStrategy &&
+    selection.primaryStrategy === selection.secondaryStrategy
+  ) {
+    throw new Error('Secondary rehab strategy must be distinct from Primary strategy.')
+  }
 }
 
 function buildProjectedPool(
@@ -229,10 +215,6 @@ function buildProjectedPool(
   return byStrategy
 }
 
-function relevantStrategiesInOrder(intent: LbpRehabStrategyIntent): LbpRehabStrategy[] {
-  return STRATEGY_PRECEDENCE_ORDER.filter((strategy) => intent[STRATEGY_INTENT_KEY[strategy]] === true)
-}
-
 function resolveRegulationAdjunctState(value: LbpTriBoolean): LbpRehabRegulationAdjunctState {
   if (value === true) return 'RELEVANT'
   if (value === false) return 'NOT_RELEVANT'
@@ -249,25 +231,38 @@ function buildRationaleKo(
   const tfLabel = TARGET_FUNCTION_LABEL_KO[targetFunction]
   const base = item.matchesTargetFunction
     ? `${tfLabel} 목표와 직접 연결되는 ${strategyLabel} 운동입니다.`
-    : `${strategyLabel} 방향에서 현재 이용 가능한 운동입니다 (목표기능과 정확히 일치하지는 않음).`
+    : `${strategyLabel} 방향에서 현재 이용 가능한 운동이지만 ${tfLabel} 목표와 직접 연결되지는 않습니다.`
   return item.state === 'START_WITH_REGRESSION'
     ? `${base} 다만 기본형이 아니라 이미 정의된 낮은 단계(regression)로 시작합니다.`
     : base
 }
 
-/**
- * Fills up to `slotCapacity` (and never more than the shared `budget`
- * remaining across the whole visit) candidates for one strategy slot.
- *
- * Never breaks a tie by array order: Target-Function-matched items are
- * preferred as a group over unmatched items, but if a group is larger than
- * the remaining room, none of that group is silently trimmed — the tie is
- * recorded in `tiedAtCutoff` and the slot is left under-filled instead.
- */
-function fillSlot(
-  pool: PoolItem[],
+function toCandidate(
+  item: PoolItem,
   slot: LbpRehabExerciseCandidateSlot,
   strategy: LbpRehabStrategy | 'REGULATION',
+  targetFunction: LbpExerciseTargetFunction,
+): LbpRehabExerciseCandidate {
+  return {
+    exerciseId: item.exerciseId,
+    slot,
+    strategy,
+    eligibilityState: item.state,
+    matchesTargetFunction: item.matchesTargetFunction,
+    regressionRequirements: item.regressionRequirements,
+    rationaleKo: buildRationaleKo(item, strategy, targetFunction),
+  }
+}
+
+/**
+ * Primary/Secondary slots require an exact Target Function link.
+ * If more equally eligible exact matches exist than the slot can show, this
+ * module reports a tie instead of selecting a winner by source/catalog order.
+ */
+function fillTargetFunctionMatchedSlot(
+  pool: readonly PoolItem[],
+  slot: 'PRIMARY' | 'SECONDARY',
+  strategy: LbpRehabStrategy,
   slotCapacity: number,
   budgetRemaining: number,
   targetFunction: LbpExerciseTargetFunction,
@@ -275,48 +270,50 @@ function fillSlot(
   tiesOut: LbpRehabStrategyTie[],
 ): number {
   const capacity = Math.min(slotCapacity, budgetRemaining)
-  if (capacity <= 0 || pool.length === 0) return 0
+  if (capacity <= 0) return 0
 
   const matched = pool.filter((item) => item.matchesTargetFunction)
-  const unmatched = pool.filter((item) => !item.matchesTargetFunction)
+  if (matched.length === 0) return 0
 
-  let taken: PoolItem[] = []
-  for (const group of [matched, unmatched]) {
-    if (group.length === 0) continue
-    const room = capacity - taken.length
-    if (room <= 0) break
-    if (group.length <= room) {
-      taken = taken.concat(group)
-    } else {
-      tiesOut.push({ slot, exerciseIds: group.map((item) => item.exerciseId) })
-      break
-    }
+  if (matched.length > capacity) {
+    tiesOut.push({ slot, exerciseIds: matched.map((item) => item.exerciseId) })
+    return 0
   }
 
-  for (const item of taken) {
-    candidatesOut.push({
-      exerciseId: item.exerciseId,
-      slot,
-      strategy,
-      eligibilityState: item.state,
-      matchesTargetFunction: item.matchesTargetFunction,
-      regressionRequirements: item.regressionRequirements,
-      rationaleKo: buildRationaleKo(item, strategy, targetFunction),
-    })
+  for (const item of matched) {
+    candidatesOut.push(toCandidate(item, slot, strategy, targetFunction))
+  }
+  return matched.length
+}
+
+/** Regulation is an adjunct, so an exact Target Function link is not required. */
+function fillRegulationSlot(
+  pool: readonly PoolItem[],
+  budgetRemaining: number,
+  targetFunction: LbpExerciseTargetFunction,
+  candidatesOut: LbpRehabExerciseCandidate[],
+  tiesOut: LbpRehabStrategyTie[],
+): number {
+  const capacity = Math.min(1, budgetRemaining)
+  if (capacity <= 0 || pool.length === 0) return 0
+
+  if (pool.length > capacity) {
+    tiesOut.push({ slot: 'REGULATION', exerciseIds: pool.map((item) => item.exerciseId) })
+    return 0
   }
 
-  return taken.length
+  candidatesOut.push(toCandidate(pool[0], 'REGULATION', 'REGULATION', targetFunction))
+  return 1
 }
 
 export function selectLbpRehabStrategy(
   input: LbpRehabStrategySelectorInput,
 ): LbpRehabStrategySelectorResult {
-  const relevant = relevantStrategiesInOrder(input.strategyIntent)
-  const primaryStrategy = relevant[0] ?? null
-  const secondaryStrategy = relevant[1] ?? null
-  const deferredRelevantStrategies = relevant.slice(2)
-  const regulationAdjunctState = resolveRegulationAdjunctState(input.strategyIntent.regulationRelevant)
+  validateResolvedStrategySelection(input.strategySelection)
 
+  const primaryStrategy = input.strategySelection.primaryStrategy
+  const secondaryStrategy = input.strategySelection.secondaryStrategy
+  const regulationAdjunctState = resolveRegulationAdjunctState(input.strategySelection.regulationRelevant)
   const projectedPool = buildProjectedPool(input.eligibility, input.targetFunction)
 
   const gaps: LbpRehabStrategyGap[] = []
@@ -329,33 +326,45 @@ export function selectLbpRehabStrategy(
   function auditPool(strategy: LbpRehabStrategy | 'REGULATION', slot: LbpRehabExerciseCandidateSlot) {
     const pool = projectedPool.get(strategy) ?? []
     for (const item of pool) {
-      eligiblePool.push({
-        exerciseId: item.exerciseId,
-        slot,
-        strategy,
-        eligibilityState: item.state,
-        matchesTargetFunction: item.matchesTargetFunction,
-        regressionRequirements: item.regressionRequirements,
-        rationaleKo: buildRationaleKo(item, strategy, input.targetFunction),
-      })
+      eligiblePool.push(toCandidate(item, slot, strategy, input.targetFunction))
     }
     return pool
   }
 
   if (primaryStrategy) {
     const pool = auditPool(primaryStrategy, 'PRIMARY')
-    if (pool.length === 0) {
+    const matching = pool.filter((item) => item.matchesTargetFunction)
+    if (matching.length === 0) {
       gaps.push({ type: 'NO_MATCHING_ELIGIBLE_EXERCISE', slot: 'PRIMARY', strategy: primaryStrategy })
     }
-    fillSlot(pool, 'PRIMARY', primaryStrategy, 2, 3 - candidates.length, input.targetFunction, candidates, tiedAtCutoff)
+    fillTargetFunctionMatchedSlot(
+      pool,
+      'PRIMARY',
+      primaryStrategy,
+      2,
+      3 - candidates.length,
+      input.targetFunction,
+      candidates,
+      tiedAtCutoff,
+    )
   }
 
   if (secondaryStrategy) {
     const pool = auditPool(secondaryStrategy, 'SECONDARY')
-    if (pool.length === 0) {
+    const matching = pool.filter((item) => item.matchesTargetFunction)
+    if (matching.length === 0) {
       gaps.push({ type: 'NO_MATCHING_ELIGIBLE_EXERCISE', slot: 'SECONDARY', strategy: secondaryStrategy })
     }
-    fillSlot(pool, 'SECONDARY', secondaryStrategy, 1, 3 - candidates.length, input.targetFunction, candidates, tiedAtCutoff)
+    fillTargetFunctionMatchedSlot(
+      pool,
+      'SECONDARY',
+      secondaryStrategy,
+      1,
+      3 - candidates.length,
+      input.targetFunction,
+      candidates,
+      tiedAtCutoff,
+    )
   }
 
   if (regulationAdjunctState === 'RELEVANT') {
@@ -363,7 +372,13 @@ export function selectLbpRehabStrategy(
     if (pool.length === 0) {
       gaps.push({ type: 'NO_MATCHING_ELIGIBLE_EXERCISE', slot: 'REGULATION', strategy: 'REGULATION' })
     }
-    fillSlot(pool, 'REGULATION', 'REGULATION', 1, 3 - candidates.length, input.targetFunction, candidates, tiedAtCutoff)
+    fillRegulationSlot(
+      pool,
+      3 - candidates.length,
+      input.targetFunction,
+      candidates,
+      tiedAtCutoff,
+    )
   }
 
   const selectedIds = new Set(candidates.map((candidate) => candidate.exerciseId))
@@ -374,7 +389,6 @@ export function selectLbpRehabStrategy(
     targetFunction: input.targetFunction,
     primaryStrategy,
     secondaryStrategy,
-    deferredRelevantStrategies,
     regulationAdjunctState,
     candidates,
     eligiblePool,

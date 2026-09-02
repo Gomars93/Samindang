@@ -1668,3 +1668,35 @@ validation(`docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md`)을
 - Batch 1 closing review 결과는 HANDOFF 참고. main merge는 PO 명시 승인.
 - Batch 2 착수 순서: (a) 3파일 복사 + RF 수정 + 테스트(Sonnet) → Opus delta
   → (b) PO CD-1/CD-2 결정 → adapter/추천/채택 UI(Sonnet) → Opus closing.
+
+## 2026-09-02 — CD-1/CD-2 PO 결정: 추천안 채택 (Batch 2 게이트 해제)
+
+### Context
+`docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md`의
+CLINICAL DECISION REQUIRED 2건(CD-1, CD-2)을 세션 대화에서 Product Owner가
+직접 확인·확정했다(Fable 권고안 그대로 채택). GitHub SSOT에 우선 기록한다.
+
+### Decision
+- **CD-1 (미확인 준비조건 운동 표시):** 옵션 B 채택 — 준비조건(capability)이
+  `UNKNOWN`인 운동은 `START_WITH_REGRESSION`으로 자동 승격하지 않는다.
+  후보로는 보이되 "확인 전 보류"로 표시하고, 원장이 해당 capability chip을
+  1~2탭으로 확인하면 즉시 시작 가능 상태로 바뀐다. 옵션 A(클릭 0, 미확인을
+  시작 가능으로 자동 표시)는 채택하지 않는다.
+- **CD-2 (치료 안전 미확인 환자의 운동 블록):** 옵션 A 채택 — 운동 후보
+  카드는 그대로 렌더하되 "채택" 버튼만 비활성화하고 "치료 안전 확인 후
+  채택 가능" 배너를 표시한다. 후보 자체를 숨기거나 블록 전체를 접지 않는다.
+
+### Reason
+Opus bounded validation의 권고 근거를 그대로 수용: CD-1은 CLOSED 문서의
+"미확인/미평가를 정상·적격으로 숨은 변환 금지" 원칙과 v1 설계 §2.3을
+일치시키고, CD-2는 FROZEN `treatmentSafetyLocked`가 요구하는 "채택
+finalization만 막는다"는 범위를 넘어서지 않으면서 원장이 후보와 차단
+이유를 함께 볼 수 있게 한다.
+
+### Consequences
+- Batch 2는 이제 사람 판단 없이 끝까지 진행한다: (a) 3개 운동 데이터 파일
+  포팅 + Opus RF-1/4/5/6/7/7b/9/10/11/12/13 규칙 수정, (b) 재계산된 safety를
+  쓰는 eligibility adapter(RF-2/3/3b), (c) CD-1/CD-2를 반영한 추천 모듈 +
+  채택 UI(RF-8), 전부 하나의 cohesive batch로 Sonnet 구현 → Opus delta →
+  concrete fix → Opus closing.
+- main merge, PR 생성은 여전히 PO 명시 승인 대상.

@@ -12,6 +12,7 @@ on:
       - 'src/doctor/workspace/lbpWorkingHypothesis.experimental.ts'
       - 'src/doctor/workspace/lbpHypothesisPresentation.experimental.ts'
       - 'src/doctor/workspace/lbpExerciseLibrary.v01.experimental.ts'
+      - 'src/doctor/workspace/lbpExerciseCoreMetadata.v01.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
@@ -25,8 +26,10 @@ on:
       - 'tests/lbp-working-hypothesis.experimental.spec.mjs'
       - 'tests/lbp-hypothesis-presentation.stress.experimental.spec.mjs'
       - 'tests/lbp-exercise-library.catalog.experimental.spec.mjs'
+      - 'tests/lbp-exercise-core-metadata.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
       - 'docs/LBP_EXERCISE_LIBRARY_CATALOG_MIGRATION_v0.1.md'
+      - 'docs/LBP_EXERCISE_CORE20_METADATA_v0.1.md'
       - '.github/workflows/lbp-action-engine-experimental.yml'
 
 jobs:
@@ -107,6 +110,14 @@ jobs:
           --platform=neutral
           --outfile=tests/.lbp-exercise-library-v01-bundle.mjs
 
+      - name: Bundle experimental core-20 exercise metadata
+        run: >-
+          npx esbuild src/doctor/workspace/lbpExerciseCoreMetadata.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-exercise-core-metadata-bundle.mjs
+
       - name: Run LBP action-adaptive stress scenarios
         run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
 
@@ -145,3 +156,6 @@ jobs:
 
       - name: Run LBP exercise-library catalog migration suite
         run: node tests/lbp-exercise-library.catalog.experimental.spec.mjs
+
+      - name: Run LBP core-20 exercise metadata suite
+        run: node tests/lbp-exercise-core-metadata.experimental.spec.mjs

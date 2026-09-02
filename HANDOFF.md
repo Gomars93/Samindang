@@ -1,5 +1,63 @@
 # Current Handoff
 
+## 2026-09-02 — LBP Rehab Strategy Selector v0.1 구현 (PR #28, DRAFT)
+
+**브랜치**: `claude/feat-lbp-action-adaptive-engine-prototype` (origin push됨,
+PR #28 — DRAFT, Product Owner 명시 승인 전 merge 금지).
+
+**이번 세션이 구현한 것**: `docs/LBP_REHAB_STRATEGY_SONNET_IMPLEMENTATION_
+BRIEF_v0.1.md`를 그대로 따라 `src/doctor/workspace/lbpRehabStrategySelector.
+v01.experimental.ts`(신규)를 추가했다 — 업스트림 Eligibility(START_AS_WRITTEN
+/START_WITH_REGRESSION만 소비, DEFER_NOT_READY/STOP_REVIEW는 절대 재생시키지
+않음)와 `strategyIntent`(이미 해석된 5개 boolean 관리의도, raw 환자사실에서
+파생하지 않음)를 입력으로 받아 Target Function을 앵커로 Core-20 exercise
+후보 0~3개를 고른다. 숫자 점수/가중치는 전혀 사용하지 않는다.
+
+**설계 판단 중 CLOSED 문서에 명시가 없어 이번 세션이 기계적으로 정한 것
+(Opus 델타 리뷰 필요)**: `strategyIntent`의 4개 전략 플래그가 동시에 여러
+개 true일 때 무엇을 Primary/Secondary로 할지는 `LBP_REHAB_STRATEGY_
+DECISION_v0.1.md`에 우선순위가 명시돼 있지 않다. 이번 구현은 그 문서가
+전략을 선언한 순서(`STRATEGY_PRECEDENCE_ORDER`: 증상반응 활용 → 신체·기능
+능력 회복 → 신경가동성 관리 → 단계적 노출·복귀)를 "어느 쪽이 더 위중하다"는
+임상 판단이 아니라 순수 기계적 동점 처리 규칙으로만 사용했고, 3번째 이후
+관련 전략은 삭제하지 않고 `deferredRelevantStrategies`에 그대로 보존한다
+(코드 상단 주석에 동일 내용 명시). 이 규칙 자체가 맞는지는 이번 배치
+범위를 벗어나는 새 임상 판단이 아니라고 보고 진행했으나, Opus/PO 확인이
+필요한 지점으로 남긴다.
+
+**테스트**: `tests/lbp-rehab-strategy-selector.experimental.spec.mjs`(브리프
+§13의 17개 acceptance 기준 1~16 커버 — #17 FROZEN zero-diff는 아래 git diff로
+별도 확인), `tests/lbp-rehab-strategy-selector.vignettes.experimental.spec.mjs`
+(브리프 §14의 vignette 12개 그대로). `.github/workflows/lbp-action-engine-
+experimental.yml`에 새 모듈 bundle 단계 + 두 테스트 실행 단계 추가.
+
+**로컬 검증 (이번 세션)**:
+- 신규 2개 스펙 파일 단독 실행 PASS.
+- 워크플로에 나열된 기존 18개 LBP 실험 스펙 전체(재bundle 포함) 재실행 —
+  전부 PASS, regression 없음.
+- `npx tsc -b` PASS, `npm run build`(vite build) PASS.
+- `npm run test:all` 전체 PASS.
+- `git diff` 기준 `src/spec/*Logic.ts`/`*Adapter.ts`, 태블릿 questionnaire
+  파일(`index.html`, `src/App.tsx`) zero-diff 확인.
+- 변경 파일: `.github/workflows/lbp-action-engine-experimental.yml`(수정),
+  `src/doctor/workspace/lbpRehabStrategySelector.v01.experimental.ts`(신규),
+  `tests/lbp-rehab-strategy-selector.experimental.spec.mjs`(신규),
+  `tests/lbp-rehab-strategy-selector.vignettes.experimental.spec.mjs`(신규).
+  esbuild bundle 산출물(`tests/.lbp-*-bundle.mjs`)은 이 브랜치의 기존
+  관례대로 커밋하지 않음(`.gitignore`에 개별 등록돼 있지 않지만 git
+  history에도 커밋된 적이 없는 생성물 — CI/로컬에서 매번 재생성).
+
+**CLINICAL DECISION REQUIRED 여부**: 없음. 브리프가 금지한 항목(숫자 점수,
+새 환자질문, 진단→운동 hard mapping, raw DoctorPayload, production UI/CRM/
+EMR 연동, 57개 전체 직접 랭킹, log-roll 등 신규 exercise ID 발명)은 전부
+회피했다. 위 "설계 판단" 항목만 명시적으로 검토가 필요한 지점.
+
+**다음 단계**: Opus delta review(브리프 §16의 10개 질문, 특히 #2 patient-fact
+→strategy mapping 여부와 #7 tie 처리)를 이 diff에 대해 실행 → 발견사항만
+Sonnet이 수정 → Opus closing review. PR #28은 계속 DRAFT/미merge 유지.
+
+---
+
 ## ⚠️ 갱신 (2026-09-01): Phase 10 delta 재심사 PASS로 종료됨 — 아래
 ## "Objective (Core Reduction Phase 10 closing review 지적 해소)" 절은
 ## 재심사 진행 중이던 시점의 snapshot이라 지금 기준으로는 stale하다.

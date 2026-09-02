@@ -1,5 +1,34 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02 (최신 2): Corrective Handoff 대조 완료, Batch 2 코드는 작업 트리에 staged/미커밋
+
+PO가 `FABLE_COMPLETE_CORRECTIVE_HANDOFF_PAIN_LBP_2026-09-02.md`로 이전 인수인계
+3종을 대체했다. GitHub 실측과 대조한 결과와 설계 수정은
+`docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` **§8 (v0.2 delta)** 에
+기록했다. 요지: main/PR #28 상태는 문서와 일치, 이 브랜치는 문서보다 8커밋
+앞섬(Batch 1 CLOSED). 문서가 바꾼 것 — Working Hypothesis 최소 형태 복귀(원장
+선택, 자동 계산 없음), structured 결과 6상태(LIMITED/NOT_PERFORMED 추가),
+재진 Quick Check 5문항, EMR 고정 6키 포맷 필수, 운동 블록은 판단·처치 레인.
+→ Batch 순서: 2(마무리) → 2.5 → 3 → 4(필수).
+
+**PO 결정 CD-1(확인 전 보류)·CD-2(채택만 차단)는 확정·기록됨**(`DECISIONS.md`
+마지막 항목, commit `ffaca5f`).
+
+**Batch 2 현재 상태 — 주의**: Sonnet 구현이 최종 검증 gate 직전에 사용자에 의해
+중단됐다. 신규 5파일(`lbpExerciseLibrary/CoreMetadata/Eligibility.ts`,
+`lbpEligibilityContext.ts`, `lbpExerciseRecommendation.ts`) + 테스트 4개 +
+수정 8파일이 **git index에 staged, 미커밋, tsc/build/test:all 미확인** 상태로
+작업 트리에 남아 있다. GitHub에는 없다. Fable 통합 점검에서 확인한 것: RF-2
+재계산 safety 게이트·RF-3/3b·RF-8·CD-1(optimistic 재평가)·CD-2·RF-13·
+TF 필터는 구현됨; NOT_RELEVANT_TODAY는 observation 라벨로만 유지. 마무리
+전 고칠 것 3건은 위 §8.2-1 (a)(b)(c).
+
+**다음 행동(PO 지시 필요)**: Batch 2 마무리를 Sonnet 새 세션에 다시 맡길지
+결정. 맡기면 (a)(b)(c) 반영 → 검증 gate → 커밋 → Opus delta → fix → closing까지
+사람 판단 없이 진행. 그 전까지 staged 작업은 건드리지 않는다(폐기·리셋 금지).
+
+---
+
 ## ⚠️ 2026-09-02 (최신): LBP Production v1 — Batch 1 게이트 CLOSED (Opus), Batch 2는 PO 결정 2건 대기
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (main `01dac63`에서 분기,

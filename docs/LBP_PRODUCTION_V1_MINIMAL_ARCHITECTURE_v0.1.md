@@ -213,3 +213,42 @@ Working Hypothesis, Rehab Strategy(4개 taxonomy), Decision Key, tranche, suffic
 
 ### 7.5 금지
 - 새 문진, 점수/가중치, 진단명, 검사 우선순위 계산, Working Hypothesis, 운동 추천(Batch 2), CRM/EMR 서버 변경, FROZEN 수정, 기존 무관 코드 리팩터.
+
+---
+
+## 8. 2026-09-02 Corrective Handoff 대조 (v0.2 delta — Fable)
+
+**기준 문서:** `FABLE_COMPLETE_CORRECTIVE_HANDOFF_PAIN_LBP_2026-09-02.md` (PO 제공, 이전 인수인계 3종을 대체).
+**대조 시각의 GitHub 실측:** main `01dac63`(문서 §37-1과 일치), PR #28 head `b099417` DRAFT(§37-2 일치), open PR #23/#25/#27 그대로(§41), `tmp-noop` 브랜치 존재(§40 — 삭제하지 않음). **이 브랜치 `claude/clinical-os-lbp-architecture-xym6po`는 문서가 모르는 상태다**: main 대비 8커밋(설계 v0.1 → Batch 1 구현·Opus delta FAIL→fix→closing → Eligibility Opus bounded validation → PO CD-1/CD-2 결정 기록). 문서 규칙("repo와 다르면 최신 PO 결정·actual evidence 우선")에 따라 브랜치 상태가 문서보다 앞선다.
+
+### 8.1 문서가 v0.1 설계를 바꾸는 지점 (수정 확정)
+
+| # | Corrective handoff | v0.1의 판단 | v0.2 수정 |
+|---|---|---|---|
+| C1 | §0-2/§0-5/§36: **Working Hypothesis + 이유**가 LBP v1 완결 조건의 명시 단계. §14: 확정진단 아님, Primary/Higher/Consider/Lower/Must-exclude 표현, 첫 화면 압축 | 엔진·presentation DEFER, free text만 | **최소 형태로 복귀.** 자동 엔진은 그대로 DEFER하되, 원장이 5개 관리지향 패턴(허리 움직임 관련 / 신경근 관여 / 보행·기립 하지 패턴 / 고관절 기여 / 천장관절 기여)에서 support 수준을 **직접 선택**하는 chip + 기존 free text. 자동 계산 없음 → 새 임상 의미 없음. → **Batch 2.5** |
+| C2 | §0-2 step 8 / §15: **치료방향 결정**은 의사 결정, 시스템은 대신하지 않음 | 단계로 명시 안 함 | `PainFinalAssessment.treatmentFocus`/`interventionPerformedOrPlanned` free text가 그 단계. **READY** — 코드 변경 없음, 화면 순서만 §8.3 |
+| C3 | §0-2 step 6 / §8-5: structured 결과는 정상/이상/불명확/**제한/미시행**/미평가를 절대 합치지 않음 | production `ExamCheckStatus` 4값(POSITIVE/NEGATIVE/UNCLEAR/NOT_YET_CHECKED) 그대로 사용 | **G15 신설**: `LIMITED`, `NOT_PERFORMED` 2값 추가(additive, 전 부위 공유 enum). EMR 규칙 "미확인은 음성으로 찍지 않음" 유지 + 제한/미시행은 사실로 기록. 다부위 공유 타입이라 Fable 통합 항목 → **Batch 2.5** |
+| C4 | §0-3: 재진 30~60초 Quick Check **5문항**(목표기능 호전 / 전체 증상반응 / 새·악화 신경증상·위험신호 / 운동 실제 시행·난이도 / 치료 후 이상반응) → 유지·진행 / 부분조정 / 재검토 / safety refresh | Batch 3 = 반응 3-tuple | **Batch 3 범위를 5문항 chip으로 확정.** 숫자 threshold 없음(§16-4) |
+| C5 | §17: EMR 고정 6키(C/C·O/S·S·O·A·P), §36 EMR/CRM 닫혀야 다음 부위 | Batch 4 선택 | **Batch 4 필수**(EMR 고정 포맷 + CRM 최소 reuse). 순서는 여전히 마지막 |
+| C6 | §8-1 흐름: 확인 → 임상가설 → 치료·운동 결정 → 재평가 | 운동 블록을 레인2(확인)에 배치 | **운동 블록은 판단·처치 레인, 최종 판단 카드 다음**에 배치 (Batch 2 마무리 시 반영) |
+| C7 | §2-3 stop point 6: 환자 안전 의미가 실제로 달라지는 변경 | — | 이후 모든 batch 브리프에 stop point로 명시 |
+| C8 | §27-1: `NOT_RELEVANT_TODAY`는 eligibility가 아니라 relevance 개념, DEFER에 억지 매핑 금지 | Batch 2 브리프 RF-11(c) | staged Batch 2 vignette 하네스는 이를 observation-only 라벨로 유지(매핑 없음) — 확인됨 |
+| C9 | §1-7: ChatGPT가 직접 코딩한 전례를 일반화하지 않음 | — | Fable은 구현하지 않는다. 이번 세션에서도 구현은 전부 Sonnet, 임상 검수는 Opus |
+
+변경 없음(문서와 v0.1이 이미 일치): Target Function anchor(§11), Selective exam 원칙(§12), 병렬 기여자(§13), 태블릿 read-only(§10), FROZEN(§9), Rehab strategy 내부 분류만(§0-4/§28~31), 추천 금지 목록(§32-1), CRM 경계(§18), 다른 부위 이동 금지(§0-5/§36).
+
+### 8.2 갱신된 Batch 순서 (한 번에 하나)
+
+1. **Batch 2 (진행 중, 마무리 필요)** — Eligibility + 추천 + 채택. 코드가 작업 트리에 staged(미커밋·최종 검증 미완료) 상태. 마무리 항목 3개: (a) 운동 블록을 판단·처치 레인으로 이동(C6), (b) `LBP_NEURAL_01`의 "직접 뒷받침"을 무조건이 아니라 `lbp_exam_neurodynamic` 결과 POSITIVE일 때만, (c) 목표 기능 미선택 시 빈 화면 대신 안내 1줄. 그 뒤 검증 gate → 커밋 → Opus delta → fix → closing.
+2. **Batch 2.5** — Working Hypothesis 최소 형태(C1) + structured 결과 6상태(C3). 새 임상 의미 없음(원장 선택·기록 필드). Opus delta 필수(공유 enum 변경).
+3. **Batch 3** — 재진 Quick Check 5문항 + safety refresh + 운동 실제 시행/난이도 기록(C4).
+4. **Batch 4 (필수)** — EMR 고정 6키 포맷 + CRM `reassess_due` 최소 write-through(C5).
+
+### 8.3 Exact Gaps 추가
+
+| # | Gap | Batch |
+|---|---|---|
+| G15 | `ExamCheckStatus`에 LIMITED / NOT_PERFORMED 부재(§8-5 위반) | 2.5 |
+| G16 | Working Hypothesis 최소 구조(원장 선택 chip, 자동 계산 없음) | 2.5 |
+| G17 | 운동 블록 배치가 canonical route 순서와 불일치(레인2) | 2 마무리 |
+| G18 | 재진 Quick Check 5문항 중 "운동 실제 시행·난이도", "치료 후 이상반응" 기록 필드 부재 | 3 |

@@ -1,5 +1,40 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02 (최신): Fable 역할 이관 + LBP Production v1 최소 설계 확정, Batch 1 진행 중
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (main `01dac63`에서 분기).
+PR #28(`claude/feat-lbp-action-adaptive-engine-prototype`, head `b099417`)은
+research branch로 계속 DRAFT/미merge. 통째로 merge하지 않는다(PO 결정, PR #28
+코멘트 `#5508066166`, `DECISIONS.md` 2026-09-02 두 항목 참고).
+
+**이 세션(Fable)이 한 것**
+1. main / PR #28 / PR #25·#27·#23 실제 상태 확인 후 LBP 흐름 11단계를
+   READY/PARTIAL/MISSING/OVERDESIGNED로 분류 →
+   `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` (§1 map, §2 minimal
+   architecture, §3 remove/defer, §4 exact gaps G1~G14, §5 batch 1~4, §6 Opus
+   확인 항목, §7 Batch 1 Sonnet 브리프).
+2. `DECISIONS.md`에 PR #28 브랜치에만 있던 PO 결정 항목을 그대로 옮기고
+   Fable 설계 항목을 추가.
+3. Batch 1(Target Function chip + LBP 최소 확인 블록 + 방향 반응 필드 + ⓘ
+   help + 원장 확인 추가) 구현을 Sonnet 세션에 위임 → focused tests →
+   Opus delta review(§6 5개 항목) → fix → Opus closing 순으로 진행.
+
+**핵심 판단 요약**
+- production v1로 가져오는 research 산출물 = 운동 데이터 3파일 + v0.1 엔진의
+  검사 문구뿐. v0.2/v0.3/B+/v0.4/가설 엔진/presentation = REMOVE·DEFER,
+  Strategy Selector = BYPASS.
+- Target Function = 기존 `FollowUpTarget` 옵션 확장(새 필드/화면 없음).
+- PR #25는 main이 이미 같은 결함을 해결 → 닫기 권고(PO 판단).
+
+**사람 판단이 필요한 지점(멈춘 곳)**: 없음(Batch 1은 새 임상 의미 없음).
+Opus delta review가 §6 항목에서 `CLINICAL DECISION REQUIRED`를 올리면 그때
+PO에게 올린다. Batch 2 시작 전 Eligibility Opus bounded validation 필요.
+
+**다음 행동**: Batch 1 루프 완료 → HANDOFF 갱신 → PR 생성은 PO 지시 시.
+
+---
+
+
 ## ⚠️ 갱신 (2026-09-01): Phase 10 delta 재심사 PASS로 종료됨 — 아래
 ## "Objective (Core Reduction Phase 10 closing review 지적 해소)" 절은
 ## 재심사 진행 중이던 시점의 snapshot이라 지금 기준으로는 stale하다.

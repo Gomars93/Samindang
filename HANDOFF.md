@@ -1,5 +1,26 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02: PO 결정 — Rehab Strategy Mapping production 구축 보류 +
+## Fable 역할 이관 (`DECISIONS.md` 동일 날짜 항목 참고)
+
+PR #28 코멘트(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5508066166,
+`author_association: OWNER` 확인)로 PO가 결정: 아래 selector가 Opus PASS를
+받은 것과 별개로, **production LBP v1은 이 selector를 그대로 채택하지
+않는다.** patient facts → Primary/Secondary Rehab Strategy 매핑 엔진은
+새로 만들지 않으며, production 경로는 `Safety → Target Function → 최소
+확인 → Exercise Eligibility → Target Function/임상반응이 뒷받침하는
+exercise 2~3개 → clinician 선택 → 재평가`로 단순화한다.
+`lbpRehabStrategySelector.v01.experimental.ts`는 bypass/simplification-
+refactor/defer 중 무엇을 할지 **Fable이 평가** — Sonnet은 이 위에 추가
+기능을 만들지 않는다. 동시에 ChatGPT의 product-architecture/overdesign-
+review/독립 통합 리뷰 역할이 Fable로 이관됨(Product Owner/Opus/Sonnet
+권한은 불변). 상세 근거/trade-off는 `DECISIONS.md`에 기록.
+
+**이 세션의 다음 행동**: 없음 — 코드 변경 요청이 아니라 향후 방향 결정
+기록. PR #28은 계속 DRAFT/미merge, CI green(`c26e01c`) 상태 그대로 둔다.
+
+---
+
 ## ✅ 2026-09-02: Opus delta review 완료 — PASS (LBP Rehab Strategy Selector)
 
 PR #28 코멘트(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5506206345)

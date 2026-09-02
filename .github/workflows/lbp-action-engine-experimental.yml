@@ -13,6 +13,7 @@ on:
       - 'src/doctor/workspace/lbpHypothesisPresentation.experimental.ts'
       - 'src/doctor/workspace/lbpExerciseLibrary.v01.experimental.ts'
       - 'src/doctor/workspace/lbpExerciseCoreMetadata.v01.experimental.ts'
+      - 'src/doctor/workspace/lbpExerciseEligibility.v01.experimental.ts'
       - 'tests/lbp-action-adaptive-engine.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.boundaries.experimental.spec.mjs'
       - 'tests/lbp-action-adaptive-engine.exhaustive.experimental.spec.mjs'
@@ -28,6 +29,7 @@ on:
       - 'tests/lbp-exercise-library.catalog.experimental.spec.mjs'
       - 'tests/lbp-exercise-core-metadata.experimental.spec.mjs'
       - 'tests/lbp-exercise-core20.vignettes.experimental.spec.mjs'
+      - 'tests/lbp-exercise-eligibility.experimental.spec.mjs'
       - 'docs/LBP_CLINICAL_OS_NORTH_STAR_GUARDRAILS.md'
       - 'docs/LBP_EXERCISE_LIBRARY_CATALOG_MIGRATION_v0.1.md'
       - 'docs/LBP_EXERCISE_CORE20_METADATA_v0.1.md'
@@ -119,6 +121,14 @@ jobs:
           --platform=neutral
           --outfile=tests/.lbp-exercise-core-metadata-bundle.mjs
 
+      - name: Bundle experimental exercise eligibility contract
+        run: >-
+          npx esbuild src/doctor/workspace/lbpExerciseEligibility.v01.experimental.ts
+          --bundle
+          --format=esm
+          --platform=neutral
+          --outfile=tests/.lbp-exercise-eligibility-bundle.mjs
+
       - name: Run LBP action-adaptive stress scenarios
         run: node tests/lbp-action-adaptive-engine.experimental.spec.mjs
 
@@ -163,3 +173,6 @@ jobs:
 
       - name: Run LBP core-20 exercise clinical vignette observation suite
         run: node tests/lbp-exercise-core20.vignettes.experimental.spec.mjs
+
+      - name: Run LBP structured exercise eligibility suite
+        run: node tests/lbp-exercise-eligibility.experimental.spec.mjs

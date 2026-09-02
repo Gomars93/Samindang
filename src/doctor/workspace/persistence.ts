@@ -255,6 +255,30 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
+ * Opus delta review (batch 2.5a) MUST-FIX 2: a hand-edited/corrupted/
+ * future-buggy record could have the same capability id in BOTH
+ * `lbpConfirmedCapabilities` and `lbpDeniedCapabilities` — the in-app
+ * `onSetLbpCapabilityStatus` setter keeps them exclusive, but this is the
+ * one place a persisted record is trusted without that guarantee. Per CD-1
+ * ("never infer eligible from uncertain/corrupt data"), an unresolvable
+ * conflict must NOT resolve to 'YES' (the more aggressive read) -- it
+ * strips the id from BOTH lists so `lbpEligibilityContext.ts` reads it as
+ * UNKNOWN, same as a capability nobody has touched yet.
+ */
+function stripConflictingLbpCapabilities(
+  confirmed: string[],
+  denied: string[],
+): { confirmed: string[]; denied: string[] } {
+  const deniedSet = new Set(denied)
+  const conflicting = new Set(confirmed.filter((c) => deniedSet.has(c)))
+  if (conflicting.size === 0) return { confirmed, denied }
+  return {
+    confirmed: confirmed.filter((c) => !conflicting.has(c)),
+    denied: denied.filter((c) => !conflicting.has(c)),
+  }
+}
+
+/**
  * Never throws. A malformed/partial/legacy payload (including `null`,
  * `undefined`, a round-2-only shape with no round-3 fields at all, or a
  * completely unrelated JSON shape) degrades to emptyWorkspaceState()
@@ -266,6 +290,10 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
   const empty = emptyWorkspaceState()
   if (!isRecord(raw)) return empty
+  const { confirmed: lbpConfirmedCapabilities, denied: lbpDeniedCapabilities } = stripConflictingLbpCapabilities(
+    sanitizeStringArray(raw.lbpConfirmedCapabilities),
+    sanitizeStringArray(raw.lbpDeniedCapabilities),
+  )
   return {
     schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : empty.schema_version,
     painExamSuggestions: Array.isArray(raw.painExamSuggestions) ? raw.painExamSuggestions.map(sanitizeExamSuggestion) : [],
@@ -287,8 +315,8 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     lbpDirectionalResponse: isValidLbpDirectionalResponse(raw.lbpDirectionalResponse)
       ? raw.lbpDirectionalResponse
       : empty.lbpDirectionalResponse,
-    lbpConfirmedCapabilities: sanitizeStringArray(raw.lbpConfirmedCapabilities),
-    lbpDeniedCapabilities: sanitizeStringArray(raw.lbpDeniedCapabilities),
+    lbpConfirmedCapabilities,
+    lbpDeniedCapabilities,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

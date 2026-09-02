@@ -109,6 +109,41 @@ function assert(name, cond) {
   assert('legacy record with lbpDirectionalResponse entirely absent degrades to NOT_ASSESSED', legacy.lbpDirectionalResponse === 'NOT_ASSESSED')
 }
 
+/* ---------------- Batch 2.5a (CD-3): lbpConfirmedCapabilities/lbpDeniedCapabilities conflict defense ---------------- */
+{
+  const empty = emptyWorkspaceState()
+  assert('emptyWorkspaceState.lbpDeniedCapabilities starts []', Array.isArray(empty.lbpDeniedCapabilities) && empty.lbpDeniedCapabilities.length === 0)
+
+  const legacy = deserializeWorkspaceState({ lbpConfirmedCapabilities: ['SAFE_WALKING'] })
+  assert('a pre-CD-3 record with no lbpDeniedCapabilities field degrades to [] (legacy-safe)', Array.isArray(legacy.lbpDeniedCapabilities) && legacy.lbpDeniedCapabilities.length === 0)
+  assert('a pre-CD-3 record keeps its lbpConfirmedCapabilities untouched', legacy.lbpConfirmedCapabilities.includes('SAFE_WALKING'))
+
+  // Opus delta review MUST-FIX 2: a hand-edited/corrupted record with the
+  // SAME capability id in both lists must resolve to neither (UNKNOWN),
+  // never 'YES' (the more aggressive read) -- CD-1's "never infer eligible
+  // from uncertain/corrupt data" applies here too.
+  const conflicting = deserializeWorkspaceState({
+    lbpConfirmedCapabilities: ['SAFE_WALKING', 'CAN_SELF_PACE'],
+    lbpDeniedCapabilities: ['SAFE_WALKING', 'QUADRUPED_TOLERATED'],
+  })
+  assert(
+    'a capability id present in BOTH lists is stripped from lbpConfirmedCapabilities (downgraded to UNKNOWN, not YES)',
+    !conflicting.lbpConfirmedCapabilities.includes('SAFE_WALKING'),
+  )
+  assert(
+    'the same conflicting id is stripped from lbpDeniedCapabilities too',
+    !conflicting.lbpDeniedCapabilities.includes('SAFE_WALKING'),
+  )
+  assert(
+    'a non-conflicting confirmed id survives untouched',
+    conflicting.lbpConfirmedCapabilities.includes('CAN_SELF_PACE'),
+  )
+  assert(
+    'a non-conflicting denied id survives untouched',
+    conflicting.lbpDeniedCapabilities.includes('QUADRUPED_TOLERATED'),
+  )
+}
+
 /* ---------------- old-schema (round 2) safe load ---------------- */
 {
   // A shape with ONLY the round-2 fields -- no painCarePlan/nextReassessmentPlan/

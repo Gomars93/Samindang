@@ -228,7 +228,7 @@ function LbpCapabilityStatusButtons({
  *
  * Each awaiting candidate's still-blocking capabilities get their own
  * 3-button group so the clinician can genuinely record 'NO' (not only
- * 'YES') right where the exercise it blocks is visible. The "확인된/지금은
+ * 'YES') right where the exercise it blocks is visible. The "확인함/지금은
  * 안 됨으로 표시한 준비 조건" row below additionally lists every capability
  * currently set to YES or NO on this record (Opus delta review defect 5's
  * scope, unchanged: it stays visible even once no candidate awaiting it is
@@ -265,8 +265,9 @@ function LbpAwaitingCapabilitySection({
           <h3>확인하면 시작 가능</h3>
           <p className="workspace__block__hint">
             아래 준비 조건이 아직 확인되지 않아 보류 중입니다. "미확인"은 "아니오"가 아니라 "아직 확인하지
-            않음"입니다 — 확인함(YES)이면 바로 추천 목록에 올라가고, 지금은 안 됨(NO)으로 표시하면 쉬운 단계(있는
-            경우)로 시작 가능해집니다.
+            않음"입니다 — 이 운동의 조건이 모두 확인함(YES)이 되면 추천 목록에 올라갑니다. "지금은 안 됨(NO)"은
+            그 조건이 실제로 안 된다는 기록이며, 쉬운 단계로 대체할 수 있는 조건일 때만 쉬운 단계로 시작 가능해집니다
+            — 꼭 필요한 조건이면 계속 보류됩니다.
           </p>
           {candidates.map((c) => (
             <div key={c.exerciseId} className="workspace__examCard">
@@ -288,7 +289,7 @@ function LbpAwaitingCapabilitySection({
       )}
       {decidedIds.length > 0 && (
         <div className="workspace__examCard">
-          <strong className="workspace__examCard__title">확인된/지금은 안 됨으로 표시한 준비 조건</strong>
+          <strong className="workspace__examCard__title">확인함/지금은 안 됨으로 표시한 준비 조건</strong>
           <p className="workspace__block__hint">다시 눌러 미확인으로 되돌릴 수 있습니다.</p>
           {decidedIds.map((cap) => (
             <div key={cap} className="workspace__examCard__row">
@@ -550,7 +551,7 @@ export function PainExerciseSection({
   lbpTreatmentSafetyLockedReasonKo?: string | null
   /** LBP v1 Batch 2 (CD-1): candidates deferred only for an unconfirmed capability. */
   lbpAwaitingCapabilityCandidates?: LbpRecommendationCandidate[]
-  /** Opus delta review defect 5: raw `WorkspaceState.lbpConfirmedCapabilities`, so the "확인된/지금은 안 됨" row can render even once every candidate that needed it has already moved to READY. */
+  /** Opus delta review defect 5: raw `WorkspaceState.lbpConfirmedCapabilities`, so the "확인함/지금은 안 됨" row can render even once every candidate that needed it has already moved to READY. */
   lbpConfirmedCapabilities?: string[]
   /** CD-3: raw `WorkspaceState.lbpDeniedCapabilities` — same scope as `lbpConfirmedCapabilities` above, the genuine 'NO' half. */
   lbpDeniedCapabilities?: string[]

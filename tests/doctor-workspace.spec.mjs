@@ -2224,7 +2224,15 @@ test('defect 4: 3 or fewer READY candidates -> no <details> disclosure at all', 
 
 // ---------- defect 5 / CD-3: capability confirmation is a genuine 3-state, not append-only ----------
 
-test('CD-3: a confirmed (YES) capability renders in the "확인된/지금은 안 됨으로 표시한 준비 조건" row with its 확인함 button pressed', () => {
+// The heading text itself (Opus delta review item 5: matches the button
+// labels 1:1 -- "확인함/지금은 안 됨" not "확인된/지금은 안 됨"). Used both as an
+// existence check and as the anchor to slice INTO the decided-capabilities
+// section specifically, since a capability's own label can legitimately
+// appear earlier on the page too (e.g. inside an awaiting-candidate card
+// for the same capability id -- see the NO-capability test below, item 4).
+const DECIDED_CAPABILITIES_HEADING = '확인함/지금은 안 됨으로 표시한 준비 조건'
+
+test('CD-3: a confirmed (YES) capability renders in the decided-capabilities row with its 확인함 button pressed', () => {
   const html = renderWith(
     PAIN_SCENARIO_1,
     lbpLiveExtraProps({
@@ -2232,17 +2240,19 @@ test('CD-3: a confirmed (YES) capability renders in the "확인된/지금은 안
       painFollowUpTargets: walkingFollowUpTarget,
     }),
   )
-  assert.ok(html.includes('확인된/지금은 안 됨으로 표시한 준비 조건'), 'the decided-capabilities row must render')
-  const idx = html.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
-  assert.ok(idx !== -1, 'the confirmed SAFE_WALKING capability label renders')
-  const after = html.slice(idx, idx + 900)
+  const headingIdx = html.indexOf(DECIDED_CAPABILITIES_HEADING)
+  assert.ok(headingIdx !== -1, 'the decided-capabilities row must render')
+  const decidedSection = html.slice(headingIdx)
+  const idx = decidedSection.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
+  assert.ok(idx !== -1, 'the confirmed SAFE_WALKING capability label renders inside the decided section')
+  const after = decidedSection.slice(idx, idx + 900)
   assert.ok(
     /<button[^>]*aria-pressed="true"[^>]*>확인함<\/button>/.test(after),
     'the 확인함 (YES) button for a confirmed capability must be pressed',
   )
 })
 
-test('CD-3: a denied (NO) capability renders with its 지금은 안 됨 button pressed, not 확인함', () => {
+test('CD-3: a denied (NO) capability renders with its 지금은 안 됨 button pressed, not 확인함 -- inspected inside the decided section, not an unrelated awaiting card', () => {
   const html = renderWith(
     PAIN_SCENARIO_1,
     lbpLiveExtraProps({
@@ -2251,10 +2261,18 @@ test('CD-3: a denied (NO) capability renders with its 지금은 안 됨 button p
       painFollowUpTargets: walkingFollowUpTarget,
     }),
   )
-  assert.ok(html.includes('확인된/지금은 안 됨으로 표시한 준비 조건'), 'the decided-capabilities row must render for a denied capability too')
-  const idx = html.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
-  assert.ok(idx !== -1)
-  const after = html.slice(idx, idx + 900)
+  const headingIdx = html.indexOf(DECIDED_CAPABILITIES_HEADING)
+  assert.ok(headingIdx !== -1, 'the decided-capabilities row must render for a denied capability too')
+  // Opus delta review item 4: SAFE_WALKING is a HARD requirement for
+  // LBP_ACT_01/ACT_02, so its label also appears earlier on the page inside
+  // those still-awaiting candidate cards (denying it does not clear a hard
+  // requirement) -- slicing from html.indexOf(label) directly would
+  // therefore inspect the wrong occurrence. Slice from the decided-section
+  // heading first so only that section's buttons are checked.
+  const decidedSection = html.slice(headingIdx)
+  const idx = decidedSection.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
+  assert.ok(idx !== -1, 'the denied SAFE_WALKING capability label renders inside the decided section')
+  const after = decidedSection.slice(idx, idx + 900)
   assert.ok(
     /<button[^>]*aria-pressed="true"[^>]*>지금은 안 됨<\/button>/.test(after),
     'the 지금은 안 됨 (NO) button for a denied capability must be pressed',
@@ -2271,7 +2289,7 @@ test('CD-3: with neither confirmed nor denied capabilities, the decided-capabili
     }),
   )
   assert.ok(
-    !html.includes('확인된/지금은 안 됨으로 표시한 준비 조건'),
+    !html.includes(DECIDED_CAPABILITIES_HEADING),
     'no decided row renders when nothing has been confirmed or denied yet',
   )
 })
@@ -2297,16 +2315,57 @@ test('CD-3: an awaiting candidate\'s still-blocking capability renders a 3-butto
   )
 })
 
-test('CD-3 (source-level): onSetLbpCapabilityStatus is a genuine 3-way setter that keeps confirmed/denied structurally mutually exclusive', () => {
+test('CD-3 (source-level): onSetLbpCapabilityStatus is a genuine 3-way setter -- each of the YES/NO/UNKNOWN branches is verified independently (mutation-resistant, Opus delta review item 3)', () => {
   const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
   const anchor = src.indexOf('onSetLbpCapabilityStatus={(cap, status) =>')
   assert.ok(anchor !== -1, 'onSetLbpCapabilityStatus handler not found')
   const body = src.slice(anchor, anchor + 1400)
-  assert.ok(/status === 'YES'/.test(body), 'handler branches on YES')
-  assert.ok(/status === 'NO'/.test(body), 'handler branches on NO')
+
+  const yesIdx = body.indexOf("status === 'YES'")
+  const noIdx = body.indexOf("status === 'NO'")
+  const lastReturnIdx = body.lastIndexOf('return {')
+  assert.ok(yesIdx !== -1 && noIdx !== -1 && lastReturnIdx !== -1, 'all three branch anchors must be found')
+  assert.ok(yesIdx < noIdx && noIdx < lastReturnIdx, 'branches must appear in YES, NO, UNKNOWN(fallback) order')
+
+  // Each branch sliced independently -- a regex that only checks "appears
+  // somewhere in the whole handler" is satisfied by the YES branch alone
+  // and would pass even if the NO branch forgot to clear the confirmed
+  // list, or the UNKNOWN (fallback) branch were a no-op.
+  const yesBranch = body.slice(yesIdx, noIdx)
+  const noBranch = body.slice(noIdx, lastReturnIdx)
+  const unknownBranch = body.slice(lastReturnIdx)
+
   assert.ok(
-    /withoutCap\(s\.lbpDeniedCapabilities\)/.test(body) && /withoutCap\(s\.lbpConfirmedCapabilities\)/.test(body),
-    'every branch removes the capability from the OTHER list, never leaving it in both',
+    /lbpDeniedCapabilities: withoutCap\(/.test(yesBranch),
+    'YES branch must clear the id out of lbpDeniedCapabilities',
+  )
+  assert.ok(
+    /lbpConfirmedCapabilities: withoutCap\(/.test(noBranch),
+    'NO branch must clear the id out of lbpConfirmedCapabilities',
+  )
+  assert.ok(
+    /lbpConfirmedCapabilities: withoutCap\(/.test(unknownBranch) && /lbpDeniedCapabilities: withoutCap\(/.test(unknownBranch),
+    'UNKNOWN (fallback/reset) branch must clear the id out of BOTH lists -- the undo path must not be a no-op',
+  )
+})
+
+test('CD-3: the undo affordance actually exists on screen -- a confirmed (YES) capability still renders a (currently unpressed) 미확인 button in the decided section', () => {
+  const html = renderWith(
+    PAIN_SCENARIO_1,
+    lbpLiveExtraProps({
+      lbpConfirmedCapabilities: ['SAFE_WALKING'],
+      painFollowUpTargets: walkingFollowUpTarget,
+    }),
+  )
+  const headingIdx = html.indexOf(DECIDED_CAPABILITIES_HEADING)
+  assert.ok(headingIdx !== -1)
+  const decidedSection = html.slice(headingIdx)
+  const idx = decidedSection.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
+  assert.ok(idx !== -1)
+  const after = decidedSection.slice(idx, idx + 900)
+  assert.ok(
+    /<button[^>]*aria-pressed="false"[^>]*>미확인<\/button>/.test(after),
+    'a 미확인 button (unpressed) must render alongside the pressed 확인함 button, proving the reset-to-UNKNOWN affordance exists in the UI, not only in state',
   )
 })
 

@@ -469,6 +469,22 @@ test('§C(ii)(b): a START_WITH_REGRESSION candidate -> candidateToRehabSuggestio
     suggestion.sourceFacts.some((f) => f.text.startsWith('쉬운 단계:')),
     'sourceFacts must include a "쉬운 단계:" line for a START_WITH_REGRESSION candidate',
   )
+
+  // Opus delta review judgment call 5 (free coverage, same fixture): LBP_HIP_STR_03
+  // shares the exact same regressible-only rule shape (SUPPORTED_STANDING_TOLERATED,
+  // BALANCE_WITH_SUPPORT) and the same walking target function, so it is
+  // reachable from this one fixture too -- LUMBAR_03/EXPOSURE_03 are skipped here
+  // since they need different target functions and are already covered at the
+  // engine level in tests/lbp-exercise-eligibility.spec.mjs.
+  const hipStr03 = result.readyCandidates.find((c) => c.exerciseId === 'LBP_HIP_STR_03')
+  assert.ok(hipStr03, 'LBP_HIP_STR_03 must be READY once its regressible capabilities are confirmed NO (CD-3)')
+  assert.equal(hipStr03.eligibilityState, 'START_WITH_REGRESSION')
+  const hipStr03Suggestion = candidateToRehabSuggestion(hipStr03)
+  assert.equal(hipStr03Suggestion.regressed, true)
+  assert.ok(
+    hipStr03Suggestion.sourceFacts.some((f) => f.text.startsWith('쉬운 단계:')),
+    'LBP_HIP_STR_03 sourceFacts must also include a "쉬운 단계:" line',
+  )
 })
 
 test('§C(ii)(c): appendLbpAdoptionText reads suggestion.regressed, never the title string, to decide whether to append the regression clause', () => {

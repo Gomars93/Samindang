@@ -21,7 +21,10 @@ import {
   buildLbpAdoptionText,
   appendLbpAdoptionText,
   TREATMENT_SAFETY_LOCKED_MESSAGE_KO,
+  TARGET_FUNCTION_ID_TO_ENUM,
 } from './.lbp-exercise-recommendation-bundle.mjs'
+import { buildLbpEligibilityContext } from './.lbp-eligibility-context-bundle.mjs'
+import { LBP_CORE_EXERCISE_METADATA } from './.lbp-exercise-recommendation-core-metadata-bundle.mjs'
 
 let passed = 0
 const test = (name, fn) => {
@@ -271,6 +274,22 @@ test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynami
 
   const absent = buildLbpRecommendationContext(payload, 'NONE', ws({ ...baseWs, painExamSuggestions: [] }))
   assert.equal(absent.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
+})
+
+// ---------- defect 1 (BLOCKER, CD-1): unconfirmed regressible capability never auto-promotes at the recommendation level either ----------
+
+test('defect 1: neuro STABLE + zero confirmed capabilities + a target function selected -> readyCandidates is empty, regressible-only candidates (e.g. LBP_HIP_MOB_01/LBP_HIP_STR_03) land in awaitingCapabilityCandidates instead', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const result = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: walkingTarget }))
+  assert.deepEqual(result.readyCandidates, [], 'nothing may be READY when every capability is still unconfirmed')
+  assert.ok(
+    result.awaitingCapabilityCandidates.some((c) => c.exerciseId === 'LBP_HIP_MOB_01'),
+    'LBP_HIP_MOB_01 (regressible-only) must wait for capability confirmation, not silently start',
+  )
+  assert.ok(
+    result.awaitingCapabilityCandidates.some((c) => c.exerciseId === 'LBP_HIP_STR_03'),
+    'LBP_HIP_STR_03 (regressible-only) must wait for capability confirmation, not silently start',
+  )
 })
 
 // ---------- (c) CD-1: unconfirmed capability -> awaiting group -> confirm flips it ready ----------

@@ -72,6 +72,7 @@ const REHAB_SUGGESTION_TEMPLATE: RehabSuggestion = {
   source: 'SUGGESTED',
   status: 'SUGGESTED',
   clinicianFinalInstruction: '',
+  regressed: false,
 }
 const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
   '',

@@ -689,26 +689,41 @@ export function DoctorWorkspace({
                       }
                     })
                   }
-                  onAdoptRehabSuggestionToCarePlan={(suggestion) =>
-                    setWorkspaceState((s) => ({
-                      ...s,
-                      painCarePlan: {
-                        ...s.painCarePlan,
-                        homeActionPlan: appendLbpAdoptionText(s.painCarePlan.homeActionPlan, suggestion),
-                        recordedAt: new Date().toISOString(),
-                      },
-                    }))
+                  // Opus delta review defect 7: only an LBP record has any
+                  // Care Plan adoption path to begin with (this module never
+                  // generates RehabSuggestion[] for any other profile/region
+                  // — see rehabSuggestion.ts's file header) -- a non-LBP pain
+                  // record or a SYNTHETIC preview must never gain an adopt
+                  // button that never existed before this batch.
+                  onAdoptRehabSuggestionToCarePlan={
+                    isLbpRecord
+                      ? (suggestion) =>
+                          setWorkspaceState((s) => ({
+                            ...s,
+                            painCarePlan: {
+                              ...s.painCarePlan,
+                              homeActionPlan: appendLbpAdoptionText(s.painCarePlan.homeActionPlan, suggestion),
+                              recordedAt: new Date().toISOString(),
+                            },
+                          }))
+                      : undefined
                   }
                   lbpRecommendationBlockedMessageKo={lbpRecommendation?.blockedMessageKo}
                   lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
                   lbpAwaitingCapabilityCandidates={lbpRecommendation?.awaitingCapabilityCandidates}
+                  lbpConfirmedCapabilities={workspaceState.lbpConfirmedCapabilities}
                   lbpTargetFunctionGap={lbpRecommendation?.targetFunctionGap}
+                  // Opus delta review defect 5: a toggle, not append-only —
+                  // tapping an already-confirmed capability (the "확인된
+                  // 준비 조건" row) removes it again, so a mistaken
+                  // confirmation is reversible.
                   onConfirmLbpCapability={(cap) =>
-                    setWorkspaceState((s) =>
-                      s.lbpConfirmedCapabilities.includes(cap)
-                        ? s
-                        : { ...s, lbpConfirmedCapabilities: [...s.lbpConfirmedCapabilities, cap] },
-                    )
+                    setWorkspaceState((s) => ({
+                      ...s,
+                      lbpConfirmedCapabilities: s.lbpConfirmedCapabilities.includes(cap)
+                        ? s.lbpConfirmedCapabilities.filter((c) => c !== cap)
+                        : [...s.lbpConfirmedCapabilities, cap],
+                    }))
                   }
                 />
               </>

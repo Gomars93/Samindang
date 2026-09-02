@@ -44,8 +44,21 @@ import type { WorkspaceState } from './persistence'
 // lbp_tf_* id <-> LbpExerciseTargetFunction enum (architecture §2.2 "TF 일치")
 // ---------------------------------------------------------------------------
 
-/** `lbp_tf_custom` intentionally maps to nothing — a free-text goal cannot be matched against Core-20 metadata's fixed enum, so it never filters an exercise IN via this path (architecture §2.2, explicitly accepted). */
-const TARGET_FUNCTION_ID_TO_ENUM: Record<string, LbpExerciseTargetFunction | undefined> = {
+/**
+ * `lbp_tf_custom` intentionally maps to nothing — a free-text goal cannot be
+ * matched against Core-20 metadata's fixed enum, so it never filters an
+ * exercise IN via this path (architecture §2.2, explicitly accepted).
+ *
+ * Opus delta review defect 8: `LBP_LUMBAR_02`'s own `targetFunctions`
+ * (FLEXION/EXTENSION/CUSTOM — `lbpExerciseCoreMetadata.ts`) has no entry
+ * here, so it is currently unreachable through this v1 target-function
+ * picker — a clinical-scope decision (which `lbp_tf_*` chip, if any, should
+ * surface cat-camel), not something this module changes on its own. Kept
+ * `export`ed so `tests/lbp-exercise-recommendation.spec.mjs`'s reachability
+ * test can assert the unreachable set stays exactly `{LBP_LUMBAR_02}` and
+ * never grows silently.
+ */
+export const TARGET_FUNCTION_ID_TO_ENUM: Record<string, LbpExerciseTargetFunction | undefined> = {
   lbp_tf_walking: 'WALKING',
   lbp_tf_sitting: 'SITTING',
   lbp_tf_standing: 'STANDING',
@@ -131,6 +144,8 @@ export type LbpRecommendationCandidate = {
   strategyLabelKo: string
   startingDoseKo: string
   stopReviewKo: readonly string[]
+  /** Opus delta review defect 2: Core-20 metadata's own regression description, always carried so adoption text can append it structurally when `eligibilityState === 'START_WITH_REGRESSION'` — never `progressionKo`. */
+  regressionKo: string
 }
 
 export type LbpRecommendationBlockedReason = 'SAFETY_REVIEW' | 'NEURO_REFRESH'
@@ -203,7 +218,10 @@ function toCandidate(
     rule.requiredDirectionalResponse != null || (meta.exerciseId === 'LBP_NEURAL_01' && neurodynamicConcordant)
   return {
     exerciseId: meta.exerciseId,
-    title: catalogItem?.canonicalName ?? meta.exerciseId,
+    // Opus delta review defect 3: plain-Korean clinic name, never the
+    // catalog's (often English) `canonicalName` — that stays reserved for
+    // ID/provenance fidelity only (lbpExerciseCoreMetadata.ts).
+    title: meta.displayNameKo,
     readiness,
     eligibilityState: readiness === 'READY' ? (result.state as 'START_AS_WRITTEN' | 'START_WITH_REGRESSION') : 'START_AS_WRITTEN',
     directlySupported,
@@ -215,6 +233,7 @@ function toCandidate(
     strategyLabelKo: domain ? strategyLabelForDomain(domain) : '',
     startingDoseKo: meta.startingDoseKo,
     stopReviewKo: meta.stopReviewKo,
+    regressionKo: meta.regressionKo,
   }
 }
 
@@ -344,7 +363,8 @@ export function buildLbpRecommendationContext(
  */
 export function candidateToRehabSuggestion(candidate: LbpRecommendationCandidate): RehabSuggestion {
   const stopReviewJoined = candidate.stopReviewKo.join('; ')
-  const regressionNote = candidate.eligibilityState === 'START_WITH_REGRESSION' ? ' (쉬운 단계로 시작)' : ''
+  const regressed = candidate.eligibilityState === 'START_WITH_REGRESSION'
+  const regressionNote = regressed ? ' (쉬운 단계로 시작)' : ''
   return {
     id: candidate.exerciseId,
     title: `${candidate.title}${regressionNote}`,
@@ -352,12 +372,19 @@ export function candidateToRehabSuggestion(candidate: LbpRecommendationCandidate
     rationale: `${candidate.strategyLabelKo} — 중단·재검토: ${stopReviewJoined}`,
     sourceFacts: [
       { text: `시작 용량: ${candidate.startingDoseKo}`, provenance: 'DERIVED' },
+      // Opus delta review defect 2: the regression note (which entry-level
+      // to actually start at) must be visible on the card itself, not only
+      // baked into the adopted Care Plan text.
+      ...(regressed ? [{ text: `쉬운 단계: ${candidate.regressionKo}`, provenance: 'DERIVED' as const }] : []),
       { text: `중단·재검토 기준: ${stopReviewJoined}`, provenance: 'DERIVED' },
     ],
     contraindicationFacts: [],
     source: 'SUGGESTED',
     status: 'SUGGESTED',
     clinicianFinalInstruction: '',
+    // Structured carrier for appendLbpAdoptionText — never re-derived by
+    // parsing `title`'s "(쉬운 단계로 시작)" suffix.
+    regressed,
   }
 }
 
@@ -395,19 +422,27 @@ export function mergeLbpRehabSuggestions(
  * `progressionKo`. Returns null for a non-Core-20 id (any RehabSuggestion
  * this module did not itself generate) so the caller can fall back to a
  * generic append built from the suggestion's own title/goal.
+ *
+ * Opus delta review defect 2: `options.regressed` (structurally passed by
+ * the caller — see `appendLbpAdoptionText` below — never parsed from a
+ * title string) appends the Core-20 metadata's own `regressionKo` after the
+ * dose when this candidate was adopted as `START_WITH_REGRESSION`, so the
+ * entry-level the patient actually starts at is not lost between the card
+ * and the Care Plan text they take home.
  */
-export function buildLbpAdoptionText(exerciseId: string): string | null {
+export function buildLbpAdoptionText(exerciseId: string, options?: { regressed?: boolean }): string | null {
   const meta = LBP_CORE_EXERCISE_METADATA.find((m) => m.exerciseId === exerciseId)
   const catalogItem = getLbpExerciseById(exerciseId)
   if (!meta || !catalogItem) return null
   const stopReviewJoined = meta.stopReviewKo.join('; ')
-  return `${catalogItem.canonicalName} — ${meta.startingDoseKo} 중단·재검토: ${stopReviewJoined}`
+  const regressionSuffix = options?.regressed ? ` 쉬운 단계: ${meta.regressionKo}` : ''
+  return `${meta.displayNameKo} — ${meta.startingDoseKo}${regressionSuffix} 중단·재검토: ${stopReviewJoined}`
 }
 
-/** Appends the adoption line to an existing free-text home action plan, idempotently (never duplicates the exact same line) and never automatically (only ever called from an explicit clinician click — Part D). */
+/** Appends the adoption line to an existing free-text home action plan, idempotently (never duplicates the exact same line) and never automatically (only ever called from an explicit clinician click — Part D). Reads `suggestion.regressed` — the structured flag `candidateToRehabSuggestion` set — rather than parsing `suggestion.title`'s "(쉬운 단계로 시작)" suffix (Opus delta review defect 2). */
 export function appendLbpAdoptionText(existingHomeActionPlan: string, suggestion: RehabSuggestion): string {
   const text =
-    buildLbpAdoptionText(suggestion.id) ??
+    buildLbpAdoptionText(suggestion.id, { regressed: suggestion.regressed === true }) ??
     [suggestion.title, suggestion.goal].filter((s) => s.trim().length > 0).join(' — ')
   if (!text) return existingHomeActionPlan
   if (existingHomeActionPlan.includes(text)) return existingHomeActionPlan

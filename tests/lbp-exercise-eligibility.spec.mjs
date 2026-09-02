@@ -145,12 +145,25 @@ test('capability UNKNOWN (hard requirement) -> DEFER_NOT_READY with missingHardR
   assert.ok(result.missingHardRequirements.includes('HIP_HINGE_CONTROL'))
 })
 
-test('RF-7b: LOAD_READY unconfirmed on LBP_LOAD_02 (now regressible) -> START_WITH_REGRESSION, not DEFER', () => {
+test('RF-7b: LOAD_READY confirmed absent (NO) on LBP_LOAD_02 (now regressible) -> START_WITH_REGRESSION, not DEFER', () => {
+  const result = evaluateLbpExerciseEligibility(
+    'LBP_LOAD_02',
+    context({ capabilities: { ...allYes, LOAD_READY: 'NO' } }),
+  )
+  assert.equal(result.state, 'START_WITH_REGRESSION')
+  assert.deepEqual(result.regressionRequirements, ['LOAD_READY'])
+})
+
+// Opus delta review defect 1 (BLOCKER, CD-1): LOAD_READY still UNKNOWN
+// (never tap-confirmed either way) must DEFER, not auto-promote to
+// START_WITH_REGRESSION — that was exactly the CD-1 option A the PO
+// rejected. Distinct from the 'NO' case immediately above.
+test('defect 1 (CD-1): LOAD_READY UNCONFIRMED (UNKNOWN) on LBP_LOAD_02 -> DEFER_NOT_READY, never auto-promoted to START_WITH_REGRESSION', () => {
   const result = evaluateLbpExerciseEligibility(
     'LBP_LOAD_02',
     context({ capabilities: { ...allYes, LOAD_READY: 'UNKNOWN' } }),
   )
-  assert.equal(result.state, 'START_WITH_REGRESSION')
+  assert.equal(result.state, 'DEFER_NOT_READY')
   assert.deepEqual(result.regressionRequirements, ['LOAD_READY'])
 })
 
@@ -186,11 +199,19 @@ test('RF-5: LBP_FUNC_01 — BALANCE_WITH_SUPPORT hard, SUPPORTED_STANDING_TOLERA
     context({ capabilities: { ...allYes, BALANCE_WITH_SUPPORT: 'UNKNOWN' } }),
   )
   assert.equal(missingBalance.state, 'DEFER_NOT_READY')
-  const missingStanding = evaluateLbpExerciseEligibility(
+  const standingNo = evaluateLbpExerciseEligibility(
+    'LBP_FUNC_01',
+    context({ capabilities: { ...allYes, SUPPORTED_STANDING_TOLERATED: 'NO' } }),
+  )
+  assert.equal(standingNo.state, 'START_WITH_REGRESSION')
+  // Defect 1 (CD-1): the same regressible capability left UNCONFIRMED
+  // (never tap-confirmed either way) must DEFER instead.
+  const standingUnknown = evaluateLbpExerciseEligibility(
     'LBP_FUNC_01',
     context({ capabilities: { ...allYes, SUPPORTED_STANDING_TOLERATED: 'UNKNOWN' } }),
   )
-  assert.equal(missingStanding.state, 'START_WITH_REGRESSION')
+  assert.equal(standingUnknown.state, 'DEFER_NOT_READY')
+  assert.deepEqual(standingUnknown.regressionRequirements, ['SUPPORTED_STANDING_TOLERATED'])
 })
 
 test('RF-6: LUMBAR_02/TRUNK_03/DEEP_TRUNK_03/TRUNK_END_01 posture-tolerance is hard; LUMBAR_03/DEEP_TRUNK_01 stay regressible', () => {
@@ -236,9 +257,17 @@ test('RF-7: LBP_FUNC_05 — SUPPORTED_STANDING_TOLERATED hard, HIP_HINGE_CONTROL
   assert.deepEqual(rule.regressibleRequirements, ['HIP_HINGE_CONTROL'])
   const noHinge = evaluateLbpExerciseEligibility(
     'LBP_FUNC_05',
-    context({ capabilities: { ...allYes, HIP_HINGE_CONTROL: 'UNKNOWN' } }),
+    context({ capabilities: { ...allYes, HIP_HINGE_CONTROL: 'NO' } }),
   )
   assert.equal(noHinge.state, 'START_WITH_REGRESSION', 'the exercise that TEACHES hip-hinge control must remain reachable without already having it')
+  // Defect 1 (CD-1): HIP_HINGE_CONTROL left UNCONFIRMED (never
+  // tap-confirmed) must DEFER, not silently start the regression path.
+  const unconfirmedHinge = evaluateLbpExerciseEligibility(
+    'LBP_FUNC_05',
+    context({ capabilities: { ...allYes, HIP_HINGE_CONTROL: 'UNKNOWN' } }),
+  )
+  assert.equal(unconfirmedHinge.state, 'DEFER_NOT_READY')
+  assert.deepEqual(unconfirmedHinge.regressionRequirements, ['HIP_HINGE_CONTROL'])
 })
 
 // ---------- 4. directional rules ----------
@@ -296,6 +325,24 @@ test('representative exercises reach START_AS_WRITTEN in an all-confirmed synthe
       `${id} should be ready in an all-ready synthetic context`,
     )
   }
+})
+
+// Opus delta review defect 1 (BLOCKER) probe, reproduced exactly and
+// reported by the verification gate: neuro STABLE + every capability
+// UNKNOWN must never START_WITH_REGRESSION for ANY of the 20 rules — before
+// the fix, LUMBAR_03/HIP_MOB_01/HIP_STR_03/EXPOSURE_03 (and any other
+// regressible-only rule) auto-promoted here.
+test('defect 1 probe: neuroStatus STABLE + every capability UNKNOWN -> 0/20 START_WITH_REGRESSION', () => {
+  const startWithRegressionIds = []
+  for (const rule of LBP_EXERCISE_ELIGIBILITY_RULES) {
+    const result = evaluateLbpExerciseEligibility(
+      rule.exerciseId,
+      context({ neuroStatus: 'STABLE', capabilities: {} }),
+    )
+    if (result.state === 'START_WITH_REGRESSION') startWithRegressionIds.push(rule.exerciseId)
+  }
+  console.log(`defect 1 probe: START_WITH_REGRESSION count = ${startWithRegressionIds.length} (${JSON.stringify(startWithRegressionIds)})`)
+  assert.deepEqual(startWithRegressionIds, [], 'no rule may auto-promote on unconfirmed regressible capabilities alone')
 })
 
 console.log('LBP Exercise Eligibility (Batch 2, RF-* fixed): PASS')

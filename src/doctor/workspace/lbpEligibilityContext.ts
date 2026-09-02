@@ -130,10 +130,21 @@ export function buildLbpEligibilityContext(
 
   // RF-12: NOT_ASSESSED -> UNKNOWN, never STABLE_OR_IMPROVING — an
   // unrecorded response must never be read as a confirmed-stable one.
+  //
+  // Opus delta review defect 6: `UNCLEAR` (the clinician looked and the
+  // movement response itself was ambiguous) must ALSO fold to UNKNOWN, not
+  // STABLE_OR_IMPROVING — it is not a read on distal-symptom trend at all,
+  // so treating it as "stable" would be inventing a reading that was never
+  // made. `NO_CLEAR_DIRECTION` stays STABLE_OR_IMPROVING: that value means
+  // no single lumbar direction was favorable, which is a real, completed
+  // observation about DIRECTION and carries no distal-symptom-worsening
+  // signal either way — a materially different thing from `UNCLEAR`
+  // (the observation itself being unclear/incomplete).
   const distalSymptomResponse: LbpExerciseEligibilityContext['distalSymptomResponse'] =
     workspaceState.lbpDirectionalResponse === 'DISTAL_WORSENING'
       ? 'WORSENING'
-      : workspaceState.lbpDirectionalResponse === 'NOT_ASSESSED'
+      : workspaceState.lbpDirectionalResponse === 'NOT_ASSESSED' ||
+          workspaceState.lbpDirectionalResponse === 'UNCLEAR'
         ? 'UNKNOWN'
         : 'STABLE_OR_IMPROVING'
 

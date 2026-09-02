@@ -326,8 +326,20 @@ export function evaluateLbpExerciseEligibility(
     }
   }
 
+  // Opus delta review defect 1 (BLOCKER, CD-1): a regressible capability's
+  // three real states — confirmed 'YES', explicitly confirmed absent 'NO',
+  // and never-tap-confirmed 'UNKNOWN' — must NOT collapse into one
+  // `!== 'YES'` bucket. Only a real 'NO' (a regression genuinely known to
+  // be needed) may drive START_WITH_REGRESSION; an 'UNKNOWN' capability is
+  // CD-1's "확인 전 보류" case (PO-approved option B, `DECISIONS.md`
+  // 2026-09-02 "CD-1/CD-2 PO 결정") and must DEFER like a missing hard
+  // requirement does — auto-promoting an unconfirmed regressible capability
+  // to a start-now state is exactly option A, which the PO rejected.
   const regressionNeeds = rule.regressibleRequirements.filter(
-    (capability) => capabilityValue(context, capability) !== 'YES',
+    (capability) => capabilityValue(context, capability) === 'NO',
+  )
+  const unconfirmedRegressible = rule.regressibleRequirements.filter(
+    (capability) => capabilityValue(context, capability) === 'UNKNOWN',
   )
 
   // RF-1 (BLOCKER fix): this check moved here from AFTER the regression
@@ -344,7 +356,22 @@ export function evaluateLbpExerciseEligibility(
       state: 'DEFER_NOT_READY',
       reasonsKo: ['신경학적 상태가 미확인이라 안정적이라고 가정하지 않습니다.'],
       missingHardRequirements: [],
-      regressionRequirements: regressionNeeds,
+      regressionRequirements: [...regressionNeeds, ...unconfirmedRegressible],
+    }
+  }
+
+  // Defect 1: an unconfirmed (never tap-confirmed) regressible capability
+  // defers exactly like a missing hard requirement — checked before the
+  // real-'NO' regression branch so a mix of "confirmed absent" + "never
+  // asked" capabilities on the same rule still defers on the unconfirmed
+  // one rather than silently starting with only the confirmed regression.
+  if (unconfirmedRegressible.length > 0) {
+    return {
+      exerciseId,
+      state: 'DEFER_NOT_READY',
+      reasonsKo: ['시작 단계를 정하는 데 필요한 준비 조건이 아직 확인되지 않았습니다.'],
+      missingHardRequirements: [],
+      regressionRequirements: unconfirmedRegressible,
     }
   }
 

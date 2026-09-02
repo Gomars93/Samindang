@@ -79,6 +79,7 @@ import type { RehabSuggestion } from './rehabSuggestion'
 import { RehabSuggestionCard } from './RehabSuggestionCard'
 import type { LbpRecommendationCandidate } from './lbpExerciseRecommendation'
 import { LBP_EXERCISE_CAPABILITY_LABEL_KO } from './lbpEligibilityContext'
+import type { LbpExerciseCapability } from './lbpExerciseEligibility'
 import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { deriveAdditionalConcernSummary } from './additionalConcern'
 import { AdditionalConcernCard } from './AdditionalConcernCard'
@@ -182,36 +183,73 @@ function LbpAddExamDisclosure({
  * before this candidate list is built). Distinct from `RehabSuggestionCard`
  * on purpose: there is no accept/hold/reject decision to make on an item
  * that is not yet a real suggestion — tapping a chip here only records
- * "confirmed 'YES'" (`WorkspaceState.lbpConfirmedCapabilities`); it never
- * silently promotes anything on its own.
+ * "confirmed 'YES'" (`WorkspaceState.lbpConfirmedCapabilities`).
+ *
+ * Opus delta review defect 5: confirmation is a TOGGLE (`onConfirm` flips
+ * membership both ways — see `DoctorWorkspace.tsx`), not append-only, so a
+ * mistaken tap is reversible. The "확인된 준비 조건" row below renders every
+ * currently-confirmed capability as a pressed chip that un-confirms on tap
+ * — it stays visible even once no candidate is left awaiting it, since
+ * undoing a confirmation is exactly the moment no "unconfirmed" chip for it
+ * exists anywhere else on screen.
  */
 function LbpAwaitingCapabilitySection({
   candidates,
+  confirmedCapabilities,
   onConfirm,
 }: {
   candidates: LbpRecommendationCandidate[]
+  /** Raw `WorkspaceState.lbpConfirmedCapabilities` — filtered to known `LbpExerciseCapability` ids before rendering (defensive against a legacy/unknown persisted member). */
+  confirmedCapabilities: string[]
   onConfirm?: (capabilityId: string) => void
 }) {
-  if (!onConfirm || candidates.length === 0) return null
+  if (!onConfirm) return null
+  const knownConfirmed = confirmedCapabilities.filter(
+    (cap): cap is LbpExerciseCapability => Object.prototype.hasOwnProperty.call(LBP_EXERCISE_CAPABILITY_LABEL_KO, cap),
+  )
+  if (candidates.length === 0 && knownConfirmed.length === 0) return null
   return (
     <section className="workspace__block">
-      <h3>확인하면 시작 가능</h3>
-      <p className="workspace__block__hint">
-        아래 준비 조건이 아직 확인되지 않아 보류 중입니다. 확인 안 함은 "아니오"가 아니라 "아직 확인하지
-        않음"입니다 — 확인되면(YES) 바로 추천 목록에 올라갑니다.
-      </p>
-      {candidates.map((c) => (
-        <div key={c.exerciseId} className="workspace__examCard">
-          <strong className="workspace__examCard__title">{c.title}</strong>
-          <div className="workspace__examCard__statusRow" role="group" aria-label={`${c.title} 준비 조건 확인`}>
-            {c.unconfirmedCapabilities.map((cap) => (
-              <button key={cap} type="button" className="workspace__statusBtn" onClick={() => onConfirm(cap)}>
-                + {LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} 확인함
+      {candidates.length > 0 && (
+        <>
+          <h3>확인하면 시작 가능</h3>
+          <p className="workspace__block__hint">
+            아래 준비 조건이 아직 확인되지 않아 보류 중입니다. 확인 안 함은 "아니오"가 아니라 "아직 확인하지
+            않음"입니다 — 확인되면(YES) 바로 추천 목록에 올라갑니다.
+          </p>
+          {candidates.map((c) => (
+            <div key={c.exerciseId} className="workspace__examCard">
+              <strong className="workspace__examCard__title">{c.title}</strong>
+              <div className="workspace__examCard__statusRow" role="group" aria-label={`${c.title} 준비 조건 확인`}>
+                {c.unconfirmedCapabilities.map((cap) => (
+                  <button key={cap} type="button" className="workspace__statusBtn" onClick={() => onConfirm(cap)}>
+                    + {LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} 확인함
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+      {knownConfirmed.length > 0 && (
+        <div className="workspace__examCard">
+          <strong className="workspace__examCard__title">확인된 준비 조건</strong>
+          <p className="workspace__block__hint">다시 누르면 확인을 취소합니다.</p>
+          <div className="workspace__examCard__statusRow" role="group" aria-label="확인된 준비 조건 목록">
+            {knownConfirmed.map((cap) => (
+              <button
+                key={cap}
+                type="button"
+                aria-pressed="true"
+                className="workspace__statusBtn workspace__statusBtn--active"
+                onClick={() => onConfirm(cap)}
+              >
+                {LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} 확인됨
               </button>
             ))}
           </div>
         </div>
-      ))}
+      )}
     </section>
   )
 }
@@ -431,6 +469,9 @@ export function PainWorkspaceLane2({
  * render logic/props as before the move (including the pre-existing
  * synthetic-scenario `재활/운동 제안` path -- exactly one render site).
  */
+/** Opus delta review defect 4 (§2.2): 3 candidate cards visible, the rest behind a "더 보기 (N)" disclosure — nothing is ever dropped, so there is no tie/cutoff problem to solve. */
+const VISIBLE_REHAB_CANDIDATE_COUNT = 3
+
 export function PainExerciseSection({
   isLbp,
   rehabSuggestions,
@@ -439,6 +480,7 @@ export function PainExerciseSection({
   lbpRecommendationBlockedMessageKo,
   lbpTreatmentSafetyLockedReasonKo,
   lbpAwaitingCapabilityCandidates,
+  lbpConfirmedCapabilities,
   onConfirmLbpCapability,
   lbpTargetFunctionGap,
 }: {
@@ -450,10 +492,12 @@ export function PainExerciseSection({
   onAdoptRehabSuggestionToCarePlan?: (suggestion: RehabSuggestion) => void
   /** LBP v1 Batch 2 (RF-3b): non-null/non-empty means the exercise section renders this one line instead of any candidate cards. */
   lbpRecommendationBlockedMessageKo?: string | null
-  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. */
+  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. Opus delta review defect 9: rendered once at the top of this section, common to both the READY cards and the awaiting-capability group, not nested only inside the READY block. */
   lbpTreatmentSafetyLockedReasonKo?: string | null
   /** LBP v1 Batch 2 (CD-1): candidates deferred only for an unconfirmed capability. */
   lbpAwaitingCapabilityCandidates?: LbpRecommendationCandidate[]
+  /** Opus delta review defect 5: raw `WorkspaceState.lbpConfirmedCapabilities`, so the "확인된 준비 조건" row can render even once every candidate that needed it has already moved to READY. */
+  lbpConfirmedCapabilities?: string[]
   onConfirmLbpCapability?: (capabilityId: string) => void
   /** LBP v1 Batch 2 §8.2-1(c): non-null only when both candidate lists are empty because no (matching) target function is selected yet. */
   lbpTargetFunctionGap?: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
@@ -490,28 +534,48 @@ export function PainExerciseSection({
     )
   }
 
+  const visibleSuggestions = rehabSuggestions.slice(0, VISIBLE_REHAB_CANDIDATE_COUNT)
+  const moreSuggestions = rehabSuggestions.slice(VISIBLE_REHAB_CANDIDATE_COUNT)
+
+  const renderCard = (s: RehabSuggestion) => (
+    <RehabSuggestionCard
+      key={s.id}
+      suggestion={s}
+      onChange={onChangeRehabSuggestion}
+      onAdoptToCarePlan={onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined}
+      adoptDisabledReasonKo={isLbp ? (lbpTreatmentSafetyLockedReasonKo ?? undefined) : undefined}
+    />
+  )
+
   return (
     <>
+      {/*
+        Opus delta review defect 9 (CD-2): rendered once here, common to
+        both the READY cards below and the awaiting-capability group in
+        `LbpAwaitingCapabilitySection` -- a treatment-safety-locked patient
+        with zero READY candidates but at least one awaiting-capability
+        candidate must still see why adoption is blocked, not only once a
+        READY card happens to exist.
+      */}
+      {isLbp && lbpTreatmentSafetyLockedReasonKo && (
+        <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
+      )}
       {rehabSuggestions.length > 0 && (
         <section className="workspace__block">
           <h3>재활/운동 제안</h3>
-          {isLbp && lbpTreatmentSafetyLockedReasonKo && (
-            <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
+          {visibleSuggestions.map(renderCard)}
+          {moreSuggestions.length > 0 && (
+            <details className="workspace__optional">
+              <summary>더 보기 ({moreSuggestions.length})</summary>
+              {moreSuggestions.map(renderCard)}
+            </details>
           )}
-          {rehabSuggestions.map((s) => (
-            <RehabSuggestionCard
-              key={s.id}
-              suggestion={s}
-              onChange={onChangeRehabSuggestion}
-              onAdoptToCarePlan={onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined}
-              adoptDisabledReasonKo={isLbp ? (lbpTreatmentSafetyLockedReasonKo ?? undefined) : undefined}
-            />
-          ))}
         </section>
       )}
       {isLbp && (
         <LbpAwaitingCapabilitySection
           candidates={lbpAwaitingCapabilityCandidates ?? []}
+          confirmedCapabilities={lbpConfirmedCapabilities ?? []}
           onConfirm={onConfirmLbpCapability}
         />
       )}

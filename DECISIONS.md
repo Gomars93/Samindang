@@ -1700,3 +1700,41 @@ finalization만 막는다"는 범위를 넘어서지 않으면서 원장이 후�
   채택 UI(RF-8), 전부 하나의 cohesive batch로 Sonnet 구현 → Opus delta →
   concrete fix → Opus closing.
 - main merge, PR 생성은 여전히 PO 명시 승인 대상.
+
+## 2026-09-02 — LBP v1 Batch 2 Opus delta review 결과 + CD-3(capability chip 3상태) PO 결정 대기
+
+### Context
+Batch 2(운동 Eligibility + 추천 + 채택, commit `2ac30c4`)에 대한 실제 Opus
+delta review(`docs/LBP_V1_BATCH2_OPUS_DELTA_REVIEW_v0.1.md`)가 FAIL(구체 결함
+10, BLOCKER 1)을 냈다. RF-1~13 중 RF-1/2/3b/4/5/6/7/7b/9/10/11/13은 RESOLVED,
+RF-3/8/12·CD-2는 RESOLVED WITH ISSUE, **CD-1은 NOT RESOLVED**.
+
+### Decision (Opus 판정, Fable이 SSOT에 고정; PO 결정 1건은 대기)
+1. **BLOCKER (CD-1 위반)**: 규칙 엔진이 capability `'NO'`와 `'UNKNOWN'`을
+   구분하지 않아, 미확인 regressible 조건이 `START_WITH_REGRESSION`으로 자동
+   승격됐다(실측: neuro STABLE + 확인 0건에서 4개 운동이 "쉬운 단계로 시작"으로
+   채택 가능). PO가 기각한 옵션 A 동작 → 즉시 수정: 미확인 regressible은
+   `DEFER_NOT_READY` + `regressionRequirements`로 돌려 "확인하면 시작 가능"으로
+   보낸다. 이 수정은 CD-3 결정과 무관하게 진행한다(미확인을 시작 가능으로
+   표시하는 것이 회귀를 못 주는 것보다 명백히 더 위험).
+2. 나머지 수정 8건(회귀 시작 시 채택 문구에 `regressionKo` 포함, Core-20
+   `displayNameKo` 한국어 명칭, 3개 표시 + 더 보기, capability 확인 취소 토글,
+   `UNCLEAR`→distal `UNKNOWN`, 비-LBP 레코드 채택 버튼 제거, LUMBAR_02 도달
+   불가 고정 테스트, 치료 안전 잠금 배너 위치)은 Sonnet concrete fix로 처리.
+3. **CD-3 (PO 결정 대기)**: 1번 수정 후 v1에서는 `'NO'`를 만들 UI가 없어
+   `START_WITH_REGRESSION` 계층(저장된 회귀 시작)이 구조적으로 도달 불가가
+   된다. 질문: capability chip을 `확인함 / 지금은 안 됨 / 미확인` 3상태로
+   확장해 회귀 계층을 살릴 것인가(Batch 2.5), v1은 회귀 계층 비활성으로 둘
+   것인가. **Opus·Fable 권고 기본값: Batch 2.5에서 3상태 chip 도입** —
+   CLOSED 문서 §8-5(정상/이상/불명확/제한/미시행/미평가 불합치)와 G15
+   `ExamCheckStatus` 6상태 확장과 같은 방향.
+4. Core-20 한국어 표시명(`displayNameKo`) 20개는 Sonnet 초안 → PO가 한 번에
+   검토·교정(임상 규칙이 아니라 명명이므로 결정 대기 없이 초안 적용).
+
+### Reason / Trade-offs
+- (+) BLOCKER를 CD-3와 분리해 즉시 안전한 쪽으로 닫는다.
+- (−) CD-3 결정 전까지 "쉬운 단계로 시작" 카드가 실제 환자에게 나오지 않는다
+  (해당 운동은 보류 + 확인 chip으로만 보임).
+
+### Consequences
+- Sonnet fix → Opus closing → HANDOFF 갱신. CD-3는 Batch 2.5 진입 전 PO에게 질문.

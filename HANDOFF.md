@@ -1,5 +1,28 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02 (최신 3): Batch 2 커밋·검증 완료 → Opus delta FAIL(10건) → Sonnet fix 진행 중, CD-3 PO 결정 대기
+
+Git 실제 상태: `2ac30c4`(Batch 2 마무리, test:all PASS, FROZEN zero-diff)가
+origin에 있다. 아래 "(최신 2)" 절의 "staged/미커밋", "PO 지시 필요" 문구는
+stale — PO가 "마무리" 지시했고 Sonnet이 `3eb1894` 체크포인트 위에서 (a)판단·
+처치 레인 배치 (b)NEURAL_01 직접지지 조건 (c)목표기능 미선택 힌트를 반영해
+커밋했다.
+
+Opus delta review(`docs/LBP_V1_BATCH2_OPUS_DELTA_REVIEW_v0.1.md`): **FAIL**.
+BLOCKER 1건 = 미확인 regressible capability가 "쉬운 단계로 시작"으로 자동
+승격(CD-1 옵션 A 잔존). 결함 1~9는 Sonnet이 fix 커밋으로 처리 중, 10(HANDOFF
+stale)은 이 절로 해소. 결정 기록: `DECISIONS.md` 마지막 항목.
+
+**사람 판단 대기 — CD-3**: capability chip을 `확인함/지금은 안 됨/미확인`
+3상태로 확장해 회귀(쉬운 단계) 시작 계층을 살릴지(권고, Batch 2.5), v1은
+비활성으로 둘지. BLOCKER 수정은 이 결정과 무관하게 진행.
+
+**다음 행동**: Sonnet fix 커밋 → Opus closing → HANDOFF 갱신 → (PO) CD-3 결정
+→ Batch 2.5(Working Hypothesis 최소 형태 + ExamCheckStatus 6상태 + capability
+3상태).
+
+---
+
 ## ⚠️ 2026-09-02 (최신 2): Corrective Handoff 대조 완료, Batch 2 코드는 작업 트리에 staged/미커밋
 
 PO가 `FABLE_COMPLETE_CORRECTIVE_HANDOFF_PAIN_LBP_2026-09-02.md`로 이전 인수인계

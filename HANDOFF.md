@@ -17,8 +17,10 @@ PO가 `FABLE_COMPLETE_CORRECTIVE_HANDOFF_PAIN_LBP_2026-09-02.md`로 이전 인�
 **Batch 2 현재 상태 — 주의**: Sonnet 구현이 최종 검증 gate 직전에 사용자에 의해
 중단됐다. 신규 5파일(`lbpExerciseLibrary/CoreMetadata/Eligibility.ts`,
 `lbpEligibilityContext.ts`, `lbpExerciseRecommendation.ts`) + 테스트 4개 +
-수정 8파일이 **git index에 staged, 미커밋, tsc/build/test:all 미확인** 상태로
-작업 트리에 남아 있다. GitHub에는 없다. Fable 통합 점검에서 확인한 것: RF-2
+수정 8파일이 **tsc/build/test:all 미확인** 상태다. 컨테이너 회수로 유실되지
+않도록 `wip(checkpoint)` 커밋으로만 브랜치에 올려 두었다(검증·Opus review·
+Definition of Done 미충족을 커밋 메시지에 명시). 이 커밋은 Batch 2 산출물이
+아니며, 마무리 시 그 위에 fix 커밋을 얹거나 되돌릴 수 있다. Fable 통합 점검에서 확인한 것: RF-2
 재계산 safety 게이트·RF-3/3b·RF-8·CD-1(optimistic 재평가)·CD-2·RF-13·
 TF 필터는 구현됨; NOT_RELEVANT_TODAY는 observation 라벨로만 유지. 마무리
 전 고칠 것 3건은 위 §8.2-1 (a)(b)(c).

@@ -1784,3 +1784,38 @@ PO가 GitHub PR diff를 매번 확인하는 대신 자연어 요약으로 진행
 ### Consequences
 - 이후 HANDOFF의 "다음 행동"에 "PR 생성"을 기본 포함하지 않는다.
 - 원장님이 "PR 만들어줘"라고 명시하면 그때 생성한다.
+
+## 2026-09-02 — CD-3 승인 + Core-20 한국어 표시명 5건 확정 (PO 결정)
+
+### Context
+Opus closing review(`docs/LBP_V1_BATCH2_OPUS_CLOSING_REVIEW_v0.1.md`)가 낸
+CD-3(capability chip 3상태 도입 여부)와 `displayNameKo` 명명 제안 5건을
+PO에게 직접 질의했다.
+
+### Decision
+- **CD-3: 승인.** Batch 2.5에서 준비조건 chip을 `확인함(YES) / 지금은 안
+  됨(NO) / 미확인(기본값)` 3상태로 확장한다. 이로써 v1에서 구조적으로 도달
+  불가였던 `START_WITH_REGRESSION`("쉬운 단계로 시작") 계층이 실제로
+  동작하게 된다.
+- **Core-20 한국어 표시명: Opus 제안 5건 그대로 적용.**
+  1. `LBP_DEEP_TRUNK_01`: "배에 힘주기(코어 브레이싱)" → **"숨 쉬면서 배에
+     살짝 힘주기"** (기존 이름이 시작 기준 "최대수축 아님"과 상충 소지 —
+     가장 우선 수정 대상)
+  2. `LBP_DIR_03`: "반복 허리 젖히기" → **"엎드려 반복 허리 젖히기"**
+     (자세 미특정 → prone 계열임을 명시)
+  3. `LBP_DIR_04`: "누워서·앉아서 숙이기" → **"누워서·앉아서 굽히기"**
+  4. `LBP_EXPOSURE_03`: "앉아 있기 시간 늘리기" → **"앉아 있기 단계적으로
+     늘리기"** (이름이 목표만 말하고 시작 용량이 "현재보다 짧게"인 구조상
+     불일치 해소)
+  5. 굽힘 계열 3개(`DIR_04`/`EXPOSURE_01`/`FUNC_05`)가 같은 화면에 동시
+     노출될 때 혼동 가능 — 이름 자체는 변경 없음, UI에서 함께 검토
+
+### Consequences
+- Batch 2.5 구현 범위 확정: (a) 위 명칭 5건 반영, (b) capability 3상태
+  + adapter(`lbpEligibilityContext.ts`)가 실제 `'NO'`를 생성하도록 UI 연결,
+  (c) Opus closing §C(i) 회귀 채택 문구 구분자 수정 + §C(ii) 회귀 테스트
+  보강. ExamCheckStatus 6상태(G15)와 Working Hypothesis 최소 형태(G16)는
+  범위가 크고(전자는 전 부위 공유 타입) 독립적이라 별도 batch로 분리해
+  진행한다(Batch 2.5b/2.5c).
+- 새 임상 의미 없음: (a)는 승인된 명명, (b)(c)는 이미 CLOSED된 CD-1/CD-3
+  결정과 Opus closing review가 지정한 정확한 수정 사항의 이행.

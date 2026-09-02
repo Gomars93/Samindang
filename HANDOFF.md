@@ -1,5 +1,19 @@
 # Current Handoff
 
+## ⚠️ 2026-09-02 (최신 5): PO 결정 CD-3 승인 + 명칭 5건 확정 → Batch 2.5a 구현 시작
+
+**PO 결정** (`DECISIONS.md` 마지막 항목): CD-3 승인(Batch 2.5에서 capability
+3상태 도입), Core-20 명칭 5건 Opus 제안 그대로 확정. 아래 "(최신 4)" 절의
+"PO 결정 3건 대기"는 stale — 3번(PR 여부)은 이미 답변됨(운영 방침 절 참고),
+이번 항목으로 나머지 2건도 해소.
+
+**진행 중 — Batch 2.5a** (범위: DECISIONS.md 이 결정 항목의 Consequences):
+(a) 명칭 5건 반영 (b) capability 3상태 + adapter 연결 (c) Opus closing §C(i)
+회귀 채택 문구 구분자 수정 + §C(ii) 테스트. ExamCheckStatus 6상태(2.5b)와
+Working Hypothesis 최소 형태(2.5c)는 범위가 커서 분리, 다음 라운드.
+
+---
+
 ## ⚠️ 2026-09-02 (최신 4): LBP v1 Batch 2 게이트 CLOSED (Opus closing PASS) — PO 결정 3건 대기
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `c23c3d0` + 이

@@ -23,6 +23,7 @@
  * No Myungri/saju/birth-time/herbal-only systemic content anywhere in this
  * file (governing task Phase 2 invariant, unchanged).
  */
+import { useId, useState } from 'react'
 import {
   aggravatingField,
   aggravatingSummaryText,
@@ -42,6 +43,16 @@ import { EmrPreviewCard } from './EmrPreviewCard'
 import { buildPainWorkspaceEmrPreview } from './emrPreview'
 import { PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget, type PainFinalAssessment, type NextReassessmentPlan } from './finalAssessment'
 import type { PhysicalExamSuggestion } from './examSuggestion'
+import {
+  LBP_CLINICIAN_ADDABLE_EXAMS,
+  LBP_DIRECTIONAL_RESPONSE_HELP,
+  LBP_DIRECTIONAL_RESPONSE_OPTIONS,
+  type LbpDirectionalResponse,
+} from './lbpExamSuggestions'
+import {
+  LBP_TARGET_FUNCTION_OPTIONS,
+  LBP_TARGET_FUNCTION_PLACEHOLDERS,
+} from './lbpTargetFunction'
 import type { EvidenceItem } from './supportEngine'
 import type { PainCarePlan } from './carePlan'
 import { PainCarePlanCard } from './CarePlanCard'
@@ -63,6 +74,91 @@ import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
 import { MicroFollowUpCard } from './MicroFollowUpCard'
 
+/**
+ * LBP v1 Batch 1 (G3/G4): "허리 움직임 반응" -- the clinician's own
+ * directional-response observation. Record-only (no computed judgment);
+ * default 'NOT_ASSESSED' is always the first, non-highlighted chip.
+ */
+function LbpDirectionalResponseCard({
+  value,
+  onChange,
+}: {
+  value: LbpDirectionalResponse
+  onChange: (next: LbpDirectionalResponse) => void
+}) {
+  const helpId = useId()
+  const [helpOpen, setHelpOpen] = useState(false)
+  return (
+    <div className="workspace__examCard workspace__examCard--directional">
+      <div className="workspace__examCard__head">
+        <strong className="workspace__examCard__title">허리 움직임 반응</strong>
+        <button
+          type="button"
+          className="workspace__helpToggle"
+          aria-expanded={helpOpen}
+          aria-controls={helpId}
+          aria-label="허리 움직임 반응 도움말"
+          title={`어떻게: ${LBP_DIRECTIONAL_RESPONSE_HELP.howKo}\n왜: ${LBP_DIRECTIONAL_RESPONSE_HELP.whyKo}`}
+          onClick={() => setHelpOpen((o) => !o)}
+        >
+          <span aria-hidden="true">ⓘ</span>
+        </button>
+      </div>
+      {helpOpen && (
+        <div id={helpId} className="workspace__examCard__help">
+          <p>어떻게: {LBP_DIRECTIONAL_RESPONSE_HELP.howKo}</p>
+          <p>왜: {LBP_DIRECTIONAL_RESPONSE_HELP.whyKo}</p>
+        </div>
+      )}
+      <div className="workspace__examCard__statusRow" role="group" aria-label="허리 움직임 반응 선택">
+        {LBP_DIRECTIONAL_RESPONSE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            aria-pressed={value === opt.value}
+            className={`workspace__statusBtn${value === opt.value ? ' workspace__statusBtn--active' : ''}`}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * LBP v1 Batch 1 (G5): "확인 추가" -- the clinician's own escape hatch to
+ * add a fixed exam (고관절/천장관절/SLR·슬럼프/보행/신경 기본검사) that the
+ * automatic rules did not surface, e.g. because safety is not CLEAR.
+ * Already-present ids are hidden; renders nothing once every addable item
+ * has been added.
+ */
+function LbpAddExamDisclosure({
+  existing,
+  onAdd,
+}: {
+  existing: PhysicalExamSuggestion[]
+  onAdd?: (id: string) => void
+}) {
+  if (!onAdd) return null
+  const existingIds = new Set(existing.map((i) => i.id))
+  const addable = LBP_CLINICIAN_ADDABLE_EXAMS.filter((e) => !existingIds.has(e.id))
+  if (addable.length === 0) return null
+  return (
+    <details className="workspace__optional">
+      <summary>확인 추가</summary>
+      <div className="workspace__addExamList">
+        {addable.map((e) => (
+          <button key={e.id} type="button" className="workspace__addExamBtn" onClick={() => onAdd(e.id)}>
+            + {e.title}
+          </button>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 export function PainWorkspaceLane2({
   payload,
   examSuggestions,
@@ -77,6 +173,9 @@ export function PainWorkspaceLane2({
   onChangeReassessment,
   microFollowUpResponse,
   priorVisits,
+  lbpDirectionalResponse,
+  onChangeLbpDirectionalResponse,
+  onAddLbpExam,
 }: {
   payload: DoctorPayload
   examSuggestions: PhysicalExamSuggestion[]
@@ -91,9 +190,15 @@ export function PainWorkspaceLane2({
   onChangeReassessment: (next: StructuredReassessment) => void
   microFollowUpResponse?: MicroFollowUpResponse | null
   priorVisits?: PatientHistoryResult | null
+  /** LBP v1 Batch 1 (G3): only meaningful when the payload is LBP — ignored (block not rendered) otherwise. */
+  lbpDirectionalResponse?: LbpDirectionalResponse
+  onChangeLbpDirectionalResponse?: (next: LbpDirectionalResponse) => void
+  /** LBP v1 Batch 1 (G5): adds one of LBP_CLINICIAN_ADDABLE_EXAMS by id, no-op if already present. */
+  onAddLbpExam?: (id: string) => void
 }) {
   const r = payload.responses
   const { flags, routing } = payload
+  const isLbp = r.safety_flags.lbp != null
 
   const durFreq = durationFrequencyText(r, routing.primary_module)
   const aggravatingText = aggravatingSummaryText(routing.primary_module, r.modules)
@@ -191,20 +296,50 @@ export function PainWorkspaceLane2({
 
       <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
 
-      {(examSuggestions.length > 0 || evidence.length > 0) && (
+      {/*
+        LBP v1 Batch 1 (§2.3): the LBP block renders whenever the payload is
+        an LBP patient (safety_flags.lbp != null) -- even when
+        examSuggestions/evidence are both empty (safety not CLEAR yet, or a
+        CLEAR patient with everything still unset), because the directional-
+        response chip row and "확인 추가" affordance must stay reachable
+        regardless. Every other pain region keeps the original
+        content-driven gate untouched.
+      */}
+      {isLbp ? (
         <>
-        <p className="workspace__layerLabel">오늘 확인할 것</p>
-        <section className="workspace__block">
-          {examSuggestions.length > 0 && (
-            <ExamSuggestionList
-              items={examSuggestions}
-              onChangeItem={onChangeExamSuggestion}
-              onAddToReassessment={onAddExamToReassessment}
+          <p className="workspace__layerLabel">오늘 확인할 것</p>
+          <section className="workspace__block">
+            <LbpDirectionalResponseCard
+              value={lbpDirectionalResponse ?? 'NOT_ASSESSED'}
+              onChange={onChangeLbpDirectionalResponse ?? (() => {})}
             />
-          )}
-          {evidence.length > 0 && <SupportContradictionPanel items={evidence} emptyText="" />}
-        </section>
+            {examSuggestions.length > 0 && (
+              <ExamSuggestionList
+                items={examSuggestions}
+                onChangeItem={onChangeExamSuggestion}
+                onAddToReassessment={onAddExamToReassessment}
+              />
+            )}
+            <LbpAddExamDisclosure existing={examSuggestions} onAdd={onAddLbpExam} />
+            {evidence.length > 0 && <SupportContradictionPanel items={evidence} emptyText="" />}
+          </section>
         </>
+      ) : (
+        (examSuggestions.length > 0 || evidence.length > 0) && (
+          <>
+          <p className="workspace__layerLabel">오늘 확인할 것</p>
+          <section className="workspace__block">
+            {examSuggestions.length > 0 && (
+              <ExamSuggestionList
+                items={examSuggestions}
+                onChangeItem={onChangeExamSuggestion}
+                onAddToReassessment={onAddExamToReassessment}
+              />
+            )}
+            {evidence.length > 0 && <SupportContradictionPanel items={evidence} emptyText="" />}
+          </section>
+          </>
+        )
       )}
 
       {additionalConcern && (
@@ -254,6 +389,7 @@ export function PainWorkspaceNext({
   onChangeNextReassessmentPlan,
   reassessment,
   priorVisits,
+  lbpDirectionalResponse,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -268,8 +404,11 @@ export function PainWorkspaceNext({
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
   reassessment: StructuredReassessment
   priorVisits?: PatientHistoryResult | null
+  /** LBP v1 Batch 1 (G3): EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
+  lbpDirectionalResponse?: LbpDirectionalResponse
 }) {
   const r = payload.responses
+  const isLbp = r.safety_flags.lbp != null
   const emrText = buildPainWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
     examSuggestions,
@@ -278,8 +417,13 @@ export function PainWorkspaceNext({
     carePlan,
     reassessment,
     nextReassessmentPlan,
+    lbpDirectionalResponse,
   })
   const patientCarePlanText = buildPainPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })
+  const followUpOptions = isLbp ? [...LBP_TARGET_FUNCTION_OPTIONS, ...PAIN_FOLLOW_UP_OPTIONS] : PAIN_FOLLOW_UP_OPTIONS
+  const followUpGroups = isLbp
+    ? [{ label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id) }]
+    : undefined
 
   return (
     <div className="workspace__pain workspace__pain--next">
@@ -293,10 +437,12 @@ export function PainWorkspaceNext({
         <div className="doctor__nextPairRow__col">
           <p className="doctor__nextPairRow__label">재평가 대상 (측정 추적)</p>
           <FollowUpTargetPicker
-            options={PAIN_FOLLOW_UP_OPTIONS}
+            options={followUpOptions}
             selected={followUpTargets}
             onChange={onChangeFollowUpTargets}
             showPostTreatmentField
+            groups={followUpGroups}
+            placeholders={isLbp ? LBP_TARGET_FUNCTION_PLACEHOLDERS : undefined}
           />
         </div>
         <div className="doctor__nextPairRow__col">

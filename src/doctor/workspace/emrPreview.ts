@@ -26,6 +26,7 @@
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { ClinicianObservationItem } from './clinicianObservation'
 import type { FollowUpTarget, HerbalFinalAssessment, PainFinalAssessment, NextReassessmentPlan } from './finalAssessment'
+import { lbpDirectionalResponseLabel, type LbpDirectionalResponse } from './lbpExamSuggestions'
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
 import type { PainCarePlan, HerbalCarePlan } from './carePlan'
 import type { ReassessmentExamItem, StructuredReassessment } from './reassessmentExam'
@@ -104,10 +105,15 @@ export function buildPainWorkspaceEmrPreview(input: {
   carePlan?: PainCarePlan
   reassessment?: StructuredReassessment
   nextReassessmentPlan?: NextReassessmentPlan
+  /** LBP v1 Batch 1 (G3): only ever renders a line when NOT the 'NOT_ASSESSED' default — a default/unset value is never printed as if it were a normal finding. */
+  lbpDirectionalResponse?: LbpDirectionalResponse
 }): string {
   const lines: Array<{ label: string; value: string }> = [
     { label: '주호소', value: input.primaryConcern ?? '' },
     { label: '진찰 소견', value: examFindingsLines(input.examSuggestions).join('; ') },
+    ...(input.lbpDirectionalResponse && input.lbpDirectionalResponse !== 'NOT_ASSESSED'
+      ? [{ label: '허리 움직임 반응', value: lbpDirectionalResponseLabel(input.lbpDirectionalResponse) }]
+      : []),
     { label: 'Assessment', value: input.finalAssessment.finalWorkingAssessment },
     { label: '치료 초점', value: input.finalAssessment.treatmentFocus },
     { label: '시행/예정 처치', value: input.finalAssessment.interventionPerformedOrPlanned },

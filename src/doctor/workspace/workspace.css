@@ -878,6 +878,50 @@
   color: var(--text-muted);
 }
 
+/* LBP v1 Batch 1 (G1): optional labeled sub-group ("목표 기능") above its
+   own chip row -- only rendered when a caller passes `groups`. */
+.workspace__followUp__group {
+  margin-bottom: 10px;
+}
+
+.workspace__followUp__groupLabel {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* LBP v1 Batch 1 (G3): "허리 움직임 반응" directional-response card + (G5)
+   "확인 추가" list -- both reuse existing exam-card/status-button/optional
+   disclosure classes, this is only the small additions those don't cover. */
+.workspace__examCard--directional {
+  border-color: var(--primary);
+}
+
+.workspace__addExamList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.workspace__addExamBtn {
+  border: 1px dashed var(--border);
+  background: var(--surface);
+  color: var(--primary);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.workspace__addExamBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ---------- save status (round 2 Phase 2) ---------- */
 .workspace__saveStatus {
   margin: 0;
@@ -1544,6 +1588,54 @@
 .workspace__detailToggle:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+/* LBP v1 Batch 1 (G4): ⓘ how/why help toggle -- tap opens (aria-expanded),
+   hover shows the same text via the native `title` attribute. Reuses the
+   card's own spacing rhythm rather than introducing a new visual language. */
+.workspace__helpToggle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace__helpToggle[aria-expanded='true'] {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.workspace__helpToggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.workspace__examCard__help {
+  background: var(--primary-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+}
+
+.workspace__examCard__help p {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.workspace__examCard__help p:last-child {
+  margin-bottom: 0;
 }
 
 /*

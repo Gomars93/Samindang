@@ -20,6 +20,7 @@ import {
   WORKSPACE_SCENARIOS,
   PAIN_SCENARIO_1,
   PAIN_SCENARIO_2,
+  PAIN_SCENARIO_3,
   HERBAL_SCENARIO_1,
   HERBAL_SCENARIO_2,
   MIXED_SCENARIO_1,
@@ -774,11 +775,23 @@ test('EMR preview reconstructs correctly from a persisted WorkspaceState passed 
   assert.ok(html.includes('재현됨'))
   assert.ok(html.includes('재로드된 판단'))
   // rule: a reload must never turn a POSITIVE-with-laterality result into
-  // an unresolved/pending item -- the "아직 확인 안 됨 · N건" pending-counter
+  // an unresolved/pending item -- the reloaded 'reload-1' SLR item must
+  // never itself appear inside the "아직 확인 안 됨 · N건" pending-counter
   // banner (distinct from the always-present per-card status BUTTON of the
-  // same label) must not appear, since the only exam item reloaded here is
-  // already POSITIVE, not NOT_YET_CHECKED.
-  assert.ok(!html.includes('아직 확인 안 됨 ·'))
+  // same label).
+  //
+  // LBP v1 Batch 1: PAIN_SCENARIO_1 is an LBP CLEAR payload, so loading it
+  // with `synthetic: undefined` now legitimately merges in the generator's
+  // always-on "목표 동작 재현" suggestion as a genuinely NEW pending item
+  // (see mergeLbpExamSuggestions) -- the counter CAN appear now; what must
+  // never happen is the reloaded SLR item being counted inside it.
+  const pendingCounterMatch = html.match(/아직 확인 안 됨 · \d+건 — ([^<]*)</)
+  if (pendingCounterMatch) {
+    assert.ok(
+      !pendingCounterMatch[1].includes('SLR 검사'),
+      'the reloaded POSITIVE SLR item must never appear in the pending counter',
+    )
+  }
 })
 
 /* -----------------------------------------------------------------------
@@ -1889,6 +1902,99 @@ test('every disclosure element Core Reduction P2/P3 introduced has a correspondi
   assert.ok(/doctor__nextIssuance__altMethods"\s*open=\{altMethodsAutoOpen\}/.test(viewSrc), '#2: doctor__nextIssuance__altMethods has an open={} condition')
   const judgmentSrc = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
   assert.ok(/className="judgment__learningCase" open=\{/.test(judgmentSrc), '#3: judgment__learningCase has an open={} condition')
+})
+
+// ---------- LBP v1 Batch 1 (G1-G5): real (non-synthetic) LBP payload ----------
+// PAIN_SCENARIO_1/2 are built through the same production spec builders as
+// every other fixture in this codebase -- rendering them with
+// `synthetic: undefined` exercises the REAL generateLbpExamSuggestions/
+// mergeLbpExamSuggestions path (not illustrative UX fixture data).
+
+test('real (non-synthetic) LBP CLEAR payload: 목표 동작 재현 card + 허리 움직임 반응 chip row (with ⓘ) + 확인 추가 render', () => {
+  const html = renderWith(PAIN_SCENARIO_1, { synthetic: undefined })
+  assert.ok(html.includes('목표 동작 재현'), '자동 생성된 목표 동작 재현 항목이 렌더된다')
+  assert.ok(html.includes('허리 움직임 반응'), '허리 움직임 반응 chip 행이 렌더된다')
+  assert.ok(html.includes('workspace__helpToggle'), 'ⓘ 도움말 토글 버튼이 렌더된다')
+  assert.ok(html.includes('aria-expanded="false"'), 'ⓘ 토글은 tap으로 열리는 aria-expanded 버튼이다')
+  assert.ok(/title="어떻게: [^"]*\n왜: [^"]*"/.test(html), 'ⓘ hover(title 속성)도 동일한 how/why 문구를 담는다')
+  assert.ok(html.includes('확인 추가'), '"확인 추가" disclosure가 렌더된다')
+  // PAIN_SCENARIO_1's leg symptom is UNKNOWN (not YES) -- SLR/슬럼프 must not
+  // be auto-generated, but it must still be offered as a manual add.
+  assert.ok(html.includes('고관절 빠른 선별'), '고관절 빠른 선별이 확인 추가 목록에 있다')
+  assert.ok(html.includes('천장관절 기여 확인'), '천장관절 기여 확인이 확인 추가 목록에 있다')
+  assert.ok(html.includes('하지 신경학적 기본검사'), '하지 신경학적 기본검사가 확인 추가 목록에 있다')
+})
+
+test('real (non-synthetic) LBP payload with leg symptom YES (pain scenario 2): SLR/슬럼프 auto-merges in, and is no longer offered in 확인 추가', () => {
+  const html = renderWith(PAIN_SCENARIO_2, { synthetic: undefined })
+  assert.ok(html.includes('하지직거상 또는 슬럼프검사'), 'SLR/슬럼프 항목이 자동으로 병합된다')
+})
+
+test('허리 움직임 반응 기본값(미시행)은 눌린 상태(aria-pressed=true)로 렌더되고, 정상 소견처럼 보이지 않는다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, { synthetic: undefined })
+  const idx = html.indexOf('허리 움직임 반응 선택')
+  assert.ok(idx !== -1)
+  const chunk = html.slice(idx, idx + 1200)
+  assert.ok(/미시행<\/button>/.test(chunk) || chunk.includes('>미시행<'), '미시행 chip 라벨이 렌더된다')
+})
+
+test('목표 기능 그룹 라벨은 LBP 재평가 대상 picker에만 나타나고, 목표 기능 chip 9개가 모두 렌더된다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, { synthetic: undefined })
+  assert.ok(html.includes('목표 기능(다음 방문에 같은 동작으로 비교)'))
+  for (const label of ['걷기', '앉기', '서기', '앉았다 일어서기', '옷 입기·양말 신기', '물건 들기', '수면·침상 동작', '업무·집안일 복귀', '기타 목표 동작']) {
+    assert.ok(html.includes(label), `목표 기능 chip "${label}"이 렌더된다`)
+  }
+  // The original PAIN_FOLLOW_UP_OPTIONS chips must still render alongside (ungrouped).
+  assert.ok(html.includes('통증 강도'))
+  assert.ok(html.includes('움직임·기능'))
+  assert.ok(html.includes('증상 재현 여부'))
+})
+
+test('non-LBP pain patient (shoulder, pain scenario 3) renders exactly as before: no 허리 움직임 반응, no 목표 기능 group label', () => {
+  const html = render(PAIN_SCENARIO_3)
+  assert.ok(!html.includes('허리 움직임 반응'))
+  assert.ok(!html.includes('목표 기능(다음 방문에 같은 동작으로 비교)'))
+  assert.ok(!html.includes('걷기'))
+})
+
+test('EMR preview: 허리 움직임 반응 line은 기본값(NOT_ASSESSED)에서는 나타나지 않는다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, { synthetic: undefined })
+  const emrIdx = html.indexOf('workspace__emrPreview__text')
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+  assert.ok(!emrTextOnly.includes('허리 움직임 반응:'))
+})
+
+test('EMR preview: 허리 움직임 반응이 설정되면 라벨로 출력된다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    synthetic: undefined,
+    submissionId: 'lbp-directional-test',
+    initialWorkspaceState: {
+      schema_version: '1.1.0',
+      lbpDirectionalResponse: 'FLEXION_FAVORABLE',
+      updated_at: null,
+    },
+  })
+  const emrIdx = html.indexOf('workspace__emrPreview__text')
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+  assert.ok(emrTextOnly.includes('허리 움직임 반응: 숙이면(굴곡) 호전'))
+})
+
+test('WorkspaceState.lbpDirectionalResponse: invalid persisted value degrades to NOT_ASSESSED (never crashes, never shown as a normal value)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    synthetic: undefined,
+    submissionId: 'lbp-directional-garbage-test',
+    initialWorkspaceState: {
+      schema_version: '1.1.0',
+      lbpDirectionalResponse: 'BOGUS_VALUE',
+      updated_at: null,
+    },
+  })
+  const emrIdx = html.indexOf('workspace__emrPreview__text')
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+  assert.ok(!emrTextOnly.includes('허리 움직임 반응:'), '알 수 없는 값은 NOT_ASSESSED로 취급되어 EMR line이 없다')
 })
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

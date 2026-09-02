@@ -35,6 +35,8 @@ export function ExamSuggestionCard({
   onAddToReassessment?: () => void
 }) {
   const noteId = useId()
+  const helpId = useId()
+  const [helpOpen, setHelpOpen] = useState(false)
   const pending = item.result.status === 'NOT_YET_CHECKED'
 
   /*
@@ -69,10 +71,30 @@ export function ExamSuggestionCard({
           {EXAM_PRIORITY_LABEL[item.priority]}
         </span>
         <strong className="workspace__examCard__title">{item.title}</strong>
+        {item.help && (
+          <button
+            type="button"
+            className="workspace__helpToggle"
+            aria-expanded={helpOpen}
+            aria-controls={helpId}
+            aria-label={`${item.title} 도움말`}
+            title={`어떻게: ${item.help.howKo}\n왜: ${item.help.whyKo}`}
+            onClick={() => setHelpOpen((o) => !o)}
+          >
+            <span aria-hidden="true">ⓘ</span>
+          </button>
+        )}
         <span className="workspace__provBadge" title="시스템 결정지원 제안 — 확정 소견 아님">
           {PROVENANCE_BADGE[item.source]}
         </span>
       </div>
+
+      {item.help && helpOpen && (
+        <div id={helpId} className="workspace__examCard__help">
+          <p>어떻게: {item.help.howKo}</p>
+          <p>왜: {item.help.whyKo}</p>
+        </div>
+      )}
 
       {item.reasonFacts.length > 0 && (
         <p className="workspace__examCard__reason">

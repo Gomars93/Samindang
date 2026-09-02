@@ -22,12 +22,28 @@ export function FollowUpTargetPicker({
   selected,
   onChange,
   showPostTreatmentField = false,
+  groups,
+  placeholders,
 }: {
   options: FollowUpTarget[]
   selected: FollowUpTarget[]
   onChange: (next: FollowUpTarget[]) => void
   /** Pain workspace records an immediate post-treatment value; herbal does not (mission Phase 10 scope). */
   showPostTreatmentField?: boolean
+  /**
+   * LBP v1 Batch 1 (G1): optional labeled sub-groups of `options`, each
+   * rendered as its own heading ("목표 기능…") above its own chip row.
+   * Options not covered by any group render in the original single,
+   * unheaded row — so a caller that omits `groups` (every non-LBP caller)
+   * renders byte-for-byte as before.
+   */
+  groups?: { label: string; ids: string[] }[]
+  /**
+   * Per-option baseline input placeholder override, keyed by target id —
+   * falls back to the shared default. E.g. LBP's "기타 목표 동작" prompts
+   * the clinician to type the actual movement instead of a generic hint.
+   */
+  placeholders?: Record<string, string>
 }) {
   const selectedIds = new Set(selected.map((t) => t.id))
   const atMax = selected.length >= MAX_FOLLOW_UP_TARGETS
@@ -45,13 +61,10 @@ export function FollowUpTargetPicker({
     onChange(selected.map((t) => (t.id === id ? { ...t, [field]: value } : t)))
   }
 
-  return (
-    <section className="workspace__followUp" aria-label="재평가 대상">
-      <h4>
-        재평가 대상 <span className="workspace__followUp__hint">(최대 {MAX_FOLLOW_UP_TARGETS}개)</span>
-      </h4>
-      <div className="workspace__followUp__options" role="group" aria-label="재평가 대상 선택">
-        {options.map((opt) => {
+  function chipRow(items: FollowUpTarget[], ariaLabel: string) {
+    return (
+      <div className="workspace__followUp__options" role="group" aria-label={ariaLabel}>
+        {items.map((opt) => {
           const isSelected = selectedIds.has(opt.id)
           return (
             <button
@@ -67,6 +80,27 @@ export function FollowUpTargetPicker({
           )
         })}
       </div>
+    )
+  }
+
+  const groupedIds = new Set((groups ?? []).flatMap((g) => g.ids))
+  const ungrouped = options.filter((o) => !groupedIds.has(o.id))
+
+  return (
+    <section className="workspace__followUp" aria-label="재평가 대상">
+      <h4>
+        재평가 대상 <span className="workspace__followUp__hint">(최대 {MAX_FOLLOW_UP_TARGETS}개)</span>
+      </h4>
+      {groups?.map((g) => (
+        <div key={g.label} className="workspace__followUp__group">
+          <p className="workspace__followUp__groupLabel">{g.label}</p>
+          {chipRow(
+            options.filter((o) => g.ids.includes(o.id)),
+            g.label,
+          )}
+        </div>
+      ))}
+      {(!groups || ungrouped.length > 0) && chipRow(groups ? ungrouped : options, '재평가 대상 선택')}
 
       {selected.length > 0 && (
         <div className="workspace__followUp__values">
@@ -78,7 +112,7 @@ export function FollowUpTargetPicker({
                 className="workspace__noteInput"
                 value={t.baseline}
                 onChange={(e) => updateField(t.id, 'baseline', e.target.value)}
-                placeholder="현재(오늘) 기준값 — 선택"
+                placeholder={placeholders?.[t.id] ?? '현재(오늘) 기준값 — 선택'}
                 aria-label={`${t.label} 오늘 기준값`}
               />
               {showPostTreatmentField && (

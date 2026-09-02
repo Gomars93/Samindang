@@ -114,6 +114,10 @@ tests/.doctor-record-error-boundary-bundle.cjs
 # esbuild bundles used by tests/doctor-view-profile-matrix.spec.mjs (regenerated, not source)
 tests/.view-profile-matrix-corespec-bundle.mjs
 tests/.view-profile-matrix-viewprofile-bundle.mjs
+# esbuild bundles used by tests/lbp-exam-suggestions.spec.mjs (regenerated, not source)
+tests/.lbp-exam-suggestions-corespec-bundle.mjs
+tests/.lbp-exam-suggestions-bundle.mjs
+tests/.lbp-target-function-bundle.mjs
 
 # esbuild bundles used by tests/workspace-round3.spec.mjs (regenerated, not source)
 tests/.workspace-round3-persistence-bundle.mjs

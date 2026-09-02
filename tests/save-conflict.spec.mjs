@@ -210,7 +210,7 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
       src.indexOf('useEffect(() => {\n    if (initialRecordUpdatedAt == null'),
       src.indexOf("}, [initialRecordUpdatedAt])") + 50,
     )
-    assert.ok(/const fresh = seedWorkspaceState\(initialWorkspaceState, synthetic\)/.test(effect))
+    assert.ok(/const fresh = seedWorkspaceState\(initialWorkspaceState, synthetic, payload\)/.test(effect))
     assert.ok(/lastKnownUpdatedAtRef\.current = initialRecordUpdatedAt/.test(effect))
     assert.ok(/lastSavedRef\.current = fresh/.test(effect), 'lastSavedRef must advance to the SAME fresh content, not just the token')
     assert.ok(/setWorkspaceState\(fresh\)/.test(effect), 'workspaceState itself must be replaced with the fresh content -- the exact HIGH finding this guards against')

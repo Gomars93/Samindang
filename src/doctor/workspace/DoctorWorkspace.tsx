@@ -57,7 +57,8 @@ import {
   primaryConcernLabel,
 } from '../DoctorView'
 import { deriveViewProfile } from './viewProfile'
-import type { PhysicalExamSuggestion } from './examSuggestion'
+import { emptyExamResult, type PhysicalExamSuggestion } from './examSuggestion'
+import { mergeLbpExamSuggestions, LBP_CLINICIAN_ADDABLE_EXAMS } from './lbpExamSuggestions'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import { defaultClinicianObservations, type ClinicianObservationItem } from './clinicianObservation'
 import type { EvidenceItem } from './supportEngine'
@@ -101,16 +102,32 @@ const REGION_LABEL: Record<string, string> = {
 function seedWorkspaceState(
   initial: WorkspaceState | null | undefined,
   synthetic: WorkspaceSyntheticData | undefined,
+  payload: DoctorPayload,
 ): WorkspaceState {
-  if (initial) return deserializeWorkspaceState(initial)
-  const empty = emptyWorkspaceState()
-  return {
-    ...empty,
-    painExamSuggestions: synthetic?.examSuggestions ?? [],
-    herbalPatternCandidates: synthetic?.patternCandidates ?? [],
-    herbalClinicianObservations: synthetic?.clinicianObservations ?? defaultClinicianObservations(),
-    painRehabSuggestions: synthetic?.rehabSuggestions ?? [],
+  if (synthetic) {
+    // Existing synthetic preview scenarios keep exact precedence — never
+    // run the LBP generator/merge over illustrative UX fixture data.
+    if (initial) return deserializeWorkspaceState(initial)
+    const empty = emptyWorkspaceState()
+    return {
+      ...empty,
+      painExamSuggestions: synthetic.examSuggestions ?? [],
+      herbalPatternCandidates: synthetic.patternCandidates ?? [],
+      herbalClinicianObservations: synthetic.clinicianObservations ?? defaultClinicianObservations(),
+      painRehabSuggestions: synthetic.rehabSuggestions ?? [],
+    }
   }
+  // A brand-new (no `initial`) non-synthetic record keeps the exact same
+  // default the pre-Batch-1 "no synthetic" path always seeded --
+  // herbalClinicianObservations starts as the standard 설진/맥진/복진/추가
+  // 문진 checklist, not [] -- this is unrelated to LBP and must not regress.
+  const base = initial
+    ? deserializeWorkspaceState(initial)
+    : { ...emptyWorkspaceState(), herbalClinicianObservations: defaultClinicianObservations() }
+  // LBP v1 Batch 1 (G2): merges freshly-generated auto suggestions into
+  // whatever is already saved (or [] for a brand-new record). A no-op for
+  // any non-LBP payload (generateLbpExamSuggestions returns [] for those).
+  return { ...base, painExamSuggestions: mergeLbpExamSuggestions(base.painExamSuggestions, payload) }
 }
 
 export function DoctorWorkspace({
@@ -200,7 +217,7 @@ export function DoctorWorkspace({
   const recordKey = resetKey ?? submissionId ?? payload.session_id
 
   const [workspaceState, setWorkspaceState] = useState<WorkspaceState>(() =>
-    seedWorkspaceState(initialWorkspaceState, synthetic),
+    seedWorkspaceState(initialWorkspaceState, synthetic, payload),
   )
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
@@ -266,7 +283,7 @@ export function DoctorWorkspace({
   if (recordKey !== lastSeenRecordKey) {
     setLastSeenRecordKey(recordKey)
     setAdditionalTypeOpen(false)
-    const seeded = seedWorkspaceState(initialWorkspaceState, synthetic)
+    const seeded = seedWorkspaceState(initialWorkspaceState, synthetic, payload)
     setWorkspaceState(seeded)
     lastSavedRef.current = seeded
     skipNextSaveRef.current = true
@@ -305,7 +322,7 @@ export function DoctorWorkspace({
   useEffect(() => {
     if (initialRecordUpdatedAt == null || initialRecordUpdatedAt === lastKnownUpdatedAtRef.current) return
     if (!workspaceStateEquals(workspaceState, lastSavedRef.current)) return
-    const fresh = seedWorkspaceState(initialWorkspaceState, synthetic)
+    const fresh = seedWorkspaceState(initialWorkspaceState, synthetic, payload)
     lastKnownUpdatedAtRef.current = initialRecordUpdatedAt
     lastSavedRef.current = fresh
     skipNextSaveRef.current = true
@@ -574,6 +591,21 @@ export function DoctorWorkspace({
                 onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, painReassessment: next }))}
                 microFollowUpResponse={microFollowUpResponse}
                 priorVisits={priorVisits}
+                lbpDirectionalResponse={workspaceState.lbpDirectionalResponse}
+                onChangeLbpDirectionalResponse={(next) =>
+                  setWorkspaceState((s) => ({ ...s, lbpDirectionalResponse: next }))
+                }
+                onAddLbpExam={(id) =>
+                  setWorkspaceState((s) => {
+                    if (s.painExamSuggestions.some((i) => i.id === id)) return s
+                    const template = LBP_CLINICIAN_ADDABLE_EXAMS.find((i) => i.id === id)
+                    if (!template) return s
+                    return {
+                      ...s,
+                      painExamSuggestions: [...s.painExamSuggestions, { ...template, result: emptyExamResult() }],
+                    }
+                  })
+                }
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
@@ -663,6 +695,7 @@ export function DoctorWorkspace({
                 onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
                 reassessment={workspaceState.painReassessment}
                 priorVisits={priorVisits}
+                lbpDirectionalResponse={workspaceState.lbpDirectionalResponse}
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (

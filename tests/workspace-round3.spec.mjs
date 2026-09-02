@@ -83,6 +83,32 @@ function assert(name, cond) {
   )
 }
 
+/* ---------------- LBP v1 Batch 1 (G3): lbpDirectionalResponse ---------------- */
+{
+  const empty = emptyWorkspaceState()
+  assert('emptyWorkspaceState.lbpDirectionalResponse starts NOT_ASSESSED', empty.lbpDirectionalResponse === 'NOT_ASSESSED')
+
+  const filled = { ...empty, lbpDirectionalResponse: 'FLEXION_FAVORABLE' }
+  const roundTripped = deserializeWorkspaceState(JSON.parse(JSON.stringify(filled)))
+  assert('round-trip: lbpDirectionalResponse survives JSON round-trip exactly', roundTripped.lbpDirectionalResponse === 'FLEXION_FAVORABLE')
+
+  const garbage = deserializeWorkspaceState({ lbpDirectionalResponse: 'BOGUS_VALUE' })
+  assert('an invalid persisted lbpDirectionalResponse degrades to NOT_ASSESSED, never throws/passes through', garbage.lbpDirectionalResponse === 'NOT_ASSESSED')
+
+  const wrongType = deserializeWorkspaceState({ lbpDirectionalResponse: 7 })
+  assert('a wrong-typed (number) lbpDirectionalResponse degrades to NOT_ASSESSED', wrongType.lbpDirectionalResponse === 'NOT_ASSESSED')
+
+  // Legacy record predating Batch 1 -- field entirely absent.
+  const legacy = deserializeWorkspaceState({
+    schema_version: '1.0.0',
+    painExamSuggestions: [],
+    painFinalAssessment: { finalWorkingAssessment: '', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: null },
+    painFollowUpTargets: [],
+    updated_at: null,
+  })
+  assert('legacy record with lbpDirectionalResponse entirely absent degrades to NOT_ASSESSED', legacy.lbpDirectionalResponse === 'NOT_ASSESSED')
+}
+
 /* ---------------- old-schema (round 2) safe load ---------------- */
 {
   // A shape with ONLY the round-2 fields -- no painCarePlan/nextReassessmentPlan/

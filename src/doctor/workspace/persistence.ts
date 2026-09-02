@@ -40,6 +40,7 @@ import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { emptyAdditionalConcernPromotion } from './additionalConcern'
 import type { Provenance } from './provenance'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } from './sanitize'
+import { isValidLbpDirectionalResponse, type LbpDirectionalResponse } from './lbpExamSuggestions'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -188,6 +189,13 @@ export type WorkspaceState = {
   painRehabSuggestions: RehabSuggestion[]
   /** Round 3 Phase H: clinician's own "look at this Additional concern more closely today" note — never mutates routing. */
   additionalConcernPromotion: AdditionalConcernPromotionState
+  /**
+   * LBP v1 Batch 1 (G3): clinician-observed lumbar-movement direction
+   * response. Default/invalid/legacy-missing always degrades to
+   * 'NOT_ASSESSED' — never rendered or persisted as a normal/negative
+   * value. Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
+   */
+  lbpDirectionalResponse: LbpDirectionalResponse
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -209,6 +217,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     herbalReassessment: emptyStructuredReassessment(),
     painRehabSuggestions: [],
     additionalConcernPromotion: emptyAdditionalConcernPromotion(),
+    lbpDirectionalResponse: 'NOT_ASSESSED',
     updated_at: null,
   }
 }
@@ -247,6 +256,9 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     herbalReassessment: sanitizeStructuredReassessment(empty.herbalReassessment, raw.herbalReassessment),
     painRehabSuggestions: Array.isArray(raw.painRehabSuggestions) ? raw.painRehabSuggestions.map(sanitizeRehabSuggestion) : [],
     additionalConcernPromotion: sanitizeShape(empty.additionalConcernPromotion, raw.additionalConcernPromotion),
+    lbpDirectionalResponse: isValidLbpDirectionalResponse(raw.lbpDirectionalResponse)
+      ? raw.lbpDirectionalResponse
+      : empty.lbpDirectionalResponse,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

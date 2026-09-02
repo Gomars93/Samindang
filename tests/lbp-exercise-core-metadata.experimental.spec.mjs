@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-const catalogModule = await import('./.lbp-exercise-library-bundle.mjs')
+const catalogModule = await import('./.lbp-exercise-library-v01-bundle.mjs')
 const coreModule = await import('./.lbp-exercise-core-metadata-bundle.mjs')
 
 const {

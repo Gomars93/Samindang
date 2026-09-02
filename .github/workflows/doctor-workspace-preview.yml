@@ -24,7 +24,7 @@ name: Deploy Doctor Workspace Preview
 
 on:
   push:
-    branches: [feat/doctor-clinical-workspace]
+    branches: [feat/doctor-clinical-workspace, claude/feat-doctor-ui-polish]
   workflow_dispatch: {}
 
 permissions:

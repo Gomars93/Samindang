@@ -257,11 +257,24 @@ batch에서 회귀 위험만 늘린다(6곳 각각 `isValidExamStatus` 가드와
    저장은 `sanitizeShape`가 status를 "문자열이면 통과"시키고, 유효성은
    `isValidExamStatus`가 `EXAM_CHECK_STATUS_LABEL` key 존재로 판정한다
    (`provenance.ts:144`). 따라서 신버전이 만든 `LIMITED` 레코드를 **구버전
-   클라이언트**가 읽으면 → invalid → EMR에서 **조용히 누락**되고 화면에는
-   `확인 필요(값 형식 오류)`로 뜬다. 데이터가 깨지는 게 아니라 **소견 한 줄이
-   사라진다.** 임상 LAN 단일 배포이므로 완화책은 "태블릿·원장 화면을 같은
-   빌드로 동시 배포" 하나뿐이며, **롤백 시에도 같은 일이 생긴다.** 배포
-   메모에 명시할 것.
+   클라이언트**가 읽으면 → invalid → EMR에서 **조용히 누락**된다.
+   데이터가 깨지는 게 아니라 **소견 한 줄이 사라진다.**
+
+   **[2026-09-03 정정 — Opus delta review defect 2]** 이 문단은 원래 "화면에는
+   `확인 필요(값 형식 오류)`로 뜬다"고 적었으나 **사실이 아니다.** Opus가 구버전을
+   실제로 재현한 결과, 그 fallback은 `StructuredReassessmentCard.tsx:52`의
+   *이전 소견* 줄에만 존재하고 **원장이 보는 주 exam 카드에는 어떤 표식도 없다.**
+   실제 열화는 문서가 서술한 것보다 나쁘다:
+   (a) EMR 텍스트에서 해당 소견 줄 누락,
+   (b) `pending`이 false라 **"아직 확인 안 됨" 목록에서도 빠짐**,
+   (c) 카드는 아무 표식 없이 `workspace__examCard--done` 스타일로 렌더 —
+   CD-2.5b-2가 사유 메모를 필수화하지 않았으므로 note가 비어 있으면
+   **화면에 흔적이 전혀 남지 않는다.**
+
+   임상 LAN 단일 배포이므로 완화책은 "태블릿·원장 화면을 같은 빌드로 동시 배포"
+   하나뿐이며, **롤백 시에도 같은 일이 생긴다.** 배포 메모에 명시할 것.
+   다음 확장(2.5c/Batch 4) 시 **오늘의 빌드가 그때의 구버전이 된다** —
+   fail-closed 표식은 백로그 항목으로 등록했다(§8).
 2. **`server/`에 이 enum 참조가 0건**임을 확인했다 → workspace blob은 서버에
    불투명(opaque). 서버 변경 없음이 **가정이 아니라 확인된 사실**이다.
 3. **선택지가 6개가 되면 원장이 `불명확`과 `제한`을 구분하지 않고 쓴다.**
@@ -360,6 +373,37 @@ CSS·`PatientResponseState`·`LbpDirectionalResponse`·capability 3상태 무변
 PASS. 이 diff와 무관한 기존 정리 로직의 경합이며 별건 백로그.
 
 ### 배포 시 주의 (§5-1 재확인)
-`LIMITED`/`NOT_PERFORMED`가 저장된 기록을 **구버전 클라이언트가 읽으면 EMR에서
-그 소견 한 줄이 조용히 누락된다**(화면엔 "확인 필요(값 형식 오류)"). 롤백해도
-같다. 태블릿·원장 화면을 같은 빌드로 동시 배포할 것.
+`LIMITED`/`NOT_PERFORMED`가 저장된 기록을 **구버전 클라이언트가 읽으면**
+(a) EMR에서 그 소견 한 줄이 조용히 누락되고, (b) "아직 확인 안 됨" 목록에서도
+빠지며, (c) 카드에는 아무 표식 없이 기록된 것처럼 보인다 — 사유 메모가 비어
+있으면 화면에 흔적이 전혀 남지 않는다(§5-1 정정 참고). 롤백해도 같다.
+태블릿·원장 화면을 같은 빌드로 동시 배포할 것.
+
+
+---
+
+## 8. Opus delta review 결과 및 후속 (2026-09-03)
+
+**Disposition: PASS** (`/tmp` 리뷰 원본 → 아래 요약; 재현 뮤테이션 11종 중 9종
+KILLED, 2종 SURVIVED → 결함 1·3).
+
+| # | 결함 | 처리 |
+|---|---|---|
+| 1 | `StructuredReassessmentCard`의 6버튼 렌더가 무테스트(4값 리터럴로 되돌려도 전 스위트 통과) | **수정 완료** `ab922be` — T-1b 쌍둥이 2건 추가, 뮤테이션으로 검출 확인 |
+| 2 | 배포 메모의 열화 서술이 사실과 다름(실제가 더 나쁨) | **수정 완료** — §5-1 및 §7 정정(이 커밋) |
+| 3 | T-10의 `PREVIOUS_EXAM_VALUE_TEMPLATE` 보호가 vacuous | **수정 완료** `ab922be` — 손상 `previous` → `NOT_YET_CHECKED` 단언 3건 추가(persistence/visitWorkspace 양쪽) |
+| 4 | 구버전 무증상 누락에 대한 fail-closed 표식 | **백로그**(이번 범위 밖). `ExamSuggestionCard` 렌더 시 `isValidExamStatus`가 false면 표식 1줄 + `--done` 스타일 제외. 다음 값 확장 전에 처리 권고 |
+
+**Opus가 독립 확인한 것**: 신규 2값이 음성/정상/eligible로 읽히는 경로 0건(전
+저장소 전수 grep), 결과값 추론 지점은 `lbpExerciseRecommendation.ts:305`의
+`=== 'POSITIVE'` 하나뿐이며 배타적, 다른 부위(목/어깨/무릎/팔꿈치/손목/발목/
+TMJ/고관절)는 exam 상태를 읽는 코드가 아예 없어 부위 분기 없이 안전,
+손상 값은 항상 `NOT_YET_CHECKED`(fail-safe) 또는 누락(fail-closed)으로 떨어짐,
+6버튼에서도 터치 타깃 높이 유지(줄만 감김), FROZEN/server zero-diff.
+
+**무조치 관찰(파일럿 확인 항목)**: `미시행`(미평가 뜻, `lbpExamSuggestions.ts:219`)과
+`시행 못 함`(판단 사실)이 같은 화면에 공존 — 문자열 충돌은 피했으나 한국어로는
+동의어로 읽힌다(PO가 tradeoff 인지 후 A안 선택). 데모 fixture `p3-cuff`의
+`UNCLEAR`+"통증으로 정확한 근력 평가 어려움"은 6상태 기준 교과서적 `LIMITED`
+사례 — 회귀 기준선이라 유지하되 파일럿용 `LIMITED` 예시 fixture 별도 추가 권고.
+상태값 자체에 대한 ⓘ 도움말은 이번에 만들지 않음(파일럿에서 혼용되면 추가).

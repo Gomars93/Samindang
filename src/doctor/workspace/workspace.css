@@ -1842,3 +1842,35 @@
   font-size: 13px;
   color: var(--text);
 }
+
+/* ---------- LBP v1 Batch 2.5c (§11): working hypothesis ---------- */
+/* Chip rows reuse .workspace__followUp__options/.workspace__followUpChip;
+   only the per-pattern group title and the patient-draft box are new. */
+.workspace__hypothesis__group {
+  margin-bottom: 12px;
+}
+
+.workspace__hypothesis__group:last-of-type {
+  margin-bottom: 0;
+}
+
+.workspace__hypothesis__group h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__hypothesis__patientDraft {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.workspace__hypothesis__patientDraftText {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}

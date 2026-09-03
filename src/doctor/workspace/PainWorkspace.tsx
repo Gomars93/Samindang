@@ -62,6 +62,7 @@ import {
   LBP_DIRECTIONAL_RESPONSE_OPTIONS,
   type LbpDirectionalResponse,
 } from './lbpExamSuggestions'
+import type { LbpWorkingHypothesis } from './lbpWorkingHypothesis'
 import {
   LBP_TARGET_FUNCTION_OPTIONS,
   LBP_TARGET_FUNCTION_PLACEHOLDERS,
@@ -655,6 +656,7 @@ export function PainWorkspaceNext({
   reassessment,
   priorVisits,
   lbpDirectionalResponse,
+  lbpWorkingHypothesis,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -671,6 +673,8 @@ export function PainWorkspaceNext({
   priorVisits?: PatientHistoryResult | null
   /** LBP v1 Batch 1 (G3): EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
   lbpDirectionalResponse?: LbpDirectionalResponse
+  /** LBP v1 Batch 2.5c (G16): EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 판단·처치 레인(DoctorWorkspace.tsx)에 있다. */
+  lbpWorkingHypothesis?: LbpWorkingHypothesis
 }) {
   const r = payload.responses
   const isLbp = r.safety_flags.lbp != null
@@ -683,6 +687,7 @@ export function PainWorkspaceNext({
     reassessment,
     nextReassessmentPlan,
     lbpDirectionalResponse,
+    lbpWorkingHypothesis,
   })
   const patientCarePlanText = buildPainPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })
   const followUpOptions = isLbp ? [...LBP_TARGET_FUNCTION_OPTIONS, ...PAIN_FOLLOW_UP_OPTIONS] : PAIN_FOLLOW_UP_OPTIONS

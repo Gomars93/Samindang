@@ -146,6 +146,13 @@ tests/.revisit-quick-check-bundle.mjs
 tests/.revisit-quick-check-card-bundle.cjs
 tests/.revisit-quick-check-longitudinal-bundle.mjs
 
+# esbuild bundles used by tests/lbp-working-hypothesis.spec.mjs (regenerated, not source)
+tests/.lbp-working-hypothesis-bundle.mjs
+tests/.lbp-working-hypothesis-card-bundle.cjs
+tests/.lbp-working-hypothesis-emrpreview-bundle.mjs
+tests/.lbp-working-hypothesis-persistence-bundle.mjs
+tests/.lbp-working-hypothesis-visitworkspace-bundle.mjs
+
 # esbuild bundles used by tests/crm-schema.spec.mjs (regenerated, not source)
 tests/.crm-types-bundle.mjs
 tests/.crm-task-engine-bundle.mjs

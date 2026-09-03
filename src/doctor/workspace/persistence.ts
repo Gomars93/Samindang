@@ -41,6 +41,7 @@ import { emptyAdditionalConcernPromotion } from './additionalConcern'
 import type { Provenance } from './provenance'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } from './sanitize'
 import { isValidLbpDirectionalResponse, type LbpDirectionalResponse } from './lbpExamSuggestions'
+import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -222,6 +223,17 @@ export type WorkspaceState = {
    * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
    */
   lbpDeniedCapabilities: string[]
+  /**
+   * LBP v1 Batch 2.5c (G16, `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`
+   * §11.2): the clinician's own directly-selected support level per pattern
+   * — no score, no computed value, ever (see `lbpWorkingHypothesis.ts`'s
+   * file header). Default `emptyLbpWorkingHypothesis()` (every pattern
+   * 'UNJUDGED'). Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION
+   * — a legacy record with no field at all deserializes to the same empty
+   * default, same convention as `lbpDirectionalResponse`/
+   * `lbpConfirmedCapabilities` above.
+   */
+  lbpWorkingHypothesis: LbpWorkingHypothesis
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -246,6 +258,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     lbpDirectionalResponse: 'NOT_ASSESSED',
     lbpConfirmedCapabilities: [],
     lbpDeniedCapabilities: [],
+    lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
     updated_at: null,
   }
 }
@@ -317,6 +330,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
       : empty.lbpDirectionalResponse,
     lbpConfirmedCapabilities,
     lbpDeniedCapabilities,
+    lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

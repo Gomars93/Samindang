@@ -30,6 +30,8 @@ import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import { ObjectiveExamFindingsCard, type ObjectiveExamField } from '../ObjectiveExamFindingsCard'
 import { VisitSummaryAside } from './VisitSummaryAside'
 import { PainFinalAssessmentCard, HerbalFinalAssessmentCard } from './FinalAssessmentCard'
+import { LbpWorkingHypothesisCard } from './LbpWorkingHypothesisCard'
+import { appendLbpHypothesisSentenceToPatientInstruction } from './lbpWorkingHypothesis'
 import { isPainFinalAssessmentRecorded, isHerbalFinalAssessmentRecorded } from './finalAssessment'
 import { computeLane1Summary, type Lane1RegionInput } from './lane1Summary'
 import { lastVisitTrackedLine } from './longitudinal'
@@ -661,6 +663,33 @@ export function DoctorWorkspace({
             <h2 id="judgment-h2">판단·처치</h2>
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
               <>
+                {/*
+                  LBP v1 Batch 2.5c (G16, §11.4): "확인 → 임상가설 →
+                  치료·운동 결정" -- the clinician's own working-hypothesis
+                  chips render immediately before PainFinalAssessmentCard,
+                  LBP records only (the 5 patterns are LBP-specific
+                  management categories, same isLbpRecord gate
+                  PainExerciseSection already uses below).
+                */}
+                {isLbpRecord && (
+                  <LbpWorkingHypothesisCard
+                    value={workspaceState.lbpWorkingHypothesis}
+                    onChange={(next) => setWorkspaceState((s) => ({ ...s, lbpWorkingHypothesis: next }))}
+                    onInsertPatientSentence={(sentence) =>
+                      setWorkspaceState((s) => ({
+                        ...s,
+                        painCarePlan: {
+                          ...s.painCarePlan,
+                          patientInstruction: appendLbpHypothesisSentenceToPatientInstruction(
+                            s.painCarePlan.patientInstruction,
+                            sentence,
+                          ),
+                          recordedAt: new Date().toISOString(),
+                        },
+                      }))
+                    }
+                  />
+                )}
                 <PainFinalAssessmentCard
                   value={workspaceState.painFinalAssessment}
                   onChange={(next) => setWorkspaceState((s) => ({ ...s, painFinalAssessment: next }))}
@@ -793,6 +822,7 @@ export function DoctorWorkspace({
                 reassessment={workspaceState.painReassessment}
                 priorVisits={priorVisits}
                 lbpDirectionalResponse={workspaceState.lbpDirectionalResponse}
+                lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (

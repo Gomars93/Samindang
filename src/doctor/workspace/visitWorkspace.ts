@@ -22,6 +22,7 @@ import { reassessmentExamItemFromPrevious, type StructuredReassessment, type Pre
 import { emptyStructuredReassessment } from './reassessmentExam'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord } from './sanitize'
 import { emptyRevisitQuickCheck, sanitizeRevisitQuickCheck, type RevisitQuickCheck } from './revisitQuickCheck'
+import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
@@ -74,6 +75,15 @@ export type VisitWorkspaceState = {
    * `lbpDirectionalResponse` in persistence.ts.
    */
   revisitQuickCheck: RevisitQuickCheck
+  /**
+   * LBP v1 Batch 2.5c (G16, §11.2): same field/shape/defaults as
+   * `WorkspaceState.lbpWorkingHypothesis` (persistence.ts) — a revisit's
+   * generic workspace reuses the identical clinician-selection type rather
+   * than inventing a parallel one, matching this file's own "one generic
+   * set of clinician fields" design (see the file header). Additive field,
+   * does NOT bump VISIT_WORKSPACE_SCHEMA_VERSION.
+   */
+  lbpWorkingHypothesis: LbpWorkingHypothesis
   updated_at: string | null
 }
 
@@ -86,6 +96,7 @@ export function emptyVisitWorkspaceState(): VisitWorkspaceState {
     nextReassessmentPlan: emptyNextReassessmentPlan(),
     reassessment: emptyStructuredReassessment(),
     revisitQuickCheck: emptyRevisitQuickCheck(),
+    lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
     updated_at: null,
   }
 }
@@ -111,6 +122,7 @@ export function deserializeVisitWorkspaceState(raw: unknown): VisitWorkspaceStat
     nextReassessmentPlan: sanitizeShape(empty.nextReassessmentPlan, raw.nextReassessmentPlan),
     reassessment: sanitizeStructuredReassessment(empty.reassessment, raw.reassessment),
     revisitQuickCheck: sanitizeRevisitQuickCheck(raw.revisitQuickCheck),
+    lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

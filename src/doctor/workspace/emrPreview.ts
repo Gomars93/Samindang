@@ -27,6 +27,7 @@ import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { ClinicianObservationItem } from './clinicianObservation'
 import type { FollowUpTarget, HerbalFinalAssessment, PainFinalAssessment, NextReassessmentPlan } from './finalAssessment'
 import { lbpDirectionalResponseLabel, type LbpDirectionalResponse } from './lbpExamSuggestions'
+import { summarizeLbpWorkingHypothesisKo, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
 import type { PainCarePlan, HerbalCarePlan } from './carePlan'
 import type { ReassessmentExamItem, StructuredReassessment } from './reassessmentExam'
@@ -39,6 +40,24 @@ import {
 } from './provenance'
 
 const CRLF = '\r\n'
+
+/**
+ * A normal entry renders "label: value" (or bare "label:" when value is
+ * empty — every existing line here always shows its label even blank, so a
+ * clinician sees every field exists). `raw` is the escape hatch for a line
+ * that is ALREADY a complete, self-labeled string — used only by the LBP
+ * v1 Batch 2.5c "임상 가설" line (`summarizeLbpWorkingHypothesisKo` already
+ * returns "임상 가설: ..." whole, matching the same convention
+ * `summarizeRevisitQuickCheckKo` already established for revisit recap
+ * text) — never double-prefixed, and (unlike every label entry) simply
+ * omitted rather than shown blank when absent.
+ */
+type EmrLine = { label: string; value: string } | { raw: string }
+
+function formatEmrLine(line: EmrLine): string {
+  if ('raw' in line) return line.raw
+  return line.value.trim() ? `${line.label}: ${line.value.trim()}` : `${line.label}:`
+}
 
 function followUpTargetsLine(targets: FollowUpTarget[]): string {
   return targets
@@ -107,13 +126,19 @@ export function buildPainWorkspaceEmrPreview(input: {
   nextReassessmentPlan?: NextReassessmentPlan
   /** LBP v1 Batch 1 (G3): only ever renders a line when NOT the 'NOT_ASSESSED' default — a default/unset value is never printed as if it were a normal finding. */
   lbpDirectionalResponse?: LbpDirectionalResponse
+  /** LBP v1 Batch 2.5c (G16, §11.5): renders one optional "임상 가설" line immediately before Assessment, only when `summarizeLbpWorkingHypothesisKo` returns non-null (at least one pattern is not UNJUDGED) — a fully-UNJUDGED hypothesis produces no line at all, never an empty "임상 가설:" line. */
+  lbpWorkingHypothesis?: LbpWorkingHypothesis
 }): string {
-  const lines: Array<{ label: string; value: string }> = [
+  const hypothesisSummary = input.lbpWorkingHypothesis ? summarizeLbpWorkingHypothesisKo(input.lbpWorkingHypothesis) : null
+  const lines: EmrLine[] = [
     { label: '주호소', value: input.primaryConcern ?? '' },
     { label: '진찰 소견', value: examFindingsLines(input.examSuggestions).join('; ') },
     ...(input.lbpDirectionalResponse && input.lbpDirectionalResponse !== 'NOT_ASSESSED'
       ? [{ label: '허리 움직임 반응', value: lbpDirectionalResponseLabel(input.lbpDirectionalResponse) }]
       : []),
+    // §11.5: no line at all when null (a fully-UNJUDGED hypothesis) —
+    // never an empty "임상 가설:" line.
+    ...(hypothesisSummary ? [{ raw: hypothesisSummary }] : []),
     { label: 'Assessment', value: input.finalAssessment.finalWorkingAssessment },
     { label: '치료 초점', value: input.finalAssessment.treatmentFocus },
     { label: '시행/예정 처치', value: input.finalAssessment.interventionPerformedOrPlanned },
@@ -138,7 +163,7 @@ export function buildPainWorkspaceEmrPreview(input: {
       ? [{ label: '다음 상세 재평가', value: nextReassessmentPlanLine(input.nextReassessmentPlan) }]
       : []),
   ]
-  return lines.map(({ label, value }) => (value.trim() ? `${label}: ${value.trim()}` : `${label}:`)).join(CRLF)
+  return lines.map(formatEmrLine).join(CRLF)
 }
 
 export function buildHerbalWorkspaceEmrPreview(input: {

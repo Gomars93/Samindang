@@ -338,3 +338,38 @@ Working Hypothesis, Rehab Strategy(4개 taxonomy), Decision Key, tranche, suffic
 - 환자 태블릿 응답(`MicroFollowUpResponse`)을 quick check로 자동 복사하지 않는다(출처 분리 원칙).
 - 점수/threshold/자동 escalation/자동 재초진 전환/EMR·CRM 변경(Batch 4)/Working Hypothesis(2.5c)/ExamCheckStatus 확장(2.5b).
 - Stop point: 위 (b)의 문장 중 하나라도 "안전 의미"를 바꾸는 것으로 판단되면 구현을 멈추고 `CLINICAL DECISION REQUIRED`로 보고한다.
+
+---
+
+## 10. Batch 3.1 브리프 — 재진 화면 잔손질 2건 (PO 승인 2026-09-03, Fable 최소 설계)
+
+**전제:** Batch 3 CLOSED 상태(HEAD `565d600`)에서 PO가 "복잡하게 만들지 않는다"를 조건으로 두 건을 승인. 자동으로 여는 것 없음, 새 규칙·threshold 없음, 새 필드 없음.
+
+### 10.1 (A) "재검토" 계열 안내에 세부 재검 꼬리말 1줄
+
+- `revisitQuickCheck.ts` `deriveRevisitQuickCheckGuidance`: 규칙 2(이상반응) / 3(악화) / 4(계획대로 시행+변화 없음) 중 **하나라도** 발화하면, 기존 문장들 뒤에 **한 번만** 별도 줄을 추가한다:
+  `export const REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT = "필요하면 아래 '오늘 재검'을 펼쳐 이전 검사 결과와 비교하세요."`
+- 규칙 1(신경증상, 이미 더 강한 문장), 5/6(운동 조정 계열), 7(유지·진행)에는 붙이지 않는다 — 알림 피로 방지.
+- 순서: 기존 규칙 1~6 문장 → 꼬리말(해당 시) → (규칙 7은 lines가 비었을 때만이므로 영향 없음). `safetyRefreshSuggested` 불변.
+- 카드/`RevisitWorkspace.tsx` 변경 없음(문장은 이미 `lines`로 렌더됨). `<details open=...>` 식 불변.
+
+### 10.2 (B) 재진 3회차 이후에도 "이전에 채택한 운동" 표시
+
+현재 `acceptedRehabTitles`는 직전 방문이 초진(submission-backed)일 때만 계산된다(`priorVisitRecapLines`). 직전이 재진이면 빈 배열 → 초진에서 채택한 운동이 화면에서 사라진다.
+
+- `longitudinal.ts`에 순수 함수 추가: `findLatestSubmissionBackedPriorVisit(visits: unknown): { visitId: string; submissionId: string; createdAt: unknown } | null` — 최신순 배열에서 처음 만나는 `submissionId`가 비어있지 않은 문자열인 원소. 비배열/원소 null/필드 손상 → null, throw 금지.
+- `RevisitWorkspace.tsx`:
+  - 새 state `rehabSourceSubmission: { submission: SubmissionRecord; createdAt: unknown } | null` (load 시작 시 null로 리셋 — 기존 리셋 블록과 같은 위치).
+  - load 안에서 `const rehabSource = findLatestSubmissionBackedPriorVisit(historyResult.data.visits)`. `rehabSource`가 있고 그 `visitId`가 `latest.visitId`와 같으면 **이미 받은 `priorSubmission` 결과를 재사용**(추가 fetch 없음); 다르면 `getSubmission(rehabSource.submissionId)` 1회 추가 fetch(실패 시 조용히 null — 다른 recap에 영향 없음, `cancelled` 가드 준수).
+  - `acceptedRehabTitles`는 `priorVisitRecapLines`/`priorVisitRecapLinesFromVisitWorkspace` 반환에서 **제거**하고, 새 로컬 순수 함수 `acceptedRehabTitlesFromSubmission(sub: SubmissionRecord | null): string[]`(내부에서 `deserializeWorkspaceState`를 거친 `painRehabSuggestions` 중 `status === 'ACCEPTED'`의 `title`)로 `rehabSourceSubmission?.submission`에서 계산한다.
+  - 표시 문구: `<strong>이전에 채택한 운동({readablePriorVisitDateLabel(createdAt)} 초진)</strong> A, B`. 직전 방문이 초진이면 결과적으로 기존과 동일한 내용 + 날짜만 추가.
+  - `priorSubmission`(직전 방문 recap·carry-forward 원천)의 의미는 **그대로**: 직전 방문이 재진이면 여전히 null. carry-forward는 손대지 않는다.
+
+### 10.3 테스트
+
+- `tests/revisit-quick-check.spec.mjs`: (A) 규칙 3 단독 → 꼬리말 1줄 존재; 규칙 2+3+4 동시 → 꼬리말 **정확히 1회**; 규칙 1 단독 / 5 단독 / 6 단독 / 규칙 7 케이스 → 꼬리말 없음; 꼬리말이 항상 마지막 줄. 기존 변이 저항 3건 유지. (B) `findLatestSubmissionBackedPriorVisit`: `[revisit, revisit, initial]` → initial; `[initial, …]` → index 0; 전부 revisit → null; 비배열/`[null]`/`submissionId` 비문자열·빈문자열 → 건너뜀/null, throw 없음. (`longitudinal.ts`를 test 스크립트 esbuild 번들에 추가.)
+- `tests/doctor-workspace.spec.mjs`(소스 검사 관례): `rehabSourceSubmission`이 load 리셋 블록에 포함; latest와 같을 때 재fetch 없이 재사용하는 분기 존재; `priorVisitRecapLines` 반환에 `acceptedRehabTitles` 없음; 표시 문구에 `readablePriorVisitDateLabel` 사용; `<details open=` 식 불변.
+- `npx tsc -b`, `npm run build`, `test:revisit-quick-check`, `test:workspace-round3`, `test:doctor-workspace`, `test:doctor-reset-key`, `test:all` PASS. FROZEN/서버 zero-diff.
+
+### 10.4 금지
+- 자동 열기, 새 필드, threshold, 카드 UI 변경, `revisitCarryForward.ts`/`microFollowUp.ts`/`persistence.ts`/`DoctorWorkspace.tsx`/`PainWorkspace.tsx`/`server/`/FROZEN 변경. 규칙 1·5·6·7 문장 자구 변경 금지.

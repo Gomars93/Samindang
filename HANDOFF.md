@@ -1,5 +1,49 @@
 # Current Handoff
 
+## ⚠️ 2026-09-03 (최신 9): LBP v1 Batch 2.5b 영향 범위 설계 완료 — PO 판단 3건 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 이 문서 커밋 시점에
+origin과 동일. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+**한 일**: Batch 2.5b(`ExamCheckStatus`에 LIMITED/NOT_PERFORMED 추가) 착수
+전 게이트인 Fable 영향 범위 설계를 작성했다 →
+`docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`. **코드 변경 0** (문서 3개만:
+설계 문서 신규 + DECISIONS + 이 문서).
+
+**설계 결론(요약)**:
+- additive 2값만 추가, 기존 4값 무변경. 라벨/glyph `Record<ExamCheckStatus,…>`
+  맵 2개가 컴파일 타임 exhaustiveness 게이트.
+- 신규 2값은 "기록된 사실" = pending 아님 → EMR·재진 이월에 나타나고 "아직
+  확인 안 됨" 카운터에서 빠진다. 기존 필터 6곳이 전부 `!== 'NOT_YET_CHECKED'`
+  형태라 **코드 변경 없이 이미 맞다** — 이 batch의 실제 산출물은 그 우연을
+  계약으로 고정하는 테스트(T-1~T-10 + 뮤테이션 6종).
+- 판단 근거로는 쓰지 않는다(`lbpExerciseRecommendation.ts:300`은 이미
+  `=== 'POSITIVE'`라 로직 무변경, 주석만 갱신).
+- **must-fix 1건**: 손으로 쓴 `STATUS_OPTIONS` 리터럴 2곳은 부분집합이 타입을
+  통과하므로, 값만 추가하면 tsc·build·기존 테스트 전부 통과하는데 화면에는
+  신규 버튼이 안 나온다 → `provenance.ts`의 `EXAM_CHECK_STATUS_OPTIONS`
+  단일 정의 + 커버리지 테스트로 강제.
+- 마이그레이션·서버 변경 없음(server/에 참조 0건). 단 **역방향 열화**:
+  신버전이 쓴 `LIMITED`를 구버전이 읽으면 EMR에서 소견 한 줄이 조용히
+  누락된다(롤백 시에도 동일) → 태블릿·원장 화면 동시 배포 필요.
+
+**사람 판단 대기 (이게 지금의 blocker)**:
+1. **CD-2.5b-1(차단)** 두 값의 한국어 라벨. 기존
+   `LbpDirectionalResponse.NOT_ASSESSED` 라벨이 이미 "미시행"이고 뜻은
+   **미평가**다(`lbpExamSuggestions.ts:219`) → 그대로 쓰면 한 화면에서 같은
+   단어가 두 뜻. **권고 A**: `제한적 시행(판단 유보)` / `시행 못 함`
+   (기존 라벨 무수정).
+2. **CD-2.5b-2(차단)** `NOT_PERFORMED` 사유 메모 필수화 여부.
+   **권고**: 필수화하지 않고 선택 시 상세·메모 토글을 자동으로 펼침.
+3. **CD-2.5b-3(비차단)** 상태 버튼 6개 배치. **권고 기본값**: 한 줄 유지 +
+   자주 쓰는 3개를 앞에 두는 순서로 해결, CSS 무변경.
+
+**다음 행동(하나)**: 위 CD-2.5b-1/-2를 PO가 정하면 Sonnet이 설계 문서 §6의
+"수정 허용 파일 6개" 범위로 착수. 그 뒤 2.5c(Working Hypothesis 최소) →
+Batch 4(EMR 고정 6키 + CRM 최소).
+
+---
+
 ## ⚠️ 2026-09-03 (최신 8): LBP v1 Batch 3.1(재진 화면 잔손질 2건) 게이트 CLOSED
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `a57d9db` + 이

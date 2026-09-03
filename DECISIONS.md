@@ -1951,3 +1951,51 @@ RESOLVED를 독립 재현으로 확인).
 ### Consequences
 - 다음: Batch 2.5b(Fable 영향 범위 설계 먼저) → 2.5c → 4.
 - 백로그: 라벨 "초진" → "문진" 자구 조정 후보.
+
+## 2026-09-03 — LBP v1 Batch 2.5b 영향 범위 설계 완료 (Fable), PO 판단 3건 대기
+
+### Context
+- HANDOFF의 "다음 행동(하나)"에 따른 착수 전 게이트. `ExamCheckStatus`는 전
+  부위 공유 타입이라 Sonnet 착수 전 Fable이 영향 범위를 먼저 설계
+  (`DECISIONS.md` 2026-09-02/03). 산출물:
+  `docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`. 코드 변경 0.
+
+### Decision (설계, 구현 아님)
+1. **additive 2값** `LIMITED`/`NOT_PERFORMED`만 추가. 기존 4값의 의미·라벨·
+   glyph·직렬화 무변경. `Record<ExamCheckStatus, string>` 라벨/glyph 맵 2개가
+   컴파일 타임 exhaustiveness 게이트 역할을 한다.
+2. **두 신규 값은 "기록된 사실"** — pending 아님. EMR/재진 이월에 나타나고
+   "아직 확인 안 됨" 카운터에서 빠진다. 기존 필터 6곳이 전부
+   `!== 'NOT_YET_CHECKED'` 형태라 **코드 변경 없이** 이 동작이 성립하므로,
+   이 batch의 실제 산출물은 그 우연을 계약으로 고정하는 테스트(T-2/T-3)다.
+3. **판단 근거로는 쓰지 않는다.** 결과값으로 추론하는 유일한 지점
+   (`lbpExerciseRecommendation.ts:300`, `=== 'POSITIVE'`)은 이미 배타적 →
+   로직 무변경, 주석만 6상태로 갱신.
+4. **must-fix 1건**: 손으로 쓴 `STATUS_OPTIONS` 리터럴 2곳
+   (`ExamSuggestionCard.tsx:19`, `StructuredReassessmentCard.tsx:20`)은
+   `ExamCheckStatus[]`가 부분집합을 허용하므로 값 추가 시 tsc/build/기존
+   테스트 전부 통과하면서 신규 버튼이 화면에 안 나온다 →
+   `provenance.ts`의 `EXAM_CHECK_STATUS_OPTIONS` 단일 정의로 승격 + 커버리지
+   테스트(T-1)로 강제.
+5. **마이그레이션·서버 변경 없음**(server/에 이 enum 참조 0건 확인).
+   단 **역방향 열화 경로 실재**: 신버전이 쓴 `LIMITED`를 구버전이 읽으면
+   `isValidExamStatus` false → EMR에서 소견 한 줄이 조용히 누락되고 화면에
+   "확인 필요(값 형식 오류)". 롤백 시에도 동일 → 동시 배포 필요.
+
+### 사람 판단 대기 (CLINICAL DECISION REQUIRED)
+- **CD-2.5b-1(차단)** 두 값의 한국어 라벨. `LbpDirectionalResponse.NOT_ASSESSED`가
+  이미 "미시행"을 **미평가**의 뜻으로 쓰고 있어(`lbpExamSuggestions.ts:219`)
+  같은 단어가 두 뜻이 된다. 권고 A: `제한적 시행(판단 유보)` /
+  `시행 못 함` (기존 라벨 무수정).
+- **CD-2.5b-2(차단)** `NOT_PERFORMED` 사유 메모 필수화 여부. 권고: 필수화하지
+  않고, 선택 시 상세·메모 토글을 자동으로 펼침.
+- **CD-2.5b-3(비차단)** 상태 버튼 6개 배치. 권고 기본값: 한 줄 유지 +
+  자주 쓰는 3개를 앞에 두는 순서로 해결, CSS 무변경.
+
+### Consequences
+- CD-2.5b-1/-2 승인 후 Sonnet 착수. 수정 허용 파일 6개 + 금지 목록은 설계
+  문서 §6. 게이트: `tsc -b`/`vite build`/`test:all` + FROZEN·tablet·server
+  zero-diff + 뮤테이션 6종 검출.
+- 백로그(비차단): `isExamChecked`(provenance.ts:128) 호출처 0 dead export 정리,
+  `DoctorWorkspace.tsx:420`의 한약 관찰 승격 시 `status:'UNCLEAR'` 자리표시자
+  오용 — 신규 2값 어느 것도 맞지 않으므로 이 batch에서 손대지 않음.

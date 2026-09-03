@@ -2556,4 +2556,109 @@ test('LBP v1 Batch 3: RevisitWorkspace.tsx computes detailCheckDue via computeDe
   assert.ok(/function todayISO\(\)/.test(src), 'todayISO() is its own named function (an injectable seam), not an inline new Date() at the call site')
 })
 
+// ---------------------------------------------------------------------------
+// LBP v1 Batch 3.1 (§10.2): "이전에 채택한 운동" survives past the 2nd
+// revisit -- RevisitWorkspace.tsx wiring for `rehabSourceSubmission` +
+// `findLatestSubmissionBackedPriorVisit`. Same source-string-check
+// convention as the Batch 3 block just above (RevisitWorkspace.tsx fetches
+// over the network, so it is not bundled/rendered here).
+// ---------------------------------------------------------------------------
+
+test('LBP v1 Batch 3.1: rehabSourceSubmission is reset to null in the load effect\'s existing reset block, alongside priorSubmission/priorVisitWorkspace', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const resetAnchor = 'setPriorHistory(null)'
+  const resetStart = src.indexOf(resetAnchor)
+  assert.ok(resetStart !== -1, 'the reset block exists')
+  const resetChunk = src.slice(resetStart, resetStart + 400)
+  const priorSubmissionIdx = resetChunk.indexOf('setPriorSubmission(null)')
+  const priorVisitWorkspaceIdx = resetChunk.indexOf('setPriorVisitWorkspace(null)')
+  const rehabSourceIdx = resetChunk.indexOf('setRehabSourceSubmission(null)')
+  assert.ok(priorSubmissionIdx !== -1 && priorVisitWorkspaceIdx !== -1, 'sanity: the existing reset calls are still there')
+  assert.ok(rehabSourceIdx !== -1, 'setRehabSourceSubmission(null) is called in the reset block')
+  assert.ok(rehabSourceIdx > priorVisitWorkspaceIdx, 'it sits alongside (after) the existing priorSubmission/priorVisitWorkspace resets, in the same block')
+  // Non-vacuous "same block" check: nothing that starts a NEW effect/function
+  // (the next useEffect or the load() declaration) sits between them.
+  const between = resetChunk.slice(priorVisitWorkspaceIdx, rehabSourceIdx)
+  assert.ok(!between.includes('async function load'), 'the reset stays inside the synchronous reset block, before load() is even declared')
+})
+
+test('LBP v1 Batch 3.1: the load effect reuses the already-fetched latest-visit submission (no extra getSubmission call) when rehabSource IS the latest visit', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const rehabSourceAnchor = 'const rehabSource = findLatestSubmissionBackedPriorVisit(historyResult.data.visits)'
+  const rehabSourceIdx = src.indexOf(rehabSourceAnchor)
+  assert.ok(rehabSourceIdx !== -1, 'rehabSource is computed via findLatestSubmissionBackedPriorVisit(historyResult.data.visits)')
+  const branchChunk = src.slice(rehabSourceIdx, rehabSourceIdx + 900)
+  assert.ok(
+    /rehabSource\.visitId === latest\.visitId/.test(branchChunk),
+    'the branch compares rehabSource.visitId against the latest prior visit\'s visitId',
+  )
+  // Non-vacuous "no extra fetch": the reuse branch (guarded by the
+  // visitId-equality check) must set state from `latestSubmission` (the
+  // variable already populated by the EARLIER getSubmission(latest.submissionId)
+  // call above), not call getSubmission again -- while the DIFFERENT branch
+  // (rehabSource is an older visit) DOES call getSubmission a second time,
+  // proving this file really does distinguish the two cases rather than
+  // always/never fetching.
+  const reuseIfIdx = branchChunk.search(/if\s*\(latest\s*&&\s*rehabSource\.visitId === latest\.visitId/)
+  assert.ok(reuseIfIdx !== -1, 'an explicit reuse-branch if() exists')
+  const elseIdx = branchChunk.indexOf('} else {', reuseIfIdx)
+  assert.ok(elseIdx !== -1, 'the reuse branch has a matching else branch')
+  const reuseBranchSrc = branchChunk.slice(reuseIfIdx, elseIdx)
+  const elseBranchSrc = branchChunk.slice(elseIdx, elseIdx + 300)
+  assert.ok(reuseBranchSrc.includes('latestSubmission') && !reuseBranchSrc.includes('getSubmission('), 'the reuse branch uses latestSubmission and calls NO getSubmission at all')
+  assert.ok(elseBranchSrc.includes('getSubmission(rehabSource.submissionId)'), 'the non-reuse (older-visit) branch DOES call getSubmission a second time -- proves the reuse branch above is not simply "getSubmission is never called here"')
+  assert.ok(/if\s*\(!cancelled\)/.test(reuseBranchSrc), 'the reuse branch still respects the cancelled guard before calling setRehabSourceSubmission')
+  assert.ok(/if\s*\(!cancelled\s*&&\s*rehabSubmissionResult\.ok\)/.test(elseBranchSrc), 'the extra-fetch branch guards its setRehabSourceSubmission with both cancelled and .ok')
+})
+
+test('LBP v1 Batch 3.1: priorVisitRecapLines()/priorVisitRecapLinesFromVisitWorkspace() no longer RETURN acceptedRehabTitles', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const fn1Start = src.indexOf('function priorVisitRecapLines(priorSubmission')
+  const fn1End = src.indexOf('\n}', fn1Start)
+  assert.ok(fn1Start !== -1 && fn1End !== -1, 'priorVisitRecapLines() exists')
+  const fn1ReturnIdx = src.indexOf('return {', fn1Start)
+  assert.ok(fn1ReturnIdx !== -1 && fn1ReturnIdx < fn1End, 'priorVisitRecapLines() has a return statement')
+  const fn1ReturnStmt = src.slice(fn1ReturnIdx, src.indexOf('\n', fn1ReturnIdx))
+  assert.ok(!fn1ReturnStmt.includes('acceptedRehabTitles'), 'priorVisitRecapLines() no longer returns acceptedRehabTitles (checking the return statement itself, not doc comments that legitimately still name it)')
+
+  const fn2Start = src.indexOf('function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace')
+  const fn2End = src.indexOf('\n}', fn2Start)
+  assert.ok(fn2Start !== -1 && fn2End !== -1, 'priorVisitRecapLinesFromVisitWorkspace() exists')
+  const fn2ReturnIdx = src.indexOf('return {', fn2Start)
+  assert.ok(fn2ReturnIdx !== -1 && fn2ReturnIdx < fn2End, 'priorVisitRecapLinesFromVisitWorkspace() has a return statement')
+  const fn2ReturnStmt = src.slice(fn2ReturnIdx, src.indexOf('\n', fn2ReturnIdx))
+  assert.ok(!fn2ReturnStmt.includes('acceptedRehabTitles'), 'priorVisitRecapLinesFromVisitWorkspace() no longer returns acceptedRehabTitles')
+
+  // Non-vacuous: acceptedRehabTitles is still a real, used identifier
+  // elsewhere in the file (the new acceptedRehabTitlesFromSubmission() path)
+  // -- this proves the assertions above are checking these two functions'
+  // return statements specifically, not that the whole file dropped the
+  // feature (their doc comments, checked NOT to include it above, are
+  // free to keep naming it in prose explaining the removal).
+  assert.ok(src.includes('function acceptedRehabTitlesFromSubmission('), 'acceptedRehabTitles is still computed, just via the new acceptedRehabTitlesFromSubmission() function')
+})
+
+test('LBP v1 Batch 3.1: the "이전에 채택한 운동" label uses readablePriorVisitDateLabel(rehabSourceSubmission?.createdAt)', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const labelIdx = src.indexOf('이전에 채택한 운동(')
+  assert.ok(labelIdx !== -1, 'the label text exists')
+  const labelChunk = src.slice(labelIdx, labelIdx + 200)
+  assert.ok(
+    labelChunk.includes('readablePriorVisitDateLabel(rehabSourceSubmission?.createdAt)'),
+    'the label interpolates readablePriorVisitDateLabel(rehabSourceSubmission?.createdAt)',
+  )
+  assert.ok(labelChunk.includes('초진)'), 'the label reads "... 초진)" per the brief\'s exact wording')
+})
+
+test('LBP v1 Batch 3.1: the 오늘 재검 <details open=...> expression is STILL unchanged after this batch\'s edits', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const summaryIdx = src.indexOf('오늘 재검(Structured Reassessment) — 필요할 때 펼치기')
+  const detailsIdx = src.lastIndexOf('<details', summaryIdx)
+  const tagChunk = src.slice(detailsIdx, detailsIdx + 120)
+  assert.ok(
+    tagChunk.startsWith('<details className="workspace__revisit__optional" open={workspaceState.reassessment.items.length > 0}>'),
+    'open= is still exactly open={workspaceState.reassessment.items.length > 0}',
+  )
+})
+
 console.log(`\n${passed} doctor-workspace assertions passed.`)

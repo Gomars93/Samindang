@@ -58,6 +58,7 @@ import {
 } from '../../lib/serverClient'
 import {
   asPriorVisitArray,
+  findLatestSubmissionBackedPriorVisit,
   readablePriorVisitDateLabel,
   readablePriorVisitFollowUpTarget,
   readablePriorVisitPrimaryConcern,
@@ -139,13 +140,22 @@ function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
     ws?.painCarePlan?.homeActionPlan ? `집에서 할 일: ${ws.painCarePlan.homeActionPlan}` : null,
     ws?.herbalCarePlan?.currentManagementGoal ? `관리 목표: ${ws.herbalCarePlan.currentManagementGoal}` : null,
   ].filter((l): l is string => l !== null)
-  // LBP v1 Batch 3 (§9.2(e)): prior visit's ACCEPTED rehab suggestions --
-  // titles only, read through the same deserializeWorkspaceState() pass
-  // above, never the raw untrusted PUT body.
-  const acceptedRehabTitles = (ws?.painRehabSuggestions ?? [])
-    .filter((i) => i.status === 'ACCEPTED')
-    .map((i) => i.title)
-  return { examLines, observationLines, carePlanLines, acceptedRehabTitles }
+  return { examLines, observationLines, carePlanLines }
+}
+
+/**
+ * §10.2 (Batch 3.1): "이전에 채택한 운동" no longer reads from whichever
+ * SubmissionRecord `priorVisitRecapLines` happened to be given (that is
+ * always the IMMEDIATELY PRIOR visit, which stops being submission-backed
+ * from the patient's 3rd revisit onward) -- it reads from
+ * `rehabSourceSubmission`, the latest SUBMISSION-BACKED visit anywhere in
+ * the history (found via `findLatestSubmissionBackedPriorVisit`). Same
+ * `deserializeWorkspaceState` pass as `priorVisitRecapLines` above, same
+ * reasoning (never read the raw untrusted PUT body directly).
+ */
+function acceptedRehabTitlesFromSubmission(sub: SubmissionRecord | null): string[] {
+  const ws = sub?.workspace ? deserializeWorkspaceState(sub.workspace) : null
+  return (ws?.painRehabSuggestions ?? []).filter((i) => i.status === 'ACCEPTED').map((i) => i.title)
 }
 
 // Round 6 review fix (revisit-of-revisit prior context): the function above
@@ -176,10 +186,12 @@ function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorksp
   // No observationLines equivalent -- a revisit's own VisitWorkspaceState
   // has no herbal-observation field (see visitWorkspace.ts's doc comment:
   // one generic set of clinician fields, not a new clinical data shape).
-  // Same reasoning for acceptedRehabTitles: a revisit's own workspace has
-  // no rehab-suggestion field either (RehabSuggestion generation is the
-  // documented LBP-submission-only exception, see rehabSuggestion.ts).
-  return { examLines, observationLines: [] as string[], carePlanLines, acceptedRehabTitles: [] as string[] }
+  // acceptedRehabTitles no longer belongs here either (§10.2) -- a
+  // revisit's own workspace has no rehab-suggestion field anyway
+  // (RehabSuggestion generation is the documented LBP-submission-only
+  // exception, see rehabSuggestion.ts); it now comes from
+  // `acceptedRehabTitlesFromSubmission(rehabSourceSubmission?.submission)`.
+  return { examLines, observationLines: [] as string[], carePlanLines }
 }
 
 // LBP v1 Batch 3 (§9.2(c)): local date, yyyy-mm-dd -- pulled into its own
@@ -200,6 +212,15 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const [priorHistory, setPriorHistory] = useState<PatientHistoryResult | null>(null)
   const [priorSubmission, setPriorSubmission] = useState<SubmissionRecord | null>(null)
   const [priorVisitWorkspace, setPriorVisitWorkspace] = useState<VisitWorkspaceState | null>(null)
+  // §10.2 (Batch 3.1): the latest SUBMISSION-BACKED visit anywhere in the
+  // history (not necessarily the immediately prior visit) -- source for
+  // "이전에 채택한 운동" so that line survives past the patient's 2nd
+  // revisit. `createdAt` is carried alongside so the recap can date-label
+  // it without a second lookup into `priorHistory`.
+  const [rehabSourceSubmission, setRehabSourceSubmission] = useState<{
+    submission: SubmissionRecord
+    createdAt: unknown
+  } | null>(null)
   const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
@@ -240,6 +261,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     setPriorHistory(null)
     setPriorSubmission(null)
     setPriorVisitWorkspace(null)
+    setRehabSourceSubmission(null)
     setMicroFollowUpResponse(null)
     // Round 18: a stale-write conflict (and its preserved draft) is scoped
     // to the PREVIOUS visit -- never let it survive into a newly-opened one.
@@ -265,8 +287,10 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       if (historyResult.ok) {
         setPriorHistory(historyResult.data)
         const latest = historyResult.data.visits[0]
+        let latestSubmission: SubmissionRecord | null = null
         if (latest?.submissionId) {
           const submissionResult = await getSubmission(latest.submissionId)
+          if (submissionResult.ok) latestSubmission = submissionResult.data
           if (!cancelled && submissionResult.ok) setPriorSubmission(submissionResult.data)
         } else if (latest) {
           // Round 6 review fix: latest prior visit is itself a no-submission
@@ -276,6 +300,25 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           const priorVisitResult = await getVisit(latest.visitId)
           if (!cancelled && priorVisitResult.ok) {
             setPriorVisitWorkspace(deserializeVisitWorkspaceState(priorVisitResult.data.workspace))
+          }
+        }
+        // §10.2: find the latest submission-backed visit anywhere in the
+        // history for "이전에 채택한 운동" -- reuse `latestSubmission` above
+        // (no second fetch) when it IS that visit, otherwise one extra
+        // `getSubmission` call, guarded by `cancelled` like every other
+        // load-effect fetch here. A failure here is silent (stays null) --
+        // it must never affect the other prior-visit recap lines above.
+        const rehabSource = findLatestSubmissionBackedPriorVisit(historyResult.data.visits)
+        if (rehabSource) {
+          if (latest && rehabSource.visitId === latest.visitId && latestSubmission) {
+            if (!cancelled) {
+              setRehabSourceSubmission({ submission: latestSubmission, createdAt: rehabSource.createdAt })
+            }
+          } else {
+            const rehabSubmissionResult = await getSubmission(rehabSource.submissionId)
+            if (!cancelled && rehabSubmissionResult.ok) {
+              setRehabSourceSubmission({ submission: rehabSubmissionResult.data, createdAt: rehabSource.createdAt })
+            }
           }
         }
       }
@@ -388,11 +431,16 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     latestPrior ? latestPrior.followUpTargets : [],
   )
-  const { examLines, observationLines, carePlanLines, acceptedRehabTitles } = !latestPrior
-    ? { examLines: [], observationLines: [], carePlanLines: [], acceptedRehabTitles: [] }
+  const { examLines, observationLines, carePlanLines } = !latestPrior
+    ? { examLines: [], observationLines: [], carePlanLines: [] }
     : latestPrior.submissionId
       ? priorVisitRecapLines(priorSubmission)
       : priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace)
+
+  // §10.2 (Batch 3.1): sourced from the latest submission-backed visit
+  // ANYWHERE in the history, not just when the immediately prior visit
+  // happens to be one -- see `rehabSourceSubmission`'s load-effect comment.
+  const acceptedRehabTitles = acceptedRehabTitlesFromSubmission(rehabSourceSubmission?.submission ?? null)
 
   // LBP v1 Batch 3 (§9.2(e)): a prior REVISIT's own quick check, read
   // through the already-sanitized priorVisitWorkspace (deserializeVisitWorkspaceState
@@ -527,11 +575,17 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                     <strong>이전 관리 계획</strong> {carePlanLines.join('; ')}
                   </p>
                 )}
-                {/* LBP v1 Batch 3 (§9.2(e)): only when the LATEST prior visit is
-                    a submission-backed visit with ACCEPTED painRehabSuggestions. */}
+                {/* §10.2 (Batch 3.1): shown whenever ANY submission-backed
+                    visit exists in the history with ACCEPTED
+                    painRehabSuggestions -- not only when the immediately
+                    prior visit is one -- so this line survives past the
+                    patient's 2nd revisit. Date-labelled with the source
+                    visit's own createdAt so it reads correctly even when
+                    that source is several revisits back. */}
                 {acceptedRehabTitles.length > 0 && (
                   <p className="workspace__priorVisit__assessment">
-                    <strong>이전에 채택한 운동</strong> {acceptedRehabTitles.join(', ')}
+                    <strong>이전에 채택한 운동({readablePriorVisitDateLabel(rehabSourceSubmission?.createdAt)} 초진)</strong>{' '}
+                    {acceptedRehabTitles.join(', ')}
                   </p>
                 )}
                 {planShowable && (

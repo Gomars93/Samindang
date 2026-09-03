@@ -18,6 +18,7 @@ import {
   sanitizeRevisitQuickCheck,
   deriveRevisitQuickCheckGuidance,
   REVISIT_QUICK_CHECK_SAFETY_LINE,
+  REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT,
   computeDetailCheckDue,
   summarizeRevisitQuickCheckKo,
   QUICK_CHECK_CHANGE_OPTIONS,
@@ -29,6 +30,7 @@ import {
   REVISIT_QUICK_CHECK_GROUP_TITLE,
 } from './.revisit-quick-check-bundle.mjs'
 import { RevisitQuickCheckCard } from './.revisit-quick-check-card-bundle.cjs'
+import { findLatestSubmissionBackedPriorVisit } from './.revisit-quick-check-longitudinal-bundle.mjs'
 
 let passCount = 0
 function assert(name, cond) {
@@ -114,10 +116,13 @@ function assert(name, cond) {
   assert('rule 1: the exact safety sentence is present', rule1.lines.includes(REVISIT_QUICK_CHECK_SAFETY_LINE))
   assert('mutation-resistance (ii): neuro YES alone (others unanswered) still produces the safety line and NOTHING else', rule1.lines.length === 1)
 
-  // Rule 2.
+  // Rule 2. (§10.1: rule 2 alone also produces the detail-check hint as its
+  // second/last line -- see the dedicated §10.1 block further below for the
+  // full hint-specific coverage; this just keeps this rule's own line-count
+  // expectation accurate now that the hint exists.)
   const rule2 = deriveRevisitQuickCheckGuidance({ ...base, targetFunctionChange: 'BETTER', overallResponse: 'BETTER', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'DONE_AS_PLANNED', adverseEffect: 'YES' })
   assert('rule 2: adverseEffect=YES produces "치료 후 이상반응 기록됨" line', rule2.lines.includes('치료 후 이상반응 기록됨: 처치 계획 재검토.'))
-  assert('rule 2: no other rule fires alongside it in this scenario', rule2.lines.length === 1)
+  assert('rule 2: no other rule 1-6 sentence fires alongside it in this scenario (only its own line + the §10.1 hint)', rule2.lines.length === 2)
   assert('rule 2: does not itself raise the safety flag', rule2.safetyRefreshSuggested === false)
 
   // Rule 3 (both the target-function and overall-response branches).
@@ -130,7 +135,9 @@ function assert(name, cond) {
   // targetFunctionChange=SAME, overallResponse=SAME.
   const rule4 = deriveRevisitQuickCheckGuidance({ ...base, targetFunctionChange: 'SAME', overallResponse: 'SAME', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'DONE_AS_PLANNED', adverseEffect: 'NO' })
   assert('rule 4: 계획대로 시행 + SAME/SAME produces the plateau line', rule4.lines.includes('계획대로 시행했는데 변화 없음: 운동·처치 계획 재검토 고려.'))
-  assert('rule 4: no other rule fires alongside it in this scenario', rule4.lines.length === 1)
+  // §10.1: rule 4 alone also produces the detail-check hint as its second/
+  // last line -- see the dedicated §10.1 block further below.
+  assert('rule 4: no other rule 1-6 sentence fires alongside it in this scenario (only its own line + the §10.1 hint)', rule4.lines.length === 2)
   // Counterexample proving the AND is real, not vacuous: dropping just
   // overallResponse to BETTER must remove the plateau line.
   const rule4Counter = deriveRevisitQuickCheckGuidance({ ...base, targetFunctionChange: 'SAME', overallResponse: 'BETTER', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'DONE_AS_PLANNED', adverseEffect: 'NO' })
@@ -169,6 +176,90 @@ function assert(name, cond) {
   assert('mutation-resistance (i): neuro NOT_ASSESSED blocks "유지·진행" even though the other 4 are favorable', !mutationI.lines.some((l) => l.includes('유지·진행')))
   assert('mutation-resistance (i): counterexample -- the identical scenario with neuro=NO (rule 7 above) DOES produce "유지·진행" (proves this assertion is not vacuous)', rule7.lines.some((l) => l.includes('유지·진행')))
   assert('mutation-resistance (i): safetyRefreshSuggested stays false when neuro is merely unanswered (NOT_ASSESSED != NO)', mutationI.safetyRefreshSuggested === false)
+}
+
+/* ------------------------------------------------------------------------
+ * §10.1: REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT -- appended once, only when
+ * rule 2/3/4 fired, always after rules 1-6, always the last line.
+ * ---------------------------------------------------------------------- */
+{
+  const base = emptyRevisitQuickCheck()
+
+  // Rule 3 alone -> hint present exactly once, as the last line.
+  const rule3Hint = deriveRevisitQuickCheckGuidance({
+    ...base,
+    targetFunctionChange: 'WORSE',
+    overallResponse: 'SAME',
+    newNeuroOrRedFlag: 'NO',
+    exerciseAdherence: 'DONE_AS_PLANNED',
+    adverseEffect: 'NO',
+  })
+  const rule3HintIdx = rule3Hint.lines.indexOf(REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT)
+  assert('§10.1 rule 3 alone: hint line is present', rule3HintIdx !== -1)
+  assert('§10.1 rule 3 alone: hint appears exactly once', rule3Hint.lines.filter((l) => l === REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT).length === 1)
+  assert('§10.1 rule 3 alone: hint is the last line', rule3HintIdx === rule3Hint.lines.length - 1)
+
+  // Rules 2 + 3 fire together -> hint STILL exactly once, still last.
+  // (Rule 3 requires targetFunctionChange=WORSE or overallResponse=WORSE;
+  // rule 4 requires targetFunctionChange=SAME AND overallResponse=SAME on
+  // those same two fields -- the two are mutually exclusive by construction,
+  // so full "2+3+4 동시" coverage is split into this 2+3 case and the 2+4
+  // case right below; both independently prove the hint is deduplicated
+  // across multiple firing rules, which is the property the brief asks for.)
+  const rules23 = deriveRevisitQuickCheckGuidance({
+    targetFunctionChange: 'SAME',
+    overallResponse: 'WORSE', // rule 3
+    newNeuroOrRedFlag: 'NO',
+    exerciseAdherence: 'NOT_DONE',
+    adverseEffect: 'YES', // rule 2
+    note: '',
+    recordedAt: null,
+  })
+  const rule2And3HintCount = rules23.lines.filter((l) => l === REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT).length
+  assert('§10.1 rules 2+3 together: hint appears exactly once (not once per firing rule)', rule2And3HintCount === 1)
+  assert('§10.1 rules 2+3 together: hint is still the last line', rules23.lines[rules23.lines.length - 1] === REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT)
+  assert('§10.1 rules 2+3 together: both rule 2 and rule 3 sentences are present before the hint', rules23.lines.includes('치료 후 이상반응 기록됨: 처치 계획 재검토.') && rules23.lines.includes('악화: 계획 재검토.'))
+
+  const rules24 = deriveRevisitQuickCheckGuidance({
+    targetFunctionChange: 'SAME',
+    overallResponse: 'SAME',
+    newNeuroOrRedFlag: 'NO',
+    exerciseAdherence: 'DONE_AS_PLANNED', // rule 4
+    adverseEffect: 'YES', // rule 2
+    note: '',
+    recordedAt: null,
+  })
+  assert('§10.1 rules 2+4 together: hint appears exactly once', rules24.lines.filter((l) => l === REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT).length === 1)
+  assert('§10.1 rules 2+4 together: hint is still the last line', rules24.lines[rules24.lines.length - 1] === REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT)
+  assert('§10.1 rules 2+4 together: both rule 2 and rule 4 sentences are present', rules24.lines.includes('치료 후 이상반응 기록됨: 처치 계획 재검토.') && rules24.lines.includes('계획대로 시행했는데 변화 없음: 운동·처치 계획 재검토 고려.'))
+
+  // Rule 1 alone (neuro YES): the stronger safety sentence fires, but the
+  // detail-check hint must NOT be appended.
+  const rule1Alone = deriveRevisitQuickCheckGuidance({ ...base, newNeuroOrRedFlag: 'YES' })
+  assert('§10.1 rule 1 alone: hint absent (neuro alone is not 2/3/4)', rule1Alone.lines.indexOf(REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT) === -1)
+
+  // Rule 5 alone (DONE_TOO_HARD).
+  const rule5Alone = deriveRevisitQuickCheckGuidance({ ...base, targetFunctionChange: 'SAME', overallResponse: 'SAME', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'DONE_TOO_HARD', adverseEffect: 'NO' })
+  assert('§10.1 rule 5 alone: hint absent', rule5Alone.lines.indexOf(REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT) === -1)
+
+  // Rule 6 alone (NOT_DONE).
+  const rule6Alone = deriveRevisitQuickCheckGuidance({ ...base, targetFunctionChange: 'SAME', overallResponse: 'SAME', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'NOT_DONE', adverseEffect: 'NO' })
+  assert('§10.1 rule 6 alone: hint absent', rule6Alone.lines.indexOf(REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT) === -1)
+
+  // Rule 7 case (유지·진행): hint absent.
+  const rule7Case = deriveRevisitQuickCheckGuidance({ targetFunctionChange: 'BETTER', overallResponse: 'BETTER', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'DONE_AS_PLANNED', adverseEffect: 'NO', note: '', recordedAt: null })
+  assert('§10.1 rule 7 case (유지·진행): hint absent', rule7Case.lines.indexOf(REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT) === -1)
+  assert('§10.1 rule 7 case: this is a real (non-vacuous) scenario -- it still produces the maintain line', rule7Case.lines.includes('유지·진행 가능(원장 판단).'))
+
+  // Rule 8 case (nothing fires): hint absent, lines stays empty -- proves
+  // the hint logic does not fire "by default" when lines is empty.
+  const rule8Case = deriveRevisitQuickCheckGuidance({ targetFunctionChange: 'SAME', overallResponse: 'SAME', newNeuroOrRedFlag: 'NO', exerciseAdherence: 'NOT_ASSESSED', adverseEffect: 'NO', note: '', recordedAt: null })
+  assert('§10.1 rule 8 case: hint absent, lines stays empty entirely', rule8Case.lines.length === 0)
+
+  // safetyRefreshSuggested unchanged by the hint addition: still true only
+  // for rule 1, still false for a rule-2/3/4 case.
+  assert('§10.1: safetyRefreshSuggested unaffected by rule 2/3/4 hint (stays false)', rules23.safetyRefreshSuggested === false && rules24.safetyRefreshSuggested === false)
+  assert('§10.1: safetyRefreshSuggested still true for rule 1', rule1Alone.safetyRefreshSuggested === true)
 }
 
 /* ------------------------------------------------------------------------
@@ -303,6 +394,83 @@ function assert(name, cond) {
   }
   const fullSummary = summarizeRevisitQuickCheckKo(full)
   assert('summarizeRevisitQuickCheckKo: all 5 answered renders all 5, in group order', fullSummary === '이전 간단 체크: 목표 기능 나빠짐 · 전체 반응 비슷함 · 신경증상·위험신호 있음 · 운동 안 함 · 이상반응 있음')
+}
+
+/* ------------------------------------------------------------------------
+ * §10.2: findLatestSubmissionBackedPriorVisit
+ * ---------------------------------------------------------------------- */
+{
+  const revisit = (id, createdAt) => ({ visitId: id, submissionId: null, createdAt })
+  const initial = (id, submissionId, createdAt) => ({ visitId: id, submissionId, createdAt })
+
+  // [revisit, revisit, initial] -> skips both revisits, finds the initial.
+  const skipsRevisits = findLatestSubmissionBackedPriorVisit([
+    revisit('v3', '2026-09-01'),
+    revisit('v2', '2026-08-01'),
+    initial('v1', 's1', '2026-07-01'),
+  ])
+  assert('§10.2: [revisit, revisit, initial] finds the initial visit', skipsRevisits !== null && skipsRevisits.visitId === 'v1')
+  assert('§10.2: [revisit, revisit, initial] carries the right submissionId', skipsRevisits.submissionId === 's1')
+  assert('§10.2: [revisit, revisit, initial] carries the initial visit\'s own createdAt', skipsRevisits.createdAt === '2026-07-01')
+
+  // [initial, ...] -> the FIRST (latest) element, index 0, when it is
+  // already submission-backed -- no unnecessary scan past it.
+  const indexZero = findLatestSubmissionBackedPriorVisit([
+    initial('v2', 's2', '2026-09-01'),
+    initial('v1', 's1', '2026-07-01'),
+  ])
+  assert('§10.2: [initial, initial] returns index 0 (the latest), not an older one', indexZero !== null && indexZero.visitId === 'v2' && indexZero.submissionId === 's2')
+
+  // All revisits -> null. Non-vacuous: the skipsRevisits case above proves
+  // a real initial visit further back WOULD be found if present.
+  const allRevisits = findLatestSubmissionBackedPriorVisit([revisit('v2', '2026-08-01'), revisit('v1', '2026-07-01')])
+  assert('§10.2: all-revisit history returns null', allRevisits === null)
+  assert('§10.2: counterexample -- the same shape with a real initial visit appended DOES return non-null (proves the null above is not vacuous)', skipsRevisits !== null)
+
+  // Non-array input -> null, never throws.
+  for (const bad of [undefined, null, 'not-an-array', 42, {}]) {
+    let threw = false
+    let result
+    try {
+      result = findLatestSubmissionBackedPriorVisit(bad)
+    } catch {
+      threw = true
+    }
+    assert(`§10.2: non-array input (${JSON.stringify(bad)}) never throws`, !threw)
+    assert(`§10.2: non-array input (${JSON.stringify(bad)}) returns null`, result === null)
+  }
+
+  // [null] -> the single element is unreadable, skipped, falls through to null.
+  const nullElement = findLatestSubmissionBackedPriorVisit([null])
+  assert('§10.2: [null] element is skipped (not crashed on), returns null', nullElement === null)
+
+  // A null/undefined element earlier in the array does not block finding a
+  // real submission-backed visit further back -- proves "skip" really means
+  // skip-and-continue, not skip-and-stop.
+  const nullThenInitial = findLatestSubmissionBackedPriorVisit([null, initial('v1', 's1', '2026-07-01')])
+  assert('§10.2: a leading null element is skipped in favor of the real initial visit behind it', nullThenInitial !== null && nullThenInitial.visitId === 'v1')
+
+  // submissionId wrong-typed (non-string) -> skipped.
+  const wrongTypedSubmissionId = findLatestSubmissionBackedPriorVisit([
+    { visitId: 'v2', submissionId: 42, createdAt: '2026-08-01' },
+    initial('v1', 's1', '2026-07-01'),
+  ])
+  assert('§10.2: a non-string submissionId is skipped in favor of the real initial visit behind it', wrongTypedSubmissionId !== null && wrongTypedSubmissionId.visitId === 'v1')
+
+  // submissionId === '' (empty string) -> skipped, same as null/missing.
+  const emptySubmissionId = findLatestSubmissionBackedPriorVisit([
+    { visitId: 'v2', submissionId: '', createdAt: '2026-08-01' },
+    initial('v1', 's1', '2026-07-01'),
+  ])
+  assert('§10.2: an empty-string submissionId is skipped (never treated as a real id)', emptySubmissionId !== null && emptySubmissionId.visitId === 'v1')
+
+  // A record whose visitId is wrong-typed carries no usable id -- skipped
+  // rather than returned with a fabricated/garbage visitId.
+  const wrongTypedVisitId = findLatestSubmissionBackedPriorVisit([
+    { visitId: 42, submissionId: 's2', createdAt: '2026-08-01' },
+    initial('v1', 's1', '2026-07-01'),
+  ])
+  assert('§10.2: a non-string visitId is skipped in favor of the real initial visit behind it', wrongTypedVisitId !== null && wrongTypedVisitId.visitId === 'v1')
 }
 
 /* ------------------------------------------------------------------------

@@ -181,6 +181,18 @@ export type RevisitQuickCheckGuidance = {
 }
 
 /**
+ * §10.1: appended once, after every rule 1-6 sentence, when (and only when)
+ * rule 2 (이상반응), rule 3 (악화), or rule 4 (계획대로 시행+변화 없음)
+ * fired -- those three are the cases where a look at "오늘 재검" (the
+ * detail-check form) is actually useful. Rule 1 already carries a stronger
+ * sentence of its own; rules 5/6 (운동 조정 계열) and rule 7 (유지·진행) do
+ * not get this line (알림 피로 방지, §10.1). No `<details>` is opened
+ * automatically by this -- it is plain text, same as every other line here.
+ */
+export const REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT =
+  "필요하면 아래 '오늘 재검'을 펼쳐 이전 검사 결과와 비교하세요."
+
+/**
  * §9.2(b): chip-state -> sentence, direct correspondence only. No score, no
  * weight, no threshold. Every sentence here is copied verbatim from the
  * brief -- this function adds no clinical interpretation beyond what each
@@ -197,6 +209,7 @@ export type RevisitQuickCheckGuidance = {
 export function deriveRevisitQuickCheckGuidance(value: RevisitQuickCheck): RevisitQuickCheckGuidance {
   const lines: string[] = []
   let safetyRefreshSuggested = false
+  let detailCheckHintNeeded = false
 
   // Rule 1.
   if (value.newNeuroOrRedFlag === 'YES') {
@@ -206,10 +219,12 @@ export function deriveRevisitQuickCheckGuidance(value: RevisitQuickCheck): Revis
   // Rule 2.
   if (value.adverseEffect === 'YES') {
     lines.push('치료 후 이상반응 기록됨: 처치 계획 재검토.')
+    detailCheckHintNeeded = true
   }
   // Rule 3.
   if (value.targetFunctionChange === 'WORSE' || value.overallResponse === 'WORSE') {
     lines.push('악화: 계획 재검토.')
+    detailCheckHintNeeded = true
   }
   // Rule 4.
   if (
@@ -218,6 +233,7 @@ export function deriveRevisitQuickCheckGuidance(value: RevisitQuickCheck): Revis
     value.overallResponse === 'SAME'
   ) {
     lines.push('계획대로 시행했는데 변화 없음: 운동·처치 계획 재검토 고려.')
+    detailCheckHintNeeded = true
   }
   // Rule 5.
   if (value.exerciseAdherence === 'DONE_TOO_HARD') {
@@ -228,6 +244,11 @@ export function deriveRevisitQuickCheckGuidance(value: RevisitQuickCheck): Revis
   // Rule 6.
   if (value.exerciseAdherence === 'NOT_DONE' || value.exerciseAdherence === 'PARTIAL') {
     lines.push('운동 시행 부족: 장애 요인 확인.')
+  }
+
+  // §10.1 tail hint: only when rule 2/3/4 fired, always last, exactly once.
+  if (detailCheckHintNeeded) {
+    lines.push(REVISIT_QUICK_CHECK_DETAIL_CHECK_HINT)
   }
 
   // Rule 7 (only considered when 1-6 produced nothing) / Rule 8 (fallback, stays []).

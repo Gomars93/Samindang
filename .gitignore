@@ -142,6 +142,7 @@ tests/.workspace-round3-visitworkspace-bundle.mjs
 # esbuild bundles used by tests/revisit-quick-check.spec.mjs (regenerated, not source)
 tests/.revisit-quick-check-bundle.mjs
 tests/.revisit-quick-check-card-bundle.cjs
+tests/.revisit-quick-check-longitudinal-bundle.mjs
 
 # esbuild bundles used by tests/crm-schema.spec.mjs (regenerated, not source)
 tests/.crm-types-bundle.mjs

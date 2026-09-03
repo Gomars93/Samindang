@@ -1,5 +1,37 @@
 # Current Handoff
 
+## ⚠️ 2026-09-03 (최신 11): Batch 2.5b CLOSED → Batch 2.5c(임상 가설) 착수
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. origin과 동일.
+PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+**Batch 2.5b 게이트 CLOSED**: 구현 → Opus delta PASS(결함 4건) → `ab922be`
+(테스트 보강) + `ea0a222`(문서 정정) → Opus closing FAIL(문서 동기화 2건만)
+→ `fb89098`(HANDOFF 실측 동기화) → 재확인 기준 5개 충족 → CLOSED.
+증거: `docs/LBP_V1_BATCH2_5B_OPUS_DELTA_REVIEW_v0.1.md`,
+`docs/LBP_V1_BATCH2_5B_OPUS_CLOSING_REVIEW_v0.1.md`(말미 Fable 후기).
+
+**교훈(다음 세션이 반드시 읽을 것)**: 구현자 자체 뮤테이션 9종이 전부 검출돼도
+게이트 통과가 아니다. 독립 검수가 **생존 2종**을 찾았고 그중 하나는 재진에서만
+조용히 4상태로 붕괴하는 경로였다. **자체 검증 통과 ≠ 게이트 통과.**
+
+**진행 중 — Batch 2.5c(Working Hypothesis 최소 형태)**
+- PO 결정 3건: 5패턴 chip + 자유 텍스트 유지 / 환자 안내문에도 쉬운 말 노출 /
+  2.5b 검수 선행(완료). 브리프 §11.
+- **환자 노출 이행 방식(중요)**: `patientCarePlanPreview.ts`의 명시적 계약
+  (원장이 쓴 것만 환자에게)을 지키기 위해 **직접 노출하지 않는다.** chip →
+  쉬운 말 초안 제안 → 원장이 "안내문에 넣기" 클릭 → 기존 `patientInstruction`에
+  삽입. `patientCarePlanPreview.ts` zero-diff를 테스트로 고정한다.
+- 초안은 `HIGHER`가 **정확히 1개**일 때만 생성. "확정 진단이 아니라 경과를 보며
+  다시 판단합니다" 문구를 테스트로 강제.
+- 재진에서도 같은 카드로 갱신 + 이전 가설 1줄 읽기 전용 표시(전에 PO가 물었던
+  "경과 보고 가설 재검토"가 여기서 닫힌다).
+
+**사람 판단 대기**: 없음.
+
+---
+
+
 ## ⚠️ 2026-09-03 (최신 10): LBP v1 Batch 2.5b 구현 완료 — `ExamCheckStatus` 6상태
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PR 미생성(운영 방침).

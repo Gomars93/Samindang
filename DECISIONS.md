@@ -2049,3 +2049,51 @@ RESOLVED를 독립 재현으로 확인).
   자리표시자 오용.
 - 다음 batch(2.5c)는 착수 전 PO 결정 필요: Working Hypothesis의 형태(자유
   텍스트 1칸 vs 구조화 필드)와 EMR/환자용 출력 노출 여부.
+
+## 2026-09-03 — LBP v1 Batch 2.5b 게이트 CLOSED + Batch 2.5c PO 결정 3건
+
+### Context
+- 2.5b: 구현 `1bda74c`/`6d0fc69` → Opus delta **PASS, 결함 4건**
+  (`docs/LBP_V1_BATCH2_5B_OPUS_DELTA_REVIEW_v0.1.md`) → `ab922be`(결함 1·3 테스트
+  보강, 뮤테이션 재현 검증) + `ea0a222`(결함 2 문서 정정) → Opus closing
+  **FAIL(문서 동기화 2건만, 코드 결함 0)** → `fb89098`(HANDOFF 실측 동기화 +
+  백로그 등록) → Opus 지정 재확인 기준 5개 전부 충족
+  (`docs/LBP_V1_BATCH2_5B_OPUS_CLOSING_REVIEW_v0.1.md` 말미).
+
+### Decision (기록)
+1. **Batch 2.5b CLOSED.** 검사 결과 6상태(제한적 시행/시행 못 함) 동작 확인.
+   Opus 독립 검증: 신규 2값이 음성/정상/eligible로 읽히는 경로 **0건**(전 저장소
+   전수), 결과값 추론 지점은 `lbpExerciseRecommendation.ts`의 `=== 'POSITIVE'`
+   하나뿐이며 배타적, 전 부위가 부위-무관 공유 경로를 그대로 쓰므로 목·어깨·
+   무릎 등에서도 선택·기록·EMR 출력이 동일하게 동작, 손상 값은 fail-safe
+   (`NOT_YET_CHECKED`) 또는 fail-closed(누락)로만 떨어짐.
+2. **검수가 실제로 잡아낸 것(기록)**: 구현자 자체 뮤테이션 9종은 전부 검출됐으나
+   독립 검수가 **생존 2종**을 찾았다 — 재검 카드 6버튼 렌더 무보호(재진에서만
+   조용히 4상태 붕괴), 손상 레코드가 "제한적 시행"이라는 없는 임상 사실로
+   렌더될 수 있었음. 자체 검증 통과 ≠ 게이트 통과임을 보여주는 사례.
+3. **배포 제약(정정됨)**: 구버전 클라이언트가 신규 값을 읽으면 (a) EMR 누락
+   (b) "아직 확인 안 됨" 목록에서도 제외 (c) 카드에 무표식 → 사유 메모가 비면
+   흔적 0. 원래 문서의 "화면에 확인 필요(값 형식 오류) 표시" 서술은 **틀렸다**.
+   태블릿·원장 화면 동시 배포 필수, 롤백 시에도 동일.
+
+### PO 결정 — Batch 2.5c (Working Hypothesis)
+- **CD-2.5c-1**: 5개 패턴 chip + 기존 자유 텍스트 유지(자동 계산 없음).
+- **CD-2.5c-2**: 가설을 **환자 안내문에도 쉬운 말로** 노출.
+- **CD-2.5c-3**: 2.5b Opus 검수 선행(완료).
+
+### Fable 설계 판단 (CD-2.5c-2 이행 방식)
+`patientCarePlanPreview.ts` 파일 헤더가 명시적 계약을 갖고 있다 — 환자 출력에는
+**원장이 직접 쓴 Care Plan 필드만** 들어가고 미확인 제안은 절대 들어가지 않는다.
+가설은 정의상 미확정이라 직접 흘리면 이 경계가 깨진다. 따라서 Batch 2의 운동
+채택 흐름을 그대로 재사용한다: chip → 쉬운 말 초안 **제안** → 원장이 "안내문에
+넣기" 클릭 → 기존 `patientInstruction`에 텍스트 삽입(수정 가능) → 기존 경로로
+환자에게. `patientCarePlanPreview.ts`는 **한 줄도 바꾸지 않는다**. 초안은
+`HIGHER`가 정확히 1개일 때만 생성하고, "확정 진단이 아니라 경과를 보며 다시
+판단합니다" 문구를 **테스트로 강제**한다.
+
+### Consequences
+- 브리프: `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §11.
+- **착수 전 처리**: 백로그의 fail-closed 표식(2.5b 결함 4)은 `ExamCheckStatus`에
+  값을 추가할 때 처리한다 — 2.5c는 그 enum에 값을 추가하지 않으므로 이번엔
+  해당 없음(Batch 4에서 재확인).
+- 다음: 2.5c 구현 → Opus delta → fix → closing → Batch 4(EMR 고정 6키 + CRM 최소).

@@ -373,3 +373,93 @@ Working Hypothesis, Rehab Strategy(4개 taxonomy), Decision Key, tranche, suffic
 
 ### 10.4 금지
 - 자동 열기, 새 필드, threshold, 카드 UI 변경, `revisitCarryForward.ts`/`microFollowUp.ts`/`persistence.ts`/`DoctorWorkspace.tsx`/`PainWorkspace.tsx`/`server/`/FROZEN 변경. 규칙 1·5·6·7 문장 자구 변경 금지.
+## 11. Batch 2.5c 브리프 — Working Hypothesis 최소 형태 (PO 승인 2026-09-03, Fable 설계)
+
+**PO 결정 3건**: (1) 5개 패턴 chip + 기존 자유 텍스트 유지, (2) 환자 안내문에도 쉬운 말로 노출, (3) Batch 2.5b Opus 검수 선행.
+
+### 11.1 발견한 제약 — 환자 출력 경계 (설계에 반영)
+
+`patientCarePlanPreview.ts` 파일 헤더가 명시적 계약을 갖고 있다: 환자용 출력에는
+**원장이 직접 쓴 Care Plan 필드만** 들어가며, 미확인 제안(PhysicalExamSuggestion /
+HerbalPatternCandidate / RehabSuggestion)은 **절대 들어가지 않는다**. 가설 chip을
+환자 출력에 직접 흘리면 이 계약이 깨진다 — 가설은 정의상 미확정이다.
+
+**해결(신규 개념 없음)**: Batch 2의 운동 채택 흐름을 그대로 재사용한다.
+chip 선택 → 시스템이 쉬운 말 초안 1문장 **제안** → 원장이 "안내문에 넣기"를
+누르면 기존 `PainCarePlan.patientInstruction`(이미 "환자에게 전달할 안내문")에
+텍스트로 삽입 → 기존 경로로 환자 안내문에 나간다. `patientCarePlanPreview.ts`는
+**한 줄도 바꾸지 않는다**. 원장이 삽입 후 문장을 수정할 수 있다.
+
+즉 환자에게 가는 것은 언제나 원장이 확인·삽입한 문장이지, 시스템이 자동으로
+내보낸 가설이 아니다. PO 결정(환자 노출)을 충족하면서 기존 안전 경계를 지킨다.
+
+### 11.2 데이터 (additive, LBP 전용)
+
+`src/doctor/workspace/lbpWorkingHypothesis.ts` (신규, 순수 로직):
+
+- 5 패턴 고정 id/라벨: `LUMBAR_MOVEMENT`(허리 움직임 관련) / `NEURAL`(신경근 관여) /
+  `WALK_STAND_LEG`(보행·기립 하지 패턴) / `HIP`(고관절 기여) / `SIJ`(천장관절 기여).
+- support 4값: `UNJUDGED`(미판단, 기본) / `HIGHER`(가능성 높음) / `CONSIDER`(고려) /
+  `LOWER`(가능성 낮음). **점수·계산 없음.** 원장이 직접 찍는다.
+- `LbpWorkingHypothesis = { supports: Record<PatternId, Support>; note: string; recordedAt: string | null }`
+  (`note`는 기존 자유 텍스트와 별개가 아니라 **만들지 않는다** — 기존
+  `finalAssessment.finalWorkingAssessment`가 그 역할. 필드는 supports + recordedAt만.)
+- 가드 `isValidLbpHypothesisSupport`, 손상/미지 값 → `UNJUDGED`.
+- `WorkspaceState`(초진)와 `VisitWorkspaceState`(재진) 양쪽에 `lbpWorkingHypothesis`
+  추가. 둘 다 additive, schema version 불변, 레거시 → empty.
+
+### 11.3 파생 문구 (계산 아님, 직접 대응)
+
+- `summarizeLbpWorkingHypothesisKo(v)` → EMR/재진 recap용 한 줄:
+  "임상 가설: 신경근 관여 가능성 높음 · 허리 움직임 관련 고려" (UNJUDGED 항목 생략,
+  전부 UNJUDGED면 `null` → 줄 자체 없음).
+- `patientSentenceDraftKo(v)` → 환자 안내문 초안 1문장. **HIGHER인 패턴이 정확히
+  1개일 때만** 문장을 만든다(여러 개면 원장이 직접 쓰는 게 맞다 → `null`).
+  문장은 확정 진단으로 읽히지 않도록 고정 표현: 
+  "오늘은 <쉬운 말 표현>과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라
+  경과를 보며 다시 판단합니다."
+  쉬운 말 표현 5종(고정): 허리 움직임 / 다리로 가는 신경 / 오래 걷거나 서 있을 때
+  나타나는 다리 / 고관절 / 골반 뒤쪽 관절.
+
+### 11.4 UI
+
+- `LbpWorkingHypothesisCard.tsx`: 5행 × 4 chip(`workspace__followUpChip` + `aria-pressed`,
+  재클릭 → UNJUDGED). 카드 제목 "임상 가설(확정 진단 아님)". hint 1줄:
+  "원장이 직접 선택합니다. 시스템이 계산하지 않습니다."
+- 배치: **판단·처치 레인, 최종 판단 카드 바로 앞**(canonical route: 확인 → 임상가설
+  → 치료·운동 결정). 운동 블록은 지금대로 최종 판단 다음.
+- 환자 문장: `patientSentenceDraftKo`가 문장을 만들 때만 카드 아래 회색 상자로
+  초안 + "안내문에 넣기" 버튼 1개. 누르면 `patientInstruction` 끝에 줄바꿈 후 추가
+  (이미 같은 문장이 있으면 중복 삽입 안 함). 자동 삽입 없음.
+- 재진: 같은 카드 재사용. 그 위에 이전 방문 가설 1줄 읽기 전용 표시 +
+  기존 이어받기 행 관례로 "이전 가설 이어받기" 버튼(오늘 값이 전부 UNJUDGED일 때만
+  활성). 자동 적용 없음.
+
+### 11.5 EMR
+
+`emrPreview.ts` `buildPainWorkspaceEmrPreview`: `Assessment` 줄 **앞**에 optional
+"임상 가설" 줄 추가(`summarizeLbpWorkingHypothesisKo`가 null이면 줄 없음).
+기존 `Assessment`(자유 텍스트)는 그대로.
+
+### 11.6 테스트 (통과 전 종료 금지)
+
+- 신규 `tests/lbp-working-hypothesis.spec.mjs` + `test:lbp-working-hypothesis`(test:all 합류):
+  기본 전부 UNJUDGED·recordedAt null; 가드가 미지 문자열 거부; 
+  `summarize…`: 전부 UNJUDGED → null, 일부만 → 해당 패턴만, UNJUDGED는 "미판단"으로도
+  출력하지 않음; `patientSentenceDraft…`: HIGHER 0개 → null, 2개 이상 → null,
+  정확히 1개 → 고정 문장 + "확정 진단이 아니라" 문구 **반드시 포함**(이 문구가 빠지면
+  실패하는 단언); 5개 패턴 각각의 쉬운 말 표현이 라틴 문자 없이 정확.
+- 카드 렌더: 5그룹·4chip, 기본 `aria-pressed="true"` 0개, 재클릭 해제,
+  "안내문에 넣기" 버튼은 초안이 있을 때만 존재(indexOf/slice 비-vacuous).
+- 삽입 동작: 빈 `patientInstruction`에 삽입 / 기존 텍스트 뒤 줄바꿈 삽입 /
+  중복 삽입 안 함 / 삽입 후 원장이 수정해도 다시 덮어쓰지 않음.
+- persistence: 초진·재진 양쪽 round-trip, 레거시 → empty, 손상 → UNJUDGED,
+  carry-forward가 가설을 **자동으로** 옮기지 않음(구조적).
+- `patientCarePlanPreview.ts` **zero-diff** 단언(소스 검사) — 환자 출력 경계 회귀 방지.
+- `npx tsc -b`, `npm run build`, `npm run test:all` PASS. FROZEN/server/tablet zero-diff.
+
+### 11.7 금지
+- 자동 계산·점수·threshold, 확정 진단명, 가설→운동추천 연결, 자동 환자 노출,
+  `patientCarePlanPreview.ts` 수정, FROZEN/서버/태블릿 변경, 새 문진.
+- Stop point: 환자 문장 자구가 확정 진단으로 읽힐 소지가 있으면 구현 중단하고
+  `CLINICAL DECISION REQUIRED` 보고.

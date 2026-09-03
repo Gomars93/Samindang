@@ -1,5 +1,62 @@
 # Current Handoff
 
+## ⚠️ 2026-09-03 (최신 10): LBP v1 Batch 2.5b 구현 완료 — `ExamCheckStatus` 6상태
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PR 미생성(운영 방침).
+main merge는 PO 명시 승인.
+
+**이력**: Fable 영향 범위 설계(`3e842c7`,
+`docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`) → PO "추천안으로 수정해줘"
+= CD-2.5b-1/-2/-3 **전부 권고안 채택** → 구현 + 테스트. 설계 문서 §7에 구현
+결과를 기록했다.
+
+**실제 진료에서 바뀌는 것**: 검사 결과 버튼이 4개에서 6개가 됐다.
+- **제한적 시행(판단 유보)** — 시행했지만 끝까지 못 가서 판단을 유보한 경우
+  (예: 통증으로 SLR 각도 미달). "불명확"은 시행은 끝났는데 해석이 갈리는
+  것이라 다르다.
+- **시행 못 함** — 시행하지 않기로 판단한 사실 자체. 이걸 찍으면 상세·메모가
+  자동으로 펼쳐진다(사유 적기 유도, 필수 아님). "아직 확인 안 됨"은 아무
+  판단도 없는 기본값이라 다르다.
+- 두 값은 **기록된 사실**이라 EMR 텍스트와 재진 이월 소견에 나타나고,
+  "아직 확인 안 됨" 카운터에서는 빠진다. 어느 쪽도 "음성/정상"으로 찍히지
+  않고, 운동 추천의 근거로도 쓰이지 않는다.
+- 라벨은 "미시행"이 아니라 "시행 못 함"이다 — 허리 움직임 반응 picker가 이미
+  "미시행"을 *미평가*의 뜻으로 쓰고 있어서 같은 단어가 두 뜻이 되는 것을
+  피했다(CD-2.5b-1 안 A).
+
+**검증**: `tsc -b`/`vite build` OK. `npm run test:all` **PASS (exit 0,
+5,114 assertions)**. 개별 `test:workspace-round3` 176 / `test:doctor-workspace`
+238 / `test:lbp-exercise-recommendation` 23. **뮤테이션 9종 전부 검출, 생존 0.**
+FROZEN/`tablet core/`/`server/` zero-diff.
+
+**설계 대비 유일한 범위 이탈**: 값 수준 계약을 검증하려면 `provenance.ts`/
+`examSuggestion.ts` 번들이 필요해 기존 `test:workspace-round3` 스크립트에
+esbuild 단계 2개를 추가했다(`package.json`, `.gitignore`). 신규 npm script는
+없다.
+
+**배포 주의**: 신규 2값이 저장된 기록을 **구버전 클라이언트가 읽으면 EMR에서
+그 소견 한 줄이 조용히 누락된다**(롤백 시에도 동일). 태블릿·원장 화면을 같은
+빌드로 동시 배포할 것.
+
+**사람 판단 대기**: 없음.
+
+**백로그(비차단)**:
+- `test:all` 3회 중 1회 `test:tablet-viewport`가 **teardown**에서
+  `ENOTEMPTY: rmdir .../profile/Default`로 죽음. 24 assertion 전부 OK 출력
+  **후** Chromium 프로필 정리 경합. 단독 재실행 2회 PASS. 이 diff와 무관.
+- `isExamChecked`(provenance.ts) — src 호출처 0 (테스트만 사용). 통합/삭제
+  보류(설계 §2.4).
+- `DoctorWorkspace.tsx:420` 한약 관찰 승격 시 `status:'UNCLEAR'` 자리표시자
+  오용 — 신규 2값 어느 것도 맞지 않아 손대지 않음.
+- 라벨 "초진" → "문진" 자구 조정(Opus O-3), Batch 3 백로그 O-1~O-7 유지.
+
+**다음 행동(하나)**: Batch 2.5c(Working Hypothesis 최소 형태). 착수 전 PO
+결정이 필요하다 — Working Hypothesis를 어떤 형태로 둘지(자유 텍스트 1칸 vs
+구조화 필드)와 EMR/환자용 출력에 나갈지 여부. 그 뒤 Batch 4(EMR 고정 6키 +
+CRM 최소). 실제 환자 파일럿 권고 유지.
+
+---
+
 ## ⚠️ 2026-09-03 (최신 9): LBP v1 Batch 2.5b 영향 범위 설계 완료 — PO 판단 3건 대기
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 이 문서 커밋 시점에

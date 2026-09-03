@@ -306,3 +306,60 @@ batch에서 회귀 위험만 늘린다(6곳 각각 `isValidExamStatus` 가드와
 
 **커밋 분할**: (1) provenance 타입/라벨/glyph/OPTIONS + 두 카드 import 전환,
 (2) 테스트 T-1~T-10, (3) 주석 갱신. 하나의 논리적 변경 = 하나의 커밋.
+
+---
+
+## 7. 구현 결과 (2026-09-03, PO "추천안으로 수정" 승인 후)
+
+설계는 위 §0~§6 그대로 유지한다. 아래는 실제로 무엇이 들어갔는지의 기록이다.
+
+### PO 결정 (전부 권고안 채택)
+| ID | 결정 |
+|---|---|
+| CD-2.5b-1 | **안 A**. `LIMITED: '제한적 시행(판단 유보)'`, `NOT_PERFORMED: '시행 못 함'`. `LbpDirectionalResponse` 라벨 무수정 → "미시행"의 두 뜻 충돌 회피 |
+| CD-2.5b-2 | **필수화하지 않음**. `NOT_PERFORMED` 선택 시 상세·메모를 자동으로 펼쳐 사유 기록을 유도(`showDetail`에 파생 조건 1개 추가). 비워둔 채 저장 허용 |
+| CD-2.5b-3 | **권고 기본값**. 한 줄 유지, 순서로 해결(정상/이상/불명확 → 제한/시행 못 함 → 미확인). **CSS 무변경** |
+
+glyph: `LIMITED: '△'`, `NOT_PERFORMED: '⊘'` (6개 상호 배타, `✕`류 미사용).
+
+### 실제 변경 (8파일)
+| 파일 | 변경 |
+|---|---|
+| `src/doctor/workspace/provenance.ts` | 타입 2값, LABEL/GLYPH 2 key, `EXAM_CHECK_STATUS_OPTIONS` 신규, 6상태 근거 주석 |
+| `src/doctor/workspace/ExamSuggestionCard.tsx` | 로컬 `STATUS_OPTIONS` 리터럴 제거 → `EXAM_CHECK_STATUS_OPTIONS` 직접 사용; `showDetail`에 `NOT_PERFORMED` 자동 펼침 |
+| `src/doctor/workspace/StructuredReassessmentCard.tsx` | 동일 리터럴 제거 → 공유 정의 사용 |
+| `src/doctor/workspace/lbpExerciseRecommendation.ts` | **주석만** (`:211~`, `:296~`). 로직 무변경 |
+| `tests/workspace-round3.spec.mjs` | T-1a·T-3·T-4·T-6·T-7·T-9·T-10 (assertion 33건) |
+| `tests/doctor-workspace.spec.mjs` | T-1b·T-2·T-5 + CD-2.5b-2 (6건) |
+| `tests/lbp-exercise-recommendation.spec.mjs` | T-8 (1건) |
+| `package.json`, `.gitignore` | **설계 §6 대비 유일한 범위 이탈**: 값 수준 계약(T-1a/T-7/T-9/T-10)을 검증하려면 `provenance.ts`/`examSuggestion.ts` 번들이 필요해 기존 `test:workspace-round3` 스크립트에 esbuild 단계 2개를 추가했다. **신규 npm script는 없다**(금지 조항 준수). 대안은 소스 정규식 검사뿐이었고 그건 뮤테이션에 약하다 |
+
+`isExamChecked`(provenance.ts) 호출처 통합은 계획대로 **하지 않았다**(§2.4).
+CSS·`PatientResponseState`·`LbpDirectionalResponse`·capability 3상태 무변경.
+
+### 검증 결과
+- `tsc -b` OK, `vite build` OK
+- `npm run test:all` **PASS (exit 0, 5,114 assertions)**
+- 개별: `test:workspace-round3` 176 / `test:doctor-workspace` 238 /
+  `test:lbp-exercise-recommendation` 23 PASS
+- FROZEN(`src/spec/*Logic.ts`, `*Adapter.ts`) · `tablet core/` · `server/`
+  **zero-diff**
+- **뮤테이션 9종 전부 검출, 생존 0** — 설계 §4가 요구한 6종 + 3종 추가:
+  ① `EXAM_CHECK_STATUS_OPTIONS`에서 `NOT_PERFORMED` 제거(값·화면 양쪽에서 검출)
+  ② `emrPreview.ts` 필터를 POSITIVE/NEGATIVE로 축소
+  ③ `isExamPending`을 `NOT_PERFORMED` 포함으로 확대
+  ④ `LIMITED` 라벨을 `'음성/정상'`으로 교체
+  ⑤ `neurodynamicConcordant`를 `!== 'NOT_YET_CHECKED'`로 완화
+  ⑥ `LIMITED` glyph를 `NEGATIVE`와 동일하게
+  ⑦ CD-2.5b-2 자동 펼침 되돌리기
+  ⑧ `RevisitWorkspace.tsx` 이월 필터를 POSITIVE/NEGATIVE로 축소
+
+**관찰(비차단)**: `test:all` 3회 중 1회 `test:tablet-viewport`가 teardown에서
+`ENOTEMPTY: rmdir .../profile/Default`로 죽었다. 24개 assertion이 전부 OK로
+출력된 **뒤** Chromium 프로필 정리 단계에서 난 것이고, 단독 재실행 2회 모두
+PASS. 이 diff와 무관한 기존 정리 로직의 경합이며 별건 백로그.
+
+### 배포 시 주의 (§5-1 재확인)
+`LIMITED`/`NOT_PERFORMED`가 저장된 기록을 **구버전 클라이언트가 읽으면 EMR에서
+그 소견 한 줄이 조용히 누락된다**(화면엔 "확인 필요(값 형식 오류)"). 롤백해도
+같다. 태블릿·원장 화면을 같은 빌드로 동시 배포할 것.

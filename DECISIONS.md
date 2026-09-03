@@ -1999,3 +1999,50 @@ RESOLVED를 독립 재현으로 확인).
 - 백로그(비차단): `isExamChecked`(provenance.ts:128) 호출처 0 dead export 정리,
   `DoctorWorkspace.tsx:420`의 한약 관찰 승격 시 `status:'UNCLEAR'` 자리표시자
   오용 — 신규 2값 어느 것도 맞지 않으므로 이 batch에서 손대지 않음.
+
+## 2026-09-03 — LBP v1 Batch 2.5b 구현 완료 (ExamCheckStatus 6상태, G15 CLOSED)
+
+### Context
+- 설계 `3e842c7`(`docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`)에서 PO
+  판단 3건을 올렸고, PO가 "추천안으로 수정해줘"로 **전부 권고안 채택**.
+
+### Decision (PO 승인 + 구현)
+1. **CD-2.5b-1 안 A**: `LIMITED = '제한적 시행(판단 유보)'`,
+   `NOT_PERFORMED = '시행 못 함'`. `LbpDirectionalResponse.NOT_ASSESSED`의
+   기존 라벨 "미시행"(뜻: 미평가)은 **수정하지 않고**, 새 값이 그 단어를
+   피한다 — 한 화면에서 같은 단어가 두 뜻이 되는 것을 막는 쪽을 택했다.
+2. **CD-2.5b-2**: 사유 메모 **필수화 안 함**. `NOT_PERFORMED`를 고르면
+   상세·메모를 자동으로 펼쳐 사유 기록을 유도(`showDetail` 파생 조건 1개).
+   비워둔 채 저장하는 것도 허용 — 빠른 point-of-care 입력 전제 유지.
+3. **CD-2.5b-3**: 버튼 6개 한 줄 유지, 순서로 해결(정상/이상/불명확 →
+   제한/시행 못 함 → 미확인). **CSS 무변경**.
+4. glyph `△`/`⊘` (6개 상호 배타). `✕`류는 `NEGATIVE`의 `–`와 혼동 위험으로
+   배제.
+5. **로직 변경 0**: 결과값으로 추론하는 유일한 지점
+   (`lbpExerciseRecommendation.ts`의 `=== 'POSITIVE'`)은 이미 배타적 →
+   주석만 갱신. 신규 2값은 어떤 판단의 근거도 되지 않는다.
+6. **must-fix 해소**: 손으로 쓴 `STATUS_OPTIONS` 리터럴 2곳을 제거하고
+   `provenance.ts`의 `EXAM_CHECK_STATUS_OPTIONS` 단일 정의를 두 카드가 직접
+   쓰게 했다. `ExamCheckStatus[]`는 부분집합을 허용해 tsc가 누락을 잡지
+   못하므로, 값 수준(T-1a)과 화면 수준(T-1b) 테스트로 이중 강제.
+7. **설계 §6 대비 유일한 범위 이탈**: 값 수준 계약을 검증하려면
+   `provenance.ts`/`examSuggestion.ts` 번들이 필요해 기존
+   `test:workspace-round3`에 esbuild 단계 2개를 추가(`package.json`,
+   `.gitignore`). 신규 npm script는 만들지 않았다(금지 조항 준수). 대안은
+   소스 정규식뿐이었고 뮤테이션에 약하다.
+
+### 검증
+- `tsc -b`/`vite build` OK, `npm run test:all` PASS(exit 0, 5,114 assertions).
+- 뮤테이션 9종 전부 검출, 생존 0(설계 §4의 6종 + 자동 펼침 되돌리기 +
+  재진 이월 필터 축소 + OPTIONS 누락의 화면 수준 검출).
+- FROZEN/`tablet core/`/`server/` zero-diff.
+
+### Consequences
+- G15 CLOSED. 남은 gap 항목은 2.5c(Working Hypothesis) → Batch 4.
+- **배포 제약(신규)**: 신규 2값이 든 기록을 구버전 클라이언트가 읽으면 EMR에서
+  해당 소견 줄이 조용히 누락된다(롤백 포함) → 태블릿·원장 화면 동시 배포.
+- 백로그: `test:tablet-viewport` teardown 경합(ENOTEMPTY, 이 diff와 무관),
+  `isExamChecked` src 호출처 0, `DoctorWorkspace.tsx:420` `'UNCLEAR'`
+  자리표시자 오용.
+- 다음 batch(2.5c)는 착수 전 PO 결정 필요: Working Hypothesis의 형태(자유
+  텍스트 1칸 vs 구조화 필드)와 EMR/환자용 출력 노출 여부.

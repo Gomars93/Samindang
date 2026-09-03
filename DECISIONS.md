@@ -1929,3 +1929,25 @@ RESOLVED를 독립 재현으로 확인).
 ### Consequences
 - Batch 3.1 후 다음: Batch 2.5b(`ExamCheckStatus` LIMITED/NOT_PERFORMED,
   Fable 영향 범위 설계 먼저) → 2.5c → 4.
+
+## 2026-09-03 — LBP v1 Batch 3.1 게이트 CLOSED (Opus delta PASS, 결함 0)
+
+### Context
+- 구현 `a57d9db`(Sonnet). Opus delta PASS, concrete defect 0, CLINICAL
+  DECISION REQUIRED 없음(`docs/LBP_V1_BATCH3_1_OPUS_DELTA_REVIEW_v0.1.md`).
+  수정 delta가 없어 closing 리뷰는 생략(리뷰할 fix가 없음).
+
+### Decision (기록)
+1. 꼬리말은 규칙 2/3/4 중 하나라도 발화 시 1회, 항상 마지막 줄, 규칙
+   1/5/6/7 단독에는 없음 — 1,152 조합 전수로 확인. `safetyRefreshSuggested`
+   및 기존 8개 문장 자구 불변.
+2. 채택 운동 원천은 "가장 최근 문진 방문 1개"만 본다. 그 방문에 채택 운동이
+   없으면 더 오래된 방문으로 내려가지 않는다(갱신된 최신 처방을 건너뛰고
+   낡은 처방을 되살리지 않음). 손상 원소는 건너뛰고 계속 탐색(라벨에 날짜가
+   있으므로 수용, Opus 판정).
+3. 브리프 §10.3 오류 정정: 규칙 3·4는 배타적이라 "2+3+4 동시" 케이스는
+   존재하지 않는다.
+
+### Consequences
+- 다음: Batch 2.5b(Fable 영향 범위 설계 먼저) → 2.5c → 4.
+- 백로그: 라벨 "초진" → "문진" 자구 조정 후보.

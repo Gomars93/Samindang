@@ -1,5 +1,44 @@
 # Current Handoff
 
+## ⚠️ 2026-09-03 (최신 8): LBP v1 Batch 3.1(재진 화면 잔손질 2건) 게이트 CLOSED
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `a57d9db` + 이
+문서 커밋. origin과 동일. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+**Batch 3.1 이력**: PO 승인 + 브리프 §10(`ac614c3`) → Sonnet 구현
+`a57d9db`(1커밋) → Opus delta **PASS, 결함 0건**
+(`docs/LBP_V1_BATCH3_1_OPUS_DELTA_REVIEW_v0.1.md`; 5개 chip 전 조합 1,152건
+전수 검증, 뮤테이션 16종 전부 검출). 수정 delta가 없으므로 closing 리뷰
+생략하고 게이트 종료. 검증: `tsc -b`/`vite build` OK,
+`test:revisit-quick-check` 145 / `test:doctor-workspace` 232 /
+`test:workspace-round3` 153 / `test:doctor-reset-key` 11, `test:all` PASS,
+FROZEN/tablet/server zero-diff.
+
+**실제 진료에서 바뀌는 것**: (A) 재진 간단 체크에서 이상반응·악화·"계획대로
+했는데 변화 없음" 중 하나라도 찍히면 안내 마지막에 "필요하면 아래 '오늘
+재검'을 펼쳐 이전 검사 결과와 비교하세요." 한 줄이 한 번만 붙는다. 자동으로
+열지 않음. 신경증상·운동 조정·유지 문장에는 붙지 않음. (B) "이전에 채택한
+운동" 줄이 재진 3회차 이후에도 표시된다 — 이력에서 가장 최근 문진 방문을
+찾아 그 채택 운동을 날짜와 함께 보여줌.
+
+**브리프 오류 기록**: §10.3의 "규칙 2+3+4 동시" 프로브는 규칙 3(악화)과
+4(둘 다 비슷함)가 배타적이라 성립 불가(Sonnet 지적, Opus 전수 검증으로
+확인). "2+3", "2+4"로 대체.
+
+**사람 판단 대기**: 없음.
+
+**백로그(비차단)**: 라벨 "초진"은 엄밀히 "태블릿 문진 방문"(재초진 문진도
+포함)이라 다음 batch에서 "문진"으로 자구 조정 후보(Opus O-3). 직전 문진
+fetch 실패 시 같은 id를 1회 더 조회함(O-1, 오히려 유리). Batch 3 백로그
+(O-1~O-7) 유지.
+
+**다음 행동(하나)**: Batch 2.5b — `ExamCheckStatus`에 LIMITED/NOT_PERFORMED
+추가. 전 부위 공유 enum이라 **Fable이 영향 범위 설계를 먼저** 쓴 뒤 Sonnet
+착수. 그 뒤 2.5c(Working Hypothesis 최소) → Batch 4(EMR 고정 6키 + CRM 최소).
+
+---
+
+
 ## ⚠️ 2026-09-03 (최신 7): LBP v1 Batch 3(재진 간단 체크) 게이트 CLOSED
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `bd58cb0` + 이

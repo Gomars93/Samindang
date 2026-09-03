@@ -252,3 +252,89 @@ Working Hypothesis, Rehab Strategy(4개 taxonomy), Decision Key, tranche, suffic
 | G16 | Working Hypothesis 최소 구조(원장 선택 chip, 자동 계산 없음) | 2.5 |
 | G17 | 운동 블록 배치가 canonical route 순서와 불일치(레인2) | 2 마무리 |
 | G18 | 재진 Quick Check 5문항 중 "운동 실제 시행·난이도", "치료 후 이상반응" 기록 필드 부재 | 3 |
+
+---
+
+## 9. Batch 3 브리프 — 재진 간단 체크(Quick Check) + 세부 체크 주기 표시 (Fable 최소 설계, 2026-09-03)
+
+**전제(PO 결정, DECISIONS 2026-09-03):** Batch 3을 2.5b/2.5c보다 먼저 한다. 초진에서 원장이 판단할 것을 최적화하는 층은 충분히 쌓였고, 이제 "재진은 30~60초 체크, 일정 주기마다 세부 체크"라는 재진 쪽 절반을 닫는다. 숫자 threshold 없음. 세부 재검은 자동으로 열지 않고 원장이 선택.
+
+### 9.1 현재 재진 화면 실측 (변경 전)
+
+- `RevisitWorkspace.tsx`(문진 없는 재진 전용, `submission_id === null`): 오늘 환자 입력(`MicroFollowUpCard`, 환자 태블릿 30~60초 응답) → 이전 방문 참고(읽기 전용) → 오늘 원장 입력(이어받기 버튼 → `ClinicalLoopStatusBar` → 최종 판단 → 관리 계획 → 재평가 대상 → 접힌 `오늘 재검` → 접힌 `다음 재평가 계획 변경`).
+- `VisitWorkspaceState`(`visitWorkspace.ts`, schema `1.0.0`): finalAssessment / carePlan / followUpTargets / nextReassessmentPlan / reassessment. **원장이 "오늘 상태를 체크로 남기는" 필드가 없다** — 환자 응답(`MicroFollowUpResponse`)은 있으나 원장의 30~60초 판단은 free text(최종 판단)뿐. G18(운동 실제 시행·난이도, 치료 후 이상반응 기록 부재)이 여기서 비롯된다.
+- `NextReassessmentPlan`(status UNSET/DATE/VISIT_COUNT/CLINICIAN_DECIDES)은 저장·표시만 될 뿐, "지금 그 시점에 도달했는가"를 알려주는 곳이 없다. 게다가 재진 화면은 **직전 방문 1건**의 plan만 읽으므로, 초진에서 세운 plan을 재진 1에서 안 바꾸면(UNSET) 재진 2에서는 plan 자체가 사라진다.
+- 이전 방문 참고에는 이전에 **채택한 운동**이 표시되지 않는다(초진 `painRehabSuggestions` ACCEPTED 항목). 운동 시행 여부를 물으려면 원장이 기억에 의존해야 한다.
+
+### 9.2 범위 (이번 batch에서 하는 것)
+
+**(a) 데이터: `revisitQuickCheck` (additive, `VISIT_WORKSPACE_SCHEMA_VERSION` 불변)**
+
+새 파일 `src/doctor/workspace/revisitQuickCheck.ts` (순수 로직, React 없음):
+
+| 항목(5) | 필드 | 값 (기본 `NOT_ASSESSED`) | 한국어 chip |
+|---|---|---|---|
+| 목표 기능 변화 | `targetFunctionChange` | NOT_ASSESSED / BETTER / SAME / WORSE | 좋아짐 / 비슷함 / 나빠짐 |
+| 전체 증상 반응 | `overallResponse` | NOT_ASSESSED / BETTER / SAME / WORSE | 좋아짐 / 비슷함 / 나빠짐 |
+| 새 신경증상·위험신호 | `newNeuroOrRedFlag` | NOT_ASSESSED / NO / YES | 없음 / 있음 |
+| 운동 실제 시행·난이도 | `exerciseAdherence` | NOT_ASSESSED / NOT_PRESCRIBED / NOT_DONE / PARTIAL / DONE_AS_PLANNED / DONE_TOO_HARD / DONE_TOO_EASY | 처방 없음 / 안 함 / 일부만 / 계획대로 / 했지만 너무 어려움 / 했지만 너무 쉬움 |
+| 치료 후 이상반응 | `adverseEffect` | NOT_ASSESSED / NO / YES | 없음 / 있음 |
+
+추가 필드: `note: string`(선택, 짧은 메모 1칸 — 이상반응/신경증상 내용 등; 이 외 free text 없음), `recordedAt: string | null`(5항목 중 하나라도 NOT_ASSESSED가 아니게 된 시점, 기존 카드 관례).
+
+`VisitWorkspaceState`에 `revisitQuickCheck: RevisitQuickCheck` 추가. `deserializeVisitWorkspaceState`: `sanitizeShape` + 각 enum 값을 `isValid*` 가드로 검증, 손상/미지 값 → `NOT_ASSESSED`, 레거시 레코드(필드 없음) → `emptyRevisitQuickCheck()`. `visitWorkspaceStateEquals`는 JSON 비교라 자동 반영.
+
+**(b) 파생 안내 1~3줄: `deriveRevisitQuickCheckGuidance(value) → { lines: string[]; safetyRefreshSuggested: boolean }`**
+
+점수·가중치·threshold 없음. chip 상태에서 문장으로의 **직접 대응**만:
+
+1. `newNeuroOrRedFlag === 'YES'` → `safetyRefreshSuggested = true` + "새 신경증상·위험신호: 안전 확인부터. 재초진 문진(태블릿) 또는 신경학적 기본검사를 고려하세요." (자동으로 아무것도 열거나 보내지 않음)
+2. `adverseEffect === 'YES'` → "치료 후 이상반응 기록됨: 처치 계획 재검토."
+3. `targetFunctionChange === 'WORSE'` 또는 `overallResponse === 'WORSE'` → "악화: 계획 재검토."
+4. `exerciseAdherence === 'DONE_AS_PLANNED'` 이고 `targetFunctionChange === 'SAME'` 이고 `overallResponse === 'SAME'` → "계획대로 시행했는데 변화 없음: 운동·처치 계획 재검토 고려."
+5. `exerciseAdherence === 'DONE_TOO_HARD'` → "운동이 어려움: 쉬운 단계 또는 다른 운동 고려." / `'DONE_TOO_EASY'` → "운동이 쉬움: 진행 단계 고려(원장 판단)." (progression 엔진 없음, 문장만)
+6. `exerciseAdherence === 'NOT_DONE'` 또는 `'PARTIAL'` → "운동 시행 부족: 장애 요인 확인." 
+7. **위 1~6 중 아무것도 해당 없고, 5항목이 전부 NOT_ASSESSED가 아니며**, `newNeuroOrRedFlag === 'NO'` 이고 `adverseEffect === 'NO'` 일 때만 → "유지·진행 가능(원장 판단)."
+8. 그 외(일부 미평가) → 빈 lines. **NOT_ASSESSED는 절대 '없음'으로 취급하지 않는다** — 신경증상 미평가면 "유지·진행" 문장은 나오지 않는다.
+
+이 문장들은 원장 판단을 대신하지 않는 참고 문구다(카드 hint에 명시). Opus는 각 문장이 chip 의미를 넘어서는 임상 판단을 만들지 않는지 검수한다.
+
+**(c) "세부 체크 주기 도달" 표시: `computeDetailCheckDue(priorVisits, todayISO) → DetailCheckDue | null`**
+
+입력은 `PatientHistoryResult.visits`(최신순, 오늘 방문 제외)와 오늘 날짜(테스트용 주입). 규칙:
+
+- 최신순으로 훑어 **처음 만나는 `status !== 'UNSET'` plan**을 유효 plan으로 본다(직전 방문이 UNSET이면 그 이전을 본다 — 9.1의 "plan 소실" 결함 수정). 유효 plan이 있는 방문의 인덱스를 `k`라 한다(k=0이 직전 방문).
+- `DATE`: `targetDate`가 `yyyy-mm-dd` 형식이고 `todayISO >= targetDate`(문자열 비교, 시간대 문제 없음) → due. 형식이 아니면 null(추측 금지).
+- `VISIT_COUNT`: `afterVisitCount`가 양의 정수이고 `k + 1 >= afterVisitCount` → due (plan을 세운 방문 이후 오늘까지의 방문 수가 k+1). 아니면 null.
+- `CLINICIAN_DECIDES` / `UNSET` / 유효 plan 없음 / 방문 없음 / 손상 → null.
+- 반환: `{ reason: 'DATE' | 'VISIT_COUNT', planLabel: string, sourceVisitCreatedAt: string }` — 표시용 사실만. 숫자 threshold를 시스템이 만들지 않는다(값은 전부 원장이 세운 plan).
+
+표시: 오늘 원장 입력 섹션의 `오늘 재검` `<details>` **바로 위**에 1줄 — "이전에 계획한 세부 재검 시점입니다(날짜 지정 2026-09-01 / 방문 3회 후) — 아래 '오늘 재검'을 펼쳐 진행할지 원장이 정합니다." `<details open>` 식은 **변경하지 않는다**(due여도 자동으로 열지 않음). `role="status"`.
+
+**(d) UI: `RevisitQuickCheckCard.tsx`** (`NextReassessmentPlanCard` 관례: `value`/`onChange` props, `workspace__followUpChip` + `aria-pressed`, 같은 chip 재클릭 → NOT_ASSESSED로 해제). 제목 "재진 간단 체크(30~60초)", hint "원장이 보고 듣고 확인한 것만 표시합니다. 환자 태블릿 응답(위)은 자동으로 옮겨오지 않습니다." 5행 chip + 메모 1칸 + 안내 문장(`deriveRevisitQuickCheckGuidance`). 1번 안전 문장은 `workspace__revisit__safetyNotice`(신규 최소 CSS) 로 시각 구분, `role="alert"` 는 쓰지 않는다(재렌더마다 스크린리더 반복 방지) — `role="status"`.
+
+`RevisitWorkspace.tsx` 배치: 오늘 원장 입력 → 이어받기 행 → `ClinicalLoopStatusBar` → **`RevisitQuickCheckCard`** → 최종 판단 → 관리 계획 → 재평가 대상 → (c) 표시 줄 → 오늘 재검 details → 다음 재평가 계획 details. `loopStatus`에 `{ key: 'quickCheck', label: '재진 간단 체크', done: revisitQuickCheck.recordedAt !== null }` 를 **맨 앞**에 추가.
+
+**(e) 이전 방문 참고 보강 (읽기 전용, 2줄)**
+
+- 직전 방문이 재진이면 `summarizeRevisitQuickCheckKo(prior.revisitQuickCheck)` → "이전 간단 체크: 목표 기능 좋아짐 · 운동 계획대로 · 이상반응 없음"(NOT_ASSESSED 항목은 생략, 전부 NOT_ASSESSED면 줄 자체 생략). 함수는 `revisitQuickCheck.ts`에 두고 단위 테스트.
+- 직전 방문이 초진(submission)이면 `painRehabSuggestions` 중 `status === 'ACCEPTED'`의 제목을 "이전에 채택한 운동: A, B" 로 표시(없으면 생략). `priorVisitRecapLines` 안에서 처리, `deserializeWorkspaceState`를 이미 거친 값만 읽는다.
+
+**(f) 테스트 (통과 전 종료 금지)**
+
+- 신규 `tests/revisit-quick-check.spec.mjs` + `package.json` `test:revisit-quick-check`(esbuild: `revisitQuickCheck.ts` esm 번들 + `RevisitQuickCheckCard.tsx` cjs 번들, `test:all`에 합류):
+  - 기본값 전부 NOT_ASSESSED, `recordedAt` null; `isValid*` 가드가 미지 문자열 거부.
+  - guidance 규칙 1~8 각각 1건 이상 + **변이 저항 3건**: (i) 신경 NOT_ASSESSED + 나머지 전부 양호 → "유지·진행" 없음, safety false; (ii) 신경 YES 단독 → safety true(다른 항목 미평가여도); (iii) 5항목 전부 양호·NO → "유지·진행" 1줄만.
+  - `computeDetailCheckDue`: DATE 당일 due / 전날 아님 / 잘못된 날짜 null; VISIT_COUNT k+1≥n due, k+1<n 아님, 0·음수·비정수 null; 직전 UNSET + 그 이전 DATE → 그 이전 plan 사용; CLINICIAN_DECIDES null; visits 비배열·원소 null·plan 손상 → null(throw 금지).
+  - `summarizeRevisitQuickCheckKo`: 전부 NOT_ASSESSED → null; 일부 → 해당 항목만.
+  - 카드 렌더(`react-dom/server`): 5 그룹 제목·chip 라벨, 기본 상태에서 `aria-pressed="true"` 0개, 값 설정 시 해당 chip만 true, 안전 문장은 신경 YES일 때만 존재(indexOf/slice로 비-vacuous 확인).
+- `tests/workspace-round3.spec.mjs`: `VisitWorkspaceState` round-trip에 `revisitQuickCheck` 포함; 레거시(필드 없음) → empty; 손상 enum → NOT_ASSESSED; `visitWorkspaceStateEquals`가 quick check 변경을 감지; carry-forward 결과에 quick check가 **없음**(구조적: `carryForwardSourceFromVisitWorkspace` 반환 키에 없고, 적용 후 오늘 workspace의 quick check가 empty 그대로).
+- `tests/doctor-workspace.spec.mjs`(기존 RevisitWorkspace 소스 검사 관례): 카드가 `ClinicalLoopStatusBar` 다음·`PainFinalAssessmentCard` 이전에 마운트; loop 항목 `quickCheck` 존재; `오늘 재검` details의 `open=` 식이 due 변수를 참조하지 않음; due 표시 줄이 details 앞에 있음.
+- `npx tsc -b`, `npm run build`, `npm run test:all` PASS. `git diff --stat origin/main -- src/spec index.html src/App.tsx server "tablet core"` 비어 있음.
+
+### 9.3 금지 / 손대지 않는 것
+
+- `revisitCarryForward.ts`, `microFollowUp.ts`, `DoctorWorkspace.tsx`, `PainWorkspace.tsx`, `persistence.ts`(초진 workspace), `server/`, FROZEN, 태블릿. 서버 변경 불필요: 직전 재진의 `VisitWorkspaceState`는 이미 클라이언트에서 `getVisit`으로 읽는다.
+- 환자 태블릿 응답(`MicroFollowUpResponse`)을 quick check로 자동 복사하지 않는다(출처 분리 원칙).
+- 점수/threshold/자동 escalation/자동 재초진 전환/EMR·CRM 변경(Batch 4)/Working Hypothesis(2.5c)/ExamCheckStatus 확장(2.5b).
+- Stop point: 위 (b)의 문장 중 하나라도 "안전 의미"를 바꾸는 것으로 판단되면 구현을 멈추고 `CLINICAL DECISION REQUIRED`로 보고한다.

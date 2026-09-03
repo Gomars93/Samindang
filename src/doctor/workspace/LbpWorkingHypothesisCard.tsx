@@ -19,6 +19,7 @@
  * (mirrors `RehabSuggestionCard.tsx`'s `onAdoptToCarePlan` prop shape).
  */
 import {
+  LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO,
   LBP_HYPOTHESIS_PATTERN_IDS,
   LBP_HYPOTHESIS_PATTERN_LABEL_KO,
   LBP_HYPOTHESIS_SUPPORT_LABEL_KO,
@@ -73,6 +74,7 @@ export function LbpWorkingHypothesisCard({
   value,
   onChange,
   onInsertPatientSentence,
+  currentPatientInstruction,
 }: {
   value: LbpWorkingHypothesis
   onChange: (next: LbpWorkingHypothesis) => void
@@ -83,12 +85,40 @@ export function LbpWorkingHypothesisCard({
    * matching `RehabSuggestionCard`'s `onAdoptToCarePlan?` optionality.
    */
   onInsertPatientSentence?: (sentence: string) => void
+  /**
+   * Opus delta review D-2/D-3: the card must know what
+   * `PainCarePlan.patientInstruction` currently holds so it can tell the
+   * clinician whether today's draft is already there, or whether the field
+   * still carries a DIFFERENT (stale/edited) hypothesis sentence — never to
+   * auto-edit or auto-delete anything in it, the field stays clinician-owned.
+   * Omitted (undefined) is treated the same as "unknown" -- falls back to
+   * the plain button, exactly like before this fix.
+   */
+  currentPatientInstruction?: string
 }) {
   function setSupport(id: LbpHypothesisPatternId, next: LbpHypothesisSupport) {
     onChange({ supports: { ...value.supports, [id]: next }, recordedAt: new Date().toISOString() })
   }
 
   const draft = patientSentenceDraftKo(value)
+  /**
+   * D-2 (second click resurrects an edited sentence) + D-3 (stale text after
+   * a chip change): three states, computed from `currentPatientInstruction`
+   * without ever writing to it.
+   *   1. today's draft is already an exact substring -> no button, static
+   *      "이미 안내문에 들어 있습니다".
+   *   2. the field contains SOME generated hypothesis sentence (detected via
+   *      the fixed clause every draft ends with) but not today's exact
+   *      draft -> keep the button, but warn above it.
+   *   3. neither -> today's plain button (unchanged behaviour).
+   */
+  const draftAlreadyInInstruction = Boolean(draft && currentPatientInstruction && currentPatientInstruction.includes(draft))
+  const staleHypothesisInInstruction = Boolean(
+    draft &&
+      !draftAlreadyInInstruction &&
+      currentPatientInstruction &&
+      currentPatientInstruction.includes(LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO),
+  )
 
   return (
     <section className="workspace__block workspace__hypothesis" aria-label="임상 가설">
@@ -108,10 +138,21 @@ export function LbpWorkingHypothesisCard({
       {draft && (
         <div className="workspace__hypothesis__patientDraft">
           <p className="workspace__hypothesis__patientDraftText">{draft}</p>
-          {onInsertPatientSentence && (
-            <button type="button" className="workspace__adoptBtn" onClick={() => onInsertPatientSentence(draft)}>
-              안내문에 넣기
-            </button>
+          {draftAlreadyInInstruction ? (
+            <p className="workspace__hypothesis__patientDraftStatus">이미 안내문에 들어 있습니다</p>
+          ) : (
+            <>
+              {staleHypothesisInInstruction && (
+                <p className="workspace__hypothesis__patientDraftWarning">
+                  안내문에 이전 가설 문장이 남아 있습니다. 직접 확인·수정하세요.
+                </p>
+              )}
+              {onInsertPatientSentence && (
+                <button type="button" className="workspace__adoptBtn" onClick={() => onInsertPatientSentence(draft)}>
+                  안내문에 넣기
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

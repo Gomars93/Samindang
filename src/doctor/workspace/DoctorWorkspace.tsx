@@ -675,6 +675,7 @@ export function DoctorWorkspace({
                   <LbpWorkingHypothesisCard
                     value={workspaceState.lbpWorkingHypothesis}
                     onChange={(next) => setWorkspaceState((s) => ({ ...s, lbpWorkingHypothesis: next }))}
+                    currentPatientInstruction={workspaceState.painCarePlan.patientInstruction}
                     onInsertPatientSentence={(sentence) =>
                       setWorkspaceState((s) => ({
                         ...s,

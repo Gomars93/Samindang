@@ -1874,3 +1874,17 @@
   font-size: 13px;
   color: var(--text);
 }
+
+/* Opus delta review D-2/D-3: insertion-state cues, never auto-edit/delete. */
+.workspace__hypothesis__patientDraftStatus {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.workspace__hypothesis__patientDraftWarning {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warning);
+}

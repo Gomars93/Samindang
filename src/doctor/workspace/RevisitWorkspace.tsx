@@ -609,7 +609,9 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                     1줄 읽기 전용 표시" -- omitted entirely when the prior
                     visit's hypothesis is null/all-UNJUDGED. */}
                 {priorHypothesisSummary && (
-                  <p className="workspace__priorVisit__assessment">{priorHypothesisSummary}</p>
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전 임상 가설</strong> {priorHypothesisSummary.replace(/^임상 가설: /, '')}
+                  </p>
                 )}
                 {/* §10.2 (Batch 3.1): shown whenever ANY submission-backed
                     visit exists in the history with ACCEPTED
@@ -735,6 +737,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       <LbpWorkingHypothesisCard
         value={workspaceState.lbpWorkingHypothesis}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, lbpWorkingHypothesis: next }))}
+        currentPatientInstruction={workspaceState.carePlan.patientInstruction}
         onInsertPatientSentence={(sentence) =>
           setWorkspaceState((s) => ({
             ...s,

@@ -152,6 +152,7 @@ tests/.lbp-working-hypothesis-card-bundle.cjs
 tests/.lbp-working-hypothesis-emrpreview-bundle.mjs
 tests/.lbp-working-hypothesis-persistence-bundle.mjs
 tests/.lbp-working-hypothesis-visitworkspace-bundle.mjs
+tests/.lbp-working-hypothesis-carepreview-bundle.mjs
 
 # esbuild bundles used by tests/crm-schema.spec.mjs (regenerated, not source)
 tests/.crm-types-bundle.mjs

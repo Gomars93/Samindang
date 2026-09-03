@@ -9,9 +9,9 @@
 
 import React from 'react'
 import { renderToString } from 'react-dom/server'
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { join as joinPath } from 'node:path'
 import {
   LBP_HYPOTHESIS_PATTERN_IDS,
   LBP_HYPOTHESIS_PATTERN_LABEL_KO,
@@ -31,6 +31,7 @@ import { LbpWorkingHypothesisCard } from './.lbp-working-hypothesis-card-bundle.
 import { buildPainWorkspaceEmrPreview } from './.lbp-working-hypothesis-emrpreview-bundle.mjs'
 import { emptyWorkspaceState, deserializeWorkspaceState } from './.lbp-working-hypothesis-persistence-bundle.mjs'
 import { emptyVisitWorkspaceState, deserializeVisitWorkspaceState } from './.lbp-working-hypothesis-visitworkspace-bundle.mjs'
+import { buildPainPatientCarePlanPreview } from './.lbp-working-hypothesis-carepreview-bundle.mjs'
 
 let passCount = 0
 function assert(name, cond) {
@@ -42,6 +43,34 @@ function assert(name, cond) {
 function withSupport(overrides) {
   const v = emptyLbpWorkingHypothesis()
   return { ...v, supports: { ...v.supports, ...overrides } }
+}
+
+/**
+ * D-9: brace-balanced scan for every `useEffect(...)` call's full source
+ * span in `src`, used to check whether a given index falls INSIDE one (a
+ * structural stand-in for "was this call moved into an effect").
+ */
+function useEffectSpans(src) {
+  const spans = []
+  const re = /useEffect\(/g
+  let m
+  while ((m = re.exec(src))) {
+    const openParenIdx = m.index + 'useEffect'.length
+    let depth = 0
+    let end = -1
+    for (let i = openParenIdx; i < src.length; i++) {
+      if (src[i] === '(') depth++
+      else if (src[i] === ')') {
+        depth--
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    if (end !== -1) spans.push([m.index, end])
+  }
+  return spans
 }
 
 /* ------------------------------------------------------------------------
@@ -350,8 +379,10 @@ function withSupport(overrides) {
  * LbpWorkingHypothesisCard rendering -- §11.4/§11.6
  * ---------------------------------------------------------------------- */
 {
-  const render = (value, onInsertPatientSentence) =>
-    renderToString(React.createElement(LbpWorkingHypothesisCard, { value, onChange: () => {}, onInsertPatientSentence }))
+  const render = (value, onInsertPatientSentence, currentPatientInstruction) =>
+    renderToString(
+      React.createElement(LbpWorkingHypothesisCard, { value, onChange: () => {}, onInsertPatientSentence, currentPatientInstruction }),
+    )
 
   const html = render(emptyLbpWorkingHypothesis())
 
@@ -405,6 +436,54 @@ function withSupport(overrides) {
   const htmlDraftNoCallback = render(withSupport({ HIP: 'HIGHER' }), undefined)
   assert('LbpWorkingHypothesisCard: draft text still renders with no onInsertPatientSentence callback supplied', htmlDraftNoCallback.includes(draftText))
   assert('LbpWorkingHypothesisCard: no "안내문에 넣기" button renders when onInsertPatientSentence is omitted', htmlDraftNoCallback.indexOf('안내문에 넣기') === -1)
+
+  // ------------------------------------------------------------------
+  // Opus delta review D-2/D-3: `currentPatientInstruction` insertion-state
+  // cues -- the card must never auto-edit/auto-delete `patientInstruction`,
+  // only tell the clinician what state it is in.
+  // ------------------------------------------------------------------
+
+  // (i) today's draft already an exact substring of the current
+  // instruction -> button absent, static "이미 안내문에 들어 있습니다" shown.
+  const htmlAlreadyPresent = render(withSupport({ HIP: 'HIGHER' }), () => {}, `기존 안내문\n${draftText}`)
+  assert('LbpWorkingHypothesisCard (D-2): no "안내문에 넣기" button when the current draft is already present verbatim', htmlAlreadyPresent.indexOf('안내문에 넣기') === -1)
+  assert('LbpWorkingHypothesisCard (D-2): shows "이미 안내문에 들어 있습니다" when the current draft is already present verbatim', htmlAlreadyPresent.includes('이미 안내문에 들어 있습니다'))
+
+  // (ii) the instruction contains a DIFFERENT generated hypothesis sentence
+  // (detected via the fixed clause) but not today's exact draft -> button
+  // stays, AND a warning renders above it.
+  const staleNeuralSentence = patientSentenceDraftKo(withSupport({ NEURAL: 'HIGHER' }))
+  const htmlStale = render(withSupport({ HIP: 'HIGHER' }), () => {}, `기존 안내문\n${staleNeuralSentence}`)
+  assert('LbpWorkingHypothesisCard (D-3): "안내문에 넣기" button still present when a DIFFERENT hypothesis sentence is stale in the instruction', htmlStale.indexOf('안내문에 넣기') !== -1)
+  assert('LbpWorkingHypothesisCard (D-3): warns "안내문에 이전 가설 문장이 남아 있습니다..." when a stale hypothesis sentence is present', htmlStale.includes('안내문에 이전 가설 문장이 남아 있습니다. 직접 확인·수정하세요.'))
+  const warnIdx = htmlStale.indexOf('안내문에 이전 가설 문장이 남아 있습니다')
+  const staleBtnIdx = htmlStale.indexOf('안내문에 넣기')
+  assert('LbpWorkingHypothesisCard (D-3): the warning renders BEFORE the button (clinician sees the warning first)', warnIdx !== -1 && staleBtnIdx !== -1 && warnIdx < staleBtnIdx)
+
+  // (iii) clean case (non-vacuous counterexample) -- neither the "already
+  // present" status nor the warning renders when the instruction has
+  // nothing hypothesis-related in it; the plain button still renders.
+  const htmlClean = render(withSupport({ HIP: 'HIGHER' }), () => {}, '원장이 직접 쓴 안내문')
+  assert('LbpWorkingHypothesisCard: clean case -- no "이미 안내문에 들어 있습니다" status when the instruction has no hypothesis sentence', !htmlClean.includes('이미 안내문에 들어 있습니다'))
+  assert('LbpWorkingHypothesisCard: clean case -- no stale-hypothesis warning when the instruction has no hypothesis sentence', !htmlClean.includes('안내문에 이전 가설 문장이 남아 있습니다'))
+  assert('LbpWorkingHypothesisCard: clean case (counterexample) -- the plain "안내문에 넣기" button still renders', htmlClean.indexOf('안내문에 넣기') !== -1)
+
+  // (iv) currentPatientInstruction omitted entirely (backwards-compatible
+  // default) -- behaves exactly like the clean case, plain button only.
+  const htmlOmitted = render(withSupport({ HIP: 'HIGHER' }), () => {})
+  assert('LbpWorkingHypothesisCard: currentPatientInstruction omitted -- no "이미 안내문에 들어 있습니다" status', !htmlOmitted.includes('이미 안내문에 들어 있습니다'))
+  assert('LbpWorkingHypothesisCard: currentPatientInstruction omitted -- no stale-hypothesis warning', !htmlOmitted.includes('안내문에 이전 가설 문장이 남아 있습니다'))
+  assert('LbpWorkingHypothesisCard: currentPatientInstruction omitted -- the plain "안내문에 넣기" button still renders', htmlOmitted.indexOf('안내문에 넣기') !== -1)
+
+  // (v) pure guard: appending an edited sentence, then the ORIGINAL, over
+  // the edited text is what D-2 reported as "resurrection" -- pin that the
+  // append function itself still exhibits this today (the card-level fix is
+  // a UI cue, not a change to the append function, which stays additive-only
+  // and clinician-owned per its own doc comment).
+  const original = patientSentenceDraftKo(withSupport({ NEURAL: 'HIGHER' }))
+  const edited = '오늘은 허리에서 다리로 이어지는 불편감과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.'
+  const resurrected = appendLbpHypothesisSentenceToPatientInstruction(edited, original)
+  assert('appendLbpHypothesisSentenceToPatientInstruction (D-2 baseline): the function itself still appends the original after an edited version (unchanged by design -- the UI-level fix is the warning cue, not a function change)', resurrected === `${edited}\n${original}`)
 }
 
 /* ------------------------------------------------------------------------
@@ -483,36 +562,179 @@ function withSupport(overrides) {
 }
 
 /* ------------------------------------------------------------------------
- * §11.1/§11.7: patientCarePlanPreview.ts zero-diff guard -- the patient
- * output boundary this whole batch is designed to protect. A sha256 pin
- * catches ANY byte-level change (not just the imports this file happened
- * to think of), matching §11.6's "zero-diff 단언(소스 검사)" requirement
- * literally.
+ * Opus delta review D-5: the prior-visit hypothesis recap line in
+ * RevisitWorkspace.tsx rendered the bare `summarizeLbpWorkingHypothesisKo`
+ * string with no `이전` marker, unlike every sibling line in the same
+ * "이전 방문 참고" block -- readable as TODAY's judgment. Fixed at the
+ * render site only (the shared summarizer itself, and the EMR line it also
+ * feeds, must keep the un-prefixed "임상 가설: " form). RevisitWorkspace.tsx
+ * is not bundled/rendered by this spec (see doctor-workspace.spec.mjs's own
+ * comment on why -- it is not wired into any esbuild bundle here), so this
+ * is a source-scan structural check, matching every other RevisitWorkspace
+ * assertion in this test suite's sibling specs.
+ * ---------------------------------------------------------------------- */
+{
+  const rwSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/RevisitWorkspace.tsx', import.meta.url)), 'utf8')
+  assert('D-5: RevisitWorkspace.tsx renders "<strong>이전 임상 가설</strong>" for the prior-visit hypothesis recap line', rwSrc.includes('<strong>이전 임상 가설</strong>'))
+  assert(
+    'D-5: the prior-visit hypothesis recap strips the shared summarizer\'s own "임상 가설: " prefix at the render site (replace(/^임상 가설: /, \'\'))',
+    /priorHypothesisSummary\.replace\(\/\^임상 가설: \/, ''\)/.test(rwSrc),
+  )
+
+  // The shared summarizer itself must be UNCHANGED (the EMR line needs the
+  // un-prefixed form) -- non-vacuous re-check of the same property already
+  // pinned above, restated here next to the D-5 fix for traceability.
+  const summaryForEmr = summarizeLbpWorkingHypothesisKo(withSupport({ NEURAL: 'HIGHER' }))
+  assert('D-5: summarizeLbpWorkingHypothesisKo (shared with the EMR line) still returns the "임상 가설: " prefix unstripped', summaryForEmr === '임상 가설: 신경근 관여 가능성 높음')
+}
+
+/* ------------------------------------------------------------------------
+ * §11.1/§11.7: patientCarePlanPreview.ts boundary guard -- Opus delta
+ * review D-6. The original whole-file sha256 pin was semantically blind: a
+ * PROVEN comment-only, zero-behaviour edit broke it, and its one obvious
+ * remedy (re-pin the hash) would silently re-baseline the very boundary it
+ * exists to protect without anyone re-reading the file. Replaced with
+ * three guards that are behavioural/semantic instead of byte-level: an
+ * exact import-list assertion (a new import is the only mechanism by which
+ * hypothesis content could enter this module), the existing never-appears
+ * content checks extended to the 5 easy labels + the fixed clause, and an
+ * output-level property assertion (patient output = clinician text).
  * ---------------------------------------------------------------------- */
 {
   const previewSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/patientCarePlanPreview.ts', import.meta.url)), 'utf8')
-  const hash = createHash('sha256').update(previewSrc, 'utf8').digest('hex')
+
+  // (1) Exact import-list assertion.
+  const importPaths = new Set([...previewSrc.matchAll(/from '([^']+)'/g)].map((m) => m[1]))
   assert(
-    'patientCarePlanPreview.ts is byte-for-byte unchanged (sha256 pin) -- LBP v1 Batch 2.5c must not touch this file at all',
-    hash === '786d84d49c00fc1143aa5c8bd841785aa4ab2af02c752b1470bc77ee48520136',
+    "patientCarePlanPreview.ts imports exactly {'./carePlan'} -- a new import here is the only mechanism by which hypothesis content could reach this module",
+    importPaths.size === 1 && importPaths.has('./carePlan'),
   )
+
+  // (2) Never-appears content checks (kept from before D-6, extended per
+  // D-6's minimal fix to the 5 patient-facing easy labels and the fixed
+  // disclaimer clause).
   assert('patientCarePlanPreview.ts source never imports the new lbpWorkingHypothesis module', !previewSrc.includes("from './lbpWorkingHypothesis'"))
   assert('patientCarePlanPreview.ts source never names any of the 5 hypothesis pattern ids', !LBP_HYPOTHESIS_PATTERN_IDS.some((id) => previewSrc.includes(id)))
   assert('patientCarePlanPreview.ts source never contains the literal string "임상 가설"', !previewSrc.includes('임상 가설'))
+  const hypothesisEasyLabelsKo = ['허리 움직임', '다리로 가는 신경', '오래 걷거나 서 있을 때 나타나는 다리', '고관절', '골반 뒤쪽 관절']
+  for (const label of hypothesisEasyLabelsKo) {
+    assert(`patientCarePlanPreview.ts source never contains the easy-label literal "${label}"`, !previewSrc.includes(label))
+  }
+  assert('patientCarePlanPreview.ts source never contains the fixed disclaimer clause literal', !previewSrc.includes(LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO))
 
-  // No src/ file outside this module/its own consumers imports
-  // lbpWorkingHypothesis.ts into patientCarePlanPreview.ts's dependency
-  // path -- the only intended callers are the workspace/card/EMR files
-  // this batch itself wires it into.
+  // (3) Output-level property assertion: build a PainCarePlan whose only
+  // non-empty field is patientInstruction and confirm the hypothesis
+  // sentence appears in the rendered patient output IF AND ONLY IF the
+  // clinician's own text contains it -- i.e. pin the PROPERTY (patient
+  // output = clinician text), not the file's bytes.
+  const emptyCarePlanForPreview = {
+    currentTreatmentGoal: '',
+    rehabilitationGoal: '',
+    homeActionPlan: '',
+    activityPrecaution: '',
+    patientInstruction: '',
+    nextVisitCheckItem: '',
+    recordedAt: null,
+  }
+  const hypothesisSentenceForPreview = patientSentenceDraftKo(withSupport({ NEURAL: 'HIGHER' }))
+
+  const previewWithout = buildPainPatientCarePlanPreview({
+    primaryConcern: '요통',
+    carePlan: { ...emptyCarePlanForPreview, patientInstruction: '원장이 직접 쓴 안내문' },
+  })
+  assert('buildPainPatientCarePlanPreview: the hypothesis sentence is ABSENT from patient output when the clinician text does not contain it', !previewWithout.includes(hypothesisSentenceForPreview))
+
+  const previewWith = buildPainPatientCarePlanPreview({
+    primaryConcern: '요통',
+    carePlan: { ...emptyCarePlanForPreview, patientInstruction: hypothesisSentenceForPreview },
+  })
+  assert(
+    'buildPainPatientCarePlanPreview: the hypothesis sentence is PRESENT in patient output only because the clinician text contains it (patient output = clinician text, no separate hypothesis-aware path)',
+    previewWith.includes(hypothesisSentenceForPreview),
+  )
+}
+
+/* ------------------------------------------------------------------------
+ * Opus delta review D-8: the previous "allowedImporters" block was a
+ * tautology -- `!new Set([6 literals]).has('a 7th literal')` never opened a
+ * single source file and could not fail for any state of the repository,
+ * while its own comment claimed it verified "no src/ file outside this
+ * module/its own consumers imports lbpWorkingHypothesis.ts". It was also
+ * already factually wrong: PainWorkspace.tsx genuinely imports the module
+ * and was missing. Replaced with a real source-tree scan.
+ * ---------------------------------------------------------------------- */
+{
+  const srcRoot = fileURLToPath(new URL('../src', import.meta.url))
+  function listSourceFiles(dir) {
+    const out = []
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = joinPath(dir, entry.name)
+      if (entry.isDirectory()) out.push(...listSourceFiles(full))
+      else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full)
+    }
+    return out
+  }
+  // The complete, up-to-date set of src/ files allowed to import
+  // lbpWorkingHypothesis.ts -- the workspace screens that wire the card in,
+  // the card itself, the EMR/persistence/visit-state modules that carry the
+  // field, and PainWorkspace.tsx (the read-model type consumer).
   const allowedImporters = new Set([
     'DoctorWorkspace.tsx',
     'RevisitWorkspace.tsx',
     'LbpWorkingHypothesisCard.tsx',
+    'PainWorkspace.tsx',
     'emrPreview.ts',
     'persistence.ts',
     'visitWorkspace.ts',
   ])
-  assert('structural sanity: patientCarePlanPreview.ts is not in the allowed-importers list (it must never import lbpWorkingHypothesis.ts)', !allowedImporters.has('patientCarePlanPreview.ts'))
+  const actualImporters = new Set()
+  for (const file of listSourceFiles(srcRoot)) {
+    const fileSrc = readFileSync(file, 'utf8')
+    if (/from '\.\/lbpWorkingHypothesis'/.test(fileSrc)) {
+      actualImporters.add(file.split('/').pop())
+    }
+  }
+  assert(
+    'structural (D-8, real): the actual set of src/**/*.{ts,tsx} files importing lbpWorkingHypothesis.ts equals the allowed-importers list exactly (no unintended new importer, none stale/missing)',
+    actualImporters.size === allowedImporters.size && [...actualImporters].every((f) => allowedImporters.has(f)),
+  )
+  assert('structural (D-8): patientCarePlanPreview.ts is not among the actual importers of lbpWorkingHypothesis.ts', !actualImporters.has('patientCarePlanPreview.ts'))
+}
+
+/* ------------------------------------------------------------------------
+ * Opus delta review D-7: the mandatory-clause guarantee rested on a SINGLE
+ * assertion (the hard-pinned exact NEURAL sentence); every other
+ * clause-presence check imports `LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO`
+ * FROM the module under test, so rewording the constant carries those
+ * assertions along with it (self-referential, proven to still pass 159/160
+ * assertions after the clause was reworded to drop "확정 진단이 아니라").
+ * This literal is independent of the module and is that failure point made
+ * explicit -- the parenthetical in its name is deliberate, to stop a future
+ * session from treating a failure here as "just re-pin the string".
+ * ---------------------------------------------------------------------- */
+{
+  assert(
+    'the mandatory clause literal is exactly the PO-approved wording (do NOT update this literal without a DECISIONS.md entry)',
+    LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO === '확정 진단이 아니라 경과를 보며 다시 판단합니다.',
+  )
+}
+
+/* ------------------------------------------------------------------------
+ * Opus delta review D-9: the mutant-(e) structural "must be inside an
+ * explicit click handler, never an effect" guard existed only for
+ * RevisitWorkspace.tsx. DoctorWorkspace.tsx:683 -- the INITIAL-VISIT
+ * insertion path, the one most patients actually go through -- had no
+ * equivalent guard in any spec. Mirrored here.
+ * ---------------------------------------------------------------------- */
+{
+  const dwSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)), 'utf8')
+  const callSites = [...dwSrc.matchAll(/appendLbpHypothesisSentenceToPatientInstruction\(/g)]
+  assert('D-9 guard: appendLbpHypothesisSentenceToPatientInstruction is called exactly once in DoctorWorkspace.tsx (the one dedicated button)', callSites.length === 1)
+  const idx = callSites[0].index
+  const before300 = dwSrc.slice(Math.max(0, idx - 300), idx)
+  assert('D-9 guard: the 300 chars before the call site contain "onInsertPatientSentence={" (it is inside that prop closure, not a bare effect)', /onInsertPatientSentence=\{/.test(before300))
+  const insideAnyUseEffect = useEffectSpans(dwSrc).some(([start, end]) => idx > start && idx < end)
+  assert('D-9 guard: the call site does NOT appear inside any useEffect(...) in DoctorWorkspace.tsx (would mean auto-insertion on render/mount rather than an explicit click)', !insideAnyUseEffect)
 }
 
 console.log(`\n${passCount} LBP working hypothesis assertions passed.`)

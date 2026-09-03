@@ -10,6 +10,14 @@ import {
   WORKSPACE_STATE_SCHEMA_VERSION,
 } from './.workspace-round3-persistence-bundle.mjs'
 import { reassessmentExamItemFromPrevious, isReassessmentPending } from './.workspace-round3-reassessment-bundle.mjs'
+import {
+  EXAM_CHECK_STATUS_LABEL,
+  EXAM_CHECK_STATUS_GLYPH,
+  EXAM_CHECK_STATUS_OPTIONS,
+  isValidExamStatus,
+  isExamChecked,
+} from './.workspace-round3-provenance-bundle.mjs'
+import { emptyExamResult, isExamPending, groupExamSuggestions } from './.workspace-round3-examsuggestion-bundle.mjs'
 import { buildPainPatientCarePlanPreview, buildHerbalPatientCarePlanPreview } from './.workspace-round3-patientpreview-bundle.mjs'
 import { emptyPainCarePlan, emptyHerbalCarePlan } from './.workspace-round3-careplan-bundle.mjs'
 import { deriveAdditionalConcernSummary, emptyAdditionalConcernPromotion } from './.workspace-round3-additionalconcern-bundle.mjs'
@@ -865,5 +873,198 @@ function assert(name, cond) {
       JSON.stringify(appliedJudgment.revisitQuickCheck) === JSON.stringify(emptyVisitWorkspaceState().revisitQuickCheck),
   )
 }
+
+/* -----------------------------------------------------------------------
+ * LBP v1 Batch 2.5b (G15): ExamCheckStatus 6상태 —
+ * POSITIVE / NEGATIVE / UNCLEAR / LIMITED / NOT_PERFORMED / NOT_YET_CHECKED.
+ * 설계 문서: docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md
+ *
+ * 이 배치의 코드 diff는 작다. 위험은 "바꾸지 않은 코드"에 있다 -- 결과 상태를
+ * 읽는 필터가 전부 `!== 'NOT_YET_CHECKED'` 형태라 신규 2값이 "기록된 사실"로
+ * 취급되는 것이 *우연히* 맞는 상태다. 아래 assertion들이 그 우연을 계약으로
+ * 고정한다.
+ * ------------------------------------------------------------------- */
+{
+  const SIX = ['POSITIVE', 'NEGATIVE', 'UNCLEAR', 'LIMITED', 'NOT_PERFORMED', 'NOT_YET_CHECKED']
+
+  /* ---- T-1a: 화면 옵션 목록이 enum 전체를 정확히 한 번씩 덮는가 ----
+   * `ExamCheckStatus[]`는 부분집합도 통과하는 타입이므로 tsc가 누락을 잡지
+   * 못한다. 값을 추가하고 EXAM_CHECK_STATUS_OPTIONS를 잊으면 build/기존
+   * 테스트가 전부 통과하면서 원장이 신규 상태를 고를 수만 없게 된다. */
+  const labelKeys = Object.keys(EXAM_CHECK_STATUS_LABEL)
+  assert(
+    'Batch 2.5b T-1a: EXAM_CHECK_STATUS_LABEL has exactly the 6 approved states',
+    labelKeys.length === 6 && SIX.every((k) => labelKeys.includes(k)),
+  )
+  assert(
+    'Batch 2.5b T-1a: EXAM_CHECK_STATUS_OPTIONS covers every label key exactly once (no silently unreachable state)',
+    EXAM_CHECK_STATUS_OPTIONS.length === labelKeys.length &&
+      new Set(EXAM_CHECK_STATUS_OPTIONS).size === EXAM_CHECK_STATUS_OPTIONS.length &&
+      labelKeys.every((k) => EXAM_CHECK_STATUS_OPTIONS.includes(k)),
+  )
+  assert(
+    'Batch 2.5b T-1a: 자주 쓰는 3개(정상/이상/불명확)가 항상 목록 앞에 온다 (CD-2.5b-3 권고 순서)',
+    EXAM_CHECK_STATUS_OPTIONS.slice(0, 3).join(',') === 'POSITIVE,NEGATIVE,UNCLEAR' &&
+      EXAM_CHECK_STATUS_OPTIONS[EXAM_CHECK_STATUS_OPTIONS.length - 1] === 'NOT_YET_CHECKED',
+  )
+
+  /* ---- T-1a(라벨 자구): CD-2.5b-1 권고안 A. 기존 LbpDirectionalResponse가
+   * "미시행"을 미평가의 뜻으로 이미 쓰고 있으므로 여기서는 쓰지 않는다. ---- */
+  assert(
+    'Batch 2.5b T-1a: LIMITED/NOT_PERFORMED labels are non-empty, distinct, and never reuse the 음성/정상 wording',
+    EXAM_CHECK_STATUS_LABEL.LIMITED.trim() !== '' &&
+      EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED.trim() !== '' &&
+      EXAM_CHECK_STATUS_LABEL.LIMITED !== EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED &&
+      !EXAM_CHECK_STATUS_LABEL.LIMITED.includes('음성') &&
+      !EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED.includes('음성') &&
+      !EXAM_CHECK_STATUS_LABEL.LIMITED.includes('정상') &&
+      !EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED.includes('정상'),
+  )
+  assert(
+    'Batch 2.5b T-1a (CD-2.5b-1): NOT_PERFORMED does not reuse the exact label "미시행" (already means 미평가 in LbpDirectionalResponse)',
+    EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED !== '미시행',
+  )
+  assert(
+    'Batch 2.5b T-1a: the four pre-existing labels are unchanged (additive only)',
+    EXAM_CHECK_STATUS_LABEL.POSITIVE === '양성/이상 소견' &&
+      EXAM_CHECK_STATUS_LABEL.NEGATIVE === '음성/정상' &&
+      EXAM_CHECK_STATUS_LABEL.UNCLEAR === '불명확' &&
+      EXAM_CHECK_STATUS_LABEL.NOT_YET_CHECKED === '아직 확인 안 됨',
+  )
+
+  /* ---- T-9: 색 무의존 요건(Core Reduction P2) -- glyph 6개가 서로 달라야 한다 ---- */
+  const glyphs = SIX.map((k) => EXAM_CHECK_STATUS_GLYPH[k])
+  assert(
+    'Batch 2.5b T-9: all 6 status glyphs exist, are non-empty, and are mutually distinct (색만으로 구분 금지)',
+    glyphs.length === 6 && glyphs.every((g) => typeof g === 'string' && g.trim() !== '') && new Set(glyphs).size === 6,
+  )
+
+  /* ---- T-7: validator가 신규 값을 받아들이고 garbage는 계속 거부하는가 ---- */
+  assert(
+    'Batch 2.5b T-7: isValidExamStatus accepts all 6 approved states',
+    SIX.every((k) => isValidExamStatus(k) === true),
+  )
+  assert(
+    'Batch 2.5b T-7: isValidExamStatus still rejects garbage (unknown string, empty, null, number, object, prototype key)',
+    ['MAYBE', '', 'limited', 'not_performed'].every((v) => isValidExamStatus(v) === false) &&
+      isValidExamStatus(null) === false &&
+      isValidExamStatus(undefined) === false &&
+      isValidExamStatus(7) === false &&
+      isValidExamStatus({}) === false &&
+      isValidExamStatus('toString') === false,
+  )
+
+  /* ---- T-3: 신규 2값은 "기록된 사실"이지 pending이 아니다 ---- */
+  const examItem = (status) => ({
+    id: `e_${status}`,
+    title: `검사 ${status}`,
+    priority: 'MUST_CHECK',
+    reasonFacts: [],
+    source: 'SUGGESTED',
+    result: { status, laterality: null, note: '', recordedAt: status === 'NOT_YET_CHECKED' ? null : '2026-01-01T00:00:00.000Z' },
+  })
+  assert(
+    'Batch 2.5b T-3: isExamPending is false for LIMITED and NOT_PERFORMED (a recorded fact, not "아직 확인 안 됨")',
+    isExamPending(examItem('LIMITED')) === false && isExamPending(examItem('NOT_PERFORMED')) === false,
+  )
+  assert(
+    'Batch 2.5b T-3: isExamPending stays true ONLY for NOT_YET_CHECKED',
+    isExamPending(examItem('NOT_YET_CHECKED')) === true &&
+      SIX.filter((k) => k !== 'NOT_YET_CHECKED').every((k) => isExamPending(examItem(k)) === false),
+  )
+  const grouped = groupExamSuggestions(SIX.map(examItem))
+  assert(
+    'Batch 2.5b T-3: groupExamSuggestions().stillPending contains only the NOT_YET_CHECKED item',
+    grouped.stillPending.length === 1 && grouped.stillPending[0].result.status === 'NOT_YET_CHECKED',
+  )
+  assert(
+    'Batch 2.5b T-3: isReassessmentPending is false for LIMITED/NOT_PERFORMED, true only for NOT_YET_CHECKED',
+    isReassessmentPending({ result: { status: 'LIMITED' } }) === false &&
+      isReassessmentPending({ result: { status: 'NOT_PERFORMED' } }) === false &&
+      isReassessmentPending({ result: { status: 'NOT_YET_CHECKED' } }) === true,
+  )
+  assert(
+    'Batch 2.5b T-3: isExamChecked is true for LIMITED/NOT_PERFORMED (they ARE clinician-entered records)',
+    isExamChecked('LIMITED') === true &&
+      isExamChecked('NOT_PERFORMED') === true &&
+      isExamChecked('NOT_YET_CHECKED') === false,
+  )
+
+  /* ---- T-4: 이전 소견이 신규 값이어도 오늘 결과로 자동 복사되지 않는다 ---- */
+  for (const prevStatus of ['LIMITED', 'NOT_PERFORMED']) {
+    const promoted = reassessmentExamItemFromPrevious('r1', '재검 항목', {
+      status: prevStatus,
+      laterality: null,
+      note: '사유 메모',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    })
+    assert(
+      `Batch 2.5b T-4: a promoted item whose previous status is ${prevStatus} still starts result.status = NOT_YET_CHECKED`,
+      promoted.result.status === 'NOT_YET_CHECKED' && promoted.result.recordedAt === null,
+    )
+    assert(
+      `Batch 2.5b T-4: the ${prevStatus} previous value itself is preserved as a read-only raw fact`,
+      promoted.previous.status === prevStatus && promoted.previous.note === '사유 메모',
+    )
+  }
+
+  /* ---- T-10: 신규 값이 기본값으로 새지 않는다 ---- */
+  assert(
+    'Batch 2.5b T-10: emptyExamResult() still defaults to NOT_YET_CHECKED (a new state must never become the default)',
+    emptyExamResult().status === 'NOT_YET_CHECKED' && emptyExamResult().recordedAt === null,
+  )
+  {
+    const emptyVisit = emptyVisitWorkspaceState()
+    assert(
+      'Batch 2.5b T-10: emptyVisitWorkspaceState reassessment items start empty (no defaulted status at all)',
+      Array.isArray(emptyVisit.reassessment.items) && emptyVisit.reassessment.items.length === 0,
+    )
+  }
+
+  /* ---- T-6: 직렬화 round-trip -- 신규 값 보존 + 구 4값 레코드 무변화 ---- */
+  {
+    const withNewStates = {
+      ...emptyWorkspaceState(),
+      painExamSuggestions: [examItem('LIMITED'), examItem('NOT_PERFORMED')],
+      painReassessment: {
+        items: [
+          {
+            id: 'r1',
+            title: '재검',
+            previous: { status: 'LIMITED', laterality: 'LEFT', note: '통증으로 각도 미달', recordedAt: '2026-01-01T00:00:00.000Z' },
+            source: 'OBSERVED',
+            result: { status: 'NOT_PERFORMED', laterality: null, note: '오늘은 시행 못 함', recordedAt: '2026-02-01T00:00:00.000Z' },
+          },
+        ],
+        finalReassessmentNote: '',
+        recordedAt: null,
+      },
+    }
+    const rt = deserializeWorkspaceState(JSON.parse(JSON.stringify(withNewStates)))
+    assert(
+      'Batch 2.5b T-6: round-trip preserves LIMITED / NOT_PERFORMED on painExamSuggestions',
+      rt.painExamSuggestions.map((i) => i.result.status).join(',') === 'LIMITED,NOT_PERFORMED',
+    )
+    assert(
+      'Batch 2.5b T-6: round-trip preserves a NOT_PERFORMED today-result and a LIMITED previous value on a reassessment item',
+      rt.painReassessment.items[0].result.status === 'NOT_PERFORMED' &&
+        rt.painReassessment.items[0].result.note === '오늘은 시행 못 함' &&
+        rt.painReassessment.items[0].previous.status === 'LIMITED' &&
+        rt.painReassessment.items[0].previous.note === '통증으로 각도 미달',
+    )
+    /* 하위 호환: 구 4값만 쓰던 레코드는 round-trip 후 한 글자도 달라지지 않아야
+     * 한다 = 마이그레이션이 필요 없다는 주장의 근거. */
+    const legacy = {
+      ...emptyWorkspaceState(),
+      painExamSuggestions: [examItem('POSITIVE'), examItem('NEGATIVE'), examItem('UNCLEAR'), examItem('NOT_YET_CHECKED')],
+    }
+    const legacyRt = deserializeWorkspaceState(JSON.parse(JSON.stringify(legacy)))
+    assert(
+      'Batch 2.5b T-6: a legacy 4-value record round-trips byte-identically (no migration needed)',
+      JSON.stringify(legacyRt.painExamSuggestions) === JSON.stringify(legacy.painExamSuggestions),
+    )
+  }
+}
+
 
 console.log(`\n${passCount} workspace round-3 assertions passed.`)

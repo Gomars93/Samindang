@@ -130,6 +130,8 @@ tests/.lbp-exercise-recommendation-core-metadata-bundle.mjs
 tests/.follow-up-target-picker-bundle.cjs
 
 # esbuild bundles used by tests/workspace-round3.spec.mjs (regenerated, not source)
+tests/.workspace-round3-provenance-bundle.mjs
+tests/.workspace-round3-examsuggestion-bundle.mjs
 tests/.workspace-round3-persistence-bundle.mjs
 tests/.workspace-round3-reassessment-bundle.mjs
 tests/.workspace-round3-patientpreview-bundle.mjs

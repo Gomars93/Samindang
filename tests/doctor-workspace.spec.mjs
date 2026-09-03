@@ -529,6 +529,148 @@ test('14차 MEDIUM-2: a wrong-typed (number) exam result.laterality never leaks 
   assert.ok(emrTextOnly.includes('양성/이상 소견'))
 })
 
+/* -----------------------------------------------------------------------
+ * LBP v1 Batch 2.5b (G15): ExamCheckStatus 6상태.
+ * 설계 문서: docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md
+ *
+ * 값 수준 계약은 tests/workspace-round3.spec.mjs가 본다. 여기서는 원장이
+ * 실제로 보는 것만 본다 -- 버튼이 화면에 있는지, EMR 텍스트가 신규 2값을
+ * "사실"로 쓰면서 미확인은 여전히 빼는지.
+ * ------------------------------------------------------------------- */
+
+// T-1b: 값 목록이 맞아도 카드가 그 목록을 쓰지 않으면 원장은 신규 상태를
+// 고를 수 없다. 손으로 쓴 STATUS_OPTIONS 리터럴이 되살아나는 것을 막는다.
+test('Batch 2.5b T-1b: an exam suggestion card renders all 6 status buttons (제한/시행 못 함 포함)', () => {
+  const html = render(PAIN_SCENARIO_1)
+  for (const label of ['양성/이상 소견', '음성/정상', '불명확', '제한적 시행(판단 유보)', '시행 못 함', '아직 확인 안 됨']) {
+    assert.ok(html.includes(label), `status button "${label}" must be offered to the clinician`)
+  }
+})
+
+test('Batch 2.5b T-1b: the two new status buttons are real aria-pressed buttons, not decorative text', () => {
+  const html = render(PAIN_SCENARIO_1)
+  for (const label of ['제한적 시행(판단 유보)', '시행 못 함']) {
+    const idx = html.indexOf(label)
+    assert.ok(idx !== -1)
+    // walk back to the enclosing tag and check it is a status button with aria-pressed
+    const openIdx = html.lastIndexOf('<button', idx)
+    assert.ok(openIdx !== -1, `"${label}" must sit inside a <button>`)
+    const chunk = html.slice(openIdx, idx)
+    assert.ok(chunk.includes('workspace__statusBtn'), `"${label}" must be a workspace__statusBtn`)
+    assert.ok(chunk.includes('aria-pressed='), `"${label}" must expose aria-pressed`)
+  }
+})
+
+// T-2: 이 배치의 임상적 요점. 제한/미시행은 사실로 기록되고(EMR에 나타남),
+// 미확인은 여전히 빠지고, 어느 쪽도 "음성/정상"으로 찍히지 않는다.
+test('Batch 2.5b T-2: EMR preview lists LIMITED and NOT_PERFORMED as recorded facts, still omits NOT_YET_CHECKED, and never renders either as 음성/정상', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    painExamSuggestions: [
+      {
+        id: 'e_lim',
+        title: '제한 시행 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'LIMITED', laterality: 'LEFT', note: '통증으로 각도 미달', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+      {
+        id: 'e_np',
+        title: '시행 못 한 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'NOT_PERFORMED', laterality: null, note: '급성기라 보류', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+      {
+        id: 'e_nyc',
+        title: '아직 안 한 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  const emrIdx = html.indexOf('workspace__emrPreview__text')
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+
+  assert.ok(emrTextOnly.includes('제한 시행 검사'), 'a LIMITED result is a recorded fact and must appear in the EMR text')
+  assert.ok(emrTextOnly.includes('제한적 시행(판단 유보)'), "the LIMITED item's own label must appear")
+  assert.ok(emrTextOnly.includes('통증으로 각도 미달'), "the LIMITED item's note must carry through")
+  assert.ok(emrTextOnly.includes('시행 못 한 검사'), 'a NOT_PERFORMED result is a recorded fact and must appear in the EMR text')
+  assert.ok(emrTextOnly.includes('시행 못 함'), "the NOT_PERFORMED item's own label must appear")
+  assert.ok(emrTextOnly.includes('급성기라 보류'), "the NOT_PERFORMED item's reason note must carry through")
+
+  assert.ok(!emrTextOnly.includes('아직 안 한 검사'), 'a NOT_YET_CHECKED item must still never be listed as a finding')
+  assert.ok(!emrTextOnly.includes('음성/정상'), 'neither new state may ever render as 음성/정상 -- the file\'s core safety invariant')
+  assert.ok(!emrTextOnly.includes('undefined'), 'no new state may leak the literal "undefined" into EMR text')
+})
+
+test('Batch 2.5b T-2: a NOT_PERFORMED / LIMITED item leaves "아직 확인 안 됨" pending state (workspace__examCard--done) like any other recorded result', () => {
+  const initialWorkspaceState = {
+    schema_version: '1.1.0',
+    painExamSuggestions: [
+      {
+        id: 'e_np',
+        title: '시행 못 한 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'NOT_PERFORMED', laterality: null, note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+    ],
+    updated_at: null,
+  }
+  const html = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  assert.ok(html.includes('workspace__examCard--done'), 'a NOT_PERFORMED item is recorded, so its card is not in the pending style')
+})
+
+// CD-2.5b-2 (권고안): 사유 메모를 필수로 만들지 않는 대신, NOT_PERFORMED를
+// 고르면 상세·메모가 자동으로 펼쳐져 사유 기록을 유도한다.
+test('Batch 2.5b CD-2.5b-2: choosing 시행 못 함 auto-opens 상세·메모 (no "상세·메모 추가" prompt left to click), while a plain NEGATIVE keeps it collapsed', () => {
+  const mk = (status) => ({
+    schema_version: '1.1.0',
+    painExamSuggestions: [
+      {
+        id: 'only',
+        title: '단일 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status, laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+    ],
+    updated_at: null,
+  })
+  const notPerformed = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState: mk('NOT_PERFORMED'), synthetic: undefined })
+  const negative = renderWith(PAIN_SCENARIO_1, { submissionId: 'x', initialWorkspaceState: mk('NEGATIVE'), synthetic: undefined })
+  assert.ok(notPerformed.includes('workspace__examCard__detailRow'), '시행 못 함 must open the note field so the reason can be recorded')
+  assert.ok(!negative.includes('workspace__examCard__detailRow'), 'a plain NEGATIVE keeps the compressed default (round 13) -- 이 자동 펼침은 NOT_PERFORMED 한정')
+})
+
+/* T-5: 재진 이월 2경로(RevisitWorkspace.tsx)는 이 배치에서 코드를 바꾸지
+ * 않는다 -- 신규 2값이 이월되는 것은 필터가 `!== 'NOT_YET_CHECKED'` 형태라서
+ * 성립하는 동작이다. RevisitWorkspace는 이 spec의 번들에 없으므로(원장 화면
+ * 전체 shell), 그 필터가 상태를 하드코딩한 목록으로 좁혀지지 않았는지를
+ * 소스 수준에서 고정한다. 같은 파일의 label-lookup 가드는
+ * tests/save-conflict.spec.mjs가 이미 본다. */
+test('Batch 2.5b T-5: both prior-visit recap paths in RevisitWorkspace.tsx still filter by isValidExamStatus + !== NOT_YET_CHECKED (never a hardcoded POSITIVE/NEGATIVE allowlist)', () => {
+  const src = fs.readFileSync(new URL('../src/doctor/workspace/RevisitWorkspace.tsx', import.meta.url), 'utf8')
+  const matches = src.match(
+    /\.filter\(\(i\) => isValidExamStatus\(i\.result\.status\) && i\.result\.status !== 'NOT_YET_CHECKED'\)/g,
+  )
+  assert.equal(matches ? matches.length : 0, 2, 'both recap functions must keep the "any recorded status carries forward" filter')
+  assert.ok(
+    !/i\.result\.status === 'POSITIVE'\s*\|\|\s*i\.result\.status === 'NEGATIVE'/.test(src),
+    'narrowing the recap to POSITIVE/NEGATIVE would silently drop 제한/미시행 from the next visit',
+  )
+})
+
 // ---------- 5. accessibility ----------
 test('exam suggestion status buttons expose aria-pressed', () => {
   const html = render(PAIN_SCENARIO_1)

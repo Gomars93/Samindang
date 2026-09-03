@@ -277,6 +277,33 @@ test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynami
   assert.equal(absent.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
 })
 
+// ---------- LBP v1 Batch 2.5b (G15): the two states added to ExamCheckStatus must not become evidence ----------
+// 설계 문서 §2.3: 결과값으로 추론하는 지점은 이 파일의 `=== 'POSITIVE'` 한 곳뿐이고,
+// 그 비교는 이미 배타적이라 로직 변경이 없었다. "변경이 없어서 안전하다"는 주장을
+// 우연이 아니라 계약으로 고정한다 -- 필터를 `!== 'NOT_YET_CHECKED'`로 완화하는
+// 리팩터가 들어오면 LIMITED/NOT_PERFORMED가 근거로 승격되며 이 테스트가 잡는다.
+test("Batch 2.5b: a LIMITED or NOT_PERFORMED neurodynamic exam is never 'directly supported' -- only POSITIVE is", () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const baseWs = {
+    painFollowUpTargets: [followUpTarget('lbp_tf_sitting', '앉기')],
+    lbpConfirmedCapabilities: ['NEURAL_SLIDER_TOLERATED'],
+  }
+  for (const status of ['LIMITED', 'NOT_PERFORMED']) {
+    const result = buildLbpRecommendationContext(
+      payload,
+      'NONE',
+      ws({ ...baseWs, painExamSuggestions: [neurodynamicExam(status)] }),
+    )
+    const neural = result.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
+    assert.ok(neural, `LBP_NEURAL_01 must still be offered as a candidate when the exam is ${status}`)
+    assert.equal(
+      neural.directlySupported,
+      false,
+      `${status} means "we did not establish concordance" -- unknown is never support (architecture §2.3)`,
+    )
+  }
+})
+
 // ---------- defect 1 (BLOCKER, CD-1): unconfirmed regressible capability never auto-promotes at the recommendation level either ----------
 
 test('defect 1: neuro STABLE + zero confirmed capabilities + a target function selected -> readyCandidates is empty, regressible-only candidates (e.g. LBP_HIP_MOB_01/LBP_HIP_STR_03) land in awaitingCapabilityCandidates instead', () => {

@@ -271,13 +271,15 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
  * projection `longitudinal.ts`'s other readers guard against.
  *
  * Walk from the most recent prior visit backward. A visit whose plan is
- * absent -- `null`/`undefined`, or not an object at all -- or whose plan is
+ * absent -- `null`/`undefined`, the server's own default for "no plan set
+ * on this visit" -- or whose plan object has no `status` key or is
  * explicitly `UNSET` carries no information -- skip it and keep looking
  * (this is the "9.1의 plan 소실 결함 수정": an unchanged-since plan must not
  * vanish just because the immediately prior visit never touched it). The
  * FIRST visit whose plan has a real (non-`UNSET`) `status` is the "유효
- * plan" -- evaluation stops there. If that plan's own `status` is present
- * but unreadable (not a string), or its DATE/VISIT_COUNT fields are
+ * plan" -- evaluation stops there. If that plan is present but unreadable
+ * -- not an object at all, or an object whose `status` is not a string --
+ * or its DATE/VISIT_COUNT fields are
  * malformed, or its status is `CLINICIAN_DECIDES` or an unrecognized
  * string, the result is `null` (this codebase never guesses at a timing
  * rule) and the scan halts immediately -- it does NOT fall back to an

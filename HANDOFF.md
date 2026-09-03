@@ -1,5 +1,52 @@
 # Current Handoff
 
+## ⚠️ 2026-09-03 (최신 7): LBP v1 Batch 3(재진 간단 체크) 게이트 CLOSED
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `bd58cb0` + 이
+문서 커밋(주석 1절 수정 포함). origin과 동일. PR 미생성(운영 방침: 텍스트
+요약 보고, 원장님이 명시 요청 시에만 PR). main merge는 PO 명시 승인.
+
+**Batch 3 커밋 이력**: `e02cfc6`(Fable 브리프 §9,
+`docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`) → `2cdbd06`(Sonnet
+구현: `revisitQuickCheck.ts`, `RevisitQuickCheckCard.tsx`, `visitWorkspace.ts`
+additive 필드, `RevisitWorkspace.tsx` 배치, 테스트 3파일) → Opus delta
+**PASS, must-fix 1 + nice-to-have 2**(`docs/LBP_V1_BATCH3_OPUS_DELTA_REVIEW_v0.1.md`,
+뮤테이션 12건 전부 검출) → `bd58cb0`(3건 수정) → Opus closing **FAIL(주석
+한 절만 잔여)** → Fable이 주석 절 수정 + Opus 지정 재확인 3개 통과 → CLOSED
+(`docs/LBP_V1_BATCH3_OPUS_CLOSING_REVIEW_v0.1.md` 말미 후기). 검증:
+`tsc -b`/`vite build` OK, `test:revisit-quick-check` 107 /
+`test:workspace-round3` 153 / `test:doctor-workspace` 227 PASS, `test:all`
+PASS(2cdbd06 시점, 이후 변경은 주석·heading·분기 1개 + 테스트), FROZEN/
+tablet/server zero-diff.
+
+**Batch 3가 실제 진료에서 바꾸는 것**: 문진 없는 재진 화면 맨 위에 "재진
+간단 체크(30~60초)" 카드가 생겼다. 원장이 5줄(목표 기능 변화 / 전체 반응 /
+새 신경증상·위험신호 / 운동 실제 시행·난이도 / 치료 후 이상반응)을 chip으로
+찍으면 참고 문장이 1~3줄 뜬다(예: 신경증상 있음 → "안전 확인부터. 재초진
+문진 또는 신경학적 기본검사를 고려"). 점수·threshold 없음, 미평가는 절대
+"없음"으로 안 침. 이전 방문에서 세운 "다음 상세 재평가"(날짜/방문 횟수)에
+도달하면 "세부 재검 시점입니다" 한 줄이 뜨되 재검 폼은 자동으로 안 열림.
+직전 방문이 UNSET이면 그 이전 방문의 계획을 찾아 쓴다(기존의 "계획 소실"
+결함 수정). 이전 방문 참고에 "이전 간단 체크 요약"과 "이전에 채택한 운동"
+줄이 추가됐다.
+
+**사람 판단 대기**: 없음(CLINICAL DECISION REQUIRED 0건).
+
+**알려진 한계(다음 안건 후보, 코드 변경 전 PO 확인)**:
+- "이전에 채택한 운동" 줄은 직전 방문이 초진일 때만 뜬다. 재진 3회차부터는
+  초진 채택 운동 목록이 화면에서 사라진다(초진 submission을 한 번 더
+  조회하는 소규모 확장 필요, Batch 3.1 후보).
+- Opus 관찰 O-1~O-7(악화 문장이 어느 축인지 미표시, 처방 없음+정체 신호,
+  메모는 recap에 미포함, 계획 세운 날짜 미표시 등)은 전부 비차단.
+
+**다음 행동(하나만)**: Batch 3.1(위 채택 운동 가시성) 여부를 PO가 정하면
+그 다음 Batch 2.5b(`ExamCheckStatus` LIMITED/NOT_PERFORMED — Fable 영향
+범위 설계 먼저) → 2.5c(Working Hypothesis 최소) → Batch 4(EMR 고정 6키 +
+CRM 최소). 실제 환자 파일럿 권고는 유지.
+
+---
+
+
 ## ⚠️ 2026-09-02 (최신 6): LBP v1 Batch 2.5a 게이트 CLOSED (Opus closing PASS)
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `e8ed6ef` + 이

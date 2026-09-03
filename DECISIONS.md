@@ -1866,3 +1866,40 @@ RESOLVED를 독립 재현으로 확인).
   `StructuredReassessment`, micro follow-up)을 대조해 최소 설계 → Sonnet 구현
   → Opus delta → fix → closing. 숫자 threshold 없음. 세부 재검은 자동으로
   열지 않고 원장이 선택.
+
+## 2026-09-03 — LBP v1 Batch 3(재진 간단 체크 + 세부 체크 주기 표시) 게이트 CLOSED
+
+### Context
+- 브리프: `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §9 (Fable,
+  `e02cfc6`). 구현 `2cdbd06`(Sonnet) → Opus delta PASS(must-fix 1: doc
+  comment가 코드와 반대, nice-to-have 2) → `bd58cb0` fix → Opus closing
+  FAIL(수정한 주석의 다른 절이 새 분기와 불일치, 코드·테스트는 clean) →
+  Fable이 주석 절만 수정, Opus 지정 재확인 3개 통과.
+- 증거: `docs/LBP_V1_BATCH3_OPUS_DELTA_REVIEW_v0.1.md`,
+  `docs/LBP_V1_BATCH3_OPUS_CLOSING_REVIEW_v0.1.md`.
+
+### Decision (기록)
+1. **Batch 3 게이트 CLOSED.** `VisitWorkspaceState.revisitQuickCheck`
+   (additive, schema `1.0.0` 불변) 5항목 chip + 메모 1칸. 안내 문장 8규칙은
+   chip 상태의 직접 대응만이며 Opus가 "새 임상 판단/threshold/escalation
+   없음"으로 확인. 미평가(NOT_ASSESSED)는 어떤 문장에서도 "없음"으로
+   취급되지 않는다("유지·진행 가능" 문장은 5항목 전부 평가 + 신경 NO +
+   이상반응 NO일 때만).
+2. **세부 체크 주기 도달 표시**: 원장이 세운 `NextReassessmentPlan`
+   (DATE/VISIT_COUNT) 값만 사용, 시스템이 만든 숫자 없음. 직전 방문이 UNSET
+   이면 더 이전 방문의 plan을 쓴다. plan이 있으나 읽을 수 없으면(비객체
+   또는 status 비문자열) 더 오래된(이미 대체된) plan으로 fallback하지 않고
+   표시를 생략한다(fail-safe, Opus가 방향 확인). `오늘 재검` 폼은 due여도
+   자동으로 열리지 않는다.
+3. **환자 태블릿 응답(micro follow-up)은 quick check로 자동 복사하지
+   않는다**(출처 분리). carry-forward도 quick check를 옮기지 않는다.
+4. **Fable의 예외적 직접 수정 1건**: closing 잔여 결함이 doc comment 한
+   절뿐이고 Opus가 "코드·테스트 무변경이면 추가 리뷰 없이 종료 가능"을
+   명시했으므로 Fable이 주석만 수정했다. 코드 구현은 계속 Sonnet 담당이며
+   이 사례를 일반화하지 않는다.
+
+### Consequences
+- 다음 안건(하나): "이전에 채택한 운동" 줄이 재진 3회차부터 사라지는 한계
+  (직전 방문 1건만 읽는 구조)를 Batch 3.1로 다룰지 PO 결정. 그 뒤 2.5b →
+  2.5c → 4.
+- PR 없이 텍스트 요약 보고 유지. main merge는 PO 명시 승인.

@@ -82,6 +82,8 @@ import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
+import { RevisitQuickCheckCard } from './RevisitQuickCheckCard'
+import { computeDetailCheckDue, summarizeRevisitQuickCheckKo } from './revisitQuickCheck'
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
 import { LBP_TARGET_FUNCTION_OPTIONS } from './lbpTargetFunction'
 import { EXAM_CHECK_STATUS_LABEL, isValidExamStatus, type ExamCheckStatus } from './provenance'
@@ -137,7 +139,13 @@ function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
     ws?.painCarePlan?.homeActionPlan ? `집에서 할 일: ${ws.painCarePlan.homeActionPlan}` : null,
     ws?.herbalCarePlan?.currentManagementGoal ? `관리 목표: ${ws.herbalCarePlan.currentManagementGoal}` : null,
   ].filter((l): l is string => l !== null)
-  return { examLines, observationLines, carePlanLines }
+  // LBP v1 Batch 3 (§9.2(e)): prior visit's ACCEPTED rehab suggestions --
+  // titles only, read through the same deserializeWorkspaceState() pass
+  // above, never the raw untrusted PUT body.
+  const acceptedRehabTitles = (ws?.painRehabSuggestions ?? [])
+    .filter((i) => i.status === 'ACCEPTED')
+    .map((i) => i.title)
+  return { examLines, observationLines, carePlanLines, acceptedRehabTitles }
 }
 
 // Round 6 review fix (revisit-of-revisit prior context): the function above
@@ -168,7 +176,22 @@ function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorksp
   // No observationLines equivalent -- a revisit's own VisitWorkspaceState
   // has no herbal-observation field (see visitWorkspace.ts's doc comment:
   // one generic set of clinician fields, not a new clinical data shape).
-  return { examLines, observationLines: [] as string[], carePlanLines }
+  // Same reasoning for acceptedRehabTitles: a revisit's own workspace has
+  // no rehab-suggestion field either (RehabSuggestion generation is the
+  // documented LBP-submission-only exception, see rehabSuggestion.ts).
+  return { examLines, observationLines: [] as string[], carePlanLines, acceptedRehabTitles: [] as string[] }
+}
+
+// LBP v1 Batch 3 (§9.2(c)): local date, yyyy-mm-dd -- pulled into its own
+// function (rather than inlined at the computeDetailCheckDue call site) so
+// "today" is a single, named, replaceable seam rather than a bare
+// `new Date()` scattered through the render body.
+function todayISO(): string {
+  const d = new Date()
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
 }
 
 export function RevisitWorkspace({ visitId, patientId }: { visitId: string; patientId: string }) {
@@ -365,11 +388,24 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     latestPrior ? latestPrior.followUpTargets : [],
   )
-  const { examLines, observationLines, carePlanLines } = !latestPrior
-    ? { examLines: [], observationLines: [], carePlanLines: [] }
+  const { examLines, observationLines, carePlanLines, acceptedRehabTitles } = !latestPrior
+    ? { examLines: [], observationLines: [], carePlanLines: [], acceptedRehabTitles: [] }
     : latestPrior.submissionId
       ? priorVisitRecapLines(priorSubmission)
       : priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace)
+
+  // LBP v1 Batch 3 (§9.2(e)): a prior REVISIT's own quick check, read
+  // through the already-sanitized priorVisitWorkspace (deserializeVisitWorkspaceState
+  // ran when it was loaded above) -- never the raw untrusted PUT body.
+  const priorRevisitQuickCheckSummary =
+    latestPrior && !latestPrior.submissionId && priorVisitWorkspace
+      ? summarizeRevisitQuickCheckKo(priorVisitWorkspace.revisitQuickCheck)
+      : null
+
+  // LBP v1 Batch 3 (§9.2(c)): "세부 체크 주기 도달" -- a pure fact against a
+  // plan the clinician already set on a prior visit. todayISO() is the one
+  // seam a future render test could inject a fixed date through.
+  const detailCheckDue = computeDetailCheckDue(priorHistory?.visits, todayISO())
 
   // Round 9: what the LATEST prior visit offers to carry forward, built
   // from whichever kind of prior visit it is. Purely a suggestion until
@@ -391,6 +427,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   }
 
   const loopStatus: ClinicalLoopStatusItem[] = [
+    { key: 'quickCheck', label: '재진 간단 체크', done: workspaceState.revisitQuickCheck.recordedAt !== null },
     { key: 'assessment', label: '최종 판단 입력', done: workspaceState.finalAssessment.recordedAt !== null },
     { key: 'plan', label: '관리 계획 입력', done: workspaceState.carePlan.recordedAt !== null },
     { key: 'followup', label: '재평가 대상 선택', done: workspaceState.followUpTargets.length > 0 },
@@ -458,6 +495,12 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                     <strong>이전 최종 판단</strong> {finalAssessmentSummary}
                   </p>
                 )}
+                {/* LBP v1 Batch 3 (§9.2(e)): only when the LATEST prior visit is
+                    itself a revisit (submissionId === null) and its quick check
+                    has at least one non-NOT_ASSESSED item. */}
+                {priorRevisitQuickCheckSummary && (
+                  <p className="workspace__priorVisit__assessment">{priorRevisitQuickCheckSummary}</p>
+                )}
                 {targets.length > 0 && (
                   <div className="workspace__priorVisit__targets">
                     {targets.map((t) => (
@@ -482,6 +525,13 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                 {carePlanLines.length > 0 && (
                   <p className="workspace__priorVisit__assessment">
                     <strong>이전 관리 계획</strong> {carePlanLines.join('; ')}
+                  </p>
+                )}
+                {/* LBP v1 Batch 3 (§9.2(e)): only when the LATEST prior visit is
+                    a submission-backed visit with ACCEPTED painRehabSuggestions. */}
+                {acceptedRehabTitles.length > 0 && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전에 채택한 운동</strong> {acceptedRehabTitles.join(', ')}
                   </p>
                 )}
                 {planShowable && (
@@ -555,6 +605,11 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
 
       <ClinicalLoopStatusBar items={loopStatus} />
 
+      <RevisitQuickCheckCard
+        value={workspaceState.revisitQuickCheck}
+        onChange={(next) => setWorkspaceState((s) => ({ ...s, revisitQuickCheck: next }))}
+      />
+
       <PainFinalAssessmentCard
         value={workspaceState.finalAssessment}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, finalAssessment: next }))}
@@ -572,6 +627,16 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         showPostTreatmentField
         groups={COMBINED_FOLLOW_UP_GROUPS}
       />
+
+      {/* LBP v1 Batch 3 (§9.2(c)): a pure fact readout, never auto-opening
+          the disclosure below it -- the clinician still decides whether to
+          act on it. */}
+      {detailCheckDue && (
+        <p className="workspace__revisit__detailCheckDue" role="status">
+          이전에 계획한 세부 재검 시점입니다({detailCheckDue.planLabel}) — 아래 &apos;오늘 재검&apos;을 펼쳐
+          진행할지 원장이 정합니다.
+        </p>
+      )}
 
       {/* Round 9: collapsed by default so a routine "unchanged, continue"
           revisit does not present two more mandatory-looking forms. Both

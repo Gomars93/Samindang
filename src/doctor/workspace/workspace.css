@@ -1789,3 +1789,56 @@
     margin: 0 0 4px;
   }
 }
+
+/* ---------- LBP v1 Batch 3 (§9): revisit quick check ---------- */
+/* Chip rows/hint/note reuse .workspace__followUp__options,
+   .workspace__followUpChip, .workspace__block__hint, .workspace__noteInput --
+   only the group title and the two guidance-line treatments are new. */
+.workspace__revisit__quickCheckGroup {
+  margin-bottom: 12px;
+}
+
+.workspace__revisit__quickCheckGroup:last-of-type {
+  margin-bottom: 0;
+}
+
+.workspace__revisit__quickCheckGroup h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__revisit__quickCheckNote {
+  margin-top: 4px;
+}
+
+.workspace__revisit__quickCheckGuidance {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace__revisit__quickCheckGuidance__line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.workspace__revisit__safetyNotice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--danger-soft, #fbf0ee);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace__revisit__detailCheckDue {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}

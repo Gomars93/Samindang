@@ -29,7 +29,11 @@ import {
   isJudgmentBlank,
   isTreatmentPlanBlank,
 } from './.workspace-round3-carryforward-bundle.mjs'
-import { emptyVisitWorkspaceState, deserializeVisitWorkspaceState } from './.workspace-round3-visitworkspace-bundle.mjs'
+import {
+  emptyVisitWorkspaceState,
+  deserializeVisitWorkspaceState,
+  visitWorkspaceStateEquals,
+} from './.workspace-round3-visitworkspace-bundle.mjs'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -755,6 +759,110 @@ function assert(name, cond) {
   assert(
     '13차 HIGH-2 (visitWorkspace.ts): reassessment.finalReassessmentNote (wrong-typed number) degrades to the safe string default',
     loaded.reassessment.finalReassessmentNote === '',
+  )
+}
+
+/* -----------------------------------------------------------------------
+ * LBP v1 Batch 3 (§9.2(a)/(f)): revisitQuickCheck field on VisitWorkspaceState.
+ * ------------------------------------------------------------------- */
+{
+  const empty = emptyVisitWorkspaceState()
+  assert(
+    'revisitQuickCheck: emptyVisitWorkspaceState() carries an empty quick check (all NOT_ASSESSED, recordedAt null)',
+    empty.revisitQuickCheck.targetFunctionChange === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.overallResponse === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.newNeuroOrRedFlag === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.exerciseAdherence === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.adverseEffect === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.recordedAt === null,
+  )
+
+  // Round-trip: a well-formed revisitQuickCheck survives deserialize.
+  const wellFormed = {
+    ...empty,
+    revisitQuickCheck: {
+      targetFunctionChange: 'BETTER',
+      overallResponse: 'SAME',
+      newNeuroOrRedFlag: 'NO',
+      exerciseAdherence: 'DONE_AS_PLANNED',
+      adverseEffect: 'NO',
+      note: '메모',
+      recordedAt: '2026-09-03T00:00:00.000Z',
+    },
+  }
+  const roundTripped = deserializeVisitWorkspaceState(wellFormed)
+  assert(
+    'revisitQuickCheck: a well-formed quick check round-trips through deserializeVisitWorkspaceState untouched',
+    JSON.stringify(roundTripped.revisitQuickCheck) === JSON.stringify(wellFormed.revisitQuickCheck),
+  )
+
+  // Legacy record: no revisitQuickCheck field at all -> empty.
+  const legacy = { ...empty }
+  delete legacy.revisitQuickCheck
+  const loadedLegacy = deserializeVisitWorkspaceState(legacy)
+  assert(
+    'revisitQuickCheck: a legacy record with no revisitQuickCheck field at all deserializes to emptyRevisitQuickCheck()',
+    JSON.stringify(loadedLegacy.revisitQuickCheck) === JSON.stringify(empty.revisitQuickCheck),
+  )
+
+  // Corrupted enum values -> NOT_ASSESSED, never a normal/negative value.
+  const corrupted = {
+    ...empty,
+    revisitQuickCheck: {
+      targetFunctionChange: 'IMPROVED', // unknown
+      overallResponse: 7, // wrong type
+      newNeuroOrRedFlag: 'NO', // valid -- survives
+      exerciseAdherence: 'MADE_UP', // unknown
+      adverseEffect: 'YES', // valid -- survives
+      note: 5, // wrong type
+      recordedAt: null,
+    },
+  }
+  const loadedCorrupted = deserializeVisitWorkspaceState(corrupted)
+  assert('revisitQuickCheck: an unknown targetFunctionChange value degrades to NOT_ASSESSED', loadedCorrupted.revisitQuickCheck.targetFunctionChange === 'NOT_ASSESSED')
+  assert('revisitQuickCheck: a wrong-typed overallResponse value degrades to NOT_ASSESSED', loadedCorrupted.revisitQuickCheck.overallResponse === 'NOT_ASSESSED')
+  assert('revisitQuickCheck: a well-formed sibling value (newNeuroOrRedFlag) survives untouched', loadedCorrupted.revisitQuickCheck.newNeuroOrRedFlag === 'NO')
+  assert('revisitQuickCheck: an unknown exerciseAdherence value degrades to NOT_ASSESSED', loadedCorrupted.revisitQuickCheck.exerciseAdherence === 'NOT_ASSESSED')
+  assert('revisitQuickCheck: a well-formed sibling value (adverseEffect) survives untouched', loadedCorrupted.revisitQuickCheck.adverseEffect === 'YES')
+  assert('revisitQuickCheck: a wrong-typed note degrades to empty string', loadedCorrupted.revisitQuickCheck.note === '')
+
+  // visitWorkspaceStateEquals detects a quick-check-only change.
+  const before = emptyVisitWorkspaceState()
+  const afterQuickCheckChange = { ...before, revisitQuickCheck: { ...before.revisitQuickCheck, adverseEffect: 'YES' } }
+  assert(
+    'visitWorkspaceStateEquals: detects a change confined entirely to revisitQuickCheck',
+    !visitWorkspaceStateEquals(before, afterQuickCheckChange),
+  )
+  assert('visitWorkspaceStateEquals: two identical states (including quick check) compare equal', visitWorkspaceStateEquals(before, { ...before }))
+
+  // Structural: carry-forward never touches revisitQuickCheck at all --
+  // carryForwardSourceFromVisitWorkspace's own return type (judgment/
+  // treatmentPlan/followUpTargets) has no quick-check key to begin with,
+  // so applying any of the three carry-forward actions to a blank revisit
+  // workspace leaves its quick check exactly as blank as it started.
+  const priorRevisitWithQuickCheck = {
+    ...emptyVisitWorkspaceState(),
+    finalAssessment: { ...empty.finalAssessment, finalWorkingAssessment: '이전 판단', recordedAt: '2026-01-01T00:00:00.000Z' },
+    revisitQuickCheck: {
+      targetFunctionChange: 'BETTER',
+      overallResponse: 'BETTER',
+      newNeuroOrRedFlag: 'NO',
+      exerciseAdherence: 'DONE_AS_PLANNED',
+      adverseEffect: 'NO',
+      note: '이전 메모',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    },
+  }
+  const revisitSourceForQuickCheck = carryForwardSourceFromVisitWorkspace(priorRevisitWithQuickCheck)
+  assert(
+    'revisitQuickCheck: carryForwardSourceFromVisitWorkspace never exposes a quickCheck-shaped key',
+    !('quickCheck' in revisitSourceForQuickCheck) && !('revisitQuickCheck' in revisitSourceForQuickCheck),
+  )
+  const appliedJudgment = applyJudgmentCarryForward(emptyVisitWorkspaceState(), revisitSourceForQuickCheck, '2026-09-03T00:00:00.000Z')
+  assert(
+    "revisitQuickCheck: applying 이전 판단 유지 carries the judgment text but leaves today's quick check blank",
+    appliedJudgment.finalAssessment.finalWorkingAssessment === '이전 판단' &&
+      JSON.stringify(appliedJudgment.revisitQuickCheck) === JSON.stringify(emptyVisitWorkspaceState().revisitQuickCheck),
   )
 }
 

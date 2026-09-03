@@ -21,6 +21,7 @@ import { emptyPainCarePlan } from './carePlan'
 import { reassessmentExamItemFromPrevious, type StructuredReassessment, type PreviousExamValue } from './reassessmentExam'
 import { emptyStructuredReassessment } from './reassessmentExam'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord } from './sanitize'
+import { emptyRevisitQuickCheck, sanitizeRevisitQuickCheck, type RevisitQuickCheck } from './revisitQuickCheck'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
@@ -65,6 +66,14 @@ export type VisitWorkspaceState = {
   followUpTargets: FollowUpTarget[]
   nextReassessmentPlan: NextReassessmentPlan
   reassessment: StructuredReassessment
+  /**
+   * LBP v1 Batch 3 (§9.2(a)): the clinician's own 30-60s revisit check-in.
+   * Additive field, does NOT bump VISIT_WORKSPACE_SCHEMA_VERSION -- a
+   * record saved before this field existed deserializes to
+   * `emptyRevisitQuickCheck()` for it, same pattern as
+   * `lbpDirectionalResponse` in persistence.ts.
+   */
+  revisitQuickCheck: RevisitQuickCheck
   updated_at: string | null
 }
 
@@ -76,6 +85,7 @@ export function emptyVisitWorkspaceState(): VisitWorkspaceState {
     followUpTargets: [],
     nextReassessmentPlan: emptyNextReassessmentPlan(),
     reassessment: emptyStructuredReassessment(),
+    revisitQuickCheck: emptyRevisitQuickCheck(),
     updated_at: null,
   }
 }
@@ -100,6 +110,7 @@ export function deserializeVisitWorkspaceState(raw: unknown): VisitWorkspaceStat
     followUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.followUpTargets),
     nextReassessmentPlan: sanitizeShape(empty.nextReassessmentPlan, raw.nextReassessmentPlan),
     reassessment: sanitizeStructuredReassessment(empty.reassessment, raw.reassessment),
+    revisitQuickCheck: sanitizeRevisitQuickCheck(raw.revisitQuickCheck),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

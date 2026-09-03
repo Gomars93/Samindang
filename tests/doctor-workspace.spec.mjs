@@ -2469,4 +2469,91 @@ test('defect 9: treatment-safety-locked + zero READY candidates + at least one a
   )
 })
 
+// ---------------------------------------------------------------------------
+// LBP v1 Batch 3 (§9.2(f)): RevisitWorkspace.tsx wiring for
+// RevisitQuickCheckCard + the detail-check-due indicator. RevisitWorkspace.tsx
+// is NOT bundled/rendered in this file (it fetches over the network) --
+// following the existing "Opus review item 1a" convention just above,
+// these are source-string checks, not a react-dom/server render.
+// ---------------------------------------------------------------------------
+
+test('LBP v1 Batch 3: RevisitQuickCheckCard mounts between <ClinicalLoopStatusBar> and <PainFinalAssessmentCard> in RevisitWorkspace.tsx', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const loopIdx = src.indexOf('<ClinicalLoopStatusBar')
+  const quickCheckIdx = src.indexOf('<RevisitQuickCheckCard')
+  const finalAssessmentIdx = src.indexOf('<PainFinalAssessmentCard')
+  assert.ok(loopIdx !== -1 && quickCheckIdx !== -1 && finalAssessmentIdx !== -1, 'all three elements exist in the source')
+  assert.ok(loopIdx < quickCheckIdx, 'RevisitQuickCheckCard mounts AFTER <ClinicalLoopStatusBar>')
+  assert.ok(quickCheckIdx < finalAssessmentIdx, 'RevisitQuickCheckCard mounts BEFORE <PainFinalAssessmentCard>')
+})
+
+test('LBP v1 Batch 3: loopStatus leads with a quickCheck item wired to revisitQuickCheck.recordedAt', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const anchor = 'const loopStatus: ClinicalLoopStatusItem[] = ['
+  const loopArrayStart = src.indexOf(anchor)
+  assert.ok(loopArrayStart !== -1, 'loopStatus array declaration exists')
+  // Start scanning for the closing "]" AFTER the anchor's own trailing "["
+  // (the anchor string itself contains an unrelated "[]" from the
+  // ClinicalLoopStatusItem[] type annotation, which would otherwise be
+  // mistaken for the array's close).
+  const arrayContentStart = loopArrayStart + anchor.length
+  const loopArrayEnd = src.indexOf(']', arrayContentStart)
+  const loopArraySrc = src.slice(arrayContentStart, loopArrayEnd)
+  const quickCheckIdx = loopArraySrc.indexOf("key: 'quickCheck'")
+  assert.ok(quickCheckIdx !== -1, "the loop array contains a key: 'quickCheck' entry")
+  // Non-vacuous "it's FIRST" check: no earlier `key:` entry precedes it,
+  // and the array does contain other `key:` entries later (proving the
+  // array itself is not simply empty/degenerate).
+  assert.ok(!loopArraySrc.slice(0, quickCheckIdx).includes('key:'), 'quickCheck is the FIRST item in loopStatus (no earlier key: entry)')
+  assert.ok((loopArraySrc.match(/key:/g) ?? []).length > 1, 'sanity: loopStatus has more than just the quickCheck item')
+  assert.ok(loopArraySrc.includes("label: '재진 간단 체크'"), 'the quickCheck item label is 재진 간단 체크')
+  assert.ok(
+    loopArraySrc.includes('done: workspaceState.revisitQuickCheck.recordedAt !== null'),
+    'the quickCheck item is done exactly when revisitQuickCheck.recordedAt !== null',
+  )
+})
+
+test('LBP v1 Batch 3: the 오늘 재검 <details> open= expression is UNCHANGED -- still items.length > 0, never references the new due variable', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const summaryIdx = src.indexOf('오늘 재검(Structured Reassessment) — 필요할 때 펼치기')
+  assert.ok(summaryIdx !== -1, 'the 오늘 재검 summary text exists')
+  const detailsIdx = src.lastIndexOf('<details', summaryIdx)
+  // Not `indexOf('>', detailsIdx)` -- the open={...} expression itself
+  // contains a literal `>` (the `.length > 0` comparison), which would
+  // truncate the tag before its real close. A fixed-length startsWith on
+  // the known literal attribute text sidesteps that trap entirely.
+  const tagChunk = src.slice(detailsIdx, detailsIdx + 120)
+  assert.ok(
+    tagChunk.startsWith('<details className="workspace__revisit__optional" open={workspaceState.reassessment.items.length > 0}>'),
+    'open= is exactly open={workspaceState.reassessment.items.length > 0}, attribute-for-attribute unchanged',
+  )
+  assert.ok(!tagChunk.includes('detailCheckDue'), 'open= never references detailCheckDue -- a due plan never auto-opens the disclosure')
+})
+
+test('LBP v1 Batch 3: the detail-check-due indicator line renders directly above the 오늘 재검 <details>, as role="status"', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const dueLineIdx = src.indexOf('workspace__revisit__detailCheckDue')
+  assert.ok(dueLineIdx !== -1, 'the due-indicator element exists')
+  const summaryIdx = src.indexOf('오늘 재검(Structured Reassessment) — 필요할 때 펼치기')
+  const detailsIdx = src.lastIndexOf('<details', summaryIdx)
+  assert.ok(dueLineIdx < detailsIdx, 'the due-indicator line appears BEFORE the 오늘 재검 <details> in source order')
+  // Non-vacuous "directly above": no OTHER <details> element sits between
+  // them (which would mean something else was inserted in between).
+  const between = src.slice(dueLineIdx, detailsIdx)
+  assert.ok(!between.includes('<details'), 'no other <details> element sits between the due-indicator line and the 오늘 재검 details')
+  const dueLineChunk = src.slice(Math.max(0, dueLineIdx - 80), dueLineIdx + 400)
+  assert.ok(dueLineChunk.includes('role="status"'), 'the due-indicator line carries role="status"')
+  assert.ok(dueLineChunk.includes('detailCheckDue.planLabel'), 'the due-indicator line interpolates detailCheckDue.planLabel')
+  assert.ok(dueLineChunk.includes('detailCheckDue &&'), 'the due-indicator line renders only when detailCheckDue is non-null')
+})
+
+test('LBP v1 Batch 3: RevisitWorkspace.tsx computes detailCheckDue via computeDetailCheckDue(priorHistory?.visits, todayISO())', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  assert.ok(
+    src.includes('computeDetailCheckDue(priorHistory?.visits, todayISO())'),
+    'detailCheckDue is computed from priorHistory?.visits and the injectable todayISO() helper',
+  )
+  assert.ok(/function todayISO\(\)/.test(src), 'todayISO() is its own named function (an injectable seam), not an inline new Date() at the call site')
+})
+
 console.log(`\n${passed} doctor-workspace assertions passed.`)

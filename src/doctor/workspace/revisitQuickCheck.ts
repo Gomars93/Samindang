@@ -271,16 +271,18 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
  * projection `longitudinal.ts`'s other readers guard against.
  *
  * Walk from the most recent prior visit backward. A visit whose plan is
- * missing, unreadable, or explicitly `UNSET` carries no information -- skip
- * it and keep looking (this is the "9.1의 plan 소실 결함 수정": an
- * unchanged-since plan must not vanish just because the immediately prior
- * visit never touched it). The FIRST visit whose plan has a real (non-
- * `UNSET`, readable) `status` string is the "유효 plan" -- evaluation stops
- * there. If that plan's own DATE/VISIT_COUNT fields are malformed, or its
- * status is `CLINICIAN_DECIDES` or an unrecognized string, the result is
- * `null` (this codebase never guesses at a timing rule) -- the scan does
- * NOT continue further back past a plan that WAS set, only past one that
- * was never set (`UNSET`) or unreadable.
+ * absent -- `null`/`undefined`, or not an object at all -- or whose plan is
+ * explicitly `UNSET` carries no information -- skip it and keep looking
+ * (this is the "9.1의 plan 소실 결함 수정": an unchanged-since plan must not
+ * vanish just because the immediately prior visit never touched it). The
+ * FIRST visit whose plan has a real (non-`UNSET`) `status` is the "유효
+ * plan" -- evaluation stops there. If that plan's own `status` is present
+ * but unreadable (not a string), or its DATE/VISIT_COUNT fields are
+ * malformed, or its status is `CLINICIAN_DECIDES` or an unrecognized
+ * string, the result is `null` (this codebase never guesses at a timing
+ * rule) and the scan halts immediately -- it does NOT fall back to an
+ * older prior visit's plan, because that plan was already superseded by
+ * this one and reporting it as due could surface a stale date.
  */
 export function computeDetailCheckDue(priorVisits: unknown, todayISO: string): DetailCheckDue | null {
   const visits = Array.isArray(priorVisits) ? priorVisits : []
@@ -288,7 +290,8 @@ export function computeDetailCheckDue(priorVisits: unknown, todayISO: string): D
     const visit = visits[k]
     if (!isSanitizeRecord(visit)) continue
     const planRaw = visit.nextReassessmentPlan
-    if (!isSanitizeRecord(planRaw)) continue
+    if (planRaw === null || planRaw === undefined) continue
+    if (!isSanitizeRecord(planRaw)) return null
     if (planRaw.status === undefined || planRaw.status === 'UNSET') continue
 
     const createdAtRaw = visit.createdAt

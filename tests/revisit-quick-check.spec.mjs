@@ -238,9 +238,26 @@ function assert(name, cond) {
     assert(`computeDetailCheckDue: malformed priorVisits input (${JSON.stringify(bad)}) returns null`, result === null)
   }
 
-  // A visit whose nextReassessmentPlan itself is corrupted (not an object) is skipped.
-  const corruptPlanContainer = computeDetailCheckDue([visit('2026-08-01T00:00:00.000Z', 'not-an-object')], '2026-09-03')
-  assert('computeDetailCheckDue: a non-object nextReassessmentPlan is skipped, not thrown on', corruptPlanContainer === null)
+  // A visit whose nextReassessmentPlan is genuinely absent (null -- the
+  // server's own default for "no plan set on this visit") IS skipped, same
+  // as UNSET: it carries no information, so the scan keeps looking further
+  // back.
+  const nullPlan = computeDetailCheckDue(
+    [visit('2026-08-20T00:00:00.000Z', null), visit('2026-07-01T00:00:00.000Z', dateDuePlan)],
+    '2026-09-03',
+  )
+  assert('computeDetailCheckDue: a null nextReassessmentPlan is skipped in favor of the older real plan', nullPlan !== null && nullPlan.reason === 'DATE')
+
+  // A visit whose nextReassessmentPlan is present but NOT an object (e.g. a
+  // stray string) is a different kind of corruption from "absent" -- it
+  // halts the scan and returns null immediately, the same fail-safe as an
+  // unreadable plan.status, rather than falling through to an older
+  // (possibly superseded) plan.
+  const corruptPlanContainer = computeDetailCheckDue(
+    [visit('2026-08-20T00:00:00.000Z', 'not-an-object'), visit('2026-07-01T00:00:00.000Z', dateDuePlan)],
+    '2026-09-03',
+  )
+  assert('computeDetailCheckDue: a non-object (but non-null) nextReassessmentPlan halts the scan (returns null) rather than guessing at an older plan', corruptPlanContainer === null)
 
   // A visit whose plan.status itself is wrong-typed (present but corrupted)
   // stops the scan right there (never falls through to an older, cleaner

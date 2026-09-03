@@ -8,16 +8,18 @@ import { useId } from 'react'
 import {
   EXAM_CHECK_STATUS_GLYPH,
   EXAM_CHECK_STATUS_LABEL,
+  // Batch 2.5b: 상태 옵션 목록을 이 파일에서 손으로 들지 않는다 --
+  // provenance.ts의 단일 정의를 쓴다(부분집합이 타입을 통과해 신규 상태가
+  // 조용히 화면에서 누락되던 문제. 그 파일의 주석 참고).
+  EXAM_CHECK_STATUS_OPTIONS,
   LATERALITY_LABEL,
   PROVENANCE_BADGE,
   isValidExamStatus,
   isValidLaterality,
-  type ExamCheckStatus,
   type Laterality,
 } from './provenance'
 import type { ReassessmentExamItem, StructuredReassessment } from './reassessmentExam'
 
-const STATUS_OPTIONS: ExamCheckStatus[] = ['POSITIVE', 'NEGATIVE', 'UNCLEAR', 'NOT_YET_CHECKED']
 const LATERALITY_OPTIONS: Laterality[] = ['LEFT', 'RIGHT', 'BILATERAL', 'NOT_APPLICABLE']
 
 function ReassessmentItemCard({
@@ -56,7 +58,7 @@ function ReassessmentItemCard({
       )}
 
       <div className="workspace__examCard__statusRow" role="group" aria-label={`${item.title} 오늘 결과`}>
-        {STATUS_OPTIONS.map((s) => (
+        {EXAM_CHECK_STATUS_OPTIONS.map((s) => (
           <button
             key={s}
             type="button"

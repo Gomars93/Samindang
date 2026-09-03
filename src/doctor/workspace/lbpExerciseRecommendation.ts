@@ -211,9 +211,11 @@ function toCandidate(
   // (b) integration correction: LBP_NEURAL_01 is "directly supported" only
   // when the Batch-1 exam suggestion `lbp_exam_neurodynamic` (하지직거상/
   // 슬럼프) has been recorded POSITIVE (concordant leg-symptom
-  // reproduction) -- NOT_YET_CHECKED / NEGATIVE / UNCLEAR / the item being
-  // absent all mean "unknown", and unknown is never support (architecture
-  // §2.3). Previously this was unconditional on the exercise id alone.
+  // reproduction) -- every other ExamCheckStatus (NEGATIVE / UNCLEAR /
+  // LIMITED / NOT_PERFORMED / NOT_YET_CHECKED, Batch 2.5b's 6 values) and
+  // the item being absent all fail to establish support, and unknown is
+  // never support (architecture §2.3). Previously this was unconditional on
+  // the exercise id alone.
   const directlySupported =
     rule.requiredDirectionalResponse != null || (meta.exerciseId === 'LBP_NEURAL_01' && neurodynamicConcordant)
   return {
@@ -294,8 +296,11 @@ export function buildLbpRecommendationContext(
 
   // (b): whether the Batch-1 neurodynamic exam (하지직거상/슬럼프) has been
   // recorded POSITIVE this record -- the only condition under which
-  // LBP_NEURAL_01 counts as directly supported. NOT_YET_CHECKED / NEGATIVE /
-  // UNCLEAR / the item being absent all fall through to `false` below.
+  // LBP_NEURAL_01 counts as directly supported. Batch 2.5b: the comparison
+  // is deliberately `=== 'POSITIVE'`, not `!== 'NOT_YET_CHECKED'`, so the
+  // two states added in that batch need no change here -- NEGATIVE /
+  // UNCLEAR / LIMITED / NOT_PERFORMED / NOT_YET_CHECKED and the item being
+  // absent all fall through to `false` below.
   const neurodynamicExam = workspaceState.painExamSuggestions.find((i) => i.id === 'lbp_exam_neurodynamic')
   const neurodynamicConcordant = neurodynamicExam?.result.status === 'POSITIVE'
 

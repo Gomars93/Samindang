@@ -9,14 +9,16 @@ import { useId, useState } from 'react'
 import {
   EXAM_CHECK_STATUS_GLYPH,
   EXAM_CHECK_STATUS_LABEL,
+  // Batch 2.5b: 상태 옵션 목록을 이 파일에서 손으로 들지 않는다 --
+  // provenance.ts의 단일 정의를 쓴다(부분집합이 타입을 통과해 신규 상태가
+  // 조용히 화면에서 누락되던 문제. 그 파일의 주석 참고).
+  EXAM_CHECK_STATUS_OPTIONS,
   LATERALITY_LABEL,
   PROVENANCE_BADGE,
-  type ExamCheckStatus,
   type Laterality,
 } from './provenance'
 import { EXAM_PRIORITY_LABEL, type PhysicalExamSuggestion } from './examSuggestion'
 
-const STATUS_OPTIONS: ExamCheckStatus[] = ['POSITIVE', 'NEGATIVE', 'UNCLEAR', 'NOT_YET_CHECKED']
 const LATERALITY_OPTIONS: Laterality[] = ['LEFT', 'RIGHT', 'BILATERAL', 'NOT_APPLICABLE']
 
 export function ExamSuggestionCard({
@@ -59,7 +61,16 @@ export function ExamSuggestionCard({
    */
   const hasDetail = item.result.note.trim() !== '' || item.result.laterality !== 'NOT_APPLICABLE'
   const [detailOpen, setDetailOpen] = useState(hasDetail)
-  const showDetail = detailOpen || hasDetail
+  /*
+   * LBP v1 Batch 2.5b (CD-2.5b-2, 권고안 PO 승인): "시행 못 함"은 사유 없이
+   * 기록되면 다음 방문에서 다시 시도해야 하는지 판단할 수 없다. 그렇다고
+   * 메모를 필수로 만들면 빠른 point-of-care 입력이라는 이 카드의 전제가
+   * 깨진다 -- 대신 이 상태에서만 상세·메모를 자동으로 펼쳐 사유 기록을
+   * 유도하고, 비워둔 채 저장하는 것도 그대로 허용한다. 파생값이므로
+   * effect가 없고, 다른 상태로 바꾸면 자동 펼침도 함께 사라진다(그때
+   * 이미 입력한 내용이 있으면 hasDetail이 계속 펼친 상태를 유지한다).
+   */
+  const showDetail = detailOpen || hasDetail || item.result.status === 'NOT_PERFORMED'
 
   return (
     <div
@@ -109,7 +120,7 @@ export function ExamSuggestionCard({
       )}
 
       <div className="workspace__examCard__statusRow" role="group" aria-label={`${item.title} 결과`}>
-        {STATUS_OPTIONS.map((s) => (
+        {EXAM_CHECK_STATUS_OPTIONS.map((s) => (
           <button
             key={s}
             type="button"

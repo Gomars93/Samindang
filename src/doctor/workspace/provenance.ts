@@ -97,13 +97,42 @@ export const PATIENT_RESPONSE_STATE_LABEL: Record<PatientResponseState, string> 
  * NOT_YET_CHECKED must never render or compute as NEGATIVE — that is the
  * single most safety-relevant invariant in this file. "안 물어봄/안 해봄"
  * is not "아니오".
+ *
+ * LBP v1 Batch 2.5b (G15, architecture §0-2 step 6 / §8-5, design doc
+ * `docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`): 정상/이상/불명확/
+ * 제한/미시행/미평가는 서로 절대 합치지 않는다. Two values were added
+ * ADDITIVELY -- the existing four keep their meaning, label, glyph and
+ * serialized form unchanged:
+ *  - LIMITED       원장이 시행했지만 끝까지 못 가서 판단을 유보한 경우
+ *                  (예: 통증으로 SLR 각도까지 도달 못함). "불명확"과 다르다 --
+ *                  불명확은 시행은 완료했는데 해석이 갈리는 것.
+ *  - NOT_PERFORMED 시행하지 않기로 판단한 사실 그 자체(사유는 메모).
+ *                  "아직 확인 안 됨"(미평가)과 다르다 -- 미평가는 아무 판단도
+ *                  없는 기본값이다.
+ * 둘 다 "원장이 기록한 사실"이므로 EMR/재진 이월 텍스트에는 나타나고,
+ * "아직 확인 안 됨" 카운터에서는 빠진다. 그리고 둘 다 어떤 판단의 근거로도
+ * 쓰이지 않는다 -- unknown은 근거가 아니다(architecture §2.3).
+ * 이 두 map(`Record<ExamCheckStatus, …>`)이 컴파일 타임 exhaustiveness
+ * 게이트다: 값만 추가하고 라벨/glyph를 잊으면 `tsc -b`가 막는다.
  */
-export type ExamCheckStatus = 'POSITIVE' | 'NEGATIVE' | 'UNCLEAR' | 'NOT_YET_CHECKED'
+export type ExamCheckStatus =
+  | 'POSITIVE'
+  | 'NEGATIVE'
+  | 'UNCLEAR'
+  | 'LIMITED'
+  | 'NOT_PERFORMED'
+  | 'NOT_YET_CHECKED'
 
 export const EXAM_CHECK_STATUS_LABEL: Record<ExamCheckStatus, string> = {
   POSITIVE: '양성/이상 소견',
   NEGATIVE: '음성/정상',
   UNCLEAR: '불명확',
+  // Batch 2.5b CD-2.5b-1 (권고안 A, PO 승인): `LbpDirectionalResponse`의
+  // NOT_ASSESSED가 이미 "미시행"이라는 라벨을 "미평가"의 뜻으로 쓰고 있다
+  // (`lbpExamSuggestions.ts`) -- 여기서도 "미시행"을 쓰면 한 화면에서 같은
+  // 단어가 두 뜻이 되므로 "시행 못 함"으로 분리한다. 기존 라벨은 무수정.
+  LIMITED: '제한적 시행(판단 유보)',
+  NOT_PERFORMED: '시행 못 함',
   NOT_YET_CHECKED: '아직 확인 안 됨',
 }
 
@@ -121,10 +150,43 @@ export const EXAM_CHECK_STATUS_GLYPH: Record<ExamCheckStatus, string> = {
   POSITIVE: '✓',
   NEGATIVE: '–',
   UNCLEAR: '?',
+  // Batch 2.5b: 색 무의존 요건(P2)상 6개 glyph가 서로 달라야 한다. 'X'류는
+  // NEGATIVE('–')와 혼동될 소지가 있어 쓰지 않는다.
+  LIMITED: '△',
+  NOT_PERFORMED: '⊘',
   NOT_YET_CHECKED: '·',
 }
 
-/** True only for a real clinician-entered result — never true for "not yet checked". */
+/**
+ * LBP v1 Batch 2.5b: 원장이 실제로 고를 수 있는 상태 버튼의 **유일한** 정의이자
+ * 정렬 순서. 이전에는 `ExamSuggestionCard.tsx`와 `StructuredReassessmentCard.tsx`가
+ * 같은 리터럴 배열을 각각 손으로 들고 있었는데, `ExamCheckStatus[]`는 부분집합도
+ * 통과하는 타입이라 값을 추가하고 이 배열을 잊으면 `tsc -b`/`vite build`/기존
+ * 테스트가 전부 통과하면서 신규 상태를 화면에서 고를 수만 없게 된다(조용한 실패).
+ * 타입으로는 못 막으므로 `tests/workspace-round3.spec.mjs`(T-1a)가 이 배열이
+ * `EXAM_CHECK_STATUS_LABEL`의 모든 key를 정확히 한 번씩 포함하는지 값 수준에서
+ * 강제하고, `tests/doctor-workspace.spec.mjs`(T-1b)가 실제로 6개 버튼이
+ * 렌더되는지 화면 수준에서 강제한다.
+ *
+ * 순서(CD-2.5b-3 권고 기본값): 자주 쓰는 3개를 앞에 두어 좁은 폭에서 줄이 감겨도
+ * 정상/이상/불명확이 항상 첫 줄에 오게 한다. CSS는 건드리지 않는다
+ * (`.workspace__examCard__statusRow`는 이미 `flex-wrap: wrap`).
+ */
+export const EXAM_CHECK_STATUS_OPTIONS: ExamCheckStatus[] = [
+  'POSITIVE',
+  'NEGATIVE',
+  'UNCLEAR',
+  'LIMITED',
+  'NOT_PERFORMED',
+  'NOT_YET_CHECKED',
+]
+
+/**
+ * True only for a real clinician-entered result — never true for "not yet
+ * checked". Batch 2.5b: LIMITED/NOT_PERFORMED ARE clinician-entered records,
+ * so this is true for them too. It is NOT "did we learn a positive/negative"
+ * — nothing may use it to reason from a result (see the type's doc comment).
+ */
 export function isExamChecked(status: ExamCheckStatus): boolean {
   return status !== 'NOT_YET_CHECKED'
 }

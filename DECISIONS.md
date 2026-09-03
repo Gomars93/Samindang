@@ -1847,3 +1847,22 @@ RESOLVED를 독립 재현으로 확인).
 ### Consequences
 - PR 없이 텍스트 요약으로 계속 보고(운영 방침, 위 항목).
 - main merge는 여전히 PO 명시 승인 대상.
+
+## 2026-09-02 — PO 재확인: 운동 자동 추천 → 원장 선택 층 유지 + Batch 순서 조정
+
+### Decision
+- PO가 "운동은 자동 추천하고 내가 선택하는 방식"을 재확인했다. Batch 2/2.5a의
+  Eligibility + 추천 + 채택 층은 그대로 유지한다(단순화·접기 없음).
+- PO가 원하는 진료 형태를 4가지로 재정의: (1) 문진으로 원장이 판단할
+  것(이학적 검사·추가 문진) 최적화 (2) 자유 입력보다 체크 형태, 과설계 금지
+  (3) 재진 시 간단 체크 (4) 일정 주기 세부 체크. Fable 대조 결과 (3)이 가장 큰
+  공백, (4)는 부품만 있고 연결 없음, (1)의 "추가 문진"은 얇음.
+- **순서 조정(Fable, next-step owner)**: Batch 3(재진 간단 체크 5문항 +
+  세부 체크 주기 도달 표시)을 Batch 2.5b/2.5c보다 먼저 진행한다. 루프를 먼저
+  닫는다.
+
+### Consequences
+- Batch 3 착수: Fable이 기존 재진 화면(`RevisitWorkspace`, `NextReassessmentPlan`,
+  `StructuredReassessment`, micro follow-up)을 대조해 최소 설계 → Sonnet 구현
+  → Opus delta → fix → closing. 숫자 threshold 없음. 세부 재검은 자동으로
+  열지 않고 원장이 선택.

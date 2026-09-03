@@ -340,8 +340,20 @@ try {
 } finally {
   try { cdp?.ws.close() } catch { /* already gone */ }
   proc.kill('SIGKILL')
+  // Give the just-killed Chrome process a moment to actually release its
+  // profile directory's file handles before removing it -- otherwise
+  // rmSync can race a still-closing renderer process and throw ENOTEMPTY
+  // (observed: every assertion printed OK, then the run died in teardown on
+  // rmdir '<tmp>/profile/Default'). Same convention as
+  // tests/visit-summary-auth-recovery-headless.spec.mjs, which already
+  // carried this fix.
+  await new Promise((r) => setTimeout(r, 300))
   server.close()
-  fs.rmSync(tmp, { recursive: true, force: true })
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch {
+    /* best-effort cleanup of a tmpdir -- never fail the test run over this */
+  }
 }
 
 console.log(`\n${passed} tablet-viewport assertions passed.`)

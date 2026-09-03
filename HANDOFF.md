@@ -40,10 +40,15 @@ esbuild 단계 2개를 추가했다(`package.json`, `.gitignore`). 신규 npm sc
 
 **사람 판단 대기**: 없음.
 
+**같은 세션에서 처리한 별건(승인 불필요, 임상 의미 없음)**:
+`test:tablet-viewport`의 teardown 경합을 고쳤다 — `test:all` 3회 중 1회
+24 assertion이 전부 OK로 출력된 **뒤** Chromium 프로필 정리에서
+`ENOTEMPTY: rmdir .../profile/Default`로 죽었다. `proc.kill` 후 300ms 대기 +
+`rmSync(maxRetries/retryDelay)` + cleanup 실패를 삼키기(임시 디렉터리 정리
+실패로 초록 테스트를 빨갛게 만들지 않는다). `visit-summary-auth-recovery-headless.spec.mjs`가
+이미 갖고 있던 관례를 그대로 옮겼다. 단독 3회 + `test:all` PASS.
+
 **백로그(비차단)**:
-- `test:all` 3회 중 1회 `test:tablet-viewport`가 **teardown**에서
-  `ENOTEMPTY: rmdir .../profile/Default`로 죽음. 24 assertion 전부 OK 출력
-  **후** Chromium 프로필 정리 경합. 단독 재실행 2회 PASS. 이 diff와 무관.
 - `isExamChecked`(provenance.ts) — src 호출처 0 (테스트만 사용). 통합/삭제
   보류(설계 §2.4).
 - `DoctorWorkspace.tsx:420` 한약 관찰 승격 시 `status:'UNCLEAR'` 자리표시자

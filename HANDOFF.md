@@ -24,10 +24,19 @@ main merge는 PO 명시 승인.
   "미시행"을 *미평가*의 뜻으로 쓰고 있어서 같은 단어가 두 뜻이 되는 것을
   피했다(CD-2.5b-1 안 A).
 
-**검증**: `tsc -b`/`vite build` OK. `npm run test:all` **PASS (exit 0,
-5,114 assertions)**. 개별 `test:workspace-round3` 176 / `test:doctor-workspace`
-238 / `test:lbp-exercise-recommendation` 23. **뮤테이션 9종 전부 검출, 생존 0.**
+**검증(현 HEAD `ea0a222` 기준)**: `tsc -b`/`vite build` OK.
+`npm run test:all` **PASS (exit 0, 5,119 assertions)**. 개별
+`test:workspace-round3` **179** / `test:doctor-workspace` **240** /
+`test:lbp-exercise-recommendation` 23 / `test:doctor` 947.
 FROZEN/`tablet core/`/`server/` zero-diff.
+
+**리뷰 사이클(중요 — 이 배치는 처음부터 깨끗했던 게 아니다)**: 구현자 자체
+뮤테이션 9종은 전부 검출됐으나, **Opus 독립 리뷰가 생존 뮤테이션 2종을
+찾아냈다** — (1) `StructuredReassessmentCard`의 6버튼 렌더를 옛 4값 리터럴로
+되돌려도 전 스위트 통과(재진에서만 조용히 4상태로 붕괴), (2)
+`PREVIOUS_EXAM_VALUE_TEMPLATE.status`를 `'LIMITED'`로 바꿔도 통과(손상 레코드가
+없는 임상 사실로 렌더). `ab922be`가 두 구멍을 테스트로 메웠고(assertion +2/+3),
+Opus가 같은 뮤테이션을 재현해 검출을 확인했다. `ea0a222`는 배포 메모 정정.
 
 **설계 대비 유일한 범위 이탈**: 값 수준 계약을 검증하려면 `provenance.ts`/
 `examSuggestion.ts` 번들이 필요해 기존 `test:workspace-round3` 스크립트에
@@ -57,6 +66,15 @@ esbuild 단계 2개를 추가했다(`package.json`, `.gitignore`). 신규 npm sc
 - `DoctorWorkspace.tsx:420` 한약 관찰 승격 시 `status:'UNCLEAR'` 자리표시자
   오용 — 신규 2값 어느 것도 맞지 않아 손대지 않음.
 - 라벨 "초진" → "문진" 자구 조정(Opus O-3), Batch 3 백로그 O-1~O-7 유지.
+- **[시점 있음] fail-closed 표식** (Opus 2.5b 결함 4): `ExamSuggestionCard.tsx`
+  렌더 시 `isValidExamStatus`가 false면 표식 1줄을 붙이고 `--done` 스타일에서
+  제외한다(`StructuredReassessmentCard.tsx:52`가 이미 쓰는 패턴).
+  **2.5c/Batch 4에서 `ExamCheckStatus`에 값을 추가하기 전에 처리할 것** —
+  그 시점에 오늘의 빌드가 "구버전"이 되어 같은 무증상 누락이 반복된다.
+- 테스트 관례 보강(Opus O-8, 선재 약점): 두 T-1b의 `aria-pressed` 확인이
+  `lastIndexOf('<button')` walk-back이라 **라벨이 버튼 안에 있는지는 검증하지
+  못한다**(신규 2값을 `<span>`으로 바꾸는 뮤테이션 생존 확인). 여는 태그의
+  `>`가 라벨보다 앞인지까지 보도록 두 테스트를 함께 보강.
 
 **다음 행동(하나)**: Batch 2.5c(Working Hypothesis 최소 형태). 착수 전 PO
 결정이 필요하다 — Working Hypothesis를 어떤 형태로 둘지(자유 텍스트 1칸 vs

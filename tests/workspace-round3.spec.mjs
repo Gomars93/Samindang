@@ -1020,6 +1020,53 @@ function assert(name, cond) {
       Array.isArray(emptyVisit.reassessment.items) && emptyVisit.reassessment.items.length === 0,
     )
   }
+  /*
+   * Opus delta review (Batch 2.5b) defect 3: the `items.length === 0`
+   * check above says nothing about PREVIOUS_EXAM_VALUE_TEMPLATE.status
+   * (persistence.ts / visitWorkspace.ts) -- the sanitizeShape fallback a
+   * malformed `previous` value actually degrades to. That constant could
+   * be flipped to e.g. 'LIMITED' and this suite would still pass. Feed a
+   * damaged `previous` (a record whose `status` is missing/wrong-typed)
+   * through both deserializers and pin the fallback to NOT_YET_CHECKED --
+   * anything else fabricates a clinical fact ("제한적 시행") that was
+   * never actually recorded.
+   */
+  {
+    const deserialized = deserializeWorkspaceState({
+      painReassessment: {
+        items: [
+          { id: 'r1', title: '재검 항목', previous: {}, result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null } },
+          {
+            id: 'r2',
+            title: '재검 항목 2',
+            previous: { status: 7, laterality: null, note: '', recordedAt: null },
+            result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
+          },
+        ],
+      },
+    })
+    assert(
+      'Batch 2.5b T-10: deserializeWorkspaceState -- a malformed previous ({}) degrades previous.status to NOT_YET_CHECKED, never a fabricated LIMITED/etc. fact',
+      deserialized.painReassessment.items[0].previous !== null && deserialized.painReassessment.items[0].previous.status === 'NOT_YET_CHECKED',
+    )
+    assert(
+      'Batch 2.5b T-10: deserializeWorkspaceState -- a wrong-typed previous.status (number) also degrades to NOT_YET_CHECKED',
+      deserialized.painReassessment.items[1].previous !== null && deserialized.painReassessment.items[1].previous.status === 'NOT_YET_CHECKED',
+    )
+  }
+  {
+    const deserializedVisit = deserializeVisitWorkspaceState({
+      reassessment: {
+        items: [
+          { id: 'r1', title: '재검 항목', previous: {}, result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null } },
+        ],
+      },
+    })
+    assert(
+      'Batch 2.5b T-10: deserializeVisitWorkspaceState -- a malformed previous ({}) degrades previous.status to NOT_YET_CHECKED, never a fabricated fact',
+      deserializedVisit.reassessment.items[0].previous !== null && deserializedVisit.reassessment.items[0].previous.status === 'NOT_YET_CHECKED',
+    )
+  }
 
   /* ---- T-6: 직렬화 round-trip -- 신규 값 보존 + 구 4값 레코드 무변화 ---- */
   {

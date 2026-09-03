@@ -561,6 +561,57 @@ test('Batch 2.5b T-1b: the two new status buttons are real aria-pressed buttons,
   }
 })
 
+// T-1b (재검 카드 쌍둥이): 설계 §4 T-1은 ExamSuggestionCard와
+// StructuredReassessmentCard 둘 다의 렌더를 요구했다. 위 두 테스트는
+// suggestion 카드만 봤으므로, 손으로 쓴 STATUS_OPTIONS 리터럴이
+// StructuredReassessmentCard.tsx에서만 되살아나도 검출되지 않았다
+// (Opus delta review, defect 1). 오늘 재검 목록을 열기 위한 초기 상태는
+// 아래 "오늘 재검 목록 renders open..." 테스트(§1.3-#7)와 동일한 형태.
+test('Batch 2.5b T-1b (reassessment card): the structured reassessment card renders all 6 status buttons (제한/시행 못 함 포함)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'reassess-6btn',
+    initialWorkspaceState: {
+      painReassessment: {
+        items: [
+          {
+            id: 'r1', title: '재검 항목', previous: null,
+            result: { status: 'NOT_YET_CHECKED', laterality: 'NOT_APPLICABLE', note: '', recordedAt: null },
+          },
+        ],
+      },
+    },
+  })
+  for (const label of ['양성/이상 소견', '음성/정상', '불명확', '제한적 시행(판단 유보)', '시행 못 함', '아직 확인 안 됨']) {
+    assert.ok(html.includes(label), `reassessment status button "${label}" must be offered to the clinician`)
+  }
+})
+
+test('Batch 2.5b T-1b (reassessment card): the two new status buttons are real aria-pressed buttons, not decorative text', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'reassess-6btn-buttons',
+    initialWorkspaceState: {
+      painReassessment: {
+        items: [
+          {
+            id: 'r1', title: '재검 항목', previous: null,
+            result: { status: 'NOT_YET_CHECKED', laterality: 'NOT_APPLICABLE', note: '', recordedAt: null },
+          },
+        ],
+      },
+    },
+  })
+  for (const label of ['제한적 시행(판단 유보)', '시행 못 함']) {
+    const idx = html.indexOf(label)
+    assert.ok(idx !== -1)
+    // walk back to the enclosing tag and check it is a status button with aria-pressed
+    const openIdx = html.lastIndexOf('<button', idx)
+    assert.ok(openIdx !== -1, `"${label}" must sit inside a <button>`)
+    const chunk = html.slice(openIdx, idx)
+    assert.ok(chunk.includes('workspace__statusBtn'), `"${label}" must be a workspace__statusBtn`)
+    assert.ok(chunk.includes('aria-pressed='), `"${label}" must expose aria-pressed`)
+  }
+})
+
 // T-2: 이 배치의 임상적 요점. 제한/미시행은 사실로 기록되고(EMR에 나타남),
 // 미확인은 여전히 빠지고, 어느 쪽도 "음성/정상"으로 찍히지 않는다.
 test('Batch 2.5b T-2: EMR preview lists LIMITED and NOT_PERFORMED as recorded facts, still omits NOT_YET_CHECKED, and never renders either as 음성/정상', () => {

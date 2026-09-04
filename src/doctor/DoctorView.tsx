@@ -5,6 +5,7 @@ import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { buildEmrSummary } from './emrSummary'
+import { buildPainWorkspaceEmrPreview } from './workspace/emrPreview'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import {
   createEmptyJudgment,
@@ -3138,7 +3139,39 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return () => clearTimeout(t)
   }, [readyToast])
 
-  // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
+  // LBP v1 Batch 4 (§14.1/§14.3, CD-2.7-2 `DECISIONS.md` 2026-09-04): a
+  // pain-derived record's 종결 EMR text is the SAME 6-key
+  // buildPainWorkspaceEmrPreview text `EmrPreviewCard` shows (now
+  // read-only) inside 참고 자료 -- the whole point of CD-2.7-2 is that the
+  // two never differ. `selectedRecord.workspace` is the server's raw/
+  // possibly-legacy JSON, exactly like every other read of it in this file
+  // (see the save-conflict handler above) -- always run through
+  // deserializeWorkspaceState, never trusted as-is. Recorder transcript/
+  // ClinicianJudgment.revised_after_exam etc. never feed this branch --
+  // only Herbal-only records still use those (the effect/handler below).
+  function buildPainEmrTextForRecord(): string {
+    const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
+    return buildPainWorkspaceEmrPreview({
+      primaryConcern: primaryConcernLabel(r),
+      examSuggestions: workspaceState.painExamSuggestions,
+      finalAssessment: workspaceState.painFinalAssessment,
+      followUpTargets: workspaceState.painFollowUpTargets,
+      carePlan: workspaceState.painCarePlan,
+      reassessment: workspaceState.painReassessment,
+      nextReassessmentPlan: workspaceState.nextReassessmentPlan,
+      lbpDirectionalResponse: workspaceState.lbpDirectionalResponse,
+      lbpWorkingHypothesis: workspaceState.lbpWorkingHypothesis,
+      onsetDurationText: durationFrequencyText(r, routing.primary_module),
+      aggravatingText: aggravatingSummaryText(routing.primary_module, r.modules),
+      impactText: isEmptyValue(r.visit_goal.chief_impact)
+        ? null
+        : answerLabel('VISIT_04_SYMPTOM_IMPACT', r.visit_goal.chief_impact),
+      lbpObjectiveMotorDeficit: selectedRecord?.judgment?.lbp_objective_motor_deficit,
+    })
+  }
+
+  // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다(herbal-only
+  // 레코드 전용 -- pain-derived 레코드는 바로 아래 별도 effect가 담당한다).
   // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
   // malformed/legacy submission resilience 배치: 이 effect는 JSX 게이트(위
   // payloadShapeOk ? ... 분기)와 무관하게 항상 실행된다 -- hook은 조건부로
@@ -3149,6 +3182,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // 자식 렌더만 잡으므로 이 예외는 그 경계를 완전히 우회한다.
   useEffect(() => {
     if (!payloadShapeOk) return
+    if (viewProfile === 'pain' || viewProfile === 'mixed') return
     const latest = recorderResults?.[0] ?? null
     if (!latest) return
     if (emrSeedRecordingIdRef.current === latest.recording_id) return
@@ -3160,7 +3194,18 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         judgment: selectedRecord?.judgment ?? null,
       }),
     )
-  }, [payloadShapeOk, recorderResults, selectedRecord?.judgment])
+  }, [payloadShapeOk, viewProfile, recorderResults, selectedRecord?.judgment])
+
+  // §14.3: pain-derived records reseed on record switch or whenever the
+  // saved record advances (workspace autosave, judgment save) -- never tied
+  // to a new recorder result, since this text does not read the transcript
+  // at all.
+  useEffect(() => {
+    if (!payloadShapeOk) return
+    if (viewProfile !== 'pain' && viewProfile !== 'mixed') return
+    setEmrText(buildPainEmrTextForRecord())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at])
 
   useEffect(() => {
     if (copyStatus === 'idle') return
@@ -3177,7 +3222,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // nonce를 새로 만드는 건 이 fix 범위에는 과하다. 값이 서버에는 저장됐지만
   // 이 화면의 selectedRecord가 아직 그 값을 모른다면(다른 창에서 저장한 경우
   // 등) 버튼을 다시 눌러도 반영되지 않는다 — 그 경우 패널을 닫았다 열면 된다.
+  // §14.3: pain-derived records rebuild from buildPainEmrTextForRecord()
+  // instead (still an immediate re-read of the current selectedRecord).
   function handleRebuildEmrSummary() {
+    if (viewProfile === 'pain' || viewProfile === 'mixed') {
+      setEmrText(buildPainEmrTextForRecord())
+      return
+    }
     if (!recorderResults?.[0]) return
     setEmrText(
       buildEmrSummary({
@@ -3760,9 +3811,21 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         </section>
 
         {/*
-          §2.3 "종결": EMR 검토(진료 녹취·요약) + P0-5 "진료 완료" 버튼을
-          한 자리에 -- 완료 직전 마지막으로 검토하는 내용과 그 확정 액션이
-          이제 서로 옆에 있다.
+          §2.3 "종결": EMR 검토 + P0-5 "진료 완료" 버튼을 한 자리에 --
+          완료 직전 마지막으로 검토하는 내용과 그 확정 액션이 이제 서로
+          옆에 있다.
+
+          LBP v1 Batch 4 (§14.3, CD-2.7-2): the EMR review+copy block below
+          used to sit ONLY inside the "진료 녹취·요약" branch that has a
+          recorder result -- so on a record with no voice recording (the
+          common pain-workspace case), 참고 자료's EmrPreviewCard copy
+          button was the ONLY copy path in practice, exactly the two-
+          different-surfaces problem CD-2.7-2 exists to close. It now
+          renders unconditionally (whenever this 종결 section itself
+          renders, i.e. mode==='server' && selectedRecord.patient_id) --
+          the ONE remaining copy surface, regardless of whether a
+          recording exists. "진료 녹취·요약" (the transcript/recording
+          metadata below) stays exactly as before, informational only.
         */}
         <section className="doctor__section doctor__nextCompletion">
           <h2>종결</h2>
@@ -3791,34 +3854,36 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                     <summary>Transcript 원문</summary>
                     <pre className="doctor__recorderTranscript">{recorderResults[0].transcript ?? '(없음)'}</pre>
                   </details>
-                  <div className="judgment__field doctor__recorderEmrField">
-                    <label className="judgment__label" htmlFor="emrSummaryText">
-                      EMR용 요약 (plain text, 직접 수정 가능)
-                    </label>
-                    <textarea
-                      id="emrSummaryText"
-                      className="judgment__textarea"
-                      rows={8}
-                      value={emrText}
-                      onChange={(e) => setEmrText(e.target.value)}
-                    />
-                  </div>
-                  <div className="judgment__actions">
-                    <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
-                      EMR용 복사
-                    </button>
-                    <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
-                      요약 다시 만들기
-                    </button>
-                    {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
-                    {copyStatus === 'error' && (
-                      <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
-                    )}
-                  </div>
                 </>
               )}
             </>
           )}
+
+          <h3>EMR 검토</h3>
+          <div className="judgment__field doctor__recorderEmrField">
+            <label className="judgment__label" htmlFor="emrSummaryText">
+              EMR용 요약 (plain text, 직접 수정 가능)
+            </label>
+            <textarea
+              id="emrSummaryText"
+              className="judgment__textarea"
+              rows={8}
+              value={emrText}
+              onChange={(e) => setEmrText(e.target.value)}
+            />
+          </div>
+          <div className="judgment__actions">
+            <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
+              EMR용 복사
+            </button>
+            <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
+              요약 다시 만들기
+            </button>
+            {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
+            {copyStatus === 'error' && (
+              <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
+            )}
+          </div>
 
           {completeSubmissionError && (
             <p className="doctor__warning" role="alert">

@@ -1,25 +1,17 @@
 /**
- * EMR preview card — shows the composed workspace EMR text with a Copy
- * button (PR #24 Phase 9). Same UX pattern as the existing production EMR
- * panel in DoctorView.tsx (plain textarea, editable, explicit copy
- * button + feedback), kept as a separate preview surface rather than
- * replacing that panel (see emrPreview.ts's file header for why).
+ * EMR preview card — shows the composed workspace EMR text, VIEW-ONLY (PR
+ * #24 Phase 9; copy button removed by LBP v1 Batch 4 §14.3/CD-2.7-2).
+ *
+ * This card used to carry its own "EMR용 복사" button, duplicating the copy
+ * surface DoctorView.tsx's 종결 section already has — two copy buttons that
+ * could show different text if either drifted. CD-2.7-2 (`DECISIONS.md`
+ * 2026-09-04) settles this: 참고 자료's preview stays read-only reference,
+ * and 종결 is the one remaining place a clinician copies EMR text from (for
+ * a pain-derived record, 종결 now sources that text from the exact same
+ * `buildPainWorkspaceEmrPreview` call this card renders — see
+ * emrPreview.ts's file header and DoctorView.tsx's own 종결 section).
  */
-import { useState } from 'react'
-
 export function EmrPreviewCard({ text }: { text: string }) {
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopyStatus('copied')
-      setTimeout(() => setCopyStatus('idle'), 2000)
-    } catch {
-      setCopyStatus('error')
-    }
-  }
-
   return (
     <section className="workspace__emrPreview" aria-label="EMR 미리보기">
       <div className="workspace__emrPreview__head">
@@ -27,13 +19,7 @@ export function EmrPreviewCard({ text }: { text: string }) {
         <span className="workspace__emrPreview__badge">제안이 자동으로 확정 소견이 되지 않음</span>
       </div>
       <textarea className="workspace__emrPreview__text" readOnly rows={7} value={text} />
-      <div className="workspace__emrPreview__actions">
-        <button type="button" className="workspace__btn" onClick={handleCopy}>
-          EMR용 복사
-        </button>
-        {copyStatus === 'copied' && <span className="workspace__copyFeedback">복사됨</span>}
-        {copyStatus === 'error' && <span className="workspace__copyError">복사 실패 — 직접 선택해서 복사해주세요.</span>}
-      </div>
+      <p className="workspace__emrPreview__hint">복사는 「다음」 레인의 「종결」 섹션에서 합니다.</p>
     </section>
   )
 }

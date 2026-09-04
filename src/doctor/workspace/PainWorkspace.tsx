@@ -49,6 +49,8 @@ import {
 } from '../DoctorView'
 import { Field } from '../DoctorView'
 import type { DoctorPayload } from '../types'
+import { answerLabel } from '../labels'
+import type { ClinicianJudgment } from '../judgment'
 import { ExamSuggestionList } from './ExamSuggestionList'
 import { SupportContradictionPanel } from './SupportContradictionPanel'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
@@ -657,6 +659,7 @@ export function PainWorkspaceNext({
   priorVisits,
   lbpDirectionalResponse,
   lbpWorkingHypothesis,
+  lbpObjectiveMotorDeficit,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -675,9 +678,19 @@ export function PainWorkspaceNext({
   lbpDirectionalResponse?: LbpDirectionalResponse
   /** LBP v1 Batch 2.5c (G16): EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 판단·처치 레인(DoctorWorkspace.tsx)에 있다. */
   lbpWorkingHypothesis?: LbpWorkingHypothesis
+  /** LBP v1 Batch 4 (§14.1, EMR O "객관적 근력저하"): EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)의 ObjectiveExamFindingsCard. */
+  lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
 }) {
   const r = payload.responses
+  const { routing } = payload
   const isLbp = r.safety_flags.lbp != null
+  // LBP v1 Batch 4 (§14.1 O/S·S): patient tablet self-report only -- never
+  // reaches the O key (see emrPreview.ts's own header for the O boundary).
+  const onsetDurationText = durationFrequencyText(r, routing.primary_module)
+  const aggravatingTextForEmr = aggravatingSummaryText(routing.primary_module, r.modules)
+  const impactTextForEmr = isEmptyValue(r.visit_goal.chief_impact)
+    ? null
+    : answerLabel('VISIT_04_SYMPTOM_IMPACT', r.visit_goal.chief_impact)
   const emrText = buildPainWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
     examSuggestions,
@@ -688,6 +701,10 @@ export function PainWorkspaceNext({
     nextReassessmentPlan,
     lbpDirectionalResponse,
     lbpWorkingHypothesis,
+    onsetDurationText,
+    aggravatingText: aggravatingTextForEmr,
+    impactText: impactTextForEmr,
+    lbpObjectiveMotorDeficit,
   })
   const patientCarePlanText = buildPainPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })
   const followUpOptions = isLbp ? [...LBP_TARGET_FUNCTION_OPTIONS, ...PAIN_FOLLOW_UP_OPTIONS] : PAIN_FOLLOW_UP_OPTIONS

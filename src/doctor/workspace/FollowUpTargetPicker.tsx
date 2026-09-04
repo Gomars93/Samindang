@@ -11,6 +11,7 @@
  * This component only records the *targets* the clinician nominates here,
  * never a fabricated or auto-computed prior-visit comparison.
  */
+import { useState } from 'react'
 import {
   MAX_FOLLOW_UP_TARGETS,
   REPEAT_VISIT_AUTO_COMPARE_STATUS,
@@ -59,6 +60,34 @@ export function FollowUpTargetPicker({
 
   function updateField(id: string, field: 'baseline' | 'postTreatmentValue', value: string) {
     onChange(selected.map((t) => (t.id === id ? { ...t, [field]: value } : t)))
+  }
+
+  /*
+   * LBP v1 Batch 4 (§14.4, CD-2.7-3 `DECISIONS.md` 2026-09-04): 치료 직후
+   * 값's own explicit-open flag, per target id -- "거의 안 적는다" (PO), so
+   * the input starts hidden behind a "직후 값 기록" toggle. This is NOT
+   * `useState(initial value)` seeded from `t.postTreatmentValue` (Batch 2.6
+   * N-2's exact regression: deriving `open` from the value at mount time,
+   * then losing sync with it, unmounted the input mid-edit the moment the
+   * clinician cleared the text back to ''). Instead the field actually
+   * shown to the clinician is the DERIVED expression
+   * `openPostTreatmentIds.has(id) || t.postTreatmentValue.trim() !== ''`
+   * computed fresh at every render -- "opened by an explicit click" OR
+   * "already has a value" -- so an already-recorded value always starts
+   * visible, and `setPostTreatmentValue` below marks the id opened on the
+   * FIRST keystroke (not only on the toggle click), so clearing the text
+   * back to '' during that same edit can never flip the visibility back to
+   * hidden underneath the clinician's cursor.
+   */
+  const [openPostTreatmentIds, setOpenPostTreatmentIds] = useState<Set<string>>(new Set())
+
+  function openPostTreatmentField(id: string) {
+    setOpenPostTreatmentIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+  }
+
+  function setPostTreatmentValue(id: string, value: string) {
+    openPostTreatmentField(id)
+    updateField(id, 'postTreatmentValue', value)
   }
 
   function chipRow(items: FollowUpTarget[], ariaLabel: string) {
@@ -125,16 +154,25 @@ export function FollowUpTargetPicker({
                 placeholder={placeholders?.[t.id] ?? '현재(오늘) 기준값 — 선택'}
                 aria-label={`${t.label} 오늘 기준값`}
               />
-              {showPostTreatmentField && (
-                <input
-                  type="text"
-                  className="workspace__noteInput"
-                  value={t.postTreatmentValue}
-                  onChange={(e) => updateField(t.id, 'postTreatmentValue', e.target.value)}
-                  placeholder="치료 직후 값 — 선택"
-                  aria-label={`${t.label} 치료 직후 값`}
-                />
-              )}
+              {showPostTreatmentField &&
+                (openPostTreatmentIds.has(t.id) || t.postTreatmentValue.trim() !== '' ? (
+                  <input
+                    type="text"
+                    className="workspace__noteInput"
+                    value={t.postTreatmentValue}
+                    onChange={(e) => setPostTreatmentValue(t.id, e.target.value)}
+                    placeholder="치료 직후 값 — 선택"
+                    aria-label={`${t.label} 치료 직후 값`}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="workspace__btn workspace__followUp__postTreatmentToggle"
+                    onClick={() => openPostTreatmentField(t.id)}
+                  >
+                    직후 값 기록
+                  </button>
+                ))}
             </div>
           ))}
         </div>

@@ -479,6 +479,27 @@
   outline-offset: 1px;
 }
 
+/* LBP v1 Batch 4 (§14.2): 시행/예정 처치's 기타 box -- same look as
+   .workspace__noteInput, kept as its own selector (not that shared class)
+   so it stays distinguishable from every other free-text note box on the
+   page (see FinalAssessmentCard.tsx's own comment for why). */
+.workspace__finalAssessment__interventionOther {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  min-height: 36px;
+  margin-top: 8px;
+}
+
+.workspace__finalAssessment__interventionOther:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 /* ---------- evidence (support/contradiction/unknown) ---------- */
 .workspace__evidence {
   display: grid;
@@ -889,6 +910,16 @@
   color: var(--text-muted);
 }
 
+/* LBP v1 Batch 4 (§14.4/CD-2.7-3): 치료 직후 값 starts hidden behind this
+   toggle -- sized to match the baseline/직후 값 inputs it sits beside in
+   the same grid row, not the taller default .workspace__btn. */
+.workspace__followUp__postTreatmentToggle {
+  min-height: 36px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /* LBP v1 Batch 1 (G1): optional labeled sub-group ("목표 기능") above its
    own chip row -- only rendered when a caller passes `groups`. */
 .workspace__followUp__group {
@@ -995,11 +1026,12 @@
   color: var(--text);
 }
 
-.workspace__emrPreview__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+/* LBP v1 Batch 4 (§14.3/CD-2.7-2): this card lost its own copy button --
+   the hint replacing it points to the one remaining copy surface. */
+.workspace__emrPreview__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .workspace__btn {

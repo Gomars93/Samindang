@@ -464,15 +464,19 @@ test('pain scenario 2: a clinician-recorded POSITIVE result renders distinctly f
 })
 
 // ---------- 4. EMR preview: SUGGESTED never becomes confirmed, NOT_YET_CHECKED never becomes negative ----------
-test('EMR preview (pain scenario 1, all exams NOT_YET_CHECKED): 진찰 소견 line stays empty, exam titles never appear as findings', () => {
+// LBP v1 Batch 4 (§14.1): the 6-key reformat folds exam findings into the
+// fixed "O" key's value (labeled "검사 결과: ..." inside it, no longer its
+// own "진찰 소견:" line) -- the fixed "O:" key itself always renders, even
+// bare, so that skeleton guarantee is what this test now pins instead.
+test('EMR preview (pain scenario 1, all exams NOT_YET_CHECKED): the fixed "O:" key still renders (bare), exam titles never appear as findings', () => {
   const html = render(PAIN_SCENARIO_1)
   const emrIdx = html.indexOf('workspace__emrPreview__text')
   assert.ok(emrIdx !== -1)
-  const textareaChunk = html.slice(emrIdx, emrIdx + 1500)
-  assert.ok(textareaChunk.includes('진찰 소견:'))
+  const emrTextEnd = html.indexOf('</textarea>', emrIdx)
+  const emrTextOnly = html.slice(emrIdx, emrTextEnd)
+  assert.ok(emrTextOnly.includes('O:'), 'the fixed O key renders even with nothing to report')
+  assert.ok(!emrTextOnly.includes('검사 결과:'), 'no exam-findings clause at all when every exam is NOT_YET_CHECKED')
   // The exam is NOT_YET_CHECKED -- its title must not appear inside the EMR text as a finding.
-  const emrTextEnd = textareaChunk.indexOf('</textarea>')
-  const emrTextOnly = textareaChunk.slice(0, emrTextEnd === -1 ? undefined : emrTextEnd)
   assert.ok(!emrTextOnly.includes('요추 능동 움직임 반응 검사'))
 })
 
@@ -485,14 +489,18 @@ test('EMR preview (pain scenario 2: one POSITIVE, one NOT_YET_CHECKED, one alrea
   assert.ok(!emrTextOnly.includes('SLR(하지직거상) 검사'), 'a NOT_YET_CHECKED item never appears as a finding')
 })
 
-test('EMR preview never contains the literal 원장 최종 판단 empty-state as a false-confirmed line (Assessment starts empty)', () => {
+// LBP v1 Batch 4 (§14.1): "최종 임상 판단" (formerly the standalone
+// "Assessment:" line) is now a clause inside the fixed "A:" key -- with no
+// clinician judgment, no hypothesis, no treatment focus and no
+// reassessment note recorded (PAIN_SCENARIO_1's default state), A itself
+// renders bare, exactly like every other empty key.
+test('EMR preview never contains a false-confirmed clinical judgment as a false-confirmed line (the fixed "A:" key starts bare)', () => {
   const html = render(PAIN_SCENARIO_1)
   const emrIdx = html.indexOf('workspace__emrPreview__text')
   const emrTextEnd = html.indexOf('</textarea>', emrIdx)
   const emrTextOnly = html.slice(emrIdx, emrTextEnd)
-  assert.ok(emrTextOnly.includes('Assessment:'))
-  // Assessment line has no clinician text yet (finalWorkingAssessment starts '').
-  assert.ok(/Assessment:\s*(&#10;|\r|\n|<)/.test(emrTextOnly) || emrTextOnly.trim().endsWith('Assessment:'))
+  assert.ok(!emrTextOnly.includes('최종 임상 판단:'), 'no 최종 임상 판단 clause without clinician text')
+  assert.ok(emrTextOnly.includes('A:'), 'the fixed A key still renders, bare')
 })
 
 /* -----------------------------------------------------------------------
@@ -3518,6 +3526,311 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
 
   test('Batch 2.6 E-14: the card still renders (and opens) when candidates exist even with no response -- only the list content is gone, not the card', () => {
     assert.ok(withCandidatesOnly.includes('간단 재확인(Micro Follow-up)'), 'the card itself still mounts for a candidates-only case')
+  })
+}
+
+/* ==========================================================================
+ * LBP v1 Batch 4 -- §14.2 (CD-2.7-1 처치 어휘 chip), §14.3 (CD-2.7-2 EMR
+ * 복사 단일화), §14.4 (CD-2.7-3 치료 직후 값 기본 숨김).
+ * ======================================================================= */
+
+/* ------------------------------------------------------------------------
+ * §14.3: EmrPreviewCard (참고 자료) is now view-only -- zero buttons inside
+ * it. The one remaining copy path (DoctorView.tsx's 종결 section) is
+ * server-mode-only UI this SSR/fetch-less harness cannot mount, so its
+ * coverage lives as source-text assertions in tests/doctor.spec.mjs
+ * instead (same convention this file's own header already documents for
+ * every other server-mode-only DoctorView behavior).
+ * ---------------------------------------------------------------------- */
+{
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic }),
+    )
+  })
+  const emrPreviewSections = renderer.root.findAll(
+    (n) => typeof n.props.className === 'string' && n.props.className.split(' ').includes('workspace__emrPreview'),
+  )
+  test('§14.3: EmrPreviewCard (참고 자료) renders exactly once', () => {
+    assert.equal(emrPreviewSections.length, 1)
+  })
+  test('§14.3: EmrPreviewCard has zero <button> elements inside it (copy button removed)', () => {
+    const buttonsInside = emrPreviewSections[0].findAll((n) => n.type === 'button')
+    assert.equal(buttonsInside.length, 0, 'no copy button (or any other button) inside the now view-only EMR preview card')
+  })
+  test('§14.3: EmrPreviewCard keeps its read-only textarea and points to 종결 for copying', () => {
+    const textarea = emrPreviewSections[0].findAll((n) => n.type === 'textarea')[0]
+    assert.ok(textarea && textarea.props.readOnly === true, 'the textarea stays read-only')
+    const hint = emrPreviewSections[0].findAll(
+      (n) => n.type === 'p' && typeof n.props.children === 'string' && n.props.children.includes('종결'),
+    )
+    assert.equal(hint.length, 1, 'the card carries a hint pointing at 종결 as the one copy location')
+  })
+}
+
+/* ------------------------------------------------------------------------
+ * §14.2 (CD-2.7-1, `DECISIONS.md` 2026-09-04): `interventionPerformedOrPlanned`
+ * is now 8 multi-select chips + a 기타 free-text box, still composing the
+ * one persisted `string` field.
+ * ---------------------------------------------------------------------- */
+{
+  function findChipGroup(renderer) {
+    return renderer.root.findAll((n) => n.props['aria-label'] === '시행/예정 처치 선택')[0]
+  }
+  function findChip(renderer, label) {
+    return findChipGroup(renderer).findAll((n) => n.type === 'button' && n.props.children === label)[0]
+  }
+  function findOtherInput(renderer) {
+    return renderer.root.findAll((n) => n.props['aria-label'] === '시행/예정 처치 기타')[0]
+  }
+  function findEmrTextarea(renderer) {
+    return renderer.root.findAll(
+      (n) => typeof n.props.className === 'string' && n.props.className.split(' ').includes('workspace__emrPreview__text'),
+    )[0]
+  }
+
+  test('§14.2: all 8 approved intervention chips render, none pressed, 기타 empty, when interventionPerformedOrPlanned starts \'\'', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic }),
+      )
+    })
+    const group = findChipGroup(renderer)
+    const chipLabels = group.findAll((n) => n.type === 'button').map((n) => n.props.children)
+    assert.deepEqual(
+      chipLabels,
+      ['침', '약침', '부항', '추나', '물리치료', '한약', '테이핑', '운동처방'],
+      'exactly the 8 PO-approved words render, in the fixed order',
+    )
+    assert.ok(
+      chipLabels.every((label) => findChip(renderer, label).props['aria-pressed'] === false),
+      'no chip starts pressed',
+    )
+    assert.equal(findOtherInput(renderer).props.value, '', '기타 box starts empty')
+  })
+
+  test('§14.2: clicking chips multi-selects (복수선택) and composes the persisted string in the fixed canonical order', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:chip-multiselect',
+        }),
+      )
+    })
+    act(() => {
+      findChip(renderer, '약침').props.onClick()
+    })
+    act(() => {
+      findChip(renderer, '침').props.onClick()
+    })
+    assert.equal(findChip(renderer, '침').props['aria-pressed'], true)
+    assert.equal(findChip(renderer, '약침').props['aria-pressed'], true)
+    assert.equal(findChip(renderer, '부항').props['aria-pressed'], false)
+    assert.ok(
+      findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 약침'),
+      'composed in fixed chip order (침 before 약침), not click order (약침 was clicked first)',
+    )
+
+    // Deselecting one keeps the other and drops it from the composed string.
+    act(() => {
+      findChip(renderer, '침').props.onClick()
+    })
+    assert.equal(findChip(renderer, '침').props['aria-pressed'], false)
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침'))
+    assert.ok(!findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 약침'))
+  })
+
+  test('§14.2: typing in 기타 composes alongside any selected chips', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:chip-plus-other',
+        }),
+      )
+    })
+    act(() => {
+      findChip(renderer, '테이핑').props.onClick()
+    })
+    act(() => {
+      findOtherInput(renderer).props.onChange({ target: { value: '얼음찜질 안내' } })
+    })
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 테이핑, 얼음찜질 안내'))
+  })
+
+  // MANDATORY mutation-guarded test (§14.6 "레거시 자유입력 값 보존"): a
+  // value recorded BEFORE this batch (plain free text, not one of the 8
+  // words) must survive verbatim into the 기타 box -- never silently
+  // dropped. Verified by hand: removing `parseInterventionValue`'s
+  // `otherTokens` collection (keeping only the known-chip filter) makes
+  // this fail with "AssertionError [ERR_ASSERTION]: 기타 box must start
+  // with the legacy value... expected false to be true" (observed,
+  // reverted -- see the batch's final report for the exact message).
+  test('§14.2 (mutation-guarded): a legacy free-text interventionPerformedOrPlanned value is preserved verbatim in 기타, not dropped', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:chip-legacy',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '',
+              interventionPerformedOrPlanned: '자기 전 온찜질 안내함',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    const group = findChipGroup(renderer)
+    assert.ok(
+      group.findAll((n) => n.type === 'button' && n.props['aria-pressed'] === true).length === 0,
+      '기타 box must start with the legacy value -- sanity: no chip is pressed for it',
+    )
+    assert.equal(
+      findOtherInput(renderer).props.value,
+      '자기 전 온찜질 안내함',
+      'the legacy free-text value is preserved verbatim in the 기타 box, not dropped',
+    )
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 자기 전 온찜질 안내함'), 'and still reaches the EMR text unchanged')
+  })
+}
+
+/* ------------------------------------------------------------------------
+ * §14.4 (CD-2.7-3, `DECISIONS.md` 2026-09-04): 치료 직후 값 defaults
+ * hidden behind a "직후 값 기록" toggle; an already-recorded value starts
+ * open; clearing it back to '' must never unmount the input mid-edit
+ * (Batch 2.6 N-2 regression pattern, same idiom as this file's other N-2
+ * pin above).
+ * ---------------------------------------------------------------------- */
+{
+  const seededTarget = { id: 'pain_intensity', label: '통증 강도', baseline: '', postTreatmentValue: '' }
+  const findToggle = (renderer) =>
+    renderer.root.findAll(
+      (n) =>
+        n.type === 'button' &&
+        typeof n.props.className === 'string' &&
+        n.props.className.split(' ').includes('workspace__followUp__postTreatmentToggle'),
+    )
+  const findPostTreatmentInput = (renderer) =>
+    renderer.root.findAll((n) => n.type === 'input' && n.props['aria-label'] === '통증 강도 치료 직후 값')
+
+  test('§14.4: 치료 직후 값 starts hidden behind a toggle when no value is recorded yet', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:posttx-hidden',
+          initialWorkspaceState: { painFollowUpTargets: [seededTarget] },
+        }),
+      )
+    })
+    assert.equal(findToggle(renderer).length, 1, 'sanity: the toggle renders')
+    assert.equal(findPostTreatmentInput(renderer).length, 0, '치료 직후 값 input does not render yet')
+  })
+
+  test('§14.4: an already-recorded 치료 직후 값 starts open (no mount latch -- derived from the value itself)', () => {
+    const html = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        initialWorkspaceState: { painFollowUpTargets: [{ ...seededTarget, postTreatmentValue: '3' }] },
+      }),
+    )
+    assert.ok(!html.includes('workspace__followUp__postTreatmentToggle'), 'no hidden-toggle button when a value already exists')
+    assert.ok(/<input[^>]*aria-label="통증 강도 치료 직후 값"/.test(html), 'the input renders directly, already showing the recorded value')
+  })
+
+  test('§14.4 (Batch 2.6 N-2 regression guard, PRIMARY case): clearing an ALREADY-RECORDED 치료 직후 값 (auto-opened by its value, never via the toggle click) back to \'\' does not unmount the input', () => {
+    // This is the exact N-2 shape: the input is visible ONLY because
+    // `t.postTreatmentValue.trim() !== ''` (openPostTreatmentIds is still
+    // empty -- the toggle was never clicked). A naive fix that derives
+    // visibility from the CURRENT value alone (no sticky "opened" state)
+    // passes every other test in this block but fails exactly this one.
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:posttx-n2-primary',
+          initialWorkspaceState: { painFollowUpTargets: [{ ...seededTarget, postTreatmentValue: '5' }] },
+        }),
+      )
+    })
+    assert.equal(findPostTreatmentInput(renderer).length, 1, 'sanity: auto-opened because a value already exists')
+    assert.equal(findToggle(renderer).length, 0, 'sanity: no toggle was ever clicked')
+    act(() => {
+      findPostTreatmentInput(renderer)[0].props.onChange({ target: { value: '' } })
+    })
+    assert.equal(
+      findPostTreatmentInput(renderer).length,
+      1,
+      'N-2 PRIMARY regression guard: clearing an already-recorded value back to \'\' must not unmount the input mid-edit',
+    )
+    assert.equal(findToggle(renderer).length, 0, 'the toggle must not reappear either')
+  })
+
+  test('§14.4: clicking "직후 값 기록" reveals the input', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:posttx-open',
+          initialWorkspaceState: { painFollowUpTargets: [seededTarget] },
+        }),
+      )
+    })
+    act(() => {
+      findToggle(renderer)[0].props.onClick()
+    })
+    assert.equal(findToggle(renderer).length, 0, 'the toggle is gone once opened')
+    assert.equal(findPostTreatmentInput(renderer).length, 1, 'the input now renders')
+  })
+
+  test('§14.4 (Batch 2.6 N-2 regression guard): typing then clearing 치료 직후 값 back to \'\' does not unmount the input or bring back the toggle', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:posttx-n2',
+          initialWorkspaceState: { painFollowUpTargets: [seededTarget] },
+        }),
+      )
+    })
+    act(() => {
+      findToggle(renderer)[0].props.onClick()
+    })
+    act(() => {
+      findPostTreatmentInput(renderer)[0].props.onChange({ target: { value: '5' } })
+    })
+    assert.equal(findPostTreatmentInput(renderer).length, 1, 'sanity: input present after typing')
+    act(() => {
+      findPostTreatmentInput(renderer)[0].props.onChange({ target: { value: '' } })
+    })
+    assert.equal(
+      findPostTreatmentInput(renderer).length,
+      1,
+      'N-2 regression guard: the input must still be present after clearing its text -- it must not unmount mid-edit',
+    )
+    assert.equal(findToggle(renderer).length, 0, 'the 직후 값 기록 toggle must NOT reappear while the clinician is actively editing this field')
   })
 }
 

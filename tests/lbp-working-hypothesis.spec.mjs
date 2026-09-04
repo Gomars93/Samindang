@@ -514,18 +514,133 @@ function useEffectSpans(src) {
   }
 
   const withoutHypothesis = buildPainWorkspaceEmrPreview(baseInput)
-  assert('buildPainWorkspaceEmrPreview: no "임상 가설" line at all when lbpWorkingHypothesis is omitted', !withoutHypothesis.includes('임상 가설'))
+  assert('buildPainWorkspaceEmrPreview: no "임상 가설" clause at all when lbpWorkingHypothesis is omitted', !withoutHypothesis.includes('임상 가설'))
 
   const withBlankHypothesis = buildPainWorkspaceEmrPreview({ ...baseInput, lbpWorkingHypothesis: emptyLbpWorkingHypothesis() })
-  assert('buildPainWorkspaceEmrPreview: no "임상 가설" line when every pattern is UNJUDGED (never an empty "임상 가설:" line)', !withBlankHypothesis.includes('임상 가설'))
+  assert('buildPainWorkspaceEmrPreview: no "임상 가설" clause when every pattern is UNJUDGED (never an empty "A: 임상 가설:" clause)', !withBlankHypothesis.includes('임상 가설'))
 
+  // LBP v1 Batch 4 (§14.1): the 6-key reformat folds "임상 가설" into the
+  // fixed "A" (평가) key's value, immediately before "최종 임상 판단" --
+  // there is no longer a standalone "임상 가설:"/"Assessment:" line pair.
   const withRealHypothesis = buildPainWorkspaceEmrPreview({ ...baseInput, lbpWorkingHypothesis: withSupport({ NEURAL: 'HIGHER' }) })
-  assert('buildPainWorkspaceEmrPreview: renders exactly one "임상 가설:" line when at least one pattern is set', withRealHypothesis.includes('임상 가설: 신경근 관여 가능성 높음'))
+  assert('buildPainWorkspaceEmrPreview: the A line carries "임상 가설: 신경근 관여 가능성 높음" when at least one pattern is set', withRealHypothesis.includes('A: 임상 가설: 신경근 관여 가능성 높음'))
   assert('buildPainWorkspaceEmrPreview: never double-prefixed ("임상 가설: 임상 가설:")', !withRealHypothesis.includes('임상 가설: 임상 가설:'))
 
-  const hypIdx = withRealHypothesis.indexOf('임상 가설:')
-  const assessmentIdx = withRealHypothesis.indexOf('Assessment:')
-  assert('buildPainWorkspaceEmrPreview: the "임상 가설" line sits before the "Assessment" line', hypIdx !== -1 && assessmentIdx !== -1 && hypIdx < assessmentIdx)
+  const withHypothesisAndJudgment = buildPainWorkspaceEmrPreview({
+    ...baseInput,
+    finalAssessment: { ...baseInput.finalAssessment, finalWorkingAssessment: '요추 기계적 통증' },
+    lbpWorkingHypothesis: withSupport({ NEURAL: 'HIGHER' }),
+  })
+  const aLine = withHypothesisAndJudgment.split('\r\n').find((l) => l.startsWith('A:'))
+  assert('buildPainWorkspaceEmrPreview: the "A:" line exists', aLine != null)
+  assert(
+    'buildPainWorkspaceEmrPreview: within that single "A:" line, "임상 가설" sits before "최종 임상 판단"',
+    aLine.includes('임상 가설:') && aLine.includes('최종 임상 판단: 요추 기계적 통증') && aLine.indexOf('임상 가설:') < aLine.indexOf('최종 임상 판단:'),
+  )
+  assert(
+    'buildPainWorkspaceEmrPreview: no separate "Assessment:" line -- both clauses live on the fixed "A:" key',
+    !withHypothesisAndJudgment.includes('Assessment:'),
+  )
+}
+
+/* ------------------------------------------------------------------------
+ * LBP v1 Batch 4 §14.1/§14.6 -- the fixed 6-key skeleton (always exactly
+ * six lines, in this order, even when every value is empty) and the O
+ * boundary (clinical safety, mandatory mutant per §14.6: a patient
+ * self-reported value must NEVER reach the O line).
+ * ---------------------------------------------------------------------- */
+{
+  const allEmptyInput = {
+    primaryConcern: null,
+    examSuggestions: [],
+    finalAssessment: { finalWorkingAssessment: '', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: null },
+    followUpTargets: [],
+  }
+  const allEmpty = buildPainWorkspaceEmrPreview(allEmptyInput)
+  const expectedSkeleton = ['C/C:', 'O/S:', 'S:', 'O:', 'A:', 'P:'].join('\r\n')
+  assert(
+    '§14.1 6-key skeleton: every value empty -> exactly the 6 fixed keys, in order (C/C, O/S, S, O, A, P), nothing else',
+    allEmpty === expectedSkeleton,
+  )
+
+  // A filled example -- one value per key, confirming the fixed key
+  // LITERALS ('C/C', 'O/S', 'S', 'O', 'A', 'P') are hardcoded, not derived
+  // from any label table (§14.6: "키 이름·순서가 하드코딩 리터럴로 고정된다").
+  const filled = buildPainWorkspaceEmrPreview({
+    primaryConcern: '요통',
+    examSuggestions: [
+      {
+        id: 'e1',
+        title: 'SLR(하지직거상) 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [],
+        source: 'SUGGESTED',
+        result: { status: 'NEGATIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+    ],
+    finalAssessment: {
+      finalWorkingAssessment: '요추 기계적 통증',
+      treatmentFocus: '가동성 회복',
+      interventionPerformedOrPlanned: '침, 물리치료',
+      immediateRetestTarget: '숙일 때 통증 재현 여부',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    },
+    followUpTargets: [{ id: 'pain_intensity', label: '통증 강도', baseline: '7', postTreatmentValue: '' }],
+    onsetDurationText: '1~3개월 · 매일',
+    aggravatingText: '움직일 때 악화',
+    impactText: '가벼운 지장',
+    lbpObjectiveMotorDeficit: 'NONE',
+  })
+  const filledLines = filled.split('\r\n')
+  assert('§14.1 filled example: exactly 6 lines', filledLines.length === 6)
+  assert('§14.1 filled example: keys are C/C, O/S, S, O, A, P in that exact order', filledLines.every((l, i) => l.startsWith(['C/C:', 'O/S:', 'S:', 'O:', 'A:', 'P:'][i])))
+  assert('§14.1 filled example: C/C carries the chief concern', filledLines[0] === 'C/C: 요통')
+  assert('§14.1 filled example: O/S carries the tablet onset/duration text', filledLines[1] === 'O/S: 1~3개월 · 매일')
+  assert(
+    '§14.1 filled example: S carries only patient self-report (악화요인/일상 영향), never a clinician value',
+    filledLines[2] === 'S: 악화요인: 움직일 때 악화; 일상 영향: 가벼운 지장',
+  )
+  assert(
+    '§14.1 filled example: O carries the clinician exam finding + the clinician objective-motor-deficit finding, and nothing patient-reported',
+    filledLines[3] === 'O: 검사 결과: SLR(하지직거상) 검사: 음성/정상; 객관적 근력저하: 없음',
+  )
+  assert(
+    '§14.1 filled example: A carries 최종 임상 판단 + 치료 초점',
+    filledLines[4] === 'A: 최종 임상 판단: 요추 기계적 통증; 치료 초점: 가동성 회복',
+  )
+  assert(
+    '§14.1 filled example: P carries 시행/예정 처치 + 즉시 재검 대상 + 재평가 대상',
+    filledLines[5] === 'P: 시행/예정 처치: 침, 물리치료; 즉시 재검 대상: 숙일 때 통증 재현 여부; 재평가 대상: 통증 강도 — 기준 7',
+  )
+
+  // §14.1 O boundary (CLINICAL SAFETY, mandatory per §14.6): every value
+  // fed here ONLY as a patient-self-report input (onsetDurationText/
+  // aggravatingText/impactText -- the tablet-derived S/O-S sources) must
+  // never reach O. Verified by hand as the mandatory mutant: temporarily
+  // adding `if (input.aggravatingText) oParts.push(input.aggravatingText)`
+  // inside buildPainWorkspaceEmrPreview's O computation made this
+  // assertion fail with "FAIL: §14.1 O boundary (CLINICAL SAFETY,
+  // mandatory): a patient self-reported value never appears on the O
+  // line" (observed, then reverted -- exact transcript in the batch's
+  // final report).
+  const patientSelfReportValue = '환자가 태블릿에 직접 적은 자가보고 문구'
+  const oBoundaryInput = {
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    onsetDurationText: patientSelfReportValue,
+    aggravatingText: patientSelfReportValue,
+    impactText: patientSelfReportValue,
+  }
+  const oBoundaryText = buildPainWorkspaceEmrPreview(oBoundaryInput)
+  assert(
+    '§14.1 O boundary sanity: the patient self-report value DOES reach the text (via O/S and S, not silently dropped)',
+    oBoundaryText.includes(patientSelfReportValue),
+  )
+  const oBoundaryOLine = oBoundaryText.split('\r\n').find((l) => l.startsWith('O:'))
+  assert(
+    '§14.1 O boundary (CLINICAL SAFETY, mandatory): a patient self-reported value never appears on the O line -- O stays bare',
+    oBoundaryOLine === 'O:',
+  )
 }
 
 /* ------------------------------------------------------------------------

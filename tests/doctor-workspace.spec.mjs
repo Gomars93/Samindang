@@ -3212,18 +3212,21 @@ test('LBP v1 Batch 3.1: the 오늘 재검 <details open=...> expression is STILL
  * DoctorWorkspace bundle (see the T-5 comment above), so -- following this
  * file's own established convention for RevisitWorkspace changes -- this is
  * a structural source check, not a full render.
+ *
+ * Closing review fix (Opus N-1): `isCarePlanEmpty` alone is no longer the
+ * whole `open=` condition -- see the guard test right below this one. The
+ * `between` check here still guarantees this really is the <details>
+ * wrapping the card (not an unrelated one).
  * ---------------------------------------------------------------------- */
-test('Batch 2.6 E-3: RevisitWorkspace.tsx wraps <PainCarePlanCard in a <details> that auto-opens exactly when !isCarePlanEmpty(workspaceState.carePlan)', () => {
+test('Batch 2.6 E-3: RevisitWorkspace.tsx wraps <PainCarePlanCard in a <details> that auto-opens when !isCarePlanEmpty(workspaceState.carePlan)', () => {
   const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
   const cardIdx = src.indexOf('<PainCarePlanCard')
   assert.ok(cardIdx !== -1, 'the card still exists')
   const detailsIdx = src.lastIndexOf('<details', cardIdx)
   assert.ok(detailsIdx !== -1, 'a <details> precedes the card')
-  const tagChunk = src.slice(detailsIdx, detailsIdx + 120)
-  assert.ok(
-    tagChunk.startsWith('<details className="workspace__revisit__optional" open={!isCarePlanEmpty(workspaceState.carePlan)}>'),
-    'open= is exactly open={!isCarePlanEmpty(workspaceState.carePlan)}',
-  )
+  const tagChunk = src.slice(detailsIdx, src.indexOf('>', detailsIdx) + 1)
+  assert.ok(tagChunk.includes('className="workspace__revisit__optional"'), 'still the same disclosure class')
+  assert.ok(tagChunk.includes('!isCarePlanEmpty(workspaceState.carePlan)'), 'open= still includes !isCarePlanEmpty(workspaceState.carePlan)')
   // Non-vacuous: no OTHER <details> sits between this one and the card (i.e.
   // this really is the details wrapping the card, not an unrelated one).
   const between = src.slice(detailsIdx + tagChunk.length, cardIdx)
@@ -3233,6 +3236,48 @@ test('Batch 2.6 E-3: RevisitWorkspace.tsx wraps <PainCarePlanCard in a <details>
     src.includes("import { isCarePlanEmpty } from './NextActionCard'"),
     'isCarePlanEmpty is imported from the same corrected NextActionCard.tsx (Batch 2.6 E-1) rather than reimplemented locally',
   )
+})
+
+/* ------------------------------------------------------------------------
+ * Closing review (Opus N-1, LOW): `isCarePlanEmpty` deliberately excludes
+ * `nextVisitCheckItem` (see its doc comment in NextActionCard.tsx) because
+ * on the INITIAL-visit screen that field lives in an always-visible lane-4
+ * textarea outside the 관리 계획 disclosure -- but on THIS screen
+ * (RevisitWorkspace.tsx) the field has no such lane; it lives INSIDE this
+ * disclosure as its only editable path. Before this fix, carrying forward a
+ * prior Care Plan whose only text was `nextVisitCheckItem` wrote the value,
+ * left this disclosure closed, and disabled the carry-forward button --
+ * button pressed, screen unchanged, no way to see or edit what was just
+ * written. This pins the `open=` condition adding the field back in on
+ * THIS screen only (E-1's initial-visit win, pinned separately above and
+ * again by the D-1 tests, is untouched).
+ * ---------------------------------------------------------------------- */
+test('N-1: RevisitWorkspace.tsx opens the Care Plan disclosure when nextVisitCheckItem ALONE is non-empty (the carry-forward-only-writes-this-field case)', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const cardIdx = src.indexOf('<PainCarePlanCard')
+  const detailsIdx = src.lastIndexOf('<details', cardIdx)
+  const tagChunk = src.slice(detailsIdx, src.indexOf('>', detailsIdx) + 1)
+  assert.ok(
+    tagChunk.includes("workspaceState.carePlan.nextVisitCheckItem.trim() !== ''"),
+    'the open= condition also opens the disclosure when nextVisitCheckItem alone is non-empty -- this screen has no other editable home for that field',
+  )
+  assert.ok(
+    /open=\{!isCarePlanEmpty\(workspaceState\.carePlan\)\s*\|\|\s*workspaceState\.carePlan\.nextVisitCheckItem\.trim\(\) !== ''\}/.test(tagChunk),
+    'the two conditions are OR-ed together in the open= expression, exactly',
+  )
+})
+
+test('N-1: the initial-visit screen (E-1) is unaffected -- nextVisitCheckItem ALONE still does NOT open its 관리 계획 disclosure', () => {
+  // Non-vacuous cross-check: PainWorkspace.tsx's own disclosure (E-1, pinned
+  // above at :2098) reads `carePlanDetailsOpen` from `isCarePlanEmpty`
+  // alone, with no nextVisitCheckItem OR-clause of its own -- the initial-
+  // visit screen keeps the field OUTSIDE the disclosure (lane-4 textarea),
+  // so it correctly has no reason to add one.
+  const src = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+  const lineIdx = src.indexOf('const carePlanDetailsOpen =')
+  assert.ok(lineIdx !== -1, 'sanity: the gate still exists')
+  const line = src.slice(lineIdx, src.indexOf('\n', lineIdx))
+  assert.ok(!line.includes('nextVisitCheckItem'), 'PainWorkspace.tsx must NOT gain an N-1-style nextVisitCheckItem OR-clause -- the E-1 test at :2113 is the real behavioral pin for this')
 })
 
 /* ------------------------------------------------------------------------
@@ -3369,6 +3414,65 @@ test('D-2: RehabSuggestionCard reveals a clinicianFinalInstruction that arrives 
     'D-2: an instruction that arrives after mount must show in the free-text input -- the old mount-time useState kept the toggle collapsed forever',
   )
   assert.equal(findToggle(renderer).length, 0, 'the collapsed toggle is gone once the instruction is visible')
+})
+
+/* ------------------------------------------------------------------------
+ * Closing review (Opus N-2, LOW): the D-2 fix above made `showInstruction`
+ * re-derive on every render, but its `useState` initializer regressed from
+ * `useState(hasDetail)` (ExamSuggestionCard.tsx's own pattern) to
+ * `useState(false)` -- dropping the mount-time latch. Without the latch, a
+ * clinician who selects an EXISTING instruction's text and deletes it hits
+ * `showInstruction === false` mid-edit, unmounting the free-text input out
+ * from under the cursor and replacing it with the "최종 지시문 추가"
+ * toggle. This pins the latch restoring that: clearing an existing
+ * instruction to '' must NOT unmount the input.
+ * ---------------------------------------------------------------------- */
+test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free-text input mounted (no mid-edit unmount)', () => {
+  const suggestion = {
+    id: 'lbp-n2-clear',
+    title: 'LBP 재활 제안 (N-2 지우기)',
+    goal: '',
+    rationale: '',
+    sourceFacts: [],
+    contraindicationFacts: [],
+    source: 'SUGGESTED',
+    status: 'ACCEPTED',
+    clinicianFinalInstruction: 'N2-EXISTING-INSTRUCTION',
+  }
+  const findInput = (renderer) =>
+    renderer.root.findAll(
+      (node) =>
+        node.type === 'input' &&
+        typeof node.props.className === 'string' &&
+        node.props.className.split(' ').includes('workspace__noteInput'),
+    )
+  const findToggle = (renderer) =>
+    renderer.root.findAll((node) => node.type === 'button' && node.props.children === '최종 지시문 추가')
+
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: undefined,
+        lbpObjectiveMotorDeficit: 'NONE',
+        resetKey: 'submission:n2-clear',
+        initialWorkspaceState: { painRehabSuggestions: [suggestion] },
+      }),
+    )
+  })
+  assert.equal(findInput(renderer).length, 1, 'sanity: mounts with content -> input visible')
+  assert.equal(findToggle(renderer).length, 0, 'sanity: no toggle while content is present')
+
+  act(() => {
+    findInput(renderer)[0].props.onChange({ target: { value: '' } })
+  })
+  assert.equal(
+    findInput(renderer).length,
+    1,
+    'N-2: the workspace__noteInput input must still be present after clearing its text -- it must not unmount mid-edit',
+  )
+  assert.equal(findToggle(renderer).length, 0, 'N-2: the 최종 지시문 추가 toggle must NOT reappear while the clinician is actively editing this field')
 })
 
 /* ------------------------------------------------------------------------

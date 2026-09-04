@@ -40,12 +40,17 @@ export function RehabSuggestionCard({
    * (DoctorWorkspace.tsx's `handleReloadFromConflict`) or a same-record
    * re-seed (`initialRecordUpdatedAt` advancing) -- stayed hidden forever,
    * because the toggle never re-derives from the new prop. Following
-   * ExamSuggestionCard.tsx:62-73's OWN pattern exactly (not just its UI
-   * shape) fixes this: `instructionOpen` only tracks an explicit manual
-   * open, and `showInstruction` derives fresh on every render, so a value
-   * that shows up later is never hidden behind a stale mount-time flag.
+   * ExamSuggestionCard.tsx:62-73's OWN pattern (not just its UI shape) fixes
+   * this: `showInstruction` derives fresh on every render, so a value that
+   * shows up later is never hidden behind a stale mount-time flag.
+   *
+   * Closing review fix (Opus N-2): the mount-time `useState` still needs to
+   * LATCH open when the card mounts with content already present, exactly
+   * like `ExamSuggestionCard.tsx:62-63`'s `useState(hasDetail)` -- otherwise
+   * clearing an existing instruction's text flips `showInstruction` to
+   * false mid-edit, unmounting the input out from under the cursor.
    */
-  const [instructionOpen, setInstructionOpen] = useState(false)
+  const [instructionOpen, setInstructionOpen] = useState(suggestion.clinicianFinalInstruction.trim() !== '')
   const showInstruction = instructionOpen || suggestion.clinicianFinalInstruction.trim() !== ''
 
   return (

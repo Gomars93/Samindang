@@ -719,9 +719,15 @@ export function PainWorkspaceNext({
     <div className="workspace__pain workspace__pain--next">
       {/*
         Phase 7 §2.5: 재평가 대상(측정 추적)과 다음 방문 확인 메모(자유
-        기록)를 관계 라벨과 함께 나란히 배치한다 (게이트 B-2, delta:
-        nextVisitCheckItem 제거 철회 -- 필드는 CarePlanCard 안에도 그대로
-        남는다, 이건 추가 배치일 뿐 대체가 아니다).
+        기록)를 관계 라벨과 함께 나란히 배치한다 (게이트 B-2).
+
+        Closing review correction (Opus N-3a): this textarea is now the
+        ONLY editable path for `nextVisitCheckItem` on the initial-visit
+        screen -- the Care Plan card below opts out of rendering the field
+        (`showNextVisitCheckItem={false}` at `:769`), so this IS a
+        replacement, not an additional placement. The revisit screen
+        (`RevisitWorkspace.tsx`) has no lane-4 textarea like this one, so
+        there the card keeps its default and renders the field itself.
       */}
       <div className="doctor__nextPairRow">
         <div className="doctor__nextPairRow__col">

@@ -795,7 +795,20 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           convention (isCarePlanEmpty, corrected in Batch 2.6 to no longer
           count `nextVisitCheckItem`), so nothing already recorded here is
           ever hidden behind a closed disclosure. */}
-      <details className="workspace__revisit__optional" open={!isCarePlanEmpty(workspaceState.carePlan)}>
+      {/* Closing review (Opus N-1): `isCarePlanEmpty` deliberately excludes
+          `nextVisitCheckItem` because on the INITIAL-visit screen that field
+          lives in an always-visible lane-4 textarea outside this disclosure
+          (see `isCarePlanEmpty`'s doc comment in NextActionCard.tsx). On
+          THIS screen the field has no such lane -- it lives INSIDE this
+          disclosure as its only editable path -- so the shared predicate's
+          premise does not hold here, and it must be added back explicitly:
+          without this, carrying forward a prior plan whose only text is
+          `nextVisitCheckItem` writes the value but leaves the disclosure
+          closed, showing nothing and disabling the carry-forward button. */}
+      <details
+        className="workspace__revisit__optional"
+        open={!isCarePlanEmpty(workspaceState.carePlan) || workspaceState.carePlan.nextVisitCheckItem.trim() !== ''}
+      >
         <summary>치료 계획 (Care Plan) — 필요할 때 펼치기</summary>
         <PainCarePlanCard
           value={workspaceState.carePlan}

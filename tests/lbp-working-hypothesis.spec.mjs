@@ -722,6 +722,19 @@ function useEffectSpans(src) {
   assert('T4: buildPainWorkspaceEmrPreview output never contains "원장 평가:"', !t4Text.includes('원장 평가:'))
   assert('T4: buildPainWorkspaceEmrPreview output never contains "치료/처방 방향:"', !t4Text.includes('치료/처방 방향:'))
   assert('T4: buildPainWorkspaceEmrPreview output never contains "진료 계획:"', !t4Text.includes('진료 계획:'))
+  // Independent review (2026-09-04): the three `!includes` checks above
+  // only catch a LABELED reintroduction (`aParts.push('원장 평가: ' + ...)`).
+  // A future mutant that smuggles the same values into O unlabeled (e.g.
+  // `oParts.push(input.clinicianJudgmentAssessment)`) would pass all three
+  // AND pass T11 (the `filled` fixture no longer passes these 3 keys at
+  // all, so that mutant never fires there either) -- this exact-match O
+  // line closes that gap, matching the "O stays bare" convention the
+  // defect #7 block above already uses.
+  const t4Lines = t4Text.split('\r\n')
+  assert(
+    'T4: the removed clinicianJudgment* keys never reach O even unlabeled -- O stays bare',
+    t4Lines.find((l) => l.startsWith('O:')) === 'O:',
+  )
 
   // Opus delta review defect #8: an unrecognized/invalid lbpDirectionalResponse
   // value must degrade exactly like the omitted/NOT_ASSESSED default --

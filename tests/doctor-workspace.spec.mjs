@@ -3547,6 +3547,19 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
  * this claim true (EMR용 복사 renders exactly once repo-wide, the 종결 call
  * site's argument key set is accounted for against PainWorkspace.tsx's own
  * call, the seed-once guard exists, and the empty-text copy guard exists).
+ *
+ * Opus CLOSING review C-5: the "복사는 「다음」 레인의 「종결」 섹션에서
+ * 합니다." hint used to be unconditional -- but this exact render (no
+ * `nextLaneFooter` prop, i.e. fixtures/preview mode, the same shape
+ * DoctorView.tsx uses when `mode !== 'server'`) has no 종결 section
+ * anywhere on screen, so the hint used to name a place that does not
+ * exist. `copyHint` is now supplied by the caller (DoctorWorkspace.tsx),
+ * derived from whether `nextLaneFooter` was passed at all -- so the FIRST
+ * assertion below (no `nextLaneFooter` prop) must show NO hint, and a
+ * second render WITH a `nextLaneFooter` prop must show the hint. Both
+ * halves matter: the first is what actually regressed (a hint pointing
+ * nowhere in every fixture/preview render), and the second confirms the
+ * fix does not just delete the hint outright.
  * ---------------------------------------------------------------------- */
 {
   let renderer
@@ -3565,13 +3578,35 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     const buttonsInside = emrPreviewSections[0].findAll((n) => n.type === 'button')
     assert.equal(buttonsInside.length, 0, 'no copy button (or any other button) inside the now view-only EMR preview card')
   })
-  test('§14.3: EmrPreviewCard keeps its read-only textarea and points to 종결 for copying', () => {
+  test('§14.3: EmrPreviewCard keeps its read-only textarea', () => {
     const textarea = emrPreviewSections[0].findAll((n) => n.type === 'textarea')[0]
     assert.ok(textarea && textarea.props.readOnly === true, 'the textarea stays read-only')
+  })
+  test('C-5: with no nextLaneFooter (fixtures/preview mode -- 종결 does not render here), EmrPreviewCard shows NO 종결-pointing hint', () => {
     const hint = emrPreviewSections[0].findAll(
       (n) => n.type === 'p' && typeof n.props.children === 'string' && n.props.children.includes('종결'),
     )
-    assert.equal(hint.length, 1, 'the card carries a hint pointing at 종결 as the one copy location')
+    assert.equal(hint.length, 0, 'no hint should point at a 종결 section that is not on screen in this render')
+  })
+
+  let rendererWithFooter
+  act(() => {
+    rendererWithFooter = TestRenderer.create(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        nextLaneFooter: React.createElement('span', null, '종결 stand-in'),
+      }),
+    )
+  })
+  const emrPreviewSectionsWithFooter = rendererWithFooter.root.findAll(
+    (n) => typeof n.props.className === 'string' && n.props.className.split(' ').includes('workspace__emrPreview'),
+  )
+  test('C-5: with a nextLaneFooter present (the same signal DoctorView.tsx gates 종결 itself on), EmrPreviewCard DOES show the 종결-pointing hint', () => {
+    const hint = emrPreviewSectionsWithFooter[0].findAll(
+      (n) => n.type === 'p' && typeof n.props.children === 'string' && n.props.children.includes('종결'),
+    )
+    assert.equal(hint.length, 1, 'the card carries a hint pointing at 종결 as the one copy location, once 종결 is actually on screen')
   })
 }
 

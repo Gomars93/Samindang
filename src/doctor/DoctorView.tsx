@@ -3241,7 +3241,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       setEmrText(generated)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at])
+  }, [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at, microFollowUpResponse])
 
   useEffect(() => {
     if (copyStatus === 'idle') return

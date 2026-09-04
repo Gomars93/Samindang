@@ -3489,10 +3489,10 @@ function detailsRange(html, classMarker) {
   // reseeds when the textarea still holds exactly what the effect
   // generated last (i.e. the clinician has not typed a manual edit since).
   const seedEffectMatch = doctorViewSrc.match(
-    /useEffect\(\(\) => \{\s*if \(!payloadShapeOk\) return\s*const recordId = selectedRecord\?\.id[\s\S]*?\}, \[payloadShapeOk, viewProfile, selectedRecord\?\.id, selectedRecord\?\.updated_at\]\)/,
+    /useEffect\(\(\) => \{\s*if \(!payloadShapeOk\) return\s*const recordId = selectedRecord\?\.id[\s\S]*?\}, \[payloadShapeOk, viewProfile, selectedRecord\?\.id, selectedRecord\?\.updated_at, microFollowUpResponse\]\)/,
   )
   assert(
-    'defect #4: the 종결 EMR seed effect exists, keyed on [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at]',
+    'defect #4/C-2: the 종결 EMR seed effect exists, keyed on [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at, microFollowUpResponse] -- the micro follow-up response arrives via an async fetch after the record loads, so it must be a dep or the seed effect runs before it resolves and silently omits the S micro-follow-up clause that EmrPreviewCard renders live (Opus closing review C-2)',
     seedEffectMatch != null,
   )
   const seedEffectBody = seedEffectMatch?.[0] ?? ''
@@ -3500,11 +3500,32 @@ function detailsRange(html, classMarker) {
     'defect #4: the seed effect compares against a ref (emrSeedRef.current.recordId / .lastGenerated), not an unconditional setEmrText',
     /emrSeedRef\.current\.recordId/.test(seedEffectBody) && /emrText === emrSeedRef\.current\.lastGenerated/.test(seedEffectBody),
   )
-  const firstIfIdx = seedEffectBody.indexOf('if (')
-  const firstSetEmrTextIdx = seedEffectBody.indexOf('setEmrText(')
+  // C-3 (Opus closing review): the previous version of this guard compared
+  // string indices (`indexOf('if (') < indexOf('setEmrText(')`), which can
+  // never fail -- the effect body always begins with
+  // `if (!payloadShapeOk) return`, so ANY setEmrText( anywhere after it
+  // (including a bare, unguarded one) satisfies that comparison. Opus's
+  // M4subtle mutant proved it: inserting a bare `setEmrText(generated)`
+  // immediately after `const generated = buildEmrTextForRecord()` --
+  // fully reverting defect #4's guard while leaving the ref-comparison
+  // logic intact elsewhere in the effect -- survived all 960 assertions.
+  // Replacement: every setEmrText( occurrence in the seed effect must have
+  // `emrSeedRef.current` within the 200 characters immediately preceding
+  // it, i.e. it must sit inside a branch that already tested the ref.
+  const setEmrTextIndices = []
+  for (let searchFrom = 0; ; ) {
+    const idx = seedEffectBody.indexOf('setEmrText(', searchFrom)
+    if (idx === -1) break
+    setEmrTextIndices.push(idx)
+    searchFrom = idx + 1
+  }
   assert(
-    "defect #4: setEmrText is never the seed effect's first statement -- every call sits inside an `if` branch (removing the guard would make this fail)",
-    firstIfIdx !== -1 && firstSetEmrTextIdx !== -1 && firstIfIdx < firstSetEmrTextIdx,
+    'C-3 sanity: the seed effect calls setEmrText( at least once',
+    setEmrTextIndices.length > 0,
+  )
+  assert(
+    'C-3: every setEmrText( call in the seed effect is guarded -- emrSeedRef.current appears within the 200 characters immediately preceding it (a bare setEmrText(generated) right after buildEmrTextForRecord(), with the ref logic left intact elsewhere -- Opus M4subtle -- must fail this)',
+    setEmrTextIndices.every((idx) => seedEffectBody.slice(Math.max(0, idx - 200), idx).includes('emrSeedRef.current')),
   )
 
   // defect #5 (ii): the 종결 call site's argument key set accounts for
@@ -3530,6 +3551,44 @@ function detailsRange(html, classMarker) {
   assert(
     "defect #5 (ii): 종결's call has no undocumented extra keys beyond PainWorkspace.tsx's -- only the 3 defect #2 clinician-judgment keys",
     extraInCompletion.length === DOCUMENTED_COMPLETION_ONLY_KEYS.size && extraInCompletion.every((k) => DOCUMENTED_COMPLETION_ONLY_KEYS.has(k)),
+  )
+
+  // C-5 (Opus closing review): EmrPreviewCard's "복사는 「다음」 레인의
+  // 「종결」 섹션에서 합니다." hint used to be hard-coded inside
+  // EmrPreviewCard.tsx itself, so it rendered even in fixtures/preview
+  // mode and for legacy records with no patient_id -- contexts where 종결
+  // never renders (it is gated on `mode === 'server' &&
+  // selectedRecord?.patient_id`). The fix makes it a `copyHint?: string`
+  // prop the CALLER supplies, so the call site can omit it when 종결 is
+  // not on screen.
+  const herbalWorkspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/HerbalWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+  const doctorWorkspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+  assert(
+    'C-5: EmrPreviewCard.tsx declares copyHint as an optional prop (the caller decides, not a hard-coded string)',
+    /copyHint\s*\?:\s*string/.test(emrPreviewCardSrc),
+  )
+  assert(
+    'C-5: EmrPreviewCard.tsx renders the hint <p> only when copyHint is given (conditionally, not unconditionally)',
+    /\{copyHint\s*&&\s*<p[\s\S]{0,80}>\{copyHint\}<\/p>\}/.test(emrPreviewCardSrc),
+  )
+  assert(
+    'C-5: PainWorkspace.tsx forwards a copyHint prop into its EmrPreviewCard call',
+    /<EmrPreviewCard\s+text=\{emrText\}\s+copyHint=\{copyHint\}\s*\/>/.test(painWorkspaceSrc),
+  )
+  assert(
+    'C-5: HerbalWorkspace.tsx forwards a copyHint prop into its EmrPreviewCard call',
+    /<EmrPreviewCard\s+text=\{emrText\}\s+copyHint=\{copyHint\}\s*\/>/.test(herbalWorkspaceSrc),
+  )
+  assert(
+    "C-5: DoctorWorkspace.tsx derives the hint from `nextLaneFooter` (the exact same signal DoctorView.tsx gates 종결's own render on) rather than always supplying it, and passes it as copyHint to both PainWorkspaceNext and HerbalWorkspaceNext",
+    /nextLaneFooter\s*!=\s*null\s*\?\s*'복사는 「다음」 레인의 「종결」 섹션에서 합니다\.'\s*:\s*undefined/.test(doctorWorkspaceSrc) &&
+      (doctorWorkspaceSrc.match(/copyHint=\{emrPreviewCopyHint\}/g) ?? []).length === 2,
   )
 }
 

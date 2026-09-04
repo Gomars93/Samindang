@@ -493,6 +493,17 @@ export function DoctorWorkspace({
   const readableMicroFollowUp = readableMicroFollowUpResponse(microFollowUpResponse ?? null)
   const deltaQuoteLine = microFollowUpQuoteLine(readableMicroFollowUp)
 
+  // Opus closing review C-5: EmrPreviewCard's "복사는 「다음」 레인의
+  // 「종결」 섹션에서 합니다." hint is only true when 종결 actually renders
+  // on screen -- `nextLaneFooter` is the exact same signal DoctorView.tsx
+  // already gates 종결's own render on (`nextLaneFooterNode`, gated by
+  // `mode === 'server' && selectedRecord?.patient_id`), so its presence
+  // here is a faithful proxy without this shell needing to know `mode`/
+  // `patient_id` itself. `undefined` when absent (fixtures/preview mode,
+  // legacy records with no patient_id) so EmrPreviewCard renders no hint
+  // at all rather than naming a section that is not on screen.
+  const emrPreviewCopyHint = nextLaneFooter != null ? '복사는 「다음」 레인의 「종결」 섹션에서 합니다.' : undefined
+
   const painFinalRecorded = isPainFinalAssessmentRecorded(workspaceState.painFinalAssessment)
   const herbalFinalRecorded = isHerbalFinalAssessmentRecorded(workspaceState.herbalFinalAssessment)
 
@@ -826,6 +837,7 @@ export function DoctorWorkspace({
                 lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
                 lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
                 microFollowUpText={deltaQuoteLine}
+                copyHint={emrPreviewCopyHint}
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
@@ -841,6 +853,7 @@ export function DoctorWorkspace({
                 onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
                 reassessment={workspaceState.herbalReassessment}
                 priorVisits={priorVisits}
+                copyHint={emrPreviewCopyHint}
               />
             )}
             {medicationCourseSlot}

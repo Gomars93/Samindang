@@ -661,6 +661,7 @@ export function PainWorkspaceNext({
   lbpWorkingHypothesis,
   lbpObjectiveMotorDeficit,
   microFollowUpText,
+  copyHint,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -683,6 +684,8 @@ export function PainWorkspaceNext({
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
   /** Opus delta review defect #7 (§14.1 S "micro follow-up"): the patient's own MicroFollowUpResponse quote line -- EMR 미리보기 조립에만 쓰인다, patient self-report, S only. */
   microFollowUpText?: string | null
+  /** Opus closing review C-5: forwarded to EmrPreviewCard's `copyHint` -- the caller decides whether 종결 is actually on screen for this record; omitted (no hint rendered) when it is not. */
+  copyHint?: string
 }) {
   const r = payload.responses
   const { routing } = payload
@@ -801,7 +804,7 @@ export function PainWorkspaceNext({
         <summary>참고 자료 (이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
         <PriorVisitHistoryCard history={priorVisits} profile="pain" />
         <PatientCarePlanPreviewCard title="환자 전달용 치료 계획" text={patientCarePlanText} />
-        <EmrPreviewCard text={emrText} />
+        <EmrPreviewCard text={emrText} copyHint={copyHint} />
         </details>
     </div>
   )

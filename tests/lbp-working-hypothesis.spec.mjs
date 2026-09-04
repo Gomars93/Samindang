@@ -581,6 +581,18 @@ function useEffectSpans(src) {
   // §15.3 removed the former "defect #2" clinicianJudgment* passthrough
   // (revised_after_exam/final_treatment_axis/prescription_direction no
   // longer reach any EMR key) -- see the T4 removal assertion below.
+  // Opus closing review (2026-09-04) H-1: the ORIGINAL version of this
+  // fixture left `reasonFacts` empty, so a mutant that appends
+  // `PhysicalExamSuggestion.reasonFacts` text onto the `검사 결과:` clause
+  // (examFindingsLines' `.map()`) never fired here and SURVIVED the whole
+  // suite (verified: `npm run test:all` exit 0 with the mutant applied).
+  // `reasonFacts` carries patient self-report text in production
+  // (lbpExamSuggestions.ts:153,161 -- e.g. "...(환자 응답)"), so a leak here
+  // would violate this file's ONE ABSOLUTE RULE. `patientReasonFactCanary`
+  // below is a value that appears NOWHERE else in this fixture's expected
+  // strings, so if it ever reached the O line, the exact-match assertion
+  // on `filledLines[3]` a few lines down would fail.
+  const patientReasonFactCanary = '환자가_보고한_검사사유_카나리아_H1_전용_다른절과안겹침'
   const filled = buildPainWorkspaceEmrPreview({
     primaryConcern: '요통',
     examSuggestions: [
@@ -588,7 +600,7 @@ function useEffectSpans(src) {
         id: 'e1',
         title: 'SLR(하지직거상) 검사',
         priority: 'MUST_CHECK',
-        reasonFacts: [],
+        reasonFacts: [{ text: patientReasonFactCanary, provenance: 'PATIENT_FACT' }],
         source: 'SUGGESTED',
         result: { status: 'NEGATIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
       },
@@ -612,7 +624,15 @@ function useEffectSpans(src) {
         {
           id: 'r1',
           title: 'SLR(하지직거상) 재검',
-          previous: null,
+          // Opus closing review (2026-09-04) M-1: the ORIGINAL version of
+          // this fixture left `previous: null`, so a mutant that prints
+          // `i.previous.status` instead of `i.result.status` in
+          // reassessmentFindingsLines never fired here and SURVIVED the
+          // whole suite. `previous.status` ('NEGATIVE') is deliberately the
+          // OPPOSITE of today's `result.status` ('POSITIVE') below, so such
+          // a mutant changes the exact-match string a few lines down
+          // ("양성/이상 소견" -> "음성/정상").
+          previous: { status: 'NEGATIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2025-06-01T00:00:00.000Z' },
           source: 'OBSERVED',
           result: { status: 'POSITIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-02T00:00:00.000Z' },
         },
@@ -747,6 +767,55 @@ function useEffectSpans(src) {
   assert(
     'defect #8: an invalid lbpDirectionalResponse value never produces an empty "허리 움직임 반응: " clause on O',
     defect8Text.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
+  )
+
+  // Opus closing review (2026-09-04) H-1 (isolated defense-in-depth,
+  // beyond the `filled`-fixture fix above): an exam item whose STATUS
+  // legitimately reaches O (not NOT_YET_CHECKED) must still never leak its
+  // `reasonFacts` canary text, even though the item's own finding text
+  // correctly appears. This isolates the property from every other O
+  // clause so a mutant that only fires when other O sources are ALSO
+  // present cannot hide behind them.
+  const examReasonCanary = '검사이유카나리아_H1_전용_절대다른곳에없음'
+  const examReasonBoundaryText = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    examSuggestions: [
+      {
+        id: 'e-h1',
+        title: 'H-1 경계 검증용 검사',
+        priority: 'MUST_CHECK',
+        reasonFacts: [{ text: examReasonCanary, provenance: 'PATIENT_FACT' }],
+        source: 'SUGGESTED',
+        result: { status: 'NEGATIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+    ],
+  })
+  assert(
+    "H-1: the exam item's own finding legitimately reaches O (검사 결과 clause) -- proves the canary check below is not vacuous",
+    examReasonBoundaryText.split('\r\n').find((l) => l.startsWith('O:')) === 'O: 검사 결과: H-1 경계 검증용 검사: 음성/정상',
+  )
+  assert(
+    "H-1: reasonFacts' patient-self-report canary text never appears anywhere in the output, even though the item's own finding does",
+    !examReasonBoundaryText.includes(examReasonCanary),
+  )
+
+  // Opus closing review (2026-09-04) H-2: `LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL`
+  // (rule 2's own comment: "'UNKNOWN' and undefined both mean 'not yet
+  // assessed' ... and are omitted") had zero fixture coverage for the
+  // 'UNKNOWN' key specifically -- `allEmptyInput` simply omits the field
+  // (exercising only the `undefined` branch), so a mutant adding
+  // `UNKNOWN: '없음'` to that label table SURVIVED the whole suite. This is
+  // a safety field (URGENT_REVIEW-affecting): "not yet examined" must never
+  // be charted as "없음".
+  const unknownText = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    lbpObjectiveMotorDeficit: 'UNKNOWN',
+  })
+  assert(
+    "H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare",
+    unknownText.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
   )
 }
 

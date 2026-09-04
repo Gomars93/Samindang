@@ -426,12 +426,17 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
 //                                                                | separately, §independent HIGH-2 below) always saves the
 //                                                                | CURRENT selectedRecord.judgment merged with the new field,
 //                                                                | never a locally-finalized snapshot
-//   DoctorTokenSetup shown inline for kind==='auth'              | ObjectiveExamFindingsCard still has this: `{authError &&
-//                                                                | <DoctorTokenSetup authFailed .../>}` (unchanged by this
-//                                                                | batch -- not retested here since this batch did not touch it)
+//   DoctorTokenSetup shown inline for kind==='auth'              | "ObjectiveExamFindingsCard M-2 (closing review): renders
+//                                                                | DoctorTokenSetup inline when authError is set..." (below,
+//                                                                | §independent HIGH-2) -- Opus closing review (2026-09-04)
+//                                                                | M-2 found this row's original claim ("not retested here")
+//                                                                | was false: no assertion anywhere actually pinned the line,
+//                                                                | and a mutant deleting it survived the whole suite. Fixed.
 //   auth-kind failure distinguished from generic; both success/
-//   conflict clear earlier auth-recovery state                  | Same as above -- ObjectiveExamFindingsCard's own authError
-//                                                                | state (unchanged by this batch)
+//   conflict clear earlier auth-recovery state                  | Same source location as above -- ObjectiveExamFindingsCard's
+//                                                                | own authError state (still unretested beyond the M-2 render
+//                                                                | assertion above; this narrower sub-claim remains N/A-by-
+//                                                                | omission, not asserted as fixed by this batch)
 //   DoctorView.tsx's judgment-save onSave callback passes
 //   result.kind through on a plain failure                      | That specific inline callback (built into the removed
 //                                          | <JudgmentPanel onSave={...}> JSX) is gone with the JSX. The
@@ -1124,6 +1129,20 @@ test('JudgmentPanel.tsx no longer exists (Batch 4.1-D §17.1/§17.2/§17.5) -- t
   test('ObjectiveExamFindingsCard HIGH-2: the plain save-status text is suppressed while a conflict is active (never shown alongside the ConflictBanner)', () => {
     assert.match(cardSrc, /lbpStatus !== 'idle' && lbpStatus !== 'conflict'/)
     assert.match(cardSrc, /shoulderStatus !== 'idle' && shoulderStatus !== 'conflict'/)
+  })
+
+  // Opus closing review (2026-09-04) M-2: the mapping table above
+  // (":429-431") claimed this property was covered by "unchanged by this
+  // batch -- not retested here", which is a claim about the SOURCE, not
+  // about a test -- no assertion anywhere actually pinned this line, so a
+  // mutant deleting it SURVIVED the whole suite (verified). This is the
+  // inline auth-expiry recovery path for the two safety fields
+  // (lbp_objective_motor_deficit/shoulder_objective_cuff_weakness) --
+  // ObjectiveExamFindingsCard is their sole remaining client-side writer
+  // (§17.3), so losing this silently would leave a clinician stuck after a
+  // token expiry with no in-card way back in.
+  test('ObjectiveExamFindingsCard M-2 (closing review): renders DoctorTokenSetup inline when authError is set (the auth-expiry inline recovery path for both safety fields)', () => {
+    assert.match(cardSrc, /\{authError && <DoctorTokenSetup authFailed onSet=\{\(\) => setAuthError\(false\)\} \/>\}/)
   })
 }
 

@@ -1,5 +1,70 @@
 # Current Handoff
 
+## ✅ 2026-09-04 (최신 18): Batch 4.1-D 독립 검증 완료(Fable) — 46개 fixture 전수 렌더로 사주 잔존 0 확인
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `6ec5d07` + 이 문서
+커밋. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+### 재현 검증 (Sonnet 보고를 그대로 믿지 않고 직접 실행)
+- FROZEN + `tests/server.spec.mjs` zero-diff: **출력 없음** = 완전 동일.
+- `npm run test:all` **3회 연속 EXIT=0**, 실패 0. `npm run test:server` 단독 **5회 연속 통과**.
+- **46개 fixture 전수 렌더 검사(직접 작성한 스크립트)**:
+  - `사주` / `명리` / `1분 디브리핑` / `학습 케이스` / `원장 판단 기록` /
+    `디브리핑·학습 기록` 잔존 — **0건**.
+  - 안전 카드(`객관적 하지 근력저하 소견 (LBP)` 라디오) — **18개 fixture에서 정상 렌더.**
+    §17.3이 지키려던 안전 편집 경로가 살아 있음을 화면으로 확인.
+
+### 제거된 테스트 32개 — 실제 커버리지 손실 여부 검증
+`save-conflict.spec.mjs` −28, `doctor-reset-key.spec.mjs` −10 (doctor +6). 전부
+**존재하지 않게 된 파일(`JudgmentPanel.tsx`)에 대한 소스 텍스트 단언**이라
+유지가 불가능하다. 문제는 "대체 커버리지가 있다"는 주장의 진위였고, 확인했다:
+
+- `save-conflict.spec.mjs:380-440`에 **은퇴한 11개 테스트 각각의 성질이 지금
+  어디서 검증되는지 표**가 남아 있다(CLAUDE.md 규칙 산출물).
+- 표가 지목하는 **`독립 검수 HIGH-2: ObjectiveExamFindingsCard stale-write
+  conflict` 섹션(`:1031-1120`, 테스트 7개)이 실제로 존재**하며, 이 배치 이전부터
+  있던 것이다. ConflictBanner 렌더, 충돌 시 로컬 선택 미초기화, 서버 값 verbatim
+  채택, 양쪽 필드 동일 계약, 레코드 전환 시 충돌 해제 — 전부 커버.
+- `N/A` 처리된 항목(pending-conflict 게이트, version-sync effect, finalized 스냅샷)은
+  **즉시저장 설계에는 보호할 draft가 애초에 없다**는 논거이며 타당하다.
+
+→ **실질 커버리지 손실 없음.**
+
+### Sonnet이 발견한, 설계(§17)가 놓친 것 — 가장 위험했던 회귀
+`ObjectiveExamFindingsCard.tsx`가 `JudgmentPanel.tsx`에서
+`LBP_MOTOR_DEFICIT_OPTIONS`/`SHOULDER_CUFF_WEAKNESS_OPTIONS`를 **직접 import**하고
+있었다. §17.3은 안전 필드의 **런타임 저장 경로**가 안 끊긴다는 것만 확인했고,
+**파일 삭제가 그 카드의 컴파일 자체를 깨뜨린다**는 것은 확인하지 않았다.
+그대로 갔다면 **§17이 지키려던 바로 그 안전 경로가 컴파일 에러로 사라졌을 것**이다.
+`judgment.ts`(React 없는 순수 모듈)로 두 상수를 이전해 해결.
+
+**교훈**: 파일을 삭제할 때는 그 파일이 **나르던 값**뿐 아니라 그 파일에서
+**import되던 심볼**도 함께 세야 한다. 런타임 경로 확인과 컴파일 의존성 확인은
+다른 작업이다.
+
+### 백로그에 추가
+`tests/server.spec.mjs`의 `audit log: no phone digits from the canary submission
+leak` 단언이 Sonnet의 전체 스위트 실행 중 **1회 실패**했다. Fable이 총 8회
+재실행(전체 3 + server 단독 5)했으나 **재현되지 않았고**, 해당 파일은 zero-diff라
+이 배치가 만든 회귀가 아니다. 다만 **PHI 누출 카나리아가 간헐 실패하는 것은
+"flake"로 넘길 성격이 아니다** — 근본 원인(테스트 데이터 우연 충돌인지, 감사
+로그 타이밍인지)을 별도로 규명할 것. FROZEN 파일이라 이 배치에서 손대지 않았다.
+
+### Batch 4 게이트 상태
+4.1-A / 4.1-B / 4.1-C / 4.1-D **구현 완료 + Fable 독립 검증 통과.**
+**게이트는 아직 CLOSED가 아니다** — Opus closing 재검수가 닫는다
+(자가검증 통과 ≠ 게이트 통과, 2.5b 교훈 승계).
+
+### 다음 행동
+1. **Opus closing 재검수** (4.1-A~D 전체 + Batch 4 원본) → 통과 시 게이트 CLOSED.
+2. **실제 환자 2~3명 파일럿** — 지금까지 만든 것 중 환자로 검증된 것이 하나도 없다.
+3. Batch 2.7-A(§13) 구현 보류 유지, 2.5d 재검토 보류 유지.
+4. 백로그: 위 PHI 카나리아 간헐 실패, §14.5 CRM `reassess_due` 배선(서버 변경 필요),
+   `emrSummary.ts` 삭제 여부, `ExamCheckStatus` 값 추가 전 fail-closed 표식.
+
+---
+
+
 ## ✅ 2026-09-04 (최신 18): Batch 4.1-D 구현 완료(Sonnet) — 1분 디브리핑/학습 케이스/JudgmentPanel 제거, Opus closing 재검수 대기
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `d4f4f21`(+ 이

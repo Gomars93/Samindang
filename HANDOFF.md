@@ -1,5 +1,61 @@
 # Current Handoff
 
+## 2026-09-04 (최신 21): H-3/M-4/M-5 수정 + M-6 처리 (Sonnet) — 판별자 전수 커버, Opus 재검수 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, 부모 HEAD `7e7eff3`
++ 이 테스트/문서 커밋. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+### 한 일
+바로 아래 항목("최신 20")의 §9.8이 요구한 6건(H-3 a/b, M-4, M-5, 규약 2 확장 ②
+문서화, M-6)을 구현. **`src/` 프로덕션 코드는 한 줄도 바꾸지 않았다** —
+`git diff --stat 7e7eff3..HEAD -- src/` 출력 없음. 변경 파일은 `tests/`
+3개(`lbp-working-hypothesis.spec.mjs`/`save-conflict.spec.mjs`/`server.spec.mjs`)
++ `DECISIONS.md` + 이 문서뿐.
+
+**이번엔 "지적된 변종만" 고치지 않고 판별자 전수 커버로 했다** — 1·2차 모두 같은
+계열("하위 필드를 채웠지만 그 필드가 가질 수 있는 값 중 하나만 채움")로 실패했기
+때문. 전체 판별자 표와 근거는 `DECISIONS.md`(2026-09-04, "H-3/M-4/M-5 수정 +
+M-6 처리") 참고. 요지:
+
+| 판별자 | 이번에 채운 좌표 |
+|---|---|
+| `reasonFacts[].provenance` | DERIVED 카나리아 추가(H-3 a) |
+| exam 항목 상태(NOT_YET_CHECKED 대 기록완료) | NOT_YET_CHECKED + reasonFacts 좌표 추가(H-3 b) |
+| 재검 `previous` × 오늘 `result` | previous 존재 + 오늘 NOT_YET_CHECKED 좌표 추가(M-4) |
+| `lbpDirectionalResponse` | 실제 기본값 `'NOT_ASSESSED'` 명시 좌표 추가(undefined 생략과는 다른 분기) |
+
+**M-5**: `ObjectiveExamFindingsCard.tsx`의 `handleChange` 전체를 슬라이스해
+`result.kind === 'auth'` 분기가 실제로 `setAuthError(true)`를 호출하는지(렌더
+줄 존재가 아니라 트리거)를 고정. `save-conflict.spec.mjs` 매핑 표의 "auth-kind
+failure distinguished..." 행을 이 테스트로 교체.
+
+**M-6**: id 필드 통째 제외(오경보 방지)는 유지하고, **추가로** 두 id 값 전체에
+대한 UUID 모양 단언 2줄을 넣었다 — 이러면 제외로 가려졌던 "id 필드에 PHI"
+변이 종류도 다시 잡힌다.
+
+### mutation 재검증
+§9.2.2가 지적한 v2/v3/v6/v9 **전부 재도입 → 전부 KILLED** (v2/v3는 T11
+exact-match, v6은 신규 M-4, v9는 신규 M-5). M-6 검증용 r2(전화번호를
+`visit_id`에 이어붙임)도 재도입 → **KILLED**(신규 UUID-모양 단언). 매번 원복
+확인, `git diff --stat src/` 빈 출력.
+
+**자체 고안 변종 4개**(NOT_ASSESSED 기본값을 정상 취급 / reasonFacts를 다른
+O 절로 유출 / laterality NOT_APPLICABLE 처리 반전 / M-6 r2) — **전부
+KILLED, 생존 0**.
+
+### 검증
+- `npm run build` EXIT=0.
+- `npm run test:all` 2회 연속 EXIT=0, `OK:` 4966(기존 4956 + 신규 10), 완전 동일.
+- `npm run test:server` 15회 연속 EXIT=0(오경보 0) — 두 라운드(총 30회).
+- `git diff --stat 7e7eff3..HEAD -- src/ index.html 'server/**' 'tablet core/**'`
+  출력 없음.
+
+### 다음 행동
+Opus의 delta 재검수 대기. 이 문서만으로 게이트 CLOSED를 주장하지 않는다(2.5b
+교훈 — Sonnet 자가검증은 게이트가 아님).
+
+---
+
 ## ⚠️ 2026-09-04 (최신 20): Opus **delta 재검수 판정 FAIL** — 변이 4개는 죽지만 변종 4개가 새로 생존, 게이트 여전히 CLOSED 아님
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `2e0a8a0` + 이 문서

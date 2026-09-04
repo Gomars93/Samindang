@@ -592,7 +592,19 @@ function useEffectSpans(src) {
   // below is a value that appears NOWHERE else in this fixture's expected
   // strings, so if it ever reached the O line, the exact-match assertion
   // on `filledLines[3]` a few lines down would fail.
+  //
+  // Delta 재검수(§9.3 H-3, 규약 2 확장 ②) v2: the ORIGINAL H-1 fix only ever
+  // populated `reasonFacts` with a SINGLE `provenance: 'PATIENT_FACT'`
+  // element, so a mutant that only forwards `provenance === 'DERIVED'`
+  // reasonFacts onto the `검사 결과:` clause SURVIVED (verified: `npm run
+  // test:all` exit 0). `DERIVED` is a real production value here
+  // (lbpExamSuggestions.ts:172 -- "양쪽 다리 증상(시스템 계산 — 신경학적
+  // 기저검사 필요)"), and this file's header rule covers it too ("Everything
+  // derived from a tablet answer ... feeds S/O/S only"). `e1` now carries
+  // BOTH provenance values so the same exact-match line closes both.
   const patientReasonFactCanary = '환자가_보고한_검사사유_카나리아_H1_전용_다른절과안겹침'
+  const derivedReasonFactCanary = '시스템계산_검사사유_카나리아_H3_전용_다른절과안겹침'
+  const notYetCheckedReasonFactCanary = '미시행항목_검사사유_카나리아_H3_v3_전용_다른절과안겹침'
   const filled = buildPainWorkspaceEmrPreview({
     primaryConcern: '요통',
     examSuggestions: [
@@ -600,9 +612,30 @@ function useEffectSpans(src) {
         id: 'e1',
         title: 'SLR(하지직거상) 검사',
         priority: 'MUST_CHECK',
-        reasonFacts: [{ text: patientReasonFactCanary, provenance: 'PATIENT_FACT' }],
+        reasonFacts: [
+          { text: patientReasonFactCanary, provenance: 'PATIENT_FACT' },
+          { text: derivedReasonFactCanary, provenance: 'DERIVED' },
+        ],
         source: 'SUGGESTED',
         result: { status: 'NEGATIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+      },
+      // Delta 재검수 v3 (H-3, 가장 중요): every generated exam item starts
+      // NOT_YET_CHECKED (`emptyExamResult()`), and the screen already shows
+      // ITS reasonFacts under "왜 확인?" (ExamSuggestionCard.tsx:110-113) --
+      // the most natural next ask is "put that text in the EMR too", and
+      // that mutant SURVIVED (verified). `e2` is never examined (status
+      // stays NOT_YET_CHECKED), so it must not add any clause at all --
+      // `filledLines[3]`'s exact-match a few lines down is UNCHANGED from
+      // before this fixture had `e2`, which is exactly what proves this:
+      // if `e2` contributed anything (its own finding OR its reasonFacts),
+      // that string would differ.
+      {
+        id: 'e2',
+        title: '아직 확인 안 한 검사(H-3 v3 전용)',
+        priority: 'MUST_CHECK',
+        reasonFacts: [{ text: notYetCheckedReasonFactCanary, provenance: 'PATIENT_FACT' }],
+        source: 'SUGGESTED',
+        result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
       },
     ],
     finalAssessment: {
@@ -659,6 +692,19 @@ function useEffectSpans(src) {
     'T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources (검사 결과/허리 움직임 반응/오늘 재검 소견/객관적 근력저하) and nothing patient-reported',
     filledLines[3] ===
       'O: 검사 결과: SLR(하지직거상) 검사: 음성/정상; 허리 움직임 반응: 숙이면(굴곡) 호전; 오늘 재검 소견: SLR(하지직거상) 재검: 양성/이상 소견; 객관적 근력저하: 없음',
+  )
+  // Delta 재검수 §9.3 H-3 v2/v3: this exact-match line is UNCHANGED after
+  // adding `e1`'s second (DERIVED) reasonFacts element and the whole `e2`
+  // NOT_YET_CHECKED item -- proving neither reaches O in any form. Checked
+  // as a whole-output `includes` too (not just the O line) so a mutant that
+  // smuggles either canary onto a DIFFERENT key (S/O-S/A/P) is also caught.
+  assert(
+    "H-3 v2: reasonFacts' DERIVED-provenance canary never appears anywhere in the output, even though the item's own (NEGATIVE) finding does",
+    !filled.includes(derivedReasonFactCanary),
+  )
+  assert(
+    "H-3 v3: a NOT_YET_CHECKED item's reasonFacts canary never appears anywhere in the output, and the item contributes no clause at all",
+    !filled.includes(notYetCheckedReasonFactCanary) && !filled.includes('아직 확인 안 한 검사'),
   )
   assert(
     '§14.1 filled example: A carries 최종 임상 판단 + 치료 초점 (Batch 4.1-A: 원장 평가/치료·처방 방향 clauses removed)',
@@ -769,6 +815,26 @@ function useEffectSpans(src) {
     defect8Text.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
   )
 
+  // 규약 2 확장 ②(판별자 전수): `allEmptyInput` simply OMITS
+  // `lbpDirectionalResponse` (-> `undefined`), but production's real default
+  // is the STRING `'NOT_ASSESSED'` (persistence.ts:258 -- every fresh
+  // workspace state stores this, never `undefined`). `undefined` and
+  // `'NOT_ASSESSED'` take different branches inside
+  // `isValidLbpDirectionalResponse(...) && ... !== 'NOT_ASSESSED'` (the
+  // first fails validity, the second passes validity then fails the
+  // not-default check) -- both must still land on "omitted", but only
+  // testing `undefined` leaves the actual production-default coordinate
+  // unexercised.
+  const notAssessedText = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    lbpDirectionalResponse: 'NOT_ASSESSED',
+  })
+  assert(
+    "판별자 전수: the real default value 'NOT_ASSESSED' (not just the omitted/undefined case) never produces a 허리 움직임 반응 clause on O",
+    notAssessedText.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
+  )
+
   // Opus closing review (2026-09-04) H-1 (isolated defense-in-depth,
   // beyond the `filled`-fixture fix above): an exam item whose STATUS
   // legitimately reaches O (not NOT_YET_CHECKED) must still never leak its
@@ -776,7 +842,16 @@ function useEffectSpans(src) {
   // correctly appears. This isolates the property from every other O
   // clause so a mutant that only fires when other O sources are ALSO
   // present cannot hide behind them.
+  // 규약 2 확장 ②(판별자 전수): the isolated H-1 item's `reasonFacts` now
+  // also carries a DERIVED-provenance canary alongside the original
+  // PATIENT_FACT one (delta 재검수 v2), so this isolated block covers both
+  // real provenance values `reasonFacts` takes in production
+  // (lbpExamSuggestions.ts:151/159/172/98-103 -- PATIENT_FACT/DERIVED/
+  // OBSERVED are all real; OBSERVED is a clinician-entered fact and not
+  // security-sensitive the same way, so PATIENT_FACT+DERIVED are the two
+  // coordinates that matter here).
   const examReasonCanary = '검사이유카나리아_H1_전용_절대다른곳에없음'
+  const examReasonDerivedCanary = '검사이유카나리아_H3v2_DERIVED_전용_절대다른곳에없음'
   const examReasonBoundaryText = buildPainWorkspaceEmrPreview({
     ...allEmptyInput,
     primaryConcern: '요통',
@@ -785,7 +860,10 @@ function useEffectSpans(src) {
         id: 'e-h1',
         title: 'H-1 경계 검증용 검사',
         priority: 'MUST_CHECK',
-        reasonFacts: [{ text: examReasonCanary, provenance: 'PATIENT_FACT' }],
+        reasonFacts: [
+          { text: examReasonCanary, provenance: 'PATIENT_FACT' },
+          { text: examReasonDerivedCanary, provenance: 'DERIVED' },
+        ],
         source: 'SUGGESTED',
         result: { status: 'NEGATIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-01T00:00:00.000Z' },
       },
@@ -798,6 +876,42 @@ function useEffectSpans(src) {
   assert(
     "H-1: reasonFacts' patient-self-report canary text never appears anywhere in the output, even though the item's own finding does",
     !examReasonBoundaryText.includes(examReasonCanary),
+  )
+  assert(
+    "H-3 v2 (isolated): reasonFacts' DERIVED-provenance canary never appears anywhere in the output either",
+    !examReasonBoundaryText.includes(examReasonDerivedCanary),
+  )
+
+  // Delta 재검수 §9.3 H-3 v3 (isolated defense-in-depth, beyond the
+  // `filled`-fixture addition above): an exam item that is STILL
+  // NOT_YET_CHECKED -- the default every generated item starts in
+  // (examSuggestion.ts's `emptyExamResult()`) -- must contribute NOTHING to
+  // O, not even a bare "검사 결과:" clause, and its `reasonFacts` (which the
+  // screen already shows under "왜 확인?", ExamSuggestionCard.tsx:110-113)
+  // must not leak either. Isolated from every other O source so a mutant
+  // that only fires when other O clauses are ALSO present cannot hide.
+  const notYetCheckedCanary = '아직확인안한검사_카나리아_H3v3_전용_절대다른곳에없음'
+  const notYetCheckedBoundaryText = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    examSuggestions: [
+      {
+        id: 'e-h3v3',
+        title: 'H-3 v3 경계 검증용 검사(미시행)',
+        priority: 'MUST_CHECK',
+        reasonFacts: [{ text: notYetCheckedCanary, provenance: 'PATIENT_FACT' }],
+        source: 'SUGGESTED',
+        result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
+      },
+    ],
+  })
+  assert(
+    'H-3 v3 (isolated): a NOT_YET_CHECKED exam item never produces even a bare 검사 결과 clause -- O stays fully bare',
+    notYetCheckedBoundaryText.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
+  )
+  assert(
+    "H-3 v3 (isolated): the NOT_YET_CHECKED item's reasonFacts canary never appears anywhere in the output",
+    !notYetCheckedBoundaryText.includes(notYetCheckedCanary),
   )
 
   // Opus closing review (2026-09-04) H-2: `LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL`
@@ -816,6 +930,49 @@ function useEffectSpans(src) {
   assert(
     "H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare",
     unknownText.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
+  )
+
+  // Delta 재검수 §9.3 M-4 (isolated defense-in-depth, beyond the `filled`
+  // fixture's opposite-value coordinate above): the `filled` fixture only
+  // exercises "today's result is recorded (POSITIVE) and previous is a
+  // DIFFERENT recorded value (NEGATIVE)" -- a mutant that UNCONDITIONALLY
+  // swaps result<->previous is caught there. But the actual defect the
+  // closing review's M-1 prose described, and the one production actually
+  // reaches for every fresh reassessment item
+  // (`reassessmentExamItemFromPrevious`: "today's result ALWAYS starts
+  // NOT_YET_CHECKED regardless of `previous.status`"), is the FALLBACK
+  // shape: today's result is still NOT_YET_CHECKED and `previous` holds an
+  // earlier recorded value. That coordinate was never exercised, and the
+  // fallback mutant (`i.result.status === 'NOT_YET_CHECKED' ? i.previous
+  // ?.status : i.result.status`) SURVIVED the whole suite (verified). O
+  // must stay bare here -- printing `previous` as if it were today's
+  // re-check is exactly what `reassessmentExam.ts`'s own header forbids
+  // ("a prior POSITIVE/NEGATIVE is never copied forward as if it were
+  // already re-confirmed").
+  const reassessmentFallbackText = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    reassessment: {
+      items: [
+        {
+          id: 'r-m4',
+          title: 'M-4 경계 검증용 재검',
+          previous: { status: 'POSITIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2025-06-01T00:00:00.000Z' },
+          source: 'OBSERVED',
+          result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
+        },
+      ],
+      finalReassessmentNote: '',
+      recordedAt: null,
+    },
+  })
+  assert(
+    "M-4: a reassessment item whose today's result is still NOT_YET_CHECKED never has `previous` printed in its place -- O stays bare",
+    reassessmentFallbackText.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
+  )
+  assert(
+    'M-4: the reassessment item title never appears at all while pending (no bare "오늘 재검 소견:" clause either)',
+    !reassessmentFallbackText.includes('M-4 경계 검증용 재검'),
   )
 }
 

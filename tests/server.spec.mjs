@@ -950,6 +950,23 @@ async function main() {
         'audit log: no phone digits from the canary submission leak in (id fields excluded from the scan -- see DECISIONS.md 2026-09-04 M-3)',
         !nonIdAuditText.includes('9999'),
       )
+      // Delta 재검수(2026-09-04) M-6: the exclusion above makes "PHI stuffed
+      // directly into submission_id/visit_id" (r2 in the delta review) a
+      // permanently invisible mutant class -- the exact scenario it excludes
+      // is also the one place a leak could hide. §9.4(i) confirmed BY CODE
+      // that today these two fields only ever hold `randomUUID()` output
+      // (server/store.js:297, server/visitStore.js:110/114; every read/
+      // update path only reaches audit AFTER a successful lookup, so the
+      // value must already match an existing UUID). This shape assertion
+      // restores that detection power without reintroducing the ~0.9%/run
+      // hex-coincidence flakiness the exclusion above fixes: a real leak
+      // breaks the fixed UUID format outright (never a substring-coincidence
+      // false positive the way scanning for "9999" as text is).
+      const idVals = allLines.flatMap((l) => [l.submission_id, l.visit_id]).filter((v) => v != null)
+      assert(
+        'audit log: submission_id/visit_id are ALWAYS server-generated UUIDs in shape -- PHI stuffed into an id field itself is caught here (delta 재검수 M-6)',
+        idVals.length > 0 && idVals.every((v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)),
+      )
     }
 
     /* ---------------- visit layer: submitting creates a visit tied to the submission ---------------- */

@@ -433,10 +433,14 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
 //                                                                | was false: no assertion anywhere actually pinned the line,
 //                                                                | and a mutant deleting it survived the whole suite. Fixed.
 //   auth-kind failure distinguished from generic; both success/
-//   conflict clear earlier auth-recovery state                  | Same source location as above -- ObjectiveExamFindingsCard's
-//                                                                | own authError state (still unretested beyond the M-2 render
-//                                                                | assertion above; this narrower sub-claim remains N/A-by-
-//                                                                | omission, not asserted as fixed by this batch)
+//   conflict clear earlier auth-recovery state                  | "ObjectiveExamFindingsCard M-5 (delta re-review v9):
+//                                                                | handleChange's auth-kind branch actually sets
+//                                                                | authError(true)..." (below, §independent HIGH-2) -- Delta
+//                                                                | 재검수(2026-09-04) M-5 found the M-2 fix above only pinned
+//                                                                | the RENDER line, not the TRIGGER: a mutant flipping the
+//                                                                | auth branch's setAuthError(true) to false left the render
+//                                                                | line untouched and SURVIVED the whole suite. Fixed -- this
+//                                                                | row is no longer N/A-by-omission.
 //   DoctorView.tsx's judgment-save onSave callback passes
 //   result.kind through on a plain failure                      | That specific inline callback (built into the removed
 //                                          | <JudgmentPanel onSave={...}> JSX) is gone with the JSX. The
@@ -1143,6 +1147,38 @@ test('JudgmentPanel.tsx no longer exists (Batch 4.1-D §17.1/§17.2/§17.5) -- t
   // token expiry with no in-card way back in.
   test('ObjectiveExamFindingsCard M-2 (closing review): renders DoctorTokenSetup inline when authError is set (the auth-expiry inline recovery path for both safety fields)', () => {
     assert.match(cardSrc, /\{authError && <DoctorTokenSetup authFailed onSet=\{\(\) => setAuthError\(false\)\} \/>\}/)
+  })
+
+  // Delta 재검수 (2026-09-04) M-5: the M-2 test above only pins the RENDER
+  // line's existence -- it never pins the TRIGGER that turns `authError` on
+  // in the first place. A mutant that leaves the render line untouched but
+  // flips `handleChange`'s auth branch to `setAuthError(false)` (v9) kills
+  // the inline auth-expiry recovery path entirely while passing every other
+  // assertion in the whole suite (verified). This slices `handleChange`
+  // itself (same convention as `handleReloadConflict` above) and pins BOTH
+  // halves of the contract in one exact-match block: the `kind === 'auth'`
+  // branch turns `authError` ON, and it is the ONLY branch that does --
+  // `result.ok` and the conflict branch both turn it back OFF (closing the
+  // mapping-table row this batch left "not retested here").
+  test("ObjectiveExamFindingsCard M-5 (delta re-review v9): handleChange's auth-kind branch actually sets authError(true) -- not just the render line existing -- and success/conflict clear it back to false", () => {
+    const fnStart = cardSrc.indexOf('async function handleChange(')
+    const fnEnd = cardSrc.indexOf('\n  }\n', fnStart)
+    const fn = cardSrc.slice(fnStart, fnEnd)
+    assert.match(
+      fn,
+      /else if \(result\.kind === 'auth'\) \{\s*setStatus\('error'\)\s*setAuthError\(true\)\s*\}/,
+      "the auth-kind branch (and only that branch) must call setAuthError(true) -- flipping this to false (v9) is exactly what this test exists to catch",
+    )
+    assert.match(
+      fn,
+      /if \(result\.ok\) \{\s*setStatus\('saved'\)\s*setAuthError\(false\)/,
+      'a successful save clears any earlier auth-recovery state',
+    )
+    assert.equal(
+      (fn.match(/setAuthError\(true\)/g) || []).length,
+      1,
+      'setAuthError(true) must appear exactly once in handleChange -- only from the auth-kind branch, never from the ok/conflict/plain-error branches',
+    )
   })
 }
 

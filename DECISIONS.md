@@ -2726,3 +2726,104 @@ no phone digits from the canary submission leak in (id fields excluded...)`) →
   확인됨, 2·4·5·6번은 소프트웨어 밖(PO 책임)이라 코드 검수로 판정하지 않는다.
 - 수정 후에도 프로덕션 코드가 불변이라면 **다시 delta 재검수만으로** 게이트를
   닫을 수 있다.
+
+## 2026-09-04 — H-3/M-4/M-5 수정 + M-6 처리 (Sonnet) — 판별자 전수 커버 방식으로, 3라운드 반복 차단
+
+### 한 일
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md` §9.8이 요구한 6건을
+구현. **`src/` 프로덕션 코드는 한 줄도 바꾸지 않았다** —
+`git diff --stat 7e7eff3..HEAD -- src/` 출력 없음으로 확인. 변경 파일은
+`tests/lbp-working-hypothesis.spec.mjs` / `tests/save-conflict.spec.mjs` /
+`tests/server.spec.mjs` 3개뿐.
+
+**이번엔 "지적된 변종만" 고치지 않았다.** 1차(변이 4개)·2차(변종 4개) 모두 같은
+계열 원인(§9.5 "규약 2 확장 ②")으로 실패했으므로, `buildPainWorkspaceEmrPreview`의
+`O` 줄에 도달 가능한 값 전체를 **판별자(discriminator) 단위로 나열**하고 각 값에
+좌표를 하나씩 뒀다:
+
+| 판별자 | 값 | 실재/방어용 | 이번에 채운 좌표 |
+|---|---|---|---|
+| `PhysicalExamSuggestion.reasonFacts[].provenance` | PATIENT_FACT/DERIVED/OBSERVED(실재, lbpExamSuggestions.ts) + 그 외 4값(방어용) | PATIENT_FACT·DERIVED 실재 | `filled`의 e1 + 격리 H-1 블록에 DERIVED 카나리아 원소 추가(H-3 a) |
+| `PhysicalExamSuggestion.result.status` (항목 상태) | NOT_YET_CHECKED(모든 신규 항목의 기본값, 실재) 대 기록 완료 | 둘 다 실재 | `filled`에 NOT_YET_CHECKED 항목(e2) 추가 + 격리 블록(H-3 b) — reasonFacts 카나리아가 O에 안 새는 것과 O가 bare로 남는 것 둘 다 단언 |
+| `ReassessmentExamItem.previous` × 오늘 `result` | previous 존재/오늘 NOT_YET_CHECKED(재검 아이템 생성 직후 정상 상태, 실재) 대 previous 존재/오늘 기록 완료(기존 커버) | 둘 다 실재 | 격리 블록(M-4) — O bare 단언 |
+| `LbpDirectionalResponse` | 6값 + 실제 기본값 `'NOT_ASSESSED'`(persistence.ts:258, 실재) + 인식 불가(방어용) + 필드 자체 생략(`undefined`, 별도 코드 경로) | `NOT_ASSESSED`는 실재 기본값, `undefined`와는 다른 분기 | `NOT_ASSESSED` 명시 좌표 추가(기존엔 `undefined` 생략과 인식 불가만 있었다) |
+| `PhysicalExamSuggestion.result.laterality` | LEFT/RIGHT/BILATERAL/NOT_APPLICABLE + null + 인식 불가 | 전부 실재 또는 이미 방어 커버 | 기존 `tests/doctor-workspace.spec.mjs`(14차 MEDIUM-2)가 이미 LEFT/BILATERAL/null/인식 불가를 이 컴포저의 렌더 경로로 커버 — 이 배치에서 중복 추가 안 함 |
+| `ClinicianJudgment.lbp_objective_motor_deficit` | NONE/SEVERE_OR_PROGRESSIVE(실재) + UNKNOWN + undefined(둘 다 "미평가") | 전부 이미 커버(H-2, 직전 라운드) | 변경 없음 |
+
+**H-3(a/b)**: `reasonFacts`의 DERIVED 좌표(v2)와 NOT_YET_CHECKED 항목 좌표(v3)를
+`filled` fixture(exact-match)와 격리 블록 양쪽에 추가. 재변이 결과: 둘 다
+**KILLED — 이번엔 T11(`filled`의 O 줄 exact-match)이 먼저 죽는다**(격리 블록의
+전용 단언도 별도로 죽는 것을 확인).
+
+**M-4**: 재검 항목 "오늘 `result` NOT_YET_CHECKED + `previous` 존재" 좌표를
+격리 블록으로 추가. v6(재검수 §9.3이 서술한 형태 그대로) 재변이 결과: **KILLED**
+— 신규 M-4 단언이 정확히 잡는다.
+
+**M-5**: `save-conflict.spec.mjs`에 `ObjectiveExamFindingsCard.tsx`의
+`handleChange` 전체를 슬라이스해 `result.kind === 'auth'` 분기가
+`setAuthError(true)`를 호출하는 것(그리고 `setAuthError(true)`가 그 함수 전체에서
+정확히 1번만 나타나는 것 + 성공 분기가 `setAuthError(false)`로 되돌리는 것)을
+소스 단언으로 고정. 매핑 표(:435-439)의 "auth-kind failure distinguished...
+still unretested" 행을 이 테스트 이름으로 교체(더 이상 N/A-by-omission 아님).
+v9 재변이 결과: **KILLED**.
+
+**M-6(비차단, 함께 처리)**: §9.4(iv) 권고를 그대로 따랐다 — **id 필드 통째
+제외는 그대로 두고**(오경보 방지 효과가 이미 검증돼 있으므로), **추가로** 두 id
+값 전체에 대한 UUID 모양 단언(`/^[0-9a-f]{8}-[0-9a-f]{4}-...-[0-9a-f]{12}$/`)을
+2줄 추가했다. r2(전화번호를 `visit_id`에 이어붙임) 재변이 결과: 이번엔 **KILLED**
+— 새 UUID-모양 단언이 잡는다(§9.4에서 SURVIVED로 기록됐던 것과 대비).
+
+### mutation 재검증 (§9.2.2가 지적한 4개, 전부 재확인)
+| 변종 | 재변이 결과 | 죽인 단언 |
+|---|---|---|
+| v2 (DERIVED reasonFacts → O) | KILLED | T11(`filled` O 줄 exact-match) |
+| v3 (NOT_YET_CHECKED 항목 reasonFacts → O) | KILLED | T11(동일) |
+| v6 (오늘 result 빈칸일 때 previous 대신 출력) | KILLED | 신규 M-4 단언 |
+| v9 (`kind==='auth'`가 `authError`를 안 켬) | KILLED | 신규 M-5 단언 |
+| r2 (전화번호를 `visit_id`에 이어붙임, M-6 검증용) | KILLED | 신규 M-6 UUID-모양 단언 |
+
+### 자체 고안 변종 (판별자 표 기반, 4개 — 지적된 것 밖에서 스스로 찾음)
+1. `lbpDirectionalResponse`의 실제 기본값 `'NOT_ASSESSED'`를 정상 값처럼 취급
+   (`!== 'NOT_ASSESSED'` 조건 제거) → **KILLED**(신규 "판별자 전수" 단언).
+2. `reasonFacts`를 O의 **다른 절**("객관적 근력저하:")로 유출 → **KILLED**(T11).
+3. `laterality`의 `NOT_APPLICABLE`/실제 값 처리를 뒤집음(조건 반전) →
+   **KILLED**(T11).
+4. (M-6 검증용 r2 재변이는 위 표에 포함) — 이 셋 다 **생존한 것이 없다**. 새로
+   추가한 결함은 없다.
+
+### 검증
+- `npm run build` EXIT=0.
+- `npm run test:all` 2회 연속 EXIT=0, `OK:` 4966(기존 4956 + 신규 단언 10개),
+  두 회 완전 동일(비결정성 없음).
+- `npm run test:server` **15회 연속 EXIT=0**(오경보 0) — 별도로 M-6 UUID-모양
+  단언 추가 전후 각 15회, 총 30회 확인.
+- `git diff --stat 7e7eff3..HEAD -- src/ index.html 'server/**' 'tablet core/**'`
+  출력 없음(FROZEN·프로덕션 zero-diff).
+- 환자 개인정보 실제 값 없음 — 전부 합성 카나리아 문자열/숫자.
+
+### 의도적으로 다르게 처리한 것
+- M-6을 "id 제외를 UUID-모양 단언으로 완전히 교체"가 아니라 **"제외는 유지 +
+  단언을 추가"**로 했다 — §9.4(iv)의 실제 문구("통째 제외 대신 모양 단언 +
+  전체 스캔")를 "9999 텍스트 스캔에서 제외를 제거"가 아니라 "제외는 그대로 두고
+  모든 id 값에 대한 형태 검사를 추가"로 해석했다. 근거: 텍스트 스캔에서 제외를
+  제거하면 §9.4(iii)이 실측한 오경보(hex 우연 충돌)가 그대로 되살아난다 — 그건
+  이번 재검수가 "통과"라고 판정한 부분이라 되돌릴 이유가 없다. 대신 모양 단언은
+  "9999 부분일치" 문제 자체가 없다(정확한 형식 검사이므로 우연 충돌이 없다).
+  결과적으로 §9.4(iv)이 원한 검출력(SURVIVED→KILLED)은 그대로 회복됐다.
+- laterality(LEFT/RIGHT/BILATERAL/인식 불가)와 UNKNOWN/undefined
+  motor-deficit 축은 이번에 fixture를 추가하지 않았다 — 코드로 확인한 결과
+  `tests/doctor-workspace.spec.mjs`(14차 MEDIUM-2, Batch 2.5b T-1b 등)가 같은
+  `buildPainWorkspaceEmrPreview` 렌더 경로(DoctorView.tsx 종결 섹션 → 화면 DOM)를
+  통해 이미 이 좌표들을 실제로 실행하고 있다 — 중복 fixture를 추가하는 대신
+  "판별자 표"에 그 사실과 근거 파일 위치를 남겼다.
+
+### Consequences
+- §9.8 6건 전부 완료. `docs/...CLOSING_REVIEW_v0.1.md` §9.9 표의 1번 전제
+  (게이트 CLOSED)는 **이 문서만으로는 여전히 판정할 수 없다** — Sonnet
+  자가검증은 게이트가 아니다(2.5b 교훈, 직전 두 라운드와 동일). 다음 단계는
+  Opus의 delta 재검수.
+- 이번에 자체 고안한 4개 변종이 전부 죽었다고 해서 "판별자 공간이 완전히
+  닫혔다"고 주장하지는 않는다 — §9.10이 이미 적었듯 하위 필드의 판별자, 그
+  판별자의 조합은 원칙적으로 무한 후퇴가 가능하다. 이번 라운드가 다룬 것은
+  §9.3/§9.8이 명시적으로 지목한 3개 결함(H-3/M-4/M-5) + M-6 + 스스로 고안한
+  4개뿐이다.

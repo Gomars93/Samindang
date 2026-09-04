@@ -44,17 +44,17 @@ export const LBP_HYPOTHESIS_PATTERN_LABEL_KO: Record<LbpHypothesisPatternId, str
 /** §11.3's 5 fixed plain-Korean expressions, used ONLY by `patientSentenceDraftKo` — deliberately not the same string as the clinician-facing pattern label above (that label names a mechanism category; this names what the patient actually feels). */
 const LBP_HYPOTHESIS_PATIENT_EASY_LABEL_KO: Record<LbpHypothesisPatternId, string> = {
   LUMBAR_MOVEMENT: '허리 움직임',
-  NEURAL: '다리로 가는 신경',
-  WALK_STAND_LEG: '오래 걷거나 서 있을 때 나타나는 다리',
+  NEURAL: '다리로 뻗치는 증상',
+  WALK_STAND_LEG: '오래 걷거나 서 있을 때 나타나는 다리 증상',
   HIP: '고관절',
   SIJ: '골반 뒤쪽 관절',
 }
 
-/** The 과/와 particle that correctly follows each easy-label above (받침 유무) — only `WALK_STAND_LEG` ("다리", no 받침) takes 와; every other label ends in a 받침 and takes 과. Kept as a fixed per-pattern table (not computed from the string) because there are only 5 fixed expressions and computing Korean 받침 rules from an arbitrary string is unnecessary machinery for a closed set. */
+/** The 과/와 particle that correctly follows each easy-label above (받침 유무) — every label currently ends in a 받침 (증상/관절 etc.) and takes 과. Kept as a fixed per-pattern table (not computed from the string) because there are only 5 fixed expressions and computing Korean 받침 rules from an arbitrary string is unnecessary machinery for a closed set. */
 const LBP_HYPOTHESIS_PATIENT_PARTICLE_KO: Record<LbpHypothesisPatternId, '과' | '와'> = {
   LUMBAR_MOVEMENT: '과',
   NEURAL: '과',
-  WALK_STAND_LEG: '와',
+  WALK_STAND_LEG: '과',
   HIP: '과',
   SIJ: '과',
 }
@@ -220,4 +220,46 @@ export function applyLbpWorkingHypothesisCarryForward(
 ): LbpWorkingHypothesis {
   if (!prior || isLbpWorkingHypothesisBlank(prior) || !isLbpWorkingHypothesisBlank(today)) return today
   return { supports: { ...prior.supports }, recordedAt: now }
+}
+
+/**
+ * Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04): §11.2 declares
+ * this data LBP-전용. `DoctorWorkspace.tsx` already gates the initial-visit
+ * card on `isLbpRecord` (`payload.responses.safety_flags.lbp != null`);
+ * `RevisitWorkspace.tsx` had NO equivalent gate, so a neck/knee/shoulder/…
+ * revisit's clinician could insert a lumbar sentence into that patient's
+ * 안내문. This is the same two-part signal, decomposed into two plain
+ * arguments so it stays a pure function callers can unit-test directly
+ * without importing `SubmissionRecord`/React here:
+ *
+ *   1. `priorSubmissionSafetyFlagsLbp` — the raw `safety_flags.lbp` value
+ *      read from the latest submission-backed visit anywhere in this
+ *      patient's history (`RevisitWorkspace.tsx`'s own
+ *      `rehabSourceSubmission?.submission?.submission?.responses?.safety_flags?.lbp`
+ *      — the first `.submission` is that wrapper's own field holding a
+ *      `SubmissionRecord`, whose OWN `.submission` field is the raw
+ *      questionnaire payload; same double-nesting `recordToPayload`
+ *      unwraps for `DoctorWorkspace.tsx`'s `isLbpRecord`).
+ *      `!= null` is the applicability convention this whole codebase uses
+ *      for `safety_flags.<region>` (see e.g. `DoctorView.tsx`'s per-region
+ *      gates) — never a truthiness check, since `false`/`0` would still be
+ *      a real recorded flag value.
+ *   2. `todayHypothesis` — today's own `WorkspaceState.lbpWorkingHypothesis`
+ *      / `VisitWorkspaceState.lbpWorkingHypothesis`. This disjunct is
+ *      REQUIRED, not an edge-case nicety: without it, a hypothesis already
+ *      recorded on this visit (e.g. carried forward before a submission
+ *      link changed, or entered while the signal was briefly unavailable)
+ *      would become unreachable/uneditable the moment the first signal is
+ *      false — the clinician could never see or correct their own prior
+ *      entry on this same visit.
+ *
+ * A patient with no submission-backed history AND a still-blank hypothesis
+ * gates closed (`false`) — the safe default matches `isLbpRecord`'s own
+ * `!= null` fail-closed shape on the initial-visit screen.
+ */
+export function isLbpPatientForRevisitHypothesisGate(
+  priorSubmissionSafetyFlagsLbp: unknown,
+  todayHypothesis: LbpWorkingHypothesis,
+): boolean {
+  return priorSubmissionSafetyFlagsLbp != null || !isLbpWorkingHypothesisBlank(todayHypothesis)
 }

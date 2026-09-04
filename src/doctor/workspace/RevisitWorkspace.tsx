@@ -89,6 +89,7 @@ import { LbpWorkingHypothesisCard } from './LbpWorkingHypothesisCard'
 import {
   appendLbpHypothesisSentenceToPatientInstruction,
   applyLbpWorkingHypothesisCarryForward,
+  isLbpPatientForRevisitHypothesisGate,
   isLbpWorkingHypothesisBlank,
   summarizeLbpWorkingHypothesisKo,
   type LbpWorkingHypothesis,
@@ -485,6 +486,25 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const hypothesisCarryForwardAvailable = priorHypothesis !== null && !isLbpWorkingHypothesisBlank(priorHypothesis)
   const hypothesisTodayBlank = isLbpWorkingHypothesisBlank(workspaceState.lbpWorkingHypothesis)
 
+  // Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04): §11.2's data is
+  // LBP-전용. `DoctorWorkspace.tsx` gates its card on `isLbpRecord`
+  // (`payload.responses.safety_flags.lbp != null`, itself sourced from
+  // `record.submission.responses` via `recordToPayload` -- see
+  // `DoctorView.tsx`); this screen serves EVERY no-questionnaire revisit
+  // regardless of region, so it needs the same signal. `rehabSourceSubmission`
+  // is already the latest submission-backed visit anywhere in this patient's
+  // history (loaded above for `acceptedRehabTitles`); its `.submission` field
+  // is a `SubmissionRecord`, whose OWN `.submission` field is the raw
+  // questionnaire payload (`Record<string, unknown>`) holding `.responses` --
+  // same double-nesting `recordToPayload` unwraps. The second disjunct
+  // (today's own hypothesis already non-blank) is required so a hypothesis
+  // already recorded on this visit never becomes unreachable/uneditable --
+  // see `isLbpPatientForRevisitHypothesisGate`'s own doc comment.
+  const priorSubmissionSafetyFlagsLbp = (
+    rehabSourceSubmission?.submission?.submission?.responses as { safety_flags?: { lbp?: unknown } } | undefined
+  )?.safety_flags?.lbp
+  const isLbpPatient = isLbpPatientForRevisitHypothesisGate(priorSubmissionSafetyFlagsLbp, workspaceState.lbpWorkingHypothesis)
+
   // Round 9: what the LATEST prior visit offers to carry forward, built
   // from whichever kind of prior visit it is. Purely a suggestion until
   // the clinician clicks -- see revisitCarryForward.ts.
@@ -703,6 +723,15 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       />
 
       {/*
+        Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04): §11.2
+        declares this data LBP-전용, matching `DoctorWorkspace.tsx`'s own
+        `isLbpRecord` gate on the initial-visit screen. This screen serves
+        EVERY no-questionnaire revisit regardless of region, so both the
+        carry-forward button and the card below are wrapped in
+        `isLbpPatient` -- see its own definition above for the two-part
+        signal (submission-backed LBP flag OR a hypothesis already recorded
+        today).
+
         LBP v1 Batch 2.5c (G16, §11.4): "재진: 같은 카드 재사용... 기존
         이어받기 행 관례로 '이전 가설 이어받기' 버튼(오늘 값이 전부
         UNJUDGED일 때만 활성). 자동 적용 없음." -- a DEDICATED action, never
@@ -713,42 +742,46 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         참고" above (`priorHypothesisSummary`); this is only the carry-
         forward action itself.
       */}
-      <div className="workspace__revisit__carryForward__actions">
-        <button
-          type="button"
-          className="workspace__btn"
-          disabled={!hypothesisCarryForwardAvailable || !hypothesisTodayBlank}
-          title={`임상 가설만 채웁니다 — ${carryForwardHint(hypothesisCarryForwardAvailable, hypothesisTodayBlank)}`}
-          onClick={() =>
-            setWorkspaceState((s) => ({
-              ...s,
-              lbpWorkingHypothesis: applyLbpWorkingHypothesisCarryForward(
-                s.lbpWorkingHypothesis,
-                priorHypothesis,
-                new Date().toISOString(),
-              ),
-            }))
-          }
-        >
-          이전 가설 이어받기
-        </button>
-      </div>
+      {isLbpPatient && (
+        <>
+          <div className="workspace__revisit__carryForward__actions">
+            <button
+              type="button"
+              className="workspace__btn"
+              disabled={!hypothesisCarryForwardAvailable || !hypothesisTodayBlank}
+              title={`임상 가설만 채웁니다 — ${carryForwardHint(hypothesisCarryForwardAvailable, hypothesisTodayBlank)}`}
+              onClick={() =>
+                setWorkspaceState((s) => ({
+                  ...s,
+                  lbpWorkingHypothesis: applyLbpWorkingHypothesisCarryForward(
+                    s.lbpWorkingHypothesis,
+                    priorHypothesis,
+                    new Date().toISOString(),
+                  ),
+                }))
+              }
+            >
+              이전 가설 이어받기
+            </button>
+          </div>
 
-      <LbpWorkingHypothesisCard
-        value={workspaceState.lbpWorkingHypothesis}
-        onChange={(next) => setWorkspaceState((s) => ({ ...s, lbpWorkingHypothesis: next }))}
-        currentPatientInstruction={workspaceState.carePlan.patientInstruction}
-        onInsertPatientSentence={(sentence) =>
-          setWorkspaceState((s) => ({
-            ...s,
-            carePlan: {
-              ...s.carePlan,
-              patientInstruction: appendLbpHypothesisSentenceToPatientInstruction(s.carePlan.patientInstruction, sentence),
-              recordedAt: new Date().toISOString(),
-            },
-          }))
-        }
-      />
+          <LbpWorkingHypothesisCard
+            value={workspaceState.lbpWorkingHypothesis}
+            onChange={(next) => setWorkspaceState((s) => ({ ...s, lbpWorkingHypothesis: next }))}
+            currentPatientInstruction={workspaceState.carePlan.patientInstruction}
+            onInsertPatientSentence={(sentence) =>
+              setWorkspaceState((s) => ({
+                ...s,
+                carePlan: {
+                  ...s.carePlan,
+                  patientInstruction: appendLbpHypothesisSentenceToPatientInstruction(s.carePlan.patientInstruction, sentence),
+                  recordedAt: new Date().toISOString(),
+                },
+              }))
+            }
+          />
+        </>
+      )}
 
       <PainFinalAssessmentCard
         value={workspaceState.finalAssessment}

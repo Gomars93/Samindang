@@ -26,6 +26,7 @@ import {
   patientSentenceDraftKo,
   appendLbpHypothesisSentenceToPatientInstruction,
   applyLbpWorkingHypothesisCarryForward,
+  isLbpPatientForRevisitHypothesisGate,
 } from './.lbp-working-hypothesis-bundle.mjs'
 import { LbpWorkingHypothesisCard } from './.lbp-working-hypothesis-card-bundle.cjs'
 import { buildPainWorkspaceEmrPreview } from './.lbp-working-hypothesis-emrpreview-bundle.mjs'
@@ -221,8 +222,8 @@ function useEffectSpans(src) {
   // the exact easy-language substring for each of the 5 fixed expressions.
   const expectedEasySubstring = {
     LUMBAR_MOVEMENT: '허리 움직임',
-    NEURAL: '다리로 가는 신경',
-    WALK_STAND_LEG: '오래 걷거나 서 있을 때 나타나는 다리',
+    NEURAL: '다리로 뻗치는 증상',
+    WALK_STAND_LEG: '오래 걷거나 서 있을 때 나타나는 다리 증상',
     HIP: '고관절',
     SIJ: '골반 뒤쪽 관절',
   }
@@ -231,12 +232,35 @@ function useEffectSpans(src) {
     assert(`patientSentenceDraftKo (${id}): contains the exact fixed easy-language expression`, draft.includes(expectedEasySubstring[id]))
   }
 
-  // Exact full sentence for one pattern, pinned verbatim (report-friendly).
-  const neuralDraft = patientSentenceDraftKo(withSupport({ NEURAL: 'HIGHER' }))
-  assert(
-    'patientSentenceDraftKo (NEURAL): exact full sentence',
-    neuralDraft === '오늘은 다리로 가는 신경과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.',
-  )
+  // ------------------------------------------------------------------
+  // D-7 (remaining half) / CDR-1 / CDR-2: all FIVE full patient sentences,
+  // pinned verbatim as hard-coded literals written out IN THIS FILE -- NOT
+  // built from LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO or any other
+  // constant imported from the module under test. This is deliberately
+  // redundant with the per-pattern easy-substring checks above: those check
+  // for a SUBSTRING and are satisfied even if surrounding wording changes;
+  // these five pin the ENTIRE string, so any wording change to any of the 5
+  // easy labels, the particle, the opening, or the mandatory clause breaks
+  // one of these five assertions. PO-approved wording -- do NOT update these
+  // literals without a DECISIONS.md entry (CDR-1 NEURAL, CDR-2 WALK_STAND_LEG,
+  // 2026-09-04).
+  // ------------------------------------------------------------------
+  const expectedFullSentenceKo = {
+    LUMBAR_MOVEMENT:
+      '오늘은 허리 움직임과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.',
+    NEURAL:
+      '오늘은 다리로 뻗치는 증상과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.',
+    WALK_STAND_LEG:
+      '오늘은 오래 걷거나 서 있을 때 나타나는 다리 증상과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.',
+    HIP:
+      '오늘은 고관절과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.',
+    SIJ:
+      '오늘은 골반 뒤쪽 관절과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.',
+  }
+  for (const id of LBP_HYPOTHESIS_PATTERN_IDS) {
+    const draft = patientSentenceDraftKo(withSupport({ [id]: 'HIGHER' }))
+    assert(`patientSentenceDraftKo (${id}): exact full sentence matches the hard-coded PO-approved literal`, draft === expectedFullSentenceKo[id])
+  }
 }
 
 /* ------------------------------------------------------------------------
@@ -347,6 +371,134 @@ function useEffectSpans(src) {
   assert('mutant (e) guard: the call site is immediately inside an onClick={...} handler', /onClick=\{/.test(before300))
   const loadEffectRegion = rwSrc.slice(rwSrc.indexOf('useEffect(() => {'), rwSrc.indexOf('}, [visitId, patientId, reloadNonce])'))
   assert('mutant (e) guard: the call site does NOT appear inside the load-on-open useEffect (would mean auto-apply on page open)', !loadEffectRegion.includes('applyLbpWorkingHypothesisCarryForward'))
+}
+
+/* ------------------------------------------------------------------------
+ * Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04):
+ * isLbpPatientForRevisitHypothesisGate -- the pure predicate that gates the
+ * revisit hypothesis card + carry-forward button. Extracted specifically so
+ * it can be unit-tested directly, independent of RevisitWorkspace.tsx's own
+ * network-loading state (that file is not bundled/rendered by this spec --
+ * see the mutant (e) block above's own comment on why).
+ * ---------------------------------------------------------------------- */
+{
+  const blank = emptyLbpWorkingHypothesis()
+  const recorded = withSupport({ NEURAL: 'HIGHER' })
+
+  // (1) No submission-backed LBP signal, no hypothesis recorded today -->
+  // gate CLOSED (the exact D-4 defect scenario: a neck/knee/etc. revisit
+  // with nothing LBP-specific about it yet).
+  assert('isLbpPatientForRevisitHypothesisGate: no LBP signal + blank hypothesis -> false (gate closed)', isLbpPatientForRevisitHypothesisGate(null, blank) === false)
+  assert('isLbpPatientForRevisitHypothesisGate: undefined LBP signal + blank hypothesis -> false (gate closed)', isLbpPatientForRevisitHypothesisGate(undefined, blank) === false)
+
+  // (2) A real submission-backed LBP signal (`safety_flags.lbp != null`) +
+  // blank hypothesis -> gate OPEN. Exercises non-boolean/non-truthy real
+  // values, matching this codebase's `!= null` applicability convention
+  // (never a truthiness check -- `false`/`0` would still be a real flag).
+  for (const lbpFlagValue of ['some-recorded-value', false, 0, {}, []]) {
+    assert(
+      `isLbpPatientForRevisitHypothesisGate: LBP signal present (${JSON.stringify(lbpFlagValue)}, != null) + blank hypothesis -> true (gate open)`,
+      isLbpPatientForRevisitHypothesisGate(lbpFlagValue, blank) === true,
+    )
+  }
+
+  // (3) REQUIRED disjunct: no submission-backed LBP signal at all, but
+  // today's own hypothesis is already non-blank -> gate stays OPEN. Without
+  // this, a hypothesis recorded on this visit would become
+  // unreachable/uneditable the moment the first signal reads false.
+  assert(
+    'isLbpPatientForRevisitHypothesisGate: no LBP signal BUT a hypothesis is already recorded today -> true (a recorded hypothesis must never become unreachable)',
+    isLbpPatientForRevisitHypothesisGate(null, recorded) === true,
+  )
+  assert(
+    'isLbpPatientForRevisitHypothesisGate: no LBP signal (undefined) BUT a hypothesis is already recorded today -> true',
+    isLbpPatientForRevisitHypothesisGate(undefined, recorded) === true,
+  )
+
+  // (4) Both true -> still true (non-vacuous "or", not exclusive-or).
+  assert('isLbpPatientForRevisitHypothesisGate: LBP signal present AND hypothesis recorded -> true', isLbpPatientForRevisitHypothesisGate('lbp', recorded) === true)
+
+  // Mutant reproduction: a broken gate that used AND instead of OR would
+  // wrongly close the gate on case (3) -- prove the real function does NOT
+  // exhibit that behaviour, and that a hand-built AND-mutant would fail the
+  // same assertion.
+  const mutantAndGate = (lbp, hyp) => lbp != null && !isLbpWorkingHypothesisBlank(hyp)
+  assert('mutant (D-4 AND-gate) reproduction: an AND-based mutant wrongly closes the gate for "no LBP signal but hypothesis recorded"', mutantAndGate(null, recorded) === false)
+  assert('mutant (D-4 AND-gate) reproduction: the REAL function differs from the mutant on that exact case', isLbpPatientForRevisitHypothesisGate(null, recorded) !== mutantAndGate(null, recorded))
+}
+
+/* ------------------------------------------------------------------------
+ * Opus delta review D-4 / CDR-3: structural guard on RevisitWorkspace.tsx --
+ * both the carry-forward button and the hypothesis card must sit INSIDE the
+ * same `{isLbpPatient && (...)}` conditional block, and `isLbpPatient` must
+ * itself be derived from isLbpPatientForRevisitHypothesisGate(...). Source-
+ * scan, same convention as the D-9/mutant-(e) guards above (RevisitWorkspace.tsx
+ * is not bundled/rendered by this spec).
+ * ---------------------------------------------------------------------- */
+{
+  const rwSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/RevisitWorkspace.tsx', import.meta.url)), 'utf8')
+
+  assert(
+    'D-4 guard: RevisitWorkspace.tsx derives isLbpPatient via isLbpPatientForRevisitHypothesisGate(...)',
+    /const isLbpPatient = isLbpPatientForRevisitHypothesisGate\(/.test(rwSrc),
+  )
+
+  const gateIdx = rwSrc.indexOf('{isLbpPatient && (')
+  assert('D-4 guard: a "{isLbpPatient && (" conditional block exists in the JSX', gateIdx !== -1)
+
+  // Find this conditional's matching close by balancing parens from the "("
+  // right after "&& ".
+  const openParenIdx = rwSrc.indexOf('(', gateIdx + '{isLbpPatient && '.length)
+  let depth = 0
+  let closeParenIdx = -1
+  for (let i = openParenIdx; i < rwSrc.length; i++) {
+    if (rwSrc[i] === '(') depth++
+    else if (rwSrc[i] === ')') {
+      depth--
+      if (depth === 0) {
+        closeParenIdx = i
+        break
+      }
+    }
+  }
+  assert('D-4 guard: the "{isLbpPatient && (...)}" block\'s matching close paren is found', closeParenIdx !== -1)
+  const gatedRegion = rwSrc.slice(gateIdx, closeParenIdx)
+
+  // Search for the button's visible label text starting AFTER gateIdx --
+  // the doc comment immediately above the gated block also mentions the
+  // same phrase in quotes, so an unqualified indexOf would find that
+  // instead of the actual JSX text node.
+  const btnIdx = rwSrc.indexOf('이전 가설 이어받기', gateIdx)
+  const cardIdx = rwSrc.indexOf('<LbpWorkingHypothesisCard')
+  const finalAssessmentIdx = rwSrc.indexOf('<PainFinalAssessmentCard')
+  assert('D-4 guard: sanity -- the carry-forward button label, the card, and the next sibling card all exist in the file', btnIdx !== -1 && cardIdx !== -1 && finalAssessmentIdx !== -1)
+
+  assert('D-4 guard: the "이전 가설 이어받기" carry-forward button sits INSIDE the isLbpPatient-gated block', btnIdx > gateIdx && btnIdx < closeParenIdx)
+  assert('D-4 guard: <LbpWorkingHypothesisCard sits INSIDE the isLbpPatient-gated block', cardIdx > gateIdx && cardIdx < closeParenIdx)
+  assert('D-4 guard: gatedRegion actually contains both (non-vacuous slice check)', gatedRegion.includes('이전 가설 이어받기') && gatedRegion.includes('<LbpWorkingHypothesisCard'))
+
+  // Counterexample proving this is not vacuously true for every card: the
+  // NEXT card down (<PainFinalAssessmentCard>, always shown regardless of
+  // LBP status) sits OUTSIDE the gated block.
+  assert(
+    'D-4 guard (counterexample): <PainFinalAssessmentCard sits OUTSIDE the isLbpPatient-gated block (proves the region check above is not trivially "everything after gateIdx")',
+    finalAssessmentIdx > closeParenIdx,
+  )
+
+  // Mutant reproduction: the D-4 defect as originally found -- the button
+  // and card as unconditional top-level JSX siblings, with NO
+  // "{isLbpPatient && (" wrapper at all. Prove the structural check above
+  // (a regex/indexOf search for that wrapper) correctly fails to find one
+  // in this hand-built ungated snippet, i.e. it is non-vacuous.
+  const mutantUngatedSnippet = `
+      <div className="workspace__revisit__carryForward__actions">
+        <button type="button" onClick={() => {}}>이전 가설 이어받기</button>
+      </div>
+      <LbpWorkingHypothesisCard value={workspaceState.lbpWorkingHypothesis} onChange={() => {}} />
+      <PainFinalAssessmentCard value={workspaceState.finalAssessment} onChange={() => {}} />
+  `
+  assert('mutant (D-4) reproduction: the hand-built ungated mutant snippet contains no "{isLbpPatient && (" wrapper at all', !mutantUngatedSnippet.includes('{isLbpPatient && ('))
+  assert('mutant (D-4) reproduction: yet the mutant snippet DOES still contain the button label and the card (the defect is real, not just missing content)', mutantUngatedSnippet.includes('이전 가설 이어받기') && mutantUngatedSnippet.includes('<LbpWorkingHypothesisCard'))
 }
 
 /* ------------------------------------------------------------------------
@@ -616,7 +768,7 @@ function useEffectSpans(src) {
   assert('patientCarePlanPreview.ts source never imports the new lbpWorkingHypothesis module', !previewSrc.includes("from './lbpWorkingHypothesis'"))
   assert('patientCarePlanPreview.ts source never names any of the 5 hypothesis pattern ids', !LBP_HYPOTHESIS_PATTERN_IDS.some((id) => previewSrc.includes(id)))
   assert('patientCarePlanPreview.ts source never contains the literal string "임상 가설"', !previewSrc.includes('임상 가설'))
-  const hypothesisEasyLabelsKo = ['허리 움직임', '다리로 가는 신경', '오래 걷거나 서 있을 때 나타나는 다리', '고관절', '골반 뒤쪽 관절']
+  const hypothesisEasyLabelsKo = ['허리 움직임', '다리로 뻗치는 증상', '오래 걷거나 서 있을 때 나타나는 다리 증상', '고관절', '골반 뒤쪽 관절']
   for (const label of hypothesisEasyLabelsKo) {
     assert(`patientCarePlanPreview.ts source never contains the easy-label literal "${label}"`, !previewSrc.includes(label))
   }

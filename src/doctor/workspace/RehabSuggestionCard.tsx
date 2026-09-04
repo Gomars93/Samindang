@@ -31,10 +31,22 @@ export function RehabSuggestionCard({
    * Batch 2.6 (E-6): follows ExamSuggestionCard.tsx's own 상세·메모 toggle
    * convention -- an always-open free-text box read as a form waiting to be
    * filled even when the clinician meant to say nothing more than the
-   * accept/hold/reject decision above it. Starts open whenever it already
-   * holds content, so nothing previously typed is ever hidden.
+   * accept/hold/reject decision above it.
+   *
+   * Delta fix (Opus review D-2): the original version starts `useState`
+   * from `suggestion.clinicianFinalInstruction`, which is evaluated ONCE at
+   * mount. On the SAME card instance (same `key={s.id}` in PainWorkspace.tsx),
+   * an instruction arriving after mount -- a conflict reload
+   * (DoctorWorkspace.tsx's `handleReloadFromConflict`) or a same-record
+   * re-seed (`initialRecordUpdatedAt` advancing) -- stayed hidden forever,
+   * because the toggle never re-derives from the new prop. Following
+   * ExamSuggestionCard.tsx:62-73's OWN pattern exactly (not just its UI
+   * shape) fixes this: `instructionOpen` only tracks an explicit manual
+   * open, and `showInstruction` derives fresh on every render, so a value
+   * that shows up later is never hidden behind a stale mount-time flag.
    */
-  const [instructionOpen, setInstructionOpen] = useState(suggestion.clinicianFinalInstruction.trim() !== '')
+  const [instructionOpen, setInstructionOpen] = useState(false)
+  const showInstruction = instructionOpen || suggestion.clinicianFinalInstruction.trim() !== ''
 
   return (
     <div className={`workspace__candidateCard workspace__candidateCard--${suggestion.status.toLowerCase()}`}>
@@ -93,7 +105,7 @@ export function RehabSuggestionCard({
         ))}
       </div>
 
-      {instructionOpen ? (
+      {showInstruction ? (
         <input
           type="text"
           className="workspace__noteInput"

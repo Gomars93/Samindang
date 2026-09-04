@@ -694,13 +694,26 @@ export function PainWorkspaceNext({
   const followUpGroups = isLbp
     ? [{ label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id) }]
     : undefined
-  // Batch 2.6 (E-16/C-2): computed once, shared by the disclosure's `open`
-  // and by NextActionCard's render gate right above it -- when the
-  // disclosure is open the clinician already sees these exact values live
-  // in the Care Plan form, so the read-only read-back below is a pure
-  // duplicate and is skipped; when it is closed, the read-back is the only
-  // place these values are visible without a click.
+  // Batch 2.6 (E-16/C-2): drives the disclosure's `open` attribute (auto-
+  // opens once there is content, per the existing convention) -- but is
+  // NOT what gates NextActionCard below (see `planOpen`, delta fix D-3).
   const carePlanDetailsOpen = !isCarePlanEmpty(carePlan) || nextReassessmentPlan.status !== 'UNSET'
+  // Batch 2.6 delta fix (Opus review D-3): `<details>` is an uncontrolled
+  // element, so `carePlanDetailsOpen` -- "does the Care Plan have content"
+  // -- is not the same thing as "is the disclosure open right now". Gating
+  // NextActionCard on the computed value instead of the real DOM state had
+  // two symptoms: (a) a clinician who hand-collapsed an auto-opened
+  // disclosure lost the "다음 액션" read-back entirely (carePlanDetailsOpen
+  // stayed true, so the gate never flipped), and (b) opening the disclosure
+  // by hand and then typing the first character into a field made
+  // NextActionCard (which sits above the disclosure) unmount out from under
+  // the cursor, shifting the page. `planOpen` tracks the disclosure's own
+  // `toggle` event -- initialized to the same value used for the first
+  // render's `open` attribute, then updated only by real open/close
+  // transitions (by hand or by `carePlanDetailsOpen` itself changing) --
+  // so NextActionCard's visibility always matches what is actually on
+  // screen.
+  const [planOpen, setPlanOpen] = useState(carePlanDetailsOpen)
 
   return (
     <div className="workspace__pain workspace__pain--next">
@@ -735,7 +748,7 @@ export function PainWorkspaceNext({
         </div>
       </div>
 
-      {!carePlanDetailsOpen && (
+      {!planOpen && (
         <NextActionCard
           homeAction={carePlan.homeActionPlan}
           nextCheck={carePlan.nextVisitCheckItem}
@@ -743,9 +756,17 @@ export function PainWorkspaceNext({
         />
       )}
 
-      <details className="workspace__optional" open={carePlanDetailsOpen}>
+      <details
+        className="workspace__optional"
+        open={carePlanDetailsOpen}
+        onToggle={(e) => setPlanOpen(e.currentTarget.open)}
+      >
         <summary>관리 계획 · 다음 재평가 — 자세히 입력</summary>
-        <PainCarePlanCard value={carePlan} onChange={onChangeCarePlan} />
+        {/* Batch 2.6 delta fix (D-1): `showNextVisitCheckItem={false}` only
+            here, where the lane-4 "다음 방문 확인 메모" textarea above is
+            the field's one editable home already. RevisitWorkspace.tsx has
+            no such textarea, so it keeps the card's default (field shown). */}
+        <PainCarePlanCard value={carePlan} onChange={onChangeCarePlan} showNextVisitCheckItem={false} />
         <NextReassessmentPlanCard value={nextReassessmentPlan} onChange={onChangeNextReassessmentPlan} />
       </details>
 

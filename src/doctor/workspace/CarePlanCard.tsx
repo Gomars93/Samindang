@@ -21,20 +21,44 @@ function TextFields({ fields, onChange }: { fields: Field[]; onChange: (key: str
   )
 }
 
-export function PainCarePlanCard({ value, onChange }: { value: PainCarePlan; onChange: (next: PainCarePlan) => void }) {
-  // Batch 2.6 (E-1/C-1): `다음 방문 확인 사항` is NOT listed here -- it is
-  // the same `carePlan.nextVisitCheckItem` field already bound to the
-  // always-visible "다음 방문 확인 메모" textarea one lane above this card
-  // (`PainWorkspace.tsx`). Drawing it a second time here duplicated a live
-  // textarea and, combined with `isCarePlanEmpty`, forced this whole card
-  // open on every keystroke there. The field is unchanged and still saves
-  // from that one textarea -- only this card's redundant copy is removed.
+export function PainCarePlanCard({
+  value,
+  onChange,
+  showNextVisitCheckItem = true,
+}: {
+  value: PainCarePlan
+  onChange: (next: PainCarePlan) => void
+  /**
+   * Batch 2.6 delta fix (Opus review D-1): `다음 방문 확인 사항` used to be
+   * unconditionally removed from this card's field list on the theory that
+   * the always-visible "다음 방문 확인 메모" textarea one lane above it
+   * (`PainWorkspace.tsx`) is a second live editor for the same
+   * `carePlan.nextVisitCheckItem` field, so drawing it here too duplicated
+   * a live textarea and, combined with `isCarePlanEmpty`, forced this whole
+   * card open on every keystroke there. That reasoning holds ONLY where
+   * that lane-4 textarea actually exists -- the initial-visit screen. The
+   * revisit screen (`RevisitWorkspace.tsx`) has no such textarea, so
+   * removing the field unconditionally orphaned it there: the value was
+   * still written by "이어받기(치료 계획)" (`revisitCarryForward.ts`) and
+   * still persisted, EMR'd, and handed to the patient, but nowhere on
+   * screen could a clinician see or edit it (docs/
+   * DOCTOR_SCREEN_LOAD_AUDIT_OPUS_v0.1.md delta review, D-1). This prop
+   * lets each call site opt out on its own: the initial-visit call site
+   * passes `false` (the field really is a duplicate there); every other
+   * call site -- including revisit, via the default -- keeps the field so
+   * `nextVisitCheckItem` always has exactly one editable home per screen.
+   */
+  showNextVisitCheckItem?: boolean
+}) {
   const fields: Field[] = [
     { key: 'currentTreatmentGoal', label: '현재 치료 목표', value: value.currentTreatmentGoal, placeholder: '원장이 직접 입력' },
     { key: 'rehabilitationGoal', label: '재활 목표', value: value.rehabilitationGoal, placeholder: '원장이 직접 입력' },
     { key: 'homeActionPlan', label: '집에서 할 행동/운동 계획', value: value.homeActionPlan, placeholder: '원장이 직접 입력 — 자동 추천 없음' },
     { key: 'activityPrecaution', label: '주의/당분간 피할 활동', value: value.activityPrecaution, placeholder: '원장이 직접 입력' },
     { key: 'patientInstruction', label: '환자 안내문', value: value.patientInstruction, placeholder: '환자에게 그대로 전달될 문구' },
+    ...(showNextVisitCheckItem
+      ? [{ key: 'nextVisitCheckItem', label: '다음 방문 확인 사항', value: value.nextVisitCheckItem, placeholder: '원장이 직접 입력' }]
+      : []),
   ]
   return (
     <section className="workspace__carePlan" aria-label="치료 계획 (Care Plan)">

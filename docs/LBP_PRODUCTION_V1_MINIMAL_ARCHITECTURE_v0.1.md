@@ -423,8 +423,11 @@ chip 선택 → 시스템이 쉬운 말 초안 1문장 **제안** → 원장이 
 
 ### 11.4 UI
 
-- `LbpWorkingHypothesisCard.tsx`: 5행 × 4 chip(`workspace__followUpChip` + `aria-pressed`,
-  재클릭 → UNJUDGED). 카드 제목 "임상 가설(확정 진단 아님)". hint 1줄:
+- `LbpWorkingHypothesisCard.tsx`: 5행 × 3 chip(`workspace__followUpChip` + `aria-pressed`,
+  재클릭 → UNJUDGED). `UNJUDGED`는 저장값의 기본값일 뿐 렌더되는 chip이 아니다
+  (Batch 2.6 E-2, `DECISIONS.md` 2026-09-04 "원장 화면 실측 감사 (Opus) 및
+  Batch 2.6 착수 / 2.5d 보류"에서 승인 — `RevisitQuickCheckCard`의 `NOT_ASSESSED`와
+  동일 관례). 카드 제목 "임상 가설(확정 진단 아님)". hint 1줄:
   "원장이 직접 선택합니다. 시스템이 계산하지 않습니다."
 - 배치: **판단·처치 레인, 최종 판단 카드 바로 앞**(canonical route: 확인 → 임상가설
   → 치료·운동 결정). 운동 블록은 지금대로 최종 판단 다음.

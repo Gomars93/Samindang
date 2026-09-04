@@ -15,9 +15,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
+import TestRenderer, { act } from 'react-test-renderer'
 import { DoctorWorkspace } from './.doctor-workspace-bundle.cjs'
 import { FollowUpTargetPicker } from './.follow-up-target-picker-bundle.cjs'
 import { MicroFollowUpCard } from './.micro-follow-up-card-bundle.cjs'
+import { PainCarePlanCard } from './.care-plan-card-bundle.cjs'
 import {
   WORKSPACE_SCENARIOS,
   PAIN_SCENARIO_1,
@@ -2068,7 +2070,7 @@ test('관리 계획 disclosure opens when isCarePlanEmpty is false OR plan.statu
       },
     },
   })
-  const idx1 = openViaCarePlan.indexOf('관리 계획 · 다음 재평가')
+  const idx1 = openViaCarePlan.indexOf('관리 계획 · 다음 재평가 — 자세히 입력')
   const tag1 = openViaCarePlan.slice(openViaCarePlan.lastIndexOf('<details', idx1), openViaCarePlan.indexOf('>', idx1) + 1)
   assert.ok(/\bopen\b/.test(tag1), 'isCarePlanEmpty=false alone opens the disclosure')
 
@@ -2076,7 +2078,7 @@ test('관리 계획 disclosure opens when isCarePlanEmpty is false OR plan.statu
     submissionId: 'careplan-open-2',
     initialWorkspaceState: { nextReassessmentPlan: { status: 'CLINICIAN_DECIDES', targetDate: '', afterVisitCount: null, note: '' } },
   })
-  const idx2 = openViaPlanStatus.indexOf('관리 계획 · 다음 재평가')
+  const idx2 = openViaPlanStatus.indexOf('관리 계획 · 다음 재평가 — 자세히 입력')
   const tag2 = openViaPlanStatus.slice(openViaPlanStatus.lastIndexOf('<details', idx2), openViaPlanStatus.indexOf('>', idx2) + 1)
   assert.ok(/\bopen\b/.test(tag2), "plan.status !== 'UNSET' alone (empty care plan otherwise) also opens the disclosure")
 })
@@ -2108,7 +2110,7 @@ test('Batch 2.6 E-1: a non-empty nextVisitCheckItem ALONE does NOT open the 관�
       },
     },
   })
-  const idx = html.indexOf('관리 계획 · 다음 재평가')
+  const idx = html.indexOf('관리 계획 · 다음 재평가 — 자세히 입력')
   const tag = html.slice(html.lastIndexOf('<details', idx), html.indexOf('>', idx) + 1)
   assert.ok(!/\bopen\b/.test(tag), 'a non-empty nextVisitCheckItem alone must not force the disclosure open')
   // The value is still saved and still visible -- in the lane-4 textarea
@@ -2132,7 +2134,7 @@ test('Batch 2.6 E-1 (differential): a non-empty currentTreatmentGoal STILL opens
       },
     },
   })
-  const idx = html.indexOf('관리 계획 · 다음 재평가')
+  const idx = html.indexOf('관리 계획 · 다음 재평가 — 자세히 입력')
   const tag = html.slice(html.lastIndexOf('<details', idx), html.indexOf('>', idx) + 1)
   assert.ok(/\bopen\b/.test(tag), 'a non-empty currentTreatmentGoal alone still opens the disclosure -- only nextVisitCheckItem was excluded')
 })
@@ -2189,7 +2191,7 @@ test('Batch 2.6 E-16/C-2: NextActionCard renders ONLY while the 관리 계획 di
       },
     },
   })
-  const closedIdx = closedHtml.indexOf('관리 계획 · 다음 재평가')
+  const closedIdx = closedHtml.indexOf('관리 계획 · 다음 재평가 — 자세히 입력')
   const closedTag = closedHtml.slice(closedHtml.lastIndexOf('<details', closedIdx), closedHtml.indexOf('>', closedIdx) + 1)
   assert.ok(!/\bopen\b/.test(closedTag), 'sanity: disclosure stays closed here (only nextVisitCheckItem is set)')
   assert.ok(closedHtml.includes('workspace__nextAction'), 'NextActionCard DOES render while the disclosure is closed')
@@ -2208,10 +2210,179 @@ test('Batch 2.6 E-16/C-2: NextActionCard renders ONLY while the 관리 계획 di
       },
     },
   })
-  const openIdx = openHtml.indexOf('관리 계획 · 다음 재평가')
+  const openIdx = openHtml.indexOf('관리 계획 · 다음 재평가 — 자세히 입력')
   const openTag = openHtml.slice(openHtml.lastIndexOf('<details', openIdx), openHtml.indexOf('>', openIdx) + 1)
   assert.ok(/\bopen\b/.test(openTag), 'sanity: disclosure is open here (currentTreatmentGoal is non-empty)')
   assert.ok(!openHtml.includes('workspace__nextAction'), 'NextActionCard does NOT render while the disclosure is open -- it would be a pure duplicate of the open form')
+})
+
+/* ------------------------------------------------------------------------
+ * Opus delta review (D-1, HIGH): removing `다음 방문 확인 사항` from
+ * PainCarePlanCard unconditionally orphaned `carePlan.nextVisitCheckItem`
+ * on the REVISIT screen -- RevisitWorkspace.tsx has no lane-4 textarea to
+ * carry it, but 이어받기(치료 계획) (revisitCarryForward.ts) still writes
+ * into it. Fix: PainCarePlanCard({ showNextVisitCheckItem = true }) --
+ * the field defaults to shown (revisit's card, unchanged) and is opted out
+ * ONLY at the initial-visit call site. These pin the invariant nobody was
+ * checking before: `nextVisitCheckItem` is bound to exactly one editable
+ * textarea on EVERY screen that renders PainCarePlanCard.
+ * ---------------------------------------------------------------------- */
+test('D-1: PainCarePlanCard renders 다음 방문 확인 사항 as an editable textarea by DEFAULT (the prop the revisit screen relies on, unchanged)', () => {
+  const html = renderToString(
+    React.createElement(PainCarePlanCard, {
+      value: {
+        currentTreatmentGoal: '',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: 'D1-REVISIT-ORPHAN-CHECK',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+      onChange: () => {},
+    }),
+  )
+  assert.ok(html.includes('다음 방문 확인 사항'), 'the field label renders by default')
+  const editableTextareasWithValue = [...html.matchAll(/<textarea\b([^>]*)>([^<]*)<\/textarea>/g)].filter(
+    ([, attrs, inner]) => !attrs.includes('readonly') && inner.includes('D1-REVISIT-ORPHAN-CHECK'),
+  )
+  assert.equal(editableTextareasWithValue.length, 1, 'the value is bound to exactly one editable textarea -- no longer invisible, no longer unreachable')
+})
+
+test('D-1: PainCarePlanCard with showNextVisitCheckItem={false} (the initial-visit call site only) omits the field entirely', () => {
+  const html = renderToString(
+    React.createElement(PainCarePlanCard, {
+      value: {
+        currentTreatmentGoal: '',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: 'D1-SHOULD-NOT-APPEAR',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+      onChange: () => {},
+      showNextVisitCheckItem: false,
+    }),
+  )
+  assert.ok(!html.includes('다음 방문 확인 사항'), 'the field label is gone when opted out')
+  assert.ok(!html.includes('D1-SHOULD-NOT-APPEAR'), 'the value does not render anywhere in this card when opted out (it still lives in the lane-4 textarea one lane up, out of this component)')
+  const textareaCount = [...html.matchAll(/<textarea\b/g)].length
+  assert.equal(textareaCount, 5, 'exactly 5 fields render when opted out, not 6')
+})
+
+test('D-1: the initial-visit call site (PainWorkspace.tsx) is the ONLY caller that opts out -- source scan', () => {
+  const painSrc = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+  assert.ok(
+    painSrc.includes('<PainCarePlanCard value={carePlan} onChange={onChangeCarePlan} showNextVisitCheckItem={false} />'),
+    'PainWorkspace.tsx opts out explicitly -- the lane-4 textarea above is the one editable home for this field on this screen',
+  )
+
+  const revisitSrc = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const cardIdx = revisitSrc.indexOf('<PainCarePlanCard')
+  assert.ok(cardIdx !== -1, 'RevisitWorkspace still renders the card')
+  const callEnd = revisitSrc.indexOf('/>', revisitSrc.indexOf('onChange={(next)', cardIdx))
+  const call = revisitSrc.slice(cardIdx, callEnd)
+  assert.ok(
+    !call.includes('showNextVisitCheckItem'),
+    'D-1: RevisitWorkspace.tsx must NOT opt out -- it has no other textarea for this field, so the card default (shown) is its only editable home',
+  )
+  // Non-vacuous: the card call really is reached through a rendered,
+  // editable control (inside the auto-opening <details>, not dead code).
+  const detailsIdx = revisitSrc.lastIndexOf('<details', cardIdx)
+  assert.ok(detailsIdx !== -1, 'a <details> precedes the card')
+  assert.ok(
+    revisitSrc.slice(detailsIdx, cardIdx).includes('className="workspace__revisit__optional"'),
+    'the card sits inside the same auto-opening, non-dead disclosure this batch already pins (E-3)',
+  )
+})
+
+/* ------------------------------------------------------------------------
+ * Opus delta review (D-3, LOW-MEDIUM): <details> is uncontrolled, so gating
+ * NextActionCard on `carePlanDetailsOpen` (a "has content" computed value)
+ * instead of the disclosure's REAL open state meant a clinician's manual
+ * collapse never brought the read-back back, and a manual open followed by
+ * typing unmounted NextActionCard out from under the cursor. Fix: track the
+ * real toggle state (`planOpen`, via onToggle) and gate on THAT.
+ * react-test-renderer is required here (renderToString cannot express a
+ * post-mount toggle event on the same instance -- see doctor-reset-key.spec
+ * .mjs's own header for why this suite otherwise avoids it).
+ * ---------------------------------------------------------------------- */
+function findCarePlanDetails(renderer) {
+  const summary = renderer.root.findAll(
+    (node) => node.type === 'summary' && node.props.children === '관리 계획 · 다음 재평가 — 자세히 입력',
+  )[0]
+  return summary?.parent
+}
+function hasNextActionCard(renderer) {
+  return renderer.root.findAll(
+    (node) => typeof node.props.className === 'string' && node.props.className.split(' ').includes('workspace__nextAction'),
+  ).length > 0
+}
+
+test('D-3: NextActionCard reappears after the 관리 계획 disclosure is hand-collapsed, even though the Care Plan still has content', () => {
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        resetKey: 'submission:d3-collapse',
+        initialWorkspaceState: {
+          painCarePlan: {
+            currentTreatmentGoal: 'D3 치료 목표',
+            rehabilitationGoal: '',
+            homeActionPlan: 'D3 홈액션',
+            activityPrecaution: '',
+            patientInstruction: '',
+            nextVisitCheckItem: '',
+            recordedAt: '2026-01-01T00:00:00.000Z',
+          },
+        },
+      }),
+    )
+  })
+  const details = findCarePlanDetails(renderer)
+  assert.ok(details, 'sanity: the 관리 계획 disclosure renders')
+  assert.equal(details.props.open, true, 'sanity: content present -> disclosure starts open')
+  assert.equal(hasNextActionCard(renderer), false, 'sanity: NextActionCard is hidden while the disclosure is open')
+
+  // The clinician hand-collapses the auto-opened disclosure. The computed
+  // "has content" value does not change -- only the real toggle state does.
+  act(() => {
+    details.props.onToggle({ currentTarget: { open: false } })
+  })
+  assert.equal(
+    hasNextActionCard(renderer),
+    true,
+    'D-3: after a manual collapse, NextActionCard (다음에 확인할 것/다음 재평가 read-back) must reappear -- gating on the has-content value alone hid it forever',
+  )
+})
+
+test('D-3: NextActionCard hides immediately once the disclosure is manually reopened (not just when content is typed)', () => {
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        resetKey: 'submission:d3-expand',
+      }),
+    )
+  })
+  const details = findCarePlanDetails(renderer)
+  assert.ok(details, 'sanity: the 관리 계획 disclosure renders')
+  assert.equal(details.props.open, false, 'sanity: empty Care Plan -> disclosure starts closed')
+  assert.equal(hasNextActionCard(renderer), true, 'sanity: NextActionCard renders (empty-state) while closed')
+
+  act(() => {
+    details.props.onToggle({ currentTarget: { open: true } })
+  })
+  assert.equal(
+    hasNextActionCard(renderer),
+    false,
+    'D-3: once manually opened, NextActionCard must hide immediately -- gating on the real toggle state (not the has-content value) is what stops the block above the cursor from unmounting later, mid-keystroke, when content is then typed',
+  )
 })
 
 // ---------- §1.3-#7 (현행 계승, regression pin) ----------
@@ -3064,13 +3235,6 @@ test('Batch 2.6 E-3: RevisitWorkspace.tsx wraps <PainCarePlanCard in a <details>
   )
 })
 
-test('Batch 2.6 E-3 mutant reproduction: reverting to the always-open form (no <details> wrapper) fails the structural check above', () => {
-  const mutantSrc = `      <PainCarePlanCard\n        value={workspaceState.carePlan}\n        onChange={(next) => setWorkspaceState((s) => ({ ...s, carePlan: next }))}\n      />\n`
-  const cardIdx = mutantSrc.indexOf('<PainCarePlanCard')
-  const detailsIdx = mutantSrc.lastIndexOf('<details', cardIdx)
-  assert.ok(detailsIdx === -1, 'reproduced: the reverted (mutant) source has no <details> at all before the card')
-})
-
 /* ------------------------------------------------------------------------
  * Batch 2.6 (E-6): RehabSuggestionCard's "최종 지시문(선택)" free-text box
  * moves behind a toggle (ExamSuggestionCard's own convention) -- starts
@@ -3135,6 +3299,76 @@ test('Batch 2.6 E-6: a non-empty clinicianFinalInstruction still renders the fre
   })
   assert.ok(html.includes('ROUND26 하루 1회, 통증 시 중단'), 'a previously recorded instruction is never hidden behind a closed toggle')
   assert.ok(!html.includes('최종 지시문 추가'), 'no toggle button renders once the field already holds content')
+})
+
+/* ------------------------------------------------------------------------
+ * Opus delta review (D-2, MEDIUM): the original `useState(suggestion.
+ * clinicianFinalInstruction.trim() !== '')` only evaluates at MOUNT.
+ * renderToString cannot express "the SAME card instance gets a later
+ * update", so the empty-vs-filled tests above (mount-time only) cannot
+ * catch this -- react-test-renderer's `.update()` on the same instance is
+ * required, reproducing the two real paths this actually happens on
+ * (DoctorWorkspace.tsx's `handleReloadFromConflict`, and the
+ * initialRecordUpdatedAt re-seed effect at :329-338) via the SAME public
+ * seam: initialWorkspaceState + initialRecordUpdatedAt updating together
+ * while `workspaceState` still equals `lastSavedRef.current` (no local
+ * edits), which is exactly the re-seed effect's own guard condition.
+ * ---------------------------------------------------------------------- */
+test('D-2: RehabSuggestionCard reveals a clinicianFinalInstruction that arrives AFTER mount on the SAME instance (conflict-reload / re-seed path)', () => {
+  const suggestion = (instruction) => ({
+    id: 'lbp-d2-same-instance',
+    title: 'LBP 재활 제안 (D-2 same instance)',
+    goal: '',
+    rationale: '',
+    sourceFacts: [],
+    contraindicationFacts: [],
+    source: 'SUGGESTED',
+    status: 'ACCEPTED',
+    clinicianFinalInstruction: instruction,
+  })
+  const findToggle = (renderer) =>
+    renderer.root.findAll((node) => node.type === 'button' && node.props.children === '최종 지시문 추가')
+  const findFilledInput = (renderer) =>
+    renderer.root.findAll((node) => node.type === 'input' && node.props.value === 'D2-LATER-INSTRUCTION')
+
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: undefined,
+        lbpObjectiveMotorDeficit: 'NONE',
+        resetKey: 'submission:d2-same',
+        initialRecordUpdatedAt: 'd2-t1',
+        initialWorkspaceState: { painRehabSuggestions: [suggestion('')] },
+      }),
+    )
+  })
+  assert.equal(findToggle(renderer).length, 1, 'sanity: mounts empty -> collapsed toggle, no input')
+  assert.equal(findFilledInput(renderer).length, 0, 'sanity: nothing to show yet')
+
+  // Same resetKey (no full reset), a LATER initialRecordUpdatedAt, and no
+  // local edits in between -- the exact re-seed guard condition
+  // (workspaceStateEquals(workspaceState, lastSavedRef.current)) that fires
+  // both on conflict-reload and on this natural re-seed effect.
+  act(() => {
+    renderer.update(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: undefined,
+        lbpObjectiveMotorDeficit: 'NONE',
+        resetKey: 'submission:d2-same',
+        initialRecordUpdatedAt: 'd2-t2',
+        initialWorkspaceState: { painRehabSuggestions: [suggestion('D2-LATER-INSTRUCTION')] },
+      }),
+    )
+  })
+  assert.equal(
+    findFilledInput(renderer).length,
+    1,
+    'D-2: an instruction that arrives after mount must show in the free-text input -- the old mount-time useState kept the toggle collapsed forever',
+  )
+  assert.equal(findToggle(renderer).length, 0, 'the collapsed toggle is gone once the instruction is visible')
 })
 
 /* ------------------------------------------------------------------------

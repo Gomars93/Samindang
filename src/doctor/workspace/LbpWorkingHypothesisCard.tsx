@@ -3,11 +3,15 @@
  * LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md §11.4). Five independent
  * chip groups (one per pattern), the same `workspace__followUpChip` +
  * `aria-pressed` + re-click-to-deselect convention `RevisitQuickCheckCard`/
- * `NextReassessmentPlanCard` already use — except every pattern's "nothing
- * chosen" member (`UNJUDGED`) is itself a rendered 4th chip here (§11.4's
- * "5행 × 4 chip"), never highlighted (`aria-pressed` stays false for it even
- * while it is the active value) so the default state still reads as zero
- * pressed chips, matching `RevisitQuickCheckCard`'s convention exactly.
+ * `NextReassessmentPlanCard` already use — 5행 × 3 chip: every pattern's
+ * "nothing chosen" member (`UNJUDGED`) is `LbpHypothesisSupport`'s stored
+ * default (`lbpWorkingHypothesis.ts`), but it is NOT itself a rendered
+ * chip. Removed Batch 2.6 (E-2, approved `DECISIONS.md` 2026-09-04
+ * "원장 화면 실측 감사 (Opus) 및 Batch 2.6 착수 / 2.5d 보류"), matching
+ * `RevisitQuickCheckCard`'s own `NOT_ASSESSED` convention, which was
+ * already excluded from render for the same reason: a "nothing chosen"
+ * member can never be pressed toward, only cleared, by re-clicking the
+ * currently active chip in a group.
  *
  * The optional patient-sentence draft box below the chips is the ONLY path
  * a hypothesis-derived sentence can reach the patient (see

@@ -61,7 +61,16 @@ const LBP_HYPOTHESIS_PATIENT_PARTICLE_KO: Record<LbpHypothesisPatternId, '과' |
 
 export type LbpHypothesisSupport = 'UNJUDGED' | 'HIGHER' | 'CONSIDER' | 'LOWER'
 
-/** UNJUDGED first (the default) — `LbpWorkingHypothesisCard.tsx` renders these 4 as one chip group per pattern, matching the brief's "5행 × 4 chip" (§11.4). */
+/**
+ * UNJUDGED first (the default, stored value). `LbpWorkingHypothesisCard.tsx`
+ * renders only the OTHER 3 as a chip group per pattern (5행 × 3 chip) —
+ * UNJUDGED itself is never a rendered chip; it is what a pattern reverts to
+ * when its currently active chip is re-clicked. Removed from render in
+ * Batch 2.6 (E-2, approved `DECISIONS.md` 2026-09-04 "원장 화면 실측 감사
+ * (Opus) 및 Batch 2.6 착수 / 2.5d 보류"), the same convention
+ * `RevisitQuickCheckCard`'s `NOT_ASSESSED` already used. This array still
+ * lists all 4 -- it is the full stored value type, not the render list.
+ */
 export const LBP_HYPOTHESIS_SUPPORT_OPTIONS: readonly LbpHypothesisSupport[] = ['UNJUDGED', 'HIGHER', 'CONSIDER', 'LOWER']
 
 export const LBP_HYPOTHESIS_SUPPORT_LABEL_KO: Record<LbpHypothesisSupport, string> = {

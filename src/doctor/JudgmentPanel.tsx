@@ -7,8 +7,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   DEBRIEF_QUESTIONS,
-  MAX_INNATE_FEATURES,
-  MAX_SYMPTOM_LINKS,
   createEmptyJudgment,
   finalizeJudgment,
   validateJudgment,
@@ -20,35 +18,17 @@ import {
 import { ConflictBanner } from './ConflictBanner'
 import { DoctorTokenSetup } from './DoctorTokenSetup'
 
-function TextList({
-  label,
-  values,
-  onChange,
-}: {
-  label: string
-  values: string[]
-  onChange: (next: string[]) => void
-}) {
-  return (
-    <div className="judgment__field">
-      <span className="judgment__label">{label}</span>
-      {values.map((v, i) => (
-        <input
-          key={i}
-          type="text"
-          className="judgment__input"
-          value={v}
-          placeholder={`${i + 1}`}
-          onChange={(e) => {
-            const next = [...values]
-            next[i] = e.target.value
-            onChange(next)
-          }}
-        />
-      ))}
-    </div>
-  )
-}
+/*
+ * Batch 4.1-C (§16.1/§16.2): TextList (the innate_features/symptom_links
+ * input control) was removed here -- its only two call sites (핵심 선천
+ * 특징/현재 증상과 연결되는 핵심) were removed below. MAX_INNATE_FEATURES/
+ * MAX_SYMPTOM_LINKS are no longer imported either -- their only uses in
+ * this file were those same two TextList labels/placeholders. Both
+ * constants, and the ClinicianJudgment.innate_features/symptom_links
+ * fields themselves, are kept in judgment.ts (deprecated, not deleted) --
+ * see judgment.ts for why (server/** FROZEN, tests/server.spec.mjs CAS
+ * round-trip probe).
+ */
 
 function LabeledTextarea({
   label,
@@ -157,7 +137,6 @@ export function JudgmentPanel({
     () => initialJudgment ?? createEmptyJudgment(source),
   )
   const [debrief, setDebrief] = useState<DebriefAnswers>(initialJudgment?.debrief ?? emptyDebrief)
-  const [outlineQuestion, setOutlineQuestion] = useState('')
   const [recorded, setRecorded] = useState<ClinicianJudgment | null>(initialJudgment ?? null)
   const [errors, setErrors] = useState<string[]>([])
   const lastKnownUpdatedAtRef = useRef<string | null>(initialUpdatedAt ?? null)
@@ -207,7 +186,6 @@ export function JudgmentPanel({
     const freshDebrief = initialJudgment?.debrief ?? emptyDebrief
     setJudgment(freshJudgment)
     setDebrief(freshDebrief)
-    setOutlineQuestion('')
     setRecorded(initialJudgment ?? null)
     setErrors([])
     setConflict(null)
@@ -364,18 +342,16 @@ export function JudgmentPanel({
         />
       )}
 
-      <div className="judgment__grid">
-        <TextList
-          label={`핵심 선천 특징 (원장 입력, 최대 ${MAX_INNATE_FEATURES}개)`}
-          values={judgment.innate_features.length ? judgment.innate_features : Array(MAX_INNATE_FEATURES).fill('')}
-          onChange={(next) => setJudgment((j) => ({ ...j, innate_features: next }))}
-        />
-        <TextList
-          label={`현재 증상과 연결되는 핵심 (원장 입력, 최대 ${MAX_SYMPTOM_LINKS}개)`}
-          values={judgment.symptom_links.length ? judgment.symptom_links : Array(MAX_SYMPTOM_LINKS).fill('')}
-          onChange={(next) => setJudgment((j) => ({ ...j, symptom_links: next }))}
-        />
-      </div>
+      {/*
+        Batch 4.1-C (§16.1): 핵심 선천 특징/현재 증상과 연결되는 핵심 input
+        (the judgment__grid TextList pair) removed here -- PO decision
+        2026-09-04: this free-form 사주 해석 성격의 입력을 뺀다.
+        ClinicianJudgment.innate_features/symptom_links (the fields these
+        wrote to), MAX_INNATE_FEATURES/MAX_SYMPTOM_LINKS,
+        validateJudgment's length checks, and finalizeJudgment's
+        empty-string filter are all UNCHANGED in judgment.ts -- only this
+        UI input is gone (see judgment.ts for why they stay).
+      */}
 
       {/*
         P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6,
@@ -494,47 +470,17 @@ export function JudgmentPanel({
         })}
       </details>
 
-      <details className="judgment__outline">
-        <summary>설명 개요 (원장 전용, 참고용)</summary>
-        <p className="doctor__derivedNote">
-          원장이 입력한 내용을 그대로 재구성해서 보여줄 뿐이며, 새로운 내용을
-          추가하거나 만들어내지 않습니다.
-        </p>
-        <ol className="judgment__outlineList">
-          <li>
-            <strong>선천 특징</strong>
-            <ul>
-              {(judgment.innate_features.filter((s) => s.trim() !== '').length
-                ? judgment.innate_features.filter((s) => s.trim() !== '')
-                : ['(미입력)']
-              ).map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </li>
-          <li>
-            <strong>현재 증상 연결</strong>
-            <ul>
-              {(judgment.symptom_links.filter((s) => s.trim() !== '').length
-                ? judgment.symptom_links.filter((s) => s.trim() !== '')
-                : ['(미입력)']
-              ).map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </li>
-          <li>
-            <strong>질문</strong>
-            <textarea
-              className="judgment__textarea"
-              value={outlineQuestion}
-              onChange={(e) => setOutlineQuestion(e.target.value)}
-              placeholder="(미입력)"
-              rows={2}
-            />
-          </li>
-        </ol>
-      </details>
+      {/*
+        Batch 4.1-C (§16.2): "설명 개요 (원장 전용, 참고용)" disclosure
+        removed entirely. It reconstructed exactly 4 items: 선천 특징 /
+        현재 증상 연결 (both removed above, §16.1) / 치료 우선순위·한약
+        방향 (already removed in 4.1-A) / 질문 (`outlineQuestion`, a local
+        `useState('')` that was never saved and never read anywhere else --
+        removed above). With 3 of its 4 sources gone, its own stated
+        purpose ("원장이 입력한 내용을 그대로 재구성") had nothing left to
+        reconstruct but an always-empty scratch textarea. Loss is zero --
+        outlineQuestion had no save path to begin with.
+      */}
     </section>
   )
 }

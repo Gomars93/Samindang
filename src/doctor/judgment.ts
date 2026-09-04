@@ -34,7 +34,20 @@ export type ClinicianJudgment = {
     myungri_status: 'resolved' | 'partial' | 'unresolved'
     myungri_pending_approval: string[]
   }
+  /**
+   * Batch 4.1-C (§16.1): 4.1-C 이후 어떤 UI도 이 필드에 쓰지 않는다 —
+   * deprecated, 새 코드에서 읽지 말 것. PO 결정 2026-09-04: 사주 해석
+   * 성격의 자유서술 입력을 뺀다(JudgmentPanel.tsx의 TextList 입력 + 설명
+   * 개요 read-back 모두 제거). 타입/기본값/`MAX_INNATE_FEATURES`/
+   * `MAX_SYMPTOM_LINKS`/`validateJudgment`의 길이 검증/`finalizeJudgment`의
+   * 빈 문자열 필터를 그대로 유지하는 이유는 saju_only_prediction 등과
+   * 동일 — server/**(FROZEN)와 tests/server.spec.mjs가 이 필드를 저장·CAS
+   * round-trip 프로브로 쓰고(`:212`,`:231`,`:325`,`:357-391`), 이미 저장된
+   * 레코드의 값이 round-trip되어 파괴되지 않아야 하기 때문(원본 JSON
+   * 아코디언에는 계속 보임).
+   */
   innate_features: string[]
+  /** Batch 4.1-C: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   symptom_links: string[]
   /**
    * Batch 4.1-A (§15.2/§15.3): 4.1-A 이후 어떤 UI도 이 필드에 쓰지 않는다 —
@@ -98,6 +111,8 @@ export function createEmptyJudgment(payload: JudgmentSourcePayload): ClinicianJu
       myungri_status: payload.myungri_status,
       myungri_pending_approval: payload.myungri_pending_approval,
     },
+    // Batch 4.1-C: deprecated defaults, kept for payload-shape/round-trip
+    // reasons only — see ClinicianJudgment's field-level comments above.
     innate_features: [],
     symptom_links: [],
     // Batch 4.1-A: deprecated defaults, kept for payload-shape/round-trip

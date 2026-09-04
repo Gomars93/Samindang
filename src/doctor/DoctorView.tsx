@@ -1943,20 +1943,21 @@ export function priorVisitsGroupCount(priorVisits: PatientHistoryResult | null |
 }
 
 /**
- * Core Reduction P4 -- "명리·감사 기록"(JudgmentPanel) 아코디언 배지: 이미
- * 서버에 저장된 판단 중 채워진 항목 개수. JudgmentPanel 자체가 관리하는
- * in-progress 편집 상태는 이 함수가 볼 수 없다(별도 컴포넌트) -- 배지는
- * "이미 기록된 값"만 반영하며, 다른 그룹들의 배지가 서버/fixture의 저장된
- * 값을 반영하는 것과 같은 성격이다.
+ * Core Reduction P4 -- "디브리핑·학습 기록"(JudgmentPanel, 구 "명리·감사
+ * 기록" -- Batch 4.1-C §16.4에서 재명명) 아코디언 배지: 이미 서버에 저장된
+ * 판단 중 채워진 항목 개수. JudgmentPanel 자체가 관리하는 in-progress 편집
+ * 상태는 이 함수가 볼 수 없다(별도 컴포넌트) -- 배지는 "이미 기록된 값"만
+ * 반영하며, 다른 그룹들의 배지가 서버/fixture의 저장된 값을 반영하는 것과
+ * 같은 성격이다.
  */
 export function judgmentRecordedFieldCount(judgment: ClinicianJudgment | null | undefined): number {
   if (!judgment) return 0
   let n = 0
-  n += judgment.innate_features.filter((s) => s.trim() !== '').length
-  n += judgment.symptom_links.filter((s) => s.trim() !== '').length
   // Batch 4.1-A §15.3: saju_only_prediction/revised_after_exam/
   // final_treatment_axis/prescription_direction은 더 이상 어떤 UI도 쓰지
   // 않는다(deprecated, judgment.ts 참고) — 이 배지에서도 뺀다.
+  // Batch 4.1-C §16.1: innate_features/symptom_links도 같은 이유로 뺀다 --
+  // JudgmentPanel의 해당 입력이 제거됐다(deprecated, judgment.ts 참고).
   if (judgment.learning_case === true) n += 1
   if (judgment.debrief && Object.values(judgment.debrief).some((v) => v.trim() !== '')) n += 1
   return n
@@ -4725,20 +4726,28 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       */}
 
       {/*
-        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): JudgmentPanel's
-        remaining fields (선천 특징/증상 연결/사주 예상→치료축·처방/1분
-        디브리핑/설명 개요/학습 케이스) get a distinct group title here --
-        "명리·감사 기록" -- so this never reads as the same thing as the
-        진료 화면의 "판단·처치" lane's FinalAssessmentCard (a different
-        component, a different lane, a different purpose: that one is the
-        derived-profile clinical assessment the clinician acts on today,
-        this one is the free-form 사주/감사 note trail). ClinicianJudgment's
-        schema, its PUT save path, its "기록" button and its save-state
-        handling below are byte-for-byte unchanged -- only the surrounding
-        group label and accordion boundary are new.
+        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): JudgmentPanel gets
+        a distinct group title here -- originally "명리·감사 기록" -- so
+        this never reads as the same thing as the 진료 화면의 "판단·처치"
+        lane's FinalAssessmentCard (a different component, a different
+        lane, a different purpose: that one is the derived-profile clinical
+        assessment the clinician acts on today, this one is a free-form
+        note/debrief trail). ClinicianJudgment's schema, its PUT save path,
+        its "기록" button and its save-state handling below are
+        byte-for-byte unchanged -- only the surrounding group label and
+        accordion boundary are new.
+
+        Batch 4.1-C (§16.4): renamed "명리·감사 기록" -> "디브리핑·학습
+        기록". By this point JudgmentPanel's own free-form 선천 특징/증상
+        연결 input (4.1-C, §16.1) and the "사주 예상→치료축·처방" block
+        (4.1-A) are both gone, so nothing "명리" remains inside it -- what's
+        left is exactly the 객관적 근력저하/회전근개 소견 read-only echo,
+        the "기록" save button + JSON, 1분 디브리핑, and 학습 케이스. The
+        old name would now misleadingly suggest 명리 content still lives
+        here; the new name describes what's actually inside.
       */}
       <ReferenceAccordion
-        title="명리·감사 기록"
+        title="디브리핑·학습 기록"
         count={judgmentRecordedFieldCount(mode === 'server' ? selectedRecord?.judgment ?? null : null)}
       >
       <JudgmentPanel

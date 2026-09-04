@@ -378,8 +378,13 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   test('JudgmentPanel.tsx: imports ConflictBanner and renders it before the editable fields', () => {
     assert.ok(src.includes("import { ConflictBanner } from './ConflictBanner'"))
     const banner = src.indexOf('{conflict && (')
-    const grid = src.indexOf('<div className="judgment__grid">')
-    assert.ok(banner !== -1 && grid !== -1 && banner < grid)
+    // Batch 4.1-C (§16.1): judgment__grid (the 핵심 선천 특징/현재 증상과
+    // 연결되는 핵심 TextList pair) was removed -- judgment__learningCase is
+    // the next stable editable-field landmark after the conflict banner
+    // (always rendered, unlike the showLbpExam/showShoulderExam echoes
+    // immediately after the banner, which are fixture-dependent).
+    const learningCase = src.indexOf('<details className="judgment__learningCase"')
+    assert.ok(banner !== -1 && learningCase !== -1 && banner < learningCase)
   })
 
   test('JudgmentPanel.tsx: handleRecord fails closed on a pending conflict (closing-review MEDIUM finding)', () => {

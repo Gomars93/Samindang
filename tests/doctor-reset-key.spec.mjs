@@ -294,6 +294,11 @@ test('JudgmentPanel no longer owns an independent key={session_id}; its reset no
   // Behavioral half, mirroring DoctorWorkspace's own reset test above: a
   // judgment typed in for submission A must not still be on screen after
   // the resetKey transitions to submission B.
+  //
+  // Batch 4.1-C (§16.1): the innate_features TextList input this used to
+  // exercise (className 'judgment__input') is gone. The 1분 디브리핑
+  // textareas (className 'judgment__textarea') are the remaining editable
+  // JudgmentPanel field this reset behavior can be pinned against.
   const source = {
     session_id: 's1',
     questionnaire_version: '1',
@@ -306,17 +311,17 @@ test('JudgmentPanel no longer owns an independent key={session_id}; its reset no
   act(() => {
     renderer = TestRenderer.create(React.createElement(JudgmentPanel, { source, resetKey: 'submission:A' }))
   })
-  const findFirstFeatureInput = () => renderer.root.findAllByProps({ className: 'judgment__input' })[0]
+  const findFirstDebriefTextarea = () => renderer.root.findAllByProps({ className: 'judgment__textarea' })[0]
   act(() => {
-    findFirstFeatureInput().props.onChange({ target: { value: 'A 환자 소견' } })
+    findFirstDebriefTextarea().props.onChange({ target: { value: 'A 환자 소견' } })
   })
-  assert.equal(findFirstFeatureInput().props.value, 'A 환자 소견', 'sanity: the typed value took effect')
+  assert.equal(findFirstDebriefTextarea().props.value, 'A 환자 소견', 'sanity: the typed value took effect')
 
   act(() => {
     renderer.update(React.createElement(JudgmentPanel, { source: { ...source, session_id: 's2' }, resetKey: 'submission:B' }))
   })
   assert.equal(
-    findFirstFeatureInput().props.value,
+    findFirstDebriefTextarea().props.value,
     '',
     "submission A's typed judgment must not still show once the unified key moves to submission B",
   )
@@ -466,6 +471,47 @@ test('T1: .judgment-panel-bundle.cjs no longer binds saju_only_prediction as a t
 test('T2: .judgment-panel-bundle.cjs no longer contains the "치료 우선순위·한약 방향" 설명개요 read-back', () => {
   const bundleSrc = readSrc('./.judgment-panel-bundle.cjs')
   assert.equal(bundleSrc.includes(esbuildEscapeNeedle('치료 우선순위·한약 방향')), false)
+})
+
+// ---------- Batch 4.1-C §16.6 T13/T14 ----------
+// R3 removal (§16.1): the "핵심 선천 특징"/"현재 증상과 연결되는 핵심"
+// TextList inputs are gone from JudgmentPanel.tsx. NOTE: judgment.ts
+// (bundled in here too, since JudgmentPanel imports validateJudgment from
+// it) legitimately still contains BOTH label strings as substrings of its
+// UNCHANGED error messages ("핵심 선천 특징은 최대 N개까지만 입력할 수
+// 있습니다." / "현재 증상과 연결되는 핵심은 최대 N개까지만..."), so a bare
+// `includes(esbuildEscapeNeedle('핵심 선천 특징'))` check would be a false
+// positive here -- it would flag the still-required validateJudgment text
+// as if it were the removed UI label. The needle below includes the
+// TextList label's own distinguishing suffix ("...(원장 입력, 최대") to
+// tell the two apart; the onChange-write checks (`innate_features: next`
+// etc.) are a second, independent structural signal.
+test('T13: .judgment-panel-bundle.cjs no longer binds innate_features/symptom_links as TextList inputs, and their labels are gone (Batch 4.1-C §16.1)', () => {
+  const bundleSrc = readSrc('./.judgment-panel-bundle.cjs')
+  assert.equal(bundleSrc.includes('innate_features: next'), false, 'no onChange write to innate_features may remain (the removed TextList\'s onChange)')
+  assert.equal(bundleSrc.includes('symptom_links: next'), false, 'no onChange write to symptom_links may remain (the removed TextList\'s onChange)')
+  assert.equal(
+    bundleSrc.includes(esbuildEscapeNeedle('핵심 선천 특징 (원장 입력')),
+    false,
+    'the removed TextList label text ("핵심 선천 특징 (원장 입력, 최대 N개)") must not appear -- validateJudgment\'s similarly-worded error message ("...은 최대 N개까지만...") stays and is a different string',
+  )
+  assert.equal(
+    bundleSrc.includes(esbuildEscapeNeedle('현재 증상과 연결되는 핵심 (원장 입력')),
+    false,
+    'the removed TextList label text must not appear -- validateJudgment\'s error message stays and is a different string',
+  )
+})
+
+// R4 removal (§16.2): the "설명 개요 (원장 전용, 참고용)" disclosure
+// (judgment__outline) is gone entirely.
+test('T14: .judgment-panel-bundle.cjs no longer renders the "설명 개요 (원장 전용, 참고용)" disclosure (Batch 4.1-C §16.2)', () => {
+  const bundleSrc = readSrc('./.judgment-panel-bundle.cjs')
+  assert.equal(bundleSrc.includes('judgment__outline'), false, 'the judgment__outline class name must not appear in the bundle')
+  assert.equal(
+    bundleSrc.includes(esbuildEscapeNeedle('설명 개요 (원장 전용, 참고용)')),
+    false,
+    'the removed disclosure summary text must not appear in the bundle',
+  )
 })
 
 console.log(`\n${passed} doctor-reset-key assertions passed.`)

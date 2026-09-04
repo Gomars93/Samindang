@@ -1239,8 +1239,15 @@ function detailsRange(html, classMarker) {
 // complementing the bundle-text T1/T2 in doctor-reset-key.spec.mjs): the
 // "사주 예상 → 수정 판단 → 치료축·처방 방향" collapsed input block
 // (judgment__secondaryFields) and its 4 labeled fields are gone from the
-// rendered output entirely -- 핵심 선천 특징/현재 증상과 연결되는 핵심
-// (the two fields that stay) still render.
+// rendered output entirely.
+//
+// Batch 4.1-C (§16.1/§16.2, updating the "still renders" lines this test
+// used to end with): 핵심 선천 특징/현재 증상과 연결되는 핵심 (the two
+// fields 4.1-A deliberately left alone) and the "설명 개요" disclosure
+// that read them back are now ALSO gone -- T13/T14 here are the
+// full-rendered-page complement of doctor-reset-key.spec.mjs's bundle-text
+// T13/T14. T23 pins the opposite side (CLAUDE.md's "표 규칙"): what
+// JudgmentPanel still has after both removals must keep rendering.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   assert('T1: judgment__secondaryFields details block no longer renders', !html.includes('judgment__secondaryFields'))
@@ -1249,8 +1256,29 @@ function detailsRange(html, classMarker) {
     assert(`T1: removed field label "${label}" no longer renders`, !html.includes(label))
   }
   assert('T2: "치료 우선순위·한약 방향" 설명개요 read-back no longer renders', !html.includes('치료 우선순위·한약 방향'))
-  assert('judgment panel: 핵심 선천 특징 still renders (not removed by this batch)', html.includes('핵심 선천 특징'))
-  assert('judgment panel: 현재 증상과 연결되는 핵심 still renders (not removed by this batch)', html.includes('현재 증상과 연결되는 핵심'))
+  assert('T13: 핵심 선천 특징 no longer renders (herbal profile)', !html.includes('핵심 선천 특징'))
+  assert('T13: 현재 증상과 연결되는 핵심 no longer renders (herbal profile)', !html.includes('현재 증상과 연결되는 핵심'))
+  assert('T14: judgment__outline no longer renders', !html.includes('judgment__outline'))
+  assert('T14: "설명 개요" disclosure summary no longer renders', !html.includes('설명 개요'))
+
+  // T23: everything else JudgmentPanel still has keeps rendering --
+  // neither removal (4.1-A's, 4.1-C's) took these with it.
+  assert('T23: "1분 디브리핑" disclosure still renders', html.includes('1분 디브리핑'))
+  assert('T23: "학습 케이스" toggle still renders', html.includes('학습 케이스'))
+  assert('T23: "기록" save button still renders', html.includes('>기록</button>'))
+}
+{
+  // T13/T14/T23 companions in pain profile too -- JudgmentPanel renders
+  // unconditionally regardless of viewProfile (unlike BIRTH_*, it has no
+  // `viewProfile !== 'pain'` gate), so both removals and both survivors
+  // must hold there as well.
+  const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
+  assert('T13: 핵심 선천 특징 no longer renders (pain profile)', !html.includes('핵심 선천 특징'))
+  assert('T13: 현재 증상과 연결되는 핵심 no longer renders (pain profile)', !html.includes('현재 증상과 연결되는 핵심'))
+  assert('T14: judgment__outline no longer renders (pain profile)', !html.includes('judgment__outline'))
+  assert('T23: "1분 디브리핑" disclosure still renders (pain profile)', html.includes('1분 디브리핑'))
+  assert('T23: "학습 케이스" toggle still renders (pain profile)', html.includes('학습 케이스'))
+  assert('T23: 객관적 근력저하 echo still renders (pain profile, LBP fixture)', html.includes('객관적 하지 근력저하'))
 }
 
 // 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 2번 —
@@ -3415,20 +3443,22 @@ function detailsRange(html, classMarker) {
 // have): the "명리" group is GONE (its accordion was removed in 4.1-B,
 // §16.3) -- there is no longer a group by that name to assert into the
 // list, and no representative field (사주 기둥 grid) to check for it
-// either. The "명리·감사 기록" group survives 4.1-B (it never held Myungri
-// input -- see JudgmentPanel) and is checked below unchanged for now; its
-// rename to "디브리핑·학습 기록" is a 4.1-C change, made in a later commit.
+// either. The former "명리·감사 기록" group is renamed "디브리핑·학습
+// 기록" (4.1-C, §16.4) -- its representative field also changes: 핵심
+// 선천 특징 (the field this used to check) is itself removed by 4.1-C
+// (§16.1), so "1분 디브리핑" (still rendered -- T23) stands in for it.
 {
   const html = renderDoctorView('여성 건강 주호소')
-  const groups = ['문진 원본', '약물·병력', '여성 안전', '검사자료', '이전 방문 원문', '명리·감사 기록', '원본 JSON']
+  const groups = ['문진 원본', '약물·병력', '여성 안전', '검사자료', '이전 방문 원문', '디브리핑·학습 기록', '원본 JSON']
   for (const g of groups) {
     assert(`metric: 기록 필드 접근 불가 0 -- 참고 화면에 "${g}" 아코디언 그룹이 렌더된다`, html.includes(g))
   }
   assert('T6 companion: metric fixture no longer offers a "명리" 아코디언 그룹', !html.includes('명리 검토'))
+  assert('T18: metric fixture no longer has a group named "명리·감사 기록" (renamed)', !html.includes('명리·감사 기록'))
   // 그룹 프레임만이 아니라 그 안의 실제 값도 도달 가능해야 한다 -- 각
   // 그룹을 대표하는 실제 필드/값 하나씩.
   assert('metric: 기록 필드 접근 불가 0 -- 여성 안전 그룹 안의 WOMEN_SAFETY_01 원본 응답이 렌더된다', html.includes('환자가 답한 것 (WOMEN_SAFETY_01)'))
-  assert('metric: 기록 필드 접근 불가 0 -- 명리·감사 기록 그룹 안의 JudgmentPanel 핵심 필드가 렌더된다', html.includes('핵심 선천 특징'))
+  assert('metric: 기록 필드 접근 불가 0 -- 디브리핑·학습 기록 그룹 안의 JudgmentPanel 필드(1분 디브리핑)가 렌더된다', html.includes('1분 디브리핑'))
   assert('metric: 기록 필드 접근 불가 0 -- 원본 JSON 그룹 안의 실제 payload 덤프가 렌더된다', html.includes('&quot;session_id&quot;'))
 }
 
@@ -3676,6 +3706,25 @@ function detailsRange(html, classMarker) {
   assert(
     'T5: judgmentRecordedFieldCount returns 0 when only the 4 deprecated fields are filled',
     judgmentRecordedFieldCount(t5Judgment) === 0,
+  )
+
+  // T15 (Batch 4.1-C §16.1/§16.6): judgmentRecordedFieldCount returns 0
+  // for a judgment where ONLY innate_features/symptom_links are filled --
+  // the badge no longer counts them either (their input was removed from
+  // JudgmentPanel, §16.1).
+  const t15Judgment = createEmptyJudgment({
+    session_id: 's1',
+    questionnaire_version: 'v1',
+    myungri_algorithm_version: 'v1',
+    myungri_library_version: 'v1',
+    myungri_status: 'resolved',
+    myungri_pending_approval: [],
+  })
+  t15Judgment.innate_features = ['간 기운이 강함', '체력 좋음']
+  t15Judgment.symptom_links = ['수면 문제']
+  assert(
+    'T15: judgmentRecordedFieldCount returns 0 when only innate_features/symptom_links are filled',
+    judgmentRecordedFieldCount(t15Judgment) === 0,
   )
 
   // C-5 (Opus closing review): EmrPreviewCard's "복사는 「다음」 레인의

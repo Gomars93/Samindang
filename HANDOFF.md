@@ -1,5 +1,105 @@
 # Current Handoff
 
+## ✅ 2026-09-04 (최신 18): Batch 4.1-D 구현 완료(Sonnet) — 1분 디브리핑/학습 케이스/JudgmentPanel 제거, Opus closing 재검수 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `d4f4f21`(+ 이
+문서 커밋, 이전 HEAD `93141cd`는 §17 설계 문서화 커밋). PR 미생성(운영
+방침). main merge는 PO 명시 승인.
+
+### 왜 이 배치가 생겼나
+4.1-C 구현 검증 중 **렌더된 화면을 직접 읽다가** 발견: `1분 디브리핑`의
+4문항(`DEBRIEF_QUESTIONS`)이 **전부 사주 질문**이고, 4.1-A가 지운
+`saju_only_prediction`/`revised_after_exam`/`final_treatment_axis`/
+`prescription_direction` 4필드와 **내용이 사실상 동일**했다. 즉 4.1-A는
+절반만 수행된 상태였고, §16.6의 T23이 그 상태를 "still renders"로 못
+박고 있었다(설계 문서 §17.0 참고, Fable 재설계).
+
+### 한 일
+설계 문서 §17 전체를 그대로 실행.
+
+1. **`1분 디브리핑`(디스클로저 전체) + `학습 케이스`(디스클로저 전체)를
+   `JudgmentPanel.tsx`에서 제거.** 그 결과 이 컴포넌트에 편집 가능한
+   필드가 0개가 됨(안전 소견 2개는 이미 이전 배치부터 읽기 전용 echo였고,
+   그 echo도 `ObjectiveExamFindingsCard`와 완전 중복이었다) →
+   **`JudgmentPanel` 컴포넌트 자체와 파일(`src/doctor/JudgmentPanel.tsx`)을
+   통째로 삭제.**
+2. `DoctorView.tsx`: `<ReferenceAccordion title="디브리핑·학습 기록">` +
+   `<JudgmentPanel .../>` 렌더 지점(그 인라인 `onSave` 콜백 포함) 전체
+   제거. 그 아코디언의 유일한 호출자였던 `judgmentRecordedFieldCount`
+   함수도 제거. `JudgmentPanel` import 제거 + 파일 전체를 훑어 남은 모든
+   `JudgmentPanel` 언급(주석 10여 곳)을 정정(더 이상 사실이 아니게 된
+   서술을 고치거나, 삭제된 컴포넌트를 가리키지 않게 재작성).
+3. `judgment.ts`: 타입은 전부 유지(`debrief`, `learning_case`,
+   `DebriefAnswers`, `DEBRIEF_QUESTIONS` 상수, `validateJudgment`,
+   `finalizeJudgment`, `createEmptyJudgment` 기본값) — deprecated 주석만
+   추가. **설계에 없던 발견**: `ObjectiveExamFindingsCard.tsx`가
+   `LBP_MOTOR_DEFICIT_OPTIONS`/`SHOULDER_CUFF_WEAKNESS_OPTIONS`를
+   `JudgmentPanel.tsx`에서 **직접 import**하고 있었다 — 그 파일을 그냥
+   지웠으면 §17.3이 지키려던 안전 편집 경로(`ObjectiveExamFindingsCard`)
+   자체가 빌드조차 안 되는 회귀였을 것. 두 상수를 `judgment.ts`(React 없는
+   순수 모듈, 원래도 두 파일이 같이 의존하던 곳)로 옮기고
+   `ObjectiveExamFindingsCard.tsx`의 import를 그곳으로 갱신해 해결.
+
+### 안전 경로(§17.3) 확인
+`lbp_objective_motor_deficit`/`shoulder_objective_cuff_weakness`는
+`ObjectiveExamFindingsCard.tsx`가 자체 즉시 저장(`onSave` →
+`DoctorView.tsx`의 `handleSaveObjectiveExamField` → `saveJudgment`, 409
+재시드 포함)으로 계속 처리한다 — 코드로 직접 확인:
+`DoctorView.tsx:4310`의 `onSaveObjectiveExam={... handleSaveObjectiveExamField}`
+→ `DoctorWorkspace.tsx:593`의 `<ObjectiveExamFindingsCard onSave={onSaveObjectiveExam}>`.
+`DoctorTokenSetup`도 다른 4곳에서 렌더돼 인증 복구 경로가 끊기지 않음(설계
+문서 §17.2에 이미 확인된 대로).
+
+### FROZEN + zero-diff 확인
+`git status --short server/ index.html src/App.tsx tests/server.spec.mjs
+src/spec/ "tablet core/"` → **출력 없음**(zero-diff).
+
+### 테스트
+- §16.6 T23을 **반전**(단순 삭제 아님, §17.5) — "still renders"였던
+  1분 디브리핑/학습 케이스/기록 버튼 단언을 "no longer renders"로.
+- **T24~T28 신규**(제거 단언, 렌더된 html 대상, 초진/pain·한약/herbal·mixed
+  세 프로필 전부 순회 — 재진은 DoctorView가 방문 횟수로 분기하지 않아
+  별도 렌더 경로/fixture가 없으므로 pain 프로필이 대신함, 보고에 명시):
+  T24(1분 디브리핑 미노출) / T25(`DEBRIEF_QUESTIONS` 4문항 문자열 자체가
+  `judgment.ts`에서 직접 import되어 순회 검사됨, 하드코딩 아님) /
+  T26(학습 케이스·★ 표시됨 미노출) / T27(디브리핑·학습 기록 아코디언·
+  원장 판단 기록 섹션 미노출) / T28(전 프로필에서 사주·명리 문자열 0회).
+  **T24~T28 전부 mutation 검증 완료**(제거를 되돌려 각 단언이 실제로
+  실패하는 것을 확인 후 원복 — 실패 메시지는 이번 세션 보고 참고).
+- `doctor-reset-key.spec.mjs`/`save-conflict.spec.mjs`가 `JudgmentPanel`
+  셀렉터·번들을 직접 쓰고 있어(총 12곳 이상) 그대로 뒀으면 파일을 읽는
+  순간 `fs.readFileSync` ENOENT로 **테스트 스위트 전체가 크래시**했을
+  자리였다 — 전부 "그 성질을 검증하던 subject가 사라졌다"는 구조적 마커로
+  교체하고, 각각 (a) 이미 존재하는 `ObjectiveExamFindingsCard` HIGH-2
+  테스트로 옮겨졌는지 또는 (b) 그 성질 자체가 새 설계엔 없는지(예:
+  `ObjectiveExamFindingsCard`는 draft/버전동기화 effect가 아예 없음)를
+  표로 남김. `package.json`의 `test:doctor-reset-key`가 더 이상 존재하지
+  않는 `JudgmentPanel.tsx`를 esbuild하던 것도 제거.
+- `doctor.spec.mjs`의 `judgmentRecordedFieldCount` 관련 T5/T15, resetKey
+  중복-수신 카운트, showLbpExam/showShoulderExam 위치(DoctorView →
+  DoctorWorkspace로 재anchor) 등 총 10여 개 기존 단언을 새 사실에 맞게
+  갱신(지우지 않음).
+- `npm run build` **EXIT=0**. `npm run test:doctor`/`test:doctor-reset-key`/
+  `test:doctor-workspace`/`test:save-conflict` 개별 실행 **전부 0 failed**.
+  `npm run test:all` 2회 실행 중 1회, FROZEN이며 이 배치와 무관한
+  `tests/server.spec.mjs`의 "phone digits from the canary submission leak"
+  단언이 실패 — `tests/server.spec.mjs`를 단독 4회 재실행(그중 1회는
+  전체 스위트 재실행 포함) 전부 통과해 기존에 존재하던 flaky 테스트로
+  판단(이 배치가 만든 회귀 아님, 코드 zero-diff로 확인됨). 이번 세션의
+  최종 `npm run test:all` 실행은 EXIT=0.
+
+### 다음 행동
+**Opus closing 재검수 대기** → 통과 시 Batch 4(+4.1 전체) 게이트 CLOSED.
+그 다음은 "최신 14"의 4~6번(실제 환자 파일럿 등)과 동일. 재검수 시
+확인 권장: (1) 위 §17.3 안전 경로 재확인, (2) `judgment.ts`로 옮겨진
+`LBP_MOTOR_DEFICIT_OPTIONS`/`SHOULDER_CUFF_WEAKNESS_OPTIONS`가 값
+변경 없이 그대로인지, (3) `tests/server.spec.mjs`의 flaky 실패가 이번
+세션이 만든 것이 아님을 별도로 재확인하고 싶다면 `npm run test:server`를
+단독으로 여러 번 더 돌려볼 것.
+
+---
+
+
 ## ✅ 2026-09-04 (최신 17): Batch 4.1-B/4.1-C 구현 완료(Sonnet) — Opus closing 재검수 대기
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `9f02d3f`(+ 이 문서

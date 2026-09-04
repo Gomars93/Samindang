@@ -1,5 +1,93 @@
 # Current Handoff
 
+## ⚠️ 2026-09-04 (최신 19): Batch 4+4.1 closing 재검수 판정 FAIL → 게이트 차단 결함 5건 수정 완료(Sonnet), Opus 재검수 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, 이 문서 커밋 기준
+HEAD는 이 커밋 직전 `289a800`(Opus closing 재검수 문서, 판정 FAIL). PR 미생성
+(운영 방침 — 이 세션은 PR을 만들지 않는다). main merge는 PO 명시 승인.
+
+### 무엇이 있었나
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md`(Opus)가 4.1-A~D 전체 +
+Batch 4 원본을 재검수하고 **판정 FAIL**을 냈다. **프로덕션 코드는 옳다**(임상
+안전 A-1~A-5 위반 0건, FROZEN zero-diff) — FAIL인 것은 **그 사실을 지키는
+테스트에 구멍이 있었다는 것**. 변이 4개(m6/a4/m7/c9)가 `npm run test:all`
+전체를 통과했고, 그중 2개(m6/a4)는 `O | 객관적 소견` 안전 경계 위였다. 자세한
+근거는 위 문서 및 `DECISIONS.md`의 "Batch 4+4.1 closing 재검수 판정 FAIL, 테스트
+규약 2 확장" 항목 참고.
+
+### 한 일 (이 세션, Sonnet)
+검수의 "파일럿 착수 전 반드시" 목록 6건 중 1~5번을 구현. **`src/` 아래
+프로덕션 코드는 한 줄도 바꾸지 않았다**(`git diff --stat src/` 출력 없음으로
+매 단계 확인) — 6번(규약 2 확장안 문서화)은 검수 커밋과 같이 이미
+`DECISIONS.md`에 기록되어 있었음을 확인.
+
+- **H-1** (`tests/lbp-working-hypothesis.spec.mjs`): `filled` fixture의 exam
+  항목 `reasonFacts`를 환자 자가보고 카나리아로 채움 + 별도 격리 블록(실제
+  검사 소견은 `O`에 정당히 남으면서 `reasonFacts` 카나리아는 어디에도
+  나타나지 않음을 증명) 신규 2개 단언.
+- **H-2**: `lbpObjectiveMotorDeficit: 'UNKNOWN'`(아직 확인 못함, 원장 미평가)
+  케이스에 `O:`(bare) 신규 단언 — "미평가"가 "없음"으로 기록되지 않음을 확인.
+- **M-1**: `filled`의 재검 항목 `previous`를 오늘 `result`(POSITIVE)와 다른
+  값(NEGATIVE)으로 채움 — rule 4(과거 값을 오늘 결과로 출력 금지)에 실제
+  커버리지 생김.
+- **M-2** (`tests/save-conflict.spec.mjs`): `ObjectiveExamFindingsCard.tsx:283`
+  의 인증만료 인라인 복구 렌더(`{authError && <DoctorTokenSetup .../>}`)에
+  소스 단언 신규 추가 + 매핑 표의 "not retested here" 행(**허위 주장**이었음
+  — 실제로는 그 성질을 지키는 단언이 저장소 어디에도 없었다)을 새 테스트
+  이름으로 교체.
+- **M-3** (`tests/server.spec.mjs`): PHI 카나리아 단언(`!auditRaw.includes
+  ('9999')`)이 감사 로그 전체 텍스트를 스캔해 랜덤 UUID(`submission_id`/
+  `visit_id`, 둘 다 `crypto.randomUUID()` hex) 우연 충돌로 0.90%/run 오경보를
+  내던 것(원인 기규명, 이 검수 문서에서 확정)을, **그 두 id 필드만 제외한
+  텍스트**를 스캔하도록 좁혀 수정. **`server/**`는 한 줄도 건드리지 않았다.**
+
+### mutation 재검증 (검수가 살아남았다고 보고한 바로 그 변이 4개, 전부 재현→사망→원복 확인)
+
+| 변이 | 무엇을 다시 넣었나 | 죽은 단언 / 실패 메시지 |
+|---|---|---|
+| m6 | `examFindingsLines`의 `.map()`에서 `reasonFacts` 텍스트를 덧붙임 | T11(`filled` O 줄 exact-match) — `FAIL: T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources...` |
+| a4 | `LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL`에 `UNKNOWN: '없음'` 추가 | H-2 신규 단언 — `FAIL: H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare` |
+| m7 | `reassessmentFindingsLines`가 `i.result.status` 대신 `i.previous.status` 출력 | T11(동일 exact-match, previous/result 스왑도 같은 단언이 잡음) |
+| c9 | `ObjectiveExamFindingsCard.tsx:283`의 `{authError && <DoctorTokenSetup .../>}` 삭제 | M-2 신규 단언 — `AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\{authError && <DoctorTokenSetup .../ }/` |
+
+4개 전부 확인 후 즉시 원복, 매번 `git diff --stat src/` 0 재확인(최종적으로도 0).
+
+M-3은 **반대 방향**도 확인했다: `tests/server.spec.mjs`에 임시 프로브(감사
+로그 라인 배열에 `leaked_note: '...9999...'`라는 **비-id 필드** 카나리아를
+push)를 넣고 실행 → 새 단언이 그대로 FAIL함을 확인(좁힌 스캔이 진짜 누출은
+여전히 잡는다) → 프로브 원복. `npm run test:server` **12회 연속 EXIT=0**,
+오경보 0회(기존 실측 0.90%/run과 비교해 유의미한 표본).
+
+### 검증
+- `npm run build` EXIT=0.
+- `npm run test:all` **2회 연속 EXIT=0**, `OK:` 라인 4956개(기존 4952 + 신규
+  단언 4개 — H-1 격리 블록 2개, H-2 1개, M-2 1개; M-1/H-1 filled 수정 자체는
+  기존 단언 재사용이라 개수 불변).
+- FROZEN(`src/spec/**`, `index.html`, `src/App.tsx`, `server/**`,
+  `tablet core/**`) zero-diff — 이번엔 `tests/server.spec.mjs`가 의도적으로
+  변경됨(M-3, 검수 문서가 명시적으로 허용).
+- **`src/` 프로덕션 코드 diff 0** — `git diff --stat src/` 출력 없음.
+- 변경 파일은 `tests/lbp-working-hypothesis.spec.mjs` /
+  `tests/save-conflict.spec.mjs` / `tests/server.spec.mjs` 3개뿐.
+- 환자 개인정보 실제 값 없음 — 전부 합성 카나리아 문자열/구조 논의뿐.
+
+### Batch 4 게이트 상태
+**여전히 CLOSED가 아니다.** 이번 수정은 Sonnet 자가검증이고, 이 저장소의
+반복된 원칙(2.5b 교훈)대로 **자가검증은 게이트가 아니다**. 다음 단계는 **Opus
+delta 재검수** — 프로덕션 코드가 이번에도 불변이므로 closing review §8이 명시한
+대로 전체 재검수가 아니라 이 5건에 대한 delta(테스트 diff + 변이 사망 기록
+재현)만으로 충분하다.
+
+### 다음 행동
+1. **Opus delta 재검수** → 통과 시 Batch 4(+4.1 전체) 게이트 CLOSED.
+2. 게이트 CLOSED 후: **실제 환자 2~3명 파일럿** (여전히 최우선 — 지금까지 만든
+   것 중 환자로 검증된 것이 하나도 없다).
+3. 나중에 해도 되는 것(L-1~L-6, `emrSummary.ts` 삭제 여부)은 파일럿 이후로
+   미룬다 — 위 closing review 문서 §7 "나중에 해도 되는 것" 참고.
+
+---
+
+
 ## ✅ 2026-09-04 (최신 18): Batch 4.1-D 독립 검증 완료(Fable) — 46개 fixture 전수 렌더로 사주 잔존 0 확인
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `6ec5d07` + 이 문서

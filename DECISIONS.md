@@ -2605,3 +2605,59 @@ exact-match는 그 사실을 감춘다. 통과하는 초록색이 커버리지�
 - 나중에 해도 되는 것(L-1~L-6, `emrSummary.ts` 삭제)은 파일럿 이후로 미룬다.
   특히 **L-1 `revisitRecapText` 배선은 파일럿의 관찰 항목으로 삼는 것이 낫다** —
   재진 EMR에 경과 요약이 실제로 필요한지를 먼저 확인하고 붙인다.
+
+## 2026-09-04 — 게이트 차단 결함 5건(H-1/H-2/M-1/M-2/M-3) 수정 완료 (Sonnet) — Opus 재검수 대기
+
+### 한 일
+바로 위 항목이 요구한 §7 필수 6건 중 1~5번(테스트/문서 변경 6번째 "규약 2
+확장안"은 위 항목에 이미 기록됨)을 구현. **`src/` 프로덕션 코드는 한 줄도
+바꾸지 않았다** — `git diff --stat src/` 출력 없음으로 확인.
+
+- **H-1**: `tests/lbp-working-hypothesis.spec.mjs`의 `filled` fixture 중
+  exam 항목(`e1`)의 `reasonFacts`를 카나리아 문자열로 채움 + 별도 격리
+  블록(exam 항목이 실제 상태로 `O`에 정당히 나타나면서도 `reasonFacts`
+  카나리아는 나타나지 않음을 증명) 신규 추가.
+- **H-2**: `lbpObjectiveMotorDeficit: 'UNKNOWN'` 케이스에 대해 `O:`(bare)
+  단언 신규 추가.
+- **M-1**: `filled`의 재검 항목(`r1`) `previous`를 오늘 `result`(POSITIVE)와
+  다른 값(NEGATIVE)으로 채움.
+- **M-2**: `ObjectiveExamFindingsCard.tsx:283`(`{authError &&
+  <DoctorTokenSetup .../>}`)에 대한 소스 단언 신규 추가 +
+  `save-conflict.spec.mjs` 매핑 표의 해당 행을 그 테스트 이름으로 교체(허위
+  "not retested here" 주장 정정).
+- **M-3**: `tests/server.spec.mjs`의 PHI 카나리아 단언을
+  `submission_id`/`visit_id`(둘 다 `randomUUID()` hex, 우연 충돌의 유일한
+  원인으로 이미 규명됨)를 제외한 텍스트만 스캔하도록 좁힘. **`server/**`는
+  건드리지 않았다**(zero-diff 확인).
+
+### mutation 재검증 (전부 완료)
+검수가 보고한 변이(m6/a4/m7/c9) 각각을 실제로 다시 넣어 **이번엔 죽는 것을
+확인**하고 원복(`git diff --stat src/` 매번 0으로 재확인):
+
+| 변이 | 죽은 단언 | 실패 메시지 |
+|---|---|---|
+| m6 | T11(`filled` O 줄 exact-match) | `FAIL: T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources...` |
+| a4 | H-2 신규 단언 | `FAIL: H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare` |
+| m7 | T11(동일, `previous`/`result` 스왑도 같은 exact-match가 잡음) | 위 m6과 동일 실패 메시지 |
+| c9 | M-2 신규 단언 | `AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\{authError && <DoctorTokenSetup .../ }/` |
+
+M-3은 반대 방향(진짜 누출은 여전히 잡히는가)도 확인: 감사 로그 라인 배열에
+`leaked_note: '...9999...'`(비-id 필드)를 심는 임시 프로브를
+`tests/server.spec.mjs`에 넣어 실행 → 새 단언이 그대로 FAIL(`FAIL: audit log:
+no phone digits from the canary submission leak in (id fields excluded...)`) →
+프로브 원복. `npm run test:server` 12회 연속 EXIT=0, 오경보 0회.
+
+### 검증
+- `npm run build` EXIT=0.
+- `npm run test:all` 2회 연속 EXIT=0, 4956 `OK:` (기존 4952 + 신규 단언 4개).
+- FROZEN(`src/spec/**`, `index.html`, `src/App.tsx`, `server/**`,
+  `tablet core/**`) zero-diff — `tests/server.spec.mjs`만 의도적으로 변경.
+- `src/` 프로덕션 코드 diff **0**(재확인 완료).
+- 환자 개인정보 실제 값 없음 — 전부 합성 카나리아 문자열.
+
+### Consequences
+- 위 6건(§7 필수) 중 1~5번 구현 완료, 6번(규약 2 확장안 문서화)은 이미 직전
+  항목에 기록되어 있었음을 확인. **게이트는 여전히 CLOSED가 아니다** — Batch
+  4의 다른 배치와 동일하게, **Sonnet 자가검증은 게이트가 아니다**(2.5b 교훈).
+  다음 단계는 **Opus의 delta 재검수**(프로덕션 코드 불변이므로 전체 재검수가
+  아니라 이 5건에 대한 delta만으로 충분 — closing review §8 참고)이다.

@@ -463,3 +463,97 @@ chip 선택 → 시스템이 쉬운 말 초안 1문장 **제안** → 원장이 
   `patientCarePlanPreview.ts` 수정, FROZEN/서버/태블릿 변경, 새 문진.
 - Stop point: 환자 문장 자구가 확정 진단으로 읽힐 소지가 있으면 구현 중단하고
   `CLINICAL DECISION REQUIRED` 보고.
+
+---
+
+## 12. Batch 2.5d 브리프 — 가설 추정 근거 표시 (PO 요청 2026-09-04, Fable 설계)
+
+**PO 요청 원문**: "이학적 검사와 세부문진으로 추정된다 정도는 가능한 거 아냐?"
+**Fable 판단**: 가능하다. 이전의 "가설 엔진 = 과설계" 판정은 과했다. 근거는 §12.1.
+
+### 12.1 왜 이것이 새로운 임상 추론이 아닌가 (핵심 근거)
+
+Batch 1의 검사 제안 규칙을 다시 읽으면, **각 검사는 애초에 특정 패턴을 가리기 위해 제안된 것**이다. 즉 "어느 검사가 어느 질문에 답하는가"는 이미 결정되어 저장소에 있다:
+
+| Batch 1이 제안하는 검사 | 그 검사가 답하는 질문 = 5패턴 중 하나 |
+|---|---|
+| `lbp_exam_neurodynamic` 하지직거상/슬럼프 (다리 증상 YES일 때 제안) | 신경근 관여 |
+| `lbp_exam_walking_tolerance` 보행 가능시간·거리 (LBP_08 YES일 때 제안) | 보행·기립 하지 패턴 |
+| `lbp_exam_hip_screen` 고관절 빠른 선별 | 고관절 기여 |
+| `lbp_exam_sij_screen` 천장관절 기여 확인 | 천장관절 기여 |
+| `lbp_exam_target_function_reproduction` 목표 동작 재현 + 허리 움직임 반응 | 허리 움직임 관련 |
+
+**따라서 2.5d가 하는 일은 "질문 옆에 그 답을 갖다 놓는 것"뿐이다.** 새 연결을 창작하지 않는다. 이 대응표에 없는 규칙은 만들지 않는다.
+
+### 12.2 데이터 — **저장하는 것이 없다**
+
+새 필드 없음. `WorkspaceState`/`VisitWorkspaceState` 변경 없음. 스키마 버전 변경 없음. 근거는 화면을 그릴 때 계산해서 보여줄 뿐이고, **기록되는 것은 여전히 원장이 찍은 지지 수준 하나뿐**이다.
+
+신규 순수 모듈 `src/doctor/workspace/lbpHypothesisEvidence.ts`:
+
+```
+deriveLbpHypothesisEvidence({ payload, flags, examSuggestions, directionalResponse })
+  -> Record<PatternId, { supporting: string[]; opposing: string[] }>
+```
+
+### 12.3 근거 판정 규칙 (전부 기존 값의 직접 대응)
+
+**검사 결과에서** — 6상태 중 두 개만 근거가 된다:
+- `POSITIVE`(양성/이상 소견) → **뒷받침**
+- `NEGATIVE`(음성/정상) → **반대**
+- `UNCLEAR` / `LIMITED` / `NOT_PERFORMED` / `NOT_YET_CHECKED` → **어느 쪽도 아님, 표시하지 않음**
+
+미확인을 음성으로 취급하지 않는다는 프로젝트 원칙 그대로다. `LIMITED`/`NOT_PERFORMED`를 여기 표시하지 않는 것은 정보를 숨기는 게 아니다 — 바로 위 확인 항목 목록이 이미 모든 상태를 그대로 보여주고 있고, 이 카드는 검사 기록부가 아니라 판단 보조이기 때문이다.
+
+**문진·계산값에서** (출처를 `(문진)`으로 명시):
+- FROZEN `flags.leg_symptom_present === 'YES'` → 신경근 관여 **뒷받침**: `다리 증상 있음(문진)`
+- `responses.modules.lbp.claudication_walking === 'YES'` → 보행·기립 하지 패턴 **뒷받침**: `걸을수록 다리 증상 악화(문진)`
+- `UNKNOWN`/무응답은 어느 쪽도 아님
+
+**허리 움직임 반응에서**:
+- `FLEXION_FAVORABLE` / `EXTENSION_FAVORABLE` → 허리 움직임 관련 **뒷받침** (기존 라벨 그대로)
+- `DISTAL_WORSENING` → 신경근 관여 **뒷받침**
+- `NO_CLEAR_DIRECTION` → 허리 움직임 관련 **반대**
+- `NOT_ASSESSED` / `UNCLEAR` → 어느 쪽도 아님
+
+**표시 문자열은 전부 기존 상수를 재사용한다** — 검사 제목(`lbpExamSuggestions.ts`), 상태 라벨(`EXAM_CHECK_STATUS_LABEL`), 방향 반응 라벨(`LBP_DIRECTIONAL_RESPONSE_OPTIONS`). 새 임상 용어를 만들지 않는다.
+
+**안전 우선**: `flags.lbp_safety_status !== 'CLEAR'`이면 근거를 **아무것도 표시하지 않는다**(Batch 1의 검사 제안이 같은 조건에서 `[]`를 반환하는 것과 동일한 규칙). 안전 확인이 먼저다.
+
+### 12.4 UI — 기존 카드 안에 두 줄 추가
+
+`LbpWorkingHypothesisCard`의 각 패턴 행에서, chip 줄 **위**에:
+
+```
+신경근 관여
+  뒷받침  하지직거상 또는 슬럼프검사: 양성/이상 소견 · 다리 증상 있음(문진)
+  반대    하지 신경학적 기본검사(감각·반사): 음성/정상
+  [가능성 높음] [고려] [가능성 낮음] [미판단]
+```
+
+- 근거가 없는 패턴은 두 줄 다 생략 — 빈 줄이 생기지 않는다.
+- **지지 수준은 절대 자동으로 정해지지 않는다.** 근거는 표시일 뿐이고, chip은 원장이 누르기 전까지 `미판단`이다.
+- 배지·점수·순위·정렬 없음. 패턴 순서는 지금의 고정 순서 그대로.
+- 카드 hint에 한 줄 추가: `근거는 원장님이 기록한 검사 결과와 문진 답변을 그대로 옮긴 것입니다. 시스템이 가능성을 판단하지 않습니다.`
+
+### 12.5 테스트 (통과 전 종료 금지)
+
+신규 `tests/lbp-hypothesis-evidence.spec.mjs` + `test:lbp-hypothesis-evidence`(`test:all` 합류):
+
+- 6상태 각각에 대해 `POSITIVE`만 뒷받침, `NEGATIVE`만 반대, 나머지 4개는 **어느 목록에도 없음**(6개 전부 개별 단언 — `LIMITED`/`NOT_PERFORMED`가 조용히 근거가 되면 실패).
+- `leg_symptom_present`가 `UNKNOWN`/`NO`일 때 신경근 관여에 문진 근거 없음.
+- `claudication_walking` 무응답/`UNKNOWN`일 때 보행 패턴에 근거 없음.
+- 방향 반응 6값 각각의 매핑, `NOT_ASSESSED`/`UNCLEAR`는 양쪽 다 없음.
+- `lbp_safety_status`가 `REVIEW_REQUIRED`/`URGENT_REVIEW`이면 **전 패턴 근거 0개**.
+- 손상 입력(flags 비객체, examSuggestions 비배열, 원소 null, status 미지 문자열)에서 throw 없이 빈 근거.
+- **표시 문자열이 기존 상수와 일치**: 근거 문자열에 등장하는 검사 제목·상태 라벨이 `lbpExamSuggestions.ts`/`provenance.ts`의 상수와 정확히 같음(새 용어 창작 방지).
+- 카드 렌더: 근거 있는 패턴에만 두 줄이 나타나고, **근거가 있어도 `aria-pressed="true"`인 chip은 0개**(자동 선택 방지 — 이 단언이 이 batch의 핵심 보호장치).
+- 뮤테이션 저항 필수 5종: (a) `LIMITED`를 뒷받침에 포함, (b) `NOT_YET_CHECKED`를 반대에 포함, (c) 안전 게이트 제거, (d) 근거가 있을 때 chip을 자동 선택, (e) 대응표에 없는 새 연결 추가.
+- `npx tsc -b`, `npm run build`, `npm run test:all` PASS. FROZEN·서버·태블릿·`patientCarePlanPreview.ts` zero-diff.
+
+### 12.6 금지
+- 새 저장 필드, 스키마 변경, 점수·가중치·threshold·순위·정렬, 지지 수준 자동 설정, §12.1 대응표에 없는 연결 창작, 진단명, 가설→운동추천 연결, 환자 안내문 자동 변경, FROZEN·서버·태블릿 변경.
+- **Stop point**: §12.3의 어떤 규칙이든 기존 값의 직접 대응을 넘어 새 임상 판단을 만든다고 판단되면 구현을 멈추고 `CLINICAL DECISION REQUIRED`로 보고한다.
+
+### 12.7 PO 결정 대기 1건
+**검사 전, 문진 근거만으로도 표시할지.** Fable 권고: **표시한다** — 근거에 `(문진)`이 명시되어 검사를 안 했다는 사실이 드러나고, 원장이 어느 방향으로 검사를 집중할지 판단하는 데 도움이 된다. 반대 논거: 검사 전에 화면이 먼저 방향을 제시하는 것이 원장 판단에 닻을 내릴 수 있다.

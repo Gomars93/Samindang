@@ -2,6 +2,12 @@
 
 # 판정: **FAIL** — 게이트를 닫지 않는다.
 
+> **판정 이력.** §1~§8은 1차 closing 재검수(`61dca0a~1..bf7f8b7`, 판정 FAIL)다.
+> 그 FAIL에 대한 수정(`289a800..2e0a8a0`, 테스트/문서만)의 **delta 재검수는
+> §9**에 있다 — **판정 역시 FAIL이며, 게이트는 여전히 CLOSED가 아니다.**
+> 기록된 변이 4개(m6/a4/m7/c9)는 이번엔 전부 죽지만, 같은 계약을 침해하는
+> 변종 4개가 새로 생존한다(§9.2.2, 신규 결함 H-3/M-4/M-5).
+
 **작성일:** 2026-09-04
 **작성 역할:** Opus (Tech Lead / 임상 권위자 / 독립 검수자)
 **검수 대상:** `61dca0a~1..bf7f8b7` (18 커밋, 26파일, +4841/−1324)
@@ -797,3 +803,393 @@ Monte Carlo: P(a 28-UUID audit log contains "9999") = 0.00897 (1793/200000)
 - Sonnet 자가검증도 Fable 독립검증도 게이트가 아니라는 원칙(2.5b 교훈)은
   이번에도 유효했다. **두 검증 모두 통과한 상태에서 안전 경계 위의 변이 2개가
   살아 있었다.**
+
+---
+
+## 9. Delta 재검수 (2026-09-04)
+
+# 판정: **FAIL** — Batch 4 + 4.1 게이트를 닫지 않는다.
+
+**검수 대상:** `289a800..HEAD`(현 HEAD `2e0a8a0`), 6파일 +324/−8.
+**검수 역할:** Opus (독립 검수자). **코드는 한 줄도 고치지 않았다** — 변이는 전부
+스크립트로 적용 후 무조건 원복, 매번 `git status --short` 빈 출력 확인.
+
+### 9.0 판정 요지
+
+**§7이 요구한 5건은 형식적으로 전부 이행됐고, 기록된 변이 4개(m6/a4/m7/c9)는
+이번엔 전부 죽는다.** 그 사실은 아래 §9.2에 실패 메시지 원문과 함께 기록했다.
+프로덕션 코드는 `src/` zero-diff — 직전 검수의 제품 PASS 판정은 그대로 유효하다.
+
+**그런데도 FAIL인 이유:** 수정이 **"그 변이 하나"만 죽이는 좁은 단언**이었다.
+같은 계약을 침해하는 변종을 직접 고안해 넣었더니 **4개가 전체 스위트를
+통과했고, 그중 2개는 다시 `O` 경계 위**다.
+
+| 변종 | 무엇을 하는가 | 결과 |
+|---|---|---|
+| **v2** | `reasonFacts` 중 `provenance === 'DERIVED'`인 것만 `O`에 덧붙임 | **SURVIVED (`test:all`)** |
+| **v3** | **아직 시행 안 한**(`NOT_YET_CHECKED`) 검사 항목의 `reasonFacts`를 `O`에 새 절로 덧붙임 | **SURVIVED (`test:all`)** |
+| **v6** | 재검 항목의 오늘 결과가 비어 있으면 `previous`를 대신 출력 | **SURVIVED (`test:all`)** |
+| **v9** | 렌더 줄은 그대로 두고 `result.kind === 'auth'` 분기가 `authError`를 켜지 않게 함 | **SURVIVED (`test:all`)** |
+
+v2/v3는 **환자 유래 텍스트가 `O | 객관적 소견`에 도달하는 경로**다. 특히 **v3는
+프로덕션의 기본 상태**를 겨냥한다 — 생성된 모든 검사 항목은
+`NOT_YET_CHECKED`에서 시작하고(`emptyExamResult()`,
+`tests/lbp-exam-suggestions.spec.mjs:339`), 화면은 그 항목에 대해 이미
+`왜 확인?`으로 `reasonFacts`를 노출한다. **이번 fixture는 드문 상태(기록 완료된
+검사)만 덮고, 흔한 상태(미시행 검사)를 비워 뒀다.** 직전 검수가 H-1의 동기로
+적은 시나리오("이 검사를 왜 하는가를 EMR에 함께 남기자는 요청") 그 자체다.
+
+v6은 **직전 검수 §1의 M-1 본문이 글자 그대로 서술한 변이**다("`result`가 아직
+`NOT_YET_CHECKED`이면 `previous.status`를 대신 출력하도록 바꿈"). 새 fixture는
+오늘 `result`를 `POSITIVE`로 채웠기 때문에 그 fallback이 **발화조차 하지
+않는다.** 죽은 것은 §7 표에 적힌 무조건 스왑 형태뿐이다.
+
+**이번 사고는 직전 검수가 지적한 것과 똑같은 형태다.** 규약 2 확장("하위 필드를
+비워 두지 않는다")을 지켜 `reasonFacts`/`previous`를 채웠지만, **채운 값이 그
+필드가 가질 수 있는 모양 중 하나뿐**이었다 — `PATIENT_FACT` 1개, 기록 완료된
+결과 1개. 규약이 한 단계 더 아래에서 다시 깨졌다. 이것이 다섯 번째 반복이다.
+
+**남은 작업은 여전히 작다** — fixture 항목 2~3개와 단언 3~4개, 프로덕션 코드
+변경 0.
+
+---
+
+### 9.1 범위 확인 (요구 항목 5)
+
+```
+$ git diff --stat 289a800..HEAD -- 'src/**' 'index.html' 'server/**' 'tablet core/**'
+(출력 없음)
+```
+`src/` **zero-diff 사실이다.** 변경 파일은 `tests/` 3개 + `DECISIONS.md` +
+`HANDOFF.md` + `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`뿐이며
+`.data/`·`.env` 없음. 범위 초과 변경은 찾지 못했다.
+
+**빌드·스위트(실측):**
+```
+$ npm run test:all   (1회차)  EXIT=0   "OK: " 4956줄
+$ npm run test:all   (2회차)  EXIT=0   "OK: " 4956줄   ← 완전 동일, 비결정성 없음
+$ npm run build                EXIT=0  (tsc -b + vite build, 1.95s)
+```
+4956 = 직전 4952 + 신규 단언 4개. 구현자 보고와 일치한다.
+
+---
+
+### 9.2 변이 테스트 전체 기록
+
+모든 변이: 스크립트 적용 → 스위트 실행 → **무조건 원복** → `git status --short`
+빈 출력 확인. 최종 상태 clean, 임시 worktree 없음, 임시 파일 없음.
+
+#### 9.2.1 직전 검수가 살아남았다고 기록한 변이 4개 — **4/4 KILLED**
+
+| # | 변이 | 결과 | 죽인 단언 / 실패 메시지 원문 |
+|---|---|---|---|
+| **m6** | `examFindingsLines`의 `.map()` 반환에 `reasonFacts` 텍스트를 덧붙임 | **KILLED** | `Error: FAIL: T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources (검사 결과/허리 움직임 반응/오늘 재검 소견/객관적 근력저하) and nothing patient-reported` |
+| **a4** | `LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL`에 `UNKNOWN: '없음'` 추가 | **KILLED** | `Error: FAIL: H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare` |
+| **m7** | `reassessmentFindingsLines`가 `i.result.status` 대신 `i.previous?.status`를 출력 | **KILLED** | m6과 동일(T11 exact-match) |
+| **c9** | `ObjectiveExamFindingsCard.tsx:283`의 `{authError && <DoctorTokenSetup … />}` 한 줄 삭제 | **KILLED** | `AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\{authError && <DoctorTokenSetup authFailed onSet=\{\(\) => setAuthError\(false\)\} \/>\}/` |
+
+#### 9.2.2 변종 변이 — **10개 중 6 KILLED / 4 SURVIVED**
+
+`SURVIVED` 판정은 전부 **`npm run test:all` 전체**로 재확인했다(대상 스위트만이
+아니라 전체 통과를 확인). `KILLED`는 해당 스위트에서의 사망으로 충분하다.
+
+| # | 계열 | 변종 내용 | 결과 | 죽인 단언 / 비고 |
+|---|---|---|---|---|
+| v1 | m6 | `reasonFacts` 전부를 **라벨 없이 별도 `O` 절**로 push | **KILLED** | T11 exact-match |
+| **v2** | m6 | `provenance === 'DERIVED'`인 `reasonFacts`만 `검사 결과` 절에 덧붙임 | **SURVIVED (test:all)** | → **H-3** |
+| **v3** | m6 | `NOT_YET_CHECKED` 항목의 `reasonFacts`를 `확인 필요 사유:` 절로 `O`에 push | **SURVIVED (test:all)** | → **H-3** |
+| v4 | a4 | 라벨표는 그대로 두고 `oParts.push(\`객관적 근력저하: ${motorDeficitLabel ?? '없음'}\`)`로 fallback | **KILLED** | `Error: FAIL: H-2: rule 2 -- 'UNKNOWN' …` |
+| v5 | a4 | `ExamCheckStatus`의 다른 미평가 상태(`NOT_YET_CHECKED`)를 `음성/정상`으로 매핑 | **KILLED** | `AssertionError: no exam-findings clause at all when every exam is NOT_YET_CHECKED` (`tests/doctor-workspace.spec.mjs:478`) — 이 경계는 이 배치 밖에서 이미 잠겨 있다 |
+| **v6** | m7 | 오늘 `result`가 `NOT_YET_CHECKED`일 때만 `previous.status`를 대신 출력(= 직전 검수 §1 M-1이 서술한 형태) | **SURVIVED (test:all)** | → **M-4** |
+| v7 | m7 | `previous`를 `O`가 아닌 **`A` 키**로 유출(`재검 소견:` 절) | **KILLED** | `Error: FAIL: §14.1 filled example: A carries 최종 임상 판단 + 치료 초점 (Batch 4.1-A: 원장 평가/치료·처방 방향 clauses removed)` |
+| v8 | c9 | 렌더는 남기되 `{false && authError && …}`로 무력화 | **KILLED** | c9와 동일 정규식 |
+| **v9** | c9 | 렌더 줄은 그대로, `result.kind === 'auth'` 분기가 `setAuthError(true)` 대신 `setAuthError(false)` | **SURVIVED (test:all)** | → **M-5** |
+| r1 | M-3 역방향 | `server/index.js`의 `SUBMISSION_CREATED` audit 호출에 실제 전화번호 값을 **비-id 필드(`status`)**로 실어 보냄 | **KILLED** | `Error: FAIL: audit log: no phone digits from the canary submission leak in (id fields excluded from the scan -- see DECISIONS.md 2026-09-04 M-3)` |
+| r2 | M-3 역방향 | 같은 값을 **`visit_id` 필드**에 실어 보냄 | **SURVIVED** | → **M-6**(가림 확인, 게이트 비차단) |
+
+#### 9.2.3 신규 단언의 비공허성 검증(별도 프로브)
+
+m6은 T11에서 먼저 죽기 때문에, **격리 H-1 블록의 단언이 스스로 값을 하는지**를
+따로 확인했다. T11과 H-1 양성 대조 단언을 임시로 무력화한 상태에서 m6을 적용:
+
+```
+Error: FAIL: H-1: reasonFacts' patient-self-report canary text never appears
+anywhere in the output, even though the item's own finding does
+```
+→ **격리 블록은 공허하지 않다.** (프로브는 즉시 원복, `git status` 빈 출력 확인.)
+
+---
+
+### 9.3 신규 결함
+
+| # | 심각도 | 항목 | 파일 |
+|---|---|---|---|
+| **H-3** | **HIGH** | H-1 수정이 `reasonFacts`의 **한 가지 모양만** 잠갔다 — `DERIVED` 사실(v2)과 **미시행 항목**의 사실(v3)이 `O`로 새는 변이가 생존 | `tests/lbp-working-hypothesis.spec.mjs:600, 777-800` |
+| **M-4** | MEDIUM | M-1 수정이 rule 4의 **무조건 스왑만** 잠갔다 — 오늘 결과가 빈칸일 때 `previous`를 끌어오는 형태(v6, M-1 본문이 서술한 바로 그 형태)가 생존 | `tests/lbp-working-hypothesis.spec.mjs:627` |
+| **M-5** | MEDIUM | M-2 수정이 **렌더 줄만** 잠갔다 — 그 줄을 켜는 트리거(`kind === 'auth'` → `setAuthError(true)`)를 지키는 단언이 없어 v9가 생존 | `src/doctor/ObjectiveExamFindingsCard.tsx:157`, `tests/save-conflict.spec.mjs:1144` |
+| **M-6** | MEDIUM(게이트 비차단) | M-3의 id 필드 **통째 제외**가 "id 필드에 PHI를 넣는" 변이 종류를 영구히 가린다(r2 생존) | `tests/server.spec.mjs:948-951` |
+| L-7 | LOW | `HANDOFF.md`의 "이 문서 커밋 기준 HEAD는 이 커밋 직전 `289a800`"이 실제와 두 커밋 어긋난다(직전 커밋은 `771d47e`) | `HANDOFF.md` |
+
+#### H-3 [HIGH] `reasonFacts` 잠금이 한 가지 모양뿐이다
+
+새 fixture는 `reasonFacts`를 **`{ text: <canary>, provenance: 'PATIENT_FACT' }`
+1개**로, 그리고 그 항목의 `result.status`를 **`NEGATIVE`(기록 완료)**로 채웠다.
+그 두 좌표를 벗어나면 커버리지가 다시 0이다.
+
+**(a) provenance 축 — v2.** `examSuggestion.ts:51`은 `reasonFacts`를 "patient/
+derived facts only"라고 정의하고, `provenance.ts`는 `DERIVED`를 "이미 승인·CLOSED
+된 코드가 태블릿 답변으로부터 계산한 것"으로 정의한다. 프로덕션에 실제 값이
+있다 — `lbpExamSuggestions.ts:172`
+`{ text: '양쪽 다리 증상(시스템 계산 — 신경학적 기저검사 필요)', provenance: 'DERIVED' }`.
+파일 헤더의 ONE ABSOLUTE RULE은 "Everything **derived from a tablet answer** …
+feeds `S`/`O/S` only"라고 적으므로 이 값이 `O`에 도달하면 그 규칙 위반이다.
+그런데 저장소 전체에 `provenance: 'DERIVED'`인 `reasonFacts`를
+`buildPainWorkspaceEmrPreview`에 넘기는 fixture가 **하나도 없다.**
+
+**(b) 항목 상태 축 — v3(더 중요).** `generateLbpExamSuggestions`가 만드는 모든
+항목은 `NOT_YET_CHECKED`에서 시작한다. 화면(`ExamSuggestionCard.tsx:110-113`)은
+바로 그 미시행 항목에 대해 `reasonFacts`를 `왜 확인?`으로 이미 보여준다. 즉
+**원장이 화면에서 보는 "왜 확인?" 텍스트를 EMR에도 넣자**는 것이 가장 자연스러운
+다음 요청이고, 그 변이가 지금 전체 스위트를 통과한다.
+
+```
+=== MUTATION v3 (NOT_YET_CHECKED 항목의 reasonFacts -> O) / npm run test:all ===
+RESULT: SURVIVED (exit 0) <<<<<<<<<< MUTANT NOT KILLED
+```
+
+**권고(프로덕션 코드 변경 0):**
+1. `filled`의 `e1`과 격리 H-1 항목의 `reasonFacts`에 **`provenance: 'DERIVED'`
+   카나리아를 두 번째 원소로** 추가한다(기존 exact-match 기대값은 그대로 통과해야 한다).
+2. `oBoundaryInput` 계열에 **`result.status: 'NOT_YET_CHECKED'` + `reasonFacts`
+   카나리아**인 exam 항목 1개를 넣고 `O:`(bare) + `!text.includes(canary)`를 단언한다.
+   — 이렇게 하면 §9.4(a)의 "exam 항목을 추가하면 `O`가 bare일 수 없다"는 제약도
+   함께 해소된다(미시행 항목은 `O`에 절을 만들지 않는다).
+
+#### M-4 [MEDIUM] rule 4가 여전히 한쪽만 잠겨 있다
+
+새 fixture는 `previous.status: 'NEGATIVE'` / 오늘 `result.status: 'POSITIVE'`다.
+`previous`를 **무조건** 쓰는 변이는 exact-match가 잡는다. 그러나 실제 사고 형태는
+"기록된 오늘 결과를 덮어쓰는 것"이 아니라 **"빈칸을 지난 값으로 채우는 것"**이고,
+그 형태(v6)는 오늘 `result`가 `POSITIVE`라 발화하지 않는다.
+`reassessmentExam.ts` 헤더가 금지하는 문장 그대로다 — "a prior POSITIVE/NEGATIVE
+is never copied forward **as if it were already re-confirmed**".
+
+**권고:** 재검 항목을 하나 더 두거나 별도 블록을 만들어
+`result.status: 'NOT_YET_CHECKED'` + `previous.status: 'POSITIVE'`를 넘기고,
+`O`에 `오늘 재검 소견` 절이 **생기지 않음**(O bare)을 단언한다.
+
+#### M-5 [MEDIUM] M-2가 렌더만 잠그고 트리거를 잠그지 않았다
+
+새 소스 단언은 `{authError && <DoctorTokenSetup …/>}` 줄의 존재만 고정한다.
+`handleChange`의 `else if (result.kind === 'auth') { setStatus('error');
+setAuthError(true) }`에서 `true`를 `false`로 바꾸면 **줄은 그대로 남은 채 인증
+만료 인라인 복구 경로 전체가 죽고**, 전체 스위트가 통과한다(v9).
+
+이것은 구현자가 매핑 표 두 번째 행에 **정직하게 미검증으로 남긴** 성질과 같은
+자리다(§9.4(b) 참조). 정직한 표기는 옳지만, 이 성질은 **삭제된 32테스트가 원래
+지키던 것**이므로 CLAUDE.md의 "지운 경로 1개당 소스 단언 1개"는 아직 미충족이다.
+
+**권고:** `save-conflict.spec.mjs`에 `handleChange` 슬라이스 대상 단언 1~2줄
+(`assert.match(fn, /result\.kind === 'auth'[\s\S]*setAuthError\(true\)/)` 및
+성공/충돌 분기의 `setAuthError(false)`) 추가 후 매핑 표 두 번째 행을 그 테스트
+이름으로 교체.
+
+---
+
+### 9.4 M-3 검출력 판정 — **수정은 옳다. 진단도 이제 실증됐다.**
+
+#### (i) 제외한 두 필드가 정말 서버 생성 UUID뿐인가 — **코드로 확인함**
+
+`server/audit.js:102-126`의 `logEvent`는 고정 6키(`ts`/`event`/`submission_id`/
+`actor`/`status?`/`visit_id?`)만 쓴다. 두 id의 출처를 전수 확인했다:
+
+| 경로 | 값의 출처 | 판정 |
+|---|---|---|
+| 생성 시 | `server/store.js:297` `const id = randomUUID()`, `server/visitStore.js:110,114` `randomUUID()` | 서버 생성 UUID |
+| 읽기/갱신 시(`index.js:602/618/639/670/1150/1229/1306/1388/1420` 등, `id = parts[2]`) | URL 경로 세그먼트(클라이언트 제공)지만 **모든 호출이 조회 성공(`record`/`visit`이 실재) 뒤에만 audit를 쓴다** — 존재하는 레코드 id와 문자열이 일치해야 하므로 결국 서버 생성 UUID | 서버 생성 UUID |
+| 클라이언트가 id를 정하는 생성 경로 | 없음(`episode_id`만 caller-controlled이며 audit 6키에 들어가지 않는다) | 해당 없음 |
+
+즉 **오늘 이 두 필드에 UUID 외의 것이 들어갈 경로는 없다.**
+
+#### (ii) 원래 의도의 검출력이 유지되는가 — **역방향 변이로 실증(r1 KILLED)**
+
+`server/index.js`의 `SUBMISSION_CREATED` audit 호출에 카나리아 제출의 실제
+전화번호 값을 **비-id 필드**로 실어 보냈더니 새 단언이 그대로 죽었다.
+`JSON.stringify({ ...l, submission_id: undefined, visit_id: undefined })`는 나머지
+키를 전부 그대로 직렬화하므로, "예상 키든 아니든 어떤 비-id 필드로도 전화번호가
+새지 않는다"는 원래 속성은 **전부 보존된다.**
+
+#### (iii) 오경보율 — **직접 측정(15회 + 40회)**
+
+```
+$ npm run test:server × 15   →  PASS=15 FAIL=0
+```
+0.9%/run 기준선에서 15회는 표본이 약하므로, **옛 형태(`auditRaw.includes('9999')`,
+id 포함 전체 스캔)가 같은 실행에서 발화했을지를 비단언 프로브로 함께 기록**하고
+40회를 더 돌렸다(프로브는 실행 후 원복, `git status` 빈 출력 확인):
+
+```
+N=40
+old (id-inclusive) form would have failed: 1/40
+new (id-excluded)  form actually failed:   0/40
+audit-log id 문자수/run: 3616 (모든 실행 동일)
+```
+
+**이 1건이 결정적 증거다.** 그 실행에서 `auditRaw`에는 `9999`가 있었지만
+`nonIdAuditText`에는 없었다 — 즉 `9999`는 **id 필드 안**에 있었다. 몬테카를로
+추정이 아니라 실제 실행에서 "PHI 없음 + 옛 형태 발화"가 재현된 것이며, 직전
+검수의 진단(UUID hex 우연 충돌)을 실증한다. **새 형태는 55회 연속 오경보 0.**
+
+#### (iv) id 필드에 PHI가 들어갈 수 있는 경로 — **오늘은 없다. 그러나 가려진다(M-6).**
+
+r2(전화번호를 `visit_id`에 이어붙이는 변이)는 **생존**한다. (i)에서 확인했듯
+오늘 그런 코드 경로는 없으므로 **게이트를 막지 않는다.** 다만 이 제외는 그
+변이 종류를 영구히 보이지 않게 만든다.
+
+**권고(비차단, 비용 2줄):** 통째 제외 대신 **모양 단언 + 전체 스캔**으로 바꾼다.
+```js
+const idVals = allLines.flatMap((l) => [l.submission_id, l.visit_id]).filter((v) => v != null)
+assert('audit log: 두 id 필드는 서버 생성 UUID 형태만 갖는다(PHI가 들어오면 여기서 죽는다)',
+  idVals.every((v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v)))
+```
+이러면 오경보는 사라지면서 id 필드의 PHI도 계속 잡힌다.
+
+---
+
+### 9.5 기존 단언 약화 여부 — **약화 없음 (PASS)**
+
+- **`filled` fixture에 채운 값이 기대값을 바꿨는가: 아니다.** delta의 `-`줄은
+  `reasonFacts: []`, `previous: null`, save-conflict 매핑 표 주석 3줄,
+  그리고 M-3 단언 1줄뿐이다. **exact-match 기대 문자열은 한 글자도 바뀌지
+  않았다** — `filledLines[3]`은 여전히
+  `'O: 검사 결과: SLR(하지직거상) 검사: 음성/정상; 허리 움직임 반응: 숙이면(굴곡) 호전; 오늘 재검 소견: SLR(하지직거상) 재검: 양성/이상 소견; 객관적 근력저하: 없음'`이다.
+  즉 카나리아를 넣고도 출력이 그대로라는 것을 exact-match가 증명하는 구조이며,
+  "테스트를 통과시키려고 기대값을 맞춘" 흔적은 없다. **이 부분은 정확히 옳게 했다.**
+- **신규 단언의 공허성:** 4개 전부 죽는 변이를 확인했다 — H-2는 a4/v4,
+  M-2는 c9/v8, M-3는 r1, 격리 H-1 2개는 §9.2.3의 전용 프로브. `없다`를 주장하는
+  단언은 3개(H-1 canary, H-2 bare, M-3)인데 모두 **짝이 되는 긍정 대조**가 있다
+  (H-1은 같은 블록의 `O: 검사 결과: …` exact-match, H-2/M-3은 변이 사망).
+- **규약 1(esbuild 이스케이핑) 저촉 0.** 신규 단언 중 번들 텍스트 대상은 없다 —
+  lbp 쪽은 함수의 런타임 출력, M-2는 `fs.readFileSync`한 raw `.tsx` 소스다.
+- **규약 2 및 이번 확장분:** 확장 규약의 **문구**는 지켰으나(하위 필드를 채웠다)
+  **목적**은 미달이다 — 채운 값이 그 필드가 가질 수 있는 모양 중 하나뿐이었다
+  (H-3/M-4). 규약을 한 번 더 조여야 한다:
+  > **규약 2 확장 ②**: 하위 필드를 채울 때는 **그 필드의 판별자(discriminator)가
+  > 갖는 값마다**(provenance 종류, 항목 상태 `NOT_YET_CHECKED` 대 기록완료,
+  > `previous` 유무 × 오늘 `result` 유무) 각각 한 좌표씩 fixture를 둔다.
+  > "채웠다"는 그 필드에 대한 커버리지가 아니라 **채운 그 한 좌표에 대한
+  > 커버리지**다.
+
+---
+
+### 9.6 의도적 편차 2건에 대한 판단
+
+**(a) `oBoundaryInput`에 직접 넣지 않고 별도 H-1 블록을 만든 것 — 논거는
+맞지만 불완전하다. 이 편차가 H-3(v3)를 만들었다.**
+
+"exam 항목을 추가하면 `O`가 bare일 수 없다"는 **기록 완료된 상태의 항목에
+대해서만** 참이다. `result.status: 'NOT_YET_CHECKED'`인 항목은
+`examFindingsLines`의 filter에서 걸러지므로 `O`는 **bare로 남는다**. 즉 직전
+검수의 권고(=`oBoundaryInput`에 `reasonFacts`를 채운 항목을 넣고 `O:` bare 단언)는
+**미시행 항목으로 그대로 이행 가능했고**, 그렇게 했다면 v3가 지금 죽었을 것이다.
+별도 블록 자체는 좋은 추가(격리 방어)이지만 **원 권고의 대체가 아니라 보완**이었다.
+
+**(b) `save-conflict.spec.mjs` 매핑 표 두 번째 행을 미검증으로 남긴 것 —
+정직한 표기는 옳다. 그러나 그 정직함이 게이트를 통과시키는 근거는 아니다.**
+
+거짓 주장("not retested here")을 사실 그대로 고친 것은 이 배치에서 가장 잘한
+일 중 하나다. 다만 그 행이 서술하는 성질은 **삭제된 32테스트가 원래 지키던
+것**이고, CLAUDE.md 4항은 "지운 경로 1개당 소스 텍스트 단언 1개"를 요구한다.
+v9가 전체 스위트를 통과하는 이상 이 행은 **"N/A(원래 없던 것)"가 아니라
+"아직 미이행"**이다. 다만 **이 한 건만으로 FAIL을 내지는 않는다** — H-3/M-4가
+없었다면 M-5는 "다음 배치"로 넘길 수 있는 크기다.
+
+---
+
+### 9.7 문서 정합성 (요구 항목 4)
+
+- **`DECISIONS.md` 규약 2 확장 기록 — 정확하고 잘 쓰였다.** 원인("exact-match는
+  fixture가 비워 둔 하위 필드의 커버리지 0을 감춘다")이 정확히 서술돼 있다.
+  다만 §9.5가 지적한 대로 **한 단계 더**(판별자 축) 조여야 한다.
+- **M-3 "원인 규명 완료" 기록 — 정확하다.** §9.4(iii)의 40회 프로브가 이를
+  실측으로 뒷받침한다(옛 형태 1/40 발화, 그 발화가 id 필드 안이었음). 다만
+  `DECISIONS.md`의 "uuids=28 … 0.90%/run" 수치는 직전 검수의 1회 계측을 그대로
+  옮긴 것으로, 이번 실측 환경에서는 id 문자수 3616/run이었다. **결론은
+  동일**하며(원인·수정 모두 유효) 수치 차이는 표본/계측 방식 차이다.
+- **변이 재검증 기록(`DECISIONS.md`/`HANDOFF.md`의 표) — 서술된 형태에 대해서는
+  전부 사실이다.** 나도 같은 변이를 넣어 같은 실패 메시지를 재현했다. 다만
+  `m7` 행이 서술하는 변이 형태는 §7 표의 형태이지 **§1 M-1 본문의 형태가
+  아니며**(후자는 v6, 여전히 생존), 문서는 그 차이를 드러내지 않는다.
+  "M-1 수정 완료"라는 표기는 **부분적으로만 사실**이다.
+- **§18.2에 7번 전제를 추가한 것 — 옳다.** 단, 그 조문("결함 5건이 전부 수정되고
+  변이 4개가 죽는 것이 확인")은 **문자 그대로는 이제 참**이지만 그 취지(구멍이
+  닫혔다)는 아직 거짓이다. 이번 재검수 결과에 맞춰 조문을 "…및 이후 재검수가
+  제기한 변종이 전부 죽는 것"으로 조이는 것을 권고한다.
+- **L-7:** `HANDOFF.md` 최신 19 항목의 "이 문서 커밋 기준 HEAD는 이 커밋 직전
+  `289a800`"은 실제와 다르다. 이 HANDOFF 커밋(`2e0a8a0`) 직전은 `771d47e`이고
+  `289a800`은 그보다 3커밋 앞이다. CLAUDE.md("Git이 항상 맞다") 기준 정정 대상.
+
+---
+
+### 9.8 게이트를 닫기 위해 남은 것 (전부 테스트/문서, 프로덕션 코드 변경 0)
+
+1. **H-3(a)** `filled`와 격리 H-1 항목의 `reasonFacts`에 `provenance: 'DERIVED'`
+   카나리아 원소 추가 → **v2가 죽는 것을 확인·기록.**
+2. **H-3(b)** `result.status: 'NOT_YET_CHECKED'` + `reasonFacts` 카나리아인 exam
+   항목으로 `O:`(bare) + 카나리아 부재 단언 추가 → **v3가 죽는 것을 확인·기록.**
+3. **M-4** `result.status: 'NOT_YET_CHECKED'` + `previous.status: 'POSITIVE'`인
+   재검 항목으로 `O:`(bare) 단언 추가 → **v6이 죽는 것을 확인·기록.**
+4. **M-5** `handleChange`의 `kind === 'auth'` → `setAuthError(true)` 소스 단언
+   추가 + 매핑 표 두 번째 행 교체 → **v9가 죽는 것을 확인·기록.**
+5. **규약 2 확장 ②**(§9.5 말미)를 `DECISIONS.md`에 1항목으로 남긴다.
+6. **L-7** `HANDOFF.md`의 HEAD 표기 정정.
+
+**비차단(파일럿 전 권고):** **M-6** — M-3의 id 필드 통째 제외를 UUID 모양 단언 +
+전체 스캔으로 교체(§9.4 iv).
+
+---
+
+### 9.9 파일럿 착수 가부 — **불가**
+
+§18.2의 7개 전제 기준:
+
+| # | 전제 | 판정 | 근거 |
+|---|---|---|---|
+| 1 | Batch 4 게이트 CLOSED | ❌ | 이 재검수 판정 FAIL |
+| 2 | 로컬 handoff 서버 LAN 전용 | 판정 보류 | 이번 delta에 `server/**` 변경 0. 운영 확인 사항이며 코드 검수로 답할 수 없다 |
+| 3 | `.data/` 미커밋 | ✅ | delta에 `.data/`·`.env` 없음, `git status` clean |
+| 4 | 환자 설명·동의 | 판정 보류 | 소프트웨어 밖(PO 책임) |
+| 5 | `URGENT_REVIEW` 시 원장 행동 규약 문서화 | 판정 보류 | 소프트웨어 밖(PO 책임) |
+| 6 | 중단 절차 | 판정 보류 | 소프트웨어 밖(PO 책임) |
+| 7 | 게이트 차단 결함 5건 수정 + 변이 4개 사망 확인 | ⚠️ 형식 충족·취지 미달 | 변이 4개는 죽는다(§9.2.1). 그러나 같은 계약의 변종 4개가 생존(§9.2.2) — 7번이 막으려던 구멍(`O` 경계, 미평가-정상 혼동)이 아직 열려 있다 |
+
+**1번이 ❌이므로 파일럿 착수 불가.** §9.8의 6건(작업량: fixture 원소 3개 +
+단언 4~5개 + 문서 2항목)을 마치고 그에 대한 변이 사망 기록을 남기면,
+다시 delta 재검수만으로 게이트를 닫을 수 있다.
+
+---
+
+### 9.10 확신이 없는 것 (그대로 적는다)
+
+- **v2(DERIVED-only)의 실제 위험도는 v3보다 낮다.** 누군가 `reasonFacts`를 `O`에
+  넣으면서 `provenance`로 걸러 `DERIVED`만 넣을 이유는 잘 떠오르지 않는다.
+  내가 이것을 결함으로 올린 근거는 "이 시나리오가 일어난다"가 아니라
+  **"그 필드의 절반에 대한 커버리지가 0이고, 채우는 비용이 배열 원소 1개"**라는
+  것이다. **v3와 M-4는 그렇지 않다** — 둘 다 프로덕션의 기본 상태를 겨냥하고,
+  둘 중 하나만으로도 나는 FAIL을 냈을 것이다.
+- **어디서 멈춰야 하는지에 대한 원칙적 답을 나는 갖고 있지 않다.** 하위 필드,
+  그 하위 필드의 판별자, 그 판별자의 조합… 무한 후퇴가 가능하다. 내가 쓴
+  기준은 "**프로덕션에 실재하는 값이 그 좌표를 통과하는가**"였다 —
+  `DERIVED` reasonFacts는 `lbpExamSuggestions.ts:172`에 실재하고,
+  `NOT_YET_CHECKED` + `reasonFacts`는 모든 생성 항목의 초기 상태이며,
+  `previous` 있고 오늘 결과 비어 있음은 재진 워크스페이스의 정상 상태다.
+  이 기준이 옳다고 확신하지는 못하지만, **적어도 이번 4개 변종은 그 기준을
+  통과했고 그래서 올렸다.**
+- **M-5(v9)를 단독으로 만났다면 나는 FAIL을 내지 않았을 것이다.** 구현자가
+  스스로 미검증이라고 적어 둔 자리이고, `DoctorTokenSetup`이 다른 4곳에 있어
+  완전 잠김이 아니다. 지금 §9.8에 넣은 것은 다른 3건을 고치러 같은 파일을
+  어차피 열기 때문이다.
+- **`server/**` 검토는 audit 경로에 한정했다.** id 필드의 출처를 전수 확인했지만,
+  그것은 `submission_id`/`visit_id`가 audit에 도달하는 경로에 대한 것이지
+  서버 전반에 대한 재검수가 아니다(이번 delta에 `server/**` 변경이 0이므로
+  범위 밖으로 두었다).

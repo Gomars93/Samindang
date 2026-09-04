@@ -1,10 +1,63 @@
 # Current Handoff
 
+## ⚠️ 2026-09-04 (최신 20): Opus **delta 재검수 판정 FAIL** — 변이 4개는 죽지만 변종 4개가 새로 생존, 게이트 여전히 CLOSED 아님
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `2e0a8a0` + 이 문서
+커밋. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+### 판정
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md` **§9**(같은 파일에 덧붙임 —
+판정 이력을 한 파일에 남긴다) — **FAIL. Batch 4 + 4.1 게이트를 닫지 않는다.**
+
+- **잘된 것.** `src/` **zero-diff 사실**. `test:all` 2회 EXIT=0(`OK:` 4956, 두 회
+  완전 동일), `build` EXIT=0. **직전 검수가 기록한 변이 4개(m6/a4/m7/c9)는 이번엔
+  전부 죽는다** — 실패 메시지 원문은 §9.2.1. `filled` fixture에 카나리아를 넣고도
+  기존 exact-match **기대값을 한 글자도 바꾸지 않은 것**은 정확히 옳은 방식이다.
+- **FAIL인 것.** 수정이 "그 변이 하나"만 죽이는 좁은 단언이었다. 같은 계약을
+  침해하는 **변종 4개가 `npm run test:all` 전체를 통과**한다(§9.2.2):
+
+| 변종 | 내용 | 신규 결함 |
+|---|---|---|
+| v2 | `reasonFacts` 중 `provenance === 'DERIVED'`인 것만 `O`로 유출 | **H-3 (HIGH)** |
+| v3 | **미시행**(`NOT_YET_CHECKED`) 검사 항목의 `reasonFacts`를 `O`로 유출 | **H-3 (HIGH)** |
+| v6 | 오늘 결과가 빈칸일 때 `previous`를 대신 출력(= 1차 검수 M-1 본문이 서술한 형태) | **M-4 (MEDIUM)** |
+| v9 | 렌더 줄은 남기고 `kind === 'auth'` 분기가 `authError`를 켜지 않게 함 | **M-5 (MEDIUM)** |
+
+v3가 가장 중요하다 — 생성된 모든 검사 항목은 `NOT_YET_CHECKED`에서 시작하고,
+화면은 그 항목에 대해 이미 `왜 확인?`으로 `reasonFacts`를 보여준다. 즉 **fixture가
+드문 상태(기록 완료)만 덮고 흔한 상태(미시행)를 비워 뒀다.**
+
+### M-3(PHI 카나리아)은 통과 — 진단이 실증됐다
+`server/**` 코드로 두 id 필드가 서버 생성 `randomUUID()`뿐임을 전수 확인했고,
+역방향 변이(비-id 필드에 전화번호를 심음)로 검출력이 살아 있음을 확인했다(KILLED).
+오경보: `test:server` **15회 + 40회 = 55회 연속 0**. 그 40회 중 **1회는 옛 형태였다면
+발화했을 실행**이었고 그 `9999`는 id 필드 안에 있었다 — 몬테카를로가 아니라 실측으로
+UUID 우연 충돌 진단이 확인됐다. 잔여 사항 **M-6**(id 필드 통째 제외가 "id에 PHI를
+넣는" 변이를 영구히 가림)은 **게이트를 막지 않는다**(모양 단언으로 교체 권고, 2줄).
+
+### 다음 행동 (전부 테스트/문서, 프로덕션 코드 변경 0 — §9.8)
+1. **H-3(a)** `reasonFacts`에 `provenance: 'DERIVED'` 카나리아 원소 추가 → v2 사망 확인.
+2. **H-3(b)** `NOT_YET_CHECKED` + `reasonFacts` 카나리아 항목으로 `O:`(bare) 단언 추가 → v3 사망 확인.
+3. **M-4** `result: NOT_YET_CHECKED` + `previous: POSITIVE` 재검 항목으로 `O:`(bare) 단언 추가 → v6 사망 확인.
+4. **M-5** `kind === 'auth'` → `setAuthError(true)` 소스 단언 추가 + 매핑 표 2행 교체 → v9 사망 확인.
+5. **규약 2 확장 ②**(판별자 축마다 한 좌표씩) `DECISIONS.md`에 1항목.
+6. (비차단) **M-6** M-3를 UUID 모양 단언 + 전체 스캔으로 교체.
+
+그 뒤 **다시 delta 재검수**만으로 게이트를 닫을 수 있다. **파일럿은 §18.2 1번이
+❌이므로 착수 불가**(§9.9).
+
+---
+
+
 ## ⚠️ 2026-09-04 (최신 19): Batch 4+4.1 closing 재검수 판정 FAIL → 게이트 차단 결함 5건 수정 완료(Sonnet), Opus 재검수 대기
 
-**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, 이 문서 커밋 기준
-HEAD는 이 커밋 직전 `289a800`(Opus closing 재검수 문서, 판정 FAIL). PR 미생성
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PR 미생성
 (운영 방침 — 이 세션은 PR을 만들지 않는다). main merge는 PO 명시 승인.
+
+> **정정(Opus delta 재검수, L-7).** 이 문단은 원래 "이 문서 커밋 기준 HEAD는 이
+> 커밋 직전 `289a800`"이라고 적었으나 실제와 어긋난다 — 이 항목이 들어간 커밋은
+> `2e0a8a0`이고 그 직전은 `771d47e`이며, `289a800`은 그보다 3커밋 앞(1차 closing
+> 재검수 문서)이다. CLAUDE.md "Git이 항상 맞다"에 따라 정정했다.
 
 ### 무엇이 있었나
 `docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md`(Opus)가 4.1-A~D 전체 +

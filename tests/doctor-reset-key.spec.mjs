@@ -21,6 +21,33 @@ import { PAIN_SCENARIO_1, HERBAL_SCENARIO_1 } from './.doctor-workspace-fixtures
 
 const readSrc = (relPath) => fs.readFileSync(fileURLToPath(new URL(relPath, import.meta.url)), 'utf8')
 
+// Batch 4.1-A §15.7: esbuild's non-ES2020 default output target escapes
+// every non-ASCII character in a bundled .cjs file to \xHH (Latin-1 range)
+// or \uHHHH (uppercase hex, surrogate pairs above U+FFFF) -- a raw Korean
+// literal (e.g. bundleSrc.includes('사주 예상')) NEVER matches the bundle
+// text and would silently, permanently pass regardless of whether the
+// text is actually gone (discovered while writing T1/T2 below: the literal
+// checks passed even against a deliberately-reintroduced mutant, i.e. they
+// were vacuous). This mirrors the bundled text exactly so the Korean
+// checks are load-bearing.
+function esbuildEscapeNeedle(s) {
+  let out = ''
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)
+    if (cp < 0x80) { out += ch; continue }
+    if (cp <= 0xff) { out += '\\x' + cp.toString(16).toUpperCase().padStart(2, '0'); continue }
+    if (cp > 0xffff) {
+      const c = cp - 0x10000
+      const hi = 0xd800 + (c >> 10)
+      const lo = 0xdc00 + (c & 0x3ff)
+      out += '\\u' + hi.toString(16).toUpperCase().padStart(4, '0') + '\\u' + lo.toString(16).toUpperCase().padStart(4, '0')
+      continue
+    }
+    out += '\\u' + cp.toString(16).toUpperCase().padStart(4, '0')
+  }
+  return out
+}
+
 let passed = 0
 const test = (name, fn) => {
   fn()
@@ -413,6 +440,32 @@ test('m4: ObjectiveExamFindingsCard also clears its save-status/authError state 
     findLbpRadios(renderer).every((r) => r.props.checked === false),
     'sanity: the reset key transition itself still succeeded in this render',
   )
+})
+
+// ---------- Batch 4.1-A §15.7 T1/T2 ----------
+// R1 removal (§15.2): JudgmentPanel.tsx's "사주 예상 → 수정 판단 →
+// 치료축·처방 방향" input block and its "치료 우선순위·한약 방향" read-back
+// li are gone. Asserted against the bundled JudgmentPanel output (not the
+// raw .tsx source) so a change that removes the JSX but leaves a stray
+// runtime reference (or vice versa) is caught -- same "assert against the
+// bundle, not the source" convention T3 below uses for DoctorView.
+test('T1: .judgment-panel-bundle.cjs no longer binds saju_only_prediction as a textarea value, and the "사주 예상 → 수정 판단" summary text is gone', () => {
+  const bundleSrc = readSrc('./.judgment-panel-bundle.cjs')
+  // §15.3 keeps ClinicianJudgment's field + createEmptyJudgment's default
+  // ("saju_only_prediction: ''") on purpose -- judgment.ts is bundled in
+  // here too (createEmptyJudgment is imported), so the bare key name is
+  // expected to survive. What must be gone is JudgmentPanel's OWN
+  // property-access/write to it (`.saju_only_prediction`, the textarea's
+  // `value={judgment.saju_only_prediction}` / `onChange`'s
+  // `saju_only_prediction: v` compiled forms).
+  assert.equal(bundleSrc.includes('.saju_only_prediction'), false, 'no dot-access read of judgment.saju_only_prediction may remain (the removed textarea\'s value binding)')
+  assert.equal(bundleSrc.includes('saju_only_prediction: v'), false, 'no onChange write to saju_only_prediction may remain (the removed textarea\'s onChange)')
+  assert.equal(bundleSrc.includes(esbuildEscapeNeedle('사주 예상 → 수정 판단')), false, 'the removed disclosure summary text must not appear in the bundle')
+})
+
+test('T2: .judgment-panel-bundle.cjs no longer contains the "치료 우선순위·한약 방향" 설명개요 read-back', () => {
+  const bundleSrc = readSrc('./.judgment-panel-bundle.cjs')
+  assert.equal(bundleSrc.includes(esbuildEscapeNeedle('치료 우선순위·한약 방향')), false)
 })
 
 console.log(`\n${passed} doctor-reset-key assertions passed.`)

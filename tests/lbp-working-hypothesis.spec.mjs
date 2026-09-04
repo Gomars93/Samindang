@@ -577,8 +577,10 @@ function useEffectSpans(src) {
   // suite unmodified). All 4 O clauses are now populated here, and the
   // exact-match assertion below covers the whole O line, so any such
   // smuggling breaks it. Also extended (still exact-match) to cover defect
-  // #2 (clinicianJudgment*, in A/A/P) and defect #7 (revisitRecapText in
-  // O/S, microFollowUpText in S).
+  // #7 (revisitRecapText in O/S, microFollowUpText in S). Batch 4.1-A
+  // §15.3 removed the former "defect #2" clinicianJudgment* passthrough
+  // (revised_after_exam/final_treatment_axis/prescription_direction no
+  // longer reach any EMR key) -- see the T4 removal assertion below.
   const filled = buildPainWorkspaceEmrPreview({
     primaryConcern: '요통',
     examSuggestions: [
@@ -619,13 +621,11 @@ function useEffectSpans(src) {
       recordedAt: '2026-01-02T00:00:00.000Z',
     },
     lbpObjectiveMotorDeficit: 'NONE',
-    clinicianJudgmentAssessment: '신경근 증상 동반 가능성 낮음',
-    clinicianJudgmentTreatment: '가동성 회복 위주',
-    clinicianJudgmentPlan: '2주 후 재평가',
   })
   const filledLines = filled.split('\r\n')
-  assert('§14.1 filled example: exactly 6 lines', filledLines.length === 6)
-  assert('§14.1 filled example: keys are C/C, O/S, S, O, A, P in that exact order', filledLines.every((l, i) => l.startsWith(['C/C:', 'O/S:', 'S:', 'O:', 'A:', 'P:'][i])))
+  // T12 (Batch 4.1-A §15.7): pain EMR still emits all 6 keys, same order.
+  assert('T12/§14.1 filled example: exactly 6 lines', filledLines.length === 6)
+  assert('T12/§14.1 filled example: keys are C/C, O/S, S, O, A, P in that exact order', filledLines.every((l, i) => l.startsWith(['C/C:', 'O/S:', 'S:', 'O:', 'A:', 'P:'][i])))
   assert('§14.1 filled example: C/C carries the chief concern', filledLines[0] === 'C/C: 요통')
   assert(
     '§14.1 filled example: O/S carries the tablet onset/duration text + (defect #7) the revisit recap text',
@@ -636,18 +636,18 @@ function useEffectSpans(src) {
     filledLines[2] === 'S: 악화요인: 움직일 때 악화; 일상 영향: 가벼운 지장; 최근 경과(환자 응답): 어제부터 조금 나아짐',
   )
   assert(
-    '§14.1 filled example (defect #6, all 4 O clauses populated): O carries the clinician exam finding + directional response + today\'s reassessment finding + the objective-motor-deficit finding, and nothing patient-reported',
+    'T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources (검사 결과/허리 움직임 반응/오늘 재검 소견/객관적 근력저하) and nothing patient-reported',
     filledLines[3] ===
       'O: 검사 결과: SLR(하지직거상) 검사: 음성/정상; 허리 움직임 반응: 숙이면(굴곡) 호전; 오늘 재검 소견: SLR(하지직거상) 재검: 양성/이상 소견; 객관적 근력저하: 없음',
   )
   assert(
-    '§14.1 filled example: A carries 최종 임상 판단 + (defect #2) 원장 평가 + 치료/처방 방향 + 치료 초점',
-    filledLines[4] === 'A: 최종 임상 판단: 요추 기계적 통증; 원장 평가: 신경근 증상 동반 가능성 낮음; 치료/처방 방향: 가동성 회복 위주; 치료 초점: 가동성 회복',
+    '§14.1 filled example: A carries 최종 임상 판단 + 치료 초점 (Batch 4.1-A: 원장 평가/치료·처방 방향 clauses removed)',
+    filledLines[4] === 'A: 최종 임상 판단: 요추 기계적 통증; 치료 초점: 가동성 회복',
   )
   assert(
-    '§14.1 filled example: P carries 시행/예정 처치 + (defect #2) 진료 계획 + 즉시 재검 대상 + 재평가 대상',
+    '§14.1 filled example: P carries 시행/예정 처치 + 즉시 재검 대상 + 재평가 대상 (Batch 4.1-A: 진료 계획 clause removed)',
     filledLines[5] ===
-      'P: 시행/예정 처치: 침, 물리치료; 진료 계획: 2주 후 재평가; 즉시 재검 대상: 숙일 때 통증 재현 여부; 재평가 대상: 통증 강도 — 기준 7',
+      'P: 시행/예정 처치: 침, 물리치료; 즉시 재검 대상: 숙일 때 통증 재현 여부; 재평가 대상: 통증 강도 — 기준 7',
   )
 
   // §14.1 O boundary (CLINICAL SAFETY, mandatory per §14.6): every value
@@ -705,28 +705,23 @@ function useEffectSpans(src) {
     defect7Lines.find((l) => l.startsWith('O:')) === 'O:',
   )
 
-  // Opus delta review defect #2: the three still clinician-typed
-  // JudgmentPanel fields (revised_after_exam/final_treatment_axis/
-  // prescription_direction) reach A/A/P and never O -- isolated so a
-  // mutant that drops exactly one of the three is caught even independent
-  // of the `filled` fixture above.
-  const defect2Text = buildPainWorkspaceEmrPreview({
+  // T4 (Batch 4.1-A §15.7): the removed `clinicianJudgment*` input keys
+  // (former defect #2 restoration -- revised_after_exam/final_treatment_axis/
+  // prescription_direction) no longer reach A or P, even when the caller
+  // still passes them (an old caller/fixture might, since these keys are
+  // simply absent from the type now, not rejected at runtime). If any of
+  // the three push clauses were still wired, one of these three
+  // `includes` checks would find its labeled clause and fail.
+  const t4Text = buildPainWorkspaceEmrPreview({
     ...allEmptyInput,
     primaryConcern: '요통',
     clinicianJudgmentAssessment: '원장 평가값',
     clinicianJudgmentTreatment: '치료 방향값',
     clinicianJudgmentPlan: '진료 계획값',
   })
-  const defect2Lines = defect2Text.split('\r\n')
-  const defect2ALine = defect2Lines.find((l) => l.startsWith('A:'))
-  const defect2PLine = defect2Lines.find((l) => l.startsWith('P:'))
-  assert('defect #2: clinicianJudgmentAssessment reaches A (원장 평가)', defect2ALine.includes('원장 평가: 원장 평가값'))
-  assert('defect #2: clinicianJudgmentTreatment reaches A (치료/처방 방향)', defect2ALine.includes('치료/처방 방향: 치료 방향값'))
-  assert('defect #2: clinicianJudgmentPlan reaches P (진료 계획)', defect2PLine.includes('진료 계획: 진료 계획값'))
-  assert(
-    'defect #2: none of the three clinician judgment fields ever reach O -- O stays bare',
-    defect2Lines.find((l) => l.startsWith('O:')) === 'O:',
-  )
+  assert('T4: buildPainWorkspaceEmrPreview output never contains "원장 평가:"', !t4Text.includes('원장 평가:'))
+  assert('T4: buildPainWorkspaceEmrPreview output never contains "치료/처방 방향:"', !t4Text.includes('치료/처방 방향:'))
+  assert('T4: buildPainWorkspaceEmrPreview output never contains "진료 계획:"', !t4Text.includes('진료 계획:'))
 
   // Opus delta review defect #8: an unrecognized/invalid lbpDirectionalResponse
   // value must degrade exactly like the omitted/NOT_ASSESSED default --

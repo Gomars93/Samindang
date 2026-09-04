@@ -1934,10 +1934,9 @@ export function judgmentRecordedFieldCount(judgment: ClinicianJudgment | null | 
   let n = 0
   n += judgment.innate_features.filter((s) => s.trim() !== '').length
   n += judgment.symptom_links.filter((s) => s.trim() !== '').length
-  if (judgment.saju_only_prediction.trim() !== '') n += 1
-  if (judgment.revised_after_exam.trim() !== '') n += 1
-  if (judgment.final_treatment_axis.trim() !== '') n += 1
-  if (judgment.prescription_direction.trim() !== '') n += 1
+  // Batch 4.1-A §15.3: saju_only_prediction/revised_after_exam/
+  // final_treatment_axis/prescription_direction은 더 이상 어떤 UI도 쓰지
+  // 않는다(deprecated, judgment.ts 참고) — 이 배지에서도 뺀다.
   if (judgment.learning_case === true) n += 1
   if (judgment.debrief && Object.values(judgment.debrief).some((v) => v.trim() !== '')) n += 1
   return n
@@ -3182,11 +3181,6 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       // visit_id) -- patient self-report, S only, never O.
       microFollowUpText: microFollowUpQuoteLine(readableMicroFollowUpResponse(microFollowUpResponse)),
       lbpObjectiveMotorDeficit: selectedRecord?.judgment?.lbp_objective_motor_deficit,
-      // Opus delta review defect #2: JudgmentPanel's three still-editable
-      // clinician-typed fields, restored into A/A/P (never O).
-      clinicianJudgmentAssessment: selectedRecord?.judgment?.revised_after_exam,
-      clinicianJudgmentTreatment: selectedRecord?.judgment?.final_treatment_axis,
-      clinicianJudgmentPlan: selectedRecord?.judgment?.prescription_direction,
     })
   }
 

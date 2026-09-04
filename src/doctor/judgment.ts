@@ -36,9 +36,19 @@ export type ClinicianJudgment = {
   }
   innate_features: string[]
   symptom_links: string[]
+  /**
+   * Batch 4.1-A (§15.2/§15.3): 4.1-A 이후 어떤 UI도 이 필드에 쓰지 않는다 —
+   * deprecated, 새 코드에서 읽지 말 것. 타입/기본값을 유지하는 이유는
+   * server/**(FROZEN)와 tests/server.spec.mjs의 판단 fixture가 이 키들을
+   * 담은 payload 모양을 그대로 쓰고, 이미 저장된 레코드의 값이 round-trip
+   * 되어 파괴되지 않아야 하기 때문(원본 JSON 아코디언에는 계속 보임).
+   */
   saju_only_prediction: string
+  /** Batch 4.1-A: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   revised_after_exam: string
+  /** Batch 4.1-A: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   final_treatment_axis: string
+  /** Batch 4.1-A: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   prescription_direction: string
   learning_case: boolean
   debrief: DebriefAnswers | null
@@ -90,6 +100,8 @@ export function createEmptyJudgment(payload: JudgmentSourcePayload): ClinicianJu
     },
     innate_features: [],
     symptom_links: [],
+    // Batch 4.1-A: deprecated defaults, kept for payload-shape/round-trip
+    // reasons only — see ClinicianJudgment's field-level comments above.
     saju_only_prediction: '',
     revised_after_exam: '',
     final_treatment_axis: '',

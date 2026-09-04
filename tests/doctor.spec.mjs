@@ -30,6 +30,7 @@ import {
   isUnreadableReproductiveDerived,
   MyungriCompactCard,
   sajuStatusLine,
+  judgmentRecordedFieldCount,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -1218,22 +1219,22 @@ function detailsRange(html, classMarker) {
   assert('constitution section: summary preview non-empty', !!summaryMatch && summaryMatch[1].trim() !== '')
 }
 
-// 13h. JudgmentPanel: 핵심 필드는 details 밖, 나머지 4개는 details 안에 접혀 있다(기본 접힘).
+// 13h. Batch 4.1-A §15.2/§15.7 (T1/T2 against the full rendered DoctorView,
+// complementing the bundle-text T1/T2 in doctor-reset-key.spec.mjs): the
+// "사주 예상 → 수정 판단 → 치료축·처방 방향" collapsed input block
+// (judgment__secondaryFields) and its 4 labeled fields are gone from the
+// rendered output entirely -- 핵심 선천 특징/현재 증상과 연결되는 핵심
+// (the two fields that stay) still render.
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
-  const [openIdx, closeIdx] = detailsRange(html, 'judgment__secondaryFields')
-  const innateIdx = html.indexOf('핵심 선천 특징')
-  const symptomLinkIdx = html.indexOf('현재 증상과 연결되는 핵심')
-  assert('judgment panel: 핵심 선천 특징 renders outside the collapsed details', innateIdx !== -1 && innateIdx < openIdx)
-  assert(
-    'judgment panel: 현재 증상과 연결되는 핵심 renders outside the collapsed details',
-    symptomLinkIdx !== -1 && symptomLinkIdx < openIdx,
-  )
-  for (const label of ['사주만 보고 예상한', '문진·맥·설·복진 후 수정된 판단', '최종 치료축', '처방 방향']) {
-    const i = html.indexOf(label)
-    assert(`judgment panel: "${label}" present`, i !== -1)
-    assert(`judgment panel: "${label}" falls inside the collapsed details`, i > openIdx && i < closeIdx)
+  assert('T1: judgment__secondaryFields details block no longer renders', !html.includes('judgment__secondaryFields'))
+  assert('T1: "사주 예상 → 수정 판단" summary text no longer renders', !html.includes('사주 예상 → 수정 판단'))
+  for (const label of ['사주만 보고 예상한', '문진·맥·설·복진 후 수정된 판단', '최종 치료축 (원장 입력)', '처방 방향 (원장 입력']) {
+    assert(`T1: removed field label "${label}" no longer renders`, !html.includes(label))
   }
+  assert('T2: "치료 우선순위·한약 방향" 설명개요 read-back no longer renders', !html.includes('치료 우선순위·한약 방향'))
+  assert('judgment panel: 핵심 선천 특징 still renders (not removed by this batch)', html.includes('핵심 선천 특징'))
+  assert('judgment panel: 현재 증상과 연결되는 핵심 still renders (not removed by this batch)', html.includes('현재 증상과 연결되는 핵심'))
 }
 
 // 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 3번 —
@@ -3530,16 +3531,15 @@ function detailsRange(html, classMarker) {
 
   // defect #5 (ii): the 종결 call site's argument key set accounts for
   // PainWorkspace.tsx's own buildPainWorkspaceEmrPreview call -- every key
-  // PainWorkspace.tsx passes is also passed by 종결, and 종결's only extra
-  // keys are the 3 defect #2 clinician-judgment ones (JudgmentPanel's live
-  // state is not threaded into PainWorkspace.tsx's mid-consult preview
-  // lane -- see buildPainEmrTextForRecord's own comment -- so that specific
-  // difference is documented and expected, not a silent drop). A key
-  // silently missing from either side, with no such explanation, fails
-  // this.
+  // PainWorkspace.tsx passes is also passed by 종결. Batch 4.1-A §15.3
+  // removed the 3 former "defect #2" clinician-judgment-only keys
+  // (clinicianJudgmentAssessment/Treatment/Plan) that used to be 종결's
+  // only documented extra keys -- the two call sites' key sets are now
+  // expected to match exactly, with zero undocumented extras on either
+  // side. A key silently missing (or newly, silently added) on either
+  // side fails this.
   const completionKeys = new Set(extractCallArgKeys(doctorViewSrc, 'buildPainWorkspaceEmrPreview'))
   const referenceKeys = new Set(extractCallArgKeys(painWorkspaceSrc, 'buildPainWorkspaceEmrPreview'))
-  const DOCUMENTED_COMPLETION_ONLY_KEYS = new Set(['clinicianJudgmentAssessment', 'clinicianJudgmentTreatment', 'clinicianJudgmentPlan'])
 
   assert('defect #5 (ii) sanity: both call sites\' argument keys were actually extracted (non-empty)', completionKeys.size > 0 && referenceKeys.size > 0)
   const missingFromCompletion = [...referenceKeys].filter((k) => !completionKeys.has(k))
@@ -3549,8 +3549,41 @@ function detailsRange(html, classMarker) {
   )
   const extraInCompletion = [...completionKeys].filter((k) => !referenceKeys.has(k))
   assert(
-    "defect #5 (ii): 종결's call has no undocumented extra keys beyond PainWorkspace.tsx's -- only the 3 defect #2 clinician-judgment keys",
-    extraInCompletion.length === DOCUMENTED_COMPLETION_ONLY_KEYS.size && extraInCompletion.every((k) => DOCUMENTED_COMPLETION_ONLY_KEYS.has(k)),
+    "Batch 4.1-A: 종결's call has zero extra keys beyond PainWorkspace.tsx's -- the former defect #2 clinician-judgment-only keys (clinicianJudgmentAssessment/Treatment/Plan) are gone from both call sites",
+    extraInCompletion.length === 0,
+  )
+
+  // T3 (Batch 4.1-A §15.7): the removed clinicianJudgment* keys must not
+  // appear anywhere in the bundled DoctorView.tsx runtime output (not just
+  // absent from this one call site's source text -- the bundle is the
+  // ground truth of what actually ships).
+  const doctorViewBundleSrc = await readFile(
+    fileURLToPath(new URL('./.doctor-view-bundle.cjs', import.meta.url)),
+    'utf8',
+  )
+  for (const key of ['clinicianJudgmentAssessment', 'clinicianJudgmentTreatment', 'clinicianJudgmentPlan']) {
+    assert(`T3: .doctor-view-bundle.cjs no longer contains "${key}"`, !doctorViewBundleSrc.includes(key))
+  }
+
+  // T5 (Batch 4.1-A §15.7): judgmentRecordedFieldCount returns 0 for a
+  // judgment where ONLY the 4 deprecated fields (saju_only_prediction/
+  // revised_after_exam/final_treatment_axis/prescription_direction) are
+  // filled -- the badge no longer counts them.
+  const t5Judgment = createEmptyJudgment({
+    session_id: 's1',
+    questionnaire_version: 'v1',
+    myungri_algorithm_version: 'v1',
+    myungri_library_version: 'v1',
+    myungri_status: 'resolved',
+    myungri_pending_approval: [],
+  })
+  t5Judgment.saju_only_prediction = '사주만 보고 예상'
+  t5Judgment.revised_after_exam = '수정된 판단'
+  t5Judgment.final_treatment_axis = '치료축'
+  t5Judgment.prescription_direction = '처방 방향'
+  assert(
+    'T5: judgmentRecordedFieldCount returns 0 when only the 4 deprecated fields are filled',
+    judgmentRecordedFieldCount(t5Judgment) === 0,
   )
 
   // C-5 (Opus closing review): EmrPreviewCard's "복사는 「다음」 레인의

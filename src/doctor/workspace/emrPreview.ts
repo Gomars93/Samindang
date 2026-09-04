@@ -33,11 +33,10 @@
  *                              observation, today's structured re-check
  *                              results, the clinician-entered objective
  *                              motor-deficit finding)
- *   A    평가                — 임상 가설 + 최종 임상 판단 + (있으면) 원장 평가 +
- *                              치료/처방 방향 + 치료 초점 (+ 오늘 재검의 최종
- *                              재평가, when present)
- *   P    계획                — 시행/예정 처치 + (있으면) 진료 계획 + 즉시 재검
- *                              대상 + Care Plan + 재평가 대상 + 다음 상세 재평가
+ *   A    평가                — 임상 가설 + 최종 임상 판단 + 치료 초점 (+ 오늘
+ *                              재검의 최종 재평가, when present)
+ *   P    계획                — 시행/예정 처치 + 즉시 재검 대상 + Care Plan +
+ *                              재평가 대상 + 다음 상세 재평가
  *
  * A key's line always renders, even when its value is empty (`C/C:` with
  * nothing after the colon) — the fixed shape is the point: pasting this
@@ -192,18 +191,6 @@ export function buildPainWorkspaceEmrPreview(input: {
   microFollowUpText?: string | null
   /** §14.1 O "객관적 근력저하": ClinicianJudgment.lbp_objective_motor_deficit — clinician-entered post-exam finding (judgment.ts: "원장이 진찰 후 입력"), a SEPARATE field from the patient's own LBP_02 self-report. Never derive this from LBP_02. */
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
-  /**
-   * Opus delta review (Batch 4) defect #2: `ClinicianJudgment.revised_after_exam` /
-   * `final_treatment_axis` / `prescription_direction` are all still clinician-
-   * typed in JudgmentPanel.tsx (viewProfile-gated nowhere, so a pain record's
-   * clinician can keep filling them) and used to reach 종결's EMR text via
-   * emrSummary.ts. §14.3's rewiring to this composer dropped them with no
-   * replacement — this restores them, in A/A/P (never O: they are judgement
-   * and plan, not an examination finding).
-   */
-  clinicianJudgmentAssessment?: string | null
-  clinicianJudgmentTreatment?: string | null
-  clinicianJudgmentPlan?: string | null
 }): string {
   const hypothesisSummary = input.lbpWorkingHypothesis ? summarizeLbpWorkingHypothesisKo(input.lbpWorkingHypothesis) : null
 
@@ -243,38 +230,27 @@ export function buildPainWorkspaceEmrPreview(input: {
   // above -- never O.
   if (input.microFollowUpText?.trim()) sParts.push(`최근 경과(환자 응답): ${input.microFollowUpText.trim()}`)
 
-  // A (평가) — 임상 가설(먼저) + 최종 임상 판단 + (있으면) 원장 평가/치료·처방 방향
-  // (defect #2) + 치료 초점 + (있으면) 최종 재평가.
+  // A (평가) — 임상 가설(먼저) + 최종 임상 판단 + 치료 초점 + (있으면) 최종
+  // 재평가. (Batch 4.1-A §15.3: ClinicianJudgment의 revised_after_exam/
+  // final_treatment_axis를 A로 push하던 경로는 제거됨 — 대체 경로는
+  // FinalAssessmentCard의 finalWorkingAssessment/treatmentFocus.)
   const aParts: string[] = []
   if (hypothesisSummary) aParts.push(hypothesisSummary)
   if (input.finalAssessment.finalWorkingAssessment.trim()) {
     aParts.push(`최종 임상 판단: ${input.finalAssessment.finalWorkingAssessment.trim()}`)
-  }
-  // defect #2: ClinicianJudgment.revised_after_exam/final_treatment_axis --
-  // still clinician-typed in JudgmentPanel.tsx, still editable on a pain
-  // record -- restored here, in A (judgement), never O (not an exam
-  // finding).
-  if (input.clinicianJudgmentAssessment?.trim()) {
-    aParts.push(`원장 평가: ${input.clinicianJudgmentAssessment.trim()}`)
-  }
-  if (input.clinicianJudgmentTreatment?.trim()) {
-    aParts.push(`치료/처방 방향: ${input.clinicianJudgmentTreatment.trim()}`)
   }
   if (input.finalAssessment.treatmentFocus.trim()) aParts.push(`치료 초점: ${input.finalAssessment.treatmentFocus.trim()}`)
   if (input.reassessment?.finalReassessmentNote.trim()) {
     aParts.push(`최종 재평가: ${input.reassessment.finalReassessmentNote.trim()}`)
   }
 
-  // P (계획) — 시행/예정 처치 + (있으면) 진료 계획 + 즉시 재검 대상 + Care Plan +
-  // 재평가 대상 + 다음 상세 재평가.
+  // P (계획) — 시행/예정 처치 + 즉시 재검 대상 + Care Plan + 재평가 대상 +
+  // 다음 상세 재평가. (Batch 4.1-A §15.3: ClinicianJudgment.prescription_direction을
+  // P로 push하던 경로는 제거됨 — 대체 경로는 FinalAssessmentCard의
+  // interventionPerformedOrPlanned + CarePlanCard.)
   const pParts: string[] = []
   if (input.finalAssessment.interventionPerformedOrPlanned.trim()) {
     pParts.push(`시행/예정 처치: ${input.finalAssessment.interventionPerformedOrPlanned.trim()}`)
-  }
-  // defect #2: ClinicianJudgment.prescription_direction -- clinician-typed
-  // plan, restored here in P (plan), never O.
-  if (input.clinicianJudgmentPlan?.trim()) {
-    pParts.push(`진료 계획: ${input.clinicianJudgmentPlan.trim()}`)
   }
   if (input.finalAssessment.immediateRetestTarget.trim()) {
     pParts.push(`즉시 재검 대상: ${input.finalAssessment.immediateRetestTarget.trim()}`)

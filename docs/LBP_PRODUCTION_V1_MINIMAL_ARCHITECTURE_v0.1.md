@@ -760,3 +760,213 @@ Batch 2.5a Opus 검수가 요구한 undo 경로다.
 ### 14.7 금지
 - 한약 EMR 포맷 변경, 새 CRM 개념·자동 발송, `applyNextReassessmentPlanToEpisode` 판정 로직 변경, 준비조건 화면(§13) 변경, 태블릿 변경, 새 자유입력 칸 추가.
 - **Stop point**: 환자 자가보고가 `O`에 들어가야만 6키가 채워지는 상황이 생기면 즉시 중단하고 `CLINICAL DECISION REQUIRED`로 보고한다. `O`는 비워 두는 것이 정답이다.
+
+---
+
+## 15. Batch 4.1 브리프 — 사주 검증 입력 블록 제거 + 출생 시간대 간략 표시 (PO 지시 2026-09-04, Fable 설계)
+
+### 15.0 이 배치가 존재하는 이유
+
+Batch 4 closing review의 미해결 결함 **C-1**은 "D-1을 고치는 수정이 D-2를 한약
+프로필에 재현했다"였다 — pain EMR에는 JudgmentPanel의 원장 타이핑 3필드를
+복구했는데(defect #2), herbal EMR에는 복구하지 않아 한약 레코드에서는 여전히
+"쓸 수 있는데 어디에도 안 나가는" 필드가 남았다.
+
+PO 판단(2026-09-04): **이 4필드는 더 이상 필요 없다.** 원장은 사주를 해석하지
+않는다(대표님이 별도로 본다). 원장 화면에 필요한 것은 **태어난 시간대(자축인묘…)
+하나뿐**이며, 간략하게만 보이면 된다.
+
+따라서 C-1은 "herbal에도 배선한다"가 아니라 **경로 자체를 제거해서** 닫는다.
+그리고 그 제거는 CLAUDE.md의 "경로를 지우거나 교체하기 전에 필드 × 화면 표를
+적는다" 규칙을 그대로 적용해서 진행한다 — 이 규칙이 만들어진 원인이 바로
+D-1/D-2/C-1 이므로, 여기서 규칙을 안 지키면 다섯 번째 사고가 난다.
+
+### 15.1 범위 — 독립적으로 승인·구현 가능한 두 파트
+
+| 파트 | 내용 | 애매함 | 상태 |
+|---|---|---|---|
+| **4.1-A** | JudgmentPanel의 사주 검증 4필드 입력 블록 + 그 하류 EMR 배선 제거 | 없음 | 바로 진행 |
+| **4.1-B** | 원장 화면 `명리` 아코디언 제거 + 출생 시간대 한 줄 간략 표시 | 15.6의 열린 판단 3건 | 15.6 확인 후 진행 |
+
+4.1-A만 머지해도 C-1은 닫힌다. 4.1-B는 화면 정리이며 안전 속성과 무관하다.
+
+### 15.2 (출력 방향) 제거 경로 R1 — JudgmentPanel 사주 검증 4필드
+
+제거 대상: `src/doctor/JudgmentPanel.tsx:414-437`
+(`<details>` "사주 예상 → 수정 판단 → 치료축·처방 방향 (펼쳐서 입력)" 전체)
+및 그 read-back `:552-562` (설명 개요의 "치료 우선순위·한약 방향" 항목).
+
+옛 경로가 나르던 필드가 **각 화면에서 지금 어디에 도달하는가 / 제거 후 어디로
+가는가**:
+
+| 필드 | 화면 | 지금 도달하는 곳 | 제거 후 대체 경로 |
+|---|---|---|---|
+| `saju_only_prediction` | 초진(pain) | 서버 저장 + 아코디언 배지 카운트만 (EMR 어디에도 안 감) | **의도적 폐기** — 사주 해석은 원장 업무가 아님(PO 2026-09-04) |
+| | 재진(pain) | 동일 | 동일 |
+| | 한약(herbal) | 동일 | 동일 |
+| | mixed | 동일 | 동일 |
+| | fixture 미리보기 | 화면에만 (저장 없음) | 동일 |
+| `revised_after_exam` | 초진(pain) | `A \| 평가` → `원장 평가:` (emrPreview.ts:253-256) | **FinalAssessmentCard `finalWorkingAssessment`** → 같은 `A` 키의 `최종 임상 판단:` |
+| | 재진(pain) | 동일 | 동일 |
+| | 한약(herbal) | **아무 데도 안 감 (= C-1 그 자체)** | **HerbalFinalAssessment `finalPatternOrMechanism`** → `최종 변증·병기:` |
+| | mixed | pain 절반에만 감 | pain 절반 + herbal 절반 각각의 위 필드 |
+| | fixture 미리보기 | 미리보기 텍스트에 동일하게 반영 | 동일 |
+| `final_treatment_axis` | 초진(pain) | `A` → `치료/처방 방향:` + 설명 개요 read-back | **FinalAssessmentCard `treatmentFocus`** → `A`의 `치료 초점:` |
+| | 재진(pain) | 동일 | 동일 |
+| | 한약(herbal) | 설명 개요 read-back만 (EMR 안 감) | **HerbalFinalAssessment `treatmentPrinciple`** → `치법:` |
+| | mixed | pain EMR + read-back | 위 둘 다 |
+| | fixture 미리보기 | 동일 | 동일 |
+| `prescription_direction` | 초진(pain) | `P \| 계획` → `진료 계획:` + 설명 개요 read-back | **FinalAssessmentCard `interventionPerformedOrPlanned`** → `P`의 `시행/예정 처치:`, 및 CarePlanCard 5필드 → `P` |
+| | 재진(pain) | 동일 | 동일 |
+| | 한약(herbal) | 설명 개요 read-back만 | **HerbalFinalAssessment `prescriptionPlanNote`** → `처방/계획 메모:` |
+| | mixed | pain EMR + read-back | 위 둘 다 |
+| | fixture 미리보기 | 동일 | 동일 |
+
+**핵심**: EMR에 도달하던 3필드는 전부 **같은 EMR 키에 도달하는 동일 레인의
+대체 입력칸이 이미 존재한다.** 새로 만들 칸이 없다. `saju_only_prediction`만
+대체 없이 폐기되며, 그 근거는 PO 판단이다.
+
+### 15.3 (입력 방향) 제거 후 "쓰이는데 안 읽히는" 필드가 남지 않는가
+
+제거 후 이 4필드에 값을 쓰는 UI는 **하나도 없다.** 타입(`ClinicianJudgment`)과
+`emptyJudgment()` 기본값은 **그대로 둔다** — 이유:
+
+- `server/**`는 FROZEN이고 `tests/server.spec.mjs`의 판단 fixture 8곳이 이
+  키들을 그대로 담고 있다. 타입에서 빼면 서버 저장 payload 모양이 바뀐다.
+- 이미 저장된 레코드에 값이 있으면 그대로 round-trip되어 **파괴되지 않는다**
+  (읽히지만 화면에 안 보일 뿐 — `원본 JSON` 아코디언에는 계속 보인다).
+
+대신 `judgment.ts`의 해당 4줄에 "4.1-A 이후 어떤 UI도 이 필드를 쓰지 않는다 —
+deprecated, 새 코드에서 읽지 말 것" 주석을 단다.
+
+이에 따라 함께 죽는 하류 배선 — **전부 같은 커밋에서 제거**:
+
+1. `emrPreview.ts` `buildPainWorkspaceEmrPreview` 입력 3키
+   (`clinicianJudgmentAssessment` / `clinicianJudgmentTreatment` /
+   `clinicianJudgmentPlan`) 및 그 3개 push 지점(`원장 평가:` / `치료/처방 방향:` /
+   `진료 계획:`) — defect #2 복구분의 되돌림.
+2. `DoctorView.tsx:3185-3189`의 그 3키 전달.
+3. `DoctorView.tsx` `judgmentRecordedFieldCount`의 4줄 카운트.
+4. `JudgmentPanel.tsx` 설명 개요의 "치료 우선순위·한약 방향" `<li>`.
+
+> **`src/doctor/emrSummary.ts`**: `Assessment/치료·처방/계획` 3줄이 이 4필드에서만
+> 채워지는데, 이 모듈은 이미 **프로덕션 호출자가 0개**다(§14.3에서 종결이
+> 호출을 끊었고, 남은 건 `tests/emrSummary.spec.mjs`의 자기 자신 단위 테스트뿐).
+> 4.1-A 이후에는 *호출자도 없고 데이터 소스도 없는* 이중 사문(死文)이 된다.
+> **권고: `src/doctor/emrSummary.ts` + `tests/emrSummary.spec.mjs` 삭제.**
+> 분리 가능한 항목이므로 PO/Opus가 보류해도 4.1-A는 성립한다.
+
+### 15.4 (출력 방향) 제거 경로 R2 — `명리` 아코디언 (파트 4.1-B)
+
+제거 대상: `src/doctor/DoctorView.tsx:4686-4788`
+(`{viewProfile !== 'pain' && (<ReferenceAccordion title="명리">` … `)}` 전체 —
+`MyungriCompactCard` + `명리 검토` reviewGrid).
+
+| 표시 값 | 초진/재진(pain) | 한약(herbal) | mixed | fixture 미리보기 | 제거 후 |
+|---|---|---|---|---|---|
+| 원국 연/월/일/시주 | **이미 안 보임** (PR #24 invariant) | 보임 | 보임 | 보임 | 화면에서 제거. `payload.myungri_calculation`은 계속 계산·저장되고 `원본 JSON` 아코디언에 그대로 남음 |
+| 일간 | 안 보임 | 보임 | 보임 | 보임 | 동일 |
+| `출생정보: 출생시간 확인됨 · 4주 8자` / `미상 · 3주 6자` | 안 보임 | 보임 | 보임 | 보임 | **출생 시간대 한 줄이 대체** (아래) |
+| 오행 분포 / 한열조습 (`해석 규칙 미확정` 고정 문구) | 안 보임 | 보임 | 보임 | 보임 | 제거 (값이 아니라 고정 안내문) |
+| 계산주의(정책 승인 대기) | 안 보임 | 보임 | 보임 | 보임 | 제거. `원본 JSON`에 남음 |
+| `명리 검토` reviewGrid 좌열(환자 원본 입력) | 안 보임 | 보임 | 보임 | 보임 | **`참고 > 문진 원본 > 환자 기본`의 `BIRTH_*` 5필드가 이미 같은 값을 보여주고 있다** (중복이었음) |
+| `명리 검토` reviewGrid 우열(계산 결과) | 안 보임 | 보임 | 보임 | 보임 | 제거. `원본 JSON`에 남음 |
+
+**대체 표시 (PO가 요청한 "간략하게"):**
+`참고 > 문진 원본 > 환자 기본`의 기존 `<Field qid="BIRTH_03" …/>`에
+doctor-facing 라벨만 붙인다.
+
+```
+- <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
++ <Field qid="BIRTH_03" label="출생 시간대" value={r.birth_info.birth_time_branch} />
+```
+
+- 값은 이미 `새벽 3시 ~ 새벽 5시 (인시)` 형태 — **자축인묘가 그대로 들어 있다.**
+  스펙(`coreSpec.ts` BIRTH_03, FROZEN)을 손대지 않고 요구를 만족한다.
+- 라벨만 바꾸는 이유: 지금은 환자용 질문문("태어난 시간대를 선택해주세요.")이
+  원장 화면에 그대로 라벨로 쓰인다.
+- `viewProfile !== 'pain'` 게이트는 그대로 — 통증 프로필에는 계속 안 보인다.
+- `unknown`이면 `잘 모르겠어요`가 muted로 표시된다(기존 `Field` 동작). 값이
+  없으면 `Field`가 `null`을 반환해 줄 자체가 안 생긴다 — **"미상"을 "확인됨"으로
+  둔갑시키는 경로가 새로 생기지 않는다.**
+
+`src/saju/`, `computeSaju`, payload의 `myungri_calculation`은 **전부 그대로 둔다.**
+계산은 계속 돌고 저장도 계속 된다 — 원장 화면 렌더링만 없어진다.
+
+### 15.5 남는 죽은 export 처리 (4.1-B)
+
+`MyungriCompactCard` / `sajuStatusLine` / `myungriGroupCount`는 4.1-B 이후
+프로덕션 렌더 지점이 0이 된다. **권고: 삭제하지 말고 남긴다.**
+
+- 이들은 "쓰기는 되는데 안 읽히는 필드"가 아니라 **읽기 전용 표시 함수**다 —
+  CLAUDE.md 규칙이 막으려는 위험(원장이 못 보는 값이 출력에 도달)에 해당하지 않는다.
+- 12차/13차 독립 리뷰에서 `pillars.day` wrong-type, `flags.hour_unknown` 결측
+  등으로 **전체 임상 화면을 날리던 버그**를 잡아 하드닝한 코드이고,
+  `tests/doctor.spec.mjs`에 그 회귀 테스트가 붙어 있다. 지금 지우면 나중에
+  되살릴 때 그 하드닝을 처음부터 다시 해야 한다.
+- 각 export 상단에 "4.1-B 이후 프로덕션 렌더 지점 없음 — 되살릴 때 `viewProfile
+  !== 'pain'` 게이트를 반드시 함께 복원할 것" 주석을 단다.
+
+`saju` 지역 변수(`DoctorView.tsx:3067`)는 계속 살아 있다 — `JudgmentPanel`의
+`source` prop(`myungri_algorithm_version` 등)이 여전히 읽는다.
+
+### 15.6 열린 판단 3건 (구현 전 확인)
+
+**(1) 생년월일·양음력·윤달은 남기는가?**
+PO 지시는 "몇시에 태어난지만 알수 있게" 였다. 문자 그대로면 `BIRTH_01`(생년월일),
+`BIRTH_02`(양/음력), `BIRTH_02A`(윤달), `BIRTH_03A`(시간 확신도)도 원장 화면에서
+빼야 한다. **본 브리프의 기본안은 "남긴다"** — 이유: 생년월일은 사주 해석이 아니라
+환자 기본 인적사항이고, 대표님이 사주를 볼 때 시(時) 단독으로는 원국을 세울 수
+없다. 빼라는 지시로 확정되면 `BIRTH_03` 한 줄만 남기는 것으로 바꾼다.
+
+**(2) `명리·감사 기록` 아코디언에 남는 `선천 특징` / `현재 증상 연결`은?**
+이 둘도 사주 해석 성격의 자유서술이며 EMR 어디로도 가지 않는다(설명 개요
+read-back만). 4.1-A는 여기까지 건드리지 않는다 — PO가 지목한 것은 4필드 블록뿐이다.
+같은 근거로 함께 빼야 한다면 별도 지시를 받아 4.1-C로 처리한다.
+
+**(3) 아코디언 제목 `명리·감사 기록`**
+4.1-A 이후 그 안에 "명리"라 부를 것이 `선천 특징`/`증상 연결`뿐이고, 4.1-B에서
+`명리` 아코디언 자체가 사라지면 제목이 오해를 부른다. (2)의 결론이 나온 뒤
+한 번에 재명명하는 것이 낫다 — **4.1에서는 제목을 건드리지 않는다.**
+
+**부수 관찰(범위 밖, 기록만)**: `명리·감사 기록` 아코디언은
+`viewProfile` 게이트가 **없다** — `명리` 아코디언(`viewProfile !== 'pain'`)과 달리
+통증 레코드에서도 열린다. 즉 PR #24의 "pain 프로필은 명리 내용을 노출하지 않는다"
+invariant가 이 경로로는 이미 새고 있었다. 4.1-A가 그 중 4필드분을 우연히 막지만,
+(2)가 남으면 누수는 남는다.
+
+### 15.7 테스트 (CLAUDE.md: 지운 경로 1개당 소스 텍스트 단언 1개)
+
+제거 단언 — 전부 번들 소스 텍스트 기준:
+
+| # | 경로 | 단언 |
+|---|---|---|
+| T1 | R1 입력 블록 | `.judgment-panel-bundle.cjs`에 `saju_only_prediction`을 값으로 바인딩한 textarea가 없다 + 요약문 `사주 예상 → 수정 판단` 문자열이 없다 |
+| T2 | R1 read-back | 같은 번들에 `치료 우선순위·한약 방향` 문자열이 없다 |
+| T3 | R1 pain EMR 배선 | `.doctor-view-bundle.cjs`에 `clinicianJudgmentAssessment` / `clinicianJudgmentTreatment` / `clinicianJudgmentPlan` 문자열이 없다 |
+| T4 | R1 EMR 출력 | `buildPainWorkspaceEmrPreview`를 모든 필드를 채운 입력으로 호출해도 출력에 `원장 평가:` / `치료/처방 방향:` / `진료 계획:` 이 나오지 않는다 |
+| T5 | R1 배지 | `judgmentRecordedFieldCount`가 4필드만 채워진 judgment에 대해 `0`을 반환한다 |
+| T6 | R2 (4.1-B) | `.doctor-view-bundle.cjs`에 `명리 검토` / `오행 분포` / `4주 8자` 문자열이 없다 |
+
+유지 단언(회귀 방지) — 이게 빠지면 T1~T6은 "그냥 다 지웠다"와 구분되지 않는다:
+
+| # | 단언 |
+|---|---|
+| T7 | herbal fixture 렌더에 `출생 시간대` 라벨과 해당 지지(예: `인시`)가 함께 보인다 |
+| T8 | mixed fixture에서도 T7이 성립한다 |
+| T9 | **pain fixture에는 `출생 시간대`도 `BIRTH_` 어떤 값도 보이지 않는다** (PR #24 invariant 유지 — 4.1-B가 이걸 깨지 않았음을 증명) |
+| T10 | 출생시간 `unknown` fixture에서 `잘 모르겠어요`가 보이고 `출생시간 확인됨` 류 문구는 어디에도 없다 |
+| T11 | `O \| 객관적 소견` 경계 불변: R1 제거 후에도 `O`에 도달하는 push 지점은 4개(검사 결과 / 허리 움직임 반응 / 오늘 재검 소견 / 객관적 근력저하)뿐이다 |
+| T12 | pain EMR 6키가 여전히 6개 전부, 같은 순서로 나온다 |
+
+**mutation 검증 필수** — T1~T6은 "없음"을 주장하는 단언이라 **구조적으로
+공허해지기 쉽다**(오타 난 문자열은 언제나 "없다"). Sonnet은 각 단언에 대해
+*제거를 되돌린 상태에서 그 단언이 실제로 실패하는 것*을 보이고 원복해야 하며,
+그 결과를 브리프에 남긴다. Batch 4의 C-3(공허한 `firstIfIdx < firstSetEmrTextIdx`
+가드)가 바로 이 함정에 빠졌던 사례다.
+
+### 15.8 FROZEN 영향
+
+`src/spec/**` · `index.html` · `src/App.tsx` · `server/**` · `tablet core/**`
+**전부 zero-diff.** BIRTH_03 스펙을 바꾸지 않고 라벨만 원장 화면에서 덧씌우며,
+`ClinicianJudgment` 타입/기본값을 유지하므로 서버 payload 모양도 그대로다.

@@ -2338,3 +2338,73 @@ Batch 2.7-A 설계(§13)에 대한 Opus 사전 검수: `APPROVE WITH CHANGES` 12
 - CD-2.7-1(처치 어휘 8개), CD-2.7-2(EMR 복사 통일), CD-2.7-3(치료 직후 값 숨김)은
   준비조건과 무관하므로 **Batch 4와 함께 또는 그 전에 처리 가능**(PO 확인 필요).
 - 파일럿 전까지 운동 준비조건 화면은 현행 유지(조건 버튼 48개 그대로).
+
+## 2026-09-04 — PO 결정: 사주 검증 입력 경로 제거, 출생 시간대만 표시 (Batch 4.1) + Batch 4 게이트 미완
+
+### Context
+Batch 4(EMR 고정 6키) closing 검수의 미해결 결함 **C-1**은 "D-1을 고치는 수정이
+D-2를 한약 프로필에 재현했다"였다 — pain EMR에는 JudgmentPanel의 원장 타이핑
+3필드(`revised_after_exam`/`final_treatment_axis`/`prescription_direction`)를
+복구했으나 herbal EMR에는 복구하지 않아, 한약 레코드에서는 **쓸 수는 있는데
+어디에도 도달하지 않는 필드**가 남았다.
+
+이 계열(D-1/D-2/C-1)은 같은 사고의 **세 번째·네 번째** 발생이며, 그 결과
+CLAUDE.md의 제거 안전 규칙이 "컨트롤 제거" 규율에서 **"제거 또는 교체" + 필드 ×
+화면 표 + 지운 경로 1개당 소스 단언 1개**로 강화됐다(`eb82862`).
+
+### Decision (PO, 2026-09-04)
+1. **`JudgmentPanel`의 사주 검증 4필드 입력 블록을 제거한다.**
+   (`saju_only_prediction` / `revised_after_exam` / `final_treatment_axis` /
+   `prescription_direction`). 사유: 원장은 사주를 해석하지 않는다 — 대표님이
+   별도로 본다. 원장 화면에 그 입력칸이 있을 이유가 없어졌다.
+2. **원장 화면에 필요한 명리 관련 정보는 "태어난 시간대(자축인묘…)" 하나뿐이며,
+   간략하게만 표시한다.**
+3. 따라서 **C-1은 "herbal에도 배선한다"가 아니라 "경로 자체를 제거"로 닫는다.**
+
+### 설계 (Fable, §15)
+`docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §15. 두 파트로 분리:
+- **4.1-A**: 입력 블록 + 하류 EMR 배선(`emrPreview`의 `clinicianJudgment*` 3키,
+  `DoctorView`의 전달, `judgmentRecordedFieldCount` 4줄, 설명 개요 read-back) 제거.
+  애매함 없음. **이것만으로 C-1이 닫힌다.**
+- **4.1-B**: `명리` 아코디언(`MyungriCompactCard` + `명리 검토` reviewGrid) 제거 +
+  `BIRTH_03`에 `출생 시간대` 라벨 부여.
+
+### 이 결정이 "값을 잃지 않는다"는 근거 (CLAUDE.md 규칙 산출물)
+- EMR에 도달하던 3필드는 **전부 같은 EMR 키에 도달하는 동일 레인 대체 입력칸이
+  이미 존재한다**(§15.2 표). 새로 만들 칸이 0개.
+  - pain: `finalWorkingAssessment` → `A 최종 임상 판단:`, `treatmentFocus` →
+    `A 치료 초점:`, `interventionPerformedOrPlanned` → `P 시행/예정 처치:`
+  - herbal: `finalPatternOrMechanism` / `treatmentPrinciple` / `prescriptionPlanNote`
+- `saju_only_prediction`만 대체 없이 **의도적 폐기**(근거: 위 PO 판단).
+- **타입과 기본값(`ClinicianJudgment`, `emptyJudgment`)은 유지**한다. 이미 저장된
+  레코드의 값은 그대로 round-trip되어 파괴되지 않고 `원본 JSON`에도 남는다.
+  `server/**`(FROZEN)와 `tests/server.spec.mjs` 판단 fixture 8곳이 zero-diff가 된다.
+- `src/saju/`·`computeSaju`·payload의 `myungri_calculation`은 **전부 유지**한다.
+  계산과 저장은 계속되고 **원장 화면 렌더링만** 없어진다.
+- `BIRTH_03`(`birth_time_branch`)은 FROZEN 스펙에 **이미 존재**하고 옵션 라벨이
+  `새벽 3시 ~ 새벽 5시 (인시)` 형태라 자축인묘를 이미 담고 있다. 원장 화면에도
+  `viewProfile !== 'pain'`일 때만 **이미 보이고 있다.** 라벨만 원장용으로 바꾸므로
+  `src/spec/**` zero-diff.
+
+### 미결(구현 전 PO 확인, §15.6)
+1. `생년월일`/`양음력`/`윤달`/`시간 확신도`도 뺄 것인가 — **기본안 "남긴다"**
+   (시 단독으로는 원국을 세울 수 없다).
+2. `선천 특징`/`현재 증상 연결`(같은 성격의 사주 자유서술, EMR 미도달)도 뺄 것인가
+   — 4.1-A 범위 밖, 필요 시 4.1-C.
+3. 아코디언 제목 `명리·감사 기록` 재명명 — 2번 결론 후 한 번에.
+
+### 기록해 둘 관찰 (범위 밖)
+`명리·감사 기록` 아코디언에는 `viewProfile` 게이트가 **없다** — `명리`
+아코디언(`viewProfile !== 'pain'`)과 달리 통증 레코드에서도 열린다. PR #24의
+"pain 프로필은 명리 내용을 노출하지 않는다" invariant가 이 경로로 이미 새고
+있었다. 4.1-A가 그 중 4필드분을 막지만, 미결 2번이 남으면 누수는 남는다.
+
+### Consequences
+- Batch 4 게이트는 **아직 CLOSED가 아니다.** 4.1-A 구현 + 이 문서/HANDOFF 동기화
+  (C-4) 후 **Opus closing 재검수 1회**가 남는다.
+- §15.7의 제거 단언 T1~T6은 "없음"을 주장하는 형태라 **구조적으로 공허해지기
+  쉽다.** Batch 4의 C-3(공허한 seed 가드, Opus의 M4subtle 변이가 살아남음)가
+  같은 함정이었으므로, 각 단언에 대해 **제거를 되돌린 상태에서 실패하는 것을
+  보이고 원복**한 결과를 브리프에 남기는 것을 구현 완료 조건으로 한다.
+- `src/doctor/emrSummary.ts`는 4.1-A 이후 호출자도 데이터 소스도 없는 이중 사문이
+  된다. 삭제 권고(분리 가능 항목, §15.3).

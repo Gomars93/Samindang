@@ -9,6 +9,7 @@
 
 import React from 'react'
 import { renderToString } from 'react-dom/server'
+import TestRenderer, { act } from 'react-test-renderer'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join as joinPath } from 'node:path'
@@ -547,7 +548,16 @@ function useEffectSpans(src) {
   for (const opt of LBP_HYPOTHESIS_SUPPORT_OPTIONS) {
     const label = LBP_HYPOTHESIS_SUPPORT_LABEL_KO[opt]
     const count = (html.match(new RegExp(`<button[^>]*>${label}</button>`, 'g')) ?? []).length
-    assert(`LbpWorkingHypothesisCard: chip "${label}" renders as a button, once per each of the 5 pattern groups`, count === 5)
+    if (opt === 'UNJUDGED') {
+      // Batch 2.6 (E-2): "미판단" is never itself a rendered chip -- it is
+      // the untouched default (nothing to press it FOR), matching the
+      // sibling convention RevisitQuickCheckCard already uses for its own
+      // NOT_ASSESSED value. The stored default is unchanged; only this
+      // always-visible, never-clicked button is gone.
+      assert(`LbpWorkingHypothesisCard: chip "${label}" (UNJUDGED) does NOT render as a button in any of the 5 pattern groups`, count === 0)
+    } else {
+      assert(`LbpWorkingHypothesisCard: chip "${label}" renders as a button, once per each of the 5 pattern groups`, count === 5)
+    }
   }
 
   // §11.6: "기본 aria-pressed=true 0개" -- default (all UNJUDGED) renders
@@ -887,6 +897,57 @@ function useEffectSpans(src) {
   assert('D-9 guard: the 300 chars before the call site contain "onInsertPatientSentence={" (it is inside that prop closure, not a bare effect)', /onInsertPatientSentence=\{/.test(before300))
   const insideAnyUseEffect = useEffectSpans(dwSrc).some(([start, end]) => idx > start && idx < end)
   assert('D-9 guard: the call site does NOT appear inside any useEffect(...) in DoctorWorkspace.tsx (would mean auto-insertion on render/mount rather than an explicit click)', !insideAnyUseEffect)
+}
+
+/* ------------------------------------------------------------------------
+ * Batch 2.6 (E-2), interactive: with the "미판단" chip gone, clearing a
+ * pattern back to UNJUDGED must still work by re-clicking the already-
+ * active chip (LbpWorkingHypothesisCard.tsx's onClick already resolves
+ * `activeValue === opt ? 'UNJUDGED' : opt`, unchanged by this batch --
+ * this pins that the removal of the UNJUDGED button did not also remove
+ * the only remaining path back to it). Uses react-test-renderer (already a
+ * devDependency, same tool tests/doctor-reset-key.spec.mjs uses) because
+ * this needs a real click to fire, not just static HTML.
+ * ---------------------------------------------------------------------- */
+{
+  let current = withSupport({ HIP: 'CONSIDER' })
+  const onChange = (next) => {
+    current = next
+  }
+
+  let renderer
+  act(() => {
+    renderer = TestRenderer.create(React.createElement(LbpWorkingHypothesisCard, { value: current, onChange }))
+  })
+
+  const hipGroup = renderer.root.find(
+    (node) => node.props && node.props['aria-label'] === `${LBP_HYPOTHESIS_PATTERN_LABEL_KO.HIP} 선택`,
+  )
+  const considerButton = hipGroup.findAll(
+    (node) => node.type === 'button' && node.props['aria-pressed'] === true,
+  )[0]
+  assert('interactive: the active (CONSIDER) chip in the HIP group is the one rendered as pressed before the re-click', considerButton !== undefined)
+
+  act(() => {
+    considerButton.props.onClick()
+  })
+  assert('interactive: re-clicking the active chip resolves HIP back to UNJUDGED (the field itself, not a button, carries the cleared state)', current.supports.HIP === 'UNJUDGED')
+  assert('interactive: clearing HIP leaves every other pattern untouched', LBP_HYPOTHESIS_PATTERN_IDS.filter((id) => id !== 'HIP').every((id) => current.supports[id] === 'UNJUDGED'))
+
+  // Counterexample: clicking a DIFFERENT (non-active) chip in the same
+  // group does not clear -- it sets that chip's own value instead. Proves
+  // the assertion above is exercising the deselect branch, not any click.
+  act(() => {
+    renderer.update(React.createElement(LbpWorkingHypothesisCard, { value: withSupport({ HIP: 'CONSIDER' }), onChange }))
+  })
+  const hipGroup2 = renderer.root.find(
+    (node) => node.props && node.props['aria-label'] === `${LBP_HYPOTHESIS_PATTERN_LABEL_KO.HIP} 선택`,
+  )
+  const lowerButton = hipGroup2.findAll((node) => node.type === 'button').find((b) => b.children.join('') === LBP_HYPOTHESIS_SUPPORT_LABEL_KO.LOWER)
+  act(() => {
+    lowerButton.props.onClick()
+  })
+  assert('interactive counterexample: clicking a DIFFERENT chip (LOWER) while CONSIDER is active sets LOWER, not UNJUDGED', current.supports.HIP === 'LOWER')
 }
 
 console.log(`\n${passCount} LBP working hypothesis assertions passed.`)

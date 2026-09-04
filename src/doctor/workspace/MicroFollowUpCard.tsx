@@ -36,20 +36,15 @@ export function MicroFollowUpCard({
         {needsAttention && <span className="workspace__microFollowUp__flag">추가 확인 필요</span>}
         <span className="workspace__microFollowUp__hint">· 참고용 raw 값, 자동 판단 없음</span>
       </summary>
+      {/* Batch 2.6 (E-14/C-9): the candidate list (this visit's carried-
+          forward prior Follow-up Targets) is intentionally not rendered
+          here anymore -- the revisit screen's own "이전 방문 참고" block
+          already shows the same targets (RevisitWorkspace.tsx). `candidates`
+          is still accepted and still decides whether this card renders at
+          all (below) and whether it counts as needing attention elsewhere;
+          only the duplicate list display is gone. Everything about the
+          patient's own responses is unchanged. */}
       <div className="workspace__microFollowUp__body">
-        {candidates.length > 0 && (
-          <div className="workspace__microFollowUp__section">
-            <p className="workspace__microFollowUp__label">이전 방문 재평가 대상 (다음 방문 간단 확인 후보)</p>
-            {candidates.map((c) => (
-              <div key={c.id} className="workspace__microFollowUp__row">
-                <strong>{c.label}</strong>
-                <span>{c.baselineText}</span>
-                {c.postTreatmentText && <span>이전 치료직후: {c.postTreatmentText}</span>}
-              </div>
-            ))}
-          </div>
-        )}
-
         {response ? (
           <div className="workspace__microFollowUp__section">
             <p className="workspace__microFollowUp__label">환자 응답 (오늘)</p>

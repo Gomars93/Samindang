@@ -694,6 +694,13 @@ export function PainWorkspaceNext({
   const followUpGroups = isLbp
     ? [{ label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id) }]
     : undefined
+  // Batch 2.6 (E-16/C-2): computed once, shared by the disclosure's `open`
+  // and by NextActionCard's render gate right above it -- when the
+  // disclosure is open the clinician already sees these exact values live
+  // in the Care Plan form, so the read-only read-back below is a pure
+  // duplicate and is skipped; when it is closed, the read-back is the only
+  // place these values are visible without a click.
+  const carePlanDetailsOpen = !isCarePlanEmpty(carePlan) || nextReassessmentPlan.status !== 'UNSET'
 
   return (
     <div className="workspace__pain workspace__pain--next">
@@ -728,16 +735,15 @@ export function PainWorkspaceNext({
         </div>
       </div>
 
-      <NextActionCard
-        homeAction={carePlan.homeActionPlan}
-        nextCheck={carePlan.nextVisitCheckItem}
-        nextReassessmentPlan={nextReassessmentPlan}
-      />
+      {!carePlanDetailsOpen && (
+        <NextActionCard
+          homeAction={carePlan.homeActionPlan}
+          nextCheck={carePlan.nextVisitCheckItem}
+          nextReassessmentPlan={nextReassessmentPlan}
+        />
+      )}
 
-      <details
-        className="workspace__optional"
-        open={!isCarePlanEmpty(carePlan) || nextReassessmentPlan.status !== 'UNSET'}
-      >
+      <details className="workspace__optional" open={carePlanDetailsOpen}>
         <summary>관리 계획 · 다음 재평가 — 자세히 입력</summary>
         <PainCarePlanCard value={carePlan} onChange={onChangeCarePlan} />
         <NextReassessmentPlanCard value={nextReassessmentPlan} onChange={onChangeNextReassessmentPlan} />

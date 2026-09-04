@@ -3,6 +3,7 @@
  * accept-hold-reject + explicit adopt-into-Care-Plan action (round 3 Phase
  * I). Same "adopt, never automatic" pattern as PatternCandidateCard.tsx.
  */
+import { useState } from 'react'
 import { PROVENANCE_BADGE } from './provenance'
 import { REHAB_SUGGESTION_STATUS_LABEL, type RehabSuggestion, type RehabSuggestionStatus } from './rehabSuggestion'
 
@@ -26,6 +27,15 @@ export function RehabSuggestionCard({
    */
   adoptDisabledReasonKo?: string
 }) {
+  /*
+   * Batch 2.6 (E-6): follows ExamSuggestionCard.tsx's own 상세·메모 toggle
+   * convention -- an always-open free-text box read as a form waiting to be
+   * filled even when the clinician meant to say nothing more than the
+   * accept/hold/reject decision above it. Starts open whenever it already
+   * holds content, so nothing previously typed is ever hidden.
+   */
+  const [instructionOpen, setInstructionOpen] = useState(suggestion.clinicianFinalInstruction.trim() !== '')
+
   return (
     <div className={`workspace__candidateCard workspace__candidateCard--${suggestion.status.toLowerCase()}`}>
       <div className="workspace__candidateCard__head">
@@ -83,14 +93,20 @@ export function RehabSuggestionCard({
         ))}
       </div>
 
-      <input
-        type="text"
-        className="workspace__noteInput"
-        value={suggestion.clinicianFinalInstruction}
-        onChange={(e) => onChange({ ...suggestion, clinicianFinalInstruction: e.target.value })}
-        placeholder="원장이 직접 다듬은 최종 지시문(선택)"
-        aria-label={`${suggestion.title} 최종 지시문`}
-      />
+      {instructionOpen ? (
+        <input
+          type="text"
+          className="workspace__noteInput"
+          value={suggestion.clinicianFinalInstruction}
+          onChange={(e) => onChange({ ...suggestion, clinicianFinalInstruction: e.target.value })}
+          placeholder="원장이 직접 다듬은 최종 지시문(선택)"
+          aria-label={`${suggestion.title} 최종 지시문`}
+        />
+      ) : (
+        <button type="button" className="workspace__detailToggle" onClick={() => setInstructionOpen(true)}>
+          최종 지시문 추가
+        </button>
+      )}
 
       {suggestion.status === 'ACCEPTED' && onAdoptToCarePlan && (
         <>

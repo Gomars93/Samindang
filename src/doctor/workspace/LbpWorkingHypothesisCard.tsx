@@ -46,13 +46,20 @@ function ChipGroup({
     <div className="workspace__hypothesis__group">
       <h4>{title}</h4>
       <div className="workspace__followUp__options" role="group" aria-label={groupAriaLabel}>
-        {LBP_HYPOTHESIS_SUPPORT_OPTIONS.map((opt) => {
-          // 'UNJUDGED' is a real, clickable chip (resets straight to
-          // UNJUDGED regardless of what was active) but never renders as
-          // pressed itself -- the default/unset state always shows zero
-          // pressed chips, same reading as every other chip group in this
-          // codebase.
-          const pressed = activeValue === opt && opt !== 'UNJUDGED'
+        {/*
+         * Batch 2.6 (E-2): `UNJUDGED` ("미판단") is never rendered as its
+         * own chip -- there is nothing to press it FOR (it is the untouched
+         * default, and `aria-pressed` never becomes true for it either way),
+         * matching the sibling convention `RevisitQuickCheckCard` already
+         * uses for its own NOT_ASSESSED value (revisitQuickCheck.ts's
+         * QUICK_CHECK_*_OPTIONS exclude it the same way). Clearing a pattern
+         * back to UNJUDGED still works exactly as before -- re-click the
+         * active chip below, which the onClick handler already resolves to
+         * 'UNJUDGED'. The stored default and the clear path are unchanged;
+         * only the always-visible, never-clicked button disappears.
+         */}
+        {LBP_HYPOTHESIS_SUPPORT_OPTIONS.filter((opt) => opt !== 'UNJUDGED').map((opt) => {
+          const pressed = activeValue === opt
           return (
             <button
               key={opt}

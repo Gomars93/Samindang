@@ -17,6 +17,7 @@ import React from 'react'
 import { renderToString } from 'react-dom/server'
 import { DoctorWorkspace } from './.doctor-workspace-bundle.cjs'
 import { FollowUpTargetPicker } from './.follow-up-target-picker-bundle.cjs'
+import { MicroFollowUpCard } from './.micro-follow-up-card-bundle.cjs'
 import {
   WORKSPACE_SCENARIOS,
   PAIN_SCENARIO_1,
@@ -423,6 +424,35 @@ test('pain scenario 1: SUGGESTED exam items carry a 제안 provenance badge, nev
 test('pain scenario 1: NOT_YET_CHECKED items render as 아직 확인 안 됨, never as a negative result', () => {
   const html = render(PAIN_SCENARIO_1)
   assert.ok(html.includes('아직 확인 안 됨'))
+})
+
+/* ------------------------------------------------------------------------
+ * Batch 2.6 (E-8/C-5): the "아직 확인 안 됨 · N건" pending-counter line
+ * shows the count only -- the exam-suggestion cards immediately below it
+ * already carry the same titles, so listing them a second time on the
+ * counter line was a pure duplicate.
+ * ---------------------------------------------------------------------- */
+test('Batch 2.6 E-8: with 3 distinct NOT_YET_CHECKED items, the pending-counter line names none of their titles (cards below already carry them)', () => {
+  const items = [
+    { id: 'e8-1', title: 'ROUND26 목표 동작 A', priority: 'MUST_CHECK', reasonFacts: [], source: 'SUGGESTED', result: { status: 'NOT_YET_CHECKED', laterality: 'NOT_APPLICABLE', note: '', recordedAt: null } },
+    { id: 'e8-2', title: 'ROUND26 목표 동작 B', priority: 'MUST_CHECK', reasonFacts: [], source: 'SUGGESTED', result: { status: 'NOT_YET_CHECKED', laterality: 'NOT_APPLICABLE', note: '', recordedAt: null } },
+    { id: 'e8-3', title: 'ROUND26 목표 동작 C', priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: { status: 'NOT_YET_CHECKED', laterality: 'NOT_APPLICABLE', note: '', recordedAt: null } },
+  ]
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'e8-multi-pending',
+    synthetic: undefined,
+    lbpObjectiveMotorDeficit: 'NONE',
+    initialWorkspaceState: { painExamSuggestions: items },
+  })
+  const counterIdx = html.indexOf('아직 확인 안 됨 ·')
+  assert.ok(counterIdx !== -1, 'the pending counter renders')
+  const counterEnd = html.indexOf('</p>', counterIdx)
+  const counterChunk = html.slice(counterIdx, counterEnd)
+  for (const item of items) {
+    assert.ok(!counterChunk.includes(item.title), `"${item.title}" does not appear on the counter line itself`)
+    assert.ok(html.includes(item.title), `sanity: "${item.title}" DOES still appear somewhere on the page (in its own card, below the counter)`)
+  }
+  assert.ok(counterChunk.includes('건'), 'the counter still expresses a count')
 })
 
 test('pain scenario 2: a clinician-recorded POSITIVE result renders distinctly from NOT_YET_CHECKED', () => {
@@ -982,19 +1012,35 @@ test('EMR preview reconstructs correctly from a persisted WorkspaceState passed 
   //
   // Opus delta review item 2: a regex spanning the counter's text can never
   // match here -- React 18 renderToString inserts `<!-- -->` comment nodes
-  // between adjacent text/expression children (actual output: `아직 확인 안
-  // 됨 · <!-- -->1<!-- -->건 — <!-- -->목표 동작 재현`), so
-  // /아직 확인 안 됨 · \d+건 — ([^<]*)</ never matches and an `if
-  // (match)`-guarded assertion silently never runs. Use indexOf/slice
-  // instead of a regex that assumes contiguous text.
+  // between adjacent text/expression children, so a regex that assumes
+  // contiguous text never matches and an `if (match)`-guarded assertion
+  // silently never runs. Use indexOf/slice instead.
+  //
+  // Batch 2.6 (E-8/C-5): the counter now shows the COUNT ONLY -- title
+  // enumeration was removed because the exam cards immediately below
+  // already carry the same titles (duplicate). Before this batch the real
+  // output here was `아직 확인 안 됨 · <!-- -->1<!-- -->건 — <!-- -->목표
+  // 동작 재현`; the trailing "— <title list>" is gone by design now, which
+  // makes the old "reloaded item must not appear in the counter's title
+  // list" check moot by construction (no titles are printed for ANY item
+  // anymore) -- pinned below as a direct regression check instead.
   const counterIdx = html.indexOf('아직 확인 안 됨 ·')
   assert.ok(counterIdx !== -1, 'the pending counter must appear -- 목표 동작 재현 was merged in as a new pending item')
   const counterEnd = html.indexOf('</p>', counterIdx)
   const counterChunk = html.slice(counterIdx, counterEnd === -1 ? undefined : counterEnd)
-  assert.ok(counterChunk.includes('목표 동작 재현'), 'the counter names the genuinely new pending item')
+  // React inserts `<!-- -->` comment nodes between the adjacent text/
+  // expression children here (real output: `...안 됨 · <!-- -->1<!-- -->건`),
+  // so check the count digit and the "건" unit separately rather than as one
+  // contiguous "1건" substring.
+  assert.ok(counterChunk.includes('>1<'), 'exactly one genuinely new pending item (목표 동작 재현) is counted')
+  assert.ok(counterChunk.includes('건'), 'the count is expressed in 건')
+  assert.ok(
+    !counterChunk.includes('목표 동작 재현'),
+    'Batch 2.6 E-8: the counter no longer names items, only counts them (mutant: reintroducing "— <titles>" fails this)',
+  )
   assert.ok(
     !counterChunk.includes('SLR 검사'),
-    'the reloaded POSITIVE SLR item must never appear in the pending counter',
+    'the reloaded POSITIVE SLR item must never appear in the pending counter (also: no title is ever printed here now)',
   )
 })
 
@@ -2035,6 +2081,139 @@ test('관리 계획 disclosure opens when isCarePlanEmpty is false OR plan.statu
   assert.ok(/\bopen\b/.test(tag2), "plan.status !== 'UNSET' alone (empty care plan otherwise) also opens the disclosure")
 })
 
+/* ------------------------------------------------------------------------
+ * Batch 2.6 (E-1, C-1, C-2): the actual defect this batch fixes. Before
+ * this batch, `isCarePlanEmpty` counted `nextVisitCheckItem` -- the SAME
+ * field the always-visible "다음 방문 확인 메모" textarea one lane above
+ * this disclosure is bound to (PainWorkspace.tsx) -- so typing a single
+ * character into THAT textarea force-opened this whole 6-field disclosure
+ * on every keystroke, and one of those 6 fields was that very value,
+ * showing up in two live textareas at once. These pin the fix directly,
+ * per the task's explicit requirement: a non-empty nextVisitCheckItem
+ * ALONE must not open the disclosure, while a non-empty
+ * currentTreatmentGoal still does.
+ * ---------------------------------------------------------------------- */
+test('Batch 2.6 E-1: a non-empty nextVisitCheckItem ALONE does NOT open the 관리 계획 disclosure (the mid-batch defect)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'e1-nextvisitcheckitem-only',
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: '',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: 'ROUND26 다음에 다시 확인',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  const idx = html.indexOf('관리 계획 · 다음 재평가')
+  const tag = html.slice(html.lastIndexOf('<details', idx), html.indexOf('>', idx) + 1)
+  assert.ok(!/\bopen\b/.test(tag), 'a non-empty nextVisitCheckItem alone must not force the disclosure open')
+  // The value is still saved and still visible -- in the lane-4 textarea
+  // above, and in NextActionCard's read-back (the disclosure being closed
+  // is exactly what makes NextActionCard render, per E-16 below).
+  assert.ok(html.includes('ROUND26 다음에 다시 확인'), 'the value itself is never lost -- it is just not force-opening the OTHER form')
+})
+
+test('Batch 2.6 E-1 (differential): a non-empty currentTreatmentGoal STILL opens the 관리 계획 disclosure', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'e1-currenttreatmentgoal',
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: 'ROUND26 치료 목표',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: '',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  const idx = html.indexOf('관리 계획 · 다음 재평가')
+  const tag = html.slice(html.lastIndexOf('<details', idx), html.indexOf('>', idx) + 1)
+  assert.ok(/\bopen\b/.test(tag), 'a non-empty currentTreatmentGoal alone still opens the disclosure -- only nextVisitCheckItem was excluded')
+})
+
+test('Batch 2.6 C-1: PainCarePlanCard no longer draws its own "다음 방문 확인 사항" field -- the lane-4 textarea is the only editable copy', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'c1-no-duplicate-field',
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: 'ROUND26 치료 목표(펼침용)',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: 'ROUND26 확인 메모 값',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  assert.ok(html.includes('관리 계획 · 다음 재평가'), 'sanity: the disclosure renders (opened by currentTreatmentGoal)')
+  assert.ok(!html.includes('다음 방문 확인 사항'), 'the Care Plan card no longer has its own "다음 방문 확인 사항" label at all')
+  // The mutation-resistance check that matters (C-1): the value must appear
+  // in only ONE *editable* (non-readonly) textarea -- the lane-4 "다음
+  // 방문 확인 메모" itself. It also legitimately appears inside the
+  // pre-existing, unrelated readonly EMR/patient-preview text blocks
+  // further down the page (those summarize the whole record and are out
+  // of this batch's scope) -- so the check is scoped to non-readonly
+  // <textarea> elements specifically, not a raw substring count.
+  const editableTextareasWithValue = [...html.matchAll(/<textarea\b([^>]*)>([^<]*)<\/textarea>/g)].filter(
+    ([, attrs, inner]) => !attrs.includes('readonly') && inner.includes('ROUND26 확인 메모 값'),
+  )
+  assert.equal(editableTextareasWithValue.length, 1, 'the value appears in exactly one EDITABLE textarea, never duplicated across two live ones')
+  assert.ok(
+    editableTextareasWithValue[0][1].includes('다음 방문 확인 메모'),
+    'that one editable textarea is specifically the lane-4 "다음 방문 확인 메모" field',
+  )
+})
+
+test('Batch 2.6 E-16/C-2: NextActionCard renders ONLY while the 관리 계획 disclosure is closed', () => {
+  const closedHtml = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'e16-closed',
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: '',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        // Only nextVisitCheckItem is non-empty -- per E-1, that alone must
+        // NOT open the disclosure, so this is the realistic "closed but
+        // NextActionCard has something to read back" case.
+        nextVisitCheckItem: 'ROUND26 집에서 할 일(닫힘)',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  const closedIdx = closedHtml.indexOf('관리 계획 · 다음 재평가')
+  const closedTag = closedHtml.slice(closedHtml.lastIndexOf('<details', closedIdx), closedHtml.indexOf('>', closedIdx) + 1)
+  assert.ok(!/\bopen\b/.test(closedTag), 'sanity: disclosure stays closed here (only nextVisitCheckItem is set)')
+  assert.ok(closedHtml.includes('workspace__nextAction'), 'NextActionCard DOES render while the disclosure is closed')
+
+  const openHtml = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'e16-open',
+    initialWorkspaceState: {
+      painCarePlan: {
+        currentTreatmentGoal: 'ROUND26 열림용 치료 목표',
+        rehabilitationGoal: '',
+        homeActionPlan: '',
+        activityPrecaution: '',
+        patientInstruction: '',
+        nextVisitCheckItem: '',
+        recordedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  const openIdx = openHtml.indexOf('관리 계획 · 다음 재평가')
+  const openTag = openHtml.slice(openHtml.lastIndexOf('<details', openIdx), openHtml.indexOf('>', openIdx) + 1)
+  assert.ok(/\bopen\b/.test(openTag), 'sanity: disclosure is open here (currentTreatmentGoal is non-empty)')
+  assert.ok(!openHtml.includes('workspace__nextAction'), 'NextActionCard does NOT render while the disclosure is open -- it would be a pure duplicate of the open form')
+})
+
 // ---------- §1.3-#7 (현행 계승, regression pin) ----------
 test('오늘 재검 목록 renders open when items.length > 0 and collapsed when items.length === 0 (현행 계승)', () => {
   const closed = render(PAIN_SCENARIO_1)
@@ -2853,5 +3032,155 @@ test('LBP v1 Batch 3.1: the 오늘 재검 <details open=...> expression is STILL
     'open= is still exactly open={workspaceState.reassessment.items.length > 0}',
   )
 })
+
+/* ------------------------------------------------------------------------
+ * Batch 2.6 (E-3): the revisit screen's PainCarePlanCard is now behind a
+ * <details>, matching the initial-visit treatment (PainWorkspace.tsx), with
+ * the same auto-open-when-non-empty convention. RevisitWorkspace.tsx fetches
+ * its own data (getVisit/getSubmission/...) and is not in this file's
+ * DoctorWorkspace bundle (see the T-5 comment above), so -- following this
+ * file's own established convention for RevisitWorkspace changes -- this is
+ * a structural source check, not a full render.
+ * ---------------------------------------------------------------------- */
+test('Batch 2.6 E-3: RevisitWorkspace.tsx wraps <PainCarePlanCard in a <details> that auto-opens exactly when !isCarePlanEmpty(workspaceState.carePlan)', () => {
+  const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const cardIdx = src.indexOf('<PainCarePlanCard')
+  assert.ok(cardIdx !== -1, 'the card still exists')
+  const detailsIdx = src.lastIndexOf('<details', cardIdx)
+  assert.ok(detailsIdx !== -1, 'a <details> precedes the card')
+  const tagChunk = src.slice(detailsIdx, detailsIdx + 120)
+  assert.ok(
+    tagChunk.startsWith('<details className="workspace__revisit__optional" open={!isCarePlanEmpty(workspaceState.carePlan)}>'),
+    'open= is exactly open={!isCarePlanEmpty(workspaceState.carePlan)}',
+  )
+  // Non-vacuous: no OTHER <details> sits between this one and the card (i.e.
+  // this really is the details wrapping the card, not an unrelated one).
+  const between = src.slice(detailsIdx + tagChunk.length, cardIdx)
+  assert.ok(!between.includes('<details'), 'no other <details> sits between the opening tag and the card')
+  assert.ok(!between.includes('</details>'), 'the details does not close before the card')
+  assert.ok(
+    src.includes("import { isCarePlanEmpty } from './NextActionCard'"),
+    'isCarePlanEmpty is imported from the same corrected NextActionCard.tsx (Batch 2.6 E-1) rather than reimplemented locally',
+  )
+})
+
+test('Batch 2.6 E-3 mutant reproduction: reverting to the always-open form (no <details> wrapper) fails the structural check above', () => {
+  const mutantSrc = `      <PainCarePlanCard\n        value={workspaceState.carePlan}\n        onChange={(next) => setWorkspaceState((s) => ({ ...s, carePlan: next }))}\n      />\n`
+  const cardIdx = mutantSrc.indexOf('<PainCarePlanCard')
+  const detailsIdx = mutantSrc.lastIndexOf('<details', cardIdx)
+  assert.ok(detailsIdx === -1, 'reproduced: the reverted (mutant) source has no <details> at all before the card')
+})
+
+/* ------------------------------------------------------------------------
+ * Batch 2.6 (E-6): RehabSuggestionCard's "최종 지시문(선택)" free-text box
+ * moves behind a toggle (ExamSuggestionCard's own convention) -- starts
+ * open only when it already holds content. Rendered here via
+ * DoctorWorkspace + painRehabSuggestions in initialWorkspaceState, the same
+ * seam tests/doctor-workspace.spec.mjs's "defect 7" tests already use.
+ * ---------------------------------------------------------------------- */
+test('Batch 2.6 E-6: an empty clinicianFinalInstruction renders a "최종 지시문 추가" toggle, not an always-open free-text input', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'x',
+    synthetic: undefined,
+    lbpObjectiveMotorDeficit: 'NONE',
+    initialWorkspaceState: {
+      painRehabSuggestions: [
+        {
+          id: 'lbp-empty-instruction',
+          title: 'LBP 재활 제안 (지시문 없음)',
+          goal: '',
+          rationale: '',
+          sourceFacts: [],
+          contraindicationFacts: [],
+          source: 'SUGGESTED',
+          // ACCEPTED (not SUGGESTED): mergeLbpRehabSuggestions drops an
+          // undecided SUGGESTED item that is no longer among the freshly
+          // recomputed candidates on a live (non-synthetic) render -- an
+          // ACCEPTED/HELD/REJECTED decision is what survives the merge
+          // (see lbp-exercise-recommendation.spec.mjs and "defect 7" above).
+          status: 'ACCEPTED',
+          clinicianFinalInstruction: '',
+        },
+      ],
+    },
+  })
+  assert.ok(html.includes('LBP 재활 제안 (지시문 없음)'), 'sanity: the candidate card itself renders')
+  assert.ok(html.includes('최종 지시문 추가'), 'the collapsed toggle button renders')
+  assert.ok(
+    !html.includes('원장이 직접 다듬은 최종 지시문(선택)'),
+    'the free-text input (identified by its placeholder) is NOT rendered while empty and untoggled',
+  )
+})
+
+test('Batch 2.6 E-6: a non-empty clinicianFinalInstruction still renders the free-text input open, value visible, no toggle needed', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    submissionId: 'x',
+    synthetic: undefined,
+    lbpObjectiveMotorDeficit: 'NONE',
+    initialWorkspaceState: {
+      painRehabSuggestions: [
+        {
+          id: 'lbp-filled-instruction',
+          title: 'LBP 재활 제안 (지시문 있음)',
+          goal: '',
+          rationale: '',
+          sourceFacts: [],
+          contraindicationFacts: [],
+          source: 'SUGGESTED',
+          status: 'ACCEPTED',
+          clinicianFinalInstruction: 'ROUND26 하루 1회, 통증 시 중단',
+        },
+      ],
+    },
+  })
+  assert.ok(html.includes('ROUND26 하루 1회, 통증 시 중단'), 'a previously recorded instruction is never hidden behind a closed toggle')
+  assert.ok(!html.includes('최종 지시문 추가'), 'no toggle button renders once the field already holds content')
+})
+
+/* ------------------------------------------------------------------------
+ * Batch 2.6 (E-14/C-9): MicroFollowUpCard no longer renders the prior-visit
+ * follow-up-target candidate list -- the revisit screen's own "이전 방문
+ * 참고" block already shows the same targets (RevisitWorkspace.tsx).
+ * Everything about the patient's own response is unaffected. Rendered here
+ * directly (its own bundle, see package.json's test:doctor-workspace step)
+ * since the component takes plain props and needs no server/fetch seam.
+ * ---------------------------------------------------------------------- */
+{
+  const candidates = [
+    { id: 'lbp_tf_forward_bend', label: 'ROUND26 목표 동작 재현', baselineText: '허리 숙이기 5초 유지', postTreatmentText: '' },
+  ]
+
+  const withCandidatesOnly = renderToString(React.createElement(MicroFollowUpCard, { candidates, response: null }))
+  test('Batch 2.6 E-14: with only prior-visit candidates and no response, the candidate list is NOT rendered', () => {
+    assert.ok(!withCandidatesOnly.includes('이전 방문 재평가 대상'), 'the candidate-list label is gone')
+    assert.ok(!withCandidatesOnly.includes('ROUND26 목표 동작 재현'), 'the candidate label text itself does not render')
+    assert.ok(!withCandidatesOnly.includes('허리 숙이기 5초 유지'), 'the candidate baseline text does not render')
+  })
+
+  const response = {
+    visit_id: 'v1',
+    patient_id: 'p1',
+    targetRatings: [{ targetId: 'lbp_tf_forward_bend', label: 'ROUND26 목표 동작 재현', patientReportedValue: '많이 편해짐' }],
+    overallChange: '좋아짐',
+    newSymptomReported: false,
+    newSymptomNote: '',
+    adverseEffectReported: false,
+    adverseEffectNote: '',
+    submitted_at: '2026-01-01T00:00:00.000Z',
+  }
+  const withResponseAndCandidates = renderToString(React.createElement(MicroFollowUpCard, { candidates, response }))
+  test('Batch 2.6 E-14: the candidate list stays absent even when a response ALSO exists, but the response itself still renders in full', () => {
+    assert.ok(!withResponseAndCandidates.includes('이전 방문 재평가 대상'), 'candidate-list label still absent')
+    assert.ok(!withResponseAndCandidates.includes('허리 숙이기 5초 유지'), 'candidate baseline text still absent')
+    assert.ok(withResponseAndCandidates.includes('환자 응답 (오늘)'), 'the patient-response section header still renders')
+    assert.ok(withResponseAndCandidates.includes('많이 편해짐'), "the patient's own reported value still renders")
+    assert.ok(withResponseAndCandidates.includes('전반적 변화:'), 'the overallChange label still renders')
+    assert.ok(withResponseAndCandidates.includes('좋아짐'), 'overallChange\'s value still renders')
+  })
+
+  test('Batch 2.6 E-14: the card still renders (and opens) when candidates exist even with no response -- only the list content is gone, not the card', () => {
+    assert.ok(withCandidatesOnly.includes('간단 재확인(Micro Follow-up)'), 'the card itself still mounts for a candidates-only case')
+  })
+}
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)

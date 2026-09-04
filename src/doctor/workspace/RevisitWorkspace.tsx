@@ -79,6 +79,7 @@ import { deserializeWorkspaceState } from './persistence'
 import { ConflictBanner } from '../ConflictBanner'
 import { PainFinalAssessmentCard } from './FinalAssessmentCard'
 import { PainCarePlanCard } from './CarePlanCard'
+import { isCarePlanEmpty } from './NextActionCard'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
@@ -788,10 +789,19 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         onChange={(next) => setWorkspaceState((s) => ({ ...s, finalAssessment: next }))}
       />
 
-      <PainCarePlanCard
-        value={workspaceState.carePlan}
-        onChange={(next) => setWorkspaceState((s) => ({ ...s, carePlan: next }))}
-      />
+      {/* Batch 2.6 (E-3): matches the initial-visit treatment
+          (PainWorkspace.tsx) instead of the always-open form the revisit
+          screen copied from an earlier round -- same auto-open-when-non-empty
+          convention (isCarePlanEmpty, corrected in Batch 2.6 to no longer
+          count `nextVisitCheckItem`), so nothing already recorded here is
+          ever hidden behind a closed disclosure. */}
+      <details className="workspace__revisit__optional" open={!isCarePlanEmpty(workspaceState.carePlan)}>
+        <summary>치료 계획 (Care Plan) — 필요할 때 펼치기</summary>
+        <PainCarePlanCard
+          value={workspaceState.carePlan}
+          onChange={(next) => setWorkspaceState((s) => ({ ...s, carePlan: next }))}
+        />
+      </details>
 
       <FollowUpTargetPicker
         options={COMBINED_FOLLOW_UP_OPTIONS}

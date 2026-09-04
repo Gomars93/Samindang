@@ -106,6 +106,7 @@ tests/.preview-server-client-bundle.mjs
 # esbuild bundles used by tests/doctor-workspace.spec.mjs (regenerated, not source)
 tests/.doctor-workspace-fixtures-bundle.mjs
 tests/.doctor-workspace-bundle.cjs
+tests/.micro-follow-up-card-bundle.cjs
 # esbuild bundle used by tests/lane1-summary.spec.mjs (regenerated, not source)
 tests/.lane1-summary-bundle.mjs
 # esbuild bundles used by tests/doctor-reset-key.spec.mjs (regenerated, not source)

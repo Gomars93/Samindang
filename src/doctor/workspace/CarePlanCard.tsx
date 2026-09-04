@@ -22,13 +22,19 @@ function TextFields({ fields, onChange }: { fields: Field[]; onChange: (key: str
 }
 
 export function PainCarePlanCard({ value, onChange }: { value: PainCarePlan; onChange: (next: PainCarePlan) => void }) {
+  // Batch 2.6 (E-1/C-1): `다음 방문 확인 사항` is NOT listed here -- it is
+  // the same `carePlan.nextVisitCheckItem` field already bound to the
+  // always-visible "다음 방문 확인 메모" textarea one lane above this card
+  // (`PainWorkspace.tsx`). Drawing it a second time here duplicated a live
+  // textarea and, combined with `isCarePlanEmpty`, forced this whole card
+  // open on every keystroke there. The field is unchanged and still saves
+  // from that one textarea -- only this card's redundant copy is removed.
   const fields: Field[] = [
     { key: 'currentTreatmentGoal', label: '현재 치료 목표', value: value.currentTreatmentGoal, placeholder: '원장이 직접 입력' },
     { key: 'rehabilitationGoal', label: '재활 목표', value: value.rehabilitationGoal, placeholder: '원장이 직접 입력' },
     { key: 'homeActionPlan', label: '집에서 할 행동/운동 계획', value: value.homeActionPlan, placeholder: '원장이 직접 입력 — 자동 추천 없음' },
     { key: 'activityPrecaution', label: '주의/당분간 피할 활동', value: value.activityPrecaution, placeholder: '원장이 직접 입력' },
     { key: 'patientInstruction', label: '환자 안내문', value: value.patientInstruction, placeholder: '환자에게 그대로 전달될 문구' },
-    { key: 'nextVisitCheckItem', label: '다음 방문 확인 사항', value: value.nextVisitCheckItem, placeholder: '원장이 직접 입력' },
   ]
   return (
     <section className="workspace__carePlan" aria-label="치료 계획 (Care Plan)">

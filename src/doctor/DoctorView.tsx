@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
-import { JudgmentPanel } from './JudgmentPanel'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { buildPainWorkspaceEmrPreview, buildHerbalWorkspaceEmrPreview } from './workspace/emrPreview'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
@@ -868,9 +867,11 @@ function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: Answe
  * 참고). `payload.routing.primary_module_detail !== 'LBP'`면 아무것도
  * 렌더링하지 않는다.
  *
- * clinician_objective_motor_deficit은 이 화면이 아니라 JudgmentPanel에서
- * 입력·저장되므로(기존 judgment 저장 경로 재사용, 별도 저장 메커니즘 없음)
- * 여기서는 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
+ * clinician_objective_motor_deficit은 이 화면이 아니라 진료 탭의
+ * `ObjectiveExamFindingsCard`에서 입력·저장되므로(기존 judgment 저장 경로
+ * 재사용, 별도 저장 메커니즘 없음 -- Batch 4.1-D §17.3: 이 경로는 "자료
+ * 보기" 탭의 읽기 전용 echo가 제거된 것과 무관하게 그대로다) 여기서는
+ * 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
  * (fixtures) 항상 "아직 진찰 전"으로 취급한다.
  */
 export function LbpSafetyPanel({
@@ -1091,7 +1092,7 @@ function suggestedNeckExamCodes(
  *
  * LBP와 달리 disease safety 계산에 원장 입력(clinician judgment)이 필요
  * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
- * JudgmentPanel에 대응 필드를 추가하지 않았다.
+ * `ClinicianJudgment`에 대응 필드를 추가하지 않았다.
  */
 export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // safety_flags.neck는 이 레코드가 NECK/SHOULDER 부위와 관련 있는지의
@@ -1247,7 +1248,7 @@ function suggestedShoulderExamCodes(
  *
  * disease safety 계산에 원장 입력이 필요 없다(NECK과 동일) — 단
  * expedited_referral_consider의 세 번째 조건(원장 진찰에서 확인된 새
- * 회전근개 약화)만 JudgmentPanel의 `shoulder_objective_cuff_weakness`를
+ * 회전근개 약화)만 `ClinicianJudgment.shoulder_objective_cuff_weakness`를
  * 읽어 반영한다(§11).
  */
 export function ShoulderSafetyPanel({
@@ -1425,7 +1426,7 @@ function suggestedKneeExamCodes(
  *
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
  * plan §3.2/§5.5) -- Wells/SLR/신경혈관 결과의 persistence schema는 아직
- * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
+ * CLOSED되지 않았으므로 `ClinicianJudgment`에 새 필드를 추가하지 않는다.
  */
 export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
@@ -1572,7 +1573,7 @@ function suggestedElbowExamCodes(
  *
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
  * plan §3.2/§5.6) -- Wells류의 persistence schema가 아직 CLOSED되지
- * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
+ * 않았으므로 `ClinicianJudgment`에 새 필드를 추가하지 않는다.
  */
 export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
@@ -1728,7 +1729,7 @@ function suggestedWristHandExamCodes(
  * 결과로만 나타난다.
  *
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다
- * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
+ * (Fable plan §3.3) -- `ClinicianJudgment`에 새 필드를 추가하지 않는다.
  */
 export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
@@ -1943,25 +1944,14 @@ export function priorVisitsGroupCount(priorVisits: PatientHistoryResult | null |
 }
 
 /**
- * Core Reduction P4 -- "디브리핑·학습 기록"(JudgmentPanel, 구 "명리·감사
- * 기록" -- Batch 4.1-C §16.4에서 재명명) 아코디언 배지: 이미 서버에 저장된
- * 판단 중 채워진 항목 개수. JudgmentPanel 자체가 관리하는 in-progress 편집
- * 상태는 이 함수가 볼 수 없다(별도 컴포넌트) -- 배지는 "이미 기록된 값"만
- * 반영하며, 다른 그룹들의 배지가 서버/fixture의 저장된 값을 반영하는 것과
- * 같은 성격이다.
+ * Batch 4.1-D (§17.1/§17.2): `judgmentRecordedFieldCount` removed. It was
+ * the "디브리핑·학습 기록" accordion's badge (learning_case + debrief
+ * fill state), and that whole accordion -- along with the "원장 판단 기록"
+ * component it rendered, which had zero editable fields left -- is now
+ * gone; this was its only caller. See judgment.ts for why `debrief`/
+ * `learning_case` stay on the `ClinicianJudgment` type regardless
+ * (deprecated, not deleted).
  */
-export function judgmentRecordedFieldCount(judgment: ClinicianJudgment | null | undefined): number {
-  if (!judgment) return 0
-  let n = 0
-  // Batch 4.1-A §15.3: saju_only_prediction/revised_after_exam/
-  // final_treatment_axis/prescription_direction은 더 이상 어떤 UI도 쓰지
-  // 않는다(deprecated, judgment.ts 참고) — 이 배지에서도 뺀다.
-  // Batch 4.1-C §16.1: innate_features/symptom_links도 같은 이유로 뺀다 --
-  // JudgmentPanel의 해당 입력이 제거됐다(deprecated, judgment.ts 참고).
-  if (judgment.learning_case === true) n += 1
-  if (judgment.debrief && Object.values(judgment.debrief).some((v) => v.trim() !== '')) n += 1
-  return n
-}
 
 /**
  * MENOPAUSE_SLEEP v0.2 Compact 요약을 raw enum 나열이 아니라 진료용 문장으로 보여준다.
@@ -2344,7 +2334,7 @@ export function recordToPayload(record: SubmissionRecord): DoctorPayload {
 // 있다 -- `routing: null`(하위호환 저장 경로, server/index.js의
 // `routing: body.routing ?? null` 참고)이나 손으로 만든/손상된
 // `responses` 하나만 있어도, 이 파일의 수십 곳(`deriveViewProfile`,
-// `primaryConcernLabel`, 각 부위 SafetyPanel, JudgmentPanel의 props 등)이
+// `primaryConcernLabel`, 각 부위 SafetyPanel의 props 등)이
 // 예외 없이 그 값을 그대로 읽어 렌더링 도중 던진다. 이 값들은 전부
 // `buildResponsePayload`/`buildRoutingPayload`/`computeSaju`(coreSpec.ts/
 // saju/index.ts) 한 번의 호출로 통째로 만들어지는 atomic한 객체라서, 실제
@@ -3269,7 +3259,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return () => clearTimeout(t)
   }, [copyStatus])
 
-  // 수동 escape hatch: 원장이 진료 판단(JudgmentPanel)을 저장한 뒤(위 seed
+  // 수동 escape hatch: 원장이 진료 판단(ObjectiveExamFindingsCard)을 저장한 뒤(위 seed
   // effect는 클리니션이 편집 중인 텍스트를 보존하려고 `updated_at`만 바뀐
   // 경우 재생성을 건너뛸 수 있으므로 — defect #4) 즉시 최신값으로 다시
   // 조립하고 싶을 때 쓰는 버튼. 현재 화면이 들고 있는 selectedRecord(클라이언트
@@ -3321,12 +3311,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
   // P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6):
   // ObjectiveExamFindingsCard's save trigger -- merges `field: value` into
-  // the record's CURRENT server judgment (never the possibly-stale one
-  // this component's own JudgmentPanel instance might be mid-editing) and
-  // saves it through the exact same PUT judgment endpoint JudgmentPanel
-  // itself uses. `judgment` is server-side a single object, so this and
-  // JudgmentPanel's own "기록" click are two independent writers to the
-  // SAME field.
+  // the record's CURRENT server judgment and saves it through the PUT
+  // judgment endpoint. Batch 4.1-D (§17.3): the field's former second
+  // writer -- the now-removed "원장 판단 기록" panel's own "기록" click --
+  // is gone -- this is now the ONLY client-side writer of `judgment`. The conflict handling
+  // below is kept as-is regardless (another tab/device saving the same
+  // submission's judgment concurrently is still possible), not because a
+  // second writer within this app still exists.
   //
   // 독립 검수 HIGH-2: 이전 버전은 409(stale write) 발생 시 서버의 current
   // judgment 위에 이 필드의 로컬 value를 다시 merge해 자동으로 1회
@@ -3335,7 +3326,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // clinician observation이라, 다른 탭/기기에서 방금 저장한 최신 소견을
   // 사람 확인 없이 조용히 덮어쓸 수 있었다(두 필드가 아니라 같은 필드에
   // 대한 두 writer가 경쟁하는 경우 포함). 자동 retry/merge를 제거하고
-  // PR #24가 JudgmentPanel/DoctorWorkspace에 이미 정착시킨 원칙 그대로
+  // PR #24가 정착시킨 원칙 그대로
   // conflict를 반환한다 -- ObjectiveExamFindingsCard가 ConflictBanner로
   // 명시적으로 보여주고, 원장이 "최신 내용 불러오기"를 누른 뒤에만 값이
   // 바뀐다(handleReloadObjectiveExamConflict 참고).
@@ -3369,7 +3360,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // 독립 검수 HIGH-2: ObjectiveExamFindingsCard의 ConflictBanner에서
   // "최신 내용 불러오기"를 누른 순간 호출된다. `handleSaveObjectiveExamField`는
   // 매 저장 시도마다 CAS 기준(judgment/updated_at)을 selectedRecord에서
-  // 그대로 읽으므로(JudgmentPanel처럼 자체 ref로 추적하지 않는다), 여기서
+  // 그대로 읽으므로(자체 ref로 추적하지 않는다), 여기서
   // selectedRecord를 서버의 current로 맞춰주지 않으면 다음 저장 시도가
   // 똑같은 stale 기준으로 다시 409를 만든다. 필드 값을 자동으로 합치지
   // 않고 서버가 돌려준 current judgment/updated_at을 있는 그대로 반영할
@@ -4236,7 +4227,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       <>
       {/*
         malformed/legacy submission resilience 배치: 아래 nav+tab 콘텐츠
-        전체(임상/참고/명리 세 표면 + JudgmentPanel + 원본 JSON)는
+        전체(임상/참고/명리 세 표면 + 원본 JSON)는
         payloadShapeOk에 게이트된다 -- 명리/참고 표면이 "profile이
         pain이 아닐 때만" 의미가 있는 것처럼, 이 구조 자체가 애초에
         구조가 온전한 payload를 전제하기 때문에 하나로 묶어서 판단한다.
@@ -4293,7 +4284,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         Core Reduction P2 (delta N-6): DoctorWorkspace no longer carries an
         independent `key` here -- its own render-time reset (keyed on the
         `resetKey` prop below, the same unifiedResetKey the
-        DoctorRecordErrorBoundary above and JudgmentPanel below both use)
+        DoctorRecordErrorBoundary above uses -- a now-removed "원장 판단
+        기록" panel used to share it too, Batch 4.1-D §17.2)
         is the sole reset mechanism, replacing the key-remount this
         comment used to describe (a key-remount was tried and reverted in
         an earlier round after it caused a real double-mount -- see
@@ -4726,74 +4718,26 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       */}
 
       {/*
-        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): JudgmentPanel gets
-        a distinct group title here -- originally "명리·감사 기록" -- so
-        this never reads as the same thing as the 진료 화면의 "판단·처치"
-        lane's FinalAssessmentCard (a different component, a different
-        lane, a different purpose: that one is the derived-profile clinical
-        assessment the clinician acts on today, this one is a free-form
-        note/debrief trail). ClinicianJudgment's schema, its PUT save path,
-        its "기록" button and its save-state handling below are
-        byte-for-byte unchanged -- only the surrounding group label and
-        accordion boundary are new.
-
-        Batch 4.1-C (§16.4): renamed "명리·감사 기록" -> "디브리핑·학습
-        기록". By this point JudgmentPanel's own free-form 선천 특징/증상
-        연결 input (4.1-C, §16.1) and the "사주 예상→치료축·처방" block
-        (4.1-A) are both gone, so nothing "명리" remains inside it -- what's
-        left is exactly the 객관적 근력저하/회전근개 소견 read-only echo,
-        the "기록" save button + JSON, 1분 디브리핑, and 학습 케이스. The
-        old name would now misleadingly suggest 명리 content still lives
-        here; the new name describes what's actually inside.
+        Batch 4.1-D (§17.1/§17.2): the "디브리핑·학습 기록" accordion
+        (its "원장 판단 기록" panel -- 1분 디브리핑 4문항 + 학습 케이스
+        체크 + 객관적 근력저하/회전근개 read-only echo + "기록" save
+        button + JSON dump) removed entirely. PO decision 2026-09-04:
+        `DEBRIEF_QUESTIONS`' 4 questions are all 사주 questions,
+        content-identical to the 4 fields 4.1-A already removed -- so
+        4.1-A was only half done, and this closes the other half. 학습
+        케이스 is also unused for now. After 4.1-A/4.1-C already removed
+        this panel's only free-form inputs, it had ZERO editable fields
+        left (§17.2) -- the panel component itself and its file are gone.
+        The two safety fields it echoed read-only are edited and saved
+        elsewhere (ObjectiveExamFindingsCard, in the 진료 tab, via
+        handleSaveObjectiveExamField below -- unchanged, unaffected by this
+        removal, see §17.3). judgmentRecordedFieldCount (its accordion
+        badge) was removed too -- this accordion was its only caller.
+        ClinicianJudgment's schema and PUT save path are unchanged --
+        `saveJudgmentToServer`/`createEmptyJudgment` are still used by
+        handleSaveObjectiveExamField above. See judgment.ts for which
+        fields/types stay (deprecated, not deleted) and why.
       */}
-      <ReferenceAccordion
-        title="디브리핑·학습 기록"
-        count={judgmentRecordedFieldCount(mode === 'server' ? selectedRecord?.judgment ?? null : null)}
-      >
-      <JudgmentPanel
-        resetKey={unifiedResetKey}
-        source={{
-          session_id: payload.session_id,
-          questionnaire_version: payload.questionnaire_version,
-          myungri_algorithm_version: saju.policy.algorithm_version,
-          myungri_library_version: saju.engine.library_version,
-          myungri_status: saju.status,
-          myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),
-        }}
-        initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
-        initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
-        /* 6차 독립 리뷰 HIGH-1/MEDIUM-1: LbpSafetyPanel과 동일한 applicability
-           신호(safety_flags.<region>, nullish 비교)로 통일 -- routing 태그나
-           strict !== null은 additional-detail 경로/레거시 undefined 키에서
-           잘못된 값을 낸다. */
-        showLbpExam={payload.responses.safety_flags.lbp != null}
-        showShoulderExam={payload.responses.safety_flags.shoulder != null}
-        onSave={
-          mode === 'server' && selectedId
-            ? async (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => {
-                // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
-                // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
-                // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
-                const result = await saveJudgmentToServer(selectedId, judgment, expectedUpdatedAt ?? undefined)
-                if (result.ok) {
-                  setSelectedRecord(result.data)
-                  return { ok: true as const, updatedAt: result.data.updated_at }
-                }
-                // Round 18: same 409-conflict translation as the workspace
-                // save callback above -- see its comment.
-                const current = result.errorBody?.current as SubmissionRecord | undefined
-                if (current) {
-                  return { ok: false as const, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
-                }
-                // P0-8: same kind pass-through as the workspace save
-                // callback above -- lets JudgmentPanel show the inline
-                // "인증 만료" recovery specifically for a 401/403.
-                return { ok: false as const, kind: result.kind }
-              }
-            : undefined
-        }
-      />
-      </ReferenceAccordion>
 
       {/*
         Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "원본 JSON" 그룹 --

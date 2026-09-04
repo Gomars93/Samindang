@@ -4,6 +4,7 @@
 // Plain node, no test framework: assert() prints "OK: <name>" and throws on failure.
 
 import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import React from 'react'
 import { renderToString } from 'react-dom/server'
@@ -13,6 +14,7 @@ import {
   createEmptyJudgment,
   validateJudgment,
   finalizeJudgment,
+  DEBRIEF_QUESTIONS,
 } from './.doctor-judgment-bundle.mjs'
 import { DOCTOR_SECTION_ORDER } from './.doctor-sectionorder-bundle.mjs'
 import {
@@ -30,7 +32,6 @@ import {
   isUnreadableReproductiveDerived,
   MyungriCompactCard,
   sajuStatusLine,
-  judgmentRecordedFieldCount,
 } from './.doctor-view-bundle.cjs'
 
 let passCount = 0
@@ -1241,13 +1242,26 @@ function detailsRange(html, classMarker) {
 // (judgment__secondaryFields) and its 4 labeled fields are gone from the
 // rendered output entirely.
 //
-// Batch 4.1-C (§16.1/§16.2, updating the "still renders" lines this test
-// used to end with): 핵심 선천 특징/현재 증상과 연결되는 핵심 (the two
-// fields 4.1-A deliberately left alone) and the "설명 개요" disclosure
+// Batch 4.1-C (§16.1/§16.2): 핵심 선천 특징/현재 증상과 연결되는 핵심 (the
+// two fields 4.1-A deliberately left alone) and the "설명 개요" disclosure
 // that read them back are now ALSO gone -- T13/T14 here are the
 // full-rendered-page complement of doctor-reset-key.spec.mjs's bundle-text
-// T13/T14. T23 pins the opposite side (CLAUDE.md's "표 규칙"): what
-// JudgmentPanel still has after both removals must keep rendering.
+// T13/T14.
+//
+// Batch 4.1-D (§17.1/§17.2/§17.5): T23 used to pin the OPPOSITE side
+// (CLAUDE.md's "표 규칙") -- what JudgmentPanel still had after 4.1-A/4.1-C
+// must keep rendering (1분 디브리핑, 학습 케이스, the "기록" button). §17.0
+// found that "still has" list was itself the problem: 1분 디브리핑's own 4
+// questions are all 사주 questions, content-identical to what 4.1-A had
+// already removed -- so T23, as written, was actively pinning the exact
+// leak §17 exists to close. §17.5 requires REVERSING T23, not deleting it,
+// so the history ("한때 보존하기로 했다가 결정이 바뀌었다") stays visible
+// in the suite. T24-T28 below are the new removal assertions §17.6 asks
+// for, exercised across every profile this suite can render (herbal/pain/
+// mixed -- 재진 has no distinct DoctorView render path or fixture of its
+// own: a follow-up visit renders through the exact same viewProfile-driven
+// code JudgmentPanel/DoctorView never branched on visit count, so the pain
+// fixture stands in for both 초진 and 재진 here).
 {
   const html = renderDoctorView('수면 주호소 + 동반 소화/통증')
   assert('T1: judgment__secondaryFields details block no longer renders', !html.includes('judgment__secondaryFields'))
@@ -1261,24 +1275,67 @@ function detailsRange(html, classMarker) {
   assert('T14: judgment__outline no longer renders', !html.includes('judgment__outline'))
   assert('T14: "설명 개요" disclosure summary no longer renders', !html.includes('설명 개요'))
 
-  // T23: everything else JudgmentPanel still has keeps rendering --
-  // neither removal (4.1-A's, 4.1-C's) took these with it.
-  assert('T23: "1분 디브리핑" disclosure still renders', html.includes('1분 디브리핑'))
-  assert('T23: "학습 케이스" toggle still renders', html.includes('학습 케이스'))
-  assert('T23: "기록" save button still renders', html.includes('>기록</button>'))
+  // T23 (REVERSED by Batch 4.1-D §17.5 -- was "still renders", now "no
+  // longer renders"): 1분 디브리핑/학습 케이스/"기록" button are all gone.
+  assert('T23 (reversed): "1분 디브리핑" disclosure no longer renders', !html.includes('1분 디브리핑'))
+  assert('T23 (reversed): "학습 케이스" toggle no longer renders', !html.includes('학습 케이스'))
+  assert('T23 (reversed): "기록" save button no longer renders', !html.includes('>기록</button>'))
 }
 {
-  // T13/T14/T23 companions in pain profile too -- JudgmentPanel renders
-  // unconditionally regardless of viewProfile (unlike BIRTH_*, it has no
-  // `viewProfile !== 'pain'` gate), so both removals and both survivors
-  // must hold there as well.
+  // T13/T14/T23 companions in pain profile too -- JudgmentPanel used to
+  // render unconditionally regardless of viewProfile (unlike BIRTH_*, it
+  // had no `viewProfile !== 'pain'` gate), so both removals and the
+  // reversed T23 must hold there as well.
   const html = renderDoctorView('허리 통증 주호소 (LBP, 확인 필요)')
   assert('T13: 핵심 선천 특징 no longer renders (pain profile)', !html.includes('핵심 선천 특징'))
   assert('T13: 현재 증상과 연결되는 핵심 no longer renders (pain profile)', !html.includes('현재 증상과 연결되는 핵심'))
   assert('T14: judgment__outline no longer renders (pain profile)', !html.includes('judgment__outline'))
-  assert('T23: "1분 디브리핑" disclosure still renders (pain profile)', html.includes('1분 디브리핑'))
-  assert('T23: "학습 케이스" toggle still renders (pain profile)', html.includes('학습 케이스'))
-  assert('T23: 객관적 근력저하 echo still renders (pain profile, LBP fixture)', html.includes('객관적 하지 근력저하'))
+  assert('T23 (reversed): "1분 디브리핑" disclosure no longer renders (pain profile)', !html.includes('1분 디브리핑'))
+  assert('T23 (reversed): "학습 케이스" toggle no longer renders (pain profile)', !html.includes('학습 케이스'))
+  // The read-only echo ("객관적 하지 근력저하 소견 (원장 진찰, LBP):") is
+  // gone (§17.2/§17.4) -- but the substring itself still renders, now from
+  // the LIVE editable ObjectiveExamFindingsCard label ("객관적 하지
+  // 근력저하 소견 (LBP)") in the 진료 tab, which is exactly T29 below.
+  assert('T23 companion: 객관적 하지 근력저하 text still renders (pain profile, LBP fixture) -- now from the editable card only, see T29', html.includes('객관적 하지 근력저하'))
+}
+
+// ---------- Batch 4.1-D §17.6: T24-T28 (removal, rendered html) ----------
+{
+  const profiles = [
+    ['herbal', '수면 주호소 + 동반 소화/통증'],
+    ['pain (also stands in for 초진/재진 -- see comment above)', '허리 통증 주호소 (LBP, 확인 필요)'],
+    ['mixed', '허리 통증 주호소 + 한약 추가문진 (mixed 프로필)'],
+  ]
+  for (const [label, fixtureName] of profiles) {
+    const html = renderDoctorView(fixtureName)
+
+    // T24: "1분 디브리핑" itself never renders, on any profile.
+    assert(`T24: "1분 디브리핑" does not render (${label} profile)`, !html.includes('1분 디브리핑'))
+
+    // T25: none of the 4 DEBRIEF_QUESTIONS strings render either -- content,
+    // not just the box name (§17.0's own lesson: reading the box's NAME
+    // was not enough, the leak was inside). Imported directly from
+    // judgment.ts's own constant so a future wording change can't silently
+    // de-fang this assertion.
+    for (const [i, q] of DEBRIEF_QUESTIONS.entries()) {
+      assert(`T25: DEBRIEF_QUESTIONS[${i}] ("${q}") does not render (${label} profile)`, !html.includes(q))
+    }
+
+    // T26: 학습 케이스 disclosure and its "★ 표시됨" flag are gone.
+    assert(`T26: "학습 케이스" does not render (${label} profile)`, !html.includes('학습 케이스'))
+    assert(`T26: "★ 표시됨" does not render (${label} profile)`, !html.includes('★ 표시됨'))
+
+    // T27: the "디브리핑·학습 기록" accordion and the "원장 판단 기록"
+    // section (JudgmentPanel's own <h2>) are both gone.
+    assert(`T27: "디브리핑·학습 기록" accordion does not render (${label} profile)`, !html.includes('디브리핑·학습 기록'))
+    assert(`T27: "원장 판단 기록" section does not render (${label} profile)`, !html.includes('원장 판단 기록'))
+
+    // T28: 사주/명리 render zero times anywhere on the page, on every
+    // profile -- the global lock §17.0's own miss (a per-box name check
+    // that never read the box's CONTENT) asks for.
+    assert(`T28: "사주" does not render anywhere (${label} profile)`, !html.includes('사주'))
+    assert(`T28: "명리" does not render anywhere (${label} profile)`, !html.includes('명리'))
+  }
 }
 
 // 13i. 중복 감사(§PART9): "1~3개월"(주호소 duration 답) 텍스트는 정확히 2번 —
@@ -1844,7 +1901,7 @@ function detailsRange(html, classMarker) {
     /asArray<string>\(routing\.secondary_screens\)/.test(src),
   )
   assert(
-    'resilience: saju.policy.pending_approval is read through asArray() at every render/JudgmentPanel-prop site',
+    'resilience: saju.policy.pending_approval is read through asArray() at every render/judgment-save-source-prop site',
     (src.match(/asArray(?:<string>)?\(saju\.policy\.pending_approval\)/g) ?? []).length >= 3,
   )
   assert(
@@ -1916,11 +1973,20 @@ function detailsRange(html, classMarker) {
         src,
       ),
   )
-  assert(
-    'resilience: showLbpExam/showShoulderExam on JudgmentPanel use the same nullish safety_flags.<region> applicability signal as their SafetyPanel gates -- routing tags or strict !== null give wrong answers on the Additional Detailed Concern route / legacy undefined keys (6th independent review HIGH-1/MEDIUM-1)',
-    /showLbpExam=\{payload\.responses\.safety_flags\.lbp != null\}/.test(src) &&
-      /showShoulderExam=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(src),
-  )
+  // Batch 4.1-D (§17.1/§17.2): JudgmentPanel's own showLbpExam/
+  // showShoulderExam props are gone along with the component. The SAME
+  // applicability signal survives on ObjectiveExamFindingsCard's
+  // showLbp/showShoulder props instead -- those are wired in
+  // DoctorWorkspace.tsx (not DoctorView.tsx, where JudgmentPanel used to
+  // live), so this guard is re-anchored on that file below.
+  {
+    const workspaceSrc = await readFile(fileURLToPath(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url)), 'utf8')
+    assert(
+      'resilience: showLbp/showShoulder on ObjectiveExamFindingsCard (DoctorWorkspace.tsx) use the same nullish safety_flags.<region> applicability signal as their SafetyPanel gates -- routing tags or strict !== null give wrong answers on the Additional Detailed Concern route / legacy undefined keys (6th independent review HIGH-1/MEDIUM-1, carried forward by Batch 4.1-D §17.3 when the editable control moved off JudgmentPanel)',
+      /showLbp=\{payload\.responses\.safety_flags\.lbp != null\}/.test(workspaceSrc) &&
+        /showShoulder=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(workspaceSrc),
+    )
+  }
   assert(
     "resilience: the LBP region sub-block additionally requires m.lbp, not just primaryModuleDetail === 'LBP'",
     /primaryModuleDetail === 'LBP' && m\.lbp\s*\n\s*\? \[/.test(src),
@@ -2965,17 +3031,20 @@ function detailsRange(html, classMarker) {
    * 데이터에서 온 배열을 그대로 .join(', ')하면 wrong-typed 원소가
    * "[object Object]"로 그대로 노출된다. MyungriCompactCard의 pendingLabels
    * 는 이미 위에서 behavioral하게 검증했으므로, DoctorView.tsx 메인 렌더
-   * 블록에만 있는 나머지 호출부(secondary_screens join, JudgmentPanel에
-   * 넘기는 myungri_pending_approval)는 구조 확인으로 보완한다. (Batch
-   * 4.1-B: 명리 검토 grid 자신의 pending_approval join은 그 grid째로
-   * 제거됐다 -- 세 번째 호출부는 더 이상 없다.)
+   * 블록에만 있는 나머지 호출부(secondary_screens join, judgment-save
+   * source object에 넘기는 myungri_pending_approval -- Batch 4.1-D 이전엔
+   * JudgmentPanel의 source prop도 같은 호출부였으나, §17.1/§17.2로 그
+   * JSX 자체가 제거되면서 handleSaveObjectiveExamField의 source 객체가
+   * 유일한 호출부로 남았다)는 구조 확인으로 보완한다. (Batch 4.1-B: 명리
+   * 검토 grid 자신의 pending_approval join은 그 grid째로 제거됐다 -- 세
+   * 번째 호출부는 더 이상 없다.)
    */
   assert(
     'resilience: routing.secondary_screens join이 readableStringArray를 거친다 (bare asArray().join() 대신, 13th independent review MEDIUM-2)',
     doctorViewSrc.includes("readableStringArray(asArray(routing.secondary_screens)).join(', ')"),
   )
   assert(
-    'resilience: JudgmentPanel에 넘기는 myungri_pending_approval이 readableStringArray를 거친다 (13th independent review MEDIUM-3)',
+    'resilience: judgment-save source 객체(handleSaveObjectiveExamField, Batch 4.1-D 이전엔 JudgmentPanel의 source prop도 포함)에 넘기는 myungri_pending_approval이 readableStringArray를 거친다 (13th independent review MEDIUM-3)',
     doctorViewSrc.includes('myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),'),
   )
 }
@@ -3120,9 +3189,10 @@ function detailsRange(html, classMarker) {
   )
   // Core Reduction P2 (delta N-6, Phase 5 Synthesis v1.2 §2.8): the
   // boundary key is now the SAME unifiedResetKey DoctorWorkspace's
-  // `resetKey` prop and JudgmentPanel's `resetKey` prop both read -- one
-  // computation instead of three independently-typed key expressions that
-  // could silently drift apart.
+  // `resetKey` prop reads (originally also JudgmentPanel's `resetKey`
+  // prop, until Batch 4.1-D §17.1/§17.2 removed that component and its
+  // JSX entirely) -- one computation instead of independently-typed key
+  // expressions that could silently drift apart.
   assert(
     'resilience: unifiedResetKey is computed once (submission:<id> in server mode, fixture:<index>:<scenario> in fixtures mode)',
     /const unifiedResetKey =\s*\n\s*mode === 'server' \? `submission:\$\{selectedRecord\?\.id \?\? 'none'\}` : `fixture:\$\{fixtureIndex\}:\$\{workspaceScenarioId\}`/.test(
@@ -3134,9 +3204,10 @@ function detailsRange(html, classMarker) {
     /key=\{unifiedResetKey\}/.test(src),
   )
   assert(
-    'resilience: DoctorWorkspace and JudgmentPanel both receive the SAME unifiedResetKey as their resetKey prop ' +
-      '(a record switch must reset the shell, the error boundary, and the judgment panel in lockstep)',
-    (src.match(/resetKey=\{unifiedResetKey\}/g) ?? []).length >= 2,
+    'resilience: DoctorWorkspace receives the SAME unifiedResetKey as its resetKey prop ' +
+      '(a record switch must reset the shell and the error boundary in lockstep -- ' +
+      'Batch 4.1-D §17.1/§17.2: JudgmentPanel used to be a second receiver of this same prop, now gone with the component)',
+    (src.match(/resetKey=\{unifiedResetKey\}/g) ?? []).length >= 1,
   )
   assert(
     'resilience: !payloadShapeOk renders DoctorRecordFallback instead of the normal tab content',
@@ -3254,7 +3325,7 @@ function detailsRange(html, classMarker) {
       })(),
   )
   assert(
-    'P0-2: ObjectiveExamFindingsCard uses the SAME nullish safety_flags.<region> applicability signal as JudgmentPanel\'s showLbpExam/showShoulderExam (6th independent review HIGH-1/MEDIUM-1)',
+    'P0-2: ObjectiveExamFindingsCard uses the SAME nullish safety_flags.<region> applicability signal JudgmentPanel\'s (now-removed, Batch 4.1-D §17.2) showLbpExam/showShoulderExam used to (6th independent review HIGH-1/MEDIUM-1)',
     /<ObjectiveExamFindingsCard[\s\S]{0,400}?showLbp=\{payload\.responses\.safety_flags\.lbp != null\}[\s\S]{0,200}?showShoulder=\{payload\.responses\.safety_flags\.shoulder != null\}/.test(
       workspaceSrc,
     ),
@@ -3285,13 +3356,19 @@ function detailsRange(html, classMarker) {
       )
     })(),
   )
-  const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')
+  // Batch 4.1-D (§17.1/§17.2): the property this test pinned when it was
+  // written -- "JudgmentPanel keeps a READ-ONLY echo of both fields,
+  // information is not lost, only the editable control moved" -- was true
+  // for 4.1-A through 4.1-C. This batch removes that read-only echo too,
+  // deliberately: §17.2's own field × screen table records this as an
+  // intentional loss (both fields are already visible, live, on their own
+  // editable radios in ObjectiveExamFindingsCard right next to the safety
+  // panel that reacts to them -- the echo was a literal duplicate, the
+  // exact kind of thing the 화면 실측 감사 already flagged as 1순위).
+  // `src/doctor/JudgmentPanel.tsx` no longer exists to read.
   assert(
-    'P0-2: JudgmentPanel keeps a READ-ONLY echo of both fields (still gated on showLbpExam/showShoulderExam) -- information is not lost, only the editable control moved',
-    panelSrc.includes('{showLbpExam && (') &&
-      panelSrc.includes('{showShoulderExam && (') &&
-      !/type="radio"\s*\n\s*name="lbp_objective_motor_deficit"/.test(panelSrc) &&
-      !/type="radio"\s*\n\s*name="shoulder_objective_cuff_weakness"/.test(panelSrc),
+    'P0-2 superseded by Batch 4.1-D §17.2: JudgmentPanel.tsx (and its read-only echo of both fields) no longer exists -- the fields are edited live on ObjectiveExamFindingsCard only, never duplicated elsewhere',
+    !existsSync(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url))),
   )
 }
 
@@ -3325,20 +3402,21 @@ function detailsRange(html, classMarker) {
 
 /* -------------------------------------------------------------------------
  * Core Reduction P3 — Phase 7 UI spec §1.3-#15 (§2.10, delta N-4): 학습
- * 케이스 disclosure(Phase 1 audit row 81) opens exactly when
+ * 케이스 disclosure(Phase 1 audit row 81) used to open exactly when
  * judgment.learning_case === true.
+ *
+ * Batch 4.1-D (§17.1/§17.5, PO decision 2026-09-04): 학습 케이스 is unused
+ * for now and removed from the screen entirely, along with the rest of
+ * JudgmentPanel.tsx (§17.2). This §1.3-#15 property (an open={} condition
+ * on a disclosure that no longer exists) is retired -- its removal is what
+ * T26 in the render-level suite below pins (학습 케이스/★ 표시됨 render on
+ * no profile). This structural check is kept as the source-level half of
+ * that same fact, per CLAUDE.md's "지운 경로 1개당 소스 단언 1개".
  * ---------------------------------------------------------------------- */
 {
-  const panelSrc = await readFile(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url)), 'utf8')
   assert(
-    '§1.3-#15: judgment__learningCase disclosure open condition is exactly judgment.learning_case === true',
-    /className="judgment__learningCase" open=\{judgment\.learning_case === true\}/.test(panelSrc),
-  )
-  assert(
-    '§1.3-#15: the checkbox itself (row 81) still lives inside that disclosure, unchanged',
-    /<details className="judgment__learningCase" open=\{judgment\.learning_case === true\}>[\s\S]{0,400}?type="checkbox"[\s\S]{0,100}?checked=\{judgment\.learning_case\}/.test(
-      panelSrc,
-    ),
+    '§1.3-#15 superseded by Batch 4.1-D §17.1: JudgmentPanel.tsx (and its judgment__learningCase disclosure) no longer exists',
+    !existsSync(fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url))),
   )
 }
 
@@ -3443,22 +3521,25 @@ function detailsRange(html, classMarker) {
 // have): the "명리" group is GONE (its accordion was removed in 4.1-B,
 // §16.3) -- there is no longer a group by that name to assert into the
 // list, and no representative field (사주 기둥 grid) to check for it
-// either. The former "명리·감사 기록" group is renamed "디브리핑·학습
-// 기록" (4.1-C, §16.4) -- its representative field also changes: 핵심
-// 선천 특징 (the field this used to check) is itself removed by 4.1-C
-// (§16.1), so "1분 디브리핑" (still rendered -- T23) stands in for it.
+// either. The former "명리·감사 기록" group was renamed "디브리핑·학습
+// 기록" (4.1-C, §16.4), then REMOVED ENTIRELY by Batch 4.1-D (§17.1/§17.2)
+// -- there is no group by that name left either, so it drops out of the
+// `groups` list below the same way "명리" did, and the "still renders"
+// assertion this test used to end with is replaced by its own absence
+// check (mirrors T27 in the §17.6 block above, at the "여성 건강 주호소"
+// fixture specifically since that is the one this metric test already uses).
 {
   const html = renderDoctorView('여성 건강 주호소')
-  const groups = ['문진 원본', '약물·병력', '여성 안전', '검사자료', '이전 방문 원문', '디브리핑·학습 기록', '원본 JSON']
+  const groups = ['문진 원본', '약물·병력', '여성 안전', '검사자료', '이전 방문 원문', '원본 JSON']
   for (const g of groups) {
     assert(`metric: 기록 필드 접근 불가 0 -- 참고 화면에 "${g}" 아코디언 그룹이 렌더된다`, html.includes(g))
   }
   assert('T6 companion: metric fixture no longer offers a "명리" 아코디언 그룹', !html.includes('명리 검토'))
-  assert('T18: metric fixture no longer has a group named "명리·감사 기록" (renamed)', !html.includes('명리·감사 기록'))
+  assert('T18: metric fixture no longer has a group named "명리·감사 기록" (renamed, then removed)', !html.includes('명리·감사 기록'))
+  assert('T27 companion: metric fixture no longer has a group named "디브리핑·학습 기록" either (Batch 4.1-D §17.1/§17.2 removed it entirely)', !html.includes('디브리핑·학습 기록'))
   // 그룹 프레임만이 아니라 그 안의 실제 값도 도달 가능해야 한다 -- 각
   // 그룹을 대표하는 실제 필드/값 하나씩.
   assert('metric: 기록 필드 접근 불가 0 -- 여성 안전 그룹 안의 WOMEN_SAFETY_01 원본 응답이 렌더된다', html.includes('환자가 답한 것 (WOMEN_SAFETY_01)'))
-  assert('metric: 기록 필드 접근 불가 0 -- 디브리핑·학습 기록 그룹 안의 JudgmentPanel 필드(1분 디브리핑)가 렌더된다', html.includes('1분 디브리핑'))
   assert('metric: 기록 필드 접근 불가 0 -- 원본 JSON 그룹 안의 실제 payload 덤프가 렌더된다', html.includes('&quot;session_id&quot;'))
 }
 
@@ -3687,44 +3768,20 @@ function detailsRange(html, classMarker) {
     assert(`T3: .doctor-view-bundle.cjs no longer contains "${key}"`, !doctorViewBundleSrc.includes(key))
   }
 
-  // T5 (Batch 4.1-A §15.7): judgmentRecordedFieldCount returns 0 for a
-  // judgment where ONLY the 4 deprecated fields (saju_only_prediction/
-  // revised_after_exam/final_treatment_axis/prescription_direction) are
-  // filled -- the badge no longer counts them.
-  const t5Judgment = createEmptyJudgment({
-    session_id: 's1',
-    questionnaire_version: 'v1',
-    myungri_algorithm_version: 'v1',
-    myungri_library_version: 'v1',
-    myungri_status: 'resolved',
-    myungri_pending_approval: [],
-  })
-  t5Judgment.saju_only_prediction = '사주만 보고 예상'
-  t5Judgment.revised_after_exam = '수정된 판단'
-  t5Judgment.final_treatment_axis = '치료축'
-  t5Judgment.prescription_direction = '처방 방향'
+  // T5 (Batch 4.1-A §15.7)/T15 (Batch 4.1-C §16.1/§16.6): SUPERSEDED by
+  // Batch 4.1-D. Both pinned that `judgmentRecordedFieldCount` -- the
+  // "디브리핑·학습 기록" accordion's badge -- returned 0 for a judgment
+  // where only some already-deprecated field was filled (saju_only_
+  // prediction et al. for T5, innate_features/symptom_links for T15).
+  // §17.1/§17.2 removes the function itself (its only caller, that
+  // accordion, is gone -- see DoctorView.tsx's own comment at the removal
+  // site), so there is no more return value to pin either. Checked at the
+  // bundle level (ASCII identifier, not a Korean literal, so this is
+  // load-bearing per DECISIONS.md's "테스트 규약 2건 확정" entry -- the
+  // same bundle T3 above already reads).
   assert(
-    'T5: judgmentRecordedFieldCount returns 0 when only the 4 deprecated fields are filled',
-    judgmentRecordedFieldCount(t5Judgment) === 0,
-  )
-
-  // T15 (Batch 4.1-C §16.1/§16.6): judgmentRecordedFieldCount returns 0
-  // for a judgment where ONLY innate_features/symptom_links are filled --
-  // the badge no longer counts them either (their input was removed from
-  // JudgmentPanel, §16.1).
-  const t15Judgment = createEmptyJudgment({
-    session_id: 's1',
-    questionnaire_version: 'v1',
-    myungri_algorithm_version: 'v1',
-    myungri_library_version: 'v1',
-    myungri_status: 'resolved',
-    myungri_pending_approval: [],
-  })
-  t15Judgment.innate_features = ['간 기운이 강함', '체력 좋음']
-  t15Judgment.symptom_links = ['수면 문제']
-  assert(
-    'T15: judgmentRecordedFieldCount returns 0 when only innate_features/symptom_links are filled',
-    judgmentRecordedFieldCount(t15Judgment) === 0,
+    'T5/T15 superseded by Batch 4.1-D §17.1/§17.2: .doctor-view-bundle.cjs no longer exports/defines judgmentRecordedFieldCount',
+    !doctorViewBundleSrc.includes('judgmentRecordedFieldCount'),
   )
 
   // C-5 (Opus closing review): EmrPreviewCard's "복사는 「다음」 레인의

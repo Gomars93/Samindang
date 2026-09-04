@@ -16,12 +16,47 @@ export const MAX_SYMPTOM_LINKS = 2
 
 export type DebriefAnswers = { q1: string; q2: string; q3: string; q4: string }
 
+/**
+ * Batch 4.1-D (§17.1/§17.2/§17.4): PO 결정 2026-09-04 — `1분 디브리핑`을
+ * 화면에서 전부 제거한다(4.1-A가 지운 4필드와 내용이 사실상 동일한 사주
+ * 질문이라는 것이 4.1-C 검증 중 드러났다 — 이 상수 자체가 그 증거다).
+ * 렌더 지점(구 JudgmentPanel.tsx의 `judgment__debrief` disclosure)은
+ * 완전히 사라졌으므로 어떤 화면에도 아래 문자열이 나타나지 않는다 —
+ * deprecated, 새 UI에서 참조하지 말 것. 상수 자체는 남긴다: `DebriefAnswers`
+ * 키(`q1`~`q4`)와의 대응 관계 문서 + `ClinicianJudgment.debrief`/
+ * `server/**`(FROZEN)·`tests/server.spec.mjs`의 round-trip 프로브 근거는
+ * §16.4/§17.4의 innate_features/saju_only_prediction 등과 동일하다.
+ */
 export const DEBRIEF_QUESTIONS = [
   '이 사주에서 제일 중요하게 본 것은 무엇인가?',
   '사주만 보고 어떤 임상문제를 예상했는가?',
   '실제 문진·맥·설을 보고 무엇을 수정했는가?',
   '그 수정이 처방을 어떻게 바꿨는가?',
 ] as const
+
+/**
+ * Batch 4.1-D (§17.2/§17.3): moved here from the now-deleted
+ * `JudgmentPanel.tsx` -- `ObjectiveExamFindingsCard.tsx` (the 진료 tab
+ * card that is the SOLE editable/save path for these two safety fields,
+ * see judgment.ts's `ObjectiveExamSaveOutcome` doc comment) imported these
+ * two option/label arrays from JudgmentPanel so both places used the exact
+ * same value/label pairs rather than forking a second copy. JudgmentPanel
+ * itself is gone (§17.2: it had zero editable fields left), so this file
+ * -- the plain types-and-helpers module both already depend on, with no
+ * React -- is the new shared home. Values/labels themselves are
+ * byte-for-byte unchanged.
+ */
+export const LBP_MOTOR_DEFICIT_OPTIONS: { value: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'; label: string }[] = [
+  { value: 'NONE', label: '없음' },
+  { value: 'SEVERE_OR_PROGRESSIVE', label: '심하거나 빠르게 진행함' },
+  { value: 'UNKNOWN', label: '아직 확인 못함' },
+]
+
+export const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'; label: string }[] = [
+  { value: 'NONE', label: '없음' },
+  { value: 'NEW_WEAKNESS_AFTER_TRAUMA', label: '외상 후 새로 생긴 근력저하 확인됨' },
+  { value: 'UNKNOWN', label: '아직 확인 못함' },
+]
 
 export type ClinicianJudgment = {
   schema_version: string

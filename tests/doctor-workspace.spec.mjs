@@ -2495,15 +2495,18 @@ test('every disclosure element Core Reduction P2/P3 introduced has a correspondi
   // The 5 disclosures Phase 5 Synthesis v1.2 introduced/changed this round:
   //   1. §2.4 반대편 유형 입력 세트 (doctor__oppositeType)      -- tested above (#4/#5)
   //   2. §2.7 발급 "다른 방법" (doctor__nextIssuance__altMethods) -- source-tested in tests/doctor.spec.mjs
-  //   3. §2.10 학습 케이스 (judgment__learningCase)              -- tested below (#15)
+  //   3. §2.10 학습 케이스 (judgment__learningCase)              -- Batch 4.1-D (§17.1) REMOVED this
+  //      disclosure entirely (JudgmentPanel.tsx itself is gone, §17.2) --
+  //      there is no open={} condition left to check; its absence is
+  //      pinned by tests/doctor.spec.mjs's T26 instead ("학습 케이스"/
+  //      "★ 표시됨" no longer render on any profile).
   // (재활 제안/병기 후보는 <details>가 아니라 존재-시에만-렌더 형태로 구현했으므로
   //  이 정적 목록에서 제외 -- 위 #10 테스트가 그 형태에 맞는 동등 검증을 담당한다.)
   const workspaceSrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
   assert.ok(/className="workspace__optional doctor__oppositeType"\s*\n\s*open=\{/.test(workspaceSrc), '#1: doctor__oppositeType has an open={} condition')
   const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
   assert.ok(/doctor__nextIssuance__altMethods"\s*open=\{altMethodsAutoOpen\}/.test(viewSrc), '#2: doctor__nextIssuance__altMethods has an open={} condition')
-  const judgmentSrc = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
-  assert.ok(/className="judgment__learningCase" open=\{/.test(judgmentSrc), '#3: judgment__learningCase has an open={} condition')
+  assert.equal(fs.existsSync('src/doctor/JudgmentPanel.tsx'), false, '#3: src/doctor/JudgmentPanel.tsx (and its judgment__learningCase disclosure) must not exist')
 })
 
 // ---------- LBP v1 Batch 1 (G1-G5): real (non-synthetic) LBP payload ----------

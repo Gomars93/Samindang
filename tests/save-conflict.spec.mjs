@@ -5,7 +5,12 @@
 // tests/server.spec.mjs and tests/follow-up-session.spec.mjs (round 17/W4) --
 // this file does not repeat that. What is genuinely NEW in this round is the
 // client-side conflict handling in DoctorWorkspace.tsx, RevisitWorkspace.tsx
-// and JudgmentPanel.tsx, all built on the shared src/doctor/ConflictBanner.tsx.
+// and (originally) JudgmentPanel.tsx, all built on the shared
+// src/doctor/ConflictBanner.tsx. Batch 4.1-D removed JudgmentPanel.tsx
+// entirely (§17) -- ObjectiveExamFindingsCard.tsx is now the sole
+// remaining client-side writer of `judgment`, and section 4 below records
+// how its own already-existing ConflictBanner wiring (§independent HIGH-2)
+// picks up the properties JudgmentPanel's tests used to pin.
 //
 // That handling lives in useEffect/useState (debounced autosave, a pending
 // conflict flag) that renderToString cannot exercise -- this repo
@@ -185,9 +190,11 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   // Real two-browser-context QA (round 18) initially caught a false-positive
   // conflict here: initialRecordUpdatedAt can legitimately advance for the
   // SAME record without DoctorWorkspace ever saving anything (the "mark as
-  // viewed" status write, or a sibling JudgmentPanel save) -- without
-  // syncing to it, DoctorWorkspace's own first autosave attempt on almost
-  // every record 409'd against its own sibling's write.
+  // viewed" status write, or a sibling judgment save -- originally
+  // JudgmentPanel's own "기록" click, now ObjectiveExamFindingsCard's
+  // immediate per-field save, Batch 4.1-D §17.3) -- without syncing to it,
+  // DoctorWorkspace's own first autosave attempt on almost every record
+  // 409'd against its own sibling's write.
   // Closing-review finding (HIGH): the first version of this fix adopted
   // the newer TOKEN without also adopting the CONTENT it came with, which
   // let a stale panel's later save pass CAS while silently overwriting a
@@ -370,155 +377,85 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 }
 
-// ---------- 4. JudgmentPanel.tsx judgment-save conflict wiring ----------
+// ---------- 4. JudgmentPanel.tsx judgment-save conflict wiring -- SUPERSEDED (Batch 4.1-D) ----------
+//
+// Batch 4.1-D (§17.1/§17.2/§17.5): JudgmentPanel had ZERO editable fields
+// left after 4.1-A/4.1-C (the 사주 예상/치료축/처방 방향 block, then
+// innate_features/symptom_links, then -- this batch -- 1분 디브리핑 and
+// 학습 케이스) -- the two safety fields it still echoed were already
+// READ-ONLY there, edited only through ObjectiveExamFindingsCard. So
+// `src/doctor/JudgmentPanel.tsx` itself, and the whole "기록" button +
+// draft/version-sync/conflict machinery the 11 tests below used to pin, are
+// gone. Each retired test's PROPERTY is accounted for like this (CLAUDE.md
+// "지운 경로 1개당 소스 단언 1개", both directions):
+//
+//   Retired test (JudgmentPanel.tsx)                          | Where that property lives now
+//   -----------------------------------------------------------|----------------------------------------------------
+//   imports+renders ConflictBanner before editable fields      | ObjectiveExamFindingsCard HIGH-2 "imports and renders
+//                                                                | the shared ConflictBanner" (below, §independent HIGH-2)
+//   handleRecord fails closed on a pending conflict             | N/A -- ObjectiveExamFindingsCard has no "기록" button /
+//                                                                | pending-conflict gate to fail closed on: every field
+//                                                                | saves immediately on selection, and a fresh selection
+//                                                                | always clears any prior conflict first ("a fresh
+//                                                                | onChange call always clears any prior conflict... before
+//                                                                | attempting to save", below) -- a different, not a missing,
+//                                                                | design for the same "never silently overwrite" property
+//   rejected save never marks the record as recorded            | N/A -- there is no separate "recorded" echo state; the
+//                                                                | radio's own `checked` value IS the record, and "on a
+//                                                                | conflict result, the clinician's local radio selection is
+//                                                                | never reset" (below) is the direct analog
+//   conflict branch leaves typed judgment/debrief untouched     | "on a conflict result... never reset -- only status/
+//                                                                | conflict state changes" (below, ObjectiveExamFindingsCard
+//                                                                | HIGH-2) -- ClinicianJudgment.debrief no longer has any
+//                                                                | editable UI at all (§17.2), so nothing there to protect
+//   reload adopts server value verbatim, no draft merge         | "handleReloadObjectiveExamConflict adopts the server's
+//                                                                | current judgment/updated_at verbatim -- no field-level
+//                                                                | merge helper referenced" (below, §independent HIGH-2) +
+//                                                                | "MINOR-1... re-seeds BOTH lbp and shoulder... snapshot"
+//   version-sync effect: adopt newer token only if draft pristine,
+//   adopt fresh CONTENT together with the token (not token alone)| N/A -- ObjectiveExamFindingsCard has no such effect to
+//                                                                | begin with. It never holds an in-progress "draft" that
+//                                                                | could go stale against a fresher external judgment mid-
+//                                                                | session -- each field saves the instant it is picked, so
+//                                                                | there is nothing for a pristine-draft version-sync effect
+//                                                                | to protect. This concept genuinely does not carry over,
+//                                                                | it is not merely untested.
+//   successful save snapshots the LIVE judgment (not `finalized`)| N/A -- ObjectiveExamFindingsCard never calls
+//                                                                | finalizeJudgment or keeps its own pristine-comparison ref;
+//                                                                | DoctorView.tsx's handleSaveObjectiveExamField (tested
+//                                                                | separately, §independent HIGH-2 below) always saves the
+//                                                                | CURRENT selectedRecord.judgment merged with the new field,
+//                                                                | never a locally-finalized snapshot
+//   DoctorTokenSetup shown inline for kind==='auth'              | ObjectiveExamFindingsCard still has this: `{authError &&
+//                                                                | <DoctorTokenSetup authFailed .../>}` (unchanged by this
+//                                                                | batch -- not retested here since this batch did not touch it)
+//   auth-kind failure distinguished from generic; both success/
+//   conflict clear earlier auth-recovery state                  | Same as above -- ObjectiveExamFindingsCard's own authError
+//                                                                | state (unchanged by this batch)
+//   DoctorView.tsx's judgment-save onSave callback passes
+//   result.kind through on a plain failure                      | That specific inline callback (built into the removed
+//                                          | <JudgmentPanel onSave={...}> JSX) is gone with the JSX. The
+//                                          | ONE client-side judgment-save path left,
+//                                          | handleSaveObjectiveExamField, already does the same
+//                                          | `return { ok: false, kind: result.kind }` and is tested at
+//                                          | "DoctorView.tsx HIGH-2: ..." below (§independent HIGH-2) --
+//                                          | see also the structural check right below this comment.
+//
+// This structural check pins the stronger fact (the file itself, not one
+// property inside it, is gone) that makes all 11 retired tests moot:
+test('JudgmentPanel.tsx no longer exists (Batch 4.1-D §17.1/§17.2/§17.5) -- the 11 conflict-wiring tests this section used to hold are superseded per the table above, not deleted without a trace', () => {
+  assert.equal(fs.existsSync('src/doctor/JudgmentPanel.tsx'), false, 'src/doctor/JudgmentPanel.tsx must not exist')
+  const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+  assert.ok(!viewSrc.includes('<JudgmentPanel'), 'DoctorView.tsx must no longer render <JudgmentPanel>')
+})
 
-{
-  const src = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
-
-  test('JudgmentPanel.tsx: imports ConflictBanner and renders it before the editable fields', () => {
-    assert.ok(src.includes("import { ConflictBanner } from './ConflictBanner'"))
-    const banner = src.indexOf('{conflict && (')
-    // Batch 4.1-C (§16.1): judgment__grid (the 핵심 선천 특징/현재 증상과
-    // 연결되는 핵심 TextList pair) was removed -- judgment__learningCase is
-    // the next stable editable-field landmark after the conflict banner
-    // (always rendered, unlike the showLbpExam/showShoulderExam echoes
-    // immediately after the banner, which are fixture-dependent).
-    const learningCase = src.indexOf('<details className="judgment__learningCase"')
-    assert.ok(banner !== -1 && learningCase !== -1 && banner < learningCase)
-  })
-
-  test('JudgmentPanel.tsx: handleRecord fails closed on a pending conflict (closing-review MEDIUM finding)', () => {
-    const fnStart = src.indexOf('async function handleRecord() {')
-    const fnEnd = src.indexOf('function handleReloadFromConflict')
-    const fn = src.slice(fnStart, fnEnd)
-    const guardIndex = fn.indexOf('if (conflict) return')
-    const onSaveCallIndex = fn.indexOf('await onSave(')
-    assert.ok(guardIndex !== -1 && onSaveCallIndex !== -1 && guardIndex < onSaveCallIndex)
-  })
-
-  test('JudgmentPanel.tsx: a rejected save never marks the judgment as recorded ("기록됨" must reflect reality)', () => {
-    const fnStart = src.indexOf('async function handleRecord() {')
-    const fnEnd = src.indexOf('function handleReloadFromConflict')
-    assert.ok(fnStart !== -1 && fnEnd !== -1)
-    const fn = src.slice(fnStart, fnEnd)
-    const conflictBranch = fn.slice(fn.indexOf('} else if (outcome.conflict) {'), fn.indexOf('} else {\n      setErrors('))
-    assert.ok(conflictBranch.length > 0)
-    assert.ok(!conflictBranch.includes('setRecorded(finalized)'), 'the conflict branch must not call setRecorded with the rejected draft')
-    assert.ok(conflictBranch.includes('setConflict(outcome.conflict)'))
-  })
-
-  test('JudgmentPanel.tsx: the conflict branch leaves the clinician\'s typed judgment/debrief state untouched (nothing is cleared or overwritten)', () => {
-    const fnStart = src.indexOf('async function handleRecord() {')
-    const fnEnd = src.indexOf('function handleReloadFromConflict')
-    const fn = src.slice(fnStart, fnEnd)
-    const conflictBranch = fn.slice(fn.indexOf('} else if (outcome.conflict) {'), fn.indexOf('} else {\n      setErrors('))
-    assert.ok(!/setJudgment\(/.test(conflictBranch) && !/setDebrief\(/.test(conflictBranch))
-  })
-
-  test('JudgmentPanel.tsx: reload loads the server\'s current judgment verbatim (or a blank form), no merge with the in-progress draft', () => {
-    const fn = src.slice(src.indexOf('function handleReloadFromConflict() {'), src.indexOf('function handleReloadFromConflict() {') + 500)
-    assert.ok(/const next = conflict\.current \?\? createEmptyJudgment\(source\)/.test(fn))
-    assert.ok(/setJudgment\(next\)/.test(fn))
-    assert.ok(!/\.\.\.\s*judgment\b/.test(fn), 'must never spread the rejected in-progress judgment back on top of the server version')
-  })
-
-  // Closing-review finding (HIGH, same class as DoctorWorkspace.tsx's):
-  // token-only adoption let a stale judgment draft pass CAS and clobber a
-  // real concurrent write to the SAME submission's judgment field. Must
-  // adopt token+content together, gated on the draft being pristine.
-  test('JudgmentPanel.tsx: the version-sync effect only adopts a newer token when the draft is pristine (isDraftPristine)', () => {
-    const effect = src.slice(src.indexOf('useEffect(() => {\n    if (initialUpdatedAt == null'), src.indexOf('[initialUpdatedAt])') + 40)
-    assert.ok(effect.length > 60, 'the version-sync effect must exist')
-    assert.ok(/if \(!isDraftPristine\(\)\) return/.test(effect), 'must bail out while the clinician has unsaved typing pending')
-  })
-
-  test('JudgmentPanel.tsx: the version-sync effect adopts fresh CONTENT together with the token (not the token alone)', () => {
-    const effect = src.slice(src.indexOf('useEffect(() => {\n    if (initialUpdatedAt == null'), src.indexOf('[initialUpdatedAt])') + 40)
-    assert.ok(/lastKnownUpdatedAtRef\.current = initialUpdatedAt/.test(effect))
-    assert.ok(/lastKnownJudgmentRef\.current = \{ judgment: freshJudgment, debrief: freshDebrief \}/.test(effect))
-    assert.ok(/setJudgment\(freshJudgment\)/.test(effect) && /setDebrief\(freshDebrief\)/.test(effect), 'the visible form fields must be replaced with the fresh content -- the exact HIGH finding this guards against')
-  })
-
-  // Second closing-review finding (MEDIUM): a successful save must snapshot
-  // the LIVE pre-finalize judgment/debrief into lastKnownJudgmentRef, never
-  // `finalized` -- finalizeJudgment stamps a fresh recorded_at that the live
-  // `judgment` state never receives (this success path never calls
-  // setJudgment(finalized)), so snapshotting `finalized` made
-  // isDraftPristine()'s comparison permanently false after the FIRST
-  // successful save, silently disabling the version-sync effect above for
-  // the rest of the panel's life and reintroducing a false conflict on
-  // every subsequent save.
-  test('JudgmentPanel.tsx: a successful save snapshots the LIVE judgment/debrief (not `finalized`) so isDraftPristine() stays meaningful after the first save', () => {
-    const fnStart = src.indexOf('async function handleRecord() {')
-    const fnEnd = src.indexOf('function handleReloadFromConflict')
-    const fn = src.slice(fnStart, fnEnd)
-    const successBranch = fn.slice(fn.indexOf('if (outcome.ok) {'), fn.indexOf('} else if (outcome.conflict) {'))
-    assert.ok(successBranch.length > 0)
-    assert.ok(
-      /lastKnownJudgmentRef\.current = \{ judgment, debrief \}/.test(successBranch),
-      'must snapshot the live judgment/debrief variables, not `finalized` (which carries a freshly-stamped recorded_at the live judgment state never receives)',
-    )
-    assert.ok(!/lastKnownJudgmentRef\.current = \{ judgment: finalized/.test(successBranch))
-  })
-
-  // ---------- P0-8 (Core Reduction Phase 6 gate / Phase 5 Synthesis §2.9):
-  // auth-failure inline recovery ----------
-  test('JudgmentPanel.tsx: imports DoctorTokenSetup and shows it inline specifically for kind===\'auth\' (distinct from the generic errors list)', () => {
-    assert.ok(src.includes("import { DoctorTokenSetup } from './DoctorTokenSetup'"))
-    assert.ok(/saveErrorKind === 'auth' && \(\s*<DoctorTokenSetup/.test(src))
-  })
-
-  test('JudgmentPanel.tsx: handleRecord distinguishes the auth-kind failure from a generic one -- only the generic one appends to the errors list', () => {
-    const fnStart = src.indexOf('async function handleRecord() {')
-    const fnEnd = src.indexOf('function handleReloadFromConflict')
-    const fn = src.slice(fnStart, fnEnd)
-    const authBranch = fn.slice(fn.indexOf("} else if (outcome.kind === 'auth') {"), fn.indexOf('} else {\n      setSaveErrorKind'))
-    assert.ok(authBranch.length > 0, 'a dedicated auth-kind branch must exist')
-    assert.ok(!authBranch.includes('setErrors('), 'the auth branch must not also push the generic "저장 실패" text')
-    const genericBranch = fn.slice(fn.indexOf('} else {\n      setSaveErrorKind'), fn.indexOf('} else {\n      setSaveErrorKind') + 200)
-    assert.ok(genericBranch.includes("setErrors(['저장 실패 — 다시 시도해주세요'])"))
-  })
-
-  test('JudgmentPanel.tsx: a successful save and a conflict outcome both clear any earlier auth-recovery state', () => {
-    const fnStart = src.indexOf('async function handleRecord() {')
-    const fnEnd = src.indexOf('function handleReloadFromConflict')
-    const fn = src.slice(fnStart, fnEnd)
-    const successBranch = fn.slice(fn.indexOf('if (outcome.ok) {'), fn.indexOf('} else if (outcome.conflict) {'))
-    const conflictBranch = fn.slice(fn.indexOf('} else if (outcome.conflict) {'), fn.indexOf("} else if (outcome.kind === 'auth') {"))
-    assert.ok(successBranch.includes('setSaveErrorKind(null)'))
-    assert.ok(conflictBranch.includes('setSaveErrorKind(null)'))
-  })
-
-  test('DoctorView.tsx: the judgment-save callback passes the ServerResult kind through on a plain (non-conflict) failure', () => {
-    const viewSrc = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
-    // P0-2 added an earlier, unrelated `onSave={` (ObjectiveExamFindingsCard)
-    // above <JudgmentPanel -- anchor the search after the JudgmentPanel tag
-    // so this keeps checking JudgmentPanel's OWN onSave callback.
-    const judgmentTagIdx = viewSrc.indexOf('<JudgmentPanel')
-    const onSaveIdx = viewSrc.indexOf('onSave={', judgmentTagIdx)
-    const block = viewSrc.slice(onSaveIdx, onSaveIdx + 1600)
-    assert.ok(/return \{ ok: false as const, kind: result\.kind \}/.test(block))
-  })
-}
-
-// ---------- 4.6. P0-7 (Core Reduction Phase 6 gate): the "기록된 판단" label
-// must not lie about save state. Phase 3 Opus review's REMOVE list flagged
-// this as a flatly false label -- in server mode (onSave present),
-// handleRecord's onSave already durably saved the record by the time
-// `recorded` is set, so "아직 저장되지 않음" (not yet saved) unconditionally
-// contradicted the save-state note rendered just above it. Only the
-// fixtures/preview path (no onSave) is genuinely ephemeral.
-{
-  const src = fs.readFileSync('src/doctor/JudgmentPanel.tsx', 'utf8')
-
-  test('JudgmentPanel.tsx: the "기록된 판단" JSON summary label depends on whether onSave (server persistence) is present, not an unconditional "아직 저장되지 않음"', () => {
-    const summaryLine = src.slice(src.indexOf('<summary>기록된 판단'), src.indexOf('</summary>', src.indexOf('<summary>기록된 판단')))
-    assert.ok(summaryLine.length > 0, 'the summary line must exist')
-    assert.ok(/onSave \? /.test(summaryLine), 'must branch on whether onSave (server persistence) was provided')
-    assert.ok(summaryLine.includes('서버에 저장됨'), 'server mode must say it really was saved')
-    assert.ok(summaryLine.includes('아직 저장되지 않음'), 'fixtures/preview mode (no onSave) keeps the genuinely-true ephemeral note')
-  })
-}
+// ---------- 4.6. P0-7 -- SUPERSEDED (Batch 4.1-D) ----------
+// The "기록된 판단 (JSON...)" summary label this section pinned lived
+// entirely inside JudgmentPanel.tsx, now gone (see the table above). No
+// replacement needed: ObjectiveExamFindingsCard has no equivalent "기록된
+// 판단" JSON dump at all (§17.4 -- that dump was judged intentional-loss
+// scope in the design brief, its only remaining editable content being the
+// two safety fields already visible live on their own radios).
 
 // ---------- 4.5. DoctorView.tsx: the "mark as viewed" sibling-write fix ----------
 // The real two-browser-context QA run caught this the hard way: opening a
@@ -554,19 +491,34 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
     assert.ok(block.includes('deserializeWorkspaceState(current.workspace)'))
   })
 
-  test('DoctorView.tsx: judgment save reads errorBody.current and passes current.judgment through as-is (ClinicianJudgment | null, matching JudgmentPanel\'s reload fallback)', () => {
-    // P0-2 added an earlier, unrelated `onSave={` (ObjectiveExamFindingsCard)
-    // above <JudgmentPanel -- anchor the search after the JudgmentPanel tag.
-    const judgmentTagIdx = src.indexOf('<JudgmentPanel')
-    const onSaveIdx = src.indexOf('onSave={', judgmentTagIdx)
-    const block = src.slice(onSaveIdx, onSaveIdx + 1400)
+  // Batch 4.1-D (§17.1/§17.2): the JudgmentPanel-owned `onSave={...}` JSX
+  // callback this test used to anchor on (`<JudgmentPanel ... onSave={`) is
+  // gone along with the JSX itself -- `handleSaveObjectiveExamField` is now
+  // the ONLY client-side judgment-save path, and it does the identical
+  // `result.errorBody?.current` / `current.judgment` translation (already
+  // separately pinned by "DoctorView.tsx HIGH-2: a 409 with a server
+  // `current` record returns a conflict outcome..." below, §independent
+  // HIGH-2) -- re-anchored here on that function's own boundaries instead
+  // of a JudgmentPanel tag that no longer exists.
+  test('DoctorView.tsx: judgment save (handleSaveObjectiveExamField) reads errorBody.current and passes current.judgment through as-is (ClinicianJudgment | null)', () => {
+    const fnStart = src.indexOf('async function handleSaveObjectiveExamField(')
+    const fnEnd = src.indexOf('\n  }', fnStart)
+    assert.ok(fnStart !== -1 && fnEnd !== -1, 'handleSaveObjectiveExamField must exist')
+    const block = src.slice(fnStart, fnEnd)
     assert.ok(block.includes('result.errorBody?.current'))
     assert.ok(block.includes('current.judgment'))
   })
 
-  test('DoctorView.tsx: both save callbacks pass expectedUpdatedAt through to the server client (the CAS precondition is actually wired, not dropped)', () => {
+  // Batch 4.1-D: the second half of this test (`saveJudgmentToServer(
+  // selectedId, judgment, expectedUpdatedAt ?? undefined)`) pinned
+  // JudgmentPanel's own onSave callback, now gone. The ONLY
+  // `saveJudgmentToServer` call site left is handleSaveObjectiveExamField's
+  // (`saveJudgmentToServer(selectedId, next, selectedRecord?.updated_at)`)
+  // -- re-pinned below against that call, alongside the still-current
+  // workspace half.
+  test('DoctorView.tsx: both save callbacks pass their CAS precondition through to the server client (not dropped)', () => {
     assert.ok(/saveWorkspaceStateToServer\(selectedId, state, expectedUpdatedAt \?\? undefined\)/.test(src))
-    assert.ok(/saveJudgmentToServer\(selectedId, judgment, expectedUpdatedAt \?\? undefined\)/.test(src))
+    assert.ok(/saveJudgmentToServer\(selectedId, next, selectedRecord\?\.updated_at\)/.test(src))
   })
 }
 

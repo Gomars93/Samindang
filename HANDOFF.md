@@ -1,5 +1,46 @@
 # Current Handoff
 
+## ✅ 2026-09-04 (최신 15): Batch 4.1-A 구현 완료(Sonnet) — C-1 닫힘, C-1 재발 여부는 Opus closing 재검수로 확인 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `c9f020d` + 이 문서
+커밋. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+**한 일**: §15.2/§15.3을 그대로 실행 — JudgmentPanel.tsx의 사주 검증 4필드
+입력 `<details>` 블록 + 설명개요 "치료 우선순위·한약 방향" read-back 제거,
+`emrPreview.ts`의 `clinicianJudgmentAssessment/Treatment/Plan` 3키와 A/A/P
+push 지점 제거, `DoctorView.tsx`의 3키 전달 + 배지 4필드 카운트 제거.
+`ClinicianJudgment` 타입 4필드 + `emptyJudgment()` 기본값은 유지(server
+FROZEN + `tests/server.spec.mjs` fixture round-trip 보존), deprecated
+주석만 추가. `emrSummary.ts`는 삭제하지 않고 "호출자 0 + 데이터 소스 0"
+주석만 추가(§15.3 권고 항목, 별도 결정 대기).
+
+**테스트**: T1~T5(제거) + T11/T12(O-경계 4소스·6키 순서 회귀 방지) 추가,
+전부 mutation 검증 완료(각 단언에 대해 제거를 되돌려 실제로 실패하는 것을
+확인 후 원복). 구현 중 발견: `.judgment-panel-bundle.cjs`/`.doctor-view-
+bundle.cjs`는 esbuild 기본 타깃이 비-ASCII(한글)를 `\uXXXX`/`\xHH`로
+이스케이프하므로, 번들 텍스트에 raw 한글 리터럴로 `includes()` 검사를
+하면 **항상 통과하는 공허한 단언**이 된다(실제로 T1/T2 초안이 이 함정에
+빠졌다가 mutation 검증 중 발각·수정됨) — `esbuildEscapeNeedle()` 헬퍼로
+교정. `npm run build` / `npm run test:all` 전체 통과. FROZEN 경로
+(`src/spec/**` · `index.html` · `src/App.tsx` · `server/**` · `tablet
+core/**`) zero-diff 확인.
+
+**C-1 상태**: 이 배치로 herbal 레코드에 배선하지 않고 **경로 자체를
+제거**했으므로, 옛 D-1/D-2/C-1류 "쓰는데 안 읽히는" 재발 형태로는 더 이상
+발생할 수 없다 — 4필드가 어느 화면에서도 편집 불가능해졌기 때문. 단,
+이것이 진짜로 게이트를 닫는지는 **Opus closing 재검수**가 확인해야 한다
+(Sonnet 자기 검증만으로 게이트를 닫지 않는다, Team Roles 참고).
+
+**다음 행동 갱신** (아래 "최신 14"의 "다음 행동" 목록 갱신):
+1. ~~Batch 4.1-A 구현~~ **완료** (이 커밋).
+2. §15.6 3건(생년월일 등 잔류 여부/명리·감사 기록 자유서술 2필드/아코디언
+   재명명) **PO 확인 대기** → 확인 후 **4.1-B 구현**(§15.4/15.5, T6~T10).
+   **4.1-B는 이번 세션에서 건드리지 않았다** (지시받은 범위 밖).
+3. 4.1-A+4.1-B 완료 후 **Opus closing 재검수** → Batch 4 게이트 CLOSED.
+4. 이후 순서는 "최신 14" 항목의 4~6번과 동일(실제 환자 파일럿 등, 미착수).
+
+---
+
 ## ⚠️ 2026-09-04 (최신 14): Batch 4(EMR 고정 6키) — closing 게이트 **미완**, C-1은 PO 결정으로 경로 제거(Batch 4.1 설계 확정)
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `93f7a0c` + 이 문서

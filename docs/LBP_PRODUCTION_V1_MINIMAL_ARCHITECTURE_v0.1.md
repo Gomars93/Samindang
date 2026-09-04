@@ -573,8 +573,28 @@ deriveLbpHypothesisEvidence({ payload, flags, examSuggestions, directionalRespon
 나머지 11개 조건이 영원히 `UNKNOWN`으로 남아 **20개 운동 중 12개가 영영 열리지 않는다.**
 직접 계산한 결과:
 
-- **열리는 8개**: LUMBAR_02, LUMBAR_03, DIR_02, HIP_MOB_01, TRUNK_END_01, HIP_STR_03, FUNC_05, EXPOSURE_03
-- **영영 못 여는 12개**: ACT_01·ACT_02(**걷기 2종**), DIR_03, DIR_04, DEEP_TRUNK_01, DEEP_TRUNK_03, TRUNK_03, FUNC_01, LOAD_02, NEURAL_01, EXPOSURE_01, REG_01
+> **[2026-09-04 정정 — Opus 설계 검수 B절] 아래 최초 수치(열림 8 / 막힘 12)는 틀렸다.**
+> Fable이 "hard requirement만 자세 4개로 덮이면 열린다"로 계산했는데, 이는 **CD-1 수정
+> 이전(2026-09-02) 엔진의 의미론**이다. 현재 엔진은 `lbpExerciseEligibility.ts:368`에서
+> **미확인 regressible도 hard와 동일하게 DEFER**시킨다(PO가 기각한 옵션 A를 되살리지 않기
+> 위해 Opus가 요구한 바로 그 수정). 즉 Fable은 자기가 대체하려는 결정의 피해를, CD-1이 닫아
+> 놓은 구멍을 다시 연 상태로 계산했다.
+>
+> **Opus 전수 실행 결과(자세 16조합 × 방향반응 5값): 열림 4 / 막힘 16.**
+> - 열리는 4개: `LBP_LUMBAR_02`, `LBP_LUMBAR_03`, `LBP_DIR_02`, `LBP_TRUNK_END_01`
+> - Fable이 열린다고 잘못 분류한 4개와 실제 막히는 조건: `HIP_MOB_01`(regressible
+>   `BALANCE_WITH_SUPPORT`), `HIP_STR_03`(동일), `FUNC_05`(regressible
+>   `HIP_HINGE_CONTROL`), `EXPOSURE_03`(regressible `SITTING_TOLERATED` — 앉기는 자세
+>   4개에 없다)
+> - **화면 기준으로는 3개**: `LUMBAR_02`의 `targetFunctions`가 목표기능 선택기에 매핑되지
+>   않아(기존 delta review defect 8) 애초에 나타나지 않는다.
+> - 교차검증: 2.5a 도달성 프로브 재실행 결과가 2.5a 기록과 일치(하네스 정확성 확인).
+>
+> 결론(CD-2.7-4를 그대로 구현할 수 없다)은 **바뀌지 않으며 근거는 오히려 강해진다.**
+
+(최초 기재, 오류 — 이력 보존용)
+- ~~**열리는 8개**: LUMBAR_02, LUMBAR_03, DIR_02, HIP_MOB_01, TRUNK_END_01, HIP_STR_03, FUNC_05, EXPOSURE_03~~
+- ~~**영영 못 여는 12개**: ACT_01·ACT_02, DIR_03, DIR_04, DEEP_TRUNK_01, DEEP_TRUNK_03, TRUNK_03, FUNC_01, LOAD_02, NEURAL_01, EXPOSURE_01, REG_01~~
 
 요통에서 가장 기본인 **걷기**가 막힌다(`SAFE_WALKING`/`CAN_SELF_PACE`는 자세가 아니다).
 

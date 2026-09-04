@@ -563,7 +563,18 @@ deriveLbpHypothesisEvidence({ payload, flags, examSuggestions, directionalRespon
 
 ---
 
-## 13. Batch 2.7-A 브리프 — 준비조건 확인을 운동 카드 안으로 (PO 승인 2026-09-04, Fable 설계)
+## 13. Batch 2.7-A 브리프 — 준비조건 확인을 운동 카드 안으로 (Fable 설계)
+
+> **⚠️ 상태: 설계 확정 · 구현 보류 (PO 결정 2026-09-04).**
+> 같은 화면을 세 번째 재설계 중이며 **실제 환자로 검증한 적이 한 번도 없다.**
+> Batch 4(EMR) 완료 → 실제 환자 2~3명 파일럿 → 그 결과로 이 설계를 그대로 쓸지
+> 고칠지 결정한다. **파일럿 전에 구현하지 말 것.**
+>
+> 착수 시 반영해야 할 것: Opus 설계 검수 개정 12건
+> (`docs/LBP_V1_BATCH2_7A_OPUS_DESIGN_REVIEW_v0.1.md` G절) 및 PO 결정 CD-2.7A-1
+> (잠긴 카드에는 이름 + 한 줄 설명만, 용량은 채택 후에만).
+> **개정 1(잠긴 카드에 채택/보류/기각 버튼 금지)은 안전 blocker다** — 이를 빠뜨리면
+> eligibility 엔진을 우회해 Care Plan에 운동이 들어간다.
 
 **대체 관계**: 이 설계는 `DECISIONS.md` 2026-09-04의 **CD-2.7-4(자세 chip 4개로 축소)를 대체한다.** 사유는 §13.1.
 

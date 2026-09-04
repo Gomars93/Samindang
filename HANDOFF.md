@@ -1,5 +1,68 @@
 # Current Handoff
 
+## ✅ 2026-09-04 (최신 16): Batch 4.1-A 독립 검증 완료(Fable) — T4 공백 1건 발견·수정, 저장소 전체 공허 테스트 감사
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `29eb06d` + 이 문서
+커밋. PR 미생성(운영 방침). main merge는 PO 명시 승인.
+
+### 재현 검증 (Sonnet 보고를 그대로 믿지 않고 직접 실행)
+- FROZEN zero-diff: `git diff --stat 72fedb9..HEAD -- src/spec index.html src/App.tsx server "tablet core"` → **출력 없음**.
+- `npm run test:all` → **EXIT=0, 25개 스위트 전부 `0 failed`**.
+- 소스 diff 전체 검토 → §15 설계와 일치, 초과 변경 없음.
+
+### 발견·수정한 공백 1건 (`29eb06d`)
+T4가 `원장 평가:` / `치료/처방 방향:` / `진료 계획:` **라벨 붙은 절**만 검사하고,
+옛 defect #2 테스트에 있던 `O stays bare` 단언을 잃었다. 이 상태에서
+`oParts.push(input.clinicianJudgmentAssessment)` 처럼 **라벨 없이** O에 밀어 넣는
+변이는:
+- T4의 세 `!includes` 를 통과하고,
+- T11(`filled` fixture의 O 라인 exact-match)도 통과한다 — `filled`가 더 이상 그
+  3키를 넘기지 않으므로 그 fixture에서는 변이가 아예 발화하지 않는다.
+
+즉 **라벨 없는 O 오염 경로에 커버리지가 없었다.** 한 줄 복구 후 **Fable이 직접
+변이를 넣어 재현**: 라벨 없는 push 상태에서 세 `!includes`는 `OK`로 통과하고
+새 단언만 `FAIL: T4: the removed clinicianJudgment* keys never reach O even
+unlabeled -- O stays bare`로 죽는 것을 확인, 원복.
+
+**교훈**: "무엇이 없다"를 라벨 문자열로만 검사하면 **라벨을 안 붙인 우회로**가
+그대로 열려 있다. `O` 같은 안전 경계는 **그 줄 전체 exact-match**로 잠가야 한다
+(같은 파일 defect #7 블록이 이미 쓰던 관례였는데 T4만 놓쳤다).
+
+### 저장소 전체 감사 — esbuild 이스케이핑 공허 테스트 (최신 15의 발견을 확장)
+`.cjs` 테스트 번들에 **raw 한글이 0개**임을 직접 확인(전부 `\uXXXX`). 따라서
+번들 텍스트에 대한 **부정형** 한글 `includes()`는 구조적으로 공허해진다.
+
+**전체 감사 결과**: `tests/*.spec.mjs` 62개 파일의 한글 `includes()` 536건 중
+**부정형 132건**. 그 중 esbuild 번들을 대상으로 하는 것은 **T1/T2뿐이었고 이미
+`esbuildEscapeNeedle()`로 교정됨.** 나머지는:
+- 대부분 `renderToStaticMarkup` 결과 `html` 또는 순수 텍스트 출력 대상 → raw 한글이
+  살아 있으므로 **비공허**.
+- `tests/preview-build.spec.mjs:96/101`만 번들 대상(`!bundled.includes('미리보기 환경')`
+  등). 단 이건 **Vite 프로덕션 번들**이고, **같은 파일이 같은 종류의 산출물에 대해
+  긍정형 단언**(`bundled.includes('미리보기 환경')`, line 78)을 통과시키고 있다 —
+  즉 이스케이프되지 않음이 짝 대조로 증명된다. **비공허, 안전.**
+- `tests/lbp-working-hypothesis.spec.mjs:989`의 `previewSrc`는 raw `.ts` 소스
+  (`readFileSync('../src/doctor/workspace/patientCarePlanPreview.ts')`) → **비공허.**
+
+**추가 오염 없음.** 앞으로 `.cjs`/`.mjs` 번들 텍스트에 한글 리터럴로 단언할 때는
+`esbuildEscapeNeedle()`을 쓰거나, **긍정형 짝 대조 단언을 함께 둔다.**
+
+### Batch 4.1-A 상태
+**구현·테스트 완료, Fable 독립 검증 통과.** 다만 **게이트는 Opus closing
+재검수가 닫는다** — Sonnet 자기 검증도, Fable 검증도 그 자체로 게이트가 아니다
+(2.5b에서 "자가검증 통과 ≠ 게이트 통과"를 이미 한 번 배웠다).
+
+### 다음 행동
+1. **§15.6 3건 PO 확인 대기** → 4.1-B 구현(§15.4/15.5, T6~T10).
+   (a) 생년월일/양음력/윤달/시간 확신도도 뺄 것인가 — **Fable 기본안: 남긴다**
+   (b) `선천 특징`/`현재 증상 연결`도 뺄 것인가 — 범위 밖, 필요 시 4.1-C
+   (c) `명리·감사 기록` 아코디언 재명명 — (b) 결론 후 한 번에
+2. 4.1-B 후 **Opus closing 재검수** → Batch 4 게이트 CLOSED.
+3. 이후 순서는 "최신 14"의 4~6번(실제 환자 파일럿 등)과 동일.
+
+---
+
+
 ## ✅ 2026-09-04 (최신 15): Batch 4.1-A 구현 완료(Sonnet) — C-1 닫힘, C-1 재발 여부는 Opus closing 재검수로 확인 대기
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `c9f020d` + 이 문서

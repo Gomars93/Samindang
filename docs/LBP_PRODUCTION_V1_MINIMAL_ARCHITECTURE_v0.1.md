@@ -1117,3 +1117,130 @@ UI만 제거하고, 타입 4줄에 4.1-A와 같은 deprecated 주석을 단다.
 `src/spec/**` · `index.html` · `src/App.tsx` · `server/**` · `tablet core/**`
 **전부 zero-diff.** `tests/server.spec.mjs`도 **zero-diff**여야 한다 — 이것이
 "저장된 값을 파괴하지 않았다"의 실행 가능한 증거다.
+
+---
+
+## 17. Batch 4.1-D 브리프 — `1분 디브리핑` · `학습 케이스` · JudgmentPanel 제거 (PO 결정 2026-09-04, Fable 설계)
+
+### 17.0 이 배치가 존재하는 이유 — Fable 설계 오류 1건
+
+4.1-C 구현 검증 중 **렌더된 화면을 직접 읽다가** 발견했다:
+`1분 디브리핑`의 4문항(`judgment.ts`의 `DEBRIEF_QUESTIONS`)이 **전부 사주
+질문**이며, 4.1-A가 지운 4필드와 **내용이 사실상 동일**하다.
+
+| `DEBRIEF_QUESTIONS` | 4.1-A에서 지운 대응 필드 |
+|---|---|
+| 이 사주에서 제일 중요하게 본 것은 무엇인가? | (없음 — 순수 사주) |
+| 사주만 보고 어떤 임상문제를 예상했는가? | `saju_only_prediction` |
+| 실제 문진·맥·설을 보고 무엇을 수정했는가? | `revised_after_exam` |
+| 그 수정이 처방을 어떻게 바꿨는가? | `prescription_direction` |
+
+**Fable의 설계 오류다.** §16.5에서 디브리핑을 "녹취 미배선 자리표시자"라고만
+적고 **그 안의 문항을 읽지 않았다.** 그 결과:
+
+1. 4.1-A가 지운 내용이 다른 상자에 그대로 복제되어 살아남았다 —
+   **4.1-A는 사실상 절반만 수행된 것이었다.**
+2. 이 디스클로저는 `viewProfile` 게이트가 없어 **통증 레코드에서도 렌더된다** —
+   §15.6의 "부수 관찰"로 적어둔 PR #24 invariant 누수가 4.1-C 이후에도 남았다.
+3. **§16.6의 T23이 "1분 디브리핑 still renders"를 적극적으로 단언한다** —
+   즉 잘못된 사실이 테스트로 못 박혀 다음 사람에게 "지키기로 한 것"으로 읽힌다.
+   이게 셋 중 가장 위험하다.
+
+이것은 CLAUDE.md의 제거 안전 규칙("지운 쪽 화면이 아니라 **지우지 않은 쪽**
+화면을 확인하라")을 **규칙을 쓴 사람이 스스로 어긴** 사례다. 규칙은 필드 ×
+화면 표를 요구했고 나는 그 표를 썼지만, **표의 행을 "제거 대상"에서만 뽑았고
+같은 상자에 남는 이웃 항목의 내용은 읽지 않았다.** 표를 채우는 것과 화면을
+읽는 것은 다르다.
+
+### 17.1 PO 결정 (2026-09-04)
+- **`1분 디브리핑` 전체 제거.** (4.1-A에서 지운 것과 내용이 같으므로)
+- **`학습 케이스`도 지금은 안 쓴다** → 화면에서 제거.
+
+### 17.2 그 결과 — JudgmentPanel에 편집 가능한 것이 0개가 된다
+
+| JudgmentPanel 잔여 요소 | 4.1-D 이후 성격 |
+|---|---|
+| `<h2>원장 판단 기록</h2>` + 안내문 | 내용 없는 껍데기 |
+| 객관적 근력저하 / 회전근개 소견 | **읽기 전용 echo** — 편집 컨트롤은 진료 탭 `ObjectiveExamFindingsCard`에 있고 값도 거기 보인다 (= 중복) |
+| `기록` 버튼 + 저장 상태 + ConflictBanner | **저장할 편집 필드가 0개** — 아무것도 안 하는 버튼 |
+| `기록된 판단 (JSON)` | judgment에 남는 편집 필드가 2개(안전 소견)뿐 |
+| `DoctorTokenSetup` (auth 복구) | **다른 4곳에서도 렌더된다**(확인: `DoctorView:4098`, `ObjectiveExamFindingsCard:277`, `DoctorWorkspace:552`) — 여기 없어도 잠기지 않는다 |
+
+→ **`디브리핑·학습 기록` 아코디언 + `JudgmentPanel` 렌더 지점을 통째로 제거한다.**
+아무것도 저장하지 않는 저장 버튼은 UI 거짓말이고, 중복 echo는 화면 실측 감사에서
+1순위 문제로 지목됐던 바로 그 유형이다.
+
+### 17.3 (입력 방향) 안전 필드 저장 경로 — 확인 완료, 끊기지 않는다
+
+**이 배치의 유일한 안전 리스크였고, 코드로 확인했다.**
+
+`lbp_objective_motor_deficit` / `shoulder_objective_cuff_weakness`는
+`URGENT_REVIEW` / `expedited_referral`에 영향을 주는 안전 필드다. 이 값들은
+**`ObjectiveExamFindingsCard`가 자체 즉시 저장(`onSave(field, value)` →
+현재 judgment에 병합 → `serverClient.saveJudgment`, 409 재시드 포함)**을 갖고 있고,
+JudgmentPanel의 `기록` 버튼에 **의존하지 않는다**
+(`src/doctor/ObjectiveExamFindingsCard.tsx:64-70, 136-140`).
+
+→ **JudgmentPanel을 제거해도 안전 필드의 편집·저장 경로는 그대로다.**
+이것이 사실이 아니었다면 이 배치는 진행 불가였다.
+
+### 17.4 (출력 방향) 필드 × 화면 표
+
+**전수 확인(grep, `src/` 전체) 결과 세 값 모두 EMR·환자 안내문·CRM·이전 방문
+카드 어디에도 도달하지 않는다.**
+
+| 필드/요소 | 도달처 | 초진 | 재진 | 한약 | mixed | fixture | 제거 후 |
+|---|---|---|---|---|---|---|---|
+| `debrief` (q1~q4) | JudgmentPanel 입력 | 보임 | 보임 | 보임 | 보임 | 보임 | **제거** |
+| | `judgmentRecordedFieldCount` 배지 | 반영 | 반영 | 반영 | 반영 | — | **제거**(아코디언째) |
+| | 서버 저장(PUT judgment) | 저장 | 저장 | 저장 | 저장 | — | **유지**(타입·round-trip) |
+| `learning_case` | JudgmentPanel 체크 + `★ 표시됨` | 보임 | 보임 | 보임 | 보임 | 보임 | **제거** |
+| | 배지 / 서버 저장 | 〃 | 〃 | 〃 | 〃 | 〃 | 배지 제거 / 저장 유지 |
+| 객관적 근력저하·회전근개 echo | 읽기 전용 표시 | 보임 | 보임 | (해당 없음) | 보임 | 보임 | **진료 탭 `ObjectiveExamFindingsCard`가 같은 값을 편집 가능한 형태로 이미 보여준다** |
+| `기록된 판단 (JSON)` | judgment 원자료 뷰 | 보임 | 보임 | 보임 | 보임 | 보임 | **의도적 폐기** — 남는 편집 필드가 안전 소견 2개뿐이고 그 값은 진료 탭에 보인다. (`원본 JSON` 아코디언은 `payload`만 덤프하고 judgment는 담지 않음 — 이 차이를 알고 폐기한다) |
+| `기록` 버튼 / ConflictBanner | 저장 | 보임 | 보임 | 보임 | 보임 | 보임 | **제거** — 저장 대상 0개. 안전 필드 저장은 §17.3대로 별도 경로 |
+
+**타입은 전부 유지한다**(4.1-A/C와 동일 근거): `ClinicianJudgment.debrief`,
+`learning_case`, `DebriefAnswers`, `DEBRIEF_QUESTIONS` 상수, `validateJudgment`,
+`finalizeJudgment` — `server/**` FROZEN + `tests/server.spec.mjs` zero-diff +
+이미 저장된 레코드의 round-trip 보존.
+
+> **`DEBRIEF_QUESTIONS` 상수 자체는 남긴다.** 문자열 4개가 `judgment.ts`에
+> 남아 있지만 렌더 지점이 0이므로 어떤 화면에도 사주 문구가 뜨지 않는다.
+> 지우면 `DebriefAnswers` 키 정의와의 대응이 깨진다.
+
+### 17.5 §16.6 T23 정정 (중요)
+
+T23은 `1분 디브리핑` / `학습 케이스` / `기록` 버튼 / 객관적 근력저하 echo가
+**"여전히 렌더된다"**고 단언한다. 4.1-D는 그 넷을 전부 지우므로 **T23을
+반전**시켜야 한다. 단순 삭제가 아니라 **반전**이다 — 그래야
+"한때 보존하기로 했다가 결정이 바뀌었다"는 이력이 테스트에 남는다.
+
+### 17.6 테스트
+
+제거 단언(전부 **렌더된 `html`** 대상 — DECISIONS 2026-09-04 규약):
+
+| # | 단언 |
+|---|---|
+| T24 | 모든 프로필(초진/재진/한약/mixed)에서 `1분 디브리핑`이 렌더되지 않는다 |
+| T25 | **`DEBRIEF_QUESTIONS` 4문항의 문자열이 어느 프로필의 렌더 결과에도 나타나지 않는다** (§17.0의 누수를 정확히 겨냥 — 상자 이름이 아니라 **내용**을 검사한다) |
+| T26 | `학습 케이스` / `★ 표시됨` 이 렌더되지 않는다 |
+| T27 | `디브리핑·학습 기록` 아코디언과 `원장 판단 기록` 섹션이 렌더되지 않는다 |
+| T28 | 전 프로필 렌더 결과에 **`사주` / `명리` 문자열이 0회** 등장한다 (§17.0을 놓치게 만든 바로 그 검사 — 이제 전역으로 잠근다) |
+
+유지 단언 — **이번에도 핵심은 지우지 않은 쪽이다**:
+
+| # | 단언 |
+|---|---|
+| T29 | **진료 탭의 `ObjectiveExamFindingsCard`가 여전히 렌더되고 편집 가능하다** (LBP fixture: `객관적 하지 근력저하 소견 (LBP)` 라디오 그룹 존재) — §17.3의 안전 경로가 살아 있음을 증명 |
+| T30 | `ObjectiveExamFindingsCard`의 자체 저장 배선(`onSave` prop)이 `DoctorView`에서 여전히 전달된다 |
+| T31 | `tests/server.spec.mjs` **zero-diff** 통과 (debrief/learning_case round-trip 보존) |
+| T32 | `doctor.spec.mjs`의 `createEmptyJudgment`/`validateJudgment`/`finalizeJudgment` 단언 **무변경** 통과 |
+| T33 | 4.1-B/C의 T7/T8/T9/T10/T20(출생 시간대 표시 + pain 미노출 + BIRTH_* 잔류)이 그대로 통과 |
+| T11/T12 | 4.1-A의 `O` 경계·6키 단언 그대로 통과 |
+
+**mutation 검증 필수**: T24~T28 각각.
+
+### 17.7 FROZEN 영향
+`src/spec/**` · `index.html` · `src/App.tsx` · `server/**` · `tablet core/**` ·
+**`tests/server.spec.mjs`** 전부 zero-diff.

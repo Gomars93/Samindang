@@ -92,9 +92,14 @@ export const PAIN_INTERVENTION_CHIP_OPTIONS = ['침', '약침', '부항', '추�
  * approved words are present and (b) everything else, verbatim, joined
  * back the same way -- so a legacy free-text value (recorded before this
  * batch, or any note that just isn't one of the 8 words) is never lost, it
- * simply shows in the 기타 box instead of as a pressed chip. Round-tripping
- * through `composeInterventionValue` with no chip/기타 edit reproduces the
- * original string exactly (comma-split/rejoin is lossless for that case).
+ * simply shows in the 기타 box instead of as a pressed chip. Opus delta
+ * review defect #10: round-tripping through `composeInterventionValue` with
+ * no chip/기타 edit is lossless in CONTENT (no token is ever dropped or
+ * fabricated), but not always byte-identical -- chips are re-emitted in the
+ * fixed canonical order (`침, 약침` even if the original string had
+ * `약침, 침`), non-chip text is always moved after the chips (`침, 도수치료,
+ * 부항` -> `침, 부항, 도수치료`), and comma-adjacent whitespace is normalized
+ * (` 침 ,  부항 ` -> `침, 부항`). Verified by hand on all three examples.
  */
 export function parseInterventionValue(value: string): { selected: Set<string>; otherText: string } {
   const tokens = value
@@ -130,7 +135,17 @@ function InterventionChipField({ value, onChange }: { value: string; onChange: (
     onChange(composeInterventionValue(next, otherText))
   }
   return (
-    <label className="workspace__finalAssessment__field workspace__finalAssessment__field--intervention">
+    // Opus delta review defect #3: this used to be a <label>, whose
+    // "labeled control" (the first labelable descendant, per the HTML spec
+    // -- a <button> qualifies) was the 침 chip -- so tapping the caption or
+    // any empty space inside the label toggled 침 unintentionally on a
+    // touch screen. A plain <div> carries no such implicit association;
+    // the chip group already has its own `aria-label` and the 기타 input
+    // already has its own `aria-label`, so nothing here loses accessible
+    // naming. Every other chip row in this workspace already uses a <div>
+    // (ExamSuggestionCard.tsx, StructuredReassessmentCard.tsx) -- this
+    // brings the intervention field into line with that convention.
+    <div className="workspace__finalAssessment__field workspace__finalAssessment__field--intervention">
       <span>시행/예정 처치</span>
       <div className="workspace__examCard__statusRow" role="group" aria-label="시행/예정 처치 선택">
         {PAIN_INTERVENTION_CHIP_OPTIONS.map((opt) => (
@@ -154,16 +169,26 @@ function InterventionChipField({ value, onChange }: { value: string; onChange: (
         unlike every other conditionally-rendered `workspace__noteInput`)
         must not carry that exact class token even alongside another one.
         Styled identically via its own selector in workspace.css.
+
+        Opus delta review defect #9: a plain `<input type="text">` runs the
+        browser's value-sanitization algorithm on every render, which
+        strips newlines -- so a legacy value recorded before this batch that
+        contains a newline (`parseInterventionValue` itself preserves it
+        verbatim) would lose it the moment the clinician typed even one more
+        character here. Restored as a `<textarea rows={1}>` (the previous
+        editor's element, before §14.2 introduced this field) so a newline
+        survives editing; §14.2's own "기타 1칸" requirement is about the
+        field COUNT (still exactly one), not the element type.
       */}
-      <input
-        type="text"
+      <textarea
+        rows={1}
         className="workspace__finalAssessment__interventionOther"
         value={otherText}
         placeholder="기타 (목록에 없는 처치)"
         aria-label="시행/예정 처치 기타"
         onChange={(e) => onChange(composeInterventionValue(selected, e.target.value))}
       />
-    </label>
+    </div>
   )
 }
 

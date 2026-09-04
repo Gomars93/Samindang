@@ -4,8 +4,7 @@ import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { JudgmentPanel } from './JudgmentPanel'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
-import { buildEmrSummary } from './emrSummary'
-import { buildPainWorkspaceEmrPreview } from './workspace/emrPreview'
+import { buildPainWorkspaceEmrPreview, buildHerbalWorkspaceEmrPreview } from './workspace/emrPreview'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import {
   createEmptyJudgment,
@@ -44,7 +43,7 @@ import {
 import type { PatientHistoryResult } from './workspace/longitudinal'
 import { asPriorVisitArray } from './workspace/longitudinal'
 import { PriorVisitHistoryCard } from './workspace/PriorVisitHistoryCard'
-import type { MicroFollowUpResponse } from './workspace/microFollowUp'
+import { microFollowUpQuoteLine, readableMicroFollowUpResponse, type MicroFollowUpResponse } from './workspace/microFollowUp'
 import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
 import { DELIVERY_MODE_LABEL } from './workspace/followUpSession'
 import type { CrmTask } from '../crm/types'
@@ -2746,10 +2745,19 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const [recorderResultsError, setRecorderResultsError] = useState<string | null>(null)
   const [emrText, setEmrText] = useState('')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
-  // 같은 recording_id로 폴링이 다시 돌아와도 EMR 텍스트를 다시 만들지
-  // 않기 위한 최신 seed 기준점(새 recording_id가 오면 편집 중이어도
-  // 갱신됨 — 아래 seed effect 주석 참고).
-  const emrSeedRecordingIdRef = useRef<string | null>(null)
+  // Opus delta review (Batch 4) defect #4: a seed-once guard for the 종결
+  // EMR text -- `recordId` pins the seed to the currently-open record (a
+  // record switch always reseeds, unconditionally), `lastGenerated` is the
+  // text this effect itself produced last; the effect below only overwrites
+  // `emrText` when the clinician has NOT diverged from that last-generated
+  // text (`emrText === lastGenerated`), so a workspace autosave that only
+  // bumps `selectedRecord.updated_at` never clobbers an edit the clinician
+  // just typed into the textarea. "요약 다시 만들기" (handleRebuildEmrSummary)
+  // stays the explicit escape hatch that re-seeds on demand regardless.
+  const emrSeedRef = useRef<{ recordId: string | null; lastGenerated: string | null }>({
+    recordId: null,
+    lastGenerated: null,
+  })
 
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
@@ -3095,13 +3103,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   useEffect(() => {
     // malformed/legacy submission resilience 배치: 레코드 A -> B 전환처럼
     // 둘 다 visit_id를 갖는 경우(둘 다 이 if를 안 타는 경우)에도 A의
-    // recorderResults/emrText/emrSeedRecordingIdRef가 B의 화면에 잠깐이라도
+    // recorderResults/emrText/emrSeedRef가 B의 화면에 잠깐이라도
     // 남아있으면 안 된다 -- 이 effect는 [mode, selectedRecord?.visit_id]가
     // 바뀔 때마다 실행되므로, 무조건 리셋한 뒤에만 새 poll을 시작한다.
     setRecorderResults(null)
     setRecorderResultsError(null)
     setEmrText('')
-    emrSeedRecordingIdRef.current = null
+    emrSeedRef.current = { recordId: null, lastGenerated: null }
     if (mode !== 'server' || !selectedRecord?.visit_id) {
       return
     }
@@ -3139,16 +3147,19 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return () => clearTimeout(t)
   }, [readyToast])
 
-  // LBP v1 Batch 4 (§14.1/§14.3, CD-2.7-2 `DECISIONS.md` 2026-09-04): a
-  // pain-derived record's 종결 EMR text is the SAME 6-key
-  // buildPainWorkspaceEmrPreview text `EmrPreviewCard` shows (now
-  // read-only) inside 참고 자료 -- the whole point of CD-2.7-2 is that the
-  // two never differ. `selectedRecord.workspace` is the server's raw/
-  // possibly-legacy JSON, exactly like every other read of it in this file
-  // (see the save-conflict handler above) -- always run through
-  // deserializeWorkspaceState, never trusted as-is. Recorder transcript/
-  // ClinicianJudgment.revised_after_exam etc. never feed this branch --
-  // only Herbal-only records still use those (the effect/handler below).
+  // LBP v1 Batch 4 (§14.1/§14.3, CD-2.7-2 `DECISIONS.md` 2026-09-04),
+  // extended by the Opus delta review's defect #1 fix: 종결's EMR text for
+  // EVERY viewProfile (pain, herbal, mixed) is the SAME workspace-composer
+  // text `EmrPreviewCard` shows (read-only) inside that profile's own 참고
+  // 자료 -- the whole point of CD-2.7-2 is that the two never differ, and
+  // that no profile is ever left with an unconditionally-rendered but empty
+  // box (Batch 4's original regression -- see defect #1). `selectedRecord.
+  // workspace` is the server's raw/possibly-legacy JSON, exactly like every
+  // other read of it in this file (see the save-conflict handler above) --
+  // always run through deserializeWorkspaceState, never trusted as-is.
+  // Recorder transcript-derived text (`emrSummary.ts`'s buildEmrSummary)
+  // no longer feeds ANY branch here -- see this file's own top-of-module
+  // comment in emrPreview.ts for why.
   function buildPainEmrTextForRecord(): string {
     const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
     return buildPainWorkspaceEmrPreview({
@@ -3166,44 +3177,69 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       impactText: isEmptyValue(r.visit_goal.chief_impact)
         ? null
         : answerLabel('VISIT_04_SYMPTOM_IMPACT', r.visit_goal.chief_impact),
+      // Opus delta review defect #7: the patient's own Micro Follow-up quote
+      // (already fetched into `microFollowUpResponse`, keyed to this
+      // visit_id) -- patient self-report, S only, never O.
+      microFollowUpText: microFollowUpQuoteLine(readableMicroFollowUpResponse(microFollowUpResponse)),
       lbpObjectiveMotorDeficit: selectedRecord?.judgment?.lbp_objective_motor_deficit,
+      // Opus delta review defect #2: JudgmentPanel's three still-editable
+      // clinician-typed fields, restored into A/A/P (never O).
+      clinicianJudgmentAssessment: selectedRecord?.judgment?.revised_after_exam,
+      clinicianJudgmentTreatment: selectedRecord?.judgment?.final_treatment_axis,
+      clinicianJudgmentPlan: selectedRecord?.judgment?.prescription_direction,
     })
   }
 
-  // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다(herbal-only
-  // 레코드 전용 -- pain-derived 레코드는 바로 아래 별도 effect가 담당한다).
-  // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
-  // malformed/legacy submission resilience 배치: 이 effect는 JSX 게이트(위
-  // payloadShapeOk ? ... 분기)와 무관하게 항상 실행된다 -- hook은 조건부로
-  // 건너뛸 수 없다. primaryConcernLabel(r)은 r.visit_goal.visit_goal을
-  // 무조건 읽으므로, payloadShapeOk가 false인 레코드에서 recorder 결과가
-  // 먼저 도착하면(EMR 패널 자체는 화면에 없어도) 이 effect가 부모
-  // DoctorView 안에서 직접 던진다 -- DoctorRecordErrorBoundary는 자신의
-  // 자식 렌더만 잡으므로 이 예외는 그 경계를 완전히 우회한다.
-  useEffect(() => {
-    if (!payloadShapeOk) return
-    if (viewProfile === 'pain' || viewProfile === 'mixed') return
-    const latest = recorderResults?.[0] ?? null
-    if (!latest) return
-    if (emrSeedRecordingIdRef.current === latest.recording_id) return
-    emrSeedRecordingIdRef.current = latest.recording_id
-    setEmrText(
-      buildEmrSummary({
-        primaryConcern: primaryConcernLabel(r),
-        structuredNote: latest.structured_note,
-        judgment: selectedRecord?.judgment ?? null,
-      }),
-    )
-  }, [payloadShapeOk, viewProfile, recorderResults, selectedRecord?.judgment])
+  // Opus delta review defect #1 (option (a)): herbal/mixed records now
+  // source their half of 종결's text from the SAME composer
+  // HerbalWorkspace.tsx's own EmrPreviewCard already calls -- so a herbal
+  // record with no voice recording no longer renders an empty box that
+  // reports "복사됨" for an empty clipboard write.
+  function buildHerbalEmrTextForRecord(): string {
+    const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
+    return buildHerbalWorkspaceEmrPreview({
+      primaryConcern: primaryConcernLabel(r),
+      clinicianObservations: workspaceState.herbalClinicianObservations,
+      finalAssessment: workspaceState.herbalFinalAssessment,
+      followUpTargets: workspaceState.herbalFollowUpTargets,
+      carePlan: workspaceState.herbalCarePlan,
+      reassessment: workspaceState.herbalReassessment,
+      nextReassessmentPlan: workspaceState.nextReassessmentPlan,
+    })
+  }
 
-  // §14.3: pain-derived records reseed on record switch or whenever the
-  // saved record advances (workspace autosave, judgment save) -- never tied
-  // to a new recorder result, since this text does not read the transcript
-  // at all.
+  // Dispatches on viewProfile -- pain -> pain 6-key text only; herbal ->
+  // herbal text only; mixed -> the pain 6-key block THEN the herbal block,
+  // separated by a blank line (CRLF+CRLF), so a mixed record's one copy
+  // carries both halves instead of only ever one profile's worth of text.
+  function buildEmrTextForRecord(): string {
+    if (viewProfile === 'herbal') return buildHerbalEmrTextForRecord()
+    if (viewProfile === 'mixed') return `${buildPainEmrTextForRecord()}\r\n\r\n${buildHerbalEmrTextForRecord()}`
+    return buildPainEmrTextForRecord()
+  }
+
+  // §14.3 (Opus delta review defect #1/#4): reseeds on record switch or
+  // whenever the saved record advances (workspace autosave, judgment save)
+  // -- for EVERY viewProfile now, not only pain/mixed. defect #4: a record
+  // switch (`selectedRecord?.id` changed from the ref's last-seen value)
+  // always reseeds unconditionally; an `updated_at`-only bump (an autosave
+  // of the SAME record) only reseeds when the textarea still holds exactly
+  // what this effect generated last -- i.e. the clinician has not typed a
+  // manual edit into it since. "요약 다시 만들기" is the explicit escape
+  // hatch that always re-seeds on demand (see handleRebuildEmrSummary).
   useEffect(() => {
     if (!payloadShapeOk) return
-    if (viewProfile !== 'pain' && viewProfile !== 'mixed') return
-    setEmrText(buildPainEmrTextForRecord())
+    const recordId = selectedRecord?.id ?? null
+    const generated = buildEmrTextForRecord()
+    if (emrSeedRef.current.recordId !== recordId) {
+      emrSeedRef.current = { recordId, lastGenerated: generated }
+      setEmrText(generated)
+      return
+    }
+    if (emrText === emrSeedRef.current.lastGenerated) {
+      emrSeedRef.current.lastGenerated = generated
+      setEmrText(generated)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at])
 
@@ -3213,33 +3249,33 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return () => clearTimeout(t)
   }, [copyStatus])
 
-  // 수동 escape hatch: 원장이 진료 판단(JudgmentPanel)을 recorder 결과가 이미
-  // seed된 뒤에 저장하면, 위 seed effect는 같은 recording_id에 대해 다시
-  // 돌지 않으므로(의도된 동작 — 편집 중 텍스트 보존) Assessment/치료·처방/계획
-  // 줄이 자동으로는 채워지지 않는다. 이 버튼은 현재 화면이 들고 있는
-  // selectedRecord.judgment(클라이언트 상태)로 즉시 다시 조립한다.
+  // 수동 escape hatch: 원장이 진료 판단(JudgmentPanel)을 저장한 뒤(위 seed
+  // effect는 클리니션이 편집 중인 텍스트를 보존하려고 `updated_at`만 바뀐
+  // 경우 재생성을 건너뛸 수 있으므로 — defect #4) 즉시 최신값으로 다시
+  // 조립하고 싶을 때 쓰는 버튼. 현재 화면이 들고 있는 selectedRecord(클라이언트
+  // 상태)로 즉시 다시 조립한다 -- 모든 viewProfile에서 동일하게
+  // buildEmrTextForRecord()를 부르고(defect #1), 그 결과를 새 seed 기준점으로
+  // 남긴다(다음 autosave가 이 재생성 직후를 "편집 안 됨"으로 보게).
   // ponytail: selectedRecord 자체를 강제로 재조회하지는 않는다 — 별도 refetch
   // nonce를 새로 만드는 건 이 fix 범위에는 과하다. 값이 서버에는 저장됐지만
   // 이 화면의 selectedRecord가 아직 그 값을 모른다면(다른 창에서 저장한 경우
   // 등) 버튼을 다시 눌러도 반영되지 않는다 — 그 경우 패널을 닫았다 열면 된다.
-  // §14.3: pain-derived records rebuild from buildPainEmrTextForRecord()
-  // instead (still an immediate re-read of the current selectedRecord).
   function handleRebuildEmrSummary() {
-    if (viewProfile === 'pain' || viewProfile === 'mixed') {
-      setEmrText(buildPainEmrTextForRecord())
-      return
-    }
-    if (!recorderResults?.[0]) return
-    setEmrText(
-      buildEmrSummary({
-        primaryConcern: primaryConcernLabel(r),
-        structuredNote: recorderResults[0].structured_note,
-        judgment: selectedRecord?.judgment ?? null,
-      }),
-    )
+    const generated = buildEmrTextForRecord()
+    emrSeedRef.current = { recordId: selectedRecord?.id ?? null, lastGenerated: generated }
+    setEmrText(generated)
   }
 
   async function handleCopyEmr() {
+    // Opus delta review defect #1 (defence in depth): even though the
+    // render site below also disables/omits the copy button when
+    // `emrText.trim() === ''`, this guard means no future caller of
+    // handleCopyEmr can report "복사됨" for a clipboard write that copied
+    // nothing.
+    if (!emrText.trim()) {
+      setCopyStatus('error')
+      return
+    }
     try {
       if (!navigator.clipboard) throw new Error('no clipboard api')
       await navigator.clipboard.writeText(emrText)
@@ -3826,6 +3862,15 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           the ONE remaining copy surface, regardless of whether a
           recording exists. "진료 녹취·요약" (the transcript/recording
           metadata below) stays exactly as before, informational only.
+
+          Opus delta review defect #1: buildEmrTextForRecord() now covers
+          every viewProfile (pain/herbal/mixed), so this box should never
+          actually be seeded empty in practice -- but the copy button below
+          still disables itself whenever `emrText.trim() === ''` (defence in
+          depth: a malformed/legacy record where payloadShapeOk is false
+          skips the seed effect entirely and leaves `emrText` at its reset
+          value) so no future path can ever report "복사됨" for a clipboard
+          write that copied nothing.
         */}
         <section className="doctor__section doctor__nextCompletion">
           <h2>종결</h2>
@@ -3873,7 +3918,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             />
           </div>
           <div className="judgment__actions">
-            <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
+            <button
+              type="button"
+              className="judgment__recordBtn"
+              onClick={handleCopyEmr}
+              disabled={!emrText.trim()}
+            >
               EMR용 복사
             </button>
             <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>

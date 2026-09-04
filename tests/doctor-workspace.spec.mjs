@@ -3540,7 +3540,13 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
  * server-mode-only UI this SSR/fetch-less harness cannot mount, so its
  * coverage lives as source-text assertions in tests/doctor.spec.mjs
  * instead (same convention this file's own header already documents for
- * every other server-mode-only DoctorView behavior).
+ * every other server-mode-only DoctorView behavior). Opus delta review
+ * defect #5: this comment used to claim that coverage existed when it did
+ * not (tests/doctor.spec.mjs carried zero such assertions) -- see that
+ * file's own "§14.3/§14.6 종결 EMR" block for the assertions that now make
+ * this claim true (EMR용 복사 renders exactly once repo-wide, the 종결 call
+ * site's argument key set is accounted for against PainWorkspace.tsx's own
+ * call, the seed-once guard exists, and the empty-text copy guard exists).
  * ---------------------------------------------------------------------- */
 {
   let renderer
@@ -3704,6 +3710,79 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       'the legacy free-text value is preserved verbatim in the 기타 box, not dropped',
     )
     assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 자기 전 온찜질 안내함'), 'and still reaches the EMR text unchanged')
+  })
+
+  // Opus delta review defect #3: the chip group used to sit inside a
+  // <label>, whose "labeled control" (the first labelable descendant --
+  // <button> qualifies, per the HTML spec) was the 침 chip -- so tapping
+  // the "시행/예정 처치" caption (or any empty space inside the label)
+  // toggled 침 unintentionally on a touch screen. Verified by hand as the
+  // mandatory mutant: reverting the wrapper back to <label> makes this fail
+  // with "AssertionError [ERR_ASSERTION]: the 시행/예정 처치 field wrapper
+  // (or any of its ancestors) must never be a <label> element... 1 !== 0"
+  // (observed, then reverted).
+  test('§14.2 (mutation-guarded, Opus delta review defect #3): the 시행/예정 처치 chip group is never nested inside a <label> (would make the caption toggle 침 on tap)', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: PAIN_SCENARIO_1.synthetic }),
+      )
+    })
+    const group = findChipGroup(renderer)
+    const labelAncestors = []
+    let node = group.parent
+    while (node) {
+      if (node.type === 'label') labelAncestors.push(node)
+      node = node.parent
+    }
+    assert.equal(
+      labelAncestors.length,
+      0,
+      'the 시행/예정 처치 field wrapper (or any of its ancestors) must never be a <label> element',
+    )
+  })
+
+  // Opus delta review defect #9: a plain <input type="text"> runs the
+  // browser's value-sanitization algorithm on every render, stripping
+  // newlines -- so a legacy free-text value recorded before this batch that
+  // contains a newline would lose it the moment the clinician typed even
+  // one more character. Restored as a <textarea> so newlines survive.
+  // Verified by hand as the mandatory mutant: reverting the element back to
+  // <input type="text"> makes the `n.type === 'textarea'` assertion below
+  // fail with "AssertionError [ERR_ASSERTION]: the 기타 field must be a
+  // <textarea>, not an <input>, so a legacy value's newline survives
+  // editing... 'input' !== undefined" (observed, then reverted).
+  test('§14.2 (mutation-guarded, Opus delta review defect #9): the 기타 field is a <textarea>, so a legacy value containing a newline is not silently mangled', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:chip-legacy-newline',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '',
+              interventionPerformedOrPlanned: '침\n부항 후 호전',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    const otherField = findOtherInput(renderer)
+    assert.equal(
+      otherField.type,
+      'textarea',
+      'the 기타 field must be a <textarea>, not an <input>, so a legacy value\'s newline survives editing',
+    )
+    assert.ok(
+      otherField.props.value.includes('\n'),
+      'the legacy value\'s newline is preserved in the field\'s own value (parseInterventionValue never strips it)',
+    )
+    assert.equal(otherField.props.value, '침\n부항 후 호전', 'the 기타 field starts with the full legacy value, newline intact')
   })
 }
 

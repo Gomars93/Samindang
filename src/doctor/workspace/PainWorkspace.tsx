@@ -660,6 +660,7 @@ export function PainWorkspaceNext({
   lbpDirectionalResponse,
   lbpWorkingHypothesis,
   lbpObjectiveMotorDeficit,
+  microFollowUpText,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -680,6 +681,8 @@ export function PainWorkspaceNext({
   lbpWorkingHypothesis?: LbpWorkingHypothesis
   /** LBP v1 Batch 4 (§14.1, EMR O "객관적 근력저하"): EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)의 ObjectiveExamFindingsCard. */
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
+  /** Opus delta review defect #7 (§14.1 S "micro follow-up"): the patient's own MicroFollowUpResponse quote line -- EMR 미리보기 조립에만 쓰인다, patient self-report, S only. */
+  microFollowUpText?: string | null
 }) {
   const r = payload.responses
   const { routing } = payload
@@ -704,6 +707,7 @@ export function PainWorkspaceNext({
     onsetDurationText,
     aggravatingText: aggravatingTextForEmr,
     impactText: impactTextForEmr,
+    microFollowUpText,
     lbpObjectiveMotorDeficit,
   })
   const patientCarePlanText = buildPainPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })

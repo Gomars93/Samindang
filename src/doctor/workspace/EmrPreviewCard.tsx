@@ -6,10 +6,14 @@
  * surface DoctorView.tsx's 종결 section already has — two copy buttons that
  * could show different text if either drifted. CD-2.7-2 (`DECISIONS.md`
  * 2026-09-04) settles this: 참고 자료's preview stays read-only reference,
- * and 종결 is the one remaining place a clinician copies EMR text from (for
- * a pain-derived record, 종결 now sources that text from the exact same
- * `buildPainWorkspaceEmrPreview` call this card renders — see
- * emrPreview.ts's file header and DoctorView.tsx's own 종결 section).
+ * and 종결 is the one remaining place a clinician copies EMR text from.
+ * Opus delta review defect #1 fix: this is now true for EVERY profile, not
+ * only pain — 종결 sources a herbal/mixed record's text from the exact same
+ * `buildHerbalWorkspaceEmrPreview`/`buildPainWorkspaceEmrPreview` calls this
+ * card renders (see emrPreview.ts's file header and DoctorView.tsx's own
+ * 종결 section), so this card's "복사는 「종결」에서" hint below stays
+ * accurate for HerbalWorkspace.tsx's instance of this card too, not only
+ * PainWorkspace.tsx's.
  */
 export function EmrPreviewCard({ text }: { text: string }) {
   return (

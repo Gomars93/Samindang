@@ -3,15 +3,18 @@
  * A/B/E; reformatted to the fixed 6-key SOAP-style layout by LBP v1 Batch 4
  * §14.1).
  *
- * This is additive to, and does NOT replace, the existing production EMR
- * flow (src/doctor/emrSummary.ts's buildEmrSummary, driven by
- * ClinicianJudgment + RecorderStructuredNote). That function is untouched
- * by this batch. This composer instead previews what the workspace's own
- * clinician-owned fields would look like as EMR text — and, since Batch 4
- * §14.3, is the ONLY EMR text source `DoctorView.tsx`'s 종결 section copies
- * for a pain-derived record (the same text `EmrPreviewCard` shows,
- * read-only, in the 참고 자료 disclosure — one composed text, two read
- * sites, never two different ones).
+ * `src/doctor/emrSummary.ts`'s buildEmrSummary (driven by ClinicianJudgment +
+ * RecorderStructuredNote) still exists and is untouched by this batch, but
+ * as of the Opus delta review's defect #1 fix, `DoctorView.tsx`'s 종결
+ * section no longer calls it for ANY record profile — `emrSummary.ts` is
+ * kept only for `tests/emrSummary.spec.mjs`'s own direct unit coverage of
+ * that module. This composer (both `buildPainWorkspaceEmrPreview` and
+ * `buildHerbalWorkspaceEmrPreview` below) is now the ONLY EMR text source
+ * `DoctorView.tsx`'s 종결 section copies, for every viewProfile (pain,
+ * herbal, mixed — mixed concatenates the pain 6-key block and the herbal
+ * block, separated by a blank line) — the exact same text `EmrPreviewCard`
+ * shows, read-only, in each workspace's own 참고 자료 disclosure. One
+ * composed text, two read sites, never two different ones.
  *
  * `buildPainWorkspaceEmrPreview` always emits exactly six lines, in this
  * fixed order (the standard this repository's other region docs already
@@ -21,16 +24,20 @@
  *
  *   C/C  주호소             — primaryConcern
  *   O/S  발병 및 경과        — tablet onset/duration text (patient self-report)
- *   S    주관적 소견         — tablet self-report (aggravating factors, impact)
+ *                              + (있으면) 재진 경과 요약 (clinician-recorded,
+ *                              still not the O line)
+ *   S    주관적 소견         — tablet self-report (aggravating factors,
+ *                              impact, micro follow-up quote)
  *   O    객관적 소견         — CLINICIAN-CONFIRMED ONLY (exam results, the
  *                              clinician's own directional-response
  *                              observation, today's structured re-check
  *                              results, the clinician-entered objective
  *                              motor-deficit finding)
- *   A    평가                — 임상 가설 + 최종 임상 판단 + 치료 초점 (+ 오늘
- *                              재검의 최종 재평가, when present)
- *   P    계획                — 시행/예정 처치 + 즉시 재검 대상 + Care Plan +
- *                              재평가 대상 + 다음 상세 재평가
+ *   A    평가                — 임상 가설 + 최종 임상 판단 + (있으면) 원장 평가 +
+ *                              치료/처방 방향 + 치료 초점 (+ 오늘 재검의 최종
+ *                              재평가, when present)
+ *   P    계획                — 시행/예정 처치 + (있으면) 진료 계획 + 즉시 재검
+ *                              대상 + Care Plan + 재평가 대상 + 다음 상세 재평가
  *
  * A key's line always renders, even when its value is empty (`C/C:` with
  * nothing after the colon) — the fixed shape is the point: pasting this
@@ -71,7 +78,11 @@
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { ClinicianObservationItem } from './clinicianObservation'
 import type { FollowUpTarget, HerbalFinalAssessment, PainFinalAssessment, NextReassessmentPlan } from './finalAssessment'
-import { lbpDirectionalResponseLabel, type LbpDirectionalResponse } from './lbpExamSuggestions'
+import {
+  isValidLbpDirectionalResponse,
+  lbpDirectionalResponseLabel,
+  type LbpDirectionalResponse,
+} from './lbpExamSuggestions'
 import { summarizeLbpWorkingHypothesisKo, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
 import type { PainCarePlan, HerbalCarePlan } from './carePlan'
@@ -171,12 +182,28 @@ export function buildPainWorkspaceEmrPreview(input: {
   lbpWorkingHypothesis?: LbpWorkingHypothesis
   /** §14.1 O/S "발병 및 경과": tablet-reported duration/frequency text (DoctorView.tsx's own `durationFrequencyText`) — patient self-report, NEVER O. */
   onsetDurationText?: string | null
+  /** §14.1 O/S "(재진) 경과 요약": a REVISIT's clinician-recorded quick-check recap (e.g. `summarizeRevisitQuickCheckKo`'s output) — appended after `onsetDurationText` on the same O/S line, never split onto its own key. Still not the `O` line: O/S is the onset-and-course key, not the exam-findings key the file header's ONE ABSOLUTE RULE governs. */
+  revisitRecapText?: string | null
   /** §14.1 S "주관적 소견": tablet-reported aggravating-factor text (`aggravatingSummaryText`'s own output) — patient self-report. */
   aggravatingText?: string | null
   /** §14.1 S: tablet VISIT_04_SYMPTOM_IMPACT answer, already label-formatted — patient self-report. */
   impactText?: string | null
+  /** §14.1 S "micro follow-up": the patient's own MicroFollowUpResponse quote line (`microFollowUpQuoteLine`'s output) — patient self-report, same key as aggravatingText/impactText. */
+  microFollowUpText?: string | null
   /** §14.1 O "객관적 근력저하": ClinicianJudgment.lbp_objective_motor_deficit — clinician-entered post-exam finding (judgment.ts: "원장이 진찰 후 입력"), a SEPARATE field from the patient's own LBP_02 self-report. Never derive this from LBP_02. */
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
+  /**
+   * Opus delta review (Batch 4) defect #2: `ClinicianJudgment.revised_after_exam` /
+   * `final_treatment_axis` / `prescription_direction` are all still clinician-
+   * typed in JudgmentPanel.tsx (viewProfile-gated nowhere, so a pain record's
+   * clinician can keep filling them) and used to reach 종결's EMR text via
+   * emrSummary.ts. §14.3's rewiring to this composer dropped them with no
+   * replacement — this restores them, in A/A/P (never O: they are judgement
+   * and plan, not an examination finding).
+   */
+  clinicianJudgmentAssessment?: string | null
+  clinicianJudgmentTreatment?: string | null
+  clinicianJudgmentPlan?: string | null
 }): string {
   const hypothesisSummary = input.lbpWorkingHypothesis ? summarizeLbpWorkingHypothesisKo(input.lbpWorkingHypothesis) : null
 
@@ -186,7 +213,18 @@ export function buildPainWorkspaceEmrPreview(input: {
   const oParts: string[] = []
   const examLines = examFindingsLines(input.examSuggestions)
   if (examLines.length) oParts.push(`검사 결과: ${examLines.join('; ')}`)
-  if (input.lbpDirectionalResponse && input.lbpDirectionalResponse !== 'NOT_ASSESSED') {
+  // defect #8: match the defensive-validity convention `isValidExamStatus`/
+  // `isValidLaterality` already use above -- an unrecognized status is
+  // treated the same as the "not yet assessed" default (omitted), never
+  // printed as an empty "허리 움직임 반응: " clause. Currently unreachable in
+  // production (deserializeWorkspaceState already sanitizes this field via
+  // isValidLbpDirectionalResponse -- see persistence.ts), but this composer
+  // is an exported public function and the `O` line is this system's most
+  // safety-sensitive one, so it defends itself too.
+  if (
+    isValidLbpDirectionalResponse(input.lbpDirectionalResponse) &&
+    input.lbpDirectionalResponse !== 'NOT_ASSESSED'
+  ) {
     oParts.push(`허리 움직임 반응: ${lbpDirectionalResponseLabel(input.lbpDirectionalResponse)}`)
   }
   const reassessLines = input.reassessment ? reassessmentFindingsLines(input.reassessment.items) : []
@@ -200,22 +238,43 @@ export function buildPainWorkspaceEmrPreview(input: {
   const sParts: string[] = []
   if (input.aggravatingText?.trim()) sParts.push(`악화요인: ${input.aggravatingText.trim()}`)
   if (input.impactText?.trim()) sParts.push(`일상 영향: ${input.impactText.trim()}`)
+  // §14.1 S "micro follow-up" (defect #7): still the patient's own quote
+  // (MicroFollowUpResponse), so it stays on S alongside the two clauses
+  // above -- never O.
+  if (input.microFollowUpText?.trim()) sParts.push(`최근 경과(환자 응답): ${input.microFollowUpText.trim()}`)
 
-  // A (평가) — 임상 가설(먼저) + 최종 임상 판단 + 치료 초점 + (있으면) 최종 재평가.
+  // A (평가) — 임상 가설(먼저) + 최종 임상 판단 + (있으면) 원장 평가/치료·처방 방향
+  // (defect #2) + 치료 초점 + (있으면) 최종 재평가.
   const aParts: string[] = []
   if (hypothesisSummary) aParts.push(hypothesisSummary)
   if (input.finalAssessment.finalWorkingAssessment.trim()) {
     aParts.push(`최종 임상 판단: ${input.finalAssessment.finalWorkingAssessment.trim()}`)
+  }
+  // defect #2: ClinicianJudgment.revised_after_exam/final_treatment_axis --
+  // still clinician-typed in JudgmentPanel.tsx, still editable on a pain
+  // record -- restored here, in A (judgement), never O (not an exam
+  // finding).
+  if (input.clinicianJudgmentAssessment?.trim()) {
+    aParts.push(`원장 평가: ${input.clinicianJudgmentAssessment.trim()}`)
+  }
+  if (input.clinicianJudgmentTreatment?.trim()) {
+    aParts.push(`치료/처방 방향: ${input.clinicianJudgmentTreatment.trim()}`)
   }
   if (input.finalAssessment.treatmentFocus.trim()) aParts.push(`치료 초점: ${input.finalAssessment.treatmentFocus.trim()}`)
   if (input.reassessment?.finalReassessmentNote.trim()) {
     aParts.push(`최종 재평가: ${input.reassessment.finalReassessmentNote.trim()}`)
   }
 
-  // P (계획) — 시행/예정 처치 + 즉시 재검 대상 + Care Plan + 재평가 대상 + 다음 상세 재평가.
+  // P (계획) — 시행/예정 처치 + (있으면) 진료 계획 + 즉시 재검 대상 + Care Plan +
+  // 재평가 대상 + 다음 상세 재평가.
   const pParts: string[] = []
   if (input.finalAssessment.interventionPerformedOrPlanned.trim()) {
     pParts.push(`시행/예정 처치: ${input.finalAssessment.interventionPerformedOrPlanned.trim()}`)
+  }
+  // defect #2: ClinicianJudgment.prescription_direction -- clinician-typed
+  // plan, restored here in P (plan), never O.
+  if (input.clinicianJudgmentPlan?.trim()) {
+    pParts.push(`진료 계획: ${input.clinicianJudgmentPlan.trim()}`)
   }
   if (input.finalAssessment.immediateRetestTarget.trim()) {
     pParts.push(`즉시 재검 대상: ${input.finalAssessment.immediateRetestTarget.trim()}`)
@@ -234,9 +293,15 @@ export function buildPainWorkspaceEmrPreview(input: {
     if (planLine) pParts.push(`다음 상세 재평가: ${planLine}`)
   }
 
+  // §14.1 O/S "(재진) 경과 요약" (defect #7): appended after the tablet
+  // onset/duration text on the SAME O/S line -- still not the `O` line.
+  const osParts: string[] = []
+  if (input.onsetDurationText?.trim()) osParts.push(input.onsetDurationText.trim())
+  if (input.revisitRecapText?.trim()) osParts.push(input.revisitRecapText.trim())
+
   const lines: EmrLine[] = [
     { label: 'C/C', value: input.primaryConcern ?? '' },
-    { label: 'O/S', value: input.onsetDurationText ?? '' },
+    { label: 'O/S', value: osParts.join('; ') },
     { label: 'S', value: sParts.join('; ') },
     { label: 'O', value: oParts.join('; ') },
     { label: 'A', value: aParts.join('; ') },

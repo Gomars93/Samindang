@@ -825,6 +825,7 @@ export function DoctorWorkspace({
                 lbpDirectionalResponse={workspaceState.lbpDirectionalResponse}
                 lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
                 lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
+                microFollowUpText={deltaQuoteLine}
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (

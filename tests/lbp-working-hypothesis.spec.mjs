@@ -566,6 +566,19 @@ function useEffectSpans(src) {
   // A filled example -- one value per key, confirming the fixed key
   // LITERALS ('C/C', 'O/S', 'S', 'O', 'A', 'P') are hardcoded, not derived
   // from any label table (§14.6: "키 이름·순서가 하드코딩 리터럴로 고정된다").
+  //
+  // Opus delta review defect #6: the ORIGINAL version of this fixture only
+  // populated 2 of the O key's 4 possible clauses (검사 결과/객관적
+  // 근력저하) -- 허리 움직임 반응/오늘 재검 소견 were never exercised by any
+  // exact-match assertion, so a mutant that smuggled a patient-reported
+  // value into either of those two clauses SURVIVED (verified: M6 pushed
+  // onsetDurationText into the 오늘 재검 소견 clause, M6b pushed
+  // aggravatingText into the 허리 움직임 반응 clause -- both passed every
+  // suite unmodified). All 4 O clauses are now populated here, and the
+  // exact-match assertion below covers the whole O line, so any such
+  // smuggling breaks it. Also extended (still exact-match) to cover defect
+  // #2 (clinicianJudgment*, in A/A/P) and defect #7 (revisitRecapText in
+  // O/S, microFollowUpText in S).
   const filled = buildPainWorkspaceEmrPreview({
     primaryConcern: '요통',
     examSuggestions: [
@@ -587,30 +600,54 @@ function useEffectSpans(src) {
     },
     followUpTargets: [{ id: 'pain_intensity', label: '통증 강도', baseline: '7', postTreatmentValue: '' }],
     onsetDurationText: '1~3개월 · 매일',
+    revisitRecapText: '전체 반응 호전',
     aggravatingText: '움직일 때 악화',
     impactText: '가벼운 지장',
+    microFollowUpText: '어제부터 조금 나아짐',
+    lbpDirectionalResponse: 'FLEXION_FAVORABLE',
+    reassessment: {
+      items: [
+        {
+          id: 'r1',
+          title: 'SLR(하지직거상) 재검',
+          previous: null,
+          source: 'OBSERVED',
+          result: { status: 'POSITIVE', laterality: 'NOT_APPLICABLE', note: '', recordedAt: '2026-01-02T00:00:00.000Z' },
+        },
+      ],
+      finalReassessmentNote: '',
+      recordedAt: '2026-01-02T00:00:00.000Z',
+    },
     lbpObjectiveMotorDeficit: 'NONE',
+    clinicianJudgmentAssessment: '신경근 증상 동반 가능성 낮음',
+    clinicianJudgmentTreatment: '가동성 회복 위주',
+    clinicianJudgmentPlan: '2주 후 재평가',
   })
   const filledLines = filled.split('\r\n')
   assert('§14.1 filled example: exactly 6 lines', filledLines.length === 6)
   assert('§14.1 filled example: keys are C/C, O/S, S, O, A, P in that exact order', filledLines.every((l, i) => l.startsWith(['C/C:', 'O/S:', 'S:', 'O:', 'A:', 'P:'][i])))
   assert('§14.1 filled example: C/C carries the chief concern', filledLines[0] === 'C/C: 요통')
-  assert('§14.1 filled example: O/S carries the tablet onset/duration text', filledLines[1] === 'O/S: 1~3개월 · 매일')
   assert(
-    '§14.1 filled example: S carries only patient self-report (악화요인/일상 영향), never a clinician value',
-    filledLines[2] === 'S: 악화요인: 움직일 때 악화; 일상 영향: 가벼운 지장',
+    '§14.1 filled example: O/S carries the tablet onset/duration text + (defect #7) the revisit recap text',
+    filledLines[1] === 'O/S: 1~3개월 · 매일; 전체 반응 호전',
   )
   assert(
-    '§14.1 filled example: O carries the clinician exam finding + the clinician objective-motor-deficit finding, and nothing patient-reported',
-    filledLines[3] === 'O: 검사 결과: SLR(하지직거상) 검사: 음성/정상; 객관적 근력저하: 없음',
+    '§14.1 filled example: S carries only patient self-report (악화요인/일상 영향/micro follow-up), never a clinician value',
+    filledLines[2] === 'S: 악화요인: 움직일 때 악화; 일상 영향: 가벼운 지장; 최근 경과(환자 응답): 어제부터 조금 나아짐',
   )
   assert(
-    '§14.1 filled example: A carries 최종 임상 판단 + 치료 초점',
-    filledLines[4] === 'A: 최종 임상 판단: 요추 기계적 통증; 치료 초점: 가동성 회복',
+    '§14.1 filled example (defect #6, all 4 O clauses populated): O carries the clinician exam finding + directional response + today\'s reassessment finding + the objective-motor-deficit finding, and nothing patient-reported',
+    filledLines[3] ===
+      'O: 검사 결과: SLR(하지직거상) 검사: 음성/정상; 허리 움직임 반응: 숙이면(굴곡) 호전; 오늘 재검 소견: SLR(하지직거상) 재검: 양성/이상 소견; 객관적 근력저하: 없음',
   )
   assert(
-    '§14.1 filled example: P carries 시행/예정 처치 + 즉시 재검 대상 + 재평가 대상',
-    filledLines[5] === 'P: 시행/예정 처치: 침, 물리치료; 즉시 재검 대상: 숙일 때 통증 재현 여부; 재평가 대상: 통증 강도 — 기준 7',
+    '§14.1 filled example: A carries 최종 임상 판단 + (defect #2) 원장 평가 + 치료/처방 방향 + 치료 초점',
+    filledLines[4] === 'A: 최종 임상 판단: 요추 기계적 통증; 원장 평가: 신경근 증상 동반 가능성 낮음; 치료/처방 방향: 가동성 회복 위주; 치료 초점: 가동성 회복',
+  )
+  assert(
+    '§14.1 filled example: P carries 시행/예정 처치 + (defect #2) 진료 계획 + 즉시 재검 대상 + 재평가 대상',
+    filledLines[5] ===
+      'P: 시행/예정 처치: 침, 물리치료; 진료 계획: 2주 후 재평가; 즉시 재검 대상: 숙일 때 통증 재현 여부; 재평가 대상: 통증 강도 — 기준 7',
   )
 
   // §14.1 O boundary (CLINICAL SAFETY, mandatory per §14.6): every value
@@ -640,6 +677,68 @@ function useEffectSpans(src) {
   assert(
     '§14.1 O boundary (CLINICAL SAFETY, mandatory): a patient self-reported value never appears on the O line -- O stays bare',
     oBoundaryOLine === 'O:',
+  )
+
+  // Opus delta review defect #7 extension: revisitRecapText/microFollowUpText
+  // reach O/S and S respectively, and never O -- isolated from the `filled`
+  // fixture above so a mutant that drops EITHER of these two specific
+  // inputs (as opposed to the pre-existing three) is caught even if it
+  // happens to leave the other clauses in `filled` intact.
+  const defect7Input = {
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    revisitRecapText: patientSelfReportValue,
+    microFollowUpText: patientSelfReportValue,
+  }
+  const defect7Text = buildPainWorkspaceEmrPreview(defect7Input)
+  const defect7Lines = defect7Text.split('\r\n')
+  assert(
+    'defect #7: revisitRecapText reaches the O/S line',
+    defect7Lines.find((l) => l.startsWith('O/S:')) === `O/S: ${patientSelfReportValue}`,
+  )
+  assert(
+    'defect #7: microFollowUpText reaches the S line (labeled 최근 경과(환자 응답))',
+    defect7Lines.find((l) => l.startsWith('S:')) === `S: 최근 경과(환자 응답): ${patientSelfReportValue}`,
+  )
+  assert(
+    'defect #7: neither revisitRecapText nor microFollowUpText ever reaches the O line -- O stays bare',
+    defect7Lines.find((l) => l.startsWith('O:')) === 'O:',
+  )
+
+  // Opus delta review defect #2: the three still clinician-typed
+  // JudgmentPanel fields (revised_after_exam/final_treatment_axis/
+  // prescription_direction) reach A/A/P and never O -- isolated so a
+  // mutant that drops exactly one of the three is caught even independent
+  // of the `filled` fixture above.
+  const defect2Text = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    clinicianJudgmentAssessment: '원장 평가값',
+    clinicianJudgmentTreatment: '치료 방향값',
+    clinicianJudgmentPlan: '진료 계획값',
+  })
+  const defect2Lines = defect2Text.split('\r\n')
+  const defect2ALine = defect2Lines.find((l) => l.startsWith('A:'))
+  const defect2PLine = defect2Lines.find((l) => l.startsWith('P:'))
+  assert('defect #2: clinicianJudgmentAssessment reaches A (원장 평가)', defect2ALine.includes('원장 평가: 원장 평가값'))
+  assert('defect #2: clinicianJudgmentTreatment reaches A (치료/처방 방향)', defect2ALine.includes('치료/처방 방향: 치료 방향값'))
+  assert('defect #2: clinicianJudgmentPlan reaches P (진료 계획)', defect2PLine.includes('진료 계획: 진료 계획값'))
+  assert(
+    'defect #2: none of the three clinician judgment fields ever reach O -- O stays bare',
+    defect2Lines.find((l) => l.startsWith('O:')) === 'O:',
+  )
+
+  // Opus delta review defect #8: an unrecognized/invalid lbpDirectionalResponse
+  // value must degrade exactly like the omitted/NOT_ASSESSED default --
+  // never an empty "허리 움직임 반응: " clause on the O line.
+  const defect8Text = buildPainWorkspaceEmrPreview({
+    ...allEmptyInput,
+    primaryConcern: '요통',
+    lbpDirectionalResponse: 'NOT_A_REAL_VALUE',
+  })
+  assert(
+    'defect #8: an invalid lbpDirectionalResponse value never produces an empty "허리 움직임 반응: " clause on O',
+    defect8Text.split('\r\n').find((l) => l.startsWith('O:')) === 'O:',
   )
 }
 

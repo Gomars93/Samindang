@@ -3352,4 +3352,185 @@ function detailsRange(html, classMarker) {
   )
 }
 
+// ==========================================================================
+// LBP v1 Batch 4 §14.3/§14.6 -- 종결 EMR text (Opus delta review defects
+// #1/#4/#5). This section renders only inside `mode === 'server' &&
+// selectedRecord?.patient_id`, a fetch-driven screen this fixtures-only
+// SSR harness cannot mount -- so, per Opus's own instruction, this stays
+// source-text assertions against DoctorView.tsx/PainWorkspace.tsx/
+// EmrPreviewCard.tsx's SOURCE rather than rendered behavior. This is the
+// coverage tests/doctor-workspace.spec.mjs's own §14.3 block comment
+// claimed already existed (Opus delta review defect #5 found it did not).
+// ==========================================================================
+{
+  function stripComments(src) {
+    return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  }
+
+  // Balanced-bracket extraction of the object-literal substring passed to
+  // `${fnName}({ ... })` -- tolerant of comments inside it (their brackets
+  // may be interleaved but net out to zero over the whole call, which is
+  // all a depth counter needs), robust to nested calls/ternaries in values.
+  function extractCallArgBody(src, fnName) {
+    const callIdx = src.indexOf(`${fnName}({`)
+    if (callIdx === -1) throw new Error(`call to ${fnName}({ not found`)
+    const bodyStart = src.indexOf('{', callIdx)
+    let depth = 0
+    let i = bodyStart
+    for (; i < src.length; i++) {
+      if (src[i] === '{') depth++
+      else if (src[i] === '}') {
+        depth--
+        if (depth === 0) break
+      }
+    }
+    if (depth !== 0) throw new Error(`unbalanced braces extracting ${fnName}({...}) call body`)
+    return src.slice(bodyStart + 1, i)
+  }
+
+  // Splits an (already comment-stripped) object-literal body into its
+  // top-level `key` or `key: value` entries, respecting nested
+  // {}/()/[]/`` so a value containing its own commas (a nested call, a
+  // template literal) is never split apart.
+  function splitTopLevelEntries(body) {
+    const parts = []
+    let depth = 0
+    let current = ''
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i]
+      if (c === '{' || c === '(' || c === '[') depth++
+      else if (c === '}' || c === ')' || c === ']') depth--
+      if (c === ',' && depth === 0) {
+        parts.push(current)
+        current = ''
+      } else {
+        current += c
+      }
+    }
+    if (current.trim()) parts.push(current)
+    return parts
+  }
+
+  function extractCallArgKeys(src, fnName) {
+    const cleanedBody = stripComments(extractCallArgBody(src, fnName))
+    return splitTopLevelEntries(cleanedBody)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .map((entry) => {
+        const colonIdx = entry.indexOf(':')
+        return colonIdx === -1 ? entry : entry.slice(0, colonIdx).trim()
+      })
+      .filter((key) => /^[A-Za-z_$][\w$]*$/.test(key))
+  }
+
+  const doctorViewSrc = await readFile(fileURLToPath(new URL('../src/doctor/DoctorView.tsx', import.meta.url)), 'utf8')
+  const emrPreviewCardSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/EmrPreviewCard.tsx', import.meta.url)),
+    'utf8',
+  )
+  const painWorkspaceSrc = await readFile(
+    fileURLToPath(new URL('../src/doctor/workspace/PainWorkspace.tsx', import.meta.url)),
+    'utf8',
+  )
+
+  // defect #1 (i) / defect #5 (i): exactly one real "EMR용 복사" button in
+  // the whole app -- the 종결 button. EmrPreviewCard.tsx's own header
+  // comment mentions the literal in quotes (describing the button it used
+  // to carry, now removed) -- stripped out here so only rendered JSX text
+  // counts.
+  const emrCopyButtonOccurrencesInDoctorView = (doctorViewSrc.match(/EMR용 복사/g) ?? []).length
+  assert(
+    'defect #1/#5: "EMR용 복사" (the one copy button) appears exactly once in DoctorView.tsx',
+    emrCopyButtonOccurrencesInDoctorView === 1,
+  )
+  assert(
+    'defect #1/#5: EmrPreviewCard.tsx renders no "EMR용 복사" button at all (its header comment\'s mention of the retired button text does not count -- comments stripped before this check)',
+    !stripComments(emrPreviewCardSrc).includes('EMR용 복사'),
+  )
+
+  // defect #1: the 종결 copy button disables itself whenever emrText is
+  // empty, so no future path can ever report 복사됨 for a clipboard write
+  // that copied nothing.
+  assert(
+    'defect #1: the 종결 EMR용 복사 button is disabled whenever emrText is empty (defence in depth)',
+    /onClick=\{handleCopyEmr\}[\s\S]{0,40}disabled=\{!emrText\.trim\(\)\}/.test(doctorViewSrc),
+  )
+
+  // defect #1 (ii): handleRebuildEmrSummary routes through the shared
+  // buildEmrTextForRecord() dispatcher (covers herbal too, not only
+  // pain/mixed the way the pre-fix version did), and that dispatcher's
+  // herbal path calls buildHerbalEmrTextForRecord(), which itself calls
+  // buildHerbalWorkspaceEmrPreview -- the exact function name §14.7
+  // forbids modifying, confirming the fix routes to it rather than
+  // reimplementing it.
+  const handleRebuildBody = doctorViewSrc.match(/function handleRebuildEmrSummary\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? ''
+  assert(
+    'defect #1 (ii): handleRebuildEmrSummary calls the shared buildEmrTextForRecord() dispatcher',
+    /buildEmrTextForRecord\(\)/.test(handleRebuildBody),
+  )
+  const dispatcherBody = doctorViewSrc.match(/function buildEmrTextForRecord\(\): string \{([\s\S]*?)\n  \}/)?.[1] ?? ''
+  assert(
+    "defect #1: the dispatcher routes viewProfile === 'herbal' to buildHerbalEmrTextForRecord()",
+    /viewProfile === 'herbal'[\s\S]*?buildHerbalEmrTextForRecord\(\)/.test(dispatcherBody),
+  )
+  assert(
+    "defect #1: the dispatcher routes viewProfile === 'mixed' to BOTH buildPainEmrTextForRecord() and buildHerbalEmrTextForRecord(), pain block first",
+    /viewProfile === 'mixed'[\s\S]*?buildPainEmrTextForRecord\(\)[\s\S]*?buildHerbalEmrTextForRecord\(\)/.test(dispatcherBody),
+  )
+  const buildHerbalFnBody = doctorViewSrc.match(/function buildHerbalEmrTextForRecord\(\): string \{([\s\S]*?)\n  \}/)?.[1] ?? ''
+  assert(
+    'defect #1 (ii): buildHerbalEmrTextForRecord() calls buildHerbalWorkspaceEmrPreview (the untouched §14.7 function, not a reimplementation)',
+    /buildHerbalWorkspaceEmrPreview\(/.test(buildHerbalFnBody),
+  )
+
+  // defect #4: the 종결 EMR seed effect guards setEmrText behind a ref
+  // comparison -- a record switch always reseeds, but an
+  // `updated_at`-only bump (a workspace autosave of the SAME record) only
+  // reseeds when the textarea still holds exactly what the effect
+  // generated last (i.e. the clinician has not typed a manual edit since).
+  const seedEffectMatch = doctorViewSrc.match(
+    /useEffect\(\(\) => \{\s*if \(!payloadShapeOk\) return\s*const recordId = selectedRecord\?\.id[\s\S]*?\}, \[payloadShapeOk, viewProfile, selectedRecord\?\.id, selectedRecord\?\.updated_at\]\)/,
+  )
+  assert(
+    'defect #4: the 종결 EMR seed effect exists, keyed on [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at]',
+    seedEffectMatch != null,
+  )
+  const seedEffectBody = seedEffectMatch?.[0] ?? ''
+  assert(
+    'defect #4: the seed effect compares against a ref (emrSeedRef.current.recordId / .lastGenerated), not an unconditional setEmrText',
+    /emrSeedRef\.current\.recordId/.test(seedEffectBody) && /emrText === emrSeedRef\.current\.lastGenerated/.test(seedEffectBody),
+  )
+  const firstIfIdx = seedEffectBody.indexOf('if (')
+  const firstSetEmrTextIdx = seedEffectBody.indexOf('setEmrText(')
+  assert(
+    "defect #4: setEmrText is never the seed effect's first statement -- every call sits inside an `if` branch (removing the guard would make this fail)",
+    firstIfIdx !== -1 && firstSetEmrTextIdx !== -1 && firstIfIdx < firstSetEmrTextIdx,
+  )
+
+  // defect #5 (ii): the 종결 call site's argument key set accounts for
+  // PainWorkspace.tsx's own buildPainWorkspaceEmrPreview call -- every key
+  // PainWorkspace.tsx passes is also passed by 종결, and 종결's only extra
+  // keys are the 3 defect #2 clinician-judgment ones (JudgmentPanel's live
+  // state is not threaded into PainWorkspace.tsx's mid-consult preview
+  // lane -- see buildPainEmrTextForRecord's own comment -- so that specific
+  // difference is documented and expected, not a silent drop). A key
+  // silently missing from either side, with no such explanation, fails
+  // this.
+  const completionKeys = new Set(extractCallArgKeys(doctorViewSrc, 'buildPainWorkspaceEmrPreview'))
+  const referenceKeys = new Set(extractCallArgKeys(painWorkspaceSrc, 'buildPainWorkspaceEmrPreview'))
+  const DOCUMENTED_COMPLETION_ONLY_KEYS = new Set(['clinicianJudgmentAssessment', 'clinicianJudgmentTreatment', 'clinicianJudgmentPlan'])
+
+  assert('defect #5 (ii) sanity: both call sites\' argument keys were actually extracted (non-empty)', completionKeys.size > 0 && referenceKeys.size > 0)
+  const missingFromCompletion = [...referenceKeys].filter((k) => !completionKeys.has(k))
+  assert(
+    "defect #5 (ii): every key PainWorkspace.tsx passes to buildPainWorkspaceEmrPreview is also passed by 종결's own call (no silent drop)",
+    missingFromCompletion.length === 0,
+  )
+  const extraInCompletion = [...completionKeys].filter((k) => !referenceKeys.has(k))
+  assert(
+    "defect #5 (ii): 종결's call has no undocumented extra keys beyond PainWorkspace.tsx's -- only the 3 defect #2 clinician-judgment keys",
+    extraInCompletion.length === DOCUMENTED_COMPLETION_ONLY_KEYS.size && extraInCompletion.every((k) => DOCUMENTED_COMPLETION_ONLY_KEYS.has(k)),
+  )
+}
+
 console.log(`\n${passCount} assertions passed, 0 failed (total ${passCount})`)

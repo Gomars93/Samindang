@@ -934,7 +934,22 @@ async function main() {
         'audit log: the planted PRIVACY_CANARY marker never appears anywhere in the file',
         !auditRaw.includes('PRIVACY_CANARY'),
       )
-      assert('audit log: no phone digits from the canary submission leak in', !auditRaw.includes('9999'))
+      // Opus closing review (2026-09-04) M-3: `auditRaw` is the raw text of
+      // the WHOLE audit log file, which by this point also contains every
+      // submission_id/visit_id ever written -- both crypto.randomUUID()
+      // hex strings, in which "9999" can appear as a coincidental
+      // substring (measured Monte Carlo: ~0.90% of full test:all runs;
+      // real PHI leaks, by contrast, fail every run, not intermittently).
+      // Excluding just those two known-hex id fields before scanning keeps
+      // the original property intact -- no phone digit leaks into ANY
+      // field of ANY audit line, expected key or not, since
+      // JSON.stringify still serializes every other key verbatim -- while
+      // removing the one known source of coincidental collisions.
+      const nonIdAuditText = allLines.map((l) => JSON.stringify({ ...l, submission_id: undefined, visit_id: undefined })).join('\n')
+      assert(
+        'audit log: no phone digits from the canary submission leak in (id fields excluded from the scan -- see DECISIONS.md 2026-09-04 M-3)',
+        !nonIdAuditText.includes('9999'),
+      )
     }
 
     /* ---------------- visit layer: submitting creates a visit tied to the submission ---------------- */

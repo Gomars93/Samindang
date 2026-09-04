@@ -700,14 +700,21 @@ function computedText(value: unknown): string | null {
   return UNREADABLE_COMPUTED_VALUE
 }
 
-/** 날짜 구성요소(년/월/일)용 -- 유효한 값이면 2자리로 0-padding, 아니면 실패 토큰. */
-function datePartText(value: unknown): string {
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value).padStart(2, '0')
-  if (typeof value === 'string' && value !== '') return value
-  return UNREADABLE_COMPUTED_VALUE
-}
+/**
+ * Batch 4.1-B: datePartText() (날짜 구성요소 0-padding 헬퍼) was removed
+ * here -- its only call site was the "명리 검토" reviewGrid's 정규화된
+ * 양력 날짜 line, deleted below. No other caller.
+ */
 
-/** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
+/**
+ * saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상
+ * 해석과 무관한 계산 상태 표시일 뿐이다.
+ *
+ * Batch 4.1-B 이후 프로덕션 렌더 지점 없음(§15.5) -- DoctorView.tsx 어디에서도
+ * 더 이상 호출하지 않는다. 되살릴 때 `viewProfile !== 'pain'` 게이트를 반드시
+ * 함께 복원할 것(§16.3, PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간
+ * 내용을 노출하지 않는다).
+ */
 export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   text: string
   tone: 'neutral' | 'warning' | 'unresolved'
@@ -734,6 +741,13 @@ const PENDING_APPROVAL_LABELS: Record<string, string> = {
  * 여기 값은 전부 saju 엔진이 이미 계산해서 내려준 값(pillars/flags/policy)의
  * 재배열일 뿐이다. 오행 분포·한열조습처럼 엔진이 계산하지 않는 값은 절대
  * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
+ *
+ * Batch 4.1-B 이후 프로덕션 렌더 지점 없음(§15.5) -- 이 카드를 얹던
+ * judgment__reviewGrid 블록째로 DoctorView.tsx에서 제거됐다. 되살릴 때
+ * `viewProfile !== 'pain'` 게이트를 반드시 함께 복원할 것(§16.3). 12차/13차
+ * 독립 리뷰가 여기서 잡은 하드닝(wrong-typed pillars.day/flags.hour_unknown
+ * 등, 아래 주석 참고)은 tests/doctor.spec.mjs의 resilience 스위트가 이
+ * 컴포넌트를 직접 렌더해 계속 회귀 방지한다.
  */
 export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
   // 12차 독립 리뷰 HIGH-3: `!saju.pillars?.day`는 truthy 체크일 뿐이라
@@ -1909,7 +1923,13 @@ export function testDataGroupCount(r: Responses): number {
   return [r.recent_tests.recent_test_flag, r.free_text.free_text_yn].filter((v) => !isEmptyValue(v)).length
 }
 
-/** Core Reduction P4 -- "명리" 아코디언 배지: 계산된 사주 기둥 개수(0~4). */
+/**
+ * Core Reduction P4 -- "명리" 아코디언 배지: 계산된 사주 기둥 개수(0~4).
+ *
+ * Batch 4.1-B 이후 프로덕션 렌더 지점 없음(§15.5) -- 이 배지가 붙어 있던
+ * "명리" ReferenceAccordion 자체가 DoctorView.tsx에서 제거됐다. 되살릴 때
+ * `viewProfile !== 'pain'` 게이트를 반드시 함께 복원할 것(§16.3).
+ */
 export function myungriGroupCount(saju: DoctorPayload['myungri_calculation']): number {
   if (!saju.pillars) return 0
   return [saju.pillars.year, saju.pillars.month, saju.pillars.day, saju.pillars.hour].filter(
@@ -2675,6 +2695,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
    * questionnaire groups it always sat next to. Nothing here deletes
    * content or changes the profile gate (viewProfile !== 'pain') that
    * decided whether it existed at all -- only the tab it lived under.
+   *
+   * Superseded by Batch 4.1-B (§16.3/§15.4, PO decision 2026-09-04): that
+   * accordion itself is now gone (not merely moved) -- a separate 명리
+   * program replaces this in-app surface. See the "Batch 4.1-B" comment
+   * where the accordion used to render.
    */
   const [recordTab, setRecordTab] = useState<'clinical' | 'reference'>('clinical')
   function openRecordTab(tab: 'clinical' | 'reference') {
@@ -4376,7 +4401,15 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <Field qid="BIRTH_01" label="생년월일" value={r.birth_info.birth_date} />
               <Field qid="BIRTH_02" value={r.birth_info.birth_calendar_type} />
               <Field qid="BIRTH_02A" value={r.birth_info.lunar_leap_month} />
-              <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
+              {/*
+                Batch 4.1-B (§16.3/§15.4): this is now the ONLY place a
+                doctor sees the patient's birth-time branch -- the "명리"
+                accordion (and its own copy of this same field) was removed
+                below as a duplicate. Label-only change (doctor-facing
+                "출생 시간대" instead of the patient-facing question text);
+                BIRTH_03 itself (spec, FROZEN) is untouched.
+              */}
+              <Field qid="BIRTH_03" label="출생 시간대" value={r.birth_info.birth_time_branch} />
               <Field qid="BIRTH_03A" value={r.birth_info.birth_time_confidence} />
             </>
           )}
@@ -4670,117 +4703,19 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       </ReferenceAccordion>
 
       {/*
-        PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지
-        않는다. Round 11 goes further -- Myungri is not merely below the
-        clinical workspace, it is a separate surface that the clinical flow
-        never renders, per the standing rule that it must be completely
-        separated from it. Core Reduction P4: it is still a separate
-        accordion GROUP inside 참고, just no longer a separate TAB.
+        Batch 4.1-B (§16.3/§15.4): the "명리" accordion (MyungriCompactCard +
+        "명리 검토" review grid: pillars, 오행/한열조습 placeholder text,
+        pending-policy warning, and a left column that only re-showed the
+        BIRTH_* fields already visible above in 문진 원본 > 환자 기본) was
+        removed entirely -- PO decision 2026-09-04: a separate 명리 program
+        is used instead, so this in-app surface was pure duplication of
+        that BIRTH_03 field (kept, now labeled "출생 시간대" above) plus
+        values that only ever round-trip through 원본 JSON now.
+        `payload.myungri_calculation` is still computed and stored
+        unchanged -- only this rendering is gone. See MyungriCompactCard /
+        sajuStatusLine / myungriGroupCount elsewhere in this file for the
+        now-dead (but deliberately kept) display helpers this used.
       */}
-
-      {viewProfile !== 'pain' && (
-      <ReferenceAccordion title="명리" count={myungriGroupCount(saju)}>
-      <MyungriCompactCard saju={saju} />
-
-      <section className="doctor__section doctor__section--myungri">
-        <h2>명리 검토</h2>
-        <p className="doctor__derivedLabel">
-          왼쪽은 환자가 입력한 원본 정보, 오른쪽은 그 입력값으로부터 결정적으로
-          계산된 사실입니다. 두 열은 서로 다른 것이며, 해석(십신·용신 등)은
-          어디에도 포함하지 않습니다.
-        </p>
-
-        <div className="judgment__reviewGrid">
-          <div className="judgment__reviewCol">
-            <h3>원본 출생정보 — 환자 입력</h3>
-            <div className="doctorField">
-              <span className="doctorField__label">생년월일 (입력 그대로)</span>
-              <span className="doctorField__value">{computedText(r.birth_info.birth_date) ?? '—'}</span>
-            </div>
-            <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
-            <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
-            <Field qid="BIRTH_03" label="출생시간대" value={r.birth_info.birth_time_branch} />
-            <Field qid="BIRTH_03A" label="시간 확신도" value={r.birth_info.birth_time_confidence} />
-          </div>
-
-          <span className="judgment__reviewArrow" aria-hidden="true">→</span>
-
-          <div className="judgment__reviewCol">
-            <h3>계산된 사실 — 시스템이 계산한 것</h3>
-
-            {saju.status !== 'resolved' && (
-              <p className="doctor__warning">
-                상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
-                {computedText(saju.unresolved_reason) ? ` — ${computedText(saju.unresolved_reason)}` : ''}
-              </p>
-            )}
-            {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
-
-            {saju.pillars && (
-              <div className="doctor__pillars">
-                <div className="doctor__pillar">
-                  <span>연주</span>
-                  <strong>{computedText(saju.pillars.year) ?? UNREADABLE_COMPUTED_VALUE}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>월주</span>
-                  <strong>{computedText(saju.pillars.month) ?? UNREADABLE_COMPUTED_VALUE}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>일주</span>
-                  <strong>{computedText(saju.pillars.day) ?? UNREADABLE_COMPUTED_VALUE}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>시주</span>
-                  <strong>{computedText(saju.pillars.hour) ?? '미상'}</strong>
-                </div>
-              </div>
-            )}
-
-            {saju.normalized?.solarDate && (
-              <p className="doctor__derivedNote">
-                정규화된 양력 날짜: {datePartText(saju.normalized.solarDate.year)}-
-                {datePartText(saju.normalized.solarDate.month)}-
-                {datePartText(saju.normalized.solarDate.day)} / 상태: {saju.status}
-              </p>
-            )}
-
-            {asArray<string>(saju.policy.pending_approval).length > 0 && (
-              <p className="doctor__warning doctor__warning--pending">
-                주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}.
-                원장이 확정하면 값이 바뀔 수 있습니다.
-              </p>
-            )}
-          </div>
-
-          <span className="judgment__reviewArrow" aria-hidden="true">→</span>
-
-          <div className="judgment__reviewCol">
-            <h3>현재 문진 요약</h3>
-            <div className="doctorField">
-              <span className="doctorField__label">주호소</span>
-              <span className="doctorField__value">{primaryConcernLabel(r)}</span>
-            </div>
-            <Field qid="VISIT_03_SYMPTOM_DURATION" label="기간" value={r.visit_goal.chief_duration} />
-            <Field qid="VISIT_04_SYMPTOM_IMPACT" label="일상 영향" value={r.visit_goal.chief_impact} />
-            {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail)
-              .slice(0, 3)
-              .map((f) => (
-                <Field key={f.qid} qid={f.qid} value={f.value} />
-              ))}
-          </div>
-        </div>
-
-        <p className="doctor__calcVsInterpret">
-          ※ 위 &ldquo;계산된 사실&rdquo;은 사주 원국(연/월/일/시주) 산출이
-          끝났다는 뜻일 뿐, 임상 해석이 끝났다는 뜻이 아닙니다. 계산 완료 ≠
-          임상 해석 완료. 임상 해석(십신·용신 등 판단)은 아래 &ldquo;원장 판단
-          기록&rdquo;에 원장이 직접 기록합니다.
-        </p>
-      </section>
-      </ReferenceAccordion>
-      )}
 
       {/*
         Core Reduction P3 (Phase 5 Synthesis v1.2 §2.3 "다음/종결"): 진료

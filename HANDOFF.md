@@ -1,5 +1,66 @@
 # Current Handoff
 
+## ✅ 2026-09-04 (최신 17): Batch 4.1-B/4.1-C 구현 완료(Sonnet) — Opus closing 재검수 대기
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `9f02d3f`(+ 이 문서
+커밋). PR 미생성(운영 방침). main merge는 PO 명시 승인. 두 커밋:
+`4f8f97b`(4.1-B) → `9f02d3f`(4.1-C).
+
+### 한 일
+§16(및 §16이 참조하는 §15.4/§15.5)을 그대로 실행.
+
+**4.1-B** (`4f8f97b`): DoctorView.tsx의 "명리" ReferenceAccordion 전체 제거
+(MyungriCompactCard 렌더 + "명리 검토" reviewGrid: 원국/오행·한열조습
+placeholder/계산주의 경고/좌열 BIRTH_* 재노출 — 전부 제거, `payload.
+myungri_calculation` 계산·저장은 그대로). `참고 > 문진 원본 > 환자 기본`의
+`BIRTH_03` Field에 `label="출생 시간대"` 추가(그 값이 doctor-facing 유일한
+출생시간 표시가 됨). `MyungriCompactCard`/`sajuStatusLine`/`myungriGroupCount`는
+삭제하지 않고 "프로덕션 렌더 지점 없음, 되살릴 때 `viewProfile !== 'pain'` 게이트
+복원할 것" 주석만 추가. 그 블록의 유일한 호출자였던 `datePartText` 헬퍼는
+완전 삭제(고아 함수, noUnusedLocals). `src/doctor/fixtures.ts`에 mixed
+viewProfile fixture 1개 신규 추가(T8 테스트용 — 기존에 그런 fixture가 전혀
+없었음, PAIN_01 + HERBAL_ADDON_ACTIVE:'yes' 조합).
+
+**4.1-C** (`9f02d3f`): JudgmentPanel.tsx의 `핵심 선천 특징`/`현재 증상과
+연결되는 핵심` TextList 입력(judgment__grid) + "설명 개요 (원장 전용,
+참고용)" disclosure(judgment__outline, `outlineQuestion` 로컬 state 포함)
+전체 제거. `ClinicianJudgment.innate_features`/`symptom_links` 타입·기본값·
+`MAX_INNATE_FEATURES`/`MAX_SYMPTOM_LINKS`·`validateJudgment`의 길이 검증·
+`finalizeJudgment`의 빈 문자열 필터는 **전부 그대로**(judgment.ts에
+deprecated 주석만 추가) — `tests/server.spec.mjs`가 `innate_features`를
+저장·CAS round-trip 프로브로 쓰고 `server/**`가 FROZEN이기 때문.
+`judgmentRecordedFieldCount`에서 innate/symptom 카운트 2줄 제거.
+`ReferenceAccordion title="명리·감사 기록"` → `"디브리핑·학습 기록"`으로
+재명명(그 안의 `<h2>원장 판단 기록</h2>`은 그대로).
+
+### FROZEN + zero-diff 확인
+`git diff --stat 4d1bbde HEAD -- src/spec index.html src/App.tsx server
+"tablet core" tests/server.spec.mjs` → **출력 없음**(zero-diff, 4.1-A 이후
+전체 배치 기준으로도 확인).
+
+### 테스트
+- T6/T13/T14/T15/T18(제거) + T7/T8/T9/T10/T20/T23(유지, 회귀 방지) 신규 추가.
+  이번 제거로 깨진 기존 단언(`doctor.spec.mjs`의 myungri compact-card
+  full-page 테스트 → MyungriCompactCard 직접 렌더로 전환, duration 중복
+  카운트 3→2, pending-approval 경고 테스트 반전, datePartText/saju.normalized
+  구조 확인 2건 제거, "명리" 그룹 목록 제거, 13h의 "still renders" 2줄 반전,
+  `:3331`/`:3339` 갱신 등) + `save-conflict.spec.mjs`의 `judgment__grid`
+  selector(→ `judgment__learningCase`) + `doctor-reset-key.spec.mjs`의
+  reset-behavior probe(innate_features input → 1분 디브리핑 textarea)까지
+  전부 갱신.
+- mutation 검증(제거를 되돌려 실패 확인 후 원복) **T6/T13/T14/T15/T18 전부
+  수행** — 절차 중 `setOutlineQuestion` 잔존 참조(TS 컴파일 에러가 됐을
+  버그, 미리 잡음) 1건 발견·수정. 상세 실패 메시지는 이번 세션 보고 참고.
+- `npm run build` / `npm run test:all` **EXIT=0, 전부 0 failed** (커밋 후
+  재실행으로 확인).
+
+### 다음 행동
+**Opus closing 재검수 대기** → 통과 시 Batch 4 게이트 CLOSED. 그 다음은
+"최신 14"의 4~6번(실제 환자 파일럿 등)과 동일.
+
+---
+
+
 ## ✅ 2026-09-04 (최신 16): Batch 4.1-A 독립 검증 완료(Fable) — T4 공백 1건 발견·수정, 저장소 전체 공허 테스트 감사
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`, HEAD `29eb06d` + 이 문서

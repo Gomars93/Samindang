@@ -119,8 +119,6 @@ function neurodynamicExam(status) {
 function ws(overrides = {}) {
   return {
     lbpDirectionalResponse: 'NOT_ASSESSED',
-    lbpConfirmedCapabilities: [],
-    lbpDeniedCapabilities: [],
     painFollowUpTargets: [],
     painExamSuggestions: [],
     ...overrides,
@@ -148,8 +146,7 @@ test('non-LBP payload -> empty result, no blocked reason', () => {
   })
   const result = buildLbpRecommendationContext(payload, undefined, ws({ painFollowUpTargets: walkingTarget }))
   assert.equal(result.blocked, null)
-  assert.deepEqual(result.readyCandidates, [])
-  assert.deepEqual(result.awaitingCapabilityCandidates, [])
+  assert.deepEqual(result.candidates, [])
 })
 
 // ---------- (b) RF-2: recomputed safety, never the tablet-time snapshot ----------
@@ -164,8 +161,7 @@ test('RF-2: tablet-time snapshot says CLEAR, but clinician just recorded SEVERE_
   )
   assert.equal(result.blocked, 'SAFETY_REVIEW')
   assert.ok(result.blockedMessageKo && result.blockedMessageKo.length > 0)
-  assert.deepEqual(result.readyCandidates, [])
-  assert.deepEqual(result.awaitingCapabilityCandidates, [])
+  assert.deepEqual(result.candidates, [])
 })
 
 test('RF-3b: neuroStatus NEW_OR_WORSENING (disease safety otherwise CLEAR) -> blocked NEURO_REFRESH, no candidates', () => {
@@ -195,24 +191,22 @@ test('target-function filter: a candidate whose Core-20 targetFunctions do not i
   const walkingOnly = buildLbpRecommendationContext(
     payload,
     'NONE',
-    ws({ painFollowUpTargets: walkingTarget, lbpConfirmedCapabilities: ['NATURAL_BREATHING_TOLERATED'] }),
+    ws({ painFollowUpTargets: walkingTarget }),
   )
-  assert.ok(!walkingOnly.readyCandidates.some((c) => c.exerciseId === 'LBP_REG_01'))
-  assert.ok(!walkingOnly.awaitingCapabilityCandidates.some((c) => c.exerciseId === 'LBP_REG_01'))
+  assert.ok(!walkingOnly.candidates.some((c) => c.exerciseId === 'LBP_REG_01'))
 
   const sleepTarget = [followUpTarget('lbp_tf_sleep', '수면·침상 동작')]
   const sleepSelected = buildLbpRecommendationContext(
     payload,
     'NONE',
-    ws({ painFollowUpTargets: sleepTarget, lbpConfirmedCapabilities: ['NATURAL_BREATHING_TOLERATED'] }),
+    ws({ painFollowUpTargets: sleepTarget }),
   )
-  assert.ok(sleepSelected.readyCandidates.some((c) => c.exerciseId === 'LBP_REG_01'))
+  assert.ok(sleepSelected.candidates.some((c) => c.exerciseId === 'LBP_REG_01'))
 
   // No target function selected at all -> no candidates (the picker is
   // step (1) in the clinician flow; nothing is recommended before it).
   const none = buildLbpRecommendationContext(payload, 'NONE', ws())
-  assert.deepEqual(none.readyCandidates, [])
-  assert.deepEqual(none.awaitingCapabilityCandidates, [])
+  assert.deepEqual(none.candidates, [])
 })
 
 // ---------- §8.2-1(c) integration correction: empty-state hint trigger ----------
@@ -229,8 +223,7 @@ test('(c) targetFunctionGap: NONE_SELECTED when no lbp_tf_* target function is p
     ws({ painFollowUpTargets: [followUpTarget('lbp_tf_custom', '기타 목표 동작')] }),
   )
   assert.equal(customOnly.targetFunctionGap, 'CUSTOM_ONLY')
-  assert.deepEqual(customOnly.readyCandidates, [])
-  assert.deepEqual(customOnly.awaitingCapabilityCandidates, [])
+  assert.deepEqual(customOnly.candidates, [])
 
   const matched = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: walkingTarget }))
   assert.equal(matched.targetFunctionGap, null)
@@ -243,7 +236,6 @@ test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynami
   const sittingTarget = [followUpTarget('lbp_tf_sitting', '앉기')]
   const baseWs = {
     painFollowUpTargets: sittingTarget,
-    lbpConfirmedCapabilities: ['NEURAL_SLIDER_TOLERATED'],
   }
 
   const positive = buildLbpRecommendationContext(
@@ -251,8 +243,8 @@ test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynami
     'NONE',
     ws({ ...baseWs, painExamSuggestions: [neurodynamicExam('POSITIVE')] }),
   )
-  const neuralPositive = positive.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
-  assert.ok(neuralPositive, 'LBP_NEURAL_01 must be ready once its own capability is confirmed')
+  const neuralPositive = positive.candidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
+  assert.ok(neuralPositive, 'LBP_NEURAL_01 must be ready')
   assert.equal(neuralPositive.directlySupported, true)
   // rankReady buckets directlySupported first -- with only one ready
   // candidate here it is trivially index 0, but the flag itself is what the
@@ -263,7 +255,7 @@ test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynami
     'NONE',
     ws({ ...baseWs, painExamSuggestions: [neurodynamicExam('NOT_YET_CHECKED')] }),
   )
-  const neuralNotYetChecked = notYetChecked.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
+  const neuralNotYetChecked = notYetChecked.candidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
   assert.ok(neuralNotYetChecked)
   assert.equal(neuralNotYetChecked.directlySupported, false)
 
@@ -272,10 +264,10 @@ test('(b) LBP_NEURAL_01 directlySupported is true only when lbp_exam_neurodynami
     'NONE',
     ws({ ...baseWs, painExamSuggestions: [neurodynamicExam('NEGATIVE')] }),
   )
-  assert.equal(negative.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
+  assert.equal(negative.candidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
 
   const absent = buildLbpRecommendationContext(payload, 'NONE', ws({ ...baseWs, painExamSuggestions: [] }))
-  assert.equal(absent.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
+  assert.equal(absent.candidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')?.directlySupported, false)
 })
 
 // ---------- LBP v1 Batch 2.5b (G15): the two states added to ExamCheckStatus must not become evidence ----------
@@ -287,7 +279,6 @@ test("Batch 2.5b: a LIMITED or NOT_PERFORMED neurodynamic exam is never 'directl
   const payload = buildPayload(CLEAR_AXIAL_BASE)
   const baseWs = {
     painFollowUpTargets: [followUpTarget('lbp_tf_sitting', '앉기')],
-    lbpConfirmedCapabilities: ['NEURAL_SLIDER_TOLERATED'],
   }
   for (const status of ['LIMITED', 'NOT_PERFORMED']) {
     const result = buildLbpRecommendationContext(
@@ -295,7 +286,7 @@ test("Batch 2.5b: a LIMITED or NOT_PERFORMED neurodynamic exam is never 'directl
       'NONE',
       ws({ ...baseWs, painExamSuggestions: [neurodynamicExam(status)] }),
     )
-    const neural = result.readyCandidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
+    const neural = result.candidates.find((c) => c.exerciseId === 'LBP_NEURAL_01')
     assert.ok(neural, `LBP_NEURAL_01 must still be offered as a candidate when the exam is ${status}`)
     assert.equal(
       neural.directlySupported,
@@ -305,46 +296,7 @@ test("Batch 2.5b: a LIMITED or NOT_PERFORMED neurodynamic exam is never 'directl
   }
 })
 
-// ---------- defect 1 (BLOCKER, CD-1): unconfirmed regressible capability never auto-promotes at the recommendation level either ----------
 
-test('defect 1: neuro STABLE + zero confirmed capabilities + a target function selected -> readyCandidates is empty, regressible-only candidates (e.g. LBP_HIP_MOB_01/LBP_HIP_STR_03) land in awaitingCapabilityCandidates instead', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const result = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: walkingTarget }))
-  assert.deepEqual(result.readyCandidates, [], 'nothing may be READY when every capability is still unconfirmed')
-  assert.ok(
-    result.awaitingCapabilityCandidates.some((c) => c.exerciseId === 'LBP_HIP_MOB_01'),
-    'LBP_HIP_MOB_01 (regressible-only) must wait for capability confirmation, not silently start',
-  )
-  assert.ok(
-    result.awaitingCapabilityCandidates.some((c) => c.exerciseId === 'LBP_HIP_STR_03'),
-    'LBP_HIP_STR_03 (regressible-only) must wait for capability confirmation, not silently start',
-  )
-})
-
-// ---------- (c) CD-1: unconfirmed capability -> awaiting group -> confirm flips it ready ----------
-
-test('CD-1: LBP_ACT_02 (hard CAN_SELF_PACE+SAFE_WALKING) with neither confirmed -> awaiting group; confirming both -> ready', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const before = buildLbpRecommendationContext(
-    payload,
-    'NONE',
-    ws({ painFollowUpTargets: walkingTarget }),
-  )
-  assert.ok(!before.readyCandidates.some((c) => c.exerciseId === 'LBP_ACT_02'))
-  const awaitingAct02 = before.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_ACT_02')
-  assert.ok(awaitingAct02, 'LBP_ACT_02 must appear in the 확인하면 시작 가능 group')
-  assert.deepEqual([...awaitingAct02.unconfirmedCapabilities].sort(), ['CAN_SELF_PACE', 'SAFE_WALKING'])
-
-  const after = buildLbpRecommendationContext(
-    payload,
-    'NONE',
-    ws({ painFollowUpTargets: walkingTarget, lbpConfirmedCapabilities: ['CAN_SELF_PACE', 'SAFE_WALKING'] }),
-  )
-  const readyAct02 = after.readyCandidates.find((c) => c.exerciseId === 'LBP_ACT_02')
-  assert.ok(readyAct02, 'confirming both capabilities must flip LBP_ACT_02 to a ready candidate')
-  assert.equal(readyAct02.eligibilityState, 'START_AS_WRITTEN')
-  assert.ok(!after.awaitingCapabilityCandidates.some((c) => c.exerciseId === 'LBP_ACT_02'))
-})
 
 // ---------- (d) CD-2: treatmentSafetyLocked -> candidates still present, adopt blocked ----------
 
@@ -361,7 +313,7 @@ test('CD-2: pregnancy_possible (treatment safety REVIEW_REQUIRED, disease safety
   assert.equal(result.treatmentSafetyLocked, true)
   assert.equal(result.treatmentSafetyLockedMessageKo, TREATMENT_SAFETY_LOCKED_MESSAGE_KO)
   // Candidates are still computed/shown -- CD-2 only gates adoption (Part D).
-  assert.ok(result.awaitingCapabilityCandidates.length > 0 || result.readyCandidates.length > 0)
+  assert.ok(result.candidates.length > 0)
 })
 
 // ---------- (e) RF-8: adopted text includes dose AND stop/review, never progression ----------
@@ -371,9 +323,9 @@ test('RF-8: candidateToRehabSuggestion / buildLbpAdoptionText include startingDo
   const result = buildLbpRecommendationContext(
     payload,
     'NONE',
-    ws({ painFollowUpTargets: walkingTarget, lbpConfirmedCapabilities: ['SAFE_WALKING', 'CAN_SELF_PACE'] }),
+    ws({ painFollowUpTargets: walkingTarget }),
   )
-  const act01 = result.readyCandidates.find((c) => c.exerciseId === 'LBP_ACT_01')
+  const act01 = result.candidates.find((c) => c.exerciseId === 'LBP_ACT_01')
   assert.ok(act01)
   const suggestion = candidateToRehabSuggestion(act01)
   assert.ok(suggestion.goal.includes(act01.startingDoseKo))
@@ -407,7 +359,7 @@ test('appendLbpAdoptionText appends once, is idempotent, and never automatic (pu
 
 // ---------- defect 3: Korean display names, never the (often English) catalog canonicalName ----------
 
-test('defect 3: every Core-20 row has a non-empty displayNameKo, and adoption text (both variants) for every row contains no Latin letters', () => {
+test('defect 3: every Core-20 row has a non-empty displayNameKo, and adoption text for every row contains no Latin letters', () => {
   assert.equal(LBP_CORE_EXERCISE_METADATA.length, 20)
   const seen = new Set()
   for (const meta of LBP_CORE_EXERCISE_METADATA) {
@@ -424,12 +376,6 @@ test('defect 3: every Core-20 row has a non-empty displayNameKo, and adoption te
       `${meta.exerciseId} adoption text contains Latin letters: ${JSON.stringify(plain)}`,
     )
 
-    // RF-8/defect 2: the regressed variant appends regressionKo -- must stay Korean too.
-    const regressed = buildLbpAdoptionText(meta.exerciseId, { regressed: true })
-    assert.ok(
-      !/[A-Za-z]/.test(regressed),
-      `${meta.exerciseId} regressed adoption text contains Latin letters: ${JSON.stringify(regressed)}`,
-    )
   }
   assert.equal(seen.size, 20)
 })
@@ -446,93 +392,7 @@ test('Batch 2.5a naming: the 4 PO-approved displayNameKo corrections are applied
 
 // ---------- Opus closing review §C(i): regression adoption text must always have a sentence boundary before "중단·재검토:" ----------
 
-test('§C(i): buildLbpAdoptionText(id, {regressed:true}) never has "중단·재검토" immediately preceded by a non-terminal character -- a "." (or other sentence-ending mark) always sits right before it', () => {
-  assert.equal(LBP_CORE_EXERCISE_METADATA.length, 20)
-  for (const meta of LBP_CORE_EXERCISE_METADATA) {
-    const regressed = buildLbpAdoptionText(meta.exerciseId, { regressed: true })
-    assert.ok(regressed, `${meta.exerciseId} buildLbpAdoptionText returned null`)
-    assert.ok(
-      !/[^.。]\s중단·재검토/.test(regressed),
-      `${meta.exerciseId} regression clause is not sentence-terminated before " 중단·재검토:": ${JSON.stringify(regressed)}`,
-    )
-  }
-})
-
 // ---------- Opus closing review §C(ii): regression-safety regression tests ----------
-
-test('§C(ii)(a): buildLbpAdoptionText(id, {regressed:true}) includes meta.regressionKo verbatim; the non-regressed variant does not', () => {
-  for (const meta of LBP_CORE_EXERCISE_METADATA) {
-    const plain = buildLbpAdoptionText(meta.exerciseId)
-    const regressed = buildLbpAdoptionText(meta.exerciseId, { regressed: true })
-    assert.ok(
-      regressed.includes(meta.regressionKo),
-      `${meta.exerciseId} regressed adoption text must include regressionKo verbatim`,
-    )
-    assert.ok(
-      !plain.includes(meta.regressionKo),
-      `${meta.exerciseId} non-regressed adoption text must not include regressionKo`,
-    )
-  }
-})
-
-test('§C(ii)(b): a START_WITH_REGRESSION candidate -> candidateToRehabSuggestion(...).regressed === true and sourceFacts includes a "쉬운 단계:" line', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const result = buildLbpRecommendationContext(
-    payload,
-    'NONE',
-    ws({
-      painFollowUpTargets: walkingTarget,
-      // LBP_HIP_MOB_01 is regressible-only (SUPPORTED_STANDING_TOLERATED,
-      // BALANCE_WITH_SUPPORT) -- confirming both 'NO' (CD-3) drives it to
-      // START_WITH_REGRESSION rather than DEFER_NOT_READY.
-      lbpDeniedCapabilities: ['SUPPORTED_STANDING_TOLERATED', 'BALANCE_WITH_SUPPORT'],
-    }),
-  )
-  const hipMob01 = result.readyCandidates.find((c) => c.exerciseId === 'LBP_HIP_MOB_01')
-  assert.ok(hipMob01, 'LBP_HIP_MOB_01 must be READY once its regressible capabilities are confirmed NO (CD-3)')
-  assert.equal(hipMob01.eligibilityState, 'START_WITH_REGRESSION')
-  const suggestion = candidateToRehabSuggestion(hipMob01)
-  assert.equal(suggestion.regressed, true)
-  assert.ok(
-    suggestion.sourceFacts.some((f) => f.text.startsWith('쉬운 단계:')),
-    'sourceFacts must include a "쉬운 단계:" line for a START_WITH_REGRESSION candidate',
-  )
-
-  // Opus delta review judgment call 5 (free coverage, same fixture): LBP_HIP_STR_03
-  // shares the exact same regressible-only rule shape (SUPPORTED_STANDING_TOLERATED,
-  // BALANCE_WITH_SUPPORT) and the same walking target function, so it is
-  // reachable from this one fixture too -- LUMBAR_03/EXPOSURE_03 are skipped here
-  // since they need different target functions and are already covered at the
-  // engine level in tests/lbp-exercise-eligibility.spec.mjs.
-  const hipStr03 = result.readyCandidates.find((c) => c.exerciseId === 'LBP_HIP_STR_03')
-  assert.ok(hipStr03, 'LBP_HIP_STR_03 must be READY once its regressible capabilities are confirmed NO (CD-3)')
-  assert.equal(hipStr03.eligibilityState, 'START_WITH_REGRESSION')
-  const hipStr03Suggestion = candidateToRehabSuggestion(hipStr03)
-  assert.equal(hipStr03Suggestion.regressed, true)
-  assert.ok(
-    hipStr03Suggestion.sourceFacts.some((f) => f.text.startsWith('쉬운 단계:')),
-    'LBP_HIP_STR_03 sourceFacts must also include a "쉬운 단계:" line',
-  )
-})
-
-test('§C(ii)(c): appendLbpAdoptionText reads suggestion.regressed, never the title string, to decide whether to append the regression clause', () => {
-  const meta = LBP_CORE_EXERCISE_METADATA.find((m) => m.exerciseId === 'LBP_HIP_MOB_01')
-  // Deliberately regressed:true with a title that does NOT contain
-  // "(쉬운 단계로 시작)" -- if appendLbpAdoptionText parsed the title instead
-  // of reading the structured flag, the regression clause would be missing.
-  const suggestion = {
-    id: 'LBP_HIP_MOB_01',
-    title: '고관절 앞쪽 스트레칭',
-    goal: meta.startingDoseKo,
-    rationale: '',
-    regressed: true,
-  }
-  const text = appendLbpAdoptionText('', suggestion)
-  assert.ok(
-    text.includes(meta.regressionKo),
-    'the regression clause must appear even though the title carries no "(쉬운 단계로 시작)" marker',
-  )
-})
 
 // ---------- defect 6: UNCLEAR directional response maps to UNKNOWN, never STABLE_OR_IMPROVING ----------
 
@@ -540,22 +400,16 @@ test('defect 6: buildLbpEligibilityContext maps lbpDirectionalResponse UNCLEAR -
   const payload = buildPayload(CLEAR_AXIAL_BASE)
   const unclear = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'UNCLEAR',
-    lbpConfirmedCapabilities: [],
-    lbpDeniedCapabilities: [],
   })
   assert.equal(unclear.distalSymptomResponse, 'UNKNOWN')
 
   const notAssessed = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'NOT_ASSESSED',
-    lbpConfirmedCapabilities: [],
-    lbpDeniedCapabilities: [],
   })
   assert.equal(notAssessed.distalSymptomResponse, 'UNKNOWN')
 
   const noClearDirection = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'NO_CLEAR_DIRECTION',
-    lbpConfirmedCapabilities: [],
-    lbpDeniedCapabilities: [],
   })
   assert.equal(
     noClearDirection.distalSymptomResponse,
@@ -565,8 +419,6 @@ test('defect 6: buildLbpEligibilityContext maps lbpDirectionalResponse UNCLEAR -
 
   const worsening = buildLbpEligibilityContext(payload, 'NONE', {
     lbpDirectionalResponse: 'DISTAL_WORSENING',
-    lbpConfirmedCapabilities: [],
-    lbpDeniedCapabilities: [],
   })
   assert.equal(worsening.distalSymptomResponse, 'WORSENING')
 })
@@ -592,14 +444,12 @@ test('mergeLbpRehabSuggestions: preserves an ACCEPTED decision across recompute 
     {
       exerciseId: 'LBP_ACT_01',
       title: '걷기 5~10분',
-      readiness: 'READY',
-      eligibilityState: 'START_AS_WRITTEN',
       directlySupported: false,
-      unconfirmedCapabilities: [],
-      regressionRequirements: [],
       strategyLabelKo: '신체·기능능력 회복',
+      startingCriteriaKo: ['보조도구 포함 안전하게 걸을 수 있음'],
       startingDoseKo: '1회 5~10분...',
       stopReviewKo: ['새로운 또는 진행하는 신경증상'],
+      regressionKo: '거리를 줄이고 휴식 간격을 늘린다',
     },
   ]
   const firstMerge = mergeLbpRehabSuggestions([], readyNow)
@@ -642,20 +492,15 @@ console.log(`\n${passed} tests passed.`)
 // ===========================================================================
 
 const workTarget = [followUpTarget('lbp_tf_work', '일')]
-const ALL_CAPS = [
-  'SAFE_WALKING', 'CAN_SELF_PACE', 'QUADRUPED_TOLERATED', 'SUPINE_TOLERATED', 'PRONE_TOLERATED',
-  'SUPPORTED_STANDING_TOLERATED', 'SITTING_TOLERATED', 'LOW_LOAD_TRUNK_CONTROL', 'HIP_HINGE_CONTROL',
-  'LOAD_READY', 'BALANCE_WITH_SUPPORT', 'FLEXION_EXPOSURE_TOLERATED', 'EXTENSION_EXPOSURE_TOLERATED',
-  'NEURAL_SLIDER_TOLERATED', 'NATURAL_BREATHING_TOLERATED',
-]
+const sleepTargetTop = [followUpTarget('lbp_tf_sleep', '수면·침상 동작')]
 const ids = (list) => list.map((c) => c.exerciseId)
 
-test('stage filter: confirmed stage 1 + every capability confirmed -> stage-1 and ALL exercises READY, stage-2/3 exercises absent from BOTH lists', () => {
+test('stage filter: confirmed stage 1 -> stage-1 and ALL exercises READY, stage-2/3 exercises absent from BOTH lists', () => {
   const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS, lbpConfirmedStage: 1 }))
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 1 }))
   assert.equal(r.blocked, null)
   assert.equal(r.confirmedStage, 1)
-  const ready = ids(r.readyCandidates), awaiting = ids(r.awaitingCapabilityCandidates)
+  const ready = ids(r.candidates), awaiting = []
   assert.ok(ready.includes('LBP_ACT_01'), 'stage-1 ACT_01 (WORK) is READY')
   assert.ok(ready.includes('LBP_FUNC_01'), 'ALL-stage FUNC_01 (WORK) is READY at stage 1')
   for (const id of ['LBP_LOAD_02', 'LBP_FUNC_05', 'LBP_TRUNK_03', 'LBP_EXPOSURE_03', 'LBP_HIP_MOB_01']) {
@@ -665,16 +510,16 @@ test('stage filter: confirmed stage 1 + every capability confirmed -> stage-1 an
 
 test('stage filter: confirmed stage 3 -> LOAD_02/FUNC_05 (stage 3) become candidates', () => {
   const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS, lbpConfirmedStage: 3 }))
-  const ready = ids(r.readyCandidates)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 3 }))
+  const ready = ids(r.candidates)
   assert.ok(ready.includes('LBP_LOAD_02') && ready.includes('LBP_FUNC_05'))
 })
 
 test('stage filter: NO confirmed stage (null) -> no filter at all, every WORK exercise is a candidate (pre-2026-09-05 behavior preserved)', () => {
   const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS }))
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget }))
   assert.equal(r.confirmedStage, null)
-  const ready = ids(r.readyCandidates)
+  const ready = ids(r.candidates)
   for (const id of ['LBP_ACT_01', 'LBP_TRUNK_03', 'LBP_LOAD_02', 'LBP_FUNC_01']) assert.ok(ready.includes(id), `${id} present with no stage filter`)
 })
 
@@ -683,18 +528,16 @@ test('legacy workspace state with NO lbpConfirmedStage field at all is byte-iden
   const legacy = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget }))
   const explicit = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: null }))
   assert.deepEqual(legacy, explicit)
-  assert.deepEqual(legacy.inferredCapabilities, [], 'no stage -> nothing inferred')
+  assert.equal(legacy.neuroUnrecorded, false, 'neuro was recorded in this fixture')
 })
 
 test('stage 0 confirmed -> blocked STAGE_0 with the 0-stage guidance, no candidates, confirmedStage 0 echoed back', () => {
   const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS, lbpConfirmedStage: 0 }))
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 0 }))
   assert.equal(r.blocked, 'STAGE_0')
   assert.ok(r.blockedMessageKo.includes('0단계') && r.blockedMessageKo.includes('능동 운동을 처방하지 않습니다'))
-  assert.deepEqual(r.readyCandidates, [])
-  assert.deepEqual(r.awaitingCapabilityCandidates, [])
+  assert.deepEqual(r.candidates, [])
   assert.equal(r.confirmedStage, 0)
-  assert.deepEqual(r.inferredCapabilities, [])
 })
 
 test('block precedence: SAFETY_REVIEW still wins over STAGE_0 (a 0-stage note must never hide a safety re-evaluation)', () => {
@@ -704,53 +547,74 @@ test('block precedence: SAFETY_REVIEW still wins over STAGE_0 (a 0-stage note mu
   assert.equal(r.confirmedStage, 0, 'the stage is still echoed so the stage card can render')
 })
 
-test('C-layer inference: confirmed stage 2, ZERO capabilities tapped -> TRUNK_03 (quadruped + low-load trunk, both inferred at <=2) is READY; ACT_01 awaits ONLY the two safety (A-layer) capabilities', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 2 }))
-  assert.equal(r.blocked, null)
-  assert.ok(ids(r.readyCandidates).includes('LBP_TRUNK_03'), 'TRUNK_03 READY with nothing tapped — inference did the work')
-  const act = r.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_ACT_01')
-  assert.ok(act, 'ACT_01 is still awaiting (walking safety is never inferred)')
-  assert.deepEqual([...act.unconfirmedCapabilities].sort(), ['CAN_SELF_PACE', 'SAFE_WALKING'])
-  const hip = r.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_HIP_MOB_01')
-  assert.ok(hip, 'HIP_MOB_01 awaits — BALANCE_WITH_SUPPORT is A-layer')
-  assert.deepEqual(hip.unconfirmedCapabilities, ['BALANCE_WITH_SUPPORT'], 'SUPPORTED_STANDING was inferred; only the safety one remains')
-})
-
-test('C-layer inference never reaches above the confirmed stage: stage 1 leaves LOW_LOAD_TRUNK_CONTROL UNKNOWN (TRUNK_03 is filtered out anyway) and inferredCapabilities has no stage-2/3 item', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 1 }))
-  for (const cap of ['LOW_LOAD_TRUNK_CONTROL', 'SITTING_TOLERATED', 'HIP_HINGE_CONTROL', 'LOAD_READY']) {
-    assert.ok(!r.inferredCapabilities.includes(cap), `${cap} must not be inferred at stage 1`)
-  }
-  for (const cap of ['SAFE_WALKING', 'BALANCE_WITH_SUPPORT', 'CAN_SELF_PACE']) {
-    assert.ok(!r.inferredCapabilities.includes(cap), `${cap} (A-layer) must never be inferred`)
-  }
-  assert.ok(r.inferredCapabilities.includes('QUADRUPED_TOLERATED') && r.inferredCapabilities.includes('SUPINE_TOLERATED'))
-})
-
-test('clinician NO beats inference: stage 2 + QUADRUPED denied -> TRUNK_03 drops out of READY and awaits exactly [QUADRUPED_TOLERATED]; inferredCapabilities no longer lists it', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 2, lbpDeniedCapabilities: ['QUADRUPED_TOLERATED'] }))
-  assert.ok(!ids(r.readyCandidates).includes('LBP_TRUNK_03'))
-  const t = r.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_TRUNK_03')
-  assert.ok(t, 'TRUNK_03 is back in the awaiting list')
-  assert.deepEqual(t.unconfirmedCapabilities, ['QUADRUPED_TOLERATED'])
-  assert.ok(!r.inferredCapabilities.includes('QUADRUPED_TOLERATED'), 'a denied capability is not shown as inferred')
-})
-
-test('clinician YES beats inference in the inferred list too: an explicitly confirmed capability is not listed as "inferred"', () => {
-  const payload = buildPayload(CLEAR_AXIAL_BASE)
-  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 3, lbpConfirmedCapabilities: ['QUADRUPED_TOLERATED', 'LOAD_READY'] }))
-  assert.ok(!r.inferredCapabilities.includes('QUADRUPED_TOLERATED') && !r.inferredCapabilities.includes('LOAD_READY'))
-  assert.ok(r.inferredCapabilities.includes('HIP_HINGE_CONTROL'), 'the rest of the C-layer at stage 3 is still inferred')
-  assert.equal(r.inferredCapabilities.length, 10, '12 C-layer − 2 explicitly confirmed')
-})
-
 test('the recommendation module never reads the STAGE SUGGESTION — only the clinician-confirmed stage (adopt, never automatic)', () => {
   const src = readFileSync(new URL('../src/doctor/workspace/lbpExerciseRecommendation.ts', import.meta.url), 'utf8')
   assert.ok(!src.includes('suggestLbpExerciseStage'), 'suggestion function must not be imported here')
   assert.ok(src.includes('workspaceState.lbpConfirmedStage'), 'the confirmed stage is the only stage input')
 })
 
-console.log(`\n(+confirmed-stage) ${passed} lbp-exercise-recommendation tests passed.`)
+
+// ===========================================================================
+// 2026-09-05: 준비조건 게이트 제거 — 대체 경로 검증
+// (CLAUDE.md "지운 경로 1개당 단언 1개")
+// ===========================================================================
+
+test('제거된 경로 1/4 — 준비조건을 하나도 누르지 않아도 후보가 나온다 (게이트가 실제로 사라졌다)', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget }))
+  assert.equal(r.blocked, null)
+  assert.ok(r.candidates.length > 0, '탭 0회로 후보가 나와야 한다')
+  assert.ok(!('awaitingCapabilityCandidates' in r), '보류 목록 자체가 사라졌다')
+  assert.ok(!('inferredCapabilities' in r), '추정 목록도 함께 사라졌다')
+})
+
+test('제거된 경로 2/4 — 후보 카드의 첫 근거 소견이 "시작 기준"이다 (원장이 판단 근거로 읽는 문장)', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget }))
+  const c = r.candidates.find((x) => x.exerciseId === 'LBP_TRUNK_03')
+  assert.ok(c, 'LBP_TRUNK_03 이 후보에 있다')
+  assert.ok(Array.isArray(c.startingCriteriaKo) && c.startingCriteriaKo.length > 0)
+  const s = candidateToRehabSuggestion(c)
+  assert.match(s.sourceFacts[0].text, /^시작 기준: /, '첫 줄이어야 한다 — 용량보다 먼저 읽힌다')
+  assert.match(s.sourceFacts[0].text, /네발기기/, '제거된 QUADRUPED_TOLERATED가 담던 내용이 여기 있다')
+  assert.deepEqual(
+    s.sourceFacts.map((f) => f.text.split(':')[0]),
+    ['시작 기준', '시작 용량', '쉬운 단계로 시작하려면', '중단·재검토 기준'],
+    '네 줄의 순서가 고정된다',
+  )
+})
+
+test('제거된 경로 3/4 — 쉬운 단계가 조건부가 아니라 항상 보인다 (시스템이 판정하지 않고 원장이 고른다)', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget }))
+  for (const c of r.candidates) {
+    const s = candidateToRehabSuggestion(c)
+    assert.ok(s.sourceFacts.some((f) => f.text.startsWith('쉬운 단계로 시작하려면: ')), c.exerciseId)
+    assert.ok(!('regressed' in s), 'regressed 플래그는 제거됐다 — 시스템이 판정하던 값이다')
+    assert.ok(!s.title.includes('쉬운 단계로 시작'), '제목에 시스템 판정이 붙지 않는다')
+  }
+})
+
+test('제거된 경로 4/4 — 채택 텍스트는 환자용이라 시작 기준(임상가용)을 넣지 않는다', () => {
+  const t = buildLbpAdoptionText('LBP_TRUNK_03')
+  assert.ok(t.includes('시작') || t.includes('회'), '용량은 들어간다')
+  assert.ok(t.includes('중단·재검토'), '중단 기준은 들어간다')
+  assert.ok(!t.includes('네발기기에서 균형을 유지할 수 있음'), '시작 기준 원문은 환자 안내문에 넣지 않는다')
+  assert.equal(buildLbpAdoptionText.length, 1, 'options 인자(regressed)가 제거됐다')
+})
+
+test('신경 상태 미기록 -> neuroUnrecorded true + 후보는 LBP_REG_01 계열만 (RF-1 게이트는 그대로)', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, undefined, ws({ painFollowUpTargets: sleepTargetTop }))
+  assert.equal(r.neuroUnrecorded, true, '원장에게 "무엇을 하면 후보가 나타나는지" 알릴 근거')
+  assert.ok(!r.candidates.some((c) => c.exerciseId === 'LBP_DEEP_TRUNK_01'), '미확인을 안정으로 가정하지 않는다')
+  assert.ok(r.candidates.some((c) => c.exerciseId === 'LBP_REG_01'), '호흡·이완만 예외로 남는다')
+})
+
+test('신경 상태 기록됨 -> neuroUnrecorded false', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: sleepTargetTop }))
+  assert.equal(r.neuroUnrecorded, false)
+})
+
+console.log(`\n(+게이트 제거) ${passed} lbp-exercise-recommendation tests passed.`)

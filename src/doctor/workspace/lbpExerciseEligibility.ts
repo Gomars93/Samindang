@@ -1,111 +1,67 @@
 /**
- * LBP Exercise Eligibility (LBP v1 Batch 2, G6/G7).
+ * LBP Exercise Eligibility — 안전 게이트만 남은 판정기.
  *
- * Ported from `lbpExerciseEligibility.v01.experimental.ts` on
- * `origin/claude/feat-lbp-action-adaptive-engine-prototype` (head `b099417`)
- * with every REQUIRED FIX from
- * `docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md` applied
- * inline (production dependency gate — see that doc's "Required fixes"
- * section for the full clinical reasoning behind each one; this file only
- * restates WHAT changed, not why):
+ * ---------------------------------------------------------------------------
+ * 2026-09-05 (원장 결정): 준비조건(capability) 게이트를 **제거**했다
+ * ---------------------------------------------------------------------------
+ * 원장 지적: *"준비조건 15개를 내가 육안으로 빠르게 처리하면 되는 거 아닌가?"*
  *
- *   RF-1  : the "neuroStatus === 'UNKNOWN'" check moved from AFTER the
- *           regression return to BEFORE it (still after the hard-requirement
- *           check, so `missingHardRequirements` — the capability-chip render
- *           data — is never lost). Blank-context (nothing confirmed) now
- *           evaluates 20/20 DEFER_NOT_READY, not 8/20 START_WITH_REGRESSION.
- *   RF-4  : LBP_ACT_02 — SAFE_WALKING moved from regressible to hard
- *           (matches ACT_01; a stored regression cannot fix "walking itself
- *           is unsafe").
- *   RF-5  : LBP_FUNC_01 — BALANCE_WITH_SUPPORT promoted to hard (fall/
- *           orthostatic safety precondition, not a regressible deficit);
- *           SUPPORTED_STANDING_TOLERATED stays regressible.
- *   RF-6  : posture-tolerance capabilities promoted hard where the metadata
- *           start criterion IS the posture itself (LUMBAR_02 → hard
- *           QUADRUPED_TOLERATED; TRUNK_03 → hard + QUADRUPED_TOLERATED;
- *           DEEP_TRUNK_03 → hard + SUPINE_TOLERATED; TRUNK_END_01 → hard
- *           SUPINE_TOLERATED). LUMBAR_03 and DEEP_TRUNK_01 stay regressible
- *           — their stored regression genuinely substitutes for the deficit.
- *   RF-7  : LBP_FUNC_05 — HIP_HINGE_CONTROL moved from hard to regressible
- *           (this exercise IS the hip-hinge skill practice; requiring the
- *           skill as a hard gate was circular). SUPPORTED_STANDING_TOLERATED
- *           promoted to hard (the actual safety precondition).
- *   RF-7b : LBP_LOAD_02 — LOAD_READY moved from hard to regressible (a
- *           stored "remove load, raise the start position" regression
- *           exists precisely for this deficit; HIP_HINGE_CONTROL stays hard
- *           — the safety lock is `routineCareAllowed`, not this field).
- *   RF-9(iii): this file's own directional-response type is renamed
- *           `LbpEligibilityDirectionalResponse` (was `LbpDirectionalResponse`)
- *           to avoid colliding with Batch 1's distinct 6-value
- *           `LbpDirectionalResponse` in `lbpExamSuggestions.ts` — the two
- *           are NOT the same type (this one has 5 values and no
- *           DISTAL_WORSENING; see `lbpEligibilityContext.ts` for the
- *           explicit adapter-side translation, RF-9(i)/(ii)).
- *   RF-10 : LBP_DEEP_TRUNK_01 — NATURAL_BREATHING_TOLERATED added as hard
- *           (the metadata's actual start criterion/stop-review is "can
- *           breathe naturally while holding it", not the supine posture;
- *           SUPINE_TOLERATED stays regressible).
- *   RF-12 : comment added below clarifying `distalSymptomResponse: 'UNKNOWN'`
- *           semantics (a first visit has no exercise response yet — this is
- *           expected, not a gap; see `lbpEligibilityContext.ts`'s adapter-side
- *           guard, which must never translate NOT_ASSESSED into
- *           STABLE_OR_IMPROVING).
+ * 확인한 사실 두 가지:
  *
- * RF-2/RF-3/RF-3b (adapter must use recomputed safety, not the tablet-time
- * snapshot; treatment-safety gates adoption; neuro-refresh collapses the
- * whole recommendation block) live in `lbpEligibilityContext.ts` /
- * `lbpExerciseRecommendation.ts` — this file has no `DoctorPayload`/safety
- * knowledge of its own by design (North Star: "no new patient questions ...
- * ranking, diagnosis→exercise mapping ... OUT of scope" below still holds).
- * RF-8 (adoption text must include stopReviewKo, never progressionKo) and
- * RF-13 (guard unknown exercise ids before calling `evaluateLbpExerciseEligibility`)
- * are recommendation-module concerns and are implemented there.
+ * 1. **그 기록은 어디로도 가지 않았다.** `lbpConfirmedCapabilities`/
+ *    `lbpDeniedCapabilities`는 EMR·재진 이어받기·환자 안내문 어디에도 도달하지
+ *    않았고, 유일한 소비자가 같은 화면 같은 세션의 이 게이트였다. 즉 탭의 유일한
+ *    효과는 "시스템이 목록을 열어주는 것"이었다 — 원장이 이미 판단을 끝낸 뒤에.
+ * 2. **채택하는 행위 자체가 이미 확인이다.** 원장이 "네발기기 팔다리 뻗기"를
+ *    채택한다는 것은 그 환자가 네발기기를 할 수 있다고 판단했다는 뜻이다.
+ *    채택 *전에* `QUADRUPED_TOLERATED`를 따로 확인하게 한 것은 같은 질문을 두 번
+ *    한 것이다.
  *
- * EXPERIMENTAL -> PRODUCTION DEPENDENCY, Batch 2: translate the already-written
- * Core-20 start/stop/regression concepts into a small, machine-readable
- * contract; answer only: "can this exercise be considered now, and at what
- * entry level?"; keep ranking, diagnosis→exercise mapping, patient-facing
- * automation, and treatment-response thresholds OUT of scope.
+ * **임상 정보는 하나도 잃지 않는다.** 삭제한 capability enum은
+ * `lbpExerciseCoreMetadata.ts`의 `startingCriteriaKo`를 기계용으로 사본한
+ * 것이었고(대조 확인함 — 예: LBP_FUNC_01의 `BALANCE_WITH_SUPPORT` =
+ * "낙상 위험이나 심한 기립성 증상이 별도 평가 없이 남아 있지 않음"), 사람이 읽는
+ * 원본 쪽이 오히려 더 풍부하다(증상 조건 절을 함께 담는다). 그 원문이 이제 후보
+ * 카드에 **시작 기준**으로 표시되고 원장이 눈으로 읽는다.
  *
- * North Star:
- * - no new patient questions are introduced here;
- * - normalized facts are expected to come from already-collected clinician/patient data;
- * - UNKNOWN never becomes normal/ready;
- * - safety refresh overrides routine exercise eligibility.
+ * 그래서 이 배치가 폐기하는 것은 RF-4/5/6/7/7b/10의 임상 판단이 아니라 그것을
+ * 담고 있던 **중복 표현**뿐이다. 원 판단은 `startingCriteriaKo` 20행에 그대로
+ * 살아 있다.
+ *
+ * 폐기된 PO 결정: CD-1(2026-09-02, 미확인 준비조건 → 확인 전 보류),
+ * CD-3(2026-09-02, capability chip 3상태). `DECISIONS.md` 2026-09-05
+ * "준비조건 게이트 제거" 항목에 이유와 함께 기록.
+ *
+ * ---------------------------------------------------------------------------
+ * 남아 있는 안전 게이트 (이번 배치에서 한 줄도 바뀌지 않음)
+ * ---------------------------------------------------------------------------
+ * 1. `routineCareAllowed`      — 질환 안전(적색기·마미증후군 등) 미해결 → STOP_REVIEW
+ * 2. `neuroStatus`             — NEW_OR_WORSENING → STOP_REVIEW / UNKNOWN → DEFER (RF-1:
+ *                                미확인을 "안정"으로 가정하지 않는다)
+ * 3. `distalSymptomResponse`   — WORSENING → STOP_REVIEW (RF-12: UNKNOWN은
+ *                                "확인된 안정"이 아니지만 이 게이트만은 통과시킨다.
+ *                                아직 반응을 볼 기회가 없었다는 이유로 운동을
+ *                                멈추지는 않는다)
+ * 4. `requiredDirectionalResponse` — 방향성 반응이 이 운동의 시작 조건과 다르면 DEFER
+ *
+ * 여기에 더해 이 모듈 바깥에서: `treatmentSafetyLocked`(임신 등 → 채택 잠금),
+ * 각 운동의 `stopReviewKo`(카드에 표시), 그리고 **원장의 명시적 채택** —
+ * 이것 없이는 어떤 운동도 환자에게 나가지 않는다.
+ *
+ * North Star (유지):
+ * - 새 환자 질문을 만들지 않는다;
+ * - UNKNOWN이 정상/준비완료가 되지 않는다;
+ * - 안전 재평가가 일상적 운동 적격성보다 우선한다.
  */
 
 import { getLbpCoreExerciseMetadata } from './lbpExerciseCoreMetadata'
 
-export type LbpExerciseEligibilityState =
-  | 'START_AS_WRITTEN'
-  | 'START_WITH_REGRESSION'
-  | 'DEFER_NOT_READY'
-  | 'STOP_REVIEW'
-
-export type LbpExerciseCapability =
-  | 'SAFE_WALKING'
-  | 'CAN_SELF_PACE'
-  | 'QUADRUPED_TOLERATED'
-  | 'SUPINE_TOLERATED'
-  | 'PRONE_TOLERATED'
-  | 'SUPPORTED_STANDING_TOLERATED'
-  | 'SITTING_TOLERATED'
-  | 'LOW_LOAD_TRUNK_CONTROL'
-  | 'HIP_HINGE_CONTROL'
-  | 'LOAD_READY'
-  | 'BALANCE_WITH_SUPPORT'
-  | 'FLEXION_EXPOSURE_TOLERATED'
-  | 'EXTENSION_EXPOSURE_TOLERATED'
-  | 'NEURAL_SLIDER_TOLERATED'
-  | 'NATURAL_BREATHING_TOLERATED'
+export type LbpExerciseEligibilityState = 'START_AS_WRITTEN' | 'DEFER_NOT_READY' | 'STOP_REVIEW'
 
 /**
- * RF-9(iii): renamed from `LbpDirectionalResponse` (research branch name) —
- * this is a DIFFERENT, narrower (5-value) type from Batch 1's
- * `LbpDirectionalResponse` (`lbpExamSuggestions.ts`, 6 values, includes
- * `DISTAL_WORSENING`). Never import one where the other is expected; the
- * adapter (`lbpEligibilityContext.ts`) is the one place that translates
- * between them.
+ * RF-9(iii): Batch 1의 6값 `LbpDirectionalResponse`(`lbpExamSuggestions.ts`,
+ * `DISTAL_WORSENING` 포함)와는 **다른** 5값 타입이다. 서로 대입하지 말 것 —
+ * 변환은 `lbpEligibilityContext.ts` 한 곳에서만 한다.
  */
 export type LbpEligibilityDirectionalResponse =
   | 'FLEXION_FAVORABLE'
@@ -118,25 +74,18 @@ export type LbpExerciseEligibilityContext = {
   routineCareAllowed: boolean
   neuroStatus: 'STABLE' | 'NEW_OR_WORSENING' | 'UNKNOWN'
   /**
-   * RF-12: `UNKNOWN` means "no exercise response exists yet to read" (a
-   * first visit, or a visit where the clinician has not recorded a
-   * directional-response chip this session) — it is expected, common, and
-   * distinct from a recorded `STABLE_OR_IMPROVING`. The adapter must never
-   * collapse the two; see the check below, which only ever branches on the
-   * literal `'WORSENING'` value (an UNKNOWN passes through exactly like
-   * STABLE_OR_IMPROVING for this specific gate, which is fine — no exercise
-   * is stopped merely for lacking a response yet — but no exercise is ever
-   * gated as if UNKNOWN meant "confirmed stable" either).
+   * RF-12: `UNKNOWN`은 "아직 읽을 운동 반응이 없다"(초진, 또는 이번 세션에
+   * 방향성 반응 chip을 기록하지 않음)는 뜻이고, 기록된 `STABLE_OR_IMPROVING`과
+   * 는 분명히 다르다. 아래 게이트는 리터럴 `'WORSENING'`에서만 분기한다 —
+   * 반응이 아직 없다는 이유로 운동을 멈추지는 않되, UNKNOWN을 "확인된 안정"으로
+   * 취급하지도 않는다.
    */
   distalSymptomResponse: 'STABLE_OR_IMPROVING' | 'WORSENING' | 'UNKNOWN'
   directionalResponse: LbpEligibilityDirectionalResponse
-  capabilities: Partial<Record<LbpExerciseCapability, 'YES' | 'NO' | 'UNKNOWN'>>
 }
 
 export type LbpExerciseEligibilityRule = {
   exerciseId: string
-  hardRequirements: readonly LbpExerciseCapability[]
-  regressibleRequirements: readonly LbpExerciseCapability[]
   requiredDirectionalResponse?: 'FLEXION_FAVORABLE' | 'EXTENSION_FAVORABLE'
   stopOnDistalWorsening: boolean
   requiresStableNeuro: boolean
@@ -146,14 +95,10 @@ export type LbpExerciseEligibilityResult = {
   exerciseId: string
   state: LbpExerciseEligibilityState
   reasonsKo: readonly string[]
-  missingHardRequirements: readonly LbpExerciseCapability[]
-  regressionRequirements: readonly LbpExerciseCapability[]
 }
 
 function rule(
   exerciseId: string,
-  hardRequirements: readonly LbpExerciseCapability[],
-  regressibleRequirements: readonly LbpExerciseCapability[],
   options?: {
     requiredDirectionalResponse?: 'FLEXION_FAVORABLE' | 'EXTENSION_FAVORABLE'
     stopOnDistalWorsening?: boolean
@@ -165,8 +110,6 @@ function rule(
   }
   return {
     exerciseId,
-    hardRequirements,
-    regressibleRequirements,
     requiredDirectionalResponse: options?.requiredDirectionalResponse,
     stopOnDistalWorsening: options?.stopOnDistalWorsening ?? true,
     requiresStableNeuro: options?.requiresStableNeuro ?? true,
@@ -174,89 +117,44 @@ function rule(
 }
 
 /**
- * DRAFT clinical translation of the already-written Core-20 metadata, RF-*
- * fixed per this file's header. No rule below ranks one eligible exercise
- * above another.
+ * Core-20 × 안전 게이트. 어떤 규칙도 적격한 운동들 사이에 순위를 매기지 않는다.
+ * 각 운동의 **시작 조건**은 이 표가 아니라 `lbpExerciseCoreMetadata.ts`의
+ * `startingCriteriaKo`에 있고, 후보 카드에 그대로 표시된다.
  */
 export const LBP_EXERCISE_ELIGIBILITY_RULES: readonly LbpExerciseEligibilityRule[] = [
-  rule('LBP_ACT_01', ['SAFE_WALKING', 'CAN_SELF_PACE'], []),
-  // RF-4: SAFE_WALKING hard (was regressible) — matches ACT_01.
-  rule('LBP_ACT_02', ['CAN_SELF_PACE', 'SAFE_WALKING'], []),
+  rule('LBP_ACT_01'),
+  rule('LBP_ACT_02'),
 
-  // RF-6: QUADRUPED_TOLERATED hard (was regressible) — it is LUMBAR_02's
-  // own start criterion, not a substitutable deficit.
-  rule('LBP_LUMBAR_02', ['QUADRUPED_TOLERATED'], []),
-  // Unchanged (Opus §4 no-action: the stored regression genuinely
-  // substitutes for reduced supine tolerance here).
-  rule('LBP_LUMBAR_03', [], ['SUPINE_TOLERATED']),
+  rule('LBP_LUMBAR_02'),
+  rule('LBP_LUMBAR_03'),
 
-  rule('LBP_DIR_02', [], ['PRONE_TOLERATED'], {
-    requiredDirectionalResponse: 'EXTENSION_FAVORABLE',
-  }),
-  rule('LBP_DIR_03', ['EXTENSION_EXPOSURE_TOLERATED'], [], {
-    requiredDirectionalResponse: 'EXTENSION_FAVORABLE',
-  }),
-  rule('LBP_DIR_04', ['FLEXION_EXPOSURE_TOLERATED'], [], {
-    requiredDirectionalResponse: 'FLEXION_FAVORABLE',
-  }),
+  rule('LBP_DIR_02', { requiredDirectionalResponse: 'EXTENSION_FAVORABLE' }),
+  rule('LBP_DIR_03', { requiredDirectionalResponse: 'EXTENSION_FAVORABLE' }),
+  rule('LBP_DIR_04', { requiredDirectionalResponse: 'FLEXION_FAVORABLE' }),
 
-  rule('LBP_HIP_MOB_01', [], ['SUPPORTED_STANDING_TOLERATED', 'BALANCE_WITH_SUPPORT']),
+  rule('LBP_HIP_MOB_01'),
 
-  // RF-10: NATURAL_BREATHING_TOLERATED hard — the metadata's real start
-  // criterion/stop-review is "breathes naturally", not the supine posture.
-  rule('LBP_DEEP_TRUNK_01', ['NATURAL_BREATHING_TOLERATED'], ['SUPINE_TOLERATED']),
-  // RF-6: SUPINE_TOLERATED hard (was regressible) — heel slide structurally
-  // requires supine.
-  rule('LBP_DEEP_TRUNK_03', ['LOW_LOAD_TRUNK_CONTROL', 'SUPINE_TOLERATED'], []),
-  // RF-6: QUADRUPED_TOLERATED hard (was regressible) — Bird-dog structurally
-  // requires quadruped; its stored regression (arm-only/leg-only) still
-  // happens WITHIN quadruped.
-  rule('LBP_TRUNK_03', ['LOW_LOAD_TRUNK_CONTROL', 'QUADRUPED_TOLERATED'], []),
-  // RF-6: SUPINE_TOLERATED hard (was regressible) — bridge structurally
-  // requires supine.
-  rule('LBP_TRUNK_END_01', ['SUPINE_TOLERATED'], []),
+  rule('LBP_DEEP_TRUNK_01'),
+  rule('LBP_DEEP_TRUNK_03'),
+  rule('LBP_TRUNK_03'),
+  rule('LBP_TRUNK_END_01'),
 
-  rule('LBP_HIP_STR_03', [], ['SUPPORTED_STANDING_TOLERATED', 'BALANCE_WITH_SUPPORT']),
-  // RF-5: BALANCE_WITH_SUPPORT promoted to hard — fall/orthostatic safety
-  // precondition, not a substitutable deficit; SUPPORTED_STANDING_TOLERATED
-  // stays regressible (a real stored regression — higher chair/hand support
-  // — addresses it).
-  rule('LBP_FUNC_01', ['BALANCE_WITH_SUPPORT'], ['SUPPORTED_STANDING_TOLERATED']),
-  // RF-7: swapped — SUPPORTED_STANDING_TOLERATED is the actual safety
-  // precondition (hard); HIP_HINGE_CONTROL is the skill this exercise
-  // itself teaches (regressible via its own stored cue-based regression),
-  // not a prerequisite for attempting it.
-  rule('LBP_FUNC_05', ['SUPPORTED_STANDING_TOLERATED'], ['HIP_HINGE_CONTROL']),
-  // RF-7b: LOAD_READY moved to regressible — a stored regression ("remove
-  // load, raise start position") exists precisely for this deficit; the
-  // safety lock is routineCareAllowed, not this field. HIP_HINGE_CONTROL
-  // stays hard.
-  rule('LBP_LOAD_02', ['HIP_HINGE_CONTROL'], ['LOAD_READY']),
+  rule('LBP_HIP_STR_03'),
+  rule('LBP_FUNC_01'),
+  rule('LBP_FUNC_05'),
+  rule('LBP_LOAD_02'),
 
-  rule('LBP_NEURAL_01', ['NEURAL_SLIDER_TOLERATED'], [], {
-    stopOnDistalWorsening: true,
-    requiresStableNeuro: true,
-  }),
+  rule('LBP_NEURAL_01', { stopOnDistalWorsening: true, requiresStableNeuro: true }),
 
-  rule('LBP_EXPOSURE_01', ['FLEXION_EXPOSURE_TOLERATED'], [], {
-    stopOnDistalWorsening: true,
-  }),
-  rule('LBP_EXPOSURE_03', [], ['SITTING_TOLERATED']),
+  rule('LBP_EXPOSURE_01', { stopOnDistalWorsening: true }),
+  rule('LBP_EXPOSURE_03'),
 
-  rule('LBP_REG_01', ['NATURAL_BREATHING_TOLERATED'], [], {
-    stopOnDistalWorsening: false,
-    requiresStableNeuro: false,
-  }),
+  // 호흡·이완만은 신경학적 상태 미확인에도 보류하지 않는다 — 자세 부하가 없고,
+  // 이 운동을 막을 근거가 어떤 신경학적 소견에도 없다.
+  rule('LBP_REG_01', { stopOnDistalWorsening: false, requiresStableNeuro: false }),
 ]
 
 const RULE_BY_ID = new Map(LBP_EXERCISE_ELIGIBILITY_RULES.map((item) => [item.exerciseId, item]))
-
-function capabilityValue(
-  context: LbpExerciseEligibilityContext,
-  capability: LbpExerciseCapability,
-): 'YES' | 'NO' | 'UNKNOWN' {
-  return context.capabilities[capability] ?? 'UNKNOWN'
-}
 
 export function evaluateLbpExerciseEligibility(
   exerciseId: string,
@@ -270,8 +168,6 @@ export function evaluateLbpExerciseEligibility(
       exerciseId,
       state: 'STOP_REVIEW',
       reasonsKo: ['현재는 일반적인 운동 진행보다 안전성 재평가가 우선입니다.'],
-      missingHardRequirements: [],
-      regressionRequirements: [],
     }
   }
 
@@ -280,21 +176,16 @@ export function evaluateLbpExerciseEligibility(
       exerciseId,
       state: 'STOP_REVIEW',
       reasonsKo: ['새롭거나 악화되는 신경학적 변화가 있어 운동 진행보다 재평가가 우선입니다.'],
-      missingHardRequirements: [],
-      regressionRequirements: [],
     }
   }
 
-  // RF-12: only the literal 'WORSENING' branches here — see this file's
-  // LbpExerciseEligibilityContext doc comment for why UNKNOWN must never be
-  // treated as if it meant "confirmed stable" elsewhere in this function.
+  // RF-12: 리터럴 'WORSENING'에서만 분기한다 — 위 `distalSymptomResponse`
+  // 주석 참고.
   if (rule.stopOnDistalWorsening && context.distalSymptomResponse === 'WORSENING') {
     return {
       exerciseId,
       state: 'STOP_REVIEW',
       reasonsKo: ['하지 증상이 더 원위부로 진행하는 반응이 있어 현재 운동 진행을 중단하고 다시 평가합니다.'],
-      missingHardRequirements: [],
-      regressionRequirements: [],
     }
   }
 
@@ -310,87 +201,24 @@ export function evaluateLbpExerciseEligibility(
           ? '이 운동을 선택할 근거가 되는 방향성 반응이 아직 확인되지 않았습니다.'
           : '현재 확인된 방향성 반응과 이 운동의 시작 조건이 맞지 않습니다.',
       ],
-      missingHardRequirements: [],
-      regressionRequirements: [],
     }
   }
 
-  const missingHard = rule.hardRequirements.filter((capability) => capabilityValue(context, capability) !== 'YES')
-  if (missingHard.length > 0) {
-    return {
-      exerciseId,
-      state: 'DEFER_NOT_READY',
-      reasonsKo: ['현재 단계에서 꼭 필요한 준비 조건이 확인되지 않아 이 운동은 보류합니다.'],
-      missingHardRequirements: missingHard,
-      regressionRequirements: [],
-    }
-  }
-
-  // Opus delta review defect 1 (BLOCKER, CD-1): a regressible capability's
-  // three real states — confirmed 'YES', explicitly confirmed absent 'NO',
-  // and never-tap-confirmed 'UNKNOWN' — must NOT collapse into one
-  // `!== 'YES'` bucket. Only a real 'NO' (a regression genuinely known to
-  // be needed) may drive START_WITH_REGRESSION; an 'UNKNOWN' capability is
-  // CD-1's "확인 전 보류" case (PO-approved option B, `DECISIONS.md`
-  // 2026-09-02 "CD-1/CD-2 PO 결정") and must DEFER like a missing hard
-  // requirement does — auto-promoting an unconfirmed regressible capability
-  // to a start-now state is exactly option A, which the PO rejected.
-  const regressionNeeds = rule.regressibleRequirements.filter(
-    (capability) => capabilityValue(context, capability) === 'NO',
-  )
-  const unconfirmedRegressible = rule.regressibleRequirements.filter(
-    (capability) => capabilityValue(context, capability) === 'UNKNOWN',
-  )
-
-  // RF-1 (BLOCKER fix): this check moved here from AFTER the regression
-  // return below — it now runs before ANY regression-driven
-  // START_WITH_REGRESSION can be reached, so an unconfirmed neurological
-  // status can never be masked by a regressible capability deficit.
-  // `regressionRequirements` is still included in this DEFER return (not
-  // dropped) so the capability-chip UI (lbpExerciseRecommendation.ts's
-  // "확인하면 시작 가능" grouping) keeps the same information it would have
-  // gotten from the regression branch.
+  // RF-1: 신경학적 상태 미확인을 "안정"으로 가정하지 않는다. 준비조건 게이트가
+  // 사라진 뒤에도 이 게이트는 그대로다 — 미확인은 원장이 1탭으로 해소한다
+  // (`ObjectiveExamFindingsCard`), 15탭이 아니라.
   if (rule.requiresStableNeuro && context.neuroStatus === 'UNKNOWN') {
     return {
       exerciseId,
       state: 'DEFER_NOT_READY',
       reasonsKo: ['신경학적 상태가 미확인이라 안정적이라고 가정하지 않습니다.'],
-      missingHardRequirements: [],
-      regressionRequirements: [...regressionNeeds, ...unconfirmedRegressible],
-    }
-  }
-
-  // Defect 1: an unconfirmed (never tap-confirmed) regressible capability
-  // defers exactly like a missing hard requirement — checked before the
-  // real-'NO' regression branch so a mix of "confirmed absent" + "never
-  // asked" capabilities on the same rule still defers on the unconfirmed
-  // one rather than silently starting with only the confirmed regression.
-  if (unconfirmedRegressible.length > 0) {
-    return {
-      exerciseId,
-      state: 'DEFER_NOT_READY',
-      reasonsKo: ['시작 단계를 정하는 데 필요한 준비 조건이 아직 확인되지 않았습니다.'],
-      missingHardRequirements: [],
-      regressionRequirements: unconfirmedRegressible,
-    }
-  }
-
-  if (regressionNeeds.length > 0) {
-    return {
-      exerciseId,
-      state: 'START_WITH_REGRESSION',
-      reasonsKo: ['기본 운동을 그대로 시작하기보다 이미 정의된 쉬운 단계(regression)로 시작하는 편이 적절합니다.'],
-      missingHardRequirements: [],
-      regressionRequirements: regressionNeeds,
     }
   }
 
   return {
     exerciseId,
     state: 'START_AS_WRITTEN',
-    reasonsKo: ['현재 확인된 정보에서는 이 운동의 기본 시작 조건을 충족합니다.'],
-    missingHardRequirements: [],
-    regressionRequirements: [],
+    reasonsKo: ['현재 확인된 정보에서는 이 운동의 안전 조건을 충족합니다 — 시작 기준은 카드에서 직접 확인하세요.'],
   }
 }
 

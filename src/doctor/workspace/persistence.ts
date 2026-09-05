@@ -73,7 +73,6 @@ const REHAB_SUGGESTION_TEMPLATE: RehabSuggestion = {
   source: 'SUGGESTED',
   status: 'SUGGESTED',
   clinicianFinalInstruction: '',
-  regressed: false,
 }
 const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
   '',
@@ -198,31 +197,14 @@ export type WorkspaceState = {
    * value. Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
    */
   lbpDirectionalResponse: LbpDirectionalResponse
-  /**
-   * LBP v1 Batch 2 (G8, CD-1): capability ids (`LbpExerciseCapability` from
-   * `lbpExerciseEligibility.ts`) the clinician has explicitly tap-confirmed
-   * 'YES' this record. Default `[]`. A capability NOT in this list is
-   * UNKNOWN, never inferred 'NO' — there is no negative-confirmation UI in
-   * v1 (PO-approved option B, `DECISIONS.md` 2026-09-02 "CD-1/CD-2 PO
-   * 결정"). Kept as `string[]` here (not the narrower capability union) so a
-   * legacy/unknown member is harmless on deserialize — validated against the
-   * real union only where it is consumed (`lbpEligibilityContext.ts`).
-   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
+  /*
+   * 2026-09-05: `lbpConfirmedCapabilities`/`lbpDeniedCapabilities`를 제거했다.
+   * 준비조건 게이트와 함께 사라진 필드다 — 두 배열은 EMR·재진 이어받기·환자
+   * 안내문 어디에도 도달한 적이 없고(확인함), 유일한 소비자가 같은 화면의
+   * 게이트였다. 옛 기록에 남아 있는 값은 역직렬화에서 조용히 무시된다(전체
+   * shape을 매번 새로 만들므로 안전하다). 폐기된 PO 결정 CD-1/CD-3의 이유는
+   * `DECISIONS.md` 2026-09-05 "준비조건 게이트 제거" 항목 참고.
    */
-  lbpConfirmedCapabilities: string[]
-  /**
-   * LBP v1 Batch 2.5a (G8, CD-3, `DECISIONS.md` 2026-09-02 "CD-3 승인..."):
-   * capability ids the clinician has explicitly tap-confirmed 'NO' (지금은
-   * 안 됨) this record — the genuine negative-confirmation state CD-1's
-   * option B deliberately left unbuilt in Batch 2. Default `[]`. Kept
-   * mutually exclusive with `lbpConfirmedCapabilities` structurally by the
-   * state-update handler (`DoctorWorkspace.tsx`'s `onSetLbpCapabilityStatus`)
-   * — never enforced here on read. A capability id in neither list is
-   * UNKNOWN (default), same as before. Kept as `string[]` for the same
-   * legacy/unknown-member-harmless reason as `lbpConfirmedCapabilities`.
-   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
-   */
-  lbpDeniedCapabilities: string[]
   /**
    * LBP v1 Batch 2.5c (G16, `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`
    * §11.2): the clinician's own directly-selected support level per pattern
@@ -271,8 +253,6 @@ export function emptyWorkspaceState(): WorkspaceState {
     painRehabSuggestions: [],
     additionalConcernPromotion: emptyAdditionalConcernPromotion(),
     lbpDirectionalResponse: 'NOT_ASSESSED',
-    lbpConfirmedCapabilities: [],
-    lbpDeniedCapabilities: [],
     lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
     lbpConfirmedStage: null,
     updated_at: null,
@@ -289,30 +269,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Opus delta review (batch 2.5a) MUST-FIX 2: a hand-edited/corrupted/
- * future-buggy record could have the same capability id in BOTH
- * `lbpConfirmedCapabilities` and `lbpDeniedCapabilities` — the in-app
- * `onSetLbpCapabilityStatus` setter keeps them exclusive, but this is the
- * one place a persisted record is trusted without that guarantee. Per CD-1
- * ("never infer eligible from uncertain/corrupt data"), an unresolvable
- * conflict must NOT resolve to 'YES' (the more aggressive read) -- it
- * strips the id from BOTH lists so `lbpEligibilityContext.ts` reads it as
- * UNKNOWN, same as a capability nobody has touched yet.
- */
-function stripConflictingLbpCapabilities(
-  confirmed: string[],
-  denied: string[],
-): { confirmed: string[]; denied: string[] } {
-  const deniedSet = new Set(denied)
-  const conflicting = new Set(confirmed.filter((c) => deniedSet.has(c)))
-  if (conflicting.size === 0) return { confirmed, denied }
-  return {
-    confirmed: confirmed.filter((c) => !conflicting.has(c)),
-    denied: denied.filter((c) => !conflicting.has(c)),
-  }
-}
-
-/**
  * Never throws. A malformed/partial/legacy payload (including `null`,
  * `undefined`, a round-2-only shape with no round-3 fields at all, or a
  * completely unrelated JSON shape) degrades to emptyWorkspaceState()
@@ -324,10 +280,6 @@ function stripConflictingLbpCapabilities(
 export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
   const empty = emptyWorkspaceState()
   if (!isRecord(raw)) return empty
-  const { confirmed: lbpConfirmedCapabilities, denied: lbpDeniedCapabilities } = stripConflictingLbpCapabilities(
-    sanitizeStringArray(raw.lbpConfirmedCapabilities),
-    sanitizeStringArray(raw.lbpDeniedCapabilities),
-  )
   return {
     schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : empty.schema_version,
     painExamSuggestions: Array.isArray(raw.painExamSuggestions) ? raw.painExamSuggestions.map(sanitizeExamSuggestion) : [],
@@ -349,8 +301,6 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     lbpDirectionalResponse: isValidLbpDirectionalResponse(raw.lbpDirectionalResponse)
       ? raw.lbpDirectionalResponse
       : empty.lbpDirectionalResponse,
-    lbpConfirmedCapabilities,
-    lbpDeniedCapabilities,
     lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
     lbpConfirmedStage: sanitizeLbpConfirmedStage(raw.lbpConfirmedStage),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,

@@ -2701,31 +2701,13 @@ test('Opus review item 1b: with MAX_FOLLOW_UP_TARGETS (3) orphan selections and 
 
 // ---------------------------------------------------------------------------
 // Opus delta review (LBP v1 Batch 2) defects 4/5/7/9 — rendered through the
-// real DoctorWorkspace shell (PainExerciseSection/LbpAwaitingCapabilitySection
-// live inside it), same `renderWith(scenario, { synthetic: undefined, ... })`
+// real DoctorWorkspace shell (PainExerciseSection lives inside it), same `renderWith(scenario, { synthetic: undefined, ... })`
 // live-recompute pattern the existing "14차 HIGH-1" test above already uses
 // for an LBP scenario. PAIN_SCENARIO_1 is a safety-CLEAR LBP payload.
 // ---------------------------------------------------------------------------
 
-const ALL_LBP_CAPABILITIES = [
-  'SAFE_WALKING',
-  'CAN_SELF_PACE',
-  'QUADRUPED_TOLERATED',
-  'SUPINE_TOLERATED',
-  'PRONE_TOLERATED',
-  'SUPPORTED_STANDING_TOLERATED',
-  'SITTING_TOLERATED',
-  'LOW_LOAD_TRUNK_CONTROL',
-  'HIP_HINGE_CONTROL',
-  'LOAD_READY',
-  'BALANCE_WITH_SUPPORT',
-  'FLEXION_EXPOSURE_TOLERATED',
-  'EXTENSION_EXPOSURE_TOLERATED',
-  'NEURAL_SLIDER_TOLERATED',
-  'NATURAL_BREATHING_TOLERATED',
-]
-
 const walkingFollowUpTarget = [{ id: 'lbp_tf_walking', label: '걷기', baseline: '', postTreatmentValue: '' }]
+const dressingFollowUpTarget = [{ id: 'lbp_tf_dressing', label: '옷 입기', baseline: '', postTreatmentValue: '' }]
 
 function lbpLiveExtraProps(initialWorkspaceState, extra = {}) {
   return { synthetic: undefined, lbpObjectiveMotorDeficit: 'NONE', initialWorkspaceState, ...extra }
@@ -2736,10 +2718,7 @@ function lbpLiveExtraProps(initialWorkspaceState, extra = {}) {
 test('defect 4: more than 3 READY LBP candidates -> first 3 candidate cards render outside <details>, the rest inside "더 보기 (N)" (nothing dropped)', () => {
   const html = renderWith(
     PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: ALL_LBP_CAPABILITIES,
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
+    lbpLiveExtraProps({ painFollowUpTargets: walkingFollowUpTarget }),
   )
   const cardCount = (html.match(/class="workspace__candidateCard /g) ?? []).length
   assert.ok(cardCount > 3, `test setup must produce more than 3 ready candidates, found ${cardCount}`)
@@ -2766,17 +2745,15 @@ test('defect 4: more than 3 READY LBP candidates -> first 3 candidate cards rend
 test('defect 4: 3 or fewer READY candidates -> no <details> disclosure at all', () => {
   const html = renderWith(
     PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: ['SAFE_WALKING', 'CAN_SELF_PACE'],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
+    // 2026-09-05: 준비조건 게이트가 사라져 "확인을 덜 해서 후보가 적다"는
+    // 설정이 불가능해졌다. 후보 수는 이제 목표 기능이 정한다 — 옷 입기는
+    // Core-20에서 대응 운동이 1개뿐이라 <details>가 뜨지 않는 조건을 만든다.
+    lbpLiveExtraProps({ painFollowUpTargets: dressingFollowUpTarget }),
   )
   const cardCount = (html.match(/class="workspace__candidateCard /g) ?? []).length
   assert.ok(cardCount > 0 && cardCount <= 3, `test setup expected 1-3 ready candidates, found ${cardCount}`)
   assert.ok(!html.includes('더 보기 ('), 'no "더 보기" disclosure is rendered for the candidate list when nothing is hidden')
 })
-
-// ---------- defect 5 / CD-3: capability confirmation is a genuine 3-state, not append-only ----------
 
 // The heading text itself (Opus delta review item 5: matches the button
 // labels 1:1 -- "확인함/지금은 안 됨" not "확인된/지금은 안 됨"). Used both as an
@@ -2785,144 +2762,6 @@ test('defect 4: 3 or fewer READY candidates -> no <details> disclosure at all', 
 // appear earlier on the page too (e.g. inside an awaiting-candidate card
 // for the same capability id -- see the NO-capability test below, item 4).
 const DECIDED_CAPABILITIES_HEADING = '확인함/지금은 안 됨으로 표시한 준비 조건'
-
-test('CD-3: a confirmed (YES) capability renders in the decided-capabilities row with its 확인함 button pressed', () => {
-  const html = renderWith(
-    PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: ['SAFE_WALKING'],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
-  )
-  const headingIdx = html.indexOf(DECIDED_CAPABILITIES_HEADING)
-  assert.ok(headingIdx !== -1, 'the decided-capabilities row must render')
-  const decidedSection = html.slice(headingIdx)
-  const idx = decidedSection.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
-  assert.ok(idx !== -1, 'the confirmed SAFE_WALKING capability label renders inside the decided section')
-  const after = decidedSection.slice(idx, idx + 900)
-  assert.ok(
-    /<button[^>]*aria-pressed="true"[^>]*>확인함<\/button>/.test(after),
-    'the 확인함 (YES) button for a confirmed capability must be pressed',
-  )
-})
-
-test('CD-3: a denied (NO) capability renders with its 지금은 안 됨 button pressed, not 확인함 -- inspected inside the decided section, not an unrelated awaiting card', () => {
-  const html = renderWith(
-    PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: [],
-      lbpDeniedCapabilities: ['SAFE_WALKING'],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
-  )
-  const headingIdx = html.indexOf(DECIDED_CAPABILITIES_HEADING)
-  assert.ok(headingIdx !== -1, 'the decided-capabilities row must render for a denied capability too')
-  // Opus delta review item 4: SAFE_WALKING is a HARD requirement for
-  // LBP_ACT_01/ACT_02, so its label also appears earlier on the page inside
-  // those still-awaiting candidate cards (denying it does not clear a hard
-  // requirement) -- slicing from html.indexOf(label) directly would
-  // therefore inspect the wrong occurrence. Slice from the decided-section
-  // heading first so only that section's buttons are checked.
-  const decidedSection = html.slice(headingIdx)
-  const idx = decidedSection.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
-  assert.ok(idx !== -1, 'the denied SAFE_WALKING capability label renders inside the decided section')
-  const after = decidedSection.slice(idx, idx + 900)
-  assert.ok(
-    /<button[^>]*aria-pressed="true"[^>]*>지금은 안 됨<\/button>/.test(after),
-    'the 지금은 안 됨 (NO) button for a denied capability must be pressed',
-  )
-})
-
-test('CD-3: with neither confirmed nor denied capabilities, the decided-capabilities row does not render at all', () => {
-  const html = renderWith(
-    PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: [],
-      lbpDeniedCapabilities: [],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
-  )
-  assert.ok(
-    !html.includes(DECIDED_CAPABILITIES_HEADING),
-    'no decided row renders when nothing has been confirmed or denied yet',
-  )
-})
-
-test('CD-3: an awaiting candidate\'s still-blocking capability renders a 3-button 확인함/지금은 안 됨/미확인 group with 미확인 pressed by default', () => {
-  const html = renderWith(
-    PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: [],
-      lbpDeniedCapabilities: [],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
-  )
-  assert.ok(html.includes('확인하면 시작 가능'), 'sanity: at least one awaiting-capability candidate is present')
-  const idx = html.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
-  assert.ok(idx !== -1)
-  const after = html.slice(idx, idx + 900)
-  assert.ok(/<button[^>]*>확인함<\/button>/.test(after), '확인함 option renders')
-  assert.ok(/<button[^>]*>지금은 안 됨<\/button>/.test(after), '지금은 안 됨 option renders')
-  assert.ok(
-    /<button[^>]*aria-pressed="true"[^>]*>미확인<\/button>/.test(after),
-    'an unconfirmed capability defaults to the 미확인 button being pressed',
-  )
-})
-
-test('CD-3 (source-level): onSetLbpCapabilityStatus is a genuine 3-way setter -- each of the YES/NO/UNKNOWN branches is verified independently (mutation-resistant, Opus delta review item 3)', () => {
-  const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
-  const anchor = src.indexOf('onSetLbpCapabilityStatus={(cap, status) =>')
-  assert.ok(anchor !== -1, 'onSetLbpCapabilityStatus handler not found')
-  const body = src.slice(anchor, anchor + 1400)
-
-  const yesIdx = body.indexOf("status === 'YES'")
-  const noIdx = body.indexOf("status === 'NO'")
-  const lastReturnIdx = body.lastIndexOf('return {')
-  assert.ok(yesIdx !== -1 && noIdx !== -1 && lastReturnIdx !== -1, 'all three branch anchors must be found')
-  assert.ok(yesIdx < noIdx && noIdx < lastReturnIdx, 'branches must appear in YES, NO, UNKNOWN(fallback) order')
-
-  // Each branch sliced independently -- a regex that only checks "appears
-  // somewhere in the whole handler" is satisfied by the YES branch alone
-  // and would pass even if the NO branch forgot to clear the confirmed
-  // list, or the UNKNOWN (fallback) branch were a no-op.
-  const yesBranch = body.slice(yesIdx, noIdx)
-  const noBranch = body.slice(noIdx, lastReturnIdx)
-  const unknownBranch = body.slice(lastReturnIdx)
-
-  assert.ok(
-    /lbpDeniedCapabilities: withoutCap\(/.test(yesBranch),
-    'YES branch must clear the id out of lbpDeniedCapabilities',
-  )
-  assert.ok(
-    /lbpConfirmedCapabilities: withoutCap\(/.test(noBranch),
-    'NO branch must clear the id out of lbpConfirmedCapabilities',
-  )
-  assert.ok(
-    /lbpConfirmedCapabilities: withoutCap\(/.test(unknownBranch) && /lbpDeniedCapabilities: withoutCap\(/.test(unknownBranch),
-    'UNKNOWN (fallback/reset) branch must clear the id out of BOTH lists -- the undo path must not be a no-op',
-  )
-})
-
-test('CD-3: the undo affordance actually exists on screen -- a confirmed (YES) capability still renders a (currently unpressed) 미확인 button in the decided section', () => {
-  const html = renderWith(
-    PAIN_SCENARIO_1,
-    lbpLiveExtraProps({
-      lbpConfirmedCapabilities: ['SAFE_WALKING'],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
-  )
-  const headingIdx = html.indexOf(DECIDED_CAPABILITIES_HEADING)
-  assert.ok(headingIdx !== -1)
-  const decidedSection = html.slice(headingIdx)
-  const idx = decidedSection.indexOf('보조도구 포함, 안전하게 걸을 수 있음')
-  assert.ok(idx !== -1)
-  const after = decidedSection.slice(idx, idx + 900)
-  assert.ok(
-    /<button[^>]*aria-pressed="false"[^>]*>미확인<\/button>/.test(after),
-    'a 미확인 button (unpressed) must render alongside the pressed 확인함 button, proving the reset-to-UNKNOWN affordance exists in the UI, not only in state',
-  )
-})
-
 // ---------- defect 7: adopt action only for LBP records ----------
 
 test('defect 7: PAIN_SCENARIO_3 (shoulder, non-LBP) never renders the "치료 계획에 가져오기" adopt button, even for an ACCEPTED suggestion', () => {
@@ -2974,55 +2813,6 @@ test('defect 7 (differential): the same ACCEPTED-suggestion shape on an LBP reco
   assert.ok(html.includes('LBP 재활 제안 (SYNTHETIC)'))
   assert.ok(html.includes('workspace__adoptBtn'), 'an LBP record must still render the adopt button for an ACCEPTED item')
 })
-
-// ---------- defect 9 (CD-2): lock banner must not depend on rehabSuggestions.length > 0 ----------
-
-test('defect 9: treatment-safety-locked + zero READY candidates + at least one awaiting-capability candidate -> the lock banner still renders', () => {
-  // pregnancy_possible drives treatment_safety_status to REVIEW_REQUIRED
-  // (disease safety unaffected) -- same mechanism as
-  // tests/lbp-exercise-recommendation.spec.mjs's CD-2 test, applied here at
-  // the rendered-workspace level by overriding the already-built payload's
-  // derived reproductive status directly (workspaceFixtures.ts's payload
-  // builder itself is not exported for reuse in this file).
-  const lockedPayload = {
-    ...PAIN_SCENARIO_1.payload,
-    responses: {
-      ...PAIN_SCENARIO_1.payload.responses,
-      reproductive_status: {
-        ...PAIN_SCENARIO_1.payload.responses.reproductive_status,
-        derived: {
-          source: 'WOMEN_SAFETY_01',
-          raw: ['pregnancy_possible'],
-          pregnant: false,
-          pregnancy_possible: true,
-          postpartum_1y: null,
-          breastfeeding: null,
-        },
-      },
-    },
-  }
-  const html = renderWith(
-    { ...PAIN_SCENARIO_1, payload: lockedPayload },
-    lbpLiveExtraProps({
-      // zero confirmed capabilities -> zero READY, but the walking target
-      // still produces at least one awaiting-capability candidate.
-      lbpConfirmedCapabilities: [],
-      painFollowUpTargets: walkingFollowUpTarget,
-    }),
-  )
-  assert.ok(!html.includes('workspace__candidateCard'), 'sanity: zero READY candidates render as cards')
-  assert.ok(html.includes('확인하면 시작 가능'), 'sanity: at least one awaiting-capability candidate is present')
-  const lockMessage = '치료 안전(임신 등) 확인 전까지 금기 민감 치료/운동은 원장 승인 없이 확정하지 않습니다.'
-  assert.ok(
-    html.includes(lockMessage),
-    'the treatment-safety lock hint must render even though rehabSuggestions is empty (zero READY cards)',
-  )
-  assert.ok(
-    html.indexOf(lockMessage) < html.indexOf('확인하면 시작 가능'),
-    'defect 9: the lock hint must render once at the top of the section, before the awaiting-capability group -- not nested only inside a READY-cards block that does not exist here',
-  )
-})
-
 // ---------------------------------------------------------------------------
 // LBP v1 Batch 3 (§9.2(f)): RevisitWorkspace.tsx wiring for
 // RevisitQuickCheckCard + the detail-check-due indicator. RevisitWorkspace.tsx
@@ -3981,21 +3771,6 @@ test('stage card: confirmed 0단계 -> guidance text, a 1-tap "1단계로 올리
   const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)
   assert.ok(/<button[^>]*aria-pressed="true"[^>]*>0단계/.test(stageGroup), 'the 0단계 button is pressed')
 })
-
-test('stage card: confirmed 2단계 with nothing tapped -> the "자동 추정된 준비 조건" row renders with (추정) items + 3-state buttons, the A-layer chip on ACT_01 carries the 안전 · 직접 확인 tag, and 2단계 is pressed', () => {
-  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ lbpConfirmedStage: 2, painFollowUpTargets: walkingFollowUpTarget }))
-  const inferredIdx = html.indexOf('확정 단계에서 자동 추정된 준비 조건')
-  assert.ok(inferredIdx !== -1, 'inferred row renders')
-  const inferredChunk = html.slice(inferredIdx, inferredIdx + 6000)
-  assert.ok(inferredChunk.includes('(추정)'), 'inferred items are labeled')
-  assert.ok(inferredChunk.includes('바로 누운 자세 유지 가능'), 'SUPINE_TOLERATED (inferred at stage 1) is listed')
-  assert.ok(!inferredChunk.includes('보조도구 포함, 안전하게 걸을 수 있음'), 'SAFE_WALKING (A-layer) is never in the inferred row')
-  assert.ok(/지금은 안 됨/.test(inferredChunk), 'the clinician can turn an inferred item off right there')
-  assert.ok(html.includes('안전 · 직접 확인'), 'A-layer chips are tagged')
-  const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)
-  assert.ok(/<button[^>]*aria-pressed="true"[^>]*>2단계/.test(stageGroup), 'the 2단계 button is pressed')
-})
-
 test('stage card: source wiring — DoctorWorkspace persists ONLY the confirmed stage (setter writes lbpConfirmedStage), and emrPreview.ts (pilot-frozen) does not read it yet', () => {
   const dwSrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
   assert.ok(/onSetLbpConfirmedStage=\{\(next\) => setWorkspaceState\(\(s\) => \(\{ \.\.\.s, lbpConfirmedStage: next \}\)\)\}/.test(dwSrc), 'setter writes the confirmed stage field')
@@ -4007,4 +3782,64 @@ test('stage card: source wiring — DoctorWorkspace persists ONLY the confirmed 
   assert.ok(!revisitSrc.includes('LbpStageCard') && !revisitSrc.includes('PainExerciseSection'), 'RevisitWorkspace has no exercise section at all, so no stage card there either (documented gap, not an omission)')
 })
 
-console.log(`\n(+stage card) ${passed} doctor-workspace assertions passed.`)
+
+// ===========================================================================
+// 2026-09-05: 준비조건 게이트 제거 — 화면 검증
+// ===========================================================================
+
+test('게이트 제거: 준비조건을 하나도 누르지 않은 라이브 LBP 기록에서 후보 카드가 실제로 렌더된다 (예전에는 0개였다)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ painFollowUpTargets: walkingFollowUpTarget }))
+  const cardCount = (html.match(/class="workspace__candidateCard /g) ?? []).length
+  assert.ok(cardCount > 0, `탭 0회로 후보 카드가 떠야 한다 (found ${cardCount})`)
+  assert.ok(html.includes('재활/운동 제안'), '운동 섹션이 렌더된다')
+})
+
+test('게이트 제거: 준비조건 확인 UI가 화면에서 완전히 사라졌다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ painFollowUpTargets: walkingFollowUpTarget }))
+  for (const gone of ['확인하면 시작 가능', '확인함/지금은 안 됨으로 표시한 준비 조건', '확정 단계에서 자동 추정된 준비 조건', '지금은 안 됨', '미확인']) {
+    assert.ok(!html.includes(gone), `"${gone}" 가 남아 있으면 안 된다`)
+  }
+  assert.ok(!html.includes('보조도구 포함, 안전하게 걸을 수 있음'), 'capability 라벨 자체가 사라졌다')
+})
+
+test('대체 경로: 후보 카드에 "시작 기준"이 첫 근거 소견으로 렌더된다 (원장이 육안 판단할 근거)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ painFollowUpTargets: walkingFollowUpTarget }))
+  const factsIdx = html.indexOf('근거 소견')
+  assert.ok(factsIdx !== -1, '근거 소견 목록이 렌더된다')
+  const chunk = html.slice(factsIdx, factsIdx + 1200)
+  assert.ok(chunk.includes('시작 기준:'), '시작 기준 줄이 있다')
+  const startIdx = chunk.indexOf('시작 기준:')
+  const doseIdx = chunk.indexOf('시작 용량:')
+  assert.ok(startIdx !== -1 && doseIdx !== -1 && startIdx < doseIdx, '시작 기준이 시작 용량보다 먼저 읽힌다')
+  assert.ok(chunk.includes('쉬운 단계로 시작하려면:'), '쉬운 단계가 항상 보인다')
+  assert.ok(chunk.includes('중단·재검토 기준:'), '중단 기준은 그대로 유지')
+})
+
+test('신경 상태 미기록 -> 빈 목록 대신 무엇을 하면 되는지 한 줄이 뜬다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, {
+    synthetic: undefined,
+    lbpObjectiveMotorDeficit: undefined,
+    initialWorkspaceState: { painFollowUpTargets: walkingFollowUpTarget },
+  })
+  assert.ok(html.includes('신경학적 이상 소견'), '해소 방법을 안내한다')
+  assert.ok(html.includes('"이상 없음"으로 가정하지 않습니다') || html.includes('&quot;이상 없음&quot;으로 가정하지 않습니다'), 'RF-1 원칙을 화면에 명시한다')
+})
+
+test('신경 상태 기록됨 -> 그 안내는 뜨지 않는다 (공허하지 않은 단언)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ painFollowUpTargets: walkingFollowUpTarget }))
+  assert.ok(!html.includes('신경학적 이상 소견(레인2'), '해소된 뒤에는 안내가 사라진다')
+})
+
+test('소스 배선: PainWorkspace/DoctorWorkspace에 준비조건 경로가 한 줄도 남지 않았다', () => {
+  const pw = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+  const dw = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  const codeOnly = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  for (const [name, src] of [['PainWorkspace', pw], ['DoctorWorkspace', dw]]) {
+    const code = codeOnly(src)
+    assert.ok(!/lbpConfirmedCapabilities|lbpDeniedCapabilities|onSetLbpCapabilityStatus|LbpAwaitingCapabilitySection/.test(code), `${name} 코드에 준비조건 경로 잔존`)
+  }
+  assert.ok(/준비조건/.test(pw), '왜 없앴는지는 주석으로 남아 있어야 한다 (조용한 삭제 금지)')
+  assert.ok(fs.existsSync('src/doctor/workspace/lbpCapabilityLayer.ts') === false, '층 모듈은 삭제됐다')
+})
+
+console.log(`\n(+게이트 제거) ${passed} doctor-workspace assertions passed.`)

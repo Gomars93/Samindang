@@ -122,39 +122,32 @@ function assert(name, cond) {
   assert('legacy record with lbpDirectionalResponse entirely absent degrades to NOT_ASSESSED', legacy.lbpDirectionalResponse === 'NOT_ASSESSED')
 }
 
-/* ---------------- Batch 2.5a (CD-3): lbpConfirmedCapabilities/lbpDeniedCapabilities conflict defense ---------------- */
+/* ---------------- 2026-09-05: 준비조건 필드 제거 (CD-1/CD-3 폐기) ---------------- */
 {
   const empty = emptyWorkspaceState()
-  assert('emptyWorkspaceState.lbpDeniedCapabilities starts []', Array.isArray(empty.lbpDeniedCapabilities) && empty.lbpDeniedCapabilities.length === 0)
+  assert(
+    'emptyWorkspaceState에 lbpConfirmedCapabilities/lbpDeniedCapabilities가 없다',
+    !('lbpConfirmedCapabilities' in empty) && !('lbpDeniedCapabilities' in empty),
+  )
 
-  const legacy = deserializeWorkspaceState({ lbpConfirmedCapabilities: ['SAFE_WALKING'] })
-  assert('a pre-CD-3 record with no lbpDeniedCapabilities field degrades to [] (legacy-safe)', Array.isArray(legacy.lbpDeniedCapabilities) && legacy.lbpDeniedCapabilities.length === 0)
-  assert('a pre-CD-3 record keeps its lbpConfirmedCapabilities untouched', legacy.lbpConfirmedCapabilities.includes('SAFE_WALKING'))
-
-  // Opus delta review MUST-FIX 2: a hand-edited/corrupted record with the
-  // SAME capability id in both lists must resolve to neither (UNKNOWN),
-  // never 'YES' (the more aggressive read) -- CD-1's "never infer eligible
-  // from uncertain/corrupt data" applies here too.
-  const conflicting = deserializeWorkspaceState({
+  // 옛 기록에 남아 있는 두 배열은 조용히 무시된다 — 역직렬화가 전체 shape을
+  // 매번 새로 만들기 때문에 안전하다. 잃는 값은 애초에 어디로도 나가지 않던
+  // 값이다(EMR·재진·환자 안내문 전부 미도달, 확인함).
+  const legacy = deserializeWorkspaceState({
     lbpConfirmedCapabilities: ['SAFE_WALKING', 'CAN_SELF_PACE'],
-    lbpDeniedCapabilities: ['SAFE_WALKING', 'QUADRUPED_TOLERATED'],
+    lbpDeniedCapabilities: ['QUADRUPED_TOLERATED'],
+    painFinalAssessment: { finalWorkingAssessment: '남아 있어야 한다' },
   })
-  assert(
-    'a capability id present in BOTH lists is stripped from lbpConfirmedCapabilities (downgraded to UNKNOWN, not YES)',
-    !conflicting.lbpConfirmedCapabilities.includes('SAFE_WALKING'),
-  )
-  assert(
-    'the same conflicting id is stripped from lbpDeniedCapabilities too',
-    !conflicting.lbpDeniedCapabilities.includes('SAFE_WALKING'),
-  )
-  assert(
-    'a non-conflicting confirmed id survives untouched',
-    conflicting.lbpConfirmedCapabilities.includes('CAN_SELF_PACE'),
-  )
-  assert(
-    'a non-conflicting denied id survives untouched',
-    conflicting.lbpDeniedCapabilities.includes('QUADRUPED_TOLERATED'),
-  )
+  assert('옛 기록의 준비조건 배열은 복원되지 않는다', !('lbpConfirmedCapabilities' in legacy) && !('lbpDeniedCapabilities' in legacy))
+  assert('같은 기록의 다른 필드는 그대로 살아남는다 (조용한 전면 초기화가 아님)', legacy.painFinalAssessment.finalWorkingAssessment === '남아 있어야 한다')
+  assert('준비조건이 있던 옛 기록도 던지지 않고 로드된다', legacy.schema_version === WORKSPACE_STATE_SCHEMA_VERSION)
+
+  // RehabSuggestion.regressed도 함께 사라졌다 — 시스템이 판정하던 값이었다.
+  const withRegressed = deserializeWorkspaceState({
+    painRehabSuggestions: [{ id: 'LBP_ACT_01', title: 'x', goal: '', rationale: '', sourceFacts: [], contraindicationFacts: [], source: 'SUGGESTED', status: 'ACCEPTED', clinicianFinalInstruction: '', regressed: true }],
+  })
+  assert('옛 기록의 regressed 플래그는 복원되지 않는다', !('regressed' in withRegressed.painRehabSuggestions[0]))
+  assert('그 제안의 원장 결정(ACCEPTED)은 그대로 보존된다', withRegressed.painRehabSuggestions[0].status === 'ACCEPTED')
 }
 
 /* ---------------- old-schema (round 2) safe load ---------------- */
@@ -1130,8 +1123,7 @@ console.log(`\n${passCount} workspace round-3 assertions passed.`)
     assert(`lbpConfirmedStage garbage ${String(bad)} degrades to null (never a stage)`, rt.lbpConfirmedStage === null)
   }
   const legacy = deserializeWorkspaceState({ lbpConfirmedCapabilities: ['SAFE_WALKING'], lbpDeniedCapabilities: [] })
-  assert('a pre-2026-09-05 record with no lbpConfirmedStage field reads as null (필터·추정 꺼짐)', legacy.lbpConfirmedStage === null)
-  assert('legacy record keeps its capabilities untouched alongside', legacy.lbpConfirmedCapabilities.includes('SAFE_WALKING'))
+  assert('a pre-2026-09-05 record with no lbpConfirmedStage field reads as null (단계 필터 꺼짐)', legacy.lbpConfirmedStage === null)
   // 0은 falsy — `|| null` 같은 실수로 0단계가 사라지면 안 된다
   const zero = deserializeWorkspaceState({ lbpConfirmedStage: 0 })
   assert('0단계는 falsy지만 null로 뭉개지지 않는다', zero.lbpConfirmedStage === 0)

@@ -478,7 +478,7 @@ export function DoctorWorkspace({
   // 않는다. 저장되는 것은 원장 확정값(`workspaceState.lbpConfirmedStage`)뿐.
   const lbpStageSuggestion = !synthetic && isLbpRecord ? suggestLbpExerciseStage(lbpStageInputFromPayload(payload)) : null
   const displayedPainRehabSuggestions = lbpRecommendation
-    ? mergeLbpRehabSuggestions(workspaceState.painRehabSuggestions, lbpRecommendation.readyCandidates)
+    ? mergeLbpRehabSuggestions(workspaceState.painRehabSuggestions, lbpRecommendation.candidates)
     : workspaceState.painRehabSuggestions
 
   // ---------------------------------------------------------------------
@@ -755,45 +755,11 @@ export function DoctorWorkspace({
                   }
                   lbpRecommendationBlockedMessageKo={lbpRecommendation?.blockedMessageKo}
                   lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
-                  lbpAwaitingCapabilityCandidates={lbpRecommendation?.awaitingCapabilityCandidates}
-                  lbpConfirmedCapabilities={workspaceState.lbpConfirmedCapabilities}
-                  lbpDeniedCapabilities={workspaceState.lbpDeniedCapabilities}
                   lbpTargetFunctionGap={lbpRecommendation?.targetFunctionGap}
+                  lbpNeuroUnrecorded={lbpRecommendation?.neuroUnrecorded}
                   lbpStageSuggestion={lbpStageSuggestion}
                   lbpConfirmedStage={workspaceState.lbpConfirmedStage}
                   onSetLbpConfirmedStage={(next) => setWorkspaceState((s) => ({ ...s, lbpConfirmedStage: next }))}
-                  lbpInferredCapabilities={lbpRecommendation?.inferredCapabilities}
-                  // CD-3 (`DECISIONS.md` 2026-09-02 "CD-3 승인..."): a genuine
-                  // 3-way setter, not a YES-only toggle — 'YES' adds to
-                  // confirmed and removes from denied, 'NO' the reverse, and
-                  // 'UNKNOWN' is an explicit reset that removes the id from
-                  // both lists. The two lists are kept structurally mutually
-                  // exclusive right here (never left to the adapter/UI to
-                  // enforce by convention).
-                  onSetLbpCapabilityStatus={(cap, status) =>
-                    setWorkspaceState((s) => {
-                      const withoutCap = (list: string[]) => list.filter((c) => c !== cap)
-                      if (status === 'YES') {
-                        return {
-                          ...s,
-                          lbpConfirmedCapabilities: [...withoutCap(s.lbpConfirmedCapabilities), cap],
-                          lbpDeniedCapabilities: withoutCap(s.lbpDeniedCapabilities),
-                        }
-                      }
-                      if (status === 'NO') {
-                        return {
-                          ...s,
-                          lbpConfirmedCapabilities: withoutCap(s.lbpConfirmedCapabilities),
-                          lbpDeniedCapabilities: [...withoutCap(s.lbpDeniedCapabilities), cap],
-                        }
-                      }
-                      return {
-                        ...s,
-                        lbpConfirmedCapabilities: withoutCap(s.lbpConfirmedCapabilities),
-                        lbpDeniedCapabilities: withoutCap(s.lbpDeniedCapabilities),
-                      }
-                    })
-                  }
                 />
               </>
             )}

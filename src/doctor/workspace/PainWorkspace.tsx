@@ -80,10 +80,6 @@ import type { StructuredReassessment } from './reassessmentExam'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import type { RehabSuggestion } from './rehabSuggestion'
 import { RehabSuggestionCard } from './RehabSuggestionCard'
-import type { LbpRecommendationCandidate } from './lbpExerciseRecommendation'
-import { LBP_EXERCISE_CAPABILITY_LABEL_KO } from './lbpEligibilityContext'
-import type { LbpExerciseCapability } from './lbpExerciseEligibility'
-import { isLbpSafetyCapability } from './lbpCapabilityLayer'
 import {
   LBP_EXERCISE_STAGE_LABEL_KO,
   LBP_STAGE_0_GUIDANCE_KO,
@@ -185,176 +181,22 @@ function LbpAddExamDisclosure({
   )
 }
 
-/** CD-3 (`DECISIONS.md` 2026-09-02 "CD-3 승인..."): the genuine 3-state a capability chip can be set to — 'UNKNOWN' is the default (never tap-confirmed either way), never a value the clinician "chose" until they explicitly reset it back. */
-type LbpCapabilityStatus = 'YES' | 'NO' | 'UNKNOWN'
-
-const LBP_CAPABILITY_STATUS_OPTIONS: LbpCapabilityStatus[] = ['YES', 'NO', 'UNKNOWN']
-const LBP_CAPABILITY_STATUS_LABEL_KO: Record<LbpCapabilityStatus, string> = {
-  YES: '확인함',
-  NO: '지금은 안 됨',
-  UNKNOWN: '미확인',
-}
-
-/** One capability's 3-button status group, mirroring `ExamSuggestionCard`'s `STATUS_OPTIONS` button convention (`aria-pressed` + `workspace__statusBtn`/`--active`). */
-function LbpCapabilityStatusButtons({
-  capabilityId,
-  status,
-  onSetStatus,
-  ariaLabel,
-}: {
-  capabilityId: LbpExerciseCapability
-  status: LbpCapabilityStatus
-  onSetStatus: (capabilityId: LbpExerciseCapability, status: LbpCapabilityStatus) => void
-  ariaLabel: string
-}) {
-  return (
-    <div className="workspace__examCard__statusRow" role="group" aria-label={ariaLabel}>
-      {LBP_CAPABILITY_STATUS_OPTIONS.map((s) => (
-        <button
-          key={s}
-          type="button"
-          aria-pressed={status === s}
-          className={`workspace__statusBtn${status === s ? ' workspace__statusBtn--active' : ''}`}
-          onClick={() => onSetStatus(capabilityId, s)}
-        >
-          {LBP_CAPABILITY_STATUS_LABEL_KO[s]}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/**
- * LBP v1 Batch 2 (CD-1, PO-approved option B) + Batch 2.5a (CD-3, PO-approved
- * 3-state, `DECISIONS.md` 2026-09-02 "CD-3 승인..."): exercises deferred
- * ONLY because a capability the clinician has not yet tap-confirmed either
- * way is UNKNOWN — never DEFER caused by a directional-response mismatch or
- * an unresolved neuro judgment (`lbpExerciseRecommendation.ts` already
- * filters those out before this candidate list is built). Distinct from
- * `RehabSuggestionCard` on purpose: there is no accept/hold/reject decision
- * to make on an item that is not yet a real suggestion — tapping a status
- * button here only records the capability's own 확인함/지금은 안 됨/미확인
- * state (`WorkspaceState.lbpConfirmedCapabilities`/`lbpDeniedCapabilities`).
+/*
+ * 2026-09-05 (원장 결정): 준비조건 확인 UI(`LbpCapabilityStatusButtons`,
+ * `LbpAwaitingCapabilitySection`)를 제거했다.
  *
- * Each awaiting candidate's still-blocking capabilities get their own
- * 3-button group so the clinician can genuinely record 'NO' (not only
- * 'YES') right where the exercise it blocks is visible. The "확인함/지금은
- * 안 됨으로 표시한 준비 조건" row below additionally lists every capability
- * currently set to YES or NO on this record (Opus delta review defect 5's
- * scope, unchanged: it stays visible even once no candidate awaiting it is
- * left on screen, so a mistaken tap stays reversible) — never the full
- * 15-capability catalog unprompted.
+ * 원장 지적: "준비조건 15개를 내가 육안으로 빠르게 처리하면 되는 거 아닌가?"
+ * — 맞다. 그 탭이 만들던 기록은 EMR·재진·환자 안내문 어디에도 도달하지
+ * 않았고(확인함), 유일한 효과가 "시스템이 목록을 열어주는 것"이었다. 그리고
+ * 원장이 어떤 운동을 **채택하는 행위 자체가 이미 그 운동의 시작 조건을
+ * 판단했다는 뜻**이다 — 채택 전에 같은 것을 또 묻고 있었다.
+ *
+ * 대체 경로: 각 후보 카드의 첫 근거 소견에 `startingCriteriaKo`(한국어 원문)가
+ * **시작 기준**으로 표시된다(`lbpExerciseRecommendation.ts`의
+ * `candidateToRehabSuggestion`). 원장은 그것을 읽고 환자를 보고 고른다.
+ * 자세한 이유는 `lbpExerciseEligibility.ts` 헤더와 `DECISIONS.md` 2026-09-05
+ * "준비조건 게이트 제거" 항목.
  */
-function LbpAwaitingCapabilitySection({
-  candidates,
-  confirmedCapabilities,
-  deniedCapabilities,
-  inferredCapabilities = [],
-  confirmedStage = null,
-  onSetStatus,
-}: {
-  candidates: LbpRecommendationCandidate[]
-  /** Raw `WorkspaceState.lbpConfirmedCapabilities` — filtered to known `LbpExerciseCapability` ids before rendering (defensive against a legacy/unknown persisted member). */
-  confirmedCapabilities: string[]
-  /** Raw `WorkspaceState.lbpDeniedCapabilities` — same defensive filtering. */
-  deniedCapabilities: string[]
-  /**
-   * 2026-09-05: 확정 단계에서 **추정으로만** YES가 된 준비조건
-   * (`LbpRecommendationResult.inferredCapabilities`). 원장이 "안 되면 끄는"
-   * 목록 — 이 행이 없으면 추정값을 되돌릴 방법이 화면에 없다
-   * (CLAUDE.md 입력 방향 규칙: 쓰기만 되고 읽히지 않는 필드를 남기지 않는다).
-   */
-  inferredCapabilities?: LbpExerciseCapability[]
-  confirmedStage?: LbpExerciseStage | null
-  onSetStatus?: (capabilityId: LbpExerciseCapability, status: LbpCapabilityStatus) => void
-}) {
-  if (!onSetStatus) return null
-  const isKnownCapability = (cap: string): cap is LbpExerciseCapability =>
-    Object.prototype.hasOwnProperty.call(LBP_EXERCISE_CAPABILITY_LABEL_KO, cap)
-  const knownConfirmed = confirmedCapabilities.filter(isKnownCapability)
-  const knownDenied = deniedCapabilities.filter(isKnownCapability)
-  const decidedIds = Array.from(new Set([...knownConfirmed, ...knownDenied]))
-  const statusOf = (cap: LbpExerciseCapability): LbpCapabilityStatus =>
-    knownConfirmed.includes(cap) ? 'YES' : knownDenied.includes(cap) ? 'NO' : 'UNKNOWN'
-  const safetyTag = (cap: LbpExerciseCapability) =>
-    isLbpSafetyCapability(cap) ? (
-      <span className="workspace__candidateStatusTag" title="안전 관련 조건 — 단계에서 추정하지 않고 원장이 직접 확인합니다">
-        안전 · 직접 확인
-      </span>
-    ) : null
-
-  if (candidates.length === 0 && decidedIds.length === 0 && inferredCapabilities.length === 0) return null
-  return (
-    <section className="workspace__block">
-      {candidates.length > 0 && (
-        <>
-          <h3>확인하면 시작 가능</h3>
-          <p className="workspace__block__hint">
-            아래 준비 조건이 아직 확인되지 않아 보류 중입니다. "미확인"은 "아니오"가 아니라 "아직 확인하지
-            않음"입니다 — 이 운동의 조건이 모두 확인함(YES)이 되면 추천 목록에 올라갑니다. "지금은 안 됨(NO)"은
-            그 조건이 실제로 안 된다는 기록이며, 쉬운 단계로 대체할 수 있는 조건일 때만 쉬운 단계로 시작 가능해집니다
-            — 꼭 필요한 조건이면 계속 보류됩니다.
-          </p>
-          {candidates.map((c) => (
-            <div key={c.exerciseId} className="workspace__examCard">
-              <strong className="workspace__examCard__title">{c.title}</strong>
-              {c.unconfirmedCapabilities.map((cap) => (
-                <div key={cap} className="workspace__examCard__row">
-                  <span>
-                    {LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} {safetyTag(cap)}
-                  </span>
-                  <LbpCapabilityStatusButtons
-                    capabilityId={cap}
-                    status={statusOf(cap)}
-                    onSetStatus={onSetStatus}
-                    ariaLabel={`${c.title} — ${LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]}`}
-                  />
-                </div>
-              ))}
-            </div>
-          ))}
-        </>
-      )}
-      {inferredCapabilities.length > 0 && (
-        <div className="workspace__examCard">
-          <strong className="workspace__examCard__title">확정 단계에서 자동 추정된 준비 조건</strong>
-          <p className="workspace__block__hint">
-            {confirmedStage !== null ? `${confirmedStage}단계` : '확정 단계'} 이하 운동이 전제하는 자세·조절 조건이라 확인함으로
-            봅니다. 실제로 안 되면 &quot;지금은 안 됨&quot;을 누르세요 — 그 조건이 필요한 운동만 보류됩니다.
-          </p>
-          {inferredCapabilities.map((cap) => (
-            <div key={cap} className="workspace__examCard__row">
-              <span>{LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} (추정)</span>
-              <LbpCapabilityStatusButtons
-                capabilityId={cap}
-                status={statusOf(cap)}
-                onSetStatus={onSetStatus}
-                ariaLabel={`${LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} (단계 추정) 상태`}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-      {decidedIds.length > 0 && (
-        <div className="workspace__examCard">
-          <strong className="workspace__examCard__title">확인함/지금은 안 됨으로 표시한 준비 조건</strong>
-          <p className="workspace__block__hint">다시 눌러 미확인으로 되돌릴 수 있습니다.</p>
-          {decidedIds.map((cap) => (
-            <div key={cap} className="workspace__examCard__row">
-              <span>{LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]}</span>
-              <LbpCapabilityStatusButtons
-                capabilityId={cap}
-                status={statusOf(cap)}
-                onSetStatus={onSetStatus}
-                ariaLabel={`${LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} 상태`}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
 
 export function PainWorkspaceLane2({
   payload,
@@ -667,15 +509,11 @@ export function PainExerciseSection({
   onAdoptRehabSuggestionToCarePlan,
   lbpRecommendationBlockedMessageKo,
   lbpTreatmentSafetyLockedReasonKo,
-  lbpAwaitingCapabilityCandidates,
-  lbpConfirmedCapabilities,
-  lbpDeniedCapabilities,
-  onSetLbpCapabilityStatus,
   lbpTargetFunctionGap,
+  lbpNeuroUnrecorded = false,
   lbpStageSuggestion,
   lbpConfirmedStage = null,
   onSetLbpConfirmedStage,
-  lbpInferredCapabilities,
 }: {
   /** LBP v1 Batch 1: only an LBP record gets the safety-lock/capability/empty-state extras below -- every other pain region renders exactly the plain SYNTHETIC-preview candidate list it always has. */
   isLbp: boolean
@@ -685,26 +523,22 @@ export function PainExerciseSection({
   lbpConfirmedStage?: LbpExerciseStage | null
   /** 2026-09-05: 단계 확정/해제 setter. 없으면 단계 카드를 렌더하지 않는다(읽기 전용 미리보기 경로). */
   onSetLbpConfirmedStage?: (next: LbpExerciseStage | null) => void
-  /** 2026-09-05: `LbpRecommendationResult.inferredCapabilities` — 확정 단계에서 추정으로만 YES인 준비조건. */
-  lbpInferredCapabilities?: LbpExerciseCapability[]
   rehabSuggestions: RehabSuggestion[]
   onChangeRehabSuggestion: (next: RehabSuggestion) => void
   /** LBP v1 Batch 2 (G10/RF-8): "adopt, never automatic" into PainCarePlan.homeActionPlan. */
   onAdoptRehabSuggestionToCarePlan?: (suggestion: RehabSuggestion) => void
   /** LBP v1 Batch 2 (RF-3b): non-null/non-empty means the exercise section renders this one line instead of any candidate cards. */
   lbpRecommendationBlockedMessageKo?: string | null
-  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. Opus delta review defect 9: rendered once at the top of this section, common to both the READY cards and the awaiting-capability group, not nested only inside the READY block. */
+  /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. */
   lbpTreatmentSafetyLockedReasonKo?: string | null
-  /** LBP v1 Batch 2 (CD-1): candidates deferred only for an unconfirmed capability. */
-  lbpAwaitingCapabilityCandidates?: LbpRecommendationCandidate[]
-  /** Opus delta review defect 5: raw `WorkspaceState.lbpConfirmedCapabilities`, so the "확인함/지금은 안 됨" row can render even once every candidate that needed it has already moved to READY. */
-  lbpConfirmedCapabilities?: string[]
-  /** CD-3: raw `WorkspaceState.lbpDeniedCapabilities` — same scope as `lbpConfirmedCapabilities` above, the genuine 'NO' half. */
-  lbpDeniedCapabilities?: string[]
-  /** CD-3 (`DECISIONS.md` 2026-09-02 "CD-3 승인..."): 3-way setter — 'YES'/'NO'/'UNKNOWN', mutual exclusivity enforced by the caller (`DoctorWorkspace.tsx`). */
-  onSetLbpCapabilityStatus?: (capabilityId: LbpExerciseCapability, status: LbpCapabilityStatus) => void
-  /** LBP v1 Batch 2 §8.2-1(c): non-null only when both candidate lists are empty because no (matching) target function is selected yet. */
+  /** LBP v1 Batch 2 §8.2-1(c): non-null only when the candidate list is empty because no (matching) target function is selected yet. */
   lbpTargetFunctionGap?: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
+  /**
+   * 2026-09-05: 신경학적 상태 미기록 때문에 후보 대부분이 보류된 상태
+   * (`LbpRecommendationResult.neuroUnrecorded`). 이유 없이 빈 목록을 보여주지
+   * 않기 위해 한 줄 안내를 띄운다 — 원장이 1탭으로 해소할 수 있는 유일한 사유다.
+   */
+  lbpNeuroUnrecorded?: boolean
 }) {
   // 2026-09-05: 단계 카드는 아래 어느 분기(안전 블록·0단계 블록·목표기능
   // 미선택)보다도 먼저, 항상 렌더된다 — 0단계로 블록이 접혀 있을 때 원장이
@@ -734,12 +568,7 @@ export function PainExerciseSection({
   // function has been picked yet -- distinct from "picked, but genuinely no
   // eligible exercise", which is out of this correction's scope and simply
   // renders nothing, same as before.
-  if (
-    isLbp &&
-    lbpTargetFunctionGap &&
-    rehabSuggestions.length === 0 &&
-    (lbpAwaitingCapabilityCandidates ?? []).length === 0
-  ) {
+  if (isLbp && lbpTargetFunctionGap && rehabSuggestions.length === 0) {
     return (
       <>
         {stageCard}
@@ -773,15 +602,18 @@ export function PainExerciseSection({
     <>
       {stageCard}
       {/*
-        Opus delta review defect 9 (CD-2): rendered once here, common to
-        both the READY cards below and the awaiting-capability group in
-        `LbpAwaitingCapabilitySection` -- a treatment-safety-locked patient
-        with zero READY candidates but at least one awaiting-capability
-        candidate must still see why adoption is blocked, not only once a
-        READY card happens to exist.
+        Opus delta review defect 9 (CD-2): rendered once here, above the
+        candidate cards -- a treatment-safety-locked patient must see why
+        adoption is blocked before scanning the cards themselves.
       */}
       {isLbp && lbpTreatmentSafetyLockedReasonKo && (
         <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
+      )}
+      {isLbp && lbpNeuroUnrecorded && (
+        <p className="workspace__block__hint">
+          신경학적 이상 소견(레인2 &quot;객관적 검사 소견&quot;)을 먼저 기록하면 나머지 운동 후보가 나타납니다 — 미확인을
+          &quot;이상 없음&quot;으로 가정하지 않습니다.
+        </p>
       )}
       {rehabSuggestions.length > 0 && (
         <section className="workspace__block">
@@ -794,16 +626,6 @@ export function PainExerciseSection({
             </details>
           )}
         </section>
-      )}
-      {isLbp && (
-        <LbpAwaitingCapabilitySection
-          candidates={lbpAwaitingCapabilityCandidates ?? []}
-          confirmedCapabilities={lbpConfirmedCapabilities ?? []}
-          deniedCapabilities={lbpDeniedCapabilities ?? []}
-          inferredCapabilities={lbpInferredCapabilities ?? []}
-          confirmedStage={lbpConfirmedStage}
-          onSetStatus={onSetLbpCapabilityStatus}
-        />
       )}
     </>
   )

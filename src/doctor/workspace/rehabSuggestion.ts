@@ -54,17 +54,6 @@ export type RehabSuggestion = {
   status: RehabSuggestionStatus
   /** Clinician's own final wording — starts empty, never pre-filled from `title`/`goal`. */
   clinicianFinalInstruction: string
-  /**
-   * Opus delta review defect 2 (LBP v1 Batch 2 only): true when this
-   * suggestion's eligibility state was `START_WITH_REGRESSION` — a
-   * structured carrier so adoption-text building (`lbpExerciseRecommendation.ts`'s
-   * `appendLbpAdoptionText`/`buildLbpAdoptionText`) never has to
-   * string-match the title's "(쉬운 단계로 시작)" suffix. Optional and
-   * unused by every non-LBP `RehabSuggestion` (defaults false via
-   * `persistence.ts`'s template, so it round-trips through save/load like
-   * every other field here).
-   */
-  regressed?: boolean
 }
 
 export function isRehabSuggestionPending(item: RehabSuggestion): boolean {

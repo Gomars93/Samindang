@@ -25,16 +25,10 @@ import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment } from '../judgment'
 import { computeLbpFlags, treatmentSafetyLocked as treatmentSafetyLockedFrozen } from '../../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../../spec/lbpAdapter'
-import { buildLbpEligibilityContext, lbpInferredCapabilities } from './lbpEligibilityContext'
+import { buildLbpEligibilityContext } from './lbpEligibilityContext'
 import { isLbpExerciseAllowedAtStage } from './lbpExerciseStageTable'
 import { LBP_STAGE_0_GUIDANCE_KO, type LbpExerciseStage } from './lbpExerciseStage'
-import {
-  evaluateLbpExerciseEligibility,
-  getLbpExerciseEligibilityRule,
-  type LbpExerciseCapability,
-  type LbpExerciseEligibilityContext,
-  type LbpExerciseEligibilityResult,
-} from './lbpExerciseEligibility'
+import { evaluateLbpExerciseEligibility, getLbpExerciseEligibilityRule } from './lbpExerciseEligibility'
 import { LBP_CORE_EXERCISE_METADATA, type LbpCoreExerciseMetadata } from './lbpExerciseCoreMetadata'
 import { getLbpExerciseById, type LbpExerciseDomain, type LbpExerciseTargetFunction } from './lbpExerciseLibrary'
 import { selectedLbpTargetFunctions } from './lbpTargetFunction'
@@ -129,24 +123,22 @@ function strategyLabelForDomain(domain: LbpExerciseDomain): string {
 // Candidate shape
 // ---------------------------------------------------------------------------
 
-export type LbpRecommendationReadiness = 'READY' | 'AWAITING_CAPABILITY_CONFIRMATION'
-
 export type LbpRecommendationCandidate = {
   exerciseId: string
   title: string
-  readiness: LbpRecommendationReadiness
-  /** Meaningful only when readiness === 'READY'. */
-  eligibilityState: 'START_AS_WRITTEN' | 'START_WITH_REGRESSION'
   /** True when a favorable directional response or (LBP_NEURAL_01) a concordant neurodynamic response directly supports this candidate — architecture §2.2 ranking rule. */
   directlySupported: boolean
-  /** Populated only when readiness === 'AWAITING_CAPABILITY_CONFIRMATION' (CD-1). */
-  unconfirmedCapabilities: LbpExerciseCapability[]
-  /** Populated only when readiness === 'READY' && eligibilityState === 'START_WITH_REGRESSION'. */
-  regressionRequirements: LbpExerciseCapability[]
   strategyLabelKo: string
+  /**
+   * 2026-09-05: Core-20 metadata의 `startingCriteriaKo` 원문. 준비조건 게이트를
+   * 없애면서 **이 문장이 원장이 실제로 읽는 시작 조건**이 됐다 — 게이트로 막는
+   * 대신 카드에 띄우고 원장이 환자를 보며 판단한다. 카드에 반드시 표시되어야
+   * 하며(`candidateToRehabSuggestion`의 첫 sourceFact), 비어 있으면 안 된다.
+   */
+  startingCriteriaKo: readonly string[]
   startingDoseKo: string
   stopReviewKo: readonly string[]
-  /** Opus delta review defect 2: Core-20 metadata's own regression description, always carried so adoption text can append it structurally when `eligibilityState === 'START_WITH_REGRESSION'` — never `progressionKo`. */
+  /** Core-20 metadata의 쉬운 단계 설명. 항상 카드에 표시된다 — 원장이 "이 환자에겐 좀 버겁겠다" 싶을 때 낮춰 줄 선택지. `progressionKo`는 여기서 절대 읽지 않는다. */
   regressionKo: string
 }
 
@@ -160,8 +152,7 @@ export type LbpRecommendationResult = {
   /** CD-2: never changes which candidates are computed/shown — only gates adoption (Part D disables the adopt action, never the card). */
   treatmentSafetyLocked: boolean
   treatmentSafetyLockedMessageKo: string | null
-  readyCandidates: LbpRecommendationCandidate[]
-  awaitingCapabilityCandidates: LbpRecommendationCandidate[]
+  candidates: LbpRecommendationCandidate[]
   /**
    * (c) integration correction: non-null only when the record is LBP, the
    * block is not `blocked`, and the clinician has selected no `lbp_tf_*`
@@ -180,11 +171,12 @@ export type LbpRecommendationResult = {
    */
   confirmedStage: LbpExerciseStage | null
   /**
-   * 2026-09-05: 확정 단계에서 **추정으로만** YES가 된 준비조건. 원장이
-   * "안 되면 끄는" 목록 — `PainWorkspace.tsx`가 3상태 버튼과 함께 띄운다.
-   * 원장이 이미 확인/부인한 것은 빠진다.
+   * 2026-09-05: 신경학적 상태(`lbp_objective_motor_deficit`)가 미기록이라 후보
+   * 대부분이 보류된 상태. RF-1 게이트는 그대로 두고(미확인을 안정으로 가정하지
+   * 않는다), 화면이 "무엇을 하면 후보가 나타나는지" 한 줄로 안내하게 한다 —
+   * 이유 없이 빈 목록을 보여주지 않기 위해서다.
    */
-  inferredCapabilities: LbpExerciseCapability[]
+  neuroUnrecorded: boolean
 }
 
 const EMPTY_RESULT = (
@@ -198,11 +190,10 @@ const EMPTY_RESULT = (
   blockedMessageKo,
   treatmentSafetyLocked,
   treatmentSafetyLockedMessageKo,
-  readyCandidates: [],
-  awaitingCapabilityCandidates: [],
+  candidates: [],
   targetFunctionGap: null,
   confirmedStage,
-  inferredCapabilities: [],
+  neuroUnrecorded: false,
 })
 
 /**
@@ -221,9 +212,7 @@ export const TREATMENT_SAFETY_LOCKED_MESSAGE_KO =
 
 function toCandidate(
   meta: LbpCoreExerciseMetadata,
-  rule: { hardRequirements: readonly LbpExerciseCapability[]; regressibleRequirements: readonly LbpExerciseCapability[]; requiredDirectionalResponse?: string },
-  result: LbpExerciseEligibilityResult,
-  readiness: LbpRecommendationReadiness,
+  rule: { requiredDirectionalResponse?: string },
   neurodynamicConcordant: boolean,
 ): LbpRecommendationCandidate {
   const catalogItem = getLbpExerciseById(meta.exerciseId)
@@ -244,15 +233,9 @@ function toCandidate(
     // catalog's (often English) `canonicalName` — that stays reserved for
     // ID/provenance fidelity only (lbpExerciseCoreMetadata.ts).
     title: meta.displayNameKo,
-    readiness,
-    eligibilityState: readiness === 'READY' ? (result.state as 'START_AS_WRITTEN' | 'START_WITH_REGRESSION') : 'START_AS_WRITTEN',
     directlySupported,
-    unconfirmedCapabilities:
-      readiness === 'AWAITING_CAPABILITY_CONFIRMATION'
-        ? [...result.missingHardRequirements, ...result.regressionRequirements]
-        : [],
-    regressionRequirements: readiness === 'READY' ? [...result.regressionRequirements] : [],
     strategyLabelKo: domain ? strategyLabelForDomain(domain) : '',
+    startingCriteriaKo: meta.startingCriteriaKo,
     startingDoseKo: meta.startingDoseKo,
     stopReviewKo: meta.stopReviewKo,
     regressionKo: meta.regressionKo,
@@ -334,8 +317,8 @@ export function buildLbpRecommendationContext(
   const neurodynamicExam = workspaceState.painExamSuggestions.find((i) => i.id === 'lbp_exam_neurodynamic')
   const neurodynamicConcordant = neurodynamicExam?.result.status === 'POSITIVE'
 
-  const ready: LbpRecommendationCandidate[] = []
-  const awaiting: LbpRecommendationCandidate[] = []
+  const found: LbpRecommendationCandidate[] = []
+  let neuroDeferred = 0
 
   for (const meta of LBP_CORE_EXERCISE_METADATA) {
     // RF-13: guard before calling the engine — a rule missing for a
@@ -350,33 +333,16 @@ export function buildLbpRecommendationContext(
     if (!isLbpExerciseAllowedAtStage(meta.exerciseId, confirmedStage)) continue
 
     const result = evaluateLbpExerciseEligibility(meta.exerciseId, context)
-    if (result.state === 'START_AS_WRITTEN' || result.state === 'START_WITH_REGRESSION') {
-      ready.push(toCandidate(meta, rule, result, 'READY', neurodynamicConcordant))
+    if (result.state === 'START_AS_WRITTEN') {
+      found.push(toCandidate(meta, rule, neurodynamicConcordant))
       continue
     }
-    if (result.state !== 'DEFER_NOT_READY') continue // STOP_REVIEW (e.g. distal worsening) — not a candidate, not a capability question either.
-
-    // CD-1: is this DEFER purely a matter of unconfirmed (not directional/
-    // neuro) capabilities? v1 has no negative-confirmation UI, so every
-    // capability the clinician has not tapped is UNKNOWN, never 'NO' — test
-    // by hypothetically confirming every capability this rule references
-    // and re-evaluating, rather than string-matching `reasonsKo`.
-    const optimisticCapabilities: LbpExerciseEligibilityContext['capabilities'] = { ...context.capabilities }
-    for (const cap of [...rule.hardRequirements, ...rule.regressibleRequirements]) {
-      optimisticCapabilities[cap] = 'YES'
+    // 2026-09-05: DEFER/STOP은 후보로 올리지 않는다(기존과 동일). 다만 그 사유가
+    // "신경학적 상태 미확인"뿐인 경우는 세어 둔다 — 원장이 1탭으로 해소할 수 있는
+    // 유일한 사유이므로 화면이 그렇게 안내한다.
+    if (result.state === 'DEFER_NOT_READY' && rule.requiresStableNeuro && context.neuroStatus === 'UNKNOWN') {
+      neuroDeferred++
     }
-    const optimistic = evaluateLbpExerciseEligibility(meta.exerciseId, {
-      ...context,
-      capabilities: optimisticCapabilities,
-    })
-    if (optimistic.state === 'START_AS_WRITTEN' || optimistic.state === 'START_WITH_REGRESSION') {
-      awaiting.push(toCandidate(meta, rule, result, 'AWAITING_CAPABILITY_CONFIRMATION', neurodynamicConcordant))
-    }
-    // Otherwise (still DEFER even with every capability confirmed — e.g. a
-    // directional-response mismatch, or the RF-1 neuro-UNKNOWN gate): not a
-    // capability question, so not shown at all. It reappears automatically
-    // once the directional-response chip or the objective-exam judgment
-    // changes (architecture §2.3: recomputed every render, nothing cached).
   }
 
   return {
@@ -384,11 +350,10 @@ export function buildLbpRecommendationContext(
     blockedMessageKo: null,
     treatmentSafetyLocked: locked,
     treatmentSafetyLockedMessageKo: lockedMessage,
-    readyCandidates: rankReady(ready),
-    awaitingCapabilityCandidates: awaiting,
+    candidates: rankReady(found),
     targetFunctionGap,
     confirmedStage,
-    inferredCapabilities: lbpInferredCapabilities(workspaceState),
+    neuroUnrecorded: neuroDeferred > 0,
   }
 }
 
@@ -404,28 +369,26 @@ export function buildLbpRecommendationContext(
  */
 export function candidateToRehabSuggestion(candidate: LbpRecommendationCandidate): RehabSuggestion {
   const stopReviewJoined = candidate.stopReviewKo.join('; ')
-  const regressed = candidate.eligibilityState === 'START_WITH_REGRESSION'
-  const regressionNote = regressed ? ' (쉬운 단계로 시작)' : ''
   return {
     id: candidate.exerciseId,
-    title: `${candidate.title}${regressionNote}`,
+    title: candidate.title,
     goal: candidate.startingDoseKo,
     rationale: `${candidate.strategyLabelKo} — 중단·재검토: ${stopReviewJoined}`,
     sourceFacts: [
+      // 2026-09-05: 시작 기준이 **첫 줄**이다. 준비조건 게이트를 없앤 뒤 원장이
+      // 이 운동을 줄지 판단하는 근거가 바로 이 문장이므로, 용량보다 먼저 읽혀야
+      // 한다. 테스트가 이 순서를 고정한다.
+      { text: `시작 기준: ${candidate.startingCriteriaKo.join('; ')}`, provenance: 'DERIVED' },
       { text: `시작 용량: ${candidate.startingDoseKo}`, provenance: 'DERIVED' },
-      // Opus delta review defect 2: the regression note (which entry-level
-      // to actually start at) must be visible on the card itself, not only
-      // baked into the adopted Care Plan text.
-      ...(regressed ? [{ text: `쉬운 단계: ${candidate.regressionKo}`, provenance: 'DERIVED' as const }] : []),
+      // 쉬운 단계는 이제 조건부가 아니라 항상 보인다 — 시스템이 "이 환자는
+      // 쉬운 단계로 시작"을 판정하지 않고, 원장이 보고 고르기 때문이다.
+      { text: `쉬운 단계로 시작하려면: ${candidate.regressionKo}`, provenance: 'DERIVED' },
       { text: `중단·재검토 기준: ${stopReviewJoined}`, provenance: 'DERIVED' },
     ],
     contraindicationFacts: [],
     source: 'SUGGESTED',
     status: 'SUGGESTED',
     clinicianFinalInstruction: '',
-    // Structured carrier for appendLbpAdoptionText — never re-derived by
-    // parsing `title`'s "(쉬운 단계로 시작)" suffix.
-    regressed,
   }
 }
 
@@ -471,7 +434,7 @@ export function mergeLbpRehabSuggestions(
  * entry-level the patient actually starts at is not lost between the card
  * and the Care Plan text they take home.
  */
-export function buildLbpAdoptionText(exerciseId: string, options?: { regressed?: boolean }): string | null {
+export function buildLbpAdoptionText(exerciseId: string): string | null {
   const meta = LBP_CORE_EXERCISE_METADATA.find((m) => m.exerciseId === exerciseId)
   const catalogItem = getLbpExerciseById(exerciseId)
   if (!meta || !catalogItem) return null
@@ -482,14 +445,13 @@ export function buildLbpAdoptionText(exerciseId: string, options?: { regressed?:
   // as "stop using the rest point"). A trailing period here guarantees a
   // clear sentence boundary before "중단·재검토:" regardless of whether
   // `regressionKo` itself ends with punctuation.
-  const regressionSuffix = options?.regressed ? ` 쉬운 단계: ${meta.regressionKo}.` : ''
-  return `${meta.displayNameKo} — ${meta.startingDoseKo}${regressionSuffix} 중단·재검토: ${stopReviewJoined}`
+  return `${meta.displayNameKo} — ${meta.startingDoseKo} 중단·재검토: ${stopReviewJoined}`
 }
 
 /** Appends the adoption line to an existing free-text home action plan, idempotently (never duplicates the exact same line) and never automatically (only ever called from an explicit clinician click — Part D). Reads `suggestion.regressed` — the structured flag `candidateToRehabSuggestion` set — rather than parsing `suggestion.title`'s "(쉬운 단계로 시작)" suffix (Opus delta review defect 2). */
 export function appendLbpAdoptionText(existingHomeActionPlan: string, suggestion: RehabSuggestion): string {
   const text =
-    buildLbpAdoptionText(suggestion.id, { regressed: suggestion.regressed === true }) ??
+    buildLbpAdoptionText(suggestion.id) ??
     [suggestion.title, suggestion.goal].filter((s) => s.trim().length > 0).join(' — ')
   if (!text) return existingHomeActionPlan
   if (existingHomeActionPlan.includes(text)) return existingHomeActionPlan

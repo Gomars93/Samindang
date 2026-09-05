@@ -1,5 +1,110 @@
 # Decisions Log
 
+## 2026-09-05 — LBP 준비조건 게이트 **제거** (CD-1·CD-3 폐기). 시작 기준을 카드에 노출한다
+
+**결정자**: Gomars93(원장, PO). 같은 날 앞 배치("준비조건 두 층")를 **되돌리고
+더 나아간다** — 그 배치는 15탭을 4탭으로 줄였으나, 원장 지적으로 탭 자체가
+불필요했음이 드러났다.
+
+### 원장 지적
+> "준비조건 15개를 내가 육안으로 빠르게 처리하면 되는 거 아닌가?"
+
+맞다. 이 세션이 잘못된 것을 최적화했다.
+
+### 확인한 사실 (주장이 아니라 코드로)
+
+1. **그 기록은 어디로도 가지 않았다.** `lbpConfirmedCapabilities`/
+   `lbpDeniedCapabilities`가 `emrPreview.ts`/`emrSummary.ts`,
+   `revisitCarryForward.ts`/`longitudinal.ts`/`visitWorkspace.ts`,
+   `patientCarePlanPreview.ts`/`carePlan.ts` 어디에도 등장하지 않는다(grep 0건).
+   유일한 소비자가 같은 화면 같은 세션의 게이트였다 — **write-only 데이터**,
+   CLAUDE.md가 금지하는 바로 그 패턴.
+2. **"15개"는 실제 숫자가 아니었다.** 목표 기능 필터 뒤 원장이 마주하는 서로
+   다른 준비조건은 1~10개다(옷입기 1 / 수면 2 / 앉기 3 / 앉았다일어서기 4 /
+   걷기 6 / 서기 7 / 들어올리기 8 / 일 10). 앞 배치가 이론상 최대치로 문제를
+   부풀렸다. 이 세션의 보고 오류였고 원장께 정정했다.
+
+### 핵심 판단 — 같은 질문을 두 번 하고 있었다
+
+**원장이 어떤 운동을 채택하는 행위 자체가 그 운동의 시작 조건을 판단했다는
+뜻이다.** "네발기기 팔다리 뻗기"를 채택한다는 건 그 환자가 네발기기를 할 수
+있다고 본 것이다. 채택 *전에* `QUADRUPED_TOLERATED`를 따로 확인시키는 것은
+중복이다. 앞 배치의 층 분리는 그 중복을 "한 번 반"으로 줄였을 뿐 없애지 못했다.
+
+### 임상 정보 손실 0 — 대조로 확인
+
+삭제한 capability enum은 `lbpExerciseCoreMetadata.ts`의 `startingCriteriaKo`를
+기계용으로 사본한 것이었다. 행 대조:
+
+| 운동 | 삭제된 capability | 남아 있는 `startingCriteriaKo` |
+|---|---|---|
+| `LBP_FUNC_01` | `BALANCE_WITH_SUPPORT` (RF-5) | "낙상 위험이나 심한 기립성 증상이 별도 평가 없이 남아 있지 않음" |
+| `LBP_DEEP_TRUNK_01` | `NATURAL_BREATHING_TOLERATED` (RF-10) | "편안하게 호흡하면서 복부에 낮은 강도의 긴장을 만들 수 있음" |
+| `LBP_LOAD_02` | `HIP_HINGE_CONTROL`+`LOAD_READY` (RF-7b) | "무부하 hip hinge를 통제된 형태로 수행 가능", "증상 irritability가 고부하 연습을 허용하고…" |
+| `LBP_ACT_02` | `CAN_SELF_PACE` (RF-4) | "보행과 휴식을 스스로 조절할 수 있음" |
+| `LBP_TRUNK_03` | `QUADRUPED_TOLERATED` (RF-6) | "네발기기에서 균형을 유지할 수 있음" |
+
+한국어 원본이 오히려 더 풍부하다(증상 조건 절을 함께 담는다). 따라서 폐기되는
+것은 RF-4/5/6/7/7b/10의 **임상 판단이 아니라 그 중복 표현**이다. 이 대조를
+`tests/lbp-exercise-eligibility.spec.mjs` §8이 5행 exact-match로 고정한다.
+
+### 안전은 줄지 않는다
+
+게이트 4개가 **한 줄도 바뀌지 않고** 남는다: `routineCareAllowed`(질환 안전),
+`neuroStatus`(NEW_OR_WORSENING → STOP / **UNKNOWN → DEFER, RF-1 유지**),
+`distalSymptomResponse`(원위 악화 → STOP), `requiredDirectionalResponse`.
+바깥으로는 `treatmentSafetyLocked`(채택 잠금), 각 운동 `stopReviewKo`(카드 표시),
+그리고 **원장의 명시적 채택** — 이것 없이는 어떤 운동도 환자에게 나가지 않는다.
+제거된 것은 그 위에 얹혀 있던 **네 번째 층**, 유일하게 수기 입력을 요구하면서
+유일하게 하류 소비자가 없던 층이다.
+
+### 경로 교체 표 (CLAUDE.md "제거 또는 교체")
+
+**(출력 방향)**
+
+| 옛 경로가 나르던 값 | 초진 | 재진 | 한약 | mixed | synthetic 미리보기 |
+|---|---|---|---|---|---|
+| 각 운동의 시작 조건 (capability enum) | **카드 첫 근거 소견 "시작 기준"**(`startingCriteriaKo` 원문) | 운동 섹션 없음(기존) | 비대상 | 초진과 동일 인스턴스 | 후보 없음(기존) |
+| "확인함/지금은 안 됨" 기록 | **의도적으로 버림** — 어디에도 도달한 적 없음(위 확인 1) | 없음 | 비대상 | 동일 | 없음 |
+| 보류 사유 "준비조건 미확인" | **소멸**(그 상태가 없어짐) | 없음 | 비대상 | 동일 | 없음 |
+| 보류 사유 "신경 상태 미확인" | **`neuroUnrecorded` → 한 줄 안내**(빈 목록 방치 방지) | 없음 | 비대상 | 동일 | 없음 |
+| `START_WITH_REGRESSION` / `regressed` | **소멸.** `regressionKo`는 "쉬운 단계로 시작하려면"으로 **항상** 카드에 표시 — 시스템 판정에서 원장 선택으로 | 없음 | 비대상 | 동일 | 없음 |
+| 제목의 "(쉬운 단계로 시작)" 접미사 | **버림**(시스템 판정이었음) | 없음 | 비대상 | 동일 | 없음 |
+| 채택 텍스트의 쉬운 단계 절 | **버림** — 시작 기준은 임상가용 문장이라 환자 안내문에 넣지 않는다 | 없음 | 비대상 | 동일 | 없음 |
+
+**(입력 방향)** 쓰기는 되는데 읽히지 않는 필드를 남기지 않았다:
+`lbpConfirmedCapabilities`/`lbpDeniedCapabilities`/`RehabSuggestion.regressed`를
+`WorkspaceState`에서 제거했고, 그것을 쓰던 UI(3상태 버튼)도 함께 닫았다. 옛
+기록의 그 값들은 역직렬화에서 조용히 무시되며(전체 shape을 매번 새로 만든다),
+같은 기록의 다른 필드와 원장 결정(ACCEPTED 등)은 보존된다 — 테스트로 확인.
+
+**(표시 조건)** latch↔파생식 전환 없음. 새로 생긴 한 줄 안내(`neuroUnrecorded`)는
+순수 파생값이고 편집 중간 상태가 없다.
+
+**(경로당 테스트 1개)** 제거 4경로 + 대체 2경로 = 단언 그룹 6개
+(recommendation 스펙 "제거된 경로 1/4~4/4" + 신경 안내 2건, doctor-workspace
+"게이트 제거"·"대체 경로" 4건, eligibility §3·§8).
+
+### 트레이드오프 / 남는 리스크
+- (−) "확인했다"는 감사 기록이 사라진다. **그러나 그 기록은 EMR에 도달한 적이
+  없어 의무기록으로서의 가치가 애초에 0이었다.** 필요해지면 EMR 도달을 먼저
+  만들고 그 다음에 논의한다(순서가 반대였던 것이 이번 결함의 원인).
+- (−) 후보 수가 늘어난다(목표기능 1개 기준 1~11개). 기존 "3개 + 더 보기 (N)"
+  접기가 그대로 흡수한다 — 테스트로 확인.
+- (−) 추정이 틀려 못 하는 자세의 운동이 뜰 수 있다 → 이제 **원장이 시작 기준을
+  읽고 거른다**. 이것이 게이트보다 정확하다(원장은 환자를 보고 있다).
+- **놓치기 쉬운 것**: 신경학적 상태 미기록이면 여전히 19/20이 보류된다(RF-1,
+  의도된 안전 게이트). 이번에 그 상태에 **한 줄 안내**를 붙여, 원장이 이유 없이
+  빈 목록을 보는 일이 없게 했다.
+
+### 검증
+`test:lbp-exercise-eligibility` 20(재작성), `test:lbp-exercise-recommendation` 30,
+`test:doctor-workspace` 279, `test:workspace-round3` 196, `test:all` exit 0,
+`build` green, FROZEN zero-diff, 태블릿 `src/spec` 0줄, 변이 4/4 KILLED
+(시작 기준 제거 / 순서 뒤바꿈 / neuroUnrecorded 고정 / RF-1 게이트 제거).
+
+---
+
 ## 2026-09-05 — LBP 준비조건 15개를 두 층으로: A층(안전 3개, 원장 직접 확인) / C층(12개, 확정 단계에서 추정) + 운동 단계 확정 UI
 
 **결정자**: Gomars93(원장, PO) — "너의 추천으로 모두 진행". 이 세션이 구현·검증.

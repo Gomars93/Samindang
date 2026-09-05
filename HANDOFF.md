@@ -1,5 +1,66 @@
 # Current Handoff
 
+## 2026-09-05 (최신 27): 준비조건 게이트 **제거** — 원장이 시작 기준을 읽고 육안 판단한다
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.
+**삭제**: `lbpCapabilityLayer.ts`, `tests/lbp-capability-layer.spec.mjs`,
+`LbpAwaitingCapabilitySection`/`LbpCapabilityStatusButtons`(PainWorkspace),
+`WorkspaceState.lbpConfirmedCapabilities`/`lbpDeniedCapabilities`,
+`RehabSuggestion.regressed`, `START_WITH_REGRESSION` 상태.
+**태블릿 `src/spec` 0줄, FROZEN zero-diff, `emrPreview.ts` 0줄.**
+
+### 왜 (원장 지적)
+> "준비조건 15개를 내가 육안으로 빠르게 처리하면 되는 거 아닌가?"
+
+맞았다. 코드로 확인한 두 가지:
+1. 그 기록은 **EMR·재진·환자 안내문 어디에도 도달한 적이 없다**(grep 0건).
+   유일한 소비자가 같은 화면의 게이트 — write-only 데이터였다.
+2. **"15개"는 실제 숫자가 아니었다.** 목표기능 필터 뒤 1~10개(옷입기 1 /
+   수면 2 / 앉기 3 / 걷기 6 / 일 10). 앞 배치(최신 26)가 이론상 최대치로
+   문제를 부풀렸다 — 이 세션의 보고 오류.
+
+핵심: **채택하는 행위 자체가 이미 확인이다.** 같은 질문을 두 번 하고 있었다.
+
+### 무엇으로 대체했나
+각 후보 카드의 **첫 근거 소견 = "시작 기준"**(`startingCriteriaKo` 한국어 원문).
+capability enum은 이 문장의 기계용 사본이었고, 원본이 더 풍부하다(대조표는
+DECISIONS.md). 쉬운 단계도 조건부가 아니라 항상 표시 — 시스템 판정에서 원장
+선택으로 바뀌었다.
+
+### 안전은 줄지 않았다
+게이트 4개 그대로: 질환 안전 / 신경(NEW_OR_WORSENING→STOP, **UNKNOWN→DEFER,
+RF-1 유지**) / 원위 악화 / 방향성. + 채택 잠금 + 카드의 중단 기준 + 원장 채택.
+제거한 것은 그 위 네 번째 층, 수기 입력을 요구하면서 하류 소비자가 없던 층.
+
+**신규**: 신경 상태 미기록이면 `neuroUnrecorded` → "신경학적 이상 소견을 먼저
+기록하면 나머지 후보가 나타납니다" 한 줄. 이유 없는 빈 목록 방지.
+
+### 검증
+- `test:lbp-exercise-eligibility` **20**(재작성) / `test:lbp-exercise-recommendation`
+  **30** / `test:doctor-workspace` **279** / `test:workspace-round3` **196**
+- `test:all` exit 0 / `build` green / FROZEN zero-diff
+- **변이 4/4 KILLED**: 시작 기준 제거 · 시작 기준을 용량 뒤로 · neuroUnrecorded
+  고정 · RF-1 신경 게이트 제거
+
+### 원장 최소 조작 (실측 기준)
+| | 이전(최신 25) | 앞 배치(26) | **지금** |
+|---|---|---|---|
+| 준비조건 | 1~10탭 | 최대 3탭 | **0탭** |
+| 신경 상태 | 1탭 | 1탭 | 1탭 |
+| 단계 확정 | — | 1탭 | 1탭(선택) |
+
+### Next Recommended Action
+1. **원장 로컬 회고 파일럿** `npm run pilot:lbp-stage` (변경 없음).
+2. **실환자 파일럿 5~10명** — 이제 볼 것이 바뀌었다: 후보 카드의 **시작 기준을
+   읽고 실제로 거르게 되는지**, 후보 수(1~11개)가 진료 흐름에 맞는지.
+3. 파일럿 뒤: `emrPreview.ts` 동결 해제 → 확정 단계·채택 운동을 EMR P에 출력.
+   **"확인했다" 기록이 필요하다면 EMR 도달을 먼저 만들고 그 다음 논의한다**
+   (순서가 반대였던 것이 이번 결함의 원인).
+4. 재진 워크스페이스에 운동 섹션(단계 카드 포함) — 여전히 없음.
+5. `workspaceFixtures.ts:247`의 `'under_1w'` fixture drift(문진에 없는 값) 미수정.
+
+---
+
 ## 2026-09-05 (최신 26): 준비조건 15개 → **A층 3개(직접 확인) / C층 12개(단계 추정)** + 운동 단계 확정 카드
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.

@@ -201,3 +201,6 @@ tests/.r17-*
 tests/.r18-*
 tests/.r19-*
 tests/.r20-*
+
+# esbuild bundle used by scripts/lbp-stage-distribution.mjs (regenerated, not source)
+scripts/.lbp-exercise-stage-bundle.mjs

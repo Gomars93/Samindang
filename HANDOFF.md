@@ -1,5 +1,53 @@
 # Current Handoff
 
+## 2026-09-05 (최신 25): 요통 운동 단계 **격하 모델 전환 + 0단계 신설 + LBP_07B 문항** — 원장 지시 반영
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.
+**변경**: `src/doctor/workspace/lbpExerciseStage.ts`(재작성) +
+`src/spec/coreSpec.ts`(문항 LBP_07B 1개 + payload 배선) +
+`tests/lbp-exercise-stage.spec.mjs`(189→**283** assertions) +
+`tests/lbp-stage-pilot.spec.mjs`(신규 36) +
+`scripts/lbp-stage-distribution.mjs`(신규, 회고 파일럿) + 문서 3건.
+
+### 이번에 한 것
+- 원장 검토에서 **오해 1건과 진짜 결함 1건**을 분리해 확인했다.
+  - (오해) v0.3에서도 `severe + 1주 이내`는 이미 1단계였다 — 상한은 기본
+    단계가 낮으면 발동하지 않는다. 먼저 이 점을 알렸다.
+  - (진짜 결함) **0단계가 없었다.** TBC 3단계를 그대로 가져오면서 그 아래를
+    비워둔 설계 실수.
+- **상한(CAP) → 격하(DEMOTION) 모델 전환.** 원장의 두 지시("급성은 1단계도
+  힘들 수 있다", "재발 3개월이면 1단계씩 격하")가 같은 연산이라 하나로 통일.
+  `severe + 급성 → 0단계`가 별도 규칙 없이 산술로 나온다.
+- **0단계(보호/안정) 신설.** 능동 운동 미처방 + 자세·호흡 안내
+  (`LBP_STAGE_0_GUIDANCE_KO`). 기본 단계로는 도달 불가, 격하로만 도달.
+- **문항 `LBP_07B`(재발 간격) 추가.** `LBP_07='YES'`일 때만 노출. 재발 격하의
+  입력이 문진에 아예 없었던 것을 메웠다. 옛 기록(필드 없음)은 격하 없이 동작.
+- **회고 파일럿 스크립트** — 이미 받아둔 제출 기록에 규칙을 돌려 분포를 뽑는다.
+  환자 신규 모집 0명, 원장 수기 입력 0건. 개인정보 미열람(테스트가 강제).
+
+### 검증
+- `npm run test:lbp-exercise-stage` — **283 assertions**
+  (전수 **700조합** = 4×7×5×5를 소스와 독립된 계산식으로 대조)
+- `npm run test:lbp-stage-pilot` — **36 assertions**(신규, 스크립트 집계·경고·PII)
+- `npm run test:all` — exit 0, 실패 0건
+- `npm run build` — green / FROZEN zero-diff 유지
+
+### Next Recommended Action
+1. **원장이 로컬에서 회고 파일럿 실행** ← 지금 여기.
+   `npm run pilot:lbp-stage` (필요시 `SAMINDANG_DATA_DIR=...`).
+   0단계 > 30% 또는 한 단계 > 80%면 규칙 재설계.
+   **요통 제출이 0건이면 회고 파일럿 불가 → 실환자 파일럿으로 직행.**
+2. **원장 결정 대기 (최우선)**: 준비조건 15개 중 A층(진짜 안전 금기)이
+   무엇인가. 현재 15개 전부 UNKNOWN이면 **운동 20개가 전부 안 뜬다**
+   (`lbpExerciseEligibility.ts` RF-1). 제안한 3층 분리는 v0.4 §6.1.
+   후보: `SAFE_WALKING` / `BALANCE_WITH_SUPPORT` / `CAN_SELF_PACE`.
+3. **화면 배선** — 파일럿 분포 확인 후. 0단계 옆 **"1단계로 올리기" 1탭**이
+   필수 요구사항(v0.4 §2).
+4. 단계 **상승** 기준(재진에서 무엇을 보고 올리는가)은 여전히 미결 —
+   TBC 원문에도 명시 기준이 없다.
+
+---
+
 ## 2026-09-05 (최신 24): 요통 **환자 단계 배정 규칙 확정 + 구현** — ODI 도입하지 않고 기존 문진 필드로 판정
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.

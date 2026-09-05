@@ -125,6 +125,7 @@ tests/.lbp-exercise-library-bundle.mjs
 tests/.lbp-exercise-core-metadata-bundle.mjs
 tests/.lbp-exercise-eligibility-bundle.mjs
 tests/.lbp-exercise-recommendation-bundle.mjs
+tests/.lbp-exercise-stage-bundle.mjs
 tests/.lbp-exercise-recommendation-corespec-bundle.mjs
 tests/.lbp-eligibility-context-bundle.mjs
 tests/.lbp-exercise-recommendation-core-metadata-bundle.mjs

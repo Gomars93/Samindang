@@ -1,6 +1,46 @@
 # Current Handoff
 
-## 2026-09-05 (최신 23): 요통 운동 **레벨 표 v0.2 확정** — 원문 4편 직접 확인 후 애매행 7개 전부 해소, ○(원장 판단 필요) 0개
+## 2026-09-05 (최신 24): 요통 **환자 단계 배정 규칙 확정 + 구현** — ODI 도입하지 않고 기존 문진 필드로 판정
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.
+**변경**: `src/doctor/workspace/lbpExerciseStage.ts`(신규) +
+`tests/lbp-exercise-stage.spec.mjs`(신규, 189 assertions) + package.json 배선 +
+문서 3건. **태블릿(`src/spec`) 0줄.**
+
+### 이번에 한 것
+- v0.2가 "운동 20개가 몇 단계인가"를 확정했다면, 이번엔 **"환자가 몇 단계인가"**
+  를 정했다. `docs/LBP_EXERCISE_STAGE_ASSIGNMENT_v0.3.md`.
+- **정정 2건**(원장께 잘못 보고했던 것, 문서 §0에 기록):
+  1. ODI 구간→단계 매핑표는 원문 근거 없는 창작이었다 → 폐기.
+  2. "통증 강도 척도가 없다"는 사실이 아니었다 → 재평가 대상
+     (`finalAssessment.ts` `PAIN_FOLLOW_UP_OPTIONS`의 `pain_intensity`,
+     `baseline`/`postTreatmentValue`)에 이미 있다.
+- 원장 결정 3건 반영: (a) `severe`→1 / `moderate`→2 / `mild`·`minimal`→3,
+  (b) 점수척도는 기존 재평가 대상 체계 사용, (c) 통합판단은 **원장 주도형**.
+- 단계를 낮추는 cap 2개: 발병 1주 이내, `LBP_13=YES`. 둘 다 **2단계까지만**
+  — 1단계까지 내리면 급성 초진 전원이 1단계가 되어 일상지장도 축이 죽는다.
+- `LBP_12`/`LBP_14`/`LBP_13=SOMEWHAT`은 단계를 바꾸지 않고 근거 문장으로만.
+- `REPEAT_VISIT_AUTO_COMPARE_STATUS`("재진 자동 비교: 자동 판단 없음") 원칙을
+  지킨다 — 이 함수는 재진에서도 **오늘 답변만** 본다. 테스트가 소스 텍스트로
+  강제.
+
+### 검증
+- `npm run test:lbp-exercise-stage` — 189 assertions 통과 (전수 조합 140가지,
+  손상 payload 12종, 문진 drift 가드, 아키텍처 제약 단언 포함)
+- `npm run test:all` — 전체 green (exit 0)
+- `npm run build` (`tsc -b && vite build`) — green
+
+### Next Recommended Action
+1. **원장 확인**: cap 값이 2단계인 것이 맞는지(직전 대화에서 "1주 이내 → 1단계"
+   라고 먼저 제안했다가 2단계로 바꿨다 — 이유는 v0.3 §3).
+2. **배선**: PainWorkspace의 어디에 단계 확정 UI를 놓을지. 지금은 함수만 있고
+   화면 호출부가 없다.
+3. **미결**: `LBP_07` 재발을 cap에 넣을지, 준비조건 15개 중 진짜 안전 금기가
+   무엇인지(v0.1 §C부터 계속 미결).
+
+---
+
+## 2026-09-05 (23): 요통 운동 **레벨 표 v0.2 확정** — 원문 4편 직접 확인 후 애매행 7개 전부 해소, ○(원장 판단 필요) 0개
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 코드 변경 없음(문서만).
 

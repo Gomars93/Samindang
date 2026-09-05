@@ -2941,3 +2941,58 @@ Opus가 단독으로 내릴 수 있는 판단이 아니다. 근거는 §18.0이 
   원문에 없는 기준을 만들어 달라는 잘못된 요청이었다.
 - 상세는 `docs/LBP_EXERCISE_LEVEL_DRAFT_v0.2.md` §1-1,
   근거는 `docs/LBP_EXERCISE_LIBRARY_EVIDENCE_RESEARCH_v0.1.md` §16.
+
+---
+
+## 2026-09-05 — 요통 운동 단계 배정: 척도를 새로 넣지 않고 기존 필드로 판정한다
+
+### Context
+`docs/LBP_EXERCISE_LEVEL_DRAFT_v0.2.md`가 운동 20개의 단계를 확정한 뒤, 남은
+문제는 "환자가 몇 단계인가"였다. 세션 진행자가 ODI(Oswestry Disability Index)
+도입을 제안하며 ODI 구간→단계 매핑표를 만들었으나, 그 표의 숫자는 **어떤
+원문에도 없는 창작**이었다(Alrwaily 2016 각주 2: "use any disability
+measure"). 표는 폐기했다.
+
+또한 세션 진행자가 "통증 강도 척도가 시스템에 없다"고 보고했으나 이는 사실이
+아니었다 — `src/spec`(태블릿)만 확인한 결과였고, 척도는 원장 워크스페이스의
+재평가 대상(Follow-up Target) 체계에 이미 있었다.
+
+### Decision
+**세 가지를 결정한다.**
+
+1. **ODI를 도입하지 않는다.** 이미 있는 `VISIT_04_SYMPTOM_IMPACT`(4지선다,
+   required, 전 증상환자)를 기본 단계 축으로 쓴다.
+   `severe`→1단계 / `moderate`→2단계 / `mild`·`minimal`→3단계.
+2. **점수척도를 새로 만들지 않는다.** 재평가 대상(`finalAssessment.ts` +
+   `lbpTargetFunction.ts`)의 `baseline`/`postTreatmentValue`가 이미 그
+   역할이다. 환자마다 재는 동작이 다르다는 점에서 ODI보다 이 시스템에 맞다.
+3. **통합판단은 "원장 주도형"(C-1)으로 한다.** 시스템은 제안 단계와 근거
+   문장을 모아 보여주고, 확정은 원장이 한다. 이전 방문값과의 자동 비교는
+   하지 않는다.
+
+### Rationale
+1. ODI는 10문항 추가 = `src/spec` 수정 = FROZEN(zero-diff) 위반이다.
+2. ODI 8번은 성생활 문항이다 — 개원가 초진 태블릿에 놓기 어렵고, 원본 ODI도
+   이 항목 무응답용 분모 조정 규칙을 따로 둔다.
+3. 최종 출력이 3단계인데 0~100% 연속척도를 입력으로 받는 것은 해상도 낭비다.
+   ODI를 넣어도 "몇 점부터 2단계인가"라는 미해결 질문은 그대로 남는다.
+4. C-2(자동 계산형)는 `finalAssessment.ts`의
+   `REPEAT_VISIT_AUTO_COMPARE_STATUS`("자동 판단 없음")와 정면 충돌한다. 이
+   원칙은 `rehabSuggestion.ts` / `lbpWorkingHypothesis.ts` /
+   `lbpExerciseRecommendation.ts`를 관통한다.
+5. 더 실질적인 이유: 지금 자동 상향 규칙을 만들면 그 규칙이 맞는지 검증할
+   임상 데이터가 0건이다. 파일럿 관찰이 먼저다.
+
+### Consequences
+- 새 파일 `src/doctor/workspace/lbpExerciseStage.ts`(순수 함수) +
+  `tests/lbp-exercise-stage.spec.mjs`(189 assertions). **태블릿(`src/spec`)
+  변경 0줄.**
+- 단계를 낮추는 cap 2개를 둔다 — 발병 1주 이내, 공포회피 큼(`LBP_13=YES`).
+  둘 다 최대 2단계까지만 허용하고 1단계까지 내리지 않는다. 1단계까지 내리면
+  급성 초진 전원이 VISIT_04와 무관하게 1단계가 되어 축이 무의미해진다.
+- `LBP_12`(회복기대) / `LBP_14`(업무지장) / `LBP_13=SOMEWHAT`은 단계를 바꾸지
+  않고 근거 문장으로만 표시한다 — 단계를 움직일 근거가 원문에 없다.
+- 이 결정은 되돌릴 수 있다. 파일럿에서 `VISIT_04=severe`가 과반을 넘으면 이
+  축은 실패이며 그때 ODI 재검토가 정당해진다.
+- **아직 화면에 배선되지 않았다** — 함수와 테스트만 있다.
+- 상세는 `docs/LBP_EXERCISE_STAGE_ASSIGNMENT_v0.3.md`.

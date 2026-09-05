@@ -204,3 +204,7 @@ tests/.r20-*
 
 # esbuild bundle used by scripts/lbp-stage-distribution.mjs (regenerated, not source)
 scripts/.lbp-exercise-stage-bundle.mjs
+
+# esbuild bundles used by tests/lbp-capability-layer.spec.mjs (regenerated, not source)
+tests/.lbp-capability-layer-bundle.mjs
+tests/.lbp-exercise-stage-table-bundle.mjs

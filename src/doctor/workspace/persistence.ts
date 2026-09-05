@@ -234,6 +234,21 @@ export type WorkspaceState = {
    * `lbpConfirmedCapabilities` above.
    */
   lbpWorkingHypothesis: LbpWorkingHypothesis
+  /**
+   * 2026-09-05 (원장 결정, `DECISIONS.md` 같은 날짜 "준비조건 두 층" 항목):
+   * 원장이 확정한 운동 단계. `null` = 아직 확정 안 함(기본).
+   * 0 = 보호/안정(능동 운동 미처방), 1~3 = TBC 단계.
+   *
+   * 이 값이 하는 일: (1) 후보 운동을 이 단계 이하로 필터, (2) C층 준비조건
+   * 12개를 이 단계에서 추정(`lbpCapabilityLayer.ts`). **제안값이 아니라
+   * 확정값만 저장한다** — 제안(`suggestLbpExerciseStage`)은 매 렌더 재계산이고
+   * 여기 쓰이지 않는다("adopt, never automatic").
+   *
+   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION — 옛 기록은
+   * `null`로 읽혀 필터·추정 모두 꺼진 기존 동작이 된다. 0~3 정수가 아닌 값은
+   * 전부 `null`.
+   */
+  lbpConfirmedStage: 0 | 1 | 2 | 3 | null
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -259,8 +274,14 @@ export function emptyWorkspaceState(): WorkspaceState {
     lbpConfirmedCapabilities: [],
     lbpDeniedCapabilities: [],
     lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
+    lbpConfirmedStage: null,
     updated_at: null,
   }
+}
+
+/** 0~3 정수만 통과. 문자열 '1', 1.5, -1, 4, null 등은 전부 null. */
+export function sanitizeLbpConfirmedStage(v: unknown): 0 | 1 | 2 | 3 | null {
+  return v === 0 || v === 1 || v === 2 || v === 3 ? v : null
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -331,6 +352,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     lbpConfirmedCapabilities,
     lbpDeniedCapabilities,
     lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
+    lbpConfirmedStage: sanitizeLbpConfirmedStage(raw.lbpConfirmedStage),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

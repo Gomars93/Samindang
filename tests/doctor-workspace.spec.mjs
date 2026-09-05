@@ -3952,3 +3952,59 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
 }
 
 console.log(`\n${passed} doctor-workspace assertions passed.`)
+
+// ===========================================================================
+// 2026-09-05: 운동 단계 카드 + C층 추정 준비조건 행 (PainWorkspace.tsx LbpStageCard)
+// ===========================================================================
+
+test('stage card: a live LBP record renders the 운동 단계 card with the suggestion (PAIN_SCENARIO_1 = mild/1_3m -> 3단계) and a 1-tap "제안대로 확정" button; nothing is pressed while unconfirmed', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+  assert.ok(html.includes('운동 단계'), 'card heading renders')
+  assert.ok(html.includes('3단계 (제안)'), 'the suggested stage is marked on its own button')
+  assert.ok(html.includes('제안대로 확정'), 'one-tap confirm exists')
+  const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)
+  assert.ok(!/aria-pressed="true"/.test(stageGroup), 'no stage button is pressed before the clinician confirms')
+  assert.ok(html.includes('workspace__stageBtn'), 'the stage buttons use their own class, not the candidate adoptBtn class')
+})
+
+test('stage card: a SYNTHETIC preview record does NOT render the stage card (no live payload -> no suggestion)', () => {
+  const html = render(PAIN_SCENARIO_1)
+  assert.ok(!html.includes('aria-label="운동 단계 확정"'), 'stage card absent on synthetic preview')
+})
+
+test('stage card: confirmed 0단계 -> guidance text, a 1-tap "1단계로 올리기", the exercise block collapses to the STAGE_0 message, and no awaiting-capability list renders', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ lbpConfirmedStage: 0, painFollowUpTargets: walkingFollowUpTarget }))
+  assert.ok(html.includes('1단계로 올리기'), 'raising is one tap')
+  assert.ok(html.includes('능동 운동을 처방하지 않습니다'), 'stage-0 guidance renders')
+  assert.ok(html.includes('0단계(보호/안정) 확정'), 'exercise block shows the STAGE_0 blocked message')
+  assert.ok(!html.includes('확인하면 시작 가능'), 'no awaiting-capability list at stage 0')
+  const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)
+  assert.ok(/<button[^>]*aria-pressed="true"[^>]*>0단계/.test(stageGroup), 'the 0단계 button is pressed')
+})
+
+test('stage card: confirmed 2단계 with nothing tapped -> the "자동 추정된 준비 조건" row renders with (추정) items + 3-state buttons, the A-layer chip on ACT_01 carries the 안전 · 직접 확인 tag, and 2단계 is pressed', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ lbpConfirmedStage: 2, painFollowUpTargets: walkingFollowUpTarget }))
+  const inferredIdx = html.indexOf('확정 단계에서 자동 추정된 준비 조건')
+  assert.ok(inferredIdx !== -1, 'inferred row renders')
+  const inferredChunk = html.slice(inferredIdx, inferredIdx + 6000)
+  assert.ok(inferredChunk.includes('(추정)'), 'inferred items are labeled')
+  assert.ok(inferredChunk.includes('바로 누운 자세 유지 가능'), 'SUPINE_TOLERATED (inferred at stage 1) is listed')
+  assert.ok(!inferredChunk.includes('보조도구 포함, 안전하게 걸을 수 있음'), 'SAFE_WALKING (A-layer) is never in the inferred row')
+  assert.ok(/지금은 안 됨/.test(inferredChunk), 'the clinician can turn an inferred item off right there')
+  assert.ok(html.includes('안전 · 직접 확인'), 'A-layer chips are tagged')
+  const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)
+  assert.ok(/<button[^>]*aria-pressed="true"[^>]*>2단계/.test(stageGroup), 'the 2단계 button is pressed')
+})
+
+test('stage card: source wiring — DoctorWorkspace persists ONLY the confirmed stage (setter writes lbpConfirmedStage), and emrPreview.ts (pilot-frozen) does not read it yet', () => {
+  const dwSrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  assert.ok(/onSetLbpConfirmedStage=\{\(next\) => setWorkspaceState\(\(s\) => \(\{ \.\.\.s, lbpConfirmedStage: next \}\)\)\}/.test(dwSrc), 'setter writes the confirmed stage field')
+  assert.ok(dwSrc.includes('suggestLbpExerciseStage(lbpStageInputFromPayload(payload))'), 'suggestion recomputed from the payload every render')
+  assert.ok(!/lbpStageSuggestion:/.test(dwSrc), 'the suggestion is never written into workspace state')
+  const emrSrc = fs.readFileSync('src/doctor/workspace/emrPreview.ts', 'utf8')
+  assert.ok(!emrSrc.includes('lbpConfirmedStage'), 'emrPreview.ts is frozen during the pilot (HANDOFF 22) — stage reaches storage, not EMR text, this batch')
+  const revisitSrc = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  assert.ok(!revisitSrc.includes('LbpStageCard') && !revisitSrc.includes('PainExerciseSection'), 'RevisitWorkspace has no exercise section at all, so no stage card there either (documented gap, not an omission)')
+})
+
+console.log(`\n(+stage card) ${passed} doctor-workspace assertions passed.`)

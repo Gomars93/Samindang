@@ -623,6 +623,30 @@
   outline-offset: 2px;
 }
 
+/* 2026-09-05: 운동 단계 카드의 "제안대로 확정" / "1단계로 올리기" 버튼.
+   시각은 .workspace__adoptBtn과 같되 클래스를 분리한다 — 회귀 테스트가
+   adoptBtn의 존재로 "후보 카드가 렌더됐는가"를 검사하므로, 단계 버튼이 그
+   판정을 오염시키면 안 된다. */
+.workspace__stageBtn {
+  display: inline-block;
+  margin-top: 8px;
+  margin-right: 6px;
+  border: 1px dashed var(--primary);
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  min-height: 30px;
+}
+
+.workspace__stageBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ---------- clinician observation checklist ---------- */
 .workspace__observationChecklist {
   display: flex;

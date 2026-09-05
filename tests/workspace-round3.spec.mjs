@@ -7,6 +7,7 @@
 import {
   emptyWorkspaceState,
   deserializeWorkspaceState,
+  workspaceStateEquals,
   WORKSPACE_STATE_SCHEMA_VERSION,
 } from './.workspace-round3-persistence-bundle.mjs'
 import { reassessmentExamItemFromPrevious, isReassessmentPending } from './.workspace-round3-reassessment-bundle.mjs'
@@ -1115,3 +1116,27 @@ function assert(name, cond) {
 
 
 console.log(`\n${passCount} workspace round-3 assertions passed.`)
+
+/* ---------------- 2026-09-05: lbpConfirmedStage (원장 확정 운동 단계) persistence ---------------- */
+{
+  const empty = emptyWorkspaceState()
+  assert('emptyWorkspaceState.lbpConfirmedStage starts null (미확정)', empty.lbpConfirmedStage === null)
+  for (const s of [0, 1, 2, 3]) {
+    const rt = deserializeWorkspaceState(JSON.parse(JSON.stringify({ ...empty, lbpConfirmedStage: s })))
+    assert(`lbpConfirmedStage ${s} round-trips through serialize/deserialize`, rt.lbpConfirmedStage === s)
+  }
+  for (const bad of ['1', 1.5, -1, 4, true, {}, [], 'severe', NaN, undefined]) {
+    const rt = deserializeWorkspaceState({ lbpConfirmedStage: bad })
+    assert(`lbpConfirmedStage garbage ${String(bad)} degrades to null (never a stage)`, rt.lbpConfirmedStage === null)
+  }
+  const legacy = deserializeWorkspaceState({ lbpConfirmedCapabilities: ['SAFE_WALKING'], lbpDeniedCapabilities: [] })
+  assert('a pre-2026-09-05 record with no lbpConfirmedStage field reads as null (필터·추정 꺼짐)', legacy.lbpConfirmedStage === null)
+  assert('legacy record keeps its capabilities untouched alongside', legacy.lbpConfirmedCapabilities.includes('SAFE_WALKING'))
+  // 0은 falsy — `|| null` 같은 실수로 0단계가 사라지면 안 된다
+  const zero = deserializeWorkspaceState({ lbpConfirmedStage: 0 })
+  assert('0단계는 falsy지만 null로 뭉개지지 않는다', zero.lbpConfirmedStage === 0)
+  const a = { ...empty, lbpConfirmedStage: 1 }
+  const b = { ...empty, lbpConfirmedStage: 2 }
+  assert('workspaceStateEquals distinguishes different confirmed stages (save is not skipped)', !workspaceStateEquals(a, b))
+}
+console.log(`\n(+lbpConfirmedStage) ${passCount} assertions passed so far.`)

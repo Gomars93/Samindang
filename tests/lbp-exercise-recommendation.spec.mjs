@@ -6,6 +6,7 @@
 // (buildResponsePayload/computeFlags/buildRoutingPayload, coreSpec.ts,
 // bundled fresh here), same pattern as tests/lbp-exam-suggestions.spec.mjs.
 
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import {
   ALL_QUESTIONS,
@@ -634,3 +635,122 @@ test('mergeLbpRehabSuggestions: an undecided (SUGGESTED) item no longer among fr
 })
 
 console.log(`\n${passed} tests passed.`)
+
+// ===========================================================================
+// 2026-09-05: 원장 확정 단계(lbpConfirmedStage) — 후보 필터 + C층 준비조건 추정
+// (DECISIONS.md 같은 날짜 "준비조건 두 층" 항목, lbpCapabilityLayer.ts)
+// ===========================================================================
+
+const workTarget = [followUpTarget('lbp_tf_work', '일')]
+const ALL_CAPS = [
+  'SAFE_WALKING', 'CAN_SELF_PACE', 'QUADRUPED_TOLERATED', 'SUPINE_TOLERATED', 'PRONE_TOLERATED',
+  'SUPPORTED_STANDING_TOLERATED', 'SITTING_TOLERATED', 'LOW_LOAD_TRUNK_CONTROL', 'HIP_HINGE_CONTROL',
+  'LOAD_READY', 'BALANCE_WITH_SUPPORT', 'FLEXION_EXPOSURE_TOLERATED', 'EXTENSION_EXPOSURE_TOLERATED',
+  'NEURAL_SLIDER_TOLERATED', 'NATURAL_BREATHING_TOLERATED',
+]
+const ids = (list) => list.map((c) => c.exerciseId)
+
+test('stage filter: confirmed stage 1 + every capability confirmed -> stage-1 and ALL exercises READY, stage-2/3 exercises absent from BOTH lists', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS, lbpConfirmedStage: 1 }))
+  assert.equal(r.blocked, null)
+  assert.equal(r.confirmedStage, 1)
+  const ready = ids(r.readyCandidates), awaiting = ids(r.awaitingCapabilityCandidates)
+  assert.ok(ready.includes('LBP_ACT_01'), 'stage-1 ACT_01 (WORK) is READY')
+  assert.ok(ready.includes('LBP_FUNC_01'), 'ALL-stage FUNC_01 (WORK) is READY at stage 1')
+  for (const id of ['LBP_LOAD_02', 'LBP_FUNC_05', 'LBP_TRUNK_03', 'LBP_EXPOSURE_03', 'LBP_HIP_MOB_01']) {
+    assert.ok(!ready.includes(id) && !awaiting.includes(id), `${id} (stage 2/3) must not appear at confirmed stage 1`)
+  }
+})
+
+test('stage filter: confirmed stage 3 -> LOAD_02/FUNC_05 (stage 3) become candidates', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS, lbpConfirmedStage: 3 }))
+  const ready = ids(r.readyCandidates)
+  assert.ok(ready.includes('LBP_LOAD_02') && ready.includes('LBP_FUNC_05'))
+})
+
+test('stage filter: NO confirmed stage (null) -> no filter at all, every WORK exercise is a candidate (pre-2026-09-05 behavior preserved)', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS }))
+  assert.equal(r.confirmedStage, null)
+  const ready = ids(r.readyCandidates)
+  for (const id of ['LBP_ACT_01', 'LBP_TRUNK_03', 'LBP_LOAD_02', 'LBP_FUNC_01']) assert.ok(ready.includes(id), `${id} present with no stage filter`)
+})
+
+test('legacy workspace state with NO lbpConfirmedStage field at all is byte-identical to lbpConfirmedStage: null', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const legacy = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget }))
+  const explicit = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: null }))
+  assert.deepEqual(legacy, explicit)
+  assert.deepEqual(legacy.inferredCapabilities, [], 'no stage -> nothing inferred')
+})
+
+test('stage 0 confirmed -> blocked STAGE_0 with the 0-stage guidance, no candidates, confirmedStage 0 echoed back', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedCapabilities: ALL_CAPS, lbpConfirmedStage: 0 }))
+  assert.equal(r.blocked, 'STAGE_0')
+  assert.ok(r.blockedMessageKo.includes('0단계') && r.blockedMessageKo.includes('능동 운동을 처방하지 않습니다'))
+  assert.deepEqual(r.readyCandidates, [])
+  assert.deepEqual(r.awaitingCapabilityCandidates, [])
+  assert.equal(r.confirmedStage, 0)
+  assert.deepEqual(r.inferredCapabilities, [])
+})
+
+test('block precedence: SAFETY_REVIEW still wins over STAGE_0 (a 0-stage note must never hide a safety re-evaluation)', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'SEVERE_OR_PROGRESSIVE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 0 }))
+  assert.equal(r.blocked, 'SAFETY_REVIEW')
+  assert.equal(r.confirmedStage, 0, 'the stage is still echoed so the stage card can render')
+})
+
+test('C-layer inference: confirmed stage 2, ZERO capabilities tapped -> TRUNK_03 (quadruped + low-load trunk, both inferred at <=2) is READY; ACT_01 awaits ONLY the two safety (A-layer) capabilities', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 2 }))
+  assert.equal(r.blocked, null)
+  assert.ok(ids(r.readyCandidates).includes('LBP_TRUNK_03'), 'TRUNK_03 READY with nothing tapped — inference did the work')
+  const act = r.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_ACT_01')
+  assert.ok(act, 'ACT_01 is still awaiting (walking safety is never inferred)')
+  assert.deepEqual([...act.unconfirmedCapabilities].sort(), ['CAN_SELF_PACE', 'SAFE_WALKING'])
+  const hip = r.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_HIP_MOB_01')
+  assert.ok(hip, 'HIP_MOB_01 awaits — BALANCE_WITH_SUPPORT is A-layer')
+  assert.deepEqual(hip.unconfirmedCapabilities, ['BALANCE_WITH_SUPPORT'], 'SUPPORTED_STANDING was inferred; only the safety one remains')
+})
+
+test('C-layer inference never reaches above the confirmed stage: stage 1 leaves LOW_LOAD_TRUNK_CONTROL UNKNOWN (TRUNK_03 is filtered out anyway) and inferredCapabilities has no stage-2/3 item', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 1 }))
+  for (const cap of ['LOW_LOAD_TRUNK_CONTROL', 'SITTING_TOLERATED', 'HIP_HINGE_CONTROL', 'LOAD_READY']) {
+    assert.ok(!r.inferredCapabilities.includes(cap), `${cap} must not be inferred at stage 1`)
+  }
+  for (const cap of ['SAFE_WALKING', 'BALANCE_WITH_SUPPORT', 'CAN_SELF_PACE']) {
+    assert.ok(!r.inferredCapabilities.includes(cap), `${cap} (A-layer) must never be inferred`)
+  }
+  assert.ok(r.inferredCapabilities.includes('QUADRUPED_TOLERATED') && r.inferredCapabilities.includes('SUPINE_TOLERATED'))
+})
+
+test('clinician NO beats inference: stage 2 + QUADRUPED denied -> TRUNK_03 drops out of READY and awaits exactly [QUADRUPED_TOLERATED]; inferredCapabilities no longer lists it', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 2, lbpDeniedCapabilities: ['QUADRUPED_TOLERATED'] }))
+  assert.ok(!ids(r.readyCandidates).includes('LBP_TRUNK_03'))
+  const t = r.awaitingCapabilityCandidates.find((c) => c.exerciseId === 'LBP_TRUNK_03')
+  assert.ok(t, 'TRUNK_03 is back in the awaiting list')
+  assert.deepEqual(t.unconfirmedCapabilities, ['QUADRUPED_TOLERATED'])
+  assert.ok(!r.inferredCapabilities.includes('QUADRUPED_TOLERATED'), 'a denied capability is not shown as inferred')
+})
+
+test('clinician YES beats inference in the inferred list too: an explicitly confirmed capability is not listed as "inferred"', () => {
+  const payload = buildPayload(CLEAR_AXIAL_BASE)
+  const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 3, lbpConfirmedCapabilities: ['QUADRUPED_TOLERATED', 'LOAD_READY'] }))
+  assert.ok(!r.inferredCapabilities.includes('QUADRUPED_TOLERATED') && !r.inferredCapabilities.includes('LOAD_READY'))
+  assert.ok(r.inferredCapabilities.includes('HIP_HINGE_CONTROL'), 'the rest of the C-layer at stage 3 is still inferred')
+  assert.equal(r.inferredCapabilities.length, 10, '12 C-layer − 2 explicitly confirmed')
+})
+
+test('the recommendation module never reads the STAGE SUGGESTION — only the clinician-confirmed stage (adopt, never automatic)', () => {
+  const src = readFileSync(new URL('../src/doctor/workspace/lbpExerciseRecommendation.ts', import.meta.url), 'utf8')
+  assert.ok(!src.includes('suggestLbpExerciseStage'), 'suggestion function must not be imported here')
+  assert.ok(src.includes('workspaceState.lbpConfirmedStage'), 'the confirmed stage is the only stage input')
+})
+
+console.log(`\n(+confirmed-stage) ${passed} lbp-exercise-recommendation tests passed.`)

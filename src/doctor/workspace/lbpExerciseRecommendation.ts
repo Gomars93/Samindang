@@ -25,7 +25,9 @@ import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment } from '../judgment'
 import { computeLbpFlags, treatmentSafetyLocked as treatmentSafetyLockedFrozen } from '../../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../../spec/lbpAdapter'
-import { buildLbpEligibilityContext } from './lbpEligibilityContext'
+import { buildLbpEligibilityContext, lbpInferredCapabilities } from './lbpEligibilityContext'
+import { isLbpExerciseAllowedAtStage } from './lbpExerciseStageTable'
+import { LBP_STAGE_0_GUIDANCE_KO, type LbpExerciseStage } from './lbpExerciseStage'
 import {
   evaluateLbpExerciseEligibility,
   getLbpExerciseEligibilityRule,
@@ -148,7 +150,8 @@ export type LbpRecommendationCandidate = {
   regressionKo: string
 }
 
-export type LbpRecommendationBlockedReason = 'SAFETY_REVIEW' | 'NEURO_REFRESH'
+/** `STAGE_0`: 원장이 0단계(보호/안정)를 확정 — 능동 운동 미처방이라 후보 블록 전체가 안내문으로 접힌다. */
+export type LbpRecommendationBlockedReason = 'SAFETY_REVIEW' | 'NEURO_REFRESH' | 'STAGE_0'
 
 export type LbpRecommendationResult = {
   /** RF-3b: non-null means the WHOLE exercise block must collapse to blockedMessageKo instead of rendering candidates. */
@@ -170,6 +173,18 @@ export type LbpRecommendationResult = {
    * UI shows one hint line instead of silently rendering nothing.
    */
   targetFunctionGap: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
+  /**
+   * 2026-09-05: 원장이 확정한 단계(`WorkspaceState.lbpConfirmedStage`)를
+   * 그대로 되돌려준다 — 화면이 workspaceState를 또 읽지 않게. `null`이면
+   * 단계 필터·준비조건 추정 모두 꺼진 상태.
+   */
+  confirmedStage: LbpExerciseStage | null
+  /**
+   * 2026-09-05: 확정 단계에서 **추정으로만** YES가 된 준비조건. 원장이
+   * "안 되면 끄는" 목록 — `PainWorkspace.tsx`가 3상태 버튼과 함께 띄운다.
+   * 원장이 이미 확인/부인한 것은 빠진다.
+   */
+  inferredCapabilities: LbpExerciseCapability[]
 }
 
 const EMPTY_RESULT = (
@@ -177,6 +192,7 @@ const EMPTY_RESULT = (
   treatmentSafetyLockedMessageKo: string | null,
   blocked: LbpRecommendationBlockedReason | null,
   blockedMessageKo: string | null,
+  confirmedStage: LbpExerciseStage | null = null,
 ): LbpRecommendationResult => ({
   blocked,
   blockedMessageKo,
@@ -185,6 +201,8 @@ const EMPTY_RESULT = (
   readyCandidates: [],
   awaitingCapabilityCandidates: [],
   targetFunctionGap: null,
+  confirmedStage,
+  inferredCapabilities: [],
 })
 
 /**
@@ -196,6 +214,8 @@ const SAFETY_REVIEW_BLOCKED_MESSAGE_KO =
   '안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다 — 위 레인1 안전 확인(허리)을 먼저 확인하세요.'
 const NEURO_REFRESH_BLOCKED_MESSAGE_KO =
   '새롭거나 악화되는 신경학적 변화가 있어 운동 추천보다 안전 재평가가 우선입니다 — 위 레인1 안전 확인(허리)을 참고하세요.'
+/** 0단계 확정 시 후보 블록 자리에 뜨는 한 줄 — 단계 카드의 안내문과 같은 문장을 쓴다(같은 상태가 두 가지로 읽히지 않게). */
+export const STAGE_0_BLOCKED_MESSAGE_KO = `0단계(보호/안정) 확정 — ${LBP_STAGE_0_GUIDANCE_KO}`
 export const TREATMENT_SAFETY_LOCKED_MESSAGE_KO =
   '치료 안전(임신 등) 확인 전까지 금기 민감 치료/운동은 원장 승인 없이 확정하지 않습니다.'
 
@@ -259,6 +279,8 @@ export function buildLbpRecommendationContext(
     return EMPTY_RESULT(false, null, null, null)
   }
 
+  const confirmedStage: LbpExerciseStage | null = workspaceState.lbpConfirmedStage ?? null
+
   const age = ageFromDoctorPayload(payload.responses)
   // Same recomputed path as lbpEligibilityContext.ts (RF-2) — never the
   // tablet-submission-time snapshot.
@@ -270,7 +292,7 @@ export function buildLbpRecommendationContext(
   // RF-3b: disease-safety-not-CLEAR collapses the whole block with one
   // message instead of rendering 20 individually STOP_REVIEW-ed cards.
   if (flags.lbp_safety_status !== 'CLEAR') {
-    return EMPTY_RESULT(locked, lockedMessage, 'SAFETY_REVIEW', SAFETY_REVIEW_BLOCKED_MESSAGE_KO)
+    return EMPTY_RESULT(locked, lockedMessage, 'SAFETY_REVIEW', SAFETY_REVIEW_BLOCKED_MESSAGE_KO, confirmedStage)
   }
 
   const context = buildLbpEligibilityContext(payload, lbpObjectiveMotorDeficit, workspaceState)
@@ -279,7 +301,15 @@ export function buildLbpRecommendationContext(
   // LBP_REG_01's intentional requiresStableNeuro:false exception must never
   // read on screen as "exercise is fine, proceed" while this is true.
   if (context.neuroStatus === 'NEW_OR_WORSENING') {
-    return EMPTY_RESULT(locked, lockedMessage, 'NEURO_REFRESH', NEURO_REFRESH_BLOCKED_MESSAGE_KO)
+    return EMPTY_RESULT(locked, lockedMessage, 'NEURO_REFRESH', NEURO_REFRESH_BLOCKED_MESSAGE_KO, confirmedStage)
+  }
+
+  // 2026-09-05: 0단계 확정 = 능동 운동 미처방. 안전 블록(위 두 개)보다는
+  // 뒤에 — 안전 재평가가 필요한 환자에게 0단계 안내문이 그 메시지를 가리면
+  // 안 된다. 단계 카드 자체는 이 결과와 무관하게 항상 렌더되므로 원장이
+  // 여기서 1단계로 올릴 수 있다.
+  if (confirmedStage === 0) {
+    return EMPTY_RESULT(locked, lockedMessage, 'STAGE_0', STAGE_0_BLOCKED_MESSAGE_KO, 0)
   }
 
   const selectedTfs = selectedTargetFunctionSet(workspaceState.painFollowUpTargets)
@@ -314,6 +344,10 @@ export function buildLbpRecommendationContext(
     if (!rule) continue
     // Architecture §2.2 "TF 일치": Core-20 ∩ selected target function.
     if (!meta.targetFunctions.some((tf) => selectedTfs.has(tf))) continue
+    // 2026-09-05: 확정 단계보다 높은 단계의 운동은 후보에서 뺀다
+    // (`lbpExerciseStageTable.ts`). 미확정(null)이면 필터 없음 — 옛 기록과
+    // 아직 단계를 안 정한 오늘 기록은 기존 그대로 전부 후보.
+    if (!isLbpExerciseAllowedAtStage(meta.exerciseId, confirmedStage)) continue
 
     const result = evaluateLbpExerciseEligibility(meta.exerciseId, context)
     if (result.state === 'START_AS_WRITTEN' || result.state === 'START_WITH_REGRESSION') {
@@ -353,6 +387,8 @@ export function buildLbpRecommendationContext(
     readyCandidates: rankReady(ready),
     awaitingCapabilityCandidates: awaiting,
     targetFunctionGap,
+    confirmedStage,
+    inferredCapabilities: lbpInferredCapabilities(workspaceState),
   }
 }
 

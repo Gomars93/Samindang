@@ -83,6 +83,13 @@ import { RehabSuggestionCard } from './RehabSuggestionCard'
 import type { LbpRecommendationCandidate } from './lbpExerciseRecommendation'
 import { LBP_EXERCISE_CAPABILITY_LABEL_KO } from './lbpEligibilityContext'
 import type { LbpExerciseCapability } from './lbpExerciseEligibility'
+import { isLbpSafetyCapability } from './lbpCapabilityLayer'
+import {
+  LBP_EXERCISE_STAGE_LABEL_KO,
+  LBP_STAGE_0_GUIDANCE_KO,
+  type LbpExerciseStage,
+  type LbpStageSuggestion,
+} from './lbpExerciseStage'
 import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { deriveAdditionalConcernSummary } from './additionalConcern'
 import { AdditionalConcernCard } from './AdditionalConcernCard'
@@ -242,6 +249,8 @@ function LbpAwaitingCapabilitySection({
   candidates,
   confirmedCapabilities,
   deniedCapabilities,
+  inferredCapabilities = [],
+  confirmedStage = null,
   onSetStatus,
 }: {
   candidates: LbpRecommendationCandidate[]
@@ -249,6 +258,14 @@ function LbpAwaitingCapabilitySection({
   confirmedCapabilities: string[]
   /** Raw `WorkspaceState.lbpDeniedCapabilities` — same defensive filtering. */
   deniedCapabilities: string[]
+  /**
+   * 2026-09-05: 확정 단계에서 **추정으로만** YES가 된 준비조건
+   * (`LbpRecommendationResult.inferredCapabilities`). 원장이 "안 되면 끄는"
+   * 목록 — 이 행이 없으면 추정값을 되돌릴 방법이 화면에 없다
+   * (CLAUDE.md 입력 방향 규칙: 쓰기만 되고 읽히지 않는 필드를 남기지 않는다).
+   */
+  inferredCapabilities?: LbpExerciseCapability[]
+  confirmedStage?: LbpExerciseStage | null
   onSetStatus?: (capabilityId: LbpExerciseCapability, status: LbpCapabilityStatus) => void
 }) {
   if (!onSetStatus) return null
@@ -259,8 +276,14 @@ function LbpAwaitingCapabilitySection({
   const decidedIds = Array.from(new Set([...knownConfirmed, ...knownDenied]))
   const statusOf = (cap: LbpExerciseCapability): LbpCapabilityStatus =>
     knownConfirmed.includes(cap) ? 'YES' : knownDenied.includes(cap) ? 'NO' : 'UNKNOWN'
+  const safetyTag = (cap: LbpExerciseCapability) =>
+    isLbpSafetyCapability(cap) ? (
+      <span className="workspace__candidateStatusTag" title="안전 관련 조건 — 단계에서 추정하지 않고 원장이 직접 확인합니다">
+        안전 · 직접 확인
+      </span>
+    ) : null
 
-  if (candidates.length === 0 && decidedIds.length === 0) return null
+  if (candidates.length === 0 && decidedIds.length === 0 && inferredCapabilities.length === 0) return null
   return (
     <section className="workspace__block">
       {candidates.length > 0 && (
@@ -277,7 +300,9 @@ function LbpAwaitingCapabilitySection({
               <strong className="workspace__examCard__title">{c.title}</strong>
               {c.unconfirmedCapabilities.map((cap) => (
                 <div key={cap} className="workspace__examCard__row">
-                  <span>{LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]}</span>
+                  <span>
+                    {LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} {safetyTag(cap)}
+                  </span>
                   <LbpCapabilityStatusButtons
                     capabilityId={cap}
                     status={statusOf(cap)}
@@ -289,6 +314,26 @@ function LbpAwaitingCapabilitySection({
             </div>
           ))}
         </>
+      )}
+      {inferredCapabilities.length > 0 && (
+        <div className="workspace__examCard">
+          <strong className="workspace__examCard__title">확정 단계에서 자동 추정된 준비 조건</strong>
+          <p className="workspace__block__hint">
+            {confirmedStage !== null ? `${confirmedStage}단계` : '확정 단계'} 이하 운동이 전제하는 자세·조절 조건이라 확인함으로
+            봅니다. 실제로 안 되면 &quot;지금은 안 됨&quot;을 누르세요 — 그 조건이 필요한 운동만 보류됩니다.
+          </p>
+          {inferredCapabilities.map((cap) => (
+            <div key={cap} className="workspace__examCard__row">
+              <span>{LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} (추정)</span>
+              <LbpCapabilityStatusButtons
+                capabilityId={cap}
+                status={statusOf(cap)}
+                onSetStatus={onSetStatus}
+                ariaLabel={`${LBP_EXERCISE_CAPABILITY_LABEL_KO[cap]} (단계 추정) 상태`}
+              />
+            </div>
+          ))}
+        </div>
       )}
       {decidedIds.length > 0 && (
         <div className="workspace__examCard">
@@ -527,6 +572,92 @@ export function PainWorkspaceLane2({
  * synthetic-scenario `재활/운동 제안` path -- exactly one render site).
  */
 /** Opus delta review defect 4 (§2.2): 3 candidate cards visible, the rest behind a "더 보기 (N)" disclosure — nothing is ever dropped, so there is no tie/cutoff problem to solve. */
+const LBP_STAGE_OPTIONS: readonly LbpExerciseStage[] = [0, 1, 2, 3]
+
+/**
+ * 2026-09-05: 운동 단계 카드 — 제안(`suggestLbpExerciseStage`) + 원장 확정.
+ *
+ * "adopt, never automatic": 제안은 저장되지 않고 매 렌더 재계산된다. 저장되는
+ * 것은 원장이 누른 확정값(`WorkspaceState.lbpConfirmedStage`)뿐이다. 확정
+ * 없이는 단계 필터도 준비조건 추정도 켜지지 않는다.
+ *
+ * 0단계 요구사항(`docs/LBP_EXERCISE_STAGE_ASSIGNMENT_v0.4.md` §2): 0단계 옆에
+ * **"1단계로 올리기"가 한 번의 조작**으로 있어야 한다. 안전한 쪽이 기본값이고
+ * 올리는 것이 의식적 행위다. 그래서 "제안대로 확정"은 1탭, 0단계에서
+ * 올리기도 1탭이다.
+ */
+function LbpStageCard({
+  suggestion,
+  confirmedStage,
+  onSetConfirmedStage,
+}: {
+  suggestion: LbpStageSuggestion
+  confirmedStage: LbpExerciseStage | null
+  onSetConfirmedStage: (next: LbpExerciseStage | null) => void
+}) {
+  const suggested = suggestion.suggestedStage
+  const showGuidance = confirmedStage === 0 || (confirmedStage === null && suggested === 0)
+  return (
+    <section className="workspace__block" aria-labelledby="lbp-stage-h3">
+      <h3 id="lbp-stage-h3">운동 단계</h3>
+      <div className="workspace__examCard">
+        <p className="workspace__examCard__reason">
+          <strong>제안</strong>{' '}
+          {suggested === null
+            ? '단계를 제안하지 않습니다 — 원장이 직접 정해주세요.'
+            : LBP_EXERCISE_STAGE_LABEL_KO[suggested]}
+          {suggested !== null &&
+            suggestion.baseStage !== null &&
+            suggestion.baseStage !== suggested &&
+            ` (일상지장도만 보면 ${LBP_EXERCISE_STAGE_LABEL_KO[suggestion.baseStage]} → 낮춤)`}
+        </p>
+        <ul className="workspace__candidateFacts workspace__candidateFacts--support">
+          {suggestion.reasons.map((r, i) => (
+            <li key={i} data-reason-kind={r.kind}>
+              {r.text}
+            </li>
+          ))}
+        </ul>
+        {showGuidance && <p className="workspace__block__hint">{LBP_STAGE_0_GUIDANCE_KO}</p>}
+        <div className="workspace__examCard__statusRow" role="group" aria-label="운동 단계 확정">
+          {LBP_STAGE_OPTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={confirmedStage === s}
+              className={`workspace__statusBtn${confirmedStage === s ? ' workspace__statusBtn--active' : ''}`}
+              onClick={() => onSetConfirmedStage(confirmedStage === s ? null : s)}
+            >
+              {`${s}단계${suggested === s ? ' (제안)' : ''}`}
+            </button>
+          ))}
+        </div>
+        {confirmedStage === null && suggested !== null && (
+          <button type="button" className="workspace__stageBtn" onClick={() => onSetConfirmedStage(suggested)}>
+            {`제안대로 확정 → ${LBP_EXERCISE_STAGE_LABEL_KO[suggested]}`}
+          </button>
+        )}
+        {confirmedStage === 0 && (
+          <button type="button" className="workspace__stageBtn" onClick={() => onSetConfirmedStage(1)}>
+            1단계로 올리기
+          </button>
+        )}
+        {confirmedStage === null ? (
+          <p className="workspace__block__hint">
+            단계를 확정하면 그 단계 이하 운동만 후보가 되고, 자세·조절 준비조건은 단계에서 자동 추정됩니다
+            (안전 관련 3개 — 걷기·균형·스스로 멈춤 — 는 직접 확인). 미확정이면 기존처럼 모든 준비조건을 하나씩
+            확인해야 합니다.
+          </p>
+        ) : (
+          <p className="workspace__block__hint">
+            확정 {LBP_EXERCISE_STAGE_LABEL_KO[confirmedStage]}. 같은 버튼을 다시 누르면 미확정으로 돌아갑니다.
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 const VISIBLE_REHAB_CANDIDATE_COUNT = 3
 
 export function PainExerciseSection({
@@ -541,9 +672,21 @@ export function PainExerciseSection({
   lbpDeniedCapabilities,
   onSetLbpCapabilityStatus,
   lbpTargetFunctionGap,
+  lbpStageSuggestion,
+  lbpConfirmedStage = null,
+  onSetLbpConfirmedStage,
+  lbpInferredCapabilities,
 }: {
   /** LBP v1 Batch 1: only an LBP record gets the safety-lock/capability/empty-state extras below -- every other pain region renders exactly the plain SYNTHETIC-preview candidate list it always has. */
   isLbp: boolean
+  /** 2026-09-05: 오늘 문진 답변으로 계산한 단계 제안(매 렌더 재계산, 저장 안 됨). LBP 기록에서만 전달된다. */
+  lbpStageSuggestion?: LbpStageSuggestion | null
+  /** 2026-09-05: `WorkspaceState.lbpConfirmedStage` — 원장 확정값. null = 미확정. */
+  lbpConfirmedStage?: LbpExerciseStage | null
+  /** 2026-09-05: 단계 확정/해제 setter. 없으면 단계 카드를 렌더하지 않는다(읽기 전용 미리보기 경로). */
+  onSetLbpConfirmedStage?: (next: LbpExerciseStage | null) => void
+  /** 2026-09-05: `LbpRecommendationResult.inferredCapabilities` — 확정 단계에서 추정으로만 YES인 준비조건. */
+  lbpInferredCapabilities?: LbpExerciseCapability[]
   rehabSuggestions: RehabSuggestion[]
   onChangeRehabSuggestion: (next: RehabSuggestion) => void
   /** LBP v1 Batch 2 (G10/RF-8): "adopt, never automatic" into PainCarePlan.homeActionPlan. */
@@ -563,12 +706,27 @@ export function PainExerciseSection({
   /** LBP v1 Batch 2 §8.2-1(c): non-null only when both candidate lists are empty because no (matching) target function is selected yet. */
   lbpTargetFunctionGap?: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
 }) {
+  // 2026-09-05: 단계 카드는 아래 어느 분기(안전 블록·0단계 블록·목표기능
+  // 미선택)보다도 먼저, 항상 렌더된다 — 0단계로 블록이 접혀 있을 때 원장이
+  // 여기서 1단계로 올릴 수 있어야 하기 때문이다.
+  const stageCard =
+    isLbp && lbpStageSuggestion && onSetLbpConfirmedStage ? (
+      <LbpStageCard
+        suggestion={lbpStageSuggestion}
+        confirmedStage={lbpConfirmedStage}
+        onSetConfirmedStage={onSetLbpConfirmedStage}
+      />
+    ) : null
+
   if (isLbp && lbpRecommendationBlockedMessageKo) {
     return (
-      <section className="workspace__block">
-        <h3>재활/운동 제안</h3>
-        <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
-      </section>
+      <>
+        {stageCard}
+        <section className="workspace__block">
+          <h3>재활/운동 제안</h3>
+          <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
+        </section>
+      </>
     )
   }
 
@@ -583,15 +741,18 @@ export function PainExerciseSection({
     (lbpAwaitingCapabilityCandidates ?? []).length === 0
   ) {
     return (
-      <section className="workspace__block">
-        <h3>재활/운동 제안</h3>
-        <p className="workspace__block__hint">
-          목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
-          선택하세요.
-          {lbpTargetFunctionGap === 'CUSTOM_ONLY' &&
-            ' "기타 목표 동작"은 자유 기록이라 대응하는 카탈로그 운동이 없습니다 — 목록에 있는 목표 기능도 함께 골라주세요.'}
-        </p>
-      </section>
+      <>
+        {stageCard}
+        <section className="workspace__block">
+          <h3>재활/운동 제안</h3>
+          <p className="workspace__block__hint">
+            목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
+            선택하세요.
+            {lbpTargetFunctionGap === 'CUSTOM_ONLY' &&
+              ' "기타 목표 동작"은 자유 기록이라 대응하는 카탈로그 운동이 없습니다 — 목록에 있는 목표 기능도 함께 골라주세요.'}
+          </p>
+        </section>
+      </>
     )
   }
 
@@ -610,6 +771,7 @@ export function PainExerciseSection({
 
   return (
     <>
+      {stageCard}
       {/*
         Opus delta review defect 9 (CD-2): rendered once here, common to
         both the READY cards below and the awaiting-capability group in
@@ -638,6 +800,8 @@ export function PainExerciseSection({
           candidates={lbpAwaitingCapabilityCandidates ?? []}
           confirmedCapabilities={lbpConfirmedCapabilities ?? []}
           deniedCapabilities={lbpDeniedCapabilities ?? []}
+          inferredCapabilities={lbpInferredCapabilities ?? []}
+          confirmedStage={lbpConfirmedStage}
           onSetStatus={onSetLbpCapabilityStatus}
         />
       )}

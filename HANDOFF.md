@@ -1,5 +1,51 @@
 # Current Handoff
 
+## 2026-09-05 (최신 26): 준비조건 15개 → **A층 3개(직접 확인) / C층 12개(단계 추정)** + 운동 단계 확정 카드
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.
+**변경**: 신규 `lbpExerciseStageTable.ts`(v0.2 표를 코드로) + `lbpCapabilityLayer.ts`
+(두 층, 문턱 계산) / 수정 `persistence.ts`(`lbpConfirmedStage`),
+`lbpEligibilityContext.ts`(추정 주입), `lbpExerciseRecommendation.ts`(단계 필터·
+STAGE_0·inferredCapabilities), `PainWorkspace.tsx`(`LbpStageCard` + 추정 행 +
+A층 태그), `DoctorWorkspace.tsx`(배선), `workspace.css`. **평가기
+`lbpExerciseEligibility.ts` 0줄, 태블릿 `src/spec` 0줄, `emrPreview.ts` 0줄.**
+
+### 이번에 한 것 (원장 "너의 추천으로 모두 진행")
+- 15개 준비조건을 **A층(안전 3: 걷기·균형·스스로 멈춤, 절대 추정 안 함)** /
+  **C층(12, 확정 단계에서 추정)**으로 분리. B층(문진 유도)은 문진에 해당
+  문항이 없어 **비어 있음** — 없는 층을 만들지 않았다.
+- 추정 문턱은 규칙표 × 단계표에서 **계산**(1단계 8개 / 2단계 10 / 3단계 12).
+  우선순위 확인함 > 지금은 안 됨 > 추정 > UNKNOWN.
+- **운동 단계 카드**: 제안 + 0~3 버튼 + "제안대로 확정" 1탭 + 0단계면
+  "1단계로 올리기" 1탭. 확정값만 저장. 확정 단계보다 높은 운동은 후보에서 제외,
+  0단계면 후보 블록이 안내문으로 접힘.
+- 추정된 준비조건은 **"(추정)" 행에서 개별로 끌 수 있다.**
+- 결과: 원장 최소 조작 = **단계 1탭 + 신경 상태 1탭 + A층 최대 3탭**
+  (기존: 15탭 + 신경 1탭).
+
+### 검증
+- `test:lbp-capability-layer` **151**(신규) / `test:lbp-exercise-recommendation`
+  **34**(+11) / `test:doctor-workspace` **281**(+5 SSR) / `test:workspace-round3`
+  **198**(+19)
+- `npm run test:all` exit 0 / `npm run build` green / FROZEN zero-diff
+- 변이 3개(A층 누출·0단계 필터 제거·NO<추정 반전) **전부 KILLED**
+
+### 관찰(이번 범위 밖, 기록만)
+- `src/doctor/workspace/workspaceFixtures.ts:247`의 `VISIT_03_SYMPTOM_DURATION:
+  'under_1w'`는 문진 선택지에 없는 값이다(`within_1w`가 맞음). fixture drift —
+  해당 시나리오는 급성 격하가 안 걸린 상태로 렌더된다. 다음 배치에서 고칠 것.
+
+### Next Recommended Action
+1. **원장 로컬에서 회고 파일럿** `npm run pilot:lbp-stage` (변경 없음).
+2. **실환자 파일럿 5~10명** — 이제 화면이 있다: 단계 카드에서 원장 판단 vs
+   제안 일치 여부, 추정 준비조건 중 실제로 "지금은 안 됨"을 누른 빈도를 본다.
+   **추정을 끄는 빈도가 높은 조건 = 문턱이 틀린 조건.**
+3. 파일럿 뒤: `emrPreview.ts` 동결 해제 → 확정 단계를 EMR P에 출력; 재진
+   워크스페이스에 운동 섹션+단계 카드; fixture drift 수정.
+4. 단계 **상승** 기준(재진)은 여전히 미결.
+
+---
+
 ## 2026-09-05 (최신 25): 요통 운동 단계 **격하 모델 전환 + 0단계 신설 + LBP_07B 문항** — 원장 지시 반영
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.

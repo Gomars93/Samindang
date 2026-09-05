@@ -70,6 +70,7 @@ import {
   mergeLbpRehabSuggestions,
   appendLbpAdoptionText,
 } from './lbpExerciseRecommendation'
+import { suggestLbpExerciseStage, lbpStageInputFromPayload } from './lbpExerciseStage'
 import { reassessmentExamItemFromPrevious } from './reassessmentExam'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -473,6 +474,9 @@ export function DoctorWorkspace({
   const isLbpRecord = payload.responses.safety_flags.lbp != null
   const lbpRecommendation =
     !synthetic && isLbpRecord ? buildLbpRecommendationContext(payload, lbpObjectiveMotorDeficit, workspaceState) : null
+  // 2026-09-05: 단계 제안은 오늘 문진 답변만으로 매 렌더 재계산 — 저장되지
+  // 않는다. 저장되는 것은 원장 확정값(`workspaceState.lbpConfirmedStage`)뿐.
+  const lbpStageSuggestion = !synthetic && isLbpRecord ? suggestLbpExerciseStage(lbpStageInputFromPayload(payload)) : null
   const displayedPainRehabSuggestions = lbpRecommendation
     ? mergeLbpRehabSuggestions(workspaceState.painRehabSuggestions, lbpRecommendation.readyCandidates)
     : workspaceState.painRehabSuggestions
@@ -755,6 +759,10 @@ export function DoctorWorkspace({
                   lbpConfirmedCapabilities={workspaceState.lbpConfirmedCapabilities}
                   lbpDeniedCapabilities={workspaceState.lbpDeniedCapabilities}
                   lbpTargetFunctionGap={lbpRecommendation?.targetFunctionGap}
+                  lbpStageSuggestion={lbpStageSuggestion}
+                  lbpConfirmedStage={workspaceState.lbpConfirmedStage}
+                  onSetLbpConfirmedStage={(next) => setWorkspaceState((s) => ({ ...s, lbpConfirmedStage: next }))}
+                  lbpInferredCapabilities={lbpRecommendation?.inferredCapabilities}
                   // CD-3 (`DECISIONS.md` 2026-09-02 "CD-3 승인..."): a genuine
                   // 3-way setter, not a YES-only toggle — 'YES' adds to
                   // confirmed and removes from denied, 'NO' the reverse, and

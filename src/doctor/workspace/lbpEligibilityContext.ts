@@ -35,6 +35,7 @@ import type {
 } from './lbpExerciseEligibility'
 import type { LbpDirectionalResponse } from './lbpExamSuggestions'
 import type { WorkspaceState } from './persistence'
+import { inferredCapabilitiesForStage } from './lbpCapabilityLayer'
 
 /** Every capability the Core-20 eligibility rules reference — used to build a complete (never partial) capabilities map and to render the CD-1 confirmation chip list. */
 export const LBP_EXERCISE_CAPABILITY_IDS: readonly LbpExerciseCapability[] = [
@@ -115,7 +116,8 @@ export function buildLbpEligibilityContext(
   workspaceState: Pick<
     WorkspaceState,
     'lbpDirectionalResponse' | 'lbpConfirmedCapabilities' | 'lbpDeniedCapabilities'
-  >,
+  > &
+    Partial<Pick<WorkspaceState, 'lbpConfirmedStage'>>,
 ): LbpExerciseEligibilityContext {
   const age = ageFromDoctorPayload(payload.responses)
   // RF-2: the recomputed path, NOT payload.responses.safety_flags.lbp — see
@@ -161,12 +163,38 @@ export function buildLbpEligibilityContext(
   // exclusive by the state-update handler (`DoctorWorkspace.tsx`'s
   // `onSetLbpCapabilityStatus`), never here. RF-9(i) still holds:
   // capabilities are never derived from directionalResponse.
+  //
+  // 2026-09-05 (원장 결정, `lbpCapabilityLayer.ts` 헤더): C층 준비조건은
+  // 원장이 확정한 단계에서 추정한다. 우선순위 — 원장이 직접 누른 값이 항상
+  // 추정을 이긴다:
+  //   확인함(YES) > 지금은 안 됨(NO) > 단계 추정(YES) > UNKNOWN
+  // A층(안전 3개)은 `inferredCapabilitiesForStage`가 절대 돌려주지 않으므로
+  // 여기서 따로 거를 것이 없다. 확정 단계가 null/0이면 추정 목록이 비어
+  // 기존 동작(전부 UNKNOWN)과 같다 — 옛 기록은 이 경로로 들어온다.
   const confirmed = new Set(workspaceState.lbpConfirmedCapabilities)
   const denied = new Set(workspaceState.lbpDeniedCapabilities)
+  const inferred = new Set(inferredCapabilitiesForStage(workspaceState.lbpConfirmedStage ?? null))
   const capabilities: LbpExerciseEligibilityContext['capabilities'] = {}
   for (const cap of LBP_EXERCISE_CAPABILITY_IDS) {
-    capabilities[cap] = confirmed.has(cap) ? 'YES' : denied.has(cap) ? 'NO' : 'UNKNOWN'
+    capabilities[cap] = confirmed.has(cap) ? 'YES' : denied.has(cap) ? 'NO' : inferred.has(cap) ? 'YES' : 'UNKNOWN'
   }
 
   return { routineCareAllowed, neuroStatus, distalSymptomResponse, directionalResponse, capabilities }
+}
+
+/**
+ * 화면용: 지금 이 기록에서 **추정으로만** YES인 준비조건(원장이 확인도 부인도
+ * 하지 않았고, 확정 단계가 그 조건의 최소 단계 이상). 원장이 "안 되면 끄는"
+ * 대상 목록이다 — `PainWorkspace.tsx`가 3상태 버튼과 함께 띄운다.
+ * `buildLbpEligibilityContext`와 정확히 같은 우선순위를 쓴다.
+ */
+export function lbpInferredCapabilities(
+  workspaceState: Pick<WorkspaceState, 'lbpConfirmedCapabilities' | 'lbpDeniedCapabilities'> &
+    Partial<Pick<WorkspaceState, 'lbpConfirmedStage'>>,
+): LbpExerciseCapability[] {
+  const confirmed = new Set(workspaceState.lbpConfirmedCapabilities)
+  const denied = new Set(workspaceState.lbpDeniedCapabilities)
+  return inferredCapabilitiesForStage(workspaceState.lbpConfirmedStage ?? null).filter(
+    (cap) => !confirmed.has(cap) && !denied.has(cap),
+  )
 }

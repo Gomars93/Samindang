@@ -3842,4 +3842,14 @@ test('소스 배선: PainWorkspace/DoctorWorkspace에 준비조건 경로가 한
   assert.ok(fs.existsSync('src/doctor/workspace/lbpCapabilityLayer.ts') === false, '층 모듈은 삭제됐다')
 })
 
+
+test('단계 카드 안내문이 현재 동작과 일치한다 — 제거된 준비조건 추정을 더 이상 설명하지 않는다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ painFollowUpTargets: walkingFollowUpTarget }))
+  // 이 배치에서 실제로 낡은 채로 배포될 뻔한 문구들 — 화면 어디에도 없어야 한다.
+  for (const stale of ['자동 추정', '준비조건은 단계에서', '준비조건을 하나씩', '걷기·균형·스스로 멈춤']) {
+    assert.ok(!html.includes(stale), `낡은 안내 문구가 남아 있다: "${stale}"`)
+  }
+  assert.ok(html.includes('시작 기준'), '대신 새 근거(시작 기준)를 가리켜야 한다')
+})
+
 console.log(`\n(+게이트 제거) ${passed} doctor-workspace assertions passed.`)

@@ -486,9 +486,8 @@ function LbpStageCard({
         )}
         {confirmedStage === null ? (
           <p className="workspace__block__hint">
-            단계를 확정하면 그 단계 이하 운동만 후보가 되고, 자세·조절 준비조건은 단계에서 자동 추정됩니다
-            (안전 관련 3개 — 걷기·균형·스스로 멈춤 — 는 직접 확인). 미확정이면 기존처럼 모든 준비조건을 하나씩
-            확인해야 합니다.
+            단계를 확정하면 그 단계 이하의 운동만 후보로 좁혀집니다. 확정하지 않으면 모든 단계의 운동이 후보로
+            나옵니다 — 각 후보 카드의 &quot;시작 기준&quot;을 보고 직접 고르시면 됩니다.
           </p>
         ) : (
           <p className="workspace__block__hint">

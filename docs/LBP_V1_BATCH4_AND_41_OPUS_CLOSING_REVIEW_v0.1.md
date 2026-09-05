@@ -2,11 +2,18 @@
 
 # 판정: **FAIL** — 게이트를 닫지 않는다.
 
-> **판정 이력.** §1~§8은 1차 closing 재검수(`61dca0a~1..bf7f8b7`, 판정 FAIL)다.
-> 그 FAIL에 대한 수정(`289a800..2e0a8a0`, 테스트/문서만)의 **delta 재검수는
-> §9**에 있다 — **판정 역시 FAIL이며, 게이트는 여전히 CLOSED가 아니다.**
-> 기록된 변이 4개(m6/a4/m7/c9)는 이번엔 전부 죽지만, 같은 계약을 침해하는
-> 변종 4개가 새로 생존한다(§9.2.2, 신규 결함 H-3/M-4/M-5).
+> **판정 이력 (최신은 §10).**
+>
+> | 라운드 | 섹션 | 대상 | 판정 | 남은 이유 |
+> |---|---|---|---|---|
+> | 1차 closing | §1~§8 | `61dca0a~1..bf7f8b7` | **FAIL** | 변이 4개(m6/a4/m7/c9) 생존 — fixture가 하위 필드를 **비워** 뒀다 |
+> | 2차 delta | §9 | `289a800..2e0a8a0` | **FAIL** | 변종 4개(v2/v3/v6/v9) 생존 — 채웠지만 **그 필드가 가질 수 있는 모양 중 하나만** 채웠다 |
+> | 3차 delta | **§10** | `7e7eff3..a539d15` | **FAIL** | 신규 변이 7개 생존 — 판별자 표에 **`priority`/`help`가 없고**, 그 두 값은 fixture가 쓰는 값과 프로덕션이 쓰는 값이 **정반대**다(신규 결함 H-4) |
+>
+> **세 라운드 내내 `src/` 프로덕션 코드는 zero-diff다.** 제품은 처음부터 옳았고
+> 지금도 옳다 — 세 번의 FAIL은 전부 "그것을 지키는 장치"에 대한 것이다.
+> **§10.6은 이 게이트가 왜 열거로는 닫히지 않는지와 종료 기준을, §10.7은
+> "지금 파일럿에 나가도 되는가"를 게이트 판정과 분리해 답한다.**
 
 **작성일:** 2026-09-04
 **작성 역할:** Opus (Tech Lead / 임상 권위자 / 독립 검수자)
@@ -1193,3 +1200,510 @@ v9가 전체 스위트를 통과하는 이상 이 행은 **"N/A(원래 없던 �
   그것은 `submission_id`/`visit_id`가 audit에 도달하는 경로에 대한 것이지
   서버 전반에 대한 재검수가 아니다(이번 delta에 `server/**` 변경이 0이므로
   범위 밖으로 두었다).
+
+---
+
+## 10. 3차 delta 재검수 (2026-09-05)
+
+# 판정: **FAIL** — Batch 4 + 4.1 게이트를 닫지 않는다. (**CLOSED 아님**)
+
+**검수 대상:** `7e7eff3..HEAD`(현 HEAD `a539d15`), 5파일 +373/−6
+(`tests/lbp-working-hypothesis.spec.mjs` / `tests/save-conflict.spec.mjs` /
+`tests/server.spec.mjs` / `DECISIONS.md` / `HANDOFF.md`).
+**검수 역할:** Opus (독립 검수자). **코드는 한 줄도 고치지 않았다** — 변이 23개와
+프로브 3개는 전부 스크립트로 적용 후 **무조건 원복**, 매번 `git status --short`
+빈 출력 확인. 최종 상태 clean, 임시 worktree·임시 파일 없음.
+
+> **이 판정을 읽는 법.** FAIL은 "지금 나가면 안 된다"는 뜻이 **아니다.**
+> 그 둘을 §10.6(종료 기준)과 §10.7(파일럿 가부)에서 분리해 답했다.
+> 결론부터: **게이트는 닫히지 않았고, 파일럿은 §10.7의 운영 조건 2개를 붙이면
+> 착수 가능하다고 본다** — 다만 그 판단은 §18.2 1번 조문을 바꾸는 일이므로
+> PO 승인 사항이다.
+
+### 10.0 판정 요지 — 무엇이 새로 깨졌나
+
+**§9.8이 요구한 6건은 전부, 그리고 제대로 이행됐다.** 기록된 변이 8개
+(m6/a4/m7/c9 + v2/v3/v6/v9)를 전부 다시 넣어 **8/8 KILLED**를 실패 메시지
+원문과 함께 확인했고(§10.2.1), 구현자가 자체 고안했다는 4개도 재현해 **4/4
+KILLED**(§10.2.2), 신규 단언 4계열이 공허하지 않음을 격리 프로브로 확인했다
+(§10.2.4). 기존 exact-match 기대 문자열은 **한 글자도 바뀌지 않았다**(§10.5).
+`src/` zero-diff, `test:all` ×3 EXIT=0 `OK: 4966` 동일, `build` EXIT=0,
+`test:server` ×15 오경보 0 — 보고된 수치와 전부 일치한다.
+
+**그런데도 FAIL인 이유는 이번 라운드가 스스로 내세운 방법 자체가 성립하지 않기
+때문이다.** 이 커밋의 논지는 "지적된 변종만 고치지 않고 `O` 줄에 도달 가능한
+**판별자를 전수 나열**했다"이다. 그 표를 코드로 독립 재작성해 대조한 결과
+**표에 없는 판별자가 4종 있었고**, 그중 두 개는 성질이 특히 나쁘다:
+
+> **`PhysicalExamSuggestion.priority`와 `.help`는 fixture가 쓰는 값과
+> 프로덕션이 쓰는 값이 정확히 반대다.**
+>
+> - 프로덕션의 LBP 검사 항목은 **전부** `priority: 'CONTEXTUAL'` + `help` 있음
+>   (`lbpExamSuggestions.ts:80-90`의 `lbpExamItem`이 하드코딩. `MUST_CHECK`는
+>   LBP 경로에서 **단 한 개도 생성되지 않는다** — `src/`에서 `MUST_CHECK`가
+>   나오는 곳은 합성 미리보기 fixture와 persistence 템플릿 기본값뿐).
+> - 컴포저 테스트의 fixture는 **전부** `priority: 'MUST_CHECK'` + `help` 없음.
+>
+> 그래서 **`priority === 'CONTEXTUAL'`(또는 `i.help`) 조건이 붙은 유출 변이는
+> 실제 환자 100%에서 발화하면서 테스트에서는 0% 발화한다.** 넣어 봤고, 둘 다
+> 전체 스위트를 통과한다(N2/N8 → **신규 결함 H-4**).
+
+이것은 1차(하위 필드를 비움) → 2차(하위 필드의 한 모양만 채움) → 3차(**필드는
+채웠는데 채운 값이 프로덕션에 없는 값**)로 이어지는 **같은 계열의 세 번째
+반복**이며, 이번 것이 가장 나쁘다. 앞의 두 번은 "드문 상태를 안 덮었다"였지만
+이번 것은 **"흔한 상태가 아니라 존재하지 않는 상태를 덮었다"**이다.
+
+**다만 이번엔 4라운드용 패치를 요구하지 않는다.** §10.6에 적었듯 판별자 열거는
+원리적으로 종료하지 않으며(이번 검수도 한 번에 7개를 더 찾았다), 같은 방식의
+4번째 패치는 5번째 FAIL을 예약하는 것이다. §10.6이 요구하는 것은 **열거를
+전칭(∀)으로 바꾸는 구조적 수정 2건**이고, 그것은 끝이 있다.
+
+---
+
+### 10.1 판별자 표 재확인 — 표에 없던 판별자 4종을 등재한다
+
+`emrPreview.ts:200-222`의 `oParts`에 도달할 수 있는 입력을 **구현자의 표를 보지
+않고 코드에서 먼저 열거**한 뒤 대조했다.
+
+#### 10.1.1 대조 결과
+
+| # | 판별자 | 프로덕션 실재값 | 표에 있나 | fixture 좌표 | 판정 |
+|---|---|---|---|---|---|
+| 1 | `examSuggestions[].result.status` | 6값 + 인식불가 | ✅ | NEGATIVE / NOT_YET_CHECKED / LIMITED / NOT_PERFORMED / 'ZZZ' | **OK** |
+| 2 | `examSuggestions[].reasonFacts[].provenance` | PATIENT_FACT · DERIVED · OBSERVED | ✅ | PATIENT_FACT + DERIVED | **OK** (OBSERVED 제외 논거 타당 — 값이 `'원장 직접 추가'`, 환자 유래 아님) |
+| 3 | `examSuggestions[].result.laterality` | LEFT/RIGHT/BILATERAL/NOT_APPLICABLE/null/인식불가 | ✅ (다른 파일 위임) | NOT_APPLICABLE·null·`7`(인식불가)·LEFT | **부분 거짓 → M-7** |
+| 4 | `lbpDirectionalResponse` | 6값 + NOT_ASSESSED + undefined + 인식불가 | ✅ | 전부 | **OK** (프로브 p3로 신규 단언 비공허 확인) |
+| 5 | `reassessment.items[].previous` × 오늘 `result` | 존재/부재 × 기록완료/미시행 | ✅ | 4조합 중 3 | **OK** |
+| 6 | `lbp_objective_motor_deficit` | NONE/SEVERE_OR_PROGRESSIVE/UNKNOWN/undefined | ✅ | 전부 | **OK** (N10으로 undefined 분기 확인) |
+| 7 | **`examSuggestions[].priority`** | **`CONTEXTUAL` 100%** | ❌ **없음** | **`MUST_CHECK` 100%** | **→ H-4 (HIGH)** |
+| 8 | **`examSuggestions[].help`** | **존재 100%** (`LBP_EXAM_HELP`가 6 id 전부 보유) | ❌ **없음** | **부재 100%** | **→ H-4 (HIGH)** |
+| 9 | **`previous`의 하위 필드**(`note` / `laterality` / `recordedAt`) | 임의 임상 텍스트 / 4값 | ❌ **없음**(표는 `previous`를 존재·부재로만 취급) | `note: ''`, `laterality: 'NOT_APPLICABLE'` **고정 100%** | **→ M-8 (MEDIUM)** |
+| 10 | **배열 기수**(`examSuggestions.length`, `reassessment.items.length`) | 1~5 / 0~n | ❌ **없음** | exam 2, 재검 1 (≥3 좌표 없음) | **→ L-8** |
+| 11 | `examSuggestions[].source` | `SUGGESTED` 100% | ❌ 없음 | `SUGGESTED` 100% | **문제 없음**(일치) |
+| 12 | `result.note` 비어있음/비어있지않음 | 둘 다 | ❌ 없음 | 컴포저 fixture는 `''` 고정이나 `doctor-workspace.spec.mjs:695-698`이 렌더 경로로 비어있지 않은 note를 실제 단언 | **OK** |
+| 13 | `O` 절의 **순서·병합** | — | ❌ 없음 | `filled`이 4절 전부 채움 | **OK**(N4 순서·N6 병합 둘 다 T11이 죽임) |
+
+#### 10.1.2 "다른 파일 커버리지에 의존" 2건 — 하나는 참, 하나는 부분 거짓
+
+구현자가 `DECISIONS.md` "의도적으로 다르게 처리한 것"에 정직하게 적어 둔 2건을
+**해당 파일의 테스트를 직접 읽고 변이를 넣어** 확인했다.
+
+**(a) motor-deficit `UNKNOWN`/`undefined` — 주장 참.**
+`UNKNOWN`은 `lbp-working-hypothesis.spec.mjs`의 H-2 단언이 직접 잠근다(a4 KILLED).
+`undefined` 분기도 잠겨 있다 — `motorDeficitLabel`을
+`LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL[input.lbpObjectiveMotorDeficit ?? 'NONE']`로
+바꾸는 변이(N10)를 넣으니
+`FAIL: §14.1 6-key skeleton: every value empty -> exactly the 6 fixed keys …`로
+**KILLED**. 위임 없이 이 파일 안에서 이미 닫혀 있다.
+
+**(b) laterality — 주장 부분 거짓 → M-7.**
+표는 "`tests/doctor-workspace.spec.mjs`(14차 MEDIUM-2)가 LEFT/BILATERAL/null/
+인식 불가를 이 컴포저의 렌더 경로로 이미 커버"라고 적는다. 실제로 읽어 보면:
+
+- **인식 불가(`laterality: 7`)는 참으로 커버된다.** `isValidLaterality` 가드를
+  제거하는 변이(N9)를 넣으니 `doctor-workspace.spec.mjs:567`
+  `assert.ok(!emrTextOnly.includes('undefined'))`가 **KILLED**. 이 절반은 사실이다.
+- **LEFT/RIGHT/BILATERAL이 실제로 찍히는지는 저장소 어디에서도 단언하지
+  않는다.** `lat` 계산 전체를 `const lat = ''`로 지우는 변이(N1)는 **전체
+  스위트를 통과한다.** 14차 MEDIUM-2 테스트는 `LEFT`를 넘기지만 `'(좌)'`가
+  나오는지는 보지 않고 `'음성/정상'`만 본다. 그리고 **`BILATERAL`은 검사
+  laterality로 저장소 전체(`src/`+`tests/`)에 단 한 번도 등장하지 않는다** —
+  표의 "BILATERAL 커버" 주장은 사실이 아니다.
+
+---
+
+### 10.2 변이 테스트 전체 기록 (23 변이 + 3 프로브)
+
+모든 변이: 스크립트 적용 → `npm run test:all` 전체 실행 → **무조건 원복** →
+`git status --short` 빈 출력 확인. `SURVIVED` 판정은 전부 대상 스위트가 아니라
+**전체 스위트** 통과로 확인했다.
+
+#### 10.2.1 1·2차가 기록한 변이 8개 — **8/8 KILLED**
+
+| # | 변이 | 결과 | 죽인 단언 (실패 메시지 원문) |
+|---|---|---|---|
+| m6 | `examFindingsLines`의 `.map()`에 `reasonFacts` 텍스트 덧붙임 | **KILLED** | `Error: FAIL: T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources (검사 결과/허리 움직임 반응/오늘 재검 소견/객관적 근력저하) and nothing patient-reported` |
+| a4 | `LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL`에 `UNKNOWN: '없음'` | **KILLED** | `Error: FAIL: H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare` |
+| m7 | `reassessmentFindingsLines`가 `previous.status`를 무조건 출력 | **KILLED** | T11(위와 동일 원문) |
+| c9 | `{authError && <DoctorTokenSetup … />}` 줄 삭제 | **KILLED** | `AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\{authError && <DoctorTokenSetup authFailed onSet=\{\(\) => setAuthError\(false\)\} \/>\}/` |
+| v2 | `provenance === 'DERIVED'`인 `reasonFacts`만 `검사 결과` 절에 덧붙임 | **KILLED** | T11(동일 원문) |
+| v3 | `NOT_YET_CHECKED` 항목의 `reasonFacts`를 `확인 필요 사유:` 절로 push | **KILLED** | T11(동일 원문) |
+| v6 | 오늘 `result`가 `NOT_YET_CHECKED`일 때만 `previous.status` 출력 | **KILLED** | `Error: FAIL: M-4: a reassessment item whose today's result is still NOT_YET_CHECKED never has 'previous' printed in its place -- O stays bare` |
+| v9 | `result.kind === 'auth'` 분기가 `setAuthError(false)` | **KILLED** | `AssertionError: the auth-kind branch (and only that branch) must call setAuthError(true) -- flipping this to false (v9) is exactly what this test exists to catch` |
+
+#### 10.2.2 구현자가 자체 고안했다는 4개 — **4/4 KILLED (보고 사실 확인)**
+
+| # | 변이 | 결과 | 죽인 단언 |
+|---|---|---|---|
+| s1 | `lbpDirectionalResponse`의 `!== 'NOT_ASSESSED'` 조건 제거 | **KILLED** | `doctor-workspace.spec.mjs:2606` `assert.ok(!html.includes('허리 움직임 반응'))` (신규 "판별자 전수" 단언도 독립적으로 죽는다 — §10.2.4 p3) |
+| s2 | `reasonFacts`를 `객관적 근력저하:` 절로 유출 | **KILLED** | T11 |
+| s3 | laterality의 `!== 'NOT_APPLICABLE'`을 `===`로 반전 | **KILLED** | T11 |
+| r2 | 전화번호 뒷자리를 `visit_id`에 이어붙임(M-6 검증용) | **KILLED** | `Error: FAIL: audit log: submission_id/visit_id are ALWAYS server-generated UUIDs in shape -- PHI stuffed into an id field itself is caught here (delta 재검수 M-6)` |
+
+#### 10.2.3 이번 검수가 새로 고안한 변이 11개 — **7 SURVIVED / 4 KILLED**
+
+좌표는 §10.1.1의 표에서 직접 도출했다(표에 없는 행 = 겨냥 지점).
+
+| # | 계열 | 변이 내용 | 결과 | 결함 |
+|---|---|---|---|---|
+| **N2** | 판별자 7 | `priority === 'CONTEXTUAL'`인 항목의 `reasonFacts`만 `검사 결과` 절에 덧붙임 | **SURVIVED (test:all)** | **→ H-4** |
+| **N8** | 판별자 8 | `i.help`가 있는 항목의 `reasonFacts`만 덧붙임 | **SURVIVED (test:all)** | **→ H-4** |
+| **N1** | 판별자 3 | `const lat = ''` — laterality 접미사를 통째로 제거 | **SURVIVED (test:all)** | **→ M-7** |
+| **N5** | 판별자 9 | 재검 줄에 `previous.note`를 `[이전: …]`로 덧붙임(rule 4 부분 위반) | **SURVIVED (test:all)** | **→ M-8** |
+| **N3** | 판별자 조합 | `NOT_YET_CHECKED` **그리고** `laterality != null`인 항목의 `reasonFacts`를 `O`에 push | **SURVIVED (test:all)** | → L-8 |
+| **N7** | 배열 기수 | `examSuggestions.length >= 3`일 때만 `reasonFacts`를 `O`에 push | **SURVIVED (test:all)** | → L-8 |
+| **r3** | M-6 우회 | 전화번호 뒷자리를 **정확히 UUID 모양으로 재조립**해 `visit_id`에 넣음 | **SURVIVED (test:all)** | → L-9(비차단) |
+| N4 | 절 순서 | `객관적 근력저하` 절을 `oParts.unshift`로 맨 앞에 | **KILLED** | T11 |
+| N6 | 절 병합 | `오늘 재검 소견` 절을 `검사 결과` 절에 합침 | **KILLED** | T11 |
+| N9 | 판별자 3 | `isValidLaterality` 가드 제거(인식 불가 → 리터럴 `undefined`) | **KILLED** | `doctor-workspace.spec.mjs:567` |
+| N10 | 판별자 6 | `lbpObjectiveMotorDeficit`의 `undefined`를 `'NONE'`으로 강제 | **KILLED** | `Error: FAIL: §14.1 6-key skeleton: every value empty -> exactly the 6 fixed keys, in order (C/C, O/S, S, O, A, P), nothing else` |
+
+#### 10.2.4 신규 단언의 비공허성 — 프로브 3개, 3/3 발화
+
+v2/v3는 T11에서 먼저 죽으므로 **격리 블록의 신규 단언이 스스로 값을 하는지**를
+따로 확인했다(T11 exact-match를 임시로 `true`로 무력화한 상태에서 변이 적용,
+프로브는 즉시 원복 + `git status` 빈 출력 확인):
+
+```
+p1 (T11 무력화 + v2) → Error: FAIL: H-3 v2: reasonFacts' DERIVED-provenance canary
+                       never appears anywhere in the output, even though the item's
+                       own (NEGATIVE) finding does
+p2 (T11 무력화 + v3) → Error: FAIL: H-3 v3: a NOT_YET_CHECKED item's reasonFacts
+                       canary never appears anywhere in the output, and the item
+                       contributes no clause at all
+p3 (s1, lbp 스위트 단독) → Error: FAIL: 판별자 전수: the real default value
+                       'NOT_ASSESSED' (not just the omitted/undefined case) never
+                       produces a 허리 움직임 반응 clause on O
+```
+
+M-4/M-5/M-6 단언은 각각 v6/v9/r2가 **그 단언 자체로** 죽었으므로 별도 프로브가
+필요 없다. **신규 단언 10개 중 공허한 것은 없다.**
+
+---
+
+### 10.3 신규 결함
+
+| # | 심각도 | 항목 | 근거 |
+|---|---|---|---|
+| **H-4** | **HIGH** | 판별자 표에 `priority`/`help`가 없고, 두 필드 모두 **fixture 값과 프로덕션 값이 정반대**다. 그 조건이 붙은 `O` 유출 변이는 실제 환자 100%에서 발화하고 테스트에서 0% 발화한다(N2/N8 생존) | `tests/lbp-working-hypothesis.spec.mjs:614,635,859,899` vs `src/doctor/workspace/lbpExamSuggestions.ts:80-90` |
+| **M-7** | MEDIUM | laterality `LEFT/RIGHT/BILATERAL`이 실제로 EMR에 찍히는지 단언하는 테스트가 없다(N1 생존). `BILATERAL`은 검사 laterality로 저장소에 0회 등장. 표의 "다른 파일이 커버" 주장이 이 방향에서는 거짓 | `src/doctor/workspace/emrPreview.ts:127-130`, `tests/doctor-workspace.spec.mjs:533,545` |
+| **M-8** | MEDIUM | `previous`의 하위 필드(`note`/`laterality`)가 모든 fixture에서 `''`/`NOT_APPLICABLE` 고정 → rule 4의 **부분** 위반(오늘 줄에 이전 메모를 덧붙임)이 생존(N5) | `tests/lbp-working-hypothesis.spec.mjs:668,913` |
+| L-8 | LOW | 판별자 **조합**(N3)과 **배열 기수**(N7) 좌표는 커버되지 않는다. **이건 고칠 항목이 아니라 §10.6의 근거로 기록한다** — 이 방향은 유한하지 않다 | — |
+| L-9 | LOW(비차단) | M-6의 UUID 모양 단언은 **PHI를 UUID 모양으로 위장**하면 우회된다(r3 생존). 오늘 프로덕션 경로 없음 | `tests/server.spec.mjs:965-969` |
+
+#### H-4 [HIGH] fixture가 묘사하는 환자는 존재할 수 없다
+
+`lbpExamItem`(`lbpExamSuggestions.ts:80-90`)은 **모든** LBP 검사 항목을
+`priority: 'CONTEXTUAL'` + `help: LBP_EXAM_HELP[id]`로 만든다. 자동 생성 4종
+(`generateLbpExamSuggestions`)도, 원장이 손으로 추가하는 5종
+(`LBP_CLINICIAN_ADDABLE_EXAMS`)도 전부 이 함수를 지난다. 프로덕션 경로 양쪽 다
+이 값을 그대로 컴포저에 넘긴다:
+
+- `DoctorWorkspace.tsx:137` `mergeLbpExamSuggestions(base.painExamSuggestions, payload)`
+  → `DoctorWorkspace.tsx:604/826` → `PainWorkspace` → 컴포저
+- `DoctorView.tsx:3182` `examSuggestions: workspaceState.painExamSuggestions`
+  (`deserializeWorkspaceState` 경유 — `workspace-round3.spec.mjs:292`가 round-trip
+  후에도 `priority === 'CONTEXTUAL'`임을 이미 단언한다)
+
+`src/`에서 `MUST_CHECK`가 값으로 등장하는 곳은 **합성 미리보기 fixture
+(`workspaceFixtures.ts`)와 persistence 템플릿의 기본값뿐**이다. 즉 실제 환자의
+검사 항목 중 `MUST_CHECK`는 **0개**다.
+
+반면 `buildPainWorkspaceEmrPreview`를 직접 부르는 fixture 4개(`filled`의 e1/e2,
+격리 H-1의 e-h1, 격리 H-3v3의 e-h3v3)는 **전부** `MUST_CHECK`이고 `help`가 없다.
+`tests/` 전체를 뒤져도 **기록 완료된 + `reasonFacts`가 비어 있지 않은 +
+`CONTEXTUAL`인** 검사 항목을 이 컴포저에 넘기는 좌표는 하나도 없다
+(`doctor-workspace.spec.mjs:441`의 `CONTEXTUAL` 항목은 `NOT_YET_CHECKED` +
+`reasonFacts: []`라 발화하지 않는다 — N2의 생존이 이를 실증한다).
+
+```
+=== MUTATION n2 (priority==='CONTEXTUAL' 항목의 reasonFacts -> O) / npm run test:all ===
+RESULT: SURVIVED (exit 0) <<<<<<<<<< MUTANT NOT KILLED
+=== MUTATION n8 (help 있는 항목의 reasonFacts -> O) / npm run test:all ===
+RESULT: SURVIVED (exit 0) <<<<<<<<<< MUTANT NOT KILLED
+```
+
+이 변이가 프로덕션에 들어가면 `'하지 통증·저림/신경증상 보고(환자 응답)'`가
+**모든 실제 요통 환자의 `O | 객관적 소견`에 찍힌다.** 파일 헤더의 ONE ABSOLUTE
+RULE 위반이자 §14.1 위반이며, 1차 검수의 H-1과 **같은 사고, 다른 좌표**다.
+
+**왜 이것이 앞의 두 번보다 나쁜가.** 1차는 "하위 필드를 비웠다", 2차는 "그 필드의
+드문 모양만 채웠다"였다. 셋 다 "흔한 상태를 안 덮었다"로 읽히지만, 3차는 다르다 —
+**fixture가 채운 값이 프로덕션에 존재하지 않는 값**이다. 2차 검수가 스스로 세운
+기준("프로덕션에 실재하는 값이 그 좌표를 통과하는가")을 fixture **자신**에게는
+적용하지 않은 결과다.
+
+#### M-7 [MEDIUM] 좌우 표시가 EMR에서 통째로 사라져도 아무도 모른다
+
+이것은 `O` 경계 위반이 아니다 — laterality는 원장 입력이므로 유출이 아니라
+**손실**이다. 그러나 요통에서 좌/우/양측은 신경학적 판단과 직결되고, EMR에
+"SLR: 양성/이상 소견"만 남고 "(좌)"가 사라지면 차트를 다시 보는 사람은 어느
+쪽인지 알 수 없다. `const lat = ''` 변이가 전체 스위트를 통과한다.
+
+#### M-8 [MEDIUM] rule 4가 "덮어쓰기"만 막고 "덧붙이기"는 안 막는다
+
+`reassessmentExam.ts` 헤더는 `previous`가 "never copied forward **as if it were
+already re-confirmed**"라고 적는다. 현 단언들은 (a) 무조건 스왑(m7), (b) 빈칸
+채우기(v6) 두 형태를 잡는다. 그러나 오늘 결과 **옆에** 이전 값을 덧붙이는
+형태는 잡지 못한다 — 모든 fixture의 `previous.note`가 `''`이고
+`previous.laterality`가 `NOT_APPLICABLE`이라 덧붙일 내용 자체가 없기 때문이다.
+
+---
+
+### 10.4 M-6 편차 판단 — **편차는 옳다. 검출력은 실제로 복원됐다.**
+
+구현자는 §9.4(iv)의 "통째 제외를 shape 단언 + 전체 스캔으로 **교체**"를
+"제외는 유지 + shape 단언 **추가**"로 해석했다. 논거는 "제외를 없애면 2차가
+실측·수용한 0.9%/run 오경보가 되살아난다"였다.
+
+**판단: 타당하고, 원 권고보다 낫다.** 근거 셋:
+
+1. **검출력 복원은 실증됐다.** §9.2.2에서 SURVIVED로 기록된 r2(전화번호를
+   `visit_id`에 이어붙임)를 다시 넣으니 이번엔 **KILLED** —
+   `FAIL: audit log: submission_id/visit_id are ALWAYS server-generated UUIDs in
+   shape …`. 즉 제외로 가려졌던 변이 종류가 다시 잡힌다.
+2. **원 권고를 문자 그대로 따랐다면 오경보가 돌아왔을 것이다.** 2차가 40회
+   프로브로 실측한 "옛 형태 1/40 발화, 그 발화가 id 필드 안"은 제외를 없애면
+   그대로 재현된다. 임상 시스템에서 PHI 카나리아가 1%씩 거짓 경보를 내는 것은
+   그 자체로 안전 문제다(팀이 실패를 무시하도록 학습된다).
+3. **이름 계열 PHI는 애초에 제외되지 않는다.** `PRIVACY_CANARY` 단언
+   (`server.spec.mjs:934-935`)은 **id를 포함한 파일 전체 원문**을 스캔한다.
+   제외되는 것은 "전화번호 뒷자리 4자리"라는 **16진수로 우연히 만들어질 수 있는
+   문자열 하나**뿐이다.
+
+**우회 가능성 검토 — 두 방향 다 확인했다.**
+
+- **"id가 아닌 새 필드에 넣기": 구조적으로 불가능.**
+  `server/audit.js:102`의 `logEvent({ event, submission_id, status, actor,
+  visit_id })`는 6키를 **구조분해로만** 받는다 — 호출자가 무슨 키를 더 넘겨도
+  `entry`에 들어가지 않는다. 이건 단언이 아니라 코드 구조가 주는 보증이다.
+- **"PHI를 UUID 모양으로 위장": 가능하다(r3 생존) → L-9.**
+  전화번호 뒷자리 `9999`는 유효한 16진수이므로
+  `99999999-9999-9999-9999-999999999999`는 shape 단언을 통과하고 텍스트 스캔에서는
+  제외된다. **다만 이건 게이트를 막지 않는다** — (i) `randomUUID()` 외에 id를
+  만드는 프로덕션 경로가 없고(§9.4(i)를 재확인했다: 생성은
+  `store.js:297`/`visitStore.js:110,114`, 읽기·갱신 경로는 전부 조회 성공 뒤에만
+  audit를 쓰므로 값이 이미 실재 UUID여야 한다), (ii) r2 같은 **이어붙이기**는
+  실수로 일어날 수 있지만 **8-4-4-4-12 hex로 재조립**은 실수로 일어나지 않는다.
+
+**결론: M-6은 처리 완료로 본다.** L-9는 잔여 한계로만 기록한다.
+
+---
+
+### 10.5 테스트 약화 / 공허성 — **약화 없음, 공허 없음 (PASS)**
+
+- **exact-match 기대값 변경 0.** `git diff 7e7eff3..HEAD -- tests/`의 `-`줄은
+  (a) `reasonFacts` 배열 리터럴 2곳(원소 추가), (b) `save-conflict.spec.mjs`
+  매핑 표 주석 4줄, (c) 주석뿐이다. **`filledLines[3]`의 기대 문자열은 한 글자도
+  바뀌지 않았다** — `e1`에 DERIVED 카나리아를 넣고 `e2`(NOT_YET_CHECKED 항목)를
+  통째로 추가하고도 출력이 그대로라는 것을 exact-match가 증명하는 구조다.
+  "통과시키려고 기대값을 맞춘" 흔적 없음.
+- **`DECISIONS.md` 테스트 규약 3건 대조:**
+  - 규약 1(esbuild 이스케이핑): 신규 단언 중 번들 텍스트 대상 0건 — lbp 쪽은
+    함수 런타임 출력, M-5는 `fs.readFileSync`한 raw `.tsx`, M-6은 파싱된 JSON.
+    **저촉 없음.**
+  - 규약 2(exact-match로 잠금): 유지. `filled`의 O 줄이 계속 전체를 잠근다.
+  - 규약 2 확장 ①·②(하위 필드 / 판별자 전수): **문구는 지켰으나 열거가
+    불완전하다** — §10.1이 표에 없는 판별자 4종을 찾았다.
+- **공허성:** §10.2.4의 프로브 3개 + v6/v9/r2의 직접 사망으로 신규 단언 10개
+  전부 발화 확인. `없다`를 주장하는 단언에는 전부 짝이 되는 긍정 대조가 있다.
+- **삭제된 단언 없음.** `OK:` 4956 → **4966**(순증 10), `test:all` 3회 전부 동일.
+
+**실측:**
+```
+$ npm run test:all  (1회차) EXIT=0  "OK: " 4966
+$ npm run test:all  (2회차) EXIT=0  "OK: " 4966   ← 완전 동일(비결정성 없음)
+$ npm run test:all  (3회차, 전 변이 원복 후) EXIT=0  "OK: " 4966
+$ npm run build     EXIT=0  (tsc -b + vite build, 1.80s)
+$ npm run test:server × 15   PASS=15 FAIL=0   (오경보 0)
+$ git diff --stat 7e7eff3..HEAD -- 'src/**' index.html 'server/**' 'tablet core/**'
+(출력 없음)                                   ← 프로덕션·FROZEN zero-diff 사실
+$ git status --short   (전 변이·프로브 원복 후)
+(출력 없음)
+```
+
+---
+
+### 10.6 4라운드 판정 — **열거는 종료하지 않는다. 전칭은 종료한다.**
+
+§9.10이 "무한 후퇴가 가능하다"고 적고도 4번째 라운드를 **더 촘촘한 열거**로
+시도했다. 이번 검수는 그 시도가 성공하지 않는다는 것을 실측으로 보인다:
+"판별자 전수"를 표방한 라운드 직후에 **한 사람이 한 번에 7개**를 더 찾았다.
+
+#### (i) 왜 종료하지 않는가
+
+`O` 줄이 읽는 값의 좌표 공간은 (필드) × (그 필드의 값) × (다른 필드와의 조합) ×
+(배열 기수)이고, 마지막 두 축은 **유한하지 않다.** N3(두 판별자 조합)과
+N7(항목 3개 이상)이 그 증거다. 좌표를 하나 더 채우면 그 좌표와 다른 좌표의
+조합이 새로 열린다. 이 방향의 라운드는 **원리적으로 끝이 없다.**
+
+#### (ii) 그러나 생존자 7개는 두 부류로 갈린다 — 한 부류는 끝이 있다
+
+| 부류 | 해당 | 성질 | 유한한가 |
+|---|---|---|---|
+| **A. fixture가 프로덕션과 다른 값을 쓴다** | N2(priority), N8(help), N1(laterality), N5(previous 하위 필드) | fixture가 묘사하는 대상이 **실재하지 않는 환자**다. 좌표가 부족한 게 아니라 **틀린** 것이다 | ✅ **끝이 있다** — fixture를 실제 생성기 출력으로 바꾸면 이 부류 전체가 한 번에 닫힌다 |
+| **B. 조합·기수** | N3, N7 | 좌표 공간의 곱집합 | ❌ 끝이 없다 |
+
+**A는 이번 라운드가 잡았어야 했다.** 2차 검수가 세운 기준("프로덕션에 실재하는
+값이 그 좌표를 통과하는가")을 fixture 자신에게 적용하기만 하면 됐다.
+
+#### (iii) 종료 기준 — 열거를 **전칭(∀)**으로 바꾼다
+
+B 부류는 좌표를 더 세는 방식으로는 못 닫는다. **세지 않는 단언**으로 닫는다.
+지금 단언들은 전부 "이 카나리아가 없다"(개별 좌표 열거)이다. 대신:
+
+> **∀ 형태 단언.** 입력 객체에서 도달 가능한 **모든 환자 유래 문자열**을
+> 재귀적으로 수집해(`reasonFacts[].text`, `previous.*`, `onsetDurationText`,
+> `aggravatingText`, `impactText`, `microFollowUpText`, `revisitRecapText` …),
+> 그중 **어느 하나도** `O` 줄에 부분문자열로 나타나지 않음을 단언한다.
+
+이 단언은 좌표를 열거하지 않으므로 **조합에도, 배열 기수에도, 미래에 추가될
+하위 필드에도 자동으로 성립한다.** N2/N3/N7/N8은 물론 아직 아무도 고안하지 않은
+변종까지 한 번에 죽는다. 헬퍼 하나(약 15줄) + fixture당 단언 1줄이다.
+
+#### (iv) 그래서 게이트를 닫는 조건은 이것이다 (프로덕션 코드 변경 0)
+
+1. **[A 부류 종결] fixture를 생성기 출력에서 만든다.** `filled`와 격리 블록의
+   exam 항목을 손으로 쓴 리터럴 대신
+   `mergeLbpExamSuggestions(generateLbpExamSuggestions(payload), payload)`의
+   실제 출력에 `result`만 덮어써서 구성한다. `priority`/`help`/`source`/`id`/
+   `title`/`reasonFacts` 조합이 **정의상** 프로덕션과 같아진다.
+   → **N2·N8이 죽는 것을 확인·기록.**
+2. **[B 부류 종결] ∀ 단언 도입.** 위 (iii)의 헬퍼를 넣고 `filled`·`oBoundaryInput`
+   ·격리 블록 전부에 적용. → **N3·N7이 죽는 것을 확인·기록.**
+3. **[M-7]** 기록 완료 + `laterality: 'BILATERAL'`(및 `LEFT`)인 항목을 하나 두고
+   `O` 줄에 `(양측)`/`(좌)`가 **실제로 나타나는** exact-match를 단언.
+   → **N1이 죽는 것을 확인·기록.**
+4. **[M-8]** `previous.note`를 비어 있지 않게, `previous.laterality`를
+   `NOT_APPLICABLE`이 아닌 값으로 채운다(기존 exact-match는 그대로 통과해야 한다).
+   → **N5가 죽는 것을 확인·기록.**
+5. **[문서] `DECISIONS.md`에 "규약 2 확장 ③"을 남긴다** — 확장 ①·②를
+   **대체하는** 형태로:
+   > 안전 경계를 잠그는 fixture는 (a) **손으로 쓰지 않고 프로덕션 생성기의
+   > 출력에서 만든다** — 손으로 쓰면 그 fixture는 실재하지 않는 환자를 묘사할 수
+   > 있고, 세 라운드 연속 실제로 그랬다. 그리고 (b) 경계 단언은 좌표를 열거하지
+   > 않고 **입력에서 도달 가능한 모든 값에 대한 전칭**으로 쓴다 — 열거는
+   > 종료하지 않고 전칭은 종료한다.
+6. **[비차단] L-9**를 `HANDOFF.md` 백로그에 잔여 한계로 기록(수정 불필요).
+
+**5·6번을 뺀 4건이 이 게이트의 닫는 조건이다. 그리고 이 4건이 닫히면 나는 5차
+라운드를 열지 않는다** — 1·2번이 A·B 두 부류를 각각 구조적으로 종결시키므로,
+그 뒤에 남는 것은 "새 프로덕션 필드가 생기면 새 커버리지가 필요하다"는
+**정상적인 유지보수**이지 같은 사고의 반복이 아니다.
+
+---
+
+### 10.7 파일럿 착수 가부 — 게이트 판정과 **분리해서** 답한다
+
+**"더 찾을 수 있다"와 "지금 나가면 안 된다"는 다르다.** 앞의 §10.0~§10.6은
+전자에 대한 것이다. 여기서는 후자에 답한다.
+
+#### (i) 먼저 사실관계
+
+| 질문 | 답 | 근거 |
+|---|---|---|
+| 오늘 HEAD의 프로덕션 코드에 결함이 있는가 | **없다** | `src/` 4라운드 연속 zero-diff. 1차 검수의 임상 안전 A-1~A-5 전수 확인 결과가 그대로 유효 |
+| 이번에 살아남은 7개 중 HEAD에 실재하는 것이 있는가 | **0개** | 23개 변이 전부 내가 주입하고 원복했다. `git status` 빈 출력 ×23 |
+| 그렇다면 이 7개가 나타내는 위험은 무엇인가 | **미래의 편집이 조용히 새는 것** | 전부 "누군가 `emrPreview.ts`를 고쳤을 때 스위트가 못 잡는다"는 형태 |
+| 파일럿(2~3명, 하루) 중에 그 편집이 일어나는가 | **일어나지 않는다** | 파일럿은 고정된 빌드를 돌린다(§18.1 "하루 진료 안에서", 병행 수기 문진) |
+
+즉 **이번 FAIL이 지키는 것은 환자가 아니라 다음 배치다.**
+
+#### (ii) §18.2 전제 7개 판정
+
+| # | 전제 | 판정 | 근거 |
+|---|---|---|---|
+| 1 | Batch 4 게이트 CLOSED | ❌ | 이 재검수 판정 FAIL(H-4) |
+| 2 | 로컬 handoff 서버 LAN 전용 | 판정 보류 | 이번 delta에 `server/**` 변경 0. 운영 확인 사항이며 코드 검수로 답할 수 없다 |
+| 3 | `.data/` 미커밋 | ✅ | delta에 `.data/`·`.env` 없음, `git status` clean(변이 원복 후 포함) |
+| 4 | 환자 설명·동의 | 판정 보류 | 소프트웨어 밖(PO 책임) |
+| 5 | `URGENT_REVIEW` 시 원장 행동 규약 문서화 | 판정 보류 | 소프트웨어 밖(PO 책임) |
+| 6 | 중단 절차 | 판정 보류 | 소프트웨어 밖(PO 책임) |
+| 7 | 결함 5건 수정 + 변이 4개 사망 확인 | ✅ **충족** | m6/a4/m7/c9 + v2/v3/v6/v9 **8/8 KILLED**(§10.2.1). 조문이 요구한 것은 전부 이행됐다 |
+
+**7번은 이제 문자와 취지 모두 충족이다.** 2차 검수가 "형식 충족·취지 미달"로
+남겼던 부분(`O` 경계와 미평가-정상 혼동 위의 구멍)이 실제로 닫혔다 — 그 두
+좌표에 대해 내가 넣은 변이는 전부 죽는다.
+
+**1번만 ❌다.** 그리고 1번이 ❌인 이유는 §10.6이 보인 대로 **원리적으로 언제
+❌를 벗어날지 정해져 있지 않은 조문**이다.
+
+#### (iii) 판단 — 조건부 착수 가능, 단 §18.2 개정은 PO 승인 사항
+
+§18.2 1번을 문자 그대로 읽으면 **착수 불가**다. 나는 그 조문을 임의로 무시하지
+않는다. 대신 **조문이 잘못 설계됐다고 판단하고 개정을 권고한다.**
+
+> **문제:** 1번("게이트 CLOSED")은 두 개의 서로 다른 것을 한 항목에 묶어 놨다.
+> - **1a 임상 안전 게이트** — 오늘 이 소프트웨어가 환자에게 잘못된 것을
+>   보여주는가? → **네 라운드 연속 CLOSED.** 위반 0건.
+> - **1b 회귀 방어 게이트** — 미래의 편집을 스위트가 잡는가? → **CLOSED 아님,
+>   그리고 열거로는 닫히지 않는다(§10.6).**
+>
+> 파일럿이 검증하려는 것(§18.3: 환자가 끝까지 하는가, 원장이 몇 초에 찾는가,
+> 어떤 칸을 비워두는가)은 전부 **1a**에만 의존한다. **1b는 파일럿의 안전과
+> 무관하다** — 파일럿 중에는 코드를 고치지 않기 때문이다.
+
+**권고(PO 결정 사항):**
+
+1. **§18.2 1번을 1a/1b로 분리하고, 파일럿 착수는 1a로 판정한다.** 1a는 CLOSED다.
+2. **1b의 대체 운영 규칙 — 파일럿 기간 중 다음 2파일을 동결한다:**
+   `src/doctor/workspace/emrPreview.ts`, `src/doctor/ObjectiveExamFindingsCard.tsx`.
+   파일럿 중 이 두 파일을 편집하지 않으면 1b가 막으려는 위험(미래의 편집이
+   조용히 새는 것)은 **파일럿 창 안에서 구조적으로 발생할 수 없다.**
+   (동결 대상이 2개뿐인 이유: 이번 검수의 생존 변이 7개가 전부 이 두 파일에
+   대한 것이다.)
+3. **1b(=§10.6 (iv)의 4건)를 파일럿 *다음* 배치의 입구 조건으로 옮긴다.**
+   파일럿 후 첫 코드 변경 전에 반드시 닫는다.
+4. **§18.2 7번은 충족으로 표시한다**(위 (ii) 근거).
+
+**이 권고를 하는 이유를 분명히 적는다.** §18.0이 이미 기록한 대로 이 프로젝트는
+**환자 0명으로 화면을 네 번 재설계했다.** 이제 테스트 커버리지로도 같은 일이
+시작되고 있다 — 세 라운드 동안 프로덕션 코드는 한 줄도 바뀌지 않았고, 바뀐 것은
+전부 "그것을 지키는 장치"다. 그 장치는 중요하지만, **그 장치의 완성도는 파일럿이
+답하려는 질문(원장이 이 화면을 실제로 쓸 수 있는가)과 아무 관련이 없다.**
+2~3명·하루·병행 수기 문진이라는 §18.1의 범위에서, 지금 남은 위험은
+"미래의 편집"뿐이고 그것은 파일럿 기간에 편집하지 않는 것으로 정확히 제거된다.
+
+**동시에, 이 권고가 게이트 판정을 바꾸지는 않는다.** H-4는 실재하는 결함이고,
+파일럿 이후 첫 코드 변경 전에 반드시 닫아야 한다. 닫지 않은 채 다음 배치를
+시작하면 다섯 번째 같은 사고가 난다 — 이미 세 번 났다.
+
+---
+
+### 10.8 게이트 상태
+
+- Batch 4 + Batch 4.1(A/B/C/D) 게이트: **CLOSED 아님** (신규 결함 H-4/M-7/M-8).
+- 재검수 재요청 조건: §10.6 (iv)의 1~4번 완료 + 그 4건에 대한 **변이 사망
+  기록**(N1/N2/N3/N5/N7/N8). 프로덕션 코드가 바뀌지 않으므로 재검수는
+  delta만으로 충분하다.
+- **§10.6 (iv)가 닫히면 5차 라운드를 열지 않는다** — 1·2번이 A·B 두 부류를
+  구조적으로 종결시키기 때문이다. 이것이 이번 검수가 앞의 두 라운드와 다른
+  점이다: 앞의 둘은 "좌표를 더 채워라"였고, 이번 것은 "좌표를 세는 것을
+  그만둬라"다.
+- 파일럿: **§10.7 (iii)의 개정 4건을 PO가 승인하면 착수 가능**하다고 본다.
+  승인 없이 §18.2를 문자 그대로 적용하면 착수 불가다. 이 판단은 내가 단독으로
+  내릴 수 있는 것이 아니다.
+
+---
+
+### 10.9 확신이 없는 것 (그대로 적는다)
+
+- **N3·N7(조합·기수)을 결함으로 올릴지 망설였다.** 둘 다 프로덕션에서 그
+  조건이 발생하기는 하지만(NOT_YET_CHECKED + laterality는 원장이 좌우를 고른 뒤
+  상태를 되돌리면 실제로 생기고, 검사 항목 3개 이상은 흔하다), **그 조건을 건
+  유출 코드를 누가 왜 쓰겠는가**에 대한 시나리오가 나에게 없다. L-8로 낮춰
+  올린 것은 그래서이고, §10.6의 근거로만 쓴다. **H-4는 그렇지 않다** — 조건이
+  붙은 게 아니라 **조건 없는 유출이 fixture에서만 안 보이는 것**에 가깝다.
+- **§10.7의 권고가 옳다고 확신하지 못한다.** 나는 "파일럿 중에는 코드를 고치지
+  않는다"를 전제로 삼았는데, 실제 진료 중에 무언가 안 맞으면 그 자리에서 고치고
+  싶어지는 것이 자연스럽다. §18.2 6번(중단 절차 — "환자 앞에서 디버깅하지
+  않는다")이 그것을 이미 금지하고 있으므로 전제가 성립한다고 봤지만, **그
+  전제가 실제로 지켜질지는 소프트웨어가 아니라 사람에 달렸다.** 지켜지지 않을
+  것 같으면 §10.6 (iv)를 먼저 닫는 것이 맞다.
+- **`priority`/`help` 말고 또 무엇이 fixture와 프로덕션에서 다른지 전수
+  확인하지 않았다.** 내가 확인한 것은 `O` 줄에 도달하는 객체 두 종
+  (`PhysicalExamSuggestion`, `ReassessmentExamItem`)의 필드다. §10.6 (iv) 1번
+  (생성기 출력으로 fixture를 만드는 것)을 하면 이 질문 자체가 사라지므로 더
+  파지 않았다.
+- **`server/**` 검토는 audit 경로에 한정했다**(2차와 동일). 이번 delta에도
+  `server/**` 변경이 0이므로 범위 밖으로 두었다.

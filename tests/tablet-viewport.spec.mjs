@@ -94,6 +94,13 @@ const EXPECTED_OPEN_INPUTS_HERBAL = 4
  */
 const EXPECTED_OPEN_INPUTS_PAIN = 1
 const LBP_FIXTURE_NAME_RE = /허리 통증 주호소 \(LBP/
+/**
+ * 2026-09-06 플로우 정렬 2/5: 레인1 안전 블록은 합집합 CLEAR면 접힌다. 위 LBP
+ * fixture는 "확인 필요"라 열려 있으므로(접힘의 효과가 보이지 않음), **CLEAR인
+ * LBP fixture**를 따로 재서 접힘이 실제로 적용됐는지(요약 줄 "전 부위 안전")와
+ * 높이를 본다. 원장의 전형적 환자는 이쪽이다.
+ */
+const LBP_CLEAR_FIXTURE_NAME_RE = /허리 통증 주호소 \+ 추가 상세상담/
 
 let passed = 0
 const check = (name, cond, extra = '') => {
@@ -386,8 +393,37 @@ try {
     )
     const mp = await cdp.evalUntil(MEASURE, (v) => v && typeof v.workflow === 'number')
     console.log(`[measured] ${label} (LBP): ${mp.workflow}px / ${mp.viewport}px = ${(mp.workflow / mp.viewport).toFixed(2)}x | overflowX ${mp.overflowX}px | ${mp.openInputs} open inputs`)
+    const lane1WrapperOnReview = await cdp.send('Runtime.evaluate', { expression: `!!document.querySelector('.doctor__lane1Collapse')`, returnByValue: true })
+    check(`${label} (LBP 확인 필요): 레인1 래퍼가 없다 (비CLEAR에 요약 줄을 얹지 않는다)`, lane1WrapperOnReview?.result?.value === false)
     check(`${label} (LBP): no horizontal overflow`, mp.overflowX === 0, `(${mp.overflowX}px)`)
     check(`${label} (LBP): exactly the intended always-open inputs`, mp.openInputs === EXPECTED_OPEN_INPUTS_PAIN, `(${mp.openInputs})`)
+
+    // 세 번째 측정: CLEAR인 LBP fixture — 레인1이 접혀야 한다.
+    const pickedClear = await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.querySelector('#doctor-fixture-select')
+        if (!s) return null
+        const opt = [...s.options].find((o) => ${LBP_CLEAR_FIXTURE_NAME_RE.toString()}.test(o.textContent))
+        if (!opt) return null
+        s.value = opt.value
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+        return opt.textContent
+      })()`,
+      returnByValue: true,
+    })
+    check(`${label}: a CLEAR LBP fixture exists`, typeof pickedClear?.result?.value === 'string', `(${pickedClear?.result?.value})`)
+    await cdp.evalUntil(
+      `(() => { const sm = document.querySelector('.doctor__lane1Collapse > summary'); return !!sm && /전 부위 안전|확인 필요|URGENT|계산불가/.test(sm.textContent) && !!document.querySelector('[aria-label="원장 최종 판단"]') })()`,
+      (v) => v === true,
+    )
+    const lane1Text = await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__lane1Collapse > summary')?.textContent ?? ''`, returnByValue: true })
+    const lane1Open = await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__lane1Collapse')?.open ?? null`, returnByValue: true })
+    const mc = await cdp.evalUntil(MEASURE, (v) => v && typeof v.workflow === 'number')
+    console.log(`[measured] ${label} (LBP CLEAR): ${mc.workflow}px / ${mc.viewport}px = ${(mc.workflow / mc.viewport).toFixed(2)}x | overflowX ${mc.overflowX}px | ${mc.openInputs} open inputs | lane1 "${lane1Text?.result?.value}" open=${lane1Open?.result?.value}`)
+    check(`${label} (LBP CLEAR): 레인1 요약이 CLEAR를 말한다`, /전 부위 안전/.test(lane1Text?.result?.value ?? ''), `("${lane1Text?.result?.value}")`)
+    check(`${label} (LBP CLEAR): 레인1 disclosure가 닫혀 있다`, lane1Open?.result?.value === false, `(open=${lane1Open?.result?.value})`)
+    check(`${label} (LBP CLEAR): no horizontal overflow`, mc.overflowX === 0, `(${mc.overflowX}px)`)
+    check(`${label} (LBP CLEAR): exactly the intended always-open inputs`, mc.openInputs === EXPECTED_OPEN_INPUTS_PAIN, `(${mc.openInputs})`)
   }
 } finally {
   try { cdp?.ws.close() } catch { /* already gone */ }

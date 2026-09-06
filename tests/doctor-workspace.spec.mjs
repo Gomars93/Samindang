@@ -3940,4 +3940,46 @@ test('접기 소스 계약: 래치 훅이 존재하고 세 접힘 모두 그것�
   assert.ok(herbalBody.includes("label: '최종 변증·병기'") && herbalBody.includes('primary'), '한약 판단 3칸은 여전히 primary')
 })
 
-console.log(`\n(+자유입력 접기) ${passed} doctor-workspace assertions passed.`)
+
+// ===========================================================================
+// 2026-09-06 플로우 정렬 2/5: 레인1 안전 블록 — CLEAR면 접힘, 아니면 열림
+// ===========================================================================
+
+test('레인1 접기: 합집합 CLEAR인 LBP 기록에서 안전 블록은 닫힌 disclosure 안에 있고, 요약 줄이 부위를 이름 붙인다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+  const tag = enclosingDetailsTag(html, 'workspace__block--safety')
+  assert.ok(tag && tag.includes('doctor__lane1Collapse'), `안전 블록은 lane1 disclosure 안에 있어야 한다: ${tag}`)
+  assert.ok(!/\sopen(=|>|\s)/.test(tag), `CLEAR면 닫혀 있어야 한다: ${tag}`)
+  assert.ok(html.includes('안전 확인 — 전 부위 안전 (허리) · 펼쳐서 상세'), '요약 줄이 CLEAR와 부위(허리)를 말한다')
+  // 접혀도 내용은 그대로 렌더된다(삭제 아님) — 기존 P0-1 단언들이 그대로 통과하는 이유
+  assert.ok(html.includes('안전 확인 — 허리(LBP)'), 'LBP 패널 내용은 여전히 있다')
+  assert.ok(html.includes('추가 권장 검사'), '권장 검사 목록도 그대로 있다(접힘 안)')
+})
+
+test('레인1 접기: URGENT(신경 소견 SEVERE)면 래퍼 없이 안전 블록이 예전처럼 직접 렌더된다 — 요약 줄 0px 추가', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}, { lbpObjectiveMotorDeficit: 'SEVERE_OR_PROGRESSIVE' }))
+  assert.ok(!html.includes('doctor__lane1Collapse'), '비CLEAR면 disclosure 래퍼 자체가 없다')
+  assert.ok(html.includes('workspace__block--safety'), '안전 블록은 직접 렌더된다')
+  assert.ok(!html.includes('전 부위 안전'), 'CLEAR 문구는 나오지 않는다')
+  const count = html.split('workspace__block--safety').length - 1
+  assert.equal(count, 1, '두 분기 중 정확히 하나만 렌더된다')
+})
+
+test('레인1 접기: CommonSafetyBanner와 <h2>안전 확인</h2>은 disclosure 바깥에 그대로 있다 (접히지 않는다)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+  const h2 = html.indexOf('id="lane1-h2"')
+  const det = html.indexOf('doctor__lane1Collapse')
+  assert.ok(h2 !== -1 && det !== -1 && h2 < det, 'h2가 disclosure보다 앞에 있다')
+  const h2Tag = enclosingDetailsTag(html, 'id="lane1-h2"')
+  assert.ok(!h2Tag || !h2Tag.includes('doctor__lane1Collapse'), 'h2는 disclosure 안이 아니다')
+})
+
+test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임상 계산 없음), 열림은 래치', () => {
+  const dw = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  assert.ok(/const lane1EverNonClear = useOpenOnceContent\(lane1Summary\.status !== 'CLEAR'\)/.test(dw))
+  assert.ok(/anySafetyRegionApplicable && lane1Collapsible && \(/.test(dw) && /anySafetyRegionApplicable && !lane1Collapsible && \(/.test(dw), '두 분기가 상호배타')
+  // 좌측 요약 chip과 같은 신호 — 두 화면이 어긋날 수 없다
+  assert.ok(/lane1=\{lane1Summary\}/.test(dw), 'aside도 같은 lane1Summary를 받는다')
+})
+
+console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)

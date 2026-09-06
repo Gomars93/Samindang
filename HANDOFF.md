@@ -1,5 +1,34 @@
 # Current Handoff
 
+## 2026-09-06 (최신 29): 플로우 정렬 2/5 — 레인1 CLEAR면 접기. **효과 −57px, 높이의 주범은 아니었다**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: `DoctorWorkspace.tsx`
+(래퍼 조건부), 테스트 2파일. 임상 카드 0줄, `src/spec` 0줄.
+
+### 한 것 / 알게 된 것
+- CLEAR면 안전 블록을 `<details>`로 접고 요약 줄에 부위를 적는다. **비CLEAR면
+  래퍼 없이 예전과 동일**(1차 구현이 비CLEAR에 +70px 얹는 걸 실측으로 잡아 고침).
+- **실측이 가설을 뒤집었다.** 접힌 뒤 레인1은 전체의 **4%(121px)**. 높이 3,064px
+  (1024×768)은 확인 36% / 판단·처치 39% / 다음 21% — 임상 내용 자체다. 표는
+  DECISIONS.md 2026-09-06 2/5. ②는 옳지만 "운동 2화면 이내"에는 기여 0.
+
+### PO 결정 필요 (HUMAN DECISION REQUIRED)
+"운동 후보가 4화면 아래" 문제의 실제 해법은 세 갈래 — **(A) 상단 점프 내비
+5탭**(내용 절단 0, 세션 추천) / (B) 카드별 밀도 재설계(광범위) / (C) 수용.
+A도 원장이 요청하지 않은 새 UI라 승인 뒤 진행.
+
+### 검증
+`test:doctor-workspace` 289 / `test:tablet-viewport` 51 / `build` green.
+
+### Next Recommended Action
+1. **③ 재진 NRS** — `FollowUpTargetPicker`의 `pain_intensity` 기준값·직후값을
+   0~10 버튼으로(저장 타입은 문자열 유지, 옛 자유값은 텍스트 칸 유지 — 처치 chip
+   패턴). 초진·재진 같은 컴포넌트라 한 번에.
+2. 위 A/B/C 결정 → 해당 작업.
+3. ④ 환자 문자 링크 / ⑤ 세부문진.
+
+---
+
 ## 2026-09-06 (최신 28): 진료 플로우 정렬 1/5 — 통증 화면 자유입력 접기, 기본 열림 입력 **4 → 1**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.

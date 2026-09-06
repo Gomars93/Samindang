@@ -42,6 +42,7 @@ import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
 import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection } from './PainWorkspace'
+import { useOpenOnceContent } from './FinalAssessmentCard'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
 import {
   AnkleFootSafetyPanel,
@@ -461,6 +462,19 @@ export function DoctorWorkspace({
   // recomputes at every render-time reset boundary because it is plain,
   // uncached, prop-driven computation, never a ref/memo carried forward).
   const lane1Summary = computeLane1Summary(payload, regionInputs)
+  // 2026-09-06 (원장 지시 "진료최적화", 플로우 정렬 2/5): 레인1 안전 블록은
+  // 합집합 상태가 CLEAR일 때 접힌다. 판정은 새로 만들지 않고 좌측 요약 chip이
+  // 이미 읽는 `lane1Summary.status`를 그대로 쓴다(같은 신호, 두 화면이 어긋날 수
+  // 없다). 래치(`useOpenOnceContent`): 비CLEAR가 한 번이라도 보였으면 열어두고
+  // 자동으로 닫지 않는다 — 원장이 신경 소견을 SEVERE로 기록해 URGENT가 되면
+  // 열리고, 다시 NONE으로 고쳐도 원장이 손으로 닫기 전까지는 열려 있다.
+  // 실측 근거: LBP 초진 화면 높이 3.2~3.9뷰포트 중 레인1이 첫 화면을 통째로
+  // 차지해 운동 후보가 3~4화면 아래에 있었다(DECISIONS.md 2026-09-06).
+  // 비CLEAR가 한 번이라도 있었으면 래퍼 자체를 두지 않고 예전처럼 블록을 직접
+  // 렌더한다(요약 줄 0px 추가 — 확인이 필요한 환자에게 한 줄을 더 얹지 않는다).
+  // 실측: 래퍼를 항상 두면 비CLEAR 화면이 +70px, CLEAR 화면은 −57px였다.
+  const lane1EverNonClear = useOpenOnceContent(lane1Summary.status !== 'CLEAR')
+  const lane1Collapsible = !lane1EverNonClear
 
   // ---------------------------------------------------------------------
   // LBP v1 Batch 2 (G9/G10): recomputed every render, exactly like
@@ -563,7 +577,20 @@ export function DoctorWorkspace({
               />
             )}
             <CommonSafetyBanner payload={payload} />
-            {anySafetyRegionApplicable && (
+            {anySafetyRegionApplicable && lane1Collapsible && (
+              <details className="workspace__optional doctor__lane1Collapse">
+                <summary>{`안전 확인 — 전 부위 안전 (${lane1Summary.clearLabels.join(' · ')}) · 펼쳐서 상세`}</summary>
+                <section className="workspace__block workspace__block--safety">
+                  <p className="workspace__block__hint">
+                    현재 계산된 flag와 안전 잠금 의미를 그대로 표시합니다 — 새 cutoff나 해석을 추가하지 않습니다.
+                  </p>
+                  {regionInputs.map((r) => (
+                    <div key={r.key}>{r.element}</div>
+                  ))}
+                </section>
+              </details>
+            )}
+            {anySafetyRegionApplicable && !lane1Collapsible && (
               <section className="workspace__block workspace__block--safety">
                 {/*
                   P5 tablet-viewport height budget: the lane's own <h2

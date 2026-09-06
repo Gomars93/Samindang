@@ -30,8 +30,10 @@ import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import { ObjectiveExamFindingsCard, type ObjectiveExamField } from '../ObjectiveExamFindingsCard'
 import { VisitSummaryAside } from './VisitSummaryAside'
 import { PainFinalAssessmentCard, HerbalFinalAssessmentCard } from './FinalAssessmentCard'
-import { LbpWorkingHypothesisCard } from './LbpWorkingHypothesisCard'
+import { WorkingHypothesisCard } from './WorkingHypothesisCard'
 import { appendLbpHypothesisSentenceToPatientInstruction } from './lbpWorkingHypothesis'
+import { activeDrivingPack } from './regionPacks'
+import { readRegionClinical, withRegionClinical, type RegionClinicalRecord } from './regionClinicalState'
 import { isPainFinalAssessmentRecorded, isHerbalFinalAssessmentRecorded } from './finalAssessment'
 import { computeLane1Summary, type Lane1RegionInput } from './lane1Summary'
 import { lastVisitTrackedLine } from './longitudinal'
@@ -62,17 +64,17 @@ import {
 } from '../DoctorView'
 import { deriveViewProfile } from './viewProfile'
 import { emptyExamResult, type PhysicalExamSuggestion } from './examSuggestion'
-import { mergeLbpExamSuggestions, LBP_CLINICIAN_ADDABLE_EXAMS } from './lbpExamSuggestions'
+import { mergeExamSuggestions } from './lbpExamSuggestions'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import { defaultClinicianObservations, type ClinicianObservationItem } from './clinicianObservation'
 import type { EvidenceItem } from './supportEngine'
 import type { RehabSuggestion } from './rehabSuggestion'
 import {
-  buildLbpRecommendationContext,
-  mergeLbpRehabSuggestions,
-  appendLbpAdoptionText,
+  buildRecommendationContext,
+  mergeRehabSuggestions,
+  appendAdoptionText,
 } from './lbpExerciseRecommendation'
-import { suggestLbpExerciseStage, lbpStageInputFromPayload } from './lbpExerciseStage'
+import { suggestExerciseStage, stageInputFromPayload } from './lbpExerciseStage'
 import { reassessmentExamItemFromPrevious } from './reassessmentExam'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -134,10 +136,13 @@ function seedWorkspaceState(
   const base = initial
     ? deserializeWorkspaceState(initial)
     : { ...emptyWorkspaceState(), herbalClinicianObservations: defaultClinicianObservations() }
-  // LBP v1 Batch 1 (G2): merges freshly-generated auto suggestions into
-  // whatever is already saved (or [] for a brand-new record). A no-op for
-  // any non-LBP payload (generateLbpExamSuggestions returns [] for those).
-  return { ...base, painExamSuggestions: mergeLbpExamSuggestions(base.painExamSuggestions, payload) }
+  // LBP v1 Batch 1 (G2) → 부위 팩 일반화: merges the driving region pack's
+  // freshly-generated auto suggestions into whatever is already saved (or []
+  // for a brand-new record). A no-op for any record without an approved pack
+  // (요통 이외 부위는 승인 전까지 여기서 아무것도 생성하지 않는다).
+  const pack = activeDrivingPack(payload.responses)
+  if (!pack) return base
+  return { ...base, painExamSuggestions: mergeExamSuggestions(pack.examHelp, pack.generateExamSuggestions(payload), base.painExamSuggestions) }
 }
 
 export function DoctorWorkspace({
@@ -489,14 +494,33 @@ export function DoctorWorkspace({
   // SYNTHETIC preview's hand-authored painRehabSuggestions is never
   // overwritten by a live recomputation.
   // ---------------------------------------------------------------------
-  const isLbpRecord = payload.responses.safety_flags.lbp != null
-  const lbpRecommendation =
-    !synthetic && isLbpRecord ? buildLbpRecommendationContext(payload, lbpObjectiveMotorDeficit, workspaceState) : null
+  // 부위 팩 일반화(2026-09-06, R2): 구동 부위(§3.4 NS01/HIP_00 판별, 승인 전
+  // 팩이면 같은 모집단의 승인 팩으로 후퇴)의 승인된 팩 하나가 L1~L8을 구동한다.
+  // 승인 팩이 없으면 아래 전부 null이라 옛 비요통 화면과 같다. 요통은 요통 팩
+  // = 옛 동작과 같다.
+  const regionPack = activeDrivingPack(payload.responses)
+  const regionState: RegionClinicalRecord | null = regionPack
+    ? readRegionClinical(workspaceState, regionPack.region, regionPack.hypothesisPatterns)
+    : null
+  const setRegionClinical = regionPack
+    ? (patch: Partial<RegionClinicalRecord>) => setWorkspaceState((s) => withRegionClinical(s, regionPack.region, patch))
+    : null
+  const regionRecommendation =
+    !synthetic && regionPack && regionState
+      ? buildRecommendationContext(
+          regionPack,
+          payload,
+          { lbp_objective_motor_deficit: lbpObjectiveMotorDeficit, shoulder_objective_cuff_weakness: shoulderObjectiveCuffWeakness },
+          regionState,
+          workspaceState,
+        )
+      : null
   // 2026-09-05: 단계 제안은 오늘 문진 답변만으로 매 렌더 재계산 — 저장되지
-  // 않는다. 저장되는 것은 원장 확정값(`workspaceState.lbpConfirmedStage`)뿐.
-  const lbpStageSuggestion = !synthetic && isLbpRecord ? suggestLbpExerciseStage(lbpStageInputFromPayload(payload)) : null
-  const displayedPainRehabSuggestions = lbpRecommendation
-    ? mergeLbpRehabSuggestions(workspaceState.painRehabSuggestions, lbpRecommendation.candidates)
+  // 않는다. 저장되는 것은 원장 확정값(요통 `workspaceState.lbpConfirmedStage`,
+  // 다른 부위 `regionClinical[region].confirmedStage`)뿐.
+  const regionStageSuggestion = !synthetic && regionPack ? suggestExerciseStage(stageInputFromPayload(regionPack.region, payload)) : null
+  const displayedPainRehabSuggestions = regionRecommendation
+    ? mergeRehabSuggestions(workspaceState.painRehabSuggestions, regionRecommendation.candidates)
     : workspaceState.painRehabSuggestions
 
   // ---------------------------------------------------------------------
@@ -653,14 +677,13 @@ export function DoctorWorkspace({
                 onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, painReassessment: next }))}
                 microFollowUpResponse={microFollowUpResponse}
                 priorVisits={priorVisits}
-                lbpDirectionalResponse={workspaceState.lbpDirectionalResponse}
-                onChangeLbpDirectionalResponse={(next) =>
-                  setWorkspaceState((s) => ({ ...s, lbpDirectionalResponse: next }))
-                }
-                onAddLbpExam={(id) =>
+                regionPack={regionPack}
+                directionalResponse={regionState?.directionalResponse}
+                onChangeDirectionalResponse={(next) => setRegionClinical?.({ directionalResponse: next })}
+                onAddRegionExam={(id) =>
                   setWorkspaceState((s) => {
                     if (s.painExamSuggestions.some((i) => i.id === id)) return s
-                    const template = LBP_CLINICIAN_ADDABLE_EXAMS.find((i) => i.id === id)
+                    const template = regionPack?.clinicianAddableExams.find((i) => i.id === id)
                     if (!template) return s
                     return {
                       ...s,
@@ -713,14 +736,15 @@ export function DoctorWorkspace({
                   LBP v1 Batch 2.5c (G16, §11.4): "확인 → 임상가설 →
                   치료·운동 결정" -- the clinician's own working-hypothesis
                   chips render immediately before PainFinalAssessmentCard,
-                  LBP records only (the 5 patterns are LBP-specific
-                  management categories, same isLbpRecord gate
+                  only for a record driven by an approved region pack (the
+                  patterns are that pack's management categories, same gate
                   PainExerciseSection already uses below).
                 */}
-                {isLbpRecord && (
-                  <LbpWorkingHypothesisCard
-                    value={workspaceState.lbpWorkingHypothesis}
-                    onChange={(next) => setWorkspaceState((s) => ({ ...s, lbpWorkingHypothesis: next }))}
+                {regionPack && regionState && setRegionClinical && (
+                  <WorkingHypothesisCard
+                    patterns={regionPack.hypothesisPatterns}
+                    value={regionState.workingHypothesis}
+                    onChange={(next) => setRegionClinical({ workingHypothesis: next })}
                     currentPatientInstruction={workspaceState.painCarePlan.patientInstruction}
                     onInsertPatientSentence={(sentence) =>
                       setWorkspaceState((s) => ({
@@ -748,7 +772,7 @@ export function DoctorWorkspace({
                   Exercise Eligibility → 운동) -- moved out of 레인2(확인).
                 */}
                 <PainExerciseSection
-                  isLbp={isLbpRecord}
+                  regionActive={regionPack != null}
                   rehabSuggestions={displayedPainRehabSuggestions}
                   onChangeRehabSuggestion={(next) =>
                     setWorkspaceState((s) => {
@@ -765,32 +789,35 @@ export function DoctorWorkspace({
                       }
                     })
                   }
-                  // Opus delta review defect 7: only an LBP record has any
-                  // Care Plan adoption path to begin with (this module never
-                  // generates RehabSuggestion[] for any other profile/region
-                  // — see rehabSuggestion.ts's file header) -- a non-LBP pain
-                  // record or a SYNTHETIC preview must never gain an adopt
-                  // button that never existed before this batch.
+                  // Opus delta review defect 7: only a record driven by an
+                  // approved region pack has any Care Plan adoption path to
+                  // begin with (this module never generates RehabSuggestion[]
+                  // for any other profile/region — see rehabSuggestion.ts's
+                  // file header) -- an unapproved region's pain record or a
+                  // SYNTHETIC preview must never gain an adopt button that
+                  // never existed before this batch.
                   onAdoptRehabSuggestionToCarePlan={
-                    isLbpRecord
+                    regionPack
                       ? (suggestion) =>
                           setWorkspaceState((s) => ({
                             ...s,
                             painCarePlan: {
                               ...s.painCarePlan,
-                              homeActionPlan: appendLbpAdoptionText(s.painCarePlan.homeActionPlan, suggestion),
+                              homeActionPlan: appendAdoptionText(regionPack, s.painCarePlan.homeActionPlan, suggestion),
                               recordedAt: new Date().toISOString(),
                             },
                           }))
                       : undefined
                   }
-                  lbpRecommendationBlockedMessageKo={lbpRecommendation?.blockedMessageKo}
-                  lbpTreatmentSafetyLockedReasonKo={lbpRecommendation?.treatmentSafetyLockedMessageKo}
-                  lbpTargetFunctionGap={lbpRecommendation?.targetFunctionGap}
-                  lbpNeuroUnrecorded={lbpRecommendation?.neuroUnrecorded}
-                  lbpStageSuggestion={lbpStageSuggestion}
-                  lbpConfirmedStage={workspaceState.lbpConfirmedStage}
-                  onSetLbpConfirmedStage={(next) => setWorkspaceState((s) => ({ ...s, lbpConfirmedStage: next }))}
+                  recommendationBlockedMessageKo={regionRecommendation?.blockedMessageKo}
+                  treatmentSafetyLockedReasonKo={regionRecommendation?.treatmentSafetyLockedMessageKo}
+                  targetFunctionGap={regionRecommendation?.targetFunctionGap}
+                  neuroUnrecorded={regionRecommendation?.neuroUnrecorded}
+                  stageSuggestion={regionStageSuggestion}
+                  confirmedStage={regionState?.confirmedStage ?? null}
+                  // 확정값만 저장한다 — 제안(regionStageSuggestion)은 절대 여기로
+                  // 흐르지 않는다. 요통은 withRegionClinical이 lbpConfirmedStage에 쓴다.
+                  onSetConfirmedStage={setRegionClinical ? (next) => setRegionClinical({ confirmedStage: next }) : undefined}
                 />
               </>
             )}
@@ -838,7 +865,9 @@ export function DoctorWorkspace({
                 onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
                 reassessment={workspaceState.painReassessment}
                 priorVisits={priorVisits}
-                lbpDirectionalResponse={workspaceState.lbpDirectionalResponse}
+                regionPack={regionPack}
+                regionWorkingHypothesis={regionState?.workingHypothesis}
+                lbpDirectionalResponse={regionState?.directionalResponse ?? 'NOT_ASSESSED'}
                 lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
                 lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
                 microFollowUpText={deltaQuoteLine}

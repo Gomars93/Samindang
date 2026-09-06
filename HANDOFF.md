@@ -1,5 +1,31 @@
 # Current Handoff
 
+## 2026-09-06 (최신 35): 부위 팩 R1·R2·R3 구현 완료 — 엔진 1개 + 팩 9개(요통만 승인), 6부위 DRAFT 콘텐츠 등록. **원장 콘텐츠 승인 대기**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. R1 = `65be060`(행동 0 변경), R2+R3 = 이 커밋.
+
+### 이 세션이 한 것
+- PO 답변 5건 반영(DECISIONS 2026-09-06 두 번째 항목). 목·어깨 별개 팩, 문항 추가 없음, 승인 즉시 활성화.
+- 콘텐츠 원본 발견: Notion 매선 프로토콜(경추/어깨/무릎/발목/턱관절) + Drive 고관절·회전근개.
+  6부위 DRAFT 팩에 패턴·운동·검사 **이름**만 옮겨 적음. 팔꿈치·손목/손은 빈 팩. 전부 비활성.
+- 구동 부위 규칙 + **승인 전 팩이면 같은 모집단 승인 팩으로 후퇴**(회귀 방지, 구현 중 발견).
+- 서버 세부문진도 같은 규칙(`regionRouting.js` parity, `DETAIL_CHECK_REGION_QUESTION_IDS`).
+
+### 검증
+`test:region-pack` 227 / 변이 6 전부 죽음 / 요통 스위트 전부 통과(소스 단언 3곳만 새 배선으로 갱신) /
+`doctor-workspace` 302 / `lbp-working-hypothesis` 252 / `server` 233 / `detail-check` 61 / `revisit-quick-check` 145 /
+`doctor` 1041 / `tsc -b` 0 / `build` green / **`test:all` exit 0 (64 스위트)**. 종결 EMR 호출(DoctorView)에 부위 키 2개를 빠뜨렸던 것을
+`doctor.spec` defect #5(ii) 키 집합 단언이 잡아 수정했다 — CLAUDE.md "지우지 않은 쪽 화면" 규칙이 테스트로 작동한 사례.
+
+### Next Recommended Action
+1. **원장(PO)**: `docs/PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md` §0을 읽고 (a) 아카이브 4패턴 틀 vs 「1권」
+   3단계 연쇄 틀 중 무엇을 가설 패턴으로 쓸지, (b) 첫 승인 부위(추천: 목 또는 어깨)를 정한 뒤 §3 8항목을 채운다.
+2. Sonnet: 채워진 부위를 팩 파일에 옮기고 vignette 테스트 추가 → `packContentGaps` 0 → 승인 3곳 동시 변경 → Opus 검수.
+3. 요통 실환자 파일럿(최신 33)은 그대로 진행 — 이 배치는 요통 화면·저장 형식을 바꾸지 않았다(스냅샷·SSR 단언).
+4. 보류: R4(요통 저장 필드 이관), `tablet core` 드리프트 주석, 팔꿈치·손목/손 콘텐츠.
+
+---
+
 ## 2026-09-06 (최신 34): PO 지시 "통증 전 부위 같은 계획" — 부위 팩 계획 v0.1 작성. **PO 결정 대기 항목 5개, 코드 0줄**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 문서만 —

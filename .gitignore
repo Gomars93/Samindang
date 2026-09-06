@@ -220,3 +220,10 @@ tests/.detail-check-questions-bundle.mjs
 tests/.detail-check-final-assessment-bundle.mjs
 tests/.detail-check-follow-up-screen-bundle.cjs
 tests/.detail-check-micro-card-bundle.cjs
+
+# esbuild bundles used by tests/region-pack.spec.mjs (regenerated, not source)
+tests/.region-packs-bundle.mjs
+tests/.region-routing-bundle.mjs
+tests/.region-clinical-state-bundle.mjs
+tests/.region-pack-*-bundle.mjs
+tests/.region-pack-*-bundle.cjs

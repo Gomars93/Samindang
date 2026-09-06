@@ -23,6 +23,7 @@ import { emptyStructuredReassessment } from './reassessmentExam'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord } from './sanitize'
 import { emptyRevisitQuickCheck, sanitizeRevisitQuickCheck, type RevisitQuickCheck } from './revisitQuickCheck'
 import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
+import { sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
@@ -84,6 +85,13 @@ export type VisitWorkspaceState = {
    * does NOT bump VISIT_WORKSPACE_SCHEMA_VERSION.
    */
   lbpWorkingHypothesis: LbpWorkingHypothesis
+  /**
+   * 부위 팩 일반화(2026-09-06, R2): 요통 이외 부위의 임상가설을 부위 키로 담는
+   * 맵 — `WorkspaceState.regionClinical`과 같은 형태·정화 규칙(`regionClinicalState.ts`).
+   * 재진 화면은 이 중 `workingHypothesis`만 읽고 쓴다. Additive field, does NOT
+   * bump VISIT_WORKSPACE_SCHEMA_VERSION.
+   */
+  regionClinical: RegionClinicalMap
   updated_at: string | null
 }
 
@@ -97,6 +105,7 @@ export function emptyVisitWorkspaceState(): VisitWorkspaceState {
     reassessment: emptyStructuredReassessment(),
     revisitQuickCheck: emptyRevisitQuickCheck(),
     lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
+    regionClinical: {},
     updated_at: null,
   }
 }
@@ -123,6 +132,7 @@ export function deserializeVisitWorkspaceState(raw: unknown): VisitWorkspaceStat
     reassessment: sanitizeStructuredReassessment(empty.reassessment, raw.reassessment),
     revisitQuickCheck: sanitizeRevisitQuickCheck(raw.revisitQuickCheck),
     lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
+    regionClinical: sanitizeRegionClinicalMap(raw.regionClinical),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

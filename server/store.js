@@ -8,7 +8,8 @@ import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
 import { createMicroFollowUpStore } from './microFollowUpStore.js'
 import { createFollowUpSessionStore } from './followUpSessionStore.js'
-import { computeDetailCheckDue, detailCheckQuestionIds, localTodayISO } from './detailCheck.js'
+import { computeDetailCheckDue, detailCheckQuestionIdsForCandidates, localTodayISO } from './detailCheck.js'
+import { drivingRegionCandidates } from './regionRouting.js'
 import { createStationStore } from './stationStore.js'
 import { createPatientIdentityStore } from './patientIdentityStore.js'
 
@@ -580,22 +581,24 @@ export function createStore(
   // 플로우 정렬 5/5 (세부문진): is TODAY the reassessment point the
   // clinician planned on a prior visit? If so, which fixed initial-
   // questionnaire items to re-ask. Pure read of the clinician's own plan
-  // (server/detailCheck.js); LBP-ness comes from the latest prior
-  // SUBMISSION's own safety_flags.lbp presence -- the same signal the
-  // doctor screen uses (RevisitWorkspace.tsx's priorSubmissionSafetyFlagsLbp),
-  // never re-derived from a routing heuristic here. Returns null when not
-  // due, so the common case adds nothing to the token record.
+  // (server/detailCheck.js); the region comes from the latest prior
+  // SUBMISSION's own safety_flags presence + the NS01/HIP_00 discriminator
+  // (server/regionRouting.js, a literal port of the doctor screen's
+  // drivingRegion), never re-derived from a routing heuristic here. Returns
+  // null when not due, so the common case adds nothing to the token record.
+  // 부위 팩 일반화(2026-09-06, R2): 승인된 팩의 부위만 재질문 id를 더 받고
+  // (DETAIL_CHECK_REGION_QUESTION_IDS), 나머지는 공통 문항만 -- 옛 비요통 동작.
   async function deriveDetailCheck(patientId, excludeVisitId) {
     const history = await getPatientHistory(patientId, excludeVisitId)
     const due = computeDetailCheckDue(history.visits, localTodayISO())
     if (!due) return null
-    let isLbp = false
+    let candidates = []
     const latestWithSubmission = history.visits.find((v) => v.submission_id)
     if (latestWithSubmission) {
       const record = await readRecord(latestWithSubmission.submission_id)
-      isLbp = Boolean(record?.submission?.responses?.safety_flags?.lbp)
+      candidates = drivingRegionCandidates(record?.submission?.responses)
     }
-    return { reason: due.reason, plan_label: due.plan_label, question_ids: detailCheckQuestionIds({ isLbp }) }
+    return { reason: due.reason, plan_label: due.plan_label, question_ids: detailCheckQuestionIdsForCandidates(candidates) }
   }
 
   // Round 3(revisit linkage): the single doctor/staff action "재진 간단

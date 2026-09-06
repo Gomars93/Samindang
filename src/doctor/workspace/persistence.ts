@@ -42,6 +42,7 @@ import type { Provenance } from './provenance'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } from './sanitize'
 import { isValidLbpDirectionalResponse, type LbpDirectionalResponse } from './lbpExamSuggestions'
 import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
+import { sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -231,6 +232,14 @@ export type WorkspaceState = {
    * 전부 `null`.
    */
   lbpConfirmedStage: 0 | 1 | 2 | 3 | null
+  /**
+   * 부위 팩 일반화(2026-09-06, R2): 요통 이외 부위의 원장 기록 3값(방향성 반응·
+   * 임상가설·확정 단계)을 부위 키로 담는 맵. 요통은 위 옛 필드 3개를 그대로 쓰고
+   * 이 맵에는 `lbp` 키가 절대 들어오지 않는다(`regionClinicalState.ts`).
+   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION — 옛 기록은
+   * 빈 맵으로 읽힌다. 읽기/쓰기는 `readRegionClinical`/`withRegionClinical`로만.
+   */
+  regionClinical: RegionClinicalMap
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -255,6 +264,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     lbpDirectionalResponse: 'NOT_ASSESSED',
     lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
     lbpConfirmedStage: null,
+    regionClinical: {},
     updated_at: null,
   }
 }
@@ -303,6 +313,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
       : empty.lbpDirectionalResponse,
     lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
     lbpConfirmedStage: sanitizeLbpConfirmedStage(raw.lbpConfirmedStage),
+    regionClinical: sanitizeRegionClinicalMap(raw.regionClinical),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

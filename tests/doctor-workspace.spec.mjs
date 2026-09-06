@@ -2650,19 +2650,25 @@ test('WorkspaceState.lbpDirectionalResponse: invalid persisted value degrades to
 
 // ---------- Opus delta review item 1: RevisitWorkspace carried-forward LBP target-function chips ----------
 
-test('Opus review item 1a: RevisitWorkspace.tsx wires LBP_TARGET_FUNCTION_OPTIONS + a matching groups label into its FollowUpTargetPicker', () => {
+test('Opus review item 1a: RevisitWorkspace.tsx wires every APPROVED region pack\'s target functions (LBP included) + a matching groups label into its FollowUpTargetPicker', () => {
+  // 부위 팩 일반화(2026-09-06, R2): the LBP-only import became "every
+  // approved pack's targetFunctions" (REGION_PACKS filtered by isPackActive)
+  // -- the LBP pack is approved, so a carried-forward lbp_tf_* target still
+  // has a real option/chip; an UNAPPROVED pack's ids are deliberately absent.
   const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  assert.ok(/import \{ REGION_PACKS, activeRegionPack, activeDrivingPack \} from '\.\/regionPacks'/.test(src), 'imports the pack registry')
   assert.ok(
-    /import \{ LBP_TARGET_FUNCTION_OPTIONS \} from '\.\/lbpTargetFunction'/.test(src),
-    'imports LBP_TARGET_FUNCTION_OPTIONS',
+    /const APPROVED_PACK_TARGET_FUNCTIONS = REGION_KEYS\.flatMap\(\(k\) => \{\s*const pack = REGION_PACKS\[k\]\s*return isPackActive\(pack\) \? pack\.targetFunctions : \[\]\s*\}\)/.test(src),
+    'target functions come from approved packs only (isPackActive gate)',
   )
   assert.ok(
-    /const COMBINED_FOLLOW_UP_OPTIONS = \[\.\.\.LBP_TARGET_FUNCTION_OPTIONS, \.\.\.PAIN_FOLLOW_UP_OPTIONS, \.\.\.HERBAL_FOLLOW_UP_OPTIONS\]/.test(
-      src,
-    ),
+    /const COMBINED_FOLLOW_UP_OPTIONS = \[\.\.\.APPROVED_PACK_TARGET_FUNCTIONS, \.\.\.PAIN_FOLLOW_UP_OPTIONS, \.\.\.HERBAL_FOLLOW_UP_OPTIONS\]/.test(src),
     'a carried-forward lbp_tf_* target has a real option/chip to render, not just an orphan selection',
   )
   assert.ok(/groups=\{COMBINED_FOLLOW_UP_GROUPS\}/.test(src), 'passes the same 목표 기능 grouping PainWorkspaceNext uses')
+  // Non-vacuous: the LBP pack really is approved, so its 9 ids are in the combined list.
+  const lbpPackSrc = fs.readFileSync('src/doctor/workspace/regionPacks/lbp.ts', 'utf8')
+  assert.ok(/productionApproved: true/.test(lbpPackSrc), 'the LBP pack is the approved one')
 })
 
 test('Opus review item 1b: FollowUpTargetPicker renders a chip (aria-pressed="true") for a selected item whose id is NOT in `options` (structurally impossible to end up un-deselectable)', () => {
@@ -3865,15 +3871,25 @@ test('stage card: confirmed 0단계 -> guidance text, a 1-tap "1단계로 올리
   const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)
   assert.ok(/<button[^>]*aria-pressed="true"[^>]*>0단계/.test(stageGroup), 'the 0단계 button is pressed')
 })
-test('stage card: source wiring — DoctorWorkspace persists ONLY the confirmed stage (setter writes lbpConfirmedStage), and emrPreview.ts (pilot-frozen) does not read it yet', () => {
+test('stage card: source wiring — DoctorWorkspace persists ONLY the confirmed stage (setter writes it through withRegionClinical, which maps lbp → lbpConfirmedStage), and emrPreview.ts (pilot-frozen) does not read it yet', () => {
+  // 부위 팩 일반화(2026-09-06, R2): the setter goes through the region
+  // adapter. Two links are pinned so the guarantee is the same as before:
+  // (1) DoctorWorkspace writes ONLY `{ confirmedStage: next }` via
+  // setRegionClinical, (2) regionClinicalState.ts maps that patch, for the
+  // LBP region, onto the old `lbpConfirmedStage` field (no second storage
+  // path for LBP).
   const dwSrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
-  assert.ok(/onSetLbpConfirmedStage=\{\(next\) => setWorkspaceState\(\(s\) => \(\{ \.\.\.s, lbpConfirmedStage: next \}\)\)\}/.test(dwSrc), 'setter writes the confirmed stage field')
-  assert.ok(dwSrc.includes('suggestLbpExerciseStage(lbpStageInputFromPayload(payload))'), 'suggestion recomputed from the payload every render')
-  assert.ok(!/lbpStageSuggestion:/.test(dwSrc), 'the suggestion is never written into workspace state')
+  assert.ok(/onSetConfirmedStage=\{setRegionClinical \? \(next\) => setRegionClinical\(\{ confirmedStage: next \}\) : undefined\}/.test(dwSrc), 'setter writes the confirmed stage field only')
+  assert.ok(/const setRegionClinical = regionPack\s*\? \(patch: Partial<RegionClinicalRecord>\) => setWorkspaceState\(\(s\) => withRegionClinical\(s, regionPack\.region, patch\)\)/.test(dwSrc), 'setRegionClinical is withRegionClinical on the driving region')
+  const adapterSrc = fs.readFileSync('src/doctor/workspace/regionClinicalState.ts', 'utf8')
+  assert.ok(/if \(patch\.confirmedStage !== undefined\) next\.lbpConfirmedStage = patch\.confirmedStage/.test(adapterSrc), 'for LBP the adapter writes the old lbpConfirmedStage field')
+  assert.ok(/if \(key === 'lbp'\) continue/.test(adapterSrc), 'regionClinical never carries an lbp key (one storage path for LBP)')
+  assert.ok(dwSrc.includes('suggestExerciseStage(stageInputFromPayload(regionPack.region, payload))'), 'suggestion recomputed from the payload every render')
+  assert.ok(!/lbpStageSuggestion:|regionStageSuggestion:/.test(dwSrc), 'the suggestion is never written into workspace state')
   const emrSrc = fs.readFileSync('src/doctor/workspace/emrPreview.ts', 'utf8')
-  assert.ok(!emrSrc.includes('lbpConfirmedStage'), 'emrPreview.ts is frozen during the pilot (HANDOFF 22) — stage reaches storage, not EMR text, this batch')
+  assert.ok(!emrSrc.includes('lbpConfirmedStage') && !emrSrc.includes('confirmedStage'), 'emrPreview.ts is frozen during the pilot (HANDOFF 22) — stage reaches storage, not EMR text, this batch')
   const revisitSrc = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
-  assert.ok(!revisitSrc.includes('LbpStageCard') && !revisitSrc.includes('PainExerciseSection'), 'RevisitWorkspace has no exercise section at all, so no stage card there either (documented gap, not an omission)')
+  assert.ok(!revisitSrc.includes('StageCard') && !revisitSrc.includes('PainExerciseSection'), 'RevisitWorkspace has no exercise section at all, so no stage card there either (documented gap, not an omission)')
 })
 
 

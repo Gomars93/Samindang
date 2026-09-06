@@ -364,14 +364,19 @@ function useEffectSpans(src) {
   // site's nearest preceding handler token were `useEffect(` instead of
   // `onClick={`, this structural check would fail -- shown by the negative
   // assertion sitting right next to the positive one.
+  // 부위 팩 일반화(2026-09-06, R2): RevisitWorkspace now calls the region-
+  // agnostic `applyWorkingHypothesisCarryForward` (workingHypothesis.ts; the
+  // LBP wrapper `applyLbpWorkingHypothesisCarryForward` delegates to it with
+  // the LBP patterns) -- same one-call-site / inside-onClick guarantee.
   const rwSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/RevisitWorkspace.tsx', import.meta.url)), 'utf8')
-  const callSites = [...rwSrc.matchAll(/applyLbpWorkingHypothesisCarryForward\(/g)]
-  assert('mutant (e) guard: applyLbpWorkingHypothesisCarryForward is called exactly once in RevisitWorkspace.tsx (the one dedicated button)', callSites.length === 1)
+  const callSites = [...rwSrc.matchAll(/applyWorkingHypothesisCarryForward\(/g)]
+  assert('mutant (e) guard: applyWorkingHypothesisCarryForward is called exactly once in RevisitWorkspace.tsx (the one dedicated button)', callSites.length === 1)
+  assert('mutant (e) guard: the LBP-named wrapper is not ALSO called there (one path, not two)', !/applyLbpWorkingHypothesisCarryForward\(/.test(rwSrc))
   const idx = callSites[0].index
   const before300 = rwSrc.slice(Math.max(0, idx - 300), idx)
   assert('mutant (e) guard: the call site is immediately inside an onClick={...} handler', /onClick=\{/.test(before300))
   const loadEffectRegion = rwSrc.slice(rwSrc.indexOf('useEffect(() => {'), rwSrc.indexOf('}, [visitId, patientId, reloadNonce])'))
-  assert('mutant (e) guard: the call site does NOT appear inside the load-on-open useEffect (would mean auto-apply on page open)', !loadEffectRegion.includes('applyLbpWorkingHypothesisCarryForward'))
+  assert('mutant (e) guard: the call site does NOT appear inside the load-on-open useEffect (would mean auto-apply on page open)', !loadEffectRegion.includes('applyWorkingHypothesisCarryForward'))
 }
 
 /* ------------------------------------------------------------------------
@@ -439,17 +444,24 @@ function useEffectSpans(src) {
 {
   const rwSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/RevisitWorkspace.tsx', import.meta.url)), 'utf8')
 
+  // 부위 팩 일반화(2026-09-06, R2): the gate is now the region-agnostic
+  // `isRegionPatientForRevisitHypothesisGate` (same two-part signal: the
+  // prior submission's safety_flags[<driving region>] OR today's own
+  // non-blank hypothesis) and the card is the region-agnostic
+  // `WorkingHypothesisCard`; the LBP wrappers delegate to both.
   assert(
-    'D-4 guard: RevisitWorkspace.tsx derives isLbpPatient via isLbpPatientForRevisitHypothesisGate(...)',
-    /const isLbpPatient = isLbpPatientForRevisitHypothesisGate\(/.test(rwSrc),
+    'D-4 guard: RevisitWorkspace.tsx derives isRegionPatient via isRegionPatientForRevisitHypothesisGate(...)',
+    /isRegionPatientForRevisitHypothesisGate\(revisitPatterns, priorSubmissionSafetyFlagsForRegion, todayHypothesis\)/.test(rwSrc),
   )
+  assert('D-4 guard: the gate still reads the prior submission safety flag for the DRIVING region (not a hardcoded lbp)', /priorSubmissionResponses\?\.safety_flags\?\.\[revisitPack\.region\]/.test(rwSrc))
 
-  const gateIdx = rwSrc.indexOf('{isLbpPatient && (')
-  assert('D-4 guard: a "{isLbpPatient && (" conditional block exists in the JSX', gateIdx !== -1)
+  const GATE_OPEN = '{isRegionPatient && revisitPack && todayHypothesis && ('
+  const gateIdx = rwSrc.indexOf(GATE_OPEN)
+  assert(`D-4 guard: a "${GATE_OPEN}" conditional block exists in the JSX`, gateIdx !== -1)
 
   // Find this conditional's matching close by balancing parens from the "("
   // right after "&& ".
-  const openParenIdx = rwSrc.indexOf('(', gateIdx + '{isLbpPatient && '.length)
+  const openParenIdx = rwSrc.indexOf('(', gateIdx + GATE_OPEN.length - 1)
   let depth = 0
   let closeParenIdx = -1
   for (let i = openParenIdx; i < rwSrc.length; i++) {
@@ -462,7 +474,7 @@ function useEffectSpans(src) {
       }
     }
   }
-  assert('D-4 guard: the "{isLbpPatient && (...)}" block\'s matching close paren is found', closeParenIdx !== -1)
+  assert('D-4 guard: the gated block\'s matching close paren is found', closeParenIdx !== -1)
   const gatedRegion = rwSrc.slice(gateIdx, closeParenIdx)
 
   // Search for the button's visible label text starting AFTER gateIdx --
@@ -470,13 +482,13 @@ function useEffectSpans(src) {
   // same phrase in quotes, so an unqualified indexOf would find that
   // instead of the actual JSX text node.
   const btnIdx = rwSrc.indexOf('이전 가설 이어받기', gateIdx)
-  const cardIdx = rwSrc.indexOf('<LbpWorkingHypothesisCard')
+  const cardIdx = rwSrc.indexOf('<WorkingHypothesisCard')
   const finalAssessmentIdx = rwSrc.indexOf('<PainFinalAssessmentCard')
   assert('D-4 guard: sanity -- the carry-forward button label, the card, and the next sibling card all exist in the file', btnIdx !== -1 && cardIdx !== -1 && finalAssessmentIdx !== -1)
 
-  assert('D-4 guard: the "이전 가설 이어받기" carry-forward button sits INSIDE the isLbpPatient-gated block', btnIdx > gateIdx && btnIdx < closeParenIdx)
-  assert('D-4 guard: <LbpWorkingHypothesisCard sits INSIDE the isLbpPatient-gated block', cardIdx > gateIdx && cardIdx < closeParenIdx)
-  assert('D-4 guard: gatedRegion actually contains both (non-vacuous slice check)', gatedRegion.includes('이전 가설 이어받기') && gatedRegion.includes('<LbpWorkingHypothesisCard'))
+  assert('D-4 guard: the "이전 가설 이어받기" carry-forward button sits INSIDE the isRegionPatient-gated block', btnIdx > gateIdx && btnIdx < closeParenIdx)
+  assert('D-4 guard: <WorkingHypothesisCard sits INSIDE the isRegionPatient-gated block', cardIdx > gateIdx && cardIdx < closeParenIdx)
+  assert('D-4 guard: gatedRegion actually contains both (non-vacuous slice check)', gatedRegion.includes('이전 가설 이어받기') && gatedRegion.includes('<WorkingHypothesisCard'))
 
   // Counterexample proving this is not vacuously true for every card: the
   // NEXT card down (<PainFinalAssessmentCard>, always shown regardless of

@@ -3661,3 +3661,65 @@ L1~L8(검사 제안·목표 기능·임상가설·운동 라이브러리·단계
 - 코드 변경 0줄. PO가 §8 질문 5개에 답하면 R1부터 시작한다. R1은 CLAUDE.md Escalation
   조건("핵심 파일 다수에 걸친 구조 변경")에 해당하므로 Fable 세션이 설계·구현하고 Opus가
   검수한다.
+
+## 2026-09-06 — PO 답변 5건 → 부위 팩 R1·R2·R3 구현. 콘텐츠 원본은 Notion 매선 프로토콜, 6부위 DRAFT 팩 등록(전부 비활성)
+
+### Context
+`PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md` §8 질문 5개에 PO가 답했다:
+1. 부위 순서 — "목이랑 회전근개를 따로 봐야 되는 거 아냐" → 목·어깨는 **별개 팩**.
+2. 원본 문서 — "모름" → Claude가 Notion·Drive를 검색해 찾았다(아래).
+3. 문항 추가 — "우리가 지금 세팅한대로" → 태블릿 문항 추가 없음. 단계 격하는 공통
+   문항(VISIT_03/04)만 자동 발동.
+4. 활성화 시점 — "즉시" → 팩 승인 즉시 활성화. 요통 파일럿 결과를 기다리지 않는다.
+5. 모집단 공유 쌍 구동 규칙 — "너의 추천안은?" → 아래 Decision 4.
+
+### 콘텐츠 원본 발견 (PO "모름"의 답)
+Notion 「삼인당한의원 › 아카이브(구버전) › 통합 완료(삭제 후보) › 매선 프로토콜」
+(2025-12-01~06): 경추/어깨/무릎/발목/턱관절 패턴 페이지 + Drive 고관절 패턴.md·
+회전근개.md. 각 페이지 = 정렬 → 움직임 → 패턴 3~4개 → 매선 → 운동 2개.
+**출처 주의**: 「매선 프로토콜 목차」에 "원장님이 만든 발목 프로토콜 포맷 그대로 전신으로
+확장했습니다"라고 적혀 있다 — 발목만 원장 원안 포맷, 나머지는 AI 확장 초안일 수 있다.
+정본(「1권 근골격 통증」 4장 경항부 v0.3)은 경항부를 4패턴이 아니라 3단계 연쇄로
+설명한다. 팔꿈치·손목/손 문서는 없다. 상세: `docs/PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md`.
+
+### Decision
+1. **R1 완료(커밋 65be060)**: 요통 엔진 → 팩 인자 일반화, 행동 0 변경(요통 스위트 수정 0줄).
+2. **R2 완료**: 추가형 `regionClinical` 필드(초진·재진 상태, 스키마 버전 미변경) +
+   `regionClinicalState.ts` 어댑터(요통은 옛 필드 3개, `regionClinical.lbp` 금지) +
+   `WorkingHypothesisCard`(패턴 prop) + PainWorkspace/DoctorWorkspace/RevisitWorkspace
+   팩 기반 + EMR 부위 가설·라벨 경로 + 서버 `regionRouting.js`(TS 포팅, parity 테스트)
+   + `DETAIL_CHECK_REGION_QUESTION_IDS`(승인 팩만).
+3. **R3 완료**: 8부위 DRAFT 팩 등록 — 목/어깨/무릎/고관절/발목·발/턱관절은 원장 문서의
+   패턴·운동·검사 **이름**만 옮겨 적음, 팔꿈치/손목·손은 빈 팩. 전부
+   `productionApproved: false`. 시작 기준·용량·중단 기준·후퇴·단계표는 비어 있고
+   `packContentGaps()`가 나열한다. 승인 = 팩 파일 + 서버 표 + 테스트 단언 3곳 동시 변경
+   + 빈 칸 0개 (`tests/region-pack.spec.mjs`가 강제).
+4. **구동 부위 규칙(Q5 추천안 채택)**: 목·어깨 둘 다면 `NS01=SHOULDER_DOMINANT`일 때만
+   어깨, 요통·고관절 둘 다면 `HIP_00=HIP_GROIN_DOMINANT`일 때만 고관절(엉덩이·골반 우세는
+   요통 — 요통 팩에 고관절·천장관절 기여 패턴과 고관절 선별 검사가 이미 있다). 그 밖은
+   `REGION_KEYS` 순서 첫 부위. **판별 부위의 팩이 승인 전이면 같은 모집단의 승인 팩으로
+   후퇴한다**(`drivingRegionCandidates` → `activeDrivingPack`) — 이것이 없으면 고관절
+   우세 환자가 R2 이전까지 받던 요통 카드를 잃는 회귀가 생긴다(구현 중 발견·수정).
+   서버 세부문진도 같은 후보 순서(`detailCheckQuestionIdsForCandidates`).
+5. **Claude 초안 필드**는 `patientEasyLabelKo`, `targetFunctions`, 운동 한글 표시명, 턱관절
+   패턴 3개뿐이며 문서에 표시했다. 그 밖의 임상 내용은 창작하지 않았다.
+
+### Rationale
+- 승인 전 팩이 화면·엔진·서버 어디에도 닿지 않음을 SSR·엔진·서버 표 세 층에서 단언한다
+  (`region-pack.spec.mjs` C/D/G/H). 변이 6개(판별 무시, lbp 키 허용, 무단 승인, 서버 후퇴
+  제거, 엔진 승인 가드 제거, 후보 순서 제거) 전부 죽음.
+- 요통 저장 형식은 파일럿 직전에 바꾸지 않는다(R4 분리). 요통 필드와 `regionClinical`이
+  같은 값을 두 곳에 갖지 않도록 어댑터가 `lbp` 키를 버린다.
+
+### Consequences
+- 변경 파일: 신규 `regionPack.ts`, `regionPacks/*`(11), `regionRouting.ts`,
+  `regionClinicalState.ts`, `workingHypothesis.ts`, `WorkingHypothesisCard.tsx`,
+  `server/regionRouting.js`, `tests/region-pack.spec.mjs`; 수정 `persistence.ts`,
+  `visitWorkspace.ts`, `emrPreview.ts`, `PainWorkspace.tsx`, `DoctorWorkspace.tsx`,
+  `RevisitWorkspace.tsx`, `LbpWorkingHypothesisCard.tsx`, `lbpWorkingHypothesis.ts`,
+  `server/detailCheck.js`, `server/store.js`, `package.json`.
+- 테스트 수정 3곳(요통 스위트 소스 단언을 새 배선으로): `lbp-working-hypothesis.spec.mjs`
+  mutant(e)·D-4 가드, `doctor-workspace.spec.mjs` 목표 기능 import·단계 setter 배선.
+  보장 내용은 같고 이름만 바뀌었다(각 단언에 이유 주석).
+- 원장 다음 할 일: `PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md` §3 8항목을 부위별로 채운다.
+  첫 부위 추천: 목·어깨(허리 다음으로 흔한 호소 — 「1권」 4장 첫 문장).

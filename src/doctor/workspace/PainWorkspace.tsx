@@ -61,16 +61,14 @@ import { PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget, type PainFinalAssessment, 
 } from './finalAssessment'
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import {
-  LBP_CLINICIAN_ADDABLE_EXAMS,
   LBP_DIRECTIONAL_RESPONSE_HELP,
   LBP_DIRECTIONAL_RESPONSE_OPTIONS,
   type LbpDirectionalResponse,
 } from './lbpExamSuggestions'
 import type { LbpWorkingHypothesis } from './lbpWorkingHypothesis'
-import {
-  LBP_TARGET_FUNCTION_OPTIONS,
-  LBP_TARGET_FUNCTION_PLACEHOLDERS,
-} from './lbpTargetFunction'
+import type { WorkingHypothesis } from './workingHypothesis'
+import type { RegionPack } from './regionPack'
+import { activeDrivingPack } from './regionPacks'
 import type { EvidenceItem } from './supportEngine'
 import type { PainCarePlan } from './carePlan'
 import { PainCarePlanCard } from './CarePlanCard'
@@ -104,26 +102,31 @@ import { MicroFollowUpCard } from './MicroFollowUpCard'
  * LBP v1 Batch 1 (G3/G4): "허리 움직임 반응" -- the clinician's own
  * directional-response observation. Record-only (no computed judgment);
  * default 'NOT_ASSESSED' is always the first, non-highlighted chip.
+ * 부위 팩 일반화(2026-09-06): 제목의 부위 라벨만 팩에서 온다(요통 = "허리").
+ * 팩의 `directionalResponseApplicable`이 false인 부위는 이 카드를 렌더하지 않는다.
  */
-function LbpDirectionalResponseCard({
+function DirectionalResponseCard({
+  regionLabelKo,
   value,
   onChange,
 }: {
+  regionLabelKo: string
   value: LbpDirectionalResponse
   onChange: (next: LbpDirectionalResponse) => void
 }) {
   const helpId = useId()
   const [helpOpen, setHelpOpen] = useState(false)
+  const title = `${regionLabelKo} 움직임 반응`
   return (
     <div className="workspace__examCard workspace__examCard--directional">
       <div className="workspace__examCard__head">
-        <strong className="workspace__examCard__title">허리 움직임 반응</strong>
+        <strong className="workspace__examCard__title">{title}</strong>
         <button
           type="button"
           className="workspace__helpToggle"
           aria-expanded={helpOpen}
           aria-controls={helpId}
-          aria-label="허리 움직임 반응 도움말"
+          aria-label={`${title} 도움말`}
           title={`어떻게: ${LBP_DIRECTIONAL_RESPONSE_HELP.howKo}\n왜: ${LBP_DIRECTIONAL_RESPONSE_HELP.whyKo}`}
           onClick={() => setHelpOpen((o) => !o)}
         >
@@ -136,7 +139,7 @@ function LbpDirectionalResponseCard({
           <p>왜: {LBP_DIRECTIONAL_RESPONSE_HELP.whyKo}</p>
         </div>
       )}
-      <div className="workspace__examCard__statusRow" role="group" aria-label="허리 움직임 반응 선택">
+      <div className="workspace__examCard__statusRow" role="group" aria-label={`${title} 선택`}>
         {LBP_DIRECTIONAL_RESPONSE_OPTIONS.map((opt) => (
           <button
             key={opt.value}
@@ -160,16 +163,19 @@ function LbpDirectionalResponseCard({
  * Already-present ids are hidden; renders nothing once every addable item
  * has been added.
  */
-function LbpAddExamDisclosure({
+function AddExamDisclosure({
+  addableExams,
   existing,
   onAdd,
 }: {
+  /** 팩의 `clinicianAddableExams`. */
+  addableExams: readonly PhysicalExamSuggestion[]
   existing: PhysicalExamSuggestion[]
   onAdd?: (id: string) => void
 }) {
   if (!onAdd) return null
   const existingIds = new Set(existing.map((i) => i.id))
-  const addable = LBP_CLINICIAN_ADDABLE_EXAMS.filter((e) => !existingIds.has(e.id))
+  const addable = addableExams.filter((e) => !existingIds.has(e.id))
   if (addable.length === 0) return null
   return (
     <details className="workspace__optional">
@@ -214,9 +220,10 @@ export function PainWorkspaceLane2({
   onChangeReassessment,
   microFollowUpResponse,
   priorVisits,
-  lbpDirectionalResponse,
-  onChangeLbpDirectionalResponse,
-  onAddLbpExam,
+  regionPack,
+  directionalResponse,
+  onChangeDirectionalResponse,
+  onAddRegionExam,
 }: {
   payload: DoctorPayload
   examSuggestions: PhysicalExamSuggestion[]
@@ -229,15 +236,21 @@ export function PainWorkspaceLane2({
   onChangeReassessment: (next: StructuredReassessment) => void
   microFollowUpResponse?: MicroFollowUpResponse | null
   priorVisits?: PatientHistoryResult | null
-  /** LBP v1 Batch 1 (G3): only meaningful when the payload is LBP — ignored (block not rendered) otherwise. */
-  lbpDirectionalResponse?: LbpDirectionalResponse
-  onChangeLbpDirectionalResponse?: (next: LbpDirectionalResponse) => void
-  /** LBP v1 Batch 1 (G5): adds one of LBP_CLINICIAN_ADDABLE_EXAMS by id, no-op if already present. */
-  onAddLbpExam?: (id: string) => void
+  /**
+   * 부위 팩 일반화(2026-09-06): 이 기록의 구동 부위 팩(승인된 것만). 생략(undefined)
+   * 하면 payload에서 직접 정한다(`drivingRegion` → `activeRegionPack`) — 요통 기록은
+   * 요통 팩. `null`은 "팩 없음"을 명시한 것.
+   */
+  regionPack?: RegionPack | null
+  /** LBP v1 Batch 1 (G3): the clinician's directional-response record for the driving region — ignored (card not rendered) when the pack says it is not applicable. */
+  directionalResponse?: LbpDirectionalResponse
+  onChangeDirectionalResponse?: (next: LbpDirectionalResponse) => void
+  /** LBP v1 Batch 1 (G5): adds one of the pack's `clinicianAddableExams` by id, no-op if already present. */
+  onAddRegionExam?: (id: string) => void
 }) {
   const r = payload.responses
   const { flags, routing } = payload
-  const isLbp = r.safety_flags.lbp != null
+  const pack = regionPack === undefined ? activeDrivingPack(r) : regionPack
 
   const durFreq = durationFrequencyText(r, routing.primary_module)
   const aggravatingText = aggravatingSummaryText(routing.primary_module, r.modules)
@@ -336,22 +349,24 @@ export function PainWorkspaceLane2({
       <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
 
       {/*
-        LBP v1 Batch 1 (§2.3): the LBP block renders whenever the payload is
-        an LBP patient (safety_flags.lbp != null) -- even when
-        examSuggestions/evidence are both empty (safety not CLEAR yet, or a
-        CLEAR patient with everything still unset), because the directional-
-        response chip row and "확인 추가" affordance must stay reachable
-        regardless. Every other pain region keeps the original
-        content-driven gate untouched.
+        LBP v1 Batch 1 (§2.3): the region block renders whenever an approved
+        pack drives this record -- even when examSuggestions/evidence are
+        both empty (safety not CLEAR yet, or a CLEAR patient with everything
+        still unset), because the directional-response chip row and "확인 추가"
+        affordance must stay reachable regardless. A region without an
+        approved pack keeps the original content-driven gate untouched.
       */}
-      {isLbp ? (
+      {pack ? (
         <>
           <p className="workspace__layerLabel">오늘 확인할 것</p>
           <section className="workspace__block">
-            <LbpDirectionalResponseCard
-              value={lbpDirectionalResponse ?? 'NOT_ASSESSED'}
-              onChange={onChangeLbpDirectionalResponse ?? (() => {})}
-            />
+            {pack.directionalResponseApplicable && (
+              <DirectionalResponseCard
+                regionLabelKo={pack.labelKo}
+                value={directionalResponse ?? 'NOT_ASSESSED'}
+                onChange={onChangeDirectionalResponse ?? (() => {})}
+              />
+            )}
             {examSuggestions.length > 0 && (
               <ExamSuggestionList
                 items={examSuggestions}
@@ -359,7 +374,7 @@ export function PainWorkspaceLane2({
                 onAddToReassessment={onAddExamToReassessment}
               />
             )}
-            <LbpAddExamDisclosure existing={examSuggestions} onAdd={onAddLbpExam} />
+            <AddExamDisclosure addableExams={pack.clinicianAddableExams} existing={examSuggestions} onAdd={onAddRegionExam} />
             {evidence.length > 0 && <SupportContradictionPanel items={evidence} emptyText="" />}
           </section>
         </>
@@ -418,21 +433,22 @@ export function PainWorkspaceLane2({
  * synthetic-scenario `재활/운동 제안` path -- exactly one render site).
  */
 /** Opus delta review defect 4 (§2.2): 3 candidate cards visible, the rest behind a "더 보기 (N)" disclosure — nothing is ever dropped, so there is no tie/cutoff problem to solve. */
-const LBP_STAGE_OPTIONS: readonly LbpExerciseStage[] = [0, 1, 2, 3]
+const STAGE_OPTIONS: readonly LbpExerciseStage[] = [0, 1, 2, 3]
 
 /**
- * 2026-09-05: 운동 단계 카드 — 제안(`suggestLbpExerciseStage`) + 원장 확정.
+ * 2026-09-05: 운동 단계 카드 — 제안(`suggestExerciseStage`) + 원장 확정.
  *
  * "adopt, never automatic": 제안은 저장되지 않고 매 렌더 재계산된다. 저장되는
- * 것은 원장이 누른 확정값(`WorkspaceState.lbpConfirmedStage`)뿐이다. 확정
- * 없이는 단계 필터도 준비조건 추정도 켜지지 않는다.
+ * 것은 원장이 누른 확정값(요통 `WorkspaceState.lbpConfirmedStage`, 다른 부위
+ * `regionClinical[region].confirmedStage`)뿐이다. 확정 없이는 단계 필터도
+ * 켜지지 않는다. 부위 팩 일반화(2026-09-06): 카드 자체에 부위 고유 내용은 없다.
  *
  * 0단계 요구사항(`docs/LBP_EXERCISE_STAGE_ASSIGNMENT_v0.4.md` §2): 0단계 옆에
  * **"1단계로 올리기"가 한 번의 조작**으로 있어야 한다. 안전한 쪽이 기본값이고
  * 올리는 것이 의식적 행위다. 그래서 "제안대로 확정"은 1탭, 0단계에서
  * 올리기도 1탭이다.
  */
-function LbpStageCard({
+function StageCard({
   suggestion,
   confirmedStage,
   onSetConfirmedStage,
@@ -444,8 +460,8 @@ function LbpStageCard({
   const suggested = suggestion.suggestedStage
   const showGuidance = confirmedStage === 0 || (confirmedStage === null && suggested === 0)
   return (
-    <section className="workspace__block" aria-labelledby="lbp-stage-h3">
-      <h3 id="lbp-stage-h3">운동 단계</h3>
+    <section className="workspace__block" aria-labelledby="exercise-stage-h3">
+      <h3 id="exercise-stage-h3">운동 단계</h3>
       <div className="workspace__examCard">
         <p className="workspace__examCard__reason">
           <strong>제안</strong>{' '}
@@ -466,7 +482,7 @@ function LbpStageCard({
         </ul>
         {showGuidance && <p className="workspace__block__hint">{LBP_STAGE_0_GUIDANCE_KO}</p>}
         <div className="workspace__examCard__statusRow" role="group" aria-label="운동 단계 확정">
-          {LBP_STAGE_OPTIONS.map((s) => (
+          {STAGE_OPTIONS.map((s) => (
             <button
               key={s}
               type="button"
@@ -506,62 +522,62 @@ function LbpStageCard({
 const VISIBLE_REHAB_CANDIDATE_COUNT = 3
 
 export function PainExerciseSection({
-  isLbp,
+  regionActive,
   rehabSuggestions,
   onChangeRehabSuggestion,
   onAdoptRehabSuggestionToCarePlan,
-  lbpRecommendationBlockedMessageKo,
-  lbpTreatmentSafetyLockedReasonKo,
-  lbpTargetFunctionGap,
-  lbpNeuroUnrecorded = false,
-  lbpStageSuggestion,
-  lbpConfirmedStage = null,
-  onSetLbpConfirmedStage,
+  recommendationBlockedMessageKo,
+  treatmentSafetyLockedReasonKo,
+  targetFunctionGap,
+  neuroUnrecorded = false,
+  stageSuggestion,
+  confirmedStage = null,
+  onSetConfirmedStage,
 }: {
-  /** LBP v1 Batch 1: only an LBP record gets the safety-lock/capability/empty-state extras below -- every other pain region renders exactly the plain SYNTHETIC-preview candidate list it always has. */
-  isLbp: boolean
-  /** 2026-09-05: 오늘 문진 답변으로 계산한 단계 제안(매 렌더 재계산, 저장 안 됨). LBP 기록에서만 전달된다. */
-  lbpStageSuggestion?: LbpStageSuggestion | null
-  /** 2026-09-05: `WorkspaceState.lbpConfirmedStage` — 원장 확정값. null = 미확정. */
-  lbpConfirmedStage?: LbpExerciseStage | null
+  /** LBP v1 Batch 1 → 부위 팩 일반화: only a record driven by an APPROVED region pack gets the safety-lock/empty-state extras below -- every other pain region renders exactly the plain SYNTHETIC-preview candidate list it always has. */
+  regionActive: boolean
+  /** 2026-09-05: 오늘 문진 답변으로 계산한 단계 제안(매 렌더 재계산, 저장 안 됨). 승인된 팩이 구동하는 기록에서만 전달된다. */
+  stageSuggestion?: LbpStageSuggestion | null
+  /** 2026-09-05: 원장 확정값(요통 `WorkspaceState.lbpConfirmedStage` / 다른 부위 `regionClinical[region].confirmedStage`). null = 미확정. */
+  confirmedStage?: LbpExerciseStage | null
   /** 2026-09-05: 단계 확정/해제 setter. 없으면 단계 카드를 렌더하지 않는다(읽기 전용 미리보기 경로). */
-  onSetLbpConfirmedStage?: (next: LbpExerciseStage | null) => void
+  onSetConfirmedStage?: (next: LbpExerciseStage | null) => void
   rehabSuggestions: RehabSuggestion[]
   onChangeRehabSuggestion: (next: RehabSuggestion) => void
   /** LBP v1 Batch 2 (G10/RF-8): "adopt, never automatic" into PainCarePlan.homeActionPlan. */
   onAdoptRehabSuggestionToCarePlan?: (suggestion: RehabSuggestion) => void
   /** LBP v1 Batch 2 (RF-3b): non-null/non-empty means the exercise section renders this one line instead of any candidate cards. */
-  lbpRecommendationBlockedMessageKo?: string | null
+  recommendationBlockedMessageKo?: string | null
   /** LBP v1 Batch 2 (CD-2): non-null/non-empty disables every candidate's adopt action (never the card) with this reason. */
-  lbpTreatmentSafetyLockedReasonKo?: string | null
+  treatmentSafetyLockedReasonKo?: string | null
   /** LBP v1 Batch 2 §8.2-1(c): non-null only when the candidate list is empty because no (matching) target function is selected yet. */
-  lbpTargetFunctionGap?: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
+  targetFunctionGap?: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
   /**
    * 2026-09-05: 신경학적 상태 미기록 때문에 후보 대부분이 보류된 상태
-   * (`LbpRecommendationResult.neuroUnrecorded`). 이유 없이 빈 목록을 보여주지
+   * (`RecommendationResult.neuroUnrecorded`). 이유 없이 빈 목록을 보여주지
    * 않기 위해 한 줄 안내를 띄운다 — 원장이 1탭으로 해소할 수 있는 유일한 사유다.
    */
-  lbpNeuroUnrecorded?: boolean
+  neuroUnrecorded?: boolean
 }) {
   // 2026-09-05: 단계 카드는 아래 어느 분기(안전 블록·0단계 블록·목표기능
   // 미선택)보다도 먼저, 항상 렌더된다 — 0단계로 블록이 접혀 있을 때 원장이
   // 여기서 1단계로 올릴 수 있어야 하기 때문이다.
   const stageCard =
-    isLbp && lbpStageSuggestion && onSetLbpConfirmedStage ? (
-      <LbpStageCard
-        suggestion={lbpStageSuggestion}
-        confirmedStage={lbpConfirmedStage}
-        onSetConfirmedStage={onSetLbpConfirmedStage}
+    regionActive && stageSuggestion && onSetConfirmedStage ? (
+      <StageCard
+        suggestion={stageSuggestion}
+        confirmedStage={confirmedStage}
+        onSetConfirmedStage={onSetConfirmedStage}
       />
     ) : null
 
-  if (isLbp && lbpRecommendationBlockedMessageKo) {
+  if (regionActive && recommendationBlockedMessageKo) {
     return (
       <>
         {stageCard}
         <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
-          <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
+          <p className="workspace__block__hint">{recommendationBlockedMessageKo}</p>
         </section>
       </>
     )
@@ -571,7 +587,7 @@ export function PainExerciseSection({
   // function has been picked yet -- distinct from "picked, but genuinely no
   // eligible exercise", which is out of this correction's scope and simply
   // renders nothing, same as before.
-  if (isLbp && lbpTargetFunctionGap && rehabSuggestions.length === 0) {
+  if (regionActive && targetFunctionGap && rehabSuggestions.length === 0) {
     return (
       <>
         {stageCard}
@@ -580,7 +596,7 @@ export function PainExerciseSection({
           <p className="workspace__block__hint">
             목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
             선택하세요.
-            {lbpTargetFunctionGap === 'CUSTOM_ONLY' &&
+            {targetFunctionGap === 'CUSTOM_ONLY' &&
               ' "기타 목표 동작"은 자유 기록이라 대응하는 카탈로그 운동이 없습니다 — 목록에 있는 목표 기능도 함께 골라주세요.'}
           </p>
         </section>
@@ -597,7 +613,7 @@ export function PainExerciseSection({
       suggestion={s}
       onChange={onChangeRehabSuggestion}
       onAdoptToCarePlan={onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined}
-      adoptDisabledReasonKo={isLbp ? (lbpTreatmentSafetyLockedReasonKo ?? undefined) : undefined}
+      adoptDisabledReasonKo={regionActive ? (treatmentSafetyLockedReasonKo ?? undefined) : undefined}
     />
   )
 
@@ -609,10 +625,10 @@ export function PainExerciseSection({
         candidate cards -- a treatment-safety-locked patient must see why
         adoption is blocked before scanning the cards themselves.
       */}
-      {isLbp && lbpTreatmentSafetyLockedReasonKo && (
-        <p className="workspace__block__hint">{lbpTreatmentSafetyLockedReasonKo}</p>
+      {regionActive && treatmentSafetyLockedReasonKo && (
+        <p className="workspace__block__hint">{treatmentSafetyLockedReasonKo}</p>
       )}
-      {isLbp && lbpNeuroUnrecorded && (
+      {regionActive && neuroUnrecorded && (
         <p className="workspace__block__hint">
           신경학적 이상 소견(레인2 &quot;객관적 검사 소견&quot;)을 먼저 기록하면 나머지 운동 후보가 나타납니다 — 미확인을
           &quot;이상 없음&quot;으로 가정하지 않습니다.
@@ -646,6 +662,8 @@ export function PainWorkspaceNext({
   onChangeNextReassessmentPlan,
   reassessment,
   priorVisits,
+  regionPack,
+  regionWorkingHypothesis,
   lbpDirectionalResponse,
   lbpWorkingHypothesis,
   lbpObjectiveMotorDeficit,
@@ -654,6 +672,10 @@ export function PainWorkspaceNext({
   onIssueCarePlanLink,
 }: {
   payload: DoctorPayload
+  /** 부위 팩 일반화(2026-09-06): 구동 부위 팩(승인된 것만). 생략하면 payload에서 정한다. 목표 기능 프리셋·EMR 부위 라벨의 출처. */
+  regionPack?: RegionPack | null
+  /** 부위 팩 일반화(2026-09-06): 구동 부위의 임상가설(요통이면 `lbpWorkingHypothesis`와 같은 값). EMR 미리보기 조립에만 쓰인다. */
+  regionWorkingHypothesis?: WorkingHypothesis
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
   examSuggestions: PhysicalExamSuggestion[]
   finalAssessment: PainFinalAssessment
@@ -681,7 +703,7 @@ export function PainWorkspaceNext({
 }) {
   const r = payload.responses
   const { routing } = payload
-  const isLbp = r.safety_flags.lbp != null
+  const pack = regionPack === undefined ? activeDrivingPack(r) : regionPack
   // LBP v1 Batch 4 (§14.1 O/S·S): patient tablet self-report only -- never
   // reaches the O key (see emrPreview.ts's own header for the O boundary).
   const onsetDurationText = durationFrequencyText(r, routing.primary_module)
@@ -699,6 +721,9 @@ export function PainWorkspaceNext({
     nextReassessmentPlan,
     lbpDirectionalResponse,
     lbpWorkingHypothesis,
+    regionWorkingHypothesis:
+      pack && regionWorkingHypothesis ? { patterns: pack.hypothesisPatterns, value: regionWorkingHypothesis } : null,
+    regionLabelKo: pack?.labelKo,
     onsetDurationText,
     aggravatingText: aggravatingTextForEmr,
     impactText: impactTextForEmr,
@@ -706,9 +731,9 @@ export function PainWorkspaceNext({
     lbpObjectiveMotorDeficit,
   })
   const patientCarePlanText = buildPainPatientCarePlanPreview({ primaryConcern: primaryConcernLabel(r), carePlan })
-  const followUpOptions = isLbp ? [...LBP_TARGET_FUNCTION_OPTIONS, ...PAIN_FOLLOW_UP_OPTIONS] : PAIN_FOLLOW_UP_OPTIONS
-  const followUpGroups = isLbp
-    ? [{ label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id) }]
+  const followUpOptions = pack ? [...pack.targetFunctions, ...PAIN_FOLLOW_UP_OPTIONS] : PAIN_FOLLOW_UP_OPTIONS
+  const followUpGroups = pack
+    ? [{ label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: pack.targetFunctions.map((o) => o.id) }]
     : undefined
   // Batch 2.6 (E-16/C-2): drives the disclosure's `open` attribute (auto-
   // opens once there is content, per the existing convention) -- but is
@@ -755,7 +780,7 @@ export function PainWorkspaceNext({
             onChange={onChangeFollowUpTargets}
             showPostTreatmentField
             groups={followUpGroups}
-            placeholders={isLbp ? LBP_TARGET_FUNCTION_PLACEHOLDERS : undefined}
+            placeholders={pack ? pack.targetFunctionPlaceholders : undefined}
             nrsTargetIds={PAIN_NRS_TARGET_IDS}
           />
         </div>

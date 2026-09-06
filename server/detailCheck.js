@@ -77,5 +77,34 @@ export function computeDetailCheckDue(historyVisits, todayISO) {
 
 /** The detail questions to ask when due: the common item plus the LBP set only for an LBP patient. */
 export function detailCheckQuestionIds({ isLbp }) {
-  return [...DETAIL_CHECK_COMMON_QUESTION_IDS, ...(isLbp ? DETAIL_CHECK_LBP_QUESTION_IDS : [])]
+  return detailCheckQuestionIdsForRegion(isLbp ? 'lbp' : null)
+}
+
+/**
+ * 부위 팩 일반화(2026-09-06, R2): 부위 키 → 그 부위의 재질문 id. **승인된 팩만**
+ * 여기 있다 — 서버는 팩의 `productionApproved`를 모르므로 이 표가 곧 활성화
+ * 목록이고, `tests/region-pack.spec.mjs`가 `{ region: pack.productionApproved ?
+ * pack.detailCheckQuestionIds : [] }`와 글자 단위로 같은지 단언한다. 승인 전
+ * 부위는 공통 문항만 받는다(옛 비요통 동작 그대로).
+ */
+export const DETAIL_CHECK_REGION_QUESTION_IDS = Object.freeze({
+  lbp: DETAIL_CHECK_LBP_QUESTION_IDS,
+})
+
+/**
+ * 구동 후보 순서(`server/regionRouting.js` `drivingRegionCandidates`)에서 표에 있는
+ * 첫 부위(= 승인된 팩)의 재질문 id. 판별 부위가 승인 전이면 같은 모집단의 승인된
+ * 부위로 되돌아간다 — 원장 화면의 `activeDrivingPack`과 같은 규칙.
+ */
+export function detailCheckQuestionIdsForCandidates(candidates) {
+  const list = Array.isArray(candidates) ? candidates : []
+  const hit = list.find((k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(DETAIL_CHECK_REGION_QUESTION_IDS, k))
+  return detailCheckQuestionIdsForRegion(hit ?? null)
+}
+
+export function detailCheckQuestionIdsForRegion(region) {
+  const regional = region != null && Object.prototype.hasOwnProperty.call(DETAIL_CHECK_REGION_QUESTION_IDS, region)
+    ? DETAIL_CHECK_REGION_QUESTION_IDS[region]
+    : []
+  return [...DETAIL_CHECK_COMMON_QUESTION_IDS, ...regional]
 }

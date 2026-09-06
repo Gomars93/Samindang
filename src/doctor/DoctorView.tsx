@@ -84,6 +84,8 @@ import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { DoctorWorkspace } from './workspace/DoctorWorkspace'
 import { MedicationCourseSection } from './MedicationCourseSection'
 import { deserializeWorkspaceState } from './workspace/persistence'
+import { activeDrivingPack } from './workspace/regionPacks'
+import { readRegionClinical } from './workspace/regionClinicalState'
 import { deriveViewProfile } from './workspace/viewProfile'
 import { WORKSPACE_SCENARIOS } from './workspace/workspaceFixtures'
 import './doctor.css'
@@ -3178,6 +3180,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // comment in emrPreview.ts for why.
   function buildPainEmrTextForRecord(): string {
     const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
+    // 부위 팩 일반화(2026-09-06, R2): PainWorkspaceNext의 EmrPreviewCard와 같은
+    // 부위 경로 -- 구동 팩의 가설·방향성 반응·라벨. tests/doctor.spec.mjs defect #5
+    // (ii)가 두 호출의 키 집합이 같음을 고정한다.
+    const regionPack = activeDrivingPack(r)
+    const regionState = regionPack ? readRegionClinical(workspaceState, regionPack.region, regionPack.hypothesisPatterns) : null
     return buildPainWorkspaceEmrPreview({
       primaryConcern: primaryConcernLabel(r),
       examSuggestions: workspaceState.painExamSuggestions,
@@ -3186,8 +3193,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       carePlan: workspaceState.painCarePlan,
       reassessment: workspaceState.painReassessment,
       nextReassessmentPlan: workspaceState.nextReassessmentPlan,
-      lbpDirectionalResponse: workspaceState.lbpDirectionalResponse,
+      lbpDirectionalResponse: regionState?.directionalResponse ?? 'NOT_ASSESSED',
       lbpWorkingHypothesis: workspaceState.lbpWorkingHypothesis,
+      regionWorkingHypothesis:
+        regionPack && regionState ? { patterns: regionPack.hypothesisPatterns, value: regionState.workingHypothesis } : null,
+      regionLabelKo: regionPack?.labelKo,
       onsetDurationText: durationFrequencyText(r, routing.primary_module),
       aggravatingText: aggravatingSummaryText(routing.primary_module, r.modules),
       impactText: isEmptyValue(r.visit_goal.chief_impact)

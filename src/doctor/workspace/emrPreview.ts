@@ -83,6 +83,7 @@ import {
   type LbpDirectionalResponse,
 } from './lbpExamSuggestions'
 import { summarizeLbpWorkingHypothesisKo, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
+import { summarizeWorkingHypothesisKo, type HypothesisPattern, type WorkingHypothesis } from './workingHypothesis'
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
 import type { PainCarePlan, HerbalCarePlan } from './carePlan'
 import type { ReassessmentExamItem, StructuredReassessment } from './reassessmentExam'
@@ -179,6 +180,14 @@ export function buildPainWorkspaceEmrPreview(input: {
   lbpDirectionalResponse?: LbpDirectionalResponse
   /** LBP v1 Batch 2.5c (G16, §11.5): folded into A's first clause, only when `summarizeLbpWorkingHypothesisKo` returns non-null (at least one pattern is not UNJUDGED) — a fully-UNJUDGED hypothesis contributes nothing at all, never an empty "임상 가설:" clause. */
   lbpWorkingHypothesis?: LbpWorkingHypothesis
+  /**
+   * 부위 팩 일반화(2026-09-06, R2): 요통 이외 부위의 임상가설 — 그 부위 팩의 패턴
+   * 목록과 오늘 값. `lbpWorkingHypothesis`가 한 줄이라도 내면 그것이 우선이고, 아니면
+   * 이것으로 같은 A행 첫 절을 만든다. 둘 다 전부 UNJUDGED면 절이 없다(요통 규칙 그대로).
+   */
+  regionWorkingHypothesis?: { patterns: readonly HypothesisPattern[]; value: WorkingHypothesis } | null
+  /** 부위 팩 일반화(2026-09-06, R2): O행 "…움직임 반응:"의 부위 라벨. 생략하면 요통("허리")이라 옛 문장과 글자 단위로 같다. */
+  regionLabelKo?: string
   /** §14.1 O/S "발병 및 경과": tablet-reported duration/frequency text (DoctorView.tsx's own `durationFrequencyText`) — patient self-report, NEVER O. */
   onsetDurationText?: string | null
   /** §14.1 O/S "(재진) 경과 요약": a REVISIT's clinician-recorded quick-check recap (e.g. `summarizeRevisitQuickCheckKo`'s output) — appended after `onsetDurationText` on the same O/S line, never split onto its own key. Still not the `O` line: O/S is the onset-and-course key, not the exam-findings key the file header's ONE ABSOLUTE RULE governs. */
@@ -192,7 +201,13 @@ export function buildPainWorkspaceEmrPreview(input: {
   /** §14.1 O "객관적 근력저하": ClinicianJudgment.lbp_objective_motor_deficit — clinician-entered post-exam finding (judgment.ts: "원장이 진찰 후 입력"), a SEPARATE field from the patient's own LBP_02 self-report. Never derive this from LBP_02. */
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
 }): string {
-  const hypothesisSummary = input.lbpWorkingHypothesis ? summarizeLbpWorkingHypothesisKo(input.lbpWorkingHypothesis) : null
+  const lbpHypothesisSummary = input.lbpWorkingHypothesis ? summarizeLbpWorkingHypothesisKo(input.lbpWorkingHypothesis) : null
+  const hypothesisSummary =
+    lbpHypothesisSummary ??
+    (input.regionWorkingHypothesis
+      ? summarizeWorkingHypothesisKo(input.regionWorkingHypothesis.patterns, input.regionWorkingHypothesis.value)
+      : null)
+  const movementResponseLabelKo = `${input.regionLabelKo ?? '허리'} 움직임 반응`
 
   // O (객관적 소견) — clinician-confirmed ONLY. See file header for why each
   // of these four sources is safe: all are clinician-entered/observed, never
@@ -212,7 +227,7 @@ export function buildPainWorkspaceEmrPreview(input: {
     isValidLbpDirectionalResponse(input.lbpDirectionalResponse) &&
     input.lbpDirectionalResponse !== 'NOT_ASSESSED'
   ) {
-    oParts.push(`허리 움직임 반응: ${lbpDirectionalResponseLabel(input.lbpDirectionalResponse)}`)
+    oParts.push(`${movementResponseLabelKo}: ${lbpDirectionalResponseLabel(input.lbpDirectionalResponse)}`)
   }
   const reassessLines = input.reassessment ? reassessmentFindingsLines(input.reassessment.items) : []
   if (reassessLines.length) oParts.push(`오늘 재검 소견: ${reassessLines.join('; ')}`)

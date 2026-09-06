@@ -1,35 +1,51 @@
 /**
- * LBP v1 Batch 2.5c — Working Hypothesis 최소 형태.
+ * LBP v1 Batch 2.5c — Working Hypothesis 최소 형태 (요통 래퍼).
  *
  * Docs ref: `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §11,
  * `DECISIONS.md`'s 2026-09-03 "LBP v1 Batch 2.5b 게이트 CLOSED + Batch 2.5c
  * PO 결정 3건" entry (CD-2.5c-1/2/3 + Fable's patient-boundary design note).
  *
- * Pure logic only, no React. Everything here is a RECORD of the
- * clinician's own selection, never a computed judgment:
- *   - No score, no threshold, no ranking, no diagnosis name.
- *   - The clinician picks every `support` value directly; nothing here
- *     infers one from questionnaire answers, exam results, or anything
- *     else in WorkspaceState.
- *   - `patientSentenceDraftKo` produces a DRAFT only — see
- *     `appendLbpHypothesisSentenceToPatientInstruction` below and this
- *     module's callers (`LbpWorkingHypothesisCard.tsx`,
- *     `DoctorWorkspace.tsx`, `RevisitWorkspace.tsx`) for the "adopt, never
- *     automatic" boundary that keeps `patientCarePlanPreview.ts` untouched
- *     (architecture §11.1): the hypothesis itself never reaches the patient
- *     output — only a sentence the clinician explicitly clicked "안내문에
- *     넣기" to copy into `PainCarePlan.patientInstruction`, the existing
- *     clinician-authored field `patientCarePlanPreview.ts` already renders.
- *
  * 부위 팩 일반화(2026-09-06, `docs/PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md`
- * §3): 아래 함수는 전부 **패턴 목록을 첫 인자로 받는 부위 무관 본체**와, 요통
- * 5패턴을 넘기는 **요통 래퍼**(옛 이름 그대로)의 두 층으로 나뉜다. 요통
- * 래퍼의 동작은 한 글자도 바뀌지 않았고 `tests/lbp-working-hypothesis.spec.mjs`
- * 184단언이 그것을 고정한다. 다른 부위는 그 팩의 `hypothesisPatterns`를 넘긴다.
+ * §3): 판단 본체(패턴 목록을 첫 인자로 받는 부위 무관 함수)는
+ * `workingHypothesis.ts`로 옮겼고, 이 파일은 **요통 5패턴을 넘기는 래퍼**만
+ * 남는다 — 옛 이름·동작 그대로이며 `tests/lbp-working-hypothesis.spec.mjs`
+ * 250단언이 그것을 고정한다.
+ *
+ * Everything here is a RECORD of the clinician's own selection, never a
+ * computed judgment: no score, no threshold, no ranking, no diagnosis name.
+ * `patientSentenceDraftKo` produces a DRAFT only — the hypothesis itself
+ * never reaches the patient output; only a sentence the clinician explicitly
+ * clicked "안내문에 넣기" to copy into `PainCarePlan.patientInstruction`.
  */
-
 import type { HypothesisPattern } from './regionPack'
-export type { HypothesisPattern }
+import {
+  HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO,
+  HYPOTHESIS_SUPPORT_LABEL_KO,
+  HYPOTHESIS_SUPPORT_OPTIONS,
+  appendHypothesisSentenceToPatientInstruction,
+  applyWorkingHypothesisCarryForward,
+  emptyWorkingHypothesis,
+  isRegionPatientForRevisitHypothesisGate,
+  isValidHypothesisSupport,
+  isWorkingHypothesisBlank,
+  patientSentenceDraftKoFor,
+  sanitizeWorkingHypothesis,
+  summarizeWorkingHypothesisKo,
+  type HypothesisSupport,
+  type WorkingHypothesis,
+} from './workingHypothesis'
+
+export type { HypothesisPattern, HypothesisSupport, WorkingHypothesis }
+export {
+  appendHypothesisSentenceToPatientInstruction,
+  applyWorkingHypothesisCarryForward,
+  emptyWorkingHypothesis,
+  isRegionPatientForRevisitHypothesisGate,
+  isWorkingHypothesisBlank,
+  patientSentenceDraftKoFor,
+  sanitizeWorkingHypothesis,
+  summarizeWorkingHypothesisKo,
+}
 
 export type LbpHypothesisPatternId = 'LUMBAR_MOVEMENT' | 'NEURAL' | 'WALK_STAND_LEG' | 'HIP' | 'SIJ'
 
@@ -76,162 +92,31 @@ export const LBP_HYPOTHESIS_PATTERNS: readonly HypothesisPattern[] = LBP_HYPOTHE
   particleKo: LBP_HYPOTHESIS_PATIENT_PARTICLE_KO[id],
 }))
 
-export type LbpHypothesisSupport = 'UNJUDGED' | 'HIGHER' | 'CONSIDER' | 'LOWER'
-export type HypothesisSupport = LbpHypothesisSupport
+export type LbpHypothesisSupport = HypothesisSupport
 
 /**
  * UNJUDGED first (the default, stored value). `LbpWorkingHypothesisCard.tsx`
  * renders only the OTHER 3 as a chip group per pattern (5행 × 3 chip) —
- * UNJUDGED itself is never a rendered chip; it is what a pattern reverts to
- * when its currently active chip is re-clicked. Removed from render in
- * Batch 2.6 (E-2, approved `DECISIONS.md` 2026-09-04 "원장 화면 실측 감사
- * (Opus) 및 Batch 2.6 착수 / 2.5d 보류"), the same convention
- * `RevisitQuickCheckCard`'s `NOT_ASSESSED` already used. This array still
- * lists all 4 -- it is the full stored value type, not the render list.
+ * UNJUDGED itself is never a rendered chip (Batch 2.6 E-2).
  */
-export const LBP_HYPOTHESIS_SUPPORT_OPTIONS: readonly LbpHypothesisSupport[] = ['UNJUDGED', 'HIGHER', 'CONSIDER', 'LOWER']
+export const LBP_HYPOTHESIS_SUPPORT_OPTIONS: readonly LbpHypothesisSupport[] = HYPOTHESIS_SUPPORT_OPTIONS
 
-export const LBP_HYPOTHESIS_SUPPORT_LABEL_KO: Record<LbpHypothesisSupport, string> = {
-  UNJUDGED: '미판단',
-  HIGHER: '가능성 높음',
-  CONSIDER: '고려',
-  LOWER: '가능성 낮음',
-}
+export const LBP_HYPOTHESIS_SUPPORT_LABEL_KO: Record<LbpHypothesisSupport, string> = HYPOTHESIS_SUPPORT_LABEL_KO
 
 export function isValidLbpHypothesisSupport(v: unknown): v is LbpHypothesisSupport {
-  return typeof v === 'string' && (LBP_HYPOTHESIS_SUPPORT_OPTIONS as readonly string[]).includes(v)
+  return isValidHypothesisSupport(v)
 }
 
 /**
  * §11.2: deliberately just `supports` + `recordedAt` — no `note` field. A
  * free-text note for the working hypothesis is not a new field; it is the
  * existing `PainFinalAssessment.finalWorkingAssessment` the clinician
- * already fills in the same 판단·처치 lane (architecture §11.2's own
- * parenthetical: "note는 기존 자유 텍스트와 별개가 아니라 만들지 않는다").
+ * already fills in the same 판단·처치 lane.
  */
 export type LbpWorkingHypothesis = {
   supports: Record<LbpHypothesisPatternId, LbpHypothesisSupport>
   recordedAt: string | null
 }
-
-/** 부위 무관 형태 — 패턴 id가 팩마다 다르므로 키는 string. 요통 값은 그대로 이 타입에 대입된다. */
-export type WorkingHypothesis = {
-  supports: Record<string, HypothesisSupport>
-  recordedAt: string | null
-}
-
-// ---------------------------------------------------------------------------
-// 부위 무관 본체 (패턴 목록을 첫 인자로 받는다)
-// ---------------------------------------------------------------------------
-
-export function emptyWorkingHypothesis(patterns: readonly HypothesisPattern[]): WorkingHypothesis {
-  const supports: Record<string, HypothesisSupport> = {}
-  for (const p of patterns) supports[p.id] = 'UNJUDGED'
-  return { supports, recordedAt: null }
-}
-
-/** True when every pattern is still UNJUDGED (the untouched default). */
-export function isWorkingHypothesisBlank(patterns: readonly HypothesisPattern[], v: WorkingHypothesis): boolean {
-  return patterns.every((p) => v.supports[p.id] === 'UNJUDGED')
-}
-
-/**
- * Never throws — a legacy record with no field at all, a non-object, or a
- * corrupted `supports` sub-record all degrade to the empty value
- * field-by-field. Each pattern id is validated INDEPENDENTLY so one corrupt/
- * unknown-string sibling never blanks the others. An unrecognized string
- * value degrades to 'UNJUDGED', never silently rendered/persisted as a real
- * clinical value. Ids the pack does not declare are dropped.
- */
-export function sanitizeWorkingHypothesis(patterns: readonly HypothesisPattern[], raw: unknown): WorkingHypothesis {
-  const empty = emptyWorkingHypothesis(patterns)
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return empty
-  const r = raw as Record<string, unknown>
-  const rawSupports =
-    typeof r.supports === 'object' && r.supports !== null && !Array.isArray(r.supports)
-      ? (r.supports as Record<string, unknown>)
-      : {}
-  const supports = { ...empty.supports }
-  for (const p of patterns) {
-    const v = rawSupports[p.id]
-    supports[p.id] = isValidLbpHypothesisSupport(v) ? v : 'UNJUDGED'
-  }
-  return {
-    supports,
-    recordedAt: typeof r.recordedAt === 'string' ? r.recordedAt : null,
-  }
-}
-
-/**
- * §11.3: EMR/재진 recap 한 줄. UNJUDGED 패턴은 생략(계산이 아니라 원장이
- * 고른 값의 직접 대응). 전부 UNJUDGED면 `null` — 호출부가 줄 자체를
- * 렌더하지 않는다(EMR에서 "임상 가설:" 빈 줄이 남지 않는다).
- */
-export function summarizeWorkingHypothesisKo(patterns: readonly HypothesisPattern[], v: WorkingHypothesis): string | null {
-  const parts = patterns
-    .filter((p) => v.supports[p.id] !== undefined && v.supports[p.id] !== 'UNJUDGED')
-    .map((p) => `${p.labelKo} ${LBP_HYPOTHESIS_SUPPORT_LABEL_KO[v.supports[p.id]]}`)
-  if (parts.length === 0) return null
-  return `임상 가설: ${parts.join(' · ')}`
-}
-
-/**
- * §11.3/§11.7: the fixed clause every patient draft sentence must contain,
- * verbatim, so a mutation that drops/rewords it is mechanically detectable
- * (`tests/lbp-working-hypothesis.spec.mjs` asserts on this exact string,
- * not just "the sentence looks reassuring").
- */
-export const LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO = '확정 진단이 아니라 경과를 보며 다시 판단합니다.'
-
-/**
- * §11.3: builds the ONE plain-language draft sentence when — and only when —
- * exactly one pattern is `HIGHER`. Zero HIGHER patterns means there is
- * nothing confident enough to draft; two or more means the clinician should
- * write the sentence themselves (a fixed template cannot honestly join two
- * mechanisms into one plain sentence) — both return `null`, and the card
- * renders no draft box at all in either case.
- */
-export function patientSentenceDraftKoFor(patterns: readonly HypothesisPattern[], v: WorkingHypothesis): string | null {
-  const higher = patterns.filter((p) => v.supports[p.id] === 'HIGHER')
-  if (higher.length !== 1) return null
-  const p = higher[0]
-  return `오늘은 ${p.patientEasyLabelKo}${p.particleKo} 관련된 통증으로 보고 치료했습니다. ${LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO}`
-}
-
-/**
- * §11.4 (재진): "이전 가설 이어받기" — copies the prior visit's `supports`
- * into today's value, stamped with today's time. Only ever called from an
- * explicit clinician click. Double-guarded: a `null`/blank prior has nothing
- * to offer, and today's value already having a real pick is never silently
- * replaced.
- */
-export function applyWorkingHypothesisCarryForward(
-  patterns: readonly HypothesisPattern[],
-  today: WorkingHypothesis,
-  prior: WorkingHypothesis | null,
-  now: string,
-): WorkingHypothesis {
-  if (!prior || isWorkingHypothesisBlank(patterns, prior) || !isWorkingHypothesisBlank(patterns, today)) return today
-  return { supports: { ...prior.supports }, recordedAt: now }
-}
-
-/**
- * 재진 가설 카드 게이트 — 이 환자가 그 부위 환자인가. 두 신호의 OR:
- *   1. 이력 속 최신 제출의 `safety_flags.<region>`이 `!= null` (적용 가능성 관례).
- *   2. 오늘 기록에 이미 판단된 패턴이 있다 — 이 신호가 없으면 첫 신호가 잠시
- *      꺼진 순간 원장이 자기 기록을 볼 수도 고칠 수도 없게 된다.
- */
-export function isRegionPatientForRevisitHypothesisGate(
-  patterns: readonly HypothesisPattern[],
-  priorSubmissionSafetyFlagsForRegion: unknown,
-  todayHypothesis: WorkingHypothesis,
-): boolean {
-  return priorSubmissionSafetyFlagsForRegion != null || !isWorkingHypothesisBlank(patterns, todayHypothesis)
-}
-
-// ---------------------------------------------------------------------------
-// 요통 래퍼 (옛 이름 그대로 — 동작 0 변경)
-// ---------------------------------------------------------------------------
 
 export function emptyLbpWorkingHypothesis(): LbpWorkingHypothesis {
   return emptyWorkingHypothesis(LBP_HYPOTHESIS_PATTERNS) as LbpWorkingHypothesis
@@ -247,34 +132,26 @@ export function isLbpWorkingHypothesisBlank(v: LbpWorkingHypothesis): boolean {
  * corrupted `supports` sub-record all degrade to
  * `emptyLbpWorkingHypothesis()` field-by-field. Each of the 5 pattern ids is
  * validated INDEPENDENTLY so one corrupt/unknown-string sibling never blanks
- * the other 4 (mirrors `persistence.ts`'s existing per-field sanitizers,
- * e.g. `sanitizeReassessmentItem`). An unrecognized string value (not one of
- * the 4 real `LbpHypothesisSupport` members) degrades to 'UNJUDGED', never
+ * the other 4. An unrecognized string value degrades to 'UNJUDGED', never
  * silently rendered/persisted as a real clinical value.
  */
 export function sanitizeLbpWorkingHypothesis(raw: unknown): LbpWorkingHypothesis {
   return sanitizeWorkingHypothesis(LBP_HYPOTHESIS_PATTERNS, raw) as LbpWorkingHypothesis
 }
 
-/**
- * §11.3: EMR/재진 recap 한 줄. UNJUDGED 패턴은 생략(계산이 아니라 원장이
- * 고른 값의 직접 대응). 전부 UNJUDGED면 `null` — 호출부가 줄 자체를
- * 렌더하지 않는다(EMR에서 "임상 가설:" 빈 줄이 남지 않는다).
- */
+/** §11.3: EMR/재진 recap 한 줄. 전부 UNJUDGED면 `null`. */
 export function summarizeLbpWorkingHypothesisKo(v: LbpWorkingHypothesis): string | null {
   return summarizeWorkingHypothesisKo(LBP_HYPOTHESIS_PATTERNS, v)
 }
 
 /**
- * §11.3: builds the environment's ONE plain-language draft sentence when —
- * and only when — exactly one pattern is `HIGHER`. Zero HIGHER patterns
- * means there is nothing confident enough to draft; two or more means the
- * clinician should write the sentence themselves (a fixed template cannot
- * honestly join two mechanisms into one plain sentence) — both return
- * `null`, and `LbpWorkingHypothesisCard.tsx` renders no draft box at all in
- * either case (§11.4's "그 아래 회색 상자" appears only when this is
- * non-null).
+ * §11.3/§11.7: the fixed clause every patient draft sentence must contain,
+ * verbatim, so a mutation that drops/rewords it is mechanically detectable
+ * (`tests/lbp-working-hypothesis.spec.mjs` asserts on this exact string).
  */
+export const LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO = HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO
+
+/** §11.3: the ONE plain-language draft sentence when exactly one pattern is `HIGHER`; otherwise `null`. */
 export function patientSentenceDraftKo(v: LbpWorkingHypothesis): string | null {
   return patientSentenceDraftKoFor(LBP_HYPOTHESIS_PATTERNS, v)
 }
@@ -282,44 +159,19 @@ export function patientSentenceDraftKo(v: LbpWorkingHypothesis): string | null {
 /**
  * §11.1/§11.4: the ONLY way a hypothesis-derived sentence ever reaches
  * `PainCarePlan.patientInstruction` — called exclusively from an explicit
- * "안내문에 넣기" click (`LbpWorkingHypothesisCard.tsx`'s
- * `onInsertPatientSentence`, wired in `DoctorWorkspace.tsx`/
- * `RevisitWorkspace.tsx`). Idempotent (never inserts the exact same
- * sentence twice) and additive-only (never replaces/clears existing text,
- * so a clinician's own edits to `patientInstruction` — including an edited
- * copy of a previously-inserted sentence — are never overwritten). Mirrors
- * `lbpExerciseRecommendation.ts`'s `appendLbpAdoptionText` pattern
- * deliberately, but kept as its own small function here rather than a
- * shared import: the two modules must stay uncoupled (§11.7 "가설→운동추천
- * 연결" 금지 — even an incidental code dependency between the hypothesis
- * and exercise modules would blur that boundary for a future reader).
- * 부위와 무관한 문자열 연산이라 부위 인자가 없다.
+ * "안내문에 넣기" click. Idempotent and additive-only. Kept uncoupled from
+ * `lbpExerciseRecommendation.ts`'s `appendLbpAdoptionText` (§11.7 "가설→운동추천
+ * 연결" 금지).
  */
-export function appendLbpHypothesisSentenceToPatientInstruction(existingPatientInstruction: string, sentence: string): string {
-  if (!sentence) return existingPatientInstruction
-  if (existingPatientInstruction.includes(sentence)) return existingPatientInstruction
-  return existingPatientInstruction.trim() ? `${existingPatientInstruction}\n${sentence}` : sentence
-}
-
-export const appendHypothesisSentenceToPatientInstruction = appendLbpHypothesisSentenceToPatientInstruction
+export const appendLbpHypothesisSentenceToPatientInstruction = appendHypothesisSentenceToPatientInstruction
 
 /**
- * §11.4 (재진): "이전 가설 이어받기" — copies the prior visit's `supports`
- * into today's value, stamped with today's time. Only ever called from an
- * explicit clinician click (never from a load effect / render path) —
- * `tests/lbp-working-hypothesis.spec.mjs` pins this both by testing the
- * pure function's own blank-guards below AND by a structural check that
- * `RevisitWorkspace.tsx`'s one call site sits inside an `onClick` handler,
- * and that the generic `revisitCarryForward.ts` module (the other, already-
- * existing "이전 내용 이어가기" actions) never references this module at
- * all — the general carry-forward mechanism must never pick up the
- * hypothesis as a side effect of an unrelated button.
- *
- * Double-guarded exactly like `revisitCarryForward.ts`'s own apply*
- * functions (e.g. `applyJudgmentCarryForward`): a `null`/blank prior has
- * nothing to offer, and today's value already having a real pick is never
- * silently replaced — both make the "never auto-apply" property belong to
- * the operation itself, not to whichever call site remembers to check.
+ * §11.4 (재진): "이전 가설 이어받기" — only ever called from an explicit
+ * clinician click (`tests/lbp-working-hypothesis.spec.mjs` pins the
+ * `RevisitWorkspace.tsx` call site inside an `onClick`, and that the generic
+ * `revisitCarryForward.ts` never references this module). Double-guarded:
+ * a `null`/blank prior has nothing to offer, and today's value already
+ * having a real pick is never silently replaced.
  */
 export function applyLbpWorkingHypothesisCarryForward(
   today: LbpWorkingHypothesis,
@@ -330,39 +182,12 @@ export function applyLbpWorkingHypothesisCarryForward(
 }
 
 /**
- * Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04): §11.2 declares
- * this data LBP-전용. `DoctorWorkspace.tsx` already gates the initial-visit
- * card on `isLbpRecord` (`payload.responses.safety_flags.lbp != null`);
- * `RevisitWorkspace.tsx` had NO equivalent gate, so a neck/knee/shoulder/…
- * revisit's clinician could insert a lumbar sentence into that patient's
- * 안내문. This is the same two-part signal, decomposed into two plain
- * arguments so it stays a pure function callers can unit-test directly
- * without importing `SubmissionRecord`/React here:
- *
- *   1. `priorSubmissionSafetyFlagsLbp` — the raw `safety_flags.lbp` value
- *      read from the latest submission-backed visit anywhere in this
- *      patient's history (`RevisitWorkspace.tsx`'s own
- *      `rehabSourceSubmission?.submission?.submission?.responses?.safety_flags?.lbp`
- *      — the first `.submission` is that wrapper's own field holding a
- *      `SubmissionRecord`, whose OWN `.submission` field is the raw
- *      questionnaire payload; same double-nesting `recordToPayload`
- *      unwraps for `DoctorWorkspace.tsx`'s `isLbpRecord`).
- *      `!= null` is the applicability convention this whole codebase uses
- *      for `safety_flags.<region>` (see e.g. `DoctorView.tsx`'s per-region
- *      gates) — never a truthiness check, since `false`/`0` would still be
- *      a real recorded flag value.
- *   2. `todayHypothesis` — today's own `WorkspaceState.lbpWorkingHypothesis`
- *      / `VisitWorkspaceState.lbpWorkingHypothesis`. This disjunct is
- *      REQUIRED, not an edge-case nicety: without it, a hypothesis already
- *      recorded on this visit (e.g. carried forward before a submission
- *      link changed, or entered while the signal was briefly unavailable)
- *      would become unreachable/uneditable the moment the first signal is
- *      false — the clinician could never see or correct their own prior
- *      entry on this same visit.
- *
- * A patient with no submission-backed history AND a still-blank hypothesis
- * gates closed (`false`) — the safe default matches `isLbpRecord`'s own
- * `!= null` fail-closed shape on the initial-visit screen.
+ * Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04): the revisit gate
+ * for the (formerly LBP-only) hypothesis card. Two-part signal — the latest
+ * submission-backed visit's raw `safety_flags.lbp` (`!= null`, the
+ * applicability convention) OR today's own hypothesis already non-blank (so
+ * a recorded entry never becomes unreachable). A patient with no
+ * submission-backed history AND a still-blank hypothesis gates closed.
  */
 export function isLbpPatientForRevisitHypothesisGate(
   priorSubmissionSafetyFlagsLbp: unknown,

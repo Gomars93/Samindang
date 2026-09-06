@@ -12,6 +12,7 @@
  * Docs ref: LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md §7.2 (G1).
  */
 import { followUpTarget, type FollowUpTarget } from './finalAssessment'
+import type { LbpExerciseTargetFunction } from './lbpExerciseLibrary'
 
 export const LBP_TARGET_FUNCTION_OPTIONS: FollowUpTarget[] = [
   followUpTarget('lbp_tf_walking', '걷기'),
@@ -32,7 +33,41 @@ export function isLbpTargetFunctionId(id: string): boolean {
 }
 
 export function selectedLbpTargetFunctions(targets: FollowUpTarget[]): FollowUpTarget[] {
-  return targets.filter((t) => isLbpTargetFunctionId(t.id))
+  return selectedTargetFunctions(LBP_TARGET_FUNCTION_IDS, targets)
+}
+
+/** 부위 팩 일반화(2026-09-06): 팩의 목표 기능 id 집합에 속한 재평가 대상만 고른다. */
+export function selectedTargetFunctions(ids: ReadonlySet<string>, targets: FollowUpTarget[]): FollowUpTarget[] {
+  return targets.filter((t) => ids.has(t.id))
+}
+
+/**
+ * `lbp_tf_*` id <-> Core-20 `targetFunctions` enum (architecture §2.2 "TF 일치").
+ * 원래 `lbpExerciseRecommendation.ts`에 있던 표를 그대로 옮겼다 — 요통 팩이
+ * 추천 모듈을 import하지 않고도 이 표를 가질 수 있게(순환 import 방지).
+ *
+ * `lbp_tf_custom` intentionally maps to nothing — a free-text goal cannot be
+ * matched against Core-20 metadata's fixed enum, so it never filters an
+ * exercise IN via this path (architecture §2.2, explicitly accepted).
+ *
+ * Opus delta review defect 8: `LBP_LUMBAR_02`'s own `targetFunctions`
+ * (FLEXION/EXTENSION/CUSTOM — `lbpExerciseCoreMetadata.ts`) has no entry
+ * here, so it is currently unreachable through this v1 target-function
+ * picker — a clinical-scope decision (which `lbp_tf_*` chip, if any, should
+ * surface cat-camel), not something this module changes on its own. Kept
+ * `export`ed so `tests/lbp-exercise-recommendation.spec.mjs`'s reachability
+ * test can assert the unreachable set stays exactly `{LBP_LUMBAR_02}` and
+ * never grows silently.
+ */
+export const LBP_TARGET_FUNCTION_ID_TO_ENUM: Record<string, LbpExerciseTargetFunction | undefined> = {
+  lbp_tf_walking: 'WALKING',
+  lbp_tf_sitting: 'SITTING',
+  lbp_tf_standing: 'STANDING',
+  lbp_tf_sit_to_stand: 'SIT_TO_STAND',
+  lbp_tf_dressing: 'DRESSING',
+  lbp_tf_lifting: 'LIFTING',
+  lbp_tf_sleep: 'SLEEP',
+  lbp_tf_work: 'WORK',
 }
 
 /**

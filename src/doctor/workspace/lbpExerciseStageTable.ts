@@ -61,9 +61,22 @@ export function stageAssignmentAsNumber(a: LbpExerciseStageAssignment): 1 | 2 | 
  * - 표에 없는 id → false (Core-20 밖의 id는 이 경로에 올 수 없다; 오면 막는다)
  */
 export function isLbpExerciseAllowedAtStage(exerciseId: string, stage: LbpExerciseStage | null): boolean {
+  return isExerciseAllowedAtStage(LBP_EXERCISE_STAGE_BY_ID, exerciseId, stage)
+}
+
+/**
+ * 부위 팩 일반화(2026-09-06): 같은 판정을 임의의 단계표에 대해 한다. 요통은
+ * `LBP_EXERCISE_STAGE_BY_ID`를 넘기고, 다른 부위는 그 팩의 `stageTable`을 넘긴다.
+ * 판정 규칙은 위 요통 함수의 주석 그대로다.
+ */
+export function isExerciseAllowedAtStage(
+  table: Readonly<Record<string, LbpExerciseStageAssignment>>,
+  exerciseId: string,
+  stage: LbpExerciseStage | null,
+): boolean {
   if (stage === null) return true
   if (stage === 0) return false
-  const assigned = LBP_EXERCISE_STAGE_BY_ID[exerciseId]
+  const assigned = table[exerciseId]
   if (assigned === undefined) return false
   if (assigned === 'ALL') return true
   return assigned <= stage

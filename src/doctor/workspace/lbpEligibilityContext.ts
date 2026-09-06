@@ -83,13 +83,34 @@ export function buildLbpEligibilityContext(
   const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
   const flags = computeLbpFlags(state)
   const routineCareAllowed = flags.lbp_safety_status === 'CLEAR'
+  const neuroStatus = neuroStatusFromLbpObjectiveMotorDeficit(lbpObjectiveMotorDeficit)
+  return buildEligibilityContextFrom({ routineCareAllowed, neuroStatus }, workspaceState.lbpDirectionalResponse)
+}
 
-  const neuroStatus: LbpExerciseEligibilityContext['neuroStatus'] =
-    lbpObjectiveMotorDeficit === 'SEVERE_OR_PROGRESSIVE'
-      ? 'NEW_OR_WORSENING'
-      : lbpObjectiveMotorDeficit === 'NONE'
-        ? 'STABLE'
-        : 'UNKNOWN'
+/** 원장의 객관적 하지 근력저하 소견 → 신경 상태 3값. 미입력(`undefined`)/`UNKNOWN`은 UNKNOWN — 안정으로 가정하지 않는다(RF-1). */
+export function neuroStatusFromLbpObjectiveMotorDeficit(
+  lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit'],
+): LbpExerciseEligibilityContext['neuroStatus'] {
+  return lbpObjectiveMotorDeficit === 'SEVERE_OR_PROGRESSIVE'
+    ? 'NEW_OR_WORSENING'
+    : lbpObjectiveMotorDeficit === 'NONE'
+      ? 'STABLE'
+      : 'UNKNOWN'
+}
+
+/**
+ * 부위 팩 일반화(2026-09-06): 재계산된 안전 판정(부위 팩의 `evaluateSafety`)과
+ * 원장이 기록한 방향성 반응에서 적격성 컨텍스트를 만든다. 요통은 위 래퍼가
+ * 같은 값을 넘기고, 다른 부위는 그 부위의 안전 로직이 넘긴다. 방향성 반응이
+ * 의미 없는 부위는 `'NOT_ASSESSED'`를 넘기면 원위 악화 = UNKNOWN, 방향 = 미시행이
+ * 되어 방향 조건이 없는 규칙만 통과한다.
+ */
+export function buildEligibilityContextFrom(
+  safety: { routineCareAllowed: boolean; neuroStatus: LbpExerciseEligibilityContext['neuroStatus'] },
+  recordedDirectionalResponse: LbpDirectionalResponse,
+): LbpExerciseEligibilityContext {
+  const { routineCareAllowed, neuroStatus } = safety
+  const workspaceState = { lbpDirectionalResponse: recordedDirectionalResponse }
 
   // RF-12: NOT_ASSESSED -> UNKNOWN, never STABLE_OR_IMPROVING — an
   // unrecorded response must never be read as a confirmed-stable one.

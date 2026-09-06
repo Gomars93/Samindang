@@ -45,7 +45,7 @@
 import { emptyExamResult, type ExamSuggestionReason, type PhysicalExamSuggestion } from './examSuggestion'
 import type { DoctorPayload } from '../types'
 
-type ExamHelp = { howKo: string; whyKo: string }
+export type ExamHelp = { howKo: string; whyKo: string }
 
 /** Verbatim copy of the v0.1 engine's per-check `help` blocks, keyed by this codebase's exam suggestion id. */
 export const LBP_EXAM_HELP: Record<string, ExamHelp> = {
@@ -192,11 +192,24 @@ export function mergeLbpExamSuggestions(
   existing: PhysicalExamSuggestion[],
   payload: DoctorPayload,
 ): PhysicalExamSuggestion[] {
+  return mergeExamSuggestions(LBP_EXAM_HELP, generateLbpExamSuggestions(payload), existing)
+}
+
+/**
+ * 부위 팩 일반화(2026-09-06): 같은 병합 규칙을 임의의 도움말 표·생성 결과에
+ * 대해 적용한다. 요통은 위 래퍼가, 다른 부위는 그 팩의 `examHelp`와
+ * `generateExamSuggestions(payload)`가 넘긴다. 규칙은 위 요통 주석 그대로:
+ * 기존 결과는 절대 건드리지 않고, 새 id만 뒤에 붙이며, 도움말은 id로 다시 붙인다.
+ */
+export function mergeExamSuggestions(
+  examHelp: Readonly<Record<string, ExamHelp>>,
+  generated: readonly PhysicalExamSuggestion[],
+  existing: PhysicalExamSuggestion[],
+): PhysicalExamSuggestion[] {
   const reattached = existing.map((item) => {
-    const help = LBP_EXAM_HELP[item.id]
+    const help = examHelp[item.id]
     return help ? { ...item, help } : item
   })
-  const generated = generateLbpExamSuggestions(payload)
   const existingIds = new Set(reattached.map((i) => i.id))
   const toAdd = generated.filter((g) => !existingIds.has(g.id))
   return [...reattached, ...toAdd]
@@ -233,6 +246,13 @@ export function isValidLbpDirectionalResponse(v: unknown): v is LbpDirectionalRe
 export function lbpDirectionalResponseLabel(v: LbpDirectionalResponse): string {
   return LBP_DIRECTIONAL_RESPONSE_OPTIONS.find((o) => o.value === v)?.label ?? ''
 }
+
+// 부위 무관 별칭 — 값 6개는 "움직임 방향에 대한 증상 반응"이라는 개념이라 부위
+// 이름이 들어 있지 않다. 어느 부위에서 이 카드를 켤지는 팩의
+// `directionalResponseApplicable`이 정한다.
+export type DirectionalResponse = LbpDirectionalResponse
+export const DIRECTIONAL_RESPONSE_OPTIONS = LBP_DIRECTIONAL_RESPONSE_OPTIONS
+export const isValidDirectionalResponse = isValidLbpDirectionalResponse
 
 /** Verbatim copy of the v0.1 engine's `buildLumbarMovementCheck` help block. */
 export const LBP_DIRECTIONAL_RESPONSE_HELP: ExamHelp = {

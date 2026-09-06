@@ -7,117 +7,43 @@
  * entry.
  *
  * Scope, deliberately narrow (architecture §2.3 invariants, unchanged here):
- *   - Core-20 only, never the full 57-item catalog.
+ *   - Core set only (요통: Core-20), never the full catalog.
  *   - No numeric score. Ranking is exactly two buckets (directly supported
  *     by the current directional/neurodynamic response, vs. everything
- *     else) in Core-20 declaration order within each bucket.
+ *     else) in Core declaration order within each bucket.
  *   - Derived results (candidates) are never persisted — recomputed on
  *     every call from the current payload/judgment/workspace state.
  *   - `Primary Strategy -> Secondary Strategy -> Exercise` clinician-facing
  *     workflow is CLOSED (PO decision, `DECISIONS.md` 2026-09-02 "LBP Rehab
- *     Strategy Mapping") and is NOT built here. The only thing reused from
- *     `lbpRehabStrategySelector.v01.experimental.ts` is its ~15-line
- *     domain->strategy static table, copied inline below, used strictly for
- *     a one-line internal/explanatory "이유" label — never a clickable
- *     step, never a filter, never a ranking signal.
+ *     Strategy Mapping") and is NOT built here. The domain->strategy label
+ *     table now lives in the 요통 팩 (`regionPacks/lbp.ts`) as a
+ *     precomputed `strategyLabelKo` per Core row — still a one-line
+ *     internal/explanatory "이유" label, never a clickable step, never a
+ *     filter, never a ranking signal.
+ *
+ * 부위 팩 일반화(2026-09-06, `docs/PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md`
+ * §3): 판단 본체는 `buildRecommendationContext(pack, …)` 하나이고, 부위마다
+ * 다른 것(Core 목록·단계표·규칙·목표 기능 표·안전 재계산·직접 뒷받침 검사)은
+ * 전부 `RegionPack` 값이다. 옛 요통 함수들은 요통 팩을 넘기는 래퍼로 남아
+ * `tests/lbp-exercise-recommendation.spec.mjs`가 수정 없이 통과한다.
  */
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment } from '../judgment'
-import { computeLbpFlags, treatmentSafetyLocked as treatmentSafetyLockedFrozen } from '../../spec/lbpLogic'
-import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../../spec/lbpAdapter'
-import { buildLbpEligibilityContext } from './lbpEligibilityContext'
-import { isLbpExerciseAllowedAtStage } from './lbpExerciseStageTable'
+import { buildEligibilityContextFrom } from './lbpEligibilityContext'
+import { isExerciseAllowedAtStage } from './lbpExerciseStageTable'
 import { LBP_STAGE_0_GUIDANCE_KO, type LbpExerciseStage } from './lbpExerciseStage'
-import { evaluateLbpExerciseEligibility, getLbpExerciseEligibilityRule } from './lbpExerciseEligibility'
-import { LBP_CORE_EXERCISE_METADATA, type LbpCoreExerciseMetadata } from './lbpExerciseCoreMetadata'
-import { getLbpExerciseById, type LbpExerciseDomain, type LbpExerciseTargetFunction } from './lbpExerciseLibrary'
-import { selectedLbpTargetFunctions } from './lbpTargetFunction'
+import { eligibilityRulesById, evaluateExerciseEligibility } from './lbpExerciseEligibility'
+import type { LbpDirectionalResponse } from './lbpExamSuggestions'
+import { selectedTargetFunctions } from './lbpTargetFunction'
 import type { FollowUpTarget } from './finalAssessment'
 import type { RehabSuggestion } from './rehabSuggestion'
 import type { WorkspaceState } from './persistence'
+import type { RegionCoreExercise, RegionJudgmentInputs, RegionPack } from './regionPack'
+import { LBP_REGION_PACK } from './regionPacks/lbp'
 
-// ---------------------------------------------------------------------------
-// lbp_tf_* id <-> LbpExerciseTargetFunction enum (architecture §2.2 "TF 일치")
-// ---------------------------------------------------------------------------
-
-/**
- * `lbp_tf_custom` intentionally maps to nothing — a free-text goal cannot be
- * matched against Core-20 metadata's fixed enum, so it never filters an
- * exercise IN via this path (architecture §2.2, explicitly accepted).
- *
- * Opus delta review defect 8: `LBP_LUMBAR_02`'s own `targetFunctions`
- * (FLEXION/EXTENSION/CUSTOM — `lbpExerciseCoreMetadata.ts`) has no entry
- * here, so it is currently unreachable through this v1 target-function
- * picker — a clinical-scope decision (which `lbp_tf_*` chip, if any, should
- * surface cat-camel), not something this module changes on its own. Kept
- * `export`ed so `tests/lbp-exercise-recommendation.spec.mjs`'s reachability
- * test can assert the unreachable set stays exactly `{LBP_LUMBAR_02}` and
- * never grows silently.
- */
-export const TARGET_FUNCTION_ID_TO_ENUM: Record<string, LbpExerciseTargetFunction | undefined> = {
-  lbp_tf_walking: 'WALKING',
-  lbp_tf_sitting: 'SITTING',
-  lbp_tf_standing: 'STANDING',
-  lbp_tf_sit_to_stand: 'SIT_TO_STAND',
-  lbp_tf_dressing: 'DRESSING',
-  lbp_tf_lifting: 'LIFTING',
-  lbp_tf_sleep: 'SLEEP',
-  lbp_tf_work: 'WORK',
-}
-
-function selectedTargetFunctionSet(followUpTargets: FollowUpTarget[]): Set<LbpExerciseTargetFunction> {
-  const set = new Set<LbpExerciseTargetFunction>()
-  for (const t of selectedLbpTargetFunctions(followUpTargets)) {
-    const mapped = TARGET_FUNCTION_ID_TO_ENUM[t.id]
-    if (mapped) set.add(mapped)
-  }
-  return set
-}
-
-// ---------------------------------------------------------------------------
-// Domain -> Rehab Strategy static table (copied ONLY this table, per
-// architecture §3 "Rehab Strategy Selector v0.1 = BYPASS", from
-// `lbpRehabStrategySelector.v01.experimental.ts` on
-// `origin/claude/feat-lbp-action-adaptive-engine-prototype`). Internal
-// explanatory label only — never a clickable Primary/Secondary step (CLOSED,
-// `DECISIONS.md` 2026-09-02).
-// ---------------------------------------------------------------------------
-
-type LbpRehabStrategy =
-  | 'SYMPTOM_RESPONSE_GUIDED_MOVEMENT'
-  | 'PHYSICAL_FUNCTION_CAPACITY'
-  | 'NEURAL_MOBILITY_MANAGEMENT'
-  | 'GRADED_EXPOSURE_RETURN'
-
-const STRATEGY_LABEL_KO: Record<LbpRehabStrategy, string> = {
-  SYMPTOM_RESPONSE_GUIDED_MOVEMENT: '증상반응 활용',
-  PHYSICAL_FUNCTION_CAPACITY: '신체·기능능력 회복',
-  NEURAL_MOBILITY_MANAGEMENT: '신경가동성 관리',
-  GRADED_EXPOSURE_RETURN: '단계적 노출·복귀',
-}
-
-const REGULATION_LABEL_KO = '호흡·이완 보조'
-
-const STRATEGY_BY_DOMAIN: Record<LbpExerciseDomain, LbpRehabStrategy | 'REGULATION'> = {
-  DIRECTIONAL_RESPONSE: 'SYMPTOM_RESPONSE_GUIDED_MOVEMENT',
-  NEURAL_MOBILITY: 'NEURAL_MOBILITY_MANAGEMENT',
-  GRADED_EXPOSURE: 'GRADED_EXPOSURE_RETURN',
-  MIND_BODY_REGULATION: 'REGULATION',
-  ACTIVITY_AEROBIC: 'PHYSICAL_FUNCTION_CAPACITY',
-  LUMBAR_MOBILITY: 'PHYSICAL_FUNCTION_CAPACITY',
-  HIP_MOBILITY: 'PHYSICAL_FUNCTION_CAPACITY',
-  DEEP_TRUNK_ACTIVATION: 'PHYSICAL_FUNCTION_CAPACITY',
-  TRUNK_CONTROL: 'PHYSICAL_FUNCTION_CAPACITY',
-  TRUNK_ENDURANCE: 'PHYSICAL_FUNCTION_CAPACITY',
-  HIP_STRENGTH: 'PHYSICAL_FUNCTION_CAPACITY',
-  FUNCTIONAL_STRENGTH: 'PHYSICAL_FUNCTION_CAPACITY',
-  LOAD_CAPACITY: 'PHYSICAL_FUNCTION_CAPACITY',
-}
-
-function strategyLabelForDomain(domain: LbpExerciseDomain): string {
-  const strategy = STRATEGY_BY_DOMAIN[domain]
-  return strategy === 'REGULATION' ? REGULATION_LABEL_KO : STRATEGY_LABEL_KO[strategy]
-}
+// 옛 위치에서 import하던 호출부/테스트를 위해 그대로 다시 export한다 — 표 자체는
+// 순환 import를 피해 `lbpTargetFunction.ts`로 옮겼다.
+export { LBP_TARGET_FUNCTION_ID_TO_ENUM as TARGET_FUNCTION_ID_TO_ENUM } from './lbpTargetFunction'
 
 // ---------------------------------------------------------------------------
 // Candidate shape
@@ -141,6 +67,7 @@ export type LbpRecommendationCandidate = {
   /** Core-20 metadata의 쉬운 단계 설명. 항상 카드에 표시된다 — 원장이 "이 환자에겐 좀 버겁겠다" 싶을 때 낮춰 줄 선택지. `progressionKo`는 여기서 절대 읽지 않는다. */
   regressionKo: string
 }
+export type RecommendationCandidate = LbpRecommendationCandidate
 
 /** `STAGE_0`: 원장이 0단계(보호/안정)를 확정 — 능동 운동 미처방이라 후보 블록 전체가 안내문으로 접힌다. */
 export type LbpRecommendationBlockedReason = 'SAFETY_REVIEW' | 'NEURO_REFRESH' | 'STAGE_0'
@@ -154,29 +81,34 @@ export type LbpRecommendationResult = {
   treatmentSafetyLockedMessageKo: string | null
   candidates: LbpRecommendationCandidate[]
   /**
-   * (c) integration correction: non-null only when the record is LBP, the
-   * block is not `blocked`, and the clinician has selected no `lbp_tf_*`
-   * target function yet (`NONE_SELECTED`) or has selected only
-   * `lbp_tf_custom` (`CUSTOM_ONLY`, which maps to no Core-20
-   * `LbpExerciseTargetFunction` -- see `TARGET_FUNCTION_ID_TO_ENUM` above).
-   * Both cases mean `readyCandidates`/`awaitingCapabilityCandidates` are
-   * empty by construction (the TF filter below excludes everything), so the
-   * UI shows one hint line instead of silently rendering nothing.
+   * (c) integration correction: non-null only when the record is this
+   * region's, the block is not `blocked`, and the clinician has selected no
+   * `<region>_tf_*` target function yet (`NONE_SELECTED`) or has selected
+   * only the free-text one (`CUSTOM_ONLY`, which maps to no Core enum -- see
+   * the pack's `targetFunctionIdToEnum`). Both cases mean the candidate list
+   * is empty by construction (the TF filter below excludes everything), so
+   * the UI shows one hint line instead of silently rendering nothing.
    */
   targetFunctionGap: 'NONE_SELECTED' | 'CUSTOM_ONLY' | null
   /**
-   * 2026-09-05: 원장이 확정한 단계(`WorkspaceState.lbpConfirmedStage`)를
-   * 그대로 되돌려준다 — 화면이 workspaceState를 또 읽지 않게. `null`이면
-   * 단계 필터·준비조건 추정 모두 꺼진 상태.
+   * 2026-09-05: 원장이 확정한 단계를 그대로 되돌려준다 — 화면이 workspaceState를
+   * 또 읽지 않게. `null`이면 단계 필터·준비조건 추정 모두 꺼진 상태.
    */
   confirmedStage: LbpExerciseStage | null
   /**
-   * 2026-09-05: 신경학적 상태(`lbp_objective_motor_deficit`)가 미기록이라 후보
-   * 대부분이 보류된 상태. RF-1 게이트는 그대로 두고(미확인을 안정으로 가정하지
-   * 않는다), 화면이 "무엇을 하면 후보가 나타나는지" 한 줄로 안내하게 한다 —
-   * 이유 없이 빈 목록을 보여주지 않기 위해서다.
+   * 2026-09-05: 신경학적 상태가 미기록이라 후보 대부분이 보류된 상태. RF-1
+   * 게이트는 그대로 두고(미확인을 안정으로 가정하지 않는다), 화면이 "무엇을
+   * 하면 후보가 나타나는지" 한 줄로 안내하게 한다 — 이유 없이 빈 목록을
+   * 보여주지 않기 위해서다.
    */
   neuroUnrecorded: boolean
+}
+export type RecommendationResult = LbpRecommendationResult
+
+/** 부위별 원장 기록 중 추천이 읽는 두 값. 요통은 `WorkspaceState.lbpDirectionalResponse`/`lbpConfirmedStage`에서, 다른 부위는 `regionClinical[region]`에서 온다. */
+export type RegionRecommendationState = {
+  directionalResponse: LbpDirectionalResponse
+  confirmedStage: LbpExerciseStage | null
 }
 
 const EMPTY_RESULT = (
@@ -199,42 +131,40 @@ const EMPTY_RESULT = (
 /**
  * Wording matches `LbpSafetyPanel`'s established convention (`DoctorView.tsx`)
  * so the same safety condition never reads two different ways on the same
- * screen.
+ * screen. 부위 라벨만 팩에서 온다 — 요통은 "(허리)"로 옛 문장과 글자 단위로 같다.
  */
-const SAFETY_REVIEW_BLOCKED_MESSAGE_KO =
-  '안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다 — 위 레인1 안전 확인(허리)을 먼저 확인하세요.'
-const NEURO_REFRESH_BLOCKED_MESSAGE_KO =
-  '새롭거나 악화되는 신경학적 변화가 있어 운동 추천보다 안전 재평가가 우선입니다 — 위 레인1 안전 확인(허리)을 참고하세요.'
+export function safetyReviewBlockedMessageKo(regionLabelKo: string): string {
+  return `안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다 — 위 레인1 안전 확인(${regionLabelKo})을 먼저 확인하세요.`
+}
+export function neuroRefreshBlockedMessageKo(regionLabelKo: string): string {
+  return `새롭거나 악화되는 신경학적 변화가 있어 운동 추천보다 안전 재평가가 우선입니다 — 위 레인1 안전 확인(${regionLabelKo})을 참고하세요.`
+}
 /** 0단계 확정 시 후보 블록 자리에 뜨는 한 줄 — 단계 카드의 안내문과 같은 문장을 쓴다(같은 상태가 두 가지로 읽히지 않게). */
 export const STAGE_0_BLOCKED_MESSAGE_KO = `0단계(보호/안정) 확정 — ${LBP_STAGE_0_GUIDANCE_KO}`
 export const TREATMENT_SAFETY_LOCKED_MESSAGE_KO =
   '치료 안전(임신 등) 확인 전까지 금기 민감 치료/운동은 원장 승인 없이 확정하지 않습니다.'
 
 function toCandidate(
-  meta: LbpCoreExerciseMetadata,
+  meta: RegionCoreExercise,
   rule: { requiredDirectionalResponse?: string },
-  neurodynamicConcordant: boolean,
+  directlySupportedByExam: boolean,
 ): LbpRecommendationCandidate {
-  const catalogItem = getLbpExerciseById(meta.exerciseId)
-  const domain = catalogItem?.domain
-  // (b) integration correction: LBP_NEURAL_01 is "directly supported" only
-  // when the Batch-1 exam suggestion `lbp_exam_neurodynamic` (하지직거상/
-  // 슬럼프) has been recorded POSITIVE (concordant leg-symptom
-  // reproduction) -- every other ExamCheckStatus (NEGATIVE / UNCLEAR /
-  // LIMITED / NOT_PERFORMED / NOT_YET_CHECKED, Batch 2.5b's 6 values) and
-  // the item being absent all fail to establish support, and unknown is
-  // never support (architecture §2.3). Previously this was unconditional on
-  // the exercise id alone.
-  const directlySupported =
-    rule.requiredDirectionalResponse != null || (meta.exerciseId === 'LBP_NEURAL_01' && neurodynamicConcordant)
+  // (b) integration correction: an exercise is "directly supported" by an
+  // exam only when the pack's `directSupportByExam` names it AND that exam
+  // has been recorded POSITIVE this record (요통: LBP_NEURAL_01 ←
+  // `lbp_exam_neurodynamic`). Every other ExamCheckStatus (NEGATIVE /
+  // UNCLEAR / LIMITED / NOT_PERFORMED / NOT_YET_CHECKED) and the item being
+  // absent all fail to establish support, and unknown is never support
+  // (architecture §2.3).
+  const directlySupported = rule.requiredDirectionalResponse != null || directlySupportedByExam
   return {
     exerciseId: meta.exerciseId,
     // Opus delta review defect 3: plain-Korean clinic name, never the
     // catalog's (often English) `canonicalName` — that stays reserved for
-    // ID/provenance fidelity only (lbpExerciseCoreMetadata.ts).
+    // ID/provenance fidelity only.
     title: meta.displayNameKo,
     directlySupported,
-    strategyLabelKo: domain ? strategyLabelForDomain(domain) : '',
+    strategyLabelKo: meta.strategyLabelKo,
     startingCriteriaKo: meta.startingCriteriaKo,
     startingDoseKo: meta.startingDoseKo,
     stopReviewKo: meta.stopReviewKo,
@@ -244,47 +174,65 @@ function toCandidate(
 
 function rankReady(items: LbpRecommendationCandidate[]): LbpRecommendationCandidate[] {
   // No numeric score (architecture §2.2): a stable two-bucket partition,
-  // Core-20 declaration order preserved within each bucket.
+  // Core declaration order preserved within each bucket.
   return [...items.filter((i) => i.directlySupported), ...items.filter((i) => !i.directlySupported)]
 }
 
-/**
- * §2.2/G9: `DoctorPayload` + clinician judgment + workspace record ->
- * ranked, safety-gated exercise candidates. Pure and safe to call on every
- * render (nothing here is persisted by this module itself).
- */
-export function buildLbpRecommendationContext(
-  payload: DoctorPayload,
-  lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit'],
-  workspaceState: WorkspaceState,
-): LbpRecommendationResult {
-  if (payload.responses.safety_flags.lbp == null) {
-    return EMPTY_RESULT(false, null, null, null)
+/** 팩의 `directSupportByExam` 중 POSITIVE로 기록된 검사가 뒷받침하는 운동 id 집합. */
+function directlySupportedExerciseIds(pack: RegionPack, examSuggestions: WorkspaceState['painExamSuggestions']): Set<string> {
+  const out = new Set<string>()
+  for (const [examId, exerciseIds] of Object.entries(pack.directSupportByExam)) {
+    // Batch 2.5b: the comparison is deliberately `=== 'POSITIVE'`, not
+    // `!== 'NOT_YET_CHECKED'`, so the two states added in that batch need no
+    // change here -- NEGATIVE / UNCLEAR / LIMITED / NOT_PERFORMED /
+    // NOT_YET_CHECKED and the item being absent all fall through.
+    const exam = examSuggestions.find((i) => i.id === examId)
+    if (exam?.result.status === 'POSITIVE') for (const id of exerciseIds) out.add(id)
   }
+  return out
+}
 
-  const confirmedStage: LbpExerciseStage | null = workspaceState.lbpConfirmedStage ?? null
+/**
+ * §2.2/G9 (부위 무관 본체): 부위 팩 + `DoctorPayload` + 원장 객관 소견 + 부위별
+ * 기록 두 값 + workspace record -> ranked, safety-gated exercise candidates.
+ * Pure and safe to call on every render (nothing here is persisted by this
+ * module itself). 승인되지 않은 팩(`productionApproved: false`)은 호출부가
+ * 먼저 걸러야 하지만, 여기서도 빈 결과를 돌려준다(이중 안전).
+ */
+export function buildRecommendationContext(
+  pack: RegionPack,
+  payload: DoctorPayload,
+  judgment: RegionJudgmentInputs,
+  regionState: RegionRecommendationState,
+  workspaceState: Pick<WorkspaceState, 'painFollowUpTargets' | 'painExamSuggestions'>,
+): LbpRecommendationResult {
+  if (!pack.productionApproved) return EMPTY_RESULT(false, null, null, null)
 
-  const age = ageFromDoctorPayload(payload.responses)
   // Same recomputed path as lbpEligibilityContext.ts (RF-2) — never the
-  // tablet-submission-time snapshot.
-  const state = toLbpStateFromDoctorPayload(payload.responses, lbpObjectiveMotorDeficit, age)
-  const flags = computeLbpFlags(state)
-  const locked = treatmentSafetyLockedFrozen(flags)
+  // tablet-submission-time snapshot. The pack owns the region's safety logic.
+  const safety = pack.evaluateSafety(payload, judgment)
+  if (!safety.applicable) return EMPTY_RESULT(false, null, null, null)
+
+  const confirmedStage: LbpExerciseStage | null = regionState.confirmedStage ?? null
+  const locked = safety.treatmentSafetyLocked
   const lockedMessage = locked ? TREATMENT_SAFETY_LOCKED_MESSAGE_KO : null
 
   // RF-3b: disease-safety-not-CLEAR collapses the whole block with one
-  // message instead of rendering 20 individually STOP_REVIEW-ed cards.
-  if (flags.lbp_safety_status !== 'CLEAR') {
-    return EMPTY_RESULT(locked, lockedMessage, 'SAFETY_REVIEW', SAFETY_REVIEW_BLOCKED_MESSAGE_KO, confirmedStage)
+  // message instead of rendering N individually STOP_REVIEW-ed cards.
+  if (!safety.routineCareAllowed) {
+    return EMPTY_RESULT(locked, lockedMessage, 'SAFETY_REVIEW', safetyReviewBlockedMessageKo(pack.labelKo), confirmedStage)
   }
 
-  const context = buildLbpEligibilityContext(payload, lbpObjectiveMotorDeficit, workspaceState)
+  const context = buildEligibilityContextFrom(
+    { routineCareAllowed: safety.routineCareAllowed, neuroStatus: safety.neuroStatus },
+    pack.directionalResponseApplicable ? regionState.directionalResponse : 'NOT_ASSESSED',
+  )
 
   // RF-3b: new/worsening neuro status also collapses the whole block —
   // LBP_REG_01's intentional requiresStableNeuro:false exception must never
   // read on screen as "exercise is fine, proceed" while this is true.
   if (context.neuroStatus === 'NEW_OR_WORSENING') {
-    return EMPTY_RESULT(locked, lockedMessage, 'NEURO_REFRESH', NEURO_REFRESH_BLOCKED_MESSAGE_KO, confirmedStage)
+    return EMPTY_RESULT(locked, lockedMessage, 'NEURO_REFRESH', neuroRefreshBlockedMessageKo(pack.labelKo), confirmedStage)
   }
 
   // 2026-09-05: 0단계 확정 = 능동 운동 미처방. 안전 블록(위 두 개)보다는
@@ -295,46 +243,41 @@ export function buildLbpRecommendationContext(
     return EMPTY_RESULT(locked, lockedMessage, 'STAGE_0', STAGE_0_BLOCKED_MESSAGE_KO, 0)
   }
 
-  const selectedTfs = selectedTargetFunctionSet(workspaceState.painFollowUpTargets)
+  const targetFunctionIds = new Set(pack.targetFunctions.map((t) => t.id))
+  const selectedTargets = selectedTargetFunctions(targetFunctionIds, workspaceState.painFollowUpTargets)
+  const selectedTfs = new Set<string>()
+  for (const t of selectedTargets) {
+    const mapped = pack.targetFunctionIdToEnum[t.id]
+    if (mapped) selectedTfs.add(mapped)
+  }
   // (c): distinguish "nothing picked yet" from "only 기타 목표 동작 (custom,
   // free-text) picked" -- the latter has real selections but none of them
-  // map to a Core-20 LbpExerciseTargetFunction (TARGET_FUNCTION_ID_TO_ENUM
-  // intentionally omits lbp_tf_custom).
-  const anyLbpTfSelected = selectedLbpTargetFunctions(workspaceState.painFollowUpTargets).length > 0
-  const targetFunctionGap: LbpRecommendationResult['targetFunctionGap'] = !anyLbpTfSelected
-    ? 'NONE_SELECTED'
-    : selectedTfs.size === 0
-      ? 'CUSTOM_ONLY'
-      : null
+  // map to a Core enum (`targetFunctionIdToEnum` intentionally omits the
+  // custom id).
+  const targetFunctionGap: LbpRecommendationResult['targetFunctionGap'] =
+    selectedTargets.length === 0 ? 'NONE_SELECTED' : selectedTfs.size === 0 ? 'CUSTOM_ONLY' : null
 
-  // (b): whether the Batch-1 neurodynamic exam (하지직거상/슬럼프) has been
-  // recorded POSITIVE this record -- the only condition under which
-  // LBP_NEURAL_01 counts as directly supported. Batch 2.5b: the comparison
-  // is deliberately `=== 'POSITIVE'`, not `!== 'NOT_YET_CHECKED'`, so the
-  // two states added in that batch need no change here -- NEGATIVE /
-  // UNCLEAR / LIMITED / NOT_PERFORMED / NOT_YET_CHECKED and the item being
-  // absent all fall through to `false` below.
-  const neurodynamicExam = workspaceState.painExamSuggestions.find((i) => i.id === 'lbp_exam_neurodynamic')
-  const neurodynamicConcordant = neurodynamicExam?.result.status === 'POSITIVE'
+  const supportedByExam = directlySupportedExerciseIds(pack, workspaceState.painExamSuggestions)
+  const ruleById = eligibilityRulesById(pack.eligibilityRules)
 
   const found: LbpRecommendationCandidate[] = []
   let neuroDeferred = 0
 
-  for (const meta of LBP_CORE_EXERCISE_METADATA) {
+  for (const meta of pack.coreExercises) {
     // RF-13: guard before calling the engine — a rule missing for a
     // metadata id would otherwise throw (ELIG's own fail-fast, D8).
-    const rule = getLbpExerciseEligibilityRule(meta.exerciseId)
+    const rule = ruleById.get(meta.exerciseId)
     if (!rule) continue
-    // Architecture §2.2 "TF 일치": Core-20 ∩ selected target function.
+    // Architecture §2.2 "TF 일치": Core ∩ selected target function.
     if (!meta.targetFunctions.some((tf) => selectedTfs.has(tf))) continue
-    // 2026-09-05: 확정 단계보다 높은 단계의 운동은 후보에서 뺀다
-    // (`lbpExerciseStageTable.ts`). 미확정(null)이면 필터 없음 — 옛 기록과
-    // 아직 단계를 안 정한 오늘 기록은 기존 그대로 전부 후보.
-    if (!isLbpExerciseAllowedAtStage(meta.exerciseId, confirmedStage)) continue
+    // 2026-09-05: 확정 단계보다 높은 단계의 운동은 후보에서 뺀다. 미확정(null)
+    // 이면 필터 없음 — 옛 기록과 아직 단계를 안 정한 오늘 기록은 기존 그대로
+    // 전부 후보.
+    if (!isExerciseAllowedAtStage(pack.stageTable, meta.exerciseId, confirmedStage)) continue
 
-    const result = evaluateLbpExerciseEligibility(meta.exerciseId, context)
+    const result = evaluateExerciseEligibility(ruleById, meta.exerciseId, context)
     if (result.state === 'START_AS_WRITTEN') {
-      found.push(toCandidate(meta, rule, neurodynamicConcordant))
+      found.push(toCandidate(meta, rule, supportedByExam.has(meta.exerciseId)))
       continue
     }
     // 2026-09-05: DEFER/STOP은 후보로 올리지 않는다(기존과 동일). 다만 그 사유가
@@ -357,12 +300,33 @@ export function buildLbpRecommendationContext(
   }
 }
 
+/**
+ * §2.2/G9 (요통 래퍼): `DoctorPayload` + clinician judgment + workspace record
+ * -> ranked, safety-gated exercise candidates. 요통 팩을 넘기고, 부위별 기록
+ * 두 값은 옛 저장 필드 그대로 읽는다 — `workspaceState.lbpConfirmedStage`가
+ * 유일한 단계 입력이다(제안 단계는 여기서 절대 읽지 않는다: "adopt, never
+ * automatic").
+ */
+export function buildLbpRecommendationContext(
+  payload: DoctorPayload,
+  lbpObjectiveMotorDeficit: ClinicianJudgment['lbp_objective_motor_deficit'],
+  workspaceState: WorkspaceState,
+): LbpRecommendationResult {
+  return buildRecommendationContext(
+    LBP_REGION_PACK,
+    payload,
+    { lbp_objective_motor_deficit: lbpObjectiveMotorDeficit },
+    { directionalResponse: workspaceState.lbpDirectionalResponse, confirmedStage: workspaceState.lbpConfirmedStage ?? null },
+    workspaceState,
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Candidate -> RehabSuggestion (merge with persisted clinician decisions)
 // ---------------------------------------------------------------------------
 
 /**
- * RF-8: `goal`/`rationale`/`sourceFacts` are built from Core-20 metadata's
+ * RF-8: `goal`/`rationale`/`sourceFacts` are built from Core metadata's
  * `startingDoseKo` + `stopReviewKo` — BOTH always appear, never dose alone.
  * `progressionKo` is never read anywhere in this module (progression is a
  * future-visit clinician decision, not v1's to hand out).
@@ -401,9 +365,9 @@ export function candidateToRehabSuggestion(candidate: LbpRecommendationCandidate
  * candidate is still kept (its decision already exists — e.g. it may already
  * be reflected in the Care Plan text — so the card must not silently
  * vanish); an undecided SUGGESTED item that is no longer a fresh candidate
- * is dropped (never decided, safe to recompute away).
+ * is dropped (never decided, safe to recompute away). 부위와 무관하다.
  */
-export function mergeLbpRehabSuggestions(
+export function mergeRehabSuggestions(
   existing: RehabSuggestion[],
   readyCandidates: LbpRecommendationCandidate[],
 ): RehabSuggestion[] {
@@ -419,41 +383,47 @@ export function mergeLbpRehabSuggestions(
   return [...merged, ...keptDecided]
 }
 
+export const mergeLbpRehabSuggestions = mergeRehabSuggestions
+
 /**
  * RF-8's other half: the exact text appended to `PainCarePlan.homeActionPlan`
  * on adopt ("adopt, never automatic" — Part D calls this only from an
  * explicit clinician click). Always dose + stop/review together; never
- * `progressionKo`. Returns null for a non-Core-20 id (any RehabSuggestion
- * this module did not itself generate) so the caller can fall back to a
- * generic append built from the suggestion's own title/goal.
+ * `progressionKo`. Returns null for an id outside the pack's Core set (any
+ * RehabSuggestion this module did not itself generate) so the caller can
+ * fall back to a generic append built from the suggestion's own title/goal.
  *
- * Opus delta review defect 2: `options.regressed` (structurally passed by
- * the caller — see `appendLbpAdoptionText` below — never parsed from a
- * title string) appends the Core-20 metadata's own `regressionKo` after the
- * dose when this candidate was adopted as `START_WITH_REGRESSION`, so the
- * entry-level the patient actually starts at is not lost between the card
- * and the Care Plan text they take home.
+ * Opus closing review §C(i): `regressionKo` rows end without terminal
+ * punctuation, so appending " 중단·재검토:" directly after them can read as
+ * the opposite of what it means. The fixed " — dose 중단·재검토:" shape here
+ * keeps a clear sentence boundary regardless of the row's own punctuation.
  */
-export function buildLbpAdoptionText(exerciseId: string): string | null {
-  const meta = LBP_CORE_EXERCISE_METADATA.find((m) => m.exerciseId === exerciseId)
-  const catalogItem = getLbpExerciseById(exerciseId)
-  if (!meta || !catalogItem) return null
+export function buildAdoptionText(pack: RegionPack, exerciseId: string): string | null {
+  const meta = pack.coreExercises.find((m) => m.exerciseId === exerciseId)
+  if (!meta) return null
   const stopReviewJoined = meta.stopReviewKo.join('; ')
-  // Opus closing review §C(i): `regressionKo` rows end without terminal
-  // punctuation, so appending " 중단·재검토:" directly after them can read as
-  // the opposite of what it means (e.g. "…휴식 지점을 사용 중단·재검토:" reads
-  // as "stop using the rest point"). A trailing period here guarantees a
-  // clear sentence boundary before "중단·재검토:" regardless of whether
-  // `regressionKo` itself ends with punctuation.
   return `${meta.displayNameKo} — ${meta.startingDoseKo} 중단·재검토: ${stopReviewJoined}`
 }
 
-/** Appends the adoption line to an existing free-text home action plan, idempotently (never duplicates the exact same line) and never automatically (only ever called from an explicit clinician click — Part D). Reads `suggestion.regressed` — the structured flag `candidateToRehabSuggestion` set — rather than parsing `suggestion.title`'s "(쉬운 단계로 시작)" suffix (Opus delta review defect 2). */
-export function appendLbpAdoptionText(existingHomeActionPlan: string, suggestion: RehabSuggestion): string {
+export function buildLbpAdoptionText(exerciseId: string): string | null {
+  return buildAdoptionText(LBP_REGION_PACK, exerciseId)
+}
+
+/** Appends the adoption line to an existing free-text home action plan, idempotently (never duplicates the exact same line) and never automatically (only ever called from an explicit clinician click — Part D). */
+export function appendAdoptionText(pack: RegionPack, existingHomeActionPlan: string, suggestion: RehabSuggestion): string {
   const text =
-    buildLbpAdoptionText(suggestion.id) ??
+    buildAdoptionText(pack, suggestion.id) ??
     [suggestion.title, suggestion.goal].filter((s) => s.trim().length > 0).join(' — ')
   if (!text) return existingHomeActionPlan
   if (existingHomeActionPlan.includes(text)) return existingHomeActionPlan
   return existingHomeActionPlan.trim() ? `${existingHomeActionPlan}\n${text}` : text
+}
+
+export function appendLbpAdoptionText(existingHomeActionPlan: string, suggestion: RehabSuggestion): string {
+  return appendAdoptionText(LBP_REGION_PACK, existingHomeActionPlan, suggestion)
+}
+
+/** 화면 호출부(`DoctorWorkspace.tsx`)가 목표 기능 픽커에 넘기는 목록 — 팩에서 바로 읽을 수 있게 재노출. */
+export function packTargetFunctions(pack: RegionPack): FollowUpTarget[] {
+  return [...pack.targetFunctions]
 }

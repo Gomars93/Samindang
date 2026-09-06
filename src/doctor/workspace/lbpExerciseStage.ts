@@ -297,20 +297,46 @@ function appendContextReasons(input: LbpStageInput, reasons: LbpStageReason[]): 
 /**
  * DoctorPayload에서 입력 6개를 뽑아낸다. payload 모양이 어긋나도 던지지
  * 않고, 못 읽은 필드는 `undefined`로 남긴다.
+ *
+ * 부위 팩 일반화(2026-09-06): 공통 문항 2개(VISIT_04/VISIT_03)는 `visit_goal`
+ * 에서, 부위별 격하·참고 입력 4개는 `safety_flags[region]`에서 읽는다. 다른
+ * 부위의 안전 플래그에는 그 4개 필드가 없으므로 `undefined`가 되어 격하·상한·
+ * 참고 문장이 자연히 발동하지 않는다 — 규칙을 부위별로 끄는 스위치가 따로
+ * 필요 없다(없는 답으로 단계를 움직이지 않는다는 원칙 그대로).
  */
-export function lbpStageInputFromPayload(payload: unknown): LbpStageInput {
+export function stageInputFromPayload(region: string, payload: unknown): LbpStageInput {
   const p = (payload ?? {}) as Record<string, unknown>
   const responses = (p.responses ?? {}) as Record<string, unknown>
   const visitGoal = (responses.visit_goal ?? {}) as Record<string, unknown>
   const safetyFlags = (responses.safety_flags ?? {}) as Record<string, unknown>
-  const lbp = (safetyFlags.lbp ?? {}) as Record<string, unknown>
+  const regional = (safetyFlags[region] ?? {}) as Record<string, unknown>
 
   return {
     chiefImpact: visitGoal.chief_impact,
     chiefDuration: visitGoal.chief_duration,
-    recurrenceInterval: lbp.recurrence_interval,
-    fearAvoidance: lbp.fear_avoidance,
-    recoveryExpectation: lbp.recovery_expectation,
-    workImpact: lbp.work_impact,
+    recurrenceInterval: regional.recurrence_interval,
+    fearAvoidance: regional.fear_avoidance,
+    recoveryExpectation: regional.recovery_expectation,
+    workImpact: regional.work_impact,
   }
 }
+
+export function lbpStageInputFromPayload(payload: unknown): LbpStageInput {
+  return stageInputFromPayload('lbp', payload)
+}
+
+// ---------------------------------------------------------------------------
+// 부위 무관 별칭 (2026-09-06 부위 팩 일반화). 단계 엔진 자체는 처음부터 부위
+// 입력을 받지 않았다 — 위 `LbpStageInput`의 6개 값은 전부 문진 답변이고 부위
+// 이름은 어디에도 들어가지 않는다. 그래서 요통 이름을 뗀 별칭만 두고 본체는
+// 그대로 쓴다. 요통 테스트(`tests/lbp-exercise-stage.spec.mjs`)가 옛 이름을
+// 계속 쓰므로 옛 export는 지우지 않는다.
+// ---------------------------------------------------------------------------
+
+export type ExerciseStage = LbpExerciseStage
+export type StageInput = LbpStageInput
+export type StageSuggestion = LbpStageSuggestion
+export type StageReason = LbpStageReason
+export const EXERCISE_STAGE_LABEL_KO = LBP_EXERCISE_STAGE_LABEL_KO
+export const STAGE_0_GUIDANCE_KO = LBP_STAGE_0_GUIDANCE_KO
+export const suggestExerciseStage: (input: StageInput) => StageSuggestion = suggestLbpExerciseStage

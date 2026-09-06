@@ -20,7 +20,16 @@
  *     output — only a sentence the clinician explicitly clicked "안내문에
  *     넣기" to copy into `PainCarePlan.patientInstruction`, the existing
  *     clinician-authored field `patientCarePlanPreview.ts` already renders.
+ *
+ * 부위 팩 일반화(2026-09-06, `docs/PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md`
+ * §3): 아래 함수는 전부 **패턴 목록을 첫 인자로 받는 부위 무관 본체**와, 요통
+ * 5패턴을 넘기는 **요통 래퍼**(옛 이름 그대로)의 두 층으로 나뉜다. 요통
+ * 래퍼의 동작은 한 글자도 바뀌지 않았고 `tests/lbp-working-hypothesis.spec.mjs`
+ * 184단언이 그것을 고정한다. 다른 부위는 그 팩의 `hypothesisPatterns`를 넘긴다.
  */
+
+import type { HypothesisPattern } from './regionPack'
+export type { HypothesisPattern }
 
 export type LbpHypothesisPatternId = 'LUMBAR_MOVEMENT' | 'NEURAL' | 'WALK_STAND_LEG' | 'HIP' | 'SIJ'
 
@@ -59,7 +68,16 @@ const LBP_HYPOTHESIS_PATIENT_PARTICLE_KO: Record<LbpHypothesisPatternId, '과' |
   SIJ: '과',
 }
 
+/** 요통 5패턴을 팩 형식으로 — 위 세 표를 한 행씩 합친 것. 순서는 `LBP_HYPOTHESIS_PATTERN_IDS`. */
+export const LBP_HYPOTHESIS_PATTERNS: readonly HypothesisPattern[] = LBP_HYPOTHESIS_PATTERN_IDS.map((id) => ({
+  id,
+  labelKo: LBP_HYPOTHESIS_PATTERN_LABEL_KO[id],
+  patientEasyLabelKo: LBP_HYPOTHESIS_PATIENT_EASY_LABEL_KO[id],
+  particleKo: LBP_HYPOTHESIS_PATIENT_PARTICLE_KO[id],
+}))
+
 export type LbpHypothesisSupport = 'UNJUDGED' | 'HIGHER' | 'CONSIDER' | 'LOWER'
+export type HypothesisSupport = LbpHypothesisSupport
 
 /**
  * UNJUDGED first (the default, stored value). `LbpWorkingHypothesisCard.tsx`
@@ -96,36 +114,37 @@ export type LbpWorkingHypothesis = {
   recordedAt: string | null
 }
 
-export function emptyLbpWorkingHypothesis(): LbpWorkingHypothesis {
-  return {
-    supports: {
-      LUMBAR_MOVEMENT: 'UNJUDGED',
-      NEURAL: 'UNJUDGED',
-      WALK_STAND_LEG: 'UNJUDGED',
-      HIP: 'UNJUDGED',
-      SIJ: 'UNJUDGED',
-    },
-    recordedAt: null,
-  }
+/** 부위 무관 형태 — 패턴 id가 팩마다 다르므로 키는 string. 요통 값은 그대로 이 타입에 대입된다. */
+export type WorkingHypothesis = {
+  supports: Record<string, HypothesisSupport>
+  recordedAt: string | null
 }
 
-/** True when every pattern is still UNJUDGED (the untouched default) — used both to decide whether a "이전 가설 이어받기" carry-forward action should be offered (never overwrite a clinician's own today's picks) and by the card to decide when to stamp `recordedAt`. */
-export function isLbpWorkingHypothesisBlank(v: LbpWorkingHypothesis): boolean {
-  return LBP_HYPOTHESIS_PATTERN_IDS.every((id) => v.supports[id] === 'UNJUDGED')
+// ---------------------------------------------------------------------------
+// 부위 무관 본체 (패턴 목록을 첫 인자로 받는다)
+// ---------------------------------------------------------------------------
+
+export function emptyWorkingHypothesis(patterns: readonly HypothesisPattern[]): WorkingHypothesis {
+  const supports: Record<string, HypothesisSupport> = {}
+  for (const p of patterns) supports[p.id] = 'UNJUDGED'
+  return { supports, recordedAt: null }
+}
+
+/** True when every pattern is still UNJUDGED (the untouched default). */
+export function isWorkingHypothesisBlank(patterns: readonly HypothesisPattern[], v: WorkingHypothesis): boolean {
+  return patterns.every((p) => v.supports[p.id] === 'UNJUDGED')
 }
 
 /**
  * Never throws — a legacy record with no field at all, a non-object, or a
- * corrupted `supports` sub-record all degrade to
- * `emptyLbpWorkingHypothesis()` field-by-field. Each of the 5 pattern ids is
- * validated INDEPENDENTLY so one corrupt/unknown-string sibling never blanks
- * the other 4 (mirrors `persistence.ts`'s existing per-field sanitizers,
- * e.g. `sanitizeReassessmentItem`). An unrecognized string value (not one of
- * the 4 real `LbpHypothesisSupport` members) degrades to 'UNJUDGED', never
- * silently rendered/persisted as a real clinical value.
+ * corrupted `supports` sub-record all degrade to the empty value
+ * field-by-field. Each pattern id is validated INDEPENDENTLY so one corrupt/
+ * unknown-string sibling never blanks the others. An unrecognized string
+ * value degrades to 'UNJUDGED', never silently rendered/persisted as a real
+ * clinical value. Ids the pack does not declare are dropped.
  */
-export function sanitizeLbpWorkingHypothesis(raw: unknown): LbpWorkingHypothesis {
-  const empty = emptyLbpWorkingHypothesis()
+export function sanitizeWorkingHypothesis(patterns: readonly HypothesisPattern[], raw: unknown): WorkingHypothesis {
+  const empty = emptyWorkingHypothesis(patterns)
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return empty
   const r = raw as Record<string, unknown>
   const rawSupports =
@@ -133,9 +152,9 @@ export function sanitizeLbpWorkingHypothesis(raw: unknown): LbpWorkingHypothesis
       ? (r.supports as Record<string, unknown>)
       : {}
   const supports = { ...empty.supports }
-  for (const id of LBP_HYPOTHESIS_PATTERN_IDS) {
-    const v = rawSupports[id]
-    supports[id] = isValidLbpHypothesisSupport(v) ? v : 'UNJUDGED'
+  for (const p of patterns) {
+    const v = rawSupports[p.id]
+    supports[p.id] = isValidLbpHypothesisSupport(v) ? v : 'UNJUDGED'
   }
   return {
     supports,
@@ -148,10 +167,10 @@ export function sanitizeLbpWorkingHypothesis(raw: unknown): LbpWorkingHypothesis
  * 고른 값의 직접 대응). 전부 UNJUDGED면 `null` — 호출부가 줄 자체를
  * 렌더하지 않는다(EMR에서 "임상 가설:" 빈 줄이 남지 않는다).
  */
-export function summarizeLbpWorkingHypothesisKo(v: LbpWorkingHypothesis): string | null {
-  const parts = LBP_HYPOTHESIS_PATTERN_IDS.filter((id) => v.supports[id] !== 'UNJUDGED').map(
-    (id) => `${LBP_HYPOTHESIS_PATTERN_LABEL_KO[id]} ${LBP_HYPOTHESIS_SUPPORT_LABEL_KO[v.supports[id]]}`,
-  )
+export function summarizeWorkingHypothesisKo(patterns: readonly HypothesisPattern[], v: WorkingHypothesis): string | null {
+  const parts = patterns
+    .filter((p) => v.supports[p.id] !== undefined && v.supports[p.id] !== 'UNJUDGED')
+    .map((p) => `${p.labelKo} ${LBP_HYPOTHESIS_SUPPORT_LABEL_KO[v.supports[p.id]]}`)
   if (parts.length === 0) return null
   return `임상 가설: ${parts.join(' · ')}`
 }
@@ -165,6 +184,88 @@ export function summarizeLbpWorkingHypothesisKo(v: LbpWorkingHypothesis): string
 export const LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO = '확정 진단이 아니라 경과를 보며 다시 판단합니다.'
 
 /**
+ * §11.3: builds the ONE plain-language draft sentence when — and only when —
+ * exactly one pattern is `HIGHER`. Zero HIGHER patterns means there is
+ * nothing confident enough to draft; two or more means the clinician should
+ * write the sentence themselves (a fixed template cannot honestly join two
+ * mechanisms into one plain sentence) — both return `null`, and the card
+ * renders no draft box at all in either case.
+ */
+export function patientSentenceDraftKoFor(patterns: readonly HypothesisPattern[], v: WorkingHypothesis): string | null {
+  const higher = patterns.filter((p) => v.supports[p.id] === 'HIGHER')
+  if (higher.length !== 1) return null
+  const p = higher[0]
+  return `오늘은 ${p.patientEasyLabelKo}${p.particleKo} 관련된 통증으로 보고 치료했습니다. ${LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO}`
+}
+
+/**
+ * §11.4 (재진): "이전 가설 이어받기" — copies the prior visit's `supports`
+ * into today's value, stamped with today's time. Only ever called from an
+ * explicit clinician click. Double-guarded: a `null`/blank prior has nothing
+ * to offer, and today's value already having a real pick is never silently
+ * replaced.
+ */
+export function applyWorkingHypothesisCarryForward(
+  patterns: readonly HypothesisPattern[],
+  today: WorkingHypothesis,
+  prior: WorkingHypothesis | null,
+  now: string,
+): WorkingHypothesis {
+  if (!prior || isWorkingHypothesisBlank(patterns, prior) || !isWorkingHypothesisBlank(patterns, today)) return today
+  return { supports: { ...prior.supports }, recordedAt: now }
+}
+
+/**
+ * 재진 가설 카드 게이트 — 이 환자가 그 부위 환자인가. 두 신호의 OR:
+ *   1. 이력 속 최신 제출의 `safety_flags.<region>`이 `!= null` (적용 가능성 관례).
+ *   2. 오늘 기록에 이미 판단된 패턴이 있다 — 이 신호가 없으면 첫 신호가 잠시
+ *      꺼진 순간 원장이 자기 기록을 볼 수도 고칠 수도 없게 된다.
+ */
+export function isRegionPatientForRevisitHypothesisGate(
+  patterns: readonly HypothesisPattern[],
+  priorSubmissionSafetyFlagsForRegion: unknown,
+  todayHypothesis: WorkingHypothesis,
+): boolean {
+  return priorSubmissionSafetyFlagsForRegion != null || !isWorkingHypothesisBlank(patterns, todayHypothesis)
+}
+
+// ---------------------------------------------------------------------------
+// 요통 래퍼 (옛 이름 그대로 — 동작 0 변경)
+// ---------------------------------------------------------------------------
+
+export function emptyLbpWorkingHypothesis(): LbpWorkingHypothesis {
+  return emptyWorkingHypothesis(LBP_HYPOTHESIS_PATTERNS) as LbpWorkingHypothesis
+}
+
+/** True when every pattern is still UNJUDGED (the untouched default) — used both to decide whether a "이전 가설 이어받기" carry-forward action should be offered (never overwrite a clinician's own today's picks) and by the card to decide when to stamp `recordedAt`. */
+export function isLbpWorkingHypothesisBlank(v: LbpWorkingHypothesis): boolean {
+  return isWorkingHypothesisBlank(LBP_HYPOTHESIS_PATTERNS, v)
+}
+
+/**
+ * Never throws — a legacy record with no field at all, a non-object, or a
+ * corrupted `supports` sub-record all degrade to
+ * `emptyLbpWorkingHypothesis()` field-by-field. Each of the 5 pattern ids is
+ * validated INDEPENDENTLY so one corrupt/unknown-string sibling never blanks
+ * the other 4 (mirrors `persistence.ts`'s existing per-field sanitizers,
+ * e.g. `sanitizeReassessmentItem`). An unrecognized string value (not one of
+ * the 4 real `LbpHypothesisSupport` members) degrades to 'UNJUDGED', never
+ * silently rendered/persisted as a real clinical value.
+ */
+export function sanitizeLbpWorkingHypothesis(raw: unknown): LbpWorkingHypothesis {
+  return sanitizeWorkingHypothesis(LBP_HYPOTHESIS_PATTERNS, raw) as LbpWorkingHypothesis
+}
+
+/**
+ * §11.3: EMR/재진 recap 한 줄. UNJUDGED 패턴은 생략(계산이 아니라 원장이
+ * 고른 값의 직접 대응). 전부 UNJUDGED면 `null` — 호출부가 줄 자체를
+ * 렌더하지 않는다(EMR에서 "임상 가설:" 빈 줄이 남지 않는다).
+ */
+export function summarizeLbpWorkingHypothesisKo(v: LbpWorkingHypothesis): string | null {
+  return summarizeWorkingHypothesisKo(LBP_HYPOTHESIS_PATTERNS, v)
+}
+
+/**
  * §11.3: builds the environment's ONE plain-language draft sentence when —
  * and only when — exactly one pattern is `HIGHER`. Zero HIGHER patterns
  * means there is nothing confident enough to draft; two or more means the
@@ -175,12 +276,7 @@ export const LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO = '확정 진단이
  * non-null).
  */
 export function patientSentenceDraftKo(v: LbpWorkingHypothesis): string | null {
-  const higher = LBP_HYPOTHESIS_PATTERN_IDS.filter((id) => v.supports[id] === 'HIGHER')
-  if (higher.length !== 1) return null
-  const id = higher[0]
-  const easy = LBP_HYPOTHESIS_PATIENT_EASY_LABEL_KO[id]
-  const particle = LBP_HYPOTHESIS_PATIENT_PARTICLE_KO[id]
-  return `오늘은 ${easy}${particle} 관련된 통증으로 보고 치료했습니다. ${LBP_HYPOTHESIS_PATIENT_SENTENCE_FIXED_CLAUSE_KO}`
+  return patientSentenceDraftKoFor(LBP_HYPOTHESIS_PATTERNS, v)
 }
 
 /**
@@ -197,12 +293,15 @@ export function patientSentenceDraftKo(v: LbpWorkingHypothesis): string | null {
  * shared import: the two modules must stay uncoupled (§11.7 "가설→운동추천
  * 연결" 금지 — even an incidental code dependency between the hypothesis
  * and exercise modules would blur that boundary for a future reader).
+ * 부위와 무관한 문자열 연산이라 부위 인자가 없다.
  */
 export function appendLbpHypothesisSentenceToPatientInstruction(existingPatientInstruction: string, sentence: string): string {
   if (!sentence) return existingPatientInstruction
   if (existingPatientInstruction.includes(sentence)) return existingPatientInstruction
   return existingPatientInstruction.trim() ? `${existingPatientInstruction}\n${sentence}` : sentence
 }
+
+export const appendHypothesisSentenceToPatientInstruction = appendLbpHypothesisSentenceToPatientInstruction
 
 /**
  * §11.4 (재진): "이전 가설 이어받기" — copies the prior visit's `supports`
@@ -227,8 +326,7 @@ export function applyLbpWorkingHypothesisCarryForward(
   prior: LbpWorkingHypothesis | null,
   now: string,
 ): LbpWorkingHypothesis {
-  if (!prior || isLbpWorkingHypothesisBlank(prior) || !isLbpWorkingHypothesisBlank(today)) return today
-  return { supports: { ...prior.supports }, recordedAt: now }
+  return applyWorkingHypothesisCarryForward(LBP_HYPOTHESIS_PATTERNS, today, prior, now) as LbpWorkingHypothesis
 }
 
 /**
@@ -270,5 +368,5 @@ export function isLbpPatientForRevisitHypothesisGate(
   priorSubmissionSafetyFlagsLbp: unknown,
   todayHypothesis: LbpWorkingHypothesis,
 ): boolean {
-  return priorSubmissionSafetyFlagsLbp != null || !isLbpWorkingHypothesisBlank(todayHypothesis)
+  return isRegionPatientForRevisitHypothesisGate(LBP_HYPOTHESIS_PATTERNS, priorSubmissionSafetyFlagsLbp, todayHypothesis)
 }

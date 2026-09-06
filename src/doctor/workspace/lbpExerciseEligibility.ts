@@ -97,16 +97,27 @@ export type LbpExerciseEligibilityResult = {
   reasonsKo: readonly string[]
 }
 
-function rule(
+export type EligibilityRuleOptions = {
+  requiredDirectionalResponse?: 'FLEXION_FAVORABLE' | 'EXTENSION_FAVORABLE'
+  stopOnDistalWorsening?: boolean
+  requiresStableNeuro?: boolean
+}
+
+/**
+ * 부위 팩 일반화(2026-09-06): 규칙 한 행을 만든다. `isKnownExercise`가 false를
+ * 돌려주면 던진다 — Core 세트 밖의 id를 가리키는 규칙은 조용히 무시되지 않고
+ * 로드 시점에 실패한다(요통 D8 fail-fast 그대로). 기본값은 요통과 같다:
+ * 원위 악화 시 중단 = true, 신경 안정 필요 = true. 다른 부위 팩이 이 기본값을
+ * 바꾸려면 행마다 명시한다(원장 승인 문서에 그 이유가 있어야 한다).
+ */
+export function buildEligibilityRule(
+  isKnownExercise: (exerciseId: string) => boolean,
   exerciseId: string,
-  options?: {
-    requiredDirectionalResponse?: 'FLEXION_FAVORABLE' | 'EXTENSION_FAVORABLE'
-    stopOnDistalWorsening?: boolean
-    requiresStableNeuro?: boolean
-  },
+  options?: EligibilityRuleOptions,
+  unknownExerciseMessage: string = 'Eligibility rule references an exercise outside the Core set',
 ): LbpExerciseEligibilityRule {
-  if (!getLbpCoreExerciseMetadata(exerciseId)) {
-    throw new Error(`Eligibility rule references non-Core-20 exercise: ${exerciseId}`)
+  if (!isKnownExercise(exerciseId)) {
+    throw new Error(`${unknownExerciseMessage}: ${exerciseId}`)
   }
   return {
     exerciseId,
@@ -114,6 +125,15 @@ function rule(
     stopOnDistalWorsening: options?.stopOnDistalWorsening ?? true,
     requiresStableNeuro: options?.requiresStableNeuro ?? true,
   }
+}
+
+function rule(exerciseId: string, options?: EligibilityRuleOptions): LbpExerciseEligibilityRule {
+  return buildEligibilityRule(
+    (id) => getLbpCoreExerciseMetadata(id) !== undefined,
+    exerciseId,
+    options,
+    'Eligibility rule references non-Core-20 exercise',
+  )
 }
 
 /**
@@ -154,14 +174,35 @@ export const LBP_EXERCISE_ELIGIBILITY_RULES: readonly LbpExerciseEligibilityRule
   rule('LBP_REG_01', { stopOnDistalWorsening: false, requiresStableNeuro: false }),
 ]
 
-const RULE_BY_ID = new Map(LBP_EXERCISE_ELIGIBILITY_RULES.map((item) => [item.exerciseId, item]))
+/** 규칙 배열 → id 맵. 팩마다 한 번 만들어 두고 `evaluateExerciseEligibility`에 넘긴다. */
+export function eligibilityRulesById(
+  rules: readonly LbpExerciseEligibilityRule[],
+): ReadonlyMap<string, LbpExerciseEligibilityRule> {
+  return new Map(rules.map((item) => [item.exerciseId, item]))
+}
+
+const RULE_BY_ID = eligibilityRulesById(LBP_EXERCISE_ELIGIBILITY_RULES)
 
 export function evaluateLbpExerciseEligibility(
   exerciseId: string,
   context: LbpExerciseEligibilityContext,
 ): LbpExerciseEligibilityResult {
-  const rule = RULE_BY_ID.get(exerciseId)
-  if (!rule) throw new Error(`No Core-20 eligibility rule for ${exerciseId}`)
+  if (!RULE_BY_ID.has(exerciseId)) throw new Error(`No Core-20 eligibility rule for ${exerciseId}`)
+  return evaluateExerciseEligibility(RULE_BY_ID, exerciseId, context)
+}
+
+/**
+ * 부위 팩 일반화(2026-09-06): 같은 4단 안전 게이트를 임의의 규칙 맵에 대해
+ * 판정한다. 게이트의 순서·문장·리터럴 비교(`=== 'WORSENING'`,
+ * `=== 'UNKNOWN'`)는 요통 원본 그대로이며, 테스트가 소스 텍스트로 고정한다.
+ */
+export function evaluateExerciseEligibility(
+  ruleById: ReadonlyMap<string, LbpExerciseEligibilityRule>,
+  exerciseId: string,
+  context: LbpExerciseEligibilityContext,
+): LbpExerciseEligibilityResult {
+  const rule = ruleById.get(exerciseId)
+  if (!rule) throw new Error(`No eligibility rule for ${exerciseId}`)
 
   if (!context.routineCareAllowed) {
     return {
@@ -227,3 +268,9 @@ export function getLbpExerciseEligibilityRule(
 ): LbpExerciseEligibilityRule | undefined {
   return RULE_BY_ID.get(exerciseId)
 }
+
+// 부위 무관 별칭 — 타입 자체에 요통 고유 의미는 없다(안전 게이트 4개는 전 부위 공통 개념).
+export type ExerciseEligibilityState = LbpExerciseEligibilityState
+export type ExerciseEligibilityContext = LbpExerciseEligibilityContext
+export type ExerciseEligibilityRule = LbpExerciseEligibilityRule
+export type ExerciseEligibilityResult = LbpExerciseEligibilityResult

@@ -3623,6 +3623,9 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
  * ---------------------------------------------------------------------- */
 {
   const seededTarget = { id: 'pain_intensity', label: '통증 강도', baseline: '', postTreatmentValue: '' }
+  // 2026-09-06 (플로우 정렬 3/5): 통증 강도의 직후값은 텍스트 <input>이 아니라
+  // 0~10 NRS 버튼 그룹이다. §14.4의 규칙(토글 뒤 숨김 / 값 있으면 열림 / 비워도
+  // 언마운트 없음)은 그대로이고, 대상이 <input>에서 role=group으로 바뀌었을 뿐.
   const findToggle = (renderer) =>
     renderer.root.findAll(
       (n) =>
@@ -3630,10 +3633,14 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
         typeof n.props.className === 'string' &&
         n.props.className.split(' ').includes('workspace__followUp__postTreatmentToggle'),
     )
+  const findPostTreatmentNrs = (renderer) =>
+    renderer.root.findAll((n) => n.type === 'div' && n.props.role === 'group' && n.props['aria-label'] === '통증 강도 치료 직후 값')
   const findPostTreatmentInput = (renderer) =>
     renderer.root.findAll((n) => n.type === 'input' && n.props['aria-label'] === '통증 강도 치료 직후 값')
+  const nrsBtn = (renderer, groupLabel, n) =>
+    renderer.root.findAll((x) => x.type === 'button' && x.props['aria-label'] === `${groupLabel} ${n}`)[0]
 
-  test('§14.4: 치료 직후 값 starts hidden behind a toggle when no value is recorded yet', () => {
+  test('§14.4: 치료 직후 값 starts hidden behind a toggle when no value is recorded yet (NRS group absent too)', () => {
     let renderer
     act(() => {
       renderer = TestRenderer.create(
@@ -3646,10 +3653,11 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       )
     })
     assert.equal(findToggle(renderer).length, 1, 'sanity: the toggle renders')
-    assert.equal(findPostTreatmentInput(renderer).length, 0, '치료 직후 값 input does not render yet')
+    assert.equal(findPostTreatmentNrs(renderer).length, 0, '직후값 NRS 그룹은 아직 렌더되지 않는다')
+    assert.equal(findPostTreatmentInput(renderer).length, 0, '직후값 텍스트 input도 없다(숫자 대상)')
   })
 
-  test('§14.4: an already-recorded 치료 직후 값 starts open (no mount latch -- derived from the value itself)', () => {
+  test('§14.4: an already-recorded 치료 직후 값 starts open — NRS 그룹이 바로 렌더되고 그 값이 눌려 있다', () => {
     const html = renderToString(
       React.createElement(DoctorWorkspace, {
         payload: PAIN_SCENARIO_1.payload,
@@ -3658,15 +3666,12 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       }),
     )
     assert.ok(!html.includes('workspace__followUp__postTreatmentToggle'), 'no hidden-toggle button when a value already exists')
-    assert.ok(/<input[^>]*aria-label="통증 강도 치료 직후 값"/.test(html), 'the input renders directly, already showing the recorded value')
+    assert.ok(/role="group" aria-label="통증 강도 치료 직후 값"/.test(html), 'NRS 그룹이 바로 렌더된다')
+    assert.ok(/<button[^>]*aria-pressed="true"[^>]*aria-label="통증 강도 치료 직후 값 3"/.test(html), "'3'이 눌린 상태")
+    assert.ok(!/<input[^>]*aria-label="통증 강도 치료 직후 값"/.test(html), '숫자 값이면 텍스트 input은 없다')
   })
 
-  test('§14.4 (Batch 2.6 N-2 regression guard, PRIMARY case): clearing an ALREADY-RECORDED 치료 직후 값 (auto-opened by its value, never via the toggle click) back to \'\' does not unmount the input', () => {
-    // This is the exact N-2 shape: the input is visible ONLY because
-    // `t.postTreatmentValue.trim() !== ''` (openPostTreatmentIds is still
-    // empty -- the toggle was never clicked). A naive fix that derives
-    // visibility from the CURRENT value alone (no sticky "opened" state)
-    // passes every other test in this block but fails exactly this one.
+  test('§14.4 (N-2 PRIMARY, NRS): 값으로 자동 열린 직후값을 버튼 재탭으로 비워도 그룹이 언마운트되지 않고 토글도 안 돌아온다', () => {
     let renderer
     act(() => {
       renderer = TestRenderer.create(
@@ -3678,20 +3683,17 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
         }),
       )
     })
-    assert.equal(findPostTreatmentInput(renderer).length, 1, 'sanity: auto-opened because a value already exists')
-    assert.equal(findToggle(renderer).length, 0, 'sanity: no toggle was ever clicked')
+    assert.equal(findPostTreatmentNrs(renderer).length, 1, 'sanity: 값이 있어 자동 열림')
+    assert.equal(findToggle(renderer).length, 0, 'sanity: 토글은 없다')
     act(() => {
-      findPostTreatmentInput(renderer)[0].props.onChange({ target: { value: '' } })
+      nrsBtn(renderer, '통증 강도 치료 직후 값', '5').props.onClick()
     })
-    assert.equal(
-      findPostTreatmentInput(renderer).length,
-      1,
-      'N-2 PRIMARY regression guard: clearing an already-recorded value back to \'\' must not unmount the input mid-edit',
-    )
-    assert.equal(findToggle(renderer).length, 0, 'the toggle must not reappear either')
+    assert.equal(findPostTreatmentNrs(renderer).length, 1, 'N-2: 비운 뒤에도 그룹이 남아 있다')
+    assert.equal(findToggle(renderer).length, 0, '토글이 다시 나타나지 않는다')
+    assert.equal(nrsBtn(renderer, '통증 강도 치료 직후 값', '5').props['aria-pressed'], false, "'5'는 해제됐다")
   })
 
-  test('§14.4: clicking "직후 값 기록" reveals the input', () => {
+  test('§14.4: clicking "직후 값 기록" reveals the NRS group', () => {
     let renderer
     act(() => {
       renderer = TestRenderer.create(
@@ -3707,10 +3709,10 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       findToggle(renderer)[0].props.onClick()
     })
     assert.equal(findToggle(renderer).length, 0, 'the toggle is gone once opened')
-    assert.equal(findPostTreatmentInput(renderer).length, 1, 'the input now renders')
+    assert.equal(findPostTreatmentNrs(renderer).length, 1, 'NRS 그룹이 렌더된다')
   })
 
-  test('§14.4 (Batch 2.6 N-2 regression guard): typing then clearing 치료 직후 값 back to \'\' does not unmount the input or bring back the toggle', () => {
+  test('§14.4 (N-2, NRS): 토글로 열고 5를 누르고 다시 5를 눌러 비워도 그룹은 남고 토글은 안 돌아온다', () => {
     let renderer
     act(() => {
       renderer = TestRenderer.create(
@@ -3722,22 +3724,114 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
         }),
       )
     })
+    act(() => { findToggle(renderer)[0].props.onClick() })
+    act(() => { nrsBtn(renderer, '통증 강도 치료 직후 값', '5').props.onClick() })
+    assert.equal(nrsBtn(renderer, '통증 강도 치료 직후 값', '5').props['aria-pressed'], true, 'sanity: 5가 눌렸다')
+    act(() => { nrsBtn(renderer, '통증 강도 치료 직후 값', '5').props.onClick() })
+    assert.equal(findPostTreatmentNrs(renderer).length, 1, 'N-2: 비워도 그룹이 남는다')
+    assert.equal(findToggle(renderer).length, 0, '토글이 돌아오지 않는다')
+  })
+
+  // 텍스트 경로의 N-2 보호는 비NRS 통증 대상(움직임·기능)으로 그대로 유지한다.
+  const textTarget = { id: 'movement_function', label: '움직임·기능', baseline: '', postTreatmentValue: '' }
+  const findTextPostInput = (renderer) =>
+    renderer.root.findAll((n) => n.type === 'input' && n.props['aria-label'] === '움직임·기능 치료 직후 값')
+  test('§14.4 (N-2, 텍스트 경로 유지): 비NRS 대상은 예전처럼 <input>이고, 타이핑 후 비워도 언마운트되지 않는다', () => {
+    let renderer
     act(() => {
-      findToggle(renderer)[0].props.onClick()
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:posttx-text-n2',
+          initialWorkspaceState: { painFollowUpTargets: [textTarget] },
+        }),
+      )
     })
-    act(() => {
-      findPostTreatmentInput(renderer)[0].props.onChange({ target: { value: '5' } })
-    })
-    assert.equal(findPostTreatmentInput(renderer).length, 1, 'sanity: input present after typing')
-    act(() => {
-      findPostTreatmentInput(renderer)[0].props.onChange({ target: { value: '' } })
-    })
-    assert.equal(
-      findPostTreatmentInput(renderer).length,
-      1,
-      'N-2 regression guard: the input must still be present after clearing its text -- it must not unmount mid-edit',
+    act(() => { findToggle(renderer)[0].props.onClick() })
+    act(() => { findTextPostInput(renderer)[0].props.onChange({ target: { value: '좋아짐' } }) })
+    act(() => { findTextPostInput(renderer)[0].props.onChange({ target: { value: '' } }) })
+    assert.equal(findTextPostInput(renderer).length, 1, 'N-2: 텍스트 input이 남아 있다')
+    assert.equal(findToggle(renderer).length, 0, '토글이 돌아오지 않는다')
+  })
+
+  // ---- 2026-09-06 플로우 정렬 3/5: NRS 기준값 ----
+  test('NRS: 통증 강도 기준값은 0~10 버튼 11개로 렌더되고, 값이 숫자면 텍스트 input은 없다', () => {
+    const html = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        initialWorkspaceState: { painFollowUpTargets: [{ ...seededTarget, baseline: '7' }] },
+      }),
     )
-    assert.equal(findToggle(renderer).length, 0, 'the 직후 값 기록 toggle must NOT reappear while the clinician is actively editing this field')
+    const btns = [...html.matchAll(/aria-label="통증 강도 오늘 기준값 (\d+)"/g)].map((m) => m[1])
+    assert.deepEqual(btns, ['0','1','2','3','4','5','6','7','8','9','10'], '0~10 버튼 11개, 순서대로')
+    assert.ok(/<button[^>]*aria-pressed="true"[^>]*aria-label="통증 강도 오늘 기준값 7"/.test(html), "'7'이 눌려 있다")
+    assert.ok(!/<input[^>]*aria-label="통증 강도 오늘 기준값"/.test(html), '숫자 값이면 텍스트 input 없음')
+    assert.ok(html.includes('통증 강도 (0~10)'), '라벨에 척도를 표시한다')
+  })
+
+  test('NRS: 옛 자유값(7/10)은 버튼 아래 텍스트 input에 그대로 남는다 — 조용히 버리지 않는다', () => {
+    const html = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        initialWorkspaceState: { painFollowUpTargets: [{ ...seededTarget, baseline: '7/10' }] },
+      }),
+    )
+    assert.ok(/role="group" aria-label="통증 강도 오늘 기준값"/.test(html), '버튼 그룹은 있다')
+    assert.ok(/<input[^>]*aria-label="통증 강도 오늘 기준값"[^>]*value="7\/10"/.test(html), '옛 값을 담은 input이 함께 있다')
+    assert.ok(!/aria-pressed="true"[^>]*aria-label="통증 강도 오늘 기준값/.test(html), '숫자가 아니라 눌린 버튼은 없다')
+  })
+
+  test('NRS: 비NRS 통증 대상(움직임·기능)과 한약 대상(수면)은 예전처럼 텍스트 input — 바이트 단위 불변', () => {
+    const pain = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: PAIN_SCENARIO_1.payload,
+        synthetic: PAIN_SCENARIO_1.synthetic,
+        initialWorkspaceState: { painFollowUpTargets: [textTarget] },
+      }),
+    )
+    assert.ok(/<input[^>]*aria-label="움직임·기능 오늘 기준값"/.test(pain), '비NRS 통증 대상은 텍스트 input')
+    assert.ok(!pain.includes('workspace__nrs'), 'NRS 마크업이 없다')
+    const herbal = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: HERBAL_SCENARIO_1.payload,
+        synthetic: HERBAL_SCENARIO_1.synthetic,
+        initialWorkspaceState: { herbalFollowUpTargets: [{ id: 'sleep', label: '수면', baseline: '', postTreatmentValue: '' }] },
+      }),
+    )
+    assert.ok(/<input[^>]*aria-label="수면 오늘 기준값"/.test(herbal), '한약 대상은 텍스트 input')
+    assert.ok(!herbal.includes('workspace__nrs'), '한약 화면에 NRS 마크업이 없다')
+  })
+
+  test('NRS: 기준값 버튼을 누르면 문자열 값이 쓰이고, 같은 버튼을 다시 누르면 비워진다', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:nrs-baseline',
+          initialWorkspaceState: { painFollowUpTargets: [seededTarget] },
+        }),
+      )
+    })
+    act(() => { nrsBtn(renderer, '통증 강도 오늘 기준값', '7').props.onClick() })
+    assert.equal(nrsBtn(renderer, '통증 강도 오늘 기준값', '7').props['aria-pressed'], true)
+    assert.equal(nrsBtn(renderer, '통증 강도 오늘 기준값', '6').props['aria-pressed'], false)
+    act(() => { nrsBtn(renderer, '통증 강도 오늘 기준값', '7').props.onClick() })
+    assert.equal(nrsBtn(renderer, '통증 강도 오늘 기준값', '7').props['aria-pressed'], false, '재탭으로 비움')
+  })
+
+  test('NRS 소스 계약: 저장 타입은 그대로 문자열이고 EMR/이어받기 경로는 건드리지 않았다', () => {
+    const fa = fs.readFileSync('src/doctor/workspace/finalAssessment.ts', 'utf8')
+    assert.ok(/baseline: string\n\s*postTreatmentValue: string/.test(fa), 'FollowUpTarget 타입 불변')
+    assert.ok(/PAIN_NRS_TARGET_IDS[^\n]*new Set\(\['pain_intensity'\]\)/.test(fa))
+    const emr = fs.readFileSync('src/doctor/workspace/emrPreview.ts', 'utf8')
+    assert.ok(!/NRS|nrs/.test(emr), 'emrPreview는 모른다 — "기준 7"로 그대로 나간다')
+    const picker = fs.readFileSync('src/doctor/workspace/FollowUpTargetPicker.tsx', 'utf8')
+    assert.ok(/legacyInput=\{baselineLegacy \? baselineInput : null\}/.test(picker), '옛 자유값 보존 경로가 코드에 있다')
   })
 }
 

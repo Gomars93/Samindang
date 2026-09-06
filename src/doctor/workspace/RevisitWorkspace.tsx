@@ -95,7 +95,9 @@ import {
   summarizeLbpWorkingHypothesisKo,
   type LbpWorkingHypothesis,
 } from './lbpWorkingHypothesis'
-import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
+import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS,
+  PAIN_NRS_TARGET_IDS,
+} from './finalAssessment'
 import { LBP_TARGET_FUNCTION_OPTIONS } from './lbpTargetFunction'
 import { EXAM_CHECK_STATUS_LABEL, isValidExamStatus, type ExamCheckStatus } from './provenance'
 import {
@@ -822,6 +824,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         onChange={(next) => setWorkspaceState((s) => ({ ...s, followUpTargets: next }))}
         showPostTreatmentField
         groups={COMBINED_FOLLOW_UP_GROUPS}
+        nrsTargetIds={PAIN_NRS_TARGET_IDS}
       />
 
       {/* LBP v1 Batch 3 (§9.2(c)): a pure fact readout, never auto-opening

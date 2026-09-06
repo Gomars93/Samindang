@@ -56,7 +56,9 @@ import { SupportContradictionPanel } from './SupportContradictionPanel'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { EmrPreviewCard } from './EmrPreviewCard'
 import { buildPainWorkspaceEmrPreview } from './emrPreview'
-import { PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget, type PainFinalAssessment, type NextReassessmentPlan } from './finalAssessment'
+import { PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget, type PainFinalAssessment, type NextReassessmentPlan,
+  PAIN_NRS_TARGET_IDS,
+} from './finalAssessment'
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import {
   LBP_CLINICIAN_ADDABLE_EXAMS,
@@ -750,6 +752,7 @@ export function PainWorkspaceNext({
             showPostTreatmentField
             groups={followUpGroups}
             placeholders={isLbp ? LBP_TARGET_FUNCTION_PLACEHOLDERS : undefined}
+            nrsTargetIds={PAIN_NRS_TARGET_IDS}
           />
         </div>
         <div className="doctor__nextPairRow__col">

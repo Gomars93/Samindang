@@ -937,6 +937,47 @@
 /* LBP v1 Batch 4 (§14.4/CD-2.7-3): 치료 직후 값 starts hidden behind this
    toggle -- sized to match the baseline/직후 값 inputs it sits beside in
    the same grid row, not the taller default .workspace__btn. */
+/* 2026-09-06: 통증 강도 NRS 0~10 버튼. 한 줄에 11개(36px + 4px 간격 = 436px)가
+   1024×768의 우측 열(≈700px)에 들어간다. 행 전체를 1열로 바꿔 라벨 → 기준값
+   → 직후값이 세로로 쌓인다(그리드 3열에 11버튼을 넣으면 두 줄로 접혀 더 높다). */
+.workspace__followUp__valueRow--nrs {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.workspace__nrs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.workspace__nrsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.workspace__nrsBtn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.workspace__nrsBtn--active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.workspace__nrsBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .workspace__followUp__postTreatmentToggle {
   min-height: 36px;
   padding: 8px 10px;

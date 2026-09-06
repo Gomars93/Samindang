@@ -14,9 +14,48 @@
 import { useState } from 'react'
 import {
   MAX_FOLLOW_UP_TARGETS,
+  NRS_VALUES,
   REPEAT_VISIT_AUTO_COMPARE_STATUS,
+  isNrsValue,
   type FollowUpTarget,
 } from './finalAssessment'
+
+/**
+ * 2026-09-06: 0~10 버튼 한 줄. 눌린 값을 다시 누르면 ''(비움). `legacyValue`가
+ * 있으면(숫자 아닌 옛 자유값) 그 값을 담은 텍스트 칸을 버튼 아래에 그대로 둔다 —
+ * 원장이 버튼을 눌러 명시적으로 바꾸기 전까지 옛 기록을 잃지 않는다.
+ */
+function NrsButtons({
+  value,
+  onChange,
+  ariaLabel,
+  legacyInput,
+}: {
+  value: string
+  onChange: (next: string) => void
+  ariaLabel: string
+  legacyInput: React.ReactNode
+}) {
+  return (
+    <div className="workspace__nrs">
+      <div className="workspace__nrsRow" role="group" aria-label={ariaLabel}>
+        {NRS_VALUES.map((n) => (
+          <button
+            key={n}
+            type="button"
+            aria-pressed={value === n}
+            aria-label={`${ariaLabel} ${n}`}
+            className={`workspace__nrsBtn${value === n ? ' workspace__nrsBtn--active' : ''}`}
+            onClick={() => onChange(value === n ? '' : n)}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      {legacyInput}
+    </div>
+  )
+}
 
 export function FollowUpTargetPicker({
   options,
@@ -25,6 +64,7 @@ export function FollowUpTargetPicker({
   showPostTreatmentField = false,
   groups,
   placeholders,
+  nrsTargetIds,
 }: {
   options: FollowUpTarget[]
   selected: FollowUpTarget[]
@@ -45,6 +85,11 @@ export function FollowUpTargetPicker({
    * the clinician to type the actual movement instead of a generic hint.
    */
   placeholders?: Record<string, string>
+  /**
+   * 2026-09-06: 기준값·직후값을 0~10 버튼으로 받는 target id 집합(통증:
+   * `PAIN_NRS_TARGET_IDS`). 생략한 호출자(한약)는 이전과 바이트 단위로 같다.
+   */
+  nrsTargetIds?: ReadonlySet<string>
 }) {
   const selectedIds = new Set(selected.map((t) => t.id))
   const atMax = selected.length >= MAX_FOLLOW_UP_TARGETS
@@ -143,9 +188,12 @@ export function FollowUpTargetPicker({
 
       {selected.length > 0 && (
         <div className="workspace__followUp__values">
-          {selected.map((t) => (
-            <div key={t.id} className="workspace__followUp__valueRow">
-              <span className="workspace__followUp__valueLabel">{t.label}</span>
+          {selected.map((t) => {
+            const nrs = nrsTargetIds?.has(t.id) === true
+            const baselineLegacy = nrs && t.baseline.trim() !== '' && !isNrsValue(t.baseline)
+            const postLegacy = nrs && t.postTreatmentValue.trim() !== '' && !isNrsValue(t.postTreatmentValue)
+            const postOpen = openPostTreatmentIds.has(t.id) || t.postTreatmentValue.trim() !== ''
+            const baselineInput = (
               <input
                 type="text"
                 className="workspace__noteInput"
@@ -154,27 +202,60 @@ export function FollowUpTargetPicker({
                 placeholder={placeholders?.[t.id] ?? '현재(오늘) 기준값 — 선택'}
                 aria-label={`${t.label} 오늘 기준값`}
               />
-              {showPostTreatmentField &&
-                (openPostTreatmentIds.has(t.id) || t.postTreatmentValue.trim() !== '' ? (
-                  <input
-                    type="text"
-                    className="workspace__noteInput"
-                    value={t.postTreatmentValue}
-                    onChange={(e) => setPostTreatmentValue(t.id, e.target.value)}
-                    placeholder="치료 직후 값 — 선택"
-                    aria-label={`${t.label} 치료 직후 값`}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="workspace__btn workspace__followUp__postTreatmentToggle"
-                    onClick={() => openPostTreatmentField(t.id)}
-                  >
-                    직후 값 기록
-                  </button>
-                ))}
-            </div>
-          ))}
+            )
+            const postInput = (
+              <input
+                type="text"
+                className="workspace__noteInput"
+                value={t.postTreatmentValue}
+                onChange={(e) => setPostTreatmentValue(t.id, e.target.value)}
+                placeholder="치료 직후 값 — 선택"
+                aria-label={`${t.label} 치료 직후 값`}
+              />
+            )
+            const postToggle = (
+              <button
+                type="button"
+                className="workspace__btn workspace__followUp__postTreatmentToggle"
+                onClick={() => openPostTreatmentField(t.id)}
+              >
+                직후 값 기록
+              </button>
+            )
+            if (!nrs) {
+              return (
+                <div key={t.id} className="workspace__followUp__valueRow">
+                  <span className="workspace__followUp__valueLabel">{t.label}</span>
+                  {baselineInput}
+                  {showPostTreatmentField && (postOpen ? postInput : postToggle)}
+                </div>
+              )
+            }
+            // NRS 대상: 라벨 → 기준값 버튼 줄 → (직후값 토글 | 직후값 버튼 줄). 직후값의
+            // 숨김/열림 규칙(§14.4, N-2 래치)은 텍스트 경로와 동일한 `postOpen`을 쓴다.
+            return (
+              <div key={t.id} className="workspace__followUp__valueRow workspace__followUp__valueRow--nrs">
+                <span className="workspace__followUp__valueLabel">{`${t.label} (0~10)`}</span>
+                <NrsButtons
+                  value={t.baseline}
+                  onChange={(v) => updateField(t.id, 'baseline', v)}
+                  ariaLabel={`${t.label} 오늘 기준값`}
+                  legacyInput={baselineLegacy ? baselineInput : null}
+                />
+                {showPostTreatmentField &&
+                  (postOpen ? (
+                    <NrsButtons
+                      value={t.postTreatmentValue}
+                      onChange={(v) => setPostTreatmentValue(t.id, v)}
+                      ariaLabel={`${t.label} 치료 직후 값`}
+                      legacyInput={postLegacy ? postInput : null}
+                    />
+                  ) : (
+                    postToggle
+                  ))}
+              </div>
+            )
+          })}
         </div>
       )}
 

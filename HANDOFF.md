@@ -1,5 +1,30 @@
 # Current Handoff
 
+## 2026-09-06 (최신 30): 플로우 정렬 3/5 — 통증 강도 NRS 0~10 버튼 (초진·재진 동시)
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: `finalAssessment.ts`
+(NRS 상수), `FollowUpTargetPicker.tsx`(`nrsTargetIds` + `NrsButtons`),
+`PainWorkspace.tsx`/`RevisitWorkspace.tsx`(prop 1줄), `workspace.css`, 테스트.
+**저장 타입·EMR·이어받기 0줄, 한약 0줄, `src/spec` 0줄.**
+
+### 한 것
+- 통증 강도 기준값·직후값 = 0~10 버튼. 재탭으로 비움. 옛 자유값('7/10')은 텍스트
+  칸으로 병존(안 버림). §14.4 직후값 토글/래치 규칙 그대로.
+- 원장 재진 입력: 통증 강도 **2탭**(기준값 + 직후값), 타이핑 0.
+
+### 검증
+`test:doctor-workspace` 통과(§14.4 5개 NRS로 갱신 + 신규 6) / `test:tablet-viewport`
+51 / `test:all` exit 0 / `build` green.
+
+### Next Recommended Action
+1. **PO 결정 대기(최신 29)**: "운동 후보 4화면 아래" — (A) 상단 점프 내비 5탭 /
+   (B) 카드 밀도 재설계 / (C) 수용.
+2. ④ 환자 문자 — 알림톡 "치료 계획 준비됨 [보기]" + `/followup/`형 안내 페이지.
+   BizM 템플릿 등록은 외부 콘솔(원장).
+3. ⑤ 세부문진 태블릿 배선(VISIT_04/LBP_13/LBP_12/LBP_14 + NRS).
+
+---
+
 ## 2026-09-06 (최신 29): 플로우 정렬 2/5 — 레인1 CLEAR면 접기. **효과 −57px, 높이의 주범은 아니었다**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: `DoctorWorkspace.tsx`

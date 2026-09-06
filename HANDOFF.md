@@ -22,7 +22,7 @@
 `test:care-plan-link` 58 / 변이 6개 전부 죽음 / `test:server` 233(라우트 그룹 47) /
 `test:audit-registry` 126(이벤트 38) / `test:follow-up-session` 278 / `test:doctor` 1041 /
 `test:doctor-workspace`·`workspace-round3`·`public-followup-url` 통과 / `build` green /
-`test:all` — 아래 커밋 메시지 참고.
+`test:all` exit 0 (커밋 `c09d7a6`).
 
 ### Next Recommended Action
 1. **PO 결정 대기(최신 29)**: "운동 후보 4화면 아래" — (A) 상단 점프 내비 5탭 /

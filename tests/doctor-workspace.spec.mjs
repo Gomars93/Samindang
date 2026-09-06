@@ -3852,4 +3852,92 @@ test('단계 카드 안내문이 현재 동작과 일치한다 — 제거된 준
   assert.ok(html.includes('시작 기준'), '대신 새 근거(시작 기준)를 가리켜야 한다')
 })
 
-console.log(`\n(+게이트 제거) ${passed} doctor-workspace assertions passed.`)
+
+// ===========================================================================
+// 2026-09-06: 자유입력 접기 — 삭제 아님. 세 카드 모두 "필요할 때 입력" 뒤로.
+// ===========================================================================
+
+/** `label` 텍스트를 감싸는 가장 가까운 <details ...> 시작 태그를 돌려준다(없으면 null). */
+function enclosingDetailsTag(html, label) {
+  const i = html.indexOf(label)
+  if (i === -1) return undefined
+  const d = html.lastIndexOf('<details', i)
+  if (d === -1) return null
+  const close = html.indexOf('>', d)
+  const tag = html.slice(d, close + 1)
+  // 그 details가 label 앞에서 이미 닫혔으면 label은 그 밖이다
+  const endBetween = html.slice(d, i).includes('</details>')
+  return endBetween ? null : tag
+}
+
+test('접기: 통증 최종판단 — 최종 임상 판단·즉시 재검 대상이 비어 있으면 닫힌 secondary 안에 있고, 처치 chip만 밖에 있다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+  for (const label of ['최종 임상 판단', '즉시 재검 대상', '치료 초점']) {
+    const tag = enclosingDetailsTag(html, `<span>${label}</span>`)
+    assert.ok(tag && tag.includes('workspace__finalAssessment__secondary'), `${label} 는 secondary disclosure 안에 있어야 한다`)
+    assert.ok(!/\sopen(=|>|\s)/.test(tag), `${label} 의 disclosure는 비어 있을 때 닫혀 있어야 한다: ${tag}`)
+  }
+  assert.ok(html.includes('최종 임상 판단 · 즉시 재검 대상 · 치료 초점 — 필요할 때 입력'), 'summary가 세 라벨을 모두 이름 붙인다')
+  const chipTag = enclosingDetailsTag(html, '<span>시행/예정 처치</span>')
+  assert.ok(chipTag === null || !chipTag.includes('workspace__finalAssessment__secondary'), '처치 chip은 접히지 않는다')
+})
+
+test('접기: 최종 임상 판단에 글이 있으면 그 disclosure는 열려서 렌더된다 (쓴 것이 숨겨지지 않는다)', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({
+    painFinalAssessment: { finalWorkingAssessment: 'ROUND27 판단 문구', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+  }))
+  const tag = enclosingDetailsTag(html, '<span>최종 임상 판단</span>')
+  assert.ok(tag && /\sopen(=|>|\s)/.test(tag), `내용이 있으면 열려야 한다: ${tag}`)
+  assert.ok(html.includes('ROUND27 판단 문구'))
+})
+
+test('접기: Care Plan — 집에서 할 운동·환자 안내문은 바로 보이고, 치료 목표·재활 목표·주의는 secondary 안에 있다', () => {
+  const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({
+    painCarePlan: { currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: 'ROUND27 운동', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: '', recordedAt: '2026-01-01T00:00:00.000Z' },
+  }))
+  assert.ok(html.includes('관리 계획 · 다음 재평가'), 'sanity: 관리 계획 disclosure가 렌더된다(homeActionPlan으로 열림)')
+  const primaryTag = enclosingDetailsTag(html, '<span>집에서 할 행동/운동 계획</span>')
+  assert.ok(!primaryTag || !primaryTag.includes('workspace__finalAssessment__secondary'), '집에서 할 운동은 카드의 secondary 안에 있지 않다')
+  const instrTag = enclosingDetailsTag(html, '<span>환자 안내문</span>')
+  assert.ok(!instrTag || !instrTag.includes('workspace__finalAssessment__secondary'), '환자 안내문도 secondary 안에 있지 않다')
+  for (const label of ['현재 치료 목표', '재활 목표', '주의/당분간 피할 활동']) {
+    const tag = enclosingDetailsTag(html, `<span>${label}</span>`)
+    assert.ok(tag && tag.includes('workspace__finalAssessment__secondary'), `${label} 는 secondary 안에 있어야 한다`)
+    assert.ok(!/\sopen(=|>|\s)/.test(tag), `${label} 의 secondary는 비어 있을 때 닫혀 있다`)
+  }
+  assert.ok(html.includes('현재 치료 목표 · 재활 목표 · 주의/당분간 피할 활동 — 필요할 때 입력'))
+})
+
+test('접기: 레인4 다음 방문 확인 메모 — 비어 있으면 닫힌 disclosure 안, 값이 있으면 열림. 값은 계속 NextActionCard로 읽힌다', () => {
+  const empty = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+  const t0 = enclosingDetailsTag(empty, 'aria-label="다음 방문 확인 메모"')
+  assert.ok(t0 && !/\sopen(=|>|\s)/.test(t0), `비어 있으면 닫힘: ${t0}`)
+  assert.ok(empty.includes('다음 방문 확인 메모 — 필요할 때 입력'), 'summary 문구')
+  const filled = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({
+    painCarePlan: { currentTreatmentGoal: '', rehabilitationGoal: '', homeActionPlan: '', activityPrecaution: '', patientInstruction: '', nextVisitCheckItem: 'ROUND27 메모', recordedAt: '2026-01-01T00:00:00.000Z' },
+  }))
+  const t1 = enclosingDetailsTag(filled, 'aria-label="다음 방문 확인 메모"')
+  assert.ok(t1 && /\sopen(=|>|\s)/.test(t1), `값이 있으면 열림: ${t1}`)
+})
+
+test('접기 소스 계약: 래치 훅이 존재하고 세 접힘 모두 그것을 쓴다 — 파생식 open={hasContent}(N-2 재발 경로)는 남아 있지 않다', () => {
+  const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+  const fa = fs.readFileSync('src/doctor/workspace/FinalAssessmentCard.tsx', 'utf8')
+  const cp = fs.readFileSync('src/doctor/workspace/CarePlanCard.tsx', 'utf8')
+  const pw = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+  const faCode = stripComments(fa), cpCode = stripComments(cp), pwCode = stripComments(pw)
+  assert.ok(/export function useOpenOnceContent\(hasContent: boolean\): boolean/.test(faCode))
+  assert.ok(/if \(hasContent && !latched\) setLatched\(true\)/.test(faCode), '래치는 true로만 움직인다')
+  // 주석은 왜 파생식을 안 쓰는지 설명하느라 그 문자열을 언급한다 — 금지되는 것은 코드다.
+  for (const [name, code] of [['FinalAssessmentCard', faCode], ['CarePlanCard', cpCode], ['PainWorkspace', pwCode]]) {
+    assert.ok(!/open=\{hasContent\}/.test(code), `${name} 코드에 파생식 open={hasContent}가 남아 있지 않다`)
+  }
+  assert.ok(/SecondaryFields/.test(cp) && /from '\.\/FinalAssessmentCard'/.test(cp), 'CarePlanCard는 같은 SecondaryFields를 재사용한다')
+  assert.ok(/useOpenOnceContent\(carePlan\.nextVisitCheckItem\.trim\(\) !== ''\)/.test(pw), '레인4 메모도 같은 래치')
+  // 헤르발(한약) 카드는 이번 배치에서 건드리지 않았다 — 구조화 공급원이 없어 접으면 원장이 볼 것이 없다.
+  const herbalIdx = fa.indexOf('export function HerbalFinalAssessmentCard')
+  const herbalBody = fa.slice(herbalIdx, herbalIdx + 2500)
+  assert.ok(herbalBody.includes("label: '최종 변증·병기'") && herbalBody.includes('primary'), '한약 판단 3칸은 여전히 primary')
+})
+
+console.log(`\n(+자유입력 접기) ${passed} doctor-workspace assertions passed.`)

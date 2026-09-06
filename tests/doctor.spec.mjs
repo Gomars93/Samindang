@@ -3544,15 +3544,15 @@ function detailsRange(html, classMarker) {
 }
 
 // 기본 free-text 증가 0: tests/tablet-viewport.spec.mjs의
-// EXPECTED_OPEN_INPUTS(=4, 판단/처치/재검 3 + §2.5 다음 방문 확인 메모 1)
+// EXPECTED_OPEN_INPUTS_HERBAL(=4, fixture 0 한약) + EXPECTED_OPEN_INPUTS_PAIN(=1, LBP: 처치 기타 한 칸 — 2026-09-06 판단/재검/메모 3개 접힘)
 // 가 실제 헤드리스 렌더로 이미 이 지표를 담당한다 -- 여기서는 그 계약이
 // 소스에 그대로 남아있는지만 구조로 재확인한다(중복 실측 없이 드리프트
 // 감시).
 {
   const src = await readFile(fileURLToPath(new URL('../tests/tablet-viewport.spec.mjs', import.meta.url)), 'utf8')
   assert(
-    'metric: 기본 free-text 증가 0 -- tablet-viewport.spec.mjs가 EXPECTED_OPEN_INPUTS=4로 기본 렌더 open input 개수를 계속 감시한다',
-    /const EXPECTED_OPEN_INPUTS = 4/.test(src),
+    'metric: 기본 free-text 증가 0 -- tablet-viewport.spec.mjs가 한약(4)/통증(1) 두 프로필의 기본 렌더 open input 개수를 계속 감시한다',
+    /const EXPECTED_OPEN_INPUTS_HERBAL = 4/.test(src) && /const EXPECTED_OPEN_INPUTS_PAIN = 1/.test(src),
   )
 }
 

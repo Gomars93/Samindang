@@ -4,12 +4,13 @@
  * SUGGESTED item is never auto-copied in here; every field starts empty
  * and is filled only by explicit clinician typing.
  */
+import { useState } from 'react'
 import type {
   HerbalFinalAssessment,
   PainFinalAssessment,
 } from './finalAssessment'
 
-type Field = { key: string; label: string; value: string; placeholder: string }
+export type Field = { key: string; label: string; value: string; placeholder: string }
 
 /** One field's `<label>` markup, factored out of `TextFields` so §14.2's chip field can sit between two plain textarea fields inside the SAME `workspace__finalAssessment__fields` grid without nesting a second copy of that grid div. */
 function TextField({ field, onChange }: { field: Field; onChange: (key: string, value: string) => void }) {
@@ -51,14 +52,36 @@ function TextFields({
   )
 }
 
-/*
- * Round 11: the default clinician action area compresses toward 판단 /
- * 처치 / 재검. Secondary fields stay in the persisted schema and stay
- * editable -- they simply stop looking mandatory on every visit. A
- * secondary field that ALREADY holds text opens automatically, so nothing
- * a clinician wrote is ever hidden from them.
+/**
+ * 2026-09-06 (원장 지시 "자유입력을 최대한 피하고 진료최적화"): 접힘 disclosure가
+ * **한 번 열리면 내용이 비어도 다시 닫히지 않는** 래치.
+ *
+ * 왜 파생식(`open={hasContent}`)이 아니라 래치인가 — CLAUDE.md 규칙 3 / Batch 2.6
+ * N-2 사고: 파생식이면 원장이 글을 쓰다가 전부 지운 순간 `hasContent`가 false로
+ * 떨어져 disclosure가 편집 도중 닫힌다(커서 아래에서 칸이 사라짐). 래치는
+ * "내용이 있었던 적이 있으면 열어둔다"만 기억하고, 닫는 것은 원장의 손(summary
+ * 클릭)에만 맡긴다. React는 prop 값이 바뀔 때만 DOM `open`을 건드리므로 원장이
+ * 손으로 닫은 상태를 다음 렌더가 되돌리지 않는다.
+ *
+ * 렌더 중 setState는 React가 파생 상태용으로 허용하는 패턴이다(즉시 재렌더).
  */
-function SecondaryFields({
+export function useOpenOnceContent(hasContent: boolean): boolean {
+  const [latched, setLatched] = useState(hasContent)
+  if (hasContent && !latched) setLatched(true)
+  return latched
+}
+
+/*
+ * Round 11: the default clinician action area compresses toward 처치. Secondary
+ * fields stay in the persisted schema and stay editable -- they simply stop
+ * looking mandatory on every visit. A secondary field that ALREADY holds text
+ * opens automatically, so nothing a clinician wrote is ever hidden from them.
+ *
+ * 2026-09-06: exported so `CarePlanCard.tsx` can collapse its own secondary
+ * fields with the SAME disclosure (one summary convention, one latch) instead
+ * of a second implementation.
+ */
+export function SecondaryFields({
   fields,
   onChange,
 }: {
@@ -67,8 +90,9 @@ function SecondaryFields({
 }) {
   if (fields.length === 0) return null
   const hasContent = fields.some((f) => f.value.trim() !== '')
+  const open = useOpenOnceContent(hasContent)
   return (
-    <details className="workspace__optional workspace__finalAssessment__secondary" open={hasContent}>
+    <details className="workspace__optional workspace__finalAssessment__secondary" open={open}>
       <summary>{`${fields.map((f) => f.label).join(' · ')} — 필요할 때 입력`}</summary>
       <TextFields fields={fields} onChange={onChange} />
     </details>
@@ -199,25 +223,26 @@ export function PainFinalAssessmentCard({
   value: PainFinalAssessment
   onChange: (next: PainFinalAssessment) => void
 }) {
-  // 판단 / 처치 / 재검 -- the three the default view asks for. 처치 is a
-  // chip field (InterventionChipField, §14.2), not a plain textarea, so
-  // each of the three renders individually below (via `TextField`, the
-  // single-field markup `TextFields` itself is built from) rather than
-  // through one `TextFields` call -- that would nest a second copy of the
-  // `workspace__finalAssessment__fields` grid div around the chip field.
-  const finalWorkingAssessmentField: Field = {
-    key: 'finalWorkingAssessment',
-    label: '최종 임상 판단',
-    value: value.finalWorkingAssessment,
-    placeholder: '원장이 직접 입력',
-  }
-  const immediateRetestTargetField: Field = {
-    key: 'immediateRetestTarget',
-    label: '즉시 재검 대상',
-    value: value.immediateRetestTarget,
-    placeholder: '예: 숙일 때 통증 재현 여부',
-  }
+  // 2026-09-06 (원장 지시): 기본으로 보이는 것은 **처치 chip 하나**다.
+  // 최종 임상 판단·즉시 재검 대상은 치료 초점과 함께 "필요할 때 입력"으로
+  // 접었다 — 임상 가설 chip이 EMR A줄을 이미 채우고(`emrPreview.ts`의
+  // hypothesisSummary), 레인2에서 체크한 검사가 재검 대상 역할을 이미 하므로
+  // 두 칸은 같은 정보를 글로 다시 쓰라는 요구였다. **삭제가 아니라 접기**다:
+  // 세 필드 모두 persisted schema·EMR·환자 안내문·재진 이어받기 경로를 한
+  // 줄도 바꾸지 않고 그대로 나른다(DECISIONS.md 2026-09-06 필드 × 화면 표).
   const secondary: Field[] = [
+    {
+      key: 'finalWorkingAssessment',
+      label: '최종 임상 판단',
+      value: value.finalWorkingAssessment,
+      placeholder: '원장이 직접 입력',
+    },
+    {
+      key: 'immediateRetestTarget',
+      label: '즉시 재검 대상',
+      value: value.immediateRetestTarget,
+      placeholder: '예: 숙일 때 통증 재현 여부',
+    },
     { key: 'treatmentFocus', label: '치료 초점', value: value.treatmentFocus, placeholder: '원장이 직접 입력' },
   ]
   const handleChange = (key: string, v: string) =>
@@ -226,46 +251,16 @@ export function PainFinalAssessmentCard({
     <section className="workspace__finalAssessment" aria-label="원장 최종 판단">
       <div className="workspace__finalAssessment__badge">원장 최종 판단</div>
       <div className="workspace__finalAssessment__fields workspace__finalAssessment__fields--primary">
-        <TextField field={finalWorkingAssessmentField} onChange={handleChange} />
         <InterventionChipField
           value={value.interventionPerformedOrPlanned}
           onChange={(v) => handleChange('interventionPerformedOrPlanned', v)}
         />
-        <TextField field={immediateRetestTargetField} onChange={handleChange} />
       </div>
       <SecondaryFields fields={secondary} onChange={handleChange} />
     </section>
   )
 }
 
-/*
- * Round 14: this card was the one place still opening FOUR textareas at
- * once, so a herbal record read as a form to fill rather than a decision
- * to record. It now follows the same 판단 / 처치 / 재검 split the Pain card
- * already used.
- *
- * Which field is which was decided by what it records, not by its name:
- *   판단 = 최종 변증·병기   처치 = 처방·계획   재검 = 추적할 증상
- * 치법 is the herbal analogue of Pain's 치료 초점 -- the principle behind
- * the treatment rather than the treatment itself -- so it is the field
- * that moves to secondary. 처방·계획 stays primary despite its "메모"
- * label because it is the only field recording what the patient actually
- * receives; collapsing that would have hidden 처치, not a detail.
- *
- * No chips or tap-actions were added for herbal's 처방/계획 메모. LBP v1
- * Batch 4 §14.2 (CD-2.7-1, `DECISIONS.md` 2026-09-04) DID resolve this
- * exact blocker for Pain's `interventionPerformedOrPlanned` field above --
- * the PO approved a closed 8-word intervention vocabulary (침/약침/부항/
- * 추나/물리치료/한약/테이핑/운동처방 + 기타 free text), so that field is now
- * `InterventionChipField`, not a plain textarea. Herbal's 처방/계획 메모
- * records a prescription description, not a modality pick from a fixed
- * list, so it was never the same kind of field and stays free text here --
- * this remains the one place with no approved chip vocabulary to build
- * from, not an oversight.
- *
- * Field keys, persisted shape and semantics are unchanged -- this is
- * purely which fields the default view opens.
- */
 export function HerbalFinalAssessmentCard({
   value,
   onChange,

@@ -72,6 +72,7 @@ import {
 import type { EvidenceItem } from './supportEngine'
 import type { PainCarePlan } from './carePlan'
 import { PainCarePlanCard } from './CarePlanCard'
+import { useOpenOnceContent } from './FinalAssessmentCard'
 import { NextActionCard, isCarePlanEmpty } from './NextActionCard'
 import { PatientCarePlanPreviewCard } from './PatientCarePlanPreviewCard'
 import { buildPainPatientCarePlanPreview } from './patientCarePlanPreview'
@@ -723,6 +724,7 @@ export function PainWorkspaceNext({
   // so NextActionCard's visibility always matches what is actually on
   // screen.
   const [planOpen, setPlanOpen] = useState(carePlanDetailsOpen)
+  const nextVisitMemoOpen = useOpenOnceContent(carePlan.nextVisitCheckItem.trim() !== '')
 
   return (
     <div className="workspace__pain workspace__pain--next">
@@ -751,15 +753,27 @@ export function PainWorkspaceNext({
           />
         </div>
         <div className="doctor__nextPairRow__col">
-          <p className="doctor__nextPairRow__label">다음 방문 확인 메모 (자유 기록)</p>
-          <textarea
-            className="workspace__noteInput doctor__nextVisitCheckMemo"
-            rows={3}
-            value={carePlan.nextVisitCheckItem}
-            placeholder="원장이 직접 입력"
-            onChange={(e) => onChangeCarePlan({ ...carePlan, nextVisitCheckItem: e.target.value, recordedAt: new Date().toISOString() })}
-            aria-label="다음 방문 확인 메모"
-          />
+          {/*
+            2026-09-06 (원장 지시 "자유입력을 최대한 피하고"): 이 메모는 초진
+            화면에서 `nextVisitCheckItem`의 유일한 편집 경로(N-3a)라 없애지 않고
+            접는다. 내용이 있으면(이어받기 등) 자동으로 열리고, 한 번 열리면
+            비워도 닫히지 않는다(`useOpenOnceContent`, N-2 재발 방지). 닫혀 있는
+            동안에도 값은 아래 NextActionCard의 "다음 확인" 줄로 읽힌다.
+          */}
+          <details
+            className="workspace__optional workspace__finalAssessment__secondary"
+            open={nextVisitMemoOpen}
+          >
+            <summary className="doctor__nextPairRow__label">다음 방문 확인 메모 — 필요할 때 입력</summary>
+            <textarea
+              className="workspace__noteInput doctor__nextVisitCheckMemo"
+              rows={3}
+              value={carePlan.nextVisitCheckItem}
+              placeholder="원장이 직접 입력"
+              onChange={(e) => onChangeCarePlan({ ...carePlan, nextVisitCheckItem: e.target.value, recordedAt: new Date().toISOString() })}
+              aria-label="다음 방문 확인 메모"
+            />
+          </details>
         </div>
       </div>
 

@@ -1,5 +1,35 @@
 # Current Handoff
 
+## 2026-09-06 (최신 33): 안 A 점프 내비 완료 — 「운동」 1탭으로 2.5~3.5화면 아래 섹션에 도달. **PO 결정 대기 항목 0개**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: `DoctorWorkspace.tsx`(`LaneJumpNav`
++ 런타임 sticky 오프셋), `PainWorkspace.tsx`(`id="exercise-h3"` 3곳), `doctor.css`(`.doctor__laneNav`),
+`tests/doctor-workspace.spec.mjs`(+7), `tests/tablet-viewport.spec.mjs`(내비 크롬 제외 측정 + 상한
+72px + 점프 실측). **콘텐츠 높이 0 변경(1266/1090/1586px 동일), `src/spec` 0줄.**
+
+### 실측
+| 뷰포트 | 운동 섹션(스크롤 0) | 「운동」 탭 후 |
+|---|---|---|
+| 데스크톱 | 2.9화면 아래 | 헤딩 122px (헤더 114px 아래) |
+| 태블릿 가로 | 3.5화면 아래 | 화면 안 |
+| 태블릿 세로 | 2.5화면 아래 | 화면 안 |
+
+### 검증
+`doctor-workspace` 302 PASS / `tablet-viewport` 72 / `doctor` 1041 / `doctor-reset-key`·`lane1-summary`
+통과 / 변이 4 전부 죽음 / `build` green / `test:all` exit 0.
+
+### 이 세션이 끝낸 것 (2026-09-05~06)
+플로우 정렬 ①~⑤ 전부 + 안 A. 파일럿 시작 조건은 코드 쪽에서는 충족.
+
+### Next Recommended Action
+1. **실환자 파일럿**(원장): 초진 → 운동 채택 → 환자 링크 → 재진 링크(세부문진 자동) 1주기.
+   `npm run pilot:lbp-stage`로 단계 분포 확인. 관찰할 것: 하단 내비가 방해되는지, 세부문진 응답률,
+   치료 계획 링크 열람률(감사 로그 `care_plan_link_issued` 수 vs 환자 열람 `patient_started_at`).
+2. 알림톡 자동 발송(④-후속): BizM 치료 계획 템플릿 외부 등록 뒤.
+3. 파일럿에서 관찰된 것만 고친다 — 추가 설계 없음.
+
+---
+
 ## 2026-09-06 (최신 32): 플로우 정렬 5/5 — 세부문진 배선 완료. **5단계 플로우 정렬 전부 구현됨**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 서버(`detailCheck.js` 신규,

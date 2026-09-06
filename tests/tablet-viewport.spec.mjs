@@ -93,6 +93,8 @@ const EXPECTED_OPEN_INPUTS_HERBAL = 4
  * 화면에 다시 꺼낸 것이다. 통증 화면은 아래에서 LBP fixture를 골라 따로 잰다.
  */
 const EXPECTED_OPEN_INPUTS_PAIN = 1
+// 점프 내비(안 A) 크롬 높이 상한: 버튼 44(≤1023px에서 48) + 패딩 12 + 테두리 1 + margin 8.
+const NAV_MAX_HEIGHT = 72
 const LBP_FIXTURE_NAME_RE = /허리 통증 주호소 \(LBP/
 /**
  * 2026-09-06 플로우 정렬 2/5: 레인1 안전 블록은 합집합 CLEAR면 접힌다. 위 LBP
@@ -233,8 +235,16 @@ const MEASURE = `(() => {
   const collapsed = document.querySelector('.workspace__observationChecklist--collapsed')
   const opener = collapsed?.querySelector('.workspace__observationSummary__open') ?? null
   const openerRect = opener ? opener.getBoundingClientRect() : null
+  // 점프 내비(안 A)는 sticky bottom 내비 크롬이다: 스크롤 중에는 화면 하단에
+  // 떠 있고 콘텐츠 끝에서만 자기 높이를 차지한다. "임상 워크플로 높이"는
+  // 콘텐츠 높이이므로 내비 높이(+margin)는 빼서 잰다 -- 대신 내비 자체의
+  // 높이는 아래 별도 상한(NAV_MAX_HEIGHT)으로 잡아, 크롬이 조용히 자라
+  // 화면을 잡아먹는 회귀는 따로 실패하게 한다.
+  const nav = clinical.querySelector('.doctor__laneNav')
+  const navHeight = nav ? Math.round(nav.getBoundingClientRect().height + parseFloat(getComputedStyle(nav).marginTop || '0')) : 0
   return {
-    workflow: Math.round(clinical.getBoundingClientRect().height),
+    workflow: Math.round(clinical.getBoundingClientRect().height) - navHeight,
+    navHeight,
     viewport: window.innerHeight,
     overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
     openInputs: [...document.querySelectorAll('.workspace textarea, .workspace input[type="text"]')].filter(vis).length,
@@ -353,12 +363,13 @@ try {
     const label = vp.name
 
     console.log(
-      `\n[measured] ${label}: ${m.workflow}px / ${m.viewport}px = ${multiple.toFixed(2)}x` +
+      `\n[measured] ${label}: ${m.workflow}px / ${m.viewport}px = ${multiple.toFixed(2)}x (nav chrome ${m.navHeight}px excluded)` +
         ` | overflowX ${m.overflowX}px | ${m.openInputs} open inputs | smallest target ${m.smallestTarget}px`,
     )
 
     check(`${label}: clinical workflow within ${vp.budget} viewports`, multiple <= vp.budget, `(${multiple.toFixed(2)}x)`)
     check(`${label}: workflow height does not regress`, m.workflow <= vp.ceiling, `(${m.workflow}px <= ${vp.ceiling}px)`)
+    check(`${label}: the jump nav chrome stays under ${NAV_MAX_HEIGHT}px (it occupies the viewport bottom while scrolling)`, m.navHeight > 0 && m.navHeight <= NAV_MAX_HEIGHT, `(${m.navHeight}px)`)
     check(`${label}: no horizontal overflow`, m.overflowX === 0, `(${m.overflowX}px)`)
     check(`${label}: no interactive target under ${MIN_TARGET}px`, m.smallestTarget !== null && m.smallestTarget >= MIN_TARGET, `(${m.smallestTarget}px)`)
     check(`${label}: exactly the intended always-open inputs (herbal fixture 0)`, m.openInputs === EXPECTED_OPEN_INPUTS_HERBAL, `(${m.openInputs})`)
@@ -397,6 +408,54 @@ try {
     check(`${label} (LBP 확인 필요): 레인1 래퍼가 없다 (비CLEAR에 요약 줄을 얹지 않는다)`, lane1WrapperOnReview?.result?.value === false)
     check(`${label} (LBP): no horizontal overflow`, mp.overflowX === 0, `(${mp.overflowX}px)`)
     check(`${label} (LBP): exactly the intended always-open inputs`, mp.openInputs === EXPECTED_OPEN_INPUTS_PAIN, `(${mp.openInputs})`)
+
+    // 점프 내비(안 A, PO "추천에 따라 진행"): 운동 후보가 첫 화면 아래에 있다는
+    // 실측 문제를 (1) 그대로 측정하고 (2) 내비 한 번 탭으로 닿는지 실제
+    // 브라우저에서 확인한다. 내비는 sticky bottom이므로 스크롤 0에서도 화면
+    // 안에 있어야 하고, 점프 뒤 헤딩은 sticky 헤더 아래에 보여야 한다.
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
+    const navBefore = await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const nav = document.querySelector('.doctor__laneNav')
+        const ex = document.getElementById('exercise-h3')
+        if (!nav || !ex) return null
+        const r = nav.getBoundingClientRect()
+        const btns = [...nav.querySelectorAll('.doctor__laneNav__btn')]
+        return {
+          labels: btns.map((b) => b.textContent),
+          minBtn: Math.min(...btns.map((b) => { const q = b.getBoundingClientRect(); return Math.round(Math.min(q.width, q.height)) })),
+          navTop: Math.round(r.top), navBottom: Math.round(r.bottom), inner: window.innerHeight,
+          exerciseTop: Math.round(ex.getBoundingClientRect().top),
+        }
+      })()`,
+      returnByValue: true,
+    })
+    const nb = navBefore?.result?.value
+    check(`${label} (LBP): 점프 내비가 5개 버튼으로 렌더된다`, Array.isArray(nb?.labels) && nb.labels.join(',') === '안전,확인,판단·처치,운동,다음', `(${nb?.labels})`)
+    check(`${label} (LBP): 스크롤 0에서 내비가 화면 안에 있다 (sticky bottom)`, nb && nb.navTop >= 0 && nb.navBottom <= nb.inner, `(top ${nb?.navTop}, bottom ${nb?.navBottom}, viewport ${nb?.inner})`)
+    check(`${label} (LBP): 내비 버튼이 ${MIN_TARGET}px 이상`, nb && nb.minBtn >= MIN_TARGET, `(${nb?.minBtn}px)`)
+    console.log(`[measured] ${label} (LBP): 운동 섹션 top = ${nb?.exerciseTop}px (viewport ${nb?.inner}px) → ${nb ? (nb.exerciseTop / nb.inner).toFixed(1) : '?'} 화면 아래`)
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__laneNav__btn[data-target="exercise-h3"]').click()`, returnByValue: true })
+    const afterJump = await cdp.evalUntil(
+      `(() => {
+        const ex = document.getElementById('exercise-h3')
+        const header = document.querySelector('.doctor__header')
+        const nav = document.querySelector('.doctor__laneNav')
+        if (!ex || !nav) return null
+        return {
+          exerciseTop: Math.round(ex.getBoundingClientRect().top),
+          headerBottom: header ? Math.round(header.getBoundingClientRect().bottom) : 0,
+          navBottom: Math.round(nav.getBoundingClientRect().bottom),
+          inner: window.innerHeight,
+          scrollY: Math.round(window.scrollY),
+        }
+      })()`,
+      (v) => v && v.scrollY > 0,
+    )
+    check(`${label} (LBP): 「운동」 탭 한 번으로 운동 섹션이 화면에 들어온다`, afterJump.exerciseTop >= 0 && afterJump.exerciseTop < afterJump.inner, `(top ${afterJump.exerciseTop}px)`)
+    check(`${label} (LBP): 점프 뒤 운동 섹션이 sticky 헤더 뒤에 숨지 않는다`, afterJump.exerciseTop >= afterJump.headerBottom, `(heading ${afterJump.exerciseTop} ≥ header ${afterJump.headerBottom})`)
+    check(`${label} (LBP): 점프 뒤에도 내비가 화면 안에 남는다`, afterJump.navBottom <= afterJump.inner, `(bottom ${afterJump.navBottom}, viewport ${afterJump.inner})`)
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
 
     // 세 번째 측정: CLEAR인 LBP fixture — 레인1이 접혀야 한다.
     const pickedClear = await cdp.send('Runtime.evaluate', {

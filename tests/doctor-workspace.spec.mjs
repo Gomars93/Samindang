@@ -4076,4 +4076,46 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
   assert.ok(/lane1=\{lane1Summary\}/.test(dw), 'aside도 같은 lane1Summary를 받는다')
 })
 
+// ---------- 점프 내비(안 A, PO "추천에 따라 진행") ----------
+// 운동 후보가 4화면 아래라는 실측 문제의 최소 해법: 레인 헤딩으로 가는 버튼.
+// 존재하는 앵커만 노출한다(한약에는 운동 섹션이 없으므로 4개).
+{
+  const navButtons = (html) => [...html.matchAll(/class="doctor__laneNav__btn" data-target="([^"]+)"[^>]*>([^<]*)</g)].map((m) => ({ target: m[1], label: m[2] }))
+  const pain = render(PAIN_SCENARIO_1)
+  const painNav = navButtons(pain)
+  test('점프 내비: 통증 화면은 안전·확인·판단·처치·운동·다음 5개 버튼', () => {
+    assert.deepEqual(painNav.map((b) => b.label), ['안전', '확인', '판단·처치', '운동', '다음'])
+  })
+  test('점프 내비: 통증 화면의 모든 버튼 대상 id가 실제로 렌더된다 (죽은 링크 없음)', () => {
+    for (const b of painNav) assert.ok(pain.includes(` id="${b.target}"`), `missing anchor ${b.target}`)
+  })
+  const herbal = render(HERBAL_SCENARIO_1)
+  const herbalNav = navButtons(herbal)
+  test('점프 내비: 한약 화면은 운동 버튼 없이 4개', () => {
+    assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치', '다음'])
+    assert.ok(!herbal.includes('id="exercise-h3"'))
+  })
+  test('점프 내비: 한약 화면의 모든 버튼 대상 id가 실제로 렌더된다', () => {
+    for (const b of herbalNav) assert.ok(herbal.includes(` id="${b.target}"`), `missing anchor ${b.target}`)
+  })
+  const mixed = render(MIXED_SCENARIO_1)
+  test('점프 내비: mixed 화면은 운동 포함 5개', () => {
+    assert.equal(navButtons(mixed).length, 5)
+  })
+  test('점프 내비: 내비는 작업 영역(main)의 마지막 자식 — sticky bottom이 성립하는 위치', () => {
+    const mainClose = pain.lastIndexOf('</main>')
+    const navStart = pain.lastIndexOf('<nav class="doctor__laneNav"')
+    assert.ok(navStart > 0 && navStart < mainClose)
+    const between = pain.slice(pain.indexOf('</nav>', navStart) + 6, mainClose)
+    assert.equal(between.trim(), '')
+  })
+  test('점프 내비: 내비는 sticky bottom이고, 점프는 sticky 헤더·요약의 실제 높이를 읽어 그 아래에 헤딩을 세운다 (소스 계약)', () => {
+    const css = fs.readFileSync(new URL('../src/doctor/doctor.css', import.meta.url), 'utf8')
+    assert.ok(/\.doctor__laneNav\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*0/.test(css))
+    const src = fs.readFileSync(new URL('../src/doctor/workspace/DoctorWorkspace.tsx', import.meta.url), 'utf8')
+    assert.ok(src.includes("document.querySelector('.doctor__header')") && src.includes("document.querySelector('.doctor__visitSummary')"))
+    assert.ok(!src.includes('scrollIntoView'), '고정 scroll-margin에 의존하는 scrollIntoView로 되돌아가면 헤딩이 헤더 뒤에 숨는다(실측 42px)')
+  })
+}
+
 console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)

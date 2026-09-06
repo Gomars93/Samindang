@@ -288,6 +288,35 @@
   margin: 0 0 8px;
 }
 
+/* 점프 내비(안 A) -- DoctorWorkspace.tsx의 LaneJumpNav 주석 참고. 작업 영역의
+   마지막 자식, sticky bottom. */
+.doctor__laneNav {
+  position: sticky;
+  bottom: 0;
+  z-index: 9;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+.doctor__laneNav__btn {
+  min-height: 44px;
+  min-width: 72px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /*
  * Phase 7 UI spec §9 "진료 화면 로딩 스켈레톤": §3.2/§3.3 치수와 동일한
  * 자리에 회색 펄스 블록만 채운다 -- 중앙 스피너 금지(operate.md).

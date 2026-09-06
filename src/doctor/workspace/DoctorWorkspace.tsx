@@ -866,6 +866,8 @@ export function DoctorWorkspace({
             {medicationCourseSlot}
             {nextLaneFooter}
           </section>
+
+          <LaneJumpNav showExercise={activeProfile === 'pain' || activeProfile === 'mixed'} />
         </main>
       </div>
 
@@ -881,5 +883,68 @@ export function DoctorWorkspace({
         <div className="workspace__saveStatus" role="status" data-status={saveStatus} hidden />
       )}
     </div>
+  )
+}
+
+/**
+ * PO 결정(HANDOFF 최신 29 → "추천에 따라 진행", 안 A): 운동 후보가 첫 화면에서
+ * 4화면 아래에 있다는 실측 문제에 대한 최소 해법 -- 레인 헤딩으로 바로 가는
+ * 점프 내비. 레이아웃·카드 밀도는 건드리지 않는다(안 B 기각).
+ *
+ * 왜 `position: sticky; bottom: 0`(fixed 아님)인가: 상단에는 이미 sticky 헤더
+ * (.doctor__header)와 세로 태블릿의 sticky 요약(.doctor__visitSummary)이 있어
+ * top 쌓기는 높이 계산이 깨지기 쉽다. 작업 영역의 마지막 자식으로 두고
+ * bottom에 붙이면 스크롤 중엔 화면 하단에 떠 있고, 끝에 닿으면 제자리에
+ * 앉는다 -- 내용을 가리지 않으므로 padding 보정도 필요 없다.
+ *
+ * 스크롤은 즉시(smooth 아님): 태블릿에서 결정적이고, 실측 테스트가 폴링 없이
+ * 검증할 수 있다. 헤딩이 sticky 헤더(.doctor__header, 세로 태블릿에서는
+ * sticky 요약 .doctor__visitSummary까지) 뒤로 숨지 않도록, 클릭 시점에 그
+ * 요소들의 실제 높이를 읽어 그만큼 위에 여유를 두고 스크롤한다 -- 고정
+ * CSS scroll-margin은 헤더가 줄바꿈되는 폭에서 틀린다(실측: 데스크톱 헤더
+ * 114px vs 고정 72px → 헤딩이 42px 가려짐).
+ */
+function stickyTopOffset(): number {
+  const header = document.querySelector('.doctor__header')
+  const summary = document.querySelector('.doctor__visitSummary')
+  const headerH = header ? header.getBoundingClientRect().height : 0
+  const summaryH =
+    summary && typeof window !== 'undefined' && window.getComputedStyle(summary).position === 'sticky'
+      ? summary.getBoundingClientRect().height
+      : 0
+  return Math.max(headerH, summaryH) + 8
+}
+
+function jumpToLane(id: string): void {
+  const el = document.getElementById(id)
+  if (!el) return
+  const top = el.getBoundingClientRect().top + window.scrollY - stickyTopOffset()
+  window.scrollTo({ top: Math.max(0, top) })
+}
+
+const LANE_JUMP_ITEMS: ReadonlyArray<{ id: string; label: string; exerciseOnly?: boolean }> = [
+  { id: 'lane1-h2', label: '안전' },
+  { id: 'lane2-h2', label: '확인' },
+  { id: 'judgment-h2', label: '판단·처치' },
+  { id: 'exercise-h3', label: '운동', exerciseOnly: true },
+  { id: 'next-h2', label: '다음' },
+]
+
+function LaneJumpNav({ showExercise }: { showExercise: boolean }) {
+  const items = LANE_JUMP_ITEMS.filter((it) => !it.exerciseOnly || showExercise)
+  return (
+    <nav className="doctor__laneNav" aria-label="진료 단계 바로가기">
+      {items.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          className="doctor__laneNav__btn"
+          data-target={it.id}
+          onClick={() => jumpToLane(it.id)}
+        >
+          {it.label}
+        </button>
+      ))}
+    </nav>
   )
 }

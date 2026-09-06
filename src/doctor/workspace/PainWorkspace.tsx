@@ -559,7 +559,7 @@ export function PainExerciseSection({
     return (
       <>
         {stageCard}
-        <section className="workspace__block">
+        <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
           <p className="workspace__block__hint">{lbpRecommendationBlockedMessageKo}</p>
         </section>
@@ -575,7 +575,7 @@ export function PainExerciseSection({
     return (
       <>
         {stageCard}
-        <section className="workspace__block">
+        <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
           <p className="workspace__block__hint">
             목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
@@ -619,7 +619,7 @@ export function PainExerciseSection({
         </p>
       )}
       {rehabSuggestions.length > 0 && (
-        <section className="workspace__block">
+        <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
           {visibleSuggestions.map(renderCard)}
           {moreSuggestions.length > 0 && (

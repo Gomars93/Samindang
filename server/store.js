@@ -221,6 +221,14 @@ export function createStore(
   {
     followUpTokenTtlMinutes = 30,
     followUpTokenRetentionHours = 24,
+    // 플로우 정렬 4/5: a patient re-opens their care-plan page over days, not
+    // minutes -- so its links live in a SEPARATE token store with a much
+    // longer TTL (default 14 days). Kept apart from follow-up-sessions/ on
+    // purpose: the two stores share one record shape but must never share a
+    // pointer namespace, or issuing a care-plan link would invalidate a
+    // revisit's live follow-up token for the same id (one-active-token-per-
+    // scope is that store's core invariant).
+    carePlanLinkTtlMinutes = 14 * 24 * 60,
     // Configurable purely so tests can use a tiny window instead of
     // sleeping for real seconds to prove "the window expired, this is now
     // a genuinely new start" -- production always uses the 5s default.
@@ -238,6 +246,11 @@ export function createStore(
   // linkage 한번쓰기 토큰).
   const followUpSessions = createFollowUpSessionStore(path.join(dataDir, '..', 'follow-up-sessions'), {
     ttlMinutes: followUpTokenTtlMinutes,
+  })
+  // care-plan-links/도 같은 형제 경로 패턴(플로우 정렬 4/5: 환자 치료 계획
+  // 읽기 전용 링크). 위 carePlanLinkTtlMinutes 주석 참고.
+  const carePlanLinks = createFollowUpSessionStore(path.join(dataDir, '..', 'care-plan-links'), {
+    ttlMinutes: carePlanLinkTtlMinutes,
   })
   // stations/도 같은 형제 경로 패턴(round 8: 클리닉 태블릿 스테이션).
   const stations = createStationStore(path.join(dataDir, '..', 'stations'))
@@ -1169,7 +1182,39 @@ export function createStore(
   // 창(기본 24시간, SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS)으로 정리
   // 되어야 한다 -- 두 정책을 같은 스위치에 묶으면 안 된다.
   async function cleanupFollowUpSessions() {
-    return followUpSessions.cleanupOlderThan(followUpTokenRetentionHours)
+    // Care-plan links age off under the same post-expiry retention window
+    // -- their TTL is longer, but once expired/invalidated they are just
+    // as dead as a spent follow-up token.
+    return (
+      (await followUpSessions.cleanupOlderThan(followUpTokenRetentionHours)) +
+      (await carePlanLinks.cleanupOlderThan(followUpTokenRetentionHours))
+    )
+  }
+
+  // 플로우 정렬 4/5 (환자 치료 계획 링크): the ONLY place that issues a
+  // CARE_PLAN capability. Scoped by SUBMISSION id (the record whose
+  // workspace the care plan was written in -- DoctorView's selectedId), so
+  // the token store's generic `visit_id` scope key holds a submission id
+  // here; every care-plan record is in its own store, so this never
+  // collides with a revisit visit's follow-up token. The text is the
+  // clinician-approved PATIENT-FACING care plan exactly as the doctor saw
+  // it in the preview card -- snapshotted here, never re-derived from the
+  // live workspace later (same posture as follow-up target labels).
+  // Returns null when the submission does not exist; the caller validates
+  // the text is non-empty before calling (an empty care plan is a client
+  // error, not something to silently issue a blank page for).
+  async function issueCarePlanLink(submissionId, carePlanText) {
+    const record = await readRecord(submissionId)
+    if (!record) return null
+    const { token, record: session } = await carePlanLinks.issueToken({
+      visit_id: submissionId,
+      patient_id: record.patient_id ?? null,
+      targets: [],
+      delivery_mode: null,
+      kind: 'CARE_PLAN',
+      care_plan_text: carePlanText,
+    })
+    return { token, session }
   }
 
   // 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 파일 개수만 반환한다.
@@ -1191,6 +1236,7 @@ export function createStore(
     deleted += await recorderResults.purgeAll()
     deleted += await microFollowUp.purgeAll()
     deleted += await followUpSessions.purgeAll()
+    deleted += await carePlanLinks.purgeAll()
     deleted += await stations.purgeAll()
     deleted += await visits.purgeAll()
     return deleted
@@ -1225,6 +1271,9 @@ export function createStore(
     markFollowUpSessionStarted: followUpSessions.markStarted,
     submitFollowUpSession,
     cleanupFollowUpSessions,
+    issueCarePlanLink,
+    resolveCarePlanLink: carePlanLinks.resolveToken,
+    markCarePlanLinkStarted: carePlanLinks.markStarted,
     listRevisitQueue,
     // Round 8: clinic tablet stations.
     registerStation: stations.registerStation,

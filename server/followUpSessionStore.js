@@ -45,6 +45,30 @@ function normalizeDeliveryMode(mode) {
   return typeof mode === 'string' && DELIVERY_MODES.has(mode) ? mode : null
 }
 
+// 플로우 정렬 4/5 (환자 치료 계획 링크): the same hash-only capability-token
+// model now also carries a READ-ONLY patient care-plan page. `kind`
+// distinguishes the two uses of one record shape:
+// - 'FOLLOW_UP' (default, every pre-existing record has no `kind` field and
+//   is treated as this): the Micro Follow-up questions; consumable once.
+// - 'CARE_PLAN': the clinician-approved patient-facing care-plan TEXT,
+//   snapshotted at issuance (never re-read from the live workspace), shown
+//   read-only and NEVER consumable -- consumeTokenWithAction refuses it
+//   below, so a care-plan token can never accept a submission even if it
+//   somehow reached a submit path.
+// `care_plan_text` is patient-facing prose only (what the doctor already
+// hands over on paper/by copy) -- it is stored at rest under the token gate
+// exactly like the follow-up target labels, and is capped so a broken
+// client cannot persist arbitrary bulk.
+const TOKEN_KINDS = new Set(['FOLLOW_UP', 'CARE_PLAN'])
+export const CARE_PLAN_TEXT_MAX_CHARS = 4000
+function normalizeKind(kind) {
+  return typeof kind === 'string' && TOKEN_KINDS.has(kind) ? kind : 'FOLLOW_UP'
+}
+function normalizeCarePlanText(kind, text) {
+  if (kind !== 'CARE_PLAN') return null
+  return typeof text === 'string' ? text.slice(0, CARE_PLAN_TEXT_MAX_CHARS) : ''
+}
+
 function tokensDir(baseDir) {
   return path.join(baseDir, 'tokens')
 }
@@ -122,7 +146,7 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
   // so issueToken leaves either a fully-installed new token+pointer or
   // (on any failure) exactly the state that existed before the call --
   // never an orphan ACTIVE token record with no pointer referencing it.
-  async function issueToken({ visit_id, patient_id, targets, delivery_mode }) {
+  async function issueToken({ visit_id, patient_id, targets, delivery_mode, kind, care_plan_text }) {
     return withLock(`visit:${visit_id}`, async () => {
       await ensureDirs()
       const pointer = await readJson(pointerPath(baseDir, visit_id))
@@ -142,12 +166,15 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
             .slice(0, 3)
             .map((t) => ({ id: t.id, label: t.label }))
         : []
+      const resolvedKind = normalizeKind(kind)
       const record = {
         token_hash: tokenHash,
         visit_id,
         patient_id,
         targets: safeTargets,
         status: 'ACTIVE',
+        kind: resolvedKind,
+        care_plan_text: normalizeCarePlanText(resolvedKind, care_plan_text),
         delivery_mode: normalizeDeliveryMode(delivery_mode),
         issued_at: now,
         expires_at: expiresAt,
@@ -316,6 +343,10 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
         // ACTIVE status left by a failed phase-3 invalidation.
         const pointerHash = await currentPointerHash(stored.visit_id)
         const record = withPointerAuthority(stored, tokenHash, pointerHash)
+        // A CARE_PLAN token is read-only by definition -- it can never be
+        // consumed, whatever path tried. Refused before any status check so
+        // the answer is the same regardless of the record's lifecycle.
+        if (record.kind === 'CARE_PLAN') return { ok: false, reason: 'invalid', record }
         if (record.status === 'CONSUMED') return { ok: false, reason: 'consumed', record }
         if (record.status === 'INVALIDATED') {
           if (record !== stored) await atomicWrite(tokenPath(baseDir, tokenHash), record).catch(() => {})

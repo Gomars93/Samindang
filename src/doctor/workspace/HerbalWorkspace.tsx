@@ -33,7 +33,7 @@ import type { ClinicianObservationItem } from './clinicianObservation'
 import type { HerbalCarePlan } from './carePlan'
 import { HerbalCarePlanCard } from './CarePlanCard'
 import { NextActionCard, isHerbalCarePlanEmpty } from './NextActionCard'
-import { PatientCarePlanPreviewCard } from './PatientCarePlanPreviewCard'
+import { PatientCarePlanPreviewCard, type IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { buildHerbalPatientCarePlanPreview } from './patientCarePlanPreview'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import type { StructuredReassessment } from './reassessmentExam'
@@ -207,6 +207,7 @@ export function HerbalWorkspaceNext({
   reassessment,
   priorVisits,
   copyHint,
+  onIssueCarePlanLink,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -223,6 +224,8 @@ export function HerbalWorkspaceNext({
   priorVisits?: PatientHistoryResult | null
   /** Opus closing review C-5: forwarded to EmrPreviewCard's `copyHint` -- the caller decides whether 종결 is actually on screen for this record; omitted (no hint rendered) when it is not. */
   copyHint?: string
+  /** 플로우 정렬 4/5: server mode only -- turns the preview text into a read-only patient link (PatientCarePlanPreviewCard). */
+  onIssueCarePlanLink?: IssueCarePlanLink
 }) {
   const r = payload.responses
 
@@ -285,7 +288,7 @@ export function HerbalWorkspaceNext({
           미리보기)는 dedup 대상이 아니므로 그대로 둔다.
         */}
         <PriorVisitHistoryCard history={priorVisits} profile="herbal" />
-        <PatientCarePlanPreviewCard title="환자 전달용 관리 계획" text={patientCarePlanText} />
+        <PatientCarePlanPreviewCard title="환자 전달용 관리 계획" text={patientCarePlanText} onIssueLink={onIssueCarePlanLink} />
         <EmrPreviewCard text={emrText} copyHint={copyHint} />
         </details>
     </div>

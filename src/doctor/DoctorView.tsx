@@ -29,6 +29,7 @@ import {
   listSubmissions,
   registerStation,
   reissueFollowUpSession,
+  issueCarePlanLink,
   resetStation,
   saveJudgment as saveJudgmentToServer,
   saveWorkspaceState as saveWorkspaceStateToServer,
@@ -62,7 +63,7 @@ import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
-import { buildPublicFollowUpLink } from '../lib/publicFollowUpUrl'
+import { buildPublicFollowUpLink, buildPublicCarePlanLink } from '../lib/publicFollowUpUrl'
 import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
 import {
@@ -3501,6 +3502,28 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return buildPublicFollowUpLink(token)
   }
 
+  /* ---------- 플로우 정렬 4/5: 환자 치료 계획 읽기 전용 링크 ---------- */
+
+  // Supplied to DoctorWorkspace ONLY in server mode with a real submission
+  // id (same gate as onSaveWorkspace). The card hands over the exact text
+  // on screen; the server snapshots it and returns a one-time raw token,
+  // which is turned into the public `#care-plan=` URL here -- the one place
+  // (publicFollowUpUrl.ts) that knows where the public SPA lives. If that
+  // base is not configured, the doctor gets a clear error instead of a
+  // link that would never open on a phone.
+  async function handleIssueCarePlanLink(
+    submissionId: string,
+    text: string,
+  ): Promise<{ ok: true; link: string; expiresAt: string } | { ok: false; error: string }> {
+    const result = await issueCarePlanLink(submissionId, text)
+    if (!result.ok) return { ok: false, error: result.error }
+    const link = buildPublicCarePlanLink(result.data.token)
+    if (link === null) {
+      return { ok: false, error: '공개 링크 기본 URL이 설정되지 않았습니다 (VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL)' }
+    }
+    return { ok: true, link, expiresAt: result.data.expiresAt }
+  }
+
   /* ---------- Round 8: clinic tablet stations (reception surface) ---------- */
 
   function stationPairingLink(credential: string): string {
@@ -4315,6 +4338,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           ) : undefined
         }
         nextLaneFooter={nextLaneFooterNode}
+        onIssueCarePlanLink={
+          mode === 'server' && selectedId ? (text) => handleIssueCarePlanLink(selectedId, text) : undefined
+        }
         onSaveWorkspace={
           mode === 'server' && selectedId
             ? async (state, expectedUpdatedAt) => {

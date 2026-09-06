@@ -78,6 +78,7 @@ import { useOpenOnceContent } from './FinalAssessmentCard'
 import { NextActionCard, isCarePlanEmpty } from './NextActionCard'
 import { PatientCarePlanPreviewCard } from './PatientCarePlanPreviewCard'
 import { buildPainPatientCarePlanPreview } from './patientCarePlanPreview'
+import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import type { StructuredReassessment } from './reassessmentExam'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
@@ -650,6 +651,7 @@ export function PainWorkspaceNext({
   lbpObjectiveMotorDeficit,
   microFollowUpText,
   copyHint,
+  onIssueCarePlanLink,
 }: {
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
@@ -674,6 +676,8 @@ export function PainWorkspaceNext({
   microFollowUpText?: string | null
   /** Opus closing review C-5: forwarded to EmrPreviewCard's `copyHint` -- the caller decides whether 종결 is actually on screen for this record; omitted (no hint rendered) when it is not. */
   copyHint?: string
+  /** 플로우 정렬 4/5: server mode only -- turns the preview text into a read-only patient link (PatientCarePlanPreviewCard). */
+  onIssueCarePlanLink?: IssueCarePlanLink
 }) {
   const r = payload.responses
   const { routing } = payload
@@ -805,7 +809,7 @@ export function PainWorkspaceNext({
       <details className="workspace__optional workspace__optional--reference">
         <summary>참고 자료 (이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
         <PriorVisitHistoryCard history={priorVisits} profile="pain" />
-        <PatientCarePlanPreviewCard title="환자 전달용 치료 계획" text={patientCarePlanText} />
+        <PatientCarePlanPreviewCard title="환자 전달용 치료 계획" text={patientCarePlanText} onIssueLink={onIssueCarePlanLink} />
         <EmrPreviewCard text={emrText} copyHint={copyHint} />
         </details>
     </div>

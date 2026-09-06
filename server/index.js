@@ -18,6 +18,7 @@ import { isDoctorRequestAllowed, isOriginAllowedForDoctor } from './auth.js'
 import { createCrmStore, CrmConflictError, CrmNotFoundError, CrmOwnershipError, MEDICATION_COURSE_REASON_CODES } from './crmStore.js'
 import { createPatientIdentityStore, IdentityConflictError } from './patientIdentityStore.js'
 import { createMessagingStore, MessagingConflictError, MessagingNotFoundError } from './messagingStore.js'
+import { CARE_PLAN_TEXT_MAX_CHARS } from './followUpSessionStore.js'
 import { resolveWebhookSecret, verifyWebhookSignature } from './messagingTransport.js'
 import {
   activateVisit,
@@ -85,6 +86,7 @@ export function createApp({
   retentionDays,
   followUpTokenTtlMinutes,
   followUpTokenRetentionHours,
+  carePlanLinkTtlMinutes,
   crmClaimLeaseMinutes,
 } = {}) {
   const resolvedDataDir = dataDir ?? process.env.SAMINDANG_DATA_DIR ?? './.data/submissions'
@@ -96,9 +98,17 @@ export function createApp({
     followUpTokenRetentionHours !== undefined
       ? followUpTokenRetentionHours
       : Number(process.env.SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS ?? '24')
+  // 플로우 정렬 4/5: 환자 치료 계획 읽기 전용 링크의 유효기간(기본 14일).
+  // 재진 follow-up 토큰(30분)과는 별도 스토어·별도 TTL -- store.js의
+  // carePlanLinkTtlMinutes 주석 참고.
+  const resolvedCarePlanLinkTtlMinutes =
+    carePlanLinkTtlMinutes !== undefined
+      ? carePlanLinkTtlMinutes
+      : Number(process.env.SAMINDANG_CARE_PLAN_LINK_TTL_MINUTES ?? String(14 * 24 * 60))
   const store = createStore(resolvedDataDir, {
     followUpTokenTtlMinutes: resolvedFollowUpTtlMinutes,
     followUpTokenRetentionHours: resolvedFollowUpRetentionHours,
+    carePlanLinkTtlMinutes: resolvedCarePlanLinkTtlMinutes,
   })
   const audit = createAuditLog(resolvedDataDir)
   // CRM v0.3.1 (round 6): a sibling data dir, not nested under submissions/
@@ -1330,6 +1340,48 @@ export function createApp({
         }
       } else if (
         parts[0] === 'api' &&
+        parts[1] === 'submissions' &&
+        parts.length === 4 &&
+        parts[3] === 'care-plan-link' &&
+        req.method === 'POST'
+      ) {
+        // 플로우 정렬 4/5 (환자 치료 계획 링크): the doctor turns the
+        // patient-facing care-plan text they are looking at (the preview
+        // card's exact text, sent in the body) into a READ-ONLY capability
+        // link the patient can open on their own phone for 14 days. The
+        // text is snapshotted server-side at issuance; the raw token is
+        // returned exactly once (same rule as start-revisit/reissue). No
+        // clinical data other than that approved text is ever reachable
+        // through the resulting public route. Issuing again for the same
+        // submission invalidates the previous link (one active link per
+        // submission -- the token store's own invariant).
+        id = parts[2]
+        if (!requireDoctor(req)) {
+          status = 403
+          bytes = sendJson(req, res, 403, { error: 'forbidden' }, cors)
+        } else {
+          const body = await readBody(req)
+          const carePlanText = typeof body?.care_plan_text === 'string' ? body.care_plan_text.trim() : ''
+          if (!carePlanText) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: 'care_plan_text is required' }, cors)
+          } else if (carePlanText.length > CARE_PLAN_TEXT_MAX_CHARS) {
+            status = 400
+            bytes = sendJson(req, res, 400, { error: `care_plan_text exceeds ${CARE_PLAN_TEXT_MAX_CHARS} characters` }, cors)
+          } else {
+            const result = await store.issueCarePlanLink(id, carePlanText)
+            if (!result) {
+              status = 404
+              bytes = sendJson(req, res, 404, { error: 'not found' }, cors)
+            } else {
+              status = 201
+              await safeAudit({ event: AUDIT_EVENTS.CARE_PLAN_LINK_ISSUED, submission_id: id, actor: AUDIT_ACTORS.DOCTOR })
+              bytes = sendJson(req, res, 201, { token: result.token, expires_at: result.session.expires_at }, cors)
+            }
+          }
+        }
+      } else if (
+        parts[0] === 'api' &&
         parts[1] === 'visits' &&
         parts.length === 4 &&
         parts[3] === 'follow-up-session' &&
@@ -1419,6 +1471,45 @@ export function createApp({
             await store.invalidateFollowUpSession(id)
             await safeAudit({ event: AUDIT_EVENTS.FOLLOW_UP_SESSION_INVALIDATED, visit_id: id, actor: AUDIT_ACTORS.DOCTOR })
             bytes = sendJson(req, res, 200, { ok: true }, cors)
+          }
+        }
+      } else if (parts[0] === 'api' && parts[1] === 'care-plan' && parts.length === 3 && req.method === 'GET') {
+        // 플로우 정렬 4/5: PUBLIC read-only care-plan page for the patient's
+        // own phone -- same posture as GET /api/follow-up-session/:token
+        // (no requireDoctor, no doctor Origin allowlist, format-validated
+        // token, shared failed-attempt rate limit). The response carries
+        // ONLY the approved patient-facing text snapshotted at issuance and
+        // the expiry -- never patient_id/submission id/name/clinician notes.
+        // There is deliberately NO POST counterpart: a care-plan link
+        // accepts nothing from the patient (see followUpSessionStore.js's
+        // CARE_PLAN refusal in consumeTokenWithAction).
+        const rawToken = safeDecodeToken(parts[2])
+        if (rawToken === null) {
+          noteFailedPublicAttempt(remoteAddress(req))
+          status = 404
+          bytes = sendJson(req, res, 404, { status: 'INVALID' }, cors)
+        } else if (!checkPublicRateLimit(remoteAddress(req))) {
+          status = 429
+          bytes = sendJson(req, res, 429, { error: 'too many attempts' }, cors)
+        } else {
+          const session = await store.resolveCarePlanLink(rawToken)
+          if (!session || session.kind !== 'CARE_PLAN') {
+            noteFailedPublicAttempt(remoteAddress(req))
+            status = 404
+            bytes = sendJson(req, res, 404, { status: 'INVALID' }, cors)
+          } else if (session.status !== 'ACTIVE') {
+            bytes = sendJson(req, res, 200, { status: session.status }, cors)
+          } else if (new Date(session.expires_at).getTime() < Date.now()) {
+            bytes = sendJson(req, res, 200, { status: 'EXPIRED' }, cors)
+          } else {
+            await store.markCarePlanLinkStarted(rawToken)
+            bytes = sendJson(
+              req,
+              res,
+              200,
+              { status: 'ACTIVE', care_plan_text: session.care_plan_text ?? '', expires_at: session.expires_at },
+              cors,
+            )
           }
         }
       } else if (

@@ -49,6 +49,9 @@ export const AUDIT_EVENTS = Object.freeze({
   FOLLOW_UP_SESSION_REISSUED: 'follow_up_session_reissued',
   FOLLOW_UP_SESSION_INVALIDATED: 'follow_up_session_invalidated',
   FOLLOW_UP_SESSION_SUBMITTED: 'follow_up_session_submitted',
+  // 플로우 정렬 4/5: 환자 치료 계획 읽기 전용 링크 발급(원장). 공개 조회
+  // (GET /api/care-plan/:token)는 읽기라서 로그하지 않는다.
+  CARE_PLAN_LINK_ISSUED: 'care_plan_link_issued',
   // 녹음/Micro Follow-up 저장
   RECORDER_RESULT_SAVED: 'recorder_result_saved',
   MICRO_FOLLOW_UP_SAVED: 'micro_follow_up_saved',

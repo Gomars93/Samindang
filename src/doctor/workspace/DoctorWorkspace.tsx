@@ -42,6 +42,7 @@ import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
 import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection } from './PainWorkspace'
+import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { useOpenOnceContent } from './FinalAssessmentCard'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
 import {
@@ -156,6 +157,7 @@ export function DoctorWorkspace({
   microFollowUpResponse,
   medicationCourseSlot,
   nextLaneFooter,
+  onIssueCarePlanLink,
 }: {
   payload: DoctorPayload
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
@@ -216,6 +218,8 @@ export function DoctorWorkspace({
   medicationCourseSlot?: ReactNode
   /** P3: 발급/메시징/종결(EMR 검토 + 완료) — DoctorView-owned state, rendered as the tail of the 다음 레인. */
   nextLaneFooter?: ReactNode
+  /** 플로우 정렬 4/5: server mode only (DoctorView supplies it with a real submission id); fixtures pass nothing. */
+  onIssueCarePlanLink?: IssueCarePlanLink
 }) {
   const basis = deriveViewProfile(payload)
   const activeProfile = basis.derived
@@ -839,6 +843,7 @@ export function DoctorWorkspace({
                 lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
                 microFollowUpText={deltaQuoteLine}
                 copyHint={emrPreviewCopyHint}
+                onIssueCarePlanLink={onIssueCarePlanLink}
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
@@ -855,6 +860,7 @@ export function DoctorWorkspace({
                 reassessment={workspaceState.herbalReassessment}
                 priorVisits={priorVisits}
                 copyHint={emrPreviewCopyHint}
+                onIssueCarePlanLink={onIssueCarePlanLink}
               />
             )}
             {medicationCourseSlot}

@@ -99,7 +99,7 @@ async function main() {
     // Registry size guard: if a future round adds/removes an event or actor
     // without updating this test's requiredEvents list below, this at
     // least makes the drift visible rather than silent.
-    assert('registry: AUDIT_EVENTS has exactly 37 registered event names', Object.keys(AUDIT_EVENTS).length === 37)
+    assert('registry: AUDIT_EVENTS has exactly 38 registered event names', Object.keys(AUDIT_EVENTS).length === 38)
     assert('registry: AUDIT_ACTORS has exactly 3 registered actor names', Object.keys(AUDIT_ACTORS).length === 3)
 
     // Independent-review finding: the raw-literal check above only proves
@@ -501,8 +501,9 @@ async function main() {
        submission_duplicate, submission_viewed, status_changed,
        judgment_saved, visit_created, visit_activated, visit_cleared,
        patient_identity_linked) already have coverage in
-       tests/server.spec.mjs / tests/crm-store.spec.mjs and are not
-       re-tested here -- these are the remaining 28. ---- */
+       tests/server.spec.mjs / tests/crm-store.spec.mjs, and
+       care_plan_link_issued (플로우 정렬 4/5) is asserted end-to-end in
+       tests/care-plan-link.spec.mjs -- these are the remaining 28. ---- */
     const lines = await readAuditLines(auditLogPath(dataDir))
     const hasEvent = (ev) => lines.some((l) => l.event === ev)
 
@@ -536,7 +537,7 @@ async function main() {
       AUDIT_EVENTS.MESSAGE_RETRIED,
       AUDIT_EVENTS.MESSAGE_CANCELLED,
     ]
-    assert('workflow: exactly 28 events are asserted here (the 37-event registry minus the 9 already covered elsewhere)', requiredEvents.length === 28)
+    assert('workflow: exactly 28 events are asserted here (the 38-event registry minus the 10 already covered elsewhere)', requiredEvents.length === 28)
     for (const ev of requiredEvents) {
       assert(`workflow: ${ev} appears at least once in audit.log`, hasEvent(ev))
     }

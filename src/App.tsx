@@ -7,6 +7,7 @@ import { PreviewBanner } from './components/PreviewBanner'
 import { ScreenShell } from './components/ScreenShell'
 import { DoctorView } from './doctor/DoctorView'
 import { FollowUpScreen } from './screens/FollowUpScreen'
+import { CarePlanScreen } from './screens/CarePlanScreen'
 import { PatientCompleteScreen, type SubmitState } from './screens/PatientCompleteScreen'
 import {
   QuestionBody,
@@ -121,6 +122,22 @@ function parseFollowUpToken(hash: string): string | null {
 }
 
 /**
+ * 플로우 정렬 4/5: `#care-plan=<token>` hash route -- the patient's READ-ONLY
+ * care-plan page (src/screens/CarePlanScreen.tsx). Same opaque-token-only
+ * parse as parseFollowUpToken; set once at mount and never cleared (the
+ * link is meant to be re-opened for its whole TTL, there is no "done").
+ */
+function parseCarePlanToken(hash: string): string | null {
+  const match = hash.match(/^#care-plan=(.+)$/)
+  if (!match) return null
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
+
+/**
  * Round 8: `#station-setup=<credential>` is the ONE-TIME pairing link a
  * staff member opens on a clinic tablet to bind it to a registered
  * station. The credential is immediately moved into localStorage and
@@ -177,6 +194,9 @@ function AppContent() {
   // screen state, exactly the privacy wall this is supposed to preserve).
   const [followUpActive, setFollowUpActive] = useState(
     () => (typeof window !== 'undefined' ? parseFollowUpToken(window.location.hash) !== null : false),
+  )
+  const [carePlanToken] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? parseCarePlanToken(window.location.hash) : null,
   )
 
   useEffect(() => {
@@ -560,6 +580,10 @@ function AppContent() {
 
   if (isStationView) {
     return <StationScreen />
+  }
+
+  if (carePlanToken !== null) {
+    return <CarePlanScreen token={carePlanToken} />
   }
 
   if (followUpActive) {

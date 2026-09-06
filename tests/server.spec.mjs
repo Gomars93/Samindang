@@ -1725,9 +1725,14 @@ async function main() {
     // POST /api/crm/medication-courses/:id/check-tasks,
     // POST /api/crm/medication-courses/:id/shift-start -- 전부 같은
     // doctor-only 가드.
+    // 플로우 정렬 4/5(환자 치료 계획 링크)에서 1개가 추가되어 47개가 됐다:
+    // POST /api/submissions/:id/care-plan-link -- 같은 doctor-only 가드.
+    // 공개 GET /api/care-plan/:token은 의도적으로 이 목록에 포함되지
+    // 않는다(환자 본인 휴대폰의 읽기 전용 라우트 -- follow-up-session
+    // 공개 라우트와 동일한 위치).
     assert(
-      'server has exactly the 46 doctor-guarded route groups calling requireDoctor (submissions x5 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x16 + messaging x4)',
-      requireDoctorCalls === 46,
+      'server has exactly the 47 doctor-guarded route groups calling requireDoctor (submissions x6 + visits x6 + current-visit GET + current-visit/clear + patients/:id/history + micro-follow-up x2 + visit workspace/revisit-queue/start-revisit/follow-up-session x6 + stations x4 + crm x16 + messaging x4)',
+      requireDoctorCalls === 47,
     )
     assert(
       'isLocalOnly no longer exists anywhere in server/index.js (fully retired)',

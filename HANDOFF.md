@@ -1,5 +1,39 @@
 # Current Handoff
 
+## 2026-09-06 (최신 31): 플로우 정렬 4/5 — 환자 치료 계획 **읽기 전용 링크** + 문자 문구 복사 (v1: 알림톡 자동발송 아님)
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 서버
+(`followUpSessionStore.js` kind/care_plan_text, `store.js` `care-plan-links/` 별도 인스턴스
++ `issueCarePlanLink`, `index.js` 라우트 2개, `audit.js` 이벤트 1개), 클라이언트
+(`CarePlanScreen.tsx` 신규, `App.tsx` `#care-plan=` 라우트, `followUpClient.ts`
+`getCarePlanLink`, `serverClient.ts` `issueCarePlanLink`, `publicFollowUpUrl.ts`
+`buildPublicCarePlanLink`, `PatientCarePlanPreviewCard.tsx` 버튼, prop 3단 전달
+`DoctorView → DoctorWorkspace → Pain/HerbalWorkspaceNext`), 테스트, 문서.
+**`src/spec` 0줄, EMR/이어받기/저장 스키마 0줄, MessagingPanel 0줄.**
+
+### 원장 사용법 (파일럿)
+1. 「다음」 레인 → 참고 자료 → 「환자 전달용 치료 계획」 카드 → **환자 링크 만들기**.
+2. 카드 아래 문자 본문이 뜨면 **문자 내용 복사** → 기존 문자 도구에 붙여넣어 발송.
+3. 환자는 링크(14일 유효)에서 텍스트만 본다. 다시 만들면 이전 링크는 즉시 죽는다.
+- 전제: `VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL`(공개 SPA 주소)과
+  `VITE_SAMINDANG_SERVER_URL`이 빌드에 들어가 있어야 한다. 없으면 버튼이 명시적 오류를 띄운다.
+
+### 검증
+`test:care-plan-link` 58 / 변이 6개 전부 죽음 / `test:server` 233(라우트 그룹 47) /
+`test:audit-registry` 126(이벤트 38) / `test:follow-up-session` 278 / `test:doctor` 1041 /
+`test:doctor-workspace`·`workspace-round3`·`public-followup-url` 통과 / `build` green /
+`test:all` — 아래 커밋 메시지 참고.
+
+### Next Recommended Action
+1. **PO 결정 대기(최신 29)**: "운동 후보 4화면 아래" — (A) 상단 점프 내비 5탭 /
+   (B) 카드 밀도 재설계 / (C) 수용.
+2. ④-후속(선택): 알림톡 자동 발송 — BizM 템플릿(치료 계획용) 외부 등록 후
+   `messages` 라우트에 `purpose: 'CARE_PLAN'`·`#care-plan=` 링크 검증·템플릿 코드 분기.
+   실제 자격증명 없는 동안은 v1 복사 방식이 유일하게 환자에게 도달하는 경로.
+3. ⑤ 세부문진 태블릿 배선(VISIT_04/LBP_13/LBP_12/LBP_14 + NRS).
+
+---
+
 ## 2026-09-06 (최신 30): 플로우 정렬 3/5 — 통증 강도 NRS 0~10 버튼 (초진·재진 동시)
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: `finalAssessment.ts`

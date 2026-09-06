@@ -1191,6 +1191,20 @@
   margin-top: 8px;
 }
 
+/* 플로우 정렬 4/5: 환자 치료 계획 링크 발급 후 문자 내용 블록 */
+.workspace__carePlanLink {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.workspace__carePlanLink__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 /* ---------- round 3: next reassessment plan (Phase B) ---------- */
 .workspace__reassessPlan {
   background: var(--surface);

@@ -208,3 +208,8 @@ scripts/.lbp-exercise-stage-bundle.mjs
 # esbuild bundles used by tests/lbp-capability-layer.spec.mjs (regenerated, not source)
 tests/.lbp-capability-layer-bundle.mjs
 tests/.lbp-exercise-stage-table-bundle.mjs
+
+# esbuild bundles used by tests/care-plan-link.spec.mjs (regenerated, not source)
+tests/.care-plan-screen-bundle.cjs
+tests/.care-plan-preview-card-bundle.cjs
+tests/.care-plan-message-bundle.mjs

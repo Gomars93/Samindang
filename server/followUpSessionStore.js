@@ -69,6 +69,27 @@ function normalizeCarePlanText(kind, text) {
   return typeof text === 'string' ? text.slice(0, CARE_PLAN_TEXT_MAX_CHARS) : ''
 }
 
+// 플로우 정렬 5/5 (세부문진): an optional snapshot, taken at issuance, of the
+// detail-check the clinician's OWN prior plan made due today (see
+// server/detailCheck.js). Only question IDS are stored -- never question
+// text -- and only a bounded list of short id strings, so a public reader
+// learns nothing beyond "which fixed questionnaire items to show". null
+// when no detail check is due (the overwhelmingly common case).
+const DETAIL_CHECK_MAX_QUESTIONS = 10
+const DETAIL_CHECK_ID_MAX_CHARS = 40
+function normalizeDetailCheck(detail) {
+  if (!detail || typeof detail !== 'object') return null
+  const ids = Array.isArray(detail.question_ids)
+    ? detail.question_ids.filter((id) => typeof id === 'string' && id !== '' && id.length <= DETAIL_CHECK_ID_MAX_CHARS).slice(0, DETAIL_CHECK_MAX_QUESTIONS)
+    : []
+  if (ids.length === 0) return null
+  return {
+    reason: detail.reason === 'DATE' || detail.reason === 'VISIT_COUNT' ? detail.reason : 'UNKNOWN',
+    plan_label: typeof detail.plan_label === 'string' ? detail.plan_label.slice(0, 100) : '',
+    question_ids: ids,
+  }
+}
+
 function tokensDir(baseDir) {
   return path.join(baseDir, 'tokens')
 }
@@ -146,7 +167,7 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
   // so issueToken leaves either a fully-installed new token+pointer or
   // (on any failure) exactly the state that existed before the call --
   // never an orphan ACTIVE token record with no pointer referencing it.
-  async function issueToken({ visit_id, patient_id, targets, delivery_mode, kind, care_plan_text }) {
+  async function issueToken({ visit_id, patient_id, targets, delivery_mode, kind, care_plan_text, detail_check }) {
     return withLock(`visit:${visit_id}`, async () => {
       await ensureDirs()
       const pointer = await readJson(pointerPath(baseDir, visit_id))
@@ -175,6 +196,7 @@ export function createFollowUpSessionStore(baseDir, { ttlMinutes = 30 } = {}) {
         status: 'ACTIVE',
         kind: resolvedKind,
         care_plan_text: normalizeCarePlanText(resolvedKind, care_plan_text),
+        detail_check: resolvedKind === 'FOLLOW_UP' ? normalizeDetailCheck(detail_check) : null,
         delivery_mode: normalizeDeliveryMode(delivery_mode),
         issued_at: now,
         expires_at: expiresAt,

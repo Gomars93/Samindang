@@ -218,6 +218,17 @@ function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorksp
 // function (rather than inlined at the computeDetailCheckDue call site) so
 // "today" is a single, named, replaceable seam rather than a bare
 // `new Date()` scattered through the render body.
+function baselineDetailAnswersFromSubmission(sub: SubmissionRecord | null): Record<string, string> {
+  const responses = (sub?.submission as { responses?: unknown } | undefined)?.responses
+  if (responses === null || typeof responses !== 'object') return {}
+  const out: Record<string, string> = {}
+  for (const [id, v] of Object.entries(responses as Record<string, unknown>)) {
+    if (typeof v === 'string') out[id] = v
+    else if (typeof v === 'number') out[id] = String(v)
+  }
+  return out
+}
+
 function todayISO(): string {
   const d = new Date()
   const yyyy = d.getFullYear()
@@ -480,6 +491,11 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   // plan the clinician already set on a prior visit. todayISO() is the one
   // seam a future render test could inject a fixed date through.
   const detailCheckDue = computeDetailCheckDue(priorHistory?.visits, todayISO())
+  // 플로우 정렬 5/5: the first-visit raw answers (questionnaire responses by
+  // question id) the MicroFollowUpCard shows beside today's detail-check
+  // answers. Read straight from the latest prior submission's own payload,
+  // string values only -- never interpreted here.
+  const baselineDetailAnswers = baselineDetailAnswersFromSubmission(priorSubmission)
 
   // LBP v1 Batch 2.5c (G16, §11.4): whether "이전 가설 이어받기" has
   // anything real to offer, and whether today's hypothesis is still the
@@ -556,7 +572,11 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           오늘 환자 입력{' '}
           <span className="workspace__block__hint">환자가 직접 보고한 변화 — 먼저 읽고 판단하세요</span>
         </h3>
-        <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse} />
+        <MicroFollowUpCard
+          candidates={microFollowUpCandidates}
+          response={microFollowUpResponse}
+          baselineDetailAnswers={baselineDetailAnswers}
+        />
       </section>
 
       <section className="workspace__block">

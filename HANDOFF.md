@@ -1,5 +1,42 @@
 # Current Handoff
 
+## 2026-09-06 (최신 32): 플로우 정렬 5/5 — 세부문진 배선 완료. **5단계 플로우 정렬 전부 구현됨**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 서버(`detailCheck.js` 신규,
+`store.js` `deriveDetailCheck` + 제출 필터, `followUpSessionStore.js` `detail_check`,
+`microFollowUpStore.js` `detailAnswers`, `index.js` 공개 GET `detail_question_ids`), 공용
+(`src/spec/detailCheckQuestions.ts` 신규), 환자(`FollowUpScreen.tsx` NRS 버튼 + 세부 확인 섹션,
+`followUpClient.ts`), 원장(`microFollowUp.ts`, `MicroFollowUpCard.tsx` 초진→오늘 행,
+`RevisitWorkspace.tsx` 초진 답 전달), `styles.css`, 테스트, 문서. **`src/spec/coreSpec.ts` 0줄,
+EMR 0줄, 저장 스키마는 추가만(레거시 응답은 `detailAnswers` 없이도 렌더).**
+
+### 동작 요약 (원장 관점)
+1. 초진에서 「다음 재검 계획」(날짜 또는 N회 후)을 넣어 둔다 — 이미 있던 카드.
+2. 그 시점이 온 재진에서 「재진 간단 문진 시작」을 누르면 링크에 세부 확인 4문항(LBP) 또는
+   1문항(비LBP)이 자동으로 붙는다. 통증 강도는 환자도 0~10 버튼.
+3. 재진 화면 「오늘 환자 입력」 카드에 초진 답 → 오늘 답이 나란히 뜬다. 판단은 원장.
+
+### 검증
+`test:detail-check` 61 / 변이 7 전부 죽음 / `follow-up-session` 279 / `revisit-quick-check` 145 /
+`station` 108 / `server` 233 / `doctor` 1041 / `build` green / `test:all` exit 0.
+
+### 5단계 플로우 정렬 상태
+| 단계 | 상태 | 커밋 |
+|---|---|---|
+| ① 자유입력 접기 | 완료 | `4562dd7` |
+| ② 레인1 CLEAR 접기 | 완료 | `326950f` |
+| ③ NRS 0~10 버튼(원장) | 완료 | `26528e8` |
+| ④ 환자 치료 계획 링크 | 완료 | `c09d7a6` |
+| ⑤ 세부문진 배선 | 완료 | 이 커밋 |
+
+### Next Recommended Action
+1. **PO 결정(최신 29) → 추천안 A 진행 예정**: "운동 후보 4화면 아래" — 상단 점프 내비 5탭.
+   (PO "추천에 따라 진행" 지시로 A 채택, 다음 배치.)
+2. 실환자 파일럿: `npm run pilot:lbp-stage`(단계 분포) + 재진 링크 사용률 확인.
+3. 알림톡 자동 발송(④-후속)은 BizM 템플릿 외부 등록 뒤.
+
+---
+
 ## 2026-09-06 (최신 31): 플로우 정렬 4/5 — 환자 치료 계획 **읽기 전용 링크** + 문자 문구 복사 (v1: 알림톡 자동발송 아님)
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 서버

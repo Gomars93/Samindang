@@ -14,13 +14,22 @@
  */
 import type { MicroFollowUpCandidateItem, MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpNeedsAttention, readableMicroFollowUpResponse } from './microFollowUp'
+import { describeDetailCheckValue, detailCheckQuestionText } from '../../spec/detailCheckQuestions'
 
 export function MicroFollowUpCard({
   candidates,
   response: rawResponse,
+  baselineDetailAnswers,
 }: {
   candidates: MicroFollowUpCandidateItem[]
   response: MicroFollowUpResponse | null
+  /**
+   * 플로우 정렬 5/5: the FIRST visit's raw answers to the same items
+   * (questionnaire responses by id), so today's detail answer is shown
+   * beside its baseline. Read-only, raw, no delta computed -- the
+   * REPEAT_VISIT_AUTO_COMPARE_STATUS rule: the clinician compares.
+   */
+  baselineDetailAnswers?: Readonly<Record<string, string>>
 }) {
   // 13차 독립 리뷰 MEDIUM-1: rawResponse는 서버가 검증 없이 저장한
   // MicroFollowUpResponse를 그대로 넘겨받는다 -- 원소/leaf 단위로 다시
@@ -54,6 +63,22 @@ export function MicroFollowUpCard({
                 <span>{r.patientReportedValue.trim() || '응답 없음'}</span>
               </div>
             ))}
+            {response.detailAnswers.length > 0 && (
+              <div className="workspace__microFollowUp__detail">
+                <p className="workspace__microFollowUp__label">세부 확인 (초진 → 오늘)</p>
+                {response.detailAnswers.map((a) => {
+                  const baseline = baselineDetailAnswers?.[a.questionId]
+                  return (
+                    <div key={a.questionId} className="workspace__microFollowUp__row">
+                      <strong>{detailCheckQuestionText(a.questionId)}</strong>
+                      <span>
+                        {`${baseline !== undefined ? describeDetailCheckValue(a.questionId, baseline) : '초진 기록 없음'} → ${describeDetailCheckValue(a.questionId, a.value)}`}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             {response.overallChange.trim() && (
               <p className="workspace__microFollowUp__line">전반적 변화: {response.overallChange.trim()}</p>
             )}

@@ -213,3 +213,10 @@ tests/.lbp-exercise-stage-table-bundle.mjs
 tests/.care-plan-screen-bundle.cjs
 tests/.care-plan-preview-card-bundle.cjs
 tests/.care-plan-message-bundle.mjs
+
+# esbuild bundles used by tests/detail-check.spec.mjs (regenerated, not source)
+tests/.detail-check-revisit-quick-check-bundle.mjs
+tests/.detail-check-questions-bundle.mjs
+tests/.detail-check-final-assessment-bundle.mjs
+tests/.detail-check-follow-up-screen-bundle.cjs
+tests/.detail-check-micro-card-bundle.cjs

@@ -54,9 +54,20 @@ export type FollowUpSessionPublicView = {
   /** Present only when status === 'ACTIVE'. Patient-safe target labels only -- never clinician notes/prior assessment/Myungri. */
   targets?: Array<{ id: string; label: string }>
   expiresAt?: string
+  /**
+   * 플로우 정렬 5/5: initial-questionnaire ids to re-ask because the
+   * clinician's own reassessment plan is due today (empty when not). Ids
+   * only -- wording/options come from coreSpec (src/spec/detailCheckQuestions.ts).
+   */
+  detailQuestionIds?: string[]
 }
 
-type PublicGetWire = { status: FollowUpSessionPublicState; targets?: Array<{ id: string; label: string }>; expires_at?: string }
+type PublicGetWire = {
+  status: FollowUpSessionPublicState
+  targets?: Array<{ id: string; label: string }>
+  expires_at?: string
+  detail_question_ids?: unknown
+}
 
 const VALID_STATES: ReadonlySet<string> = new Set(['ACTIVE', 'EXPIRED', 'CONSUMED', 'INVALIDATED', 'INVALID'])
 
@@ -83,7 +94,10 @@ export async function getFollowUpSession(token: string): Promise<FollowUpClientR
     })
     const body: PublicGetWire | null = await res.json().catch(() => null)
     if (body && typeof body.status === 'string' && VALID_STATES.has(body.status)) {
-      return { ok: true, data: { status: body.status, targets: body.targets, expiresAt: body.expires_at } }
+      const detailQuestionIds = Array.isArray(body.detail_question_ids)
+        ? body.detail_question_ids.filter((id): id is string => typeof id === 'string')
+        : []
+      return { ok: true, data: { status: body.status, targets: body.targets, expiresAt: body.expires_at, detailQuestionIds } }
     }
     return { ok: false, error: `오류 (${res.status})`, kind: 'other' }
   } catch (err) {
@@ -140,6 +154,8 @@ export async function getCarePlanLink(token: string): Promise<FollowUpClientResu
 
 export type FollowUpSessionAnswers = {
   targetRatings: Array<{ targetId: string; patientReportedValue: string }>
+  /** 플로우 정렬 5/5: answers to the detail-check items, by initial-questionnaire id. Empty when none were asked. */
+  detailAnswers: Array<{ questionId: string; value: string }>
   overallChange: string
   newSymptomReported: boolean
   newSymptomNote: string

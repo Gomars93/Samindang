@@ -1553,7 +1553,21 @@ export function createApp({
             // opened these questions. Best-effort and idempotent inside the
             // store -- it must never affect this read's own outcome.
             await store.markFollowUpSessionStarted(rawToken)
-            bytes = sendJson(req, res, 200, { status: 'ACTIVE', targets: session.targets, expires_at: session.expires_at }, cors)
+            // 플로우 정렬 5/5: detail_question_ids is ALWAYS present (empty
+            // when no detail check is due) -- ids only, never question
+            // text or the plan that made them due.
+            bytes = sendJson(
+              req,
+              res,
+              200,
+              {
+                status: 'ACTIVE',
+                targets: session.targets,
+                expires_at: session.expires_at,
+                detail_question_ids: session.detail_check?.question_ids ?? [],
+              },
+              cors,
+            )
           }
         }
       } else if (

@@ -28,11 +28,16 @@ export function drivingRegion(responses) {
   return present[0]
 }
 
+/** 승인 전 팩의 대체 구동 부위 — TS `FALLBACK_REGIONS`의 포팅(고관절 → 요통만; 어깨 → 목 없음). */
+const FALLBACK_REGIONS = Object.freeze({
+  hip: Object.freeze(['lbp']),
+})
+
 /** 구동 후보 순서 — TS `drivingRegionCandidates`의 포팅(이유는 그쪽 주석). */
 export function drivingRegionCandidates(responses) {
   const first = drivingRegion(responses)
   if (first === null || !isRecord(responses)) return []
   const flags = isRecord(responses.safety_flags) ? responses.safety_flags : {}
-  const rest = REGION_KEYS.filter((k) => k !== first && flags[k] != null)
+  const rest = (FALLBACK_REGIONS[first] ?? []).filter((k) => k !== first && flags[k] != null)
   return [first, ...rest]
 }

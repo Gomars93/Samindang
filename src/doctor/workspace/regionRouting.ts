@@ -48,8 +48,22 @@ export function drivingRegion(responses: unknown): RegionKey | null {
 }
 
 /**
- * 구동 후보 순서 — 판별 결과가 첫째, 나머지 non-null 부위가 `REGION_KEYS` 순서로
- * 뒤따른다. 호출부(`activeDrivingPack`)는 이 순서에서 **첫 승인 팩**을 쓴다.
+ * 판별 부위의 팩이 승인 전일 때 대신 구동해도 되는 부위 — **명시된 쌍만**.
+ * 고관절 → 요통: 같은 `low_back_pelvis` 모집단이고 요통 팩의 가설에 고관절 기여·
+ * 천장관절 기여가 이미 있어 그 환자를 요통 관리 체계에서 보는 것이 R2 이전과
+ * 같다(회귀 방지가 목적). **어깨 → 목은 허용하지 않는다**(2026-09-07 목 활성화
+ * 시점 결정): 어깨 우세 환자에게 목 가설 칩·목 운동 후보를 새로 보여주는 것은
+ * 회귀 방지가 아니라 다른 부위의 판단을 덧씌우는 일이다. 어깨 팩이 승인되기
+ * 전까지 그 환자는 R2 이전처럼 안전 패널만 본다.
+ */
+const FALLBACK_REGIONS: Partial<Record<RegionKey, readonly RegionKey[]>> = {
+  hip: ['lbp'],
+}
+
+/**
+ * 구동 후보 순서 — 판별 결과가 첫째, 그 뒤에 `FALLBACK_REGIONS`에 적힌 부위 중
+ * 이 환자에게 non-null인 것만 뒤따른다. 호출부(`activeDrivingPack`, 서버
+ * `detailCheckQuestionIdsForCandidates`)는 이 순서에서 **첫 승인 팩**을 쓴다.
  *
  * 왜 후보 목록인가: 판별 결과 부위의 팩이 아직 승인 전이면(예: HIP_00=고관절
  * 우세인데 고관절 팩은 DRAFT) 같은 모집단의 승인된 팩(요통)으로 되돌아가야
@@ -60,6 +74,6 @@ export function drivingRegionCandidates(responses: unknown): RegionKey[] {
   const first = drivingRegion(responses)
   if (first === null || !isRecord(responses)) return []
   const flags = isRecord(responses.safety_flags) ? responses.safety_flags : {}
-  const rest = REGION_KEYS.filter((k) => k !== first && flags[k] != null)
+  const rest = (FALLBACK_REGIONS[first] ?? []).filter((k) => k !== first && flags[k] != null)
   return [first, ...rest]
 }

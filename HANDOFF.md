@@ -1,5 +1,33 @@
 # Current Handoff
 
+## 2026-09-07 (최신 38): **목 팩 활성화** — ③ CLOSED · ④ 인코딩 · `productionApproved: true` + 어깨→목 후퇴 차단. 어깨·무릎은 아직 DRAFT
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO "네 추천안으로 진행 부탁"(2026-09-07) 실행.
+
+### 한 것
+- `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md`(정본) — Core 9, 7필드, 단계표, 규칙, 검사 쌍 4, NECK_12, Opus 검수
+  PASS(조건부 2: CPG 원문 대조 미완·행 단위 문장 검토 미완 → 파일럿 §10).
+- `regionPacks/neck.ts` 전 필드 + `provenance` 전부 CLINICIAN_APPROVED + `productionApproved: true`. 서버 `neck: ['NECK_12']`.
+- `regionRouting.ts`/`server/regionRouting.js`: 후퇴는 `hip → lbp`만. 어깨 우세 환자는 목 팩을 보지 않는다.
+- `tests/neck-exercise-core.vignettes.spec.mjs` 신설(39), `region-pack` 318, 변이 8/8 죽음.
+
+### 검증
+**`test:all` exit 0 (66 스위트)** / `doctor` 1041 / `doctor-workspace` 302 / `server` 233 / `detail-check` 61 / `lbp-stage-pilot` 46 /
+`tsc -b` 0 / `build` green. 요통 스위트 무수정 통과.
+
+### 못 한 것
+- PR #30 → main merge(GitHub 커넥터 세션 오류, 최신 37과 동일). PO가 UI에서 merge하거나 이 브랜치 PR과 함께.
+- CPG 2017 원문 대조(egress 차단). 등급은 어디에도 적지 않았다.
+
+### Next Recommended Action
+1. **원장 파일럿(목)**: CLOSED §10 관찰 6항목. 첫 10건에서 카드 문장 수정분을 모아 v1.1.
+   `npm run pilot:region-stage -- neck`.
+2. **어깨 ②**: `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` 초안(원장+Opus). PR #30 어깨 문서에 §5 검사 목록이
+   없어 원장 검사 스크립트(회전근개.md) 기반, `neuroExamIds` 결정 필요. 그 다음 무릎.
+3. 이 브랜치 PR 생성/갱신(ChatGPT 리뷰 가능 상태) — PO 지시 시.
+
+---
+
 ## 2026-09-07 (최신 37): PO 승인 5건 실행 — PR #30 가설 교체(목5/어깨6/무릎7) + E-1~E-5 + 목 근거 매트릭스 초안. **화면 변화 0, 원장 체크리스트 9개 대기**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PR #30 head를 이 브랜치에 병합(`f0535c2`, 문서만) + 구현 커밋 1.

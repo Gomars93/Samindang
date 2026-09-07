@@ -1,5 +1,7 @@
 /**
- * DRAFT 부위 팩 조립기 — 원장 승인 전 팩을 최소 입력으로 만든다.
+ * 부위 팩 조립기 — 원장 승인 전 팩(DRAFT)을 최소 입력으로 만들고, 원장 CLOSED 문서가
+ * 나온 팩은 같은 조립기에 7필드·단계표·규칙·검사 쌍을 채우고 `productionApproved: true`를
+ * 켠다(목, 2026-09-07). 파일명은 역사적 이유로 그대로 둔다.
  *
  * 승인 전 팩의 규칙(`docs/PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md`):
  *   - `productionApproved: false` 고정. 엔진·화면·서버 어디에도 닿지 않는다
@@ -30,7 +32,7 @@ import type {
 } from '../regionPack'
 import { REGION_LABEL_KO } from '../regionPack'
 import type { ExamHelp, DirectionalResponse } from '../lbpExamSuggestions'
-import { buildEligibilityRule, type LbpExerciseEligibilityRule } from '../lbpExerciseEligibility'
+import { buildEligibilityRule, type EligibilityRuleOptions, type LbpExerciseEligibilityRule } from '../lbpExerciseEligibility'
 import type { LbpExerciseStageAssignment } from '../lbpExerciseStageTable'
 
 export type DraftExercise = {
@@ -51,6 +53,11 @@ export type DraftExercise = {
   domain?: string
   /** 후보 카드 "이유" 한 줄(요통의 전략 라벨 자리). 생략하면 `domain`의 라벨을 쓴다. */
   strategyLabelKo?: string
+  /**
+   * 행 단위 적격성 옵션(원장 CLOSED 문서). 생략하면 DRAFT 기본값
+   * `{ stopOnDistalWorsening: false, requiresStableNeuro: false }` — 이유는 파일 헤더.
+   */
+  rule?: EligibilityRuleOptions
 }
 
 export type DraftExam = {
@@ -81,7 +88,14 @@ export type DraftPackSpec = {
   rehabDomains: readonly RegionRehabDomain[]
   /** 필드별 출처 — 승인 게이트(`packContentGaps`). */
   provenance: RegionPackProvenance
+  /** 검사 id → POSITIVE일 때 "직접 뒷받침"으로 올라가는 운동 id(순위 버킷만, 필터 아님). 생략 = {}. */
+  directSupportByExam?: Readonly<Record<string, readonly string[]>>
   detailCheckQuestionIds?: readonly string[]
+  /**
+   * 승인 스위치. 기본 false(DRAFT). true는 원장 CLOSED 문서가 있고 `provenance` 전 필드가
+   * `CLINICIAN_APPROVED`이며 `packContentGaps === []`일 때만 — `tests/region-pack.spec.mjs` D절이 막는다.
+   */
+  productionApproved?: boolean
 }
 
 function tfEnum(region: RegionKey, id: string): string {
@@ -113,8 +127,13 @@ export function buildDraftPack(spec: DraftPackSpec): RegionPack {
     strategyLabelKo: e.strategyLabelKo ?? (e.domain ? domainLabel.get(e.domain) ?? '' : ''),
   }))
   const known = new Set(coreExercises.map((e) => e.exerciseId))
+  const ruleOptions = new Map(spec.exercises.map((e) => [e.id, e.rule]))
   const eligibilityRules: LbpExerciseEligibilityRule[] = coreExercises.map((e) =>
-    buildEligibilityRule((id) => known.has(id), e.exerciseId, { stopOnDistalWorsening: false, requiresStableNeuro: false }),
+    buildEligibilityRule((id) => known.has(id), e.exerciseId, {
+      stopOnDistalWorsening: false,
+      requiresStableNeuro: false,
+      ...(ruleOptions.get(e.exerciseId) ?? {}),
+    }),
   )
   const examHelp: Record<string, ExamHelp> = {}
   const clinicianAddableExams: PhysicalExamSuggestion[] = spec.clinicianAddableExams.map((x) => {
@@ -132,7 +151,7 @@ export function buildDraftPack(spec: DraftPackSpec): RegionPack {
   return {
     region: spec.region,
     labelKo: REGION_LABEL_KO[spec.region],
-    productionApproved: false,
+    productionApproved: spec.productionApproved ?? false,
     sourceDocument: spec.sourceDocument,
     hypothesisPatterns: spec.hypothesisPatterns,
     targetFunctions,
@@ -147,7 +166,7 @@ export function buildDraftPack(spec: DraftPackSpec): RegionPack {
     neuroExamIds: spec.neuroExamIds ?? [],
     rehabDomains: spec.rehabDomains,
     provenance: spec.provenance,
-    directSupportByExam: {},
+    directSupportByExam: spec.directSupportByExam ?? {},
     examHelp,
     clinicianAddableExams,
     // 승인된 자동 검사 규칙이 없다 — 항상 []. 규칙은 PAIN_EXAM_RECOMMENDATION_TEMPLATE.md의 APPROVED 행에서만 온다.

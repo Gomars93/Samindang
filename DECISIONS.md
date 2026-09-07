@@ -3804,3 +3804,40 @@ AAOS, NICE NG226, BESS, ACR)이 붙어 있다. 아카이브 4패턴은 그 뼈�
   제거 / 도메인 게이트 제거) 전부 죽음. `test:lbp-stage-pilot` 46(E-5 8 추가). `tsc -b` 0, `vite build` green.
 - 화면 변화 0 — 3부위 팩은 여전히 `productionApproved: false`(H절 SSR 단언).
 - 다음: 원장이 `NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9개 → Opus 검수 → CLOSED → Sonnet 인코딩(④).
+
+## 2026-09-07 — PO "네 추천안으로 진행 부탁" → 목 팩 ③ CLOSED · ④ 인코딩 · 활성화(`productionApproved: true`) + 구동 후퇴 규칙 축소
+
+### Context
+직전 항목의 다음 행동(원장 체크리스트 9개 → Opus 검수 → CLOSED → 인코딩 → 어깨·무릎 순)에 PO가 "추천안으로
+진행"이라 답했다. 이는 `docs/NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0의 제안값을 원장 답으로 위임한 것이다.
+"다른 부위 이동 금지 — 앞 부위가 닫혀야 다음 부위"(2026-09-06 계획) 원칙에 따라 **이번 항목은 목만** 끝냈다.
+
+### Decision
+1. `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md` — Core 9(초안 12 → 9: DIR_02/SCAP_02/ACT_01 보류), 7필드, 단계표
+   (1단계 3/2단계 6), 규칙(NEURAL_01 신경 안정+원위 중단, DIR_01 신전 조건+원위 중단), 검사→뒷받침 4쌍, 재질문 NECK_12.
+2. `regionPacks/neck.ts` 전 필드 인코딩, `provenance` 전부 `CLINICIAN_APPROVED`, `productionApproved: true`.
+   `packContentGaps(neck) === []`. 서버 `DETAIL_CHECK_REGION_QUESTION_IDS.neck = ['NECK_12']`.
+3. **구동 후퇴 규칙 축소**: R2의 "판별 부위 팩 미승인 → 같은 모집단 승인 팩" 후퇴를 **고관절 → 요통만**으로
+   제한(`FALLBACK_REGIONS`, TS+서버). 어깨 → 목 후퇴는 허용하지 않는다.
+4. Opus 임상 검수 PASS, 조건부 2: (a) CPG 2017 분류별 권고 **원문 대조 미완** — 이 세션은 PubMed/JOSPT egress가
+   차단됨. 초안 §1.2 표는 어디에도 확정값으로 옮기지 않았고 팩은 운동 범주만 PR #30 §4 문장에 기댄다. (b) 7필드
+   문장의 원장 행 단위 검토 미완(PO 위임). 둘 다 안전 게이트(코드 검증)와 무관하며 파일럿 관찰 항목(CLOSED §10).
+
+### Rationale
+- 어깨 → 목 후퇴를 막은 이유: 요통·고관절 후퇴는 "R2 이전에 받던 요통 카드를 잃지 않게"(회귀 방지)였다. 어깨 우세
+  환자는 R2 이전에 아무 카드도 없었으므로 목 카드를 새로 보여주는 것은 회귀 방지가 아니라 다른 부위 판단의 덧씌움이다.
+  목 활성화가 처음으로 이 차이를 실제 화면 문제로 만들었다.
+- Core 12 → 9: 초안이 권한 대로. 3단계 전용 행이 없어져 3단계 확정 시 9개 전부 허용된다 — 굴곡 호전 환자의 방향성
+  운동 부재(DIR_02 보류)와 함께 파일럿 관찰 항목.
+- 위임 승인을 `CLINICIAN_APPROVED`로 기록한 이유: 출처 게이트의 의미는 "원장 책임 아래 확정됨"이고 PO가 그 책임을
+  명시적으로 졌다. 대신 "행 단위 검토 미완"을 CLOSED §1에 남겨 v1.1 재개방 경로를 열어 둔다.
+
+### Consequences / 검증
+- **화면 변화(목 기록만)**: 임상 가설 카드(PR #30 5패턴), 운동 단계 카드, 목 움직임 반응 카드(목 라벨), 확인 추가 11,
+  목표 기능 프리셋 4, 재활/운동 제안(목표 기능 선택 후), EMR A/O행 목 문장, 재검 재질문 NECK_12. 어깨 우세(NS01)
+  기록은 변화 0. 요통 변화 0(요통 스위트 무수정 통과).
+- `tests/neck-exercise-core.vignettes.spec.mjs` 신설 39(엔진 구동: V1~V9), `region-pack` 318, 변이 8종 전부 죽음
+  (서버 표 행 제거 / 어깨→목 후퇴 TS·서버 / NEURAL 신경 요구 제거 / ULTT 쌍 제거 / 단계 이동 / Spurling 쌍 추가 /
+  DIR 방향 조건 제거). `doctor` 1041 / `doctor-workspace` 302 / `server` 233 / `detail-check` 61 / `tsc -b` 0 / `build` green.
+- 파일럿 계측: `npm run pilot:region-stage -- neck`(원장 로컬).
+- 다음: 어깨(PR #30 §5 검사 목록 없음 → 원장 검사 스크립트 기반, `neuroExamIds` 결정 필요) → 무릎. 각각 ② 초안부터.

@@ -1,8 +1,9 @@
 # 목(NECK) Exercise Evidence Matrix v0.1 — 원장+Opus 초안
 
-**상태**: DRAFT — 원장 검토 대기. **이 문서는 운동 라이브러리가 아니다.** 원장이 §3~§8의 각 행을
-유지/수정/삭제로 확정하고 Opus 임상 검수를 거쳐 `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md`가
-나오기 전까지 어떤 값도 팩(`src/doctor/workspace/regionPacks/neck.ts`)에 옮기지 않는다.
+**상태**: 초안 → **2026-09-07 PO "추천안으로 진행"으로 §0 체크리스트 9개가 제안값 그대로 확정됨.** 확정본과
+Opus 검수 결과는 `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md`(정본). 이 문서는 근거·대안(보류 후보 DIR_02/SCAP_02/
+ACT_01, §1.2 CPG 표 — **원문 대조 미완**)의 기록으로 남긴다. **이 문서 자체는 운동 라이브러리가 아니다** — 팩(`src/doctor/workspace/regionPacks/neck.ts`)의
+정본은 CLOSED 문서이며, 이 초안과 팩이 다르면 CLOSED 문서가 맞다.
 **작성 근거**: PO 결정 2026-09-07 (설계 §10-5 "원장+Opus 초안") — 요통 동등성 설계
 `docs/PAIN_REGION_PACK_LBP_PARITY_DESIGN_v0.1.md` §7 ②단계.
 **프레임워크 정본**: PR #30 `docs/recovered_rehab_architecture/NECK_V1_REHAB_ARCHITECTURE_RECOVERED.md`

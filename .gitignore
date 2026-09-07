@@ -229,3 +229,6 @@ tests/.region-routing-bundle.mjs
 tests/.region-clinical-state-bundle.mjs
 tests/.region-pack-*-bundle.mjs
 tests/.region-pack-*-bundle.cjs
+
+# esbuild bundles used by tests/neck-exercise-core.vignettes.spec.mjs (regenerated, not source)
+tests/.neck-vignettes-*-bundle.mjs

@@ -89,6 +89,8 @@ export function detailCheckQuestionIds({ isLbp }) {
  */
 export const DETAIL_CHECK_REGION_QUESTION_IDS = Object.freeze({
   lbp: DETAIL_CHECK_LBP_QUESTION_IDS,
+  // 목 팩 승인(2026-09-07, docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md §8): 지속 자세 악화 1문항.
+  neck: Object.freeze(['NECK_12']),
 })
 
 /**

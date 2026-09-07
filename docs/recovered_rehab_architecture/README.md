@@ -13,17 +13,29 @@ Important governance:
 - They do **not** authorize a new questionnaire, score, or mandatory strategy layer.
 - LBP remains the only region with the deeper canonical exercise warehouse / actionable exercise-object research stack.
 
-Recovered references:
+## Recovered architecture references
 
 1. `NECK_V1_REHAB_ARCHITECTURE_RECOVERED.md`
 2. `SHOULDER_V1_REHAB_ARCHITECTURE_RECOVERED.md`
 3. `KNEE_V1_REHAB_ARCHITECTURE_RECOVERED.md`
 
-Shared product principle:
+These are compact, governance-safe references distilled from the recovered historical artifacts.
+
+## Preserved source material
+
+`source/` contains material preserved from the prior ChatGPT Library artifacts so the original rehabilitation design is auditable:
+
+- `source/NECK_V1_Evidence_Matrix_v0.2_HANDOFF.md` — recovered historical NECK Evidence Matrix source artifact.
+- `source/SHOULDER_V1_Evidence_Matrix_REHAB_EXTRACT.md` — verbatim recovered SHOULDER Exercise/Rehabilitation + Reassessment + evidence-claim section.
+- `source/KNEE_V1_Evidence_Matrix_REHAB_EXTRACT.md` — verbatim recovered KNEE Exercise/Rehabilitation + Reassessment + evidence-claim section.
+
+The SHOULDER/KNEE source extracts are intentionally limited to the missing rehabilitation-related sections relevant to this recovery. The current GitHub PASS/FROZEN module documents remain authoritative for their already-integrated safety/module semantics.
+
+## Shared product principle
 
 > Clinical OS surfaces 2–3 reasonable rehabilitation candidates; the clinician approves, removes, or replaces them and chooses the final 1–2.
 
-Shared selection principle:
+## Shared selection principle
 
 > Exercise selection is based on function, irritability, objective/functional response, patient goal, and safety — not diagnosis labels alone.
 

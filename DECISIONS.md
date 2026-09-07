@@ -3723,3 +3723,35 @@ Notion 「삼인당한의원 › 아카이브(구버전) › 통합 완료(삭�
   보장 내용은 같고 이름만 바뀌었다(각 단언에 이유 주석).
 - 원장 다음 할 일: `PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md` §3 8항목을 부위별로 채운다.
   첫 부위 추천: 목·어깨(허리 다음으로 흔한 호소 — 「1권」 4장 첫 문장).
+
+## 2026-09-07 — PR #30(복구 재활 아키텍처) 확인 + 요통 동등성 설계 v0.1 (PO 결정 대기)
+
+### Context
+PO가 "목·어깨·무릎에도 Exercise/Rehabilitation Architecture를 설계해 두었다"고 했고, 저장소
+전수조사(브랜치 33·커밋 504·GitHub 코드/PR/이슈 검색)에서는 요통 외 운동 자산이 없었다.
+원인은 PR #30(2026-09-07, draft)이 밝혔다: 해당 설계는 ChatGPT Library 아티팩트(2026-08-25)에
+있었고 깃허브에 커밋된 적이 없었다. PR #30이 `docs/recovered_rehab_architecture/`로 처음 복구했다
+(NECK/SHOULDER/KNEE, REFERENCE ONLY, 운동 라이브러리 아님을 본문이 명시).
+
+### Decision (제안 — PO 승인 전)
+1. 부위 팩의 임상 프레임워크 정본을 **PR #30 복구 아키텍처**로 삼는다. 현재 DRAFT 팩의
+   가설 4패턴(Notion 아카이브 출처)은 PR #30 가설 상태로 교체한다. 운동 이름은 `아카이브(후보)`
+   표기로만 보존.
+2. "요통에 준한다" = 요통 v1 12단계 스택을 부위마다 같은 순서로 밟는다
+   (`docs/PAIN_REGION_PACK_LBP_PARITY_DESIGN_v0.1.md` §1·§7). 콘텐츠 출처 우선순위는 §4.
+3. 엔진 변경은 5건으로 한정(§6): 방향성 라벨 팩화, 신경 상태 검사 파생(D-1), 도메인 필드,
+   진단→운동 하드코딩 부정 단언, 파일럿 스크립트 일반화. 추천·단계·적격성·저장·EMR·서버는 불변.
+4. 넣지 않는 것: irritability 입력(요통 DEFER), 재진 response state 자동 판정
+   (`REPEAT_VISIT_AUTO_COMPARE_STATUS` 원칙), 요통 5패턴 변경.
+
+### Rationale
+PR #30 프레임워크는 요통 프로덕션과 같은 뼈대(Safety→Function→Hypothesis→Exercise→Reassessment,
+"2~3 후보 → 원장 승인", HIGHER/CONSIDER/LOWER, 진단 비고정)이며 가이드라인 인용(JOSPT 2017,
+AAOS, NICE NG226, BESS, ACR)이 붙어 있다. 아카이브 4패턴은 그 뼈대와 맞지 않고 출처가 "원장
+발목 포맷의 AI 확장"이다.
+
+### Consequences
+- 코드 변경 0줄. PO가 설계 §10 결정 5건에 답하면 §8(DRAFT 교체, 화면 0 변경)부터 착수.
+- 첫 부위는 목. 고관절·발목·팔꿈치·손목·턱관절은 PR #30 범위 밖 — 원장 문서 전까지 보류.
+- 검증 기록(전수조사): `git log --all --diff-filter=A`에서 exercise/rehab 파일은 전부 LBP;
+  GitHub 코드 검색 `exercise neck|shoulder|knee` 0건; PR 검색 3건(요통·무관).

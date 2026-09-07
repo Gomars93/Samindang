@@ -1,5 +1,30 @@
 # Current Handoff
 
+## 2026-09-07 (최신 36): PR #30 확인 — 복구 재활 아키텍처(목·어깨·무릎) + 요통 동등성 설계 v0.1. **PO 결정 5건 대기, 코드 0줄**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 문서만 —
+`docs/PAIN_REGION_PACK_LBP_PARITY_DESIGN_v0.1.md`(신규), `DECISIONS.md`(항목 1), 이 파일.
+
+### 확인된 사실
+- 요통 외 운동 자산은 깃허브 어디에도 없었다(브랜치 33·커밋 504·코드/PR/이슈 검색). PO 설계는
+  ChatGPT Library(2026-08-25)에 있었고 **PR #30**(draft, 오늘)이 `docs/recovered_rehab_architecture/`로
+  처음 복구했다. NECK/SHOULDER/KNEE 3부위, REFERENCE ONLY, 운동 라이브러리 아님 명시.
+- Notion 「1권 근골격 통증」(원장 저술) 3·4·5·6장(요통·경항부·슬관절·견관절)은 표적 구조·근거문헌
+  중심의 매선 참고서 — 운동은 부가 처방 한두 줄. 가설 모델(3단계 연쇄/고리/건병증 연속체)은
+  PR #30·아카이브·요통 프로덕션 모두와 다른 세 번째 틀.
+
+### 설계 요지
+요통 v1 12단계를 부위마다 같은 순서로; 프레임워크 정본 = PR #30; DRAFT 팩 가설 4패턴은 PR #30
+가설 상태(목 5/어깨 6/무릎 7)로 교체; 엔진 변경 5건만; 콘텐츠 출처 우선순위 표 고정.
+
+### Next Recommended Action
+1. **PO 결정 5건**(설계 §10): PR #30 merge / 패턴 수·라벨 / D-1 신경 파생 / DRAFT 교체 / 목 Evidence
+   Matrix 작성 주체.
+2. 답 후 §8(DRAFT 교체, 화면 0 변경) → 목 ② 문서 → ③~⑥.
+3. 요통 파일럿은 병행.
+
+---
+
 ## 2026-09-06 (최신 35): 부위 팩 R1·R2·R3 구현 완료 — 엔진 1개 + 팩 9개(요통만 승인), 6부위 DRAFT 콘텐츠 등록. **원장 콘텐츠 승인 대기**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. R1 = `65be060`(행동 0 변경), R2+R3 = 이 커밋.

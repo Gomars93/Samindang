@@ -80,6 +80,8 @@ const LBP_CORE_EXERCISES: readonly RegionCoreExercise[] = LBP_CORE_EXERCISE_META
   return {
     exerciseId: meta.exerciseId,
     displayNameKo: meta.displayNameKo,
+    // E-3: 카탈로그 도메인 그대로(문자열). 전략 라벨은 종전처럼 도메인에서 파생.
+    domain: domain ?? '',
     startingCriteriaKo: meta.startingCriteriaKo,
     startingDoseKo: meta.startingDoseKo,
     acceptableResponseKo: meta.acceptableResponseKo,
@@ -115,6 +117,9 @@ function evaluateLbpSafety(payload: DoctorPayload, judgment: RegionJudgmentInput
   }
 }
 
+/** E-3: 요통의 재활 도메인 표 = 카탈로그 도메인 13개. 라벨은 그 도메인의 전략 라벨(후보 카드 "이유"와 같은 글자). */
+const LBP_REHAB_DOMAINS = (Object.keys(STRATEGY_BY_DOMAIN) as LbpExerciseDomain[]).map((id) => ({ id, labelKo: strategyLabelForDomain(id) }))
+
 export const LBP_REGION_PACK: RegionPack = {
   region: 'lbp',
   labelKo: REGION_LABEL_KO.lbp,
@@ -128,6 +133,19 @@ export const LBP_REGION_PACK: RegionPack = {
   stageTable: LBP_EXERCISE_STAGE_BY_ID,
   eligibilityRules: LBP_EXERCISE_ELIGIBILITY_RULES,
   directionalResponseApplicable: true,
+  // E-1: 라벨·도움말은 요통 기본값(`DIRECTIONAL_RESPONSE_OPTIONS` / `LBP_DIRECTIONAL_RESPONSE_HELP`) — 생략.
+  // E-2: 요통의 신경 상태는 원장 판단 필드(`lbp_objective_motor_deficit`)에서 온다 — 검사 파생 없음.
+  neuroExamIds: [],
+  rehabDomains: LBP_REHAB_DOMAINS,
+  // 요통 Core-20·단계표·검사·목표 기능은 전부 원장 승인 문서(sourceDocument)에서 옮긴 것.
+  provenance: {
+    hypothesisPatterns: 'CLINICIAN_APPROVED',
+    targetFunctions: 'CLINICIAN_APPROVED',
+    coreExercises: 'CLINICIAN_APPROVED',
+    stageTable: 'CLINICIAN_APPROVED',
+    clinicianAddableExams: 'CLINICIAN_APPROVED',
+    directSupportByExam: 'CLINICIAN_APPROVED',
+  },
   // (b) integration correction: LBP_NEURAL_01 is "directly supported" only
   // when the Batch-1 exam suggestion `lbp_exam_neurodynamic` (하지직거상/
   // 슬럼프) has been recorded POSITIVE.

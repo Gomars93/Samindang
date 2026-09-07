@@ -1,5 +1,35 @@
 # Current Handoff
 
+## 2026-09-07 (최신 37): PO 승인 5건 실행 — PR #30 가설 교체(목5/어깨6/무릎7) + E-1~E-5 + 목 근거 매트릭스 초안. **화면 변화 0, 원장 체크리스트 9개 대기**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PR #30 head를 이 브랜치에 병합(`f0535c2`, 문서만) + 구현 커밋 1.
+
+### 한 것
+- **§8**: `regionPacks/{neck,shoulder,knee}.ts` 가설 → PR #30 상태(아카이브 4패턴 폐기, 운동 이름 8개×3은
+  `아카이브(후보)`). 목 수동 검사 11개(PR #30 §5). 목만 방향성 카드 on.
+- **E-1** 팩 라벨/도움말(칩·EMR O행), **E-2** `neuroExamIds` 검사 파생(D-1; 목 = C5–T1 기준선 + UMN), **E-3** `domain` +
+  `rehabDomains`, **출처 게이트** `provenance` 6필드(`packContentGaps`), **E-4** J절 부정 단언, **E-5**
+  `scripts/region-stage-distribution.mjs <region>`(요통 스크립트는 껍데기).
+- **⑤** `docs/NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` DRAFT — 원장+Opus 초안. 팩 반영 0.
+- DECISIONS 2026-09-07 두 번째 항목, `docs/PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md` 갱신.
+
+### 검증
+`region-pack` 307(변이 5/5 죽음) / `lbp-stage-pilot` 46 / 요통 스위트 전부 무수정 통과 / `doctor` 1041 /
+`doctor-workspace` 302 / `server` 233 / `detail-check` 61 / `tsc -b` 0 / `build` green / **`test:all` exit 0 (65 스위트)**.
+
+### 못 한 것 (blocker)
+- **PR #30 → main merge**: GitHub 커넥터가 `invalid session` — API로 draft 해제·merge 불가. PO가 GitHub UI에서
+  직접 merge하거나, 이 브랜치 PR과 함께 들어가게 둔다(같은 커밋 포함).
+
+### Next Recommended Action
+1. **원장**: `docs/NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9개(후보 유지/삭제, 7필드 문장, 단계표,
+   규칙, 검사 쌍, 재질문, 재검증). 특히 §1.2 CPG 2017 표는 **원문 대조 필수**(등급 미기재 이유).
+2. Opus 임상 검수 → `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md` → Sonnet: 팩 인코딩 + vignette 스위트 + 서버 재질문 표
+   + `provenance` 전 필드 `CLINICIAN_APPROVED` + `packContentGaps === []` → `productionApproved: true` (④~⑤).
+3. 어깨 → 무릎 같은 순서(설계 §7). 요통 파일럿 병행.
+
+---
+
 ## 2026-09-07 (최신 36): PR #30 확인 — 복구 재활 아키텍처(목·어깨·무릎) + 요통 동등성 설계 v0.1. **PO 결정 5건 대기, 코드 0줄**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. 변경: 문서만 —

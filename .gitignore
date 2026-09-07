@@ -202,8 +202,10 @@ tests/.r18-*
 tests/.r19-*
 tests/.r20-*
 
-# esbuild bundle used by scripts/lbp-stage-distribution.mjs (regenerated, not source)
+# esbuild bundles used by scripts/region-stage-distribution.mjs / lbp-stage-distribution.mjs (regenerated, not source)
 scripts/.lbp-exercise-stage-bundle.mjs
+scripts/.region-routing-bundle.mjs
+scripts/.region-pack-bundle.mjs
 
 # esbuild bundles used by tests/lbp-capability-layer.spec.mjs (regenerated, not source)
 tests/.lbp-capability-layer-bundle.mjs

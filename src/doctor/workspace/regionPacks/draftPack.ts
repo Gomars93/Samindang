@@ -18,9 +18,18 @@ import type { DoctorPayload } from '../../types'
 import type { FollowUpTarget } from '../finalAssessment'
 import { followUpTarget } from '../finalAssessment'
 import { emptyExamResult, type PhysicalExamSuggestion } from '../examSuggestion'
-import type { HypothesisPattern, RegionCoreExercise, RegionJudgmentInputs, RegionKey, RegionPack, RegionSafetyEvaluation } from '../regionPack'
+import type {
+  HypothesisPattern,
+  RegionCoreExercise,
+  RegionJudgmentInputs,
+  RegionKey,
+  RegionPack,
+  RegionPackProvenance,
+  RegionRehabDomain,
+  RegionSafetyEvaluation,
+} from '../regionPack'
 import { REGION_LABEL_KO } from '../regionPack'
-import type { ExamHelp } from '../lbpExamSuggestions'
+import type { ExamHelp, DirectionalResponse } from '../lbpExamSuggestions'
 import { buildEligibilityRule, type LbpExerciseEligibilityRule } from '../lbpExerciseEligibility'
 import type { LbpExerciseStageAssignment } from '../lbpExerciseStageTable'
 
@@ -38,8 +47,10 @@ export type DraftExercise = {
   acceptableResponseKo?: readonly string[]
   /** 팩의 목표 기능 enum 값. 비어 있으면 어떤 목표 기능에도 매칭되지 않아 후보에 오르지 못한다 — 승인 전 채워야 한다. */
   targetFunctions?: readonly string[]
-  /** 후보 카드 "이유" 한 줄(요통의 전략 라벨 자리). 문서의 패턴 이름을 넣는다. */
-  strategyLabelKo: string
+  /** E-3: 팩 `rehabDomains`의 id. 미배정이면 '' — `packContentGaps`가 나열한다. */
+  domain?: string
+  /** 후보 카드 "이유" 한 줄(요통의 전략 라벨 자리). 생략하면 `domain`의 라벨을 쓴다. */
+  strategyLabelKo?: string
 }
 
 export type DraftExam = {
@@ -61,6 +72,15 @@ export type DraftPackSpec = {
   evaluateSafety: (payload: DoctorPayload, judgment: RegionJudgmentInputs) => RegionSafetyEvaluation
   /** 방향성 반응 카드가 이 부위에 의미가 있는가(원장 결정). 기본 false. */
   directionalResponseApplicable?: boolean
+  /** E-1: 부위별 방향성 칩 라벨·도움말(생략 시 요통 문구). */
+  directionalResponseLabels?: Readonly<Partial<Record<DirectionalResponse, string>>>
+  directionalResponseHelp?: ExamHelp
+  /** E-2: 신경 상태를 파생할 검사 id(객관적 결손 검사만). 생략 = [] = `evaluateSafety` 값 그대로(UNKNOWN). */
+  neuroExamIds?: readonly string[]
+  /** E-3: PR #30 재활 도메인 표. */
+  rehabDomains: readonly RegionRehabDomain[]
+  /** 필드별 출처 — 승인 게이트(`packContentGaps`). */
+  provenance: RegionPackProvenance
   detailCheckQuestionIds?: readonly string[]
 }
 
@@ -78,9 +98,11 @@ export function buildDraftPack(spec: DraftPackSpec): RegionPack {
     if (!t.id.endsWith('_tf_custom')) targetFunctionIdToEnum[t.id] = tfEnum(spec.region, t.id)
     if (t.placeholder) targetFunctionPlaceholders[t.id] = t.placeholder
   }
+  const domainLabel = new Map(spec.rehabDomains.map((d) => [d.id, d.labelKo]))
   const coreExercises: RegionCoreExercise[] = spec.exercises.map((e) => ({
     exerciseId: e.id,
     displayNameKo: e.displayNameKo,
+    domain: e.domain ?? '',
     startingCriteriaKo: e.startingCriteriaKo ?? [],
     startingDoseKo: e.startingDoseKo ?? '',
     acceptableResponseKo: e.acceptableResponseKo ?? [],
@@ -88,7 +110,7 @@ export function buildDraftPack(spec: DraftPackSpec): RegionPack {
     regressionKo: e.regressionKo ?? '',
     progressionKo: e.progressionKo ?? '',
     targetFunctions: e.targetFunctions ?? [],
-    strategyLabelKo: e.strategyLabelKo,
+    strategyLabelKo: e.strategyLabelKo ?? (e.domain ? domainLabel.get(e.domain) ?? '' : ''),
   }))
   const known = new Set(coreExercises.map((e) => e.exerciseId))
   const eligibilityRules: LbpExerciseEligibilityRule[] = coreExercises.map((e) =>
@@ -120,6 +142,11 @@ export function buildDraftPack(spec: DraftPackSpec): RegionPack {
     stageTable: spec.stageTable ?? {},
     eligibilityRules,
     directionalResponseApplicable: spec.directionalResponseApplicable ?? false,
+    directionalResponseLabels: spec.directionalResponseLabels,
+    directionalResponseHelp: spec.directionalResponseHelp,
+    neuroExamIds: spec.neuroExamIds ?? [],
+    rehabDomains: spec.rehabDomains,
+    provenance: spec.provenance,
     directSupportByExam: {},
     examHelp,
     clinicianAddableExams,
@@ -145,9 +172,11 @@ export function packContentGaps(pack: RegionPack): string[] {
   if (nonCustomTfs.length === 0) gaps.push('targetFunctions: 자유 입력 외 목표 기능 0개')
   if (pack.coreExercises.length === 0) gaps.push('coreExercises: 운동 0개')
   const ruleIds = new Set(pack.eligibilityRules.map((r) => r.exerciseId))
+  const domainIds = new Set(pack.rehabDomains.map((d) => d.id))
   for (const e of pack.coreExercises) {
     const at = `coreExercises.${e.exerciseId}`
     if (!e.displayNameKo.trim()) gaps.push(`${at}.displayNameKo 비어 있음`)
+    if (!domainIds.has(e.domain)) gaps.push(`${at}.domain '${e.domain}' — rehabDomains에 없음 (E-3 도메인 미배정)`)
     if (e.startingCriteriaKo.length === 0) gaps.push(`${at}.startingCriteriaKo 비어 있음`)
     if (!e.startingDoseKo.trim()) gaps.push(`${at}.startingDoseKo 비어 있음`)
     if (e.stopReviewKo.length === 0) gaps.push(`${at}.stopReviewKo 비어 있음`)
@@ -161,5 +190,16 @@ export function packContentGaps(pack: RegionPack): string[] {
     if (!ruleIds.has(e.exerciseId)) gaps.push(`eligibilityRules.${e.exerciseId} 없음 (후보에서 조용히 빠짐)`)
   }
   if (!pack.sourceDocument.trim()) gaps.push('sourceDocument 비어 있음')
+  // E-2: 신경 파생 검사 id는 이 팩이 실제로 낼 수 있는 검사여야 한다 — 자동 제안(`examHelp` 키)
+  // 또는 "확인 추가" 목록. 아니면 원장이 그 검사를 기록할 길이 없어 신경 상태가 영원히 UNKNOWN이다.
+  const knownExamIds = new Set([...Object.keys(pack.examHelp), ...pack.clinicianAddableExams.map((x) => x.id)])
+  for (const id of pack.neuroExamIds) {
+    if (!knownExamIds.has(id)) gaps.push(`neuroExamIds.${id} — examHelp/clinicianAddableExams에 없는 검사 id`)
+  }
+  // 출처 게이트(요통 동등성 설계 §4): 원장 승인(CLINICIAN_APPROVED)이 아닌 필드는 전부 빈 칸이다.
+  // PR #30 프레임워크·아카이브 후보·Claude 초안은 승인 전 원장이 행마다 유지/삭제/확정해야 한다.
+  for (const [field, prov] of Object.entries(pack.provenance)) {
+    if (prov !== 'CLINICIAN_APPROVED') gaps.push(`provenance.${field} = ${prov} (원장 확정 전)`)
+  }
   return gaps
 }

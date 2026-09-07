@@ -188,6 +188,8 @@ export function buildPainWorkspaceEmrPreview(input: {
   regionWorkingHypothesis?: { patterns: readonly HypothesisPattern[]; value: WorkingHypothesis } | null
   /** 부위 팩 일반화(2026-09-06, R2): O행 "…움직임 반응:"의 부위 라벨. 생략하면 요통("허리")이라 옛 문장과 글자 단위로 같다. */
   regionLabelKo?: string
+  /** E-1(2026-09-07): 팩의 부위별 방향성 칩 라벨. 화면 칩과 EMR O행이 같은 글자를 써야 한다. 생략/빠진 값은 요통 라벨. */
+  directionalResponseLabels?: Readonly<Partial<Record<LbpDirectionalResponse, string>>>
   /** §14.1 O/S "발병 및 경과": tablet-reported duration/frequency text (DoctorView.tsx's own `durationFrequencyText`) — patient self-report, NEVER O. */
   onsetDurationText?: string | null
   /** §14.1 O/S "(재진) 경과 요약": a REVISIT's clinician-recorded quick-check recap (e.g. `summarizeRevisitQuickCheckKo`'s output) — appended after `onsetDurationText` on the same O/S line, never split onto its own key. Still not the `O` line: O/S is the onset-and-course key, not the exam-findings key the file header's ONE ABSOLUTE RULE governs. */
@@ -227,7 +229,9 @@ export function buildPainWorkspaceEmrPreview(input: {
     isValidLbpDirectionalResponse(input.lbpDirectionalResponse) &&
     input.lbpDirectionalResponse !== 'NOT_ASSESSED'
   ) {
-    oParts.push(`${movementResponseLabelKo}: ${lbpDirectionalResponseLabel(input.lbpDirectionalResponse)}`)
+    oParts.push(
+      `${movementResponseLabelKo}: ${input.directionalResponseLabels?.[input.lbpDirectionalResponse] ?? lbpDirectionalResponseLabel(input.lbpDirectionalResponse)}`,
+    )
   }
   const reassessLines = input.reassessment ? reassessmentFindingsLines(input.reassessment.items) : []
   if (reassessLines.length) oParts.push(`오늘 재검 소견: ${reassessLines.join('; ')}`)

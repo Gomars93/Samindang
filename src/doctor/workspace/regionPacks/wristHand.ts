@@ -14,5 +14,16 @@ export const WRIST_HAND_REGION_PACK = buildDraftPack({
   targetFunctions: [{ id: 'wrist_hand_tf_custom', label: '기타 목표 동작', placeholder: '목표 동작을 적어주세요' }],
   exercises: [],
   clinicianAddableExams: [],
+  // E-3: PR #30 범위 밖 부위 — 도메인 표 없음(원장 ② 문서에서 정한다). 운동 행은 전부 도메인 미배정으로 빈 칸에 오른다.
+  rehabDomains: [],
+  // 출처 표기(요통 동등성 설계 §4) — 승인 게이트. 빈 팩 — 원장 문서 없음.
+  provenance: {
+    hypothesisPatterns: 'CLAUDE_DRAFT',
+    targetFunctions: 'CLAUDE_DRAFT',
+    coreExercises: 'CLAUDE_DRAFT',
+    stageTable: 'CLAUDE_DRAFT',
+    clinicianAddableExams: 'CLAUDE_DRAFT',
+    directSupportByExam: 'CLAUDE_DRAFT',
+  },
   evaluateSafety: (payload) => evaluateWristHandSafety(payload),
 })

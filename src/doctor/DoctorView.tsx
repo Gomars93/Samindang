@@ -3198,6 +3198,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       regionWorkingHypothesis:
         regionPack && regionState ? { patterns: regionPack.hypothesisPatterns, value: regionState.workingHypothesis } : null,
       regionLabelKo: regionPack?.labelKo,
+      directionalResponseLabels: regionPack?.directionalResponseLabels,
       onsetDurationText: durationFrequencyText(r, routing.primary_module),
       aggravatingText: aggravatingSummaryText(routing.primary_module, r.modules),
       impactText: isEmptyValue(r.visit_goal.chief_impact)

@@ -20,7 +20,7 @@ import type { FollowUpTarget } from './finalAssessment'
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import type { LbpExerciseEligibilityRule } from './lbpExerciseEligibility'
 import type { LbpExerciseStageAssignment } from './lbpExerciseStageTable'
-import type { ExamHelp } from './lbpExamSuggestions'
+import type { ExamHelp, DirectionalResponse } from './lbpExamSuggestions'
 
 /** `payload.responses.safety_flags`의 키와 동일 (`src/spec/coreSpec.ts` `safety_flags:` 블록). */
 export type RegionKey = 'lbp' | 'neck' | 'shoulder' | 'knee' | 'hip' | 'ankle_foot' | 'elbow' | 'wrist_hand' | 'tmj'
@@ -58,10 +58,33 @@ export type HypothesisPattern = {
   particleKo: '과' | '와'
 }
 
-/** Core 세트 한 행 — 요통 `LbpCoreExerciseMetadata`와 같은 필드에 `strategyLabelKo`(후보 카드 "이유" 한 줄)만 미리 계산해 얹은 형태. */
+/**
+ * 팩 필드별 콘텐츠 출처(요통 동등성 설계 §4 "출처 신뢰 표기", DECISIONS 2026-09-07 PO 승인).
+ * - `CLINICIAN_APPROVED`  원장 승인 문서에서 옮김 + 팩 승인 완료(요통 Core-20). 유일하게 승인 가능한 값.
+ * - `CLINICIAN_DOCUMENT`  원장이 쓴 문서에서 옮겼지만 이 팩 용도로는 아직 확정 전(예: 원장 검사 스크립트).
+ * - `PR30_FRAMEWORK`      PR #30 복구 재활 아키텍처(가이드라인 인용, REFERENCE ONLY)에서 옮김. 한국어 라벨은 Claude 초안.
+ * - `ARCHIVE_CANDIDATE`   Notion 아카이브 매선 프로토콜("원장 발목 포맷의 AI 확장" 가능성) — 후보 목록으로만, 승인 시 행마다 유지/삭제.
+ * - `CLAUDE_DRAFT`        원장 문서에 없어 Claude가 채운 초안(목표 기능·환자용 쉬운 말 등).
+ * `packContentGaps`는 `CLINICIAN_APPROVED`가 아닌 필드를 전부 빈 칸으로 나열한다 — 출처 표기가 곧 승인 게이트다.
+ */
+export type RegionContentProvenance = 'CLINICIAN_APPROVED' | 'CLINICIAN_DOCUMENT' | 'PR30_FRAMEWORK' | 'ARCHIVE_CANDIDATE' | 'CLAUDE_DRAFT'
+
+export type RegionPackProvenance = Readonly<
+  Record<'hypothesisPatterns' | 'targetFunctions' | 'coreExercises' | 'stageTable' | 'clinicianAddableExams' | 'directSupportByExam', RegionContentProvenance>
+>
+
+/** 재활 도메인 한 행 — PR #30 "Rehabilitation domains"(목 9·어깨 8·무릎 11), 요통은 카탈로그 도메인 13. 운동 행의 `domain`이 이 id 공간을 가리킨다. */
+export type RegionRehabDomain = {
+  id: string
+  labelKo: string
+}
+
+/** Core 세트 한 행 — 요통 `LbpCoreExerciseMetadata`와 같은 필드에 `strategyLabelKo`(후보 카드 "이유" 한 줄)와 `domain`(E-3)을 얹은 형태. */
 export type RegionCoreExercise = {
   exerciseId: string
   displayNameKo: string
+  /** 팩 `rehabDomains`의 id. 도메인 분류 보존용(E-3) — 추천 엔진은 읽지 않는다(진단·도메인 → 운동 자동 매핑 금지). '' = 미배정. */
+  domain: string
   startingCriteriaKo: readonly string[]
   startingDoseKo: string
   acceptableResponseKo: readonly string[]
@@ -113,6 +136,25 @@ export type RegionPack = {
   eligibilityRules: readonly LbpExerciseEligibilityRule[]
   /** 방향성 반응 카드·게이트가 이 부위에 의미가 있는가. false면 카드를 렌더하지 않고 값은 NOT_ASSESSED로 고정된다. */
   directionalResponseApplicable: boolean
+  /**
+   * E-1: 방향성 반응 6값의 부위별 칩 라벨. 값 집합·저장 형식은 공통(요통과 같음)이고 라벨만
+   * 바뀐다(목: "팔 쪽으로 퍼짐"). 없거나 빠진 값은 요통 라벨(`DIRECTIONAL_RESPONSE_OPTIONS`)을 쓴다.
+   */
+  directionalResponseLabels?: Readonly<Partial<Record<DirectionalResponse, string>>>
+  /** E-1: 방향성 반응 카드 ⓘ 도움말. 없으면 요통 문구(`LBP_DIRECTIONAL_RESPONSE_HELP`). */
+  directionalResponseHelp?: ExamHelp
+  /**
+   * E-2 (D-1, DECISIONS 2026-09-07): 이 부위의 신경 상태를 파생할 검사 id들(`clinicianAddableExams` 또는
+   * 자동 제안에 있는 id). 비어 있지 않으면 추천 엔진은 `evaluateSafety().neuroStatus` 대신 기록된 검사
+   * 결과로 `neuroStatus`를 만든다 — 하나라도 POSITIVE → NEW_OR_WORSENING(전체 차단, RF-3b), 전부 NEGATIVE →
+   * STABLE, 그 밖(미시행·UNCLEAR·LIMITED·NOT_PERFORMED·항목 없음) → UNKNOWN. 비어 있으면(요통) 기존 경로 그대로.
+   * 여기 넣는 검사는 "객관적 신경학적 결손(새로 생김/악화)" 의미의 검사만 — 유발 검사(Spurling 등)는 넣지 않는다.
+   */
+  neuroExamIds: readonly string[]
+  /** E-3: 이 부위의 재활 도메인 표(PR #30). 운동 행의 `domain`이 가리키는 id 공간. 추천 엔진은 읽지 않는다. */
+  rehabDomains: readonly RegionRehabDomain[]
+  /** 필드별 콘텐츠 출처 — `packContentGaps`의 승인 게이트. */
+  provenance: RegionPackProvenance
   /** 검사 id → 그 검사가 POSITIVE일 때 "직접 뒷받침"으로 올라가는 운동 id들 (요통: 하지직거상/슬럼프 → LBP_NEURAL_01). */
   directSupportByExam: Readonly<Record<string, readonly string[]>>
   /** L1 검사 제안의 ⓘ 도움말(id별). 저장되지 않고 병합 시 다시 붙는다. */

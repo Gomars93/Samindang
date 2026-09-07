@@ -38,7 +38,8 @@ import { selectedTargetFunctions } from './lbpTargetFunction'
 import type { FollowUpTarget } from './finalAssessment'
 import type { RehabSuggestion } from './rehabSuggestion'
 import type { WorkspaceState } from './persistence'
-import type { RegionCoreExercise, RegionJudgmentInputs, RegionPack } from './regionPack'
+import type { RegionCoreExercise, RegionJudgmentInputs, RegionNeuroStatus, RegionPack } from './regionPack'
+import type { PhysicalExamSuggestion } from './examSuggestion'
 import { LBP_REGION_PACK } from './regionPacks/lbp'
 
 // 옛 위치에서 import하던 호출부/테스트를 위해 그대로 다시 export한다 — 표 자체는
@@ -193,6 +194,29 @@ function directlySupportedExerciseIds(pack: RegionPack, examSuggestions: Workspa
 }
 
 /**
+ * E-2 (D-1, DECISIONS 2026-09-07): 팩이 `neuroExamIds`를 선언한 부위의 신경 상태를
+ * 기록된 검사 결과에서 파생한다. 요통은 선언하지 않아(빈 배열) null을 돌려주고
+ * 호출부가 `evaluateSafety().neuroStatus`(원장 판단 필드)를 그대로 쓴다.
+ *
+ * 규칙(보수적, RF-1/RF-12와 같은 방향 — 미확인을 안정으로 읽지 않는다):
+ *   - 하나라도 `POSITIVE` → `NEW_OR_WORSENING` (호출부가 RF-3b로 전체 차단)
+ *   - 선언된 검사 **전부**가 기록에 있고 전부 `NEGATIVE` → `STABLE`
+ *   - 그 밖(항목 없음·NOT_YET_CHECKED·UNCLEAR·LIMITED·NOT_PERFORMED 섞임) → `UNKNOWN`
+ * "전부 NEGATIVE"를 요구하는 이유: 요통의 STABLE은 원장이 `NONE`이라고 한 번에 판단한
+ * 값이다. 검사 3개 중 1개만 음성인 상태를 그와 같은 무게로 읽으면 안 된다.
+ */
+export function neuroStatusFromExamResults(
+  neuroExamIds: readonly string[],
+  examSuggestions: readonly PhysicalExamSuggestion[],
+): RegionNeuroStatus | null {
+  if (neuroExamIds.length === 0) return null
+  const statuses = neuroExamIds.map((id) => examSuggestions.find((i) => i.id === id)?.result.status)
+  if (statuses.some((st) => st === 'POSITIVE')) return 'NEW_OR_WORSENING'
+  if (statuses.every((st) => st === 'NEGATIVE')) return 'STABLE'
+  return 'UNKNOWN'
+}
+
+/**
  * §2.2/G9 (부위 무관 본체): 부위 팩 + `DoctorPayload` + 원장 객관 소견 + 부위별
  * 기록 두 값 + workspace record -> ranked, safety-gated exercise candidates.
  * Pure and safe to call on every render (nothing here is persisted by this
@@ -223,8 +247,10 @@ export function buildRecommendationContext(
     return EMPTY_RESULT(locked, lockedMessage, 'SAFETY_REVIEW', safetyReviewBlockedMessageKo(pack.labelKo), confirmedStage)
   }
 
+  // E-2: 팩이 신경 검사 id를 선언했으면(요통은 아님) 검사 결과가 신경 상태다.
+  const neuroStatus = neuroStatusFromExamResults(pack.neuroExamIds, workspaceState.painExamSuggestions) ?? safety.neuroStatus
   const context = buildEligibilityContextFrom(
-    { routineCareAllowed: safety.routineCareAllowed, neuroStatus: safety.neuroStatus },
+    { routineCareAllowed: safety.routineCareAllowed, neuroStatus },
     pack.directionalResponseApplicable ? regionState.directionalResponse : 'NOT_ASSESSED',
   )
 

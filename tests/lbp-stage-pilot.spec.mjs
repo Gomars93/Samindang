@@ -24,30 +24,36 @@ function assert(name, cond) {
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SCRIPT = path.join(ROOT, 'scripts', 'lbp-stage-distribution.mjs')
 const SCRIPT_SOURCE = readFileSync(SCRIPT, 'utf8')
+// E-5(2026-09-07): 본체는 부위 무관 스크립트. 요통 껍데기와 본체 둘 다 개인정보 규칙을 지켜야 한다.
+const GENERIC_SCRIPT = path.join(ROOT, 'scripts', 'region-stage-distribution.mjs')
+const GENERIC_SOURCE = readFileSync(GENERIC_SCRIPT, 'utf8')
 
+// 부위 기록의 판별은 화면과 같은 규칙(`drivingRegion`: `safety_flags.<region>`이 non-null)이다.
+// 요통이 아닌 위치(loc)는 그 부위의 안전 플래그를 갖는 기록으로 만든다 — 태블릿이 실제로 내는 형태.
 function record(id, { impact, duration, loc = 'low_back_pelvis', interval, fear, work } = {}) {
-  const lbp = {}
-  if (interval) lbp.recurrence_interval = interval
-  if (fear) lbp.fear_avoidance = fear
-  if (work) lbp.work_impact = work
+  const regional = {}
+  if (interval) regional.recurrence_interval = interval
+  if (fear) regional.fear_avoidance = fear
+  if (work) regional.work_impact = work
+  const regionKey = loc === 'low_back_pelvis' ? 'lbp' : loc
   return {
     id,
     submission: {
       responses: {
         pain: { primary_location: loc },
         visit_goal: { chief_impact: impact, chief_duration: duration },
-        safety_flags: { lbp },
+        safety_flags: { [regionKey]: regional },
       },
     },
   }
 }
 
-function run(records, extraFiles = {}) {
+function run(records, extraFiles = {}, script = SCRIPT, args = []) {
   const dir = mkdtempSync(path.join(tmpdir(), 'lbp-pilot-'))
   try {
     records.forEach((r, i) => writeFileSync(path.join(dir, `r${i}.json`), JSON.stringify(r)))
     for (const [name, body] of Object.entries(extraFiles)) writeFileSync(path.join(dir, name), body)
-    return execFileSync(process.execPath, [SCRIPT], {
+    return execFileSync(process.execPath, [script, ...args], {
       env: { ...process.env, SAMINDANG_DATA_DIR: dir },
       encoding: 'utf8',
       cwd: ROOT,
@@ -200,16 +206,51 @@ const TEN = [
 }
 
 // ---------------------------------------------------------------------------
-// 5. 개인정보 — 스크립트가 애초에 그 필드들을 읽지 않는다
+// 5. 개인정보 — 스크립트가 애초에 그 필드들을 읽지 않는다 (요통 껍데기 + 부위 본체 둘 다)
 // ---------------------------------------------------------------------------
 
 const PII_FIELDS = ['patient_name', 'phone_last4', 'birth', 'patient_label', 'myungri', 'note']
 for (const f of PII_FIELDS) {
-  assert(`개인정보: 스크립트가 '${f}'를 읽지 않는다`, !SCRIPT_SOURCE.includes(f))
+  assert(`개인정보: 스크립트가 '${f}'를 읽지 않는다`, !SCRIPT_SOURCE.includes(f) && !GENERIC_SOURCE.includes(f))
 }
 assert(
   '개인정보: 기록 전체를 그대로 출력하는 코드가 없다',
-  !/console\.log\([^)]*record\b/.test(SCRIPT_SOURCE) && !/JSON\.stringify\(record/.test(SCRIPT_SOURCE),
+  !/console\.log\([^)]*record\b/.test(SCRIPT_SOURCE) && !/JSON\.stringify\(record/.test(SCRIPT_SOURCE) &&
+    !/console\.log\([^)]*record\b/.test(GENERIC_SOURCE) && !/JSON\.stringify\(record/.test(GENERIC_SOURCE),
 )
+
+// ---------------------------------------------------------------------------
+// 6. E-5 부위 일반화 — 같은 본체가 다른 부위로 돈다; 요통 껍데기는 본체를 부른다
+// ---------------------------------------------------------------------------
+
+assert('E-5: 요통 스크립트는 부위 본체를 import하는 껍데기다', /from '\.\/region-stage-distribution\.mjs'/.test(SCRIPT_SOURCE) && /runStageDistribution\('lbp'\)/.test(SCRIPT_SOURCE))
+assert('E-5: 본체는 기록의 부위를 화면과 같은 규칙(drivingRegion)으로 정한다 — primary_location 문자열 비교가 아니다', /drivingRegion\(responses\) !== region/.test(GENERIC_SOURCE) && !/low_back_pelvis/.test(GENERIC_SOURCE))
+assert('E-5: 본체는 부위 인자로 stageInputFromPayload를 부른다', /stageInputFromPayload\(region, submission\)/.test(GENERIC_SOURCE))
+{
+  const recs = [
+    ...TEN,
+    record('n1', { impact: 'moderate', duration: '1_3m', loc: 'neck' }), // 2
+    record('n2', { impact: 'severe', duration: 'within_1w', loc: 'neck' }), // 1 - 1 = 0
+  ]
+  const out = run(recs, {}, GENERIC_SCRIPT, ['neck'])
+  assert('E-5 neck: 제목이 목 운동 단계다', out.includes('목 운동 단계 — 회고 파일럿 분포'))
+  assert('E-5 neck: 목 기록 3건만 센다 (TEN의 목 1건 + 2건; 요통 9건 제외)', /목 주호소 : 3건/.test(out))
+  assert('E-5 neck: 0단계 2건 (TEN의 목 severe+급성 1건 + n2)', countFor(out, '0단계 · 보호/안정') === 2)
+  assert('E-5 neck: 2단계 1건', countFor(out, '2단계 · 움직임 조절') === 1)
+  assert('E-5 neck: 요통 전용 LBP_07B 안내는 뜨지 않고, 목 격하 입력 부재 안내가 뜬다', !out.includes('LBP_07B') && out.includes('목 안전 플래그에는 재발 간격·공포회피 입력이 아직 없습니다'))
+}
+{
+  const out = run(TEN, {}, GENERIC_SCRIPT, ['lbp'])
+  assert('E-5 lbp: 본체를 lbp로 직접 불러도 요통 껍데기와 같은 집계다', /요통 주호소\s+:\s*9건/.test(out) && countFor(out, '0단계 · 보호/안정') === 2 && countFor(out, '2단계 · 움직임 조절') === 3)
+}
+{
+  let out = ''
+  try {
+    run([record('x', { impact: 'mild', duration: '1_3m' })], {}, GENERIC_SCRIPT, ['spine'])
+  } catch (e) {
+    out = `${e.stdout ?? ''}${e.stderr ?? ''}`
+  }
+  assert('E-5: 알 수 없는 부위 인자는 exit code 0이 아니고 가능한 값을 알려준다', out.includes("알 수 없는 부위 'spine'") && out.includes('lbp, neck, shoulder'))
+}
 
 console.log(`\n${passCount} assertions passed.`)

@@ -61,6 +61,7 @@ import { PAIN_FOLLOW_UP_OPTIONS, type FollowUpTarget, type PainFinalAssessment, 
 } from './finalAssessment'
 import type { PhysicalExamSuggestion } from './examSuggestion'
 import {
+  type ExamHelp,
   LBP_DIRECTIONAL_RESPONSE_HELP,
   LBP_DIRECTIONAL_RESPONSE_OPTIONS,
   type LbpDirectionalResponse,
@@ -109,14 +110,21 @@ function DirectionalResponseCard({
   regionLabelKo,
   value,
   onChange,
+  labels,
+  help = LBP_DIRECTIONAL_RESPONSE_HELP,
 }: {
   regionLabelKo: string
   value: LbpDirectionalResponse
   onChange: (next: LbpDirectionalResponse) => void
+  /** E-1: 팩의 부위별 칩 라벨. 없거나 빠진 값은 요통 라벨(값 집합은 공통). */
+  labels?: Readonly<Partial<Record<LbpDirectionalResponse, string>>>
+  /** E-1: 팩의 ⓘ 도움말. 없으면 요통 문구. */
+  help?: ExamHelp
 }) {
   const helpId = useId()
   const [helpOpen, setHelpOpen] = useState(false)
   const title = `${regionLabelKo} 움직임 반응`
+  const options = LBP_DIRECTIONAL_RESPONSE_OPTIONS.map((opt) => ({ value: opt.value, label: labels?.[opt.value] ?? opt.label }))
   return (
     <div className="workspace__examCard workspace__examCard--directional">
       <div className="workspace__examCard__head">
@@ -127,7 +135,7 @@ function DirectionalResponseCard({
           aria-expanded={helpOpen}
           aria-controls={helpId}
           aria-label={`${title} 도움말`}
-          title={`어떻게: ${LBP_DIRECTIONAL_RESPONSE_HELP.howKo}\n왜: ${LBP_DIRECTIONAL_RESPONSE_HELP.whyKo}`}
+          title={`어떻게: ${help.howKo}\n왜: ${help.whyKo}`}
           onClick={() => setHelpOpen((o) => !o)}
         >
           <span aria-hidden="true">ⓘ</span>
@@ -135,12 +143,12 @@ function DirectionalResponseCard({
       </div>
       {helpOpen && (
         <div id={helpId} className="workspace__examCard__help">
-          <p>어떻게: {LBP_DIRECTIONAL_RESPONSE_HELP.howKo}</p>
-          <p>왜: {LBP_DIRECTIONAL_RESPONSE_HELP.whyKo}</p>
+          <p>어떻게: {help.howKo}</p>
+          <p>왜: {help.whyKo}</p>
         </div>
       )}
       <div className="workspace__examCard__statusRow" role="group" aria-label={`${title} 선택`}>
-        {LBP_DIRECTIONAL_RESPONSE_OPTIONS.map((opt) => (
+        {options.map((opt) => (
           <button
             key={opt.value}
             type="button"
@@ -365,6 +373,8 @@ export function PainWorkspaceLane2({
                 regionLabelKo={pack.labelKo}
                 value={directionalResponse ?? 'NOT_ASSESSED'}
                 onChange={onChangeDirectionalResponse ?? (() => {})}
+                labels={pack.directionalResponseLabels}
+                help={pack.directionalResponseHelp}
               />
             )}
             {examSuggestions.length > 0 && (
@@ -521,6 +531,20 @@ function StageCard({
 
 const VISIBLE_REHAB_CANDIDATE_COUNT = 3
 
+/** 요통 안내문 원문(2026-09-05) — 글자 단위로 유지. 다른 부위는 `neuroUnrecordedHintForPack`. */
+export const LBP_NEURO_UNRECORDED_HINT_KO =
+  '신경학적 이상 소견(레인2 "객관적 검사 소견")을 먼저 기록하면 나머지 운동 후보가 나타납니다 — 미확인을 "이상 없음"으로 가정하지 않습니다.'
+
+/**
+ * E-2: 팩이 `neuroExamIds`를 선언한 부위는 그 검사를 기록해야 신경 상태가 정해진다 — 안내문이
+ * 그 검사 이름을 가리킨다. 선언하지 않은 팩(요통)은 요통 원문.
+ */
+export function neuroUnrecordedHintForPack(pack: Pick<RegionPack, 'neuroExamIds' | 'clinicianAddableExams'>): string {
+  if (pack.neuroExamIds.length === 0) return LBP_NEURO_UNRECORDED_HINT_KO
+  const titles = pack.neuroExamIds.map((id) => pack.clinicianAddableExams.find((x) => x.id === id)?.title ?? id)
+  return `신경학적 검사(${titles.join(', ')})를 "확인 추가"로 넣고 결과를 기록하면 나머지 운동 후보가 나타납니다 — 미시행을 "이상 없음"으로 가정하지 않습니다.`
+}
+
 export function PainExerciseSection({
   regionActive,
   rehabSuggestions,
@@ -530,6 +554,7 @@ export function PainExerciseSection({
   treatmentSafetyLockedReasonKo,
   targetFunctionGap,
   neuroUnrecorded = false,
+  neuroUnrecordedHintKo = LBP_NEURO_UNRECORDED_HINT_KO,
   stageSuggestion,
   confirmedStage = null,
   onSetConfirmedStage,
@@ -558,6 +583,8 @@ export function PainExerciseSection({
    * 않기 위해 한 줄 안내를 띄운다 — 원장이 1탭으로 해소할 수 있는 유일한 사유다.
    */
   neuroUnrecorded?: boolean
+  /** E-2: 그 안내문. 요통은 원장 판단 필드(기본값), 신경 검사 파생 부위는 팩이 정한 검사명으로 안내한다. */
+  neuroUnrecordedHintKo?: string
 }) {
   // 2026-09-05: 단계 카드는 아래 어느 분기(안전 블록·0단계 블록·목표기능
   // 미선택)보다도 먼저, 항상 렌더된다 — 0단계로 블록이 접혀 있을 때 원장이
@@ -628,12 +655,7 @@ export function PainExerciseSection({
       {regionActive && treatmentSafetyLockedReasonKo && (
         <p className="workspace__block__hint">{treatmentSafetyLockedReasonKo}</p>
       )}
-      {regionActive && neuroUnrecorded && (
-        <p className="workspace__block__hint">
-          신경학적 이상 소견(레인2 &quot;객관적 검사 소견&quot;)을 먼저 기록하면 나머지 운동 후보가 나타납니다 — 미확인을
-          &quot;이상 없음&quot;으로 가정하지 않습니다.
-        </p>
-      )}
+      {regionActive && neuroUnrecorded && <p className="workspace__block__hint">{neuroUnrecordedHintKo}</p>}
       {rehabSuggestions.length > 0 && (
         <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
@@ -724,6 +746,7 @@ export function PainWorkspaceNext({
     regionWorkingHypothesis:
       pack && regionWorkingHypothesis ? { patterns: pack.hypothesisPatterns, value: regionWorkingHypothesis } : null,
     regionLabelKo: pack?.labelKo,
+    directionalResponseLabels: pack?.directionalResponseLabels,
     onsetDurationText,
     aggravatingText: aggravatingTextForEmr,
     impactText: impactTextForEmr,

@@ -43,7 +43,7 @@ import { answerLabel } from '../labels'
 import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
-import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection } from './PainWorkspace'
+import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnrecordedHintForPack } from './PainWorkspace'
 import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { useOpenOnceContent } from './FinalAssessmentCard'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
@@ -813,6 +813,7 @@ export function DoctorWorkspace({
                   treatmentSafetyLockedReasonKo={regionRecommendation?.treatmentSafetyLockedMessageKo}
                   targetFunctionGap={regionRecommendation?.targetFunctionGap}
                   neuroUnrecorded={regionRecommendation?.neuroUnrecorded}
+                  neuroUnrecordedHintKo={regionPack ? neuroUnrecordedHintForPack(regionPack) : undefined}
                   stageSuggestion={regionStageSuggestion}
                   confirmedStage={regionState?.confirmedStage ?? null}
                   // 확정값만 저장한다 — 제안(regionStageSuggestion)은 절대 여기로

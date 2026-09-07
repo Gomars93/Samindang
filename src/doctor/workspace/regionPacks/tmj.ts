@@ -36,5 +36,16 @@ export const TMJ_REGION_PACK = buildDraftPack({
     { id: 'tmj_exam_scapular_alignment', title: '견갑 정렬(하강/전인)', help: { howKo: '견갑 하강·전인을 본다.', whyKo: '패턴 근원.' } },
     { id: 'tmj_exam_sls_eyes_closed', title: '눈 감고 한 발 서기', help: { howKo: '10초 기준, 좌우 3초 이상 차이.', whyKo: '고유수용성/기능 불균형.' } },
   ],
+  // E-3: PR #30 범위 밖 부위 — 도메인 표 없음(원장 ② 문서에서 정한다). 운동 행은 전부 도메인 미배정으로 빈 칸에 오른다.
+  rehabDomains: [],
+  // 출처 표기(요통 동등성 설계 §4) — 승인 게이트. 패턴 3개는 Claude 초안(문서는 A~D 분류가 아님), 운동·검사는 Notion CCMFU 통합 프로토콜에서 옮김.
+  provenance: {
+    hypothesisPatterns: 'CLAUDE_DRAFT',
+    targetFunctions: 'CLAUDE_DRAFT',
+    coreExercises: 'ARCHIVE_CANDIDATE',
+    stageTable: 'CLAUDE_DRAFT',
+    clinicianAddableExams: 'ARCHIVE_CANDIDATE',
+    directSupportByExam: 'CLAUDE_DRAFT',
+  },
   evaluateSafety: (payload) => evaluateTmjSafety(payload),
 })

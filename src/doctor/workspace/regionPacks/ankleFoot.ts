@@ -44,5 +44,16 @@ export const ANKLE_FOOT_REGION_PACK = buildDraftPack({
     { id: 'ankle_foot_exam_squat', title: '스쿼트 관찰', help: { howKo: '무릎 안쪽 붕괴, 발목 배굴 제한, 골반 회전/기울기를 본다.', whyKo: '패턴 분류의 기본 검사.' } },
     { id: 'ankle_foot_exam_weight_shift', title: '체중 분배 비율(55:45 기준)', help: { howKo: '좌우 체중 분배를 잰다.', whyKo: '55:45 이상 차이면 비정렬 의심.' } },
   ],
+  // E-3: PR #30 범위 밖 부위 — 도메인 표 없음(원장 ② 문서에서 정한다). 운동 행은 전부 도메인 미배정으로 빈 칸에 오른다.
+  rehabDomains: [],
+  // 출처 표기(요통 동등성 설계 §4) — 승인 게이트. 발목 페이지는 원장 원안 포맷(「매선 프로토콜 목차」) → 원장 문서. 팩 용도 확정은 아직.
+  provenance: {
+    hypothesisPatterns: 'CLINICIAN_DOCUMENT',
+    targetFunctions: 'CLAUDE_DRAFT',
+    coreExercises: 'CLINICIAN_DOCUMENT',
+    stageTable: 'CLAUDE_DRAFT',
+    clinicianAddableExams: 'CLINICIAN_DOCUMENT',
+    directSupportByExam: 'CLAUDE_DRAFT',
+  },
   evaluateSafety: (payload) => evaluateAnkleFootSafety(payload),
 })

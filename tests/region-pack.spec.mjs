@@ -11,6 +11,8 @@
  * G. 추천 엔진 — 승인 전 팩은 빈 결과, 요통 차단 문장 불변
  * H. SSR — 승인 전 부위 화면에 가설/단계/방향성 카드 없음, 요통은 있음
  * I. 지운 경로 1개당 소스 단언 1개 (CLAUDE.md)
+ * J. 요통 동등성 §8 + E-1~E-4 (PO 승인 2026-09-07) — PR #30 가설 교체, 방향성 라벨 팩화,
+ *    신경 상태 검사 파생(D-1), 도메인·출처 게이트, 진단→운동 하드코딩 부정 단언
  */
 import { readFileSync } from 'node:fs'
 import React from 'react'
@@ -44,6 +46,7 @@ import {
   buildLbpRecommendationContext,
   safetyReviewBlockedMessageKo,
   neuroRefreshBlockedMessageKo,
+  neuroStatusFromExamResults,
 } from './.region-pack-recommendation-bundle.mjs'
 import { LBP_CORE_EXERCISE_METADATA } from './.region-pack-core-metadata-bundle.mjs'
 import { LBP_EXERCISE_STAGE_BY_ID } from './.region-pack-stage-table-bundle.mjs'
@@ -56,6 +59,7 @@ import {
 import { LBP_TARGET_FUNCTION_OPTIONS, LBP_TARGET_FUNCTION_ID_TO_ENUM } from './.region-pack-target-function-bundle.mjs'
 import { PAIN_SCENARIO_1 } from './.region-pack-fixtures-bundle.mjs'
 import { DoctorWorkspace } from './.region-pack-doctor-workspace-bundle.cjs'
+import { PainWorkspaceLane2, neuroUnrecordedHintForPack, LBP_NEURO_UNRECORDED_HINT_KO } from './.region-pack-pain-workspace-bundle.cjs'
 
 let passed = 0
 function assert(name, cond) {
@@ -193,16 +197,16 @@ assert('D: draft eligibility rules do not require stable neuro / distal stop (no
   const NECK_PATTERNS = REGION_PACKS.neck.hypothesisPatterns
   assert('E: sanitizeRegionClinicalMap drops lbp and unknown keys, keeps only known non-lbp keys', same(Object.keys(sanitizeRegionClinicalMap({ lbp: {}, neck: {}, bogus: {} })), ['neck']))
   assert('E: sanitizeRegionClinicalMap of garbage is {}', same(sanitizeRegionClinicalMap('x'), {}) && same(sanitizeRegionClinicalMap(null), {}) && same(sanitizeRegionClinicalMap([1]), {}))
-  const s = sanitizeRegionClinicalMap({ neck: { directionalResponse: 'FLEXION_FAVORABLE', confirmedStage: 2, workingHypothesis: { supports: { FHP: 'HIGHER', BOGUS: 'nope', 7: 'LOWER' }, recordedAt: 't' } }, knee: 'garbage' })
-  assert('E: valid neck record survives (directional, stage, valid supports only)', s.neck.directionalResponse === 'FLEXION_FAVORABLE' && s.neck.confirmedStage === 2 && same(s.neck.workingHypothesis, { supports: { 7: 'LOWER', FHP: 'HIGHER' }, recordedAt: 't' }) || (s.neck.workingHypothesis.supports.FHP === 'HIGHER' && s.neck.workingHypothesis.supports.BOGUS === undefined))
+  const s = sanitizeRegionClinicalMap({ neck: { directionalResponse: 'FLEXION_FAVORABLE', confirmedStage: 2, workingHypothesis: { supports: { AXIAL_MOBILITY_DEFICIT: 'HIGHER', BOGUS: 'nope', 7: 'LOWER' }, recordedAt: 't' } }, knee: 'garbage' })
+  assert('E: valid neck record survives (directional, stage, valid supports only)', s.neck.directionalResponse === 'FLEXION_FAVORABLE' && s.neck.confirmedStage === 2 && same(s.neck.workingHypothesis, { supports: { 7: 'LOWER', AXIAL_MOBILITY_DEFICIT: 'HIGHER' }, recordedAt: 't' }) || (s.neck.workingHypothesis.supports.AXIAL_MOBILITY_DEFICIT === 'HIGHER' && s.neck.workingHypothesis.supports.BOGUS === undefined))
   assert('E: garbage region record degrades to defaults, not dropped', s.knee.directionalResponse === 'NOT_ASSESSED' && s.knee.confirmedStage === null && same(s.knee.workingHypothesis, { supports: {}, recordedAt: null }))
   assert('E: bad stage values degrade to null', sanitizeRegionClinicalMap({ neck: { confirmedStage: '2' } }).neck.confirmedStage === null && sanitizeRegionClinicalMap({ neck: { confirmedStage: 4 } }).neck.confirmedStage === null && sanitizeRegionClinicalMap({ neck: { confirmedStage: 0 } }).neck.confirmedStage === 0)
 
   const empty = emptyWorkspaceState()
   assert('E: emptyWorkspaceState.regionClinical is {} (additive, schema unchanged 1.1.0)', same(empty.regionClinical, {}) && empty.schema_version === '1.1.0')
   assert('E: legacy record without regionClinical deserializes to {}', same(deserializeWorkspaceState({}).regionClinical, {}))
-  const rt = deserializeWorkspaceState(JSON.parse(JSON.stringify({ ...empty, regionClinical: { neck: { directionalResponse: 'NOT_ASSESSED', confirmedStage: 1, workingHypothesis: { supports: { FHP: 'CONSIDER' }, recordedAt: null } } } })))
-  assert('E: regionClinical round-trips through serialize/deserialize', rt.regionClinical.neck.confirmedStage === 1 && rt.regionClinical.neck.workingHypothesis.supports.FHP === 'CONSIDER')
+  const rt = deserializeWorkspaceState(JSON.parse(JSON.stringify({ ...empty, regionClinical: { neck: { directionalResponse: 'NOT_ASSESSED', confirmedStage: 1, workingHypothesis: { supports: { AXIAL_MOBILITY_DEFICIT: 'CONSIDER' }, recordedAt: null } } } })))
+  assert('E: regionClinical round-trips through serialize/deserialize', rt.regionClinical.neck.confirmedStage === 1 && rt.regionClinical.neck.workingHypothesis.supports.AXIAL_MOBILITY_DEFICIT === 'CONSIDER')
   assert('E: a persisted regionClinical.lbp is dropped on load (single storage path for LBP)', deserializeWorkspaceState({ regionClinical: { lbp: { confirmedStage: 3 } } }).regionClinical.lbp === undefined)
 
   const lbpRead = readRegionClinical({ ...empty, lbpDirectionalResponse: 'EXTENSION_FAVORABLE', lbpConfirmedStage: 2 }, 'lbp', LBP.hypothesisPatterns)
@@ -213,12 +217,12 @@ assert('D: draft eligibility rules do not require stable neuro / distal stop (no
   assert('E: withRegionClinical(neck) writes regionClinical.neck and leaves the LBP fields untouched', w2.regionClinical.neck.confirmedStage === 1 && w2.lbpConfirmedStage === null && w2.regionClinical.neck.directionalResponse === 'NOT_ASSESSED')
   const neckRead = readRegionClinical(w2, 'neck', NECK_PATTERNS)
   assert('E: readRegionClinical(neck) prunes the hypothesis to the pack patterns (all UNJUDGED by default)', same(Object.keys(neckRead.workingHypothesis.supports), NECK_PATTERNS.map((p) => p.id)) && Object.values(neckRead.workingHypothesis.supports).every((v) => v === 'UNJUDGED'))
-  const w3 = withRegionHypothesis(w2, 'neck', { supports: { FHP: 'HIGHER' }, recordedAt: 'now' })
-  assert('E: withRegionHypothesis(neck) keeps confirmedStage and replaces only the hypothesis', w3.regionClinical.neck.confirmedStage === 1 && readRegionHypothesis(w3, 'neck', NECK_PATTERNS).supports.FHP === 'HIGHER')
+  const w3 = withRegionHypothesis(w2, 'neck', { supports: { AXIAL_MOBILITY_DEFICIT: 'HIGHER' }, recordedAt: 'now' })
+  assert('E: withRegionHypothesis(neck) keeps confirmedStage and replaces only the hypothesis', w3.regionClinical.neck.confirmedStage === 1 && readRegionHypothesis(w3, 'neck', NECK_PATTERNS).supports.AXIAL_MOBILITY_DEFICIT === 'HIGHER')
   const vws = emptyVisitWorkspaceState()
   assert('E: VisitWorkspaceState has regionClinical {} and legacy loads to {}', same(vws.regionClinical, {}) && same(deserializeVisitWorkspaceState({}).regionClinical, {}))
-  const v2 = withRegionHypothesis(vws, 'knee', { supports: { STIFF_KNEE: 'LOWER' }, recordedAt: null })
-  assert('E: revisit hypothesis for knee round-trips through deserializeVisitWorkspaceState', deserializeVisitWorkspaceState(JSON.parse(JSON.stringify(v2))).regionClinical.knee.workingHypothesis.supports.STIFF_KNEE === 'LOWER')
+  const v2 = withRegionHypothesis(vws, 'knee', { supports: { KNEE_OA: 'LOWER' }, recordedAt: null })
+  assert('E: revisit hypothesis for knee round-trips through deserializeVisitWorkspaceState', deserializeVisitWorkspaceState(JSON.parse(JSON.stringify(v2))).regionClinical.knee.workingHypothesis.supports.KNEE_OA === 'LOWER')
   assert('E: withRegionHypothesis(lbp) on a revisit state writes lbpWorkingHypothesis', withRegionHypothesis(vws, 'lbp', { supports: { NEURAL: 'HIGHER' }, recordedAt: null }).lbpWorkingHypothesis.supports.NEURAL === 'HIGHER')
 }
 
@@ -230,11 +234,11 @@ assert('D: draft eligibility rules do not require stable neuro / distal stop (no
   const base = { primaryConcern: null, examSuggestions: [], finalAssessment: empty.painFinalAssessment, followUpTargets: [] }
   const lbpHyp = { ...emptyLbpWorkingHypothesis(), supports: { ...emptyLbpWorkingHypothesis().supports, NEURAL: 'HIGHER' } }
   assert('F: LBP hypothesis still reaches the A line unchanged', buildPainWorkspaceEmrPreview({ ...base, lbpWorkingHypothesis: lbpHyp }).includes('임상 가설: 신경근 관여 가능성 높음'))
-  const neckHyp = { supports: { FHP: 'HIGHER' }, recordedAt: null }
+  const neckHyp = { supports: { AXIAL_MOBILITY_DEFICIT: 'HIGHER' }, recordedAt: null }
   const neckText = buildPainWorkspaceEmrPreview({ ...base, lbpWorkingHypothesis: emptyLbpWorkingHypothesis(), regionWorkingHypothesis: { patterns: REGION_PACKS.neck.hypothesisPatterns, value: neckHyp } })
-  assert('F: region hypothesis reaches the A line when the LBP one is blank', neckText.includes('임상 가설: 전방머리자세(FHP)형 가능성 높음'))
+  assert('F: region hypothesis reaches the A line when the LBP one is blank', neckText.includes('임상 가설: 목 움직임 제한(축성 목통증) 가능성 높음'))
   const bothText = buildPainWorkspaceEmrPreview({ ...base, lbpWorkingHypothesis: lbpHyp, regionWorkingHypothesis: { patterns: REGION_PACKS.neck.hypothesisPatterns, value: neckHyp } })
-  assert('F: LBP hypothesis takes precedence over the region one (never two 임상 가설 clauses)', bothText.includes('신경근 관여') && !bothText.includes('전방머리자세'))
+  assert('F: LBP hypothesis takes precedence over the region one (never two 임상 가설 clauses)', bothText.includes('신경근 관여') && !bothText.includes('축성 목통증'))
   assert('F: blank region hypothesis contributes no 임상 가설 clause', !buildPainWorkspaceEmrPreview({ ...base, regionWorkingHypothesis: { patterns: REGION_PACKS.neck.hypothesisPatterns, value: { supports: {}, recordedAt: null } } }).includes('임상 가설'))
   assert('F: O line label defaults to 허리 (old sentence byte-for-byte)', buildPainWorkspaceEmrPreview({ ...base, lbpDirectionalResponse: 'FLEXION_FAVORABLE' }).includes('허리 움직임 반응: 숙이면(굴곡) 호전'))
   assert('F: O line label follows regionLabelKo', buildPainWorkspaceEmrPreview({ ...base, lbpDirectionalResponse: 'FLEXION_FAVORABLE', regionLabelKo: '목' }).includes('목 움직임 반응: 숙이면(굴곡) 호전'))
@@ -303,6 +307,131 @@ assert('D: draft eligibility rules do not require stable neuro / distal stop (no
   assert('I-4: server derives the candidate order with drivingRegionCandidates and asks detailCheckQuestionIdsForCandidates (no isLbp boolean)', /drivingRegionCandidates\(record\?\.submission\?\.responses\)/.test(st) && /detailCheckQuestionIdsForCandidates\(candidates\)/.test(st) && !/isLbp/.test(st.slice(st.indexOf('async function deriveDetailCheck'), st.indexOf('async function deriveDetailCheck') + 1200)))
   const ep = src('src/doctor/workspace/emrPreview.ts')
   assert('I-5: emrPreview keeps the 허리 default so the LBP O line is unchanged', /input\.regionLabelKo \?\? '허리'/.test(ep))
+}
+
+// ---------------------------------------------------------------------------
+// J. 요통 동등성 §8 + E-1~E-4 (DECISIONS 2026-09-07 "추천안으로 모두 승인")
+// ---------------------------------------------------------------------------
+{
+  const ids = (k) => REGION_PACKS[k].hypothesisPatterns.map((p) => p.id)
+  // §8/§5 — PR #30 가설 상태로 교체. 목은 요통과 같은 5개.
+  assert('J-§8: neck hypothesis patterns are the 5 PR #30 candidates in order', same(ids('neck'), ['AXIAL_MOBILITY_DEFICIT', 'RADICULAR_INVOLVEMENT', 'CERVICOGENIC_HEADACHE', 'MOVEMENT_COORDINATION_DEFICIT', 'SHOULDER_OR_PERIPHERAL']))
+  assert('J-§8: neck has as many patterns as LBP (5)', ids('neck').length === LBP.hypothesisPatterns.length && LBP.hypothesisPatterns.length === 5)
+  assert('J-§8: shoulder hypothesis patterns are the 6 PR #30 phenotypes', same(ids('shoulder'), ['RC_RELATED', 'FROZEN_SHOULDER', 'GH_OA', 'INSTABILITY_TRAUMATIC', 'INSTABILITY_ATRAUMATIC_MOTOR_CONTROL', 'CERVICAL_CONTRIBUTION']))
+  assert('J-§8: knee hypothesis patterns are the 7 PR #30 phenotypes', same(ids('knee'), ['KNEE_OA', 'PATELLOFEMORAL_PAIN', 'PATELLAR_TENDINOPATHY', 'ACUTE_MENISCAL', 'DEGENERATIVE_MENISCAL', 'LIGAMENT_INSTABILITY', 'PATELLAR_INSTABILITY']))
+  const ARCHIVE_PATTERN_IDS = /^(FHP|UPPER_TRAP_LEVATOR|FLAT_NECK|THORACIC_RESTRICTION|SCAPULAR_PROTRACTION|UPPER_TRAP_DOMINANT|SCAPULAR_IR_DOWNWARD|INTERNAL_ROTATION|EXTERNAL_ROTATION|STIFF_KNEE|HIP_KNEE_COUPLING)$/
+  assert('J-§8: no archive 4-pattern id survives in neck/shoulder/knee', ['neck', 'shoulder', 'knee'].every((k) => ids(k).every((id) => !ARCHIVE_PATTERN_IDS.test(id))))
+  assert('J-§8: MUST_EXCLUDE_* is L0 safety, never a hypothesis chip (any pack)', REGION_KEYS.every((k) => ids(k).every((id) => !/^MUST_EXCLUDE/.test(id))))
+  assert('J-§8: archive exercise names are preserved as candidates (8 each) and stay unapproved', ['neck', 'shoulder', 'knee'].every((k) => REGION_PACKS[k].coreExercises.length === 8 && REGION_PACKS[k].productionApproved === false))
+  assert('J-§8: LBP pack is unchanged — patterns, exercises, labels byte-identical to the old constants', same(LBP.hypothesisPatterns.map((p) => p.id), LBP_HYPOTHESIS_PATTERN_IDS) && LBP.coreExercises.length === LBP_CORE_EXERCISE_METADATA.length && LBP.coreExercises.every((e, i) => e.exerciseId === LBP_CORE_EXERCISE_METADATA[i].exerciseId && e.strategyLabelKo === REGION_PACKS.lbp.rehabDomains.find((d) => d.id === e.domain)?.labelKo))
+  assert('J-§8: hip / ankle_foot / tmj / elbow / wrist_hand still declare no PR #30 domain table (out of PR #30 scope)', ['hip', 'ankle_foot', 'tmj', 'elbow', 'wrist_hand'].every((k) => REGION_PACKS[k].rehabDomains.length === 0))
+
+  // §3 — 방향성 반응: 목만 켠다.
+  assert('J-§3: directionalResponseApplicable is true for lbp and neck only', REGION_KEYS.filter((k) => REGION_PACKS[k].directionalResponseApplicable).join(',') === 'lbp,neck')
+
+  // E-1 — 라벨 팩화. 값 집합은 공통, 라벨만 부위별.
+  const neckLabels = REGION_PACKS.neck.directionalResponseLabels
+  assert('E-1: neck declares labels only for known directional values', Object.keys(neckLabels).every((v) => ['NOT_ASSESSED', 'FLEXION_FAVORABLE', 'EXTENSION_FAVORABLE', 'NO_CLEAR_DIRECTION', 'DISTAL_WORSENING', 'UNCLEAR'].includes(v)) && neckLabels.DISTAL_WORSENING === '팔 쪽으로 퍼짐(원위부 악화)')
+  assert('E-1: LBP declares no label override (old strings stay the default path)', LBP.directionalResponseLabels === undefined && LBP.directionalResponseHelp === undefined)
+  {
+    const empty = emptyWorkspaceState()
+    const base = { primaryConcern: null, examSuggestions: [], finalAssessment: empty.painFinalAssessment, followUpTargets: [] }
+    assert('E-1 EMR: neck labels reach the O line with the neck region label', buildPainWorkspaceEmrPreview({ ...base, lbpDirectionalResponse: 'DISTAL_WORSENING', regionLabelKo: '목', directionalResponseLabels: neckLabels }).includes('목 움직임 반응: 팔 쪽으로 퍼짐(원위부 악화)'))
+    assert('E-1 EMR: a value the pack does not override falls back to the shared label', buildPainWorkspaceEmrPreview({ ...base, lbpDirectionalResponse: 'NO_CLEAR_DIRECTION', regionLabelKo: '목', directionalResponseLabels: neckLabels }).includes('목 움직임 반응: 뚜렷한 방향 없음'))
+    assert('E-1 EMR: LBP sentence without labels is byte-for-byte the old one', buildPainWorkspaceEmrPreview({ ...base, lbpDirectionalResponse: 'DISTAL_WORSENING' }).includes('허리 움직임 반응: 다리 쪽으로 퍼짐(원위부 악화)'))
+    // SSR: 승인된 목 팩(가정)을 직접 넘기면 목 라벨·목 도움말이 칩에 나온다; 요통 팩은 옛 문구.
+    const lane2Props = (pack, payload) => ({
+      payload,
+      examSuggestions: [],
+      onChangeExamSuggestion: () => {},
+      additionalConcernPromotion: empty.additionalConcernPromotion,
+      onChangeAdditionalConcernPromotion: () => {},
+      reassessment: empty.painReassessment,
+      onChangeReassessment: () => {},
+      regionPack: pack,
+      directionalResponse: 'NOT_ASSESSED',
+      onChangeDirectionalResponse: () => {},
+    })
+    const neckPayload = structuredClone(PAIN_SCENARIO_1.payload)
+    delete neckPayload.responses.safety_flags.lbp
+    neckPayload.responses.safety_flags.neck = { neck_safety_status: 'CLEAR' }
+    neckPayload.responses.modules.neck = { recent_trauma: 'NO' }
+    const neckHtml = renderToString(React.createElement(PainWorkspaceLane2, lane2Props({ ...REGION_PACKS.neck, productionApproved: true }, neckPayload)))
+    assert('E-1 SSR: hypothetically approved neck pack renders 목 움직임 반응 with the neck chip label and neck help text', neckHtml.includes('목 움직임 반응') && neckHtml.includes('팔 쪽으로 퍼짐(원위부 악화)') && neckHtml.includes('손 쪽으로 더 퍼지는지') && !neckHtml.includes('다리 쪽으로 퍼짐'))
+    const lbpHtml = renderToString(React.createElement(PainWorkspaceLane2, lane2Props(LBP, PAIN_SCENARIO_1.payload)))
+    assert('E-1 SSR: LBP card still renders the old chip label and old help text', lbpHtml.includes('허리 움직임 반응') && lbpHtml.includes('다리 쪽으로 퍼짐(원위부 악화)') && lbpHtml.includes('서서 허리를 굽히고') && !lbpHtml.includes('팔 쪽으로 퍼짐'))
+  }
+
+  // E-2 — 신경 상태 검사 파생(D-1).
+  const ex = (id, status) => ({ id, title: id, priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: { status, laterality: null, note: '', recordedAt: null } })
+  const NECK_NEURO = REGION_PACKS.neck.neuroExamIds
+  assert('E-2: neck derives neuro status from exactly the C5–T1 baseline and UMN exams; both are addable exams', same(NECK_NEURO, ['neck_exam_neuro_c5_t1', 'neck_exam_umn']) && NECK_NEURO.every((id) => REGION_PACKS.neck.clinicianAddableExams.some((x) => x.id === id)))
+  assert('E-2: provocation tests (Spurling/ULTT) are addable exams but NOT neuro-status exams', ['neck_exam_spurling', 'neck_exam_ultt'].every((id) => REGION_PACKS.neck.clinicianAddableExams.some((x) => x.id === id) && !NECK_NEURO.includes(id)))
+  assert('E-2: lbp / shoulder / knee and every other pack declare no neuro exam ids (LBP keeps the clinician judgment field)', REGION_KEYS.filter((k) => k !== 'neck').every((k) => REGION_PACKS[k].neuroExamIds.length === 0))
+  assert('E-2 unit: no ids → null (caller keeps evaluateSafety().neuroStatus)', neuroStatusFromExamResults([], [ex('neck_exam_neuro_c5_t1', 'POSITIVE')]) === null)
+  assert('E-2 unit: nothing recorded → UNKNOWN, never STABLE', neuroStatusFromExamResults(NECK_NEURO, []) === 'UNKNOWN')
+  assert('E-2 unit: one NEGATIVE, one absent → UNKNOWN (partial baseline is not stability)', neuroStatusFromExamResults(NECK_NEURO, [ex('neck_exam_neuro_c5_t1', 'NEGATIVE')]) === 'UNKNOWN')
+  assert('E-2 unit: NEGATIVE + UNCLEAR/LIMITED/NOT_PERFORMED/NOT_YET_CHECKED → UNKNOWN', ['UNCLEAR', 'LIMITED', 'NOT_PERFORMED', 'NOT_YET_CHECKED'].every((st) => neuroStatusFromExamResults(NECK_NEURO, [ex('neck_exam_neuro_c5_t1', 'NEGATIVE'), ex('neck_exam_umn', st)]) === 'UNKNOWN'))
+  assert('E-2 unit: all NEGATIVE → STABLE', neuroStatusFromExamResults(NECK_NEURO, [ex('neck_exam_neuro_c5_t1', 'NEGATIVE'), ex('neck_exam_umn', 'NEGATIVE')]) === 'STABLE')
+  assert('E-2 unit: any POSITIVE → NEW_OR_WORSENING even when the other is NEGATIVE', neuroStatusFromExamResults(NECK_NEURO, [ex('neck_exam_neuro_c5_t1', 'NEGATIVE'), ex('neck_exam_umn', 'POSITIVE')]) === 'NEW_OR_WORSENING')
+  {
+    // 통합: 안전 CLEAR인(가정) 승인 목 팩에서 신경 검사 POSITIVE는 RF-3b 전체 차단(목 문장), 미기록은 차단 없음.
+    const clearNeck = { ...REGION_PACKS.neck, productionApproved: true, evaluateSafety: () => ({ applicable: true, routineCareAllowed: true, treatmentSafetyLocked: false, neuroStatus: 'UNKNOWN' }) }
+    const neckState = { directionalResponse: 'NOT_ASSESSED', workingHypothesis: { supports: {}, recordedAt: null }, confirmedStage: null }
+    const wsPos = { ...emptyWorkspaceState(), painExamSuggestions: [ex('neck_exam_umn', 'POSITIVE')] }
+    const pos = buildRecommendationContext(clearNeck, PAIN_SCENARIO_1.payload, {}, neckState, wsPos)
+    assert('E-2 engine: POSITIVE UMN exam on a (hypothetically) CLEAR approved neck pack → NEURO_REFRESH block with the 목 sentence', pos.blocked === 'NEURO_REFRESH' && pos.blockedMessageKo === neuroRefreshBlockedMessageKo('목'))
+    const none = buildRecommendationContext(clearNeck, PAIN_SCENARIO_1.payload, {}, neckState, emptyWorkspaceState())
+    assert('E-2 engine: no neuro exam recorded → UNKNOWN → no block (candidates just gate on their own rules)', none.blocked === null)
+    // 요통은 검사 결과가 신경 상태를 건드리지 않는다 — 원장 판단 필드가 유일한 입력(행동 0 변경).
+    const ws = { ...emptyWorkspaceState(), painFollowUpTargets: [{ id: 'lbp_tf_walking', label: '걷기', baseline: '', postTreatmentValue: '' }] }
+    const lbpBase = buildLbpRecommendationContext(PAIN_SCENARIO_1.payload, 'NONE', ws)
+    const lbpWithPositiveExams = buildLbpRecommendationContext(PAIN_SCENARIO_1.payload, 'NONE', { ...ws, painExamSuggestions: [ex('neck_exam_umn', 'POSITIVE'), ex('lbp_exam_neuro_baseline', 'POSITIVE')] })
+    assert('E-2 engine: LBP ignores exam-derived neuro status entirely (same blocked/candidate ids with or without POSITIVE exams)', lbpBase.blocked === null && lbpWithPositiveExams.blocked === null && same(lbpBase.candidates.map((c) => c.exerciseId), lbpWithPositiveExams.candidates.map((c) => c.exerciseId)))
+    assert('E-2 hint: LBP hint is the old literal; neck hint names the neuro exams', neuroUnrecordedHintForPack(LBP) === LBP_NEURO_UNRECORDED_HINT_KO && LBP_NEURO_UNRECORDED_HINT_KO.includes('객관적 검사 소견') && neuroUnrecordedHintForPack(REGION_PACKS.neck).includes('C5–T1 신경학적 기준선') && neuroUnrecordedHintForPack(REGION_PACKS.neck).includes('확인 추가'))
+  }
+
+  // E-3 — 도메인 표 + 출처 게이트.
+  assert('E-3: domain table sizes follow PR #30 (neck 9 / shoulder 8 / knee 11) and the LBP catalog (13)', REGION_PACKS.neck.rehabDomains.length === 9 && REGION_PACKS.shoulder.rehabDomains.length === 8 && REGION_PACKS.knee.rehabDomains.length === 11 && LBP.rehabDomains.length === 13)
+  for (const k of ['lbp', 'neck', 'shoulder', 'knee']) {
+    const domainIds = new Set(REGION_PACKS[k].rehabDomains.map((d) => d.id))
+    assert(`E-3: every ${k} core exercise carries a domain from its own table`, REGION_PACKS[k].coreExercises.every((e) => domainIds.has(e.domain)))
+    assert(`E-3: ${k} domain ids are unique`, domainIds.size === REGION_PACKS[k].rehabDomains.length)
+  }
+  assert('E-3: draft exercise strategy label = its domain label (the old archive pattern name is gone from the card reason line)', ['neck', 'shoulder', 'knee'].every((k) => REGION_PACKS[k].coreExercises.every((e) => e.strategyLabelKo === REGION_PACKS[k].rehabDomains.find((d) => d.id === e.domain).labelKo)) && !REGION_PACKS.neck.coreExercises.some((e) => /FHP|승모·견갑거근|플랫넥/.test(e.strategyLabelKo)))
+  const PROV_FIELDS = ['hypothesisPatterns', 'targetFunctions', 'coreExercises', 'stageTable', 'clinicianAddableExams', 'directSupportByExam']
+  assert('provenance: every pack declares all 6 provenance fields', REGION_KEYS.every((k) => same(Object.keys(REGION_PACKS[k].provenance).sort(), [...PROV_FIELDS].sort())))
+  assert('provenance: LBP is CLINICIAN_APPROVED on every field (the only approvable value)', PROV_FIELDS.every((f) => LBP.provenance[f] === 'CLINICIAN_APPROVED'))
+  assert('provenance: neck/shoulder/knee hypotheses are PR30_FRAMEWORK and exercises are ARCHIVE_CANDIDATE', ['neck', 'shoulder', 'knee'].every((k) => REGION_PACKS[k].provenance.hypothesisPatterns === 'PR30_FRAMEWORK' && REGION_PACKS[k].provenance.coreExercises === 'ARCHIVE_CANDIDATE'))
+  assert('provenance gate: a non-approved provenance is a content gap (neck lists 6 provenance gaps, one per non-approved field)', packContentGaps(REGION_PACKS.neck).filter((g) => g.startsWith('provenance.')).length === 6 && packContentGaps(REGION_PACKS.neck).includes('provenance.coreExercises = ARCHIVE_CANDIDATE (원장 확정 전)'))
+  assert('provenance gate: flipping only productionApproved on a pack with non-approved provenance still leaves gaps (approval needs the provenance flipped too)', packContentGaps({ ...REGION_PACKS.neck, productionApproved: true }).some((g) => g.startsWith('provenance.')))
+  assert('provenance gate (non-vacuous): the LBP pack with one field downgraded gains exactly that gap', same(packContentGaps({ ...LBP, provenance: { ...LBP.provenance, stageTable: 'CLAUDE_DRAFT' } }), ['provenance.stageTable = CLAUDE_DRAFT (원장 확정 전)']))
+  assert('E-3 gate (non-vacuous): an LBP row with an unknown domain is a gap', packContentGaps({ ...LBP, coreExercises: [{ ...LBP.coreExercises[0], domain: 'NOPE' }, ...LBP.coreExercises.slice(1)] }).some((g) => g.includes(".domain 'NOPE'")))
+  assert('E-2 gate (non-vacuous): a neuro exam id the pack cannot surface is a gap', packContentGaps({ ...LBP, neuroExamIds: ['ghost_exam'] }).some((g) => g.startsWith('neuroExamIds.ghost_exam')))
+
+  // E-4 — 진단(가설) → 운동 하드코딩 부정 단언 (PR #30 "금지").
+  const wordRe = (id) => new RegExp(`\\b${id}\\b`)
+  for (const k of REGION_KEYS) {
+    const pack = REGION_PACKS[k]
+    const exerciseSide = JSON.stringify({ coreExercises: pack.coreExercises, eligibilityRules: pack.eligibilityRules, stageTable: pack.stageTable, directSupportByExam: pack.directSupportByExam, targetFunctionIdToEnum: pack.targetFunctionIdToEnum })
+    assert(`E-4: no ${k} hypothesis pattern id appears anywhere on the exercise side (rules, stage table, exam support, TF mapping)`, pack.hypothesisPatterns.every((p) => !wordRe(p.id).test(exerciseSide)))
+    const examIds = new Set([...Object.keys(pack.examHelp), ...pack.clinicianAddableExams.map((x) => x.id)])
+    assert(`E-4: ${k} directSupportByExam keys are exam ids the pack can surface (never a hypothesis or diagnosis)`, Object.keys(pack.directSupportByExam).every((id) => examIds.has(id)))
+    assert(`E-4: ${k} exercise/pattern ids carry no structural-diagnosis token`, !/\b(DISC|STENOSIS|FACET|IMPINGEMENT|HERNIATION|BULGE)\b/.test(JSON.stringify([pack.hypothesisPatterns.map((p) => p.id), pack.coreExercises.map((e) => e.exerciseId)])))
+  }
+  {
+    const src = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8')
+    const engine = src('src/doctor/workspace/lbpExerciseRecommendation.ts')
+    assert('E-4: the recommendation engine never reads hypothesisPatterns / workingHypothesis / rehabDomains / a row domain (가설·도메인 → 운동 자동 연결 없음)', !/hypothesisPatterns|workingHypothesis|rehabDomains|\.domain\b/.test(engine))
+    const elig = src('src/doctor/workspace/lbpExerciseEligibility.ts')
+    assert('E-4: the eligibility engine never reads hypothesisPatterns / workingHypothesis', !/hypothesisPatterns|workingHypothesis/.test(elig))
+    const pw = src('src/doctor/workspace/PainWorkspace.tsx')
+    assert('E-1 source: the directional card takes labels/help from the pack', /labels=\{pack\.directionalResponseLabels\}/.test(pw) && /help=\{pack\.directionalResponseHelp\}/.test(pw) && /directionalResponseLabels: pack\?\.directionalResponseLabels/.test(pw))
+    const dv = src('src/doctor/DoctorView.tsx')
+    assert('E-1 source: 종결 EMR passes the same directionalResponseLabels key (key-set parity with PainWorkspace)', /directionalResponseLabels: regionPack\?\.directionalResponseLabels/.test(dv))
+    const dw = src('src/doctor/workspace/DoctorWorkspace.tsx')
+    assert('E-2 source: DoctorWorkspace passes the pack-derived neuro hint', /neuroUnrecordedHintKo=\{regionPack \? neuroUnrecordedHintForPack\(regionPack\) : undefined\}/.test(dw))
+  }
 }
 
 console.log(`\n${passed} region-pack assertions passed.`)

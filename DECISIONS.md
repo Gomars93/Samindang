@@ -3755,3 +3755,52 @@ AAOS, NICE NG226, BESS, ACR)이 붙어 있다. 아카이브 4패턴은 그 뼈�
 - 첫 부위는 목. 고관절·발목·팔꿈치·손목·턱관절은 PR #30 범위 밖 — 원장 문서 전까지 보류.
 - 검증 기록(전수조사): `git log --all --diff-filter=A`에서 exercise/rehab 파일은 전부 LBP;
   GitHub 코드 검색 `exercise neck|shoulder|knee` 0건; PR 검색 3건(요통·무관).
+
+## 2026-09-07 — PO "추천안으로 모두 승인" → 요통 동등성 설계 §8·E-1~E-5 구현 + 목 근거 매트릭스 초안
+
+### Context
+`docs/PAIN_REGION_PACK_LBP_PARITY_DESIGN_v0.1.md` §10의 결정 5건에 PO가 "추천안으로 모두 승인"이라
+답했다(2026-09-07). 추천안은 (1) PR #30 먼저 merge(reference-only) (2) 가설 패턴 목 5/어깨 6/무릎 7 + §5 라벨
+(3) D-1 채택 — 요통 외 부위의 신경 상태를 검사 결과에서 파생 (4) §8 DRAFT 팩 교체 — 아카이브 4패턴 폐기
+(5) 첫 부위(목) Exercise Evidence Matrix는 원장+Opus 초안.
+
+### Decision
+1. **PR #30 = 부위 팩 임상 프레임워크 정본.** 목·어깨·무릎 팩의 `hypothesisPatterns`를 PR #30 가설 상태로
+   교체했다. 목 수동 검사는 PR #30 §5 Selective Exam 11개. 아카이브 운동 이름은 `아카이브(후보)`로만 보존.
+2. **D-1**: `RegionPack.neuroExamIds`. 비어 있지 않으면 추천 엔진이 `evaluateSafety().neuroStatus` 대신 기록된
+   검사 결과로 신경 상태를 만든다 — 하나라도 POSITIVE → NEW_OR_WORSENING(RF-3b 전체 차단), **전부** NEGATIVE →
+   STABLE, 그 밖 UNKNOWN. 요통은 빈 배열(원장 판단 필드 유지, 행동 0 변경). 목: C5–T1 기준선 + UMN 징후.
+   유발 검사(Spurling/ULTT)는 넣지 않는다.
+3. **E-1**: `directionalResponseLabels`/`directionalResponseHelp` — 값 6개·저장은 공통, 칩 라벨·도움말·EMR O행만
+   부위별. 목만 `directionalResponseApplicable: true`.
+4. **E-3**: `RegionCoreExercise.domain` + `RegionPack.rehabDomains`(PR #30 도메인: 목 9/어깨 8/무릎 11, 요통 13).
+   추천 엔진은 읽지 않는다(도메인 → 운동 자동 매핑 금지).
+5. **출처 게이트**: `RegionPack.provenance` 6필드(`CLINICIAN_APPROVED | CLINICIAN_DOCUMENT | PR30_FRAMEWORK |
+   ARCHIVE_CANDIDATE | CLAUDE_DRAFT`). `packContentGaps`가 `CLINICIAN_APPROVED`가 아닌 필드를 빈 칸으로 나열 —
+   `productionApproved`만 뒤집어서는 승인이 성립하지 않는다.
+6. **E-4**: `tests/region-pack.spec.mjs` J절 — 가설 id가 운동 쪽에 없음, 엔진 소스가 가설을 읽지 않음, 구조진단
+   토큰 없음, `directSupportByExam` 키는 검사 id만.
+7. **E-5**: `scripts/region-stage-distribution.mjs <region>` — 기록의 부위는 화면과 같은 `drivingRegion`. 요통
+   스크립트는 이 본체를 `'lbp'`로 부르는 껍데기(출력·경고 불변).
+8. **⑤ 목 근거 매트릭스 초안** `docs/NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` — Core 후보 12(권고 9), 도메인 배정,
+   메타 7필드 제안, 단계표, 적격성 옵션, 검사→뒷받침 4쌍, 재질문 `NECK_12`, 금지 목록, freeze 전 재검증 5건.
+   **팩에는 0줄 반영** — 원장 체크리스트 9개 → Opus 검수 → CLOSED 후 ④.
+9. **PR #30 merge**: GitHub 커넥터가 이 세션에서 `invalid session`을 반환해 API로 draft 해제·merge를 수행하지
+   못했다. 대신 PR head(`133f030`)를 작업 브랜치에 병합(`f0535c2`, 코드 0) — 이 브랜치가 main에 들어가면 같은
+   커밋이 main에 도달한다. **PO가 GitHub UI에서 PR #30을 직접 merge하거나 이 브랜치의 PR로 함께 들어가게 둔다.**
+
+### Rationale
+- D-1의 "전부 NEGATIVE → STABLE": 요통의 STABLE은 원장이 `NONE`으로 한 번에 판단한 값이다. 검사 2개 중 1개만
+  음성인 상태를 같은 무게로 읽으면 RF-1(미확인을 안정으로 가정하지 않음)을 어긴다.
+- 출처를 데이터(`provenance`)로 둔 이유: 설계 §4 "출처 신뢰 표기"를 주석으로만 두면 승인 시점에 사람이 잊는다.
+  게이트에 넣으면 `packContentGaps === []`가 "원장이 6필드를 전부 확정했다"를 함의한다.
+- 어깨·무릎의 `neuroExamIds`는 비워 둔다: PR #30 어깨 문서는 "distal neuro change"를 재평가 조건부 항목으로만
+  두고, 무릎은 신경혈관 손상이 L0다. 검사 항목을 만드는 것은 원장 ② 결정.
+
+### Consequences / 검증
+- 요통 화면·저장·EMR 문장 0 변경: 요통 스위트 전부 **무수정** 통과(recommendation 30, eligibility 20, vignettes,
+  working-hypothesis 252, exam-suggestions 25, stage 283, doctor 1041, doctor-workspace 302).
+- `test:region-pack` 227 → **307**(J절 80). 변이 5종(every→some NEGATIVE / 파생 제거 / EMR 라벨 무시 / 출처 게이트
+  제거 / 도메인 게이트 제거) 전부 죽음. `test:lbp-stage-pilot` 46(E-5 8 추가). `tsc -b` 0, `vite build` green.
+- 화면 변화 0 — 3부위 팩은 여전히 `productionApproved: false`(H절 SSR 단언).
+- 다음: 원장이 `NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9개 → Opus 검수 → CLOSED → Sonnet 인코딩(④).

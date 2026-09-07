@@ -42,5 +42,16 @@ export const HIP_REGION_PACK = buildDraftPack({
     { id: 'hip_exam_ir_er', title: '고관절 내·외회전 범위', help: { howKo: '내회전 20°, 외회전 25° 기준으로 본다.', whyKo: '내회전 제한은 전방경사형, 외회전 제한은 후방경사형 단서.' } },
     { id: 'hip_exam_9090', title: '90/90 내·외회전 검사', help: { howKo: '좌우 비대칭을 본다.', whyKo: '비대칭이면 회전 패턴.' } },
   ],
+  // E-3: PR #30 범위 밖 부위 — 도메인 표 없음(원장 ② 문서에서 정한다). 운동 행은 전부 도메인 미배정으로 빈 칸에 오른다.
+  rehabDomains: [],
+  // 출처 표기(요통 동등성 설계 §4) — 승인 게이트. Drive 고관절 패턴.md는 Notion 매선 프로토콜 계열(AI 확장 초안 가능성) → 아카이브(후보). 비어 있는 단계표·직접뒷받침은 Claude 자리표시.
+  provenance: {
+    hypothesisPatterns: 'ARCHIVE_CANDIDATE',
+    targetFunctions: 'CLAUDE_DRAFT',
+    coreExercises: 'ARCHIVE_CANDIDATE',
+    stageTable: 'CLAUDE_DRAFT',
+    clinicianAddableExams: 'ARCHIVE_CANDIDATE',
+    directSupportByExam: 'CLAUDE_DRAFT',
+  },
   evaluateSafety: (payload) => evaluateHipSafety(payload),
 })

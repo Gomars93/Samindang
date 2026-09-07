@@ -1,5 +1,25 @@
 # Current Handoff
 
+## 2026-09-07 (최신 39): 레퍼런스 리서치(B수준) + 어깨 ② 초안. **코드 0, 문서 4**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.
+- `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` 신규 — 검증 수준 A/B/C 정의. 이 세션은 PubMed·JOSPT 등 원문 도메인이
+  전부 egress 차단이라 **전부 B수준**(검색 요약 인용). 목 CPG 2017 분류별 권고·등급 확인(급성 방사통만 미확인),
+  재검증 5건(CFRT·DNF·신경 가동·방향 선호·견인) 확인, 어깨 출처 6건 확인 + Lee 2025 동결견 CPG 서지 정정(ARM, JOSPT 아님).
+- **발견**: NECK_DIR_01(방향성 반복 운동)은 경추 근거가 제한적 — 팩 유지(반응 조건부·원위 악화 제외), CLOSED §1 조건부
+  행 + §10 관찰 항목 7 추가. v1.1에서 데이터로 결정.
+- `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` 신규 — 추천안 포함 체크리스트 9. **팩 반영 0.** 착수 조건 §10
+  (목 파일럿 첫 관찰 후; PO가 "지금"이면 즉시).
+- DECISIONS 2026-09-07 네 번째 항목.
+
+### Next Recommended Action
+1. **원장 로컬 5분**: 로그 §5 A수준 체크리스트 5건(JOSPT 2017 권고표, Domenech 2011 숫자, CFRT 32° 기재 여부,
+   DIR_01 유지 동의, Lee 2025 동결견 원문).
+2. 목 파일럿(CLOSED §10, 이제 7항목).
+3. 어깨 ② 체크리스트 9 → "추천안으로 진행"이면 CLOSED·인코딩(목과 같은 절차, 예상 코드: 팩 1 + 비네트 1 + 서버 1행).
+
+---
+
 ## 2026-09-07 (최신 38): **목 팩 활성화** — ③ CLOSED · ④ 인코딩 · `productionApproved: true` + 어깨→목 후퇴 차단. 어깨·무릎은 아직 DRAFT
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO "네 추천안으로 진행 부탁"(2026-09-07) 실행.

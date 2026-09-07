@@ -44,7 +44,7 @@ PASS면 v1.0 CLOSED 문서를 만들고 Sonnet이 팩에 옮긴다(설계 §7 �
 2. **ACR Appropriateness Criteria — Cervical Neck Pain or Cervical Radiculopathy (2019). PMID 31054759.**
    영상·의뢰 게이트 근거(운동 선택에는 직접 쓰지 않음).
 
-### 1.2 이 초안이 CPG 2017에서 가져온 "분류 → 운동 방향" (요약 — **원문 재확인 필요**)
+### 1.2 이 초안이 CPG 2017에서 가져온 "분류 → 운동 방향" (요약 — **2026-09-07 B수준 대조 완료**: `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` §1. 급성 방사통 행만 미확인, 등급은 로그에만 기재)
 아래는 Opus의 문헌 지식으로 요약한 것이며, **v1.0 CLOSED 전에 원장/Opus가 원문 표(권고 등급 포함)를
 대조해야 한다**(§10). 등급(A/B/C/F)은 여기 적지 않는다 — 기억에 의존한 등급을 확정값으로 만들지 않기 위해.
 

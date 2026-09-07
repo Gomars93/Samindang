@@ -3841,3 +3841,36 @@ AAOS, NICE NG226, BESS, ACR)이 붙어 있다. 아카이브 4패턴은 그 뼈�
   DIR 방향 조건 제거). `doctor` 1041 / `doctor-workspace` 302 / `server` 233 / `detail-check` 61 / `tsc -b` 0 / `build` green.
 - 파일럿 계측: `npm run pilot:region-stage -- neck`(원장 로컬).
 - 다음: 어깨(PR #30 §5 검사 목록 없음 → 원장 검사 스크립트 기반, `neuroExamIds` 결정 필요) → 무릎. 각각 ② 초안부터.
+
+## 2026-09-07 — PO "부족한 레퍼런스는 리서치, 나머지는 추천안으로 진행" → 근거 검증 로그 + 어깨 ② 초안
+
+### Context
+목 CLOSED v1.0 §1의 조건부 항목(CPG 2017 원문 대조 미완)과 근거 매트릭스 §10 재검증 5건, 어깨 착수 전 출처 확인.
+이 세션의 네트워크 egress는 PubMed·PMC·JOSPT·Europe PMC·archive.org·orthopt.org·physiotutors·e-arm.org를 차단한다
+(WebFetch EGRESS_BLOCKED). 검색(WebSearch)은 동작한다.
+
+### Decision
+1. **검증 수준을 A/B/C로 정의하고 로그로 남긴다** — `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md`. 이번 리서치는
+   전부 **B수준**(검색 엔진이 1차 문헌 페이지에서 뽑은 요약 인용). B수준 문장은 팩·CLOSED에 등급으로 옮기지 않는다.
+2. 목 CPG 2017: 분류별 권고·등급(B/C)을 B수준으로 확인. Core 9 중 8개가 권고 범주 안. 급성 방사통 행만 미확인.
+3. **NECK_DIR_01 근거 제한 발견**(May & Aina 2018: 경추 방향 선호 근거 제한, MDT 경추 "little support"). 팩에서 빼지
+   않는다 — 반응 기록 조건부 후보이고 원위 악화 시 제외되며 요통과 대칭. CLOSED §1에 조건부 행 추가, §10 관찰 항목 7
+   추가, v1.1에서 결정.
+4. CFRT 32° cutoff·DNF 지구력 참고치(숫자 불일치)·신경 가동성(JOSPT 2025 NMA, 확실성 중간~낮음)·견인(Fritz 2014,
+   Romeo 2018) 확인. 팩 변경 0 — 모두 현재 결정(cutoff 미기재, 견인 Core 밖)을 지지.
+5. 어깨 출처 확인: Desmeules 2025 JOSPT RC 건병증 CPG, AAOS 2025 RC 손상 CPG, BESS 2025 견봉하 pathway, BESS/BOA
+   비외상성 불안정 pathway·Derby, BESS 2026 외상성 탈구 재활. **정정**: PR #30이 "Lee et al 2025 Frozen Shoulder CPG"라고
+   적은 문헌은 JOSPT가 아니라 Ann Rehabil Med 2025;49(3):113–138(PMID 40602400).
+6. **어깨 ② 초안** `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` — 추천안 포함 체크리스트 9(7번째 패턴 AC 추가,
+   Core 11→10, 검사 3 추가 중 원위 신경 검사를 `neuroExamIds`로, 뒷받침 5쌍, 재질문 SH08). **팩 반영 0.** 착수 조건은
+   목 파일럿 첫 관찰 후(§10) — PO가 "지금"을 택하면 즉시 인코딩 가능.
+
+### Rationale
+- "확인했다"의 뜻을 A/B/C로 나눈 이유: 검색 요약을 원문 확인으로 적으면 나중에 아무도 원문을 안 읽는다. B수준은
+  "범주가 맞다"까지만 보증하고, 원장 로컬 5분 체크리스트(로그 §5)가 A수준을 닫는다.
+- DIR_01을 지우지 않는 이유: 근거 제한 ≠ 해로움의 근거. 반응 조건부·원위 악화 제외·요통 대칭이라는 세 안전장치가 있고,
+  파일럿 데이터 없이 지우면 굴곡·신전 호전 환자 모두 방향성 후보가 없어진다. 데이터로 결정한다.
+
+### Consequences
+- 코드 변경 0. 문서 4(로그 신규, 어깨 초안 신규, 목 CLOSED §1·§10, 목 매트릭스 §1.2 표기).
+- 다음: 원장 로컬 A수준 체크리스트 5건 → 목 파일럿 → 어깨 ② 체크리스트 9 → 어깨 CLOSED·인코딩.

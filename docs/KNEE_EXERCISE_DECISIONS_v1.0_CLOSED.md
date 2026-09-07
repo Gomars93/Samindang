@@ -6,6 +6,9 @@
 어깨와 달리 **별도 근거 매트릭스 초안 단계를 거치지 않았다** — 이 문서가 매트릭스 겸 CLOSED다(PO가 "전부" 진행을 택했고 PR #30
 프레임워크가 이미 도메인·관리 방향을 정해 둔 부위라서). 파일럿 §10에서 원장이 카드 문장을 읽고 고칠 항목을 모은다.
 **진입 기준**: B수준(요통·목·어깨와 동일).
+**2026-09-07 원문 대조(같은 날 저녁)**: PR #30 갱신으로 **원문**(`source/originals/KNEE_V1_Evidence_Matrix_v0.1_HANDOFF.part*.md`,
+737행 25,880B, SHA-256 `a507cc32…` 재조립 검증)이 올라왔다. 이 문서는 4KB 요약본만 보고 작성됐으므로 전 항목을 대조했다 — §1-2 표.
+**도메인 11·금지 6·재평가 축은 원문과 일치**했고, **검사 2건이 누락**되어 추가했다.
 
 ---
 
@@ -19,6 +22,19 @@
 | 확률·cutoff를 넣지 않았는가 | PASS | 팩·문서 어디에도 없음. 슬개건 등척성 각도(30~60°)는 시작 자세 서술이지 임계값이 아니다. |
 | **근거 범주 밖 행** | **조건부** | 로그 §4-2: 스텝업/다운(c)·카프 레이즈(j 일부)·건 등척성→HSR(i)은 CPG 범주 직접 근거 없음(리뷰·RCT 수준). 유지 근거: 기능 목표(계단)에 직접 대응하고 PR#30 도메인(계단 내성·건 부하 점진)에 속한다. §10에서 채택률 관찰. |
 | **행 단위 문장 검토** | **미완(조건부)** | PO 위임 승인. 파일럿 §10-1. |
+
+### 1-2. 원문 대조 결과 (2026-09-07 저녁)
+
+| 원문 항목 | 이 문서 v1.0 초판 | 조치 |
+|---|---|---|
+| §11 Domain 11 | 11 (동일) | 변경 없음 |
+| §11 금지 6 | 6 (동일, §1 표에 행별 대응) | 변경 없음 |
+| §12 재평가 조건부(giving-way, locking, PF/tendon load…) | KNEE_13 = giving-way, 잠김은 L0 | 변경 없음 |
+| §5-C effusion "sweep test", §5-F "true locking supersedes provocative cascade" | 도움말에 같은 취지 | 변경 없음 |
+| **§5-A 마지막 "target function reproduction"** | **없음** | **추가** — 어깨와 같은 누락. 재평가 기준값. |
+| **§5-G "patellar mobility/apprehension when indicated"** | **없음** | **추가** — `PATELLAR_INSTABILITY` 가설은 있는데 그 검사가 없던 짝 결손. 운동 뒷받침 쌍은 두지 않는다(v1.0에 슬개골 특이 안정화 행이 없다 → §10-7). |
+| §11 입력 10 중 **irritability** | 기록 수단 없음 | **v1.1 보류** — 전 부위 공통 구조 갭(어깨 CLOSED §1-2와 같은 사유). §10-8 관찰. |
+| §5-E pivot shift | 없음 | 유지 — 원문도 "only when appropriate". |
 
 ## 2. 가설 패턴 (7) — 확정
 PR#30 phenotype 7 그대로(KNEE_OA / PATELLOFEMORAL_PAIN / PATELLAR_TENDINOPATHY / ACUTE_MENISCAL / DEGENERATIVE_MENISCAL /
@@ -52,8 +68,9 @@ LIG_01. **id 전부 폐기**(region-pack J-④, `KNEE_(IR|ER|STIFF|HIP)_` 부재
 ## 5. 단계표·적격성 — 확정
 1단계 4(EDU_01·MOB_01·QUAD_01·GLUT_01) / 2단계 6 / 3단계 2(LIG_01·GAIT_01). 규칙 전부 기본값, 방향성 카드 미적용, `neuroExamIds` 없음.
 
-## 6. 검사(10) → 직접 뒷받침(8쌍) — 확정
-아카이브 4(squat·step_down·single_leg_stance·tke) + 추가 6(rom·effusion·quad_lag·stability·pf_load·joint_line).
+## 6. 검사(12) → 직접 뒷받침(8쌍) — 확정 (2026-09-07 원문 대조 반영)
+아카이브 4(squat·step_down·single_leg_stance·tke) + 추가 6(rom·effusion·quad_lag·stability·pf_load·joint_line)
++ **원문 대조 2**(target_function_reproduction = 원문 §5-A, patellar_mobility_apprehension = 원문 §5-G; 둘 다 쌍 없음).
 `tke → QUAD_01` / `quad_lag → QUAD_01` / `squat → QUAD_02` / `step_down → STEP_01, GLUT_01` / `single_leg_stance → BAL_01` /
 `rom → MOB_01` / `pf_load → PF_01, TEND_01` / `stability → BAL_01, LIG_01`. effusion·joint_line은 쌍 없음(가설 근거·안전 문맥).
 검사 소견 → 운동이지 진단명 → 운동이 아니다(안정성 검사 이완 소견이 균형·기능 복귀 행을 뒷받침).
@@ -75,8 +92,10 @@ E-4(가설 id 부재·진단 토큰 부재), 아카이브 id 부재(J-④), TEND
 4. `KNEE_12`·`KNEE_13` 응답률.
 5. effusion·joint_line 검사 기록률(뒷받침 쌍이 없는 검사를 원장이 계속 기록하는가 — 아니면 v1.1에서 삭제).
 6. 달리기 복귀 목표(RUNNING) 환자 비율 → GAIT_01·LIG_01(3단계 전용) 도달 여부.
+7. 슬개골 apprehension POSITIVE 빈도 → 슬개골 특이 안정화 운동(현재 없음)을 v1.1에 추가할지.
+8. **irritability 기록 요구**(원문 §11 입력 10 중 유일한 미구현) → 전 부위 공통 필드 신설 여부.
 
 ## 11. 코드 대응 (2026-09-07)
 - `regionPacks/knee.ts` 전 필드 + `provenance` 전부 `CLINICIAN_APPROVED` + `productionApproved: true`.
 - `server/detailCheck.js` `knee: ['KNEE_12', 'KNEE_13']`.
-- `tests/knee-exercise-core.vignettes.spec.mjs`(22단언), `tests/region-pack.spec.mjs` 갱신.
+- `tests/knee-exercise-core.vignettes.spec.mjs`(23단언 — 원문 대조로 검사 12·슬개골 검사 짝 단언 추가), `tests/region-pack.spec.mjs` 갱신.

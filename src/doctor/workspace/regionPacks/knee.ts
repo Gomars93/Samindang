@@ -4,10 +4,14 @@
  * 원장 승인 문서: `docs/KNEE_EXERCISE_DECISIONS_v1.0_CLOSED.md` (PO "허리를 기준으로 모든 파트 진행", 2026-09-07).
  * 임상 프레임워크 정본: PR #30 `docs/recovered_rehab_architecture/KNEE_V1_REHAB_ARCHITECTURE_RECOVERED.md`
  * (phenotype 7, Domain 11, 금지 6). 근거 확인: `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` §4 (B수준).
+ * **원문(A수준, 프로젝트 1차 설계 문서)**: `docs/recovered_rehab_architecture/source/originals/KNEE_V1_Evidence_Matrix_v0.1_HANDOFF.part*.md`
+ * (737행, SHA-256 a507cc32… 재조립 검증, 2026-09-07 PR #30 갱신분). 도메인 11·금지 6은 원문 §11과 일치 확인;
+ * 검사는 원문 §5 판별자 A~G 대조로 2개를 추가했다.
  *
  * 내용 요약(CLOSED §2~§8):
  *   hypothesisPatterns     PR#30 phenotype 7 그대로.
- *   clinicianAddableExams  아카이브 4(스쿼트·스텝다운·한 발 서기·TKE) + 추가 6 = 10.
+ *   clinicianAddableExams  12 — 아카이브 4(스쿼트·스텝다운·한 발 서기·TKE) + 추가 6 + **원문 대조 추가 2**
+ *                          (목표 기능 재현 = 원문 §5-A, 슬개골 가동성·apprehension = 원문 §5-G).
  *   rehabDomains           PR#30 Domain 11 (GRADED_EXPOSURE는 독립 행 없음 — 목의 AEROBIC과 같은 처리).
  *   coreExercises          Core 12. 아카이브 8개는 병합·대체·미채택으로 전부 폐기(VMO 고립·90/90·내전 폐기).
  *   stageTable             1단계 4 / 2단계 6 / 3단계 2.
@@ -235,6 +239,8 @@ export const KNEE_REGION_PACK = buildDraftPack({
   },
   // 아카이브 4 + 추가 6 — 자동 삽입 없음.
   clinicianAddableExams: [
+    { id: 'knee_exam_target_function_reproduction', title: '목표 기능 재현', help: { howKo: '환자가 고른 목표 동작(계단·쪼그려 앉기·걷기 등)을 실제로 해 보게 하고 증상 재현 여부를 본다.', whyKo: '원문 §5-A 체중부하·기능 판별의 마지막 항목. 재평가는 같은 동작으로 비교한다(원문 §12 "모든 재진: Target Function 0–10").' } },
+    { id: 'knee_exam_patellar_mobility_apprehension', title: '슬개골 가동성·apprehension', help: { howKo: '무릎을 살짝 굽힌 상태에서 슬개골을 내외측으로 밀어 가동성과 불안감(apprehension)을 본다. 급성 탈구 직후에는 시행하지 않는다.', whyKo: '원문 §5-G "patellar mobility/apprehension when indicated". 슬개골 불안정 가설의 근거. 운동 뒷받침 쌍은 없다 — v1.0에 슬개골 특이 안정화 운동이 없다(CLOSED §10-7 관찰).' } },
     { id: 'knee_exam_squat', title: '스쿼트 관찰(무릎 안쪽 붕괴·회전)', help: { howKo: '스쿼트에서 무릎 안쪽 붕괴, 발끝 대비 내외회전, 힙힌지 실패를 본다.', whyKo: '무릎 중심 스쿼트인지 고관절 전략인지 구분(움직임 조절). POSITIVE면 앉았다 일어서기·박스 스쿼트가 직접 뒷받침된다.' } },
     { id: 'knee_exam_step_down', title: '스텝다운 검사', help: { howKo: '한 발로 내려서며 무릎 안쪽 붕괴·통증을 본다.', whyKo: '고관절 안정성·신경근 조절 평가. POSITIVE면 스텝업·스텝다운 조절과 고관절 후외측 강화가 직접 뒷받침된다.' } },
     { id: 'knee_exam_single_leg_stance', title: '한 발 서기', help: { howKo: '발목–무릎–고관절 라인 붕괴 여부와 유지 시간을 본다.', whyKo: '균형·조절 도메인 평가. POSITIVE면 한 발 균형 운동이 직접 뒷받침된다.' } },

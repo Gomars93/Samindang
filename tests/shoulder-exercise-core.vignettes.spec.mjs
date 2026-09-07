@@ -46,8 +46,10 @@ assert('0: Core 10 ids as CLOSED §3', same(PACK.coreExercises.map((e) => e.exer
 assert('0: every Core row has all 7 fields', PACK.coreExercises.every((e) => e.startingCriteriaKo.length > 0 && e.startingDoseKo && e.acceptableResponseKo.length > 0 && e.stopReviewKo.length > 0 && e.regressionKo && e.progressionKo && e.targetFunctions.length > 0))
 assert('0: stage table 1단계 4 / 2단계 5 / 3단계 1 covering exactly the Core 10', same(Object.keys(PACK.stageTable).sort(), PACK.coreExercises.map((e) => e.exerciseId).sort()) && [1, 2, 3].map((s) => Object.values(PACK.stageTable).filter((v) => v === s).length).join() === '4,5,1')
 assert('0: all rules default (no stable-neuro / distal-stop / directional requirement); directional card off', PACK.eligibilityRules.every((r) => !r.requiresStableNeuro && !r.stopOnDistalWorsening && !r.requiredDirectionalResponse) && PACK.directionalResponseApplicable === false)
-assert('0: hypothesis 7 incl. AC_LOCAL_CONTRIBUTION; exams 8 incl. the 3 added', PACK.hypothesisPatterns.length === 7 && PACK.clinicianAddableExams.length === 8 && ['shoulder_exam_scapular_control', 'shoulder_exam_distal_neuro', 'shoulder_exam_apprehension_relocation'].every((id) => PACK.clinicianAddableExams.some((x) => x.id === id)))
-assert('0: direct-support pairs as CLOSED §6 (5 exams; subscap / horizontal adduction / distal neuro absent)', same(PACK.directSupportByExam, { shoulder_exam_rom: ['SH_MOB_01', 'SH_MOB_02'], shoulder_exam_empty_can: ['SH_RC_01'], shoulder_exam_er_resist: ['SH_RC_01', 'SH_RC_02'], shoulder_exam_scapular_control: ['SH_SCAP_01', 'SH_SCAP_02'], shoulder_exam_apprehension_relocation: ['SH_STAB_01'] }))
+assert('0: hypothesis 7 — the original §8 clinical candidate set (AC_OR_LOCAL_JOINT_CONTRIBUTION included there, not invented here)', PACK.hypothesisPatterns.length === 7 && PACK.hypothesisPatterns.some((p) => p.id === 'AC_LOCAL_CONTRIBUTION'))
+assert('0: exams 10 — 5 clinician-script + 3 matrix + 2 from the 2026-09-07 original cross-check (target-function reproduction, AROM/PROM split)', PACK.clinicianAddableExams.length === 10 && ['shoulder_exam_scapular_control', 'shoulder_exam_distal_neuro', 'shoulder_exam_apprehension_relocation', 'shoulder_exam_target_function_reproduction', 'shoulder_exam_arom', 'shoulder_exam_prom'].every((id) => PACK.clinicianAddableExams.some((x) => x.id === id)))
+assert('0: the merged 능동/수동 exam id is gone — active and passive ROM are separate rows (original §5 "핵심 분기")', !PACK.clinicianAddableExams.some((x) => x.id === 'shoulder_exam_rom') && PACK.examHelp.shoulder_exam_prom.whyKo.includes('핵심 분기'))
+assert('0: direct-support pairs as CLOSED §6 (6 exams; subscap / horizontal adduction / distal neuro / target-function absent)', same(PACK.directSupportByExam, { shoulder_exam_arom: ['SH_MOB_01'], shoulder_exam_prom: ['SH_MOB_01', 'SH_MOB_02'], shoulder_exam_empty_can: ['SH_RC_01'], shoulder_exam_er_resist: ['SH_RC_01', 'SH_RC_02'], shoulder_exam_scapular_control: ['SH_SCAP_01', 'SH_SCAP_02'], shoulder_exam_apprehension_relocation: ['SH_STAB_01'] }))
 assert('0: the frozen-shoulder mobility row pins "통증 범위 내" and never "세게" (CLOSED §8)', PACK.coreExercises.find((e) => e.exerciseId === 'SH_MOB_02').startingDoseKo.includes('통증 범위 내') && PACK.coreExercises.find((e) => e.exerciseId === 'SH_MOB_02').startingDoseKo.includes('세게 늘리지 않는다'))
 
 // V1 머리 위 목표만, 검사 없음
@@ -60,8 +62,13 @@ assert('0: the frozen-shoulder mobility row pins "통증 범위 내" and never "
 }
 // V2 검사 → 직접 뒷받침
 {
-  const r = run(clearPayload(), state(), ws(OVERHEAD, [...NEURO_STABLE, ex('shoulder_exam_rom', 'POSITIVE'), ex('shoulder_exam_apprehension_relocation', 'POSITIVE')]))
-  assert('V2: ROM + apprehension POSITIVE promote exactly MOB_01, MOB_02, STAB_01', same(r.candidates.filter((c) => c.directlySupported).map((c) => c.exerciseId).sort(), ['SH_MOB_01', 'SH_MOB_02', 'SH_STAB_01']))
+  const r = run(clearPayload(), state(), ws(OVERHEAD, [...NEURO_STABLE, ex('shoulder_exam_prom', 'POSITIVE'), ex('shoulder_exam_apprehension_relocation', 'POSITIVE')]))
+  assert('V2: passive ROM restriction + apprehension POSITIVE promote exactly MOB_01, MOB_02, STAB_01', same(r.candidates.filter((c) => c.directlySupported).map((c) => c.exerciseId).sort(), ['SH_MOB_01', 'SH_MOB_02', 'SH_STAB_01']))
+  // 원문 §5: 능동만 제한(수동 유지) = 통증 억제·근력·조절 쪽 → 저강도 스트레칭 행(MOB_02)을 끌어올리지 않는다.
+  const aromOnly = run(clearPayload(), state(), ws(OVERHEAD, [...NEURO_STABLE, ex('shoulder_exam_arom', 'POSITIVE'), ex('shoulder_exam_prom', 'NEGATIVE')]))
+  assert('V2a: active-only restriction promotes MOB_01 alone — the mobility-deficit stretch row stays unpromoted (original §5 branch)', same(aromOnly.candidates.filter((c) => c.directlySupported).map((c) => c.exerciseId), ['SH_MOB_01']))
+  const tfr = run(clearPayload(), state(), ws(OVERHEAD, [ex('shoulder_exam_target_function_reproduction', 'POSITIVE')]))
+  assert('V2c: target-function reproduction POSITIVE promotes nothing (reassessment anchor, not an exercise pair — same as the neck pack)', tfr.candidates.every((c) => c.directlySupported === false))
   const sub = run(clearPayload(), state(), ws(OVERHEAD, [ex('shoulder_exam_subscap_resist', 'POSITIVE'), ex('shoulder_exam_horizontal_adduction', 'POSITIVE')]))
   assert('V2b: subscap / horizontal adduction POSITIVE support NO exercise (hypothesis evidence only)', sub.candidates.every((c) => c.directlySupported === false))
 }

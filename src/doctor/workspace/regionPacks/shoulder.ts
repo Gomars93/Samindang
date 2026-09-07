@@ -4,18 +4,21 @@
  * 원장 승인 문서: `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md` (PO "허리를 기준으로 모든 파트 진행",
  * 2026-09-07 — `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9개를 추천안 그대로 확정).
  * 임상 프레임워크 정본: PR #30 `docs/recovered_rehab_architecture/SHOULDER_V1_REHAB_ARCHITECTURE_RECOVERED.md`.
- * 검사 원본: Drive 「회전근개.md」(원장 검사 스크립트, 5개) + 매트릭스 §6 추가 3개.
+ * 검사 원본: Drive 「회전근개.md」(원장 검사 스크립트 5) + 매트릭스 §6 추가 3 + **원문 대조 추가 2**(2026-09-07).
+ * **원문(A수준, 프로젝트 1차 설계 문서)**: `docs/recovered_rehab_architecture/source/originals/SHOULDER_V1_Evidence_Matrix_v0.1_HANDOFF.part*.md`
+ * (652행, SHA-256 bf406ed7… 재조립 검증). 가설 7·도메인 8·금지 3은 원문 §8·§10과 일치 확인.
  * 근거 확인: `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` §3 (B수준 — 요통·목과 같은 진입 기준).
  *
  * 내용 요약(CLOSED §2~§8):
  *   hypothesisPatterns     PR#30 phenotype 6 + AC/국소 기여 1 = 7.
- *   clinicianAddableExams  원장 스크립트 5 + 견갑 조절 관찰 / 원위 신경 / apprehension-relocation = 8.
+ *   clinicianAddableExams  10 — 원장 스크립트 5 + 매트릭스 추가 3(견갑 조절·원위 신경·apprehension) +
+ *                          **원문 대조 추가 2**(목표 기능 재현, AROM/PROM 분리 — 원문 §7 Base 1~3, §5 "핵심 분기").
  *   rehabDomains           PR#30 Domain 8 (KINETIC_CHAIN은 SH_OVH_01에 흡수, 독립 행 없음).
  *   coreExercises          Core 10 (초안 11 → SH_THX_01 보류). 아카이브 8개는 병합·대응으로 전부 폐기.
  *   stageTable             1단계 4 / 2단계 5 / 3단계 1.
  *   eligibilityRules       전부 기본값(false/false). 방향성 카드 미적용.
  *   neuroExamIds           원위 신경 검사 1개(D-1 의미) — POSITIVE면 전체 차단, 미시행은 후보를 비우지 않는다.
- *   directSupportByExam    검사 5 → 운동(순위 버킷만).
+ *   directSupportByExam    검사 6 → 운동(순위 버킷만).
  *   detailCheckQuestionIds SH08 (서버 `DETAIL_CHECK_REGION_QUESTION_IDS.shoulder`와 parity).
  *
  * 금지(PR#30): "회전근개 = 밴드 외회전", "오십견 = 강한 ROM", "충돌증후군 = 견봉 공간 넓히기" 하드코딩 없음 —
@@ -208,7 +211,9 @@ export const SHOULDER_REGION_PACK = buildDraftPack({
   },
   // 원장 검사 스크립트 5 + 매트릭스 §6 추가 3 — 자동 삽입 없음.
   clinicianAddableExams: [
-    { id: 'shoulder_exam_rom', title: '간단 능동/수동 ROM(목덜미·브라끈 잡기)', help: { howKo: '아픈 쪽 팔로 목덜미 뒤를 잡고, 다음에 브라끈 잡듯이 뒤를 잡게 한다. 능동과 수동을 비교한다.', whyKo: '외회전·내회전 범위를 빠르게 본다. 능동=수동 제한은 동결견·관절염 가설의 근거. POSITIVE(제한)면 가동 운동 2개가 직접 뒷받침된다.' } },
+    { id: 'shoulder_exam_target_function_reproduction', title: '목표 기능 재현', help: { howKo: '환자가 고른 목표 동작(머리 위로 올리기·옷 입기 등)을 실제로 해 보게 하고 증상 재현 여부를 본다.', whyKo: '원문 §7 Base 검사. 재평가는 같은 동작으로 비교한다(원문 §11 "모든 재진: Target Function 0–10").' } },
+    { id: 'shoulder_exam_arom', title: '능동 가동범위(거상·외전·외회전·기능적 내회전)', help: { howKo: '환자가 스스로 팔을 올리고(거상), 벌리고(외전), 밖으로 돌리고, 등 뒤로 손을 올리게 한다(목덜미·브라끈 잡기로 빠르게 볼 수 있다).', whyKo: '원문 §7 Base 검사. POSITIVE(능동 제한)면 진자·보조 거상이 직접 뒷받침된다. 능동 제한만으로 원인을 정하지 않는다 — 수동과 비교해야 한다(원문 §5).' } },
+    { id: 'shoulder_exam_prom', title: '수동 가동범위(거상·외회전·내회전) — 특히 수동 외회전', help: { howKo: '팔에 힘을 빼게 하고 검사자가 거상·외회전·내회전을 끝까지 움직여 범위와 끝느낌을 본다. 능동 범위와 반드시 비교한다.', whyKo: '원문 §5 "SHOULDER_V1의 핵심 분기": 능동 제한에 **수동도 유사하게 제한**이면 가동성 결손(동결견·관절와상완 관절염) 쪽, 수동이 유지되면 통증 억제·회전근개 약화·조절 문제 쪽을 고려한다. 수동 외회전은 세 표현형을 가르는 high-yield 정보. 단일 ROM 패턴으로 진단을 확정하지 않는다. POSITIVE(수동 제한)면 가동 운동 2개가 직접 뒷받침된다.' } },
     { id: 'shoulder_exam_empty_can', title: '엠티캔 검사(Empty can, 극상근)', help: { howKo: '앞으로 나란히 팔을 펴고 엄지가 아래로 가게 돌린 뒤 아래로 누르는 힘에 버티게 한다.', whyKo: '극상근 저항 검사. 단독으로 파열을 진단하지 않는다. POSITIVE(통증·약화)면 등척성 회전근개 운동이 직접 뒷받침된다.' } },
     { id: 'shoulder_exam_er_resist', title: '극하근/소원근 저항검사', help: { howKo: '팔꿈치 90°로 옆구리에 붙이고 팔을 밖으로 벌리게 하며 안쪽으로 저항한다.', whyKo: '외회전근 저항 검사 — 근력/부하 반응. POSITIVE면 회전근개 저항 운동 2개가 직접 뒷받침된다. 갑작스런 뚜렷한 약화는 원장 판단 필드(객관적 근력저하)로 안전이 먼저.' } },
     { id: 'shoulder_exam_subscap_resist', title: '견갑하근 저항검사', help: { howKo: '같은 자세에서 팔을 안쪽으로 모으게 하며 바깥쪽으로 저항한다.', whyKo: '내회전근 저항 검사. 가설 근거이며 운동 뒷받침 쌍은 없다.' } },
@@ -219,7 +224,8 @@ export const SHOULDER_REGION_PACK = buildDraftPack({
   ],
   // CLOSED §6 — 순위 버킷만. subscap·horizontal adduction·distal neuro는 쌍 없음.
   directSupportByExam: {
-    shoulder_exam_rom: ['SH_MOB_01', 'SH_MOB_02'],
+    shoulder_exam_arom: ['SH_MOB_01'],
+    shoulder_exam_prom: ['SH_MOB_01', 'SH_MOB_02'],
     shoulder_exam_empty_can: ['SH_RC_01'],
     shoulder_exam_er_resist: ['SH_RC_01', 'SH_RC_02'],
     shoulder_exam_scapular_control: ['SH_SCAP_01', 'SH_SCAP_02'],

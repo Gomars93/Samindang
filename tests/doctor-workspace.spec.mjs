@@ -45,6 +45,19 @@ const renderWith = (scenario, extraProps) =>
     React.createElement(DoctorWorkspace, { payload: scenario.payload, synthetic: scenario.synthetic, ...extraProps }),
   )
 
+// 2026-09-07 (4부위 활성화): 어깨 팩이 승인되면서 PAIN_SCENARIO_3(어깨 우세)는 이제 "승인 팩이 구동하는 기록"이다 — 요통처럼
+// painRehabSuggestions가 live 병합된다. "승인 전 부위 기록은 병합이 건드리지 않는다"를 검증하던 테스트는 아직 DRAFT인 팔꿈치로
+// 라우팅한 같은 시나리오를 쓴다(안전 플래그·모듈만 바꿈; 팩이 없으면 화면은 옛 SYNTHETIC 후보 목록을 그대로 그린다).
+const DRAFT_REGION_SCENARIO = (() => {
+  const s = JSON.parse(JSON.stringify(PAIN_SCENARIO_3))
+  const r = s.payload.responses
+  delete r.safety_flags.neck
+  delete r.safety_flags.shoulder
+  r.safety_flags.elbow = { elbow_safety_status: 'CLEAR' }
+  r.modules.elbow = { recent_trauma: 'NO' }
+  return s
+})()
+
 // ---------- 1. every scenario renders without throwing ----------
 for (const s of WORKSPACE_SCENARIOS) {
   test(`scenario "${s.label}" (${s.kind}) renders without throwing`, () => {
@@ -1118,10 +1131,11 @@ test('14차 HIGH-1: painRehabSuggestions[0].sourceFacts/contraindicationFacts wi
   // fabricated non-Core-20 id like this fixture's 'r1', still status
   // SUGGESTED (never decided), would legitimately be recomputed away, which
   // is correct new behavior but would make this defensive test assert on
-  // the wrong thing. PAIN_SCENARIO_3 (shoulder, non-LBP) is untouched by
-  // that merge and keeps this test's original intent -- malformed nested
-  // facts inside a persisted RehabSuggestion never crash the render --
-  // exercised exactly as before.
+  // the wrong thing. A DRAFT-region record (DRAFT_REGION_SCENARIO, elbow —
+  // PAIN_SCENARIO_3 itself became an approved-shoulder record on 2026-09-07)
+  // is untouched by that merge and keeps this test's original intent --
+  // malformed nested facts inside a persisted RehabSuggestion never crash
+  // the render -- exercised exactly as before.
   const initialWorkspaceState = {
     schema_version: '1.1.0',
     painRehabSuggestions: [
@@ -1139,7 +1153,7 @@ test('14차 HIGH-1: painRehabSuggestions[0].sourceFacts/contraindicationFacts wi
     ],
     updated_at: null,
   }
-  const html = renderWith(PAIN_SCENARIO_3, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
+  const html = renderWith(DRAFT_REGION_SCENARIO, { submissionId: 'x', initialWorkspaceState, synthetic: undefined })
   assert.ok(html.includes('재활 제안 (SYNTHETIC)'))
   assert.ok(html.includes('근거 소견 생존'))
   assert.ok(html.includes('금기 소견 생존'))
@@ -2601,9 +2615,17 @@ test('목표 기능 그룹 라벨은 LBP 재평가 대상 picker에만 나타나
   assert.ok(html.includes('증상 재현 여부'))
 })
 
-test('non-LBP pain patient (shoulder, pain scenario 3) renders exactly as before: no 허리 움직임 반응, no 목표 기능 group label', () => {
+test('shoulder-dominant pain patient (pain scenario 3, shoulder pack approved 2026-09-07) renders shoulder presets, never LBP ones: no 허리 움직임 반응, no 걷기', () => {
   const html = render(PAIN_SCENARIO_3)
   assert.ok(!html.includes('허리 움직임 반응'))
+  assert.ok(!html.includes('움직임 반응'), 'directional card is not applicable to the shoulder pack')
+  assert.ok(!html.includes('걷기'))
+  assert.ok(!html.includes('lbp_tf_'))
+})
+
+test('DRAFT-region pain patient (elbow) renders exactly as before: no 움직임 반응, no 목표 기능 group label', () => {
+  const html = render(DRAFT_REGION_SCENARIO)
+  assert.ok(!html.includes('움직임 반응'))
   assert.ok(!html.includes('목표 기능(다음 방문에 같은 동작으로 비교)'))
   assert.ok(!html.includes('걷기'))
 })
@@ -2770,8 +2792,8 @@ test('defect 4: 3 or fewer READY candidates -> no <details> disclosure at all', 
 const DECIDED_CAPABILITIES_HEADING = '확인함/지금은 안 됨으로 표시한 준비 조건'
 // ---------- defect 7: adopt action only for LBP records ----------
 
-test('defect 7: PAIN_SCENARIO_3 (shoulder, non-LBP) never renders the "치료 계획에 가져오기" adopt button, even for an ACCEPTED suggestion', () => {
-  const html = renderWith(PAIN_SCENARIO_3, {
+test('defect 7: a DRAFT-region record (elbow; PAIN_SCENARIO_3 routed to elbow) never renders the "치료 계획에 가져오기" adopt button, even for an ACCEPTED suggestion', () => {
+  const html = renderWith(DRAFT_REGION_SCENARIO, {
     submissionId: 'x',
     synthetic: undefined,
     initialWorkspaceState: {

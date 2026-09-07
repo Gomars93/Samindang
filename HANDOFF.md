@@ -1,5 +1,35 @@
 # Current Handoff
 
+## 2026-09-07 (최신 41): **승인 팩 2 → 6** — 어깨·무릎·발목/발·손목/손 활성화(요통 기준 B수준). 엔진·화면 변경 0, 팩 데이터 + 테스트 + 문서
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO "허리를 기준으로 모든 파트 진행" + 범위 "목 어깨 무릎 손목 발목까지 전부" +
+"모든 작업 후에 PR"(2026-09-07).
+
+### 한 것
+- `regionPacks/shoulder.ts`(Core 10·검사 8·neuro 1·SH08) / `knee.ts`(Core 12·검사 10·KNEE_12/13) / `ankleFoot.ts`(원장 원안 11+4·6패턴·AF_00) /
+  `wristHand.ts`(빈 팩 → Core 10·검사 8·neuro 1·WH_11) — 전부 `provenance` CLINICIAN_APPROVED + `productionApproved: true`, 빈 칸 0.
+- `server/detailCheck.js` 4행. `tests/{shoulder,knee,wrist-hand,ankle-foot}-exercise-core.vignettes.spec.mjs` 신설(94), `region-pack` 331.
+- 문서: CLOSED 4(`docs/*_EXERCISE_DECISIONS_v1.0_CLOSED.md`), 근거 로그 §4·§6·§7(B수준, 에이전트 리서치 3건), DRAFT_CONTENT §1, 어깨 매트릭스
+  §10 해제, 목 파일럿 로그 "다른 부위" 절, REAL_DEVICE §5-b. DECISIONS 2026-09-07 "4부위 활성화".
+
+### 검증
+`region-pack` 331 / `region-exercise-vignettes` 94 / `neck-exercise-vignettes` 39 / `region-pilot-observation` 64 / `detail-check` 61 /
+`server` 233 / `doctor` 1041 / `doctor-workspace` 303(어깨 승인으로 DRAFT 의존 테스트 3개를 팔꿈치 복제 시나리오로 이동) / `follow-up-session` 279 /
+`tsc -b` 0 / `build` green / `test:all` exit 0 (68 스위트).
+
+### 못 한 것 / 조건부
+- 원문(A수준) 대조 전부 v1.1 항목(정책). 근거 범주 밖 행은 "조건부"로 표시(각 CLOSED §1) → 파일럿 채택률로 결정.
+- 손목/손은 원장 콘텐츠 0 — 첫 10건 전 행 문장 검토가 필수(CLOSED §10-1).
+- 고관절·팔꿈치·턱관절 DRAFT 유지(PO 범위 밖).
+
+### Next Recommended Action
+1. **PO**: PR 리뷰·main 병합 → 원장 PC `git pull` + `npm run build` → `REAL_DEVICE_PILOT_CHECKLIST.md` §5-b로 6부위 화면 1회씩 확인.
+2. **원장 파일럿(6부위 동시)**: 관찰 로그 §1의 3가지(신경 검사 결과·방향성 반응(요통·목만)·채택/보류/배제 버튼)를 화면에 남기고 주 1회
+   `npm run pilot:region-observation -- <region>`. 손목/손·발목/발은 카드 문장 수정 목록을 먼저.
+3. 첫 라운드(부위당 10건 또는 4주) → 각 CLOSED §10 → v1.1.
+
+---
+
 ## 2026-09-07 (최신 40): **목 파일럿 시작 가능 상태** — 검증 수준 정책(B수준 진입, 요통과 동일) + 관찰 항목 자동 집계 스크립트. **팩·엔진·화면 변경 0**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO "파일럿을 최대한 빨리, 완성시킬 수 있는 데까지"(2026-09-07).

@@ -160,6 +160,9 @@ http://localhost:4173/#doctor
 - **실패 시**: 목 칩·검사 카드가 전혀 없으면 `npm run test:region-pack`과 `npm run test:neck-exercise-vignettes`를 돌려
   본다(둘 다 통과하면 빌드가 옛 것이다 — 사전 준비의 `npm run build`를 다시).
 - 파일럿 관찰 기록 절차는 `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` §1.
+- **어깨·무릎·발목/발·손목/손도 승인됨(2026-09-07)**: 각 주호소로 테스트 문진을 1건씩 제출해 가설 칩·검사 카드·후보 카드가
+  보이는지 같은 방식으로 확인한다. 어깨는 NS01 "어깨 우세"로 답해야 어깨 팩이 뜬다(목 우세·비슷함은 목 팩). 고관절·팔꿈치·턱관절은
+  아직 DRAFT라 안전 패널만 보이면 정상이다.
 
 ---
 

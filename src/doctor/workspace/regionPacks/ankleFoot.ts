@@ -1,22 +1,44 @@
 /**
- * 발목/발(ANKLE_FOOT) 부위 팩 — DRAFT, 원장 승인 전 (`productionApproved: false`).
+ * 발목/발(ANKLE_FOOT) 부위 팩 — **승인**, `productionApproved: true` (2026-09-07).
  *
- * 출처: Notion 「매선 프로토콜 › 발목 패턴」(2025-12-04, 아카이브) — 「매선 프로토콜
- * 목차」가 "원장님이 만든 발목 프로토콜 포맷"이라 부르는 **원장 원안 포맷**이다
- * (3패턴 분류 "삼인당 표준 분류", 패턴별 운동 3~4개, 3단계 치료 진행, 경과 지표).
- * 문서의 3-Phase(통증 조절 1~4회 / 기능 회복 5~8회 / 고착화 9~12회)는 방문 회차
- * 기준이라 이 시스템의 운동 단계(0~3, VISIT_04 축)와 다르다 — 단계표는 원장이 정한다.
+ * 원장 승인 문서: `docs/ANKLE_FOOT_EXERCISE_DECISIONS_v1.0_CLOSED.md` (PO "허리를 기준으로 모든 파트 진행", 2026-09-07).
+ * 원장 원안: Notion 「매선 프로토콜 › 발목 패턴」(2025-12-04, 「목차」가 "원장님이 만든 발목 프로토콜 포맷"이라 부름) —
+ * 3패턴·운동 11·검사 4는 **원장 원안 그대로** 보존하고 7필드·단계·도메인을 채웠다.
+ * 근거 확인: `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` §6 (B수준: JOSPT 2021 외측 염좌/CAI, 2018·2024 아킬레스,
+ * 2023 족저 뒤꿈치 통증 CPG 등). 그 CPG의 관리 범주 3개를 가설 패턴으로 **추가**했다(원장 3 + CPG 3 = 6).
+ *
+ * 내용 요약(CLOSED §2~§8):
+ *   hypothesisPatterns     원장 3(골반 비정렬형·고관절 전략 문제형·발목 가동성 제한형) + CPG 3(외측 염좌·불안정 회복,
+ *                          아킬레스 건 부하, 족저 뒤꿈치 통증).
+ *   clinicianAddableExams  원장 4 + 추가 4(한 발 뒤꿈치 들기·아킬레스 부하 재현·족저 뒤꿈치·인대 이완) = 8.
+ *   rehabDomains           8 (PR #30 범위 밖 부위 — 이 문서에서 신설).
+ *   coreExercises          원장 11 + 추가 4(교육·부하 조절, 한 발 균형, 아킬레스 부하 점진, 족저근막 스트레칭) = 15.
+ *   stageTable             1단계 7 / 2단계 7 / 3단계 1.
+ *   eligibilityRules       전부 기본값. 방향성 카드 미적용. neuroExamIds 없음(원위 신경 변화는 L0 문항 AF_02·AF_08).
+ *   directSupportByExam    검사 8 → 운동(순위 버킷만).
+ *   detailCheckQuestionIds AF_00(가장 불편한 부위 — 재검 때 위치 이동 확인).
+ *
+ * 문서의 3-Phase(방문 회차 기준)는 이 시스템의 단계(0~3, VISIT_04 축)와 다르다 — 단계표는 CLOSED §5가 정한다.
+ * 골절(Ottawa)·아킬레스 파열·DVT·감염/Charcot·체중부하 불가는 L0 안전(`ankleFootLogic.ts`, FROZEN).
  */
 import { buildDraftPack } from './draftPack'
 import { evaluateAnkleFootSafety } from './regionSafety'
 
+/** 전 운동 공통 중단·재검토 첫 항목(CLOSED §4) — 비네트 0절이 단언한다. */
+const STOP_COMMON = '새로운 또는 진행하는 신경증상(발·발가락 힘빠짐·감각저하) 또는 종아리 한쪽 붓기·통증(혈전 우려)'
+
 export const ANKLE_FOOT_REGION_PACK = buildDraftPack({
   region: 'ankle_foot',
-  sourceDocument: 'DRAFT — Notion 매선 프로토콜 › 발목 패턴 (2025-12-04, 원장 원안 포맷). 원장 승인 전.',
+  productionApproved: true,
+  sourceDocument:
+    'docs/ANKLE_FOOT_EXERCISE_DECISIONS_v1.0_CLOSED.md (2026-09-07, PO 승인) + Notion 매선 프로토콜 › 발목 패턴 (2025-12-04, 원장 원안 포맷)',
   hypothesisPatterns: [
     { id: 'PELVIC_ALIGNMENT_LOSS', labelKo: '골반 비정렬형', patientEasyLabelKo: '골반 높이가 맞지 않는 자세', particleKo: '와' },
     { id: 'HIP_STRATEGY_LOSS', labelKo: '고관절 전략 문제형', patientEasyLabelKo: '고관절이 축 역할을 못 하는 움직임', particleKo: '과' },
     { id: 'ANKLE_MOBILITY_LOSS', labelKo: '발목 가동성 제한형', patientEasyLabelKo: '발목이 충분히 젖혀지지 않는 상태', particleKo: '와' },
+    { id: 'LATERAL_ANKLE_SPRAIN_RECOVERY', labelKo: '외측 발목 염좌·불안정 회복', patientEasyLabelKo: '접질린 뒤 남은 불안정', particleKo: '과' },
+    { id: 'ACHILLES_TENDON_LOAD', labelKo: '아킬레스 건 부하 통증', patientEasyLabelKo: '뒤꿈치 힘줄 부하', particleKo: '와' },
+    { id: 'PLANTAR_HEEL_PAIN', labelKo: '족저 뒤꿈치 통증', patientEasyLabelKo: '발바닥 뒤꿈치 통증', particleKo: '과' },
   ],
   targetFunctions: [
     { id: 'ankle_foot_tf_walking', label: '걷기' },
@@ -25,35 +47,264 @@ export const ANKLE_FOOT_REGION_PACK = buildDraftPack({
     { id: 'ankle_foot_tf_standing_long', label: '오래 서 있기' },
     { id: 'ankle_foot_tf_custom', label: '기타 목표 동작', placeholder: '예: 등산 하산, 축구 복귀 — 목표 동작을 적어주세요' },
   ],
+  rehabDomains: [
+    { id: 'EDUCATION_LOAD_MODIFICATION', labelKo: '교육·부하 조절' },
+    { id: 'ANKLE_MOBILITY', labelKo: '발목 가동성' },
+    { id: 'CALF_PLANTARFLEXOR_STRENGTH', labelKo: '종아리·족저굴곡근 근력' },
+    { id: 'PROXIMAL_HIP_CONTROL', labelKo: '골반·고관절 조절' },
+    { id: 'BALANCE_PROPRIOCEPTION', labelKo: '균형·고유수용감각' },
+    { id: 'TENDON_LOAD_PROGRESSION', labelKo: '건 부하 점진' },
+    { id: 'PLANTAR_FASCIA_HEEL', labelKo: '족저근막·뒤꿈치' },
+    { id: 'LANDING_RETURN_TO_ACTIVITY', labelKo: '착지·활동 복귀' },
+  ],
+  // CLOSED §3·§4 — 원장 원안 11(id·이름 그대로) + 추가 4. 용량은 삼인당 시작 기본값(문서에 있던 10회만 원안).
   exercises: [
-    { id: 'AF_PELV_01', sourceName: '클램(Clam)', displayNameKo: '클램', strategyLabelKo: '골반 비정렬형' },
-    { id: 'AF_PELV_02', sourceName: '사이드 브릿지', displayNameKo: '사이드 브릿지', strategyLabelKo: '골반 비정렬형' },
-    { id: 'AF_PELV_03', sourceName: '힙어브덕션(중둔근 강화)', displayNameKo: '힙 어브덕션(중둔근 강화)', strategyLabelKo: '골반 비정렬형' },
-    { id: 'AF_HIPS_01', sourceName: '힙힌지', displayNameKo: '힙 힌지', strategyLabelKo: '고관절 전략 문제형' },
-    { id: 'AF_HIPS_02', sourceName: '힙쓰러스트', displayNameKo: '힙 쓰러스트', strategyLabelKo: '고관절 전략 문제형' },
-    { id: 'AF_HIPS_03', sourceName: 'Step-down control', displayNameKo: '스텝다운 컨트롤', strategyLabelKo: '고관절 전략 문제형' },
-    { id: 'AF_HIPS_04', sourceName: '고관절 내·외회전 운동(90–90)', displayNameKo: '90/90 고관절 내·외회전', strategyLabelKo: '고관절 전략 문제형' },
-    { id: 'AF_MOB_01', sourceName: 'Wall Dorsiflexion Stretch (10회)', displayNameKo: '벽 발목 배굴 스트레칭', startingDoseKo: '10회', strategyLabelKo: '발목 가동성 제한형' },
-    { id: 'AF_MOB_02', sourceName: 'Calf Raise', displayNameKo: '카프 레이즈', strategyLabelKo: '발목 가동성 제한형' },
-    { id: 'AF_MOB_03', sourceName: 'Ankle Mobility Drills', displayNameKo: '발목 가동성 드릴', strategyLabelKo: '발목 가동성 제한형' },
-    { id: 'AF_MOB_04', sourceName: 'Soft Landing Training', displayNameKo: '부드러운 착지 훈련', strategyLabelKo: '발목 가동성 제한형' },
+    {
+      id: 'AF_EDU_01',
+      sourceName: 'Education — pain-monitoring model + progressive weight-bearing',
+      displayNameKo: '통증 반응 교육 + 점진적 체중부하',
+      domain: 'EDUCATION_LOAD_MODIFICATION',
+      startingCriteriaKo: ['안전 확인 CLEAR(체중부하 가능)', '환자가 현재 편하게 걷는 시간을 말할 수 있음'],
+      startingDoseKo: '매일 걷기 시간의 70~80%부터. 운동 중 통증은 10점 중 5 이하, 다음 날 아침 기저로 회복되면 계속.',
+      acceptableResponseKo: ['다음 날 아침 통증이 기저로 회복됨', '주 단위로 악화되지 않음'],
+      stopReviewKo: [STOP_COMMON, '체중부하가 갑자기 어려워짐', '주 단위로 통증이 악화'],
+      regressionKo: '걷기 시간을 줄이고 하루 2~3회로 나눔',
+      progressionKo: '시간 또는 지면 난이도 중 한 가지만 증가',
+      targetFunctions: ['WALKING', 'STAIRS', 'RUNNING', 'STANDING_LONG'],
+    },
+    {
+      id: 'AF_PELV_01',
+      sourceName: '클램(Clam)',
+      displayNameKo: '클램',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['옆으로 누운 자세가 가능함', '동작 중 허리·고관절 앞 통증이 없음'],
+      startingDoseKo: '10~15회 × 2세트(양쪽), 하루 1회부터 시작.',
+      acceptableResponseKo: ['엉덩이 옆의 피로만 느껴짐'],
+      stopReviewKo: [STOP_COMMON, '허리·고관절 앞쪽 통증 유발'],
+      regressionKo: '범위를 줄이고 밴드 제거',
+      progressionKo: '밴드 추가 또는 세트 중 한 가지만',
+      targetFunctions: ['WALKING', 'STANDING_LONG', 'STAIRS'],
+    },
+    {
+      id: 'AF_PELV_02',
+      sourceName: '사이드 브릿지',
+      displayNameKo: '사이드 브릿지',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['무릎 대고 옆으로 버티기가 가능함', '어깨·허리 통증 없음'],
+      startingDoseKo: '무릎 대고 10~15초 유지 × 5회(양쪽), 하루 1회부터 시작.',
+      acceptableResponseKo: ['옆구리·엉덩이 옆의 피로만 느껴짐'],
+      stopReviewKo: [STOP_COMMON, '허리 통증 유발', '어깨 통증'],
+      regressionKo: '유지 시간을 절반으로',
+      progressionKo: '유지 시간을 먼저, 그다음 무릎 펴기',
+      targetFunctions: ['STANDING_LONG', 'WALKING'],
+    },
+    {
+      id: 'AF_PELV_03',
+      sourceName: '힙어브덕션(중둔근 강화)',
+      displayNameKo: '힙 어브덕션(중둔근 강화)',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['옆으로 누워 다리를 들 수 있음', '동작 중 허리 통증이 없음'],
+      startingDoseKo: '10~15회 × 2세트(양쪽), 하루 1회부터 시작.',
+      acceptableResponseKo: ['엉덩이 옆의 피로만 느껴짐', '골반이 뒤로 넘어가지 않고 조절됨'],
+      stopReviewKo: [STOP_COMMON, '허리 통증 유발'],
+      regressionKo: '범위를 줄이고 벽에 등을 대고',
+      progressionKo: '밴드 또는 발목 부하 중 한 가지만',
+      targetFunctions: ['WALKING', 'STAIRS', 'STANDING_LONG'],
+    },
+    {
+      id: 'AF_HIPS_01',
+      sourceName: '힙힌지',
+      displayNameKo: '힙 힌지',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['서서 골반을 뒤로 밀며 상체를 숙일 수 있음', '허리 통증 없음'],
+      startingDoseKo: '막대를 등에 대고 10회 × 2세트, 하루 1회부터 시작.',
+      acceptableResponseKo: ['허벅지 뒤·엉덩이의 당김·피로만 느껴짐'],
+      stopReviewKo: [STOP_COMMON, '허리 통증 유발'],
+      regressionKo: '범위를 줄이고 벽에 엉덩이 닿기',
+      progressionKo: '범위를 먼저, 그다음 가벼운 부하',
+      targetFunctions: ['STAIRS', 'WALKING', 'RUNNING'],
+    },
+    {
+      id: 'AF_HIPS_02',
+      sourceName: '힙쓰러스트',
+      displayNameKo: '힙 쓰러스트',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['브릿지 자세가 가능함', '허리 통증 없음'],
+      startingDoseKo: '바닥 브릿지 10~12회 × 2세트, 하루 1회부터 시작.',
+      acceptableResponseKo: ['엉덩이의 피로만 느껴짐', '허리로 밀어 올리지 않음'],
+      stopReviewKo: [STOP_COMMON, '허리 통증 유발', '햄스트링 경련'],
+      regressionKo: '범위를 줄이고 짧게 유지',
+      progressionKo: '한 발 → 그다음 부하',
+      targetFunctions: ['STAIRS', 'RUNNING', 'WALKING'],
+    },
+    {
+      id: 'AF_HIPS_03',
+      sourceName: 'Step-down control',
+      displayNameKo: '스텝다운 컨트롤',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['낮은 단에서 한 발로 내려설 수 있음', '무릎·발목 정렬을 조절할 수 있음'],
+      startingDoseKo: '낮은 단(10 cm) 8~10회 × 2세트(양쪽), 하루 1회부터 시작.',
+      acceptableResponseKo: ['골반 흔들림·무릎 안쪽 붕괴가 반복하면서 줄어듦'],
+      stopReviewKo: [STOP_COMMON, '발목 통증 급증', '정렬이 조절되지 않음'],
+      regressionKo: '단 높이를 낮추고 난간 잡기',
+      progressionKo: '단 높이 또는 속도 중 한 가지만',
+      targetFunctions: ['STAIRS', 'WALKING', 'RUNNING'],
+    },
+    {
+      id: 'AF_HIPS_04',
+      sourceName: '고관절 내·외회전 운동(90–90)',
+      displayNameKo: '90/90 고관절 내·외회전',
+      domain: 'PROXIMAL_HIP_CONTROL',
+      startingCriteriaKo: ['바닥에 앉는 자세가 가능함', '고관절 앞 날카로운 통증이 없음'],
+      startingDoseKo: '양쪽으로 넘기기 8~10회 × 2세트, 하루 1회부터 시작.',
+      acceptableResponseKo: ['고관절 주변의 당김만 느껴짐'],
+      stopReviewKo: [STOP_COMMON, '고관절 앞 날카로운 통증', '허리 통증 유발'],
+      regressionKo: '범위를 줄이고 손으로 보조',
+      progressionKo: '범위 또는 유지 시간 중 한 가지만',
+      targetFunctions: ['WALKING', 'STAIRS'],
+    },
+    {
+      id: 'AF_MOB_01',
+      sourceName: 'Wall Dorsiflexion Stretch (10회)',
+      displayNameKo: '벽 발목 배굴 스트레칭',
+      domain: 'ANKLE_MOBILITY',
+      startingCriteriaKo: ['체중부하가 가능함(안전 CLEAR)', '앞쪽 발목 걸림 통증이 날카롭지 않음'],
+      startingDoseKo: '10회(원안), 30초 유지 × 3회로 시작, 하루 2회.',
+      acceptableResponseKo: ['종아리·발목 앞의 당김만 느껴짐', '무릎-벽 거리가 유지되거나 늘어남'],
+      stopReviewKo: [STOP_COMMON, '발목 앞 날카로운 걸림 통증'],
+      regressionKo: '거리를 줄이고 무릎 살짝만',
+      progressionKo: '거리만 증가',
+      targetFunctions: ['WALKING', 'STAIRS', 'RUNNING'],
+    },
+    {
+      id: 'AF_MOB_02',
+      sourceName: 'Calf Raise',
+      displayNameKo: '카프 레이즈',
+      domain: 'CALF_PLANTARFLEXOR_STRENGTH',
+      startingCriteriaKo: ['아킬레스 파열 우려가 없음(안전 CLEAR)', '양발 뒤꿈치 들기가 통증 허용 범위'],
+      startingDoseKo: '양발 10~15회 × 3세트, 하루 1회부터 시작.',
+      acceptableResponseKo: ['종아리의 피로만 느껴짐', '다음 날 아침 통증이 기저로 회복됨'],
+      stopReviewKo: [STOP_COMMON, '뒤꿈치 힘줄 통증이 다음 날 아침 악화', '갑작스런 밀기 힘 상실'],
+      regressionKo: '범위를 줄이고 손으로 보조',
+      progressionKo: '한 발 → 느린 템포 → 부하',
+      targetFunctions: ['WALKING', 'STAIRS', 'RUNNING', 'STANDING_LONG'],
+    },
+    {
+      id: 'AF_MOB_03',
+      sourceName: 'Ankle Mobility Drills',
+      displayNameKo: '발목 가동성 드릴',
+      domain: 'ANKLE_MOBILITY',
+      startingCriteriaKo: ['발목 능동 움직임에 날카로운 통증이 없음'],
+      startingDoseKo: '발목 원 그리기·알파벳 쓰기 각 방향 10회, 하루 2회부터 시작.',
+      acceptableResponseKo: ['뻣뻣함이 반복하면서 줄어듦'],
+      stopReviewKo: [STOP_COMMON, '움직임 중 통증 급증', '붓기 증가'],
+      regressionKo: '범위를 줄이고 앉아서',
+      progressionKo: '범위 또는 횟수 중 한 가지만',
+      targetFunctions: ['WALKING', 'STAIRS'],
+    },
+    {
+      id: 'AF_MOB_04',
+      sourceName: 'Soft Landing Training',
+      displayNameKo: '부드러운 착지 훈련',
+      domain: 'LANDING_RETURN_TO_ACTIVITY',
+      startingCriteriaKo: ['한 발 뒤꿈치 들기와 한 발 균형을 조절할 수 있음', '뛰기 목표가 있음'],
+      startingDoseKo: '양발 제자리 착지 8~10회 × 2세트부터 시작, 격일. 소리 없이 착지.',
+      acceptableResponseKo: ['착지가 조용해지고 무릎·발목 정렬이 유지됨', '다음 날 붓기·통증이 없음'],
+      stopReviewKo: [STOP_COMMON, '착지 중 발목이 꺾이는 느낌', '다음 날 붓기'],
+      regressionKo: '높이를 없애고 양발로만',
+      progressionKo: '한 발 착지 → 그다음 높이',
+      targetFunctions: ['RUNNING'],
+    },
+    {
+      id: 'AF_BAL_01',
+      sourceName: 'Single-leg balance progression (pillow / foam → wobble board)',
+      displayNameKo: '한 발 균형 진행(베개·폼 → 보드)',
+      domain: 'BALANCE_PROPRIOCEPTION',
+      startingCriteriaKo: ['한 발로 10초 설 수 있음(붙잡을 것 옆에서)', '체중부하가 가능함'],
+      startingDoseKo: '한 발 서기 30초 × 3회(양쪽), 하루 1~2회부터 시작.',
+      acceptableResponseKo: ['흔들림이 반복하면서 줄어듦', '발목 통증이 늘지 않음'],
+      stopReviewKo: [STOP_COMMON, '발목이 꺾이는 느낌 재현 → 중단'],
+      regressionKo: '손끝을 벽에 대고 시간을 줄임',
+      progressionKo: '눈 감기 → 베개·폼 → 보드 중 한 단계씩',
+      targetFunctions: ['WALKING', 'STAIRS', 'RUNNING', 'STANDING_LONG'],
+    },
+    {
+      id: 'AF_TEND_01',
+      sourceName: 'Achilles tendon load progression (isometric → eccentric heel drop / slow heavy resistance)',
+      displayNameKo: '아킬레스 부하 점진(등척성 → 뒤꿈치 내리기·느린 고부하)',
+      domain: 'TENDON_LOAD_PROGRESSION',
+      startingCriteriaKo: ['아킬레스 파열 우려가 없음(안전 CLEAR)', '등척성 뒤꿈치 들기 유지에서 통증이 허용 범위'],
+      startingDoseKo: '양발 뒤꿈치 들기 유지 30~45초 × 5회부터 시작, 하루 1~2회. 운동 중 통증 10점 중 5 이하.',
+      acceptableResponseKo: ['운동 직후 힘줄 통증이 줄거나 유지됨', '다음 날 아침 뻣뻣함·통증이 기저로 회복됨'],
+      stopReviewKo: [STOP_COMMON, '다음 날 아침 힘줄 통증이 뚜렷하게 악화', '갑작스런 "뚝" 소리·밀기 힘 상실'],
+      regressionKo: '등척성만, 양발로',
+      progressionKo: '등척성 → 느린 뒤꿈치 내리기(3초) → 부하(배낭)',
+      targetFunctions: ['WALKING', 'RUNNING', 'STAIRS'],
+    },
+    {
+      id: 'AF_PF_01',
+      sourceName: 'Plantar fascia specific stretch + calf stretch',
+      displayNameKo: '족저근막 특이 스트레칭 + 종아리 스트레칭',
+      domain: 'PLANTAR_FASCIA_HEEL',
+      startingCriteriaKo: ['뒤꿈치 바닥 통증이 아침 첫걸음에 가장 심한 양상', '발바닥 날카로운 통증이 스트레칭으로 유발되지 않음'],
+      startingDoseKo: '발가락 젖혀 발바닥 당기기 10초 × 10회(아침 첫걸음 전) + 종아리 스트레칭 30초 × 3회, 하루 2~3회.',
+      acceptableResponseKo: ['아침 첫걸음 통증이 주 단위로 줄어듦'],
+      stopReviewKo: [STOP_COMMON, '뒤꿈치 붓기·열감', '발바닥 통증이 스트레칭으로 급증'],
+      regressionKo: '유지 시간을 절반으로',
+      progressionKo: '유지 시간 또는 횟수 중 한 가지만',
+      targetFunctions: ['WALKING', 'STANDING_LONG'],
+    },
   ],
-  clinicianAddableExams: [
-    { id: 'ankle_foot_exam_df_lunge', title: '발목 배굴 런지 검사(10cm 기준)', help: { howKo: '벽에서 무릎이 닿는 거리를 잰다.', whyKo: '6~8cm 이하면 발목 가동성 제한형 강력 의심.' } },
-    { id: 'ankle_foot_exam_sls', title: '한 발 서기 10초', help: { howKo: '10초 유지 여부, 골반 흔들림, 발목/무릎 정렬을 본다.', whyKo: '골반 비정렬형·고관절 전략 문제형 단서.' } },
-    { id: 'ankle_foot_exam_squat', title: '스쿼트 관찰', help: { howKo: '무릎 안쪽 붕괴, 발목 배굴 제한, 골반 회전/기울기를 본다.', whyKo: '패턴 분류의 기본 검사.' } },
-    { id: 'ankle_foot_exam_weight_shift', title: '체중 분배 비율(55:45 기준)', help: { howKo: '좌우 체중 분배를 잰다.', whyKo: '55:45 이상 차이면 비정렬 의심.' } },
-  ],
-  // E-3: PR #30 범위 밖 부위 — 도메인 표 없음(원장 ② 문서에서 정한다). 운동 행은 전부 도메인 미배정으로 빈 칸에 오른다.
-  rehabDomains: [],
-  // 출처 표기(요통 동등성 설계 §4) — 승인 게이트. 발목 페이지는 원장 원안 포맷(「매선 프로토콜 목차」) → 원장 문서. 팩 용도 확정은 아직.
-  provenance: {
-    hypothesisPatterns: 'CLINICIAN_DOCUMENT',
-    targetFunctions: 'CLAUDE_DRAFT',
-    coreExercises: 'CLINICIAN_DOCUMENT',
-    stageTable: 'CLAUDE_DRAFT',
-    clinicianAddableExams: 'CLINICIAN_DOCUMENT',
-    directSupportByExam: 'CLAUDE_DRAFT',
+  // CLOSED §5 — 1단계 7 / 2단계 7 / 3단계 1. 문서의 3-Phase(방문 회차)와 다르다.
+  stageTable: {
+    AF_EDU_01: 1,
+    AF_MOB_01: 1,
+    AF_MOB_03: 1,
+    AF_PELV_01: 1,
+    AF_PF_01: 1,
+    AF_TEND_01: 1,
+    AF_BAL_01: 1,
+    AF_MOB_02: 2,
+    AF_PELV_02: 2,
+    AF_PELV_03: 2,
+    AF_HIPS_01: 2,
+    AF_HIPS_02: 2,
+    AF_HIPS_03: 2,
+    AF_HIPS_04: 2,
+    AF_MOB_04: 3,
   },
+  // 원장 원안 4 + 추가 4 — 자동 삽입 없음. 원안 문구(10cm·6~8cm·55:45)는 원장 기준값이라 그대로 둔다.
+  clinicianAddableExams: [
+    { id: 'ankle_foot_exam_df_lunge', title: '발목 배굴 런지 검사(10cm 기준)', help: { howKo: '벽에서 무릎이 닿는 거리를 잰다.', whyKo: '6~8cm 이하면 발목 가동성 제한형 강력 의심. POSITIVE면 배굴 스트레칭·가동성 드릴이 직접 뒷받침된다.' } },
+    { id: 'ankle_foot_exam_sls', title: '한 발 서기 10초', help: { howKo: '10초 유지 여부, 골반 흔들림, 발목/무릎 정렬을 본다.', whyKo: '골반 비정렬형·고관절 전략 문제형 단서. POSITIVE면 한 발 균형과 클램이 직접 뒷받침된다.' } },
+    { id: 'ankle_foot_exam_squat', title: '스쿼트 관찰', help: { howKo: '무릎 안쪽 붕괴, 발목 배굴 제한, 골반 회전/기울기를 본다.', whyKo: '패턴 분류의 기본 검사. POSITIVE면 힙 힌지와 스텝다운 컨트롤이 직접 뒷받침된다.' } },
+    { id: 'ankle_foot_exam_weight_shift', title: '체중 분배 비율(55:45 기준)', help: { howKo: '좌우 체중 분배를 잰다.', whyKo: '55:45 이상 차이면 비정렬 의심. POSITIVE면 골반 조절 운동 3개가 직접 뒷받침된다.' } },
+    { id: 'ankle_foot_exam_heel_raise', title: '한 발 뒤꿈치 들기 횟수·높이', help: { howKo: '한 발로 뒤꿈치 들기를 반복시켜 횟수와 높이, 좌우 차이를 본다.', whyKo: '종아리·족저굴곡근 근력과 건 부하 내성. POSITIVE(감소)면 카프 레이즈가 직접 뒷받침된다. 갑작스런 밀기 불가는 파열 안전 분기.' } },
+    { id: 'ankle_foot_exam_achilles_load', title: '아킬레스 부하 재현(압통·한 발 홉)', help: { howKo: '건 중간부 압통과 한 발 홉·뒤꿈치 들기에서 통증 재현을 본다.', whyKo: '아킬레스 건 부하 가설의 근거. POSITIVE면 아킬레스 부하 점진이 직접 뒷받침된다.' } },
+    { id: 'ankle_foot_exam_plantar_heel', title: '족저 뒤꿈치 압통·첫걸음 통증', help: { howKo: '종골 내측 결절 압통과 아침 첫걸음·오래 앉았다 일어설 때 통증을 확인한다.', whyKo: '족저 뒤꿈치 통증 가설의 근거. POSITIVE면 족저근막 스트레칭이 직접 뒷받침된다.' } },
+    { id: 'ankle_foot_exam_ligament_laxity', title: '외측 인대 이완(전방 당김·거골 기울임)', help: { howKo: '전방 당김·거골 기울임에서 이완·끝느낌·통증을 좌우 비교한다. 급성 외상 직후에는 Ottawa 기준이 먼저.', whyKo: '외측 염좌·불안정 가설의 근거. POSITIVE면 한 발 균형 진행이 직접 뒷받침된다.' } },
+  ],
+  // CLOSED §6 — 순위 버킷만.
+  directSupportByExam: {
+    ankle_foot_exam_df_lunge: ['AF_MOB_01', 'AF_MOB_03'],
+    ankle_foot_exam_sls: ['AF_BAL_01', 'AF_PELV_01'],
+    ankle_foot_exam_squat: ['AF_HIPS_01', 'AF_HIPS_03'],
+    ankle_foot_exam_weight_shift: ['AF_PELV_01', 'AF_PELV_02', 'AF_PELV_03'],
+    ankle_foot_exam_heel_raise: ['AF_MOB_02'],
+    ankle_foot_exam_achilles_load: ['AF_TEND_01'],
+    ankle_foot_exam_plantar_heel: ['AF_PF_01'],
+    ankle_foot_exam_ligament_laxity: ['AF_BAL_01'],
+  },
+  directionalResponseApplicable: false,
+  provenance: {
+    hypothesisPatterns: 'CLINICIAN_APPROVED',
+    targetFunctions: 'CLINICIAN_APPROVED',
+    coreExercises: 'CLINICIAN_APPROVED',
+    stageTable: 'CLINICIAN_APPROVED',
+    clinicianAddableExams: 'CLINICIAN_APPROVED',
+    directSupportByExam: 'CLINICIAN_APPROVED',
+  },
+  // CLOSED §7 — 서버 `DETAIL_CHECK_REGION_QUESTION_IDS.ankle_foot`와 같아야 한다(C절 parity).
+  detailCheckQuestionIds: ['AF_00'],
   evaluateSafety: (payload) => evaluateAnkleFootSafety(payload),
 })

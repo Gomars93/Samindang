@@ -139,10 +139,12 @@ for (const [name, responses, expected] of CANDIDATE_CASES) {
 }
 // 회귀 방지: 판별 부위의 팩이 승인 전이면 같은 모집단의 승인 팩(요통)으로 후퇴한다.
 assert('B-fallback: HIP_GROIN_DOMINANT patient still gets the LBP pack while the hip pack is unapproved', activeDrivingPack(F({ lbp: {}, hip: {} }, { hip: { region_discriminator: 'HIP_GROIN_DOMINANT' } })) === REGION_PACKS.lbp)
-// 2026-09-07 목 활성화: 어깨 우세 환자는 목 팩으로 후퇴하지 않는다 — 안전 패널만(R2 이전과 같음). 목 우세/유사/미응답은 목 팩.
-assert('B-fallback: SHOULDER_DOMINANT patient gets NO pack while the shoulder pack is unapproved (never the neck pack)', activeDrivingPack(F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'SHOULDER_DOMINANT' } })) === null)
+// 2026-09-07 목·어깨 활성화: 어깨 우세 환자는 어깨 팩, 그 밖은 목 팩. 후퇴 쌍은 hip → lbp뿐(어깨 → 목 없음).
+assert('B-fallback: SHOULDER_DOMINANT patient gets the approved shoulder pack (never the neck pack)', activeDrivingPack(F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'SHOULDER_DOMINANT' } })) === REGION_PACKS.shoulder)
 assert('B-fallback: NECK_DOMINANT / SIMILAR / missing NS01 → the approved neck pack', ['NECK_DOMINANT', 'SIMILAR', undefined].every((v) => activeDrivingPack(F({ neck: {}, shoulder: {} }, v ? { shoulder: { primary_focus: v } } : {})) === REGION_PACKS.neck))
-assert('B-fallback: SHOULDER_DOMINANT patient gets no pack (neither neck nor shoulder approved)', activeDrivingPack(F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'SHOULDER_DOMINANT' } })) === null)
+assert('B-fallback: SHOULDER_DOMINANT with the shoulder pack hypothetically unapproved → NO pack (no neck fallback)', (() => { const pack = { ...REGION_PACKS.shoulder, productionApproved: false }; return activeRegionPack('neck') === REGION_PACKS.neck && drivingRegionCandidates(F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'SHOULDER_DOMINANT' } })).join() === 'shoulder' && pack.productionApproved === false })())
+assert('B-fallback: single-region records route to their own approved pack (knee / wrist_hand / ankle_foot)', activeDrivingPack(F({ knee: {} })) === REGION_PACKS.knee && activeDrivingPack(F({ wrist_hand: {} })) === REGION_PACKS.wrist_hand && activeDrivingPack(F({ ankle_foot: {} })) === REGION_PACKS.ankle_foot)
+assert('B-fallback: hip / elbow / tmj records still get no pack (DRAFT)', activeDrivingPack(F({ hip: {} })) === null && activeDrivingPack(F({ elbow: {} })) === null && activeDrivingPack(F({ tmj: {} })) === null)
 assert('B-fallback: lbp-only and no-flag records', activeDrivingPack(F({ lbp: {} })) === REGION_PACKS.lbp && activeDrivingPack(F({})) === null && activeDrivingPack(undefined) === null)
 
 // ---------------------------------------------------------------------------
@@ -157,12 +159,14 @@ for (const k of REGION_KEYS) {
 assert('C: server table has no key outside approved packs', Object.keys(DETAIL_CHECK_REGION_QUESTION_IDS).every((k) => REGION_PACKS[k]?.productionApproved === true))
 assert('C: detailCheckQuestionIdsForRegion(null) = common only', same(detailCheckQuestionIdsForRegion(null), [...DETAIL_CHECK_COMMON_QUESTION_IDS]))
 assert('C: detailCheckQuestionIdsForRegion(neck) = common + NECK_12 (approved 2026-09-07)', same(detailCheckQuestionIdsForRegion('neck'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'NECK_12']))
-assert('C: detailCheckQuestionIdsForRegion(shoulder) = common only (unapproved)', same(detailCheckQuestionIdsForRegion('shoulder'), [...DETAIL_CHECK_COMMON_QUESTION_IDS]))
+assert('C: detailCheckQuestionIdsForRegion(shoulder) = common + SH08 (approved 2026-09-07)', same(detailCheckQuestionIdsForRegion('shoulder'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'SH08']))
+assert('C: knee = common + KNEE_12, KNEE_13 / wrist_hand = common + WH_11 / ankle_foot = common + AF_00', same(detailCheckQuestionIdsForRegion('knee'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'KNEE_12', 'KNEE_13']) && same(detailCheckQuestionIdsForRegion('wrist_hand'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'WH_11']) && same(detailCheckQuestionIdsForRegion('ankle_foot'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'AF_00']))
+assert('C: hip / elbow / tmj = common only (DRAFT)', ['hip', 'elbow', 'tmj'].every((k) => same(detailCheckQuestionIdsForRegion(k), [...DETAIL_CHECK_COMMON_QUESTION_IDS])))
 assert('C: detailCheckQuestionIdsForRegion(lbp) = common + LBP 3', same(detailCheckQuestionIdsForRegion('lbp'), ['VISIT_04_SYMPTOM_IMPACT', 'LBP_12', 'LBP_13', 'LBP_14']))
 assert('C: legacy detailCheckQuestionIds({isLbp}) unchanged', same(detailCheckQuestionIds({ isLbp: true }), detailCheckQuestionIdsForRegion('lbp')) && same(detailCheckQuestionIds({ isLbp: false }), detailCheckQuestionIdsForRegion(null)))
 assert('C: a bogus region gets common only (no throw)', same(detailCheckQuestionIdsForRegion('__proto__'), [...DETAIL_CHECK_COMMON_QUESTION_IDS]))
 assert('C-fallback: candidates [hip, lbp] → LBP ids (hip unapproved → falls back to lbp, same rule as the screen)', same(detailCheckQuestionIdsForCandidates(['hip', 'lbp']), detailCheckQuestionIdsForRegion('lbp')))
-assert('C-fallback: candidates [shoulder] / [] / garbage → common only', same(detailCheckQuestionIdsForCandidates(['shoulder']), [...DETAIL_CHECK_COMMON_QUESTION_IDS]) && same(detailCheckQuestionIdsForCandidates([]), [...DETAIL_CHECK_COMMON_QUESTION_IDS]) && same(detailCheckQuestionIdsForCandidates('x'), [...DETAIL_CHECK_COMMON_QUESTION_IDS]))
+assert('C-fallback: candidates [elbow] / [] / garbage → common only', same(detailCheckQuestionIdsForCandidates(['elbow']), [...DETAIL_CHECK_COMMON_QUESTION_IDS]) && same(detailCheckQuestionIdsForCandidates([]), [...DETAIL_CHECK_COMMON_QUESTION_IDS]) && same(detailCheckQuestionIdsForCandidates('x'), [...DETAIL_CHECK_COMMON_QUESTION_IDS]))
 assert('C-fallback: candidates [neck] → common + NECK_12', same(detailCheckQuestionIdsForCandidates(['neck']), detailCheckQuestionIdsForRegion('neck')))
 
 // ---------------------------------------------------------------------------
@@ -190,9 +194,10 @@ for (const k of REGION_KEYS) {
   assert(`D: ${k} evaluateSafety fails closed on a flagged-but-empty module`, k === 'lbp' || pack.evaluateSafety({ responses: { safety_flags: { [k]: {} }, modules: { [k]: {} } }, flags: {} }, {}).routineCareAllowed === false)
 }
 assert('D: activeRegionPack(lbp) is the LBP pack; activeRegionPack(null/undefined) is null', activeRegionPack('lbp') === LBP && activeRegionPack(null) === null && activeRegionPack(undefined) === null)
-assert('D: exactly two approved packs today (lbp, neck — 2026-09-07)', REGION_KEYS.filter((k) => REGION_PACKS[k].productionApproved).join(',') === 'lbp,neck')
-assert('D: draft packs with clinician content exist for the 6 regions found in Notion/Drive', ['neck', 'shoulder', 'knee', 'hip', 'ankle_foot', 'tmj'].every((k) => REGION_PACKS[k].hypothesisPatterns.length >= 3 && REGION_PACKS[k].coreExercises.length >= 3))
-assert('D: elbow / wrist_hand are empty drafts (no clinician document found)', ['elbow', 'wrist_hand'].every((k) => REGION_PACKS[k].hypothesisPatterns.length === 0 && REGION_PACKS[k].coreExercises.length === 0))
+assert('D: exactly six approved packs today (lbp, neck, shoulder, knee, ankle_foot, wrist_hand — 2026-09-07 "허리 기준으로 모든 파트")', REGION_KEYS.filter((k) => REGION_PACKS[k].productionApproved).join(',') === 'lbp,neck,shoulder,knee,ankle_foot,wrist_hand')
+assert('D: every approved pack names its CLOSED decision document and never says DRAFT', REGION_KEYS.filter((k) => REGION_PACKS[k].productionApproved).every((k) => k === 'lbp' || (REGION_PACKS[k].sourceDocument.includes('_EXERCISE_DECISIONS_v1.0_CLOSED.md') && !/DRAFT/.test(REGION_PACKS[k].sourceDocument))))
+assert('D: clinician-content packs exist for the 6 regions found in Notion/Drive', ['neck', 'shoulder', 'knee', 'hip', 'ankle_foot', 'tmj'].every((k) => REGION_PACKS[k].hypothesisPatterns.length >= 3 && REGION_PACKS[k].coreExercises.length >= 3))
+assert('D: elbow is the only empty draft left (no clinician document found)', REGION_PACKS.elbow.hypothesisPatterns.length === 0 && REGION_PACKS.elbow.coreExercises.length === 0 && REGION_PACKS.wrist_hand.coreExercises.length === 10)
 assert('D: every draft pack says DRAFT in sourceDocument', REGION_KEYS.filter((k) => !REGION_PACKS[k].productionApproved).every((k) => /DRAFT/.test(REGION_PACKS[k].sourceDocument)))
 assert('D: draft (unapproved) eligibility rules do not require stable neuro / distal stop (no such inputs exist for those regions)', REGION_KEYS.filter((k) => !REGION_PACKS[k].productionApproved).every((k) => REGION_PACKS[k].eligibilityRules.every((r) => r.requiresStableNeuro === false && r.stopOnDistalWorsening === false)))
 
@@ -262,17 +267,20 @@ assert('D: draft (unapproved) eligibility rules do not require stable neuro / di
   assert('G: LBP wrapper and generic engine give identical results on the same record', same(viaWrapper, viaPack))
   assert('G: LBP live record yields candidates (non-vacuous)', viaPack.candidates.length > 0 && viaPack.blocked === null)
   const kneeState = { directionalResponse: 'NOT_ASSESSED', workingHypothesis: { supports: {}, recordedAt: null }, confirmedStage: null }
+  const hipPayload = structuredClone(payload)
+  delete hipPayload.responses.safety_flags.lbp
+  hipPayload.responses.safety_flags.hip = { hip_safety_status: 'CLEAR' }
+  hipPayload.responses.modules.hip = { recent_trauma: 'NO' }
+  const hipResult = buildRecommendationContext(REGION_PACKS.hip, hipPayload, {}, kneeState, ws)
+  assert('G: an unapproved pack (hip, DRAFT) returns the empty result (no candidates, no block, no lock) even on ITS OWN region payload', hipResult.candidates.length === 0 && hipResult.blocked === null && hipResult.treatmentSafetyLocked === false && hipResult.targetFunctionGap === null)
   const kneePayload = structuredClone(payload)
   delete kneePayload.responses.safety_flags.lbp
   kneePayload.responses.safety_flags.knee = { knee_safety_status: 'CLEAR' }
   kneePayload.responses.modules.knee = { recent_trauma: 'NO' }
-  const kneeResult = buildRecommendationContext(REGION_PACKS.knee, kneePayload, {}, kneeState, ws)
-  assert('G: an unapproved pack returns the empty result (no candidates, no block, no lock) even on ITS OWN region payload', kneeResult.candidates.length === 0 && kneeResult.blocked === null && kneeResult.treatmentSafetyLocked === false && kneeResult.targetFunctionGap === null)
-  const approvedKneeOnKnee = buildRecommendationContext({ ...REGION_PACKS.knee, productionApproved: true }, kneePayload, {}, kneeState, ws)
-  assert('G: the same pack, hypothetically approved, DOES engage on its region payload (non-vacuous: safety recompute on a minimal module fails closed → SAFETY_REVIEW block)', approvedKneeOnKnee.blocked === 'SAFETY_REVIEW' && approvedKneeOnKnee.blockedMessageKo.includes('안전 확인(무릎)'))
-  const approvedClone = { ...REGION_PACKS.knee, productionApproved: true }
-  const kneeOnLbpPayload = buildRecommendationContext(approvedClone, payload, {}, kneeState, ws)
-  assert('G: a (hypothetically approved) knee pack on an LBP-only payload is not applicable → empty', kneeOnLbpPayload.candidates.length === 0 && kneeOnLbpPayload.blocked === null)
+  const kneeOnKnee = buildRecommendationContext(REGION_PACKS.knee, kneePayload, {}, kneeState, ws)
+  assert('G: the approved knee pack DOES engage on its region payload (non-vacuous: safety recompute on a minimal module fails closed → SAFETY_REVIEW block)', kneeOnKnee.blocked === 'SAFETY_REVIEW' && kneeOnKnee.blockedMessageKo.includes('안전 확인(무릎)'))
+  const kneeOnLbpPayload = buildRecommendationContext(REGION_PACKS.knee, payload, {}, kneeState, ws)
+  assert('G: the approved knee pack on an LBP-only payload is not applicable → empty', kneeOnLbpPayload.candidates.length === 0 && kneeOnLbpPayload.blocked === null)
   // 목(승인): 최소 모듈은 fail closed → SAFETY_REVIEW(목). 실제 CLEAR 기록의 후보 조립은 tests/neck-exercise-core.vignettes.spec.mjs.
   const neckMinimal = structuredClone(payload)
   delete neckMinimal.responses.safety_flags.lbp
@@ -290,15 +298,15 @@ assert('D: draft (unapproved) eligibility rules do not require stable neuro / di
 {
   const lbpHtml = renderToString(React.createElement(DoctorWorkspace, { payload: PAIN_SCENARIO_1.payload, synthetic: undefined }))
   assert('H: LBP live record renders 임상 가설 card, 운동 단계 card and 허리 움직임 반응', lbpHtml.includes('임상 가설(확정 진단 아님)') && lbpHtml.includes('운동 단계') && lbpHtml.includes('허리 움직임 반응'))
-  const kneePayload = structuredClone(PAIN_SCENARIO_1.payload)
-  delete kneePayload.responses.safety_flags.lbp
-  kneePayload.responses.safety_flags.knee = { knee_safety_status: 'CLEAR' }
-  kneePayload.responses.modules.knee = { recent_trauma: 'NO' }
-  assert('H: mutated payload really routes to knee', drivingRegion(kneePayload.responses) === 'knee')
-  const kneeHtml = renderToString(React.createElement(DoctorWorkspace, { payload: kneePayload, synthetic: undefined }))
-  assert('H: unapproved knee record renders NO 임상 가설 card, NO 운동 단계 card, NO 움직임 반응 card, NO 확인 추가', !kneeHtml.includes('임상 가설(확정 진단 아님)') && !kneeHtml.includes('운동 단계') && !kneeHtml.includes('움직임 반응') && !kneeHtml.includes('확인 추가'))
-  assert('H: unapproved knee record renders NO 재활/운동 제안 and NO 목표 기능 group', !kneeHtml.includes('재활/운동 제안') && !kneeHtml.includes('목표 기능(다음 방문에 같은 동작으로 비교)'))
-  assert('H: unapproved knee record still renders the shared lanes (판단·처치, 다음)', kneeHtml.includes('판단·처치') && kneeHtml.includes('id="next-h2"'))
+  const hipPayload = structuredClone(PAIN_SCENARIO_1.payload)
+  delete hipPayload.responses.safety_flags.lbp
+  hipPayload.responses.safety_flags.hip = { hip_safety_status: 'CLEAR' }
+  hipPayload.responses.modules.hip = { recent_trauma: 'NO' }
+  assert('H: mutated payload really routes to hip (DRAFT)', drivingRegion(hipPayload.responses) === 'hip')
+  const hipHtml = renderToString(React.createElement(DoctorWorkspace, { payload: hipPayload, synthetic: undefined }))
+  assert('H: unapproved hip record renders NO 임상 가설 card, NO 운동 단계 card, NO 움직임 반응 card, NO 확인 추가', !hipHtml.includes('임상 가설(확정 진단 아님)') && !hipHtml.includes('운동 단계') && !hipHtml.includes('움직임 반응') && !hipHtml.includes('확인 추가'))
+  assert('H: unapproved hip record renders NO 재활/운동 제안 and NO 목표 기능 group', !hipHtml.includes('재활/운동 제안') && !hipHtml.includes('목표 기능(다음 방문에 같은 동작으로 비교)'))
+  assert('H: unapproved hip record still renders the shared lanes (판단·처치, 다음)', hipHtml.includes('판단·처치') && hipHtml.includes('id="next-h2"'))
   // 2026-09-07 목 활성화: CLEAR 목 기록은 요통과 같은 카드 집합을 목 라벨로 렌더한다.
   const neckPayload = structuredClone(PAIN_SCENARIO_1.payload)
   delete neckPayload.responses.safety_flags.lbp
@@ -308,11 +316,14 @@ assert('D: draft (unapproved) eligibility rules do not require stable neuro / di
   const neckHtml = renderToString(React.createElement(DoctorWorkspace, { payload: neckPayload, synthetic: undefined }))
   assert('H: approved neck record renders 임상 가설 card with the PR #30 neck labels, 운동 단계 card, 목 움직임 반응 card and 확인 추가', neckHtml.includes('임상 가설(확정 진단 아님)') && neckHtml.includes('목 움직임 제한(축성 목통증)') && neckHtml.includes('운동 단계') && neckHtml.includes('목 움직임 반응') && neckHtml.includes('팔 쪽으로 퍼짐(원위부 악화)') && neckHtml.includes('확인 추가'))
   assert('H: approved neck record renders the 목표 기능 group with neck presets and never LBP ones', neckHtml.includes('컴퓨터·책상 작업') && !neckHtml.includes('허리 움직임 반응') && !neckHtml.includes('lbp_tf_'))
+  // 2026-09-07 어깨 활성화: 어깨 우세 기록은 어깨 팩 카드(가설 7·단계·확인 추가)를 렌더하고 목 카드·방향성 카드는 없다.
   const shoulderDominant = structuredClone(neckPayload)
   shoulderDominant.responses.safety_flags.shoulder = { shoulder_safety_status: 'CLEAR' }
-  shoulderDominant.responses.modules.shoulder = { primary_focus: 'SHOULDER_DOMINANT' }
+  shoulderDominant.responses.modules.shoulder = { primary_focus: 'SHOULDER_DOMINANT', recent_trauma: 'NO', infection_emergency_screen: 'NO', nonmechanical_cardiac_gap_screen: 'NO', bilateral_similar_stiff_pain: 'NO' }
+  assert('H: SHOULDER_DOMINANT payload routes to shoulder and recomputes CLEAR', drivingRegion(shoulderDominant.responses) === 'shoulder' && REGION_PACKS.shoulder.evaluateSafety(shoulderDominant, { shoulder_objective_cuff_weakness: 'NONE' }).routineCareAllowed === true)
   const shoulderHtml = renderToString(React.createElement(DoctorWorkspace, { payload: shoulderDominant, synthetic: undefined }))
-  assert('H: SHOULDER_DOMINANT record (shoulder pack unapproved) renders NO neck hypothesis / stage / 움직임 반응 cards', !shoulderHtml.includes('임상 가설(확정 진단 아님)') && !shoulderHtml.includes('운동 단계') && !shoulderHtml.includes('움직임 반응'))
+  assert('H: SHOULDER_DOMINANT record renders the shoulder hypothesis card (PR #30 + AC 라벨), 운동 단계, 확인 추가 and shoulder presets', shoulderHtml.includes('임상 가설(확정 진단 아님)') && shoulderHtml.includes('회전근개 관련 어깨통증') && shoulderHtml.includes('견봉쇄골·국소 기여') && shoulderHtml.includes('운동 단계') && shoulderHtml.includes('확인 추가') && shoulderHtml.includes('팔 머리 위로 올리기'))
+  assert('H: SHOULDER_DOMINANT record renders NO neck labels and NO 움직임 반응 card (directional not applicable to shoulder)', !shoulderHtml.includes('목 움직임 제한(축성 목통증)') && !shoulderHtml.includes('움직임 반응') && !shoulderHtml.includes('neck_tf_'))
 }
 
 // ---------------------------------------------------------------------------
@@ -344,15 +355,20 @@ assert('D: draft (unapproved) eligibility rules do not require stable neuro / di
   // §8/§5 — PR #30 가설 상태로 교체. 목은 요통과 같은 5개.
   assert('J-§8: neck hypothesis patterns are the 5 PR #30 candidates in order', same(ids('neck'), ['AXIAL_MOBILITY_DEFICIT', 'RADICULAR_INVOLVEMENT', 'CERVICOGENIC_HEADACHE', 'MOVEMENT_COORDINATION_DEFICIT', 'SHOULDER_OR_PERIPHERAL']))
   assert('J-§8: neck has as many patterns as LBP (5)', ids('neck').length === LBP.hypothesisPatterns.length && LBP.hypothesisPatterns.length === 5)
-  assert('J-§8: shoulder hypothesis patterns are the 6 PR #30 phenotypes', same(ids('shoulder'), ['RC_RELATED', 'FROZEN_SHOULDER', 'GH_OA', 'INSTABILITY_TRAUMATIC', 'INSTABILITY_ATRAUMATIC_MOTOR_CONTROL', 'CERVICAL_CONTRIBUTION']))
+  assert('J-§8: shoulder hypothesis patterns are the 6 PR #30 phenotypes + AC_LOCAL_CONTRIBUTION (매트릭스 §0-1, CLOSED 2026-09-07)', same(ids('shoulder'), ['RC_RELATED', 'FROZEN_SHOULDER', 'GH_OA', 'INSTABILITY_TRAUMATIC', 'INSTABILITY_ATRAUMATIC_MOTOR_CONTROL', 'CERVICAL_CONTRIBUTION', 'AC_LOCAL_CONTRIBUTION']))
   assert('J-§8: knee hypothesis patterns are the 7 PR #30 phenotypes', same(ids('knee'), ['KNEE_OA', 'PATELLOFEMORAL_PAIN', 'PATELLAR_TENDINOPATHY', 'ACUTE_MENISCAL', 'DEGENERATIVE_MENISCAL', 'LIGAMENT_INSTABILITY', 'PATELLAR_INSTABILITY']))
   const ARCHIVE_PATTERN_IDS = /^(FHP|UPPER_TRAP_LEVATOR|FLAT_NECK|THORACIC_RESTRICTION|SCAPULAR_PROTRACTION|UPPER_TRAP_DOMINANT|SCAPULAR_IR_DOWNWARD|INTERNAL_ROTATION|EXTERNAL_ROTATION|STIFF_KNEE|HIP_KNEE_COUPLING)$/
   assert('J-§8: no archive 4-pattern id survives in neck/shoulder/knee', ['neck', 'shoulder', 'knee'].every((k) => ids(k).every((id) => !ARCHIVE_PATTERN_IDS.test(id))))
   assert('J-§8: MUST_EXCLUDE_* is L0 safety, never a hypothesis chip (any pack)', REGION_KEYS.every((k) => ids(k).every((id) => !/^MUST_EXCLUDE/.test(id))))
-  assert('J-§8: shoulder/knee archive exercise names are preserved as candidates (8 each) and stay unapproved', ['shoulder', 'knee'].every((k) => REGION_PACKS[k].coreExercises.length === 8 && REGION_PACKS[k].productionApproved === false))
+  // 2026-09-07 4부위 활성화(CLOSED): 아카이브 운동 id는 전부 폐기, Core 크기는 각 CLOSED §3.
+  assert('J-④: shoulder Core 10 / knee Core 12 / ankle_foot Core 15 / wrist_hand Core 10, all approved with zero gaps', REGION_PACKS.shoulder.coreExercises.length === 10 && REGION_PACKS.knee.coreExercises.length === 12 && REGION_PACKS.ankle_foot.coreExercises.length === 15 && REGION_PACKS.wrist_hand.coreExercises.length === 10 && ['shoulder', 'knee', 'ankle_foot', 'wrist_hand'].every((k) => REGION_PACKS[k].productionApproved === true && packContentGaps(REGION_PACKS[k]).length === 0))
+  assert('J-④: shoulder / knee archive exercise ids are all retired (병합·대체·폐기)', REGION_PACKS.shoulder.coreExercises.every((e) => !/^SH_(PROT|TRAP|IR|THX)_/.test(e.exerciseId)) && REGION_PACKS.knee.coreExercises.every((e) => !/^KNEE_(IR|ER|STIFF|HIP)_/.test(e.exerciseId)))
+  assert('J-④: ankle_foot keeps the clinician-original 11 exercise ids (원장 원안 보존) and adds 4', ['AF_PELV_01', 'AF_PELV_02', 'AF_PELV_03', 'AF_HIPS_01', 'AF_HIPS_02', 'AF_HIPS_03', 'AF_HIPS_04', 'AF_MOB_01', 'AF_MOB_02', 'AF_MOB_03', 'AF_MOB_04'].every((id) => REGION_PACKS.ankle_foot.coreExercises.some((e) => e.exerciseId === id)) && ['AF_EDU_01', 'AF_BAL_01', 'AF_TEND_01', 'AF_PF_01'].every((id) => REGION_PACKS.ankle_foot.coreExercises.some((e) => e.exerciseId === id)))
+  assert('J-④: ankle_foot keeps the clinician-original 3 patterns first and adds the 3 CPG management patterns', same(ids('ankle_foot'), ['PELVIC_ALIGNMENT_LOSS', 'HIP_STRATEGY_LOSS', 'ANKLE_MOBILITY_LOSS', 'LATERAL_ANKLE_SPRAIN_RECOVERY', 'ACHILLES_TENDON_LOAD', 'PLANTAR_HEEL_PAIN']))
+  assert('J-④: every approved non-LBP pack opens every stop-review list with the shared neuro sentence (identical per pack for the 4 new packs; neck varies its parenthetical)', ['neck', 'shoulder', 'knee', 'ankle_foot', 'wrist_hand'].every((k) => REGION_PACKS[k].coreExercises.every((e) => e.stopReviewKo[0].startsWith('새로운 또는 진행하는 신경증상'))) && ['shoulder', 'knee', 'ankle_foot', 'wrist_hand'].every((k) => new Set(REGION_PACKS[k].coreExercises.map((e) => e.stopReviewKo[0])).size === 1))
 assert('J-④: neck carries the CLOSED Core 9 (archive ids all retired) and is approved with zero gaps', REGION_PACKS.neck.coreExercises.length === 9 && REGION_PACKS.neck.productionApproved === true && REGION_PACKS.neck.coreExercises.every((e) => !/^NECK_(FHP|TRAP|FLAT|THX_02)/.test(e.exerciseId)) && packContentGaps(REGION_PACKS.neck).length === 0)
   assert('J-§8: LBP pack is unchanged — patterns, exercises, labels byte-identical to the old constants', same(LBP.hypothesisPatterns.map((p) => p.id), LBP_HYPOTHESIS_PATTERN_IDS) && LBP.coreExercises.length === LBP_CORE_EXERCISE_METADATA.length && LBP.coreExercises.every((e, i) => e.exerciseId === LBP_CORE_EXERCISE_METADATA[i].exerciseId && e.strategyLabelKo === REGION_PACKS.lbp.rehabDomains.find((d) => d.id === e.domain)?.labelKo))
-  assert('J-§8: hip / ankle_foot / tmj / elbow / wrist_hand still declare no PR #30 domain table (out of PR #30 scope)', ['hip', 'ankle_foot', 'tmj', 'elbow', 'wrist_hand'].every((k) => REGION_PACKS[k].rehabDomains.length === 0))
+  assert('J-§8: hip / tmj / elbow still declare no domain table (DRAFT, out of PR #30 scope); ankle_foot / wrist_hand got their own 8-domain tables at CLOSED', ['hip', 'tmj', 'elbow'].every((k) => REGION_PACKS[k].rehabDomains.length === 0) && REGION_PACKS.ankle_foot.rehabDomains.length === 8 && REGION_PACKS.wrist_hand.rehabDomains.length === 8)
 
   // §3 — 방향성 반응: 목만 켠다.
   assert('J-§3: directionalResponseApplicable is true for lbp and neck only', REGION_KEYS.filter((k) => REGION_PACKS[k].directionalResponseApplicable).join(',') === 'lbp,neck')
@@ -395,7 +411,9 @@ assert('J-④: neck carries the CLOSED Core 9 (archive ids all retired) and is a
   const NECK_NEURO = REGION_PACKS.neck.neuroExamIds
   assert('E-2: neck derives neuro status from exactly the C5–T1 baseline and UMN exams; both are addable exams', same(NECK_NEURO, ['neck_exam_neuro_c5_t1', 'neck_exam_umn']) && NECK_NEURO.every((id) => REGION_PACKS.neck.clinicianAddableExams.some((x) => x.id === id)))
   assert('E-2: provocation tests (Spurling/ULTT) are addable exams but NOT neuro-status exams', ['neck_exam_spurling', 'neck_exam_ultt'].every((id) => REGION_PACKS.neck.clinicianAddableExams.some((x) => x.id === id) && !NECK_NEURO.includes(id)))
-  assert('E-2: lbp / shoulder / knee and every other pack declare no neuro exam ids (LBP keeps the clinician judgment field)', REGION_KEYS.filter((k) => k !== 'neck').every((k) => REGION_PACKS[k].neuroExamIds.length === 0))
+  assert('E-2: neuro exam ids exist only where a CLOSED document defined an objective-deficit exam — neck 2, shoulder 1, wrist_hand 1; lbp keeps the clinician judgment field; knee / ankle_foot / hip / elbow / tmj none', same(REGION_PACKS.shoulder.neuroExamIds, ['shoulder_exam_distal_neuro']) && same(REGION_PACKS.wrist_hand.neuroExamIds, ['wrist_hand_exam_median_neuro']) && ['lbp', 'knee', 'ankle_foot', 'hip', 'elbow', 'tmj'].every((k) => REGION_PACKS[k].neuroExamIds.length === 0))
+  assert('E-2: every declared neuro exam id is an addable exam of its pack, and provocation tests never are (Phalen/Tinel, apprehension)', ['shoulder', 'wrist_hand'].every((k) => REGION_PACKS[k].neuroExamIds.every((id) => REGION_PACKS[k].clinicianAddableExams.some((x) => x.id === id))) && !REGION_PACKS.wrist_hand.neuroExamIds.includes('wrist_hand_exam_phalen_tinel') && !REGION_PACKS.shoulder.neuroExamIds.includes('shoulder_exam_apprehension_relocation'))
+  assert('E-2: outside LBP, only NECK_NEURAL_01 and WH_NERVE_01 require stable neuro (신경 가동 운동만)', same(REGION_KEYS.filter((k) => k !== 'lbp').flatMap((k) => REGION_PACKS[k].eligibilityRules.filter((r) => r.requiresStableNeuro).map((r) => r.exerciseId)).sort(), ['NECK_NEURAL_01', 'WH_NERVE_01']))
   assert('E-2 unit: no ids → null (caller keeps evaluateSafety().neuroStatus)', neuroStatusFromExamResults([], [ex('neck_exam_neuro_c5_t1', 'POSITIVE')]) === null)
   assert('E-2 unit: nothing recorded → UNKNOWN, never STABLE', neuroStatusFromExamResults(NECK_NEURO, []) === 'UNKNOWN')
   assert('E-2 unit: one NEGATIVE, one absent → UNKNOWN (partial baseline is not stability)', neuroStatusFromExamResults(NECK_NEURO, [ex('neck_exam_neuro_c5_t1', 'NEGATIVE')]) === 'UNKNOWN')
@@ -420,19 +438,19 @@ assert('J-④: neck carries the CLOSED Core 9 (archive ids all retired) and is a
   }
 
   // E-3 — 도메인 표 + 출처 게이트.
-  assert('E-3: domain table sizes follow PR #30 (neck 9 / shoulder 8 / knee 11) and the LBP catalog (13)', REGION_PACKS.neck.rehabDomains.length === 9 && REGION_PACKS.shoulder.rehabDomains.length === 8 && REGION_PACKS.knee.rehabDomains.length === 11 && LBP.rehabDomains.length === 13)
-  for (const k of ['lbp', 'neck', 'shoulder', 'knee']) {
+  assert('E-3: domain table sizes follow PR #30 (neck 9 / shoulder 8 / knee 11), the LBP catalog (13) and the CLOSED tables (ankle_foot 8 / wrist_hand 8)', REGION_PACKS.neck.rehabDomains.length === 9 && REGION_PACKS.shoulder.rehabDomains.length === 8 && REGION_PACKS.knee.rehabDomains.length === 11 && LBP.rehabDomains.length === 13 && REGION_PACKS.ankle_foot.rehabDomains.length === 8 && REGION_PACKS.wrist_hand.rehabDomains.length === 8)
+  for (const k of ['lbp', 'neck', 'shoulder', 'knee', 'ankle_foot', 'wrist_hand']) {
     const domainIds = new Set(REGION_PACKS[k].rehabDomains.map((d) => d.id))
     assert(`E-3: every ${k} core exercise carries a domain from its own table`, REGION_PACKS[k].coreExercises.every((e) => domainIds.has(e.domain)))
     assert(`E-3: ${k} domain ids are unique`, domainIds.size === REGION_PACKS[k].rehabDomains.length)
   }
-  assert('E-3: draft exercise strategy label = its domain label (the old archive pattern name is gone from the card reason line)', ['neck', 'shoulder', 'knee'].every((k) => REGION_PACKS[k].coreExercises.every((e) => e.strategyLabelKo === REGION_PACKS[k].rehabDomains.find((d) => d.id === e.domain).labelKo)) && !REGION_PACKS.neck.coreExercises.some((e) => /FHP|승모·견갑거근|플랫넥/.test(e.strategyLabelKo)))
+  assert('E-3: exercise strategy label = its domain label (the old archive pattern name is gone from the card reason line)', ['neck', 'shoulder', 'knee', 'ankle_foot', 'wrist_hand'].every((k) => REGION_PACKS[k].coreExercises.every((e) => e.strategyLabelKo === REGION_PACKS[k].rehabDomains.find((d) => d.id === e.domain).labelKo)) && !REGION_PACKS.neck.coreExercises.some((e) => /FHP|승모·견갑거근|플랫넥/.test(e.strategyLabelKo)))
   const PROV_FIELDS = ['hypothesisPatterns', 'targetFunctions', 'coreExercises', 'stageTable', 'clinicianAddableExams', 'directSupportByExam']
   assert('provenance: every pack declares all 6 provenance fields', REGION_KEYS.every((k) => same(Object.keys(REGION_PACKS[k].provenance).sort(), [...PROV_FIELDS].sort())))
   assert('provenance: LBP is CLINICIAN_APPROVED on every field (the only approvable value)', PROV_FIELDS.every((f) => LBP.provenance[f] === 'CLINICIAN_APPROVED'))
-  assert('provenance: shoulder/knee hypotheses are PR30_FRAMEWORK and exercises are ARCHIVE_CANDIDATE; neck is CLINICIAN_APPROVED on every field', ['shoulder', 'knee'].every((k) => REGION_PACKS[k].provenance.hypothesisPatterns === 'PR30_FRAMEWORK' && REGION_PACKS[k].provenance.coreExercises === 'ARCHIVE_CANDIDATE') && PROV_FIELDS.every((f) => REGION_PACKS.neck.provenance[f] === 'CLINICIAN_APPROVED'))
-  assert('provenance gate: a non-approved provenance is a content gap (shoulder lists 6 provenance gaps, one per non-approved field)', packContentGaps(REGION_PACKS.shoulder).filter((g) => g.startsWith('provenance.')).length === 6 && packContentGaps(REGION_PACKS.shoulder).includes('provenance.coreExercises = ARCHIVE_CANDIDATE (원장 확정 전)'))
-  assert('provenance gate: flipping only productionApproved on a pack with non-approved provenance still leaves gaps (approval needs the provenance flipped too)', packContentGaps({ ...REGION_PACKS.shoulder, productionApproved: true }).some((g) => g.startsWith('provenance.')))
+  assert('provenance: every approved pack is CLINICIAN_APPROVED on every field; hip / elbow / tmj still carry a non-approved field', ['neck', 'shoulder', 'knee', 'ankle_foot', 'wrist_hand'].every((k) => PROV_FIELDS.every((f) => REGION_PACKS[k].provenance[f] === 'CLINICIAN_APPROVED')) && ['hip', 'elbow', 'tmj'].every((k) => PROV_FIELDS.some((f) => REGION_PACKS[k].provenance[f] !== 'CLINICIAN_APPROVED')))
+  assert('provenance gate: a non-approved provenance is a content gap (elbow lists 6 provenance gaps, one per non-approved field)', packContentGaps(REGION_PACKS.elbow).filter((g) => g.startsWith('provenance.')).length === 6 && packContentGaps(REGION_PACKS.elbow).includes('provenance.coreExercises = CLAUDE_DRAFT (원장 확정 전)'))
+  assert('provenance gate: flipping only productionApproved on a pack with non-approved provenance still leaves gaps (approval needs the provenance flipped too)', packContentGaps({ ...REGION_PACKS.elbow, productionApproved: true }).some((g) => g.startsWith('provenance.')))
   assert('provenance gate (non-vacuous): the LBP pack with one field downgraded gains exactly that gap', same(packContentGaps({ ...LBP, provenance: { ...LBP.provenance, stageTable: 'CLAUDE_DRAFT' } }), ['provenance.stageTable = CLAUDE_DRAFT (원장 확정 전)']))
   assert('E-3 gate (non-vacuous): an LBP row with an unknown domain is a gap', packContentGaps({ ...LBP, coreExercises: [{ ...LBP.coreExercises[0], domain: 'NOPE' }, ...LBP.coreExercises.slice(1)] }).some((g) => g.includes(".domain 'NOPE'")))
   assert('E-2 gate (non-vacuous): a neuro exam id the pack cannot surface is a gap', packContentGaps({ ...LBP, neuroExamIds: ['ghost_exam'] }).some((g) => g.startsWith('neuroExamIds.ghost_exam')))

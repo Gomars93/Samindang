@@ -101,9 +101,32 @@ From the Orthopaedic Section of the APTA.* JOSPT 2017;47(7):A1–A83. DOI 10.251
 | Derby Shoulder Instability Rehabilitation Programme (Bateman et al.) | https://pmc.ncbi.nlm.nih.gov/articles/PMC4935133/ ; Physiotherapy 2018 갱신 결과 | 비외상성 재발 불안정에 구조화된 이정표형 운동 프로그램이 통증·안정성·기능 개선 | — |
 | BESS practice guidelines: *Rehabilitation following traumatic anterior shoulder dislocation* (Wong C, Jaggi A, et al.) 2026 | PMID 41959665, DOI 10.1177/17585732261439731 | 수술/비수술 모두 단계별 프로토콜; 장기 고정 근거 부족, 조기 재활 의뢰 | 단계 내용 세부 미확인(C) |
 
-## 4. 무릎 — 미검증(이번 범위 밖)
-PR #30 무릎 문서의 출처(NICE NG226, AAOS Knee OA 2021, AAOS Acute Meniscus 2024, AAOS ACL 2022, JOSPT Ligament 2017,
-Willy 2019/Neal 2024 PFP, Dutch PFP/PT 2024, ACR Acute Knee Trauma, SANJO 2023, NICE NG158)는 무릎 ② 착수 시 같은 방식으로.
+## 4. 무릎 — 무릎 팩 CLOSED의 출처 (B, 2026-09-07 리서치)
+
+검색 요약(snippet) 확인. 원문 미열람. DOI/PMID는 snippet에 나온 것만.
+
+| 출처 | 운동 관련 권고(범주) | 등급(snippet) | 검증 |
+|---|---|---|---|
+| Willy RW et al. Patellofemoral Pain CPG. JOSPT 2019;49(9). DOI 10.2519/jospt.2019.0302, PMID 31475628 | 고관절(후외측)+무릎 복합 표적 운동이 핵심; 체중부하 스쿼트·비체중부하 신전 모두 가능; 테이핑·보조기·가동술은 운동에 결합 | 복합 hip+knee 운동 **A** | B |
+| Logerstedt DS et al. Meniscal and Articular Cartilage Lesions Revision 2018. JOSPT 2018;48(2). DOI 10.2519/jospt.2018.0301, PMID 29385940 | 감독하 점진적 ROM·무릎/고관절 근력·신경근 훈련; 수술 후 조기 점진적 무릎 운동; 점진적 활동 복귀 | 감독 재활 B / 치료적 운동 B / 활동 복귀 C | B |
+| Logerstedt DS et al. Knee Ligament Sprain Revision 2017. JOSPT 2017;47(11). DOI 10.2519/jospt.2017.0303, PMID 29089004 | 체중부하·비체중부하 구심/원심 운동, 신경근 재교육 병행, 조기 체중부하 | 치료적 운동 A / 신경근 재교육 A(2차 해석) | B |
+| AAOS. Knee OA (Non-Arthroplasty) CPG 3rd ed. 2021; Brophy·Fillingham JAAOS 2022. DOI 10.5435/JAAOS-D-21-01233, PMID 35383651 | 감독/비감독/수중 운동 모두 무운동보다 우선; 신경근 훈련 병행; 자가관리·교육 | 운동 Strong / 신경근 Moderate / 자가관리 Strong | B |
+| Bannuru RR et al. OARSI 2019. Osteoarthritis Cartilage 2019;27(11). DOI 10.1016/j.joca.2019.06.011, PMID 31278997 | Core = 교육 + 구조화된 지상 운동(근력·유산소·균형) ± 체중관리 | Core 분류(Level 숫자 미확인) | B |
+| NICE NG226 (2022) | 치료적 운동 = 핵심; 국소 근력·전신 유산소; 초기 통증 증가 교육 | "offer" | B |
+| Malliaras P et al. Patellar Tendinopathy. JOSPT 2015;45(11). DOI 10.2519/jospt.2015.5987, PMID 26390269 | 단계적 부하: 등척성(30–60°) → 등장성·레그프레스·스플릿 스쿼트 | 임상 리뷰 | B |
+| Rio E et al. BJSM 2015;49(19). DOI 10.1136/bjsports-2014-094386 | 고부하 등척성(5×45초) 즉시 진통 ≥45분 | RCT crossover | B |
+| Kongsgaard M et al. Scand J Med Sci Sports 2009;19(6). DOI 10.1111/j.1600-0838.2009.00949.x | HSR 12주 vs 편심 vs 주사 | RCT(수치 미확인) | B |
+| van Melick N et al. KNGF ACL guideline. BJSM 2016;50. DOI 10.1136/bjsports-2015-095898, PMID 27539507 | 기준 기반 3단계, 개방/폐쇄 사슬, 근력+신경근, 복귀 기준 | SR+합의 | B |
+| Kotsifaki R et al. Aspetar ACLR CPG. BJSM 2023;57:500-514. DOI 10.1136/bjsports-2022-106158 (※ "Aspetar 2016"은 실체 미확인) | 사두근·햄스트링 근력 회복이 모든 단계의 전제; 근력 기준 게이트 | CPG | B |
+
+### 4-1. 팩 행 ↔ 범주
+EDU_01 ← AAOS Strong/OARSI Core/NICE · MOB_01 ← JOSPT 2018 B · QUAD_01·QUAD_02 ← JOSPT 2019 A · GLUT_01 ← JOSPT 2019 A(가장 직접) ·
+BAL_01 ← JOSPT 2017 A/2018 B/AAOS Moderate · PF_01 ← JOSPT 2019 A · LIG_01 ← JOSPT 2017 A + van Melick · GAIT_01 ← Kotsifaki 2023.
+**직접 범주 없음(조건부)**: STEP_01(스텝업/다운), HSC_01의 종아리, TEND_01(등척성→HSR — 리뷰·RCT 수준, CPG 등급 없음).
+
+### 4-2. C — 미확인
+JOSPT 3종 CPG의 개별 권고 등급 문자(테이핑·가동술·조기 체중부하), OARSI Level 표기, NICE GRADE, Kongsgaard 결과 수치, 개별 운동명
+(쿼드셋·SLR·스텝업·힐 슬라이드·브릿지·카프레이즈)의 가이드라인 내 직접 언급 여부, 레드플래그 문구(NHS 2차 자료에서만 확인).
 
 ## 5. 원장 A수준 확인 체크리스트 (로컬 PC, 5분)
 
@@ -115,3 +138,49 @@ Willy 2019/Neal 2024 PFP, Dutch PFP/PT 2024, ACR Acute Knee Trauma, SANJO 2023, 
 3. ☐ CFRT 32° 도움말 기재 여부.
 4. ☐ NECK_DIR_01: 근거 제한을 알고도 v1.0 유지에 동의하는가(§2-4). 아니면 v1.1에서 삭제.
 5. ☐ Lee 2025 동결견 CPG(ARM) 원문 → irritability별 스트레칭 강도 권고 확인(어깨 ② §4 전제).
+
+## 6. 발목/발 — 발목 팩 CLOSED의 출처 (B, 2026-09-07 리서치)
+
+| 출처 | 운동 관련 권고(범주) | 등급(snippet) | 검증 |
+|---|---|---|---|
+| Martin RL et al. Lateral Ankle Ligament Sprains Revision 2021. JOSPT 2021;51(4). DOI 10.2519/jospt.2021.0302, PMID 33789434 | 점진적 체중부하(외부 지지 하), 체중부하 족배굴곡·동적 균형 개선, 균형 운동 베개/폼 → 보드 진행, 작업/스포츠 특이 운동 | 개별 등급 미확인 | B(내용)/C(등급) |
+| Martin RL et al. Midportion Achilles Tendinopathy Revision 2018. JOSPT 2018;48(5). DOI 10.2519/jospt.2018.0302, PMID 29712543 | 기계적 부하 / 고부하·저속 운동 프로그램 | **Grade A** | B |
+| Chimenti RL et al. Achilles Revision 2024. JOSPT 2024;54(12). DOI 10.2519/jospt.2024.0302 | 운동 = 건 부하(편심·동심·등척·플라이오), 통증 내성·기능에 따른 점진 | 등급 미확인 | B/C |
+| Koc TA et al. Heel Pain – Plantar Fasciitis Revision 2023. JOSPT 2023;53(12). DOI 10.2519/jospt.2023.0303 | 족저근막 특이 + 비복근/가자미근 스트레칭, 발·발목 저항운동, 야간 부목, 테이핑, 교육 | 야간 부목 A / 테이핑 A / 저항운동 B(2차 요약) | B/B- |
+| Alfredson H 1998 (DOI 미확인) / Silbernagel KG 2007 AJSM doi:10.1177/0363546506298279 / Beyer R 2015 AJSM doi:10.1177/0363546515584760 | 편심 heel-drop 3×15 1일 2회 / 통증 모니터링(≤5/10, 다음날 아침 회복) / HSR = 편심과 동등·순응도↑ | RCT | B |
+| Delahunt E et al. ROAST 2019. BJSM 2018;52(20). PMID 29886432 + CAI SR/MA(PMID 41825489, 41942996), hop-stabilization RCT(PMID 31618073) | 재활 지향 평가 프레임; 균형·플라이오·신경근 훈련이 CAI 동적 안정성 개선; 고관절 강화는 병행 시 효과; hop 훈련이 착지 역학 개선 | SR/MA·RCT | B |
+| Kulig K et al. PTTD RCT. Phys Ther 2009;89(1). DOI 10.2522/ptj.20070242, PMID 19022863 | 편심/동심 점진 저항 + 종아리 스트레칭 + 보조기 | RCT | B |
+| 내재근 훈련 SR/MA: PLOS One 2022 doi:10.1371/journal.pone.0266525; PMID 35724360 | short-foot: 균형·근력·PROM 개선, 통증은 비우월 | SR/MA | B |
+
+### 6-1. 팩 행 ↔ 범주
+EDU_01 ← JOSPT 2021 + Silbernagel · MOB_01/MOB_03 ← JOSPT 2021 배굴, 2023 종아리 스트레칭 · MOB_02 ← JOSPT 2018 A, 2023 B ·
+TEND_01 ← JOSPT 2018 A + Alfredson/Beyer · PF_01 ← JOSPT 2023 · BAL_01 ← JOSPT 2021(진행 명시) + CAI SR/MA · PELV_01/03 ← CAI 고관절
+강화(병행 시) · MOB_04 ← hop-stabilization RCT. **직접 범주 없음(조건부, 전부 원장 원안)**: HIPS_01 힙 힌지, HIPS_02 힙 쓰러스트,
+HIPS_04 90/90; HIPS_03 스텝다운은 단면 연구 수준.
+
+### 6-2. C — 미확인
+JOSPT 2021 개별 등급, 2023 등급(2차 블로그 요약 의존), 2024 등척성·교육 등급, Alfredson DOI, DiGiovanni 원저 서지, ROAST의 구체 운동
+권고 문구, Ottawa 원저 표기.
+
+## 7. 손목/손 — 손목 팩 CLOSED의 출처 (B, 2026-09-07 리서치)
+
+| 출처 | 운동/보존치료 관련 내용(범주) | 등급(snippet) | 검증 |
+|---|---|---|---|
+| Erickson M et al. Hand Pain and Sensory Deficits: CTS. JOSPT 2019;49(5). DOI 10.2519/jospt.2019.0301 (요약판 PMID 31039688) | 야간 손목 중립 보조기 1차; 교육·악화 자세/활동 상담; 신경/건 활주는 항목 존재 | 등급 문자 미확인 | B(보조기·교육)/C(활주) |
+| APTA. CTS Revision 2026. JOSPT 2026;56(4). DOI 10.2519/jospt.2026.0301, PMID 41919928 | 전완 기반 보조기 야간 1차, CTS-6 진단, 보조요법 "may" | should/may | B |
+| AAOS. CTS CPG 2016→2024 (DOI 미확인) | 무지구 위축은 CTS 연관(strong); 수술이 보조기·주사보다 6·12개월 우수 | strong/moderate | B |
+| 한국한의약진흥원 손목터널증후군 한의표준임상진료지침 (nikom.or.kr guide_idx=289) | 교육·활동조절 + 보조기 + 자가운동 권고 항목 존재(세부 미확인) | 미확인 | B/C |
+| de Quervain SR/NMA. J Hand Ther 2025. PMID 41298159 | 보조기+주사 병용 최적(저확실성); 점진적 건 부하는 향후 과제 | low-certainty | B |
+| Kloppenburg M et al. EULAR 2018 hand OA (SLR PMID 30402266) / Kolasinski SL et al. ACR 2019. Arthritis Rheumatol 2020. DOI 10.1002/art.41142, PMID 31908149 | 교육·페이싱·인체공학(Rec1 1b/A), 운동(Rec2 1a/A), 엄지 CMC 보조기; ACR 운동·자기효능 강력 | A / strong | B |
+| Østerås N. Cochrane 2017 CD010388 / JOSPT 2024 손 OA MA. DOI 10.2519/jospt.2024.12241, PMID 38506711 / 엄지 CMC 운동 MA 2024 PMID 38667585 / McVeigh KH. J Hand Ther 2022 | 효과 작음~중등(단기), 악력 SMD +0.21; CMC 운동 통증·장애 개선, 고유수용 운동; FDI+대립근 동적 안정화 | GRADE low/moderate | B |
+| Mehta SP et al. Distal Radius Fracture Rehabilitation CPG. JOSPT 2024;54(9). DOI 10.2519/jospt.2024.0301, PMID 39213418 / AAOS DRF 2020 | 수술 후 3주 내 AROM + 가벼운 일상활동; 2주부터 준최대 악력 강화; 가정운동 = 지도 치료 | should 형식 | B |
+| Cordella M et al. Hand/wrist tendinopathy exercise SR. J Hand Ther 2023;36(4) / 비특이 손목통 단일연구 PMC11278657 / TFCC 보존 PMC8476392 | 건병증 운동 근거 "limited"; 악력+손목 안정화 4주; DRUJ 안정 시 보존 1차, 보조기·감각운동 재활 | limited | B |
+
+### 7-1. 팩 행 ↔ 범주
+EDU_01 ← CTS CPG 교육·보조기 + EULAR Rec1 · MOB_01 ← DRF CPG ROM · MOB_02 ← DRF CPG(회내/회외 명시 C) · GLIDE_01/NERVE_01 ← CTS CPG
+항목(등급 C) · GRIP_01 ← DRF CPG + EULAR Rec2 + JOSPT 2024 MA · THUMB_01 ← McVeigh 2022 + CMC MA + ACR · HAND_01 ← EULAR Rec2 1a/A + ACR ·
+FUNC_01 ← EULAR Rec1 + CTS 활동 상담. **직접 범주 없음(조건부)**: RES_01 손목 저항. **보류**: WH_ECC_01 편심성(저질 리뷰만).
+
+### 7-2. C — 미확인
+CTS CPG 신경/건 활주·도수·교육 등급 문자, DRF CPG 등급·회내/회외 명시·비수술 AROM 시점, EULAR 2018 DOI, 한의 CPG 자가운동 세부,
+de Quervain 편심성 RCT 여부, TFCC 정식 CPG 부재, McVeigh 2022 효과 크기·DOI, AAOS DRF/CTS DOI.

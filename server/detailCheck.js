@@ -91,6 +91,11 @@ export const DETAIL_CHECK_REGION_QUESTION_IDS = Object.freeze({
   lbp: DETAIL_CHECK_LBP_QUESTION_IDS,
   // 목 팩 승인(2026-09-07, docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md §8): 지속 자세 악화 1문항.
   neck: Object.freeze(['NECK_12']),
+  // 2026-09-07 PO "허리를 기준으로 모든 파트 진행" — 각 부위 CLOSED §7과 parity(tests/region-pack.spec.mjs C절).
+  shoulder: Object.freeze(['SH08']),
+  knee: Object.freeze(['KNEE_12', 'KNEE_13']),
+  wrist_hand: Object.freeze(['WH_11']),
+  ankle_foot: Object.freeze(['AF_00']),
 })
 
 /**

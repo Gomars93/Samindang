@@ -3916,3 +3916,46 @@ Next Action 1번으로 두어 목 파일럿 앞에 문턱을 세웠는데, PO가
   부위 id 하드코딩 부재, 오류 경로 2, 개인정보 필드 10개 미열람 + 기록 통째 출력 부재.
 - 문서: `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` 신규(원장 절차 §1, 명령 §2, 임계값 §3, 수동 표 §4, 종료 기준 §5),
   `REAL_DEVICE_PILOT_CHECKLIST.md` §5-b 목 환자 확인, CLOSED §1·§10 표기, 로그 §5 머리말, HANDOFF 40.
+
+## 2026-09-07 — PO "허리를 기준으로 모든 파트 진행" → 어깨·무릎·발목/발·손목/손 팩 활성화 (승인 팩 2 → 6)
+
+### Context
+PO 범위 답변 "목 어깨 무릎 손목 발목까지 전부", PR은 "모든 작업 후에". 요통 팩과 같은 진입 기준(B수준 근거 확인, 이날 앞 항목 "검증
+수준 정책")을 네 부위에 적용했다. 이 세션 네트워크는 원문 도메인 egress 차단 — 근거는 WebSearch 요약(B수준)만.
+
+### Decision
+1. **어깨**: `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9를 추천안 그대로 확정 → `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md`.
+   가설 7(PR#30 6 + AC 국소), Core 10(THX_01 보류), 검사 8(+견갑 조절·원위 신경·apprehension), `neuroExamIds: [shoulder_exam_distal_neuro]`
+   (POSITIVE 전체 차단, STABLE 요구 행 없음), 뒷받침 5쌍, 재질문 SH08. 매트릭스 §10 "목 파일럿 후 착수" 조건은 PO 지시로 해제.
+2. **무릎**: PR#30 phenotype 7·Domain 11 그대로 + 로그 §4(B수준) → `docs/KNEE_EXERCISE_DECISIONS_v1.0_CLOSED.md`. Core 12(아카이브 8 전부 폐기 —
+   VMO 고립·90/90·내전 미채택), 검사 10, 뒷받침 8쌍, `neuroExamIds` 없음(원위 신경은 L0 KNEE_02), 재질문 KNEE_12·KNEE_13.
+3. **발목/발**: 원장 원안(Notion 발목 패턴, 원장 포맷) **보존** — 3패턴·운동 11·검사 4의 id·이름·기준값(10cm/6~8cm/55:45/10회) 그대로 + 7필드·
+   단계·도메인 8 신설 + CPG 관리 패턴 3(염좌·아킬레스·족저)·운동 4(교육·균형·아킬레스 부하·족저근막)·검사 4 **추가** →
+   `docs/ANKLE_FOOT_EXERCISE_DECISIONS_v1.0_CLOSED.md`. Core 15, 재질문 AF_00(유일한 single_choice 후보).
+4. **손목/손**: 원장 문서 0 → 로그 §7(B수준) + Claude 초안 + PO 위임 → `docs/WRIST_HAND_EXERCISE_DECISIONS_v1.0_CLOSED.md`. 가설 7(관리 지향),
+   Core 10(편심성 WH_ECC_01 보류), 검사 8, `neuroExamIds: [wrist_hand_exam_median_neuro]` + `WH_NERVE_01: requiresStableNeuro`(목 NEURAL_01
+   대칭), 재질문 WH_11. 6개 승인 팩 중 유일하게 원장 콘텐츠 0 — §10-1 전 행 문장 검토가 v1.1 본체.
+5. 공통: 방향성 카드는 요통·목만(4부위 미적용). 후퇴 쌍은 hip → lbp만 유지. 어깨 우세(NS01) 환자는 이제 어깨 팩(목 CLOSED §9의 "안전 패널만"
+   종료). 각 CLOSED §10 파일럿 관찰은 `pilot:region-observation -- <region>`으로 집계.
+6. 근거 로그 `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` §4 무릎(12 출처) / §6 발목(11) / §7 손목(17) 추가 — 리서치 에이전트 3개 병렬,
+   DOI/PMID는 snippet에 있는 것만. "Aspetar 2016"은 실체 미확인(Aspetar CPG는 Kotsifaki 2023).
+
+### Rationale
+- 기준은 하나(B수준 진입). 목만 A수준을 요구했던 이중 기준을 없앤 직후이므로 나머지 네 부위도 같은 문턱으로 들어간다.
+- 원장 콘텐츠가 있는 부위(발목)는 원안을 바꾸지 않고 **추가만** 했다 — 원장 원안 포맷을 Claude가 고쳐 쓰면 나중에 무엇이 원장 것인지
+  알 수 없다. 테스트가 11개 id·표시명·"10회" 보존을 단언한다.
+- 근거 범주가 없는 행(무릎 STEP/HSC 종아리/TEND, 발목 힙 힌지·쓰러스트·90/90·스텝다운, 손목 RES)은 지우지 않고 **조건부**로 표시하고
+  §10 채택률로 v1.1에서 결정 — 목 DIR_01과 같은 처리.
+- 신경 게이트: 객관 결손 검사가 정의된 부위(어깨·손목)만 `neuroExamIds`. 유발 검사(apprehension·Phalen/Tinel)는 절대 신경 게이트가 아니다
+  (region-pack E-2 단언). 손목 신경 활주만 STABLE 요구 — 목과 같은 이유(신경 가동 운동은 기준선 안정 후).
+- 어깨 원장 근력저하 판단 필드는 L0 expedited_referral 플래그일 뿐 안전 상태를 바꾸지 않는다(SHOULDER_V1 §12) — 엔진이 그 플래그를 읽지
+  않는 현행 설계를 비네트 V7c가 고정. 바꾸려면 별도 DECISIONS.
+
+### Consequences / 검증
+- 코드: `regionPacks/{shoulder,knee,ankleFoot,wristHand}.ts` 승인 인코딩, `server/detailCheck.js` 4행, `package.json`
+  `test:region-exercise-vignettes`(+test:all), `.gitignore`. 엔진·화면·서버 로직 변경 0(팩 데이터만).
+- 테스트: 비네트 4스위트 94단언(어깨 27·무릎 22·손목 23·발목 22), `region-pack` 318 → 331; `doctor-workspace` 303 — PAIN_SCENARIO_3(어깨 우세)이
+  승인 팩 기록이 되면서 "승인 전 부위는 병합이 건드리지 않는다"를 검증하던 3개 테스트는 DRAFT인 팔꿈치로 라우팅한 복제 시나리오로 옮김(승인 6·후퇴·C parity·D CLOSED 문서·H 어깨 SSR·
+  J-④ 아카이브 폐기·원안 보존·E-2 신경 게이트·E-3 도메인·provenance). `tsc -b` 0, `build` green, `test:all` exit 0.
+- 문서: CLOSED 4, 로그 §4·§6·§7, DRAFT_CONTENT §1, 어깨 매트릭스 §10 해제, 목 파일럿 로그(다른 부위 절차), REAL_DEVICE §5-b, HANDOFF 41.
+- 남은 DRAFT: 고관절(Drive 고관절 패턴.md 있음), 턱관절(Notion CCMFU), 팔꿈치(문서 없음) — PO 범위 밖("목 어깨 무릎 손목 발목").

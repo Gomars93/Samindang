@@ -3,6 +3,8 @@
 **상태**: 파일럿 진행 중 (시작 2026-09-07). 정본 결정은 `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md`(§10이 관찰 7항목).
 **전제**: 목 팩은 **B수준 근거 확인으로 production에 들어간다** — 요통 팩과 같은 기준
 (`DECISIONS.md` 2026-09-07 "검증 수준 정책"). 원문(A수준) 대조는 파일럿 전제조건이 아니라 v1.1 항목이다(§4-2).
+**다른 부위**: 어깨·무릎·발목/발·손목/손도 같은 절차다 — §1~§3을 부위만 바꿔 읽고, 부위 고유 관찰 항목은 각 CLOSED §10
+(`SHOULDER_/KNEE_/ANKLE_FOOT_/WRIST_HAND_EXERCISE_DECISIONS_v1.0_CLOSED.md`)에 있다. 집계는 `npm run pilot:region-observation -- <region>`.
 **이 문서의 역할**: 원장이 파일럿 동안 **무엇을 기록해야 집계가 되는지**, **어떤 숫자가 나오면 v1.1을 여는지**를 한 장에 둔다.
 
 ---
@@ -105,8 +107,9 @@ SAMINDANG_DATA_DIR=D:\경로\submissions npm run pilot:region-observation -- nec
 v1.1 재개방 = `DECISIONS.md` 항목 1개 + `NECK_EXERCISE_DECISIONS_v1.1.md`(변경 행만) + 팩 변경 시 `tests/neck-exercise-core.vignettes.spec.mjs` 갱신.
 문장만 바뀌면 비네트 갱신은 필요 없다(비네트는 id·규칙·단계만 단언한다).
 
-어깨 ②(`docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §10)는 이 첫 라운드 종료 후 착수한다 — 같은 단계 축(VISIT_04)을 두 부위가
-동시에 처음 쓰면 어느 쪽 문제인지 구분이 안 된다. PO가 "지금"을 택하면 즉시 가능.
+**2026-09-07 갱신**: PO "허리를 기준으로 모든 파트 진행"으로 어깨·무릎·발목/발·손목/손이 목과 **동시에** 파일럿에 들어갔다. 부위별
+집계가 분리되어 있으므로(스크립트가 부위 인자를 받음) 단계 축 문제는 부위별 §10 결과를 나란히 놓고 본다 — 여러 부위에서 같은 단계
+경고가 동시에 뜨면 축(VISIT_04) 문제, 한 부위에서만 뜨면 그 팩 문제.
 
 ---
 

@@ -233,3 +233,6 @@ tests/.region-pack-*-bundle.cjs
 
 # esbuild bundles used by tests/neck-exercise-core.vignettes.spec.mjs (regenerated, not source)
 tests/.neck-vignettes-*-bundle.mjs
+
+# esbuild bundles used by tests/*-exercise-core.vignettes.spec.mjs (shoulder/knee/wrist-hand/ankle-foot; regenerated, not source)
+tests/.region-vignettes-*-bundle.mjs

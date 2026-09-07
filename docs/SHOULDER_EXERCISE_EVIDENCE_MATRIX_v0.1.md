@@ -1,6 +1,6 @@
 # 어깨(SHOULDER) Exercise Evidence Matrix v0.1 — 원장+Opus 초안
 
-**상태**: DRAFT — PO 검토 대기. **팩 반영 0.** 목과 같은 절차: 이 문서 §0 체크리스트 → Opus 검수 →
+**상태**: CLOSED로 승격(2026-09-07, `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md`). 아래는 초안 기록. 목과 같은 절차: 이 문서 §0 체크리스트 → Opus 검수 →
 `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md` → 팩 인코딩 → `productionApproved: true`.
 **작성 근거**: PO 2026-09-07 "나머지는 추천안으로 진행"(직전 보고의 다음 행동 2 "어깨 ② 초안 착수").
 **프레임워크 정본**: PR #30 `docs/recovered_rehab_architecture/SHOULDER_V1_REHAB_ARCHITECTURE_RECOVERED.md` +
@@ -136,6 +136,9 @@ RC = 밴드 외회전 자동 / 동결견 = 강한 ROM / 충돌 = 견봉 공간 �
 ## 9. 파일럿 관찰(⑥) — 목 CLOSED §10과 같은 6항목 + 어깨 고유: 야간 통증 추적(보조 지표, 안전 지표 아님), 불안정 사건 수.
 
 ## 10. 착수 조건
+> **2026-09-07 해제**: PO "허리를 기준으로 모든 파트 진행" → 체크리스트 9를 추천안 그대로 확정, `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md`.
+> 부위별 집계 스크립트(`pilot:region-observation -- <region>`)가 목·어깨 관찰을 분리하므로 동시 파일럿의 리스크 3은 완화됐다.
+
 목 파일럿 첫 관찰(CLOSED §10-1 문장 수정 목록)이 한 번 돌아온 뒤 이 문서를 CLOSED로 올린다 — 같은 가정(VISIT_04
 단계 축·7필드 문형)에 두 부위를 동시에 거는 것을 피하기 위해(설계 §9 리스크 3). PO가 "지금 진행"을 택하면 목과 같은
 절차로 즉시 인코딩 가능(예상: 팩 1파일 + 비네트 스위트 + 서버 표 1행 + 테스트 갱신).

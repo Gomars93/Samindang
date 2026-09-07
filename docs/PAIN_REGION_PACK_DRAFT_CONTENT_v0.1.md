@@ -1,7 +1,7 @@
 # 부위 팩 DRAFT 콘텐츠 v0.1 — 원장 승인 체크리스트
 
-**상태**: DRAFT — 8부위 전부 `productionApproved: false`. 원장이 이 문서로 부위별 승인 여부를
-정하기 전까지 화면·엔진·서버 어디에도 나타나지 않는다.
+**상태**: 2026-09-07 — 승인 6부위(요통·목·어깨·무릎·발목/발·손목/손), DRAFT 3부위(고관절·팔꿈치·턱관절). 승인 전 팩은 화면·엔진·서버
+어디에도 나타나지 않는다. PO "허리를 기준으로 모든 파트 진행"(DECISIONS 2026-09-07 "4부위 활성화").
 **상위 문서**: `docs/PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md`(구조), `DECISIONS.md`
 2026-09-06 항목 2건(계획 / PO 답변).
 **코드**: `src/doctor/workspace/regionPacks/<region>.ts`, 조립기 `draftPack.ts`, 안전 재계산
@@ -39,13 +39,13 @@
 | 부위 | 출처 | 가설 패턴 | 운동(Core) | 수동 검사 | 목표 기능(초안) | 빈 칸(승인 전 필수) |
 |---|---|---|---|---|---|---|
 | 목 `neck` | **승인(2026-09-07)** — `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md` | 5 (PR #30) | **Core 9 (7필드·단계표·규칙 완료)** | 11 (PR #30 §5) | 4+자유 | **0 — `productionApproved: true`.** 파일럿 관찰 항목은 CLOSED §10 |
-| 어깨 `shoulder` | **PR #30** 프레임워크 + Drive 회전근개.md(원장 검사 스크립트) + Notion 어깨 패턴(운동 이름만) | **6 (PR #30: 회전근개 관련 / 동결견 / 관절와상완 관절염 / 외상성 불안정 / 비외상성·조절형 / 경추 기여)** | 8(아카이브 후보) | 5 | 4+자유 | 같음 |
-| 무릎 `knee` | **PR #30** 프레임워크 + Notion 무릎 패턴(운동·검사 이름만) | **7 (PR #30: OA / 슬개대퇴 / 슬개건병증 / 급성 반월판 / 퇴행성 반월판 / 인대 불안정 / 슬개골 불안정)** | 8(아카이브 후보) | 4 | 4+자유 | 같음 |
+| 어깨 `shoulder` | **승인(2026-09-07)** — `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md` | 7 (PR #30 6 + AC 국소) | **Core 10 (7필드·단계표·규칙 완료)** | 8 | 4+자유 | **0 — `productionApproved: true`.** 파일럿 CLOSED §10 |
+| 무릎 `knee` | **승인(2026-09-07)** — `docs/KNEE_EXERCISE_DECISIONS_v1.0_CLOSED.md` | 7 (PR #30) | **Core 12** | 10 | 4+자유 | **0 — `productionApproved: true`.** 파일럿 CLOSED §10 |
 | 고관절 `hip` | Drive 고관절 패턴.md | 4 (전방경사형 / 후방경사형 / 회전형 / 고관절–요추 연동형) | 8 | 4 | 4+자유 | 같음 |
-| 발목/발 `ankle_foot` | Notion 발목 패턴(**원장 원안 포맷**) | 3 (골반 비정렬형 / 고관절 전략 문제형 / 발목 가동성 제한형) | 11 | 4 | 4+자유 | 운동 11×… (배굴 스트레칭 10회만 용량 있음) |
+| 발목/발 `ankle_foot` | **승인(2026-09-07)** — `docs/ANKLE_FOOT_EXERCISE_DECISIONS_v1.0_CLOSED.md` (원장 원안 11·3패턴 보존) | 6 (원장 3 + CPG 3) | **Core 15 (원안 11 + 4)** | 8 | 4+자유 | **0 — `productionApproved: true`.** 파일럿 CLOSED §10 |
 | 턱관절 `tmj` | Notion 턱관절(CCMFU 통합 프로토콜) | 3 (**Claude 초안** — 문서는 A~D 분류가 아님) | 3 (용량은 문서 그대로) | 4 | 3+자유 | 운동 3×(시작 기준·중단 기준·후퇴·목표 기능) + 단계표 3 + 패턴 재정의 |
 | 팔꿈치 `elbow` | **없음** | 0 | 0 | 0 | 자유만 | 전부 |
-| 손목/손 `wrist_hand` | **없음** | 0 | 0 | 0 | 자유만 | 전부 |
+| 손목/손 `wrist_hand` | **승인(2026-09-07)** — `docs/WRIST_HAND_EXERCISE_DECISIONS_v1.0_CLOSED.md` (원장 문서 0 → CPG·SR B수준 + Claude 초안 + PO 위임) | 7 | **Core 10** | 8 | 4+자유 | **0 — `productionApproved: true`.** 파일럿 §10-1(전 행 문장 검토) |
 
 빈 칸의 정확한 목록은 코드가 낸다:
 ```

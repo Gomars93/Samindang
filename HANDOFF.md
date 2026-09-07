@@ -1,5 +1,37 @@
 # Current Handoff
 
+## 2026-09-07 (최신 40): **목 파일럿 시작 가능 상태** — 검증 수준 정책(B수준 진입, 요통과 동일) + 관찰 항목 자동 집계 스크립트. **팩·엔진·화면 변경 0**
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO "파일럿을 최대한 빨리, 완성시킬 수 있는 데까지"(2026-09-07).
+
+### 한 것
+- **정책 정정**: HANDOFF 39가 목 파일럿 앞에 세운 "원장 A수준 체크리스트 5건" 문턱을 없앴다 — 요통 팩은 그 단계 없이
+  production에 들어갔고 목만 다른 기준을 둘 근거가 없었다(PO 지적). DECISIONS 2026-09-07 "검증 수준 정책". 로그 §5·CLOSED
+  §1·§10에 "v1.1 항목, 파일럿 전제 아님" 표기.
+- `scripts/region-pilot-observation.mjs <region>` 신규 — CLOSED §10의 ②방향성 반응 ③신경 검사 기록 ⑤NECK_12 응답 ⑦운동
+  채택(DIR_01 행 비고)을 저장된 제출 기록 + `../micro-follow-up`에서 개인정보 없이 집계하고, ④단계 분포는 기존 본체를 이어
+  실행. 부위 무관(팩·서버 표·`drivingRegion`에서 읽음). 판정 임계값은 제안값(`THRESHOLDS`).
+- `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` 신규 — 원장이 진료 중 남길 3가지(신경 검사 2개 결과·방향성 반응·채택/보류/배제
+  버튼) §1, 명령 §2, 임계값 §3, 수동 표(카드 문장 수정 / A수준 원문 대조) §4, 첫 라운드 종료 기준(10건 또는 4주) §5.
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-b 목 환자 화면 확인 절(신경 미기록 시 NEURAL_01만 보류, POSITIVE 시 전체 잠금).
+
+### 검증
+`region-pilot-observation` 64 / `region-pack` 318 / `neck-exercise-vignettes` 39 / `lbp-stage-pilot` 46 / `detail-check` 61 /
+`tsc -b` 0 / `build` green / `test:all` exit 0 (67 스위트).
+
+### 못 한 것
+- 이 브랜치의 PR — PO 확인 후 생성(파일럿은 원장 PC가 이 브랜치를 pull하거나 main 병합 후 빌드해야 시작된다).
+- PR #30 → main merge(이전과 동일, PO가 UI에서).
+
+### Next Recommended Action
+1. **PO**: 이 브랜치 PR 생성 여부 답 → main 병합 → 원장 PC `git pull` + `npm run build` + `scripts\\start-clinic.bat`.
+2. **원장(파일럿 시작)**: `REAL_DEVICE_PILOT_CHECKLIST.md` §5-b로 목 화면 1회 확인 → 다음 목 환자부터 관찰 로그 §1의 3가지를
+   화면에 남긴다 → 주 1회 `npm run pilot:region-observation -- neck`.
+3. 첫 라운드 종료(10건/4주) → 출력을 관찰 로그 §6에 붙이고 §3 발동 신호마다 결정 1줄 → v1.1(필요 시) → 어깨 ② 착수.
+4. A수준 원문 대조 5건(로그 §5)은 원문을 볼 기회가 있을 때 §4-2 표에 — 파일럿을 막지 않는다.
+
+---
+
 ## 2026-09-07 (최신 39): 레퍼런스 리서치(B수준) + 어깨 ② 초안. **코드 0, 문서 4**
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`.

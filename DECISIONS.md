@@ -3874,3 +3874,45 @@ AAOS, NICE NG226, BESS, ACR)이 붙어 있다. 아카이브 4패턴은 그 뼈�
 ### Consequences
 - 코드 변경 0. 문서 4(로그 신규, 어깨 초안 신규, 목 CLOSED §1·§10, 목 매트릭스 §1.2 표기).
 - 다음: 원장 로컬 A수준 체크리스트 5건 → 목 파일럿 → 어깨 ② 체크리스트 9 → 어깨 CLOSED·인코딩.
+
+## 2026-09-07 — 검증 수준 정책: v1.0 production 진입은 B수준(요통 선례), A수준 원문 대조는 파일럿 전제조건이 아니다 + 파일럿 관찰 자동 집계
+
+### Context
+PO: "일단은 파일럿 프로그램을 최대한 빨리 돌려 보고 싶어." 직전 세션의 HANDOFF 39가 "원장 로컬 5분 A수준 체크리스트 5건"을
+Next Action 1번으로 두어 목 파일럿 앞에 문턱을 세웠는데, PO가 "허리 때는 안 한 걸 왜 내게 요구하는가"라고 지적했다. 맞는
+지적이다 — 요통 팩(Core-20, `productionApproved: true`)은 원문 A수준 대조 없이 production에 들어갔고, 목만 다른 기준을 적용할
+근거를 문서 어디에도 적은 적이 없다.
+
+### Decision
+1. **부위 팩 v1.0의 production 진입 기준은 B수준 근거 확인**이다(검색 요약으로 "권고 범주가 맞다"까지). 요통·목 동일. 앞으로
+   어깨·무릎도 같다. A수준(원문) 대조는 **v1.1 항목**이며, 원문이 B수준 요약과 **다를 때만** CLOSED 재개방 사유가 된다.
+   등급 문자는 여전히 팩·CLOSED에 옮기지 않는다(2026-09-07 앞 항목 그대로).
+2. 목 파일럿을 **지금** 시작한다. 전제조건은 코드(이미 `productionApproved: true`, test:all green)와 기록 절차뿐이다.
+3. CLOSED §10 관찰 7항목 중 기록에서 셀 수 있는 5항목(②방향성 반응 ③신경 검사 기록 ④단계 분포 ⑤NECK_12 응답 ⑦DIR_01 채택)을
+   **스크립트가 센다** — `scripts/region-pilot-observation.mjs <region>` (`npm run pilot:region-observation -- neck`). 부위 무관
+   본체: 신경 검사 id·Core 운동·방향성 조건은 팩에서, 재질문 id는 `server/detailCheck.js` 표에서, 부위 판별은 `drivingRegion`
+   (화면과 같은 규칙)에서 읽는다. ④는 기존 `region-stage-distribution.mjs` 본체를 이어서 호출한다. 손으로만 되는 ①카드 문장
+   수정 ⑥원문 대조는 `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` §4 표.
+4. 판정 임계값은 **제안값**으로 스크립트 `THRESHOLDS`·테스트·로그 문서 §3에 같은 숫자로 고정: 저장 기록 <10건(방향 참고용),
+   화면 저장 <80%, 굴곡 호전 ≥20%(굴곡 후보 없는 팩 → DIR_02 검토), 신경 2개 모두 기록 <70%, 방향성 조건부 운동 후보 ≥5건·채택
+   <20%(v1.1 유지/삭제 자료), 재질문 부위 문항 답변 <50%. 임상 임계값이 아니라 "v1.1에서 그 항목을 다시 보는" 회의 소집 기준.
+5. 첫 라운드 종료: 저장된 목 기록 10건 또는 4주. 종료 후 어깨 ② 착수(어깨 §10 그대로).
+
+### Rationale
+- 같은 조직이 두 부위에 다른 문턱을 두면, 문턱이 낮은 쪽이 "덜 검증됨"으로 오해되거나 높은 쪽이 영영 못 나간다. 기준은 하나여야
+  하고, 그 하나는 이미 요통이 정했다(B수준 진입). 이 결정은 목의 기준을 낮추는 것이 아니라 **문서화되지 않은 이중 기준을 없애는**
+  것이다.
+- 원장이 손으로 7항목을 세면 파일럿이 진료를 방해하고 기록이 끊긴다. 세 가지(신경 검사 결과·방향성 반응·채택 버튼)만 원장 화면에
+  평소처럼 남기면 나머지는 스크립트가 센다 — 요통 회고 파일럿(`pilot:lbp-stage`)과 같은 원칙("환자를 새로 모집하지 않고, 원장이
+  손으로 세지 않는다").
+- 임계값을 "제안값"으로 못 박는 이유: 지금 숫자는 데이터 없이 정한 것이다. 첫 라운드에서 한 번 발동하면 그때 원장이 숫자를 고친다
+  — 스크립트·테스트·문서 셋을 같이.
+
+### Consequences / 검증
+- 코드: `scripts/region-pilot-observation.mjs` 신규, `package.json` `pilot:region-observation`·`test:region-pilot-observation`
+  (+ `test:all`), `.gitignore` `scripts/.region-packs-index-bundle.mjs`. 팩·엔진·화면 변경 0.
+- 테스트: `tests/region-pilot-observation.spec.mjs` 64 단언 — 손으로 검산한 12건(요통 제외·미저장 제외·손상 파일 제외·옛 기록
+  `regionClinical` 부재·손상 채택 상태값), 임계값 6개 각각 발동·비발동, 요통으로도 도는지(옛 필드 `lbpDirectionalResponse`),
+  부위 id 하드코딩 부재, 오류 경로 2, 개인정보 필드 10개 미열람 + 기록 통째 출력 부재.
+- 문서: `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` 신규(원장 절차 §1, 명령 §2, 임계값 §3, 수동 표 §4, 종료 기준 §5),
+  `REAL_DEVICE_PILOT_CHECKLIST.md` §5-b 목 환자 확인, CLOSED §1·§10 표기, 로그 §5 머리말, HANDOFF 40.

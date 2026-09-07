@@ -106,6 +106,10 @@ PR #30 무릎 문서의 출처(NICE NG226, AAOS Knee OA 2021, AAOS Acute Meniscu
 Willy 2019/Neal 2024 PFP, Dutch PFP/PT 2024, ACR Acute Knee Trauma, SANJO 2023, NICE NG158)는 무릎 ② 착수 시 같은 방식으로.
 
 ## 5. 원장 A수준 확인 체크리스트 (로컬 PC, 5분)
+
+> **2026-09-07 정책(DECISIONS "검증 수준 정책")**: 이 체크리스트는 **파일럿 전제조건이 아니다**. 요통 팩이 B수준으로
+> production에 들어간 것과 같은 기준으로 목 팩도 B수준으로 들어가며, 아래 5건은 v1.1 항목이다
+> (`docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` §4-2). 원문이 §1~§3의 B수준 요약과 **다를 때만** CLOSED 재개방 사유가 된다.
 1. ☐ https://www.jospt.org/doi/10.2519/jospt.2017.0302 → 권고 요약 표에서 §1 표의 등급 B/C 확인, **급성 방사통** 행 채우기.
 2. ☐ Domenech 2011 초록 → 남/여 평균 초 수 확정(§2-2) — 팩에 넣을지는 별도 결정.
 3. ☐ CFRT 32° 도움말 기재 여부.

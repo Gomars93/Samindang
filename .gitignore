@@ -206,6 +206,7 @@ tests/.r20-*
 scripts/.lbp-exercise-stage-bundle.mjs
 scripts/.region-routing-bundle.mjs
 scripts/.region-pack-bundle.mjs
+scripts/.region-packs-index-bundle.mjs
 
 # esbuild bundles used by tests/lbp-capability-layer.spec.mjs (regenerated, not source)
 tests/.lbp-capability-layer-bundle.mjs

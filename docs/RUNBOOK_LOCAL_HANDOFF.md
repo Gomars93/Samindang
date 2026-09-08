@@ -116,30 +116,51 @@ submission detected" 한 줄만 남고, 제출 내용은 로그에 남지 않는
 
 ### 2.5 자동 시작 + 죽으면 자동 복구 (Task Scheduler, 권장)
 
-매번 콘솔 창을 열어 서버를 띄우지 않으려면, 로그온 시 자동 시작 +
-비정상 종료 시 자동 재시작을 Windows 작업 스케줄러에 등록한다:
+매번 콘솔 창을 열어 서버 2개(핸드오프 API 4317 + 환자 앱 프리뷰 4173)를
+띄우지 않으려면, 로그온 시 자동 시작 + 비정상 종료 시 자동 재시작을
+Windows 작업 스케줄러에 등록한다. **`npm run build`로 `dist\`가 먼저
+있어야 한다**(2.1) — 프리뷰 서버는 빌드 결과물을 서빙할 뿐 스스로
+빌드하지 않는다.
+
+두 서버를 한 번에 등록(권장):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\register-doctor-api-task.ps1
+powershell -ExecutionPolicy Bypass -File scripts\register-clinic-autostart.ps1
 ```
 
-`SamindangDoctorAPI`라는 이름으로 등록되며, `scripts\start-doctor-api.bat`을
-로그온 시 실행하고 죽으면(비정상 종료) 최대 999회까지 1분 간격으로
-재시작한다(재시작 로직은 Task Scheduler 자체 기능 — 별도 supervisor
-프로세스를 만들지 않는다).
+`SamindangDoctorAPI`(4317, `scripts\start-doctor-api.bat`)와
+`SamindangPatientPreview`(4173, `scripts\start-patient-preview.bat`) 두
+작업이 각각 등록되며, 둘 다 로그온 시 실행되고 죽으면(비정상 종료) 최대
+999회까지 1분 간격으로 재시작한다(재시작 로직은 Task Scheduler 자체
+기능 — 별도 supervisor 프로세스를 만들지 않는다). 한쪽이 죽어도 다른
+쪽은 영향받지 않는다 — 독립된 두 작업이다.
+
+한쪽만 필요하면 개별 스크립트를 직접 쓴다:
+`scripts\register-doctor-api-task.ps1` / `scripts\register-patient-preview-task.ps1`.
 
 상태/헬스 확인:
 
 ```powershell
-Get-ScheduledTask -TaskName SamindangDoctorAPI | Get-ScheduledTaskInfo
+Get-ScheduledTask -TaskName SamindangDoctorAPI, SamindangPatientPreview | Get-ScheduledTaskInfo
 curl http://localhost:4317/api/health   # {"ok":true,"service":"doctor-api",...}
+curl http://localhost:4173              # 태블릿 앱 HTML
 ```
 
-해제:
+지금 바로(재로그온 없이) 시작하려면:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\unregister-doctor-api-task.ps1
+Start-ScheduledTask -TaskName SamindangDoctorAPI
+Start-ScheduledTask -TaskName SamindangPatientPreview
 ```
+
+해제(둘 다):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\unregister-clinic-autostart.ps1
+```
+
+한쪽만 해제하려면 `scripts\unregister-doctor-api-task.ps1` /
+`scripts\unregister-patient-preview-task.ps1`.
 
 ## 3. 보안 모델 (반드시 이해하고 운영할 것)
 

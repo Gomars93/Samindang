@@ -1342,8 +1342,12 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     VISIT_00_INTENT: 'pain_care',
     VISIT_03_SYMPTOM_DURATION: '1_3m',
     VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    // 2026-09-08 순서 재설계: "오늘 자세히"는 참고 증상에서 고른 것 중
+    // 하나다 -- 'sleep'이 참고 증상 목록에도 있어야 일관된 기록이 된다
+    // (payload의 reference_symptoms에서는 다시 빠지므로 원장 화면에 보이는
+    // 것은 이전과 같다: 추가 상세상담=수면 / 참고 증상=소화·기타).
+    REFERENCE_SYMPTOMS_01: ['sleep', 'digestion', 'other'],
     ADDITIONAL_DETAIL_01: 'sleep',
-    REFERENCE_SYMPTOMS_01: ['digestion', 'other'],
     SAFETY_01: ['none'],
     PAIN_01: 'low_back_pelvis',
     PAIN_02: ['aching'],

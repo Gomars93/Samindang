@@ -417,15 +417,29 @@ const SAFETY_QUESTIONS: Question[] = [
  * Tablet UX v2.1 §11-§21: 문진 구조를 명시적으로 3단으로 분리한다.
  *   A. PRIMARY DETAILED CONCERN -- VISIT_00_INTENT/VISIT_02_* 라우팅으로
  *      정한 주호소. 항상 FULL module을 탄다(기존 IS_PRIMARY_* 그대로).
- *   B. ADDITIONAL DETAILED CONCERN (최대 1개) -- 명시적으로 "이것도 자세히
- *      상담받고 싶다"고 고른 경우에만 그 category의 FULL module을 추가로
+ *   B. REFERENCE SYMPTOMS (복수 가능) -- "그 밖에 불편한 곳" 수준의 flag.
+ *      절대 detailed/short/menopause/MSK/추가 safety-specific module을 열지
+ *      않는다(§19 HARD RULE). global safety는 전체 환자 공통이라 그대로다.
+ *   C. ADDITIONAL DETAILED CONCERN (최대 1개) -- **B에서 고른 것 중 하나**를
+ *      "오늘 자세히"로 지정한 경우에만 그 category의 FULL module을 추가로
  *      연다. 기존 module question set/safety engine을 그대로 재사용하고
  *      (복제 없음), `hasDetailedConcern()`으로 각 IS_PRIMARY_* gate를
  *      "primary === X" OR "additional concern === X"로 확장한다.
- *   C. REFERENCE SYMPTOMS (복수 가능) -- "그 밖에 알아두면 좋을 불편함"
- *      수준의 flag일 뿐이다. 절대 detailed/short/menopause/MSK/추가
- *      safety-specific module을 열지 않는다(§19 HARD RULE). global safety는
- *      전체 환자 공통이므로 그대로 유지된다.
+ *
+ * 2026-09-08 순서 재설계(PO 지시, DECISIONS 같은 날 항목): 원래 C가 B보다
+ * 먼저였고 둘이 각자 독립적으로 거의 같은 선택지 목록을 보여줘, 환자에게는
+ * "비슷한 질문을 두 번" 받는 것으로 읽혔다. 이제 B(다중, 넓게 훑기)가 먼저
+ * 오고 C(단일)는 **B에서 고른 것의 부분집합**만 선택지로 받는다 -- 두 번째
+ * 화면이 첫 번째의 "좁혀가기"로 읽혀 중복감이 사라지고, 겹칠 수가 구조적으로
+ * 없어진다(사후에 서로 빼주던 exclude 로직이 필요 없다). B에서 고른 것 중
+ * 자세히 볼 수 있는 후보가 하나도 없으면(없음/그 밖의 증상만) C는 아예
+ * 화면에 뜨지 않는다 -- 버튼이 '없음' 하나뿐인 죽은 화면을 만들지 않는다.
+ *
+ * **저장된 값의 해석 규칙은 바뀌지 않았다.** `ADDITIONAL_DETAIL_01`이
+ * 무엇을 여는지(hasDetailedConcern / modulesActivated / routing payload)는
+ * 이전과 글자 단위로 같다 -- 부분집합 규칙은 "화면 선택지(optionsIf)"와
+ * "정리(pruneStaleResponses)" 두 층에서만 강제한다. 이미 저장된 제출/legacy
+ * fixture의 해석을 바꾸지 않기 위함이다.
  *
  * 엔진 제약과 화면 순서(ordering fix, PR #20 후속): `App.tsx`의
  * `nextQuestion()`은 `visibleQuestions(r)` 배열에서 현재 질문의 다음
@@ -436,8 +450,9 @@ const SAFETY_QUESTIONS: Question[] = [
  * phase-aware 재정렬(아래 `reorderForDetailPhases`)이 별도로 결정한다 --
  * Primary의 full module 문항들을 이 두 질문보다 항상 앞에 배치하므로,
  * 정적 배열 순서와 무관하게 실제 화면 순서는 "방문목적 → 주호소 카테고리
- * → Primary 자신의 full module → 추가 상세상담 선택 → (선택했다면)
- * Additional의 full module → 참고 증상 선택 → ..." 가 정확히 지켜진다.
+ * → Primary 자신의 full module → 참고 증상 선택(다중) → (후보가 있으면)
+ * 그중 오늘 자세히 볼 것 선택(단일) → (골랐다면) 그 module의 full 문항
+ * → ..." 가 정확히 지켜진다.
  * 즉 이 두 질문 자체는 이제 어느 module 블록보다 정적으로 앞에 있을
  * 필요가 없다 -- 재정렬이 순서를 온전히 책임진다.
  */
@@ -502,60 +517,104 @@ const ADDITIONAL_DETAIL_OPTIONS: Option[] = [
   { value: 'weight', label: '체중 관리' },
 ]
 
+/**
+ * 참고 증상(REFERENCE_SYMPTOMS_01)에서 고른 값 중 "오늘 자세히"의 후보가 될
+ * 수 있는 것들 -- `ADDITIONAL_DETAIL_01`의 선택지를 만드는 단 하나의 근거다.
+ *
+ * 후보에서 빠지는 것: '없음'/'그 밖의 증상'(열 module이 자체가 없다), 이미
+ * 주호소인 category(§13, 같은 것을 두 번 full-detail 하지 않는다), 남성의
+ * '여성 건강'. 앞의 둘은 REFERENCE_SYMPTOMS_01의 optionsIf에서도 이미
+ * 걸러지지만, 저장된 값이 malformed거나 legacy raw fixture인 경우까지
+ * 대비해 여기서 한 번 더 막는다(fail-safe, 기존 코드의 방어 스타일과 동일).
+ */
+function detailCandidateKeys(r: Responses): string[] {
+  const stored = r['REFERENCE_SYMPTOMS_01']
+  if (!Array.isArray(stored)) return []
+  const eligible = new Set(
+    ADDITIONAL_DETAIL_OPTIONS.filter((o) => o.value !== 'none').map((o) => o.value),
+  )
+  const primary = primaryConcernSecondaryKey(r)
+  const male = r['ID_03'] === 'male'
+  const out: string[] = []
+  for (const v of stored) {
+    if (typeof v !== 'string' || !eligible.has(v)) continue
+    if (primary && v === primary) continue
+    if (male && v === 'women') continue
+    if (!out.includes(v)) out.push(v)
+  }
+  return out
+}
+
+/**
+ * 원장에게 나가는 "참고 증상" 목록 -- 저장된 다중선택 답에서 "오늘 자세히"로
+ * 고른 항목 하나를 뺀 것.
+ *
+ * 순서 재설계 전에는 두 질문의 선택지가 서로를 제외했기 때문에 애초에 겹칠
+ * 수가 없었고, 원장 화면은 "추가 상세상담"과 "참고 증상"을 겹침 없는 두
+ * 블록으로 읽어왔다(§18). 이제는 자세히 볼 항목을 참고 증상 안에서 고르므로
+ * 원본 답에는 둘 다 들어 있다 -- 원장 화면의 계약을 그대로 유지하려면
+ * payload를 만들 때 빼준다. 환자가 실제로 무엇을 골랐는지(원본)는
+ * `responses.REFERENCE_SYMPTOMS_01`에 그대로 남는다.
+ */
+function referenceSymptomsForPayload(r: Responses): unknown[] | null {
+  const stored = r['REFERENCE_SYMPTOMS_01']
+  if (!Array.isArray(stored)) return null
+  const additional = r['ADDITIONAL_DETAIL_01']
+  if (typeof additional !== 'string' || additional === 'none') return stored
+  return stored.filter((v) => v !== additional)
+}
+
 const DETAIL_ROUTING_QUESTIONS: Question[] = [
-  {
-    id: 'ADDITIONAL_DETAIL_01',
-    variable: 'additional_detail_concern',
-    input: 'single_choice',
-    question: '오늘 이것과 함께 자세히 상담받고 싶은 문제가 또 있나요?',
-    helper: '선택한 문제는 오늘 함께 자세히 확인합니다. 최대 1개까지 고를 수 있어요.',
-    required: true,
-    step: '상담 내용',
-    layout: 'grid2',
-    // (ordering fix) VISIT_00_INTENT 하나만 보고 "새 흐름인가"를 판단한다
-    // -- SECONDARY_01의 답변 여부와는 무관하다(위 파일 헤더 설명 참고).
-    // 실제로 이 질문이 화면에 뜨는 시점은 phase-aware reordering이
-    // 결정한다(Primary의 full module 완료 후).
-    showIf: (r) => r['VISIT_00_INTENT'] != null,
-    options: ADDITIONAL_DETAIL_OPTIONS,
-    // 이미 Primary인 category, 남성의 "여성 건강"은 제외한다(§13).
-    optionsIf: (r) => {
-      const exclude = new Set<string>()
-      const primary = primaryConcernSecondaryKey(r)
-      if (primary) exclude.add(primary)
-      if (r['ID_03'] === 'male') exclude.add('women')
-      return ADDITIONAL_DETAIL_OPTIONS.filter((o) => !exclude.has(o.value))
-    },
-  },
   {
     id: 'REFERENCE_SYMPTOMS_01',
     variable: 'reference_symptoms',
     input: 'multi_choice',
-    question: '그 밖에 원장님이 알아두면 좋을 불편함이 있나요?',
-    helper: '있다는 사실만 원장님께 전달됩니다. 여러 개를 고를 수 있어요.',
+    question: '그 밖에 불편한 곳이 있나요?',
+    helper: '있는 것을 모두 골라주세요. 다음 화면에서 이 중 하나를 오늘 자세히 볼 수 있어요.',
     required: true,
     step: '상담 내용',
     layout: 'grid2',
     exclusive: 'none',
     options: SECONDARY_OPTIONS,
-    // Primary와 Additional detail로 이미 선택된 category는 중복 방지를 위해
-    // 가능하면 목록에서 제외한다(§18). 남성의 "여성 건강"도 제외.
+    // 이미 Primary인 category, 남성의 "여성 건강"은 제외한다(§13/§18).
+    // ADDITIONAL_DETAIL_01은 이제 이 질문 *다음*에 오므로 여기서 뺄 것이
+    // 없다 -- 반대로 저쪽이 이 답의 부분집합만 받는다(파일 헤더 참고).
     optionsIf: (r) => {
       const exclude = new Set<string>()
       const primary = primaryConcernSecondaryKey(r)
       if (primary) exclude.add(primary)
-      const additional = r['ADDITIONAL_DETAIL_01']
-      if (typeof additional === 'string' && additional !== 'none') exclude.add(additional)
       if (r['ID_03'] === 'male') exclude.add('women')
       return SECONDARY_OPTIONS.filter((o) => !exclude.has(o.value))
     },
-    // ADDITIONAL_DETAIL_01이 답변된(=null이 아닌) 다음에만 노출된다 --
-    // ADDITIONAL_DETAIL_01은 VISIT_00_INTENT != null일 때만 보이므로, 이
-    // 필드가 채워졌다는 것 자체가 이미 새 흐름(비-legacy) 경로에 있다는
-    // 신호다. 실제로 이 질문이 화면에 뜨는 시점(Primary와, 선택했다면
-    // Additional의 full module이 모두 끝난 뒤)은 phase-aware reordering이
-    // 결정한다.
-    showIf: (r) => r['ADDITIONAL_DETAIL_01'] != null,
+    // (ordering fix) VISIT_00_INTENT 하나만 보고 "새 흐름인가"를 판단한다
+    // -- SECONDARY_01의 답변 여부와는 무관하다(위 파일 헤더 설명 참고).
+    // 실제로 이 질문이 화면에 뜨는 시점은 phase-aware reordering이
+    // 결정한다(Primary의 full module 완료 후).
+    showIf: (r) => r['VISIT_00_INTENT'] != null,
+  },
+  {
+    id: 'ADDITIONAL_DETAIL_01',
+    variable: 'additional_detail_concern',
+    input: 'single_choice',
+    question: '이 중에 오늘 자세히 진료받기를 원하는 것이 있나요?',
+    helper: '고른 문제는 오늘 함께 자세히 확인합니다. 최대 1개까지 고를 수 있어요.',
+    required: true,
+    step: '상담 내용',
+    layout: 'grid2',
+    options: ADDITIONAL_DETAIL_OPTIONS,
+    // 선택지는 **바로 앞 화면에서 고른 것**뿐이다(+ '없음'). 고른 것이 하나면
+    // [그 항목]/[없음] 두 버튼이 되어 "이거 자세히 볼까요?"처럼 읽힌다.
+    // 'none'을 항상 맨 앞에 두는 것은 기존 배열 순서와 같다(첫 항목 =
+    // 최소부담 fail-safe 기본값 -- ADDITIONAL_DETAIL_OPTIONS 위 주석 참고).
+    optionsIf: (r) => {
+      const candidates = new Set(detailCandidateKeys(r))
+      return ADDITIONAL_DETAIL_OPTIONS.filter((o) => o.value === 'none' || candidates.has(o.value))
+    },
+    // 앞 화면이 답해졌고, 그중 자세히 볼 수 있는 후보가 하나라도 있을 때만
+    // 뜬다 -- '없음'/'그 밖의 증상'만 골랐다면 이 화면은 아예 건너뛴다
+    // (버튼이 '없음' 하나뿐인 죽은 화면 방지). 앞 화면이 채워졌다는 것 자체가
+    // 이미 새 흐름(비-legacy) 경로에 있다는 신호이기도 하다.
+    showIf: (r) => r['REFERENCE_SYMPTOMS_01'] != null && detailCandidateKeys(r).length > 0,
   },
 ]
 
@@ -4391,7 +4450,7 @@ export const buildRoutingPayload = (r: Responses) => {
       ? (r['ADDITIONAL_DETAIL_01'] as string)
       : null
   const additionalTarget = additionalDetailKey ? MODULE_ROUTES[additionalDetailKey] ?? null : null
-  const referenceSymptoms = Array.isArray(r['REFERENCE_SYMPTOMS_01']) ? r['REFERENCE_SYMPTOMS_01'] : null
+  const referenceSymptoms = referenceSymptomsForPayload(r)
 
   const allTargets: string[] = []
   if (primaryTarget) allTargets.push(primaryTarget)
@@ -4626,7 +4685,9 @@ function reorderForDetailPhases(r: Responses, list: Question[]): Question[] {
       ? postList
       : [...postList.slice(0, insertAt), ...systemicItems, ...postList.slice(insertAt)]
 
-  return [...preList, ...primaryModuleItems, ...additionalDetailQ, ...additionalModuleItems, ...referenceQ, ...post]
+  // 2026-09-08 순서 재설계: 참고 증상(다중)이 먼저, 그중 하나를 고르는
+  // "오늘 자세히"(단일)가 그다음, 그래서 열린 module의 문항이 그 뒤다.
+  return [...preList, ...primaryModuleItems, ...referenceQ, ...additionalDetailQ, ...additionalModuleItems, ...post]
 }
 
 export const visibleQuestions = (r: Responses): Question[] =>
@@ -4657,18 +4718,30 @@ export const pruneStaleResponses = (
     // 더 이상 허용되지 않는 옵션이 남아있을 수 있다(예: SECONDARY_01에서
     // 주호소로 바뀐 값). 현재 허용된 옵션과 교집합만 남긴다.
     const leaked: { id: string; values: string[] }[] = []
+    // 2026-09-08: single_choice도 같은 사고가 난다 -- 참고 증상에서 어떤
+    // 항목을 빼면, 그것을 "오늘 자세히"로 골라둔 ADDITIONAL_DETAIL_01의
+    // 저장값이 자기 선택지에 없는 값으로 남는다(화면은 다른 후보가 있어
+    // 계속 보이므로 위의 stale 규칙으로는 안 잡힌다). 그대로 두면 환자가
+    // 화면에서 뺀 항목의 full module이 계속 열려 있게 된다.
+    const orphaned: string[] = []
     for (const q of visibleQs) {
-      if (q.input !== 'multi_choice' || !q.optionsIf) continue
+      if (!q.optionsIf) continue
       const stored = cur[q.id]
-      if (!Array.isArray(stored)) continue
-      const allowed = new Set(q.optionsIf(cur).map((o) => o.value))
-      const filtered = stored.filter((v) => allowed.has(v))
-      if (filtered.length !== stored.length) {
-        leaked.push({ id: q.id, values: filtered })
+      if (q.input === 'multi_choice') {
+        if (!Array.isArray(stored)) continue
+        const allowed = new Set(q.optionsIf(cur).map((o) => o.value))
+        const filtered = stored.filter((v) => allowed.has(v))
+        if (filtered.length !== stored.length) {
+          leaked.push({ id: q.id, values: filtered })
+        }
+      } else if (q.input === 'single_choice') {
+        if (typeof stored !== 'string') continue
+        const allowed = new Set(q.optionsIf(cur).map((o) => o.value))
+        if (!allowed.has(stored)) orphaned.push(q.id)
       }
     }
 
-    if (stale.length === 0 && leaked.length === 0) break
+    if (stale.length === 0 && leaked.length === 0 && orphaned.length === 0) break
 
     const next: Responses = { ...cur }
     for (const q of stale) {
@@ -4678,6 +4751,10 @@ export const pruneStaleResponses = (
     for (const l of leaked) {
       next[l.id] = l.values
       removed.push(l.id)
+    }
+    for (const id of orphaned) {
+      next[id] = null
+      removed.push(id)
     }
     cur = next
   }
@@ -4770,7 +4847,7 @@ export const buildResponsePayload = (r: Responses) => ({
         : null,
   },
   reference_symptoms: {
-    reference_symptoms: Array.isArray(r['REFERENCE_SYMPTOMS_01']) ? r['REFERENCE_SYMPTOMS_01'] : null,
+    reference_symptoms: referenceSymptomsForPayload(r),
   },
   // 하위호환: 새 흐름에서는 SECONDARY_01이 노출되지 않아 항상 null이다
   // (§21 migration -- 기존 raw fixture/테스트 경로에서만 값이 남는다).

@@ -149,7 +149,15 @@ function estimateScreenHeight(q) {
   // screen, and only known once a response is chosen.
 
   if (q.input === 'multi_choice' || q.input === 'single_choice') {
-    const options = q.optionsIf ? q.optionsIf(emptyResponses) : (q.options ?? [])
+    // 2026-09-08: optionsIf는 "지금까지의 답"에 따라 목록을 줄이므로, 빈
+    // 응답으로 한 번 부른 결과는 그 화면의 최악(가장 긴) 높이가 아니다 --
+    // 예: ADDITIONAL_DETAIL_01은 빈 응답에서 '없음' 하나만 돌려주지만, 참고
+    // 증상을 9개 다 고른 환자에게는 10줄짜리 화면이 된다. 레이아웃 예산은
+    // 실제 환자가 볼 수 있는 최악을 재야 하므로 정적 목록과 비교해 더 긴
+    // 쪽을 쓴다(다른 optionsIf 화면들도 성별 필터 전 목록 = 최악이 된다).
+    const filtered = q.optionsIf ? q.optionsIf(emptyResponses) : null
+    const stat = q.options ?? []
+    const options = filtered === null ? stat : (filtered.length >= stat.length ? filtered : stat)
     if (options.length > 0) {
       const rows = options.map((o) => optionRowHeight(o.label))
       h += rows.reduce((a, b) => a + b, 0) + (options.length - 1) * OPTION_LIST_GAP

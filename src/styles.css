@@ -1182,6 +1182,15 @@ input {
   margin: 0 0 10px;
 }
 
+.followUp__label--sub {
+  font-size: 17px;
+  margin-top: 14px;
+}
+
+.followUp__detailItem + .followUp__detailItem {
+  margin-top: 10px;
+}
+
 .followUp__targetHint {
   font-size: 13px;
   color: var(--text-muted);

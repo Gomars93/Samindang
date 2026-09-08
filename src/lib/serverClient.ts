@@ -476,6 +476,26 @@ export function reissueFollowUpSession(visitId: string): Promise<ServerResult<Is
   })
 }
 
+/**
+ * 플로우 정렬 4/5: turns the patient-facing care-plan text the doctor is
+ * looking at into a read-only capability link (POST
+ * /api/submissions/:id/care-plan-link). The raw token is returned exactly
+ * once, like startRevisit/reissueFollowUpSession -- a reload cannot recover
+ * it; the doctor simply issues again (which invalidates the previous link).
+ */
+export type IssuedCarePlanLink = { token: string; expiresAt: string }
+
+export function issueCarePlanLink(submissionId: string, carePlanText: string): Promise<ServerResult<IssuedCarePlanLink>> {
+  return request<{ token: string; expires_at: string }>(`/api/submissions/${encodeURIComponent(submissionId)}/care-plan-link`, {
+    method: 'POST',
+    body: JSON.stringify({ care_plan_text: carePlanText }),
+  }).then((result) => {
+    if (!result.ok) return result
+    if (typeof result.data?.token !== 'string' || typeof result.data?.expires_at !== 'string') return invalidResponseShape()
+    return { ok: true, data: { token: result.data.token, expiresAt: result.data.expires_at } }
+  })
+}
+
 export function invalidateFollowUpSession(visitId: string): Promise<ServerResult<{ ok: true }>> {
   return request(`/api/visits/${encodeURIComponent(visitId)}/follow-up-session/invalidate`, { method: 'POST' })
 }

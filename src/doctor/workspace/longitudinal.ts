@@ -167,3 +167,38 @@ export function lastVisitTrackedLine(priorVisits: PatientHistoryResult | null | 
 function isRecordLike(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object'
 }
+
+/**
+ * §10.2 (Batch 3.1): before this, "이전에 채택한 운동" only ever read the
+ * IMMEDIATELY PRIOR visit's submission -- once a patient has had two or
+ * more revisits since their intake, the immediately prior visit is itself a
+ * revisit (no `submissionId`) and the line silently disappeared, even
+ * though the intake visit (and its accepted exercises) still exists further
+ * back in the same history. This walks the same most-recent-first
+ * `PatientHistoryResult['visits']` projection and returns the FIRST
+ * (i.e. latest) visit that is actually submission-backed -- a pure lookup,
+ * no fetch, no clinical judgment, no threshold.
+ *
+ * `visits` is `unknown`, not `PriorVisitSummary[]`, for the same reason as
+ * every other reader in this file: it is the untrusted-PUT projection. Any
+ * element that is not a record, or whose `submissionId` is not a non-empty
+ * string, or whose `visitId` is not a string, carries no usable exercise
+ * source -- it is skipped (not returned as a partial/guessed result) and
+ * the scan continues to the next, older visit. A non-array input, or a
+ * history with no submission-backed visit anywhere in it, returns `null`.
+ * Never throws.
+ */
+export function findLatestSubmissionBackedPriorVisit(
+  visits: unknown,
+): { visitId: string; submissionId: string; createdAt: unknown } | null {
+  const list = asPriorVisitArray<unknown>(visits)
+  for (const raw of list) {
+    if (!isRecordLike(raw)) continue
+    const submissionId = raw.submissionId
+    if (typeof submissionId !== 'string' || submissionId === '') continue
+    const visitId = raw.visitId
+    if (typeof visitId !== 'string') continue
+    return { visitId, submissionId, createdAt: raw.createdAt }
+  }
+  return null
+}

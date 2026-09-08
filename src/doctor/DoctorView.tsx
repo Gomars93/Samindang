@@ -2,9 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
-import { JudgmentPanel } from './JudgmentPanel'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
-import { buildEmrSummary } from './emrSummary'
+import { buildPainWorkspaceEmrPreview, buildHerbalWorkspaceEmrPreview } from './workspace/emrPreview'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import {
   createEmptyJudgment,
@@ -30,6 +29,7 @@ import {
   listSubmissions,
   registerStation,
   reissueFollowUpSession,
+  issueCarePlanLink,
   resetStation,
   saveJudgment as saveJudgmentToServer,
   saveWorkspaceState as saveWorkspaceStateToServer,
@@ -43,7 +43,7 @@ import {
 import type { PatientHistoryResult } from './workspace/longitudinal'
 import { asPriorVisitArray } from './workspace/longitudinal'
 import { PriorVisitHistoryCard } from './workspace/PriorVisitHistoryCard'
-import type { MicroFollowUpResponse } from './workspace/microFollowUp'
+import { microFollowUpQuoteLine, readableMicroFollowUpResponse, type MicroFollowUpResponse } from './workspace/microFollowUp'
 import type { DeliveryMode, RevisitQueueItem, StationInfo } from './workspace/followUpSession'
 import { DELIVERY_MODE_LABEL } from './workspace/followUpSession'
 import type { CrmTask } from '../crm/types'
@@ -63,7 +63,7 @@ import { WorkstationSetup } from './WorkstationSetup'
 import { getStoredWorkstationId } from './workstation'
 import { DoctorTokenSetup, DoctorTokenClearButton } from './DoctorTokenSetup'
 import { getStoredDoctorToken } from './doctorToken'
-import { buildPublicFollowUpLink } from '../lib/publicFollowUpUrl'
+import { buildPublicFollowUpLink, buildPublicCarePlanLink } from '../lib/publicFollowUpUrl'
 import { computeLbpFlags, diseaseSafetyLocked, treatmentSafetyLocked, type LbpComputedFields } from '../spec/lbpLogic'
 import { toLbpStateFromDoctorPayload, ageFromDoctorPayload } from '../spec/lbpAdapter'
 import {
@@ -84,6 +84,8 @@ import { toWristHandStateFromDoctorPayload } from '../spec/wristHandAdapter'
 import { DoctorWorkspace } from './workspace/DoctorWorkspace'
 import { MedicationCourseSection } from './MedicationCourseSection'
 import { deserializeWorkspaceState } from './workspace/persistence'
+import { activeDrivingPack } from './workspace/regionPacks'
+import { readRegionClinical } from './workspace/regionClinicalState'
 import { deriveViewProfile } from './workspace/viewProfile'
 import { WORKSPACE_SCENARIOS } from './workspace/workspaceFixtures'
 import './doctor.css'
@@ -700,14 +702,21 @@ function computedText(value: unknown): string | null {
   return UNREADABLE_COMPUTED_VALUE
 }
 
-/** 날짜 구성요소(년/월/일)용 -- 유효한 값이면 2자리로 0-padding, 아니면 실패 토큰. */
-function datePartText(value: unknown): string {
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value).padStart(2, '0')
-  if (typeof value === 'string' && value !== '') return value
-  return UNREADABLE_COMPUTED_VALUE
-}
+/**
+ * Batch 4.1-B: datePartText() (날짜 구성요소 0-padding 헬퍼) was removed
+ * here -- its only call site was the "명리 검토" reviewGrid's 정규화된
+ * 양력 날짜 line, deleted below. No other caller.
+ */
 
-/** saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상 해석과 무관한 계산 상태 표시일 뿐이다. */
+/**
+ * saju.status + 정책 대기 여부 -> "계산 완료/부분/불가" 짧은 상태 문구. 임상
+ * 해석과 무관한 계산 상태 표시일 뿐이다.
+ *
+ * Batch 4.1-B 이후 프로덕션 렌더 지점 없음(§15.5) -- DoctorView.tsx 어디에서도
+ * 더 이상 호출하지 않는다. 되살릴 때 `viewProfile !== 'pain'` 게이트를 반드시
+ * 함께 복원할 것(§16.3, PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간
+ * 내용을 노출하지 않는다).
+ */
 export function sajuStatusLine(saju: DoctorPayload['myungri_calculation']): {
   text: string
   tone: 'neutral' | 'warning' | 'unresolved'
@@ -734,6 +743,13 @@ const PENDING_APPROVAL_LABELS: Record<string, string> = {
  * 여기 값은 전부 saju 엔진이 이미 계산해서 내려준 값(pillars/flags/policy)의
  * 재배열일 뿐이다. 오행 분포·한열조습처럼 엔진이 계산하지 않는 값은 절대
  * 새로 계산하지 않고 "해석 규칙 미확정" 문구로만 남긴다(원장 판단 영역).
+ *
+ * Batch 4.1-B 이후 프로덕션 렌더 지점 없음(§15.5) -- 이 카드를 얹던
+ * judgment__reviewGrid 블록째로 DoctorView.tsx에서 제거됐다. 되살릴 때
+ * `viewProfile !== 'pain'` 게이트를 반드시 함께 복원할 것(§16.3). 12차/13차
+ * 독립 리뷰가 여기서 잡은 하드닝(wrong-typed pillars.day/flags.hour_unknown
+ * 등, 아래 주석 참고)은 tests/doctor.spec.mjs의 resilience 스위트가 이
+ * 컴포넌트를 직접 렌더해 계속 회귀 방지한다.
  */
 export function MyungriCompactCard({ saju }: { saju: DoctorPayload['myungri_calculation'] }) {
   // 12차 독립 리뷰 HIGH-3: `!saju.pillars?.day`는 truthy 체크일 뿐이라
@@ -854,9 +870,11 @@ function suggestedExamCodes(flags: LbpComputedFields, claudicationWalking: Answe
  * 참고). `payload.routing.primary_module_detail !== 'LBP'`면 아무것도
  * 렌더링하지 않는다.
  *
- * clinician_objective_motor_deficit은 이 화면이 아니라 JudgmentPanel에서
- * 입력·저장되므로(기존 judgment 저장 경로 재사용, 별도 저장 메커니즘 없음)
- * 여기서는 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
+ * clinician_objective_motor_deficit은 이 화면이 아니라 진료 탭의
+ * `ObjectiveExamFindingsCard`에서 입력·저장되므로(기존 judgment 저장 경로
+ * 재사용, 별도 저장 메커니즘 없음 -- Batch 4.1-D §17.3: 이 경로는 "자료
+ * 보기" 탭의 읽기 전용 echo가 제거된 것과 무관하게 그대로다) 여기서는
+ * 마지막으로 저장된 judgment 값을 읽기만 한다 — 서버 모드가 아니면
  * (fixtures) 항상 "아직 진찰 전"으로 취급한다.
  */
 export function LbpSafetyPanel({
@@ -1077,7 +1095,7 @@ function suggestedNeckExamCodes(
  *
  * LBP와 달리 disease safety 계산에 원장 입력(clinician judgment)이 필요
  * 없다 — v0.2.1 §5는 순수하게 환자 응답 + Core reuse만으로 계산되므로
- * JudgmentPanel에 대응 필드를 추가하지 않았다.
+ * `ClinicianJudgment`에 대응 필드를 추가하지 않았다.
  */
 export function NeckSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // safety_flags.neck는 이 레코드가 NECK/SHOULDER 부위와 관련 있는지의
@@ -1233,7 +1251,7 @@ function suggestedShoulderExamCodes(
  *
  * disease safety 계산에 원장 입력이 필요 없다(NECK과 동일) — 단
  * expedited_referral_consider의 세 번째 조건(원장 진찰에서 확인된 새
- * 회전근개 약화)만 JudgmentPanel의 `shoulder_objective_cuff_weakness`를
+ * 회전근개 약화)만 `ClinicianJudgment.shoulder_objective_cuff_weakness`를
  * 읽어 반영한다(§11).
  */
 export function ShoulderSafetyPanel({
@@ -1411,7 +1429,7 @@ function suggestedKneeExamCodes(
  *
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
  * plan §3.2/§5.5) -- Wells/SLR/신경혈관 결과의 persistence schema는 아직
- * CLOSED되지 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
+ * CLOSED되지 않았으므로 `ClinicianJudgment`에 새 필드를 추가하지 않는다.
  */
 export function KneeSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
@@ -1558,7 +1576,7 @@ function suggestedElbowExamCodes(
  *
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다(Fable
  * plan §3.2/§5.6) -- Wells류의 persistence schema가 아직 CLOSED되지
- * 않았으므로 JudgmentPanel에 새 필드를 추가하지 않는다.
+ * 않았으므로 `ClinicianJudgment`에 새 필드를 추가하지 않는다.
  */
 export function ElbowSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
@@ -1714,7 +1732,7 @@ function suggestedWristHandExamCodes(
  * 결과로만 나타난다.
  *
  * 이번 iteration에서는 clinician-entered objective field가 필요 없다
- * (Fable plan §3.3) -- JudgmentPanel에 새 필드를 추가하지 않는다.
+ * (Fable plan §3.3) -- `ClinicianJudgment`에 새 필드를 추가하지 않는다.
  */
 export function WristHandSafetyPanel({ payload }: { payload: DoctorPayload }) {
   // 무관함(null)과 계산 불가(applicable하지만 손상)를 분리 -- 5차 독립
@@ -1909,7 +1927,13 @@ export function testDataGroupCount(r: Responses): number {
   return [r.recent_tests.recent_test_flag, r.free_text.free_text_yn].filter((v) => !isEmptyValue(v)).length
 }
 
-/** Core Reduction P4 -- "명리" 아코디언 배지: 계산된 사주 기둥 개수(0~4). */
+/**
+ * Core Reduction P4 -- "명리" 아코디언 배지: 계산된 사주 기둥 개수(0~4).
+ *
+ * Batch 4.1-B 이후 프로덕션 렌더 지점 없음(§15.5) -- 이 배지가 붙어 있던
+ * "명리" ReferenceAccordion 자체가 DoctorView.tsx에서 제거됐다. 되살릴 때
+ * `viewProfile !== 'pain'` 게이트를 반드시 함께 복원할 것(§16.3).
+ */
 export function myungriGroupCount(saju: DoctorPayload['myungri_calculation']): number {
   if (!saju.pillars) return 0
   return [saju.pillars.year, saju.pillars.month, saju.pillars.day, saju.pillars.hour].filter(
@@ -1923,25 +1947,14 @@ export function priorVisitsGroupCount(priorVisits: PatientHistoryResult | null |
 }
 
 /**
- * Core Reduction P4 -- "명리·감사 기록"(JudgmentPanel) 아코디언 배지: 이미
- * 서버에 저장된 판단 중 채워진 항목 개수. JudgmentPanel 자체가 관리하는
- * in-progress 편집 상태는 이 함수가 볼 수 없다(별도 컴포넌트) -- 배지는
- * "이미 기록된 값"만 반영하며, 다른 그룹들의 배지가 서버/fixture의 저장된
- * 값을 반영하는 것과 같은 성격이다.
+ * Batch 4.1-D (§17.1/§17.2): `judgmentRecordedFieldCount` removed. It was
+ * the "디브리핑·학습 기록" accordion's badge (learning_case + debrief
+ * fill state), and that whole accordion -- along with the "원장 판단 기록"
+ * component it rendered, which had zero editable fields left -- is now
+ * gone; this was its only caller. See judgment.ts for why `debrief`/
+ * `learning_case` stay on the `ClinicianJudgment` type regardless
+ * (deprecated, not deleted).
  */
-export function judgmentRecordedFieldCount(judgment: ClinicianJudgment | null | undefined): number {
-  if (!judgment) return 0
-  let n = 0
-  n += judgment.innate_features.filter((s) => s.trim() !== '').length
-  n += judgment.symptom_links.filter((s) => s.trim() !== '').length
-  if (judgment.saju_only_prediction.trim() !== '') n += 1
-  if (judgment.revised_after_exam.trim() !== '') n += 1
-  if (judgment.final_treatment_axis.trim() !== '') n += 1
-  if (judgment.prescription_direction.trim() !== '') n += 1
-  if (judgment.learning_case === true) n += 1
-  if (judgment.debrief && Object.values(judgment.debrief).some((v) => v.trim() !== '')) n += 1
-  return n
-}
 
 /**
  * MENOPAUSE_SLEEP v0.2 Compact 요약을 raw enum 나열이 아니라 진료용 문장으로 보여준다.
@@ -2324,7 +2337,7 @@ export function recordToPayload(record: SubmissionRecord): DoctorPayload {
 // 있다 -- `routing: null`(하위호환 저장 경로, server/index.js의
 // `routing: body.routing ?? null` 참고)이나 손으로 만든/손상된
 // `responses` 하나만 있어도, 이 파일의 수십 곳(`deriveViewProfile`,
-// `primaryConcernLabel`, 각 부위 SafetyPanel, JudgmentPanel의 props 등)이
+// `primaryConcernLabel`, 각 부위 SafetyPanel의 props 등)이
 // 예외 없이 그 값을 그대로 읽어 렌더링 도중 던진다. 이 값들은 전부
 // `buildResponsePayload`/`buildRoutingPayload`/`computeSaju`(coreSpec.ts/
 // saju/index.ts) 한 번의 호출로 통째로 만들어지는 atomic한 객체라서, 실제
@@ -2676,6 +2689,11 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
    * questionnaire groups it always sat next to. Nothing here deletes
    * content or changes the profile gate (viewProfile !== 'pain') that
    * decided whether it existed at all -- only the tab it lived under.
+   *
+   * Superseded by Batch 4.1-B (§16.3/§15.4, PO decision 2026-09-04): that
+   * accordion itself is now gone (not merely moved) -- a separate 명리
+   * program replaces this in-app surface. See the "Batch 4.1-B" comment
+   * where the accordion used to render.
    */
   const [recordTab, setRecordTab] = useState<'clinical' | 'reference'>('clinical')
   function openRecordTab(tab: 'clinical' | 'reference') {
@@ -2745,10 +2763,19 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const [recorderResultsError, setRecorderResultsError] = useState<string | null>(null)
   const [emrText, setEmrText] = useState('')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
-  // 같은 recording_id로 폴링이 다시 돌아와도 EMR 텍스트를 다시 만들지
-  // 않기 위한 최신 seed 기준점(새 recording_id가 오면 편집 중이어도
-  // 갱신됨 — 아래 seed effect 주석 참고).
-  const emrSeedRecordingIdRef = useRef<string | null>(null)
+  // Opus delta review (Batch 4) defect #4: a seed-once guard for the 종결
+  // EMR text -- `recordId` pins the seed to the currently-open record (a
+  // record switch always reseeds, unconditionally), `lastGenerated` is the
+  // text this effect itself produced last; the effect below only overwrites
+  // `emrText` when the clinician has NOT diverged from that last-generated
+  // text (`emrText === lastGenerated`), so a workspace autosave that only
+  // bumps `selectedRecord.updated_at` never clobbers an edit the clinician
+  // just typed into the textarea. "요약 다시 만들기" (handleRebuildEmrSummary)
+  // stays the explicit escape hatch that re-seeds on demand regardless.
+  const emrSeedRef = useRef<{ recordId: string | null; lastGenerated: string | null }>({
+    recordId: null,
+    lastGenerated: null,
+  })
 
   // 서버 모드: 목록을 5초마다 폴링한다. retryNonce가 바뀌면(에러 화면의
   // "다시 시도") 즉시 한 번 더 불러온다.
@@ -3094,13 +3121,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   useEffect(() => {
     // malformed/legacy submission resilience 배치: 레코드 A -> B 전환처럼
     // 둘 다 visit_id를 갖는 경우(둘 다 이 if를 안 타는 경우)에도 A의
-    // recorderResults/emrText/emrSeedRecordingIdRef가 B의 화면에 잠깐이라도
+    // recorderResults/emrText/emrSeedRef가 B의 화면에 잠깐이라도
     // 남아있으면 안 된다 -- 이 effect는 [mode, selectedRecord?.visit_id]가
     // 바뀔 때마다 실행되므로, 무조건 리셋한 뒤에만 새 poll을 시작한다.
     setRecorderResults(null)
     setRecorderResultsError(null)
     setEmrText('')
-    emrSeedRecordingIdRef.current = null
+    emrSeedRef.current = { recordId: null, lastGenerated: null }
     if (mode !== 'server' || !selectedRecord?.visit_id) {
       return
     }
@@ -3138,29 +3165,105 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return () => clearTimeout(t)
   }, [readyToast])
 
-  // 새 recording 결과가 도착했을 때만 EMR 요약 텍스트를 다시 만든다.
-  // 편집 중이어도 새 recording_id가 오면 항상 최신 결과로 덮어쓴다(의도된 동작).
-  // malformed/legacy submission resilience 배치: 이 effect는 JSX 게이트(위
-  // payloadShapeOk ? ... 분기)와 무관하게 항상 실행된다 -- hook은 조건부로
-  // 건너뛸 수 없다. primaryConcernLabel(r)은 r.visit_goal.visit_goal을
-  // 무조건 읽으므로, payloadShapeOk가 false인 레코드에서 recorder 결과가
-  // 먼저 도착하면(EMR 패널 자체는 화면에 없어도) 이 effect가 부모
-  // DoctorView 안에서 직접 던진다 -- DoctorRecordErrorBoundary는 자신의
-  // 자식 렌더만 잡으므로 이 예외는 그 경계를 완전히 우회한다.
+  // LBP v1 Batch 4 (§14.1/§14.3, CD-2.7-2 `DECISIONS.md` 2026-09-04),
+  // extended by the Opus delta review's defect #1 fix: 종결's EMR text for
+  // EVERY viewProfile (pain, herbal, mixed) is the SAME workspace-composer
+  // text `EmrPreviewCard` shows (read-only) inside that profile's own 참고
+  // 자료 -- the whole point of CD-2.7-2 is that the two never differ, and
+  // that no profile is ever left with an unconditionally-rendered but empty
+  // box (Batch 4's original regression -- see defect #1). `selectedRecord.
+  // workspace` is the server's raw/possibly-legacy JSON, exactly like every
+  // other read of it in this file (see the save-conflict handler above) --
+  // always run through deserializeWorkspaceState, never trusted as-is.
+  // Recorder transcript-derived text (`emrSummary.ts`'s buildEmrSummary)
+  // no longer feeds ANY branch here -- see this file's own top-of-module
+  // comment in emrPreview.ts for why.
+  function buildPainEmrTextForRecord(): string {
+    const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
+    // 부위 팩 일반화(2026-09-06, R2): PainWorkspaceNext의 EmrPreviewCard와 같은
+    // 부위 경로 -- 구동 팩의 가설·방향성 반응·라벨. tests/doctor.spec.mjs defect #5
+    // (ii)가 두 호출의 키 집합이 같음을 고정한다.
+    const regionPack = activeDrivingPack(r)
+    const regionState = regionPack ? readRegionClinical(workspaceState, regionPack.region, regionPack.hypothesisPatterns) : null
+    return buildPainWorkspaceEmrPreview({
+      primaryConcern: primaryConcernLabel(r),
+      examSuggestions: workspaceState.painExamSuggestions,
+      finalAssessment: workspaceState.painFinalAssessment,
+      followUpTargets: workspaceState.painFollowUpTargets,
+      carePlan: workspaceState.painCarePlan,
+      reassessment: workspaceState.painReassessment,
+      nextReassessmentPlan: workspaceState.nextReassessmentPlan,
+      lbpDirectionalResponse: regionState?.directionalResponse ?? 'NOT_ASSESSED',
+      lbpWorkingHypothesis: workspaceState.lbpWorkingHypothesis,
+      regionWorkingHypothesis:
+        regionPack && regionState ? { patterns: regionPack.hypothesisPatterns, value: regionState.workingHypothesis } : null,
+      regionLabelKo: regionPack?.labelKo,
+      directionalResponseLabels: regionPack?.directionalResponseLabels,
+      onsetDurationText: durationFrequencyText(r, routing.primary_module),
+      aggravatingText: aggravatingSummaryText(routing.primary_module, r.modules),
+      impactText: isEmptyValue(r.visit_goal.chief_impact)
+        ? null
+        : answerLabel('VISIT_04_SYMPTOM_IMPACT', r.visit_goal.chief_impact),
+      // Opus delta review defect #7: the patient's own Micro Follow-up quote
+      // (already fetched into `microFollowUpResponse`, keyed to this
+      // visit_id) -- patient self-report, S only, never O.
+      microFollowUpText: microFollowUpQuoteLine(readableMicroFollowUpResponse(microFollowUpResponse)),
+      lbpObjectiveMotorDeficit: selectedRecord?.judgment?.lbp_objective_motor_deficit,
+    })
+  }
+
+  // Opus delta review defect #1 (option (a)): herbal/mixed records now
+  // source their half of 종결's text from the SAME composer
+  // HerbalWorkspace.tsx's own EmrPreviewCard already calls -- so a herbal
+  // record with no voice recording no longer renders an empty box that
+  // reports "복사됨" for an empty clipboard write.
+  function buildHerbalEmrTextForRecord(): string {
+    const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
+    return buildHerbalWorkspaceEmrPreview({
+      primaryConcern: primaryConcernLabel(r),
+      clinicianObservations: workspaceState.herbalClinicianObservations,
+      finalAssessment: workspaceState.herbalFinalAssessment,
+      followUpTargets: workspaceState.herbalFollowUpTargets,
+      carePlan: workspaceState.herbalCarePlan,
+      reassessment: workspaceState.herbalReassessment,
+      nextReassessmentPlan: workspaceState.nextReassessmentPlan,
+    })
+  }
+
+  // Dispatches on viewProfile -- pain -> pain 6-key text only; herbal ->
+  // herbal text only; mixed -> the pain 6-key block THEN the herbal block,
+  // separated by a blank line (CRLF+CRLF), so a mixed record's one copy
+  // carries both halves instead of only ever one profile's worth of text.
+  function buildEmrTextForRecord(): string {
+    if (viewProfile === 'herbal') return buildHerbalEmrTextForRecord()
+    if (viewProfile === 'mixed') return `${buildPainEmrTextForRecord()}\r\n\r\n${buildHerbalEmrTextForRecord()}`
+    return buildPainEmrTextForRecord()
+  }
+
+  // §14.3 (Opus delta review defect #1/#4): reseeds on record switch or
+  // whenever the saved record advances (workspace autosave, judgment save)
+  // -- for EVERY viewProfile now, not only pain/mixed. defect #4: a record
+  // switch (`selectedRecord?.id` changed from the ref's last-seen value)
+  // always reseeds unconditionally; an `updated_at`-only bump (an autosave
+  // of the SAME record) only reseeds when the textarea still holds exactly
+  // what this effect generated last -- i.e. the clinician has not typed a
+  // manual edit into it since. "요약 다시 만들기" is the explicit escape
+  // hatch that always re-seeds on demand (see handleRebuildEmrSummary).
   useEffect(() => {
     if (!payloadShapeOk) return
-    const latest = recorderResults?.[0] ?? null
-    if (!latest) return
-    if (emrSeedRecordingIdRef.current === latest.recording_id) return
-    emrSeedRecordingIdRef.current = latest.recording_id
-    setEmrText(
-      buildEmrSummary({
-        primaryConcern: primaryConcernLabel(r),
-        structuredNote: latest.structured_note,
-        judgment: selectedRecord?.judgment ?? null,
-      }),
-    )
-  }, [payloadShapeOk, recorderResults, selectedRecord?.judgment])
+    const recordId = selectedRecord?.id ?? null
+    const generated = buildEmrTextForRecord()
+    if (emrSeedRef.current.recordId !== recordId) {
+      emrSeedRef.current = { recordId, lastGenerated: generated }
+      setEmrText(generated)
+      return
+    }
+    if (emrText === emrSeedRef.current.lastGenerated) {
+      emrSeedRef.current.lastGenerated = generated
+      setEmrText(generated)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payloadShapeOk, viewProfile, selectedRecord?.id, selectedRecord?.updated_at, microFollowUpResponse])
 
   useEffect(() => {
     if (copyStatus === 'idle') return
@@ -3168,27 +3271,33 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return () => clearTimeout(t)
   }, [copyStatus])
 
-  // 수동 escape hatch: 원장이 진료 판단(JudgmentPanel)을 recorder 결과가 이미
-  // seed된 뒤에 저장하면, 위 seed effect는 같은 recording_id에 대해 다시
-  // 돌지 않으므로(의도된 동작 — 편집 중 텍스트 보존) Assessment/치료·처방/계획
-  // 줄이 자동으로는 채워지지 않는다. 이 버튼은 현재 화면이 들고 있는
-  // selectedRecord.judgment(클라이언트 상태)로 즉시 다시 조립한다.
+  // 수동 escape hatch: 원장이 진료 판단(ObjectiveExamFindingsCard)을 저장한 뒤(위 seed
+  // effect는 클리니션이 편집 중인 텍스트를 보존하려고 `updated_at`만 바뀐
+  // 경우 재생성을 건너뛸 수 있으므로 — defect #4) 즉시 최신값으로 다시
+  // 조립하고 싶을 때 쓰는 버튼. 현재 화면이 들고 있는 selectedRecord(클라이언트
+  // 상태)로 즉시 다시 조립한다 -- 모든 viewProfile에서 동일하게
+  // buildEmrTextForRecord()를 부르고(defect #1), 그 결과를 새 seed 기준점으로
+  // 남긴다(다음 autosave가 이 재생성 직후를 "편집 안 됨"으로 보게).
   // ponytail: selectedRecord 자체를 강제로 재조회하지는 않는다 — 별도 refetch
   // nonce를 새로 만드는 건 이 fix 범위에는 과하다. 값이 서버에는 저장됐지만
   // 이 화면의 selectedRecord가 아직 그 값을 모른다면(다른 창에서 저장한 경우
   // 등) 버튼을 다시 눌러도 반영되지 않는다 — 그 경우 패널을 닫았다 열면 된다.
   function handleRebuildEmrSummary() {
-    if (!recorderResults?.[0]) return
-    setEmrText(
-      buildEmrSummary({
-        primaryConcern: primaryConcernLabel(r),
-        structuredNote: recorderResults[0].structured_note,
-        judgment: selectedRecord?.judgment ?? null,
-      }),
-    )
+    const generated = buildEmrTextForRecord()
+    emrSeedRef.current = { recordId: selectedRecord?.id ?? null, lastGenerated: generated }
+    setEmrText(generated)
   }
 
   async function handleCopyEmr() {
+    // Opus delta review defect #1 (defence in depth): even though the
+    // render site below also disables/omits the copy button when
+    // `emrText.trim() === ''`, this guard means no future caller of
+    // handleCopyEmr can report "복사됨" for a clipboard write that copied
+    // nothing.
+    if (!emrText.trim()) {
+      setCopyStatus('error')
+      return
+    }
     try {
       if (!navigator.clipboard) throw new Error('no clipboard api')
       await navigator.clipboard.writeText(emrText)
@@ -3214,12 +3323,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
 
   // P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6):
   // ObjectiveExamFindingsCard's save trigger -- merges `field: value` into
-  // the record's CURRENT server judgment (never the possibly-stale one
-  // this component's own JudgmentPanel instance might be mid-editing) and
-  // saves it through the exact same PUT judgment endpoint JudgmentPanel
-  // itself uses. `judgment` is server-side a single object, so this and
-  // JudgmentPanel's own "기록" click are two independent writers to the
-  // SAME field.
+  // the record's CURRENT server judgment and saves it through the PUT
+  // judgment endpoint. Batch 4.1-D (§17.3): the field's former second
+  // writer -- the now-removed "원장 판단 기록" panel's own "기록" click --
+  // is gone -- this is now the ONLY client-side writer of `judgment`. The conflict handling
+  // below is kept as-is regardless (another tab/device saving the same
+  // submission's judgment concurrently is still possible), not because a
+  // second writer within this app still exists.
   //
   // 독립 검수 HIGH-2: 이전 버전은 409(stale write) 발생 시 서버의 current
   // judgment 위에 이 필드의 로컬 value를 다시 merge해 자동으로 1회
@@ -3228,7 +3338,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // clinician observation이라, 다른 탭/기기에서 방금 저장한 최신 소견을
   // 사람 확인 없이 조용히 덮어쓸 수 있었다(두 필드가 아니라 같은 필드에
   // 대한 두 writer가 경쟁하는 경우 포함). 자동 retry/merge를 제거하고
-  // PR #24가 JudgmentPanel/DoctorWorkspace에 이미 정착시킨 원칙 그대로
+  // PR #24가 정착시킨 원칙 그대로
   // conflict를 반환한다 -- ObjectiveExamFindingsCard가 ConflictBanner로
   // 명시적으로 보여주고, 원장이 "최신 내용 불러오기"를 누른 뒤에만 값이
   // 바뀐다(handleReloadObjectiveExamConflict 참고).
@@ -3262,7 +3372,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // 독립 검수 HIGH-2: ObjectiveExamFindingsCard의 ConflictBanner에서
   // "최신 내용 불러오기"를 누른 순간 호출된다. `handleSaveObjectiveExamField`는
   // 매 저장 시도마다 CAS 기준(judgment/updated_at)을 selectedRecord에서
-  // 그대로 읽으므로(JudgmentPanel처럼 자체 ref로 추적하지 않는다), 여기서
+  // 그대로 읽으므로(자체 ref로 추적하지 않는다), 여기서
   // selectedRecord를 서버의 current로 맞춰주지 않으면 다음 저장 시도가
   // 똑같은 stale 기준으로 다시 409를 만든다. 필드 값을 자동으로 합치지
   // 않고 서버가 돌려준 current judgment/updated_at을 있는 그대로 반영할
@@ -3401,6 +3511,28 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // falling back to a guessed URL.
   function patientFollowUpLink(token: string): string | null {
     return buildPublicFollowUpLink(token)
+  }
+
+  /* ---------- 플로우 정렬 4/5: 환자 치료 계획 읽기 전용 링크 ---------- */
+
+  // Supplied to DoctorWorkspace ONLY in server mode with a real submission
+  // id (same gate as onSaveWorkspace). The card hands over the exact text
+  // on screen; the server snapshots it and returns a one-time raw token,
+  // which is turned into the public `#care-plan=` URL here -- the one place
+  // (publicFollowUpUrl.ts) that knows where the public SPA lives. If that
+  // base is not configured, the doctor gets a clear error instead of a
+  // link that would never open on a phone.
+  async function handleIssueCarePlanLink(
+    submissionId: string,
+    text: string,
+  ): Promise<{ ok: true; link: string; expiresAt: string } | { ok: false; error: string }> {
+    const result = await issueCarePlanLink(submissionId, text)
+    if (!result.ok) return { ok: false, error: result.error }
+    const link = buildPublicCarePlanLink(result.data.token)
+    if (link === null) {
+      return { ok: false, error: '공개 링크 기본 URL이 설정되지 않았습니다 (VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL)' }
+    }
+    return { ok: true, link, expiresAt: result.data.expiresAt }
   }
 
   /* ---------- Round 8: clinic tablet stations (reception surface) ---------- */
@@ -3760,9 +3892,30 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         </section>
 
         {/*
-          §2.3 "종결": EMR 검토(진료 녹취·요약) + P0-5 "진료 완료" 버튼을
-          한 자리에 -- 완료 직전 마지막으로 검토하는 내용과 그 확정 액션이
-          이제 서로 옆에 있다.
+          §2.3 "종결": EMR 검토 + P0-5 "진료 완료" 버튼을 한 자리에 --
+          완료 직전 마지막으로 검토하는 내용과 그 확정 액션이 이제 서로
+          옆에 있다.
+
+          LBP v1 Batch 4 (§14.3, CD-2.7-2): the EMR review+copy block below
+          used to sit ONLY inside the "진료 녹취·요약" branch that has a
+          recorder result -- so on a record with no voice recording (the
+          common pain-workspace case), 참고 자료's EmrPreviewCard copy
+          button was the ONLY copy path in practice, exactly the two-
+          different-surfaces problem CD-2.7-2 exists to close. It now
+          renders unconditionally (whenever this 종결 section itself
+          renders, i.e. mode==='server' && selectedRecord.patient_id) --
+          the ONE remaining copy surface, regardless of whether a
+          recording exists. "진료 녹취·요약" (the transcript/recording
+          metadata below) stays exactly as before, informational only.
+
+          Opus delta review defect #1: buildEmrTextForRecord() now covers
+          every viewProfile (pain/herbal/mixed), so this box should never
+          actually be seeded empty in practice -- but the copy button below
+          still disables itself whenever `emrText.trim() === ''` (defence in
+          depth: a malformed/legacy record where payloadShapeOk is false
+          skips the seed effect entirely and leaves `emrText` at its reset
+          value) so no future path can ever report "복사됨" for a clipboard
+          write that copied nothing.
         */}
         <section className="doctor__section doctor__nextCompletion">
           <h2>종결</h2>
@@ -3791,34 +3944,41 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
                     <summary>Transcript 원문</summary>
                     <pre className="doctor__recorderTranscript">{recorderResults[0].transcript ?? '(없음)'}</pre>
                   </details>
-                  <div className="judgment__field doctor__recorderEmrField">
-                    <label className="judgment__label" htmlFor="emrSummaryText">
-                      EMR용 요약 (plain text, 직접 수정 가능)
-                    </label>
-                    <textarea
-                      id="emrSummaryText"
-                      className="judgment__textarea"
-                      rows={8}
-                      value={emrText}
-                      onChange={(e) => setEmrText(e.target.value)}
-                    />
-                  </div>
-                  <div className="judgment__actions">
-                    <button type="button" className="judgment__recordBtn" onClick={handleCopyEmr}>
-                      EMR용 복사
-                    </button>
-                    <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
-                      요약 다시 만들기
-                    </button>
-                    {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
-                    {copyStatus === 'error' && (
-                      <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
-                    )}
-                  </div>
                 </>
               )}
             </>
           )}
+
+          <h3>EMR 검토</h3>
+          <div className="judgment__field doctor__recorderEmrField">
+            <label className="judgment__label" htmlFor="emrSummaryText">
+              EMR용 요약 (plain text, 직접 수정 가능)
+            </label>
+            <textarea
+              id="emrSummaryText"
+              className="judgment__textarea"
+              rows={8}
+              value={emrText}
+              onChange={(e) => setEmrText(e.target.value)}
+            />
+          </div>
+          <div className="judgment__actions">
+            <button
+              type="button"
+              className="judgment__recordBtn"
+              onClick={handleCopyEmr}
+              disabled={!emrText.trim()}
+            >
+              EMR용 복사
+            </button>
+            <button type="button" className="judgment__recordBtn" onClick={handleRebuildEmrSummary}>
+              요약 다시 만들기
+            </button>
+            {copyStatus === 'copied' && <span className="doctor__recorderCopyFeedback">복사됨</span>}
+            {copyStatus === 'error' && (
+              <span className="doctor__warning">복사 실패 — 직접 선택해서 복사해주세요.</span>
+            )}
+          </div>
 
           {completeSubmissionError && (
             <p className="doctor__warning" role="alert">
@@ -4101,7 +4261,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       <>
       {/*
         malformed/legacy submission resilience 배치: 아래 nav+tab 콘텐츠
-        전체(임상/참고/명리 세 표면 + JudgmentPanel + 원본 JSON)는
+        전체(임상/참고/명리 세 표면 + 원본 JSON)는
         payloadShapeOk에 게이트된다 -- 명리/참고 표면이 "profile이
         pain이 아닐 때만" 의미가 있는 것처럼, 이 구조 자체가 애초에
         구조가 온전한 payload를 전제하기 때문에 하나로 묶어서 판단한다.
@@ -4158,7 +4318,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         Core Reduction P2 (delta N-6): DoctorWorkspace no longer carries an
         independent `key` here -- its own render-time reset (keyed on the
         `resetKey` prop below, the same unifiedResetKey the
-        DoctorRecordErrorBoundary above and JudgmentPanel below both use)
+        DoctorRecordErrorBoundary above uses -- a now-removed "원장 판단
+        기록" panel used to share it too, Batch 4.1-D §17.2)
         is the sole reset mechanism, replacing the key-remount this
         comment used to describe (a key-remount was tried and reverted in
         an earlier round after it caused a real double-mount -- see
@@ -4188,6 +4349,9 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
           ) : undefined
         }
         nextLaneFooter={nextLaneFooterNode}
+        onIssueCarePlanLink={
+          mode === 'server' && selectedId ? (text) => handleIssueCarePlanLink(selectedId, text) : undefined
+        }
         onSaveWorkspace={
           mode === 'server' && selectedId
             ? async (state, expectedUpdatedAt) => {
@@ -4267,7 +4431,15 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               <Field qid="BIRTH_01" label="생년월일" value={r.birth_info.birth_date} />
               <Field qid="BIRTH_02" value={r.birth_info.birth_calendar_type} />
               <Field qid="BIRTH_02A" value={r.birth_info.lunar_leap_month} />
-              <Field qid="BIRTH_03" value={r.birth_info.birth_time_branch} />
+              {/*
+                Batch 4.1-B (§16.3/§15.4): this is now the ONLY place a
+                doctor sees the patient's birth-time branch -- the "명리"
+                accordion (and its own copy of this same field) was removed
+                below as a duplicate. Label-only change (doctor-facing
+                "출생 시간대" instead of the patient-facing question text);
+                BIRTH_03 itself (spec, FROZEN) is untouched.
+              */}
+              <Field qid="BIRTH_03" label="출생 시간대" value={r.birth_info.birth_time_branch} />
               <Field qid="BIRTH_03A" value={r.birth_info.birth_time_confidence} />
             </>
           )}
@@ -4561,117 +4733,19 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       </ReferenceAccordion>
 
       {/*
-        PR #24 Phase 2 invariant: pain 프로필은 명리/출생시간 내용을 노출하지
-        않는다. Round 11 goes further -- Myungri is not merely below the
-        clinical workspace, it is a separate surface that the clinical flow
-        never renders, per the standing rule that it must be completely
-        separated from it. Core Reduction P4: it is still a separate
-        accordion GROUP inside 참고, just no longer a separate TAB.
+        Batch 4.1-B (§16.3/§15.4): the "명리" accordion (MyungriCompactCard +
+        "명리 검토" review grid: pillars, 오행/한열조습 placeholder text,
+        pending-policy warning, and a left column that only re-showed the
+        BIRTH_* fields already visible above in 문진 원본 > 환자 기본) was
+        removed entirely -- PO decision 2026-09-04: a separate 명리 program
+        is used instead, so this in-app surface was pure duplication of
+        that BIRTH_03 field (kept, now labeled "출생 시간대" above) plus
+        values that only ever round-trip through 원본 JSON now.
+        `payload.myungri_calculation` is still computed and stored
+        unchanged -- only this rendering is gone. See MyungriCompactCard /
+        sajuStatusLine / myungriGroupCount elsewhere in this file for the
+        now-dead (but deliberately kept) display helpers this used.
       */}
-
-      {viewProfile !== 'pain' && (
-      <ReferenceAccordion title="명리" count={myungriGroupCount(saju)}>
-      <MyungriCompactCard saju={saju} />
-
-      <section className="doctor__section doctor__section--myungri">
-        <h2>명리 검토</h2>
-        <p className="doctor__derivedLabel">
-          왼쪽은 환자가 입력한 원본 정보, 오른쪽은 그 입력값으로부터 결정적으로
-          계산된 사실입니다. 두 열은 서로 다른 것이며, 해석(십신·용신 등)은
-          어디에도 포함하지 않습니다.
-        </p>
-
-        <div className="judgment__reviewGrid">
-          <div className="judgment__reviewCol">
-            <h3>원본 출생정보 — 환자 입력</h3>
-            <div className="doctorField">
-              <span className="doctorField__label">생년월일 (입력 그대로)</span>
-              <span className="doctorField__value">{computedText(r.birth_info.birth_date) ?? '—'}</span>
-            </div>
-            <Field qid="BIRTH_02" label="달력 종류" value={r.birth_info.birth_calendar_type} />
-            <Field qid="BIRTH_02A" label="윤달 여부" value={r.birth_info.lunar_leap_month} />
-            <Field qid="BIRTH_03" label="출생시간대" value={r.birth_info.birth_time_branch} />
-            <Field qid="BIRTH_03A" label="시간 확신도" value={r.birth_info.birth_time_confidence} />
-          </div>
-
-          <span className="judgment__reviewArrow" aria-hidden="true">→</span>
-
-          <div className="judgment__reviewCol">
-            <h3>계산된 사실 — 시스템이 계산한 것</h3>
-
-            {saju.status !== 'resolved' && (
-              <p className="doctor__warning">
-                상태: {saju.status === 'partial' ? '부분 계산됨 (시주 미상)' : '계산 불가'}
-                {computedText(saju.unresolved_reason) ? ` — ${computedText(saju.unresolved_reason)}` : ''}
-              </p>
-            )}
-            {saju.flags.hour_unknown && <p className="doctor__warning">시주 미상</p>}
-
-            {saju.pillars && (
-              <div className="doctor__pillars">
-                <div className="doctor__pillar">
-                  <span>연주</span>
-                  <strong>{computedText(saju.pillars.year) ?? UNREADABLE_COMPUTED_VALUE}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>월주</span>
-                  <strong>{computedText(saju.pillars.month) ?? UNREADABLE_COMPUTED_VALUE}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>일주</span>
-                  <strong>{computedText(saju.pillars.day) ?? UNREADABLE_COMPUTED_VALUE}</strong>
-                </div>
-                <div className="doctor__pillar">
-                  <span>시주</span>
-                  <strong>{computedText(saju.pillars.hour) ?? '미상'}</strong>
-                </div>
-              </div>
-            )}
-
-            {saju.normalized?.solarDate && (
-              <p className="doctor__derivedNote">
-                정규화된 양력 날짜: {datePartText(saju.normalized.solarDate.year)}-
-                {datePartText(saju.normalized.solarDate.month)}-
-                {datePartText(saju.normalized.solarDate.day)} / 상태: {saju.status}
-              </p>
-            )}
-
-            {asArray<string>(saju.policy.pending_approval).length > 0 && (
-              <p className="doctor__warning doctor__warning--pending">
-                주의: 야자시/조자시 또는 진태양시 정책이 아직 확정되지 않아 이
-                값이 바뀔 수 있습니다. 대기 항목: {readableStringArray(asArray(saju.policy.pending_approval)).join(', ')}.
-                원장이 확정하면 값이 바뀔 수 있습니다.
-              </p>
-            )}
-          </div>
-
-          <span className="judgment__reviewArrow" aria-hidden="true">→</span>
-
-          <div className="judgment__reviewCol">
-            <h3>현재 문진 요약</h3>
-            <div className="doctorField">
-              <span className="doctorField__label">주호소</span>
-              <span className="doctorField__value">{primaryConcernLabel(r)}</span>
-            </div>
-            <Field qid="VISIT_03_SYMPTOM_DURATION" label="기간" value={r.visit_goal.chief_duration} />
-            <Field qid="VISIT_04_SYMPTOM_IMPACT" label="일상 영향" value={r.visit_goal.chief_impact} />
-            {primaryModuleFields(routing.primary_module, r.modules, routing.primary_module_detail)
-              .slice(0, 3)
-              .map((f) => (
-                <Field key={f.qid} qid={f.qid} value={f.value} />
-              ))}
-          </div>
-        </div>
-
-        <p className="doctor__calcVsInterpret">
-          ※ 위 &ldquo;계산된 사실&rdquo;은 사주 원국(연/월/일/시주) 산출이
-          끝났다는 뜻일 뿐, 임상 해석이 끝났다는 뜻이 아닙니다. 계산 완료 ≠
-          임상 해석 완료. 임상 해석(십신·용신 등 판단)은 아래 &ldquo;원장 판단
-          기록&rdquo;에 원장이 직접 기록합니다.
-        </p>
-      </section>
-      </ReferenceAccordion>
-      )}
 
       {/*
         Core Reduction P3 (Phase 5 Synthesis v1.2 §2.3 "다음/종결"): 진료
@@ -4681,66 +4755,26 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       */}
 
       {/*
-        Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): JudgmentPanel's
-        remaining fields (선천 특징/증상 연결/사주 예상→치료축·처방/1분
-        디브리핑/설명 개요/학습 케이스) get a distinct group title here --
-        "명리·감사 기록" -- so this never reads as the same thing as the
-        진료 화면의 "판단·처치" lane's FinalAssessmentCard (a different
-        component, a different lane, a different purpose: that one is the
-        derived-profile clinical assessment the clinician acts on today,
-        this one is the free-form 사주/감사 note trail). ClinicianJudgment's
-        schema, its PUT save path, its "기록" button and its save-state
-        handling below are byte-for-byte unchanged -- only the surrounding
-        group label and accordion boundary are new.
+        Batch 4.1-D (§17.1/§17.2): the "디브리핑·학습 기록" accordion
+        (its "원장 판단 기록" panel -- 1분 디브리핑 4문항 + 학습 케이스
+        체크 + 객관적 근력저하/회전근개 read-only echo + "기록" save
+        button + JSON dump) removed entirely. PO decision 2026-09-04:
+        `DEBRIEF_QUESTIONS`' 4 questions are all 사주 questions,
+        content-identical to the 4 fields 4.1-A already removed -- so
+        4.1-A was only half done, and this closes the other half. 학습
+        케이스 is also unused for now. After 4.1-A/4.1-C already removed
+        this panel's only free-form inputs, it had ZERO editable fields
+        left (§17.2) -- the panel component itself and its file are gone.
+        The two safety fields it echoed read-only are edited and saved
+        elsewhere (ObjectiveExamFindingsCard, in the 진료 tab, via
+        handleSaveObjectiveExamField below -- unchanged, unaffected by this
+        removal, see §17.3). judgmentRecordedFieldCount (its accordion
+        badge) was removed too -- this accordion was its only caller.
+        ClinicianJudgment's schema and PUT save path are unchanged --
+        `saveJudgmentToServer`/`createEmptyJudgment` are still used by
+        handleSaveObjectiveExamField above. See judgment.ts for which
+        fields/types stay (deprecated, not deleted) and why.
       */}
-      <ReferenceAccordion
-        title="명리·감사 기록"
-        count={judgmentRecordedFieldCount(mode === 'server' ? selectedRecord?.judgment ?? null : null)}
-      >
-      <JudgmentPanel
-        resetKey={unifiedResetKey}
-        source={{
-          session_id: payload.session_id,
-          questionnaire_version: payload.questionnaire_version,
-          myungri_algorithm_version: saju.policy.algorithm_version,
-          myungri_library_version: saju.engine.library_version,
-          myungri_status: saju.status,
-          myungri_pending_approval: readableStringArray(asArray(saju.policy.pending_approval)),
-        }}
-        initialJudgment={mode === 'server' ? selectedRecord?.judgment ?? null : null}
-        initialUpdatedAt={mode === 'server' ? selectedRecord?.updated_at : undefined}
-        /* 6차 독립 리뷰 HIGH-1/MEDIUM-1: LbpSafetyPanel과 동일한 applicability
-           신호(safety_flags.<region>, nullish 비교)로 통일 -- routing 태그나
-           strict !== null은 additional-detail 경로/레거시 undefined 키에서
-           잘못된 값을 낸다. */
-        showLbpExam={payload.responses.safety_flags.lbp != null}
-        showShoulderExam={payload.responses.safety_flags.shoulder != null}
-        onSave={
-          mode === 'server' && selectedId
-            ? async (judgment: ClinicianJudgment, expectedUpdatedAt: string | null) => {
-                // selectedRecord를 갱신해야 selectedRecord?.judgment(EMR 요약 seed
-                // effect와 "요약 다시 만들기" 버튼이 읽는 값)가 저장 직후 최신이
-                // 된다 — 이걸 빼면 재열람 전까지 계속 stale한 judgment를 읽는다.
-                const result = await saveJudgmentToServer(selectedId, judgment, expectedUpdatedAt ?? undefined)
-                if (result.ok) {
-                  setSelectedRecord(result.data)
-                  return { ok: true as const, updatedAt: result.data.updated_at }
-                }
-                // Round 18: same 409-conflict translation as the workspace
-                // save callback above -- see its comment.
-                const current = result.errorBody?.current as SubmissionRecord | undefined
-                if (current) {
-                  return { ok: false as const, conflict: { current: current.judgment, currentUpdatedAt: current.updated_at } }
-                }
-                // P0-8: same kind pass-through as the workspace save
-                // callback above -- lets JudgmentPanel show the inline
-                // "인증 만료" recovery specifically for a 401/403.
-                return { ok: false as const, kind: result.kind }
-              }
-            : undefined
-        }
-      />
-      </ReferenceAccordion>
 
       {/*
         Core Reduction P4 (Phase 5 Synthesis v1.2 §2.11): "원본 JSON" 그룹 --

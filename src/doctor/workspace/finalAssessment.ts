@@ -95,6 +95,22 @@ export const PAIN_FOLLOW_UP_OPTIONS: FollowUpTarget[] = [
   followUpTarget('symptom_reproduction', '증상 재현 여부'),
 ]
 
+/**
+ * 2026-09-06 (원장 지시 "재진시 추적항목만 체크 — NRS라던지", "자유입력을 최대한
+ * 피하고"): 통증 강도의 기준값·직후값은 0~10 버튼(NRS)으로 입력한다.
+ *
+ * 저장 타입은 그대로 `string`이다 — 버튼은 그 문자열('7')을 만드는 구조화 입력일
+ * 뿐이고(처치 chip과 같은 원칙, §14.2), EMR("기준 7")·이전 방문 표시("이전
+ * baseline: 7")·이어받기 경로는 한 줄도 바뀌지 않는다. 이 문항 도입 전에 적힌
+ * 자유값('7/10', '심함')은 `isNrsValue`가 false를 돌려주고, 화면은 그 값을 담은
+ * 텍스트 칸을 버튼 위에 그대로 남긴다 — 절대 조용히 버리지 않는다.
+ */
+export const PAIN_NRS_TARGET_IDS: ReadonlySet<string> = new Set(['pain_intensity'])
+export const NRS_VALUES: readonly string[] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+export function isNrsValue(v: string): boolean {
+  return NRS_VALUES.includes(v)
+}
+
 export const HERBAL_FOLLOW_UP_OPTIONS: FollowUpTarget[] = [
   followUpTarget('sleep', '수면'),
   followUpTarget('digestion', '소화'),

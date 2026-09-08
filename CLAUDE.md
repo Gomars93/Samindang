@@ -42,7 +42,7 @@
 `claude` CLI를 자동으로 이어 실행하며, task 완료 시 자체적으로
 `git commit -m "queue: complete <task>"` 체크포인트 커밋을 만든다.
 
-이 문서가 정의하는 "Opus/Sonnet/ChatGPT 협업 체계"는 **이 큐 시스템을 대체하지
+이 문서가 정의하는 "Opus/Sonnet/Fable 협업 체계"는 **이 큐 시스템을 대체하지
 않는다.** 큐 시스템은 로컬 세션 내에서 task를 이어 실행하는 실행 메커니즘이고,
 이 문서의 역할 구분은 "누가 무엇을 검수/승인하는가"에 대한 상위 협업 원칙이다.
 둘이 동시에 활성화되어 있을 때:
@@ -73,19 +73,24 @@ build를 직접 실행해 확인한다.
 - **Sonnet (Primary Developer)**: 실제 코드 구현, 테스트, 버그 수정, 일반적인
   리팩터링, lint/typecheck/build 검증, 작업 branch 관리. 승인되지 않은 범위까지
   임의로 확장하지 않으며 unrelated code를 수정하지 않는다.
-- **Fable (Escalation Specialist)**: 상시 사용하지 않는다. 아래 Escalation Rules
-  조건에 해당할 때만 후보로 판단한다.
-- **ChatGPT (Independent Reviewer)**: Claude 내부 검수와 별개의 독립 검수자.
-  GitHub에 push된 PR/commit/diff/HANDOFF.md/DECISIONS.md/주요 소스/테스트 결과를
-  기준으로 요구사항 누락, regression 위험, architecture 문제, 과도한 변경,
-  테스트 부족, edge case, 보안, 유지보수성, 다음 단계를 검토한다.
+- **Fable (Escalation Specialist + Independent Reviewer)**: escalation은 상시
+  사용하지 않는다 — 아래 Escalation Rules 조건에 해당할 때만 후보로 판단한다.
+  **독립 검수자 역할은 2026-09-08 PO 지시로 ChatGPT에서 Fable로 이관됐다**
+  (`DECISIONS.md` 같은 날 항목). 구현한 세션과 **다른 세션/모델 호출**로 PR을
+  검수한다: GitHub에 push된 PR/commit/diff/HANDOFF.md/DECISIONS.md/주요 소스/
+  테스트 결과를 기준으로 요구사항 누락, regression 위험, architecture 문제,
+  과도한 변경, 테스트 부족, edge case, 보안, 유지보수성, 다음 단계를 검토하고,
+  발견 사항 하나하나를 **코드에 대고 확인**(CONFIRMED / 기각)한 뒤 판정한다.
+  검수 결과(발견·판정·수정 여부)는 PR 코멘트 또는 `DECISIONS.md`에 남긴다.
 
-  **ChatGPT의 검수는 "진행 여부를 결정하는 게이트"이지, GitHub의 "필수 승인
+  **독립 검수는 "진행 여부를 결정하는 게이트"이지, GitHub의 "필수 승인
   (required reviewer approval)"이 아니다.** 이 저장소의 GitHub 연결은 사용자
-  본인 계정에 연결되어 있어, ChatGPT를 GitHub의 required-approval 1표로
+  본인 계정에 연결되어 있어, 검수자를 GitHub의 required-approval 1표로
   설정하면 안 된다(같은 계정 기반 승인은 별도 리뷰어로 인정되지 않는다).
-  ChatGPT가 REQUEST CHANGES로 판단하면 Sonnet/Opus가 수정하고, 최종 merge
-  판단은 항상 사용자(Product Owner)가 한다.
+  검수자가 REQUEST CHANGES로 판단하면 Sonnet/Opus가 수정하고, 최종 merge
+  판단은 항상 사용자(Product Owner)가 한다 — PO가 명시적으로 "추천안으로
+  진행"을 위임한 경우에만 검수자가 병합까지 수행하고, 그 위임 사실을
+  `DECISIONS.md`에 남긴다.
 
 ### 역할은 선언만으로 실행되지 않는다 (모델 routing은 아직 수동)
 
@@ -127,6 +132,36 @@ Claude Code가 작업을 시작할 때 순서:
   실수로 `git add -A` 시 포함되지 않는지 매번 `git status`로 확인
 - 테스트를 우회해서 통과시키지 않기, failing test 삭제로 문제 해결하지 않기
 - 의미 없는 broad refactor 금지
+- **경로를 지우거나 다른 것으로 교체하기 전에, 그 경로가 나르던 값 하나하나에
+  대해 화면별 대체 경로를 표로 적는다.** "중복/불필요"로 판단한 컨트롤·버튼·표시의
+  제거뿐 아니라, **어떤 값이 화면에 도달하던 경로(요약 함수·조립기·데이터 소스)를
+  다른 것으로 갈아끼우는 경우에도 똑같이 적용된다.**
+  1. **(출력 방향)** 옛 경로가 나르던 **필드를 전부 열거**하고, 각 필드 × 각 화면
+     (초진 / 재진 / 한약 / mixed / fixture 미리보기)에 대해 새 경로에서 그 값이
+     어디로 가는지 — 또는 "의도적으로 버림 + 그 근거" — 를 **한 행씩** 적는다.
+     "확인했다" 한 줄은 충족으로 보지 않는다.
+  2. **(입력 방향)** 화면에서 **아직 편집 가능한 필드**가 새 경로 이후에도 어딘가
+     출력·저장에 도달하는지 반대 방향으로도 확인한다. 쓰기는 되는데 읽히지 않는
+     필드를 남기지 않는다 — 남긴다면 그 편집 UI를 함께 닫는다.
+  3. **(표시 조건)** 어떤 칸의 표시 조건을 latch에서 파생식으로(또는 그 반대로)
+     바꿀 때는, 편집 도중 값이 빈 문자열이 되는 순간 칸이 사라지지 않는지 확인한다.
+  4. 위 표를 커밋 메시지(또는 브리프)에 남기고, **지운 경로 1개당 소스 텍스트
+     단언 1개**를 `tests/`에 추가한다 — 산문 주장 대신 테스트로 검증되게 한다.
+
+  이 규칙은 같은 사고가 **네 번** 난 뒤에 이 형태가 됐다:
+  - Batch 2.6 D-1 — 초진에서 중복이라 지운 `다음 방문 확인 사항`이 재진에는 대체
+    칸이 없어, 보이지도 고쳐지지도 않는데 이어받기는 계속 그 필드에 썼다. (제거)
+  - Batch 2.6 N-2 — 그 회귀를 고치는 수정이 mount latch를 파생식으로 바꾸면서,
+    입력 도중 칸이 사라지는 새 회귀를 만들었다. (표시 조건 — 3항)
+  - Batch 4 D-1/D-2 — EMR 복사를 한 곳으로 모으면서 한약 진료는 빈 값을 복사하고
+    "복사됨"을 띄웠고, 원장이 직접 타이핑한 판단 3필드가 출력에서 사라졌다. (교체)
+  - Batch 4 closing C-1 — **D-1을 고치는 수정이 D-2를 한약 프로필에 재현했다.**
+    이 네 번째 사고는 **위 규칙의 첫 버전이 커밋되기 한 커밋 전에 일어났고**, 그
+    첫 버전("컨트롤 제거"만 규율)으로는 잡히지 않았다. 그래서 트리거를 "제거 또는
+    교체"로 넓히고, 검증 가능한 산출물(필드 × 화면 표 + 경로당 테스트 1개)을
+    요구하는 지금 형태가 됐다.
+
+  네 번 다 "지운 쪽 화면에서는 옳았다". 확인해야 하는 것은 **지우지 않은 쪽 화면**이다.
 - 환자 개인정보(문진 답변, 사주 출생정보 등)를 로그, 커밋 메시지, PR 설명,
   DECISIONS.md, HANDOFF.md 어디에도 실제 값으로 남기지 않는다 — 구조/필드명
   수준에서만 논의한다
@@ -135,7 +170,7 @@ Claude Code가 작업을 시작할 때 순서:
 
 ```
 main                              (protected, Single Source of Truth)
- ↑ PR (ChatGPT + 사용자 리뷰)
+ ↑ PR (Fable 독립 검수 + 사용자 리뷰)
 feature / fix / chore branch      (claude/feat-xxx, claude/fix-xxx,
                                     claude/refactor-xxx, claude/chore-xxx)
 ```
@@ -172,7 +207,7 @@ feature / fix / chore branch      (claude/feat-xxx, claude/fix-xxx,
 - 핵심 파일 다수에 걸친 구조 변경
 - migration 또는 backward compatibility 위험
 - 기존 설계를 근본적으로 재검토해야 함
-- Opus와 ChatGPT(외부 리뷰) 결과가 크게 충돌
+- Opus와 Fable 독립 검수 결과가 크게 충돌
 - 장시간 자율 분석이 필요한 문제
 
 ## Definition of Done
@@ -186,4 +221,4 @@ feature / fix / chore branch      (claude/feat-xxx, claude/fix-xxx,
 - `HANDOFF.md` 갱신
 - 필요 시 `DECISIONS.md` 갱신
 - GitHub push
-- PR 상태 정리 (신규 생성 또는 기존 PR 갱신, ChatGPT 리뷰 가능한 상태)
+- PR 상태 정리 (신규 생성 또는 기존 PR 갱신, Fable 독립 검수 가능한 상태)

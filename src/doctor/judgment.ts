@@ -16,12 +16,47 @@ export const MAX_SYMPTOM_LINKS = 2
 
 export type DebriefAnswers = { q1: string; q2: string; q3: string; q4: string }
 
+/**
+ * Batch 4.1-D (§17.1/§17.2/§17.4): PO 결정 2026-09-04 — `1분 디브리핑`을
+ * 화면에서 전부 제거한다(4.1-A가 지운 4필드와 내용이 사실상 동일한 사주
+ * 질문이라는 것이 4.1-C 검증 중 드러났다 — 이 상수 자체가 그 증거다).
+ * 렌더 지점(구 JudgmentPanel.tsx의 `judgment__debrief` disclosure)은
+ * 완전히 사라졌으므로 어떤 화면에도 아래 문자열이 나타나지 않는다 —
+ * deprecated, 새 UI에서 참조하지 말 것. 상수 자체는 남긴다: `DebriefAnswers`
+ * 키(`q1`~`q4`)와의 대응 관계 문서 + `ClinicianJudgment.debrief`/
+ * `server/**`(FROZEN)·`tests/server.spec.mjs`의 round-trip 프로브 근거는
+ * §16.4/§17.4의 innate_features/saju_only_prediction 등과 동일하다.
+ */
 export const DEBRIEF_QUESTIONS = [
   '이 사주에서 제일 중요하게 본 것은 무엇인가?',
   '사주만 보고 어떤 임상문제를 예상했는가?',
   '실제 문진·맥·설을 보고 무엇을 수정했는가?',
   '그 수정이 처방을 어떻게 바꿨는가?',
 ] as const
+
+/**
+ * Batch 4.1-D (§17.2/§17.3): moved here from the now-deleted
+ * `JudgmentPanel.tsx` -- `ObjectiveExamFindingsCard.tsx` (the 진료 tab
+ * card that is the SOLE editable/save path for these two safety fields,
+ * see judgment.ts's `ObjectiveExamSaveOutcome` doc comment) imported these
+ * two option/label arrays from JudgmentPanel so both places used the exact
+ * same value/label pairs rather than forking a second copy. JudgmentPanel
+ * itself is gone (§17.2: it had zero editable fields left), so this file
+ * -- the plain types-and-helpers module both already depend on, with no
+ * React -- is the new shared home. Values/labels themselves are
+ * byte-for-byte unchanged.
+ */
+export const LBP_MOTOR_DEFICIT_OPTIONS: { value: 'NONE' | 'SEVERE_OR_PROGRESSIVE' | 'UNKNOWN'; label: string }[] = [
+  { value: 'NONE', label: '없음' },
+  { value: 'SEVERE_OR_PROGRESSIVE', label: '심하거나 빠르게 진행함' },
+  { value: 'UNKNOWN', label: '아직 확인 못함' },
+]
+
+export const SHOULDER_CUFF_WEAKNESS_OPTIONS: { value: 'NONE' | 'NEW_WEAKNESS_AFTER_TRAUMA' | 'UNKNOWN'; label: string }[] = [
+  { value: 'NONE', label: '없음' },
+  { value: 'NEW_WEAKNESS_AFTER_TRAUMA', label: '외상 후 새로 생긴 근력저하 확인됨' },
+  { value: 'UNKNOWN', label: '아직 확인 못함' },
+]
 
 export type ClinicianJudgment = {
   schema_version: string
@@ -34,11 +69,34 @@ export type ClinicianJudgment = {
     myungri_status: 'resolved' | 'partial' | 'unresolved'
     myungri_pending_approval: string[]
   }
+  /**
+   * Batch 4.1-C (§16.1): 4.1-C 이후 어떤 UI도 이 필드에 쓰지 않는다 —
+   * deprecated, 새 코드에서 읽지 말 것. PO 결정 2026-09-04: 사주 해석
+   * 성격의 자유서술 입력을 뺀다(JudgmentPanel.tsx의 TextList 입력 + 설명
+   * 개요 read-back 모두 제거). 타입/기본값/`MAX_INNATE_FEATURES`/
+   * `MAX_SYMPTOM_LINKS`/`validateJudgment`의 길이 검증/`finalizeJudgment`의
+   * 빈 문자열 필터를 그대로 유지하는 이유는 saju_only_prediction 등과
+   * 동일 — server/**(FROZEN)와 tests/server.spec.mjs가 이 필드를 저장·CAS
+   * round-trip 프로브로 쓰고(`:212`,`:231`,`:325`,`:357-391`), 이미 저장된
+   * 레코드의 값이 round-trip되어 파괴되지 않아야 하기 때문(원본 JSON
+   * 아코디언에는 계속 보임).
+   */
   innate_features: string[]
+  /** Batch 4.1-C: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   symptom_links: string[]
+  /**
+   * Batch 4.1-A (§15.2/§15.3): 4.1-A 이후 어떤 UI도 이 필드에 쓰지 않는다 —
+   * deprecated, 새 코드에서 읽지 말 것. 타입/기본값을 유지하는 이유는
+   * server/**(FROZEN)와 tests/server.spec.mjs의 판단 fixture가 이 키들을
+   * 담은 payload 모양을 그대로 쓰고, 이미 저장된 레코드의 값이 round-trip
+   * 되어 파괴되지 않아야 하기 때문(원본 JSON 아코디언에는 계속 보임).
+   */
   saju_only_prediction: string
+  /** Batch 4.1-A: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   revised_after_exam: string
+  /** Batch 4.1-A: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   final_treatment_axis: string
+  /** Batch 4.1-A: 위와 동일 — deprecated, 새 코드에서 읽지 말 것. */
   prescription_direction: string
   learning_case: boolean
   debrief: DebriefAnswers | null
@@ -88,8 +146,12 @@ export function createEmptyJudgment(payload: JudgmentSourcePayload): ClinicianJu
       myungri_status: payload.myungri_status,
       myungri_pending_approval: payload.myungri_pending_approval,
     },
+    // Batch 4.1-C: deprecated defaults, kept for payload-shape/round-trip
+    // reasons only — see ClinicianJudgment's field-level comments above.
     innate_features: [],
     symptom_links: [],
+    // Batch 4.1-A: deprecated defaults, kept for payload-shape/round-trip
+    // reasons only — see ClinicianJudgment's field-level comments above.
     saju_only_prediction: '',
     revised_after_exam: '',
     final_treatment_axis: '',

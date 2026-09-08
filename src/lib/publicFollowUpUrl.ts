@@ -93,3 +93,16 @@ export function buildPublicFollowUpLink(token: string): string | null {
   if (base === null) return null
   return `${base}#follow-up=${token}`
 }
+
+/**
+ * 플로우 정렬 4/5: the patient's READ-ONLY care-plan page (`#care-plan=<token>`,
+ * see src/screens/CarePlanScreen.tsx). Same base-URL resolution as the
+ * follow-up link -- one place knows where the public SPA lives -- and the
+ * same null-when-unconfigured contract, so the doctor card can refuse to
+ * show a link that would not open on a phone.
+ */
+export function buildPublicCarePlanLink(token: string): string | null {
+  const base = resolvePublicFollowUpBaseUrl()
+  if (base === null) return null
+  return `${base}#care-plan=${token}`
+}

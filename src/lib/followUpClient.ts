@@ -54,9 +54,20 @@ export type FollowUpSessionPublicView = {
   /** Present only when status === 'ACTIVE'. Patient-safe target labels only -- never clinician notes/prior assessment/Myungri. */
   targets?: Array<{ id: string; label: string }>
   expiresAt?: string
+  /**
+   * 플로우 정렬 5/5: initial-questionnaire ids to re-ask because the
+   * clinician's own reassessment plan is due today (empty when not). Ids
+   * only -- wording/options come from coreSpec (src/spec/detailCheckQuestions.ts).
+   */
+  detailQuestionIds?: string[]
 }
 
-type PublicGetWire = { status: FollowUpSessionPublicState; targets?: Array<{ id: string; label: string }>; expires_at?: string }
+type PublicGetWire = {
+  status: FollowUpSessionPublicState
+  targets?: Array<{ id: string; label: string }>
+  expires_at?: string
+  detail_question_ids?: unknown
+}
 
 const VALID_STATES: ReadonlySet<string> = new Set(['ACTIVE', 'EXPIRED', 'CONSUMED', 'INVALIDATED', 'INVALID'])
 
@@ -83,7 +94,54 @@ export async function getFollowUpSession(token: string): Promise<FollowUpClientR
     })
     const body: PublicGetWire | null = await res.json().catch(() => null)
     if (body && typeof body.status === 'string' && VALID_STATES.has(body.status)) {
-      return { ok: true, data: { status: body.status, targets: body.targets, expiresAt: body.expires_at } }
+      const detailQuestionIds = Array.isArray(body.detail_question_ids)
+        ? body.detail_question_ids.filter((id): id is string => typeof id === 'string')
+        : []
+      return { ok: true, data: { status: body.status, targets: body.targets, expiresAt: body.expires_at, detailQuestionIds } }
+    }
+    return { ok: false, error: `오류 (${res.status})`, kind: 'other' }
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'AbortError' ? '요청 시간 초과' : '서버에 연결할 수 없습니다.'
+    return { ok: false, error: msg, kind: 'network' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 플로우 정렬 4/5: public READ-ONLY care-plan page (GET /api/care-plan/:token).
+ * Same status enum and same "any recognized status body is data regardless
+ * of HTTP code" handling as getFollowUpSession above. `carePlanText` is
+ * present only while ACTIVE and is the clinician-approved patient-facing
+ * text snapshotted at issuance -- nothing else ever comes back.
+ */
+export type CarePlanLinkPublicView = {
+  status: FollowUpSessionPublicState
+  carePlanText?: string
+  expiresAt?: string
+}
+
+type CarePlanGetWire = { status: FollowUpSessionPublicState; care_plan_text?: string; expires_at?: string }
+
+export async function getCarePlanLink(token: string): Promise<FollowUpClientResult<CarePlanLinkPublicView>> {
+  if (!isFollowUpServerConfigured()) return { ok: false, error: '서버가 설정되지 않았습니다.', kind: 'other' }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const res = await fetch(`${BASE_URL}/api/care-plan/${encodeURIComponent(token)}`, {
+      signal: controller.signal,
+      headers: { 'content-type': 'application/json' },
+    })
+    const body: CarePlanGetWire | null = await res.json().catch(() => null)
+    if (body && typeof body.status === 'string' && VALID_STATES.has(body.status)) {
+      return {
+        ok: true,
+        data: {
+          status: body.status,
+          carePlanText: typeof body.care_plan_text === 'string' ? body.care_plan_text : undefined,
+          expiresAt: body.expires_at,
+        },
+      }
     }
     return { ok: false, error: `오류 (${res.status})`, kind: 'other' }
   } catch (err) {
@@ -96,6 +154,8 @@ export async function getFollowUpSession(token: string): Promise<FollowUpClientR
 
 export type FollowUpSessionAnswers = {
   targetRatings: Array<{ targetId: string; patientReportedValue: string }>
+  /** 플로우 정렬 5/5: answers to the detail-check items, by initial-questionnaire id. Empty when none were asked. */
+  detailAnswers: Array<{ questionId: string; value: string }>
   overallChange: string
   newSymptomReported: boolean
   newSymptomNote: string

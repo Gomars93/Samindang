@@ -30,6 +30,10 @@ import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import { ObjectiveExamFindingsCard, type ObjectiveExamField } from '../ObjectiveExamFindingsCard'
 import { VisitSummaryAside } from './VisitSummaryAside'
 import { PainFinalAssessmentCard, HerbalFinalAssessmentCard } from './FinalAssessmentCard'
+import { WorkingHypothesisCard } from './WorkingHypothesisCard'
+import { appendLbpHypothesisSentenceToPatientInstruction } from './lbpWorkingHypothesis'
+import { activeDrivingPack } from './regionPacks'
+import { readRegionClinical, withRegionClinical, type RegionClinicalRecord } from './regionClinicalState'
 import { isPainFinalAssessmentRecorded, isHerbalFinalAssessmentRecorded } from './finalAssessment'
 import { computeLane1Summary, type Lane1RegionInput } from './lane1Summary'
 import { lastVisitTrackedLine } from './longitudinal'
@@ -39,7 +43,9 @@ import { answerLabel } from '../labels'
 import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
-import { PainWorkspaceLane2, PainWorkspaceNext } from './PainWorkspace'
+import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnrecordedHintForPack } from './PainWorkspace'
+import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
+import { useOpenOnceContent } from './FinalAssessmentCard'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
 import {
   AnkleFootSafetyPanel,
@@ -57,11 +63,18 @@ import {
   primaryConcernLabel,
 } from '../DoctorView'
 import { deriveViewProfile } from './viewProfile'
-import type { PhysicalExamSuggestion } from './examSuggestion'
+import { emptyExamResult, type PhysicalExamSuggestion } from './examSuggestion'
+import { mergeExamSuggestions } from './lbpExamSuggestions'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import { defaultClinicianObservations, type ClinicianObservationItem } from './clinicianObservation'
 import type { EvidenceItem } from './supportEngine'
 import type { RehabSuggestion } from './rehabSuggestion'
+import {
+  buildRecommendationContext,
+  mergeRehabSuggestions,
+  appendAdoptionText,
+} from './lbpExerciseRecommendation'
+import { suggestExerciseStage, stageInputFromPayload } from './lbpExerciseStage'
 import { reassessmentExamItemFromPrevious } from './reassessmentExam'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
@@ -101,16 +114,35 @@ const REGION_LABEL: Record<string, string> = {
 function seedWorkspaceState(
   initial: WorkspaceState | null | undefined,
   synthetic: WorkspaceSyntheticData | undefined,
+  payload: DoctorPayload,
 ): WorkspaceState {
-  if (initial) return deserializeWorkspaceState(initial)
-  const empty = emptyWorkspaceState()
-  return {
-    ...empty,
-    painExamSuggestions: synthetic?.examSuggestions ?? [],
-    herbalPatternCandidates: synthetic?.patternCandidates ?? [],
-    herbalClinicianObservations: synthetic?.clinicianObservations ?? defaultClinicianObservations(),
-    painRehabSuggestions: synthetic?.rehabSuggestions ?? [],
+  if (synthetic) {
+    // Existing synthetic preview scenarios keep exact precedence — never
+    // run the LBP generator/merge over illustrative UX fixture data.
+    if (initial) return deserializeWorkspaceState(initial)
+    const empty = emptyWorkspaceState()
+    return {
+      ...empty,
+      painExamSuggestions: synthetic.examSuggestions ?? [],
+      herbalPatternCandidates: synthetic.patternCandidates ?? [],
+      herbalClinicianObservations: synthetic.clinicianObservations ?? defaultClinicianObservations(),
+      painRehabSuggestions: synthetic.rehabSuggestions ?? [],
+    }
   }
+  // A brand-new (no `initial`) non-synthetic record keeps the exact same
+  // default the pre-Batch-1 "no synthetic" path always seeded --
+  // herbalClinicianObservations starts as the standard 설진/맥진/복진/추가
+  // 문진 checklist, not [] -- this is unrelated to LBP and must not regress.
+  const base = initial
+    ? deserializeWorkspaceState(initial)
+    : { ...emptyWorkspaceState(), herbalClinicianObservations: defaultClinicianObservations() }
+  // LBP v1 Batch 1 (G2) → 부위 팩 일반화: merges the driving region pack's
+  // freshly-generated auto suggestions into whatever is already saved (or []
+  // for a brand-new record). A no-op for any record without an approved pack
+  // (요통 이외 부위는 승인 전까지 여기서 아무것도 생성하지 않는다).
+  const pack = activeDrivingPack(payload.responses)
+  if (!pack) return base
+  return { ...base, painExamSuggestions: mergeExamSuggestions(pack.examHelp, pack.generateExamSuggestions(payload), base.painExamSuggestions) }
 }
 
 export function DoctorWorkspace({
@@ -130,6 +162,7 @@ export function DoctorWorkspace({
   microFollowUpResponse,
   medicationCourseSlot,
   nextLaneFooter,
+  onIssueCarePlanLink,
 }: {
   payload: DoctorPayload
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
@@ -190,6 +223,8 @@ export function DoctorWorkspace({
   medicationCourseSlot?: ReactNode
   /** P3: 발급/메시징/종결(EMR 검토 + 완료) — DoctorView-owned state, rendered as the tail of the 다음 레인. */
   nextLaneFooter?: ReactNode
+  /** 플로우 정렬 4/5: server mode only (DoctorView supplies it with a real submission id); fixtures pass nothing. */
+  onIssueCarePlanLink?: IssueCarePlanLink
 }) {
   const basis = deriveViewProfile(payload)
   const activeProfile = basis.derived
@@ -200,7 +235,7 @@ export function DoctorWorkspace({
   const recordKey = resetKey ?? submissionId ?? payload.session_id
 
   const [workspaceState, setWorkspaceState] = useState<WorkspaceState>(() =>
-    seedWorkspaceState(initialWorkspaceState, synthetic),
+    seedWorkspaceState(initialWorkspaceState, synthetic, payload),
   )
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
@@ -266,7 +301,7 @@ export function DoctorWorkspace({
   if (recordKey !== lastSeenRecordKey) {
     setLastSeenRecordKey(recordKey)
     setAdditionalTypeOpen(false)
-    const seeded = seedWorkspaceState(initialWorkspaceState, synthetic)
+    const seeded = seedWorkspaceState(initialWorkspaceState, synthetic, payload)
     setWorkspaceState(seeded)
     lastSavedRef.current = seeded
     skipNextSaveRef.current = true
@@ -305,7 +340,7 @@ export function DoctorWorkspace({
   useEffect(() => {
     if (initialRecordUpdatedAt == null || initialRecordUpdatedAt === lastKnownUpdatedAtRef.current) return
     if (!workspaceStateEquals(workspaceState, lastSavedRef.current)) return
-    const fresh = seedWorkspaceState(initialWorkspaceState, synthetic)
+    const fresh = seedWorkspaceState(initialWorkspaceState, synthetic, payload)
     lastKnownUpdatedAtRef.current = initialRecordUpdatedAt
     lastSavedRef.current = fresh
     skipNextSaveRef.current = true
@@ -436,6 +471,57 @@ export function DoctorWorkspace({
   // recomputes at every render-time reset boundary because it is plain,
   // uncached, prop-driven computation, never a ref/memo carried forward).
   const lane1Summary = computeLane1Summary(payload, regionInputs)
+  // 2026-09-06 (원장 지시 "진료최적화", 플로우 정렬 2/5): 레인1 안전 블록은
+  // 합집합 상태가 CLEAR일 때 접힌다. 판정은 새로 만들지 않고 좌측 요약 chip이
+  // 이미 읽는 `lane1Summary.status`를 그대로 쓴다(같은 신호, 두 화면이 어긋날 수
+  // 없다). 래치(`useOpenOnceContent`): 비CLEAR가 한 번이라도 보였으면 열어두고
+  // 자동으로 닫지 않는다 — 원장이 신경 소견을 SEVERE로 기록해 URGENT가 되면
+  // 열리고, 다시 NONE으로 고쳐도 원장이 손으로 닫기 전까지는 열려 있다.
+  // 실측 근거: LBP 초진 화면 높이 3.2~3.9뷰포트 중 레인1이 첫 화면을 통째로
+  // 차지해 운동 후보가 3~4화면 아래에 있었다(DECISIONS.md 2026-09-06).
+  // 비CLEAR가 한 번이라도 있었으면 래퍼 자체를 두지 않고 예전처럼 블록을 직접
+  // 렌더한다(요약 줄 0px 추가 — 확인이 필요한 환자에게 한 줄을 더 얹지 않는다).
+  // 실측: 래퍼를 항상 두면 비CLEAR 화면이 +70px, CLEAR 화면은 −57px였다.
+  const lane1EverNonClear = useOpenOnceContent(lane1Summary.status !== 'CLEAR')
+  const lane1Collapsible = !lane1EverNonClear
+
+  // ---------------------------------------------------------------------
+  // LBP v1 Batch 2 (G9/G10): recomputed every render, exactly like
+  // lane1Summary above -- never cached/persisted itself (architecture §2.3).
+  // Guarded on `!synthetic`, mirroring seedWorkspaceState's own guard above
+  // ("Existing synthetic preview scenarios keep exact precedence -- never
+  // run the LBP generator/merge over illustrative UX fixture data") so a
+  // SYNTHETIC preview's hand-authored painRehabSuggestions is never
+  // overwritten by a live recomputation.
+  // ---------------------------------------------------------------------
+  // 부위 팩 일반화(2026-09-06, R2): 구동 부위(§3.4 NS01/HIP_00 판별, 승인 전
+  // 팩이면 같은 모집단의 승인 팩으로 후퇴)의 승인된 팩 하나가 L1~L8을 구동한다.
+  // 승인 팩이 없으면 아래 전부 null이라 옛 비요통 화면과 같다. 요통은 요통 팩
+  // = 옛 동작과 같다.
+  const regionPack = activeDrivingPack(payload.responses)
+  const regionState: RegionClinicalRecord | null = regionPack
+    ? readRegionClinical(workspaceState, regionPack.region, regionPack.hypothesisPatterns)
+    : null
+  const setRegionClinical = regionPack
+    ? (patch: Partial<RegionClinicalRecord>) => setWorkspaceState((s) => withRegionClinical(s, regionPack.region, patch))
+    : null
+  const regionRecommendation =
+    !synthetic && regionPack && regionState
+      ? buildRecommendationContext(
+          regionPack,
+          payload,
+          { lbp_objective_motor_deficit: lbpObjectiveMotorDeficit, shoulder_objective_cuff_weakness: shoulderObjectiveCuffWeakness },
+          regionState,
+          workspaceState,
+        )
+      : null
+  // 2026-09-05: 단계 제안은 오늘 문진 답변만으로 매 렌더 재계산 — 저장되지
+  // 않는다. 저장되는 것은 원장 확정값(요통 `workspaceState.lbpConfirmedStage`,
+  // 다른 부위 `regionClinical[region].confirmedStage`)뿐.
+  const regionStageSuggestion = !synthetic && regionPack ? suggestExerciseStage(stageInputFromPayload(regionPack.region, payload)) : null
+  const displayedPainRehabSuggestions = regionRecommendation
+    ? mergeRehabSuggestions(workspaceState.painRehabSuggestions, regionRecommendation.candidates)
+    : workspaceState.painRehabSuggestions
 
   // ---------------------------------------------------------------------
   // 좌측 요약 값 조립 (§2.1/§3.2) -- read-only formatting of already-computed
@@ -452,6 +538,17 @@ export function DoctorWorkspace({
   const trackedLine = lastVisitTrackedLine(priorVisits)
   const readableMicroFollowUp = readableMicroFollowUpResponse(microFollowUpResponse ?? null)
   const deltaQuoteLine = microFollowUpQuoteLine(readableMicroFollowUp)
+
+  // Opus closing review C-5: EmrPreviewCard's "복사는 「다음」 레인의
+  // 「종결」 섹션에서 합니다." hint is only true when 종결 actually renders
+  // on screen -- `nextLaneFooter` is the exact same signal DoctorView.tsx
+  // already gates 종결's own render on (`nextLaneFooterNode`, gated by
+  // `mode === 'server' && selectedRecord?.patient_id`), so its presence
+  // here is a faithful proxy without this shell needing to know `mode`/
+  // `patient_id` itself. `undefined` when absent (fixtures/preview mode,
+  // legacy records with no patient_id) so EmrPreviewCard renders no hint
+  // at all rather than naming a section that is not on screen.
+  const emrPreviewCopyHint = nextLaneFooter != null ? '복사는 「다음」 레인의 「종결」 섹션에서 합니다.' : undefined
 
   const painFinalRecorded = isPainFinalAssessmentRecorded(workspaceState.painFinalAssessment)
   const herbalFinalRecorded = isHerbalFinalAssessmentRecorded(workspaceState.herbalFinalAssessment)
@@ -508,7 +605,20 @@ export function DoctorWorkspace({
               />
             )}
             <CommonSafetyBanner payload={payload} />
-            {anySafetyRegionApplicable && (
+            {anySafetyRegionApplicable && lane1Collapsible && (
+              <details className="workspace__optional doctor__lane1Collapse">
+                <summary>{`안전 확인 — 전 부위 안전 (${lane1Summary.clearLabels.join(' · ')}) · 펼쳐서 상세`}</summary>
+                <section className="workspace__block workspace__block--safety">
+                  <p className="workspace__block__hint">
+                    현재 계산된 flag와 안전 잠금 의미를 그대로 표시합니다 — 새 cutoff나 해석을 추가하지 않습니다.
+                  </p>
+                  {regionInputs.map((r) => (
+                    <div key={r.key}>{r.element}</div>
+                  ))}
+                </section>
+              </details>
+            )}
+            {anySafetyRegionApplicable && !lane1Collapsible && (
               <section className="workspace__block workspace__block--safety">
                 {/*
                   P5 tablet-viewport height budget: the lane's own <h2
@@ -559,13 +669,6 @@ export function DoctorWorkspace({
                 }
                 onAddExamToReassessment={addPainExamToReassessment}
                 evidence={synthetic?.evidence}
-                rehabSuggestions={workspaceState.painRehabSuggestions}
-                onChangeRehabSuggestion={(next) =>
-                  setWorkspaceState((s) => ({
-                    ...s,
-                    painRehabSuggestions: s.painRehabSuggestions.map((it) => (it.id === next.id ? next : it)),
-                  }))
-                }
                 additionalConcernPromotion={workspaceState.additionalConcernPromotion}
                 onChangeAdditionalConcernPromotion={(next) =>
                   setWorkspaceState((s) => ({ ...s, additionalConcernPromotion: next }))
@@ -574,6 +677,20 @@ export function DoctorWorkspace({
                 onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, painReassessment: next }))}
                 microFollowUpResponse={microFollowUpResponse}
                 priorVisits={priorVisits}
+                regionPack={regionPack}
+                directionalResponse={regionState?.directionalResponse}
+                onChangeDirectionalResponse={(next) => setRegionClinical?.({ directionalResponse: next })}
+                onAddRegionExam={(id) =>
+                  setWorkspaceState((s) => {
+                    if (s.painExamSuggestions.some((i) => i.id === id)) return s
+                    const template = regionPack?.clinicianAddableExams.find((i) => i.id === id)
+                    if (!template) return s
+                    return {
+                      ...s,
+                      painExamSuggestions: [...s.painExamSuggestions, { ...template, result: emptyExamResult() }],
+                    }
+                  })
+                }
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
@@ -614,10 +731,96 @@ export function DoctorWorkspace({
           <section className="doctor__visitLane doctor__visitLane--judgment" aria-labelledby="judgment-h2">
             <h2 id="judgment-h2">판단·처치</h2>
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
-              <PainFinalAssessmentCard
-                value={workspaceState.painFinalAssessment}
-                onChange={(next) => setWorkspaceState((s) => ({ ...s, painFinalAssessment: next }))}
-              />
+              <>
+                {/*
+                  LBP v1 Batch 2.5c (G16, §11.4): "확인 → 임상가설 →
+                  치료·운동 결정" -- the clinician's own working-hypothesis
+                  chips render immediately before PainFinalAssessmentCard,
+                  only for a record driven by an approved region pack (the
+                  patterns are that pack's management categories, same gate
+                  PainExerciseSection already uses below).
+                */}
+                {regionPack && regionState && setRegionClinical && (
+                  <WorkingHypothesisCard
+                    patterns={regionPack.hypothesisPatterns}
+                    value={regionState.workingHypothesis}
+                    onChange={(next) => setRegionClinical({ workingHypothesis: next })}
+                    currentPatientInstruction={workspaceState.painCarePlan.patientInstruction}
+                    onInsertPatientSentence={(sentence) =>
+                      setWorkspaceState((s) => ({
+                        ...s,
+                        painCarePlan: {
+                          ...s.painCarePlan,
+                          patientInstruction: appendLbpHypothesisSentenceToPatientInstruction(
+                            s.painCarePlan.patientInstruction,
+                            sentence,
+                          ),
+                          recordedAt: new Date().toISOString(),
+                        },
+                      }))
+                    }
+                  />
+                )}
+                <PainFinalAssessmentCard
+                  value={workspaceState.painFinalAssessment}
+                  onChange={(next) => setWorkspaceState((s) => ({ ...s, painFinalAssessment: next }))}
+                />
+                {/*
+                  LBP v1 Batch 2 §8.2-1(a): exercise candidates/adoption render
+                  here, immediately after PainFinalAssessmentCard, matching the
+                  PO's canonical route (확인 → Working Hypothesis → 치료 방향 →
+                  Exercise Eligibility → 운동) -- moved out of 레인2(확인).
+                */}
+                <PainExerciseSection
+                  regionActive={regionPack != null}
+                  rehabSuggestions={displayedPainRehabSuggestions}
+                  onChangeRehabSuggestion={(next) =>
+                    setWorkspaceState((s) => {
+                      // Upsert: a freshly live-merged LBP candidate (readiness
+                      // just recomputed above, not yet in persisted state)
+                      // must still be recordable on first status change, not
+                      // silently dropped by a map() that finds no match.
+                      const exists = s.painRehabSuggestions.some((it) => it.id === next.id)
+                      return {
+                        ...s,
+                        painRehabSuggestions: exists
+                          ? s.painRehabSuggestions.map((it) => (it.id === next.id ? next : it))
+                          : [...s.painRehabSuggestions, next],
+                      }
+                    })
+                  }
+                  // Opus delta review defect 7: only a record driven by an
+                  // approved region pack has any Care Plan adoption path to
+                  // begin with (this module never generates RehabSuggestion[]
+                  // for any other profile/region — see rehabSuggestion.ts's
+                  // file header) -- an unapproved region's pain record or a
+                  // SYNTHETIC preview must never gain an adopt button that
+                  // never existed before this batch.
+                  onAdoptRehabSuggestionToCarePlan={
+                    regionPack
+                      ? (suggestion) =>
+                          setWorkspaceState((s) => ({
+                            ...s,
+                            painCarePlan: {
+                              ...s.painCarePlan,
+                              homeActionPlan: appendAdoptionText(regionPack, s.painCarePlan.homeActionPlan, suggestion),
+                              recordedAt: new Date().toISOString(),
+                            },
+                          }))
+                      : undefined
+                  }
+                  recommendationBlockedMessageKo={regionRecommendation?.blockedMessageKo}
+                  treatmentSafetyLockedReasonKo={regionRecommendation?.treatmentSafetyLockedMessageKo}
+                  targetFunctionGap={regionRecommendation?.targetFunctionGap}
+                  neuroUnrecorded={regionRecommendation?.neuroUnrecorded}
+                  neuroUnrecordedHintKo={regionPack ? neuroUnrecordedHintForPack(regionPack) : undefined}
+                  stageSuggestion={regionStageSuggestion}
+                  confirmedStage={regionState?.confirmedStage ?? null}
+                  // 확정값만 저장한다 — 제안(regionStageSuggestion)은 절대 여기로
+                  // 흐르지 않는다. 요통은 withRegionClinical이 lbpConfirmedStage에 쓴다.
+                  onSetConfirmedStage={setRegionClinical ? (next) => setRegionClinical({ confirmedStage: next }) : undefined}
+                />
+              </>
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
               <HerbalFinalAssessmentCard
@@ -663,6 +866,14 @@ export function DoctorWorkspace({
                 onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
                 reassessment={workspaceState.painReassessment}
                 priorVisits={priorVisits}
+                regionPack={regionPack}
+                regionWorkingHypothesis={regionState?.workingHypothesis}
+                lbpDirectionalResponse={regionState?.directionalResponse ?? 'NOT_ASSESSED'}
+                lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
+                lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
+                microFollowUpText={deltaQuoteLine}
+                copyHint={emrPreviewCopyHint}
+                onIssueCarePlanLink={onIssueCarePlanLink}
               />
             )}
             {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
@@ -678,11 +889,15 @@ export function DoctorWorkspace({
                 onChangeNextReassessmentPlan={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
                 reassessment={workspaceState.herbalReassessment}
                 priorVisits={priorVisits}
+                copyHint={emrPreviewCopyHint}
+                onIssueCarePlanLink={onIssueCarePlanLink}
               />
             )}
             {medicationCourseSlot}
             {nextLaneFooter}
           </section>
+
+          <LaneJumpNav showExercise={activeProfile === 'pain' || activeProfile === 'mixed'} />
         </main>
       </div>
 
@@ -698,5 +913,68 @@ export function DoctorWorkspace({
         <div className="workspace__saveStatus" role="status" data-status={saveStatus} hidden />
       )}
     </div>
+  )
+}
+
+/**
+ * PO 결정(HANDOFF 최신 29 → "추천에 따라 진행", 안 A): 운동 후보가 첫 화면에서
+ * 4화면 아래에 있다는 실측 문제에 대한 최소 해법 -- 레인 헤딩으로 바로 가는
+ * 점프 내비. 레이아웃·카드 밀도는 건드리지 않는다(안 B 기각).
+ *
+ * 왜 `position: sticky; bottom: 0`(fixed 아님)인가: 상단에는 이미 sticky 헤더
+ * (.doctor__header)와 세로 태블릿의 sticky 요약(.doctor__visitSummary)이 있어
+ * top 쌓기는 높이 계산이 깨지기 쉽다. 작업 영역의 마지막 자식으로 두고
+ * bottom에 붙이면 스크롤 중엔 화면 하단에 떠 있고, 끝에 닿으면 제자리에
+ * 앉는다 -- 내용을 가리지 않으므로 padding 보정도 필요 없다.
+ *
+ * 스크롤은 즉시(smooth 아님): 태블릿에서 결정적이고, 실측 테스트가 폴링 없이
+ * 검증할 수 있다. 헤딩이 sticky 헤더(.doctor__header, 세로 태블릿에서는
+ * sticky 요약 .doctor__visitSummary까지) 뒤로 숨지 않도록, 클릭 시점에 그
+ * 요소들의 실제 높이를 읽어 그만큼 위에 여유를 두고 스크롤한다 -- 고정
+ * CSS scroll-margin은 헤더가 줄바꿈되는 폭에서 틀린다(실측: 데스크톱 헤더
+ * 114px vs 고정 72px → 헤딩이 42px 가려짐).
+ */
+function stickyTopOffset(): number {
+  const header = document.querySelector('.doctor__header')
+  const summary = document.querySelector('.doctor__visitSummary')
+  const headerH = header ? header.getBoundingClientRect().height : 0
+  const summaryH =
+    summary && typeof window !== 'undefined' && window.getComputedStyle(summary).position === 'sticky'
+      ? summary.getBoundingClientRect().height
+      : 0
+  return Math.max(headerH, summaryH) + 8
+}
+
+function jumpToLane(id: string): void {
+  const el = document.getElementById(id)
+  if (!el) return
+  const top = el.getBoundingClientRect().top + window.scrollY - stickyTopOffset()
+  window.scrollTo({ top: Math.max(0, top) })
+}
+
+const LANE_JUMP_ITEMS: ReadonlyArray<{ id: string; label: string; exerciseOnly?: boolean }> = [
+  { id: 'lane1-h2', label: '안전' },
+  { id: 'lane2-h2', label: '확인' },
+  { id: 'judgment-h2', label: '판단·처치' },
+  { id: 'exercise-h3', label: '운동', exerciseOnly: true },
+  { id: 'next-h2', label: '다음' },
+]
+
+function LaneJumpNav({ showExercise }: { showExercise: boolean }) {
+  const items = LANE_JUMP_ITEMS.filter((it) => !it.exerciseOnly || showExercise)
+  return (
+    <nav className="doctor__laneNav" aria-label="진료 단계 바로가기">
+      {items.map((it) => (
+        <button
+          key={it.id}
+          type="button"
+          className="doctor__laneNav__btn"
+          data-target={it.id}
+          onClick={() => jumpToLane(it.id)}
+        >
+          {it.label}
+        </button>
+      ))}
+    </nav>
   )
 }

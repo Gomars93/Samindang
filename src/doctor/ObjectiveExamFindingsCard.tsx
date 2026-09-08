@@ -2,7 +2,7 @@
  * P0-2 (Core Reduction Phase 6 gate / Phase 3 Opus review §3-6, 단순화
  * 금지선 5-1 "안전 입력이 비기본 탭에"): the LBP/SHOULDER objective exam
  * findings (`lbp_objective_motor_deficit` / `shoulder_objective_cuff_weakness`)
- * used to be editable ONLY inside JudgmentPanel, which lives in the '자료
+ * used to be editable ONLY inside JudgmentPanel, which lived in the '자료
  * 보기' tab -- while their safety effect (URGENT_REVIEW /
  * expedited_referral_consider, computed in src/spec/lbpLogic.ts /
  * shoulderLogic.ts, frozen) shows up in the 진료 tab's LbpSafetyPanel /
@@ -15,9 +15,11 @@
  * `shoulder_objective_cuff_weakness` fields, through the same PUT
  * /api/submissions/:id/judgment (serverClient.ts's saveJudgment) --
  * DoctorView.tsx's onSave prop here does the merge-with-the-rest-of-
- * judgment. `judgment` is a single server-side object, so a stale-write
- * CAS mismatch is possible if JudgmentPanel's own "기록" click (or another
- * tab/device saving this same field) landed in between.
+ * judgment. Batch 4.1-D (§17.3): JudgmentPanel is now gone entirely -- this
+ * card is the ONLY client-side writer of `judgment` left. The conflict
+ * handling below is unaffected either way (another tab/device saving the
+ * same submission concurrently is still possible, and this card never
+ * tracked CAS itself -- see DoctorView.tsx's handleSaveObjectiveExamField).
  *
  * 독립 검수 HIGH-2: 이전 버전은 409 발생 시 서버의 current judgment 위에
  * 로컬 value를 자동으로 다시 merge해 재저장했다 -- 안전 판정에 영향을 줄
@@ -32,8 +34,12 @@
  * immediate-save wiring, not a new capability.
  */
 import { useState } from 'react'
-import { LBP_MOTOR_DEFICIT_OPTIONS, SHOULDER_CUFF_WEAKNESS_OPTIONS } from './JudgmentPanel'
-import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from './judgment'
+import {
+  LBP_MOTOR_DEFICIT_OPTIONS,
+  SHOULDER_CUFF_WEAKNESS_OPTIONS,
+  type ClinicianJudgment,
+  type ObjectiveExamSaveOutcome,
+} from './judgment'
 import { DoctorTokenSetup } from './DoctorTokenSetup'
 import { ConflictBanner } from './ConflictBanner'
 

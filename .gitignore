@@ -106,6 +106,8 @@ tests/.preview-server-client-bundle.mjs
 # esbuild bundles used by tests/doctor-workspace.spec.mjs (regenerated, not source)
 tests/.doctor-workspace-fixtures-bundle.mjs
 tests/.doctor-workspace-bundle.cjs
+tests/.micro-follow-up-card-bundle.cjs
+tests/.care-plan-card-bundle.cjs
 # esbuild bundle used by tests/lane1-summary.spec.mjs (regenerated, not source)
 tests/.lane1-summary-bundle.mjs
 # esbuild bundles used by tests/doctor-reset-key.spec.mjs (regenerated, not source)
@@ -114,8 +116,25 @@ tests/.doctor-record-error-boundary-bundle.cjs
 # esbuild bundles used by tests/doctor-view-profile-matrix.spec.mjs (regenerated, not source)
 tests/.view-profile-matrix-corespec-bundle.mjs
 tests/.view-profile-matrix-viewprofile-bundle.mjs
+# esbuild bundles used by tests/lbp-exam-suggestions.spec.mjs (regenerated, not source)
+tests/.lbp-exam-suggestions-corespec-bundle.mjs
+tests/.lbp-exam-suggestions-bundle.mjs
+tests/.lbp-target-function-bundle.mjs
+# esbuild bundles used by tests/lbp-exercise-*.spec.mjs (regenerated, not source)
+tests/.lbp-exercise-library-bundle.mjs
+tests/.lbp-exercise-core-metadata-bundle.mjs
+tests/.lbp-exercise-eligibility-bundle.mjs
+tests/.lbp-exercise-recommendation-bundle.mjs
+tests/.lbp-exercise-stage-bundle.mjs
+tests/.lbp-exercise-recommendation-corespec-bundle.mjs
+tests/.lbp-eligibility-context-bundle.mjs
+tests/.lbp-exercise-recommendation-core-metadata-bundle.mjs
+# esbuild bundle used by tests/doctor-workspace.spec.mjs (regenerated, not source)
+tests/.follow-up-target-picker-bundle.cjs
 
 # esbuild bundles used by tests/workspace-round3.spec.mjs (regenerated, not source)
+tests/.workspace-round3-provenance-bundle.mjs
+tests/.workspace-round3-examsuggestion-bundle.mjs
 tests/.workspace-round3-persistence-bundle.mjs
 tests/.workspace-round3-reassessment-bundle.mjs
 tests/.workspace-round3-patientpreview-bundle.mjs
@@ -124,6 +143,19 @@ tests/.workspace-round3-additionalconcern-bundle.mjs
 tests/.workspace-round3-microfollowup-bundle.mjs
 tests/.workspace-round3-carryforward-bundle.mjs
 tests/.workspace-round3-visitworkspace-bundle.mjs
+
+# esbuild bundles used by tests/revisit-quick-check.spec.mjs (regenerated, not source)
+tests/.revisit-quick-check-bundle.mjs
+tests/.revisit-quick-check-card-bundle.cjs
+tests/.revisit-quick-check-longitudinal-bundle.mjs
+
+# esbuild bundles used by tests/lbp-working-hypothesis.spec.mjs (regenerated, not source)
+tests/.lbp-working-hypothesis-bundle.mjs
+tests/.lbp-working-hypothesis-card-bundle.cjs
+tests/.lbp-working-hypothesis-emrpreview-bundle.mjs
+tests/.lbp-working-hypothesis-persistence-bundle.mjs
+tests/.lbp-working-hypothesis-visitworkspace-bundle.mjs
+tests/.lbp-working-hypothesis-carepreview-bundle.mjs
 
 # esbuild bundles used by tests/crm-schema.spec.mjs (regenerated, not source)
 tests/.crm-types-bundle.mjs
@@ -169,3 +201,40 @@ tests/.r17-*
 tests/.r18-*
 tests/.r19-*
 tests/.r20-*
+
+# esbuild bundles used by scripts/region-stage-distribution.mjs / lbp-stage-distribution.mjs (regenerated, not source)
+scripts/.lbp-exercise-stage-bundle.mjs
+scripts/.region-routing-bundle.mjs
+scripts/.region-pack-bundle.mjs
+scripts/.region-packs-index-bundle.mjs
+
+# esbuild bundles used by tests/lbp-capability-layer.spec.mjs (regenerated, not source)
+tests/.lbp-capability-layer-bundle.mjs
+tests/.lbp-exercise-stage-table-bundle.mjs
+
+# esbuild bundles used by tests/care-plan-link.spec.mjs (regenerated, not source)
+tests/.care-plan-screen-bundle.cjs
+tests/.care-plan-preview-card-bundle.cjs
+tests/.care-plan-message-bundle.mjs
+
+# esbuild bundles used by tests/detail-check.spec.mjs (regenerated, not source)
+tests/.detail-check-revisit-quick-check-bundle.mjs
+tests/.detail-check-questions-bundle.mjs
+tests/.detail-check-final-assessment-bundle.mjs
+tests/.detail-check-follow-up-screen-bundle.cjs
+tests/.detail-check-micro-card-bundle.cjs
+tests/.detail-check-baseline-bundle.mjs
+tests/.detail-check-doctor-fixtures-bundle.mjs
+
+# esbuild bundles used by tests/region-pack.spec.mjs (regenerated, not source)
+tests/.region-packs-bundle.mjs
+tests/.region-routing-bundle.mjs
+tests/.region-clinical-state-bundle.mjs
+tests/.region-pack-*-bundle.mjs
+tests/.region-pack-*-bundle.cjs
+
+# esbuild bundles used by tests/neck-exercise-core.vignettes.spec.mjs (regenerated, not source)
+tests/.neck-vignettes-*-bundle.mjs
+
+# esbuild bundles used by tests/*-exercise-core.vignettes.spec.mjs (shoulder/knee/wrist-hand/ankle-foot; regenerated, not source)
+tests/.region-vignettes-*-bundle.mjs

@@ -21,6 +21,9 @@ import { emptyPainCarePlan } from './carePlan'
 import { reassessmentExamItemFromPrevious, type StructuredReassessment, type PreviousExamValue } from './reassessmentExam'
 import { emptyStructuredReassessment } from './reassessmentExam'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord } from './sanitize'
+import { emptyRevisitQuickCheck, sanitizeRevisitQuickCheck, type RevisitQuickCheck } from './revisitQuickCheck'
+import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
+import { sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const REASSESSMENT_ITEM_TEMPLATE: StructuredReassessment['items'][number] = reassessmentExamItemFromPrevious(
@@ -65,6 +68,30 @@ export type VisitWorkspaceState = {
   followUpTargets: FollowUpTarget[]
   nextReassessmentPlan: NextReassessmentPlan
   reassessment: StructuredReassessment
+  /**
+   * LBP v1 Batch 3 (§9.2(a)): the clinician's own 30-60s revisit check-in.
+   * Additive field, does NOT bump VISIT_WORKSPACE_SCHEMA_VERSION -- a
+   * record saved before this field existed deserializes to
+   * `emptyRevisitQuickCheck()` for it, same pattern as
+   * `lbpDirectionalResponse` in persistence.ts.
+   */
+  revisitQuickCheck: RevisitQuickCheck
+  /**
+   * LBP v1 Batch 2.5c (G16, §11.2): same field/shape/defaults as
+   * `WorkspaceState.lbpWorkingHypothesis` (persistence.ts) — a revisit's
+   * generic workspace reuses the identical clinician-selection type rather
+   * than inventing a parallel one, matching this file's own "one generic
+   * set of clinician fields" design (see the file header). Additive field,
+   * does NOT bump VISIT_WORKSPACE_SCHEMA_VERSION.
+   */
+  lbpWorkingHypothesis: LbpWorkingHypothesis
+  /**
+   * 부위 팩 일반화(2026-09-06, R2): 요통 이외 부위의 임상가설을 부위 키로 담는
+   * 맵 — `WorkspaceState.regionClinical`과 같은 형태·정화 규칙(`regionClinicalState.ts`).
+   * 재진 화면은 이 중 `workingHypothesis`만 읽고 쓴다. Additive field, does NOT
+   * bump VISIT_WORKSPACE_SCHEMA_VERSION.
+   */
+  regionClinical: RegionClinicalMap
   updated_at: string | null
 }
 
@@ -76,6 +103,9 @@ export function emptyVisitWorkspaceState(): VisitWorkspaceState {
     followUpTargets: [],
     nextReassessmentPlan: emptyNextReassessmentPlan(),
     reassessment: emptyStructuredReassessment(),
+    revisitQuickCheck: emptyRevisitQuickCheck(),
+    lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
+    regionClinical: {},
     updated_at: null,
   }
 }
@@ -100,6 +130,9 @@ export function deserializeVisitWorkspaceState(raw: unknown): VisitWorkspaceStat
     followUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.followUpTargets),
     nextReassessmentPlan: sanitizeShape(empty.nextReassessmentPlan, raw.nextReassessmentPlan),
     reassessment: sanitizeStructuredReassessment(empty.reassessment, raw.reassessment),
+    revisitQuickCheck: sanitizeRevisitQuickCheck(raw.revisitQuickCheck),
+    lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
+    regionClinical: sanitizeRegionClinicalMap(raw.regionClinical),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

@@ -83,10 +83,17 @@ export type MicroFollowUpTargetRating = {
   patientReportedValue: string
 }
 
+export type MicroFollowUpDetailAnswer = {
+  questionId: string
+  value: string
+}
+
 export type MicroFollowUpResponse = {
   visit_id: string
   patient_id: string
   targetRatings: MicroFollowUpTargetRating[]
+  /** 플로우 정렬 5/5: raw answers to the re-asked initial-questionnaire items (empty when none were asked). */
+  detailAnswers: MicroFollowUpDetailAnswer[]
   /** Patient's own short answer -- free text, never inferred. */
   overallChange: string
   newSymptomReported: boolean
@@ -101,6 +108,7 @@ export function emptyMicroFollowUpResponse(visitId: string, patientId: string): 
     visit_id: visitId,
     patient_id: patientId,
     targetRatings: [],
+    detailAnswers: [],
     overallChange: '',
     newSymptomReported: false,
     newSymptomNote: '',
@@ -114,6 +122,11 @@ const MICRO_FOLLOW_UP_TARGET_RATING_TEMPLATE: MicroFollowUpTargetRating = {
   targetId: '',
   label: '',
   patientReportedValue: '',
+}
+
+const MICRO_FOLLOW_UP_DETAIL_ANSWER_TEMPLATE: MicroFollowUpDetailAnswer = {
+  questionId: '',
+  value: '',
 }
 
 /**
@@ -138,6 +151,7 @@ export function readableMicroFollowUpResponse(value: unknown): MicroFollowUpResp
   return {
     ...sanitized,
     targetRatings: sanitizeArray(MICRO_FOLLOW_UP_TARGET_RATING_TEMPLATE, raw.targetRatings),
+    detailAnswers: sanitizeArray(MICRO_FOLLOW_UP_DETAIL_ANSWER_TEMPLATE, raw.detailAnswers).filter((a) => a.questionId !== ''),
   }
 }
 

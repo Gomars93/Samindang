@@ -40,6 +40,16 @@ function assert(name, cond) {
     'configured: the token is appended verbatim, never re-encoded or mangled (a real capability token is base64url-shaped)',
     configured.buildPublicFollowUpLink('a-B_1~2.3') === 'https://gomars93.github.io/Samindang/followup/#follow-up=a-B_1~2.3',
   )
+  // 플로우 정렬 4/5: the read-only care-plan page shares the base but has its
+  // own hash route, so App.tsx can tell the two apart without ambiguity.
+  assert(
+    'configured: buildPublicCarePlanLink() uses the same base with the #care-plan=<token> route',
+    configured.buildPublicCarePlanLink('abc123') === 'https://gomars93.github.io/Samindang/followup/#care-plan=abc123',
+  )
+  assert(
+    'unconfigured: buildPublicCarePlanLink() returns null, never a guess (same contract as the follow-up link)',
+    unconfigured.buildPublicCarePlanLink('abc123') === null,
+  )
 }
 
 {

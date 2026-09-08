@@ -1371,4 +1371,39 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     SLEEP_02: '1_2_days',
     SLEEP_03: ['none'],
   }),
+
+  // Batch 4.1-B (§16.6 T8): the only DOCTOR_FIXTURES entry with
+  // viewProfile === 'mixed' (pain primary + HERBAL_ADDON_ACTIVE:'yes' --
+  // see tests/doctor-view-profile-matrix.spec.mjs case 3). Added so the
+  // "출생 시간대" doctor-facing label (§16.3/§15.4) has real mixed-profile
+  // coverage, not just herbal/pain -- no such fixture existed before this
+  // batch (checked: no other entry combines PAIN_01 with
+  // VISIT_00_INTENT:'herbal' or HERBAL_ADDON_ACTIVE:'yes').
+  buildFixture('허리 통증 주호소 + 한약 추가문진 (mixed 프로필)', {
+    ID_01: '유하준',
+    ID_03: 'male',
+    BIRTH_01: '19820730',
+    BIRTH_03: 'in',
+    VISIT_00_INTENT: 'pain_care',
+    HERBAL_ADDON_ACTIVE: 'yes',
+    VISIT_03_SYMPTOM_DURATION: '1_3m',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    SAFETY_01: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_02: ['aching'],
+    PAIN_04: 'none',
+    LBP_01: 'BACK_ONLY',
+    LBP_02: ['NONE'],
+    LBP_03: 'NONE',
+    LBP_04: ['NONE'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'NO',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 3,
+    LBP_13: 'NO',
+    LBP_14: 'NONE',
+  }),
 ]

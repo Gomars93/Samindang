@@ -21,7 +21,25 @@ function allBlank(values: (string | null | undefined)[]): boolean {
   return !values.some((v) => (v ?? '').trim() !== '')
 }
 
-/** True when the clinician has written nothing into the Pain Care Plan at all. */
+/**
+ * True when the clinician has written nothing into the Pain Care Plan's OWN
+ * fields. Deliberately excludes `nextVisitCheckItem`: that field is also the
+ * one bound to the always-visible "다음 방문 확인 메모" textarea one lane
+ * above this disclosure (`PainWorkspace.tsx`), so counting it here made
+ * typing a single character into THAT textarea force this whole 6-field
+ * disclosure open on every keystroke -- and one of those 6 fields is that
+ * very value, so it then showed up in two live textareas at once (Batch 2.6,
+ * docs/DOCTOR_SCREEN_LOAD_AUDIT_OPUS_v0.1.md E-1). The field itself is
+ * unaffected -- still stored, still saved from the lane-4 textarea.
+ *
+ * This premise ("the field also lives in an always-visible lane above this
+ * disclosure") holds ONLY on the initial-visit screen (`PainWorkspace.tsx`).
+ * A screen that instead keeps `nextVisitCheckItem` INSIDE its own version of
+ * this disclosure -- as `RevisitWorkspace.tsx` does, where it is the field's
+ * only editable path -- must add that field to its own `open` condition
+ * itself rather than relying on this predicate to count it (see the closing
+ * review fix, Opus N-1, at `RevisitWorkspace.tsx`'s `<details>`).
+ */
 export function isCarePlanEmpty(plan: PainCarePlan): boolean {
   return allBlank([
     plan.currentTreatmentGoal,
@@ -29,7 +47,6 @@ export function isCarePlanEmpty(plan: PainCarePlan): boolean {
     plan.homeActionPlan,
     plan.activityPrecaution,
     plan.patientInstruction,
-    plan.nextVisitCheckItem,
   ])
 }
 

@@ -58,6 +58,7 @@ import {
 } from '../../lib/serverClient'
 import {
   asPriorVisitArray,
+  findLatestSubmissionBackedPriorVisit,
   readablePriorVisitDateLabel,
   readablePriorVisitFollowUpTarget,
   readablePriorVisitPrimaryConcern,
@@ -78,11 +79,29 @@ import { deserializeWorkspaceState } from './persistence'
 import { ConflictBanner } from '../ConflictBanner'
 import { PainFinalAssessmentCard } from './FinalAssessmentCard'
 import { PainCarePlanCard } from './CarePlanCard'
+import { isCarePlanEmpty } from './NextActionCard'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
+import { baselineDetailAnswersFromResponses } from './detailCheckBaseline'
 import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
-import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS } from './finalAssessment'
+import { RevisitQuickCheckCard } from './RevisitQuickCheckCard'
+import { computeDetailCheckDue, summarizeRevisitQuickCheckKo } from './revisitQuickCheck'
+import { WorkingHypothesisCard } from './WorkingHypothesisCard'
+import { appendLbpHypothesisSentenceToPatientInstruction, isLbpWorkingHypothesisBlank } from './lbpWorkingHypothesis'
+import {
+  applyWorkingHypothesisCarryForward,
+  isRegionPatientForRevisitHypothesisGate,
+  isWorkingHypothesisBlank,
+  summarizeWorkingHypothesisKo,
+  type WorkingHypothesis,
+} from './workingHypothesis'
+import { REGION_KEYS, isPackActive, type RegionKey, type RegionPack } from './regionPack'
+import { REGION_PACKS, activeRegionPack, activeDrivingPack } from './regionPacks'
+import { readRegionHypothesis, withRegionHypothesis, type RegionHypothesisHost } from './regionClinicalState'
+import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS,
+  PAIN_NRS_TARGET_IDS,
+} from './finalAssessment'
 import { EXAM_CHECK_STATUS_LABEL, isValidExamStatus, type ExamCheckStatus } from './provenance'
 import {
   applyFollowUpTargetsCarryForward,
@@ -96,7 +115,22 @@ import {
 } from './revisitCarryForward'
 
 const SAVE_DEBOUNCE_MS = 900
-const COMBINED_FOLLOW_UP_OPTIONS = [...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS]
+// LBP v1 Batch 1 delta fix (Opus review item 1): a prior visit's carried-
+// forward Follow-up Targets can include <region>_tf_* ids (revisitCarryForward.ts's
+// trackingOnly() passes every target through regardless of id) -- those
+// must have a chip here too, or a carried target is selected with no way to
+// see/deselect it. 2026-09-08 Fable F-4: 목표 기능 칩은 **이 환자의 구동 팩**
+// (`revisitPack`)의 것만 — 승인 팩 6개를 전부 펼치면 34개 칩(‘기타 목표 동작’
+// 6개 포함)이 되어 재진 화면에서 고를 수 없다. 다른 부위의 id가 이월돼 있으면
+// FollowUpTargetPicker가 고아 칩으로 그대로 그린다(보이고 해제할 수 있다).
+const FOLLOW_UP_TARGET_GROUP_LABEL = '목표 기능(다음 방문에 같은 동작으로 비교)'
+function revisitFollowUpOptions(pack: RegionPack | null) {
+  const targetFunctions = pack?.targetFunctions ?? []
+  return {
+    options: [...targetFunctions, ...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS],
+    groups: [{ label: FOLLOW_UP_TARGET_GROUP_LABEL, ids: targetFunctions.map((o) => o.id) }],
+  }
+}
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 
@@ -127,7 +161,27 @@ function priorVisitRecapLines(priorSubmission: SubmissionRecord | null) {
     ws?.painCarePlan?.homeActionPlan ? `집에서 할 일: ${ws.painCarePlan.homeActionPlan}` : null,
     ws?.herbalCarePlan?.currentManagementGoal ? `관리 목표: ${ws.herbalCarePlan.currentManagementGoal}` : null,
   ].filter((l): l is string => l !== null)
-  return { examLines, observationLines, carePlanLines }
+  // LBP v1 Batch 2.5c (G16, §11.4): `ws` already passed through
+  // `deserializeWorkspaceState` above, so the hypothesis host (요통 옛 필드 +
+  // 부위 맵) is always well-formed here, never raw/untrusted. 어느 부위의
+  // 가설을 읽을지는 호출부가 구동 부위로 정한다(`readRegionHypothesis`).
+  const hypothesisHost: RegionHypothesisHost | null = ws ?? null
+  return { examLines, observationLines, carePlanLines, hypothesisHost }
+}
+
+/**
+ * §10.2 (Batch 3.1): "이전에 채택한 운동" no longer reads from whichever
+ * SubmissionRecord `priorVisitRecapLines` happened to be given (that is
+ * always the IMMEDIATELY PRIOR visit, which stops being submission-backed
+ * from the patient's 3rd revisit onward) -- it reads from
+ * `rehabSourceSubmission`, the latest SUBMISSION-BACKED visit anywhere in
+ * the history (found via `findLatestSubmissionBackedPriorVisit`). Same
+ * `deserializeWorkspaceState` pass as `priorVisitRecapLines` above, same
+ * reasoning (never read the raw untrusted PUT body directly).
+ */
+function acceptedRehabTitlesFromSubmission(sub: SubmissionRecord | null): string[] {
+  const ws = sub?.workspace ? deserializeWorkspaceState(sub.workspace) : null
+  return (ws?.painRehabSuggestions ?? []).filter((i) => i.status === 'ACCEPTED').map((i) => i.title)
 }
 
 // Round 6 review fix (revisit-of-revisit prior context): the function above
@@ -158,7 +212,34 @@ function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorksp
   // No observationLines equivalent -- a revisit's own VisitWorkspaceState
   // has no herbal-observation field (see visitWorkspace.ts's doc comment:
   // one generic set of clinician fields, not a new clinical data shape).
-  return { examLines, observationLines: [] as string[], carePlanLines }
+  // acceptedRehabTitles no longer belongs here either (§10.2) -- a
+  // revisit's own workspace has no rehab-suggestion field anyway
+  // (RehabSuggestion generation is the documented LBP-submission-only
+  // exception, see rehabSuggestion.ts); it now comes from
+  // `acceptedRehabTitlesFromSubmission(rehabSourceSubmission?.submission)`.
+  // LBP v1 Batch 2.5c (G16, §11.4): `priorVisitWorkspace` already passed
+  // through `deserializeVisitWorkspaceState` when it was loaded (see the
+  // load effect below), so this is never raw/untrusted.
+  const hypothesisHost: RegionHypothesisHost | null = priorVisitWorkspace ?? null
+  return { examLines, observationLines: [] as string[], carePlanLines, hypothesisHost }
+}
+
+// LBP v1 Batch 3 (§9.2(c)): local date, yyyy-mm-dd -- pulled into its own
+// function (rather than inlined at the computeDetailCheckDue call site) so
+// "today" is a single, named, replaceable seam rather than a bare
+// `new Date()` scattered through the render body.
+function baselineDetailAnswersFromSubmission(sub: SubmissionRecord | null): Record<string, string> {
+  // 2026-09-08 Fable F-2: `responses`는 question id 평면 맵이 아니라 coreSpec의
+  // 중첩 payload — 경로 표는 detailCheckBaseline.ts 한 곳에 둔다.
+  return baselineDetailAnswersFromResponses((sub?.submission as { responses?: unknown } | undefined)?.responses)
+}
+
+function todayISO(): string {
+  const d = new Date()
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
 }
 
 export function RevisitWorkspace({ visitId, patientId }: { visitId: string; patientId: string }) {
@@ -167,6 +248,15 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const [priorHistory, setPriorHistory] = useState<PatientHistoryResult | null>(null)
   const [priorSubmission, setPriorSubmission] = useState<SubmissionRecord | null>(null)
   const [priorVisitWorkspace, setPriorVisitWorkspace] = useState<VisitWorkspaceState | null>(null)
+  // §10.2 (Batch 3.1): the latest SUBMISSION-BACKED visit anywhere in the
+  // history (not necessarily the immediately prior visit) -- source for
+  // "이전에 채택한 운동" so that line survives past the patient's 2nd
+  // revisit. `createdAt` is carried alongside so the recap can date-label
+  // it without a second lookup into `priorHistory`.
+  const [rehabSourceSubmission, setRehabSourceSubmission] = useState<{
+    submission: SubmissionRecord
+    createdAt: unknown
+  } | null>(null)
   const [microFollowUpResponse, setMicroFollowUpResponse] = useState<MicroFollowUpResponse | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const skipNextSaveRef = useRef(false)
@@ -207,6 +297,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
     setPriorHistory(null)
     setPriorSubmission(null)
     setPriorVisitWorkspace(null)
+    setRehabSourceSubmission(null)
     setMicroFollowUpResponse(null)
     // Round 18: a stale-write conflict (and its preserved draft) is scoped
     // to the PREVIOUS visit -- never let it survive into a newly-opened one.
@@ -232,8 +323,10 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       if (historyResult.ok) {
         setPriorHistory(historyResult.data)
         const latest = historyResult.data.visits[0]
+        let latestSubmission: SubmissionRecord | null = null
         if (latest?.submissionId) {
           const submissionResult = await getSubmission(latest.submissionId)
+          if (submissionResult.ok) latestSubmission = submissionResult.data
           if (!cancelled && submissionResult.ok) setPriorSubmission(submissionResult.data)
         } else if (latest) {
           // Round 6 review fix: latest prior visit is itself a no-submission
@@ -243,6 +336,25 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           const priorVisitResult = await getVisit(latest.visitId)
           if (!cancelled && priorVisitResult.ok) {
             setPriorVisitWorkspace(deserializeVisitWorkspaceState(priorVisitResult.data.workspace))
+          }
+        }
+        // §10.2: find the latest submission-backed visit anywhere in the
+        // history for "이전에 채택한 운동" -- reuse `latestSubmission` above
+        // (no second fetch) when it IS that visit, otherwise one extra
+        // `getSubmission` call, guarded by `cancelled` like every other
+        // load-effect fetch here. A failure here is silent (stays null) --
+        // it must never affect the other prior-visit recap lines above.
+        const rehabSource = findLatestSubmissionBackedPriorVisit(historyResult.data.visits)
+        if (rehabSource) {
+          if (latest && rehabSource.visitId === latest.visitId && latestSubmission) {
+            if (!cancelled) {
+              setRehabSourceSubmission({ submission: latestSubmission, createdAt: rehabSource.createdAt })
+            }
+          } else {
+            const rehabSubmissionResult = await getSubmission(rehabSource.submissionId)
+            if (!cancelled && rehabSubmissionResult.ok) {
+              setRehabSourceSubmission({ submission: rehabSubmissionResult.data, createdAt: rehabSource.createdAt })
+            }
           }
         }
       }
@@ -355,11 +467,92 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     latestPrior ? latestPrior.followUpTargets : [],
   )
-  const { examLines, observationLines, carePlanLines } = !latestPrior
-    ? { examLines: [], observationLines: [], carePlanLines: [] }
+  const {
+    examLines,
+    observationLines,
+    carePlanLines,
+    hypothesisHost: priorHypothesisHost,
+  } = !latestPrior
+    ? { examLines: [], observationLines: [], carePlanLines: [], hypothesisHost: null as RegionHypothesisHost | null }
     : latestPrior.submissionId
       ? priorVisitRecapLines(priorSubmission)
       : priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace)
+
+  // 부위 팩 일반화(2026-09-06, R2): 이 재진이 어느 부위 팩으로 도는가. 초진
+  // 화면과 같은 신호 — 이력 속 최신 제출의 안전 플래그 + NS01/HIP_00 판별,
+  // 승인 전 팩이면 같은 모집단의 승인 팩으로 후퇴(`activeDrivingPack`). 제출이
+  // 없으면(문진 없는 재진만 있는 환자) 오늘 기록에 이미 판단된 가설이 있는
+  // 부위로 되돌아간다 — 원장이 자기 기록을 볼 수 있어야 하므로. 승인된 팩이
+  // 없으면 가설 카드·이어받기 전부 렌더하지 않는다.
+  const priorSubmissionResponses = (
+    rehabSourceSubmission?.submission?.submission?.responses as { safety_flags?: Record<string, unknown> } | undefined
+  )
+  const regionWithTodayHypothesis: RegionKey | null = !isLbpWorkingHypothesisBlank(workspaceState.lbpWorkingHypothesis)
+    ? 'lbp'
+    : (REGION_KEYS.find((k) => {
+        const pack = REGION_PACKS[k]
+        return isPackActive(pack) && !isWorkingHypothesisBlank(pack.hypothesisPatterns, readRegionHypothesis(workspaceState, k, pack.hypothesisPatterns))
+      }) ?? null)
+  const revisitPack = activeDrivingPack(priorSubmissionResponses) ?? activeRegionPack(regionWithTodayHypothesis)
+  const revisitPatterns = revisitPack?.hypothesisPatterns ?? []
+  const followUpPicker = revisitFollowUpOptions(revisitPack)
+  const priorHypothesis: WorkingHypothesis | null =
+    revisitPack && priorHypothesisHost ? readRegionHypothesis(priorHypothesisHost, revisitPack.region, revisitPatterns) : null
+  const todayHypothesis: WorkingHypothesis | null = revisitPack
+    ? readRegionHypothesis(workspaceState, revisitPack.region, revisitPatterns)
+    : null
+  const priorHypothesisSummary = priorHypothesis ? summarizeWorkingHypothesisKo(revisitPatterns, priorHypothesis) : null
+
+  // §10.2 (Batch 3.1): sourced from the latest submission-backed visit
+  // ANYWHERE in the history, not just when the immediately prior visit
+  // happens to be one -- see `rehabSourceSubmission`'s load-effect comment.
+  const acceptedRehabTitles = acceptedRehabTitlesFromSubmission(rehabSourceSubmission?.submission ?? null)
+
+  // LBP v1 Batch 3 (§9.2(e)): a prior REVISIT's own quick check, read
+  // through the already-sanitized priorVisitWorkspace (deserializeVisitWorkspaceState
+  // ran when it was loaded above) -- never the raw untrusted PUT body.
+  const priorRevisitQuickCheckSummary =
+    latestPrior && !latestPrior.submissionId && priorVisitWorkspace
+      ? summarizeRevisitQuickCheckKo(priorVisitWorkspace.revisitQuickCheck)
+      : null
+
+  // LBP v1 Batch 3 (§9.2(c)): "세부 체크 주기 도달" -- a pure fact against a
+  // plan the clinician already set on a prior visit. todayISO() is the one
+  // seam a future render test could inject a fixed date through.
+  const detailCheckDue = computeDetailCheckDue(priorHistory?.visits, todayISO())
+  // 플로우 정렬 5/5: the first-visit raw answers (questionnaire responses by
+  // question id) the MicroFollowUpCard shows beside today's detail-check
+  // answers. Read straight from the latest prior submission's own payload,
+  // string values only -- never interpreted here.
+  const baselineDetailAnswers = baselineDetailAnswersFromSubmission(priorSubmission)
+
+  // LBP v1 Batch 2.5c (G16, §11.4): whether "이전 가설 이어받기" has
+  // anything real to offer, and whether today's hypothesis is still the
+  // untouched default -- both gate the button (disabled unless available
+  // AND today is blank), matching the pattern the 3 carry-forward buttons
+  // above already use for their own disabled/hint logic.
+  const hypothesisCarryForwardAvailable = priorHypothesis !== null && !isWorkingHypothesisBlank(revisitPatterns, priorHypothesis)
+  const hypothesisTodayBlank = todayHypothesis === null || isWorkingHypothesisBlank(revisitPatterns, todayHypothesis)
+
+  // Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04) → 부위 팩 일반화:
+  // the hypothesis data belongs to ONE region pack. `DoctorWorkspace.tsx`
+  // gates its card on the driving region's approved pack (sourced from
+  // `record.submission.responses` via `recordToPayload` -- see
+  // `DoctorView.tsx`); this screen serves EVERY no-questionnaire revisit
+  // regardless of region, so it needs the same signal. `rehabSourceSubmission`
+  // is already the latest submission-backed visit anywhere in this patient's
+  // history (loaded above for `acceptedRehabTitles`); its `.submission` field
+  // is a `SubmissionRecord`, whose OWN `.submission` field is the raw
+  // questionnaire payload (`Record<string, unknown>`) holding `.responses` --
+  // same double-nesting `recordToPayload` unwraps. The second disjunct
+  // (today's own hypothesis already non-blank) is required so a hypothesis
+  // already recorded on this visit never becomes unreachable/uneditable --
+  // see `isRegionPatientForRevisitHypothesisGate`'s own doc comment.
+  const priorSubmissionSafetyFlagsForRegion = revisitPack ? priorSubmissionResponses?.safety_flags?.[revisitPack.region] : undefined
+  const isRegionPatient =
+    revisitPack !== null &&
+    todayHypothesis !== null &&
+    isRegionPatientForRevisitHypothesisGate(revisitPatterns, priorSubmissionSafetyFlagsForRegion, todayHypothesis)
 
   // Round 9: what the LATEST prior visit offers to carry forward, built
   // from whichever kind of prior visit it is. Purely a suggestion until
@@ -381,6 +574,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   }
 
   const loopStatus: ClinicalLoopStatusItem[] = [
+    { key: 'quickCheck', label: '재진 간단 체크', done: workspaceState.revisitQuickCheck.recordedAt !== null },
     { key: 'assessment', label: '최종 판단 입력', done: workspaceState.finalAssessment.recordedAt !== null },
     { key: 'plan', label: '관리 계획 입력', done: workspaceState.carePlan.recordedAt !== null },
     { key: 'followup', label: '재평가 대상 선택', done: workspaceState.followUpTargets.length > 0 },
@@ -408,7 +602,11 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           오늘 환자 입력{' '}
           <span className="workspace__block__hint">환자가 직접 보고한 변화 — 먼저 읽고 판단하세요</span>
         </h3>
-        <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse} />
+        <MicroFollowUpCard
+          candidates={microFollowUpCandidates}
+          response={microFollowUpResponse}
+          baselineDetailAnswers={baselineDetailAnswers}
+        />
       </section>
 
       <section className="workspace__block">
@@ -448,6 +646,12 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                     <strong>이전 최종 판단</strong> {finalAssessmentSummary}
                   </p>
                 )}
+                {/* LBP v1 Batch 3 (§9.2(e)): only when the LATEST prior visit is
+                    itself a revisit (submissionId === null) and its quick check
+                    has at least one non-NOT_ASSESSED item. */}
+                {priorRevisitQuickCheckSummary && (
+                  <p className="workspace__priorVisit__assessment">{priorRevisitQuickCheckSummary}</p>
+                )}
                 {targets.length > 0 && (
                   <div className="workspace__priorVisit__targets">
                     {targets.map((t) => (
@@ -472,6 +676,27 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
                 {carePlanLines.length > 0 && (
                   <p className="workspace__priorVisit__assessment">
                     <strong>이전 관리 계획</strong> {carePlanLines.join('; ')}
+                  </p>
+                )}
+                {/* LBP v1 Batch 2.5c (G16, §11.4): "그 위에 이전 방문 가설
+                    1줄 읽기 전용 표시" -- omitted entirely when the prior
+                    visit's hypothesis is null/all-UNJUDGED. */}
+                {priorHypothesisSummary && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전 임상 가설</strong> {priorHypothesisSummary.replace(/^임상 가설: /, '')}
+                  </p>
+                )}
+                {/* §10.2 (Batch 3.1): shown whenever ANY submission-backed
+                    visit exists in the history with ACCEPTED
+                    painRehabSuggestions -- not only when the immediately
+                    prior visit is one -- so this line survives past the
+                    patient's 2nd revisit. Date-labelled with the source
+                    visit's own createdAt so it reads correctly even when
+                    that source is several revisits back. */}
+                {acceptedRehabTitles.length > 0 && (
+                  <p className="workspace__priorVisit__assessment">
+                    <strong>이전에 채택한 운동({readablePriorVisitDateLabel(rehabSourceSubmission?.createdAt)} 초진)</strong>{' '}
+                    {acceptedRehabTitles.join(', ')}
                   </p>
                 )}
                 {planShowable && (
@@ -545,22 +770,127 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
 
       <ClinicalLoopStatusBar items={loopStatus} />
 
+      <RevisitQuickCheckCard
+        value={workspaceState.revisitQuickCheck}
+        onChange={(next) => setWorkspaceState((s) => ({ ...s, revisitQuickCheck: next }))}
+      />
+
+      {/*
+        Opus delta review D-4 / CDR-3 (PO decision, 2026-09-04): §11.2
+        declares this data LBP-전용, matching `DoctorWorkspace.tsx`'s own
+        `isLbpRecord` gate on the initial-visit screen. This screen serves
+        EVERY no-questionnaire revisit regardless of region, so both the
+        carry-forward button and the card below are wrapped in
+        `isLbpPatient` -- see its own definition above for the two-part
+        signal (submission-backed LBP flag OR a hypothesis already recorded
+        today).
+
+        LBP v1 Batch 2.5c (G16, §11.4): "재진: 같은 카드 재사용... 기존
+        이어받기 행 관례로 '이전 가설 이어받기' 버튼(오늘 값이 전부
+        UNJUDGED일 때만 활성). 자동 적용 없음." -- a DEDICATED action, never
+        folded into the generic "이전 내용 이어가기" row above (that row's
+        source, revisitCarryForward.ts, never references the hypothesis at
+        all -- see lbpWorkingHypothesis.ts's file header). The prior visit's
+        own hypothesis summary already rendered read-only in "이전 방문
+        참고" above (`priorHypothesisSummary`); this is only the carry-
+        forward action itself.
+      */}
+      {isRegionPatient && revisitPack && todayHypothesis && (
+        <>
+          <div className="workspace__revisit__carryForward__actions">
+            <button
+              type="button"
+              className="workspace__btn"
+              disabled={!hypothesisCarryForwardAvailable || !hypothesisTodayBlank}
+              title={`임상 가설만 채웁니다 — ${carryForwardHint(hypothesisCarryForwardAvailable, hypothesisTodayBlank)}`}
+              onClick={() =>
+                setWorkspaceState((s) =>
+                  withRegionHypothesis(
+                    s,
+                    revisitPack.region,
+                    applyWorkingHypothesisCarryForward(
+                      revisitPatterns,
+                      readRegionHypothesis(s, revisitPack.region, revisitPatterns),
+                      priorHypothesis,
+                      new Date().toISOString(),
+                    ),
+                  ),
+                )
+              }
+            >
+              이전 가설 이어받기
+            </button>
+          </div>
+
+          <WorkingHypothesisCard
+            patterns={revisitPatterns}
+            value={todayHypothesis}
+            onChange={(next) => setWorkspaceState((s) => withRegionHypothesis(s, revisitPack.region, next))}
+            currentPatientInstruction={workspaceState.carePlan.patientInstruction}
+            onInsertPatientSentence={(sentence) =>
+              setWorkspaceState((s) => ({
+                ...s,
+                carePlan: {
+                  ...s.carePlan,
+                  patientInstruction: appendLbpHypothesisSentenceToPatientInstruction(s.carePlan.patientInstruction, sentence),
+                  recordedAt: new Date().toISOString(),
+                },
+              }))
+            }
+          />
+        </>
+      )}
+
       <PainFinalAssessmentCard
         value={workspaceState.finalAssessment}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, finalAssessment: next }))}
       />
 
-      <PainCarePlanCard
-        value={workspaceState.carePlan}
-        onChange={(next) => setWorkspaceState((s) => ({ ...s, carePlan: next }))}
-      />
+      {/* Batch 2.6 (E-3): matches the initial-visit treatment
+          (PainWorkspace.tsx) instead of the always-open form the revisit
+          screen copied from an earlier round -- same auto-open-when-non-empty
+          convention (isCarePlanEmpty, corrected in Batch 2.6 to no longer
+          count `nextVisitCheckItem`), so nothing already recorded here is
+          ever hidden behind a closed disclosure. */}
+      {/* Closing review (Opus N-1): `isCarePlanEmpty` deliberately excludes
+          `nextVisitCheckItem` because on the INITIAL-visit screen that field
+          lives in an always-visible lane-4 textarea outside this disclosure
+          (see `isCarePlanEmpty`'s doc comment in NextActionCard.tsx). On
+          THIS screen the field has no such lane -- it lives INSIDE this
+          disclosure as its only editable path -- so the shared predicate's
+          premise does not hold here, and it must be added back explicitly:
+          without this, carrying forward a prior plan whose only text is
+          `nextVisitCheckItem` writes the value but leaves the disclosure
+          closed, showing nothing and disabling the carry-forward button. */}
+      <details
+        className="workspace__revisit__optional"
+        open={!isCarePlanEmpty(workspaceState.carePlan) || workspaceState.carePlan.nextVisitCheckItem.trim() !== ''}
+      >
+        <summary>치료 계획 (Care Plan) — 필요할 때 펼치기</summary>
+        <PainCarePlanCard
+          value={workspaceState.carePlan}
+          onChange={(next) => setWorkspaceState((s) => ({ ...s, carePlan: next }))}
+        />
+      </details>
 
       <FollowUpTargetPicker
-        options={COMBINED_FOLLOW_UP_OPTIONS}
+        options={followUpPicker.options}
         selected={workspaceState.followUpTargets}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, followUpTargets: next }))}
         showPostTreatmentField
+        groups={followUpPicker.groups}
+        nrsTargetIds={PAIN_NRS_TARGET_IDS}
       />
+
+      {/* LBP v1 Batch 3 (§9.2(c)): a pure fact readout, never auto-opening
+          the disclosure below it -- the clinician still decides whether to
+          act on it. */}
+      {detailCheckDue && (
+        <p className="workspace__revisit__detailCheckDue" role="status">
+          이전에 계획한 세부 재검 시점입니다({detailCheckDue.planLabel}) — 아래 &apos;오늘 재검&apos;을 펼쳐
+          진행할지 원장이 정합니다.
+        </p>
+      )}
 
       {/* Round 9: collapsed by default so a routine "unchanged, continue"
           revisit does not present two more mandatory-looking forms. Both

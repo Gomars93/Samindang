@@ -7,9 +7,18 @@
 import {
   emptyWorkspaceState,
   deserializeWorkspaceState,
+  workspaceStateEquals,
   WORKSPACE_STATE_SCHEMA_VERSION,
 } from './.workspace-round3-persistence-bundle.mjs'
 import { reassessmentExamItemFromPrevious, isReassessmentPending } from './.workspace-round3-reassessment-bundle.mjs'
+import {
+  EXAM_CHECK_STATUS_LABEL,
+  EXAM_CHECK_STATUS_GLYPH,
+  EXAM_CHECK_STATUS_OPTIONS,
+  isValidExamStatus,
+  isExamChecked,
+} from './.workspace-round3-provenance-bundle.mjs'
+import { emptyExamResult, isExamPending, groupExamSuggestions } from './.workspace-round3-examsuggestion-bundle.mjs'
 import { buildPainPatientCarePlanPreview, buildHerbalPatientCarePlanPreview } from './.workspace-round3-patientpreview-bundle.mjs'
 import { emptyPainCarePlan, emptyHerbalCarePlan } from './.workspace-round3-careplan-bundle.mjs'
 import { deriveAdditionalConcernSummary, emptyAdditionalConcernPromotion } from './.workspace-round3-additionalconcern-bundle.mjs'
@@ -29,7 +38,11 @@ import {
   isJudgmentBlank,
   isTreatmentPlanBlank,
 } from './.workspace-round3-carryforward-bundle.mjs'
-import { emptyVisitWorkspaceState, deserializeVisitWorkspaceState } from './.workspace-round3-visitworkspace-bundle.mjs'
+import {
+  emptyVisitWorkspaceState,
+  deserializeVisitWorkspaceState,
+  visitWorkspaceStateEquals,
+} from './.workspace-round3-visitworkspace-bundle.mjs'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -81,6 +94,60 @@ function assert(name, cond) {
     'round-trip: painReassessment.items[0].result stays NOT_YET_CHECKED (never auto-copied from previous)',
     roundTripped.painReassessment.items[0].result.status === 'NOT_YET_CHECKED',
   )
+}
+
+/* ---------------- LBP v1 Batch 1 (G3): lbpDirectionalResponse ---------------- */
+{
+  const empty = emptyWorkspaceState()
+  assert('emptyWorkspaceState.lbpDirectionalResponse starts NOT_ASSESSED', empty.lbpDirectionalResponse === 'NOT_ASSESSED')
+
+  const filled = { ...empty, lbpDirectionalResponse: 'FLEXION_FAVORABLE' }
+  const roundTripped = deserializeWorkspaceState(JSON.parse(JSON.stringify(filled)))
+  assert('round-trip: lbpDirectionalResponse survives JSON round-trip exactly', roundTripped.lbpDirectionalResponse === 'FLEXION_FAVORABLE')
+
+  const garbage = deserializeWorkspaceState({ lbpDirectionalResponse: 'BOGUS_VALUE' })
+  assert('an invalid persisted lbpDirectionalResponse degrades to NOT_ASSESSED, never throws/passes through', garbage.lbpDirectionalResponse === 'NOT_ASSESSED')
+
+  const wrongType = deserializeWorkspaceState({ lbpDirectionalResponse: 7 })
+  assert('a wrong-typed (number) lbpDirectionalResponse degrades to NOT_ASSESSED', wrongType.lbpDirectionalResponse === 'NOT_ASSESSED')
+
+  // Legacy record predating Batch 1 -- field entirely absent.
+  const legacy = deserializeWorkspaceState({
+    schema_version: '1.0.0',
+    painExamSuggestions: [],
+    painFinalAssessment: { finalWorkingAssessment: '', treatmentFocus: '', interventionPerformedOrPlanned: '', immediateRetestTarget: '', recordedAt: null },
+    painFollowUpTargets: [],
+    updated_at: null,
+  })
+  assert('legacy record with lbpDirectionalResponse entirely absent degrades to NOT_ASSESSED', legacy.lbpDirectionalResponse === 'NOT_ASSESSED')
+}
+
+/* ---------------- 2026-09-05: 준비조건 필드 제거 (CD-1/CD-3 폐기) ---------------- */
+{
+  const empty = emptyWorkspaceState()
+  assert(
+    'emptyWorkspaceState에 lbpConfirmedCapabilities/lbpDeniedCapabilities가 없다',
+    !('lbpConfirmedCapabilities' in empty) && !('lbpDeniedCapabilities' in empty),
+  )
+
+  // 옛 기록에 남아 있는 두 배열은 조용히 무시된다 — 역직렬화가 전체 shape을
+  // 매번 새로 만들기 때문에 안전하다. 잃는 값은 애초에 어디로도 나가지 않던
+  // 값이다(EMR·재진·환자 안내문 전부 미도달, 확인함).
+  const legacy = deserializeWorkspaceState({
+    lbpConfirmedCapabilities: ['SAFE_WALKING', 'CAN_SELF_PACE'],
+    lbpDeniedCapabilities: ['QUADRUPED_TOLERATED'],
+    painFinalAssessment: { finalWorkingAssessment: '남아 있어야 한다' },
+  })
+  assert('옛 기록의 준비조건 배열은 복원되지 않는다', !('lbpConfirmedCapabilities' in legacy) && !('lbpDeniedCapabilities' in legacy))
+  assert('같은 기록의 다른 필드는 그대로 살아남는다 (조용한 전면 초기화가 아님)', legacy.painFinalAssessment.finalWorkingAssessment === '남아 있어야 한다')
+  assert('준비조건이 있던 옛 기록도 던지지 않고 로드된다', legacy.schema_version === WORKSPACE_STATE_SCHEMA_VERSION)
+
+  // RehabSuggestion.regressed도 함께 사라졌다 — 시스템이 판정하던 값이었다.
+  const withRegressed = deserializeWorkspaceState({
+    painRehabSuggestions: [{ id: 'LBP_ACT_01', title: 'x', goal: '', rationale: '', sourceFacts: [], contraindicationFacts: [], source: 'SUGGESTED', status: 'ACCEPTED', clinicianFinalInstruction: '', regressed: true }],
+  })
+  assert('옛 기록의 regressed 플래그는 복원되지 않는다', !('regressed' in withRegressed.painRehabSuggestions[0]))
+  assert('그 제안의 원장 결정(ACCEPTED)은 그대로 보존된다', withRegressed.painRehabSuggestions[0].status === 'ACCEPTED')
 }
 
 /* ---------------- old-schema (round 2) safe load ---------------- */
@@ -697,4 +764,371 @@ function assert(name, cond) {
   )
 }
 
+/* -----------------------------------------------------------------------
+ * LBP v1 Batch 3 (§9.2(a)/(f)): revisitQuickCheck field on VisitWorkspaceState.
+ * ------------------------------------------------------------------- */
+{
+  const empty = emptyVisitWorkspaceState()
+  assert(
+    'revisitQuickCheck: emptyVisitWorkspaceState() carries an empty quick check (all NOT_ASSESSED, recordedAt null)',
+    empty.revisitQuickCheck.targetFunctionChange === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.overallResponse === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.newNeuroOrRedFlag === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.exerciseAdherence === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.adverseEffect === 'NOT_ASSESSED' &&
+      empty.revisitQuickCheck.recordedAt === null,
+  )
+
+  // Round-trip: a well-formed revisitQuickCheck survives deserialize.
+  const wellFormed = {
+    ...empty,
+    revisitQuickCheck: {
+      targetFunctionChange: 'BETTER',
+      overallResponse: 'SAME',
+      newNeuroOrRedFlag: 'NO',
+      exerciseAdherence: 'DONE_AS_PLANNED',
+      adverseEffect: 'NO',
+      note: '메모',
+      recordedAt: '2026-09-03T00:00:00.000Z',
+    },
+  }
+  const roundTripped = deserializeVisitWorkspaceState(wellFormed)
+  assert(
+    'revisitQuickCheck: a well-formed quick check round-trips through deserializeVisitWorkspaceState untouched',
+    JSON.stringify(roundTripped.revisitQuickCheck) === JSON.stringify(wellFormed.revisitQuickCheck),
+  )
+
+  // Legacy record: no revisitQuickCheck field at all -> empty.
+  const legacy = { ...empty }
+  delete legacy.revisitQuickCheck
+  const loadedLegacy = deserializeVisitWorkspaceState(legacy)
+  assert(
+    'revisitQuickCheck: a legacy record with no revisitQuickCheck field at all deserializes to emptyRevisitQuickCheck()',
+    JSON.stringify(loadedLegacy.revisitQuickCheck) === JSON.stringify(empty.revisitQuickCheck),
+  )
+
+  // Corrupted enum values -> NOT_ASSESSED, never a normal/negative value.
+  const corrupted = {
+    ...empty,
+    revisitQuickCheck: {
+      targetFunctionChange: 'IMPROVED', // unknown
+      overallResponse: 7, // wrong type
+      newNeuroOrRedFlag: 'NO', // valid -- survives
+      exerciseAdherence: 'MADE_UP', // unknown
+      adverseEffect: 'YES', // valid -- survives
+      note: 5, // wrong type
+      recordedAt: null,
+    },
+  }
+  const loadedCorrupted = deserializeVisitWorkspaceState(corrupted)
+  assert('revisitQuickCheck: an unknown targetFunctionChange value degrades to NOT_ASSESSED', loadedCorrupted.revisitQuickCheck.targetFunctionChange === 'NOT_ASSESSED')
+  assert('revisitQuickCheck: a wrong-typed overallResponse value degrades to NOT_ASSESSED', loadedCorrupted.revisitQuickCheck.overallResponse === 'NOT_ASSESSED')
+  assert('revisitQuickCheck: a well-formed sibling value (newNeuroOrRedFlag) survives untouched', loadedCorrupted.revisitQuickCheck.newNeuroOrRedFlag === 'NO')
+  assert('revisitQuickCheck: an unknown exerciseAdherence value degrades to NOT_ASSESSED', loadedCorrupted.revisitQuickCheck.exerciseAdherence === 'NOT_ASSESSED')
+  assert('revisitQuickCheck: a well-formed sibling value (adverseEffect) survives untouched', loadedCorrupted.revisitQuickCheck.adverseEffect === 'YES')
+  assert('revisitQuickCheck: a wrong-typed note degrades to empty string', loadedCorrupted.revisitQuickCheck.note === '')
+
+  // visitWorkspaceStateEquals detects a quick-check-only change.
+  const before = emptyVisitWorkspaceState()
+  const afterQuickCheckChange = { ...before, revisitQuickCheck: { ...before.revisitQuickCheck, adverseEffect: 'YES' } }
+  assert(
+    'visitWorkspaceStateEquals: detects a change confined entirely to revisitQuickCheck',
+    !visitWorkspaceStateEquals(before, afterQuickCheckChange),
+  )
+  assert('visitWorkspaceStateEquals: two identical states (including quick check) compare equal', visitWorkspaceStateEquals(before, { ...before }))
+
+  // Structural: carry-forward never touches revisitQuickCheck at all --
+  // carryForwardSourceFromVisitWorkspace's own return type (judgment/
+  // treatmentPlan/followUpTargets) has no quick-check key to begin with,
+  // so applying any of the three carry-forward actions to a blank revisit
+  // workspace leaves its quick check exactly as blank as it started.
+  const priorRevisitWithQuickCheck = {
+    ...emptyVisitWorkspaceState(),
+    finalAssessment: { ...empty.finalAssessment, finalWorkingAssessment: '이전 판단', recordedAt: '2026-01-01T00:00:00.000Z' },
+    revisitQuickCheck: {
+      targetFunctionChange: 'BETTER',
+      overallResponse: 'BETTER',
+      newNeuroOrRedFlag: 'NO',
+      exerciseAdherence: 'DONE_AS_PLANNED',
+      adverseEffect: 'NO',
+      note: '이전 메모',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    },
+  }
+  const revisitSourceForQuickCheck = carryForwardSourceFromVisitWorkspace(priorRevisitWithQuickCheck)
+  assert(
+    'revisitQuickCheck: carryForwardSourceFromVisitWorkspace never exposes a quickCheck-shaped key',
+    !('quickCheck' in revisitSourceForQuickCheck) && !('revisitQuickCheck' in revisitSourceForQuickCheck),
+  )
+  const appliedJudgment = applyJudgmentCarryForward(emptyVisitWorkspaceState(), revisitSourceForQuickCheck, '2026-09-03T00:00:00.000Z')
+  assert(
+    "revisitQuickCheck: applying 이전 판단 유지 carries the judgment text but leaves today's quick check blank",
+    appliedJudgment.finalAssessment.finalWorkingAssessment === '이전 판단' &&
+      JSON.stringify(appliedJudgment.revisitQuickCheck) === JSON.stringify(emptyVisitWorkspaceState().revisitQuickCheck),
+  )
+}
+
+/* -----------------------------------------------------------------------
+ * LBP v1 Batch 2.5b (G15): ExamCheckStatus 6상태 —
+ * POSITIVE / NEGATIVE / UNCLEAR / LIMITED / NOT_PERFORMED / NOT_YET_CHECKED.
+ * 설계 문서: docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md
+ *
+ * 이 배치의 코드 diff는 작다. 위험은 "바꾸지 않은 코드"에 있다 -- 결과 상태를
+ * 읽는 필터가 전부 `!== 'NOT_YET_CHECKED'` 형태라 신규 2값이 "기록된 사실"로
+ * 취급되는 것이 *우연히* 맞는 상태다. 아래 assertion들이 그 우연을 계약으로
+ * 고정한다.
+ * ------------------------------------------------------------------- */
+{
+  const SIX = ['POSITIVE', 'NEGATIVE', 'UNCLEAR', 'LIMITED', 'NOT_PERFORMED', 'NOT_YET_CHECKED']
+
+  /* ---- T-1a: 화면 옵션 목록이 enum 전체를 정확히 한 번씩 덮는가 ----
+   * `ExamCheckStatus[]`는 부분집합도 통과하는 타입이므로 tsc가 누락을 잡지
+   * 못한다. 값을 추가하고 EXAM_CHECK_STATUS_OPTIONS를 잊으면 build/기존
+   * 테스트가 전부 통과하면서 원장이 신규 상태를 고를 수만 없게 된다. */
+  const labelKeys = Object.keys(EXAM_CHECK_STATUS_LABEL)
+  assert(
+    'Batch 2.5b T-1a: EXAM_CHECK_STATUS_LABEL has exactly the 6 approved states',
+    labelKeys.length === 6 && SIX.every((k) => labelKeys.includes(k)),
+  )
+  assert(
+    'Batch 2.5b T-1a: EXAM_CHECK_STATUS_OPTIONS covers every label key exactly once (no silently unreachable state)',
+    EXAM_CHECK_STATUS_OPTIONS.length === labelKeys.length &&
+      new Set(EXAM_CHECK_STATUS_OPTIONS).size === EXAM_CHECK_STATUS_OPTIONS.length &&
+      labelKeys.every((k) => EXAM_CHECK_STATUS_OPTIONS.includes(k)),
+  )
+  assert(
+    'Batch 2.5b T-1a: 자주 쓰는 3개(정상/이상/불명확)가 항상 목록 앞에 온다 (CD-2.5b-3 권고 순서)',
+    EXAM_CHECK_STATUS_OPTIONS.slice(0, 3).join(',') === 'POSITIVE,NEGATIVE,UNCLEAR' &&
+      EXAM_CHECK_STATUS_OPTIONS[EXAM_CHECK_STATUS_OPTIONS.length - 1] === 'NOT_YET_CHECKED',
+  )
+
+  /* ---- T-1a(라벨 자구): CD-2.5b-1 권고안 A. 기존 LbpDirectionalResponse가
+   * "미시행"을 미평가의 뜻으로 이미 쓰고 있으므로 여기서는 쓰지 않는다. ---- */
+  assert(
+    'Batch 2.5b T-1a: LIMITED/NOT_PERFORMED labels are non-empty, distinct, and never reuse the 음성/정상 wording',
+    EXAM_CHECK_STATUS_LABEL.LIMITED.trim() !== '' &&
+      EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED.trim() !== '' &&
+      EXAM_CHECK_STATUS_LABEL.LIMITED !== EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED &&
+      !EXAM_CHECK_STATUS_LABEL.LIMITED.includes('음성') &&
+      !EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED.includes('음성') &&
+      !EXAM_CHECK_STATUS_LABEL.LIMITED.includes('정상') &&
+      !EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED.includes('정상'),
+  )
+  assert(
+    'Batch 2.5b T-1a (CD-2.5b-1): NOT_PERFORMED does not reuse the exact label "미시행" (already means 미평가 in LbpDirectionalResponse)',
+    EXAM_CHECK_STATUS_LABEL.NOT_PERFORMED !== '미시행',
+  )
+  assert(
+    'Batch 2.5b T-1a: the four pre-existing labels are unchanged (additive only)',
+    EXAM_CHECK_STATUS_LABEL.POSITIVE === '양성/이상 소견' &&
+      EXAM_CHECK_STATUS_LABEL.NEGATIVE === '음성/정상' &&
+      EXAM_CHECK_STATUS_LABEL.UNCLEAR === '불명확' &&
+      EXAM_CHECK_STATUS_LABEL.NOT_YET_CHECKED === '아직 확인 안 됨',
+  )
+
+  /* ---- T-9: 색 무의존 요건(Core Reduction P2) -- glyph 6개가 서로 달라야 한다 ---- */
+  const glyphs = SIX.map((k) => EXAM_CHECK_STATUS_GLYPH[k])
+  assert(
+    'Batch 2.5b T-9: all 6 status glyphs exist, are non-empty, and are mutually distinct (색만으로 구분 금지)',
+    glyphs.length === 6 && glyphs.every((g) => typeof g === 'string' && g.trim() !== '') && new Set(glyphs).size === 6,
+  )
+
+  /* ---- T-7: validator가 신규 값을 받아들이고 garbage는 계속 거부하는가 ---- */
+  assert(
+    'Batch 2.5b T-7: isValidExamStatus accepts all 6 approved states',
+    SIX.every((k) => isValidExamStatus(k) === true),
+  )
+  assert(
+    'Batch 2.5b T-7: isValidExamStatus still rejects garbage (unknown string, empty, null, number, object, prototype key)',
+    ['MAYBE', '', 'limited', 'not_performed'].every((v) => isValidExamStatus(v) === false) &&
+      isValidExamStatus(null) === false &&
+      isValidExamStatus(undefined) === false &&
+      isValidExamStatus(7) === false &&
+      isValidExamStatus({}) === false &&
+      isValidExamStatus('toString') === false,
+  )
+
+  /* ---- T-3: 신규 2값은 "기록된 사실"이지 pending이 아니다 ---- */
+  const examItem = (status) => ({
+    id: `e_${status}`,
+    title: `검사 ${status}`,
+    priority: 'MUST_CHECK',
+    reasonFacts: [],
+    source: 'SUGGESTED',
+    result: { status, laterality: null, note: '', recordedAt: status === 'NOT_YET_CHECKED' ? null : '2026-01-01T00:00:00.000Z' },
+  })
+  assert(
+    'Batch 2.5b T-3: isExamPending is false for LIMITED and NOT_PERFORMED (a recorded fact, not "아직 확인 안 됨")',
+    isExamPending(examItem('LIMITED')) === false && isExamPending(examItem('NOT_PERFORMED')) === false,
+  )
+  assert(
+    'Batch 2.5b T-3: isExamPending stays true ONLY for NOT_YET_CHECKED',
+    isExamPending(examItem('NOT_YET_CHECKED')) === true &&
+      SIX.filter((k) => k !== 'NOT_YET_CHECKED').every((k) => isExamPending(examItem(k)) === false),
+  )
+  const grouped = groupExamSuggestions(SIX.map(examItem))
+  assert(
+    'Batch 2.5b T-3: groupExamSuggestions().stillPending contains only the NOT_YET_CHECKED item',
+    grouped.stillPending.length === 1 && grouped.stillPending[0].result.status === 'NOT_YET_CHECKED',
+  )
+  assert(
+    'Batch 2.5b T-3: isReassessmentPending is false for LIMITED/NOT_PERFORMED, true only for NOT_YET_CHECKED',
+    isReassessmentPending({ result: { status: 'LIMITED' } }) === false &&
+      isReassessmentPending({ result: { status: 'NOT_PERFORMED' } }) === false &&
+      isReassessmentPending({ result: { status: 'NOT_YET_CHECKED' } }) === true,
+  )
+  assert(
+    'Batch 2.5b T-3: isExamChecked is true for LIMITED/NOT_PERFORMED (they ARE clinician-entered records)',
+    isExamChecked('LIMITED') === true &&
+      isExamChecked('NOT_PERFORMED') === true &&
+      isExamChecked('NOT_YET_CHECKED') === false,
+  )
+
+  /* ---- T-4: 이전 소견이 신규 값이어도 오늘 결과로 자동 복사되지 않는다 ---- */
+  for (const prevStatus of ['LIMITED', 'NOT_PERFORMED']) {
+    const promoted = reassessmentExamItemFromPrevious('r1', '재검 항목', {
+      status: prevStatus,
+      laterality: null,
+      note: '사유 메모',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    })
+    assert(
+      `Batch 2.5b T-4: a promoted item whose previous status is ${prevStatus} still starts result.status = NOT_YET_CHECKED`,
+      promoted.result.status === 'NOT_YET_CHECKED' && promoted.result.recordedAt === null,
+    )
+    assert(
+      `Batch 2.5b T-4: the ${prevStatus} previous value itself is preserved as a read-only raw fact`,
+      promoted.previous.status === prevStatus && promoted.previous.note === '사유 메모',
+    )
+  }
+
+  /* ---- T-10: 신규 값이 기본값으로 새지 않는다 ---- */
+  assert(
+    'Batch 2.5b T-10: emptyExamResult() still defaults to NOT_YET_CHECKED (a new state must never become the default)',
+    emptyExamResult().status === 'NOT_YET_CHECKED' && emptyExamResult().recordedAt === null,
+  )
+  {
+    const emptyVisit = emptyVisitWorkspaceState()
+    assert(
+      'Batch 2.5b T-10: emptyVisitWorkspaceState reassessment items start empty (no defaulted status at all)',
+      Array.isArray(emptyVisit.reassessment.items) && emptyVisit.reassessment.items.length === 0,
+    )
+  }
+  /*
+   * Opus delta review (Batch 2.5b) defect 3: the `items.length === 0`
+   * check above says nothing about PREVIOUS_EXAM_VALUE_TEMPLATE.status
+   * (persistence.ts / visitWorkspace.ts) -- the sanitizeShape fallback a
+   * malformed `previous` value actually degrades to. That constant could
+   * be flipped to e.g. 'LIMITED' and this suite would still pass. Feed a
+   * damaged `previous` (a record whose `status` is missing/wrong-typed)
+   * through both deserializers and pin the fallback to NOT_YET_CHECKED --
+   * anything else fabricates a clinical fact ("제한적 시행") that was
+   * never actually recorded.
+   */
+  {
+    const deserialized = deserializeWorkspaceState({
+      painReassessment: {
+        items: [
+          { id: 'r1', title: '재검 항목', previous: {}, result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null } },
+          {
+            id: 'r2',
+            title: '재검 항목 2',
+            previous: { status: 7, laterality: null, note: '', recordedAt: null },
+            result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null },
+          },
+        ],
+      },
+    })
+    assert(
+      'Batch 2.5b T-10: deserializeWorkspaceState -- a malformed previous ({}) degrades previous.status to NOT_YET_CHECKED, never a fabricated LIMITED/etc. fact',
+      deserialized.painReassessment.items[0].previous !== null && deserialized.painReassessment.items[0].previous.status === 'NOT_YET_CHECKED',
+    )
+    assert(
+      'Batch 2.5b T-10: deserializeWorkspaceState -- a wrong-typed previous.status (number) also degrades to NOT_YET_CHECKED',
+      deserialized.painReassessment.items[1].previous !== null && deserialized.painReassessment.items[1].previous.status === 'NOT_YET_CHECKED',
+    )
+  }
+  {
+    const deserializedVisit = deserializeVisitWorkspaceState({
+      reassessment: {
+        items: [
+          { id: 'r1', title: '재검 항목', previous: {}, result: { status: 'NOT_YET_CHECKED', laterality: null, note: '', recordedAt: null } },
+        ],
+      },
+    })
+    assert(
+      'Batch 2.5b T-10: deserializeVisitWorkspaceState -- a malformed previous ({}) degrades previous.status to NOT_YET_CHECKED, never a fabricated fact',
+      deserializedVisit.reassessment.items[0].previous !== null && deserializedVisit.reassessment.items[0].previous.status === 'NOT_YET_CHECKED',
+    )
+  }
+
+  /* ---- T-6: 직렬화 round-trip -- 신규 값 보존 + 구 4값 레코드 무변화 ---- */
+  {
+    const withNewStates = {
+      ...emptyWorkspaceState(),
+      painExamSuggestions: [examItem('LIMITED'), examItem('NOT_PERFORMED')],
+      painReassessment: {
+        items: [
+          {
+            id: 'r1',
+            title: '재검',
+            previous: { status: 'LIMITED', laterality: 'LEFT', note: '통증으로 각도 미달', recordedAt: '2026-01-01T00:00:00.000Z' },
+            source: 'OBSERVED',
+            result: { status: 'NOT_PERFORMED', laterality: null, note: '오늘은 시행 못 함', recordedAt: '2026-02-01T00:00:00.000Z' },
+          },
+        ],
+        finalReassessmentNote: '',
+        recordedAt: null,
+      },
+    }
+    const rt = deserializeWorkspaceState(JSON.parse(JSON.stringify(withNewStates)))
+    assert(
+      'Batch 2.5b T-6: round-trip preserves LIMITED / NOT_PERFORMED on painExamSuggestions',
+      rt.painExamSuggestions.map((i) => i.result.status).join(',') === 'LIMITED,NOT_PERFORMED',
+    )
+    assert(
+      'Batch 2.5b T-6: round-trip preserves a NOT_PERFORMED today-result and a LIMITED previous value on a reassessment item',
+      rt.painReassessment.items[0].result.status === 'NOT_PERFORMED' &&
+        rt.painReassessment.items[0].result.note === '오늘은 시행 못 함' &&
+        rt.painReassessment.items[0].previous.status === 'LIMITED' &&
+        rt.painReassessment.items[0].previous.note === '통증으로 각도 미달',
+    )
+    /* 하위 호환: 구 4값만 쓰던 레코드는 round-trip 후 한 글자도 달라지지 않아야
+     * 한다 = 마이그레이션이 필요 없다는 주장의 근거. */
+    const legacy = {
+      ...emptyWorkspaceState(),
+      painExamSuggestions: [examItem('POSITIVE'), examItem('NEGATIVE'), examItem('UNCLEAR'), examItem('NOT_YET_CHECKED')],
+    }
+    const legacyRt = deserializeWorkspaceState(JSON.parse(JSON.stringify(legacy)))
+    assert(
+      'Batch 2.5b T-6: a legacy 4-value record round-trips byte-identically (no migration needed)',
+      JSON.stringify(legacyRt.painExamSuggestions) === JSON.stringify(legacy.painExamSuggestions),
+    )
+  }
+}
+
+
 console.log(`\n${passCount} workspace round-3 assertions passed.`)
+
+/* ---------------- 2026-09-05: lbpConfirmedStage (원장 확정 운동 단계) persistence ---------------- */
+{
+  const empty = emptyWorkspaceState()
+  assert('emptyWorkspaceState.lbpConfirmedStage starts null (미확정)', empty.lbpConfirmedStage === null)
+  for (const s of [0, 1, 2, 3]) {
+    const rt = deserializeWorkspaceState(JSON.parse(JSON.stringify({ ...empty, lbpConfirmedStage: s })))
+    assert(`lbpConfirmedStage ${s} round-trips through serialize/deserialize`, rt.lbpConfirmedStage === s)
+  }
+  for (const bad of ['1', 1.5, -1, 4, true, {}, [], 'severe', NaN, undefined]) {
+    const rt = deserializeWorkspaceState({ lbpConfirmedStage: bad })
+    assert(`lbpConfirmedStage garbage ${String(bad)} degrades to null (never a stage)`, rt.lbpConfirmedStage === null)
+  }
+  const legacy = deserializeWorkspaceState({ lbpConfirmedCapabilities: ['SAFE_WALKING'], lbpDeniedCapabilities: [] })
+  assert('a pre-2026-09-05 record with no lbpConfirmedStage field reads as null (단계 필터 꺼짐)', legacy.lbpConfirmedStage === null)
+  // 0은 falsy — `|| null` 같은 실수로 0단계가 사라지면 안 된다
+  const zero = deserializeWorkspaceState({ lbpConfirmedStage: 0 })
+  assert('0단계는 falsy지만 null로 뭉개지지 않는다', zero.lbpConfirmedStage === 0)
+  const a = { ...empty, lbpConfirmedStage: 1 }
+  const b = { ...empty, lbpConfirmedStage: 2 }
+  assert('workspaceStateEquals distinguishes different confirmed stages (save is not skipped)', !workspaceStateEquals(a, b))
+}
+console.log(`\n(+lbpConfirmedStage) ${passCount} assertions passed so far.`)

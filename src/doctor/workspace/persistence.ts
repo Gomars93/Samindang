@@ -40,6 +40,9 @@ import type { AdditionalConcernPromotionState } from './additionalConcern'
 import { emptyAdditionalConcernPromotion } from './additionalConcern'
 import type { Provenance } from './provenance'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } from './sanitize'
+import { isValidLbpDirectionalResponse, type LbpDirectionalResponse } from './lbpExamSuggestions'
+import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
+import { sanitizeConfirmedStage, sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -188,6 +191,55 @@ export type WorkspaceState = {
   painRehabSuggestions: RehabSuggestion[]
   /** Round 3 Phase H: clinician's own "look at this Additional concern more closely today" note — never mutates routing. */
   additionalConcernPromotion: AdditionalConcernPromotionState
+  /**
+   * LBP v1 Batch 1 (G3): clinician-observed lumbar-movement direction
+   * response. Default/invalid/legacy-missing always degrades to
+   * 'NOT_ASSESSED' — never rendered or persisted as a normal/negative
+   * value. Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION.
+   */
+  lbpDirectionalResponse: LbpDirectionalResponse
+  /*
+   * 2026-09-05: `lbpConfirmedCapabilities`/`lbpDeniedCapabilities`를 제거했다.
+   * 준비조건 게이트와 함께 사라진 필드다 — 두 배열은 EMR·재진 이어받기·환자
+   * 안내문 어디에도 도달한 적이 없고(확인함), 유일한 소비자가 같은 화면의
+   * 게이트였다. 옛 기록에 남아 있는 값은 역직렬화에서 조용히 무시된다(전체
+   * shape을 매번 새로 만들므로 안전하다). 폐기된 PO 결정 CD-1/CD-3의 이유는
+   * `DECISIONS.md` 2026-09-05 "준비조건 게이트 제거" 항목 참고.
+   */
+  /**
+   * LBP v1 Batch 2.5c (G16, `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`
+   * §11.2): the clinician's own directly-selected support level per pattern
+   * — no score, no computed value, ever (see `lbpWorkingHypothesis.ts`'s
+   * file header). Default `emptyLbpWorkingHypothesis()` (every pattern
+   * 'UNJUDGED'). Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION
+   * — a legacy record with no field at all deserializes to the same empty
+   * default, same convention as `lbpDirectionalResponse`/
+   * `lbpConfirmedCapabilities` above.
+   */
+  lbpWorkingHypothesis: LbpWorkingHypothesis
+  /**
+   * 2026-09-05 (원장 결정, `DECISIONS.md` 같은 날짜 "준비조건 두 층" 항목):
+   * 원장이 확정한 운동 단계. `null` = 아직 확정 안 함(기본).
+   * 0 = 보호/안정(능동 운동 미처방), 1~3 = TBC 단계.
+   *
+   * 이 값이 하는 일: (1) 후보 운동을 이 단계 이하로 필터, (2) C층 준비조건
+   * 12개를 이 단계에서 추정(`lbpCapabilityLayer.ts`). **제안값이 아니라
+   * 확정값만 저장한다** — 제안(`suggestLbpExerciseStage`)은 매 렌더 재계산이고
+   * 여기 쓰이지 않는다("adopt, never automatic").
+   *
+   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION — 옛 기록은
+   * `null`로 읽혀 필터·추정 모두 꺼진 기존 동작이 된다. 0~3 정수가 아닌 값은
+   * 전부 `null`.
+   */
+  lbpConfirmedStage: 0 | 1 | 2 | 3 | null
+  /**
+   * 부위 팩 일반화(2026-09-06, R2): 요통 이외 부위의 원장 기록 3값(방향성 반응·
+   * 임상가설·확정 단계)을 부위 키로 담는 맵. 요통은 위 옛 필드 3개를 그대로 쓰고
+   * 이 맵에는 `lbp` 키가 절대 들어오지 않는다(`regionClinicalState.ts`).
+   * Additive field, does NOT bump WORKSPACE_STATE_SCHEMA_VERSION — 옛 기록은
+   * 빈 맵으로 읽힌다. 읽기/쓰기는 `readRegionClinical`/`withRegionClinical`로만.
+   */
+  regionClinical: RegionClinicalMap
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -209,8 +261,17 @@ export function emptyWorkspaceState(): WorkspaceState {
     herbalReassessment: emptyStructuredReassessment(),
     painRehabSuggestions: [],
     additionalConcernPromotion: emptyAdditionalConcernPromotion(),
+    lbpDirectionalResponse: 'NOT_ASSESSED',
+    lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
+    lbpConfirmedStage: null,
+    regionClinical: {},
     updated_at: null,
   }
+}
+
+/** 0~3 정수만 통과. 문자열 '1', 1.5, -1, 4, null 등은 전부 null — 부위 공통 규칙(`regionClinicalState.sanitizeConfirmedStage`)에 위임한다(2026-09-08 Fable F-6: 같은 규칙이 두 곳에 있으면 한쪽만 바뀐다). */
+export function sanitizeLbpConfirmedStage(v: unknown): 0 | 1 | 2 | 3 | null {
+  return sanitizeConfirmedStage(v)
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -247,6 +308,12 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     herbalReassessment: sanitizeStructuredReassessment(empty.herbalReassessment, raw.herbalReassessment),
     painRehabSuggestions: Array.isArray(raw.painRehabSuggestions) ? raw.painRehabSuggestions.map(sanitizeRehabSuggestion) : [],
     additionalConcernPromotion: sanitizeShape(empty.additionalConcernPromotion, raw.additionalConcernPromotion),
+    lbpDirectionalResponse: isValidLbpDirectionalResponse(raw.lbpDirectionalResponse)
+      ? raw.lbpDirectionalResponse
+      : empty.lbpDirectionalResponse,
+    lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
+    lbpConfirmedStage: sanitizeLbpConfirmedStage(raw.lbpConfirmedStage),
+    regionClinical: sanitizeRegionClinicalMap(raw.regionClinical),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

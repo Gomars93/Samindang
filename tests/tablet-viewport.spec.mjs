@@ -77,12 +77,32 @@ const VIEWPORTS = [
 ]
 const MIN_TARGET = 36
 /**
- * 판단 / 처치 / 재검 (3) + Core Reduction P3's §2.5 "다음 방문 확인 메모"
- * (1, `doctor__nextVisitCheckMemo` -- always visible, paired next to
- * 재평가 대상 per Phase 5 Synthesis v1.2 §2.5) -- and nothing else -- is
- * open by default.
+ * fixture 0(첫 예시 = "수면 주호소 + 동반 소화/통증", 한약 프로필)의 기본 열림
+ * 입력. 이 값은 한약 판단 카드(최종 변증·병기 / 처방·계획 메모 / 추적할 증상)
+ * + 한약 쪽 메모 한 칸이다 — 이전 주석이 "판단/처치/재검"이라 적은 것은 통증
+ * 프로필로 오해한 것이었고(2026-09-06 확인), 통증 카드는 이 화면에 없다.
+ * 한약 판단 필드에는 chip 같은 구조화 공급원이 없어 이번 배치에서 접지 않았다.
  */
-const EXPECTED_OPEN_INPUTS = 4
+const EXPECTED_OPEN_INPUTS_HERBAL = 4
+/**
+ * 2026-09-06 (원장 지시 "자유입력을 최대한 피하고 진료최적화"): **LBP(통증)
+ * 프로필**의 기본 열림 자유입력은 처치 chip의 "기타" 한 칸뿐이다. 최종 임상
+ * 판단·즉시 재검 대상·다음 방문 확인 메모 세 textarea가 "필요할 때 입력"
+ * disclosure 안으로 들어갔다 — 삭제가 아니라 접기(EMR·환자 안내문·재진 경로
+ * 불변, DECISIONS.md 2026-09-06). 이 값이 올라가면 누군가 자유입력을 기본
+ * 화면에 다시 꺼낸 것이다. 통증 화면은 아래에서 LBP fixture를 골라 따로 잰다.
+ */
+const EXPECTED_OPEN_INPUTS_PAIN = 1
+// 점프 내비(안 A) 크롬 높이 상한: 버튼 44(≤1023px에서 48) + 패딩 12 + 테두리 1 + margin 8.
+const NAV_MAX_HEIGHT = 72
+const LBP_FIXTURE_NAME_RE = /허리 통증 주호소 \(LBP/
+/**
+ * 2026-09-06 플로우 정렬 2/5: 레인1 안전 블록은 합집합 CLEAR면 접힌다. 위 LBP
+ * fixture는 "확인 필요"라 열려 있으므로(접힘의 효과가 보이지 않음), **CLEAR인
+ * LBP fixture**를 따로 재서 접힘이 실제로 적용됐는지(요약 줄 "전 부위 안전")와
+ * 높이를 본다. 원장의 전형적 환자는 이쪽이다.
+ */
+const LBP_CLEAR_FIXTURE_NAME_RE = /허리 통증 주호소 \+ 추가 상세상담/
 
 let passed = 0
 const check = (name, cond, extra = '') => {
@@ -215,8 +235,16 @@ const MEASURE = `(() => {
   const collapsed = document.querySelector('.workspace__observationChecklist--collapsed')
   const opener = collapsed?.querySelector('.workspace__observationSummary__open') ?? null
   const openerRect = opener ? opener.getBoundingClientRect() : null
+  // 점프 내비(안 A)는 sticky bottom 내비 크롬이다: 스크롤 중에는 화면 하단에
+  // 떠 있고 콘텐츠 끝에서만 자기 높이를 차지한다. "임상 워크플로 높이"는
+  // 콘텐츠 높이이므로 내비 높이(+margin)는 빼서 잰다 -- 대신 내비 자체의
+  // 높이는 아래 별도 상한(NAV_MAX_HEIGHT)으로 잡아, 크롬이 조용히 자라
+  // 화면을 잡아먹는 회귀는 따로 실패하게 한다.
+  const nav = clinical.querySelector('.doctor__laneNav')
+  const navHeight = nav ? Math.round(nav.getBoundingClientRect().height + parseFloat(getComputedStyle(nav).marginTop || '0')) : 0
   return {
-    workflow: Math.round(clinical.getBoundingClientRect().height),
+    workflow: Math.round(clinical.getBoundingClientRect().height) - navHeight,
+    navHeight,
     viewport: window.innerHeight,
     overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
     openInputs: [...document.querySelectorAll('.workspace textarea, .workspace input[type="text"]')].filter(vis).length,
@@ -284,11 +312,14 @@ try {
   await cdp.send('Runtime.enable')
   await cdp.send('Page.enable')
 
-  for (const vp of VIEWPORTS) {
+  for (const [vpIdx, vp] of VIEWPORTS.entries()) {
     await cdp.send('Emulation.setDeviceMetricsOverride', {
       width: vp.width, height: vp.height, deviceScaleFactor: 1, mobile: false,
     })
-    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/#doctor` })
+    // 2026-09-06: 회차마다 query를 바꿔 **완전 새로고침**을 강제한다 — 같은 URL의
+    // 해시만 바꾸는 navigate는 같은 문서 내 이동이라 React 상태(직전 회차가
+    // 고른 LBP fixture)가 그대로 남아 첫 측정이 다른 프로필을 잰다.
+    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/?vp=${vpIdx}#doctor` })
 
     // Fixtures mode gives a deterministic, PHI-free record. Selecting it
     // needs a real change event, same as a click would produce.
@@ -304,6 +335,18 @@ try {
     })
     await cdp.evalUntil(`!!document.querySelector('.workspace')`, (v) => v === true)
     // The production-shaped record: no synthetic decision-support data.
+    // fixture 0(한약)을 명시적으로 고른다 — 새로고침 외에 한 겹 더 방어.
+    await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.querySelector('#doctor-fixture-select')
+        if (!s) return false
+        s.value = '0'
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+        return true
+      })()`,
+      returnByValue: true,
+    })
+    await cdp.evalUntil(`!!document.querySelector('.workspace') && document.body.innerText.includes('최종 변증·병기')`, (v) => v === true)
     await cdp.send('Runtime.evaluate', {
       expression: `(() => {
         const s = document.querySelector('#doctor-workspace-scenario-select')
@@ -320,15 +363,16 @@ try {
     const label = vp.name
 
     console.log(
-      `\n[measured] ${label}: ${m.workflow}px / ${m.viewport}px = ${multiple.toFixed(2)}x` +
+      `\n[measured] ${label}: ${m.workflow}px / ${m.viewport}px = ${multiple.toFixed(2)}x (nav chrome ${m.navHeight}px excluded)` +
         ` | overflowX ${m.overflowX}px | ${m.openInputs} open inputs | smallest target ${m.smallestTarget}px`,
     )
 
     check(`${label}: clinical workflow within ${vp.budget} viewports`, multiple <= vp.budget, `(${multiple.toFixed(2)}x)`)
     check(`${label}: workflow height does not regress`, m.workflow <= vp.ceiling, `(${m.workflow}px <= ${vp.ceiling}px)`)
+    check(`${label}: the jump nav chrome stays under ${NAV_MAX_HEIGHT}px (it occupies the viewport bottom while scrolling)`, m.navHeight > 0 && m.navHeight <= NAV_MAX_HEIGHT, `(${m.navHeight}px)`)
     check(`${label}: no horizontal overflow`, m.overflowX === 0, `(${m.overflowX}px)`)
     check(`${label}: no interactive target under ${MIN_TARGET}px`, m.smallestTarget !== null && m.smallestTarget >= MIN_TARGET, `(${m.smallestTarget}px)`)
-    check(`${label}: exactly the intended always-open inputs`, m.openInputs === EXPECTED_OPEN_INPUTS, `(${m.openInputs})`)
+    check(`${label}: exactly the intended always-open inputs (herbal fixture 0)`, m.openInputs === EXPECTED_OPEN_INPUTS_HERBAL, `(${m.openInputs})`)
     check(`${label}: the unrecorded checklist is collapsed, not deleted`, m.checklistCollapsed === true)
     check(`${label}: the collapsed summary still names what is outstanding`, /미확인/.test(m.checklistSummary), `("${m.checklistSummary.trim()}")`)
     check(
@@ -336,12 +380,127 @@ try {
       m.openerVisible === true && m.openerSize !== null && m.openerSize >= MIN_TARGET,
       `(${m.openerSize}px)`,
     )
+
+    // 2026-09-06: 통증(LBP) 프로필을 따로 잰다 — 이번 배치가 접은 세 칸이 실제
+    // 헤드리스 렌더에서 보이지 않는지, 그리고 처치 "기타" 한 칸만 남는지.
+    // 옵션은 인덱스가 아니라 이름으로 고른다(fixture 재정렬에 안전).
+    const picked = await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.querySelector('#doctor-fixture-select')
+        if (!s) return null
+        const opt = [...s.options].find((o) => ${LBP_FIXTURE_NAME_RE.toString()}.test(o.textContent))
+        if (!opt) return null
+        s.value = opt.value
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+        return opt.textContent
+      })()`,
+      returnByValue: true,
+    })
+    check(`${label}: an LBP fixture exists to measure the pain profile on`, typeof picked?.result?.value === 'string', `(${picked?.result?.value})`)
+    // 한약 카드가 사라지고(통증 단일 프로필) 통증 최종판단 카드가 서면 렌더 완료.
+    await cdp.evalUntil(
+      `!!document.querySelector('.workspace') && !document.body.innerText.includes('최종 변증·병기') && !!document.querySelector('[aria-label="원장 최종 판단"]')`,
+      (v) => v === true,
+    )
+    const mp = await cdp.evalUntil(MEASURE, (v) => v && typeof v.workflow === 'number')
+    console.log(`[measured] ${label} (LBP): ${mp.workflow}px / ${mp.viewport}px = ${(mp.workflow / mp.viewport).toFixed(2)}x | overflowX ${mp.overflowX}px | ${mp.openInputs} open inputs`)
+    const lane1WrapperOnReview = await cdp.send('Runtime.evaluate', { expression: `!!document.querySelector('.doctor__lane1Collapse')`, returnByValue: true })
+    check(`${label} (LBP 확인 필요): 레인1 래퍼가 없다 (비CLEAR에 요약 줄을 얹지 않는다)`, lane1WrapperOnReview?.result?.value === false)
+    check(`${label} (LBP): no horizontal overflow`, mp.overflowX === 0, `(${mp.overflowX}px)`)
+    check(`${label} (LBP): exactly the intended always-open inputs`, mp.openInputs === EXPECTED_OPEN_INPUTS_PAIN, `(${mp.openInputs})`)
+
+    // 점프 내비(안 A, PO "추천에 따라 진행"): 운동 후보가 첫 화면 아래에 있다는
+    // 실측 문제를 (1) 그대로 측정하고 (2) 내비 한 번 탭으로 닿는지 실제
+    // 브라우저에서 확인한다. 내비는 sticky bottom이므로 스크롤 0에서도 화면
+    // 안에 있어야 하고, 점프 뒤 헤딩은 sticky 헤더 아래에 보여야 한다.
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
+    const navBefore = await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const nav = document.querySelector('.doctor__laneNav')
+        const ex = document.getElementById('exercise-h3')
+        if (!nav || !ex) return null
+        const r = nav.getBoundingClientRect()
+        const btns = [...nav.querySelectorAll('.doctor__laneNav__btn')]
+        return {
+          labels: btns.map((b) => b.textContent),
+          minBtn: Math.min(...btns.map((b) => { const q = b.getBoundingClientRect(); return Math.round(Math.min(q.width, q.height)) })),
+          navTop: Math.round(r.top), navBottom: Math.round(r.bottom), inner: window.innerHeight,
+          exerciseTop: Math.round(ex.getBoundingClientRect().top),
+        }
+      })()`,
+      returnByValue: true,
+    })
+    const nb = navBefore?.result?.value
+    check(`${label} (LBP): 점프 내비가 5개 버튼으로 렌더된다`, Array.isArray(nb?.labels) && nb.labels.join(',') === '안전,확인,판단·처치,운동,다음', `(${nb?.labels})`)
+    check(`${label} (LBP): 스크롤 0에서 내비가 화면 안에 있다 (sticky bottom)`, nb && nb.navTop >= 0 && nb.navBottom <= nb.inner, `(top ${nb?.navTop}, bottom ${nb?.navBottom}, viewport ${nb?.inner})`)
+    check(`${label} (LBP): 내비 버튼이 ${MIN_TARGET}px 이상`, nb && nb.minBtn >= MIN_TARGET, `(${nb?.minBtn}px)`)
+    console.log(`[measured] ${label} (LBP): 운동 섹션 top = ${nb?.exerciseTop}px (viewport ${nb?.inner}px) → ${nb ? (nb.exerciseTop / nb.inner).toFixed(1) : '?'} 화면 아래`)
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__laneNav__btn[data-target="exercise-h3"]').click()`, returnByValue: true })
+    const afterJump = await cdp.evalUntil(
+      `(() => {
+        const ex = document.getElementById('exercise-h3')
+        const header = document.querySelector('.doctor__header')
+        const nav = document.querySelector('.doctor__laneNav')
+        if (!ex || !nav) return null
+        return {
+          exerciseTop: Math.round(ex.getBoundingClientRect().top),
+          headerBottom: header ? Math.round(header.getBoundingClientRect().bottom) : 0,
+          navBottom: Math.round(nav.getBoundingClientRect().bottom),
+          inner: window.innerHeight,
+          scrollY: Math.round(window.scrollY),
+        }
+      })()`,
+      (v) => v && v.scrollY > 0,
+    )
+    check(`${label} (LBP): 「운동」 탭 한 번으로 운동 섹션이 화면에 들어온다`, afterJump.exerciseTop >= 0 && afterJump.exerciseTop < afterJump.inner, `(top ${afterJump.exerciseTop}px)`)
+    check(`${label} (LBP): 점프 뒤 운동 섹션이 sticky 헤더 뒤에 숨지 않는다`, afterJump.exerciseTop >= afterJump.headerBottom, `(heading ${afterJump.exerciseTop} ≥ header ${afterJump.headerBottom})`)
+    check(`${label} (LBP): 점프 뒤에도 내비가 화면 안에 남는다`, afterJump.navBottom <= afterJump.inner, `(bottom ${afterJump.navBottom}, viewport ${afterJump.inner})`)
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
+
+    // 세 번째 측정: CLEAR인 LBP fixture — 레인1이 접혀야 한다.
+    const pickedClear = await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.querySelector('#doctor-fixture-select')
+        if (!s) return null
+        const opt = [...s.options].find((o) => ${LBP_CLEAR_FIXTURE_NAME_RE.toString()}.test(o.textContent))
+        if (!opt) return null
+        s.value = opt.value
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+        return opt.textContent
+      })()`,
+      returnByValue: true,
+    })
+    check(`${label}: a CLEAR LBP fixture exists`, typeof pickedClear?.result?.value === 'string', `(${pickedClear?.result?.value})`)
+    await cdp.evalUntil(
+      `(() => { const sm = document.querySelector('.doctor__lane1Collapse > summary'); return !!sm && /전 부위 안전|확인 필요|URGENT|계산불가/.test(sm.textContent) && !!document.querySelector('[aria-label="원장 최종 판단"]') })()`,
+      (v) => v === true,
+    )
+    const lane1Text = await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__lane1Collapse > summary')?.textContent ?? ''`, returnByValue: true })
+    const lane1Open = await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__lane1Collapse')?.open ?? null`, returnByValue: true })
+    const mc = await cdp.evalUntil(MEASURE, (v) => v && typeof v.workflow === 'number')
+    console.log(`[measured] ${label} (LBP CLEAR): ${mc.workflow}px / ${mc.viewport}px = ${(mc.workflow / mc.viewport).toFixed(2)}x | overflowX ${mc.overflowX}px | ${mc.openInputs} open inputs | lane1 "${lane1Text?.result?.value}" open=${lane1Open?.result?.value}`)
+    check(`${label} (LBP CLEAR): 레인1 요약이 CLEAR를 말한다`, /전 부위 안전/.test(lane1Text?.result?.value ?? ''), `("${lane1Text?.result?.value}")`)
+    check(`${label} (LBP CLEAR): 레인1 disclosure가 닫혀 있다`, lane1Open?.result?.value === false, `(open=${lane1Open?.result?.value})`)
+    check(`${label} (LBP CLEAR): no horizontal overflow`, mc.overflowX === 0, `(${mc.overflowX}px)`)
+    check(`${label} (LBP CLEAR): exactly the intended always-open inputs`, mc.openInputs === EXPECTED_OPEN_INPUTS_PAIN, `(${mc.openInputs})`)
   }
 } finally {
   try { cdp?.ws.close() } catch { /* already gone */ }
   proc.kill('SIGKILL')
+  // Give the just-killed Chrome process a moment to actually release its
+  // profile directory's file handles before removing it -- otherwise
+  // rmSync can race a still-closing renderer process and throw ENOTEMPTY
+  // (observed: every assertion printed OK, then the run died in teardown on
+  // rmdir '<tmp>/profile/Default'). Same convention as
+  // tests/visit-summary-auth-recovery-headless.spec.mjs, which already
+  // carried this fix.
+  await new Promise((r) => setTimeout(r, 300))
   server.close()
-  fs.rmSync(tmp, { recursive: true, force: true })
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch {
+    /* best-effort cleanup of a tmpdir -- never fail the test run over this */
+  }
 }
 
 console.log(`\n${passed} tablet-viewport assertions passed.`)

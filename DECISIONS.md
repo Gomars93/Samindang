@@ -1,5 +1,631 @@
 # Decisions Log
 
+## 2026-09-06 — 원장 화면 "운동 후보 4화면 아래": 안 A(점프 내비) 채택 — **sticky-bottom 5탭, 콘텐츠 높이 0 변경**
+
+**결정자**: Gomars93(PO), "추천에 따라 진행"(HANDOFF 최신 29의 A/B/C 중 추천안 A).
+
+### 무엇
+- `DoctorWorkspace`의 작업 영역(`main.doctor__visitWork`) **마지막 자식**으로
+  `<nav class="doctor__laneNav">` — 안전 / 확인 / 판단·처치 / 운동 / 다음. 운동 버튼은 통증·mixed
+  프로필에만(한약은 4개). 버튼 `data-target`은 레인 헤딩 id(`lane1-h2`, `lane2-h2`, `judgment-h2`,
+  `next-h2`)와 운동 섹션에 새로 준 `id="exercise-h3"`.
+- 탭 → 즉시 스크롤(smooth 아님). 목표 위치는 **클릭 시점에** sticky 헤더(`.doctor__header`)와
+  세로 태블릿의 sticky 요약(`.doctor__visitSummary`) 실제 높이를 읽어 그만큼 아래에 헤딩을 세운다.
+- 실측 스펙(`tests/tablet-viewport.spec.mjs`)에 세 뷰포트 × (내비 5버튼·스크롤 0에서 화면 안·
+  버튼 ≥36px·「운동」 탭 후 헤딩이 화면 안이고 헤더 뒤에 숨지 않음·탭 후 내비 잔존) 추가.
+
+### 실측 (배치 전 문제 → 배치 후)
+| 뷰포트 | 운동 섹션 top(스크롤 0) | 탭 후 헤딩 top | 헤더 bottom |
+|---|---|---|---|
+| 데스크톱 1440×900 | 2568px = **2.9화면 아래** | 122px | 114px |
+| 태블릿 가로 1024×768 | 2662px = **3.5화면 아래** | 화면 안 | — |
+| 태블릿 세로 834×1112 | 2743px = **2.5화면 아래** | 화면 안 | — |
+
+콘텐츠(임상 워크플로) 높이는 배치 전과 **동일**(1266 / 1090 / 1586px). 내비 크롬 65~69px은 별도
+상한(72px)으로 잡는다.
+
+### 왜 이렇게 (트레이드오프)
+- **sticky bottom, fixed 아님.** 상단에 sticky 헤더·sticky 요약이 이미 있어 top 쌓기는 높이
+  계산이 깨진다. 작업 영역 마지막 자식 + `bottom: 0`이면 스크롤 중엔 하단에 떠 있고 끝에서
+  제자리에 앉아 내용을 가리지 않는다 → padding 보정 불필요. 대가: 콘텐츠 끝에서 자기 높이
+  65px을 한 번 차지한다.
+- **높이 예산 측정에서 내비 크롬을 뺀다.** 1.5× 예산은 "워크플로를 끝내기까지 스크롤 거리"인데,
+  sticky 내비는 그 거리를 늘리지 않는다(마지막 65px은 내비 자체). 대신 내비 높이 상한(72px)을
+  별도 단언으로 두어 크롬이 조용히 자라는 회귀는 따로 실패한다. 빼지 않으면 태블릿 가로가
+  1.51×로 예산을 넘는데, 그 0.01은 내비이지 임상 콘텐츠가 아니다 — 이걸 "예산 완화"로 푸는 것이
+  더 부정직하다.
+- **고정 CSS `scroll-margin-top` 대신 런타임 오프셋.** 첫 구현(72px 고정)은 데스크톱에서 헤더가
+  114px로 줄바꿈되어 헤딩이 42px 가려졐다(실측). 헤더 높이는 폭·글꼴에 따라 변하므로 클릭 시점에
+  읽는다. 변이 테스트: 오프셋 제거 → 헤딩 15px(헤더 뒤) → 실측 스펙이 잡는다.
+- **안 B(카드 밀도 재설계) 기각.** 콘텐츠 자체를 줄이는 건 정보 손실이고, 문제는 "운동이 어디
+  있는지"가 아니라 "거기까지 가는 데 3화면"이었다. 내비 1탭이 정확한 크기의 해법.
+
+### 숨은 리스크
+- 내비가 하단 65px을 상시 점유한다(가로 태블릿에서 8%). 파일럿에서 방해되면 "스크롤 중에만
+  표시"로 바꿀 수 있다 — 지금은 단순함 우선.
+- 현재 위치 강조(active 탭)는 넣지 않았다(IntersectionObserver = 과설계). 원장이 어디 있는지
+  모르는 문제가 관찰되면 그때.
+- 재진 화면(`RevisitWorkspace`)에는 내비가 없다 — 재진은 한 화면 안에 들어오므로 대상 아님.
+
+### 검증
+`test:doctor-workspace` +7(SSR: 통증 5/한약 4/mixed 5 버튼, 대상 id 존재, main 마지막 자식,
+소스 계약), `test:tablet-viewport` 72(내비 관련 +8×3 뷰포트 포함). 변이 4개 전부 죽음(한약에도
+운동 버튼 / 대상 id 오타 / main 밖 렌더 / sticky 오프셋 제거→헤더 뒤 숨김). `test:doctor` 1041,
+`build` green.
+
+---
+
+## 2026-09-06 — 플로우 정렬 5/5: 세부문진 = **원장이 정한 재검 시점이 오면, 초진 문항 4개를 같은 id로 다시 묻는다** (새 척도 0개, 서버가 시점 판정)
+
+**결정자**: Gomars93(PO). 지시 원문: *"적정치료횟수와 주기를 채우면 세부문진 진행 …
+세부문진 항목은 뭐로 채울지 고민스럽네"*, *"과설계와 자유입력을 최대한 피하고"*.
+
+### 무엇
+- **시점**: 원장이 초진 「다음 재검 계획」에 넣은 값(`nextReassessmentPlan` DATE / VISIT_COUNT)이
+  오늘 충족되면 세부문진이 켜진다. 판정은 **서버**(`server/detailCheck.js`)가 재진 링크 발급
+  (`startRevisit`/`reissue`) 때 한다 — 원장 화면의 `computeDetailCheckDue`(TS)를 서버 히스토리
+  형태로 **포팅**했고, 두 구현은 한 픽스처 표로 패리티 테스트된다(15케이스).
+- **항목**: 초진 문항 id 그대로 — `VISIT_04_SYMPTOM_IMPACT`(공통) + LBP 환자면
+  `LBP_12`(회복 기대 0~10)·`LBP_13`(공포회피)·`LBP_14`(일상 지장). LBP 여부는 직전 제출의
+  `safety_flags.lbp` 존재로 판정(원장 화면과 같은 신호). 문항 텍스트·선택지는 서버가 나르지
+  않고 환자/원장 화면이 coreSpec에서 id로 푼다(`src/spec/detailCheckQuestions.ts`).
+- **NRS**: 추적 항목 `pain_intensity`는 환자 화면에서도 0~10 버튼(`NumericScale`)으로 받는다
+  — 원장이 3/5에서 같은 항목을 NRS 버튼으로 기록하므로 숫자가 같은 척도로 비교된다.
+- **저장**: 토큰 레코드 `detail_check {reason, plan_label, question_ids}`(id만, ≤10개), 공개
+  GET `detail_question_ids`(항상 배열, 없으면 `[]`), 제출 `detailAnswers [{questionId, value}]`
+  → 스냅샷 id 밖은 버림, 값 100자 상한, `microFollowUp` 레코드에 raw 저장.
+- **원장 화면**: 재진 MicroFollowUpCard에 「세부 확인 (초진 → 오늘)」 행 — 초진 답(제출
+  responses에서 id로) → 오늘 답, 라벨은 coreSpec 옵션 라벨. **차이 계산 없음**(자동 비교 금지
+  원칙 그대로). 초진 답이 없으면 "초진 기록 없음".
+
+### 왜 이렇게 (트레이드오프)
+- **새 척도(ODI 등)를 넣지 않았다.** 2026-09-05 결정("척도를 새로 넣지 않고 기존 필드로")과
+  같은 이유 — 환자 부담 0 증가, 초진과 1:1 비교 가능. 잃는 것: 표준화 점수 없음. 파일럿에서
+  필요가 증명되면 그때 추가.
+- **서버가 시점을 판정한다.** 클라이언트가 `include_detail_check`를 보내게 하면 접수 태블릿
+  배정 경로(`assignRevisitToStation`)에서는 아무도 계산하지 않아 세부문진이 조용히 빠진다.
+  대가: 같은 규칙이 TS/JS 두 곳에 존재 → 패리티 테스트로 드리프트를 실패로 만든다.
+- **세부 항목은 전부 필수.** 원본 문항은 `required:false`지만 "잘 모르겠어요" 선택지가 있어
+  탭 1회로 끝난다. 선택으로 두면 재검 시점 데이터가 비어 원장이 다시 물어야 한다.
+- **`detail_question_ids`를 항상 내려준다(빈 배열 포함).** 응답 형태가 안정적이어야 환자
+  화면이 분기 없이 렌더한다. 기존 키 계약 테스트는 새 키를 포함하도록 갱신.
+
+### 숨은 리스크
+- 세부문진은 **재진 링크(Micro Follow-up)** 위에서만 돈다. 원장이 재진 링크를 발급하지 않고
+  구두로 진료하면 세부문진도 없다 — 재진 링크 사용률이 전제.
+- 오늘 날짜는 서버 로컬 달력(`localTodayISO`)이다. 서버 PC 시계/시간대가 틀리면 DATE 계획이
+  하루 어긋난다. UTC를 쓰지 않은 것은 의도(클리닉의 "오늘").
+- 초진 답이 숫자(LBP_12)인 경우 responses에 number로 저장돼 있어 문자열로 바꿔 비교한다.
+
+### 검증
+`tests/detail-check.spec.mjs` 61 단언(패리티 15 / 스토어 정규화 / E2E 발급·재발급·제출 /
+환자 화면 상호작용(react-test-renderer, fetch 스텁) / 원장 카드 SSR / 소스 계약: 환자 NRS id
+집합 = 원장 `PAIN_NRS_TARGET_IDS`). 변이 7개 전부 죽음(VISIT_COUNT off-by-one / 스냅샷 밖 id
+허용 / 공개 GET 키 제거 / isLbp 상수화 / 제출 게이트 제거 / NRS를 텍스트로 / 카드 초진·오늘
+뒤바꿈). 첫 실행에서 살아남은 2개는 테스트 순서 결함이라 테스트를 고쳐 다시 죽였다.
+`test:follow-up-session` 279 / `revisit-quick-check` 145 / `station` 108 / `server` 233 통과, `build` green.
+
+### 필드 × 화면 표 (새 경로 추가, 제거된 경로 없음)
+| 값 | 출처 | 환자 재진 링크 | 원장 재진 화면 | 초진 화면 | fixture |
+|---|---|---|---|---|---|
+| detail_question_ids | 토큰 스냅샷 | 세부 확인 섹션(coreSpec으로 렌더) | 해당 없음 | 해당 없음 | 해당 없음 |
+| detailAnswers | 환자 제출 | 제출 후 메모리 비움 | 「세부 확인」 행 오늘 값 | 없음 | 없음 |
+| 초진 답(같은 id) | 직전 제출 responses | 노출 안 함 | 「세부 확인」 행 초진 값 | (원래 문진) | 없음 |
+| pain_intensity 값 | 환자 NRS 버튼 | 문자열 "0"~"10" | 기존 targetRatings 행 그대로 | 원장 NRS 버튼(3/5) | 없음 |
+
+---
+
+## 2026-09-06 — 플로우 정렬 4/5: 환자 치료 계획을 **읽기 전용 링크**로 전달 — 문자 본문에는 링크만, 발송은 v1에서 복사·붙여넣기
+
+**결정자**: Gomars93(PO). 지시 원문: *"내가 채택하고 임상가설과 치료 플랜과 운동처방을
+환자에게 문자"*, *"과설계와 자유입력을 최대한 피하고 진료최적화를 원해"*.
+
+### 무엇
+- 「환자 전달용 치료 계획/관리 계획」 카드에 **「환자 링크 만들기」** 버튼 1개. 누르면
+  화면에 보이는 그 텍스트가 서버에 스냅샷되고(`POST /api/submissions/:id/care-plan-link`,
+  원장 가드), 토큰 1회 반환 → `#care-plan=<token>` 공개 URL + 문자 본문
+  (`buildCarePlanMessageText`)이 카드 아래 나타난다. **「문자 내용 복사」**로 원장의
+  기존 문자 도구(EMR 문자 등)에 붙여넣는다.
+- 환자 화면 `CarePlanScreen`(`#care-plan=`): 텍스트만 보여주는 페이지. 입력·버튼·POST 없음.
+  URL을 지우지 않는다(14일간 다시 열 수 있어야 하므로 follow-up의 1회용 스크럽 규칙과
+  **의도적으로 다르다**).
+- 서버: 기존 `followUpSessionStore`(해시만 저장, 평문 토큰 미보관)를 **별도 인스턴스**
+  `care-plan-links/`로 하나 더 띄운다. 레코드에 `kind: 'CARE_PLAN'` + `care_plan_text`
+  (4000자 상한). TTL 기본 14일(`SAMINDANG_CARE_PLAN_LINK_TTL_MINUTES`). `consumeTokenWithAction`은
+  CARE_PLAN이면 무조건 거부. 같은 제출에 다시 만들면 이전 링크 즉시 무효(스토어 불변식).
+  공개 `GET /api/care-plan/:token` 응답 키는 `{status, care_plan_text, expires_at}` 뿐.
+  감사 이벤트 `care_plan_link_issued` 1개 추가(본문은 로그에 남지 않음). `purgeAll` 포함.
+
+### 왜 이렇게 (트레이드오프)
+- **왜 별도 스토어인가**: follow-up 스토어는 "scope당 활성 토큰 1개"가 핵심 불변식이라,
+  같은 스토어에 care-plan을 넣으면 재진 방문의 살아있는 follow-up 토큰을 치료 계획 발급이
+  덮어쓴다. 스토어 인스턴스를 나누면 코드 재사용(해시·락·포인터·정리)은 그대로 얻고
+  네임스페이스 충돌은 구조적으로 사라진다.
+- **왜 문자 본문에 계획을 넣지 않는가**: 문자는 전달·캡처·전송이 자유롭다. 임상 내용은
+  토큰 뒤(14일 TTL, 재발급 시 무효)에만 두고, 본문은 운영 문구 + 링크만. 잃는 것: 환자가
+  문자만 봐서는 내용을 모른다(링크 1탭 필요).
+- **왜 MessagingPanel(알림톡/SMS 파이프라인)에 안 태웠나**: 그 파이프라인은
+  `#follow-up=` 링크 형태·`SAMINDANG_FOLLOWUP_01` 템플릿(외부 등록)·재진 문구에 강하게 묶여
+  있고, 실제 자격증명이 없어 **지금은 mock 전송만** 된다(`MessagingPanel.tsx` 헤더). 거기에
+  care-plan을 끼우면 지금 당장 환자에게 도달하는 건 0건이고 리뷰 완료된 발송 코드를 넓게
+  건드려야 한다. v1은 복사·붙여넣기로 **오늘 실제로 도달**하게 하고, 알림톡 자동 발송은
+  템플릿 등록 후 별도 배치(`purpose: 'CARE_PLAN'` + 링크 정규식 + 템플릿 코드 분기)로 미룬다.
+- **왜 카드 안에 버튼인가(종결 섹션이 아니라)**: 종결 섹션은 저장된 `selectedRecord.workspace`를
+  읽지만, 카드는 **지금 화면의 라이브 텍스트**를 갖고 있다. 원장이 읽은 것과 환자가 여는 것이
+  같아야 하므로 카드가 발급 주체. 한약 카드도 같은 컴포넌트라 자동 적용.
+
+### 숨은 리스크
+- 공개 base URL(`VITE_SAMINDANG_PUBLIC_FOLLOWUP_BASE_URL`)이 없으면 링크를 만들 수 없다 —
+  버튼은 발급 후 명시적 오류를 보여주며 조용히 실패하지 않는다.
+- 환자 화면은 GitHub Pages 프리뷰가 아니라 **서버가 설정된 SPA**에서만 동작한다
+  (`VITE_SAMINDANG_SERVER_URL`). 파일럿 전 LAN/공개 경로 확인 필요.
+- `care_plan_text`는 토큰 게이트 뒤라도 **디스크에 평문**이다(follow-up 라벨과 같은 자세).
+  보존은 만료 후 `SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS`로 정리된다.
+
+### 검증
+`tests/care-plan-link.spec.mjs` 58 단언(스토어·라우트·purge·환자 화면 SSR·카드 상호작용·
+문자 문구). 변이 6개(consume 거부 제거 / 공개 응답에 patient_id 추가 / 재발급 무효화
+깨기 / App 라우트 제거 / 버튼 상시 노출 / 만료 화면에 본문 누출) 전부 죽음.
+`test:server` 라우트 그룹 46→47, `test:audit-registry` 37→38 갱신. `build` green.
+
+### 필드 × 화면 표 (CLAUDE.md 규칙 — 새 경로 추가, 제거된 경로 없음)
+| 값 | 출처 | 초진 통증 | 초진 한약 | mixed | fixture 미리보기 | 환자 화면 |
+|---|---|---|---|---|---|---|
+| 치료 계획 본문 | 카드 `text`(라이브) | 발급 시 스냅샷 | 발급 시 스냅샷 | 두 카드 각각 | 버튼 없음(핸들러 없음) | `care_plan_text` 그대로 |
+| 링크/문자 본문 | 발급 응답 | 카드 아래 표시 | 동일 | 동일 | 없음 | 해당 없음 |
+| 만료일 | `expires_at` | 표시 안 함(문자 문구에 "14일") | 동일 | 동일 | 없음 | "N월 N일까지" |
+
+---
+
+## 2026-09-06 — 플로우 정렬 3/5: 통증 강도 기준값·직후값을 **NRS 0~10 버튼**으로 (저장 타입 불변)
+
+**결정자**: Gomars93(PO). 지시 원문: *"재진시 추적항목만 체크 (nrs라던지 기능제한정도의
+개선이라던지)"*, *"자유입력을 최대한 피하고"*.
+
+### 무엇
+`FollowUpTargetPicker`에 `nrsTargetIds` prop을 더해, 통증(`PAIN_NRS_TARGET_IDS =
+{pain_intensity}`)의 기준값·직후값을 0~10 버튼 11개로 받는다. 눌린 값을 다시
+누르면 비움. 초진(`PainWorkspaceNext`)·재진(`RevisitWorkspace`) 두 호출부가 같은
+컴포넌트를 쓰므로 한 번에 적용됐고, 한약 호출부는 prop을 넘기지 않아 바이트
+단위로 불변이다.
+
+### 원칙 — 처치 chip(§14.2)과 같다
+- **저장 타입은 그대로 `string`.** 버튼은 `'7'`이라는 문자열을 만드는 구조화 입력일
+  뿐이다. EMR(`기준 7`), 이전 방문 표시(`이전 baseline: 7`), 이어받기 경로는 한 줄도
+  바뀌지 않았다 — 테스트가 `emrPreview.ts`에 NRS라는 단어가 없음을 고정.
+- **옛 자유값을 조용히 버리지 않는다.** `'7/10'`, `'심함'`처럼 `isNrsValue`가 false인
+  값은 버튼 아래 기존 텍스트 칸에 그대로 남는다. 원장이 버튼을 눌러 명시적으로
+  바꾸기 전까지 보인다.
+- **§14.4(CD-2.7-3)의 직후값 규칙 유지**: 토글 뒤 숨김 / 값 있으면 열림 / 비워도
+  언마운트 없음(N-2). 대상이 `<input>`에서 `role=group`으로 바뀐 것뿐이고 열림 판정
+  `openPostTreatmentIds.has(id) || value !== ''`는 텍스트 경로와 같은 식을 쓴다.
+  버튼 재탭으로 비우는 경로도 `setPostTreatmentValue`를 지나 "열림"을 기록한다.
+
+### 필드 × 화면
+| 값 | 초진 | 재진 | 한약 | EMR | 이전 방문 표시 |
+|---|---|---|---|---|---|
+| `pain_intensity.baseline` | 텍스트 → **NRS 버튼**(옛 자유값은 텍스트 병존) | 동일 | 비대상 | `기준 7` 불변 | `이전 baseline: 7` 불변 |
+| `pain_intensity.postTreatmentValue` | 토글 → 텍스트 → **토글 → NRS** | 동일 | 비대상 | `직후 3` 불변 | 불변 |
+| 그 밖의 통증 대상(움직임·기능, 증상 재현, 목표 기능 8개) | 텍스트 불변 | 불변 | — | 불변 | 불변 |
+| 한약 대상 4개 | — | — | 텍스트 불변 | 불변 | 불변 |
+
+입력 방향: write-only 필드 0(같은 두 문자열 필드에 쓴다). 표시 조건: 직후값 열림은
+기존 파생식+래치 그대로(§14.4가 이미 N-2를 닫은 식).
+
+### 검증
+`test:doctor-workspace`: §14.4 5개를 NRS 경로로 갱신 + 텍스트 경로 N-2 보호를
+`movement_function`으로 이전 + NRS 5개 신규(11버튼 순서·눌림, 옛 값 보존, 비NRS·
+한약 불변, 누름/해제 상호작용, 소스 계약). `test:tablet-viewport` 51(버튼 최소
+36px 계약 통과, overflowX 0). `test:all` exit 0, `build` green, FROZEN zero-diff.
+
+---
+
+## 2026-09-06 — 플로우 정렬 2/5: 레인1 안전 블록 CLEAR면 접기 — **효과 −57px, 높이의 주범이 아니었다**
+
+**결정자**: Gomars93(PO, "추천안으로 진행"). 앞 항목(1/5)에서 이 세션이 "레인1이 첫
+화면을 통째로 차지해 운동 후보가 3~4화면 아래"라고 진단하고 이 항목을 ②로 제안했다.
+**그 진단은 CLEAR 환자에게는 틀렸다.** 구현·실측 결과를 그대로 기록한다.
+
+### 구현
+- 판정은 새 임상 계산 없이 좌측 요약 chip이 이미 읽는 `lane1Summary.status`
+  하나. CLEAR면 `<details>`(닫힘)로 감싸고 요약 줄에 `clearLabels`("전 부위 안전
+  (허리)")를 적는다. `<h2>`와 `CommonSafetyBanner`는 바깥.
+- **비CLEAR(URGENT/확인 필요/계산불가)면 래퍼 자체를 두지 않고** 예전과 동일하게
+  블록을 직접 렌더한다. 1차 구현은 항상 래퍼를 두고 `open`만 바꿨는데, 실측에서
+  비CLEAR 화면이 **+70px**(요약 줄) 늘었다 — 확인이 필요한 환자에게 한 줄을 더
+  얹는 것은 거꾸로다. 래치(`useOpenOnceContent`)로 "비CLEAR가 한 번이라도
+  있었으면 래퍼 없음"을 기억해, 원장이 SEVERE를 기록해 URGENT가 된 뒤 NONE으로
+  고쳐도 블록이 갑자기 접히지 않는다.
+
+### 실측 (헤드리스 Chromium, 임상 워크플로 `.workspace` 높이)
+
+| 화면 | 1440×900 | 1024×768 | 834×1112 |
+|---|---|---|---|
+| LBP 확인 필요 (래퍼 없음, 이전과 동일) | 2881px 3.20x | 2993px 3.90x | 3007px 2.70x |
+| **LBP CLEAR (접힘 적용)** | 2894px 3.22x | 3064px 3.99x | 3032px 2.73x |
+| 한약 fixture 0 (참고) | 1266px 1.41x | 1090px 1.42x | 1586px 1.43x |
+
+접힘 뒤 CLEAR LBP 화면의 **레인별 분해 (1024×768, 총 3064px)**:
+
+| 레인 | px | 비중 | 안의 큰 것 |
+|---|---|---|---|
+| 안전 확인 | **121** | 4% | h2 23 · 공통배너 38 · 접힌 details 42 |
+| 확인 | 1088 | 36% | 객관적 검사 154 · **PainWorkspaceLane2 899**(오늘 한눈에 + 오늘 확인할 것 + 허리 움직임 반응 + 확인 추가 + 오늘 재검) |
+| 판단·처치 | 1187 | 39% | **임상 가설 445**(5패턴×3버튼) · 원장 최종 판단 312 · **운동 단계 카드 277** · 재활/운동 제안 75(목표기능 미선택 힌트) · 다른 유형 42 |
+| 다음 | 639 | 21% | PainWorkspaceNext 604(재평가 대상 + 메모 + 다음 액션 + 관리계획/참고 details) |
+
+### 결론 — 정직하게
+- ②는 **맞는 동작**이고(CLEAR 환자가 안전 상세를 볼 필요 없음, 상태는 요약 줄과
+  좌측 chip에 남음) **비용 0**(비CLEAR 불변)이지만, **"운동 후보 2화면 이내"라는
+  목표에는 기여하지 않는다.** 레인1은 애초에 4%였다.
+- 높이는 낭비가 아니라 **7단계 플로우의 임상 내용 그 자체**다. 목표기능을 하나
+  고르면 후보 카드(각 ~300px)가 더 붙는다.
+- 이 세션이 만든 운동 단계 카드(277px)도 소비자 중 하나다.
+
+### 다음 결정은 PO의 것 — 세 갈래
+- **(A) 점프 내비게이션** — 상단 고정 5탭(안전/확인/판단/운동/다음). 내용 절단 0,
+  ~40px, "운동이 어디 있지"를 1탭으로. 이 세션의 추천. 단, 원장이 요청하지 않은
+  새 UI 요소라 승인 뒤에 만든다.
+- **(B) 밀도 조정** — 임상 가설 15버튼→5 chip, 단계 카드 힌트 축소 등 카드별
+  재설계. PO 승인 카드(Batch 2.5c G16 등)를 건드리는 광범위 변경 — CLAUDE.md가
+  경계하는 부류.
+- **(C) 수용** — 진료 순서대로 스크롤하는 것이 곧 플로우라고 보고 그대로 둠.
+
+### 필드 × 화면
+필드 이동 0. 안전 블록의 **렌더 위치·내용 불변**, 래퍼만 조건부. EMR·환자문·
+이어받기 무관. 표시 조건: 래치(래퍼 유무), 텍스트 입력 없음 → N-2 경로 없음.
+
+### 검증
+`test:doctor-workspace` 289(+4: CLEAR 닫힘·URGENT 래퍼 없음·h2 바깥·소스 계약),
+`test:tablet-viewport` 51(+한약·LBP 확인필요·LBP CLEAR 3측정, CLEAR 요약 문구와
+open=false 실측), `build` green, FROZEN zero-diff.
+
+---
+
+## 2026-09-06 — 원장 진료 플로우 정렬 1/5: 통증 화면 자유입력 **접기(삭제 아님)** — 기본 열림 입력 4 → 1
+
+**결정자**: Gomars93(PO). 지시 원문: *"과설계와 자유입력을 최대한 피하고 진료최적화를
+원해."* 원장이 제시한 7단계 플로우(문진 → 검사·추가문진 제안 → 진료 → 가설·운동
+제안 → 채택 → 환자 문자 → EMR 복붙 / 재진: 추적만 → 횟수·주기 뒤 세부문진)를
+현재 화면에 대조한 결과, 6단계는 이미 있고 없는 것은 "환자 문자 본문" 하나였다.
+문제는 없는 것이 아니라 **너무 많은 것**이었고, 그 첫 조치가 이 항목이다.
+
+### 정정 — "자유입력 11개"는 소스 개수였다
+이 세션이 원장께 보고한 "초진 자유입력 11개"는 `textarea`를 소스에서 센 것이고
+**렌더 기본 상태**가 아니었다. Care Plan 5칸은 이미 "관리 계획 — 자세히 입력"
+disclosure 안에 있었다. 실측(헤드리스 Chromium, `checkVisibility()`) 기준 초진
+LBP 화면의 기본 열림 자유입력은 **4개**였다: 최종 임상 판단 · 즉시 재검 대상 ·
+다음 방문 확인 메모(textarea 3) + 처치 "기타"(text 1). 보고 오류였고 정정했다.
+계획은 그대로 유효했다(4 → 1).
+
+### 왜 삭제가 아니라 접기인가
+지우려던 칸을 추적했더니 **전부 세 곳에 도달**하고 있었다 — EMR(`emrPreview.ts`
+S/O/A/P), 환자 전달문(`patientCarePlanPreview.ts`), 재진 이어받기
+(`revisitCarryForward.ts`). 삭제하면 세 출력이 조용히 얇아진다 — Batch 2.6 D-1
+(초진에서 지운 칸이 재진을 고아로 만듦)의 정확한 재현이다. 접기는 데이터 경로를
+한 줄도 바꾸지 않고 기본 화면에서만 물러나게 한다.
+
+### 무엇을 접었나 (필드 × 화면 표, CLAUDE.md "제거 또는 교체" 규칙)
+
+| 필드 | 초진 이전 | **초진 이후** | 재진 | EMR | 환자 안내문 | 이어받기 |
+|---|---|---|---|---|---|---|
+| 최종 임상 판단 | 보임 | secondary(닫힘·내용 시 열림) | 이어받기 카드 불변 | A줄 불변 | — | 불변 |
+| 즉시 재검 대상 | 보임 | secondary | 불변 | P줄 불변 | — | 불변 |
+| 치료 초점 | secondary(기존) | 같은 secondary | 불변 | A줄 불변 | — | 불변 |
+| 현재 치료 목표 | 관리계획 details 안 | 카드 secondary | 카드 secondary | P 불변 | 불변 | 불변 |
+| 재활 목표 | 〃 | secondary | secondary | P 불변 | 불변 | 불변 |
+| 주의·피할 활동 | 〃 | secondary | secondary | P 불변 | 불변 | 불변 |
+| 집에서 할 운동 | 〃 | **primary** (채택 버튼이 채움) | primary | P 불변 | 불변 | 불변 |
+| 환자 안내문 | 〃 | **primary** (가설 카드가 채움) | primary | — | 불변 | 불변 |
+| 다음 방문 확인 사항(카드) | 초진 미표시(D-1) | 미표시 그대로 | 카드 secondary(내용 시 열림) | P 불변 | 불변 | 불변 |
+| 다음 방문 확인 메모(레인4) | 보임 | details(닫힘·내용 시 열림) | 없음(기존) | P 불변 | 불변 | 불변 |
+| 처치 chip + 기타 | 보임 | **보임(유일한 기본 열림 입력)** | — | P 불변 | — | 불변 |
+
+**(입력 방향)** 모든 칸이 원래 존재했던 모든 화면에서 여전히 편집 가능하다.
+write-only가 된 필드 0개. 레인4 메모는 초진의 유일한 편집 경로(N-3a)라 없애지
+않고 접었고, 닫힌 동안에도 NextActionCard "다음 확인" 줄로 읽힌다.
+**(표시 조건)** 파생식 `open={hasContent}`가 아니라 **래치**(`useOpenOnceContent`):
+내용이 있었던 적이 있으면 열어두고, 닫는 것은 원장 손에만 맡긴다. 파생식이면
+글을 쓰다 전부 지운 순간 disclosure가 편집 도중 닫힌다 — Batch 2.6 N-2 사고의
+경로. 기존 `SecondaryFields`(치료 초점)에도 그 잠재 결함이 있었고 함께 고쳤다.
+`CarePlanCard`는 같은 `SecondaryFields`를 재사용한다(구현 1개, summary 관례 1개).
+**(경로당 테스트)** SSR 4건(최종판단 닫힘/열림, Care Plan primary·secondary, 레인4
+메모 닫힘/열림) + 소스 계약 1건(래치 존재, 파생식 부재, 한약 카드 불변) +
+헤드리스 실측 계약 분리.
+
+### 뷰포트 예산 계약의 정정
+`tests/tablet-viewport.spec.mjs`의 `EXPECTED_OPEN_INPUTS = 4`는 **fixture 0(수면
+주호소, 한약 프로필)**을 재고 있었다. 옛 주석 "판단/처치/재검 3 + 메모 1"은 통증
+프로필로 오해한 것 — 실제 4개는 한약 판단 3칸 + 한약 메모다. 계약을 둘로 나눴다:
+`EXPECTED_OPEN_INPUTS_HERBAL = 4`(불변) + `EXPECTED_OPEN_INPUTS_PAIN = 1`(LBP
+fixture를 이름으로 골라 두 번째 측정). 회차마다 `?vp=N` 쿠리로 완전 새로고침 —
+해시만 바꾸는 navigate는 같은 문서 내 이동이라 직전 회차의 fixture 선택이 남았다.
+
+### 한약 카드는 접지 않았다
+한약 판단 3칸(최종 변증·병기 / 처방·계획 메모 / 추적할 증상)에는 chip 같은
+구조화 공급원이 없다. 접으면 원장이 볼 것이 없어진다. 통증처럼 chip이 먹여주는
+구조가 생긴 뒤에 다룬다.
+
+### 부수 실측 — 다음 단계의 기준선
+LBP 화면 임상 워크플로 높이: 데스크톱 1440×900 **3.20x**, 태블릿 가로 1024×768
+**3.90x**, 태블릿 세로 834×1112 **2.70x** (한약 예산 1.5x의 2배 이상). 원장이
+"운동이 안 뜬다"고 느낀 원인 — 운동 후보가 3~4화면 아래에 있다. 다음 항목(안전
+레인 CLEAR 시 한 줄로 접기)의 목표 수치.
+
+### 검증
+`test:doctor-workspace` 285(+5), `test:tablet-viewport` 33(2프로필), `test:doctor`
+1041, `test:all` exit 0, `build` green, FROZEN zero-diff.
+
+---
+
+## 2026-09-05 — LBP 준비조건 게이트 **제거** (CD-1·CD-3 폐기). 시작 기준을 카드에 노출한다
+
+**결정자**: Gomars93(원장, PO). 같은 날 앞 배치("준비조건 두 층")를 **되돌리고
+더 나아간다** — 그 배치는 15탭을 4탭으로 줄였으나, 원장 지적으로 탭 자체가
+불필요했음이 드러났다.
+
+### 원장 지적
+> "준비조건 15개를 내가 육안으로 빠르게 처리하면 되는 거 아닌가?"
+
+맞다. 이 세션이 잘못된 것을 최적화했다.
+
+### 확인한 사실 (주장이 아니라 코드로)
+
+1. **그 기록은 어디로도 가지 않았다.** `lbpConfirmedCapabilities`/
+   `lbpDeniedCapabilities`가 `emrPreview.ts`/`emrSummary.ts`,
+   `revisitCarryForward.ts`/`longitudinal.ts`/`visitWorkspace.ts`,
+   `patientCarePlanPreview.ts`/`carePlan.ts` 어디에도 등장하지 않는다(grep 0건).
+   유일한 소비자가 같은 화면 같은 세션의 게이트였다 — **write-only 데이터**,
+   CLAUDE.md가 금지하는 바로 그 패턴.
+2. **"15개"는 실제 숫자가 아니었다.** 목표 기능 필터 뒤 원장이 마주하는 서로
+   다른 준비조건은 1~10개다(옷입기 1 / 수면 2 / 앉기 3 / 앉았다일어서기 4 /
+   걷기 6 / 서기 7 / 들어올리기 8 / 일 10). 앞 배치가 이론상 최대치로 문제를
+   부풀렸다. 이 세션의 보고 오류였고 원장께 정정했다.
+
+### 핵심 판단 — 같은 질문을 두 번 하고 있었다
+
+**원장이 어떤 운동을 채택하는 행위 자체가 그 운동의 시작 조건을 판단했다는
+뜻이다.** "네발기기 팔다리 뻗기"를 채택한다는 건 그 환자가 네발기기를 할 수
+있다고 본 것이다. 채택 *전에* `QUADRUPED_TOLERATED`를 따로 확인시키는 것은
+중복이다. 앞 배치의 층 분리는 그 중복을 "한 번 반"으로 줄였을 뿐 없애지 못했다.
+
+### 임상 정보 손실 0 — 대조로 확인
+
+삭제한 capability enum은 `lbpExerciseCoreMetadata.ts`의 `startingCriteriaKo`를
+기계용으로 사본한 것이었다. 행 대조:
+
+| 운동 | 삭제된 capability | 남아 있는 `startingCriteriaKo` |
+|---|---|---|
+| `LBP_FUNC_01` | `BALANCE_WITH_SUPPORT` (RF-5) | "낙상 위험이나 심한 기립성 증상이 별도 평가 없이 남아 있지 않음" |
+| `LBP_DEEP_TRUNK_01` | `NATURAL_BREATHING_TOLERATED` (RF-10) | "편안하게 호흡하면서 복부에 낮은 강도의 긴장을 만들 수 있음" |
+| `LBP_LOAD_02` | `HIP_HINGE_CONTROL`+`LOAD_READY` (RF-7b) | "무부하 hip hinge를 통제된 형태로 수행 가능", "증상 irritability가 고부하 연습을 허용하고…" |
+| `LBP_ACT_02` | `CAN_SELF_PACE` (RF-4) | "보행과 휴식을 스스로 조절할 수 있음" |
+| `LBP_TRUNK_03` | `QUADRUPED_TOLERATED` (RF-6) | "네발기기에서 균형을 유지할 수 있음" |
+
+한국어 원본이 오히려 더 풍부하다(증상 조건 절을 함께 담는다). 따라서 폐기되는
+것은 RF-4/5/6/7/7b/10의 **임상 판단이 아니라 그 중복 표현**이다. 이 대조를
+`tests/lbp-exercise-eligibility.spec.mjs` §8이 5행 exact-match로 고정한다.
+
+### 안전은 줄지 않는다
+
+게이트 4개가 **한 줄도 바뀌지 않고** 남는다: `routineCareAllowed`(질환 안전),
+`neuroStatus`(NEW_OR_WORSENING → STOP / **UNKNOWN → DEFER, RF-1 유지**),
+`distalSymptomResponse`(원위 악화 → STOP), `requiredDirectionalResponse`.
+바깥으로는 `treatmentSafetyLocked`(채택 잠금), 각 운동 `stopReviewKo`(카드 표시),
+그리고 **원장의 명시적 채택** — 이것 없이는 어떤 운동도 환자에게 나가지 않는다.
+제거된 것은 그 위에 얹혀 있던 **네 번째 층**, 유일하게 수기 입력을 요구하면서
+유일하게 하류 소비자가 없던 층이다.
+
+### 경로 교체 표 (CLAUDE.md "제거 또는 교체")
+
+**(출력 방향)**
+
+| 옛 경로가 나르던 값 | 초진 | 재진 | 한약 | mixed | synthetic 미리보기 |
+|---|---|---|---|---|---|
+| 각 운동의 시작 조건 (capability enum) | **카드 첫 근거 소견 "시작 기준"**(`startingCriteriaKo` 원문) | 운동 섹션 없음(기존) | 비대상 | 초진과 동일 인스턴스 | 후보 없음(기존) |
+| "확인함/지금은 안 됨" 기록 | **의도적으로 버림** — 어디에도 도달한 적 없음(위 확인 1) | 없음 | 비대상 | 동일 | 없음 |
+| 보류 사유 "준비조건 미확인" | **소멸**(그 상태가 없어짐) | 없음 | 비대상 | 동일 | 없음 |
+| 보류 사유 "신경 상태 미확인" | **`neuroUnrecorded` → 한 줄 안내**(빈 목록 방치 방지) | 없음 | 비대상 | 동일 | 없음 |
+| `START_WITH_REGRESSION` / `regressed` | **소멸.** `regressionKo`는 "쉬운 단계로 시작하려면"으로 **항상** 카드에 표시 — 시스템 판정에서 원장 선택으로 | 없음 | 비대상 | 동일 | 없음 |
+| 제목의 "(쉬운 단계로 시작)" 접미사 | **버림**(시스템 판정이었음) | 없음 | 비대상 | 동일 | 없음 |
+| 채택 텍스트의 쉬운 단계 절 | **버림** — 시작 기준은 임상가용 문장이라 환자 안내문에 넣지 않는다 | 없음 | 비대상 | 동일 | 없음 |
+
+**(입력 방향)** 쓰기는 되는데 읽히지 않는 필드를 남기지 않았다:
+`lbpConfirmedCapabilities`/`lbpDeniedCapabilities`/`RehabSuggestion.regressed`를
+`WorkspaceState`에서 제거했고, 그것을 쓰던 UI(3상태 버튼)도 함께 닫았다. 옛
+기록의 그 값들은 역직렬화에서 조용히 무시되며(전체 shape을 매번 새로 만든다),
+같은 기록의 다른 필드와 원장 결정(ACCEPTED 등)은 보존된다 — 테스트로 확인.
+
+**(표시 조건)** latch↔파생식 전환 없음. 새로 생긴 한 줄 안내(`neuroUnrecorded`)는
+순수 파생값이고 편집 중간 상태가 없다.
+
+**(경로당 테스트 1개)** 제거 4경로 + 대체 2경로 = 단언 그룹 6개
+(recommendation 스펙 "제거된 경로 1/4~4/4" + 신경 안내 2건, doctor-workspace
+"게이트 제거"·"대체 경로" 4건, eligibility §3·§8).
+
+### 트레이드오프 / 남는 리스크
+- (−) "확인했다"는 감사 기록이 사라진다. **그러나 그 기록은 EMR에 도달한 적이
+  없어 의무기록으로서의 가치가 애초에 0이었다.** 필요해지면 EMR 도달을 먼저
+  만들고 그 다음에 논의한다(순서가 반대였던 것이 이번 결함의 원인).
+- (−) 후보 수가 늘어난다(목표기능 1개 기준 1~11개). 기존 "3개 + 더 보기 (N)"
+  접기가 그대로 흡수한다 — 테스트로 확인.
+- (−) 추정이 틀려 못 하는 자세의 운동이 뜰 수 있다 → 이제 **원장이 시작 기준을
+  읽고 거른다**. 이것이 게이트보다 정확하다(원장은 환자를 보고 있다).
+- **놓치기 쉬운 것**: 신경학적 상태 미기록이면 여전히 19/20이 보류된다(RF-1,
+  의도된 안전 게이트). 이번에 그 상태에 **한 줄 안내**를 붙여, 원장이 이유 없이
+  빈 목록을 보는 일이 없게 했다.
+
+### 검증
+`test:lbp-exercise-eligibility` 20(재작성), `test:lbp-exercise-recommendation` 30,
+`test:doctor-workspace` 279, `test:workspace-round3` 196, `test:all` exit 0,
+`build` green, FROZEN zero-diff, 태블릿 `src/spec` 0줄, 변이 4/4 KILLED
+(시작 기준 제거 / 순서 뒤바꿈 / neuroUnrecorded 고정 / RF-1 게이트 제거).
+
+---
+
+## 2026-09-05 — LBP 준비조건 15개를 두 층으로: A층(안전 3개, 원장 직접 확인) / C층(12개, 확정 단계에서 추정) + 운동 단계 확정 UI
+
+**결정자**: Gomars93(원장, PO) — "너의 추천으로 모두 진행". 이 세션이 구현·검증.
+**CD-1 옵션 B(2026-09-02)를 C층 12개에 한해 대체한다.** A층 3개에는 CD-1
+옵션 B(확인 전 보류)가 그대로 산다. CD-3(3상태 chip)은 그대로다.
+
+### 문제
+`lbpExerciseEligibility.ts`는 준비조건 15개가 전부 UNKNOWN이면 운동 20개를
+전부 DEFER한다(RF-1, 의도된 fail-closed). 원장이 15개를 하나도 안 누르면
+화면에 운동이 하나도 안 뜬다. 원장: *"이걸 매번 체크해야 돼 내가?"*
+
+### 결정
+1. **A층(안전, 절대 추정 안 함)**: `SAFE_WALKING`, `BALANCE_WITH_SUPPORT`,
+   `CAN_SELF_PACE`. 안 되면 다칠 수 있는 조건(낙상·기립성·스스로 못 멈춤).
+2. **C층(단계에서 추정)**: 나머지 12개. 원장이 운동 단계를 확정하면 그 단계
+   이하 운동이 전제하는 자세·조절 능력은 있다고 본다. 우선순위는
+   **확인함(YES) > 지금은 안 됨(NO) > 단계 추정(YES) > UNKNOWN** — 원장이 누른
+   값이 항상 추정을 이긴다.
+3. **추정 문턱은 손으로 정하지 않는다.** min over {그 조건을 요구하는 운동}
+   of stage(운동)로 규칙표 × 단계표(v0.2)에서 계산. 결과: 1단계에서 8개,
+   2단계 10개, 3단계 12개가 추정 YES. 테스트가 12개 문턱을 명시 표로 고정.
+4. **원래 제안한 B층(문진 유도)은 비어 있다** — 문진에 자세 수행 가능 여부를
+   묻는 문항이 없다. 없는 층을 만들지 않는다.
+5. **운동 단계 확정 UI**(`LbpStageCard`, PainWorkspace 판단·처치 레인): 제안
+   (`suggestLbpExerciseStage`, 매 렌더 재계산·저장 안 함) + 0~3단계 버튼 +
+   "제안대로 확정" 1탭 + 0단계일 때 "1단계로 올리기" 1탭. 저장되는 것은
+   확정값 `WorkspaceState.lbpConfirmedStage`(0|1|2|3|null)뿐.
+6. **확정 단계보다 높은 단계의 운동은 후보에서 뺀다.** 미확정(null)이면
+   필터 없음(기존 동작). 0단계 확정이면 후보 블록이 `STAGE_0` 안내문으로
+   접힌다(안전 블록 SAFETY_REVIEW/NEURO_REFRESH가 우선).
+7. **추정값을 되돌릴 화면**: "확정 단계에서 자동 추정된 준비 조건" 행에
+   (추정) 표시 + 3상태 버튼. 이 행이 없으면 추정을 끌 방법이 없다(CLAUDE.md
+   입력 방향 규칙).
+8. **평가기(`lbpExerciseEligibility.ts`)는 한 줄도 바꾸지 않았다.** 바뀐 것은
+   어댑터가 평가기에 넘기는 값의 출처와 후보 필터뿐. 평가기의 RF-1 테스트
+   (blank context → 20/20 DEFER)는 그대로 통과한다.
+
+### 경로 교체 표 (CLAUDE.md "제거 또는 교체")
+
+교체된 경로: (a) 준비조건 값의 출처(확인/부인만 → +단계 추정),
+(b) 후보 집합(목표기능 필터만 → +단계 필터), (c) 블록 사유(+STAGE_0).
+`PainExerciseSection`은 DoctorWorkspace 한 곳에서만 호출되며 pain/mixed
+프로필이 같은 인스턴스를 공유한다(실측 `grep PainExerciseSection src/`).
+
+| 값 | 초진 (DoctorWorkspace) | 재진 (RevisitWorkspace) | 한약 | mixed | synthetic/fixture |
+|---|---|---|---|---|---|
+| C층 준비조건 UNKNOWN→추정 YES | "자동 추정된 준비 조건" 행에 (추정)+3상태 버튼 | 운동 섹션 자체가 없음(기존) | 비대상 | 초진과 동일 인스턴스 | `lbpRecommendation` null → 변화 없음 |
+| 확정 단계보다 높은 운동 | 후보에서 제거(의도). 단계 카드 힌트에 명시 | 없음 | 비대상 | 동일 | 없음 |
+| `lbpConfirmedStage`(신규 저장) | 단계 카드 버튼(읽기·쓰기) | **표시 없음 — 문서화된 gap**(재진에 운동 섹션 없음) | 비대상 | 동일 | 없음 |
+| 0단계 블록 메시지 | 후보 블록 대체, 단계 카드는 유지 | 없음 | 비대상 | 동일 | 없음 |
+| A층 chip | "안전 · 직접 확인" 태그 추가 | 없음 | 비대상 | 동일 | 없음 |
+| EMR 출력 | **미도달** — `emrPreview.ts` 파일럿 동결(HANDOFF 22). 소스 단언으로 고정 | | | | |
+
+**입력 방향**: `lbpConfirmedStage` 편집 → 저장(round-trip 테스트) → 추천
+모듈이 읽음(테스트). 추정 준비조건 → "지금은 안 됨" → `lbpDeniedCapabilities`
+→ 어댑터가 추정보다 우선(테스트 + 변이 KILLED).
+**표시 조건**: latch↔파생식 전환 없음. 단계 카드는 텍스트 입력이 없어 편집
+중 빈 문자열 상태가 존재하지 않는다.
+**경로당 단언**: A층 누출 방지 / 0단계 필터 / NO>추정 우선순위 / 평가기 불변 /
+EMR 미도달 / 제안 미저장 — 소스·동작 단언 6개 + 변이 3개 KILLED.
+
+### 트레이드오프 (PO 승인)
+- (−) C층에서 fail-closed를 포기한다. 추정이 틀리면 못 하는 자세의 운동이
+  후보로 뜰 수 있다. (+) 대응: 운동 카드의 중단 기준, 채택(adopt) 전엔
+  환자에게 안 나감, 추정값 개별 끄기. 2중 안전장치 위에 3중을 걸어둔 상태였다.
+- (−) 단계 카드는 초진에만 있다. 재진은 운동 섹션이 아직 없어 단계 확정도
+  없다 — 재진 배치에서 함께 다룬다.
+- (−) 확정 단계가 EMR 텍스트에 안 나간다(동결). 파일럿 뒤 emrPreview 배치.
+- **놓치기 쉬운 것**: 신경학적 상태(`lbp_objective_motor_deficit`)가 미기록이면
+  여전히 19/20 운동이 DEFER다(RF-1 neuro gate, 이번 배치 범위 밖·의도된 안전
+  게이트). 즉 실제 최소 조작은 "단계 1탭 + 신경 상태 1탭 + A층 최대 3탭".
+
+### 검증
+`test:lbp-capability-layer` 151(신규), `test:lbp-exercise-recommendation` 34
+(+11), `test:doctor-workspace` 281(+5, SSR 렌더), `test:workspace-round3` 198
+(+19), `test:all` exit 0, `build` green, FROZEN zero-diff, 변이 3/3 KILLED.
+
+---
+
+## 2026-09-05 — LBP 운동 단계: 상한(CAP) 모델 → 격하(DEMOTION) 모델, 0단계 신설, LBP_07B 문항 추가
+
+**결정자**: Gomars93(원장, Product Owner). 이 세션은 지시를 구현·검증했다.
+
+### 무엇을 결정했나
+
+1. **급성/재발은 "상한"이 아니라 "격하(-1)"로 처리한다.**
+   최종 = clamp(기본 − 격하개수, 0, 3), 그 뒤 공포회피 상한(최대 2) 적용.
+2. **0단계(보호/안정)를 신설한다.** 능동 운동을 처방하지 않는 선택지.
+   기본 단계로는 도달할 수 없고 격하로만 도달한다.
+3. **문항 `LBP_07B`(재발 간격)를 태블릿에 추가한다.**
+   `LBP_07 === 'YES'`일 때만 노출, `required: false`.
+
+### 왜 (원장 지시 원문 요지)
+
+- "급성 요통 심한 케이스 2단계도 힘든지 바로 1단계지. **1단계도 힘들 수
+  있어.** 근육 락킹으로 신경계를 보호하려고 하잖아."
+- "재발 간격이 3개월이면 조심해야지 **1단계씩 격하**시켜야지."
+
+두 지시 모두 "한 단계 낮춘다"는 같은 연산이다. 상한 모델을 유지한 채
+"severe+급성은 0단계" 규칙을 따로 붙이면 규칙이 4종류가 되어 원장이 결과를
+예측할 수 없다. 격하로 통일하면 산술 하나로 전부 나온다.
+
+### 확인한 사실 2건 (지시 검토 과정에서)
+
+- **(오해였음)** v0.3에서도 `severe + 1주 이내`는 이미 1단계였다 — 상한은
+  기본 단계가 이미 낮으면 발동하지 않는다. 원장께 이 점을 먼저 알렸다.
+- **(진짜 결함이었음)** 0단계가 없었다. TBC 3단계를 그대로 가져오면서 그
+  아래를 비워둔 설계 실수. protective muscle guarding 상태에 능동 운동을
+  얹지 않는 선택지가 시스템에 존재하지 않았다.
+
+### 경로 교체 표 (CLAUDE.md "제거 또는 교체" 규칙)
+
+**(출력 방향)** 교체된 경로가 나르던 값 × 화면. `lbpExerciseStage.ts`를
+import하는 화면 코드는 **실측 0개**다(`grep -rn lbpExerciseStage src/`
+→ coreSpec의 주석 1건뿐). 따라서 화면별 유실은 구조적으로 발생할 수 없다.
+
+| 옛 경로가 나르던 값 | 초진 | 재진 | 한약 | mixed | fixture/테스트 |
+|---|---|---|---|---|---|
+| `ACUTE_ONSET_MAX_STAGE` (export 상수) | 호출부 0 | 호출부 0 | 비대상(LBP 아님) | 호출부 0 | 테스트 import 삭제 + **부활 방지 단언 추가** |
+| reason `kind:'CAP'` 중 급성 사유 | 호출부 0 | 호출부 0 | 비대상 | 호출부 0 | `kind:'DEMOTION'`으로 기대값 갱신 |
+| `suggestedStage` 값역 1~3 | 호출부 0 | 호출부 0 | 비대상 | 호출부 0 | 0~3으로 확장, 전수 700조합 대조 |
+| (신규) `guidance` | 배선 예정 | 배선 예정 | 비대상 | 배선 예정 | 0단계와 정확히 동치임을 700조합에서 단언 |
+
+**(입력 방향)** 화면에서 편집 가능한데 읽히지 않는 필드는 없다 — 이 함수의
+입력 6개는 전부 환자 태블릿 답변이고 원장 편집 UI가 없다. 신규 `LBP_07B`는
+태블릿 입력 → `buildResponsePayload` → `lbpStageInputFromPayload` → 판정까지
+연결을 테스트가 end-to-end로 단언한다.
+
+**(표시 조건)** latch↔파생식 전환 없음. `guidance`는 순수 파생값이며 편집
+중간 상태가 존재하지 않는다.
+
+**(경로당 테스트 1개)** 신규 3 + 제거 1 = 소스 텍스트 단언 4개 추가
+(`제약(신규 경로 1/3)`, `2/3`, `3/3`, `제약(지운 경로)`).
+
+### 대안과 트레이드오프
+
+- **0단계 자동 vs 수동만**: 자동을 택했다. severe+급성 환자가 전원 0단계가
+  되어 "태블릿 도입 효과가 안 보인다"는 리스크가 있으나, 안전한 쪽이
+  기본값이고 올리는 것이 의식적 행위여야 한다는 원칙이 우선. 화면 배선 시
+  **"1단계로 올리기" 1탭**을 필수 요구사항으로 문서에 못박았다.
+  그 리스크의 크기는 회고 파일럿 분포로 측정한다(0단계 > 30%면 재검토).
+- **LBP_07B를 문진에 넣기 vs 원장이 화면에서 클릭**: 문진을 택했다. 재발
+  간격은 **환자만 아는 정보**이고, 원장 클릭을 늘리는 것은 같은 날 원장이
+  제기한 "이걸 매번 체크해야 되냐"는 문제를 키운다.
+- **재발 환자 별도 트랙**: 만들지 않기로. 트랙을 나누면 화면·저장·재진
+  비교·EMR 요약이 2배가 된다.
+
+### 근거의 한계 (문서·화면에 이 이상 쓰지 않는다)
+
+TBC(Alrwaily 2016) 원문에 0단계는 없다. 0단계는 **삼인당의 정책 결정**이며,
+"0단계가 회복을 앞당긴다"는 근거는 없다. 주장하는 것은 "급성기에 운동을
+처방하지 않는 선택지가 있어야 한다"까지다.
+
+### 검증
+
+`test:lbp-exercise-stage` 283 assertions(전수 700조합을 독립 계산식과 대조),
+`test:lbp-stage-pilot` 36 assertions(신규), `test:all` exit 0, `build` green,
+FROZEN(`src/spec/*Logic.ts`/`*Adapter.ts`) zero-diff.
+
+상세: `docs/LBP_EXERCISE_STAGE_ASSIGNMENT_v0.4.md`.
+
+---
+
 architecture, data model, API contract, 호환성 등 향후 개발자가 반드시 알아야
 할 판단만 기록한다. 사소한 구현 선택은 기록하지 않는다.
 
@@ -1498,3 +2124,1931 @@ source of truth로 사용하지 않는다 — 필요하면 visual reference로�
   `dcbcbd3` 기준)를 재오픈하지 않는다.
 - (−) #2/#4는 여전히 미해결 — `in_consultation` 자동 전이와 CRM
   reason_code 한국어 라벨은 다음 배치에서 다시 PO 확인이 필요하다.
+## 2026-09-02 — LBP Rehab Strategy Mapping: production 구축 보류 + Fable 역할 이관 (PO 결정, PR #28 코멘트)
+
+### Context
+`docs/LBP_REHAB_STRATEGY_SONNET_IMPLEMENTATION_BRIEF_v0.1.md`에 따라 구현한
+`src/doctor/workspace/lbpRehabStrategySelector.v01.experimental.ts`(commit
+`a219a5a` → 독립 리뷰 fix `23b2b5d`)가 실제 Opus 모델 호출 delta review에서
+PASS 판정을 받은 직후, Product Owner가 PR #28에 코멘트
+(https://github.com/Gomars93/Samindang/pull/28#issuecomment-5508066166,
+`author_association: OWNER`로 GitHub API에서 직접 확인)로 두 가지를 결정했다.
+
+### Decision — Rehab Strategy Mapping: production에서 만들지 않는다
+- 4개 Rehab Strategy 분류(증상반응 활용/신체·기능능력 회복/신경가동성 관리/
+  단계적 노출·복귀) + 호흡·이완 adjunct는 **내부 분류/설명/audit 구조로만**
+  유지한다.
+- 임상가에게 노출되는 `Primary Strategy → Secondary Strategy → Exercise`
+  워크플로 단계는 추가하지 않는다.
+- 현재 실험용 selector 계약을 만족시키기 위한 `patient facts → Primary/
+  Secondary Rehab Strategy` 매핑 엔진(이 selector의 필수 입력이지만 아직
+  미구현인 upstream 단계)은 **새로 만들지 않는다**.
+- Production LBP v1의 목표 파이프라인은 대신:
+  `Safety → Target Function → 최소 필요 확인 → Exercise Eligibility →
+  Target Function/현재 임상 반응이 직접 뒷받침하는 exercise 2~3개 →
+  clinician이 1~2개 선택 → 재평가`.
+- `lbpRehabStrategySelector.v01.experimental.ts`는 **범위가 한정된 실험적
+  산출물로서 리뷰 계약은 통과했지만, 있는 그대로 production 빌딩블록으로
+  가정하지 않는다.** v1에서 이 모듈을 우회(bypass)할지, 단순화 리팩터할지,
+  보류(defer)할지는 Fable이 평가한다. 이 selector를 보존하기 위한 upstream
+  strategy-mapping 레이어를 만들지 않는다.
+
+### Decision — 협업 역할 이관: ChatGPT → Fable
+ChatGPT가 맡던 product-architecture / overdesign-review / independent-
+integration-review / workflow-simplification / next-step-sequencing 역할을
+Fable로 이관한다. 최종 역할 구분:
+- Product Owner: 최종 product/clinical 결정 + main merge 명시 승인.
+- Fable: 최소 product architecture, overdesign gate, integration/
+  orchestration, 독립 product review, next-step sequencing, SSOT 관리.
+- Opus: 독립적 임상 의미/안전성/architecture 리뷰 + delta/closing review,
+  필요 시 `CLINICAL DECISION REQUIRED` 제기 가능.
+- Sonnet: 승인된 범위 내 구현/테스트/구체적 수정.
+- GitHub: SSOT.
+
+Fable은 Product Owner의 결정 권한, Opus의 임상 권한, 기본 구현 책임 중
+어느 것도 가지지 않는다. (이 문서 상단 "역할은 선언만으로 실행되지 않는다"
+원칙 그대로 — 실제로 그 모델/세션이 호출됐을 때만 해당 역할이 성립한다.)
+
+또한 코멘트는 "이미 CLOSED된 narrow implementation은 기본적으로 Fable을
+추가 리뷰 hop으로 넣지 않는다: Sonnet → focused tests → Opus delta →
+Sonnet fixes(필요 시만) → Opus closing. Fable은 product-architecture/
+overdesign 또는 의미 있는 integration 복잡도가 있을 때만 재투입"이라는
+token-efficiency guard를 재확인했다.
+
+### Reason
+- 현재 selector는 이미 해석된 `strategySelection`(Primary/Secondary)을
+  입력으로 요구하는데, 그 입력을 실제로 채울 patient-fact→strategy 매핑은
+  CLOSED 결정 문서에 없고 새로 만들려면 새로운 임상 판단이 필요하다 — PO가
+  "이 새 임상 판단을 만들 필요 없이 production 경로를 더 단순하게 간다"고
+  선택.
+- ChatGPT 기반 역할을 Fable로 옮기는 것은 코드/임상 로직과 무관한 순수
+  협업 프로세스 결정이라 이 세션이 재론할 사안이 아니다.
+
+### Trade-offs
+- (+) production 경로가 이미 존재하는 Eligibility/Target Function 위에서
+  더 짧아지고, 아직 미승인인 patient→strategy 매핑을 새로 발명할 필요가
+  없다.
+- (+) 이번에 만든 selector와 테스트는 폐기되지 않고 "범위가 한정된 실험,
+  검토 완료" 상태로 남아 이후 Fable 평가의 입력 자료가 된다.
+- (−) `lbpRehabStrategySelector.v01.experimental.ts`는 이번 결정으로
+  production 경로에 통합될 예정이 없다 — 이 모듈에 대한 추가 investment
+  (더 많은 vignette, 실제 payload 연결 등)는 Fable 평가 전까지 보류한다.
+
+### Consequences
+- 이 세션(Sonnet)은 이 selector 위에 추가 기능(strategy-mapping 엔진,
+  Doctor UI 연동 등)을 더 만들지 않는다.
+- 다음 production LBP v1 아키텍처 논의는 Fable 세션이 실제로 호출됐을 때
+  진행한다.
+
+## 2026-09-02 — LBP Production v1 Minimal Architecture (Fable 설계, PO 결정 후속)
+
+### Context
+PO 결정(위 항목, PR #28 코멘트 `#5508066166`)으로 ChatGPT 역할을 승계한
+Fable이 첫 작업으로 현재 repo(`main` `01dac63`, PR #28 `b099417`)를
+READY/PARTIAL/MISSING/OVERDESIGNED로 분류하고 production v1 최소 구조를
+`docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md`에 기록했다.
+
+### Decision (Fable 제안 — 제품 구조 판단; 임상 의미 신설 없음)
+- PR #28 research stack 중 production v1로 가져오는 것은 **운동 데이터
+  3파일**(`lbpExerciseLibrary.v01`, `lbpExerciseCoreMetadata.v01`,
+  `lbpExerciseEligibility.v01`)과 **v0.1 엔진의 검사 항목 문구/how·why**뿐이다.
+- v0.2(Decision Key/freshness)·v0.3(sufficiency)·B+ priority·v0.4 projection은
+  v1에 넣지 않는다(REMOVE, research 보존). Working Hypothesis 엔진/presentation은
+  DEFER(최종 판단 free text 유지). Rehab Strategy Selector v0.1은 **BYPASS**
+  (upstream Primary/Secondary를 만들지 않는다는 PO 결정의 직접 귀결) —
+  도메인→전략 정적 표만 추천 이유 라벨용으로 재사용.
+- Target Function은 새 필드/화면이 아니라 **기존 `FollowUpTarget` 옵션**으로
+  주입한다(추적·이력·EMR·micro follow-up 플러밍 재사용). 방향 반응은
+  `WorkspaceState.lbpDirectionalResponse` 필드 1개.
+- 구현은 4개 batch(1: 목표기능+최소 확인 블록 / 2: Eligibility+운동 2~3개 /
+  3: 재진 반응 루프 / 4(선택): CRM write-through+고정 EMR). Batch 1은 새
+  임상 의미가 없어 즉시 진행하고, Opus delta review에서 §6 확인 항목 5개를
+  답한다. Batch 2는 Eligibility의 Opus bounded validation을 선행한다.
+
+### Reason
+- main에는 안전(FROZEN)과 기록·추적·EMR이 이미 있고 "목표기능→최소 확인→운동"
+  가운데만 비어 있다. v1 규칙 표에서는 환자당 자동 제안이 최대 3개라
+  tranche/priority/sufficiency 기계가 해결하던 문제 자체가 생기지 않는다.
+- 과설계 gate(인수인계 문서 §8/§30)에서 위 8개 모듈은 "없어도 실제 관리가
+  잘 되는가"에 YES.
+
+### Trade-offs
+- (+) diff가 작고 기존 테스트 인프라(`test:all`)에 그대로 합류. 연구 자산은
+  PR #28에 보존.
+- (−) v0.2~v0.4가 다루던 "복합 cue 4~5개 경쟁" 상황은 v1에서 원장의 "확인
+  추가"로 처리한다(자동 우선순위 없음). 실제 진료에서 반복적 부담이
+  증명되면 그때 별도 Product Decision.
+- (−) PR #25는 main이 이미 해결해 닫기 권고(PO 판단), PR #28은 계속
+  DRAFT/미merge.
+
+### Consequences
+- Batch 1 브리프는 위 문서 §7. 루프: Sonnet → focused tests → Opus delta →
+  Sonnet fix → Opus closing. main merge는 PO 명시 승인.
+
+## 2026-09-02 — LBP v1 Batch 1 Opus delta review 결과 반영 + Batch 2 진입 조건 (Fable 기록, Opus 판정)
+
+### Context
+Batch 1(commit `9533414`)에 대한 실제 Opus delta review
+(`docs/LBP_V1_BATCH1_OPUS_DELTA_REVIEW_v0.1.md`)가 FAIL(구체 결함 6, CLINICAL
+DECISION REQUIRED 0)을 냈고 Sonnet이 `2f37946`에서 6건을 수정했다. 동시에
+Batch 2 선행 조건으로 실험용 Exercise Eligibility 규칙의 Opus bounded
+validation(`docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md`)을
+수행해 PASS WITH REQUIRED FIXES + PO 결정 2건(CD-1, CD-2)이 나왔다.
+
+### Decision (Opus 임상 판정, Fable이 SSOT에 고정)
+1. **자동 확인 항목 규칙 4개로 확정** (모두 CLOSED 계산값/원문 답변의 직결,
+   새 임상 의미 아님): (a) 목표 동작 재현(항상), (b) FROZEN
+   `leg_symptom_present==='YES'` → 하지직거상/슬럼프, (c) 태블릿 LBP_08
+   `claudication_walking==='YES'` → 보행 가능시간·거리, (d) FROZEN
+   `lbp_neuro_baseline_required===true` → 하지 신경학적 기본검사(감각·반사).
+   `lbp_safety_status!=='CLEAR'`이면 자동 제안 없음, 원장 "확인 추가"는 항상
+   가능. UNKNOWN은 어떤 규칙도 트리거하지 않는다.
+2. **Batch 2 운동 게이트는 재계산 safety를 쓴다.** 태블릿 제출 시점
+   `payload.responses.safety_flags.lbp`(객관적 근력저하 = undefined로 계산)가
+   아니라 `computeLbpFlags(toLbpStateFromDoctorPayload(responses,
+   lbpObjectiveMotorDeficit, age))` 결과를 `routineCareAllowed`로 쓴다.
+   `treatmentSafetyLocked`도 채택(finalization) 게이트에 반영한다. 새/악화
+   신경증상 기록 시 운동 블록은 접고 safety refresh 배너로 대체한다.
+3. **Eligibility 규칙 표는 복사 후 Opus RF-1/4/5/6/7/7b/10/11/12/13 수정을
+   적용한 뒤에만 production dependency가 된다.** 핵심: 신경상태 미확인이
+   회귀 판정에 가려지지 않게 순서 이동(RF-1), 자세 전제·낙상 안전·보행 안전은
+   hard 조건(RF-4/5/6), hip hinge 순환 의존 제거(RF-7/7b).
+4. **Batch 2는 PO 결정 CD-1(미확인 준비조건 → "쉬운 단계 시작" vs "확인 전
+   보류") 및 CD-2(치료 안전 미확인 시 채택만 차단 vs 블록 전체 접기) 전까지
+   adapter/추천 UI를 만들지 않는다.** Fable 권고 기본값: CD-1 = 확인 전 보류
+   (chip 1~2탭으로 해제), CD-2 = 후보는 보이되 채택 버튼 비활성.
+
+### Reason
+- (1)(2)(3)은 CLOSED 문서·FROZEN spec이 이미 요구하는 사항의 연결이라 Opus
+  권한 내 concrete fix. (4)는 CLOSED 문서와 v1 설계 문서 §2.3이 충돌하거나
+  FROZEN spec이 화면 처리를 규정하지 않아 PO만 정할 수 있다.
+
+### Trade-offs
+- (+) Batch 1 규칙 4개로 환자당 자동 제안 최대 4개(4개 동시 성립 조건: 양측
+  다리증상 + concrete neuro 없음 + LBP_08 YES). tranche/priority 기계 불필요
+  전제 유지.
+- (−) Batch 2 착수가 PO 결정 2건에 걸린다. 결정 전에도 규칙 표 수정(3)과
+  파일 복사는 가능하므로 별도 bounded 작업으로 선행할 수 있다.
+
+### Consequences
+- Batch 1 closing review 결과는 HANDOFF 참고. main merge는 PO 명시 승인.
+- Batch 2 착수 순서: (a) 3파일 복사 + RF 수정 + 테스트(Sonnet) → Opus delta
+  → (b) PO CD-1/CD-2 결정 → adapter/추천/채택 UI(Sonnet) → Opus closing.
+
+## 2026-09-02 — CD-1/CD-2 PO 결정: 추천안 채택 (Batch 2 게이트 해제)
+
+### Context
+`docs/LBP_EXERCISE_ELIGIBILITY_OPUS_BOUNDED_VALIDATION_v0.1.md`의
+CLINICAL DECISION REQUIRED 2건(CD-1, CD-2)을 세션 대화에서 Product Owner가
+직접 확인·확정했다(Fable 권고안 그대로 채택). GitHub SSOT에 우선 기록한다.
+
+### Decision
+- **CD-1 (미확인 준비조건 운동 표시):** 옵션 B 채택 — 준비조건(capability)이
+  `UNKNOWN`인 운동은 `START_WITH_REGRESSION`으로 자동 승격하지 않는다.
+  후보로는 보이되 "확인 전 보류"로 표시하고, 원장이 해당 capability chip을
+  1~2탭으로 확인하면 즉시 시작 가능 상태로 바뀐다. 옵션 A(클릭 0, 미확인을
+  시작 가능으로 자동 표시)는 채택하지 않는다.
+- **CD-2 (치료 안전 미확인 환자의 운동 블록):** 옵션 A 채택 — 운동 후보
+  카드는 그대로 렌더하되 "채택" 버튼만 비활성화하고 "치료 안전 확인 후
+  채택 가능" 배너를 표시한다. 후보 자체를 숨기거나 블록 전체를 접지 않는다.
+
+### Reason
+Opus bounded validation의 권고 근거를 그대로 수용: CD-1은 CLOSED 문서의
+"미확인/미평가를 정상·적격으로 숨은 변환 금지" 원칙과 v1 설계 §2.3을
+일치시키고, CD-2는 FROZEN `treatmentSafetyLocked`가 요구하는 "채택
+finalization만 막는다"는 범위를 넘어서지 않으면서 원장이 후보와 차단
+이유를 함께 볼 수 있게 한다.
+
+### Consequences
+- Batch 2는 이제 사람 판단 없이 끝까지 진행한다: (a) 3개 운동 데이터 파일
+  포팅 + Opus RF-1/4/5/6/7/7b/9/10/11/12/13 규칙 수정, (b) 재계산된 safety를
+  쓰는 eligibility adapter(RF-2/3/3b), (c) CD-1/CD-2를 반영한 추천 모듈 +
+  채택 UI(RF-8), 전부 하나의 cohesive batch로 Sonnet 구현 → Opus delta →
+  concrete fix → Opus closing.
+- main merge, PR 생성은 여전히 PO 명시 승인 대상.
+
+## 2026-09-02 — LBP v1 Batch 2 Opus delta review 결과 + CD-3(capability chip 3상태) PO 결정 대기
+
+### Context
+Batch 2(운동 Eligibility + 추천 + 채택, commit `2ac30c4`)에 대한 실제 Opus
+delta review(`docs/LBP_V1_BATCH2_OPUS_DELTA_REVIEW_v0.1.md`)가 FAIL(구체 결함
+10, BLOCKER 1)을 냈다. RF-1~13 중 RF-1/2/3b/4/5/6/7/7b/9/10/11/13은 RESOLVED,
+RF-3/8/12·CD-2는 RESOLVED WITH ISSUE, **CD-1은 NOT RESOLVED**.
+
+### Decision (Opus 판정, Fable이 SSOT에 고정; PO 결정 1건은 대기)
+1. **BLOCKER (CD-1 위반)**: 규칙 엔진이 capability `'NO'`와 `'UNKNOWN'`을
+   구분하지 않아, 미확인 regressible 조건이 `START_WITH_REGRESSION`으로 자동
+   승격됐다(실측: neuro STABLE + 확인 0건에서 4개 운동이 "쉬운 단계로 시작"으로
+   채택 가능). PO가 기각한 옵션 A 동작 → 즉시 수정: 미확인 regressible은
+   `DEFER_NOT_READY` + `regressionRequirements`로 돌려 "확인하면 시작 가능"으로
+   보낸다. 이 수정은 CD-3 결정과 무관하게 진행한다(미확인을 시작 가능으로
+   표시하는 것이 회귀를 못 주는 것보다 명백히 더 위험).
+2. 나머지 수정 8건(회귀 시작 시 채택 문구에 `regressionKo` 포함, Core-20
+   `displayNameKo` 한국어 명칭, 3개 표시 + 더 보기, capability 확인 취소 토글,
+   `UNCLEAR`→distal `UNKNOWN`, 비-LBP 레코드 채택 버튼 제거, LUMBAR_02 도달
+   불가 고정 테스트, 치료 안전 잠금 배너 위치)은 Sonnet concrete fix로 처리.
+3. **CD-3 (PO 결정 대기)**: 1번 수정 후 v1에서는 `'NO'`를 만들 UI가 없어
+   `START_WITH_REGRESSION` 계층(저장된 회귀 시작)이 구조적으로 도달 불가가
+   된다. 질문: capability chip을 `확인함 / 지금은 안 됨 / 미확인` 3상태로
+   확장해 회귀 계층을 살릴 것인가(Batch 2.5), v1은 회귀 계층 비활성으로 둘
+   것인가. **Opus·Fable 권고 기본값: Batch 2.5에서 3상태 chip 도입** —
+   CLOSED 문서 §8-5(정상/이상/불명확/제한/미시행/미평가 불합치)와 G15
+   `ExamCheckStatus` 6상태 확장과 같은 방향.
+4. Core-20 한국어 표시명(`displayNameKo`) 20개는 Sonnet 초안 → PO가 한 번에
+   검토·교정(임상 규칙이 아니라 명명이므로 결정 대기 없이 초안 적용).
+
+### Reason / Trade-offs
+- (+) BLOCKER를 CD-3와 분리해 즉시 안전한 쪽으로 닫는다.
+- (−) CD-3 결정 전까지 "쉬운 단계로 시작" 카드가 실제 환자에게 나오지 않는다
+  (해당 운동은 보류 + 확인 chip으로만 보임).
+
+### Consequences
+- Sonnet fix → Opus closing → HANDOFF 갱신. CD-3는 Batch 2.5 진입 전 PO에게 질문.
+
+## 2026-09-02 — LBP v1 Batch 2 Opus closing PASS; Batch 2.5 선행 조건 + PO 승인 대기 항목 확정
+
+### Context
+Sonnet fix(`d092105` 체크포인트 + `c23c3d0`)가 Opus delta review 결함 1~9를
+해소했고 Opus closing review(`docs/LBP_V1_BATCH2_OPUS_CLOSING_REVIEW_v0.1.md`)가
+PASS를 냈다. 독립 probe: capability 전부 UNKNOWN → START_WITH_REGRESSION 0/20,
+readyCandidates 빈 배열; 전부 'NO' → RF 매핑대로 4개 회귀(엔진 계층 정상).
+defect 1 되돌린 mutant에서 새 테스트가 실제로 실패함을 확인(비-공허).
+
+### Decision (기록)
+1. **Batch 2 게이트 CLOSED.** PR 생성/main merge는 PO 명시 판단.
+2. **Batch 2.5 선행 필수(CD-3를 3상태 chip으로 결정하는 경우에만):** 회귀
+   채택 문구 구분자 수정(`regressionKo` 뒤 종결부호 없이 "중단·재검토:"가
+   이어져 "…휴식 지점을 사용 중단"으로 오독 가능) + 회귀 문구 회귀 테스트.
+   v1에서는 START_WITH_REGRESSION이 구조적으로 도달 불가라 비차단.
+3. **PO 승인 대기(명명, 임상 규칙 아님):** Core-20 `displayNameKo` 20개.
+   Opus 제안: DEEP_TRUNK_01 "배에 힘주기(코어 브레이싱)" → "숨 쉬면서 배에
+   살짝 힘주기"(시작 기준 "최대수축 아님"과 상충 소지, 우선 검토); DIR_03
+   "엎드려 반복 허리 젖히기"; DIR_04 "누워서·앉아서 굽히기"; EXPOSURE_03
+   "앉아 있기 단계적으로 늘리기"; 굽힘 계열 3개 동시 노출 시 혼동 검토.
+4. Core-20 원장용 필드(`startingCriteriaKo`/`acceptableResponseKo`/
+   `progressionKo`)의 잔여 영어는 환자 노출 없음 → 의도적 미변경.
+5. SYNTHETIC LBP 프리뷰에서 채택 버튼이 남는 것은 실제 제출 경로 영향 없음
+   → 선택 사항(`!synthetic && isLbpRecord`), 미적용.
+
+### Consequences
+- 다음 PO 결정: (a) CD-3, (b) displayNameKo 명명.
+- 그 뒤 Batch 2.5(Working Hypothesis 최소 형태 + ExamCheckStatus 6상태 +
+  [CD-3 시] capability 3상태 + §C(i)(ii)).
+
+## 2026-09-02 — 운영 방침: PR 없이 텍스트 요약 보고 (PO 확정)
+
+### Decision
+앞으로 세션은 batch/decision 완료 시 **PR을 자동으로 만들지 않는다.**
+변경 내용은 이 대화(또는 텍스트 요약)로 보고한다. PR은 원장님이 명시적으로
+요청할 때만 생성한다. main merge는 기존과 동일하게 별도 명시 승인 필요.
+
+### Reason
+PO가 GitHub PR diff를 매번 확인하는 대신 자연어 요약으로 진행 상황을 파악하길
+원함. `CLAUDE.md` Review Protocol의 "PR 생성/갱신" 단계보다 이 명시적 PO
+지시가 우선한다(Decision Precedence: 최신 PO 결정 > 문서 관례).
+
+### Consequences
+- 이후 HANDOFF의 "다음 행동"에 "PR 생성"을 기본 포함하지 않는다.
+- 원장님이 "PR 만들어줘"라고 명시하면 그때 생성한다.
+
+## 2026-09-02 — CD-3 승인 + Core-20 한국어 표시명 5건 확정 (PO 결정)
+
+### Context
+Opus closing review(`docs/LBP_V1_BATCH2_OPUS_CLOSING_REVIEW_v0.1.md`)가 낸
+CD-3(capability chip 3상태 도입 여부)와 `displayNameKo` 명명 제안 5건을
+PO에게 직접 질의했다.
+
+### Decision
+- **CD-3: 승인.** Batch 2.5에서 준비조건 chip을 `확인함(YES) / 지금은 안
+  됨(NO) / 미확인(기본값)` 3상태로 확장한다. 이로써 v1에서 구조적으로 도달
+  불가였던 `START_WITH_REGRESSION`("쉬운 단계로 시작") 계층이 실제로
+  동작하게 된다.
+- **Core-20 한국어 표시명: Opus 제안 5건 그대로 적용.**
+  1. `LBP_DEEP_TRUNK_01`: "배에 힘주기(코어 브레이싱)" → **"숨 쉬면서 배에
+     살짝 힘주기"** (기존 이름이 시작 기준 "최대수축 아님"과 상충 소지 —
+     가장 우선 수정 대상)
+  2. `LBP_DIR_03`: "반복 허리 젖히기" → **"엎드려 반복 허리 젖히기"**
+     (자세 미특정 → prone 계열임을 명시)
+  3. `LBP_DIR_04`: "누워서·앉아서 숙이기" → **"누워서·앉아서 굽히기"**
+  4. `LBP_EXPOSURE_03`: "앉아 있기 시간 늘리기" → **"앉아 있기 단계적으로
+     늘리기"** (이름이 목표만 말하고 시작 용량이 "현재보다 짧게"인 구조상
+     불일치 해소)
+  5. 굽힘 계열 3개(`DIR_04`/`EXPOSURE_01`/`FUNC_05`)가 같은 화면에 동시
+     노출될 때 혼동 가능 — 이름 자체는 변경 없음, UI에서 함께 검토
+
+### Consequences
+- Batch 2.5 구현 범위 확정: (a) 위 명칭 5건 반영, (b) capability 3상태
+  + adapter(`lbpEligibilityContext.ts`)가 실제 `'NO'`를 생성하도록 UI 연결,
+  (c) Opus closing §C(i) 회귀 채택 문구 구분자 수정 + §C(ii) 회귀 테스트
+  보강. ExamCheckStatus 6상태(G15)와 Working Hypothesis 최소 형태(G16)는
+  범위가 크고(전자는 전 부위 공유 타입) 독립적이라 별도 batch로 분리해
+  진행한다(Batch 2.5b/2.5c).
+- 새 임상 의미 없음: (a)는 승인된 명명, (b)(c)는 이미 CLOSED된 CD-1/CD-3
+  결정과 Opus closing review가 지정한 정확한 수정 사항의 이행.
+
+## 2026-09-02 — LBP v1 Batch 2.5a 게이트 CLOSED (Opus closing PASS)
+
+### Context
+`53a8149`(Batch 2.5a 구현) → Opus delta review **PASS 단 must-fix 3 +
+nice-to-have 1**(`docs/LBP_V1_BATCH2_5A_OPUS_DELTA_REVIEW_v0.1.md`) →
+`e8ed6ef`(4건 전부 수정, 뮤테이션 재현으로 자체 검증) → Opus closing
+**PASS**(`docs/LBP_V1_BATCH2_5A_OPUS_CLOSING_REVIEW_v0.1.md`, 결함 1~4
+RESOLVED를 독립 재현으로 확인).
+
+### Decision (기록)
+1. **Batch 2.5a 게이트 CLOSED.** CD-3(capability 3상태 확인함/지금은 안
+   됨/미확인)가 실제로 동작한다. 도달성 재확인: 준비조건 하나를 "지금은
+   안 됨"으로 찍으면 최대 8/20 운동이 "쉬운 단계로 시작"으로 열릴 수
+   있음(임상적으로 문제 없음, Batch 2 closing에서 이미 확인).
+2. **잔여 개선(비차단, 다음 batch 후보로 백로그)**: `확인하면 시작
+   가능` 섹션에서 hard requirement를 "지금은 안 됨"으로 찍은 경우와
+   regressible 조건이 미확인인 경우를 UI에서 구분해서 보여주는 구조적
+   개선(`missingHardRequirements`/`regressionRequirements` 분리 노출).
+   지금은 안내 문구로 충분히 방어됨.
+3. **다음 batch**: Batch 2.5b(`ExamCheckStatus` 6상태 — LIMITED/
+   NOT_PERFORMED 추가, 전 부위 공유 타입이라 착수 전 Fable이 영향 범위
+   설계 검토), Batch 2.5c(Working Hypothesis 최소 형태), 이후 Batch 3
+   (재진 Quick Check 5문항), Batch 4(EMR 고정 6키 + CRM 최소).
+
+### Consequences
+- PR 없이 텍스트 요약으로 계속 보고(운영 방침, 위 항목).
+- main merge는 여전히 PO 명시 승인 대상.
+
+## 2026-09-02 — PO 재확인: 운동 자동 추천 → 원장 선택 층 유지 + Batch 순서 조정
+
+### Decision
+- PO가 "운동은 자동 추천하고 내가 선택하는 방식"을 재확인했다. Batch 2/2.5a의
+  Eligibility + 추천 + 채택 층은 그대로 유지한다(단순화·접기 없음).
+- PO가 원하는 진료 형태를 4가지로 재정의: (1) 문진으로 원장이 판단할
+  것(이학적 검사·추가 문진) 최적화 (2) 자유 입력보다 체크 형태, 과설계 금지
+  (3) 재진 시 간단 체크 (4) 일정 주기 세부 체크. Fable 대조 결과 (3)이 가장 큰
+  공백, (4)는 부품만 있고 연결 없음, (1)의 "추가 문진"은 얇음.
+- **순서 조정(Fable, next-step owner)**: Batch 3(재진 간단 체크 5문항 +
+  세부 체크 주기 도달 표시)을 Batch 2.5b/2.5c보다 먼저 진행한다. 루프를 먼저
+  닫는다.
+
+### Consequences
+- Batch 3 착수: Fable이 기존 재진 화면(`RevisitWorkspace`, `NextReassessmentPlan`,
+  `StructuredReassessment`, micro follow-up)을 대조해 최소 설계 → Sonnet 구현
+  → Opus delta → fix → closing. 숫자 threshold 없음. 세부 재검은 자동으로
+  열지 않고 원장이 선택.
+
+## 2026-09-03 — LBP v1 Batch 3(재진 간단 체크 + 세부 체크 주기 표시) 게이트 CLOSED
+
+### Context
+- 브리프: `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §9 (Fable,
+  `e02cfc6`). 구현 `2cdbd06`(Sonnet) → Opus delta PASS(must-fix 1: doc
+  comment가 코드와 반대, nice-to-have 2) → `bd58cb0` fix → Opus closing
+  FAIL(수정한 주석의 다른 절이 새 분기와 불일치, 코드·테스트는 clean) →
+  Fable이 주석 절만 수정, Opus 지정 재확인 3개 통과.
+- 증거: `docs/LBP_V1_BATCH3_OPUS_DELTA_REVIEW_v0.1.md`,
+  `docs/LBP_V1_BATCH3_OPUS_CLOSING_REVIEW_v0.1.md`.
+
+### Decision (기록)
+1. **Batch 3 게이트 CLOSED.** `VisitWorkspaceState.revisitQuickCheck`
+   (additive, schema `1.0.0` 불변) 5항목 chip + 메모 1칸. 안내 문장 8규칙은
+   chip 상태의 직접 대응만이며 Opus가 "새 임상 판단/threshold/escalation
+   없음"으로 확인. 미평가(NOT_ASSESSED)는 어떤 문장에서도 "없음"으로
+   취급되지 않는다("유지·진행 가능" 문장은 5항목 전부 평가 + 신경 NO +
+   이상반응 NO일 때만).
+2. **세부 체크 주기 도달 표시**: 원장이 세운 `NextReassessmentPlan`
+   (DATE/VISIT_COUNT) 값만 사용, 시스템이 만든 숫자 없음. 직전 방문이 UNSET
+   이면 더 이전 방문의 plan을 쓴다. plan이 있으나 읽을 수 없으면(비객체
+   또는 status 비문자열) 더 오래된(이미 대체된) plan으로 fallback하지 않고
+   표시를 생략한다(fail-safe, Opus가 방향 확인). `오늘 재검` 폼은 due여도
+   자동으로 열리지 않는다.
+3. **환자 태블릿 응답(micro follow-up)은 quick check로 자동 복사하지
+   않는다**(출처 분리). carry-forward도 quick check를 옮기지 않는다.
+4. **Fable의 예외적 직접 수정 1건**: closing 잔여 결함이 doc comment 한
+   절뿐이고 Opus가 "코드·테스트 무변경이면 추가 리뷰 없이 종료 가능"을
+   명시했으므로 Fable이 주석만 수정했다. 코드 구현은 계속 Sonnet 담당이며
+   이 사례를 일반화하지 않는다.
+
+### Consequences
+- 다음 안건(하나): "이전에 채택한 운동" 줄이 재진 3회차부터 사라지는 한계
+  (직전 방문 1건만 읽는 구조)를 Batch 3.1로 다룰지 PO 결정. 그 뒤 2.5b →
+  2.5c → 4.
+- PR 없이 텍스트 요약 보고 유지. main merge는 PO 명시 승인.
+
+## 2026-09-03 — PO 승인: Batch 3.1 "재진 화면 잔손질 2건"
+
+### Context
+- PO 질문: "재진 세부 문진 시 경과가 별로일 때 세부적으로 더 파고들게 되어
+  있나?" Fable 답: 새 신경증상만 "재초진 문진/신경학적 기본검사 고려"로
+  유도하고, 단순 악화·정체는 "계획 재검토" 문장뿐이며 `오늘 재검`을 펼치라는
+  유도가 없음. PO 조건: "복잡하게 만들고 싶지 않다."
+
+### Decision (PO "승인")
+1. **(A)** 이상반응/악화/계획대로 시행+변화 없음 중 하나라도 있으면 안내
+   문장 끝에 꼬리말 1줄을 **한 번만** 추가: "필요하면 아래 '오늘 재검'을
+   펼쳐 이전 검사 결과와 비교하세요." 자동으로 열지 않음. 신경증상·운동
+   조정·유지 문장에는 붙이지 않음(알림 피로 방지). threshold 없음 — "얼마나
+   나빠야 나쁜가"는 원장 판단으로 남긴다.
+2. **(B)** "이전에 채택한 운동" 줄을 직전 방문이 재진이어도 표시: 이력에서
+   가장 최근 초진(submission-backed) 방문을 찾아 그 채택 운동 제목을 날짜와
+   함께 보여준다. 직전 방문 recap/carry-forward 원천(`priorSubmission`)의
+   의미는 바꾸지 않는다.
+3. 브리프: `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §10.
+   루프: Sonnet → 테스트 → Opus delta → fix → closing. 안전 의미 변경 없음
+   (Opus가 확인).
+
+### Consequences
+- Batch 3.1 후 다음: Batch 2.5b(`ExamCheckStatus` LIMITED/NOT_PERFORMED,
+  Fable 영향 범위 설계 먼저) → 2.5c → 4.
+
+## 2026-09-03 — LBP v1 Batch 3.1 게이트 CLOSED (Opus delta PASS, 결함 0)
+
+### Context
+- 구현 `a57d9db`(Sonnet). Opus delta PASS, concrete defect 0, CLINICAL
+  DECISION REQUIRED 없음(`docs/LBP_V1_BATCH3_1_OPUS_DELTA_REVIEW_v0.1.md`).
+  수정 delta가 없어 closing 리뷰는 생략(리뷰할 fix가 없음).
+
+### Decision (기록)
+1. 꼬리말은 규칙 2/3/4 중 하나라도 발화 시 1회, 항상 마지막 줄, 규칙
+   1/5/6/7 단독에는 없음 — 1,152 조합 전수로 확인. `safetyRefreshSuggested`
+   및 기존 8개 문장 자구 불변.
+2. 채택 운동 원천은 "가장 최근 문진 방문 1개"만 본다. 그 방문에 채택 운동이
+   없으면 더 오래된 방문으로 내려가지 않는다(갱신된 최신 처방을 건너뛰고
+   낡은 처방을 되살리지 않음). 손상 원소는 건너뛰고 계속 탐색(라벨에 날짜가
+   있으므로 수용, Opus 판정).
+3. 브리프 §10.3 오류 정정: 규칙 3·4는 배타적이라 "2+3+4 동시" 케이스는
+   존재하지 않는다.
+
+### Consequences
+- 다음: Batch 2.5b(Fable 영향 범위 설계 먼저) → 2.5c → 4.
+- 백로그: 라벨 "초진" → "문진" 자구 조정 후보.
+
+## 2026-09-03 — LBP v1 Batch 2.5b 영향 범위 설계 완료 (Fable), PO 판단 3건 대기
+
+### Context
+- HANDOFF의 "다음 행동(하나)"에 따른 착수 전 게이트. `ExamCheckStatus`는 전
+  부위 공유 타입이라 Sonnet 착수 전 Fable이 영향 범위를 먼저 설계
+  (`DECISIONS.md` 2026-09-02/03). 산출물:
+  `docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`. 코드 변경 0.
+
+### Decision (설계, 구현 아님)
+1. **additive 2값** `LIMITED`/`NOT_PERFORMED`만 추가. 기존 4값의 의미·라벨·
+   glyph·직렬화 무변경. `Record<ExamCheckStatus, string>` 라벨/glyph 맵 2개가
+   컴파일 타임 exhaustiveness 게이트 역할을 한다.
+2. **두 신규 값은 "기록된 사실"** — pending 아님. EMR/재진 이월에 나타나고
+   "아직 확인 안 됨" 카운터에서 빠진다. 기존 필터 6곳이 전부
+   `!== 'NOT_YET_CHECKED'` 형태라 **코드 변경 없이** 이 동작이 성립하므로,
+   이 batch의 실제 산출물은 그 우연을 계약으로 고정하는 테스트(T-2/T-3)다.
+3. **판단 근거로는 쓰지 않는다.** 결과값으로 추론하는 유일한 지점
+   (`lbpExerciseRecommendation.ts:300`, `=== 'POSITIVE'`)은 이미 배타적 →
+   로직 무변경, 주석만 6상태로 갱신.
+4. **must-fix 1건**: 손으로 쓴 `STATUS_OPTIONS` 리터럴 2곳
+   (`ExamSuggestionCard.tsx:19`, `StructuredReassessmentCard.tsx:20`)은
+   `ExamCheckStatus[]`가 부분집합을 허용하므로 값 추가 시 tsc/build/기존
+   테스트 전부 통과하면서 신규 버튼이 화면에 안 나온다 →
+   `provenance.ts`의 `EXAM_CHECK_STATUS_OPTIONS` 단일 정의로 승격 + 커버리지
+   테스트(T-1)로 강제.
+5. **마이그레이션·서버 변경 없음**(server/에 이 enum 참조 0건 확인).
+   단 **역방향 열화 경로 실재**: 신버전이 쓴 `LIMITED`를 구버전이 읽으면
+   `isValidExamStatus` false → EMR에서 소견 한 줄이 조용히 누락된다.
+   (2026-09-03 정정: 원래 "화면에 확인 필요(값 형식 오류)"라고 적었으나 사실이
+   아니다 — 주 exam 카드에는 표식이 없고, "아직 확인 안 됨" 목록에서도 빠지며,
+   사유 메모가 비면 화면에 흔적이 전혀 남지 않는다. 실제 열화가 더 나쁘다.)
+   롤백 시에도 동일 → 동시 배포 필요.
+
+### 사람 판단 대기 (CLINICAL DECISION REQUIRED)
+- **CD-2.5b-1(차단)** 두 값의 한국어 라벨. `LbpDirectionalResponse.NOT_ASSESSED`가
+  이미 "미시행"을 **미평가**의 뜻으로 쓰고 있어(`lbpExamSuggestions.ts:219`)
+  같은 단어가 두 뜻이 된다. 권고 A: `제한적 시행(판단 유보)` /
+  `시행 못 함` (기존 라벨 무수정).
+- **CD-2.5b-2(차단)** `NOT_PERFORMED` 사유 메모 필수화 여부. 권고: 필수화하지
+  않고, 선택 시 상세·메모 토글을 자동으로 펼침.
+- **CD-2.5b-3(비차단)** 상태 버튼 6개 배치. 권고 기본값: 한 줄 유지 +
+  자주 쓰는 3개를 앞에 두는 순서로 해결, CSS 무변경.
+
+### Consequences
+- CD-2.5b-1/-2 승인 후 Sonnet 착수. 수정 허용 파일 6개 + 금지 목록은 설계
+  문서 §6. 게이트: `tsc -b`/`vite build`/`test:all` + FROZEN·tablet·server
+  zero-diff + 뮤테이션 6종 검출.
+- 백로그(비차단): `isExamChecked`(provenance.ts:128) 호출처 0 dead export 정리,
+  `DoctorWorkspace.tsx:420`의 한약 관찰 승격 시 `status:'UNCLEAR'` 자리표시자
+  오용 — 신규 2값 어느 것도 맞지 않으므로 이 batch에서 손대지 않음.
+
+## 2026-09-03 — LBP v1 Batch 2.5b 구현 완료 (ExamCheckStatus 6상태, G15 CLOSED)
+
+### Context
+- 설계 `3e842c7`(`docs/LBP_V1_BATCH2_5B_FABLE_IMPACT_SCOPE_v0.1.md`)에서 PO
+  판단 3건을 올렸고, PO가 "추천안으로 수정해줘"로 **전부 권고안 채택**.
+
+### Decision (PO 승인 + 구현)
+1. **CD-2.5b-1 안 A**: `LIMITED = '제한적 시행(판단 유보)'`,
+   `NOT_PERFORMED = '시행 못 함'`. `LbpDirectionalResponse.NOT_ASSESSED`의
+   기존 라벨 "미시행"(뜻: 미평가)은 **수정하지 않고**, 새 값이 그 단어를
+   피한다 — 한 화면에서 같은 단어가 두 뜻이 되는 것을 막는 쪽을 택했다.
+2. **CD-2.5b-2**: 사유 메모 **필수화 안 함**. `NOT_PERFORMED`를 고르면
+   상세·메모를 자동으로 펼쳐 사유 기록을 유도(`showDetail` 파생 조건 1개).
+   비워둔 채 저장하는 것도 허용 — 빠른 point-of-care 입력 전제 유지.
+3. **CD-2.5b-3**: 버튼 6개 한 줄 유지, 순서로 해결(정상/이상/불명확 →
+   제한/시행 못 함 → 미확인). **CSS 무변경**.
+4. glyph `△`/`⊘` (6개 상호 배타). `✕`류는 `NEGATIVE`의 `–`와 혼동 위험으로
+   배제.
+5. **로직 변경 0**: 결과값으로 추론하는 유일한 지점
+   (`lbpExerciseRecommendation.ts`의 `=== 'POSITIVE'`)은 이미 배타적 →
+   주석만 갱신. 신규 2값은 어떤 판단의 근거도 되지 않는다.
+6. **must-fix 해소**: 손으로 쓴 `STATUS_OPTIONS` 리터럴 2곳을 제거하고
+   `provenance.ts`의 `EXAM_CHECK_STATUS_OPTIONS` 단일 정의를 두 카드가 직접
+   쓰게 했다. `ExamCheckStatus[]`는 부분집합을 허용해 tsc가 누락을 잡지
+   못하므로, 값 수준(T-1a)과 화면 수준(T-1b) 테스트로 이중 강제.
+7. **설계 §6 대비 유일한 범위 이탈**: 값 수준 계약을 검증하려면
+   `provenance.ts`/`examSuggestion.ts` 번들이 필요해 기존
+   `test:workspace-round3`에 esbuild 단계 2개를 추가(`package.json`,
+   `.gitignore`). 신규 npm script는 만들지 않았다(금지 조항 준수). 대안은
+   소스 정규식뿐이었고 뮤테이션에 약하다.
+
+### 검증
+- `tsc -b`/`vite build` OK, `npm run test:all` PASS(exit 0, 5,114 assertions).
+- 뮤테이션 9종 전부 검출, 생존 0(설계 §4의 6종 + 자동 펼침 되돌리기 +
+  재진 이월 필터 축소 + OPTIONS 누락의 화면 수준 검출).
+- FROZEN/`tablet core/`/`server/` zero-diff.
+
+### Consequences
+- G15 CLOSED. 남은 gap 항목은 2.5c(Working Hypothesis) → Batch 4.
+- **배포 제약(신규)**: 신규 2값이 든 기록을 구버전 클라이언트가 읽으면 EMR에서
+  해당 소견 줄이 조용히 누락된다(롤백 포함) → 태블릿·원장 화면 동시 배포.
+- 백로그: `test:tablet-viewport` teardown 경합(ENOTEMPTY, 이 diff와 무관),
+  `isExamChecked` src 호출처 0, `DoctorWorkspace.tsx:420` `'UNCLEAR'`
+  자리표시자 오용.
+- 다음 batch(2.5c)는 착수 전 PO 결정 필요: Working Hypothesis의 형태(자유
+  텍스트 1칸 vs 구조화 필드)와 EMR/환자용 출력 노출 여부.
+
+## 2026-09-03 — LBP v1 Batch 2.5b 게이트 CLOSED + Batch 2.5c PO 결정 3건
+
+### Context
+- 2.5b: 구현 `1bda74c`/`6d0fc69` → Opus delta **PASS, 결함 4건**
+  (`docs/LBP_V1_BATCH2_5B_OPUS_DELTA_REVIEW_v0.1.md`) → `ab922be`(결함 1·3 테스트
+  보강, 뮤테이션 재현 검증) + `ea0a222`(결함 2 문서 정정) → Opus closing
+  **FAIL(문서 동기화 2건만, 코드 결함 0)** → `fb89098`(HANDOFF 실측 동기화 +
+  백로그 등록) → Opus 지정 재확인 기준 5개 전부 충족
+  (`docs/LBP_V1_BATCH2_5B_OPUS_CLOSING_REVIEW_v0.1.md` 말미).
+
+### Decision (기록)
+1. **Batch 2.5b CLOSED.** 검사 결과 6상태(제한적 시행/시행 못 함) 동작 확인.
+   Opus 독립 검증: 신규 2값이 음성/정상/eligible로 읽히는 경로 **0건**(전 저장소
+   전수), 결과값 추론 지점은 `lbpExerciseRecommendation.ts`의 `=== 'POSITIVE'`
+   하나뿐이며 배타적, 전 부위가 부위-무관 공유 경로를 그대로 쓰므로 목·어깨·
+   무릎 등에서도 선택·기록·EMR 출력이 동일하게 동작, 손상 값은 fail-safe
+   (`NOT_YET_CHECKED`) 또는 fail-closed(누락)로만 떨어짐.
+2. **검수가 실제로 잡아낸 것(기록)**: 구현자 자체 뮤테이션 9종은 전부 검출됐으나
+   독립 검수가 **생존 2종**을 찾았다 — 재검 카드 6버튼 렌더 무보호(재진에서만
+   조용히 4상태 붕괴), 손상 레코드가 "제한적 시행"이라는 없는 임상 사실로
+   렌더될 수 있었음. 자체 검증 통과 ≠ 게이트 통과임을 보여주는 사례.
+3. **배포 제약(정정됨)**: 구버전 클라이언트가 신규 값을 읽으면 (a) EMR 누락
+   (b) "아직 확인 안 됨" 목록에서도 제외 (c) 카드에 무표식 → 사유 메모가 비면
+   흔적 0. 원래 문서의 "화면에 확인 필요(값 형식 오류) 표시" 서술은 **틀렸다**.
+   태블릿·원장 화면 동시 배포 필수, 롤백 시에도 동일.
+
+### PO 결정 — Batch 2.5c (Working Hypothesis)
+- **CD-2.5c-1**: 5개 패턴 chip + 기존 자유 텍스트 유지(자동 계산 없음).
+- **CD-2.5c-2**: 가설을 **환자 안내문에도 쉬운 말로** 노출.
+- **CD-2.5c-3**: 2.5b Opus 검수 선행(완료).
+
+### Fable 설계 판단 (CD-2.5c-2 이행 방식)
+`patientCarePlanPreview.ts` 파일 헤더가 명시적 계약을 갖고 있다 — 환자 출력에는
+**원장이 직접 쓴 Care Plan 필드만** 들어가고 미확인 제안은 절대 들어가지 않는다.
+가설은 정의상 미확정이라 직접 흘리면 이 경계가 깨진다. 따라서 Batch 2의 운동
+채택 흐름을 그대로 재사용한다: chip → 쉬운 말 초안 **제안** → 원장이 "안내문에
+넣기" 클릭 → 기존 `patientInstruction`에 텍스트 삽입(수정 가능) → 기존 경로로
+환자에게. `patientCarePlanPreview.ts`는 **한 줄도 바꾸지 않는다**. 초안은
+`HIGHER`가 정확히 1개일 때만 생성하고, "확정 진단이 아니라 경과를 보며 다시
+판단합니다" 문구를 **테스트로 강제**한다.
+
+### Consequences
+- 브리프: `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §11.
+- **착수 전 처리**: 백로그의 fail-closed 표식(2.5b 결함 4)은 `ExamCheckStatus`에
+  값을 추가할 때 처리한다 — 2.5c는 그 enum에 값을 추가하지 않으므로 이번엔
+  해당 없음(Batch 4에서 재확인).
+- 다음: 2.5c 구현 → Opus delta → fix → closing → Batch 4(EMR 고정 6키 + CRM 최소).
+
+## 2026-09-04 — PO 결정 CDR-1/CDR-2/CDR-3 (환자 문구 2건 + 재진 게이트) 및 Batch 2.5c 게이트 CLOSED
+
+### Context
+Batch 2.5c 구현 `04d06cd` → Opus delta **FAIL**(D-1~D-9, CDR-1/2/3 제기,
+`docs/LBP_V1_BATCH2_5C_OPUS_DELTA_REVIEW_v0.1.md`) → `f449502`(PO 결정과 무관한
+6건 수정) → PO 결정 3건 → `9f07541`(D-1/D-4/D-7 나머지) → Opus closing
+**코드 9건 전부 RESOLVED, 문서 2건만 지적**
+(`docs/LBP_V1_BATCH2_5C_OPUS_CLOSING_REVIEW_v0.1.md`).
+
+### PO 결정 (2026-09-04)
+
+**CDR-1 — `NEURAL` 환자 문구를 증상 수준 표현으로 교체.**
+`다리로 가는 신경` → **`다리로 뻗치는 증상`**. 최종 문장:
+`오늘은 다리로 뻗치는 증상과 관련된 통증으로 보고 치료했습니다. 확정 진단이 아니라 경과를 보며 다시 판단합니다.`
+채택 이유: 원문도 질환명을 말하지 않아 문장 자체는 방어 가능했으나, 다섯 문장 중
+유일하게 **해부학 구조를 지목**해 환자의 재전달 과정에서 "신경이 눌렸대요/
+디스크래요"로 변형될 위험이 있었다(Opus CDR-1). 증상 수준 표현은 그 앵커를
+제거하면서도 임상 의미를 잃지 않는다 — `뻗치다`는 환자가 실제로 쓰는 말이라
+어느 증상을 중심으로 봤는지가 그대로 전달된다.
+
+**CDR-2 — `WALK_STAND_LEG` 환자 문구의 한국어 문법 수정.**
+`오래 걷거나 서 있을 때 나타나는 다리` → **`오래 걷거나 서 있을 때 나타나는 다리 증상`**
+(조사도 `와` → `과`, 증상은 받침이 있음). 원문은 "나타나는"이 "다리"를 수식해
+"걸을 때 나타나는 다리"가 되어 비문이었다(D-1). 협착증·신경인성 파행 같은
+진단명을 피하는 방향은 그대로 유지.
+
+**CDR-3 — 재진 화면 임상 가설 카드를 요통 환자에게만 표시.**
+조건: 직전 문진 방문의 `safety_flags.lbp != null` **또는** 오늘 이미 가설이
+기록되어 있음. 두 번째 조건은 이미 기록한 가설이 갑자기 접근 불가가 되지 않도록
+하기 위한 것이다. 초진 화면(`DoctorWorkspace.tsx`의 `isLbpRecord`)은 이미 막혀
+있었고 재진 화면만 뚫려 있어, **목·무릎 재진 환자 안내문에 허리 문장이 들어갈 수
+있었다**(D-4). 브리프 §11.2의 "LBP 전용" 정의와 일치시킨 것.
+
+**결정하지 않은 것**: `HIP`의 쉬운 말 표현 `고관절`은 의학 용어라 쉬운 말 역할을
+못 한다는 지적(Opus A-4)이 있으나 PO가 결정하지 않았다. `엉덩관절(고관절)` 등이
+후보. 환자 문구를 다음에 다룰 때 함께 결정한다. **백로그.**
+
+### 명시적으로 기록하는 트레이드오프 (Opus 관찰 8)
+"확정 진단이 아니라 경과를 보며 다시 판단합니다." 문구는 **초안 생성 시점의
+보장**이지 출력 시점의 보장이 아니다. 원장이 안내문에 삽입한 뒤 그 문장만 지우고
+가설 문장을 남기면 시스템은 감지하지 못한다. **이는 의도된 것이다** — 출력 시점에
+강제하려면 `patientCarePlanPreview.ts`가 가설을 알아야 하는데, 그것이 바로 이
+batch가 지키려는 경계(§11.1)다. 안내문은 원장 소유 필드로 남긴다.
+
+### Decision (기록)
+1. **Batch 2.5c 게이트 CLOSED.** Opus가 실제 `RevisitWorkspace` 컴포넌트를
+   jsdom으로 렌더해 요통/비요통 기록 양방향으로 게이트 동작을 확인했다(카드가
+   요통 환자에게 안 뜨는 반대 방향 오류 없음). 검증: `tsc -b`/`vite build` OK,
+   `test:lbp-working-hypothesis` 214 / `test:workspace-round3` 179 /
+   `test:doctor-workspace` 240, `test:all` PASS. FROZEN·`patientCarePlanPreview.ts`
+   ·금지 파일 전부 zero-diff.
+2. **환자 문구 5개는 테스트에 하드코딩 리터럴로 고정**되어 있다(모듈 상수 참조
+   아님). 문구를 바꾸면 6개 단언이 동시에 실패한다. **이 리터럴을 고칠 때는
+   반드시 DECISIONS.md에 항목을 남긴다** — 이 항목이 그 참조 대상이다.
+
+### Consequences
+- 백로그(전부 비차단, Opus 관찰): (1) 초안이 사라지면(가능성 높음 2개 이상 선택 등)
+  안내문에 남은 이전 가설 문장 경고도 같이 사라진다 — 경고를 `{draft && …}` 밖으로
+  올리면 해결. (2) 재진 게이트 접근 경로의 **필드명 오타는 아무도 못 잡는다**
+  (`.responses` → `.response`는 타입 통과 + 전 테스트 통과 + 요통 환자에게 카드
+  소멸) — 소스 스캔 가드 1줄 추가 권고. (3) D-8 import 스캔이 같은 디렉터리
+  경로만 본다. (4) `HIP` 쉬운 말 표현.
+- 다음: **Batch 2.5d(가설 추정 제안)** — PO가 "이학적 검사와 세부문진으로
+  추정된다 정도는 가능하지 않냐"고 확인. 근거를 함께 표시하되 지지 수준은 원장이
+  직접 찍는 방식. 그 뒤 Batch 4(EMR 고정 6키 + CRM 최소).
+
+## 2026-09-04 — 원장 화면 실측 감사 (Opus) 및 Batch 2.6 착수 / 2.5d 보류
+
+### Context
+PO: "과설계로 빠지지 않게 세팅 가능해? 진료시에 핵심정보들만 있으면 좋겠는데."
+PO가 "점검부터"를 선택 → Fable이 설계자 자신이라 자기 채점을 피하기 위해 Opus에게
+실측 감사를 위임. 결과: `docs/DOCTOR_SCREEN_LOAD_AUDIT_OPUS_v0.1.md`.
+
+### 실측 (코드 직접 계수, 추정 아님)
+- **초진**: 화면 열자마자 탭 요소 약 70개 + 자유입력 4칸. 진료 중반 자유입력 최대 16칸.
+- **재진**: 항상 보이는 chip 52개 + 자유입력 10~16칸. **문서의 "재진 30~60초" 목표와
+  정면으로 어긋난다** — 30~60초는 간단체크 카드 하나의 예산이고 나머지 14블록은 그 밖이다.
+- 원인은 카드 수가 아니라 세 가지: (1) 같은 값을 두 번 그리는 곳 5군데,
+  (2) 접혀 있어야 할 것이 자동으로 펼쳐지는 곳 3군데, (3) 초진 배치를 재진이 그대로 복사.
+
+### 확인된 결함 (설계 의도와 실제 동작이 다름)
+1. **`다음 방문 확인 메모`에 한 글자만 입력하면 Care Plan 6칸이 통째로 펼쳐진다.**
+   `isCarePlanEmpty`가 `nextVisitCheckItem`을 포함하기 때문. 게다가 그 6칸 중 하나가
+   방금 입력한 바로 그 필드라 **같은 값이 두 개의 살아있는 textarea로 동시에 뜬다.**
+   원장이 손으로 닫아도 키 입력마다 다시 열린다. 가설 문장 삽입·운동 채택도 같은 경로.
+2. **`SupportContradictionPanel`은 실제 환자 화면에서 한 번도 렌더되지 않는 죽은 표면**
+   (`evidence={synthetic?.evidence}` — synthetic 프리뷰 전용).
+3. `LbpWorkingHypothesisCard`의 `미판단` chip 5개는 누를 일이 없다(해제는 재클릭으로
+   이미 가능). 형제 카드 `RevisitQuickCheckCard`는 같은 이유로 이미 렌더에서 제외 중 —
+   두 카드의 관례가 어긋나 있었다.
+
+### Decision
+1. **Batch 2.6(화면 정리 1차) 착수** — 임상 의미가 바뀌지 않아 PO 승인 불요인 항목만:
+   자동 펼침 차단 + `nextVisitCheckItem` 이중 배치 해소 / `미판단` chip 제거 /
+   재진 Care Plan 접기 / 운동 `최종 지시문` 토글 뒤로 / `아직 확인 안 됨` 줄의 제목 나열
+   제거 / 재진 micro follow-up 후보 목록 제거 / `NextActionCard`는 접힘이 닫힌 경우만.
+   예상: **초진 자유입력 11 → 5칸, 재진 항상 보이는 자유입력 10~16 → 4~6칸.**
+2. **Batch 2.5d 보류.** 단독 착수하지 않는다 — 이미 초과된 예산에 더 얹는 것이 되므로
+   2.6 이후에 재검토한다.
+3. **2.5d 설계 §12를 두 곳 정정한다(Fable 판단 오류)**:
+   (a) **문진만으로 얻는 근거는 표시하지 않는다.** 그 두 문장은 이미 검사 카드의
+   `왜 확인?` 줄에 글자 그대로 있다(`lbpExamSuggestions.ts:146,155`) — 추가가 아니라
+   중복이다. 게다가 환자를 만지기 전 화면이 방향을 제시하면 앵커링 위험이 실재한다.
+   Fable의 원래 권고("띄우자")를 철회한다.
+   (b) **근거 없는 패턴을 disclosure로 감추지 않는다.** 검사 결과를 찍는 순간 행이
+   튀어나와 아래 행이 밀린다 — 태블릿에서 **진료 중 chip 위치가 이동하는 오탭 위험**이며
+   편의가 아니라 안전 문제다. 5행 고정 순서·상시 노출을 유지하고, 근거는 패턴당 **1줄**
+   (뒷받침·반대를 한 줄에 합침)로 한다.
+4. **되돌림 후보로 기록**: `LbpAwaitingCapabilitySection`(운동 준비조건 체크). PO가
+   승인한 것은 "운동은 자동 추천, 내가 선택"이지 "운동을 열려면 전제조건 체크리스트를
+   먼저 채우기"가 아니다(Opus 판정). 엔진은 유지하고 UI만 축약하는 안 — **PO 결정 필요.**
+
+### PO 결정 대기 4건
+1. **처치 어휘 목록**(침/약침/부항/추나/물리치료/한약/…) — 주시면 `시행·예정 처치`
+   자유입력 칸이 chip으로 바뀐다. 코드 주석이 "승인된 어휘가 없어 못 만들었다"고 명시.
+2. **EMR 복사 위치** — 현재 두 군데(참고 자료 접힘 안 / 종결 섹션). 매번 쓰는 쪽이
+   접힘 안에 있다.
+3. **`치료 직후 값`을 실제로 적는지** — 안 적으면 기본 입력칸 3개가 사라진다.
+4. **운동 준비조건 체크를 지금 형태로 계속 쓸지** (위 4번).
+
+### Consequences
+- `SupportContradictionPanel` 처리(제거 vs 2.5d 근거를 이 패널로)는 2.5d 재개 전 명시적 결정.
+- 감사에서 "절대 지우면 안 되는 것" 12항목이 문서화됐다 — 향후 정리 작업의 가드레일.
+
+## 2026-09-04 — PO 결정 4건 (화면 정리 2차, Batch 2.7 범위 확정)
+
+Opus 화면 감사(`docs/DOCTOR_SCREEN_LOAD_AUDIT_OPUS_v0.1.md`) 부록의 PO 결정 대기
+4건에 대한 답. Batch 2.6(승인 불요 항목)은 별도로 이미 진행 중.
+
+### CD-2.7-1 — 처치 어휘 확정 (자유입력 → chip)
+`PainFinalAssessment.interventionPerformedOrPlanned`를 chip + 기타 1칸으로 전환.
+**승인 목록 8개**: 침 / 약침 / 부항 / 추나 / 물리치료 / 한약 / 테이핑 / 운동처방만.
+`기타` 자유입력 1칸은 남긴다(목록에 없는 처치용). 복수 선택 가능.
+`FinalAssessmentCard.tsx`의 "승인된 처치 어휘가 없어 chip으로 못 만들었다"는 주석의
+차단 사유가 이 결정으로 해소된다. **저장 형식은 기존 문자열 필드를 유지**하고 chip
+선택을 사람이 읽는 문자열로 합성한다(스키마 변경 없음, EMR 출력 형식 불변).
+
+### CD-2.7-2 — EMR 복사는 `종결` 섹션 하나로 통일
+`참고 자료` 접힘 안의 `EmrPreviewCard`는 **보기 전용**으로 남기고 복사 버튼을 제거,
+복사는 `종결` 섹션 한 곳에서만 한다. 진료 마지막에 한 번 복사하는 실제 흐름과 일치.
+
+### CD-2.7-3 — `치료 직후 값`은 기본에서 숨긴다
+"거의 안 적는다"(PO). `FollowUpTargetPicker`에서 target당 `치료 직후 값` 입력을
+기본 숨김으로 하고 `직후 값 기록` 토글로 노출한다. **저장 필드·기존 값 표시는 불변**
+(이미 기록된 값이 있으면 자동으로 펼쳐 보인다 — 기록이 숨겨지면 안 된다).
+기본 화면 자유입력 **최대 -3칸**.
+
+### CD-2.7-4 — 운동 준비조건을 자세 chip 4개로 축소
+`LbpAwaitingCapabilitySection`의 조건별 3버튼 행과 5줄 안내문단을 걷어내고,
+**자세 chip 4개**(누움 / 엎드림 / 네발기기 / 지지하고 서기)로 대체한다.
+**Eligibility 판정 로직(`lbpExerciseEligibility.ts`)은 손대지 않는다** — 화면만 축약.
+근거: PO가 승인한 것은 "운동 자동 추천 → 원장이 선택"이지 "운동을 열려면 준비조건
+체크리스트를 먼저 채우기"가 아니었다(Opus 판정, CD-1/CD-3의 원래 취지와도 일치).
+Fable 주: 이는 이미 병합된 Batch 2.5a UI의 **부분 되돌림**이다. capability 3상태
+자체(확인함/지금은 안 됨/미확인)는 데이터 모델에 그대로 남고, 화면에서 원장이
+만나는 표면만 자세 4개로 줄인다. 자세 chip → capability 매핑은 착수 전 Fable이
+설계하고 Opus가 임상 검수한다(자세 4개로 15개 capability를 다 덮지 못하면 어떤
+운동이 영영 안 열리는지 반드시 도달성 재확인).
+
+### Consequences
+- **Batch 2.7 = 위 4건.** Batch 2.6(승인 불요 7건) 완료 후 착수.
+- CD-2.7-4는 도달성 회귀 위험이 있어 Opus delta 검수 필수(Batch 2.5a에서 "all-NO →
+  START_WITH_REGRESSION 정확히 4개" 도달성 프로브를 이미 만들어 두었으므로 재사용).
+- 2.5d는 여전히 보류. 2.6 → 2.7 이후 재검토.
+
+## 2026-09-04 — LBP v1 Batch 2.6(화면 정리 1차) 게이트 CLOSED
+
+### Context
+`4f3ce14` 구현 → Opus delta **FAIL**(D-1 HIGH 회귀 포함 7건,
+`docs/LBP_V1_BATCH2_6_OPUS_DELTA_REVIEW_v0.1.md`) → `be8e072`(D-1~D-6) +
+`9e8fe19`(D-7 HANDOFF) → Opus closing **FAIL**(N-1/N-2/N-3, 전부 LOW,
+`docs/LBP_V1_BATCH2_6_OPUS_CLOSING_REVIEW_v0.1.md`) → `b08a1b8` → Fable이 재확인
+기준 전부 실행해 충족.
+
+### Decision (기록)
+1. **Batch 2.6 CLOSED.** 실측 감소(Opus가 세 리비전을 같은 harness로 재계수):
+   **초진 진료 중반 자유입력 14 → 6칸**, 탭 82 → 76.
+   **재진 화면 열자마자 자유입력 10 → 4칸.** 감사 §G의 12개 불가침 항목 전부 무손상.
+2. **이 batch가 만든 회귀 2건과 그 교훈(반드시 승계)**:
+   - **D-1**: 초진에서 "중복"이라고 지운 필드가 재진에는 대체 경로가 없어 **보이지도
+     고쳐지지도 않는데 이어받기는 계속 거기 썼다.** 원장이 못 본 문장이 다음 방문
+     EMR·환자 안내문에 실릴 수 있었다. → **지우기 전에 그 필드를 쓰는 모든 화면에
+     대체 경로가 있는지 확인한다.**
+   - **N-2**: D-2 수정(파생값 전환)이 mount latch를 잃어 **지시문을 지우는 도중 입력칸이
+     사라지는** 새 회귀를 만들었다. → **수정도 회귀를 만든다. closing 검수를 생략하지 않는다.**
+   - **N-3**: 회귀를 유발한 잘못된 전제가 주석으로 남아 있었다. → **회귀를 고치면 그
+     회귀를 낳은 설명도 같이 고친다.**
+3. **`isCarePlanEmpty`의 전제는 화면 의존적이다**(초진: 필드가 접힘 **밖**에 있어 제외가
+   옳음 / 재진: 접힘 **안**에 있어 호출부가 조건을 더해야 함). 주석에 명시했다.
+
+### Consequences
+- 다음: **Batch 2.7 = CD-2.7-1..4.** 착수 전 Fable이 **자세 4개 ↔ capability 매핑**을
+  설계하고 Opus가 도달성 검증(2.5a의 "all-NO → START_WITH_REGRESSION 정확히 4개" 프로브
+  재사용). 자세 4개로 못 덮는 조건이 있으면 그 운동이 영영 안 열린다.
+- CD-2.7-1 작업 시 한약 `nextVisitCheckItem` 이중 배치(O-6)도 같은 prop으로 함께 처리 가능.
+- 2.5d는 계속 보류(2.7 이후 재검토).
+
+## 2026-09-04 — CD-2.7-4 폐기, Batch 2.7-A 구현 보류(설계만 확정), Batch 4 우선
+
+### Context
+Batch 2.7-A 설계(§13)에 대한 Opus 사전 검수: `APPROVE WITH CHANGES` 12건
+(`docs/LBP_V1_BATCH2_7A_OPUS_DESIGN_REVIEW_v0.1.md`). 검수 과정에서 Fable 설계의
+중대한 오류 2건이 드러났다(아래). PO에게 트레이드오프를 제시하고 결정을 받았다.
+
+### Decision (PO 승인)
+1. **CD-2.7-4(운동 준비조건을 자세 chip 4개로 축소) 폐기 확정.**
+   근거: Opus가 엔진을 번들해 전수 실행한 결과 자세 4개만 설정 가능하면
+   **20개 중 16개(화면 기준 17개)가 영영 열리지 않는다** — 요통에서 가장 기본인
+   걷기 2종(`LBP_ACT_01`/`LBP_ACT_02`), 호흡이완, 신경활주가 전부 포함된다.
+   이 결론은 실제 환자 파일럿으로도 바뀌지 않는 계산상 사실이므로 지금 폐기한다.
+2. **Batch 2.7-A(준비조건을 운동 카드 안으로) 설계는 §13으로 확정하되 구현은 보류.**
+   사유(PO 동의): 같은 화면을 이번이 세 번째 재설계인데 **실제 환자로 한 번도
+   검증한 적이 없다.** 오늘 PO의 "치료 직후 값은 거의 안 적는다" 한마디로 입력칸
+   3개가 즉시 사라진 것이 그 증거다. 준비조건도 같을 수 있다.
+3. **다음 작업은 Batch 4**(EMR 고정 6키 + CRM 최소 write-through). 매 진료에 쓰이고,
+   형식이 정해져 있어 추측 위험이 낮으며, v1 완결의 마지막 필수 조건이다.
+4. **그 뒤 실제 환자 2~3명 파일럿**, 그 결과로 §13을 그대로 쓸지 고칠지 결정한다.
+
+### Fable 설계 오류 2건 (기록 — 같은 실수 방지)
+- **도달성 산술 오류**: Fable이 "열림 8 / 막힘 12"로 계산해 PO 결정을 뒤집었으나
+  실제는 **"열림 4 / 막힘 16"**. 원인은 **CD-1 수정 이전 엔진 의미론으로 계산**한 것
+  (hard requirement만 막는다고 가정). 현재 엔진은 미확인 regressible도 DEFER시킨다.
+  **PO 결정을 뒤집는 근거 수치는 반드시 엔진을 직접 실행해 검증할 것.**
+- **안전 구멍 설계**: §13 목업이 잠긴 카드에 `[보류][기각]`을 두었는데, 결정된
+  RehabSuggestion은 `mergeLbpRehabSuggestions`의 `keptDecided`로 영구 보존되므로
+  나중에 `채택`으로 전환하면 **eligibility 엔진을 한 번도 통과하지 않은 운동이
+  Care Plan에 들어간다.** 채택 버튼 비활성화로는 막히지 않는다(게이트는 버튼이 아니라
+  "저장된 제안이 되었는가"에 있다).
+
+### PO 결정 (§13 구현 시 적용)
+- **CD-2.7A-1**: 잠긴 운동 카드에는 **운동 이름 + 한 줄 설명만** 표시한다.
+  용량·횟수·중단 기준(`startingDoseKo`/`stopReviewKo`)은 **채택 이후에만** 표시.
+  사유: 아직 허용되지 않은 운동의 처방 용량이 원장 앵커링과, 태블릿을 환자 쪽으로
+  돌렸을 때의 환자 오독 경로가 된다(Opus 개정 2).
+
+### Consequences
+- §13은 Opus 개정 12건을 반영해 갱신한 뒤 **착수 대기** 상태로 둔다(구현 금지).
+- CD-2.7-1(처치 어휘 8개), CD-2.7-2(EMR 복사 통일), CD-2.7-3(치료 직후 값 숨김)은
+  준비조건과 무관하므로 **Batch 4와 함께 또는 그 전에 처리 가능**(PO 확인 필요).
+- 파일럿 전까지 운동 준비조건 화면은 현행 유지(조건 버튼 48개 그대로).
+
+## 2026-09-04 — PO 결정: 사주 검증 입력 경로 제거, 출생 시간대만 표시 (Batch 4.1) + Batch 4 게이트 미완
+
+### Context
+Batch 4(EMR 고정 6키) closing 검수의 미해결 결함 **C-1**은 "D-1을 고치는 수정이
+D-2를 한약 프로필에 재현했다"였다 — pain EMR에는 JudgmentPanel의 원장 타이핑
+3필드(`revised_after_exam`/`final_treatment_axis`/`prescription_direction`)를
+복구했으나 herbal EMR에는 복구하지 않아, 한약 레코드에서는 **쓸 수는 있는데
+어디에도 도달하지 않는 필드**가 남았다.
+
+이 계열(D-1/D-2/C-1)은 같은 사고의 **세 번째·네 번째** 발생이며, 그 결과
+CLAUDE.md의 제거 안전 규칙이 "컨트롤 제거" 규율에서 **"제거 또는 교체" + 필드 ×
+화면 표 + 지운 경로 1개당 소스 단언 1개**로 강화됐다(`eb82862`).
+
+### Decision (PO, 2026-09-04)
+1. **`JudgmentPanel`의 사주 검증 4필드 입력 블록을 제거한다.**
+   (`saju_only_prediction` / `revised_after_exam` / `final_treatment_axis` /
+   `prescription_direction`). 사유: 원장은 사주를 해석하지 않는다 — 대표님이
+   별도로 본다. 원장 화면에 그 입력칸이 있을 이유가 없어졌다.
+2. **원장 화면에 필요한 명리 관련 정보는 "태어난 시간대(자축인묘…)" 하나뿐이며,
+   간략하게만 표시한다.**
+3. 따라서 **C-1은 "herbal에도 배선한다"가 아니라 "경로 자체를 제거"로 닫는다.**
+
+### 설계 (Fable, §15)
+`docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §15. 두 파트로 분리:
+- **4.1-A**: 입력 블록 + 하류 EMR 배선(`emrPreview`의 `clinicianJudgment*` 3키,
+  `DoctorView`의 전달, `judgmentRecordedFieldCount` 4줄, 설명 개요 read-back) 제거.
+  애매함 없음. **이것만으로 C-1이 닫힌다.**
+- **4.1-B**: `명리` 아코디언(`MyungriCompactCard` + `명리 검토` reviewGrid) 제거 +
+  `BIRTH_03`에 `출생 시간대` 라벨 부여.
+
+### 이 결정이 "값을 잃지 않는다"는 근거 (CLAUDE.md 규칙 산출물)
+- EMR에 도달하던 3필드는 **전부 같은 EMR 키에 도달하는 동일 레인 대체 입력칸이
+  이미 존재한다**(§15.2 표). 새로 만들 칸이 0개.
+  - pain: `finalWorkingAssessment` → `A 최종 임상 판단:`, `treatmentFocus` →
+    `A 치료 초점:`, `interventionPerformedOrPlanned` → `P 시행/예정 처치:`
+  - herbal: `finalPatternOrMechanism` / `treatmentPrinciple` / `prescriptionPlanNote`
+- `saju_only_prediction`만 대체 없이 **의도적 폐기**(근거: 위 PO 판단).
+- **타입과 기본값(`ClinicianJudgment`, `emptyJudgment`)은 유지**한다. 이미 저장된
+  레코드의 값은 그대로 round-trip되어 파괴되지 않고 `원본 JSON`에도 남는다.
+  `server/**`(FROZEN)와 `tests/server.spec.mjs` 판단 fixture 8곳이 zero-diff가 된다.
+- `src/saju/`·`computeSaju`·payload의 `myungri_calculation`은 **전부 유지**한다.
+  계산과 저장은 계속되고 **원장 화면 렌더링만** 없어진다.
+- `BIRTH_03`(`birth_time_branch`)은 FROZEN 스펙에 **이미 존재**하고 옵션 라벨이
+  `새벽 3시 ~ 새벽 5시 (인시)` 형태라 자축인묘를 이미 담고 있다. 원장 화면에도
+  `viewProfile !== 'pain'`일 때만 **이미 보이고 있다.** 라벨만 원장용으로 바꾸므로
+  `src/spec/**` zero-diff.
+
+### 미결(구현 전 PO 확인, §15.6)
+1. `생년월일`/`양음력`/`윤달`/`시간 확신도`도 뺄 것인가 — **기본안 "남긴다"**
+   (시 단독으로는 원국을 세울 수 없다).
+2. `선천 특징`/`현재 증상 연결`(같은 성격의 사주 자유서술, EMR 미도달)도 뺄 것인가
+   — 4.1-A 범위 밖, 필요 시 4.1-C.
+3. 아코디언 제목 `명리·감사 기록` 재명명 — 2번 결론 후 한 번에.
+
+### 기록해 둘 관찰 (범위 밖)
+`명리·감사 기록` 아코디언에는 `viewProfile` 게이트가 **없다** — `명리`
+아코디언(`viewProfile !== 'pain'`)과 달리 통증 레코드에서도 열린다. PR #24의
+"pain 프로필은 명리 내용을 노출하지 않는다" invariant가 이 경로로 이미 새고
+있었다. 4.1-A가 그 중 4필드분을 막지만, 미결 2번이 남으면 누수는 남는다.
+
+### Consequences
+- Batch 4 게이트는 **아직 CLOSED가 아니다.** 4.1-A 구현 + 이 문서/HANDOFF 동기화
+  (C-4) 후 **Opus closing 재검수 1회**가 남는다.
+- §15.7의 제거 단언 T1~T6은 "없음"을 주장하는 형태라 **구조적으로 공허해지기
+  쉽다.** Batch 4의 C-3(공허한 seed 가드, Opus의 M4subtle 변이가 살아남음)가
+  같은 함정이었으므로, 각 단언에 대해 **제거를 되돌린 상태에서 실패하는 것을
+  보이고 원복**한 결과를 브리프에 남기는 것을 구현 완료 조건으로 한다.
+- `src/doctor/emrSummary.ts`는 4.1-A 이후 호출자도 데이터 소스도 없는 이중 사문이
+  된다. 삭제 권고(분리 가능 항목, §15.3).
+
+## 2026-09-04 — 테스트 규약 2건 확정: 번들 텍스트 한글 단언, 안전 경계 exact-match
+
+### Context
+Batch 4.1-A 구현 중 **두 가지 서로 다른 "공허한 테스트" 함정**이 실제로 발생했다.
+둘 다 **mutation 검증 단계에서만** 드러났고, "테스트 통과"만 보고했다면 검사하지
+않는 단언 4개를 "검증됨"으로 기록할 뻔했다. Batch 4의 C-3(공허한 seed 가드,
+Opus의 M4subtle 변이가 살아남음)에 이어 같은 계열의 세 번째·네 번째 사례다.
+
+### 함정 1 — esbuild 이스케이핑
+`tests/.<name>-bundle.cjs`(테스트 하네스가 esbuild로 빌드하는 번들)는 **비-ASCII
+문자를 전부 `\xHH`/`\uHHHH`로 이스케이프한다.** 직접 확인: `.judgment-panel-
+bundle.cjs`에 **raw 한글 0개.** 따라서
+
+```js
+assert(!bundleSrc.includes('사주 예상'))   // 언제나 통과 — 아무것도 검사하지 않음
+```
+
+은 대상 문자열이 실제로 남아 있어도 영원히 통과한다.
+
+**저장소 전체 감사 결과**(Fable): `tests/*.spec.mjs` 62개 파일, 한글 `includes()`
+536건 중 부정형 132건. esbuild 번들 대상은 T1/T2 두 건뿐이었고 이미 교정됨.
+나머지는 `renderToStaticMarkup` 결과 `html`·순수 텍스트·raw `.ts` 소스 대상이라
+비공허. `tests/preview-build.spec.mjs:96/101`은 번들 대상이지만 **Vite** 산출물이고
+같은 파일이 같은 산출물에 **긍정형 단언**(line 78)을 통과시키고 있어 이스케이프
+되지 않음이 짝 대조로 증명된다. **추가 오염 없음.**
+
+### 규약 1 (확정)
+`.cjs`/`.mjs` **번들 텍스트**에 한글 리터럴로 단언할 때는 둘 중 하나를 반드시 한다:
+1. `esbuildEscapeNeedle()`(`tests/doctor-reset-key.spec.mjs`)로 needle을 변환하거나,
+2. **같은 산출물에 대한 긍정형 짝 대조 단언**을 함께 둔다(그 단언이 통과하면
+   그 산출물은 이스케이프하지 않는다는 증거가 된다).
+
+ASCII 식별자(필드명·키명) 검사는 영향 없다. **렌더된 `html` 대상 단언도 영향 없다.**
+
+### 함정 2 — 라벨 문자열로만 잠근 안전 경계
+T4 초안은 `원장 평가:` / `치료/처방 방향:` / `진료 계획:` 이라는 **라벨 붙은 절**의
+부재만 검사했다. 이 상태에서 `oParts.push(input.clinicianJudgmentAssessment)` 처럼
+**라벨 없이** `O`에 밀어 넣는 변이는:
+- 세 `!includes` 를 전부 통과하고,
+- T11(`filled` fixture의 `O` 라인 exact-match)도 통과한다 — 그 fixture가 더 이상
+  해당 키들을 넘기지 않으므로 변이가 **거기서는 발화조차 하지 않는다.**
+
+Fable이 직접 변이를 넣어 재현했고(세 `!includes`는 `OK`, 새 단언만 FAIL),
+`29eb06d`에서 `O stays bare` exact-match 한 줄로 닫았다.
+
+### 규약 2 (확정)
+**`O | 객관적 소견` 같은 안전 경계는 "금지 라벨이 없다"가 아니라 "그 줄 전체가
+정확히 이것이다"로 잠근다.** 라벨 문자열 부재 검사는 라벨을 안 붙인 우회로를
+그대로 열어 둔다. (같은 파일 defect #7 블록이 이미 이 관례를 쓰고 있었는데
+T4만 놓쳤다.)
+
+또한: **fixture에서 입력을 빼면 그 fixture의 exact-match 단언은 그 입력에 대한
+변이를 더 이상 잡지 못한다.** 제거 배치에서 fixture 입력을 줄일 때는, 그 입력에
+대한 커버리지가 다른 단언으로 옮겨졌는지 반드시 확인한다.
+
+### Consequences
+- 두 규약 모두 `tests/` 관례이며, 다음 배치부터 신규 단언에 적용한다.
+- **일반 원칙**: "없음"을 주장하는 단언은 **구조적으로 공허해지기 쉽다.** 제거
+  배치의 완료 조건은 앞으로도 "테스트 통과"가 아니라 **"제거를 되돌린 상태에서
+  그 단언이 실제로 실패하는 것을 보이고 원복한 기록"**이다(§15.7).
+- Batch 4.1-A는 Fable 독립 검증을 통과했으나 **게이트는 Opus closing 재검수가
+  닫는다** — 자가검증 통과 ≠ 게이트 통과(2.5b 교훈 승계).
+
+## 2026-09-04 — Batch 4.1 완결(A~D): 원장 화면에서 사주 표면 전면 제거 + 설계 규칙 2건
+
+### PO 결정 (2026-09-04, 순차)
+1. 사주 검증 4필드 입력 블록 제거 (4.1-A)
+2. `명리` 아코디언 제거, 출생 시간대만 간략 표시 (4.1-B) — 근거: **"사주 넣어보는
+   프로그램이 별도로 있어"**. 원장은 사주를 해석하지 않는다.
+3. 생년월일/양음력/윤달/시간 확신도는 **남긴다** — 대표님이 별도 프로그램에
+   입력하려면 시(時) 단독으로는 원국을 세울 수 없다.
+4. `선천 특징`/`현재 증상 연결` 제거 (4.1-C)
+5. `1분 디브리핑` 전체 제거 + `학습 케이스`도 지금은 안 쓴다 (4.1-D)
+
+### 결과
+`JudgmentPanel`에 편집 가능한 요소가 0개가 되어 **패널과 아코디언을 통째로 제거**했다.
+원장 화면 46개 fixture 전수 렌더 검사에서 `사주`/`명리`/`디브리핑`/`학습 케이스`
+**잔존 0건**, 안전 카드(객관적 근력저하 라디오)는 18개 fixture에서 정상 렌더.
+
+타입(`ClinicianJudgment`의 7개 필드 + `DEBRIEF_QUESTIONS` 상수 + `validateJudgment`/
+`finalizeJudgment`)은 **전부 유지**했다 — `server/**` FROZEN, `tests/server.spec.mjs`
+**zero-diff 통과**가 "이미 저장된 값을 파괴하지 않았다"의 실행 가능한 증거다.
+
+### 설계 규칙 1 (신규) — 표를 채우는 것과 화면을 읽는 것은 다르다
+
+**Fable 설계 오류**: §16.5가 `1분 디브리핑`을 "녹취 미배선 자리표시자"라고만 적고
+**그 안의 4문항을 읽지 않았다.** 실제로는 전부 사주 질문이었고 4.1-A가 지운
+4필드와 내용이 사실상 동일했다. 즉 **4.1-A는 절반만 수행된 상태였고**, 더 나쁘게는
+§16.6의 T23이 그 상태를 "still renders"로 못 박아 **다음 사람에게 "보존하기로 한
+것"으로 읽히게** 만들었다.
+
+CLAUDE.md의 제거 안전 규칙을 **규칙을 쓴 사람이 스스로 어긴** 사례다. 표는 썼지만
+**표의 행을 "제거 대상"에서만 뽑았고, 같은 상자에 남는 이웃 항목의 내용은 읽지
+않았다.**
+
+**규칙**: 어떤 컨테이너(아코디언·disclosure·카드)에서 항목을 제거할 때는,
+**그 컨테이너에 남는 모든 항목의 실제 텍스트를 렌더해서 읽는다.** 항목 이름이나
+변수명이 아니라 **화면에 나오는 문자열**이다. 이번에 그것을 잡아낸 것은 표가
+아니라 **fixture를 렌더해서 원장이 보는 글자를 직접 읽은 것**이었다.
+
+### 설계 규칙 2 (신규) — 파일 삭제는 값 경로와 import 경로를 따로 센다
+
+**설계 누락**: §17.3은 안전 필드(`lbp_objective_motor_deficit` 등)의 **런타임 저장
+경로**가 `ObjectiveExamFindingsCard`의 자체 즉시 저장으로 유지된다는 것을 코드로
+확인했다. 그러나 그 카드가 `JudgmentPanel.tsx`에서 `LBP_MOTOR_DEFICIT_OPTIONS`/
+`SHOULDER_CUFF_WEAKNESS_OPTIONS`를 **직접 import**하고 있다는 것은 확인하지 않았다.
+그대로 삭제했다면 **§17이 지키려던 바로 그 안전 경로가 컴파일 에러로 사라졌을
+것이다.** 구현 중 Sonnet이 발견해 `judgment.ts`로 이전해 해결.
+
+**규칙**: 파일을 삭제할 때는 그 파일이 **나르던 값**뿐 아니라 그 파일에서
+**import되던 심볼**도 함께 센다. 런타임 경로 확인과 컴파일 의존성 확인은
+다른 작업이며, 전자를 했다고 후자가 되지 않는다.
+
+### 제거된 테스트 32개 — 검증 결과 실질 손실 없음
+`save-conflict.spec.mjs` −28, `doctor-reset-key.spec.mjs` −10. 전부 존재하지 않게
+된 `JudgmentPanel.tsx`에 대한 소스 텍스트 단언이라 유지 불가. "대체 커버리지가
+있다"는 주장을 Fable이 확인했다: `save-conflict.spec.mjs:380-440`의 매핑 표가
+지목하는 `독립 검수 HIGH-2: ObjectiveExamFindingsCard stale-write conflict`
+섹션(`:1031-1120`, 테스트 7개)이 **실제로 존재하며 이 배치 이전부터 있던 것**이다.
+`N/A` 처리된 항목들은 "즉시저장 설계에는 보호할 draft가 애초에 없다"는 타당한 논거다.
+
+### 백로그 (신규)
+`tests/server.spec.mjs`의 `audit log: no phone digits from the canary submission
+leak` 단언이 1회 실패했다. Fable이 8회 재실행했으나 재현되지 않았고 해당 파일은
+zero-diff다. **다만 PHI 누출 카나리아의 간헐 실패는 "flake"로 넘길 성격이 아니다** —
+근본 원인을 별도로 규명할 것.
+
+### Consequences
+- Batch 4 게이트는 **여전히 CLOSED가 아니다.** 4.1-A~D 전체에 대한 **Opus closing
+  재검수**가 남았다. Sonnet 자가검증도 Fable 독립 검증도 게이트가 아니다(2.5b 교훈).
+- 다음 우선순위는 **실제 환자 2~3명 파일럿**이다. 이번 Batch 4.1만으로도 원장 화면
+  설계가 네 번 바뀌었는데(A/B/C/D), 그 전부가 **환자 0명 상태에서** 이뤄졌다.
+
+## 2026-09-04 — Batch 4+4.1 closing 재검수 판정 FAIL, 테스트 규약 2 확장
+
+### 판정
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md` — **FAIL. 게이트를 닫지 않는다.**
+
+**프로덕션 코드는 옳다.** 임상 안전 A-1~A-5 위반 0건: `O`에 도달하는 소스는 4개
+뿐이고 전부 원장 입력, 환자 자가보고 5개 입력은 전부 `S`/`O/S`로만 간다. 안전 필드
+편집·저장·409·인증만료·레코드전환 초기화 경로 전부 생존. FROZEN zero-diff.
+`test:all` 2회 exit 0.
+
+**FAIL인 것은 그 사실을 지키는 장치다.** 이 저장소의 완료 조건은 "테스트 통과"가
+아니라 **"변이가 죽는 것"**인데, 변이 4개가 전체 스위트를 통과했고 **2개가 `O`
+경계 위**에 있다.
+
+| 변이 | 내용 | 결과 |
+|---|---|---|
+| m6 (H-1) | `examFindingsLines`가 `reasonFacts`(`provenance: 'PATIENT_FACT'`, 실제 값에 `(환자 응답)` 포함)를 `O` 줄에 덧붙임 | **SURVIVED** |
+| a4 (H-2) | `LBP_OBJECTIVE_MOTOR_DEFICIT_LABEL`에 `UNKNOWN: '없음'` — 미평가를 EMR에 "없음"으로 기록 | **SURVIVED** |
+| m7 (M-1) | 재검 항목의 `previous`를 오늘 결과로 출력(rule 4 위반) | **SURVIVED** |
+| c9 (M-2) | 안전 필드 화면의 인증만료 인라인 복구 렌더 삭제 | **SURVIVED** |
+
+### 테스트 규약 2 확장 (신규 — 이번 FAIL의 근본 원인)
+
+기존 규약 2는 "안전 경계는 금지 라벨 부재가 아니라 **줄 전체 exact-match**로
+잠근다"였다. **그 규약을 지켰는데도 위 3개 변이가 살아남았다.** 원인이 하나다:
+
+> **exact-match fixture가 그 줄에 도달할 수 있는 객체의 하위 필드를 비워 뒀다.**
+> `reasonFacts: []`, `previous: null`, `'UNKNOWN'` fixture 부재.
+
+exact-match는 "이 줄이 정확히 이것이다"를 잠그지만, **fixture가 비워 둔 하위
+필드는 애초에 그 줄에 도달할 기회가 없으므로 그 필드에 대한 커버리지가 0**이고,
+exact-match는 그 사실을 감춘다. 통과하는 초록색이 커버리지를 가린다.
+
+**규약 2 확장**: 안전 경계를 exact-match로 잠글 때, fixture는 **그 줄에 도달할 수
+있는 객체의 모든 하위 필드를 비어 있지 않게** 채운다. 특히 그 필드가 환자
+자가보고(`PATIENT_FACT`)나 과거 값(`previous`)을 담을 수 있다면 **고유한 카나리아
+문자열로 채워서**, 그것이 그 줄에 나타나지 않음을 exact-match가 실제로 증명하게 한다.
+
+**이 함정의 하위 필드 변종이 이번 배치에서만 3번 재현됐다.** 다음 배치가 같은 곳에
+빠지지 않게 하는 유일한 장치가 이 규약이다.
+
+### 부수 결론
+- **M-3: PHI 카나리아 간헐 실패의 원인 규명 완료 — PHI 누출이 아니다.**
+  `!auditRaw.includes('9999')`가 랜덤 UUID 28개가 든 파일 전체를 스캔해, UUID hex에
+  `9999`가 우연히 들어가면 오경보가 난다(실측 uuids=28, 몬테카를로 200k회로
+  **0.90%/run**). 이전 HANDOFF의 "원인 미규명" 기록을 이것으로 대체한다.
+  스캔 범위를 id 필드 제외로 좁혀 수정한다.
+- **6번째 사고는 찾지 못했다.** 배치 전(`61dca0a~1`) 번들을 별도 worktree에서
+  빌드해 46 fixture를 양쪽에서 렌더하고 화면 문자열 집합을 diff했으며, 사라진 줄
+  전부가 설계된 제거이거나 값이 다른 곳에 잔존함을 1:1 확인했다.
+  **다만 이것이 "없다"는 뜻은 아니다** — 이 방법은 fixture가 도달하는 화면
+  상태에만 완전하고, **서버 모드에서만 렌더되는 영역(종결 섹션, 재진 워크스페이스,
+  이전 방문 카드, 메시징)은 사각지대**다. 그 사각지대를 메우는 수단이 §18.4의
+  파일럿 기록 6종이다.
+
+### Consequences
+- 게이트 차단 결함 5건(H-1/H-2/M-1/M-2/M-3)은 **전부 테스트/문서 변경이며
+  프로덕션 코드 수정이 0건**이다. 수정 후 delta 재검수만으로 게이트를 닫는다.
+- §18.2 파일럿 착수 전 전제에 **7번 항목으로 추가**했다 — H-1/H-2는 `O` 경계와
+  미평가-정상 혼동 위의 구멍이므로 **수정 전 파일럿 금지**.
+- 나중에 해도 되는 것(L-1~L-6, `emrSummary.ts` 삭제)은 파일럿 이후로 미룬다.
+  특히 **L-1 `revisitRecapText` 배선은 파일럿의 관찰 항목으로 삼는 것이 낫다** —
+  재진 EMR에 경과 요약이 실제로 필요한지를 먼저 확인하고 붙인다.
+
+## 2026-09-04 — 게이트 차단 결함 5건(H-1/H-2/M-1/M-2/M-3) 수정 완료 (Sonnet) — Opus 재검수 대기
+
+### 한 일
+바로 위 항목이 요구한 §7 필수 6건 중 1~5번(테스트/문서 변경 6번째 "규약 2
+확장안"은 위 항목에 이미 기록됨)을 구현. **`src/` 프로덕션 코드는 한 줄도
+바꾸지 않았다** — `git diff --stat src/` 출력 없음으로 확인.
+
+- **H-1**: `tests/lbp-working-hypothesis.spec.mjs`의 `filled` fixture 중
+  exam 항목(`e1`)의 `reasonFacts`를 카나리아 문자열로 채움 + 별도 격리
+  블록(exam 항목이 실제 상태로 `O`에 정당히 나타나면서도 `reasonFacts`
+  카나리아는 나타나지 않음을 증명) 신규 추가.
+- **H-2**: `lbpObjectiveMotorDeficit: 'UNKNOWN'` 케이스에 대해 `O:`(bare)
+  단언 신규 추가.
+- **M-1**: `filled`의 재검 항목(`r1`) `previous`를 오늘 `result`(POSITIVE)와
+  다른 값(NEGATIVE)으로 채움.
+- **M-2**: `ObjectiveExamFindingsCard.tsx:283`(`{authError &&
+  <DoctorTokenSetup .../>}`)에 대한 소스 단언 신규 추가 +
+  `save-conflict.spec.mjs` 매핑 표의 해당 행을 그 테스트 이름으로 교체(허위
+  "not retested here" 주장 정정).
+- **M-3**: `tests/server.spec.mjs`의 PHI 카나리아 단언을
+  `submission_id`/`visit_id`(둘 다 `randomUUID()` hex, 우연 충돌의 유일한
+  원인으로 이미 규명됨)를 제외한 텍스트만 스캔하도록 좁힘. **`server/**`는
+  건드리지 않았다**(zero-diff 확인).
+
+### mutation 재검증 (전부 완료)
+검수가 보고한 변이(m6/a4/m7/c9) 각각을 실제로 다시 넣어 **이번엔 죽는 것을
+확인**하고 원복(`git diff --stat src/` 매번 0으로 재확인):
+
+| 변이 | 죽은 단언 | 실패 메시지 |
+|---|---|---|
+| m6 | T11(`filled` O 줄 exact-match) | `FAIL: T11/§14.1 filled example (defect #6, all 4 O clauses populated): O carries exactly the 4 clinician-confirmed sources...` |
+| a4 | H-2 신규 단언 | `FAIL: H-2: rule 2 -- 'UNKNOWN' (아직 확인 못함) never appears on O in any form -- O stays bare` |
+| m7 | T11(동일, `previous`/`result` 스왑도 같은 exact-match가 잡음) | 위 m6과 동일 실패 메시지 |
+| c9 | M-2 신규 단언 | `AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\{authError && <DoctorTokenSetup .../ }/` |
+
+M-3은 반대 방향(진짜 누출은 여전히 잡히는가)도 확인: 감사 로그 라인 배열에
+`leaked_note: '...9999...'`(비-id 필드)를 심는 임시 프로브를
+`tests/server.spec.mjs`에 넣어 실행 → 새 단언이 그대로 FAIL(`FAIL: audit log:
+no phone digits from the canary submission leak in (id fields excluded...)`) →
+프로브 원복. `npm run test:server` 12회 연속 EXIT=0, 오경보 0회.
+
+### 검증
+- `npm run build` EXIT=0.
+- `npm run test:all` 2회 연속 EXIT=0, 4956 `OK:` (기존 4952 + 신규 단언 4개).
+- FROZEN(`src/spec/**`, `index.html`, `src/App.tsx`, `server/**`,
+  `tablet core/**`) zero-diff — `tests/server.spec.mjs`만 의도적으로 변경.
+- `src/` 프로덕션 코드 diff **0**(재확인 완료).
+- 환자 개인정보 실제 값 없음 — 전부 합성 카나리아 문자열.
+
+### Consequences
+- 위 6건(§7 필수) 중 1~5번 구현 완료, 6번(규약 2 확장안 문서화)은 이미 직전
+  항목에 기록되어 있었음을 확인. **게이트는 여전히 CLOSED가 아니다** — Batch
+  4의 다른 배치와 동일하게, **Sonnet 자가검증은 게이트가 아니다**(2.5b 교훈).
+  다음 단계는 **Opus의 delta 재검수**(프로덕션 코드 불변이므로 전체 재검수가
+  아니라 이 5건에 대한 delta만으로 충분 — closing review §8 참고)이다.
+
+## 2026-09-04 — Batch 4+4.1 delta 재검수 판정 FAIL, 테스트 규약 2 확장 ②
+
+### 판정
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md` **§9** — **FAIL.
+게이트를 닫지 않는다.** (검수 대상 `289a800..2e0a8a0`, 6파일 +324/−8.)
+
+바로 위 항목("게이트 차단 결함 5건 수정 완료")의 수정은 **형식적으로는 전부
+이행됐다**: `src/` zero-diff 사실, `test:all` 2회 EXIT=0(`OK:` 4956 동일),
+`build` EXIT=0, 그리고 **기록된 변이 4개(m6/a4/m7/c9)가 이번엔 전부 죽는다.**
+`filled` fixture에 카나리아를 넣고도 **기존 exact-match 기대값을 한 글자도 바꾸지
+않은 것**은 정확히 옳은 방식이었다(테스트를 통과시키려 기대값을 맞춘 흔적 없음).
+
+**FAIL인 것은 수정의 폭이다.** 같은 계약을 침해하는 변종을 넣었더니 4개가 전체
+스위트를 통과했고, 그중 2개는 다시 `O | 객관적 소견` 경계 위다.
+
+| 변종 | 내용 | 결함 |
+|---|---|---|
+| v2 | `provenance === 'DERIVED'`인 `reasonFacts`만 `O`로 유출 | H-3 (HIGH) |
+| v3 | **미시행**(`NOT_YET_CHECKED`) 검사 항목의 `reasonFacts`를 `O`로 유출 | H-3 (HIGH) |
+| v6 | 오늘 결과가 빈칸일 때 `previous`를 대신 출력 | M-4 (MEDIUM) |
+| v9 | 렌더 줄은 남기고 `kind === 'auth'` 분기가 `authError`를 켜지 않게 함 | M-5 (MEDIUM) |
+
+### 테스트 규약 2 확장 ② (신규 — 이번 FAIL의 근본 원인)
+
+직전 항목의 **규약 2 확장 ①**("exact-match fixture는 그 줄에 도달할 수 있는
+객체의 모든 하위 필드를 비어 있지 않게 채운다")은 **지켜졌다.** `reasonFacts`도
+`previous`도 실제로 채워졌다. 그런데도 위 3개 변종이 살아남았다. 원인이 하나다:
+
+> **채운 값이 그 필드가 가질 수 있는 모양 중 하나뿐이었다.**
+> `reasonFacts`는 `provenance: 'PATIENT_FACT'` 1개, 그 항목의 상태는 `NEGATIVE`
+> (기록 완료) 하나. `previous`는 오늘 `result`가 이미 채워진 좌표 하나.
+
+"채웠다"는 그 **필드**에 대한 커버리지가 아니라 **채운 그 한 좌표**에 대한
+커버리지다. 그리고 프로덕션의 **기본 상태**는 오히려 비워 둔 쪽에 있었다 —
+생성된 모든 exam 항목은 `NOT_YET_CHECKED`에서 시작하고(`emptyExamResult()`),
+`lbpExamSuggestions.ts:172`에는 실제 `provenance: 'DERIVED'` 값이 있으며,
+재진 워크스페이스의 정상 상태는 "`previous` 있고 오늘 결과 비어 있음"이다.
+
+**규약 2 확장 ②**: 하위 필드를 채울 때는 **그 필드의 판별자(discriminator)가 갖는
+값마다 한 좌표씩** fixture를 둔다 — `provenance` 종류, 항목 상태(`NOT_YET_CHECKED`
+대 기록 완료), `previous` 유무 × 오늘 `result` 유무. 어디서 멈출지는
+**"프로덕션에 실재하는 값이 그 좌표를 통과하는가"**로 판단한다.
+
+### 부수 결론
+- **M-3(PHI 카나리아)은 통과.** `server/**` 코드로 `submission_id`/`visit_id`가
+  서버 생성 `randomUUID()`뿐임을 전수 확인(생성 2곳 + 읽기/갱신 경로는 전부 조회
+  성공 뒤에만 audit를 씀). 역방향 변이(비-id 필드에 전화번호를 심음) **KILLED** →
+  원래 검출력 보존. 오경보 `test:server` **55회 연속 0**. 그 중 40회 프로브에서
+  **1회는 옛 형태였다면 발화했을 실행**이었고 그 `9999`는 id 필드 안에 있었다 —
+  UUID 우연 충돌 진단이 몬테카를로가 아니라 **실측으로** 확인됐다.
+- **M-6(비차단):** id 필드 **통째 제외**는 "id 필드에 PHI를 넣는" 변이 종류를
+  영구히 가린다(그 변이 생존 확인). 오늘 그런 코드 경로는 없으므로 게이트를
+  막지 않으나, 통째 제외 대신 **UUID 모양 단언 + 전체 스캔**으로 바꾸면 오경보를
+  없애면서 가림도 사라진다(2줄).
+- **§18.2 7번 조문의 취지 보정 필요.** "결함 5건이 수정되고 변이 4개가 죽는 것이
+  확인"은 문자 그대로는 이제 참이지만 그 취지(구멍이 닫혔다)는 아직 거짓이다.
+
+### Consequences
+- 게이트는 **여전히 CLOSED가 아니다.** 남은 6건(§9.8)은 **전부 테스트/문서이며
+  프로덕션 코드 변경 0** — fixture 원소 3개 + 단언 4~5개 + 문서 2항목.
+- **파일럿 착수 불가** — §18.2 1번(게이트 CLOSED)이 ❌. 3번(`.data/` 미커밋)은
+  확인됨, 2·4·5·6번은 소프트웨어 밖(PO 책임)이라 코드 검수로 판정하지 않는다.
+- 수정 후에도 프로덕션 코드가 불변이라면 **다시 delta 재검수만으로** 게이트를
+  닫을 수 있다.
+
+## 2026-09-04 — H-3/M-4/M-5 수정 + M-6 처리 (Sonnet) — 판별자 전수 커버 방식으로, 3라운드 반복 차단
+
+### 한 일
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md` §9.8이 요구한 6건을
+구현. **`src/` 프로덕션 코드는 한 줄도 바꾸지 않았다** —
+`git diff --stat 7e7eff3..HEAD -- src/` 출력 없음으로 확인. 변경 파일은
+`tests/lbp-working-hypothesis.spec.mjs` / `tests/save-conflict.spec.mjs` /
+`tests/server.spec.mjs` 3개뿐.
+
+**이번엔 "지적된 변종만" 고치지 않았다.** 1차(변이 4개)·2차(변종 4개) 모두 같은
+계열 원인(§9.5 "규약 2 확장 ②")으로 실패했으므로, `buildPainWorkspaceEmrPreview`의
+`O` 줄에 도달 가능한 값 전체를 **판별자(discriminator) 단위로 나열**하고 각 값에
+좌표를 하나씩 뒀다:
+
+| 판별자 | 값 | 실재/방어용 | 이번에 채운 좌표 |
+|---|---|---|---|
+| `PhysicalExamSuggestion.reasonFacts[].provenance` | PATIENT_FACT/DERIVED/OBSERVED(실재, lbpExamSuggestions.ts) + 그 외 4값(방어용) | PATIENT_FACT·DERIVED 실재 | `filled`의 e1 + 격리 H-1 블록에 DERIVED 카나리아 원소 추가(H-3 a) |
+| `PhysicalExamSuggestion.result.status` (항목 상태) | NOT_YET_CHECKED(모든 신규 항목의 기본값, 실재) 대 기록 완료 | 둘 다 실재 | `filled`에 NOT_YET_CHECKED 항목(e2) 추가 + 격리 블록(H-3 b) — reasonFacts 카나리아가 O에 안 새는 것과 O가 bare로 남는 것 둘 다 단언 |
+| `ReassessmentExamItem.previous` × 오늘 `result` | previous 존재/오늘 NOT_YET_CHECKED(재검 아이템 생성 직후 정상 상태, 실재) 대 previous 존재/오늘 기록 완료(기존 커버) | 둘 다 실재 | 격리 블록(M-4) — O bare 단언 |
+| `LbpDirectionalResponse` | 6값 + 실제 기본값 `'NOT_ASSESSED'`(persistence.ts:258, 실재) + 인식 불가(방어용) + 필드 자체 생략(`undefined`, 별도 코드 경로) | `NOT_ASSESSED`는 실재 기본값, `undefined`와는 다른 분기 | `NOT_ASSESSED` 명시 좌표 추가(기존엔 `undefined` 생략과 인식 불가만 있었다) |
+| `PhysicalExamSuggestion.result.laterality` | LEFT/RIGHT/BILATERAL/NOT_APPLICABLE + null + 인식 불가 | 전부 실재 또는 이미 방어 커버 | 기존 `tests/doctor-workspace.spec.mjs`(14차 MEDIUM-2)가 이미 LEFT/BILATERAL/null/인식 불가를 이 컴포저의 렌더 경로로 커버 — 이 배치에서 중복 추가 안 함 |
+| `ClinicianJudgment.lbp_objective_motor_deficit` | NONE/SEVERE_OR_PROGRESSIVE(실재) + UNKNOWN + undefined(둘 다 "미평가") | 전부 이미 커버(H-2, 직전 라운드) | 변경 없음 |
+
+**H-3(a/b)**: `reasonFacts`의 DERIVED 좌표(v2)와 NOT_YET_CHECKED 항목 좌표(v3)를
+`filled` fixture(exact-match)와 격리 블록 양쪽에 추가. 재변이 결과: 둘 다
+**KILLED — 이번엔 T11(`filled`의 O 줄 exact-match)이 먼저 죽는다**(격리 블록의
+전용 단언도 별도로 죽는 것을 확인).
+
+**M-4**: 재검 항목 "오늘 `result` NOT_YET_CHECKED + `previous` 존재" 좌표를
+격리 블록으로 추가. v6(재검수 §9.3이 서술한 형태 그대로) 재변이 결과: **KILLED**
+— 신규 M-4 단언이 정확히 잡는다.
+
+**M-5**: `save-conflict.spec.mjs`에 `ObjectiveExamFindingsCard.tsx`의
+`handleChange` 전체를 슬라이스해 `result.kind === 'auth'` 분기가
+`setAuthError(true)`를 호출하는 것(그리고 `setAuthError(true)`가 그 함수 전체에서
+정확히 1번만 나타나는 것 + 성공 분기가 `setAuthError(false)`로 되돌리는 것)을
+소스 단언으로 고정. 매핑 표(:435-439)의 "auth-kind failure distinguished...
+still unretested" 행을 이 테스트 이름으로 교체(더 이상 N/A-by-omission 아님).
+v9 재변이 결과: **KILLED**.
+
+**M-6(비차단, 함께 처리)**: §9.4(iv) 권고를 그대로 따랐다 — **id 필드 통째
+제외는 그대로 두고**(오경보 방지 효과가 이미 검증돼 있으므로), **추가로** 두 id
+값 전체에 대한 UUID 모양 단언(`/^[0-9a-f]{8}-[0-9a-f]{4}-...-[0-9a-f]{12}$/`)을
+2줄 추가했다. r2(전화번호를 `visit_id`에 이어붙임) 재변이 결과: 이번엔 **KILLED**
+— 새 UUID-모양 단언이 잡는다(§9.4에서 SURVIVED로 기록됐던 것과 대비).
+
+### mutation 재검증 (§9.2.2가 지적한 4개, 전부 재확인)
+| 변종 | 재변이 결과 | 죽인 단언 |
+|---|---|---|
+| v2 (DERIVED reasonFacts → O) | KILLED | T11(`filled` O 줄 exact-match) |
+| v3 (NOT_YET_CHECKED 항목 reasonFacts → O) | KILLED | T11(동일) |
+| v6 (오늘 result 빈칸일 때 previous 대신 출력) | KILLED | 신규 M-4 단언 |
+| v9 (`kind==='auth'`가 `authError`를 안 켬) | KILLED | 신규 M-5 단언 |
+| r2 (전화번호를 `visit_id`에 이어붙임, M-6 검증용) | KILLED | 신규 M-6 UUID-모양 단언 |
+
+### 자체 고안 변종 (판별자 표 기반, 4개 — 지적된 것 밖에서 스스로 찾음)
+1. `lbpDirectionalResponse`의 실제 기본값 `'NOT_ASSESSED'`를 정상 값처럼 취급
+   (`!== 'NOT_ASSESSED'` 조건 제거) → **KILLED**(신규 "판별자 전수" 단언).
+2. `reasonFacts`를 O의 **다른 절**("객관적 근력저하:")로 유출 → **KILLED**(T11).
+3. `laterality`의 `NOT_APPLICABLE`/실제 값 처리를 뒤집음(조건 반전) →
+   **KILLED**(T11).
+4. (M-6 검증용 r2 재변이는 위 표에 포함) — 이 셋 다 **생존한 것이 없다**. 새로
+   추가한 결함은 없다.
+
+### 검증
+- `npm run build` EXIT=0.
+- `npm run test:all` 2회 연속 EXIT=0, `OK:` 4966(기존 4956 + 신규 단언 10개),
+  두 회 완전 동일(비결정성 없음).
+- `npm run test:server` **15회 연속 EXIT=0**(오경보 0) — 별도로 M-6 UUID-모양
+  단언 추가 전후 각 15회, 총 30회 확인.
+- `git diff --stat 7e7eff3..HEAD -- src/ index.html 'server/**' 'tablet core/**'`
+  출력 없음(FROZEN·프로덕션 zero-diff).
+- 환자 개인정보 실제 값 없음 — 전부 합성 카나리아 문자열/숫자.
+
+### 의도적으로 다르게 처리한 것
+- M-6을 "id 제외를 UUID-모양 단언으로 완전히 교체"가 아니라 **"제외는 유지 +
+  단언을 추가"**로 했다 — §9.4(iv)의 실제 문구("통째 제외 대신 모양 단언 +
+  전체 스캔")를 "9999 텍스트 스캔에서 제외를 제거"가 아니라 "제외는 그대로 두고
+  모든 id 값에 대한 형태 검사를 추가"로 해석했다. 근거: 텍스트 스캔에서 제외를
+  제거하면 §9.4(iii)이 실측한 오경보(hex 우연 충돌)가 그대로 되살아난다 — 그건
+  이번 재검수가 "통과"라고 판정한 부분이라 되돌릴 이유가 없다. 대신 모양 단언은
+  "9999 부분일치" 문제 자체가 없다(정확한 형식 검사이므로 우연 충돌이 없다).
+  결과적으로 §9.4(iv)이 원한 검출력(SURVIVED→KILLED)은 그대로 회복됐다.
+- laterality(LEFT/RIGHT/BILATERAL/인식 불가)와 UNKNOWN/undefined
+  motor-deficit 축은 이번에 fixture를 추가하지 않았다 — 코드로 확인한 결과
+  `tests/doctor-workspace.spec.mjs`(14차 MEDIUM-2, Batch 2.5b T-1b 등)가 같은
+  `buildPainWorkspaceEmrPreview` 렌더 경로(DoctorView.tsx 종결 섹션 → 화면 DOM)를
+  통해 이미 이 좌표들을 실제로 실행하고 있다 — 중복 fixture를 추가하는 대신
+  "판별자 표"에 그 사실과 근거 파일 위치를 남겼다.
+
+### Consequences
+- §9.8 6건 전부 완료. `docs/...CLOSING_REVIEW_v0.1.md` §9.9 표의 1번 전제
+  (게이트 CLOSED)는 **이 문서만으로는 여전히 판정할 수 없다** — Sonnet
+  자가검증은 게이트가 아니다(2.5b 교훈, 직전 두 라운드와 동일). 다음 단계는
+  Opus의 delta 재검수.
+- 이번에 자체 고안한 4개 변종이 전부 죽었다고 해서 "판별자 공간이 완전히
+  닫혔다"고 주장하지는 않는다 — §9.10이 이미 적었듯 하위 필드의 판별자, 그
+  판별자의 조합은 원칙적으로 무한 후퇴가 가능하다. 이번 라운드가 다룬 것은
+  §9.3/§9.8이 명시적으로 지목한 3개 결함(H-3/M-4/M-5) + M-6 + 스스로 고안한
+  4개뿐이다.
+
+## 2026-09-05 — Batch 4+4.1 **3차 delta 재검수 판정 FAIL** (Opus) — 판별자 열거를 그만두고 전칭(∀)으로 바꾼다
+
+**대상:** `7e7eff3..a539d15`. **결론 문서:**
+`docs/LBP_V1_BATCH4_AND_41_OPUS_CLOSING_REVIEW_v0.1.md` **§10**.
+
+### 확인된 사실 (전부 코드로 재현)
+- 기록된 변이 8개(m6/a4/m7/c9 + v2/v3/v6/v9) **8/8 KILLED**.
+- 구현자 자체 고안 4개(s1/s2/s3/r2) **4/4 KILLED** — 보고가 사실이다.
+- 신규 단언 10개 전부 비공허(격리 프로브 3/3 발화). exact-match 기대값 변경 0,
+  약화 0. `src/`·FROZEN zero-diff. `test:all` ×3 `OK: 4966` 동일, `build` EXIT=0,
+  `test:server` ×15 오경보 0.
+- **M-6 편차는 옳다** — "id 제외 유지 + UUID 모양 단언 추가"는 원 권고("제외를
+  교체")보다 낫다: r2가 다시 죽고(검출력 복원 실증), 제외를 없앴다면 실측된
+  0.9%/run 오경보가 되살아났을 것이며, 이름 계열 PHI는 애초에 제외 대상이 아니다.
+
+### 판정이 FAIL인 이유 — 신규 결함 H-4 (HIGH)
+"판별자 전수"를 표방한 표에 **`PhysicalExamSuggestion.priority`와 `.help`가
+없다.** 그리고 이 두 필드는 **fixture 값과 프로덕션 값이 정반대**다 —
+`lbpExamItem`(`lbpExamSuggestions.ts:80-90`)이 모든 LBP 검사 항목을
+`priority: 'CONTEXTUAL'` + `help` 있음으로 만들고, `MUST_CHECK`는 LBP 경로에서
+**단 한 개도 생성되지 않는다**(합성 미리보기 fixture와 persistence 템플릿
+기본값에만 존재). 반면 컴포저 fixture 4개는 전부 `MUST_CHECK` + `help` 없음.
+따라서 그 조건이 붙은 `O` 유출 변이는 **실제 환자 100%에서 발화하고 테스트에서
+0% 발화한다**(N2/N8 생존, `npm run test:all` exit 0으로 확인).
+
+부수 결함: **M-7**(laterality `LEFT/RIGHT/BILATERAL`이 `O`에 실제로 찍히는지
+단언하는 테스트가 저장소에 없다 — `const lat = ''` 변이 생존, `BILATERAL`은 검사
+laterality로 `src/`+`tests/` 통틀어 0회 등장), **M-8**(`previous`의 하위 필드가
+전 fixture에서 `''`/`NOT_APPLICABLE` 고정 → rule 4의 "덧붙이기" 형태 생존).
+
+### 결정 — 규약 2 확장 ③ (확장 ①·②를 **대체**한다)
+
+확장 ①("하위 필드를 비워 두지 않는다")과 ②("판별자마다 좌표를 둔다")는 세
+라운드 연속 같은 사고를 막지 못했다. 원인은 **열거가 종료하지 않는다**는 것이다
+(이번 검수 한 번에 생존 변이 7개 추가 발견, 그중 2개는 판별자 **조합**과 **배열
+기수** — 유한하지 않은 축). 대체 규약:
+
+> **규약 2 확장 ③.** 안전 경계를 잠그는 fixture와 단언은,
+> **(a) fixture를 손으로 쓰지 않고 프로덕션 생성기의 출력에서 만든다.**
+> 손으로 쓴 fixture는 실재하지 않는 환자를 묘사할 수 있고, 세 라운드 연속
+> 실제로 그랬다(1차: 하위 필드를 비움 → 2차: 그 필드의 한 모양만 채움 →
+> 3차: 프로덕션에 없는 값을 채움). 생성기 출력에서 만들면 `priority`/`help`/
+> `source`/`reasonFacts` 조합이 **정의상** 프로덕션과 같아진다.
+> **(b) 경계 단언을 좌표 열거가 아니라 전칭(∀)으로 쓴다.** 카나리아를 좌표마다
+> 심는 대신, 입력 객체에서 도달 가능한 **모든 환자 유래 문자열**을 재귀적으로
+> 수집해 그중 어느 하나도 `O` 줄에 나타나지 않음을 단언한다. 전칭 단언은
+> 조합에도, 배열 기수에도, 미래에 추가될 하위 필드에도 자동으로 성립한다 —
+> **열거는 종료하지 않고 전칭은 종료한다.**
+
+### 게이트를 닫는 조건 (프로덕션 코드 변경 0, §10.6 (iv))
+1. fixture를 `mergeLbpExamSuggestions(generateLbpExamSuggestions(payload), payload)`
+   출력에서 구성 → **N2·N8 사망 확인·기록**(A 부류 종결).
+2. ∀ 단언 헬퍼 도입 후 `filled`·`oBoundaryInput`·격리 블록에 적용 →
+   **N3·N7 사망 확인·기록**(B 부류 종결).
+3. M-7: `BILATERAL`/`LEFT` 항목으로 `O`에 `(양측)`/`(좌)`가 실제로 나타나는
+   exact-match 추가 → **N1 사망 확인·기록**.
+4. M-8: `previous.note`/`previous.laterality`를 비지 않게 채움 →
+   **N5 사망 확인·기록**.
+5. 위 확장 ③을 이 문서의 규약으로 확정(이 항목이 그 기록이다).
+
+**이 4건이 닫히면 Opus는 5차 라운드를 열지 않는다** — 1·2번이 두 부류를
+구조적으로 종결시키므로 그 뒤에 남는 것은 정상적인 유지보수다.
+
+### 파일럿 — 게이트 판정과 분리(§10.7). **PO 결정 사항.**
+살아남은 변이 7개 중 **HEAD에 실재하는 결함은 0개**다(23개 변이 전부 주입 후
+원복, `git status` 빈 출력 ×23). 위험은 전부 "미래의 편집이 조용히 새는 것"이고,
+파일럿(2~3명·하루·고정 빌드·병행 수기 문진)에는 그 편집이 없다.
+
+**권고:** `docs/LBP_PRODUCTION_V1_MINIMAL_ARCHITECTURE_v0.1.md` §18.2 **1번을
+1a/1b로 분리** — 1a(임상 안전 게이트: 오늘 이 소프트웨어가 환자에게 잘못된 것을
+보여주는가)는 **네 라운드 연속 CLOSED**이고, 1b(회귀 방어 게이트: 미래의 편집을
+스위트가 잡는가)는 CLOSED가 아니며 열거로는 닫히지 않는다. **파일럿 착수는 1a로
+판정**하고, 1b의 대체 운영 규칙으로 **파일럿 기간 중
+`src/doctor/workspace/emrPreview.ts`와 `src/doctor/ObjectiveExamFindingsCard.tsx`를
+동결**한다(이번 생존 변이 7개가 전부 이 두 파일 대상 — 편집하지 않으면 1b가
+막으려는 위험이 파일럿 창 안에서 구조적으로 발생하지 않는다). 1b(위 1~4번)는
+파일럿 *다음* 배치의 입구 조건으로 옮긴다. **§18.2 7번은 이제 충족**(변이 8/8
+사망으로 문자·취지 모두).
+
+**승인 없이 §18.2를 문자 그대로 적용하면 파일럿 착수 불가**이며, 이 개정은
+Opus가 단독으로 내릴 수 있는 판단이 아니다. 근거는 §18.0이 이미 기록한 것과
+같다 — **환자 0명으로 화면을 네 번 재설계한 것이 위험으로 기록돼 있고, 지금
+테스트 커버리지에서 같은 일이 시작되고 있다.** 세 라운드 동안 프로덕션 코드는
+한 줄도 바뀌지 않았다.
+
+## 2026-09-05 — TBC 임상 상태(Volatile/Stable/Well-controlled)를 태블릿 문진에 넣지 않는다
+
+### Context
+요통 재활운동 레벨 체계를 TBC(Treatment-Based Classification, Alrwaily 2016)의
+3단계에 맞추기로 하면서, TBC 원 배정표가 요구하는 세 축 중 하나인 **임상 상태
+(불안정/안정/잘 조절됨)** 가 현재 문진에 존재하지 않는 개념이라는 것이 확인됐다.
+이걸 새 문항으로 태블릿에 추가할지가 쟁점이었다.
+
+### Decision
+**추가하지 않는다.** 임상 상태는 원장 판단 영역으로 두고, 원장 화면에서 단계를
+선택지로 제시하되 자동 확정하지 않는다.
+
+### Rationale
+1. 태블릿 문항 분기는 `src/spec/**`에 있고 이 경로는 FROZEN(zero-diff) 상태다.
+   문항 추가는 시뮬레이션 검증을 마친 임상 로직을 다시 여는 일이다.
+2. TBC 원문 각주 1이 "분류 변수가 불일치하면 **장애 등급을 우선**하고 임상
+   상태로 **보완**한다"고 명시한다 — 임상 상태는 주 판정 축이 아니라 보완
+   변수다. 주 축인 장애 정도는 이미 문진이 기능 제한으로 잡고 있다.
+3. TBC 원문 자체가 세 축 어디에도 숫자 컷오프를 두지 않는다. 원 논문이 로직으로
+   치환하지 않은 것을 우리가 치환할 근거가 없다.
+
+### Consequences
+- 레벨 판정은 결정론적 자동 산출이 아니라 **원장 선택 + 문진 기반 제안** 구조가
+  된다. 제안은 근거를 함께 표시하고, 비어 있는 상태를 정상으로 취급한다.
+- 이전에 원장께 여쭤봤던 "ODI 몇 점부터 몇 단계인가"라는 질문은 **철회**한다 —
+  원문에 없는 기준을 만들어 달라는 잘못된 요청이었다.
+- 상세는 `docs/LBP_EXERCISE_LEVEL_DRAFT_v0.2.md` §1-1,
+  근거는 `docs/LBP_EXERCISE_LIBRARY_EVIDENCE_RESEARCH_v0.1.md` §16.
+
+---
+
+## 2026-09-05 — 요통 운동 단계 배정: 척도를 새로 넣지 않고 기존 필드로 판정한다
+
+### Context
+`docs/LBP_EXERCISE_LEVEL_DRAFT_v0.2.md`가 운동 20개의 단계를 확정한 뒤, 남은
+문제는 "환자가 몇 단계인가"였다. 세션 진행자가 ODI(Oswestry Disability Index)
+도입을 제안하며 ODI 구간→단계 매핑표를 만들었으나, 그 표의 숫자는 **어떤
+원문에도 없는 창작**이었다(Alrwaily 2016 각주 2: "use any disability
+measure"). 표는 폐기했다.
+
+또한 세션 진행자가 "통증 강도 척도가 시스템에 없다"고 보고했으나 이는 사실이
+아니었다 — `src/spec`(태블릿)만 확인한 결과였고, 척도는 원장 워크스페이스의
+재평가 대상(Follow-up Target) 체계에 이미 있었다.
+
+### Decision
+**세 가지를 결정한다.**
+
+1. **ODI를 도입하지 않는다.** 이미 있는 `VISIT_04_SYMPTOM_IMPACT`(4지선다,
+   required, 전 증상환자)를 기본 단계 축으로 쓴다.
+   `severe`→1단계 / `moderate`→2단계 / `mild`·`minimal`→3단계.
+2. **점수척도를 새로 만들지 않는다.** 재평가 대상(`finalAssessment.ts` +
+   `lbpTargetFunction.ts`)의 `baseline`/`postTreatmentValue`가 이미 그
+   역할이다. 환자마다 재는 동작이 다르다는 점에서 ODI보다 이 시스템에 맞다.
+3. **통합판단은 "원장 주도형"(C-1)으로 한다.** 시스템은 제안 단계와 근거
+   문장을 모아 보여주고, 확정은 원장이 한다. 이전 방문값과의 자동 비교는
+   하지 않는다.
+
+### Rationale
+1. ODI는 10문항 추가 = `src/spec` 수정 = FROZEN(zero-diff) 위반이다.
+2. ODI 8번은 성생활 문항이다 — 개원가 초진 태블릿에 놓기 어렵고, 원본 ODI도
+   이 항목 무응답용 분모 조정 규칙을 따로 둔다.
+3. 최종 출력이 3단계인데 0~100% 연속척도를 입력으로 받는 것은 해상도 낭비다.
+   ODI를 넣어도 "몇 점부터 2단계인가"라는 미해결 질문은 그대로 남는다.
+4. C-2(자동 계산형)는 `finalAssessment.ts`의
+   `REPEAT_VISIT_AUTO_COMPARE_STATUS`("자동 판단 없음")와 정면 충돌한다. 이
+   원칙은 `rehabSuggestion.ts` / `lbpWorkingHypothesis.ts` /
+   `lbpExerciseRecommendation.ts`를 관통한다.
+5. 더 실질적인 이유: 지금 자동 상향 규칙을 만들면 그 규칙이 맞는지 검증할
+   임상 데이터가 0건이다. 파일럿 관찰이 먼저다.
+
+### Consequences
+- 새 파일 `src/doctor/workspace/lbpExerciseStage.ts`(순수 함수) +
+  `tests/lbp-exercise-stage.spec.mjs`(189 assertions). **태블릿(`src/spec`)
+  변경 0줄.**
+- 단계를 낮추는 cap 2개를 둔다 — 발병 1주 이내, 공포회피 큼(`LBP_13=YES`).
+  둘 다 최대 2단계까지만 허용하고 1단계까지 내리지 않는다. 1단계까지 내리면
+  급성 초진 전원이 VISIT_04와 무관하게 1단계가 되어 축이 무의미해진다.
+- `LBP_12`(회복기대) / `LBP_14`(업무지장) / `LBP_13=SOMEWHAT`은 단계를 바꾸지
+  않고 근거 문장으로만 표시한다 — 단계를 움직일 근거가 원문에 없다.
+- 이 결정은 되돌릴 수 있다. 파일럿에서 `VISIT_04=severe`가 과반을 넘으면 이
+  축은 실패이며 그때 ODI 재검토가 정당해진다.
+- **아직 화면에 배선되지 않았다** — 함수와 테스트만 있다.
+- 상세는 `docs/LBP_EXERCISE_STAGE_ASSIGNMENT_v0.3.md`.
+
+## 2026-09-06 — PO 지시: 통증 전 부위에 요통 진료 프로세스 적용 — "부위 팩" 계획 v0.1 (PO 결정 대기)
+
+### Context
+PO가 "통증은 모두 같은 계획 실행"을 지시했다. 조사 결과 요통(LBP)에만 있는 층은
+L1~L8(검사 제안·목표 기능·임상가설·운동 라이브러리·단계·적격성·추천 조립·세부문진
+재질문)이며 모듈 11개·테스트 약 650단언·전부 TS 하드코딩이다. 나머지 8부위는 안전
+판정(L0)과 검사 코드 라벨 목록까지만 있고, 각 부위 v1 통합 리포트가 운동 추천·가설
+자동화를 명시적으로 "v1 범위 제외"로 닫아 두었다. 공통 흐름(레인·점프 내비·재평가
+대상·재검 계획·micro follow-up·치료 계획 링크)은 이미 전 부위 공유다.
+
+### Decision (제안 — PO 승인 전)
+1. **엔진 1개 + 부위 팩 N개.** 요통 11개 모듈의 상수를 `regionPacks/lbp.ts`로 옮겨 적고
+   엔진 함수는 `pack`을 첫 인자로 받는다. 기존 `lbp*` export는 래퍼로 유지해 요통
+   테스트 수정 0줄로 통과시킨다(R1 = 행동 0 변경).
+2. **콘텐츠는 원장 승인 문서에서만.** 팩의 `productionApproved: false`면 화면에
+   아무것도 내지 않는다. Claude는 부위별 운동·가설·검사 규칙을 창작하지 않는다
+   (`CLINICAL_OS_NORTH_STAR.md:100`).
+3. **요통 저장 필드 3개는 지금 건드리지 않는다.** 새 부위는 추가형 `regionClinical`
+   필드, 읽기는 어댑터 하나. 마이그레이션은 R4로 분리.
+4. **모집단 공유 쌍**(목·어깨, 요통·고관절)은 판별 문항(`NS01`/`HIP_00`)으로 팩 하나만
+   구동.
+5. 기존 조항 해제를 명시한다: "다른 부위 이동 금지", "EMR/CRM 닫혀야 다음 부위"
+   (Batch 4 게이트 CLOSED 기록 없음 — R1·R2는 EMR diff 0을 게이트로 병행), 각 부위 v1
+   "범위 제외".
+
+### Rationale
+- 병목은 코드가 아니라 부위별 임상 콘텐츠다. 요통 콘텐츠는 원문 확인 문서 약 2,000행과
+  원장 검토 여러 회가 들었다. 코드를 복사해 8벌 만들면 콘텐츠 없는 빈 껍데기 8개와
+  버그 표면 8배가 남는다.
+- VISIT_04 단계 축은 요통 파일럿에서도 아직 검증 전이다(2026-09-05 결정). 확장 활성화는
+  그 결과 뒤로 두는 것을 권한다.
+
+### Consequences
+- 상세: `docs/PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md` (배치 R0~R4, 원장 콘텐츠
+  입력 양식 8항목, clarify 질문 5개).
+- 코드 변경 0줄. PO가 §8 질문 5개에 답하면 R1부터 시작한다. R1은 CLAUDE.md Escalation
+  조건("핵심 파일 다수에 걸친 구조 변경")에 해당하므로 Fable 세션이 설계·구현하고 Opus가
+  검수한다.
+
+## 2026-09-06 — PO 답변 5건 → 부위 팩 R1·R2·R3 구현. 콘텐츠 원본은 Notion 매선 프로토콜, 6부위 DRAFT 팩 등록(전부 비활성)
+
+### Context
+`PAIN_REGION_PACK_GENERALIZATION_PLAN_v0.1.md` §8 질문 5개에 PO가 답했다:
+1. 부위 순서 — "목이랑 회전근개를 따로 봐야 되는 거 아냐" → 목·어깨는 **별개 팩**.
+2. 원본 문서 — "모름" → Claude가 Notion·Drive를 검색해 찾았다(아래).
+3. 문항 추가 — "우리가 지금 세팅한대로" → 태블릿 문항 추가 없음. 단계 격하는 공통
+   문항(VISIT_03/04)만 자동 발동.
+4. 활성화 시점 — "즉시" → 팩 승인 즉시 활성화. 요통 파일럿 결과를 기다리지 않는다.
+5. 모집단 공유 쌍 구동 규칙 — "너의 추천안은?" → 아래 Decision 4.
+
+### 콘텐츠 원본 발견 (PO "모름"의 답)
+Notion 「삼인당한의원 › 아카이브(구버전) › 통합 완료(삭제 후보) › 매선 프로토콜」
+(2025-12-01~06): 경추/어깨/무릎/발목/턱관절 패턴 페이지 + Drive 고관절 패턴.md·
+회전근개.md. 각 페이지 = 정렬 → 움직임 → 패턴 3~4개 → 매선 → 운동 2개.
+**출처 주의**: 「매선 프로토콜 목차」에 "원장님이 만든 발목 프로토콜 포맷 그대로 전신으로
+확장했습니다"라고 적혀 있다 — 발목만 원장 원안 포맷, 나머지는 AI 확장 초안일 수 있다.
+정본(「1권 근골격 통증」 4장 경항부 v0.3)은 경항부를 4패턴이 아니라 3단계 연쇄로
+설명한다. 팔꿈치·손목/손 문서는 없다. 상세: `docs/PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md`.
+
+### Decision
+1. **R1 완료(커밋 65be060)**: 요통 엔진 → 팩 인자 일반화, 행동 0 변경(요통 스위트 수정 0줄).
+2. **R2 완료**: 추가형 `regionClinical` 필드(초진·재진 상태, 스키마 버전 미변경) +
+   `regionClinicalState.ts` 어댑터(요통은 옛 필드 3개, `regionClinical.lbp` 금지) +
+   `WorkingHypothesisCard`(패턴 prop) + PainWorkspace/DoctorWorkspace/RevisitWorkspace
+   팩 기반 + EMR 부위 가설·라벨 경로 + 서버 `regionRouting.js`(TS 포팅, parity 테스트)
+   + `DETAIL_CHECK_REGION_QUESTION_IDS`(승인 팩만).
+3. **R3 완료**: 8부위 DRAFT 팩 등록 — 목/어깨/무릎/고관절/발목·발/턱관절은 원장 문서의
+   패턴·운동·검사 **이름**만 옮겨 적음, 팔꿈치/손목·손은 빈 팩. 전부
+   `productionApproved: false`. 시작 기준·용량·중단 기준·후퇴·단계표는 비어 있고
+   `packContentGaps()`가 나열한다. 승인 = 팩 파일 + 서버 표 + 테스트 단언 3곳 동시 변경
+   + 빈 칸 0개 (`tests/region-pack.spec.mjs`가 강제).
+4. **구동 부위 규칙(Q5 추천안 채택)**: 목·어깨 둘 다면 `NS01=SHOULDER_DOMINANT`일 때만
+   어깨, 요통·고관절 둘 다면 `HIP_00=HIP_GROIN_DOMINANT`일 때만 고관절(엉덩이·골반 우세는
+   요통 — 요통 팩에 고관절·천장관절 기여 패턴과 고관절 선별 검사가 이미 있다). 그 밖은
+   `REGION_KEYS` 순서 첫 부위. **판별 부위의 팩이 승인 전이면 같은 모집단의 승인 팩으로
+   후퇴한다**(`drivingRegionCandidates` → `activeDrivingPack`) — 이것이 없으면 고관절
+   우세 환자가 R2 이전까지 받던 요통 카드를 잃는 회귀가 생긴다(구현 중 발견·수정).
+   서버 세부문진도 같은 후보 순서(`detailCheckQuestionIdsForCandidates`).
+5. **Claude 초안 필드**는 `patientEasyLabelKo`, `targetFunctions`, 운동 한글 표시명, 턱관절
+   패턴 3개뿐이며 문서에 표시했다. 그 밖의 임상 내용은 창작하지 않았다.
+
+### Rationale
+- 승인 전 팩이 화면·엔진·서버 어디에도 닿지 않음을 SSR·엔진·서버 표 세 층에서 단언한다
+  (`region-pack.spec.mjs` C/D/G/H). 변이 6개(판별 무시, lbp 키 허용, 무단 승인, 서버 후퇴
+  제거, 엔진 승인 가드 제거, 후보 순서 제거) 전부 죽음.
+- 요통 저장 형식은 파일럿 직전에 바꾸지 않는다(R4 분리). 요통 필드와 `regionClinical`이
+  같은 값을 두 곳에 갖지 않도록 어댑터가 `lbp` 키를 버린다.
+
+### Consequences
+- 변경 파일: 신규 `regionPack.ts`, `regionPacks/*`(11), `regionRouting.ts`,
+  `regionClinicalState.ts`, `workingHypothesis.ts`, `WorkingHypothesisCard.tsx`,
+  `server/regionRouting.js`, `tests/region-pack.spec.mjs`; 수정 `persistence.ts`,
+  `visitWorkspace.ts`, `emrPreview.ts`, `PainWorkspace.tsx`, `DoctorWorkspace.tsx`,
+  `RevisitWorkspace.tsx`, `LbpWorkingHypothesisCard.tsx`, `lbpWorkingHypothesis.ts`,
+  `server/detailCheck.js`, `server/store.js`, `package.json`.
+- 테스트 수정 3곳(요통 스위트 소스 단언을 새 배선으로): `lbp-working-hypothesis.spec.mjs`
+  mutant(e)·D-4 가드, `doctor-workspace.spec.mjs` 목표 기능 import·단계 setter 배선.
+  보장 내용은 같고 이름만 바뀌었다(각 단언에 이유 주석).
+- 원장 다음 할 일: `PAIN_REGION_PACK_DRAFT_CONTENT_v0.1.md` §3 8항목을 부위별로 채운다.
+  첫 부위 추천: 목·어깨(허리 다음으로 흔한 호소 — 「1권」 4장 첫 문장).
+
+## 2026-09-07 — PR #30(복구 재활 아키텍처) 확인 + 요통 동등성 설계 v0.1 (PO 결정 대기)
+
+### Context
+PO가 "목·어깨·무릎에도 Exercise/Rehabilitation Architecture를 설계해 두었다"고 했고, 저장소
+전수조사(브랜치 33·커밋 504·GitHub 코드/PR/이슈 검색)에서는 요통 외 운동 자산이 없었다.
+원인은 PR #30(2026-09-07, draft)이 밝혔다: 해당 설계는 ChatGPT Library 아티팩트(2026-08-25)에
+있었고 깃허브에 커밋된 적이 없었다. PR #30이 `docs/recovered_rehab_architecture/`로 처음 복구했다
+(NECK/SHOULDER/KNEE, REFERENCE ONLY, 운동 라이브러리 아님을 본문이 명시).
+
+### Decision (제안 — PO 승인 전)
+1. 부위 팩의 임상 프레임워크 정본을 **PR #30 복구 아키텍처**로 삼는다. 현재 DRAFT 팩의
+   가설 4패턴(Notion 아카이브 출처)은 PR #30 가설 상태로 교체한다. 운동 이름은 `아카이브(후보)`
+   표기로만 보존.
+2. "요통에 준한다" = 요통 v1 12단계 스택을 부위마다 같은 순서로 밟는다
+   (`docs/PAIN_REGION_PACK_LBP_PARITY_DESIGN_v0.1.md` §1·§7). 콘텐츠 출처 우선순위는 §4.
+3. 엔진 변경은 5건으로 한정(§6): 방향성 라벨 팩화, 신경 상태 검사 파생(D-1), 도메인 필드,
+   진단→운동 하드코딩 부정 단언, 파일럿 스크립트 일반화. 추천·단계·적격성·저장·EMR·서버는 불변.
+4. 넣지 않는 것: irritability 입력(요통 DEFER), 재진 response state 자동 판정
+   (`REPEAT_VISIT_AUTO_COMPARE_STATUS` 원칙), 요통 5패턴 변경.
+
+### Rationale
+PR #30 프레임워크는 요통 프로덕션과 같은 뼈대(Safety→Function→Hypothesis→Exercise→Reassessment,
+"2~3 후보 → 원장 승인", HIGHER/CONSIDER/LOWER, 진단 비고정)이며 가이드라인 인용(JOSPT 2017,
+AAOS, NICE NG226, BESS, ACR)이 붙어 있다. 아카이브 4패턴은 그 뼈대와 맞지 않고 출처가 "원장
+발목 포맷의 AI 확장"이다.
+
+### Consequences
+- 코드 변경 0줄. PO가 설계 §10 결정 5건에 답하면 §8(DRAFT 교체, 화면 0 변경)부터 착수.
+- 첫 부위는 목. 고관절·발목·팔꿈치·손목·턱관절은 PR #30 범위 밖 — 원장 문서 전까지 보류.
+- 검증 기록(전수조사): `git log --all --diff-filter=A`에서 exercise/rehab 파일은 전부 LBP;
+  GitHub 코드 검색 `exercise neck|shoulder|knee` 0건; PR 검색 3건(요통·무관).
+
+## 2026-09-07 — PO "추천안으로 모두 승인" → 요통 동등성 설계 §8·E-1~E-5 구현 + 목 근거 매트릭스 초안
+
+### Context
+`docs/PAIN_REGION_PACK_LBP_PARITY_DESIGN_v0.1.md` §10의 결정 5건에 PO가 "추천안으로 모두 승인"이라
+답했다(2026-09-07). 추천안은 (1) PR #30 먼저 merge(reference-only) (2) 가설 패턴 목 5/어깨 6/무릎 7 + §5 라벨
+(3) D-1 채택 — 요통 외 부위의 신경 상태를 검사 결과에서 파생 (4) §8 DRAFT 팩 교체 — 아카이브 4패턴 폐기
+(5) 첫 부위(목) Exercise Evidence Matrix는 원장+Opus 초안.
+
+### Decision
+1. **PR #30 = 부위 팩 임상 프레임워크 정본.** 목·어깨·무릎 팩의 `hypothesisPatterns`를 PR #30 가설 상태로
+   교체했다. 목 수동 검사는 PR #30 §5 Selective Exam 11개. 아카이브 운동 이름은 `아카이브(후보)`로만 보존.
+2. **D-1**: `RegionPack.neuroExamIds`. 비어 있지 않으면 추천 엔진이 `evaluateSafety().neuroStatus` 대신 기록된
+   검사 결과로 신경 상태를 만든다 — 하나라도 POSITIVE → NEW_OR_WORSENING(RF-3b 전체 차단), **전부** NEGATIVE →
+   STABLE, 그 밖 UNKNOWN. 요통은 빈 배열(원장 판단 필드 유지, 행동 0 변경). 목: C5–T1 기준선 + UMN 징후.
+   유발 검사(Spurling/ULTT)는 넣지 않는다.
+3. **E-1**: `directionalResponseLabels`/`directionalResponseHelp` — 값 6개·저장은 공통, 칩 라벨·도움말·EMR O행만
+   부위별. 목만 `directionalResponseApplicable: true`.
+4. **E-3**: `RegionCoreExercise.domain` + `RegionPack.rehabDomains`(PR #30 도메인: 목 9/어깨 8/무릎 11, 요통 13).
+   추천 엔진은 읽지 않는다(도메인 → 운동 자동 매핑 금지).
+5. **출처 게이트**: `RegionPack.provenance` 6필드(`CLINICIAN_APPROVED | CLINICIAN_DOCUMENT | PR30_FRAMEWORK |
+   ARCHIVE_CANDIDATE | CLAUDE_DRAFT`). `packContentGaps`가 `CLINICIAN_APPROVED`가 아닌 필드를 빈 칸으로 나열 —
+   `productionApproved`만 뒤집어서는 승인이 성립하지 않는다.
+6. **E-4**: `tests/region-pack.spec.mjs` J절 — 가설 id가 운동 쪽에 없음, 엔진 소스가 가설을 읽지 않음, 구조진단
+   토큰 없음, `directSupportByExam` 키는 검사 id만.
+7. **E-5**: `scripts/region-stage-distribution.mjs <region>` — 기록의 부위는 화면과 같은 `drivingRegion`. 요통
+   스크립트는 이 본체를 `'lbp'`로 부르는 껍데기(출력·경고 불변).
+8. **⑤ 목 근거 매트릭스 초안** `docs/NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` — Core 후보 12(권고 9), 도메인 배정,
+   메타 7필드 제안, 단계표, 적격성 옵션, 검사→뒷받침 4쌍, 재질문 `NECK_12`, 금지 목록, freeze 전 재검증 5건.
+   **팩에는 0줄 반영** — 원장 체크리스트 9개 → Opus 검수 → CLOSED 후 ④.
+9. **PR #30 merge**: GitHub 커넥터가 이 세션에서 `invalid session`을 반환해 API로 draft 해제·merge를 수행하지
+   못했다. 대신 PR head(`133f030`)를 작업 브랜치에 병합(`f0535c2`, 코드 0) — 이 브랜치가 main에 들어가면 같은
+   커밋이 main에 도달한다. **PO가 GitHub UI에서 PR #30을 직접 merge하거나 이 브랜치의 PR로 함께 들어가게 둔다.**
+
+### Rationale
+- D-1의 "전부 NEGATIVE → STABLE": 요통의 STABLE은 원장이 `NONE`으로 한 번에 판단한 값이다. 검사 2개 중 1개만
+  음성인 상태를 같은 무게로 읽으면 RF-1(미확인을 안정으로 가정하지 않음)을 어긴다.
+- 출처를 데이터(`provenance`)로 둔 이유: 설계 §4 "출처 신뢰 표기"를 주석으로만 두면 승인 시점에 사람이 잊는다.
+  게이트에 넣으면 `packContentGaps === []`가 "원장이 6필드를 전부 확정했다"를 함의한다.
+- 어깨·무릎의 `neuroExamIds`는 비워 둔다: PR #30 어깨 문서는 "distal neuro change"를 재평가 조건부 항목으로만
+  두고, 무릎은 신경혈관 손상이 L0다. 검사 항목을 만드는 것은 원장 ② 결정.
+
+### Consequences / 검증
+- 요통 화면·저장·EMR 문장 0 변경: 요통 스위트 전부 **무수정** 통과(recommendation 30, eligibility 20, vignettes,
+  working-hypothesis 252, exam-suggestions 25, stage 283, doctor 1041, doctor-workspace 302).
+- `test:region-pack` 227 → **307**(J절 80). 변이 5종(every→some NEGATIVE / 파생 제거 / EMR 라벨 무시 / 출처 게이트
+  제거 / 도메인 게이트 제거) 전부 죽음. `test:lbp-stage-pilot` 46(E-5 8 추가). `tsc -b` 0, `vite build` green.
+- 화면 변화 0 — 3부위 팩은 여전히 `productionApproved: false`(H절 SSR 단언).
+- 다음: 원장이 `NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9개 → Opus 검수 → CLOSED → Sonnet 인코딩(④).
+
+## 2026-09-07 — PO "네 추천안으로 진행 부탁" → 목 팩 ③ CLOSED · ④ 인코딩 · 활성화(`productionApproved: true`) + 구동 후퇴 규칙 축소
+
+### Context
+직전 항목의 다음 행동(원장 체크리스트 9개 → Opus 검수 → CLOSED → 인코딩 → 어깨·무릎 순)에 PO가 "추천안으로
+진행"이라 답했다. 이는 `docs/NECK_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0의 제안값을 원장 답으로 위임한 것이다.
+"다른 부위 이동 금지 — 앞 부위가 닫혀야 다음 부위"(2026-09-06 계획) 원칙에 따라 **이번 항목은 목만** 끝냈다.
+
+### Decision
+1. `docs/NECK_EXERCISE_DECISIONS_v1.0_CLOSED.md` — Core 9(초안 12 → 9: DIR_02/SCAP_02/ACT_01 보류), 7필드, 단계표
+   (1단계 3/2단계 6), 규칙(NEURAL_01 신경 안정+원위 중단, DIR_01 신전 조건+원위 중단), 검사→뒷받침 4쌍, 재질문 NECK_12.
+2. `regionPacks/neck.ts` 전 필드 인코딩, `provenance` 전부 `CLINICIAN_APPROVED`, `productionApproved: true`.
+   `packContentGaps(neck) === []`. 서버 `DETAIL_CHECK_REGION_QUESTION_IDS.neck = ['NECK_12']`.
+3. **구동 후퇴 규칙 축소**: R2의 "판별 부위 팩 미승인 → 같은 모집단 승인 팩" 후퇴를 **고관절 → 요통만**으로
+   제한(`FALLBACK_REGIONS`, TS+서버). 어깨 → 목 후퇴는 허용하지 않는다.
+4. Opus 임상 검수 PASS, 조건부 2: (a) CPG 2017 분류별 권고 **원문 대조 미완** — 이 세션은 PubMed/JOSPT egress가
+   차단됨. 초안 §1.2 표는 어디에도 확정값으로 옮기지 않았고 팩은 운동 범주만 PR #30 §4 문장에 기댄다. (b) 7필드
+   문장의 원장 행 단위 검토 미완(PO 위임). 둘 다 안전 게이트(코드 검증)와 무관하며 파일럿 관찰 항목(CLOSED §10).
+
+### Rationale
+- 어깨 → 목 후퇴를 막은 이유: 요통·고관절 후퇴는 "R2 이전에 받던 요통 카드를 잃지 않게"(회귀 방지)였다. 어깨 우세
+  환자는 R2 이전에 아무 카드도 없었으므로 목 카드를 새로 보여주는 것은 회귀 방지가 아니라 다른 부위 판단의 덧씌움이다.
+  목 활성화가 처음으로 이 차이를 실제 화면 문제로 만들었다.
+- Core 12 → 9: 초안이 권한 대로. 3단계 전용 행이 없어져 3단계 확정 시 9개 전부 허용된다 — 굴곡 호전 환자의 방향성
+  운동 부재(DIR_02 보류)와 함께 파일럿 관찰 항목.
+- 위임 승인을 `CLINICIAN_APPROVED`로 기록한 이유: 출처 게이트의 의미는 "원장 책임 아래 확정됨"이고 PO가 그 책임을
+  명시적으로 졌다. 대신 "행 단위 검토 미완"을 CLOSED §1에 남겨 v1.1 재개방 경로를 열어 둔다.
+
+### Consequences / 검증
+- **화면 변화(목 기록만)**: 임상 가설 카드(PR #30 5패턴), 운동 단계 카드, 목 움직임 반응 카드(목 라벨), 확인 추가 11,
+  목표 기능 프리셋 4, 재활/운동 제안(목표 기능 선택 후), EMR A/O행 목 문장, 재검 재질문 NECK_12. 어깨 우세(NS01)
+  기록은 변화 0. 요통 변화 0(요통 스위트 무수정 통과).
+- `tests/neck-exercise-core.vignettes.spec.mjs` 신설 39(엔진 구동: V1~V9), `region-pack` 318, 변이 8종 전부 죽음
+  (서버 표 행 제거 / 어깨→목 후퇴 TS·서버 / NEURAL 신경 요구 제거 / ULTT 쌍 제거 / 단계 이동 / Spurling 쌍 추가 /
+  DIR 방향 조건 제거). `doctor` 1041 / `doctor-workspace` 302 / `server` 233 / `detail-check` 61 / `tsc -b` 0 / `build` green.
+- 파일럿 계측: `npm run pilot:region-stage -- neck`(원장 로컬).
+- 다음: 어깨(PR #30 §5 검사 목록 없음 → 원장 검사 스크립트 기반, `neuroExamIds` 결정 필요) → 무릎. 각각 ② 초안부터.
+
+## 2026-09-07 — PO "부족한 레퍼런스는 리서치, 나머지는 추천안으로 진행" → 근거 검증 로그 + 어깨 ② 초안
+
+### Context
+목 CLOSED v1.0 §1의 조건부 항목(CPG 2017 원문 대조 미완)과 근거 매트릭스 §10 재검증 5건, 어깨 착수 전 출처 확인.
+이 세션의 네트워크 egress는 PubMed·PMC·JOSPT·Europe PMC·archive.org·orthopt.org·physiotutors·e-arm.org를 차단한다
+(WebFetch EGRESS_BLOCKED). 검색(WebSearch)은 동작한다.
+
+### Decision
+1. **검증 수준을 A/B/C로 정의하고 로그로 남긴다** — `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md`. 이번 리서치는
+   전부 **B수준**(검색 엔진이 1차 문헌 페이지에서 뽑은 요약 인용). B수준 문장은 팩·CLOSED에 등급으로 옮기지 않는다.
+2. 목 CPG 2017: 분류별 권고·등급(B/C)을 B수준으로 확인. Core 9 중 8개가 권고 범주 안. 급성 방사통 행만 미확인.
+3. **NECK_DIR_01 근거 제한 발견**(May & Aina 2018: 경추 방향 선호 근거 제한, MDT 경추 "little support"). 팩에서 빼지
+   않는다 — 반응 기록 조건부 후보이고 원위 악화 시 제외되며 요통과 대칭. CLOSED §1에 조건부 행 추가, §10 관찰 항목 7
+   추가, v1.1에서 결정.
+4. CFRT 32° cutoff·DNF 지구력 참고치(숫자 불일치)·신경 가동성(JOSPT 2025 NMA, 확실성 중간~낮음)·견인(Fritz 2014,
+   Romeo 2018) 확인. 팩 변경 0 — 모두 현재 결정(cutoff 미기재, 견인 Core 밖)을 지지.
+5. 어깨 출처 확인: Desmeules 2025 JOSPT RC 건병증 CPG, AAOS 2025 RC 손상 CPG, BESS 2025 견봉하 pathway, BESS/BOA
+   비외상성 불안정 pathway·Derby, BESS 2026 외상성 탈구 재활. **정정**: PR #30이 "Lee et al 2025 Frozen Shoulder CPG"라고
+   적은 문헌은 JOSPT가 아니라 Ann Rehabil Med 2025;49(3):113–138(PMID 40602400).
+6. **어깨 ② 초안** `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` — 추천안 포함 체크리스트 9(7번째 패턴 AC 추가,
+   Core 11→10, 검사 3 추가 중 원위 신경 검사를 `neuroExamIds`로, 뒷받침 5쌍, 재질문 SH08). **팩 반영 0.** 착수 조건은
+   목 파일럿 첫 관찰 후(§10) — PO가 "지금"을 택하면 즉시 인코딩 가능.
+
+### Rationale
+- "확인했다"의 뜻을 A/B/C로 나눈 이유: 검색 요약을 원문 확인으로 적으면 나중에 아무도 원문을 안 읽는다. B수준은
+  "범주가 맞다"까지만 보증하고, 원장 로컬 5분 체크리스트(로그 §5)가 A수준을 닫는다.
+- DIR_01을 지우지 않는 이유: 근거 제한 ≠ 해로움의 근거. 반응 조건부·원위 악화 제외·요통 대칭이라는 세 안전장치가 있고,
+  파일럿 데이터 없이 지우면 굴곡·신전 호전 환자 모두 방향성 후보가 없어진다. 데이터로 결정한다.
+
+### Consequences
+- 코드 변경 0. 문서 4(로그 신규, 어깨 초안 신규, 목 CLOSED §1·§10, 목 매트릭스 §1.2 표기).
+- 다음: 원장 로컬 A수준 체크리스트 5건 → 목 파일럿 → 어깨 ② 체크리스트 9 → 어깨 CLOSED·인코딩.
+
+## 2026-09-07 — 검증 수준 정책: v1.0 production 진입은 B수준(요통 선례), A수준 원문 대조는 파일럿 전제조건이 아니다 + 파일럿 관찰 자동 집계
+
+### Context
+PO: "일단은 파일럿 프로그램을 최대한 빨리 돌려 보고 싶어." 직전 세션의 HANDOFF 39가 "원장 로컬 5분 A수준 체크리스트 5건"을
+Next Action 1번으로 두어 목 파일럿 앞에 문턱을 세웠는데, PO가 "허리 때는 안 한 걸 왜 내게 요구하는가"라고 지적했다. 맞는
+지적이다 — 요통 팩(Core-20, `productionApproved: true`)은 원문 A수준 대조 없이 production에 들어갔고, 목만 다른 기준을 적용할
+근거를 문서 어디에도 적은 적이 없다.
+
+### Decision
+1. **부위 팩 v1.0의 production 진입 기준은 B수준 근거 확인**이다(검색 요약으로 "권고 범주가 맞다"까지). 요통·목 동일. 앞으로
+   어깨·무릎도 같다. A수준(원문) 대조는 **v1.1 항목**이며, 원문이 B수준 요약과 **다를 때만** CLOSED 재개방 사유가 된다.
+   등급 문자는 여전히 팩·CLOSED에 옮기지 않는다(2026-09-07 앞 항목 그대로).
+2. 목 파일럿을 **지금** 시작한다. 전제조건은 코드(이미 `productionApproved: true`, test:all green)와 기록 절차뿐이다.
+3. CLOSED §10 관찰 7항목 중 기록에서 셀 수 있는 5항목(②방향성 반응 ③신경 검사 기록 ④단계 분포 ⑤NECK_12 응답 ⑦DIR_01 채택)을
+   **스크립트가 센다** — `scripts/region-pilot-observation.mjs <region>` (`npm run pilot:region-observation -- neck`). 부위 무관
+   본체: 신경 검사 id·Core 운동·방향성 조건은 팩에서, 재질문 id는 `server/detailCheck.js` 표에서, 부위 판별은 `drivingRegion`
+   (화면과 같은 규칙)에서 읽는다. ④는 기존 `region-stage-distribution.mjs` 본체를 이어서 호출한다. 손으로만 되는 ①카드 문장
+   수정 ⑥원문 대조는 `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` §4 표.
+4. 판정 임계값은 **제안값**으로 스크립트 `THRESHOLDS`·테스트·로그 문서 §3에 같은 숫자로 고정: 저장 기록 <10건(방향 참고용),
+   화면 저장 <80%, 굴곡 호전 ≥20%(굴곡 후보 없는 팩 → DIR_02 검토), 신경 2개 모두 기록 <70%, 방향성 조건부 운동 후보 ≥5건·채택
+   <20%(v1.1 유지/삭제 자료), 재질문 부위 문항 답변 <50%. 임상 임계값이 아니라 "v1.1에서 그 항목을 다시 보는" 회의 소집 기준.
+5. 첫 라운드 종료: 저장된 목 기록 10건 또는 4주. 종료 후 어깨 ② 착수(어깨 §10 그대로).
+
+### Rationale
+- 같은 조직이 두 부위에 다른 문턱을 두면, 문턱이 낮은 쪽이 "덜 검증됨"으로 오해되거나 높은 쪽이 영영 못 나간다. 기준은 하나여야
+  하고, 그 하나는 이미 요통이 정했다(B수준 진입). 이 결정은 목의 기준을 낮추는 것이 아니라 **문서화되지 않은 이중 기준을 없애는**
+  것이다.
+- 원장이 손으로 7항목을 세면 파일럿이 진료를 방해하고 기록이 끊긴다. 세 가지(신경 검사 결과·방향성 반응·채택 버튼)만 원장 화면에
+  평소처럼 남기면 나머지는 스크립트가 센다 — 요통 회고 파일럿(`pilot:lbp-stage`)과 같은 원칙("환자를 새로 모집하지 않고, 원장이
+  손으로 세지 않는다").
+- 임계값을 "제안값"으로 못 박는 이유: 지금 숫자는 데이터 없이 정한 것이다. 첫 라운드에서 한 번 발동하면 그때 원장이 숫자를 고친다
+  — 스크립트·테스트·문서 셋을 같이.
+
+### Consequences / 검증
+- 코드: `scripts/region-pilot-observation.mjs` 신규, `package.json` `pilot:region-observation`·`test:region-pilot-observation`
+  (+ `test:all`), `.gitignore` `scripts/.region-packs-index-bundle.mjs`. 팩·엔진·화면 변경 0.
+- 테스트: `tests/region-pilot-observation.spec.mjs` 64 단언 — 손으로 검산한 12건(요통 제외·미저장 제외·손상 파일 제외·옛 기록
+  `regionClinical` 부재·손상 채택 상태값), 임계값 6개 각각 발동·비발동, 요통으로도 도는지(옛 필드 `lbpDirectionalResponse`),
+  부위 id 하드코딩 부재, 오류 경로 2, 개인정보 필드 10개 미열람 + 기록 통째 출력 부재.
+- 문서: `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` 신규(원장 절차 §1, 명령 §2, 임계값 §3, 수동 표 §4, 종료 기준 §5),
+  `REAL_DEVICE_PILOT_CHECKLIST.md` §5-b 목 환자 확인, CLOSED §1·§10 표기, 로그 §5 머리말, HANDOFF 40.
+
+## 2026-09-07 — PO "허리를 기준으로 모든 파트 진행" → 어깨·무릎·발목/발·손목/손 팩 활성화 (승인 팩 2 → 6)
+
+### Context
+PO 범위 답변 "목 어깨 무릎 손목 발목까지 전부", PR은 "모든 작업 후에". 요통 팩과 같은 진입 기준(B수준 근거 확인, 이날 앞 항목 "검증
+수준 정책")을 네 부위에 적용했다. 이 세션 네트워크는 원문 도메인 egress 차단 — 근거는 WebSearch 요약(B수준)만.
+
+### Decision
+1. **어깨**: `docs/SHOULDER_EXERCISE_EVIDENCE_MATRIX_v0.1.md` §0 체크리스트 9를 추천안 그대로 확정 → `docs/SHOULDER_EXERCISE_DECISIONS_v1.0_CLOSED.md`.
+   가설 7(PR#30 6 + AC 국소), Core 10(THX_01 보류), 검사 8(+견갑 조절·원위 신경·apprehension), `neuroExamIds: [shoulder_exam_distal_neuro]`
+   (POSITIVE 전체 차단, STABLE 요구 행 없음), 뒷받침 5쌍, 재질문 SH08. 매트릭스 §10 "목 파일럿 후 착수" 조건은 PO 지시로 해제.
+2. **무릎**: PR#30 phenotype 7·Domain 11 그대로 + 로그 §4(B수준) → `docs/KNEE_EXERCISE_DECISIONS_v1.0_CLOSED.md`. Core 12(아카이브 8 전부 폐기 —
+   VMO 고립·90/90·내전 미채택), 검사 10, 뒷받침 8쌍, `neuroExamIds` 없음(원위 신경은 L0 KNEE_02), 재질문 KNEE_12·KNEE_13.
+3. **발목/발**: 원장 원안(Notion 발목 패턴, 원장 포맷) **보존** — 3패턴·운동 11·검사 4의 id·이름·기준값(10cm/6~8cm/55:45/10회) 그대로 + 7필드·
+   단계·도메인 8 신설 + CPG 관리 패턴 3(염좌·아킬레스·족저)·운동 4(교육·균형·아킬레스 부하·족저근막)·검사 4 **추가** →
+   `docs/ANKLE_FOOT_EXERCISE_DECISIONS_v1.0_CLOSED.md`. Core 15, 재질문 AF_00(유일한 single_choice 후보).
+4. **손목/손**: 원장 문서 0 → 로그 §7(B수준) + Claude 초안 + PO 위임 → `docs/WRIST_HAND_EXERCISE_DECISIONS_v1.0_CLOSED.md`. 가설 7(관리 지향),
+   Core 10(편심성 WH_ECC_01 보류), 검사 8, `neuroExamIds: [wrist_hand_exam_median_neuro]` + `WH_NERVE_01: requiresStableNeuro`(목 NEURAL_01
+   대칭), 재질문 WH_11. 6개 승인 팩 중 유일하게 원장 콘텐츠 0 — §10-1 전 행 문장 검토가 v1.1 본체.
+5. 공통: 방향성 카드는 요통·목만(4부위 미적용). 후퇴 쌍은 hip → lbp만 유지. 어깨 우세(NS01) 환자는 이제 어깨 팩(목 CLOSED §9의 "안전 패널만"
+   종료). 각 CLOSED §10 파일럿 관찰은 `pilot:region-observation -- <region>`으로 집계.
+6. 근거 로그 `docs/REHAB_REFERENCE_VERIFICATION_LOG_v0.1.md` §4 무릎(12 출처) / §6 발목(11) / §7 손목(17) 추가 — 리서치 에이전트 3개 병렬,
+   DOI/PMID는 snippet에 있는 것만. "Aspetar 2016"은 실체 미확인(Aspetar CPG는 Kotsifaki 2023).
+
+### Rationale
+- 기준은 하나(B수준 진입). 목만 A수준을 요구했던 이중 기준을 없앤 직후이므로 나머지 네 부위도 같은 문턱으로 들어간다.
+- 원장 콘텐츠가 있는 부위(발목)는 원안을 바꾸지 않고 **추가만** 했다 — 원장 원안 포맷을 Claude가 고쳐 쓰면 나중에 무엇이 원장 것인지
+  알 수 없다. 테스트가 11개 id·표시명·"10회" 보존을 단언한다.
+- 근거 범주가 없는 행(무릎 STEP/HSC 종아리/TEND, 발목 힙 힌지·쓰러스트·90/90·스텝다운, 손목 RES)은 지우지 않고 **조건부**로 표시하고
+  §10 채택률로 v1.1에서 결정 — 목 DIR_01과 같은 처리.
+- 신경 게이트: 객관 결손 검사가 정의된 부위(어깨·손목)만 `neuroExamIds`. 유발 검사(apprehension·Phalen/Tinel)는 절대 신경 게이트가 아니다
+  (region-pack E-2 단언). 손목 신경 활주만 STABLE 요구 — 목과 같은 이유(신경 가동 운동은 기준선 안정 후).
+- 어깨 원장 근력저하 판단 필드는 L0 expedited_referral 플래그일 뿐 안전 상태를 바꾸지 않는다(SHOULDER_V1 §12) — 엔진이 그 플래그를 읽지
+  않는 현행 설계를 비네트 V7c가 고정. 바꾸려면 별도 DECISIONS.
+
+### Consequences / 검증
+- 코드: `regionPacks/{shoulder,knee,ankleFoot,wristHand}.ts` 승인 인코딩, `server/detailCheck.js` 4행, `package.json`
+  `test:region-exercise-vignettes`(+test:all), `.gitignore`. 엔진·화면·서버 로직 변경 0(팩 데이터만).
+- 테스트: 비네트 4스위트 94단언(어깨 27·무릎 22·손목 23·발목 22), `region-pack` 318 → 331; `doctor-workspace` 303 — PAIN_SCENARIO_3(어깨 우세)이
+  승인 팩 기록이 되면서 "승인 전 부위는 병합이 건드리지 않는다"를 검증하던 3개 테스트는 DRAFT인 팔꿈치로 라우팅한 복제 시나리오로 옮김(승인 6·후퇴·C parity·D CLOSED 문서·H 어깨 SSR·
+  J-④ 아카이브 폐기·원안 보존·E-2 신경 게이트·E-3 도메인·provenance). `tsc -b` 0, `build` green, `test:all` exit 0.
+- 문서: CLOSED 4, 로그 §4·§6·§7, DRAFT_CONTENT §1, 어깨 매트릭스 §10 해제, 목 파일럿 로그(다른 부위 절차), REAL_DEVICE §5-b, HANDOFF 41.
+- 남은 DRAFT: 고관절(Drive 고관절 패턴.md 있음), 턱관절(Notion CCMFU), 팔꿈치(문서 없음) — PO 범위 밖("목 어깨 무릎 손목 발목").
+
+## 2026-09-07 (저녁) — PR #30 원문 대조: 어깨·무릎 팩의 검사 4건 누락을 찾아 수정, 어깨 AC 패턴 출처 정정
+
+### Context
+PO "깃허브자료 업데이트 했어 확인해봐, PR #30". PR #30이 13:31에 갱신되어, 그때까지 이 브랜치가 병합해 둔 요약본
+(`*_REHAB_ARCHITECTURE_RECOVERED.md`, 3.7~4KB)이 아니라 **원문**이 `source/originals/`에 올라왔다 — 목 341행/어깨 652행/무릎 737행.
+오늘 낮에 승인한 어깨·무릎 팩은 **그 요약본만 보고** 만든 것이므로 전 항목을 원문과 대조했다.
+
+### Decision
+1. **원문을 브랜치에 병합**(문서만, `806d992`). 3개 파일을 part에서 재조립해 SHA-256이 매니페스트 기대값과 일치함을 확인
+   (`bf406ed7…` / `a507cc32…` / `b5b8240d…`). 검증 절차와 결과는 근거 로그 §8 신설.
+2. **대조 결과 — 핵심 구조는 3부위 모두 일치**: 목 도메인 9·Base 검사 2, 어깨 가설 7·도메인 8·금지 3, 무릎 도메인 11·금지 6·재평가 축.
+   **목 팩은 변경 0.** 요약본이 그 부분은 충실했다.
+3. **어깨 검사 2건 추가**: (a) `shoulder_exam_target_function_reproduction` — 원문 §7 Base 1번인데 빠져 있었다(목 팩에는 있다).
+   (b) `shoulder_exam_rom` 1개를 **`shoulder_exam_arom` / `shoulder_exam_prom`으로 분리** — 원문 §5가 "Active vs Passive ROM =
+   SHOULDER_V1의 핵심 분기"라고 제목으로 못박았고, 수동 외회전이 동결견·관절와상완 관절염·회전근개 표현형을 가르는 high-yield다.
+   뒷받침도 분기: 능동만 제한 → SH_MOB_01, 수동도 제한(가동성 결손) → SH_MOB_01 + SH_MOB_02.
+4. **무릎 검사 2건 추가**: `knee_exam_target_function_reproduction`(원문 §5-A), `knee_exam_patellar_mobility_apprehension`(원문 §5-G) —
+   후자는 `PATELLAR_INSTABILITY` 가설이 있는데 그 검사가 없던 짝 결손이다. 둘 다 운동 뒷받침 쌍은 두지 않는다.
+5. **정정(사실 관계)**: 어깨 매트릭스 §0-1이 `AC_LOCAL_CONTRIBUTION`을 "7번째 추천 **추가**"라고 적었으나, 원문 §8 가설 후보에
+   `AC_OR_LOCAL_JOINT_CONTRIBUTION`이 **처음부터 있었다**. 요약본이 6개로 줄여 옮긴 것이다. 결론(7개 유지)은 같지만 근거가 다르므로
+   매트릭스 §0-1과 CLOSED §1-2에 정정 기록.
+6. **irritability는 v1.1로 보류**: 원문의 운동 입력 목록(목 §7 / 어깨 §10 / 무릎 §11)에 모두 있으나 어느 팩에도 기록 수단이 없다.
+   요통·목을 포함한 **전 부위 공통 구조 갭**이고 새 상태 필드는 스키마 변경이라 별도 결정 사안이다. 각 CLOSED §10 관찰 항목으로 넣고
+   파일럿을 막지 않는다.
+7. resisted scaption·AC palpation(어깨), pivot shift(무릎)는 추가하지 않는다 — 원문도 조건부이거나 기존 검사로 근사되고, 검사 목록이
+   이미 10~12개다. 파일럿 관찰 후 v1.1.
+
+### Rationale
+- 요약본과 원문의 차이가 **어디에 생기는지**가 이번 대조의 수확이다: 잃은 것은 가설·도메인 같은 뼈대가 아니라 **검사와 분기의 세부**였다.
+  뼈대만 맞으면 팩이 맞다고 믿었으면 어깨는 "능동 vs 수동"이라는 원문의 핵심 분기를 통째로 잃은 채 파일럿에 들어갔을 것이다.
+- 파일럿 **시작 전**에 잡은 것이 결정적이다. 검사 id가 바뀌면 이미 저장된 기록과 어긋나는데, 어깨·무릎 팩은 오늘 승인됐고 실환자 기록이
+  0건이라 지금은 무손실로 나눌 수 있다. 하루만 늦었어도 마이그레이션 문제가 됐다.
+- AC 출처 정정을 굳이 남기는 이유: "우리가 판단해서 추가했다"와 "원문에 있던 걸 복원했다"는 v1.1에서 그 행을 지울지 말지의 근거가
+  완전히 다르다. 전자면 우리 판단을 재검토하면 되고, 후자면 원문 설계를 뒤집는 일이 된다.
+
+### Consequences / 검증
+- 코드: `regionPacks/shoulder.ts`(검사 8→10, 뒷받침 5→6쌍), `regionPacks/knee.ts`(검사 10→12). 운동·단계·안전 게이트·서버 표 변경 0.
+- 테스트: 어깨 비네트 27→31(검사 10, AROM/PROM 분기 V2a, 목표 기능 재현 무쌍 V2c, `shoulder_exam_rom` 부재), 무릎 22→23(검사 12,
+  슬개골 검사 ↔ 가설 짝). `region-pack` 331 유지.
+- 문서: 근거 로그 §8 신설(원문 3건 SHA-256 검증 + 부위별 대조표 + "§0의 A수준과 대상이 다르다" 구분), 어깨·무릎 CLOSED §1-2 대조표 +
+  §6 갱신 + §10 관찰 항목 추가, 어깨 매트릭스 §0-1 정정, HANDOFF 42.
+- 남은 것: §5 원장 로컬 체크리스트(외부 CPG 원문)는 그대로. 이번 절은 그것을 대체하지 않는다.
+
+## 2026-09-08 — 독립 검수자 ChatGPT → Fable 이관, PR #31 Fable 독립 검수 6건 판정·수정, 남은 승인 항목 PO 위임
+
+### Context
+PO(2026-09-08): "chatgpt 이제 무시해도 돼 그 역할을 fable 한테 넘겼어. 그 밖에 나머지 승인 필요한 부분도 추천안으로 진행 부탁해.
+난 얼른 파일럿 프로그램을 돌려야겠어." — 즉 (1) 독립 검수자 역할 이관, (2) 남은 승인 항목(PR #31 병합 포함)을 추천안으로 진행,
+(3) 파일럿 시작이 최우선.
+
+### Decision
+1. **독립 검수자 = Fable**(CLAUDE.md Team Roles·Git Workflow·Escalation·DoD·PR 템플릿 갱신). ChatGPT는 더 이상 게이트가 아니다.
+   검수 방식은 그대로: push된 PR/diff/HANDOFF/DECISIONS/테스트를 보고, 발견 사항을 **코드에 대고 확인한 뒤** 판정. GitHub required
+   approval로는 두지 않는다(같은 계정). **PO가 "추천안으로 진행"을 위임한 경우에만** 검수자가 병합까지 수행하고 그 사실을 여기 남긴다
+   — 이번이 그 첫 사례다.
+2. **PR #31 Fable 독립 검수(`/code-review 31 high`, 6건) 판정**:
+   | # | 발견 | 판정 | 처리 |
+   |---|---|---|---|
+   | F-1 | 팔꿈치·손목/손 플래그가 **동시에** 설 때(ELBOW_00 ∈ {FOREARM, DIFFUSE_OR_MULTIPLE, UNKNOWN}; coreSpec `IS_PRIMARY_*_SAFETY`의 의도적 겹침) `drivingRegion`이 REGION_KEYS 순서 우연으로 팔꿈치(DRAFT)를 골라 승인된 손목/손 팩이 안 붙는다 | CONFIRMED — 그러나 **결과는 정책과 일치** | 명시 짝 규칙으로 승격(TS+서버, parity 테스트 6+1+2건). 손목/손 팩 후퇴는 두지 않는다 — 문진의 주부위 라벨도 'ELBOW'이고, 팔꿈치 우세 환자에게 손목 운동을 덧씌우는 것은 어깨→목 거부와 같은 이유로 안 된다. **진짜 해법은 팔꿈치 팩 승인**(v1.1) |
+   | F-2 | 재진 카드 "초진 → 오늘"의 초진 답이 항상 '초진 기록 없음' — `baselineDetailAnswersFromSubmission`이 `responses`를 question id 평면 맵으로 훑는데 실제는 `modules.<부위>.<필드>`로 중첩 | CONFIRMED | `detailCheckBaseline.ts` 신설: 재질문 id 9개(서버 표와 집합 동일) → `modules` 경로 명시 표. 테스트: 서버 표와 집합 일치, coreSpec `<필드>: r['<id>']` 줄과 행별 대응, 실제 fixture payload 왕복(LBP/NECK/KNEE), 옛 평면 맵은 `{}`, `metadata.answers`(답이 아니라 답한 시각·화면) 미사용 |
+   | F-3 | 파일럿 집계 `DIRECTIONAL_VALUES`에 `UNCLEAR`(불명확) 누락 → '미시행'으로 오집계 | CONFIRMED | 6값으로 맞춤 + `LbpDirectionalResponse` 선언과 집합 동일 단언 + 요통 옛 필드 경로 검사 |
+   | F-4 | 재진 목표 기능 칩이 승인 팩 6개 전부(34개, '기타 목표 동작' 6개 포함) | CONFIRMED | `revisitPack.targetFunctions`로 범위 축소(교체 규칙 표는 아래) |
+   | F-5 | `server/store.js` deriveDetailCheck가 이력을 두 번 읽음 | CONFIRMED(효율) | **v1.1 보류** — 정확성 영향 0, 클리닉 LAN 규모에서 체감 0. 파일럿을 막지 않는다 |
+   | F-6 | `sanitizeLbpConfirmedStage`가 `sanitizeConfirmedStage`와 중복 | CONFIRMED | 위임(동작 동일; `workspace-round3` 196 통과) |
+3. **F-4 교체 규칙 표**(CLAUDE.md "경로를 지우거나 교체하기 전에" 규칙). 옛 경로 `APPROVED_PACK_TARGET_FUNCTIONS`(모듈 상수, 승인 팩 전부)
+   → 새 경로 `revisitFollowUpOptions(revisitPack)`(렌더마다 구동 팩 1개). 이 경로는 **재진(RevisitWorkspace) 화면에만** 있었다 —
+   초진(DoctorWorkspace)은 원래 구동 팩 1개 범위였고, 한약·mixed·fixture 미리보기는 이 컴포넌트를 쓰지 않는다.
+   | 옛 경로가 나르던 값 | 초진 | 재진(통증) | 재진(한약·팩 없음) | 재진(DRAFT 부위) | fixture 미리보기 |
+   |---|---|---|---|---|---|
+   | 구동 팩의 목표 기능 칩 | 해당 없음(원래 팩 1개) | `revisitPack.targetFunctions` — **동일** | 칩 없음(옛: 34개 — 의도적 버림, 그 환자 부위가 아님) | `activeDrivingPack`이 null이면 오늘 가설이 있는 부위 팩, 없으면 칩 없음 | 해당 없음 |
+   | 다른 승인 팩의 목표 기능 칩 | 해당 없음 | **의도적 버림** — 이월된 다른 부위 id는 `FollowUpTargetPicker` 고아 행으로 계속 보이고 해제된다(1b 테스트) | 같음 | 같음 | 해당 없음 |
+   | 그룹 라벨 '목표 기능(다음 방문에 같은 동작으로 비교)' | 해당 없음 | 동일(`FOLLOW_UP_TARGET_GROUP_LABEL`) | 그룹 ids 빈 배열 | 같음 | 해당 없음 |
+   | PAIN/HERBAL 공통 옵션 | 해당 없음 | 동일 | 동일 | 동일 | 해당 없음 |
+   입력 방향: 선택된 `followUpTargets`는 옵션 목록과 무관하게 그대로 저장·EMR에 도달한다(옵션은 칩 표시만 결정). 표시 조건 변경 없음.
+   지운 경로 1개당 소스 단언: `tests/doctor-workspace.spec.mjs` 'Opus review item 1a'가 옛 상수 3개 부재 + 새 함수·호출·prop 4개를 단언.
+4. **남은 승인 항목 위임 처리**: PR #31을 검수 수정 커밋 후 **merge commit으로 main에 병합**(저장소 관례). PR #30은 이미 닫힘(내용 흡수).
+
+### Rationale
+- 6건 중 정확성에 닿는 것은 F-2(원장이 보는 화면에 사실과 다른 '기록 없음')와 F-3(파일럿 임계값이 틀리게 계산됨)이다. 파일럿의 목적이
+  "관찰 데이터로 v1.1을 결정"이므로 **집계가 틀리면 파일럿 자체가 무의미**해진다 — 병합 전에 잡아야 했다.
+- F-1은 "버그처럼 보이지만 정책상 옳은 결과"의 전형이다. 우연(배열 순서)에 기대던 것을 규칙으로 승격만 하고 행동은 바꾸지 않았다.
+  손목/손 후퇴를 넣었다면 파일럿 중 팔꿈치 우세 환자에게 손목 운동 후보가 떴을 것이다.
+- ChatGPT → Fable 이관은 검수 **주체**가 바뀌는 것이지 검수 **기준**이 바뀌는 것이 아니다. 같은 세션이 구현과 검수를 동시에 하는 것을
+  막기 위해, 이번 검수는 `/code-review` 서브에이전트(별도 컨텍스트)가 발견하고 본 세션이 코드에 대고 확인하는 2단으로 했다.
+
+### Consequences / 검증
+- 코드: `regionRouting.ts`/`server/regionRouting.js`(짝 규칙), `detailCheckBaseline.ts`(신설) + `RevisitWorkspace.tsx`(F-2·F-4),
+  `scripts/region-pilot-observation.mjs`(F-3), `persistence.ts`(F-6). 엔진·팩 데이터·안전 게이트 변경 0.
+- 테스트: `region-pack` 331→347, `detail-check` 65→80, `region-pilot-observation` 64→69, `doctor-workspace` 303 유지, `tsc -b` 0, `build` 0.
+- 문서: CLAUDE.md(역할), PR 템플릿, HANDOFF 43.
+- v1.1 후보로 남긴 것: F-5(이력 이중 읽기), 팔꿈치 팩 승인(F-1의 근본 해법), irritability 공통 필드.
+

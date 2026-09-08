@@ -415,6 +415,17 @@
   gap: 6px;
 }
 
+/* LBP v1 Batch 2.5a (CD-3): one capability's label + its 3-button (확인함/지금은 안 됨/미확인) status group. */
+.workspace__examCard__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .workspace__statusBtn,
 .workspace__lateralityBtn {
   border: 1px solid var(--border);
@@ -464,6 +475,27 @@
 }
 
 .workspace__noteInput:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* LBP v1 Batch 4 (§14.2): 시행/예정 처치's 기타 box -- same look as
+   .workspace__noteInput, kept as its own selector (not that shared class)
+   so it stays distinguishable from every other free-text note box on the
+   page (see FinalAssessmentCard.tsx's own comment for why). */
+.workspace__finalAssessment__interventionOther {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  min-height: 36px;
+  margin-top: 8px;
+}
+
+.workspace__finalAssessment__interventionOther:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
@@ -587,6 +619,30 @@
 }
 
 .workspace__adoptBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 2026-09-05: 운동 단계 카드의 "제안대로 확정" / "1단계로 올리기" 버튼.
+   시각은 .workspace__adoptBtn과 같되 클래스를 분리한다 — 회귀 테스트가
+   adoptBtn의 존재로 "후보 카드가 렌더됐는가"를 검사하므로, 단계 버튼이 그
+   판정을 오염시키면 안 된다. */
+.workspace__stageBtn {
+  display: inline-block;
+  margin-top: 8px;
+  margin-right: 6px;
+  border: 1px dashed var(--primary);
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  min-height: 30px;
+}
+
+.workspace__stageBtn:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
@@ -878,6 +934,101 @@
   color: var(--text-muted);
 }
 
+/* LBP v1 Batch 4 (§14.4/CD-2.7-3): 치료 직후 값 starts hidden behind this
+   toggle -- sized to match the baseline/직후 값 inputs it sits beside in
+   the same grid row, not the taller default .workspace__btn. */
+/* 2026-09-06: 통증 강도 NRS 0~10 버튼. 한 줄에 11개(36px + 4px 간격 = 436px)가
+   1024×768의 우측 열(≈700px)에 들어간다. 행 전체를 1열로 바꿔 라벨 → 기준값
+   → 직후값이 세로로 쌓인다(그리드 3열에 11버튼을 넣으면 두 줄로 접혀 더 높다). */
+.workspace__followUp__valueRow--nrs {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.workspace__nrs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.workspace__nrsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.workspace__nrsBtn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.workspace__nrsBtn--active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.workspace__nrsBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.workspace__followUp__postTreatmentToggle {
+  min-height: 36px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* LBP v1 Batch 1 (G1): optional labeled sub-group ("목표 기능") above its
+   own chip row -- only rendered when a caller passes `groups`. */
+.workspace__followUp__group {
+  margin-bottom: 10px;
+}
+
+.workspace__followUp__groupLabel {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* LBP v1 Batch 1 (G3): "허리 움직임 반응" directional-response card + (G5)
+   "확인 추가" list -- both reuse existing exam-card/status-button/optional
+   disclosure classes, this is only the small additions those don't cover. */
+.workspace__examCard--directional {
+  border-color: var(--primary);
+}
+
+.workspace__addExamList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.workspace__addExamBtn {
+  border: 1px dashed var(--border);
+  background: var(--surface);
+  color: var(--primary);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.workspace__addExamBtn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ---------- save status (round 2 Phase 2) ---------- */
 .workspace__saveStatus {
   margin: 0;
@@ -940,11 +1091,12 @@
   color: var(--text);
 }
 
-.workspace__emrPreview__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+/* LBP v1 Batch 4 (§14.3/CD-2.7-2): this card lost its own copy button --
+   the hint replacing it points to the one remaining copy surface. */
+.workspace__emrPreview__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .workspace__btn {
@@ -1037,6 +1189,20 @@
   align-items: center;
   gap: 10px;
   margin-top: 8px;
+}
+
+/* 플로우 정렬 4/5: 환자 치료 계획 링크 발급 후 문자 내용 블록 */
+.workspace__carePlanLink {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.workspace__carePlanLink__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 /* ---------- round 3: next reassessment plan (Phase B) ---------- */
@@ -1546,6 +1712,57 @@
   outline-offset: 2px;
 }
 
+/* LBP v1 Batch 1 (G4): ⓘ how/why help toggle -- tap opens (aria-expanded),
+   hover shows the same text via the native `title` attribute. Reuses the
+   card's own spacing rhythm rather than introducing a new visual language. */
+.workspace__helpToggle {
+  /* Opus delta review item 6: this stylesheet's tablet touch-target
+     convention is 36-44px (see workspace__addExamBtn's 36px min-height) --
+     24px was under that. */
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  border-radius: 999px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workspace__helpToggle[aria-expanded='true'] {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.workspace__helpToggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.workspace__examCard__help {
+  background: var(--primary-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+}
+
+.workspace__examCard__help p {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.workspace__examCard__help p:last-child {
+  margin-bottom: 0;
+}
+
 /*
  * Round 15 (tablet density). Round 14 laid the primary 판단 / 처치 / 재검
  * set out in one row above 1100px, but the pre-existing 1100px breakpoint
@@ -1682,4 +1899,103 @@
   .workspace__block h3 {
     margin: 0 0 4px;
   }
+}
+
+/* ---------- LBP v1 Batch 3 (§9): revisit quick check ---------- */
+/* Chip rows/hint/note reuse .workspace__followUp__options,
+   .workspace__followUpChip, .workspace__block__hint, .workspace__noteInput --
+   only the group title and the two guidance-line treatments are new. */
+.workspace__revisit__quickCheckGroup {
+  margin-bottom: 12px;
+}
+
+.workspace__revisit__quickCheckGroup:last-of-type {
+  margin-bottom: 0;
+}
+
+.workspace__revisit__quickCheckGroup h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__revisit__quickCheckNote {
+  margin-top: 4px;
+}
+
+.workspace__revisit__quickCheckGuidance {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace__revisit__quickCheckGuidance__line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.workspace__revisit__safetyNotice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--danger-soft, #fbf0ee);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace__revisit__detailCheckDue {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* ---------- LBP v1 Batch 2.5c (§11): working hypothesis ---------- */
+/* Chip rows reuse .workspace__followUp__options/.workspace__followUpChip;
+   only the per-pattern group title and the patient-draft box are new. */
+.workspace__hypothesis__group {
+  margin-bottom: 12px;
+}
+
+.workspace__hypothesis__group:last-of-type {
+  margin-bottom: 0;
+}
+
+.workspace__hypothesis__group h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__hypothesis__patientDraft {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.workspace__hypothesis__patientDraftText {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Opus delta review D-2/D-3: insertion-state cues, never auto-edit/delete. */
+.workspace__hypothesis__patientDraftStatus {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.workspace__hypothesis__patientDraftWarning {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warning);
 }

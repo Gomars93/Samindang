@@ -52,3 +52,15 @@ export function buildHerbalPatientCarePlanPreview(input: { primaryConcern: strin
   ]
   return lines.join(CRLF)
 }
+
+/**
+ * 플로우 정렬 4/5: the SMS/알림톡 body the doctor copies into the clinic's
+ * own messaging tool once a care-plan link is issued. Operational copy
+ * only -- the plan itself lives behind the link (token-gated, 14-day TTL),
+ * never inline in a message body, so a forwarded or screenshotted SMS
+ * carries no clinical content. Kept here (not in the card) so the exact
+ * wording is one testable function.
+ */
+export function buildCarePlanMessageText(link: string): string {
+  return `[삼인당한의원] 치료 계획 안내\n오늘 진료에서 안내한 치료 계획을 아래 링크에서 확인하실 수 있습니다. (14일간 열람 가능)\n${link}`
+}

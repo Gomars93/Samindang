@@ -71,6 +71,7 @@ export function createMicroFollowUpStore(followUpDir) {
     adverseEffectReported,
     adverseEffectNote,
     inputProvenance,
+    detailAnswers,
   }) {
     return withLock(visit_id, async () => {
       await mkdir(followUpDir, { recursive: true })
@@ -94,6 +95,11 @@ export function createMicroFollowUpStore(followUpDir) {
         newSymptomNote: newSymptomNote ?? '',
         adverseEffectReported: Boolean(adverseEffectReported),
         adverseEffectNote: adverseEffectNote ?? '',
+        // 플로우 정렬 5/5: [{questionId, value}] -- already filtered to the
+        // token's own detail_check snapshot by store.js's
+        // submitFollowUpSession; stored raw, compared by the doctor, never
+        // interpreted here.
+        detailAnswers: Array.isArray(detailAnswers) ? detailAnswers : [],
         inputProvenance: normalizeInputProvenance(inputProvenance),
         created_at: now,
         updated_at: now,

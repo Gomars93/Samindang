@@ -31,7 +31,9 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { SingleChoice } from '../components/SingleChoice'
+import { NumericScale } from '../components/NumericScale'
 import { TextInputField } from '../components/TextInputField'
+import { resolveDetailCheckQuestions, type DetailCheckQuestion } from '../spec/detailCheckQuestions'
 import {
   getFollowUpSession,
   submitFollowUpSession,
@@ -49,6 +51,15 @@ const YES_NO_OPTIONS: Option[] = [
   { value: 'no', label: '아니오' },
   { value: 'yes', label: '예' },
 ]
+
+// 플로우 정렬 3/5·5/5: the doctor records 통증 강도 as NRS 0~10 buttons
+// (finalAssessment.ts's PAIN_NRS_TARGET_IDS); the patient answers the same
+// target the same way, so the two numbers compare like-for-like. Mirrored
+// here as a literal (not imported from the doctor module) to keep this
+// patient screen's import surface to spec + presentational components; a
+// source-level test pins the two sets equal.
+const NRS_TARGET_IDS: ReadonlySet<string> = new Set(['pain_intensity'])
+const NRS_SCALE = { min: 0, max: 10, minLabel: '통증 없음', maxLabel: '상상할 수 있는 최악' }
 
 const UNAVAILABLE_MESSAGE: Record<string, string> = {
   EXPIRED: '링크가 만료되었습니다. 직원에게 문의해 주세요.',
@@ -86,6 +97,8 @@ export function FollowUpScreen({
   const [unavailableReason, setUnavailableReason] = useState<string>('')
   const [targets, setTargets] = useState<Array<{ id: string; label: string }>>([])
   const [targetAnswers, setTargetAnswers] = useState<Record<string, string>>({})
+  const [detailQuestions, setDetailQuestions] = useState<DetailCheckQuestion[]>([])
+  const [detailAnswers, setDetailAnswers] = useState<Record<string, string>>({})
   const [overallChange, setOverallChange] = useState<string | null>(null)
   const [newSymptom, setNewSymptom] = useState<string | null>(null)
   const [newSymptomNote, setNewSymptomNote] = useState('')
@@ -115,6 +128,7 @@ export function FollowUpScreen({
         return
       }
       setTargets(result.data.targets ?? [])
+      setDetailQuestions(resolveDetailCheckQuestions(result.data.detailQuestionIds ?? []))
       setScreen('form')
     })
     return () => {
@@ -160,6 +174,7 @@ export function FollowUpScreen({
 
   const allAnswered =
     targets.every((t) => Boolean(targetAnswers[t.id])) &&
+    detailQuestions.every((q) => Boolean(detailAnswers[q.id])) &&
     overallChange !== null &&
     newSymptom !== null &&
     adverseEffect !== null
@@ -170,6 +185,7 @@ export function FollowUpScreen({
     setSubmitError(null)
     const answers: FollowUpSessionAnswers = {
       targetRatings: targets.map((t) => ({ targetId: t.id, patientReportedValue: targetAnswers[t.id] ?? '' })),
+      detailAnswers: detailQuestions.map((q) => ({ questionId: q.id, value: detailAnswers[q.id] ?? '' })),
       overallChange: overallChange ?? '',
       newSymptomReported: newSymptom === 'yes',
       newSymptomNote: newSymptom === 'yes' ? newSymptomNote : '',
@@ -193,6 +209,7 @@ export function FollowUpScreen({
     // 프라이버시: 제출 성공 즉시 답변을 메모리에서 비운다(기존 문진 privacy
     // wipe와 동일 패턴 -- App.tsx의 submitState success/unconfigured 이펙트 참고).
     setTargetAnswers({})
+    setDetailAnswers({})
     setOverallChange(null)
     setNewSymptom(null)
     setNewSymptomNote('')
@@ -275,19 +292,56 @@ export function FollowUpScreen({
           <h1 className="question">간단 재확인</h1>
           <p className="helper">지난 방문 이후 상태를 간단히 알려주세요 (30초 정도 소요됩니다).</p>
 
-          {targets.map((t) => (
-            <section key={t.id} className="followUp__section">
-              <h2 className="followUp__label">{t.label}</h2>
-              <p className="followUp__targetHint">지금 상태를 숫자나 짧은 말로 적어주세요 (예: 통증 4, 걷기 40분)</p>
-              <TextInputField
-                mode="short_text"
-                value={targetAnswers[t.id] ?? ''}
-                onChange={(v) => setTargetAnswers((m) => ({ ...m, [t.id]: v }))}
-                maxLength={200}
-                placeholder="현재 상태"
-              />
+          {targets.map((t) =>
+            NRS_TARGET_IDS.has(t.id) ? (
+              <section key={t.id} className="followUp__section">
+                <h2 className="followUp__label">{`${t.label} (0~10)`}</h2>
+                <p className="followUp__targetHint">지금 통증이 어느 정도인지 숫자를 눌러 주세요</p>
+                <NumericScale
+                  {...NRS_SCALE}
+                  value={targetAnswers[t.id] !== undefined && targetAnswers[t.id] !== '' ? Number(targetAnswers[t.id]) : null}
+                  onSelect={(n) => setTargetAnswers((m) => ({ ...m, [t.id]: String(n) }))}
+                />
+              </section>
+            ) : (
+              <section key={t.id} className="followUp__section">
+                <h2 className="followUp__label">{t.label}</h2>
+                <p className="followUp__targetHint">지금 상태를 숫자나 짧은 말로 적어주세요 (예: 통증 4, 걷기 40분)</p>
+                <TextInputField
+                  mode="short_text"
+                  value={targetAnswers[t.id] ?? ''}
+                  onChange={(v) => setTargetAnswers((m) => ({ ...m, [t.id]: v }))}
+                  maxLength={200}
+                  placeholder="현재 상태"
+                />
+              </section>
+            ),
+          )}
+
+          {detailQuestions.length > 0 && (
+            <section className="followUp__section followUp__detail" aria-label="세부 확인">
+              <h2 className="followUp__label">세부 확인</h2>
+              <p className="followUp__targetHint">처음 방문 때 답한 것과 같은 질문입니다. 지금 상태 기준으로 답해 주세요.</p>
+              {detailQuestions.map((q) => (
+                <div key={q.id} className="followUp__detailItem">
+                  <h3 className="followUp__label followUp__label--sub">{q.question}</h3>
+                  {q.kind === 'single_choice' ? (
+                    <SingleChoice
+                      options={q.options}
+                      value={detailAnswers[q.id] ?? null}
+                      onSelect={(v) => setDetailAnswers((m) => ({ ...m, [q.id]: v }))}
+                    />
+                  ) : (
+                    <NumericScale
+                      {...q.scale}
+                      value={detailAnswers[q.id] !== undefined && detailAnswers[q.id] !== '' ? Number(detailAnswers[q.id]) : null}
+                      onSelect={(n) => setDetailAnswers((m) => ({ ...m, [q.id]: String(n) }))}
+                    />
+                  )}
+                </div>
+              ))}
             </section>
-          ))}
+          )}
 
           <section className="followUp__section">
             <h2 className="followUp__label">전반적인 변화</h2>

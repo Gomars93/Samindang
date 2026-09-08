@@ -93,6 +93,7 @@ npm run server
 | `SAMINDANG_ALLOWED_ORIGINS` | (빈 목록) | 원장 엔드포인트를 브라우저에서 호출할 수 있는 origin을 쉼표로 구분해 지정한다(예: `http://localhost:5173,http://192.168.0.10:4317`). `http://localhost:<포트>`/`http://127.0.0.1:<포트>`는 항상 허용되므로 일반적인 단일 PC 구성에서는 이 값을 설정할 필요가 없다. 3절 참고. |
 | `SAMINDANG_RETENTION_DAYS` | `30` | 이 일수보다 오래된 제출을 서버 시작 시 1회, 이후 6시간마다 자동 삭제한다. `0`으로 설정하면 자동삭제를 완전히 끈다. 7절 참고. |
 | `SAMINDANG_ACTIVE_VISIT_TTL_MINUTES` | `30` | "진료 중" 표시(활성 방문)가 자동으로 만료되기까지의 분(分). 읽을 때마다 확인하며(별도 타이머 없음), 활성화 이후 갱신되지 않는다. 12절 참고. |
+| `SAMINDANG_CARE_PLAN_LINK_TTL_MINUTES` | `20160`(14일) | 원장이 「환자 링크 만들기」로 발급한 환자 치료 계획 읽기 전용 링크(`#care-plan=<token>`)의 유효 시간(분). 재진 간단 문진 토큰(30분)과는 별도 저장소(`care-plan-links/`)·별도 값이다. 만료·무효화된 링크 파일은 `SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS`(기본 24시간) 뒤 정리된다. |
 
 PowerShell 예시:
 

@@ -14,13 +14,22 @@
  */
 import type { MicroFollowUpCandidateItem, MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpNeedsAttention, readableMicroFollowUpResponse } from './microFollowUp'
+import { describeDetailCheckValue, detailCheckQuestionText } from '../../spec/detailCheckQuestions'
 
 export function MicroFollowUpCard({
   candidates,
   response: rawResponse,
+  baselineDetailAnswers,
 }: {
   candidates: MicroFollowUpCandidateItem[]
   response: MicroFollowUpResponse | null
+  /**
+   * 플로우 정렬 5/5: the FIRST visit's raw answers to the same items
+   * (questionnaire responses by id), so today's detail answer is shown
+   * beside its baseline. Read-only, raw, no delta computed -- the
+   * REPEAT_VISIT_AUTO_COMPARE_STATUS rule: the clinician compares.
+   */
+  baselineDetailAnswers?: Readonly<Record<string, string>>
 }) {
   // 13차 독립 리뷰 MEDIUM-1: rawResponse는 서버가 검증 없이 저장한
   // MicroFollowUpResponse를 그대로 넘겨받는다 -- 원소/leaf 단위로 다시
@@ -36,20 +45,15 @@ export function MicroFollowUpCard({
         {needsAttention && <span className="workspace__microFollowUp__flag">추가 확인 필요</span>}
         <span className="workspace__microFollowUp__hint">· 참고용 raw 값, 자동 판단 없음</span>
       </summary>
+      {/* Batch 2.6 (E-14/C-9): the candidate list (this visit's carried-
+          forward prior Follow-up Targets) is intentionally not rendered
+          here anymore -- the revisit screen's own "이전 방문 참고" block
+          already shows the same targets (RevisitWorkspace.tsx). `candidates`
+          is still accepted and still decides whether this card renders at
+          all (below) and whether it counts as needing attention elsewhere;
+          only the duplicate list display is gone. Everything about the
+          patient's own responses is unchanged. */}
       <div className="workspace__microFollowUp__body">
-        {candidates.length > 0 && (
-          <div className="workspace__microFollowUp__section">
-            <p className="workspace__microFollowUp__label">이전 방문 재평가 대상 (다음 방문 간단 확인 후보)</p>
-            {candidates.map((c) => (
-              <div key={c.id} className="workspace__microFollowUp__row">
-                <strong>{c.label}</strong>
-                <span>{c.baselineText}</span>
-                {c.postTreatmentText && <span>이전 치료직후: {c.postTreatmentText}</span>}
-              </div>
-            ))}
-          </div>
-        )}
-
         {response ? (
           <div className="workspace__microFollowUp__section">
             <p className="workspace__microFollowUp__label">환자 응답 (오늘)</p>
@@ -59,6 +63,22 @@ export function MicroFollowUpCard({
                 <span>{r.patientReportedValue.trim() || '응답 없음'}</span>
               </div>
             ))}
+            {response.detailAnswers.length > 0 && (
+              <div className="workspace__microFollowUp__detail">
+                <p className="workspace__microFollowUp__label">세부 확인 (초진 → 오늘)</p>
+                {response.detailAnswers.map((a) => {
+                  const baseline = baselineDetailAnswers?.[a.questionId]
+                  return (
+                    <div key={a.questionId} className="workspace__microFollowUp__row">
+                      <strong>{detailCheckQuestionText(a.questionId)}</strong>
+                      <span>
+                        {`${baseline !== undefined ? describeDetailCheckValue(a.questionId, baseline) : '초진 기록 없음'} → ${describeDetailCheckValue(a.questionId, a.value)}`}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             {response.overallChange.trim() && (
               <p className="workspace__microFollowUp__line">전반적 변화: {response.overallChange.trim()}</p>
             )}

@@ -23,9 +23,12 @@ export function ExamSuggestionList({
 
   return (
     <div className="workspace__examSuggestions">
+      {/* Batch 2.6 (E-8/C-5): count only -- the cards immediately below
+          already carry these same titles, so re-listing them here was a
+          pure duplicate of what the eye lands on next. */}
       {stillPending.length > 0 && (
         <p className="workspace__pendingCounter" role="status">
-          아직 확인 안 됨 · {stillPending.length}건 — {stillPending.map((i) => i.title).join(', ')}
+          아직 확인 안 됨 · {stillPending.length}건
         </p>
       )}
 

@@ -1296,6 +1296,34 @@ const LBP_QUESTIONS: Question[] = [
     ],
   },
   {
+    // LBP_07B: 재발 "간격"을 묻는 유일한 문항.
+    //
+    // LBP_07('이전에도 있었나요')만으로는 재발 간격을 알 수 없는데, 운동
+    // 단계 배정 규칙(`src/doctor/workspace/lbpExerciseStage.ts`)은 "최근
+    // 재발이면 한 단계 낮춘다"를 요구한다 — 그 입력이 여기서 온다.
+    // 원장 지시(2026-09-05): "재발간격이 3개월이면 조심해야지 1단계씩
+    // 격하시켜야지".
+    //
+    // LBP_07 === 'YES'일 때만 노출되므로 초진 환자(대다수)의 문진 길이는
+    // 변하지 않는다. `required: false` — 답을 못 해도 진행을 막지 않고,
+    // 미응답은 단계 격하 없음으로 처리된다(모르면 안전한 쪽이 아니라
+    // 중립으로 둔다 — 없는 재발을 지어내지 않는다).
+    id: 'LBP_07B',
+    variable: 'lbp_recurrence_interval',
+    input: 'single_choice',
+    question: '마지막으로 그렇게 아팠던 게 언제인가요?',
+    required: false,
+    step: '상세 증상',
+    layout: 'grid2',
+    showIf: (r) => IS_PRIMARY_LBP(r) && r['LBP_07'] === 'YES',
+    options: [
+      { value: 'within_3m', label: '3개월 이내' },
+      { value: '3m_1y', label: '3개월~1년' },
+      { value: 'over_1y', label: '1년 이상' },
+      { value: 'unknown', label: '잘 모르겠어요' },
+    ],
+  },
+  {
     id: 'LBP_08',
     variable: 'lbp_claudication_walking',
     input: 'single_choice',
@@ -4890,6 +4918,7 @@ export const buildResponsePayload = (r: Responses) => ({
       current_redflag_screen: r['LBP_05'],
       trauma_safety: r['LBP_06'],
       recurrence: r['LBP_07'],
+      recurrence_interval: r['LBP_07B'],
       claudication_walking: r['LBP_08'],
       claudication_relief: r['LBP_09'],
       onset_before_45: r['LBP_10'],

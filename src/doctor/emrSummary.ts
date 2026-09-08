@@ -8,6 +8,9 @@
  * — 자동 Assessment 확정/자동 처방 생성 금지 원칙 때문이다.
  * structured_note.assessment는 "진찰 소견"(Recorder가 받아적은 서술)
  * 줄에만 쓴다 — 확정된 임상 판단이 아니다.
+ *
+ * Batch 4.1-A 이후 프로덕션 호출자 0 + 데이터 소스 0 (이중 사문). 삭제 여부는
+ * 별도 결정 대기.
  */
 import type { ClinicianJudgment } from './judgment'
 import type { RecorderStructuredNote } from '../lib/serverClient'

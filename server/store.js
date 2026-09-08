@@ -8,6 +8,8 @@ import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
 import { createMicroFollowUpStore } from './microFollowUpStore.js'
 import { createFollowUpSessionStore } from './followUpSessionStore.js'
+import { computeDetailCheckDue, detailCheckQuestionIdsForCandidates, localTodayISO } from './detailCheck.js'
+import { drivingRegionCandidates } from './regionRouting.js'
 import { createStationStore } from './stationStore.js'
 import { createPatientIdentityStore } from './patientIdentityStore.js'
 
@@ -221,6 +223,14 @@ export function createStore(
   {
     followUpTokenTtlMinutes = 30,
     followUpTokenRetentionHours = 24,
+    // 플로우 정렬 4/5: a patient re-opens their care-plan page over days, not
+    // minutes -- so its links live in a SEPARATE token store with a much
+    // longer TTL (default 14 days). Kept apart from follow-up-sessions/ on
+    // purpose: the two stores share one record shape but must never share a
+    // pointer namespace, or issuing a care-plan link would invalidate a
+    // revisit's live follow-up token for the same id (one-active-token-per-
+    // scope is that store's core invariant).
+    carePlanLinkTtlMinutes = 14 * 24 * 60,
     // Configurable purely so tests can use a tiny window instead of
     // sleeping for real seconds to prove "the window expired, this is now
     // a genuinely new start" -- production always uses the 5s default.
@@ -238,6 +248,11 @@ export function createStore(
   // linkage 한번쓰기 토큰).
   const followUpSessions = createFollowUpSessionStore(path.join(dataDir, '..', 'follow-up-sessions'), {
     ttlMinutes: followUpTokenTtlMinutes,
+  })
+  // care-plan-links/도 같은 형제 경로 패턴(플로우 정렬 4/5: 환자 치료 계획
+  // 읽기 전용 링크). 위 carePlanLinkTtlMinutes 주석 참고.
+  const carePlanLinks = createFollowUpSessionStore(path.join(dataDir, '..', 'care-plan-links'), {
+    ttlMinutes: carePlanLinkTtlMinutes,
   })
   // stations/도 같은 형제 경로 패턴(round 8: 클리닉 태블릿 스테이션).
   const stations = createStationStore(path.join(dataDir, '..', 'stations'))
@@ -563,6 +578,29 @@ export function createStore(
     }))
   }
 
+  // 플로우 정렬 5/5 (세부문진): is TODAY the reassessment point the
+  // clinician planned on a prior visit? If so, which fixed initial-
+  // questionnaire items to re-ask. Pure read of the clinician's own plan
+  // (server/detailCheck.js); the region comes from the latest prior
+  // SUBMISSION's own safety_flags presence + the NS01/HIP_00 discriminator
+  // (server/regionRouting.js, a literal port of the doctor screen's
+  // drivingRegion), never re-derived from a routing heuristic here. Returns
+  // null when not due, so the common case adds nothing to the token record.
+  // 부위 팩 일반화(2026-09-06, R2): 승인된 팩의 부위만 재질문 id를 더 받고
+  // (DETAIL_CHECK_REGION_QUESTION_IDS), 나머지는 공통 문항만 -- 옛 비요통 동작.
+  async function deriveDetailCheck(patientId, excludeVisitId) {
+    const history = await getPatientHistory(patientId, excludeVisitId)
+    const due = computeDetailCheckDue(history.visits, localTodayISO())
+    if (!due) return null
+    let candidates = []
+    const latestWithSubmission = history.visits.find((v) => v.submission_id)
+    if (latestWithSubmission) {
+      const record = await readRecord(latestWithSubmission.submission_id)
+      candidates = drivingRegionCandidates(record?.submission?.responses)
+    }
+    return { reason: due.reason, plan_label: due.plan_label, question_ids: detailCheckQuestionIdsForCandidates(candidates) }
+  }
+
   // Round 3(revisit linkage): the single doctor/staff action "재진 간단
   // 문진 시작" -- creates the NEW visit for an EXISTING patient_id (the
   // caller in server/index.js already verified visitExistsForPatient,
@@ -679,11 +717,13 @@ export function createStore(
       let result
       try {
         const targets = await deriveMicroFollowUpCandidates(patientId, visit.id)
+        const detailCheck = await deriveDetailCheck(patientId, visit.id)
         const { token, record } = await followUpSessions.issueToken({
           visit_id: visit.id,
           patient_id: patientId,
           targets,
           delivery_mode: deliveryMode,
+          detail_check: detailCheck,
         })
         result = { visit, token, session: record }
       } catch (err) {
@@ -831,6 +871,7 @@ export function createStore(
     const visit = await visits.getVisit(visitId)
     if (!visit) return null
     const targets = await deriveMicroFollowUpCandidates(visit.patient_id, visitId)
+    const detailCheck = await deriveDetailCheck(visit.patient_id, visitId)
     // Round 8: carry the existing session's delivery_mode forward unless
     // the caller explicitly asks for a different one -- a plain "재발급"
     // should not silently change how the link is meant to be delivered.
@@ -840,6 +881,7 @@ export function createStore(
       patient_id: visit.patient_id,
       targets,
       delivery_mode: deliveryMode ?? existing?.delivery_mode ?? null,
+      detail_check: detailCheck,
     })
     return { visit, token, session: record }
   }
@@ -884,10 +926,20 @@ export function createStore(
           label: labelById.get(t.targetId),
           patientReportedValue: typeof t.patientReportedValue === 'string' ? t.patientReportedValue.slice(0, 500) : '',
         }))
+      // 플로우 정렬 5/5: detail answers are accepted ONLY for question ids
+      // in the token's own detail_check snapshot (a submitted id outside
+      // it is silently dropped, never trusted), values are plain short
+      // strings. No label/option resolution here -- the doctor screen does
+      // that from coreSpec by id.
+      const allowedDetailIds = new Set(record.detail_check?.question_ids ?? [])
+      const detailAnswers = (Array.isArray(answers?.detailAnswers) ? answers.detailAnswers : [])
+        .filter((a) => a && typeof a.questionId === 'string' && allowedDetailIds.has(a.questionId))
+        .map((a) => ({ questionId: a.questionId, value: typeof a.value === 'string' ? a.value.slice(0, 100) : '' }))
       return microFollowUp.saveResponse({
         visit_id: record.visit_id,
         patient_id: record.patient_id,
         targetRatings,
+        detailAnswers,
         overallChange: typeof answers?.overallChange === 'string' ? answers.overallChange.slice(0, 500) : '',
         newSymptomReported: Boolean(answers?.newSymptomReported),
         newSymptomNote: typeof answers?.newSymptomNote === 'string' ? answers.newSymptomNote.slice(0, 1000) : '',
@@ -1169,7 +1221,39 @@ export function createStore(
   // 창(기본 24시간, SAMINDANG_FOLLOWUP_TOKEN_RETENTION_HOURS)으로 정리
   // 되어야 한다 -- 두 정책을 같은 스위치에 묶으면 안 된다.
   async function cleanupFollowUpSessions() {
-    return followUpSessions.cleanupOlderThan(followUpTokenRetentionHours)
+    // Care-plan links age off under the same post-expiry retention window
+    // -- their TTL is longer, but once expired/invalidated they are just
+    // as dead as a spent follow-up token.
+    return (
+      (await followUpSessions.cleanupOlderThan(followUpTokenRetentionHours)) +
+      (await carePlanLinks.cleanupOlderThan(followUpTokenRetentionHours))
+    )
+  }
+
+  // 플로우 정렬 4/5 (환자 치료 계획 링크): the ONLY place that issues a
+  // CARE_PLAN capability. Scoped by SUBMISSION id (the record whose
+  // workspace the care plan was written in -- DoctorView's selectedId), so
+  // the token store's generic `visit_id` scope key holds a submission id
+  // here; every care-plan record is in its own store, so this never
+  // collides with a revisit visit's follow-up token. The text is the
+  // clinician-approved PATIENT-FACING care plan exactly as the doctor saw
+  // it in the preview card -- snapshotted here, never re-derived from the
+  // live workspace later (same posture as follow-up target labels).
+  // Returns null when the submission does not exist; the caller validates
+  // the text is non-empty before calling (an empty care plan is a client
+  // error, not something to silently issue a blank page for).
+  async function issueCarePlanLink(submissionId, carePlanText) {
+    const record = await readRecord(submissionId)
+    if (!record) return null
+    const { token, record: session } = await carePlanLinks.issueToken({
+      visit_id: submissionId,
+      patient_id: record.patient_id ?? null,
+      targets: [],
+      delivery_mode: null,
+      kind: 'CARE_PLAN',
+      care_plan_text: carePlanText,
+    })
+    return { token, session }
   }
 
   // 파일럿 종료 후 전체 삭제(scripts/purge-data.mjs 전용). 파일 개수만 반환한다.
@@ -1191,6 +1275,7 @@ export function createStore(
     deleted += await recorderResults.purgeAll()
     deleted += await microFollowUp.purgeAll()
     deleted += await followUpSessions.purgeAll()
+    deleted += await carePlanLinks.purgeAll()
     deleted += await stations.purgeAll()
     deleted += await visits.purgeAll()
     return deleted
@@ -1225,6 +1310,9 @@ export function createStore(
     markFollowUpSessionStarted: followUpSessions.markStarted,
     submitFollowUpSession,
     cleanupFollowUpSessions,
+    issueCarePlanLink,
+    resolveCarePlanLink: carePlanLinks.resolveToken,
+    markCarePlanLinkStarted: carePlanLinks.markStarted,
     listRevisitQueue,
     // Round 8: clinic tablet stations.
     registerStation: stations.registerStation,

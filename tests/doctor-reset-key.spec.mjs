@@ -15,11 +15,22 @@ import { fileURLToPath } from 'node:url'
 import React from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { DoctorWorkspace } from './.doctor-workspace-bundle.cjs'
-import { JudgmentPanel } from './.judgment-panel-bundle.cjs'
 import { DoctorRecordErrorBoundary } from './.doctor-record-error-boundary-bundle.cjs'
 import { PAIN_SCENARIO_1, HERBAL_SCENARIO_1 } from './.doctor-workspace-fixtures-bundle.mjs'
 
 const readSrc = (relPath) => fs.readFileSync(fileURLToPath(new URL(relPath, import.meta.url)), 'utf8')
+
+// Batch 4.1-A §15.7 introduced `esbuildEscapeNeedle` here (esbuild's
+// non-ES2020 default output target escapes every non-ASCII character in a
+// bundled .cjs file to \xHH/\uHHHH, so a raw Korean literal never matches
+// bundle text and silently, permanently passes regardless of whether the
+// text is actually gone -- see DECISIONS.md's "테스트 규약 2건 확정" entry,
+// 2026-09-04, 함정 1). Its only callers here were the T1/T2/T13/T14 tests
+// against `.judgment-panel-bundle.cjs`. Batch 4.1-D (§17.5) removes
+// JudgmentPanel.tsx entirely -- see the superseding test below -- so this
+// file no longer bundles anything with escaped Korean text to check, and
+// the helper itself is removed along with its only call sites (kept in
+// spirit by the DECISIONS.md entry above, for the next file that needs it).
 
 let passed = 0
 const test = (name, fn) => {
@@ -259,40 +270,30 @@ test('MedicationCourseSection key remains {patient_id} unchanged (composed by Do
 })
 
 // ---------- #9 ----------
-test('JudgmentPanel no longer owns an independent key={session_id}; its reset now follows the unified reset key transition (no dual-key drift)', () => {
+// Batch 4.1-D (§17.1/§17.2/§17.5): JudgmentPanel is REMOVED entirely --
+// zero editable fields were left in it (the 1분 디브리핑 textareas this
+// test used to type into and the innate_features TextList before that are
+// both gone; the only two fields it ever echoed, the LBP/SHOULDER
+// objective exam findings, are edited exclusively by
+// ObjectiveExamFindingsCard). So the property this test used to pin
+// ("no dual-key drift between an independent key={session_id} and the
+// unified reset key") no longer has a subject: there is no more
+// JudgmentPanel instance to key at all. `src/doctor/JudgmentPanel.tsx`
+// itself is deleted (`fs.existsSync` below proves it), and DoctorView.tsx
+// no longer references the component. The SURVIVING half of what this
+// test protected -- "does this cross-record reset actually clear a
+// safety-relevant editable field, not just a key prop's identity" -- is
+// now covered by the m4 tests below (lines ~366-448), which already
+// exercise ObjectiveExamFindingsCard's OWN render-time reset (driven by
+// the same resetKey DoctorWorkspace forwards, which is unifiedResetKey
+// end-to-end from DoctorView.tsx) against the actual objective-exam radio
+// state. This test is kept, not deleted, as the removal marker CLAUDE.md's
+// "지운 경로 1개당 소스 단언 1개" rule asks for.
+test('JudgmentPanel.tsx no longer exists and DoctorView.tsx no longer references it (Batch 4.1-D §17.2 -- the panel had zero editable fields left, so it and its independent-key concern are both gone)', () => {
+  const panelPath = fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url))
+  assert.equal(fs.existsSync(panelPath), false, 'src/doctor/JudgmentPanel.tsx must not exist')
   const viewSrc = readSrc('../src/doctor/DoctorView.tsx')
-  assert.ok(!/<JudgmentPanel\s*\n\s*key=/.test(viewSrc), '<JudgmentPanel> no longer carries its own key prop')
-  assert.ok(/<JudgmentPanel\s*\n\s*resetKey=\{unifiedResetKey\}/.test(viewSrc), 'JudgmentPanel receives the SAME unifiedResetKey as its resetKey prop instead')
-
-  // Behavioral half, mirroring DoctorWorkspace's own reset test above: a
-  // judgment typed in for submission A must not still be on screen after
-  // the resetKey transitions to submission B.
-  const source = {
-    session_id: 's1',
-    questionnaire_version: '1',
-    myungri_algorithm_version: '1',
-    myungri_library_version: '1',
-    myungri_status: 'resolved',
-    myungri_pending_approval: [],
-  }
-  let renderer
-  act(() => {
-    renderer = TestRenderer.create(React.createElement(JudgmentPanel, { source, resetKey: 'submission:A' }))
-  })
-  const findFirstFeatureInput = () => renderer.root.findAllByProps({ className: 'judgment__input' })[0]
-  act(() => {
-    findFirstFeatureInput().props.onChange({ target: { value: 'A 환자 소견' } })
-  })
-  assert.equal(findFirstFeatureInput().props.value, 'A 환자 소견', 'sanity: the typed value took effect')
-
-  act(() => {
-    renderer.update(React.createElement(JudgmentPanel, { source: { ...source, session_id: 's2' }, resetKey: 'submission:B' }))
-  })
-  assert.equal(
-    findFirstFeatureInput().props.value,
-    '',
-    "submission A's typed judgment must not still show once the unified key moves to submission B",
-  )
+  assert.ok(!viewSrc.includes('JudgmentPanel'), 'DoctorView.tsx must not reference JudgmentPanel in any form (import, JSX, or comment)')
 })
 
 // ---------- §1.1-#7 (lane1 union recomputes at every render-time reset boundary) ----------
@@ -412,6 +413,33 @@ test('m4: ObjectiveExamFindingsCard also clears its save-status/authError state 
   assert.ok(
     findLbpRadios(renderer).every((r) => r.props.checked === false),
     'sanity: the reset key transition itself still succeeded in this render',
+  )
+})
+
+// ---------- Batch 4.1-A §15.7 T1/T2 ----------
+// ---------- Batch 4.1-A §15.7 T1/T2, Batch 4.1-C §16.6 T13/T14: SUPERSEDED by Batch 4.1-D ----------
+// T1/T2 (bundled-textarea/read-back removal inside the panel's "사주 예상
+// → 수정 판단 → 치료축·처방 방향" block) and T13/T14 (the innate_features/
+// symptom_links TextList inputs + "설명 개요" read-back, also inside that
+// same panel) each asserted that ONE specific field/disclosure was gone
+// from `.judgment-panel-bundle.cjs`, the panel component's own compiled
+// output. Batch 4.1-D (§17.1/§17.2/§17.5) removes the panel ITSELF --
+// `src/doctor/JudgmentPanel.tsx` no longer exists, so there is no more
+// `.judgment-panel-bundle.cjs` to bundle or read (the `test:doctor-reset-key`
+// npm script's esbuild step for it is removed too) and none of these four
+// tests has a subject left to check. This is a strictly STRONGER fact than
+// any of them individually claimed (the whole file is gone, not just one
+// field inside it), so replacing them with prose would lose exactly the
+// kind of verifiable signal CLAUDE.md's "지운 경로 1개당 소스 단언 1개"
+// rule asks for. Kept as one structural test proving the stronger fact,
+// per §17.5's "정정, 단순 삭제 아님" instruction (mirrors test #9 above).
+test('T1/T2/T13/T14 superseded: src/doctor/JudgmentPanel.tsx is gone entirely, so the field-level removals these four tests each pinned individually no longer have a subject (Batch 4.1-D §17.1/§17.2/§17.5)', () => {
+  const panelPath = fileURLToPath(new URL('../src/doctor/JudgmentPanel.tsx', import.meta.url))
+  assert.equal(fs.existsSync(panelPath), false, 'src/doctor/JudgmentPanel.tsx must not exist')
+  const pkgSrc = readSrc('../package.json')
+  assert.ok(
+    !pkgSrc.includes('src/doctor/JudgmentPanel.tsx'),
+    'the test:doctor-reset-key npm script must no longer esbuild src/doctor/JudgmentPanel.tsx (there is nothing left to bundle)',
   )
 })
 

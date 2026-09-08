@@ -1,5 +1,42 @@
 # Current Handoff
 
+## 2026-09-08 (최신 45): **문진 "없음" 최상단 11문항 (v2.4 §22)** — SAFETY_01은 v2.3 금지 원칙의 PO 해제. 부위 팩 34문항은 범위 밖
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (origin/main `c6dac9f`에서 새로 시작 — PR #31 병합 후 미병합 커밋 없음).
+
+**PO 지시**(실기기 문진 중): "복용중인 약이나, 응급 상황 체크 상황 등에서 문진표에서 없음을 제일 상단에 배치해서 쓸모없이 스크롤 하지 않게 동선을 수정해줘".
+
+### 한 것
+- **지시의 전제 2건이 사실과 달라 확인 후 정정**했다:
+  - **복용 중인 약** — `MED_USE` 옵션[0]이 **이미** `'없어요'`고, 그걸 고르면 `MED_TYPES`(8개)는 `showIf`로 화면이 안 뜬다 → **변경 없음**.
+  - **응급 `SAFETY_01`** — `'해당 없음'` 맨 끝은 **의도된 설계**였다(v2.3 §17 주석 "안전문항엔 재배치 절대 금지" + W8 CRITICAL 테스트가 잠금).
+- **쟁점 2건을 PO에게 올려 판단받았다**:
+  - `SAFETY_01`: 구현자는 **그대로 두기**를 권장(satisficing → 가슴통증·편측 위약·의식소실·대량출혈 놓침, 7개라 스크롤 이득도 불확실).
+    **PO가 트레이드오프를 알고 최상단 배치 선택** → 구현. 재검토 조건을 `DECISIONS.md`에 명시(`red_flag_general=['none']` 비율 상승 시 되돌림).
+  - `HISTORY_01`(12개): 구현자 권장과 일치 → 올림. 단 `osteoporosis`가 골절 위험 red flag 원천인 하이브리드임을 기록.
+- **11문항 재배치**: `SAFETY_01` · `HISTORY_01` · `SEC_PAIN_01` · `SEC_URINARY_01` · `SEC_FATIGUE_01` · `SEC_STRESS_01` ·
+  `SEC_WOMEN_01` · `STRESS_03` · `SEC_GI_01` · `SEC_BOWEL_01` · `SEC_SLEEP_01`. **표시 순서만** — 값 집합·타입·`exclusive`·저장·원장 payload 전부 무변경
+  (`src/`에 `options[0]`/`options[length-1]` 인덱스 의존 코드 0건을 grep으로 확인, `exclusive`는 값 기반 Set 조회라 순서 무관).
+- **W8 재작성 + W9 전수 스캔 신설**: 모든 `multi_choice`의 "없음"류를 두 패턴(none-first 13 / none-before-unknown 34) 중 하나로 분류하고
+  **미분류면 실패**. 두 명부를 이름으로 못박아 새 문항이 세 번째 관행을 만들거나 부위 팩이 명부를 이탈하면 빌드가 깨진다. 현재 미분류 0 · noneLast 0.
+
+### 범위 밖 (미결 — PO 판단 필요)
+부위 팩 red flag/CES **34문항**(`LBP_04`(CES) 포함)은 `NONE`을 `UNKNOWN` 바로 앞에 두는 다른 패턴이다. PO 지시는 `SAFETY_01`을 지목했고
+CES 포함 일괄 변경은 승인 범위 밖이라 **손대지 않았다**.
+
+### 검증
+`tsc -b` 0 / `test:integration` 1184 assertions, 0 failed / `test:all` exit 0 / `build` 0.
+
+### Next Recommended Action
+1. **PR #33(문진 2화면 순서 재설계)이 아직 `open`이다** — main에 없다. 클리닉 PC가 `main`을 빌드하면 그 변경은 안 보인다.
+   PO가 실기기 확인 후 병합 여부 판단.
+2. 이 브랜치 PR도 Fable 독립 검수 → PO 병합 판단.
+3. **클리닉 PC `.env` 확인**: 태블릿 전송 실패는 변수명이 원인일 수 있다 — 올바른 이름은 `VITE_SAMINDANG_SERVER_URL=http://<원장PC IP>:4317`
+   (`src/lib/serverClient.ts:24`, RUNBOOK §5). 포트 `:4317` 필수. 수정 후 `npm run build` 재실행.
+4. 파일럿 관찰 시 `SAFETY_01` 재검토 조건(위 DECISIONS) 모니터링.
+
+---
+
 ## 2026-09-08 (최신 43): **Fable 독립 검수 → PR #31 수정·병합** — 검수자 역할 ChatGPT→Fable, 6건 중 5건 수정·1건 v1.1 보류. 파일럿 시작 가능
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po` → **main 병합**(PR #31, merge commit). PO(2026-09-08): "chatgpt 이제 무시해도 돼 그 역할을

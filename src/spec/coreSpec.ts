@@ -338,9 +338,20 @@ const primaryConcernSecondaryKey = (r: Responses): string | null => {
 }
 
 // Tablet UX v2.3 §17: SECONDARY_01/REFERENCE_SYMPTOMS_01은 둘 다 안전문항이
-// 아닌 정보용 선택 질문(§18 참고)이라 "없음"을 목록 맨 앞으로 옮긴다 --
-// SAFETY_01/CES/응급 체크리스트류 안전문항에는 이 재배치를 절대 적용하지
-// 않는다(그런 화면들의 옵션 배열은 이 상수를 전혀 참조하지 않음).
+// 아닌 정보용 선택 질문(§18 참고)이라 "없음"을 목록 맨 앞으로 옮긴다.
+//
+// Tablet UX v2.4 §22 (PO 2026-09-08): v2.3은 여기서 "SAFETY_01/CES/응급
+// 체크리스트류에는 이 재배치를 절대 적용하지 않는다"고 못박았으나, PO가
+// 그 금지를 SAFETY_01 **한 문항에 한해** 해제했다. 구현자는 satisficing
+// 위험(환자가 목록을 읽지 않고 맨 위 '해당 없음'을 눌러 넘어가 가슴통증·
+// 편측 위약·의식소실·대량출혈을 놓치는 것)을 제기했고, PO가 그 트레이드
+// 오프를 알고 최상단 배치를 선택했다 -- 근거와 재검토 조건은 DECISIONS.md
+// 2026-09-08 항목에 있다.
+//
+// **부위 팩의 red flag/CES 화면(LBP_02·LBP_04·NECK_02·KNEE_02 등 34문항)은
+// 이 해제 범위가 아니다** -- 여전히 'NONE'을 'UNKNOWN' 바로 앞(사실상 끝)에
+// 둔다. 그 화면들의 옵션 배열은 이 상수를 참조하지 않으며, 아래
+// noneFirstPolicy 스캔 테스트가 두 패턴을 각각 잠근다.
 const SECONDARY_OPTIONS: Option[] = [
   { value: 'none', label: '없음' },
   { value: 'sleep', label: '잠' },
@@ -402,13 +413,17 @@ const SAFETY_QUESTIONS: Question[] = [
     step: '상담 내용',
     exclusive: 'none',
     options: [
+      // Tablet UX v2.4 §22 (PO 2026-09-08): '해당 없음'을 맨 아래에서 맨 위로.
+      // v2.3의 "안전문항에는 재배치 금지" 원칙을 PO가 이 문항에 한해 해제했다
+      // (satisficing 위험은 고지됨 -- 위 SECONDARY_OPTIONS 주석과 DECISIONS.md 참고).
+      // 부위 팩 red flag/CES 화면에는 적용하지 않는다.
+      { value: 'none', label: '해당 없음' },
       { value: 'chest_breathing', label: '새로 생긴 심한 가슴 통증이나 숨쉬기가 매우 힘든 증상' },
       { value: 'focal_neuro', label: '갑자기 한쪽 팔·다리에 힘이 빠지거나 말하기 어려운 증상' },
       { value: 'loc_seizure', label: '의식을 잃었거나 경련을 한 증상' },
       { value: 'sudden_severe_pain', label: '갑자기 시작된 매우 심한 두통이나 통증' },
       { value: 'uncontrolled_bleeding', label: '멈추지 않는 심한 출혈' },
       { value: 'high_fever_illness', label: '고열과 함께 몸 상태가 매우 좋지 않음' },
-      { value: 'none', label: '해당 없음' },
     ],
   },
 ]
@@ -3064,12 +3079,12 @@ const STRESS_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: IS_PRIMARY_STRESS,
     options: [
+      { value: 'none', label: '특별한 몸 증상은 없어요' },
       { value: 'sleep', label: '잠이 더 불편해져요' },
       { value: 'digestion', label: '소화가 더 불편해져요' },
       { value: 'pain', label: '두통이나 통증이 심해져요' },
       { value: 'cardiac_sensation', label: '가슴 두근거림·답답함이 생겨요' },
       { value: 'sweating_heat', label: '땀이 나거나 몸이 달아올라요' },
-      { value: 'none', label: '특별한 몸 증상은 없어요' },
     ],
   },
 ]
@@ -3355,11 +3370,11 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'sleep') && SEC_NOT_PRIMARY('sleep')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'sleep_onset', label: '잠들기 어려워요' },
       { value: 'night_awakenings', label: '자다가 자주 깨요' },
       { value: 'early_waking', label: '너무 일찍 깨요' },
       { value: 'nonrestorative', label: '충분히 자도 개운하지 않아요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3373,12 +3388,12 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'digestion') && SEC_NOT_PRIMARY('digestion')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'indigestion', label: '소화가 잘 안 되고 더부룩해요' },
       { value: 'epigastric_discomfort', label: '명치나 윗배가 답답하거나 아파요' },
       { value: 'reflux', label: '속이 쓰리거나 신물이 올라와요' },
       { value: 'nausea', label: '메스껍거나 구역감이 있어요' },
       { value: 'poor_appetite', label: '입맛이 없어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3392,12 +3407,12 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'bowel') && SEC_NOT_PRIMARY('bowel')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'constipation', label: '변이 잘 안 나오거나 딱딱해요' },
       { value: 'diarrhea', label: '묽은 변이나 설사가 잦아요' },
       { value: 'alternating', label: '변비와 설사가 번갈아 있어요' },
       { value: 'incomplete_emptying', label: '보고 나도 덜 본 느낌이 있어요' },
       { value: 'abdominal_discomfort', label: '배가 아프거나 불편하면서 대변 문제가 있어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3411,6 +3426,7 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'pain') && SEC_NOT_PRIMARY('pain')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'neck_shoulder', label: '목·어깨' },
       { value: 'low_back_pelvis', label: '허리·골반' },
       { value: 'arm_hand', label: '팔·손' },
@@ -3419,7 +3435,6 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
       { value: 'head_face_jaw', label: '머리·얼굴·턱' },
       { value: 'chest_rib', label: '가슴·갈비뼈 주변' },
       { value: 'abdomen', label: '배 주변' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3433,6 +3448,7 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'urinary') && SEC_NOT_PRIMARY('urinary')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'frequency', label: '소변을 자주 봐요' },
       { value: 'urgency', label: '갑자기 소변이 마려워 참기 어려워요' },
       { value: 'nocturia', label: '밤에 자다가 소변 때문에 깨요' },
@@ -3440,7 +3456,6 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
       { value: 'incomplete_emptying', label: '소변을 봐도 덜 본 느낌이 있어요' },
       { value: 'dysuria', label: '소변 볼 때 아프거나 불편해요' },
       { value: 'incontinence', label: '소변이 새는 경우가 있어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3454,13 +3469,13 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'fatigue') && SEC_NOT_PRIMARY('fatigue')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'morning_fatigue', label: '아침부터 기운이 없어요' },
       { value: 'exertional_fatigue', label: '조금만 움직여도 쉽게 지쳐요' },
       { value: 'later_day_fatigue', label: '오후나 저녁에 더 처져요' },
       { value: 'poor_recovery', label: '쉬어도 회복이 잘 안 돼요' },
       { value: 'heaviness', label: '몸이 무겁고 늘어져요' },
       { value: 'sleepiness', label: '졸리고 잠이 쏟아져요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3474,13 +3489,13 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'stress') && SEC_NOT_PRIMARY('stress')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'worry', label: '걱정이나 생각이 많아요' },
       { value: 'tension', label: '긴장되고 예민해요' },
       { value: 'irritability', label: '짜증이나 화가 자주 나요' },
       { value: 'low_mood', label: '마음이 가라앉고 의욕이 없어요' },
       { value: 'palpitation_tightness', label: '가슴이 두근거리거나 답답할 때가 있어요' },
       { value: 'somatic_worsening', label: '스트레스를 받으면 몸 증상이 심해져요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3494,13 +3509,13 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'women') && SEC_NOT_PRIMARY_WOMEN(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'irregular_cycle', label: '생리 주기가 불규칙해요' },
       { value: 'dysmenorrhea', label: '생리통이 심해요' },
       { value: 'flow_change', label: '생리양이 너무 많거나 적어요' },
       { value: 'premenstrual', label: '생리 전후 몸이나 기분 변화가 심해요' },
       { value: 'discharge_discomfort', label: '냉·분비물이나 질 불편감이 있어요' },
       { value: 'menopause_symptoms', label: '갱년기 증상이 있어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3717,6 +3732,10 @@ const HISTORY_QUESTIONS: Question[] = [
     step: '병력정보',
     exclusive: 'none',
     options: [
+      // Tablet UX v2.4 §22 (PO 2026-09-08): 선택지가 12개라 태블릿에서
+      // 확실히 스크롤이 생긴다 -- 대다수인 "없음" 환자가 목록 끝까지
+      // 내려가야 했다. exclusive:'none'이라 누르는 즉시 나머지가 해제된다.
+      { value: 'none', label: '없음' },
       { value: 'cardiovascular', label: '심장·혈관 질환' },
       { value: 'diabetes', label: '당뇨' },
       { value: 'cerebrovascular', label: '뇌혈관 질환' },
@@ -3731,7 +3750,6 @@ const HISTORY_QUESTIONS: Question[] = [
       // 추가이며 기존 선택지는 건드리지 않는다.
       { value: 'osteoporosis', label: '골다공증' },
       { value: 'other', label: '기타' },
-      { value: 'none', label: '없음' },
     ],
   },
   {

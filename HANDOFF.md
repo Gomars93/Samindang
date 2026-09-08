@@ -30,12 +30,41 @@ CES 포함 일괄 변경은 승인 범위 밖이라 **손대지 않았다**.
 `tsc -b` 0 / `test:integration` 1184 assertions, 0 failed / `test:all` exit 0 / `build` 0.
 
 ### Next Recommended Action
-1. **PR #33(문진 2화면 순서 재설계)이 아직 `open`이다** — main에 없다. 클리닉 PC가 `main`을 빌드하면 그 변경은 안 보인다.
-   PO가 실기기 확인 후 병합 여부 판단.
-2. 이 브랜치 PR도 Fable 독립 검수 → PO 병합 판단.
+1. **PR #33·#34 모두 main에 병합 완료(2026-09-08)** — 두 화면 순서 재설계 + "없음" 최상단 11문항. 클리닉 PC는 `git pull origin main` 후
+   `npm run build` 재실행하면 둘 다 반영된다.
+2. **부위 팩 red flag/CES 34문항**(`LBP_04` CES 포함)도 "없음" 최상단으로 올리는 후속 작업 진행 중(PO 지시, 같은 날) — 별도 커밋/PR.
 3. **클리닉 PC `.env` 확인**: 태블릿 전송 실패는 변수명이 원인일 수 있다 — 올바른 이름은 `VITE_SAMINDANG_SERVER_URL=http://<원장PC IP>:4317`
    (`src/lib/serverClient.ts:24`, RUNBOOK §5). 포트 `:4317` 필수. 수정 후 `npm run build` 재실행.
 4. ~~파일럿 관찰 시 `SAFETY_01` 재검토 조건 모니터링~~ — **PO 철회(2026-09-08)**. 파일럿 관찰 항목 아님.
+
+---
+
+## 2026-09-08 (44): **상담 내용 2화면 순서 재설계** — 참고 증상(다중) → 그중 하나를 "오늘 자세히"(단일). 최소부담 경로 화면 -1 — **PR #33 main 병합 완료**
+
+**브랜치**: `claude/feat-detail-routing-reorder` (PR #33, merged). PO가 실기기 문진에서 "이게 겹치는 느낌인데 왜 문진을 두 번 했지?"
+→ 버그가 아니라 설계였으나(§11-§21), 두 질문이 각자 독립적으로 거의 같은 목록을 보여줘 관계가 보이지 않았다.
+PO 선택: "순서를 뒤집어 하나로 합침".
+
+### 한 것
+- **순서 뒤집기**: Primary full module → 참고 증상(다중) → **그중 하나**를 고르는 "오늘 자세히"(단일) → 그 module 문항.
+  두 번째 화면의 선택지는 첫 화면 선택의 **부분집합**(+ '없음')이라 사후 exclude 로직이 사라졌다.
+- **후보 0개면 두 번째 화면을 건너뛴다** — '없음' 버튼 하나뿐인 화면을 만들지 않는다. 최소부담 경로에서 **화면 1개·탭 2개 감소**
+  (7개 프로필 전부 -1/-2, `questionnaire-volume`이 수치로 고정).
+- **저장값 해석 규칙은 무변경** — 부분집합은 화면 선택지와 정리(prune) 층에서만 강제. 저장된 제출/legacy fixture 재해석 없음.
+- **`pruneStaleResponses`를 single_choice까지 확장** — 참고 증상에서 항목을 빼면 그걸 자세히 보기로 골라둔 답과 그 module 답까지
+  정리된다(안 하면 환자가 지운 항목의 module이 계속 열려 있다). 덤으로 `VISIT_00_INTENT`/`VISIT_01` 성별 필터 누수도 막힌다.
+- **원장 payload의 `reference_symptoms`에서 자세히 보기 항목 제외** — 원장 화면의 두 블록이 겹치지 않던 기존 계약 유지.
+- `layout-budget`이 `optionsIf` 화면의 **최악 높이**를 재도록 수정(빈 응답 1회 호출은 최악이 아니었다 — 이번에 드러난 측정 오류).
+
+### 검증
+`integration` 1178 / `questionnaire-volume` 36 / `layout-budget` 7 / `doctor` 1041 / `viewport` 60 / `patient-ux` 30 /
+`tsc -b` 0 / `build` 0 / **`test:all` exit 0**. 임상 로직·부위 팩·운동 엔진 변경 0.
+
+### Next Recommended Action
+1. **main 병합 완료(2026-09-08)** — 클리닉 PC `git pull origin main` → `npm run build`(태블릿 앱 재빌드 필요) → 자동시작 작업은 그대로 두면 된다.
+2. **원장**: 실기기에서 이 두 화면을 한 번 통과해 볼 것 — 특히 **참고 증상에서 하나 골랐다가 다시 빼기**(그 항목의 상세 문진이
+   사라지는지)와 **'없음'을 고르면 다음 화면이 건너뛰어지는지**.
+3. 파일럿(관찰 로그 §1)은 이 변경과 무관하게 진행 가능 — 임상 로직은 그대로다.
 
 ---
 

@@ -113,6 +113,13 @@ const ROUTING_CASES = [
   ['lbp+hip, HIP_00 SIMILAR_OR_MULTIPLE → lbp', F({ lbp: {}, hip: {} }, { hip: { region_discriminator: 'SIMILAR_OR_MULTIPLE' } }), 'lbp'],
   ['lbp+hip, HIP_00 missing → lbp', F({ lbp: {}, hip: {} }), 'lbp'],
   ['hip only (no lbp flag) → hip', F({ hip: {} }), 'hip'],
+  // 2026-09-08 Fable F-1: 문진은 ELBOW_00 ∈ {FOREARM, DIFFUSE_OR_MULTIPLE, UNKNOWN}에서 팔꿈치·손목/손 플래그를 함께 세운다 → 팔꿈치가 구동(명시 규칙).
+  ['elbow+wrist_hand, ELBOW_00 FOREARM → elbow', F({ elbow: {}, wrist_hand: {} }, { elbow: { region_discriminator: 'FOREARM' } }), 'elbow'],
+  ['elbow+wrist_hand, ELBOW_00 DIFFUSE_OR_MULTIPLE → elbow', F({ elbow: {}, wrist_hand: {} }, { elbow: { region_discriminator: 'DIFFUSE_OR_MULTIPLE' } }), 'elbow'],
+  ['elbow+wrist_hand, ELBOW_00 UNKNOWN → elbow', F({ elbow: {}, wrist_hand: {} }, { elbow: { region_discriminator: 'UNKNOWN' } }), 'elbow'],
+  ['elbow+wrist_hand, ELBOW_00 missing → elbow', F({ elbow: {}, wrist_hand: {} }), 'elbow'],
+  ['elbow+wrist_hand, ELBOW_00 WRIST_HAND (defensive — the questionnaire never sets the elbow flag here) → wrist_hand', F({ elbow: {}, wrist_hand: {} }, { elbow: { region_discriminator: 'WRIST_HAND' } }), 'wrist_hand'],
+  ['wrist_hand only (ELBOW_00 WRIST_HAND) → wrist_hand', F({ wrist_hand: {} }, { elbow: { region_discriminator: 'WRIST_HAND' } }), 'wrist_hand'],
   ['flag value false is still a recorded flag (!= null) → lbp', F({ lbp: false }), 'lbp'],
   ['flag value null is absent → null', F({ lbp: null }), null],
 ]
@@ -131,6 +138,7 @@ const CANDIDATE_CASES = [
   ['neck+shoulder, SHOULDER_DOMINANT → [shoulder] (NO neck fallback — 2026-09-07)', F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'SHOULDER_DOMINANT' } }), ['shoulder']],
   ['neck+shoulder, NECK_DOMINANT → [neck]', F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'NECK_DOMINANT' } }), ['neck']],
   ['hip only → [hip] (fallback lbp absent from the record)', F({ hip: {} }), ['hip']],
+  ['elbow+wrist_hand, FOREARM → [elbow] (NO wrist_hand fallback — 2026-09-08)', F({ elbow: {}, wrist_hand: {} }, { elbow: { region_discriminator: 'FOREARM' } }), ['elbow']],
   ['garbage → []', 'x', []],
 ]
 for (const [name, responses, expected] of CANDIDATE_CASES) {
@@ -144,6 +152,8 @@ assert('B-fallback: SHOULDER_DOMINANT patient gets the approved shoulder pack (n
 assert('B-fallback: NECK_DOMINANT / SIMILAR / missing NS01 → the approved neck pack', ['NECK_DOMINANT', 'SIMILAR', undefined].every((v) => activeDrivingPack(F({ neck: {}, shoulder: {} }, v ? { shoulder: { primary_focus: v } } : {})) === REGION_PACKS.neck))
 assert('B-fallback: SHOULDER_DOMINANT with the shoulder pack hypothetically unapproved → NO pack (no neck fallback)', (() => { const pack = { ...REGION_PACKS.shoulder, productionApproved: false }; return activeRegionPack('neck') === REGION_PACKS.neck && drivingRegionCandidates(F({ neck: {}, shoulder: {} }, { shoulder: { primary_focus: 'SHOULDER_DOMINANT' } })).join() === 'shoulder' && pack.productionApproved === false })())
 assert('B-fallback: single-region records route to their own approved pack (knee / wrist_hand / ankle_foot)', activeDrivingPack(F({ knee: {} })) === REGION_PACKS.knee && activeDrivingPack(F({ wrist_hand: {} })) === REGION_PACKS.wrist_hand && activeDrivingPack(F({ ankle_foot: {} })) === REGION_PACKS.ankle_foot)
+assert('B-fallback: a FOREARM / DIFFUSE / UNKNOWN arm record (both flags set by the questionnaire) gets NO pack — the approved wrist_hand pack is not overlaid on an elbow-driven record', ['FOREARM', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN'].every((v) => activeDrivingPack(F({ elbow: {}, wrist_hand: {} }, { elbow: { region_discriminator: v } })) === null))
+assert('B-fallback: the questionnaire really sets both flags for FOREARM (non-vacuous: IS_PRIMARY_ELBOW_SAFETY ∩ IS_PRIMARY_WRIST_HAND_SAFETY ⊇ {FOREARM, DIFFUSE_OR_MULTIPLE, UNKNOWN})', (() => { const core = readFileSync(new URL('../src/spec/coreSpec.ts', import.meta.url), 'utf8'); const pick = (name) => core.match(new RegExp(`export const ${name} = \\(r: Responses\\) =>\\s*IS_PRIMARY_ARM_HAND\\(r\\) && \\[([^\\]]+)\\]`))[1].replace(/['\s]/g, '').split(','); const e = pick('IS_PRIMARY_ELBOW_SAFETY'); const w = pick('IS_PRIMARY_WRIST_HAND_SAFETY'); return ['FOREARM', 'DIFFUSE_OR_MULTIPLE', 'UNKNOWN'].every((v) => e.includes(v) && w.includes(v)) && e.includes('ELBOW') && !w.includes('ELBOW') && w.includes('WRIST_HAND') && !e.includes('WRIST_HAND') })())
 assert('B-fallback: hip / elbow / tmj records still get no pack (DRAFT)', activeDrivingPack(F({ hip: {} })) === null && activeDrivingPack(F({ elbow: {} })) === null && activeDrivingPack(F({ tmj: {} })) === null)
 assert('B-fallback: lbp-only and no-flag records', activeDrivingPack(F({ lbp: {} })) === REGION_PACKS.lbp && activeDrivingPack(F({})) === null && activeDrivingPack(undefined) === null)
 

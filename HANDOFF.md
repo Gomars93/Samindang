@@ -1,5 +1,35 @@
 # Current Handoff
 
+## 2026-09-08 (최신 43): **Fable 독립 검수 → PR #31 수정·병합** — 검수자 역할 ChatGPT→Fable, 6건 중 5건 수정·1건 v1.1 보류. 파일럿 시작 가능
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po` → **main 병합**(PR #31, merge commit). PO(2026-09-08): "chatgpt 이제 무시해도 돼 그 역할을
+fable 한테 넘겼어 … 나머지 승인 필요한 부분도 추천안으로 진행 … 얼른 파일럿 프로그램을 돌려야겠어".
+
+### 한 것
+- **역할 이관**: CLAUDE.md Team Roles — 독립 검수자 = Fable(escalation 겸). ChatGPT 게이트 제거. PR 템플릿 검수 절 제목 갱신.
+- **PR #31 Fable 독립 검수 6건**(`DECISIONS.md` 같은 날 표):
+  - F-2 **재진 카드 "초진 → 오늘"의 초진 답이 항상 비어 있었다**(중첩 `responses.modules`를 평면 맵으로 훑음) → `detailCheckBaseline.ts`
+    경로 표(재질문 id 9개 = 서버 표) + fixture 왕복 테스트. `metadata.answers`는 답이 아니라 답한 시각·화면이라 쓰지 않는다.
+  - F-3 파일럿 집계에 `UNCLEAR`(불명확) 누락 → 6값 + 타입 선언과 집합 일치 단언.
+  - F-4 재진 목표 기능 칩 34개 → 구동 팩 1개 범위(교체 규칙 표는 DECISIONS §3; 이월된 다른 부위 id는 고아 칩으로 유지).
+  - F-1 팔꿈치+손목/손 동시 플래그 → 팔꿈치 구동을 **명시 규칙**으로(행동 변화 0, 손목/손 후퇴 없음). 근본 해법 = 팔꿈치 팩 승인(v1.1).
+  - F-6 stage sanitizer 중복 → 위임. F-5 서버 이력 이중 읽기 → **v1.1 보류**(정확성 영향 0).
+
+### 검증
+`region-pack` 347 / `detail-check` 80 / `region-pilot-observation` 69 / `doctor-workspace` 303 / `workspace-round3` 196 /
+`lbp-working-hypothesis` 252 / `region-exercise-vignettes` 99 / `neck-exercise-vignettes` 39 / `tsc -b` 0 / `build` 0 / `test:all` exit 0.
+
+### Next Recommended Action — **파일럿 시작 절차**
+1. 클리닉 PC: `git checkout main && git pull` → `npm install`(의존성 변경 없음, 생략 가능) → `npm run build` → 로컬 handoff 서버 기동
+   (`docs/RUNBOOK_LOCAL_HANDOFF.md`).
+2. 원장: `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-b로 6부위 화면 1회 통과(요통·목·어깨·무릎·손목/손·발목/발) — 특히 어깨 AROM/PROM 분리,
+   재진 카드의 "초진 → 오늘"에 초진 값이 실제로 찍히는지.
+3. 파일럿 운영: `docs/NECK_PILOT_OBSERVATION_LOG_v1.0.md` §1 프로토콜(부위 공통). 주 1회 `npm run pilot:region-observation -- <region>`
+   (neck/shoulder/knee/wrist_hand/ankle_foot/lbp) — 임계값은 **제안값**, 경고는 판단 재료이지 자동 조치가 아니다.
+4. v1.1 후보(파일럿 관찰로 결정): irritability 공통 필드, 팔꿈치 팩 승인, F-5, 각 CLOSED §10 관찰 항목.
+
+---
+
 ## 2026-09-07 (최신 42): **PR #30 원문 대조** — 어깨·무릎 검사 4건 누락 발견·수정, 어깨 AC 출처 정정. 목 팩은 변경 0
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO "깃허브자료 업데이트 했어 확인해봐, PR #30"(2026-09-07 저녁).

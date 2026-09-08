@@ -2672,25 +2672,31 @@ test('WorkspaceState.lbpDirectionalResponse: invalid persisted value degrades to
 
 // ---------- Opus delta review item 1: RevisitWorkspace carried-forward LBP target-function chips ----------
 
-test('Opus review item 1a: RevisitWorkspace.tsx wires every APPROVED region pack\'s target functions (LBP included) + a matching groups label into its FollowUpTargetPicker', () => {
-  // 부위 팩 일반화(2026-09-06, R2): the LBP-only import became "every
-  // approved pack's targetFunctions" (REGION_PACKS filtered by isPackActive)
-  // -- the LBP pack is approved, so a carried-forward lbp_tf_* target still
-  // has a real option/chip; an UNAPPROVED pack's ids are deliberately absent.
+test('Opus review item 1a (2026-09-08 Fable F-4): RevisitWorkspace.tsx scopes the 목표 기능 chips to the patient\'s driving pack (revisitPack), keeps PAIN/HERBAL options, and still routes carried-forward foreign ids through the picker\'s orphan row', () => {
+  // 부위 팩 일반화(2026-09-06, R2) had every APPROVED pack's targetFunctions in
+  // one module-level list; with six approved packs that is 34 chips (six of
+  // them '기타 목표 동작') on every revisit. Now the list is derived per render
+  // from `revisitPack` (activeDrivingPack of the prior submission, else the
+  // region with today's hypothesis). A carried-forward id from another
+  // region is not in `options`, so FollowUpTargetPicker's orphanSelected
+  // row renders it (pinned by the 'Opus review item 1b' tests below).
   const src = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
   assert.ok(/import \{ REGION_PACKS, activeRegionPack, activeDrivingPack \} from '\.\/regionPacks'/.test(src), 'imports the pack registry')
-  assert.ok(
-    /const APPROVED_PACK_TARGET_FUNCTIONS = REGION_KEYS\.flatMap\(\(k\) => \{\s*const pack = REGION_PACKS\[k\]\s*return isPackActive\(pack\) \? pack\.targetFunctions : \[\]\s*\}\)/.test(src),
-    'target functions come from approved packs only (isPackActive gate)',
-  )
-  assert.ok(
-    /const COMBINED_FOLLOW_UP_OPTIONS = \[\.\.\.APPROVED_PACK_TARGET_FUNCTIONS, \.\.\.PAIN_FOLLOW_UP_OPTIONS, \.\.\.HERBAL_FOLLOW_UP_OPTIONS\]/.test(src),
-    'a carried-forward lbp_tf_* target has a real option/chip to render, not just an orphan selection',
-  )
-  assert.ok(/groups=\{COMBINED_FOLLOW_UP_GROUPS\}/.test(src), 'passes the same 목표 기능 grouping PainWorkspaceNext uses')
-  // Non-vacuous: the LBP pack really is approved, so its 9 ids are in the combined list.
+  assert.ok(!src.includes('APPROVED_PACK_TARGET_FUNCTIONS') && !src.includes('COMBINED_FOLLOW_UP_OPTIONS') && !src.includes('COMBINED_FOLLOW_UP_GROUPS'), 'the all-approved-packs module constants are gone (replaced path)')
+  assert.ok(/function revisitFollowUpOptions\(pack: RegionPack \| null\) \{\s*const targetFunctions = pack\?\.targetFunctions \?\? \[\]/.test(src), 'target functions come from the one pack passed in (none when there is no pack)')
+  assert.ok(/options: \[\.\.\.targetFunctions, \.\.\.PAIN_FOLLOW_UP_OPTIONS, \.\.\.HERBAL_FOLLOW_UP_OPTIONS\]/.test(src), 'PAIN + HERBAL options are kept after the pack chips')
+  assert.ok(/groups: \[\{ label: FOLLOW_UP_TARGET_GROUP_LABEL, ids: targetFunctions\.map\(\(o\) => o\.id\) \}\]/.test(src), 'the 목표 기능 group wraps exactly the pack chips')
+  assert.ok(/const followUpPicker = revisitFollowUpOptions\(revisitPack\)/.test(src), 'derived from revisitPack, per render')
+  assert.ok(/options=\{followUpPicker\.options\}/.test(src) && /groups=\{followUpPicker\.groups\}/.test(src), 'the picker receives the derived options + groups')
+  assert.ok(src.includes("const FOLLOW_UP_TARGET_GROUP_LABEL = '목표 기능(다음 방문에 같은 동작으로 비교)'"), 'group label text unchanged')
+  // Non-vacuous: the LBP pack really is approved (its chips still appear for an LBP revisit), and the
+  // un-scoped list really was too long to be usable.
   const lbpPackSrc = fs.readFileSync('src/doctor/workspace/regionPacks/lbp.ts', 'utf8')
   assert.ok(/productionApproved: true/.test(lbpPackSrc), 'the LBP pack is the approved one')
+  const packDir = 'src/doctor/workspace/regionPacks'
+  const approvedPackFiles = fs.readdirSync(packDir).filter((f) => /^[a-z][A-Za-z]+\.ts$/.test(f) && !['index.ts', 'draftPack.ts', 'regionSafety.ts'].includes(f)).filter((f) => /productionApproved: true/.test(fs.readFileSync(`${packDir}/${f}`, 'utf8')))
+  const otherChipCount = approvedPackFiles.reduce((n, f) => n + (fs.readFileSync(`${packDir}/${f}`, 'utf8').match(/기타 목표 동작/g) ?? []).length, 0)
+  assert.ok(approvedPackFiles.length >= 6 && otherChipCount >= 5, `six approved packs with a '기타 목표 동작' chip each is why the un-scoped list was unusable (approved=${approvedPackFiles.length}, 기타=${otherChipCount})`)
 })
 
 test('Opus review item 1b: FollowUpTargetPicker renders a chip (aria-pressed="true") for a selected item whose id is NOT in `options` (structurally impossible to end up un-deselectable)', () => {

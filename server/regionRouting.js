@@ -25,6 +25,11 @@ export function drivingRegion(responses) {
     const hip = isRecord(modules.hip) ? modules.hip : {}
     return hip.region_discriminator === 'HIP_GROIN_DOMINANT' ? 'hip' : 'lbp'
   }
+  // 팔꿈치·손목/손 둘 다 → 팔꿈치 (TS 쪽 주석; 손목/손 팩 후퇴 없음).
+  if (has('elbow') && has('wrist_hand')) {
+    const elbow = isRecord(modules.elbow) ? modules.elbow : {}
+    return elbow.region_discriminator === 'WRIST_HAND' ? 'wrist_hand' : 'elbow'
+  }
   return present[0]
 }
 

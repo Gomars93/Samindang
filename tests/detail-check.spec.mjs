@@ -21,7 +21,9 @@ import { createRequire } from 'node:module'
 import { createApp } from '../server/index.js'
 import { createStore } from '../server/store.js'
 import { createFollowUpSessionStore } from '../server/followUpSessionStore.js'
-import { computeDetailCheckDue as serverDue, detailCheckQuestionIds, localTodayISO } from '../server/detailCheck.js'
+import { computeDetailCheckDue as serverDue, detailCheckQuestionIds, localTodayISO, DETAIL_CHECK_REGION_QUESTION_IDS } from '../server/detailCheck.js'
+import { DETAIL_CHECK_RESPONSE_PATHS, baselineDetailAnswersFromResponses } from './.detail-check-baseline-bundle.mjs'
+import { DOCTOR_FIXTURES } from './.detail-check-doctor-fixtures-bundle.mjs'
 import { computeDetailCheckDue as clientDue } from './.detail-check-revisit-quick-check-bundle.mjs'
 import { resolveDetailCheckQuestions, describeDetailCheckValue, detailCheckQuestionText } from './.detail-check-questions-bundle.mjs'
 import { PAIN_NRS_TARGET_IDS } from './.detail-check-final-assessment-bundle.mjs'
@@ -297,6 +299,35 @@ async function main() {
       assert('describe: empty value -> 응답 없음; unknown id passes the raw value through', describeDetailCheckValue('LBP_13', '') === '응답 없음' && describeDetailCheckValue('NOPE', 'raw') === 'raw')
       const legacy = renderToString(React.createElement(MicroFollowUpCard, { candidates: [], response: { ...response, detailAnswers: undefined } }))
       assert('card: a legacy response without detailAnswers renders without the block and without throwing', !legacy.includes('세부 확인'))
+    }
+
+    /* ---------------- 7. baseline (초진 답) from the nested submission payload — 2026-09-08 Fable F-2 ---------------- */
+    {
+      const serverIds = [...new Set(Object.values(DETAIL_CHECK_REGION_QUESTION_IDS).flat())].sort()
+      assert('baseline: DETAIL_CHECK_RESPONSE_PATHS covers exactly the server re-ask id set (no more, no less)', JSON.stringify(Object.keys(DETAIL_CHECK_RESPONSE_PATHS).sort()) === JSON.stringify(serverIds))
+      const coreSrc = await readFile(path.join(__dirname, '..', 'src', 'spec', 'coreSpec.ts'), 'utf8')
+      const modulesBlock = coreSrc.slice(coreSrc.indexOf('export const buildResponsePayload'))
+      for (const [id, [moduleKey, field]] of Object.entries(DETAIL_CHECK_RESPONSE_PATHS)) {
+        const moduleStart = modulesBlock.search(new RegExp(`^    ${moduleKey}: \\{`, 'm'))
+        const nextModule = modulesBlock.slice(moduleStart + 1).search(/^    [a-z_]+: \{/m)
+        const block = modulesBlock.slice(moduleStart, nextModule === -1 ? undefined : moduleStart + 1 + nextModule)
+        assert(`baseline: coreSpec buildResponsePayload writes r['${id}'] to modules.${moduleKey}.${field}`, moduleStart >= 0 && new RegExp(`\\b${field}: r\\['${id}'\\]`).test(block))
+      }
+      const fixtureNamed = (part) => DOCTOR_FIXTURES.find((f) => f.name.includes(part))
+      const lbp = baselineDetailAnswersFromResponses(fixtureNamed('LBP').payload.responses)
+      assert('baseline: a real LBP fixture payload (built by buildResponsePayload) yields LBP_12 as a numeric string and LBP_13 as the raw option value', lbp.LBP_12 === '6' && lbp.LBP_13 === 'SOMEWHAT')
+      assert('baseline: the LBP fixture never fabricates other regions\' ids (neck/knee modules carry null there)', !('NECK_12' in lbp) && !('KNEE_12' in lbp) && !('SH08' in lbp))
+      const neck = baselineDetailAnswersFromResponses(fixtureNamed('NECK').payload.responses)
+      assert('baseline: NECK fixture → NECK_12 raw value', neck.NECK_12 === 'YES' && !('LBP_12' in neck))
+      const knee = baselineDetailAnswersFromResponses(fixtureNamed('KNEE').payload.responses)
+      assert('baseline: KNEE fixture → KNEE_12 / KNEE_13 raw values', knee.KNEE_12 === 'UP_TO_30_MIN' && knee.KNEE_13 === 'NO')
+      assert('baseline: the doctor card labels the fixture value with coreSpec wording, not the raw enum', describeDetailCheckValue('LBP_13', lbp.LBP_13) !== 'SOMEWHAT' && describeDetailCheckValue('LBP_12', lbp.LBP_12) === '6/10')
+      // Regression pin for the bug itself: the pre-fix reader treated `responses` as a flat id map, which the real payload never is.
+      assert('baseline: a flat id-keyed map (the shape the old reader assumed) yields nothing — the real payload is nested under modules', JSON.stringify(baselineDetailAnswersFromResponses({ LBP_12: 7, LBP_13: 'A_LOT' })) === '{}')
+      assert('baseline: null / array / non-finite values are skipped, never stringified', JSON.stringify(baselineDetailAnswersFromResponses({ modules: { lbp: { recovery_expectation: null, fear_avoidance: ['A'] }, knee: { morning_stiffness_duration: NaN } } })) === '{}')
+      assert('baseline: garbage input → {}', JSON.stringify(baselineDetailAnswersFromResponses('x')) === '{}' && JSON.stringify(baselineDetailAnswersFromResponses(undefined)) === '{}')
+      const revisitSrc = await readFile(path.join(__dirname, '..', 'src', 'doctor', 'workspace', 'RevisitWorkspace.tsx'), 'utf8')
+      assert('source: RevisitWorkspace reads the baseline through detailCheckBaseline.ts (not a flat Object.entries(responses) walk, not metadata.answers)', /baselineDetailAnswersFromResponses\(/.test(revisitSrc) && !/Object\.entries\(responses as Record/.test(revisitSrc) && !/metadata\.answers/.test(revisitSrc))
     }
 
     /* ---------------- 6. source contract ---------------- */

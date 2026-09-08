@@ -223,6 +223,8 @@ tests/.detail-check-questions-bundle.mjs
 tests/.detail-check-final-assessment-bundle.mjs
 tests/.detail-check-follow-up-screen-bundle.cjs
 tests/.detail-check-micro-card-bundle.cjs
+tests/.detail-check-baseline-bundle.mjs
+tests/.detail-check-doctor-fixtures-bundle.mjs
 
 # esbuild bundles used by tests/region-pack.spec.mjs (regenerated, not source)
 tests/.region-packs-bundle.mjs

@@ -29,6 +29,6 @@
 ## Remaining work
 
 
-## Handoff notes for ChatGPT review
-<!-- ChatGPT가 이 PR만 보고 별도 설명 없이 검수할 수 있도록, 반드시 확인해야 할
+## Handoff notes for independent review (Fable)
+<!-- 독립 검수자(2026-09-08부터 Fable, CLAUDE.md Team Roles)가 이 PR만 보고 별도 설명 없이 검수할 수 있도록, 반드시 확인해야 할
      맥락(관련 HANDOFF.md/DECISIONS.md 항목, 임상 안전 관련 변경 여부 등)을 적는다. -->

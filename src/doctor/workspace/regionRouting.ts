@@ -16,6 +16,9 @@
  *     골반 우세를 요통으로 두는 이유: 요통 팩의 가설 패턴에 이미 고관절 기여·
  *     천장관절 기여가 있고 고관절 선별 검사도 수동 추가 항목에 있어, 그 환자를
  *     요통 관리 체계 안에서 보는 것이 기존 설계와 맞는다.
+ *   - 팔꿈치·손목/손 둘 다(문진이 FOREARM/DIFFUSE_OR_MULTIPLE/UNKNOWN에서 두 플래그를
+ *     같이 세운다) → 팔꿈치. `ELBOW_00 === 'WRIST_HAND'`면 손목/손(실제로는 팔꿈치
+ *     플래그가 없어 단독 부위로 온다). 손목/손 팩으로의 후퇴는 없다.
  *   - 그 밖에는 `REGION_KEYS` 선언 순서에서 첫 non-null 부위.
  *
  * `server/regionRouting.js`는 이 파일의 문자 그대로 포팅이며 `tests/region-pack.spec.mjs`
@@ -43,6 +46,16 @@ export function drivingRegion(responses: unknown): RegionKey | null {
   if (has('lbp') && has('hip')) {
     const hip = isRecord(modules.hip) ? modules.hip : {}
     return hip.region_discriminator === 'HIP_GROIN_DOMINANT' ? 'hip' : 'lbp'
+  }
+  // 팔꿈치·손목/손 둘 다 — 문진 자체가 `ELBOW_00`이 FOREARM/DIFFUSE_OR_MULTIPLE/
+  // UNKNOWN일 때 두 안전 플래그를 **동시에** 세운다(coreSpec `IS_PRIMARY_*_SAFETY`
+  // 의 의도적 겹침, 원위 요골 골절 fail-open 방지). `ELBOW_00 === 'WRIST_HAND'`는
+  // 팔꿈치 플래그를 세우지 않으므로 여기 오지 않는다. 그 세 값은 문진의 주부위
+  // 라벨도 'ELBOW'이므로 팔꿈치가 구동한다 — 손목/손 팩(승인)을 덧씌우지 않는다
+  // (어깨 → 목 거부와 같은 원칙; 팔꿈치 팩 승인이 진짜 해법, 2026-09-08 Fable F-1).
+  if (has('elbow') && has('wrist_hand')) {
+    const elbow = isRecord(modules.elbow) ? modules.elbow : {}
+    return elbow.region_discriminator === 'WRIST_HAND' ? 'wrist_hand' : 'elbow'
   }
   return present[0]
 }

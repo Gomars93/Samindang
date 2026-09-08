@@ -51,13 +51,17 @@ export const THRESHOLDS = Object.freeze({
   WORKSPACE_SAVED_MIN_PCT: 80,
 })
 
-const DIRECTIONAL_VALUES = ['NOT_ASSESSED', 'FLEXION_FAVORABLE', 'EXTENSION_FAVORABLE', 'NO_CLEAR_DIRECTION', 'DISTAL_WORSENING']
+// `lbpExamSuggestions.ts` LbpDirectionalResponse의 6값 전부 — 'UNCLEAR'(불명확)를
+// 빠뜨리면 원장이 '불명확'으로 저장한 기록이 '미시행'으로 집계되어 파일럿의
+// 방향성 시행률이 실제보다 낮게 읽힌다(2026-09-08 Fable 독립 검수 F-3).
+const DIRECTIONAL_VALUES = ['NOT_ASSESSED', 'FLEXION_FAVORABLE', 'EXTENSION_FAVORABLE', 'NO_CLEAR_DIRECTION', 'DISTAL_WORSENING', 'UNCLEAR']
 const DIRECTIONAL_LABEL = {
   NOT_ASSESSED: '미시행',
   FLEXION_FAVORABLE: '굴곡 호전',
   EXTENSION_FAVORABLE: '신전 호전',
   NO_CLEAR_DIRECTION: '뚜렷한 방향 없음',
   DISTAL_WORSENING: '원위부 악화',
+  UNCLEAR: '불명확',
 }
 const ADOPTION_STATUSES = ['SUGGESTED', 'ACCEPTED', 'HELD', 'REJECTED']
 

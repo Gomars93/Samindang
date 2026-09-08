@@ -4002,3 +4002,53 @@ PO "깃허브자료 업데이트 했어 확인해봐, PR #30". PR #30이 13:31�
 - 문서: 근거 로그 §8 신설(원문 3건 SHA-256 검증 + 부위별 대조표 + "§0의 A수준과 대상이 다르다" 구분), 어깨·무릎 CLOSED §1-2 대조표 +
   §6 갱신 + §10 관찰 항목 추가, 어깨 매트릭스 §0-1 정정, HANDOFF 42.
 - 남은 것: §5 원장 로컬 체크리스트(외부 CPG 원문)는 그대로. 이번 절은 그것을 대체하지 않는다.
+
+## 2026-09-08 — 독립 검수자 ChatGPT → Fable 이관, PR #31 Fable 독립 검수 6건 판정·수정, 남은 승인 항목 PO 위임
+
+### Context
+PO(2026-09-08): "chatgpt 이제 무시해도 돼 그 역할을 fable 한테 넘겼어. 그 밖에 나머지 승인 필요한 부분도 추천안으로 진행 부탁해.
+난 얼른 파일럿 프로그램을 돌려야겠어." — 즉 (1) 독립 검수자 역할 이관, (2) 남은 승인 항목(PR #31 병합 포함)을 추천안으로 진행,
+(3) 파일럿 시작이 최우선.
+
+### Decision
+1. **독립 검수자 = Fable**(CLAUDE.md Team Roles·Git Workflow·Escalation·DoD·PR 템플릿 갱신). ChatGPT는 더 이상 게이트가 아니다.
+   검수 방식은 그대로: push된 PR/diff/HANDOFF/DECISIONS/테스트를 보고, 발견 사항을 **코드에 대고 확인한 뒤** 판정. GitHub required
+   approval로는 두지 않는다(같은 계정). **PO가 "추천안으로 진행"을 위임한 경우에만** 검수자가 병합까지 수행하고 그 사실을 여기 남긴다
+   — 이번이 그 첫 사례다.
+2. **PR #31 Fable 독립 검수(`/code-review 31 high`, 6건) 판정**:
+   | # | 발견 | 판정 | 처리 |
+   |---|---|---|---|
+   | F-1 | 팔꿈치·손목/손 플래그가 **동시에** 설 때(ELBOW_00 ∈ {FOREARM, DIFFUSE_OR_MULTIPLE, UNKNOWN}; coreSpec `IS_PRIMARY_*_SAFETY`의 의도적 겹침) `drivingRegion`이 REGION_KEYS 순서 우연으로 팔꿈치(DRAFT)를 골라 승인된 손목/손 팩이 안 붙는다 | CONFIRMED — 그러나 **결과는 정책과 일치** | 명시 짝 규칙으로 승격(TS+서버, parity 테스트 6+1+2건). 손목/손 팩 후퇴는 두지 않는다 — 문진의 주부위 라벨도 'ELBOW'이고, 팔꿈치 우세 환자에게 손목 운동을 덧씌우는 것은 어깨→목 거부와 같은 이유로 안 된다. **진짜 해법은 팔꿈치 팩 승인**(v1.1) |
+   | F-2 | 재진 카드 "초진 → 오늘"의 초진 답이 항상 '초진 기록 없음' — `baselineDetailAnswersFromSubmission`이 `responses`를 question id 평면 맵으로 훑는데 실제는 `modules.<부위>.<필드>`로 중첩 | CONFIRMED | `detailCheckBaseline.ts` 신설: 재질문 id 9개(서버 표와 집합 동일) → `modules` 경로 명시 표. 테스트: 서버 표와 집합 일치, coreSpec `<필드>: r['<id>']` 줄과 행별 대응, 실제 fixture payload 왕복(LBP/NECK/KNEE), 옛 평면 맵은 `{}`, `metadata.answers`(답이 아니라 답한 시각·화면) 미사용 |
+   | F-3 | 파일럿 집계 `DIRECTIONAL_VALUES`에 `UNCLEAR`(불명확) 누락 → '미시행'으로 오집계 | CONFIRMED | 6값으로 맞춤 + `LbpDirectionalResponse` 선언과 집합 동일 단언 + 요통 옛 필드 경로 검사 |
+   | F-4 | 재진 목표 기능 칩이 승인 팩 6개 전부(34개, '기타 목표 동작' 6개 포함) | CONFIRMED | `revisitPack.targetFunctions`로 범위 축소(교체 규칙 표는 아래) |
+   | F-5 | `server/store.js` deriveDetailCheck가 이력을 두 번 읽음 | CONFIRMED(효율) | **v1.1 보류** — 정확성 영향 0, 클리닉 LAN 규모에서 체감 0. 파일럿을 막지 않는다 |
+   | F-6 | `sanitizeLbpConfirmedStage`가 `sanitizeConfirmedStage`와 중복 | CONFIRMED | 위임(동작 동일; `workspace-round3` 196 통과) |
+3. **F-4 교체 규칙 표**(CLAUDE.md "경로를 지우거나 교체하기 전에" 규칙). 옛 경로 `APPROVED_PACK_TARGET_FUNCTIONS`(모듈 상수, 승인 팩 전부)
+   → 새 경로 `revisitFollowUpOptions(revisitPack)`(렌더마다 구동 팩 1개). 이 경로는 **재진(RevisitWorkspace) 화면에만** 있었다 —
+   초진(DoctorWorkspace)은 원래 구동 팩 1개 범위였고, 한약·mixed·fixture 미리보기는 이 컴포넌트를 쓰지 않는다.
+   | 옛 경로가 나르던 값 | 초진 | 재진(통증) | 재진(한약·팩 없음) | 재진(DRAFT 부위) | fixture 미리보기 |
+   |---|---|---|---|---|---|
+   | 구동 팩의 목표 기능 칩 | 해당 없음(원래 팩 1개) | `revisitPack.targetFunctions` — **동일** | 칩 없음(옛: 34개 — 의도적 버림, 그 환자 부위가 아님) | `activeDrivingPack`이 null이면 오늘 가설이 있는 부위 팩, 없으면 칩 없음 | 해당 없음 |
+   | 다른 승인 팩의 목표 기능 칩 | 해당 없음 | **의도적 버림** — 이월된 다른 부위 id는 `FollowUpTargetPicker` 고아 행으로 계속 보이고 해제된다(1b 테스트) | 같음 | 같음 | 해당 없음 |
+   | 그룹 라벨 '목표 기능(다음 방문에 같은 동작으로 비교)' | 해당 없음 | 동일(`FOLLOW_UP_TARGET_GROUP_LABEL`) | 그룹 ids 빈 배열 | 같음 | 해당 없음 |
+   | PAIN/HERBAL 공통 옵션 | 해당 없음 | 동일 | 동일 | 동일 | 해당 없음 |
+   입력 방향: 선택된 `followUpTargets`는 옵션 목록과 무관하게 그대로 저장·EMR에 도달한다(옵션은 칩 표시만 결정). 표시 조건 변경 없음.
+   지운 경로 1개당 소스 단언: `tests/doctor-workspace.spec.mjs` 'Opus review item 1a'가 옛 상수 3개 부재 + 새 함수·호출·prop 4개를 단언.
+4. **남은 승인 항목 위임 처리**: PR #31을 검수 수정 커밋 후 **merge commit으로 main에 병합**(저장소 관례). PR #30은 이미 닫힘(내용 흡수).
+
+### Rationale
+- 6건 중 정확성에 닿는 것은 F-2(원장이 보는 화면에 사실과 다른 '기록 없음')와 F-3(파일럿 임계값이 틀리게 계산됨)이다. 파일럿의 목적이
+  "관찰 데이터로 v1.1을 결정"이므로 **집계가 틀리면 파일럿 자체가 무의미**해진다 — 병합 전에 잡아야 했다.
+- F-1은 "버그처럼 보이지만 정책상 옳은 결과"의 전형이다. 우연(배열 순서)에 기대던 것을 규칙으로 승격만 하고 행동은 바꾸지 않았다.
+  손목/손 후퇴를 넣었다면 파일럿 중 팔꿈치 우세 환자에게 손목 운동 후보가 떴을 것이다.
+- ChatGPT → Fable 이관은 검수 **주체**가 바뀌는 것이지 검수 **기준**이 바뀌는 것이 아니다. 같은 세션이 구현과 검수를 동시에 하는 것을
+  막기 위해, 이번 검수는 `/code-review` 서브에이전트(별도 컨텍스트)가 발견하고 본 세션이 코드에 대고 확인하는 2단으로 했다.
+
+### Consequences / 검증
+- 코드: `regionRouting.ts`/`server/regionRouting.js`(짝 규칙), `detailCheckBaseline.ts`(신설) + `RevisitWorkspace.tsx`(F-2·F-4),
+  `scripts/region-pilot-observation.mjs`(F-3), `persistence.ts`(F-6). 엔진·팩 데이터·안전 게이트 변경 0.
+- 테스트: `region-pack` 331→347, `detail-check` 65→80, `region-pilot-observation` 64→69, `doctor-workspace` 303 유지, `tsc -b` 0, `build` 0.
+- 문서: CLAUDE.md(역할), PR 템플릿, HANDOFF 43.
+- v1.1 후보로 남긴 것: F-5(이력 이중 읽기), 팔꿈치 팩 승인(F-1의 근본 해법), irritability 공통 필드.
+

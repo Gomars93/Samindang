@@ -83,6 +83,7 @@ import { isCarePlanEmpty } from './NextActionCard'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
 import { NextReassessmentPlanCard } from './NextReassessmentPlanCard'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
+import { baselineDetailAnswersFromResponses } from './detailCheckBaseline'
 import { ClinicalLoopStatusBar, type ClinicalLoopStatusItem } from './ClinicalLoopStatus'
 import { RevisitQuickCheckCard } from './RevisitQuickCheckCard'
 import { computeDetailCheckDue, summarizeRevisitQuickCheckKo } from './revisitQuickCheck'
@@ -95,7 +96,7 @@ import {
   summarizeWorkingHypothesisKo,
   type WorkingHypothesis,
 } from './workingHypothesis'
-import { REGION_KEYS, isPackActive, type RegionKey } from './regionPack'
+import { REGION_KEYS, isPackActive, type RegionKey, type RegionPack } from './regionPack'
 import { REGION_PACKS, activeRegionPack, activeDrivingPack } from './regionPacks'
 import { readRegionHypothesis, withRegionHypothesis, type RegionHypothesisHost } from './regionClinicalState'
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS,
@@ -118,17 +119,18 @@ const SAVE_DEBOUNCE_MS = 900
 // forward Follow-up Targets can include <region>_tf_* ids (revisitCarryForward.ts's
 // trackingOnly() passes every target through regardless of id) -- those
 // must have a chip here too, or a carried target is selected with no way to
-// see/deselect it. 부위 팩 일반화(2026-09-06): 승인된 팩 전부의 목표 기능이
-// 앞에 오고(팩 등록 순서), 한 그룹으로 묶인다 — 승인 전 팩의 id는 넣지 않는다
-// (그 부위의 초진에서 선택될 수 없었으므로 이어받을 것도 없다).
-const APPROVED_PACK_TARGET_FUNCTIONS = REGION_KEYS.flatMap((k) => {
-  const pack = REGION_PACKS[k]
-  return isPackActive(pack) ? pack.targetFunctions : []
-})
-const COMBINED_FOLLOW_UP_OPTIONS = [...APPROVED_PACK_TARGET_FUNCTIONS, ...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS]
-const COMBINED_FOLLOW_UP_GROUPS = [
-  { label: '목표 기능(다음 방문에 같은 동작으로 비교)', ids: APPROVED_PACK_TARGET_FUNCTIONS.map((o) => o.id) },
-]
+// see/deselect it. 2026-09-08 Fable F-4: 목표 기능 칩은 **이 환자의 구동 팩**
+// (`revisitPack`)의 것만 — 승인 팩 6개를 전부 펼치면 34개 칩(‘기타 목표 동작’
+// 6개 포함)이 되어 재진 화면에서 고를 수 없다. 다른 부위의 id가 이월돼 있으면
+// FollowUpTargetPicker가 고아 칩으로 그대로 그린다(보이고 해제할 수 있다).
+const FOLLOW_UP_TARGET_GROUP_LABEL = '목표 기능(다음 방문에 같은 동작으로 비교)'
+function revisitFollowUpOptions(pack: RegionPack | null) {
+  const targetFunctions = pack?.targetFunctions ?? []
+  return {
+    options: [...targetFunctions, ...PAIN_FOLLOW_UP_OPTIONS, ...HERBAL_FOLLOW_UP_OPTIONS],
+    groups: [{ label: FOLLOW_UP_TARGET_GROUP_LABEL, ids: targetFunctions.map((o) => o.id) }],
+  }
+}
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
 
@@ -227,14 +229,9 @@ function priorVisitRecapLinesFromVisitWorkspace(priorVisitWorkspace: VisitWorksp
 // "today" is a single, named, replaceable seam rather than a bare
 // `new Date()` scattered through the render body.
 function baselineDetailAnswersFromSubmission(sub: SubmissionRecord | null): Record<string, string> {
-  const responses = (sub?.submission as { responses?: unknown } | undefined)?.responses
-  if (responses === null || typeof responses !== 'object') return {}
-  const out: Record<string, string> = {}
-  for (const [id, v] of Object.entries(responses as Record<string, unknown>)) {
-    if (typeof v === 'string') out[id] = v
-    else if (typeof v === 'number') out[id] = String(v)
-  }
-  return out
+  // 2026-09-08 Fable F-2: `responses`는 question id 평면 맵이 아니라 coreSpec의
+  // 중첩 payload — 경로 표는 detailCheckBaseline.ts 한 곳에 둔다.
+  return baselineDetailAnswersFromResponses((sub?.submission as { responses?: unknown } | undefined)?.responses)
 }
 
 function todayISO(): string {
@@ -498,6 +495,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       }) ?? null)
   const revisitPack = activeDrivingPack(priorSubmissionResponses) ?? activeRegionPack(regionWithTodayHypothesis)
   const revisitPatterns = revisitPack?.hypothesisPatterns ?? []
+  const followUpPicker = revisitFollowUpOptions(revisitPack)
   const priorHypothesis: WorkingHypothesis | null =
     revisitPack && priorHypothesisHost ? readRegionHypothesis(priorHypothesisHost, revisitPack.region, revisitPatterns) : null
   const todayHypothesis: WorkingHypothesis | null = revisitPack
@@ -876,11 +874,11 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       </details>
 
       <FollowUpTargetPicker
-        options={COMBINED_FOLLOW_UP_OPTIONS}
+        options={followUpPicker.options}
         selected={workspaceState.followUpTargets}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, followUpTargets: next }))}
         showPostTreatmentField
-        groups={COMBINED_FOLLOW_UP_GROUPS}
+        groups={followUpPicker.groups}
         nrsTargetIds={PAIN_NRS_TARGET_IDS}
       />
 

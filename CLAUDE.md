@@ -42,7 +42,7 @@
 `claude` CLI를 자동으로 이어 실행하며, task 완료 시 자체적으로
 `git commit -m "queue: complete <task>"` 체크포인트 커밋을 만든다.
 
-이 문서가 정의하는 "Opus/Sonnet/ChatGPT 협업 체계"는 **이 큐 시스템을 대체하지
+이 문서가 정의하는 "Opus/Sonnet/Fable 협업 체계"는 **이 큐 시스템을 대체하지
 않는다.** 큐 시스템은 로컬 세션 내에서 task를 이어 실행하는 실행 메커니즘이고,
 이 문서의 역할 구분은 "누가 무엇을 검수/승인하는가"에 대한 상위 협업 원칙이다.
 둘이 동시에 활성화되어 있을 때:
@@ -73,19 +73,24 @@ build를 직접 실행해 확인한다.
 - **Sonnet (Primary Developer)**: 실제 코드 구현, 테스트, 버그 수정, 일반적인
   리팩터링, lint/typecheck/build 검증, 작업 branch 관리. 승인되지 않은 범위까지
   임의로 확장하지 않으며 unrelated code를 수정하지 않는다.
-- **Fable (Escalation Specialist)**: 상시 사용하지 않는다. 아래 Escalation Rules
-  조건에 해당할 때만 후보로 판단한다.
-- **ChatGPT (Independent Reviewer)**: Claude 내부 검수와 별개의 독립 검수자.
-  GitHub에 push된 PR/commit/diff/HANDOFF.md/DECISIONS.md/주요 소스/테스트 결과를
-  기준으로 요구사항 누락, regression 위험, architecture 문제, 과도한 변경,
-  테스트 부족, edge case, 보안, 유지보수성, 다음 단계를 검토한다.
+- **Fable (Escalation Specialist + Independent Reviewer)**: escalation은 상시
+  사용하지 않는다 — 아래 Escalation Rules 조건에 해당할 때만 후보로 판단한다.
+  **독립 검수자 역할은 2026-09-08 PO 지시로 ChatGPT에서 Fable로 이관됐다**
+  (`DECISIONS.md` 같은 날 항목). 구현한 세션과 **다른 세션/모델 호출**로 PR을
+  검수한다: GitHub에 push된 PR/commit/diff/HANDOFF.md/DECISIONS.md/주요 소스/
+  테스트 결과를 기준으로 요구사항 누락, regression 위험, architecture 문제,
+  과도한 변경, 테스트 부족, edge case, 보안, 유지보수성, 다음 단계를 검토하고,
+  발견 사항 하나하나를 **코드에 대고 확인**(CONFIRMED / 기각)한 뒤 판정한다.
+  검수 결과(발견·판정·수정 여부)는 PR 코멘트 또는 `DECISIONS.md`에 남긴다.
 
-  **ChatGPT의 검수는 "진행 여부를 결정하는 게이트"이지, GitHub의 "필수 승인
+  **독립 검수는 "진행 여부를 결정하는 게이트"이지, GitHub의 "필수 승인
   (required reviewer approval)"이 아니다.** 이 저장소의 GitHub 연결은 사용자
-  본인 계정에 연결되어 있어, ChatGPT를 GitHub의 required-approval 1표로
+  본인 계정에 연결되어 있어, 검수자를 GitHub의 required-approval 1표로
   설정하면 안 된다(같은 계정 기반 승인은 별도 리뷰어로 인정되지 않는다).
-  ChatGPT가 REQUEST CHANGES로 판단하면 Sonnet/Opus가 수정하고, 최종 merge
-  판단은 항상 사용자(Product Owner)가 한다.
+  검수자가 REQUEST CHANGES로 판단하면 Sonnet/Opus가 수정하고, 최종 merge
+  판단은 항상 사용자(Product Owner)가 한다 — PO가 명시적으로 "추천안으로
+  진행"을 위임한 경우에만 검수자가 병합까지 수행하고, 그 위임 사실을
+  `DECISIONS.md`에 남긴다.
 
 ### 역할은 선언만으로 실행되지 않는다 (모델 routing은 아직 수동)
 
@@ -165,7 +170,7 @@ Claude Code가 작업을 시작할 때 순서:
 
 ```
 main                              (protected, Single Source of Truth)
- ↑ PR (ChatGPT + 사용자 리뷰)
+ ↑ PR (Fable 독립 검수 + 사용자 리뷰)
 feature / fix / chore branch      (claude/feat-xxx, claude/fix-xxx,
                                     claude/refactor-xxx, claude/chore-xxx)
 ```
@@ -202,7 +207,7 @@ feature / fix / chore branch      (claude/feat-xxx, claude/fix-xxx,
 - 핵심 파일 다수에 걸친 구조 변경
 - migration 또는 backward compatibility 위험
 - 기존 설계를 근본적으로 재검토해야 함
-- Opus와 ChatGPT(외부 리뷰) 결과가 크게 충돌
+- Opus와 Fable 독립 검수 결과가 크게 충돌
 - 장시간 자율 분석이 필요한 문제
 
 ## Definition of Done
@@ -216,4 +221,4 @@ feature / fix / chore branch      (claude/feat-xxx, claude/fix-xxx,
 - `HANDOFF.md` 갱신
 - 필요 시 `DECISIONS.md` 갱신
 - GitHub push
-- PR 상태 정리 (신규 생성 또는 기존 PR 갱신, ChatGPT 리뷰 가능한 상태)
+- PR 상태 정리 (신규 생성 또는 기존 PR 갱신, Fable 독립 검수 가능한 상태)

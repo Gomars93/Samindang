@@ -42,7 +42,7 @@ import type { Provenance } from './provenance'
 import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } from './sanitize'
 import { isValidLbpDirectionalResponse, type LbpDirectionalResponse } from './lbpExamSuggestions'
 import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
-import { sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
+import { sanitizeConfirmedStage, sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -269,9 +269,9 @@ export function emptyWorkspaceState(): WorkspaceState {
   }
 }
 
-/** 0~3 정수만 통과. 문자열 '1', 1.5, -1, 4, null 등은 전부 null. */
+/** 0~3 정수만 통과. 문자열 '1', 1.5, -1, 4, null 등은 전부 null — 부위 공통 규칙(`regionClinicalState.sanitizeConfirmedStage`)에 위임한다(2026-09-08 Fable F-6: 같은 규칙이 두 곳에 있으면 한쪽만 바뀐다). */
 export function sanitizeLbpConfirmedStage(v: unknown): 0 | 1 | 2 | 3 | null {
-  return v === 0 || v === 1 || v === 2 || v === 3 ? v : null
+  return sanitizeConfirmedStage(v)
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

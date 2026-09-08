@@ -244,6 +244,31 @@ assert('재질문 id는 서버 표에서 읽는다', /DETAIL_CHECK_REGION_QUESTI
 assert('신경 검사 id는 팩에서 읽는다', /pack\.neuroExamIds/.test(SOURCE))
 
 // ---------------------------------------------------------------------------
+// 3b. 방향성 6값 전부 집계 — 'UNCLEAR'(불명확)가 '미시행'으로 새지 않는다 (2026-09-08 Fable F-3)
+// ---------------------------------------------------------------------------
+
+{
+  const { out, status } = run([
+    record('u1', { directional: 'UNCLEAR', exams: BOTH_NEG }),
+    record('u2', { directional: 'NOT_ASSESSED' }),
+    record('u3', { directional: 'BOGUS_VALUE' }), // 모르는 값만 미시행으로 취급
+  ])
+  assert('3b: 정상 종료', status === 0)
+  assert('3b: 불명확 1건 (UNCLEAR)', countFor(out, '불명확') === 1)
+  assert('3b: 미시행 2건 (NOT_ASSESSED 1 + 모르는 값 1) — UNCLEAR는 여기 포함되지 않는다', countFor(out, '미시행') === 2)
+  const lbp = run([record('ul', { region: 'lbp', directional: 'UNCLEAR' })], { args: ['lbp'] })
+  assert('3b: 요통 옛 필드 lbpDirectionalResponse의 UNCLEAR도 불명확 1건', lbp.status === 0 && countFor(lbp.out, '불명확') === 1)
+  assert('3b: 스크립트의 방향성 값 목록은 lbpExamSuggestions.ts의 LbpDirectionalResponse 6값과 같다', (() => {
+    const m = SOURCE.match(/const DIRECTIONAL_VALUES = \[([^\]]+)\]/)
+    const vals = m[1].split(',').map((x) => x.trim().replace(/'/g, '')).sort()
+    const lbpSrc = readFileSync(path.join(ROOT, 'src/doctor/workspace/lbpExamSuggestions.ts'), 'utf8')
+    const decl = lbpSrc.match(/export type LbpDirectionalResponse =([\s\S]*?)\n\n/)[1]
+    const typed = [...decl.matchAll(/'([A-Z_]+)'/g)].map((x) => x[1]).sort()
+    return JSON.stringify(vals) === JSON.stringify(typed) && typed.includes('UNCLEAR')
+  })())
+}
+
+// ---------------------------------------------------------------------------
 // 4. 오류 경로 — 데이터 폴더 없음 / 모르는 부위
 // ---------------------------------------------------------------------------
 

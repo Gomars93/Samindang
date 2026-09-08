@@ -1,6 +1,34 @@
 # Current Handoff
 
-## 2026-09-08 (최신 45): **문진 "없음" 최상단 11문항 (v2.4 §22)** — SAFETY_01은 v2.3 금지 원칙의 PO 해제. 부위 팩 34문항은 범위 밖
+## 2026-09-08 (최신 46): **문진 "없음" 최상단 부위 팩 34문항 확장 (v2.4 §22 후속)** — 이제 문진 전체 단일 규칙(none/NONE = index 0). PR #34 merge 완료
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO에게 "34문항도 올릴까요?" 확인 질문 → **"34문항도 올린다."**
+
+### 한 것
+- **34문항 재배치**(`src/spec/coreSpec.ts` 30 / `tmjQuestions.ts` 2 `TMJ_01/03` / `hipQuestions.ts` 2 `HIP_02/04`) — `LBP_04`(마미증후군
+  CES 스크리닝) 포함. `NONE`을 `UNKNOWN`("잘 모르겠어요") 바로 앞에 두던 기존 패턴이 **소멸**하고, 이제 문진 전체가 단일 규칙
+  (none/NONE = index 0)을 따른다.
+- 손 반복 대신 **작은 프로그램**(브래킷 균형 파싱)으로 34문항을 기계적으로 재배치 — HEAD 스냅샷과 프로그램 대조로 값·라벨·`exclusive`·
+  `required`·`showIf` 무변경 + none이 index 0임을 34문항 전수 확인(`검사 문항: 34 / 순서만 바뀐 문항: 34 / missing: 0`).
+- **W9 재작성**: 기존 두 명부(none-first 13 / none-before-unknown 34)를 **단일 명부 47개**로 합침. per-question 검증도 함께 고침
+  — 기존 코드가 소문자 `'none'`·단일값 `exclusive`만 확인해 대문자 `NONE`/`exclusive` 배열 문항(이번에 합류한 34개 대부분)을
+  놓쳤을 검사 결함이었다.
+- **PR #34 생성 + main 병합 완료** — PR #33(2화면 순서 재설계)도 같은 세션에서 병합. 병합 중 `HANDOFF.md` 충돌 1건 수동 해결
+  (`coreSpec.ts`/`integration.spec.mjs`는 자동 병합됨).
+
+### 검증
+`tsc -b` 0 / `test:integration` 1275 assertions, 0 failed / `test:all` exit 0 / `build` 0.
+
+### Next Recommended Action
+1. **클리닉 PC**: `git pull origin main` (또는 이 브랜치 merge 완료 후 main) → `npm run build` → 태블릿 재확인.
+2. **클리닉 PC `.env` 확인**: 태블릿 전송 실패는 변수명이 원인일 수 있다 — 올바른 이름은 `VITE_SAMINDANG_SERVER_URL=http://<원장PC IP>:4317`
+   (`src/lib/serverClient.ts:24`, RUNBOOK §5). 포트 `:4317` 필수.
+3. 원장 실기기 확인 포인트: 이번엔 응급/red flag 계열 34문항 전체가 "없음"부터 보인다 — 특히 `LBP_04`(CES) 화면에서 나머지 5개 항목이
+   여전히 다 보이는지(값 누락 없음은 이미 프로그램으로 검증했지만 실기기 렌더링 확인은 별개).
+
+---
+
+## 2026-09-08 (45): **문진 "없음" 최상단 11문항 (v2.4 §22)** — SAFETY_01은 v2.3 금지 원칙의 PO 해제. 부위 팩 34문항은 범위 밖
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (origin/main `c6dac9f`에서 새로 시작 — PR #31 병합 후 미병합 커밋 없음).
 

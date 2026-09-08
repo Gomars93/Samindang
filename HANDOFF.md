@@ -1,8 +1,75 @@
 # Current Handoff
 
-## 2026-09-08 (최신 44): **상담 내용 2화면 순서 재설계** — 참고 증상(다중) → 그중 하나를 "오늘 자세히"(단일). 최소부담 경로 화면 -1
+## 2026-09-08 (최신 46): **문진 "없음" 최상단 부위 팩 34문항 확장 (v2.4 §22 후속)** — 이제 문진 전체 단일 규칙(none/NONE = index 0). PR #34 merge 완료
 
-**브랜치**: `claude/feat-detail-routing-reorder` (PR 대기). PO가 실기기 문진에서 "이게 겹치는 느낌인데 왜 문진을 두 번 했지?"
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO에게 "34문항도 올릴까요?" 확인 질문 → **"34문항도 올린다."**
+
+### 한 것
+- **34문항 재배치**(`src/spec/coreSpec.ts` 30 / `tmjQuestions.ts` 2 `TMJ_01/03` / `hipQuestions.ts` 2 `HIP_02/04`) — `LBP_04`(마미증후군
+  CES 스크리닝) 포함. `NONE`을 `UNKNOWN`("잘 모르겠어요") 바로 앞에 두던 기존 패턴이 **소멸**하고, 이제 문진 전체가 단일 규칙
+  (none/NONE = index 0)을 따른다.
+- 손 반복 대신 **작은 프로그램**(브래킷 균형 파싱)으로 34문항을 기계적으로 재배치 — HEAD 스냅샷과 프로그램 대조로 값·라벨·`exclusive`·
+  `required`·`showIf` 무변경 + none이 index 0임을 34문항 전수 확인(`검사 문항: 34 / 순서만 바뀐 문항: 34 / missing: 0`).
+- **W9 재작성**: 기존 두 명부(none-first 13 / none-before-unknown 34)를 **단일 명부 47개**로 합침. per-question 검증도 함께 고침
+  — 기존 코드가 소문자 `'none'`·단일값 `exclusive`만 확인해 대문자 `NONE`/`exclusive` 배열 문항(이번에 합류한 34개 대부분)을
+  놓쳤을 검사 결함이었다.
+- **PR #34 생성 + main 병합 완료** — PR #33(2화면 순서 재설계)도 같은 세션에서 병합. 병합 중 `HANDOFF.md` 충돌 1건 수동 해결
+  (`coreSpec.ts`/`integration.spec.mjs`는 자동 병합됨).
+
+### 검증
+`tsc -b` 0 / `test:integration` 1275 assertions, 0 failed / `test:all` exit 0 / `build` 0.
+
+### Next Recommended Action
+1. **클리닉 PC**: `git pull origin main` (또는 이 브랜치 merge 완료 후 main) → `npm run build` → 태블릿 재확인.
+2. **클리닉 PC `.env` 확인**: 태블릿 전송 실패는 변수명이 원인일 수 있다 — 올바른 이름은 `VITE_SAMINDANG_SERVER_URL=http://<원장PC IP>:4317`
+   (`src/lib/serverClient.ts:24`, RUNBOOK §5). 포트 `:4317` 필수.
+3. 원장 실기기 확인 포인트: 이번엔 응급/red flag 계열 34문항 전체가 "없음"부터 보인다 — 특히 `LBP_04`(CES) 화면에서 나머지 5개 항목이
+   여전히 다 보이는지(값 누락 없음은 이미 프로그램으로 검증했지만 실기기 렌더링 확인은 별개).
+
+---
+
+## 2026-09-08 (45): **문진 "없음" 최상단 11문항 (v2.4 §22)** — SAFETY_01은 v2.3 금지 원칙의 PO 해제. 부위 팩 34문항은 범위 밖
+
+**브랜치**: `claude/clinical-os-lbp-architecture-xym6po` (origin/main `c6dac9f`에서 새로 시작 — PR #31 병합 후 미병합 커밋 없음).
+
+**PO 지시**(실기기 문진 중): "복용중인 약이나, 응급 상황 체크 상황 등에서 문진표에서 없음을 제일 상단에 배치해서 쓸모없이 스크롤 하지 않게 동선을 수정해줘".
+
+### 한 것
+- **지시의 전제 2건이 사실과 달라 확인 후 정정**했다:
+  - **복용 중인 약** — `MED_USE` 옵션[0]이 **이미** `'없어요'`고, 그걸 고르면 `MED_TYPES`(8개)는 `showIf`로 화면이 안 뜬다 → **변경 없음**.
+  - **응급 `SAFETY_01`** — `'해당 없음'` 맨 끝은 **의도된 설계**였다(v2.3 §17 주석 "안전문항엔 재배치 절대 금지" + W8 CRITICAL 테스트가 잠금).
+- **쟁점 2건을 PO에게 올려 판단받았다**:
+  - `SAFETY_01`: 구현자는 **그대로 두기**를 권장(satisficing → 가슴통증·편측 위약·의식소실·대량출혈 놓침, 7개라 스크롤 이득도 불확실).
+    **PO가 트레이드오프를 알고 최상단 배치 선택** → 구현. 구현자가 제안한 파일럿 모니터링(`red_flag_general=['none']` 비율 감시)은
+    **PO가 같은 날 철회**했다 — "1차의료원에 잘 오지도 않을 뿐더러, 본인이 알아서 판단하겠지"(base rate + 환자 자가 판단이 1차 방어선).
+    구현자 반론(소실된 증상인 TIA·실신은 오히려 1차 진료로 오고 자가 판단이 틀리는 유형)은 `DECISIONS.md`에 기록만 남겼다 — 결정 불변.
+  - `HISTORY_01`(12개): 구현자 권장과 일치 → 올림. 단 `osteoporosis`가 골절 위험 red flag 원천인 하이브리드임을 기록.
+- **11문항 재배치**: `SAFETY_01` · `HISTORY_01` · `SEC_PAIN_01` · `SEC_URINARY_01` · `SEC_FATIGUE_01` · `SEC_STRESS_01` ·
+  `SEC_WOMEN_01` · `STRESS_03` · `SEC_GI_01` · `SEC_BOWEL_01` · `SEC_SLEEP_01`. **표시 순서만** — 값 집합·타입·`exclusive`·저장·원장 payload 전부 무변경
+  (`src/`에 `options[0]`/`options[length-1]` 인덱스 의존 코드 0건을 grep으로 확인, `exclusive`는 값 기반 Set 조회라 순서 무관).
+- **W8 재작성 + W9 전수 스캔 신설**: 모든 `multi_choice`의 "없음"류를 두 패턴(none-first 13 / none-before-unknown 34) 중 하나로 분류하고
+  **미분류면 실패**. 두 명부를 이름으로 못박아 새 문항이 세 번째 관행을 만들거나 부위 팩이 명부를 이탈하면 빌드가 깨진다. 현재 미분류 0 · noneLast 0.
+
+### 범위 밖 (미결 — PO 판단 필요)
+부위 팩 red flag/CES **34문항**(`LBP_04`(CES) 포함)은 `NONE`을 `UNKNOWN` 바로 앞에 두는 다른 패턴이다. PO 지시는 `SAFETY_01`을 지목했고
+CES 포함 일괄 변경은 승인 범위 밖이라 **손대지 않았다**.
+
+### 검증
+`tsc -b` 0 / `test:integration` 1184 assertions, 0 failed / `test:all` exit 0 / `build` 0.
+
+### Next Recommended Action
+1. **PR #33·#34 모두 main에 병합 완료(2026-09-08)** — 두 화면 순서 재설계 + "없음" 최상단 11문항. 클리닉 PC는 `git pull origin main` 후
+   `npm run build` 재실행하면 둘 다 반영된다.
+2. **부위 팩 red flag/CES 34문항**(`LBP_04` CES 포함)도 "없음" 최상단으로 올리는 후속 작업 진행 중(PO 지시, 같은 날) — 별도 커밋/PR.
+3. **클리닉 PC `.env` 확인**: 태블릿 전송 실패는 변수명이 원인일 수 있다 — 올바른 이름은 `VITE_SAMINDANG_SERVER_URL=http://<원장PC IP>:4317`
+   (`src/lib/serverClient.ts:24`, RUNBOOK §5). 포트 `:4317` 필수. 수정 후 `npm run build` 재실행.
+4. ~~파일럿 관찰 시 `SAFETY_01` 재검토 조건 모니터링~~ — **PO 철회(2026-09-08)**. 파일럿 관찰 항목 아님.
+
+---
+
+## 2026-09-08 (44): **상담 내용 2화면 순서 재설계** — 참고 증상(다중) → 그중 하나를 "오늘 자세히"(단일). 최소부담 경로 화면 -1 — **PR #33 main 병합 완료**
+
+**브랜치**: `claude/feat-detail-routing-reorder` (PR #33, merged). PO가 실기기 문진에서 "이게 겹치는 느낌인데 왜 문진을 두 번 했지?"
 → 버그가 아니라 설계였으나(§11-§21), 두 질문이 각자 독립적으로 거의 같은 목록을 보여줘 관계가 보이지 않았다.
 PO 선택: "순서를 뒤집어 하나로 합침".
 
@@ -22,9 +89,9 @@ PO 선택: "순서를 뒤집어 하나로 합침".
 `tsc -b` 0 / `build` 0 / **`test:all` exit 0**. 임상 로직·부위 팩·운동 엔진 변경 0.
 
 ### Next Recommended Action
-1. **원장**: 실기기에서 이 두 화면을 한 번 통과해 볼 것 — 특히 **참고 증상에서 하나 골랐다가 다시 빼기**(그 항목의 상세 문진이
+1. **main 병합 완료(2026-09-08)** — 클리닉 PC `git pull origin main` → `npm run build`(태블릿 앱 재빌드 필요) → 자동시작 작업은 그대로 두면 된다.
+2. **원장**: 실기기에서 이 두 화면을 한 번 통과해 볼 것 — 특히 **참고 증상에서 하나 골랐다가 다시 빼기**(그 항목의 상세 문진이
    사라지는지)와 **'없음'을 고르면 다음 화면이 건너뛰어지는지**.
-2. 확인되면 PR 병합 → 클리닉 PC `git pull` → `npm run build`(태블릿 앱 재빌드 필요) → 자동시작 작업은 그대로 두면 된다.
 3. 파일럿(관찰 로그 §1)은 이 변경과 무관하게 진행 가능 — 임상 로직은 그대로다.
 
 ---

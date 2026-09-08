@@ -4044,23 +4044,92 @@ function applyLbp02Or03DirectAnswer(r, id, value) {
   assert('W7: LBP_10 also hidden for acute-onset LBP (gate unchanged)', !visibleIds(acute).has('LBP_10'))
 }
 
-// W8: "없음" first-position reorder (v2.3 §17) -- non-safety optional
-// pickers only. SECONDARY_01/REFERENCE_SYMPTOMS_01 share SECONDARY_OPTIONS
-// and are both info-only/optional, so "없음" moves to index 0 for both.
-// SAFETY_01 (a real safety checklist) has its own separate options array
-// and must be completely untouched by this change.
+// W8: "없음" first-position placement (v2.3 §17 -> v2.4 §22).
+//
+// v2.3 hoisted "없음" to index 0 for SECONDARY_01/REFERENCE_SYMPTOMS_01 only,
+// and this block asserted that SAFETY_01 kept "해당 없음" LAST -- explicitly
+// so a patient could not satisfice past a real emergency checklist.
+//
+// v2.4 (PO 2026-09-08) reverses that one assertion. The PO was shown the
+// satisficing risk (patient taps the first button without reading, so
+// chest pain / focal weakness / LOC / uncontrolled bleeding go unreported)
+// and chose top placement anyway. The negative assertion below is therefore
+// inverted, deliberately, and the reasoning lives in DECISIONS.md 2026-09-08.
+// The region-pack red flag/CES screens are NOT in scope -- W9 locks those.
 {
   const sec01 = ALL_QUESTIONS.find((q) => q.id === 'SECONDARY_01')
   const ref01 = ALL_QUESTIONS.find((q) => q.id === 'REFERENCE_SYMPTOMS_01')
   const safety01 = ALL_QUESTIONS.find((q) => q.id === 'SAFETY_01')
   assert('W8: SECONDARY_01 options[0] is "없음" (none)', sec01.options[0].value === 'none')
   assert('W8: REFERENCE_SYMPTOMS_01 options[0] is "없음" (none)', ref01.options[0].value === 'none')
-  assert('W8 CRITICAL: SAFETY_01 (a real safety checklist) keeps "해당 없음" LAST, untouched', safety01.options[safety01.options.length - 1].value === 'none' && safety01.options[0].value !== 'none')
+  assert('W8 (v2.4, PO override of v2.3): SAFETY_01 now leads with "해당 없음"', safety01.options[0].value === 'none')
+  assert('W8: SAFETY_01 keeps all 6 emergency items, none dropped by the move', safety01.options.length === 7 && safety01.options.slice(1).every((o) => o.value !== 'none'))
   // optionsIf (used at render time, e.g. excluding the already-chosen
   // primary/additional category) must also keep 'none' first -- it's a
   // filter over the same reordered array, not a fresh unordered one.
   const filteredRef = ref01.optionsIf(withPainCare({ PAIN_01: 'low_back_pelvis' }))
   assert('W8: REFERENCE_SYMPTOMS_01 optionsIf() output also keeps "없음" first', filteredRef[0].value === 'none')
+}
+
+// W9 (v2.4 §22, extended same day to the region-pack red flag/CES screens):
+// exhaustive placement scan. v2.4 originally left two documented patterns
+// (info pickers = none-first, region-pack red flag/CES = none-before-unknown)
+// with SAFETY_01 as a one-question PO override into the first bucket.
+//
+// Same-day follow-up (PO): move the region-pack red flag/CES "없음"/"NONE"
+// to the top too, for the same scroll-burden reason as SAFETY_01. That
+// collapses pattern B into pattern A -- there is now exactly ONE convention
+// (none/NONE first) for every multi_choice question that offers a
+// none-type escape. A question landing anywhere else fails here instead of
+// shipping an inconsistent screen.
+//
+// The roster is pinned by name on purpose: adding a question to it should
+// be a deliberate, reviewed act, not a silent side effect. Emergency/CES
+// screens (LBP_04 CES, NECK_02, KNEE_02, etc.) live in this same roster now
+// -- a question silently dropping out of it is exactly the regression
+// worth failing the build over.
+{
+  const isNoneValue = (v) => v === 'none' || v === 'NONE'
+
+  const NONE_FIRST_IDS = [
+    'AF_02', 'AF_04', 'AF_05', 'ELBOW_02', 'ELBOW_09A', 'ELBOW_10', 'ELBOW_11',
+    'ELBOW_14', 'HIP_02', 'HIP_04', 'HISTORY_01', 'KNEE_02', 'KNEE_06A',
+    'KNEE_06B', 'KNEE_08', 'KNEE_11', 'LBP_02', 'LBP_04', 'LBP_05', 'LBP_11',
+    'MS_05', 'NECK_02', 'NECK_04', 'NECK_05', 'NECK_09', 'REFERENCE_SYMPTOMS_01',
+    'SAFETY_01', 'SECONDARY_01', 'SEC_BOWEL_01', 'SEC_FATIGUE_01', 'SEC_GI_01',
+    'SEC_PAIN_01', 'SEC_SLEEP_01', 'SEC_STRESS_01', 'SEC_URINARY_01',
+    'SEC_WOMEN_01', 'SH02', 'STRESS_03', 'TMJ_01', 'TMJ_03', 'WH_02', 'WH_06',
+    'WH_07A', 'WH_08A', 'WH_10', 'WH_13', 'WOMEN_SAFETY_01',
+  ]
+
+  const noneFirst = []
+  const unclassified = []
+  for (const q of ALL_QUESTIONS) {
+    if (q.input !== 'multi_choice') continue
+    const opts = q.options
+    if (!Array.isArray(opts) || !opts.some((o) => isNoneValue(o.value))) continue
+    const idx = opts.findIndex((o) => isNoneValue(o.value))
+    if (idx === 0) noneFirst.push(q.id)
+    else unclassified.push(`${q.id}@${idx}/${opts.length}`)
+  }
+  const sorted = (a) => [...a].sort()
+  const same = (a, b) => sorted(a).join(',') === sorted(b).join(',')
+
+  assert('W9 CRITICAL: no multi_choice question keeps NONE anywhere but index 0', unclassified.length === 0)
+  assert(`W9: none-first roster is exactly the ${NONE_FIRST_IDS.length} reviewed questions`, same(noneFirst, NONE_FIRST_IDS))
+  // The v2.4 reorder must not have changed WHICH values exist anywhere --
+  // it is a display-order change only, so every reordered question keeps
+  // its full option set and its exclusive semantics (case varies by
+  // question: some declare 'none', some 'NONE', some as part of an
+  // exclusive array alongside 'unknown'/'UNKNOWN').
+  for (const id of NONE_FIRST_IDS) {
+    const q = ALL_QUESTIONS.find((x) => x.id === id)
+    const values = new Set(q.options.map((o) => o.value))
+    const noneValues = q.options.map((o) => o.value).filter(isNoneValue)
+    assert(`W9: ${id} keeps a single none option and no duplicates`, values.size === q.options.length && noneValues.length === 1)
+    const exclusiveList = Array.isArray(q.exclusive) ? q.exclusive : [q.exclusive]
+    assert(`W9: ${id} still declares its none value as exclusive`, exclusiveList.some(isNoneValue))
+  }
 }
 
 // W11 (forward-walk simulation): mirrors App.tsx's actual nextQuestion()

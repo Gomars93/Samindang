@@ -338,9 +338,20 @@ const primaryConcernSecondaryKey = (r: Responses): string | null => {
 }
 
 // Tablet UX v2.3 §17: SECONDARY_01/REFERENCE_SYMPTOMS_01은 둘 다 안전문항이
-// 아닌 정보용 선택 질문(§18 참고)이라 "없음"을 목록 맨 앞으로 옮긴다 --
-// SAFETY_01/CES/응급 체크리스트류 안전문항에는 이 재배치를 절대 적용하지
-// 않는다(그런 화면들의 옵션 배열은 이 상수를 전혀 참조하지 않음).
+// 아닌 정보용 선택 질문(§18 참고)이라 "없음"을 목록 맨 앞으로 옮긴다.
+//
+// Tablet UX v2.4 §22 (PO 2026-09-08): v2.3은 여기서 "SAFETY_01/CES/응급
+// 체크리스트류에는 이 재배치를 절대 적용하지 않는다"고 못박았으나, PO가
+// 그 금지를 SAFETY_01 **한 문항에 한해** 해제했다. 구현자는 satisficing
+// 위험(환자가 목록을 읽지 않고 맨 위 '해당 없음'을 눌러 넘어가 가슴통증·
+// 편측 위약·의식소실·대량출혈을 놓치는 것)을 제기했고, PO가 그 트레이드
+// 오프를 알고 최상단 배치를 선택했다 -- 근거와 재검토 조건은 DECISIONS.md
+// 2026-09-08 항목에 있다.
+//
+// **부위 팩의 red flag/CES 화면(LBP_02·LBP_04·NECK_02·KNEE_02 등 34문항)은
+// 이 해제 범위가 아니다** -- 여전히 'NONE'을 'UNKNOWN' 바로 앞(사실상 끝)에
+// 둔다. 그 화면들의 옵션 배열은 이 상수를 참조하지 않으며, 아래
+// noneFirstPolicy 스캔 테스트가 두 패턴을 각각 잠근다.
 const SECONDARY_OPTIONS: Option[] = [
   { value: 'none', label: '없음' },
   { value: 'sleep', label: '잠' },
@@ -402,13 +413,17 @@ const SAFETY_QUESTIONS: Question[] = [
     step: '상담 내용',
     exclusive: 'none',
     options: [
+      // Tablet UX v2.4 §22 (PO 2026-09-08): '해당 없음'을 맨 아래에서 맨 위로.
+      // v2.3의 "안전문항에는 재배치 금지" 원칙을 PO가 이 문항에 한해 해제했다
+      // (satisficing 위험은 고지됨 -- 위 SECONDARY_OPTIONS 주석과 DECISIONS.md 참고).
+      // 부위 팩 red flag/CES 화면에는 적용하지 않는다.
+      { value: 'none', label: '해당 없음' },
       { value: 'chest_breathing', label: '새로 생긴 심한 가슴 통증이나 숨쉬기가 매우 힘든 증상' },
       { value: 'focal_neuro', label: '갑자기 한쪽 팔·다리에 힘이 빠지거나 말하기 어려운 증상' },
       { value: 'loc_seizure', label: '의식을 잃었거나 경련을 한 증상' },
       { value: 'sudden_severe_pain', label: '갑자기 시작된 매우 심한 두통이나 통증' },
       { value: 'uncontrolled_bleeding', label: '멈추지 않는 심한 출혈' },
       { value: 'high_fever_illness', label: '고열과 함께 몸 상태가 매우 좋지 않음' },
-      { value: 'none', label: '해당 없음' },
     ],
   },
 ]
@@ -725,14 +740,13 @@ const MENOPAUSE_SLEEP_QUESTIONS: Question[] = [
     exclusive: ['none', 'unknown'],
     showIf: MS_GATE_YES_OR_UNSURE,
     options: [
-      { value: 'loud_snoring', label: '코를 심하게 곤다고 들어요' },
+      { value: 'none', label: '해당 없음' }, { value: 'loud_snoring', label: '코를 심하게 곤다고 들어요' },
       { value: 'witnessed_apnea', label: '자다가 숨이 멈춘다고 들은 적이 있어요' },
       { value: 'choking_gasping', label: '숨이 막히거나 헐떡이며 깬 적이 있어요' },
       {
         value: 'restless_legs_pattern',
         label: '밤에 다리가 불편해 움직이고 싶고, 움직이면 좀 편해져요',
       },
-      { value: 'none', label: '해당 없음' },
       { value: 'unknown', label: '잘 모르겠어요' },
     ],
   },
@@ -1265,10 +1279,9 @@ const LBP_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_LBP,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'PARESTHESIA', label: '저리거나 찌릿함' },
+      { value: 'NONE', label: '없어요' }, { value: 'PARESTHESIA', label: '저리거나 찌릿함' },
       { value: 'NUMBNESS', label: '감각이 둔함' },
       { value: 'SUBJECTIVE_WEAKNESS', label: '힘이 빠지는 느낌' },
-      { value: 'NONE', label: '없어요' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1299,12 +1312,11 @@ const LBP_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_LBP,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'URINARY_RETENTION', label: '소변이 잘 나오지 않거나 시작하기 어려워짐' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'URINARY_RETENTION', label: '소변이 잘 나오지 않거나 시작하기 어려워짐' },
       { value: 'BLADDER_BOWEL_CONTROL', label: '소변이나 대변을 조절하기 어려워짐' },
       { value: 'SADDLE_SENSORY_CHANGE', label: '항문·회음부 주변 감각이 둔해짐' },
       { value: 'RAPID_PROGRESSIVE_WEAKNESS', label: '다리 힘이 빠르게 약해짐' },
       { value: 'SUDDEN_SEXUAL_FUNCTION_CHANGE', label: '성기능에 갑작스러운 변화가 생김' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1318,11 +1330,10 @@ const LBP_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_LBP,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'FEVER_CHILLS_OR_SERIOUS_INFECTION', label: '원인 모를 발열·오한 또는 최근 심한 감염' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'FEVER_CHILLS_OR_SERIOUS_INFECTION', label: '원인 모를 발열·오한 또는 최근 심한 감염' },
       { value: 'LONG_TERM_STEROID_OR_IMMUNOSUPPRESSIVE', label: '장기간 스테로이드 또는 면역억제 치료' },
       { value: 'RECENT_SPINAL_PROCEDURE_OR_INJECTION', label: '최근 허리·척추 주사, 시술, 또는 수술' },
       { value: 'UNEXPLAINED_WEIGHT_LOSS', label: '최근 설명되지 않는 체중 감소' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1488,7 +1499,7 @@ const LBP_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_LBP(r) && IS_LBP_CHRONIC_ONSET(r),
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'SECOND_HALF_NIGHT_WAKING', label: '밤 후반부에 허리 때문에 잠에서 깸' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'SECOND_HALF_NIGHT_WAKING', label: '밤 후반부에 허리 때문에 잠에서 깸' },
       { value: 'BUTTOCK_PAIN', label: '엉덩이 통증이 반복됨' },
       { value: 'IMPROVES_WITH_MOVEMENT', label: '움직이면 오히려 좋아짐' },
       { value: 'NSAID_RAPID_RESPONSE', label: '소염진통제를 먹으면 48시간 안에 뚜렷이 좋아짐' },
@@ -1496,7 +1507,6 @@ const LBP_QUESTIONS: Question[] = [
       { value: 'PAST_OR_CURRENT_ARTHRITIS', label: '관절염 진단이나 관절이 붓는 증상이 있었음' },
       { value: 'PAST_OR_CURRENT_ENTHESITIS', label: '발뒤꿈치 등 힘줄이 뼈에 붙는 부위 통증이 반복됨' },
       { value: 'PAST_OR_CURRENT_PSORIASIS', label: '건선 진단을 받았거나 의심되는 피부병변이 있음' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1647,12 +1657,11 @@ const NECK_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_NECK,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'HAND_CLUMSINESS', label: '손이 서툴러 단추 잠그기, 젓가락질, 글씨 쓰기 등이 어렵거나 물건을 자주 떨어뜨림' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'HAND_CLUMSINESS', label: '손이 서툴러 단추 잠그기, 젓가락질, 글씨 쓰기 등이 어렵거나 물건을 자주 떨어뜨림' },
       { value: 'GAIT_BALANCE_CHANGE', label: '걸을 때 휘청거리거나 균형 잡기가 어려움' },
       { value: 'BILATERAL_OR_MULTI_LIMB_NEURO', label: '양쪽 팔·손 또는 팔과 다리에 동시에 저림·감각이상·힘빠짐이 있음' },
       { value: 'RAPIDLY_WORSENING_LIMB_WEAKNESS', label: '팔이나 다리 힘이 빠르게 약해지고 있음' },
       { value: 'NEW_BLADDER_BOWEL_CHANGE', label: '최근 소변·대변 조절에 뚜렷한 변화가 생김' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1709,13 +1718,12 @@ const NECK_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_NECK,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'NEW_VISUAL_DISTURBANCE', label: '물체가 둘로 보이거나 시야가 갑자기 이상해짐' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'NEW_VISUAL_DISTURBANCE', label: '물체가 둘로 보이거나 시야가 갑자기 이상해짐' },
       { value: 'NEW_SPEECH_OR_SWALLOWING_DIFFICULTY', label: '말이 어눌해지거나 삼키기 어려워짐' },
       { value: 'NEW_FACE_OR_EYELID_CHANGE', label: '얼굴 또는 한쪽 눈꺼풀에 갑작스러운 변화가 생김' },
       { value: 'NEW_ONE_SIDED_WEAKNESS_OR_NUMBNESS', label: '몸 한쪽에 갑자기 힘빠짐이나 감각이상이 생김' },
       { value: 'NEW_SEVERE_BALANCE_OR_COORDINATION_CHANGE', label: '갑자기 심하게 휘청거리거나 몸을 가누기 어려움' },
       { value: 'NEW_SEVERE_DIZZINESS_OR_FAINTNESS', label: '이전과 다른 심한 어지럼 또는 쓰러질 것 같은 느낌이 생김' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1729,12 +1737,11 @@ const NECK_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_NECK,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'PRIOR_CANCER', label: '암을 진단받거나 치료받은 적이 있음' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'PRIOR_CANCER', label: '암을 진단받거나 치료받은 적이 있음' },
       { value: 'FEVER_OR_RECENT_SERIOUS_INFECTION', label: '원인 모를 발열·오한이 있거나 최근 심한 감염으로 치료받음' },
       { value: 'IMMUNOSUPPRESSION', label: '면역을 크게 떨어뜨리는 질환 또는 치료가 있음' },
       { value: 'RECENT_CERVICAL_PROCEDURE_OR_SURGERY', label: '최근 목 부위 수술·주사·침습적 시술을 받음' },
       { value: 'UNEXPLAINED_WEIGHT_LOSS', label: '특별한 이유 없이 최근 체중이 눈에 띄게 감소함' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1797,10 +1804,9 @@ const NECK_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_NECK,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'PARESTHESIA', label: '찌릿하거나 저림' },
+      { value: 'NONE', label: '없어요' }, { value: 'PARESTHESIA', label: '찌릿하거나 저림' },
       { value: 'NUMBNESS', label: '감각이 둔하거나 무딤' },
       { value: 'SUBJECTIVE_WEAKNESS', label: '힘이 빠지는 느낌' },
-      { value: 'NONE', label: '없어요' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -1938,10 +1944,9 @@ const SHOULDER_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_NECK(r) && r['SH01'] === 'YES',
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'DEFORMITY_OR_STILL_OUT', label: '어깨 모양이 평소와 확연히 다르거나, 빠진 뒤 아직 제자리로 돌아오지 않은 느낌' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'DEFORMITY_OR_STILL_OUT', label: '어깨 모양이 평소와 확연히 다르거나, 빠진 뒤 아직 제자리로 돌아오지 않은 느낌' },
       { value: 'NEW_NEUROVASCULAR_CHANGE', label: '손이나 팔이 갑자기 매우 차갑거나 창백·푸르게 변했거나, 감각·힘이 크게 떨어짐' },
       { value: 'SEVERE_SWELLING_OR_CANNOT_MOVE', label: '심하게 붓거나 멍이 들면서 팔을 거의 움직일 수 없음' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2109,10 +2114,9 @@ const KNEE_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_KNEE,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '무릎 모양이 확연히 달라졌거나 빠진 채 제자리로 돌아오지 않은 느낌' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '무릎 모양이 확연히 달라졌거나 빠진 채 제자리로 돌아오지 않은 느낌' },
       { value: 'COLD_PALE_BLUE_FOOT', label: '발이나 발목이 갑자기 매우 차갑거나 창백·푸르게 변함' },
       { value: 'MAJOR_NEW_DISTAL_NEURO_CHANGE', label: '발·다리 감각이나 힘이 갑자기 크게 떨어짐' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2199,11 +2203,10 @@ const KNEE_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_06_SHOWN(r),
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'RECENT_SURGERY_HOSPITALIZATION_OR_IMMOBILITY', label: '최근 수술을 받았거나 입원했거나, 오래 움직이지 못했음' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'RECENT_SURGERY_HOSPITALIZATION_OR_IMMOBILITY', label: '최근 수술을 받았거나 입원했거나, 오래 움직이지 못했음' },
       { value: 'PRIOR_DVT_OR_PE', label: '이전에 다리 혈전(DVT)이나 폐색전증(PE)을 진단받은 적이 있음' },
       { value: 'ACTIVE_CANCER', label: '현재 암을 진단받았거나 치료 중임' },
       { value: 'PREGNANCY_PUERPERIUM_OR_HORMONAL_CONTEXT', label: '임신 중이거나 출산 직후이거나, 호르몬제(피임약 등)를 복용 중임' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2221,10 +2224,9 @@ const KNEE_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_KNEE(r) && IS_KNEE_06_SHOWN(r) && !computeFlags(r).general_red,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'CHEST_PAIN_OR_TIGHTNESS', label: '가슴 통증이나 답답함' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'CHEST_PAIN_OR_TIGHTNESS', label: '가슴 통증이나 답답함' },
       { value: 'SHORTNESS_OF_BREATH', label: '숨이 차거나 숨쉬기 어려움' },
       { value: 'HEMOPTYSIS', label: '피가 섞인 기침' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2252,14 +2254,13 @@ const KNEE_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_KNEE,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'NEW_SENSORY_CHANGE', label: '새로 생긴 저림·감각 둔화/이상감각' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'NEW_SENSORY_CHANGE', label: '새로 생긴 저림·감각 둔화/이상감각' },
       { value: 'NEW_WEAKNESS', label: '새로 생긴 뚜렷한 힘빠짐' },
       { value: 'NEW_BLADDER_BOWEL_CONTROL_CHANGE', label: '새로 생긴 소변·대변 조절 변화' },
       {
         value: 'NEW_HIP_GROIN_PAIN_OR_WEIGHT_BEARING_DIFFICULTY_NOT_EXPLAINED_BY_KNEE',
         label: '무릎 증상과 함께 새로 생긴 엉덩이·사타구니 통증이 있거나, 무릎만으로 설명하기 어려울 정도로 다리에 체중을 싣기 힘듦',
       },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2306,12 +2307,11 @@ const KNEE_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_KNEE,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'WALKING_OR_STANDING', label: '걷거나 서 있을 때' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'WALKING_OR_STANDING', label: '걷거나 서 있을 때' },
       { value: 'STAIRS', label: '계단을 오르내릴 때' },
       { value: 'SQUAT_OR_CHAIR_RISE', label: '쪼그려 앉거나 의자에서 일어날 때' },
       { value: 'RUNNING_OR_JUMPING', label: '뛰거나 점프할 때' },
       { value: 'PROLONGED_SITTING', label: '오래 앉아 있을 때' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2437,10 +2437,9 @@ const ELBOW_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_ELBOW_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '팔꿈치 모양이 확연히 달라졌거나 빠진 채 제자리로 돌아오지 않은 느낌' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '팔꿈치 모양이 확연히 달라졌거나 빠진 채 제자리로 돌아오지 않은 느낌' },
       { value: 'COLD_PALE_BLUE_HAND', label: '손이나 손목이 갑자기 매우 차갑거나 창백·푸르게 변함' },
       { value: 'MAJOR_NEW_DISTAL_NEURO_CHANGE', label: '손·손가락 감각이나 힘이 갑자기 크게 떨어짐' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2568,9 +2567,8 @@ const ELBOW_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && IS_ELBOW_09_SHOWN(r),
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'NEW_OR_WORSENING_HAND_WEAKNESS', label: '손의 힘이 새로 빠지거나 점점 심해짐(물건을 자주 떨어뜨리는 것 포함)' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'NEW_OR_WORSENING_HAND_WEAKNESS', label: '손의 힘이 새로 빠지거나 점점 심해짐(물건을 자주 떨어뜨리는 것 포함)' },
       { value: 'VISIBLE_MUSCLE_WASTING', label: '손의 근육이 눈에 띄게 마르거나 홀쭉해짐' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2584,9 +2582,8 @@ const ELBOW_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_ELBOW_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'NEW_NECK_SHOULDER_SYMPTOM', label: '목이나 어깨에 새로 생긴 통증·뻣뻣함이 함께 있음' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'NEW_NECK_SHOULDER_SYMPTOM', label: '목이나 어깨에 새로 생긴 통증·뻣뻣함이 함께 있음' },
       { value: 'MULTI_LEVEL_OR_BILATERAL_SENSORY_CHANGE', label: '양팔 또는 여러 부위에 동시에 저림·감각이상이 있음' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2604,11 +2601,10 @@ const ELBOW_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_ELBOW_SAFETY(r) && !computeFlags(r).general_red,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'CHEST_PAIN_OR_TIGHTNESS', label: '가슴 통증이나 답답함' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'CHEST_PAIN_OR_TIGHTNESS', label: '가슴 통증이나 답답함' },
       { value: 'SHORTNESS_OF_BREATH', label: '숨이 차거나 숨쉬기 어려움' },
       { value: 'COLD_SWEAT', label: '식은땀' },
       { value: 'NAUSEA', label: '메스꺼움' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2655,12 +2651,11 @@ const ELBOW_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_ELBOW_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'GRIPPING', label: '물건을 쥘 때' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'GRIPPING', label: '물건을 쥘 때' },
       { value: 'LIFTING_CARRYING', label: '들거나 나를 때' },
       { value: 'PUSHING', label: '밀 때' },
       { value: 'PULLING', label: '당길 때' },
       { value: 'ROTATION', label: '손목을 돌릴 때(회내/회외)' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2734,12 +2729,11 @@ const WRIST_HAND_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '손목·손·손가락 모양이 확연히 달라졌거나 관절이 빠진 채 제자리로 돌아오지 않은 느낌' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'GROSS_DEFORMITY_OR_STILL_OUT', label: '손목·손·손가락 모양이 확연히 달라졌거나 관절이 빠진 채 제자리로 돌아오지 않은 느낌' },
       { value: 'COLD_PALE_BLUE_DIGITS', label: '손이나 손가락이 갑자기 매우 차갑거나 창백·푸르게 변함' },
       { value: 'MAJOR_NEW_DISTAL_NEURO_CHANGE', label: '손·손가락 감각이나 힘이 갑자기 크게 떨어짐' },
       { value: 'UNCONTROLLED_HEAVY_BLEEDING', label: '눌러도 잘 멈추지 않는 심한 출혈이 있음' },
       { value: 'SEVERE_OPEN_WOUND_WITH_DEEP_EXPOSURE', label: '상처 사이로 뼈·힘줄·관절처럼 깊은 조직이 드러나 보임' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2815,9 +2809,8 @@ const WRIST_HAND_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'CUT_OR_PENETRATING_WOUND', label: '베이거나 찔리거나 뾰족한 물체에 관통된 상처' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'CUT_OR_PENETRATING_WOUND', label: '베이거나 찔리거나 뾰족한 물체에 관통된 상처' },
       { value: 'HUMAN_OR_ANIMAL_BITE', label: '사람 또는 동물에게 물린 상처(주먹을 치다가 상대 치아에 손등이 찢어진 경우 포함)' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2864,10 +2857,9 @@ const WRIST_HAND_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && isWh07aShown(r['WH_06'] as string[] | undefined, r['WH_07'] as string | undefined),
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'SEVERE_PAIN_WHEN_STRAIGHTENING', label: '손가락을 펴려고 하면 통증이 매우 심함' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'SEVERE_PAIN_WHEN_STRAIGHTENING', label: '손가락을 펴려고 하면 통증이 매우 심함' },
       { value: 'TENDS_TO_STAY_FLEXED', label: '아픈 손가락을 자꾸 굽힌 채로 두게 됨' },
       { value: 'DIFFUSE_FUSIFORM_SWELLING', label: '손가락 전체가 소시지처럼 두루 붓는 느낌' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2897,10 +2889,9 @@ const WRIST_HAND_QUESTIONS: Question[] = [
     showIf: (r) => IS_PRIMARY_WRIST_HAND_SAFETY(r) && IS_WH_08_SHOWN(r),
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'NEW_OR_WORSENING_GRIP_PINCH_WEAKNESS', label: '손의 쥐는 힘이나 집는 힘이 새로 약해지거나 점점 심해짐' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'NEW_OR_WORSENING_GRIP_PINCH_WEAKNESS', label: '손의 쥐는 힘이나 집는 힘이 새로 약해지거나 점점 심해짐' },
       { value: 'DROPPING_OBJECTS', label: '예전보다 물건을 자주 떨어뜨림' },
       { value: 'VISIBLE_THENAR_OR_INTRINSIC_WASTING', label: '엄지두덩이나 손가락 사이 근육이 눈에 띄게 마르거나 홀쭉해짐' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2933,13 +2924,12 @@ const WRIST_HAND_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'GRIPPING', label: '물건을 쥘 때' },
+      { value: 'NONE', label: '특별히 악화되는 동작 없음' }, { value: 'GRIPPING', label: '물건을 쥘 때' },
       { value: 'PINCHING', label: '엄지와 손가락으로 집을 때' },
       { value: 'THUMB_MOTION', label: '엄지손가락을 움직일 때' },
       { value: 'WRIST_ROTATION', label: '손목·전완을 돌릴 때' },
       { value: 'WEIGHT_BEARING_THROUGH_HAND', label: '손으로 바닥이나 의자를 짚을 때' },
       { value: 'REPETITIVE_HAND_USE', label: '손을 반복해서 오래 사용할 때' },
-      { value: 'NONE', label: '특별히 악화되는 동작 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -2982,11 +2972,10 @@ const WRIST_HAND_QUESTIONS: Question[] = [
     showIf: IS_PRIMARY_WRIST_HAND_SAFETY,
     exclusive: ['NONE', 'UNKNOWN'],
     options: [
-      { value: 'NEW_NECK_SHOULDER_SYMPTOM', label: '목이나 어깨에 새로 생긴 통증·뻣뻣함이 함께 있음' },
+      { value: 'NONE', label: '해당 없음' }, { value: 'NEW_NECK_SHOULDER_SYMPTOM', label: '목이나 어깨에 새로 생긴 통증·뻣뻣함이 함께 있음' },
       { value: 'BILATERAL_OR_MULTIPLE_SENSORY', label: '양손 또는 여러 부위에 동시에 저림·감각이상이 있음' },
       { value: 'MULTIPLE_SWOLLEN_JOINTS', label: '손가락 여러 관절 또는 다른 관절도 함께 붓고 아픔' },
       { value: 'PROLONGED_MORNING_STIFFNESS', label: '여러 관절이 아침에 오래 뻣뻣한 편임' },
-      { value: 'NONE', label: '해당 없음' },
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
@@ -3023,10 +3012,10 @@ const ANKLE_FOOT_ROUTING_QUESTIONS: Question[] = [
 const ANKLE_FOOT_QUESTIONS: Question[] = [
   { id:'AF_01', variable:'ankle_foot_recent_trauma', input:'single_choice', question:'최근 넘어지거나 접질리거나 부딪히는 등 이 부위에 다친 일이 있었나요?', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, options:[{value:'YES',label:'네'},{value:'NO',label:'아니요'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
   { id:'AF_02', variable:'ankle_foot_limb_threatening_screen', input:'multi_choice', question:'지금 이 부위나 발에 다음과 같은 변화가 있나요?', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, exclusive:['NONE','UNKNOWN'], options:[
-    {value:'SEVERE_OPEN_INJURY_OR_BONE_EXPOSURE',label:'심한 열린 상처가 있거나 뼈가 보임'}, {value:'UNCONTROLLED_HEAVY_BLEEDING',label:'피가 많이 나고 잘 멎지 않음'}, {value:'FOOT_COLD_PALE_BLUE_OR_SEVERE_CIRCULATION_CHANGE',label:'발이 갑자기 매우 차갑거나 창백·푸르게 변함'}, {value:'NEW_MAJOR_NUMBNESS_OR_WEAKNESS_AFTER_TRAUMA',label:'다친 뒤 발·발가락 감각이나 힘이 갑자기 크게 떨어짐'}, {value:'NONE',label:'해당 없음'}, {value:'UNKNOWN',label:'잘 모르겠어요'}] },
+    {value:'NONE',label:'해당 없음'}, {value:'SEVERE_OPEN_INJURY_OR_BONE_EXPOSURE',label:'심한 열린 상처가 있거나 뼈가 보임'}, {value:'UNCONTROLLED_HEAVY_BLEEDING',label:'피가 많이 나고 잘 멎지 않음'}, {value:'FOOT_COLD_PALE_BLUE_OR_SEVERE_CIRCULATION_CHANGE',label:'발이 갑자기 매우 차갑거나 창백·푸르게 변함'}, {value:'NEW_MAJOR_NUMBNESS_OR_WEAKNESS_AFTER_TRAUMA',label:'다친 뒤 발·발가락 감각이나 힘이 갑자기 크게 떨어짐'}, {value:'UNKNOWN',label:'잘 모르겠어요'}] },
   { id:'AF_03', variable:'ankle_foot_post_trauma_walking', input:'single_choice', question:'다친 뒤 지금 체중을 싣거나 걸을 때 어느 정도인가요?', required:true, step:'상세 증상', showIf:(r)=>IS_PRIMARY_ANKLE_FOOT_SAFETY(r)&&r['AF_01']==='YES', options:[{value:'CAN_WALK_NORMALLY',label:'평소처럼 걸을 수 있음'},{value:'CAN_WALK_BUT_MARKED_DIFFICULTY',label:'걸을 수 있지만 많이 불편함'},{value:'CANNOT_BEAR_WEIGHT_OR_TAKE_4_STEPS',label:'체중을 싣기 어렵거나 4걸음을 걷기 어려움'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
-  { id:'AF_04', variable:'ankle_foot_midfoot_supportive_screen', input:'multi_choice', question:'다친 뒤 발 중간 부위와 관련해 다음 중 해당되는 것이 있나요?', required:true, step:'상세 증상', showIf:IS_AF_04_SHOWN, exclusive:['NONE','UNKNOWN'], options:[{value:'NEW_PLANTAR_MIDFOOT_BRUISING_NOTICED',label:'발바닥 중간에 새 멍이 생긴 것을 봄'},{value:'MARKED_MIDFOOT_FUNCTION_OR_WEIGHT_BEARING_DIFFICULTY',label:'발 중간 통증 때문에 체중을 싣거나 걷기가 매우 어려움'},{value:'NONE',label:'해당 없음'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
-  { id:'AF_05', variable:'ankle_foot_achilles_rupture_screen', input:'multi_choice', question:'다친 뒤 발목 뒤쪽이나 종아리와 관련해 다음 중 해당되는 것이 있나요?', required:true, step:'상세 증상', showIf:IS_AF_05_SHOWN, exclusive:['NONE','UNKNOWN'], options:[{value:'SUDDEN_POP_OR_SNAP_BEHIND_ANKLE_OR_CALF',label:'발목 뒤나 종아리에서 갑자기 뚝/퍽 하는 느낌이나 소리가 남'},{value:'NEW_MARKED_LOSS_OF_PUSH_OFF_OR_TOE_RISE',label:'발로 밀어내거나 까치발 서는 힘이 갑자기 크게 떨어짐'},{value:'NONE',label:'해당 없음'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_04', variable:'ankle_foot_midfoot_supportive_screen', input:'multi_choice', question:'다친 뒤 발 중간 부위와 관련해 다음 중 해당되는 것이 있나요?', required:true, step:'상세 증상', showIf:IS_AF_04_SHOWN, exclusive:['NONE','UNKNOWN'], options:[{value:'NONE',label:'해당 없음'}, {value:'NEW_PLANTAR_MIDFOOT_BRUISING_NOTICED',label:'발바닥 중간에 새 멍이 생긴 것을 봄'},{value:'MARKED_MIDFOOT_FUNCTION_OR_WEIGHT_BEARING_DIFFICULTY',label:'발 중간 통증 때문에 체중을 싣거나 걷기가 매우 어려움'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
+  { id:'AF_05', variable:'ankle_foot_achilles_rupture_screen', input:'multi_choice', question:'다친 뒤 발목 뒤쪽이나 종아리와 관련해 다음 중 해당되는 것이 있나요?', required:true, step:'상세 증상', showIf:IS_AF_05_SHOWN, exclusive:['NONE','UNKNOWN'], options:[{value:'NONE',label:'해당 없음'}, {value:'SUDDEN_POP_OR_SNAP_BEHIND_ANKLE_OR_CALF',label:'발목 뒤나 종아리에서 갑자기 뚝/퍽 하는 느낌이나 소리가 남'},{value:'NEW_MARKED_LOSS_OF_PUSH_OFF_OR_TOE_RISE',label:'발로 밀어내거나 까치발 서는 힘이 갑자기 크게 떨어짐'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
   { id:'AF_06', variable:'ankle_foot_infection_screen', input:'single_choice', question:'현재 발이나 발목에 붉음·열감·붓기·상처와 관련해 가장 가까운 상태를 골라주세요.', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, options:[{value:'NO_CONCERN',label:'해당 없음'},{value:'LOCALIZED_STABLE_RED_HOT_SWOLLEN_OR_WOUND',label:'국소적으로 붉거나 뜨겁고 붓거나 상처가 있지만 빠르게 심해지지는 않음'},{value:'SYSTEMIC_OR_RAPIDLY_WORSENING',label:'몸 상태가 많이 안 좋거나 붓기·통증이 빠르게 심해지고 있음'},{value:'SEVERE_ISCHAEMIA_DEEP_INFECTION_OR_GANGRENE_CONCERN',label:'검게 변함·심한 순환장애·깊은 감염이 걱정될 정도의 변화가 있음'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
   { id:'AF_07', variable:'ankle_foot_dvt_pattern', input:'single_choice', question:'최근 한쪽 종아리나 아래다리가 새로 붓고 아픈가요?', required:true, step:'상세 증상', showIf:IS_AF_07_SHOWN, options:[{value:'NO',label:'아니요'},{value:'NEW_UNILATERAL_CALF_OR_LOWER_LEG_SWELLING_PAIN',label:'네, 한쪽이 새로 붓고 아파요'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
   { id:'AF_08', variable:'ankle_foot_progressive_neuro_screen', input:'single_choice', question:'외상과 별개로 발이나 발가락의 감각 저하 또는 힘 빠짐이 새로 생기거나 진행하고 있나요?', required:true, step:'상세 증상', showIf:IS_PRIMARY_ANKLE_FOOT_SAFETY, options:[{value:'NO',label:'아니요'},{value:'NEW_OR_PROGRESSIVE_DISTAL_NUMBNESS_OR_WEAKNESS',label:'네, 새로 생기거나 점점 심해지고 있어요'},{value:'UNKNOWN',label:'잘 모르겠어요'}] },
@@ -3123,12 +3112,12 @@ const STRESS_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: IS_PRIMARY_STRESS,
     options: [
+      { value: 'none', label: '특별한 몸 증상은 없어요' },
       { value: 'sleep', label: '잠이 더 불편해져요' },
       { value: 'digestion', label: '소화가 더 불편해져요' },
       { value: 'pain', label: '두통이나 통증이 심해져요' },
       { value: 'cardiac_sensation', label: '가슴 두근거림·답답함이 생겨요' },
       { value: 'sweating_heat', label: '땀이 나거나 몸이 달아올라요' },
-      { value: 'none', label: '특별한 몸 증상은 없어요' },
     ],
   },
 ]
@@ -3414,11 +3403,11 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'sleep') && SEC_NOT_PRIMARY('sleep')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'sleep_onset', label: '잠들기 어려워요' },
       { value: 'night_awakenings', label: '자다가 자주 깨요' },
       { value: 'early_waking', label: '너무 일찍 깨요' },
       { value: 'nonrestorative', label: '충분히 자도 개운하지 않아요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3432,12 +3421,12 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'digestion') && SEC_NOT_PRIMARY('digestion')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'indigestion', label: '소화가 잘 안 되고 더부룩해요' },
       { value: 'epigastric_discomfort', label: '명치나 윗배가 답답하거나 아파요' },
       { value: 'reflux', label: '속이 쓰리거나 신물이 올라와요' },
       { value: 'nausea', label: '메스껍거나 구역감이 있어요' },
       { value: 'poor_appetite', label: '입맛이 없어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3451,12 +3440,12 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'bowel') && SEC_NOT_PRIMARY('bowel')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'constipation', label: '변이 잘 안 나오거나 딱딱해요' },
       { value: 'diarrhea', label: '묽은 변이나 설사가 잦아요' },
       { value: 'alternating', label: '변비와 설사가 번갈아 있어요' },
       { value: 'incomplete_emptying', label: '보고 나도 덜 본 느낌이 있어요' },
       { value: 'abdominal_discomfort', label: '배가 아프거나 불편하면서 대변 문제가 있어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3470,6 +3459,7 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'pain') && SEC_NOT_PRIMARY('pain')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'neck_shoulder', label: '목·어깨' },
       { value: 'low_back_pelvis', label: '허리·골반' },
       { value: 'arm_hand', label: '팔·손' },
@@ -3478,7 +3468,6 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
       { value: 'head_face_jaw', label: '머리·얼굴·턱' },
       { value: 'chest_rib', label: '가슴·갈비뼈 주변' },
       { value: 'abdomen', label: '배 주변' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3492,6 +3481,7 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'urinary') && SEC_NOT_PRIMARY('urinary')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'frequency', label: '소변을 자주 봐요' },
       { value: 'urgency', label: '갑자기 소변이 마려워 참기 어려워요' },
       { value: 'nocturia', label: '밤에 자다가 소변 때문에 깨요' },
@@ -3499,7 +3489,6 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
       { value: 'incomplete_emptying', label: '소변을 봐도 덜 본 느낌이 있어요' },
       { value: 'dysuria', label: '소변 볼 때 아프거나 불편해요' },
       { value: 'incontinence', label: '소변이 새는 경우가 있어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3513,13 +3502,13 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'fatigue') && SEC_NOT_PRIMARY('fatigue')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'morning_fatigue', label: '아침부터 기운이 없어요' },
       { value: 'exertional_fatigue', label: '조금만 움직여도 쉽게 지쳐요' },
       { value: 'later_day_fatigue', label: '오후나 저녁에 더 처져요' },
       { value: 'poor_recovery', label: '쉬어도 회복이 잘 안 돼요' },
       { value: 'heaviness', label: '몸이 무겁고 늘어져요' },
       { value: 'sleepiness', label: '졸리고 잠이 쏟아져요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3533,13 +3522,13 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'stress') && SEC_NOT_PRIMARY('stress')(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'worry', label: '걱정이나 생각이 많아요' },
       { value: 'tension', label: '긴장되고 예민해요' },
       { value: 'irritability', label: '짜증이나 화가 자주 나요' },
       { value: 'low_mood', label: '마음이 가라앉고 의욕이 없어요' },
       { value: 'palpitation_tightness', label: '가슴이 두근거리거나 답답할 때가 있어요' },
       { value: 'somatic_worsening', label: '스트레스를 받으면 몸 증상이 심해져요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3553,13 +3542,13 @@ const SECONDARY_SHORT_QUESTIONS: Question[] = [
     exclusive: 'none',
     showIf: (r) => has(r, 'SECONDARY_01', 'women') && SEC_NOT_PRIMARY_WOMEN(r),
     options: [
+      { value: 'none', label: '특별히 없어요' },
       { value: 'irregular_cycle', label: '생리 주기가 불규칙해요' },
       { value: 'dysmenorrhea', label: '생리통이 심해요' },
       { value: 'flow_change', label: '생리양이 너무 많거나 적어요' },
       { value: 'premenstrual', label: '생리 전후 몸이나 기분 변화가 심해요' },
       { value: 'discharge_discomfort', label: '냉·분비물이나 질 불편감이 있어요' },
       { value: 'menopause_symptoms', label: '갱년기 증상이 있어요' },
-      { value: 'none', label: '특별히 없어요' },
     ],
   },
   {
@@ -3776,6 +3765,10 @@ const HISTORY_QUESTIONS: Question[] = [
     step: '병력정보',
     exclusive: 'none',
     options: [
+      // Tablet UX v2.4 §22 (PO 2026-09-08): 선택지가 12개라 태블릿에서
+      // 확실히 스크롤이 생긴다 -- 대다수인 "없음" 환자가 목록 끝까지
+      // 내려가야 했다. exclusive:'none'이라 누르는 즉시 나머지가 해제된다.
+      { value: 'none', label: '없음' },
       { value: 'cardiovascular', label: '심장·혈관 질환' },
       { value: 'diabetes', label: '당뇨' },
       { value: 'cerebrovascular', label: '뇌혈관 질환' },
@@ -3790,7 +3783,6 @@ const HISTORY_QUESTIONS: Question[] = [
       // 추가이며 기존 선택지는 건드리지 않는다.
       { value: 'osteoporosis', label: '골다공증' },
       { value: 'other', label: '기타' },
-      { value: 'none', label: '없음' },
     ],
   },
   {
@@ -3862,12 +3854,11 @@ const HISTORY_QUESTIONS: Question[] = [
       return true
     },
     options: [
-      { value: 'pregnant', label: '임신 중이에요' },
+      { value: 'none', label: '해당 없음' }, { value: 'pregnant', label: '임신 중이에요' },
       { value: 'pregnancy_possible', label: '임신 가능성이 있어요' },
       { value: 'postpartum_1y', label: '출산 후 1년 이내예요' },
       { value: 'breastfeeding', label: '모유수유 중이에요' },
       { value: 'menopause', label: '폐경했어요' },
-      { value: 'none', label: '해당 없음' },
       { value: 'unknown', label: '잘 모르겠어요' },
     ],
   },

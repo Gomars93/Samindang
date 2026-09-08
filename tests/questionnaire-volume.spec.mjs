@@ -149,14 +149,21 @@ const MALE = { ...IDENTITY, ID_03: 'male' }
 // greedy picker never lands on a chronic-onset duration for these seeds,
 // so that pair (gated on IS_LBP_CHRONIC_ONSET) is never reached by this
 // floor walk either before or after.
+// 2026-09-08 상담 내용 2화면 순서 재설계: 참고 증상(다중)이 먼저 오고, 그중
+// 하나를 고르는 "오늘 자세히"(단일)는 **고를 후보가 있을 때만** 뜬다. 최소부담
+// 걷기는 참고 증상에 '없음'을 고르므로 이제 그 화면이 통째로 사라진다 --
+// 아래 여섯 프로필이 전부 정확히 -1 screen / -2 taps 인 이유가 그것이다
+// (이전에는 '없음'을 고르려고 한 화면을 반드시 지나야 했다).
+// '추가상세(수면)' 프로필만 두 화면을 모두 seed하는데, walk는 seed된 질문을
+// 세지 않으므로 그 프로필의 수치에는 두 화면이 빠져 있다(실제 환자는 +2 화면).
 const PROFILES = [
-  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 24, taps: 48 },
-  { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 29, taps: 60 },
-  { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 28, taps: 56 },
-  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', ADDITIONAL_DETAIL_01: 'sleep' }, screens: 26, taps: 52 },
-  { name: 'symptom · 수면', seed: { ...IDENTITY, VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: 'sleep' }, screens: 17, taps: 34 },
-  { name: 'herbal · 증상치료(소화)', seed: { ...IDENTITY, VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, screens: 25, taps: 51 },
-  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
+  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
+  { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 28, taps: 58 },
+  { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 27, taps: 54 },
+  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 25, taps: 50 },
+  { name: 'symptom · 수면', seed: { ...IDENTITY, VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: 'sleep' }, screens: 16, taps: 32 },
+  { name: 'herbal · 증상치료(소화)', seed: { ...IDENTITY, VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, screens: 24, taps: 49 },
+  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 22, taps: 44 },
 ]
 
 console.log('=== questionnaire information volume (minimum-burden floor) ===\n')

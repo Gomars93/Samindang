@@ -12,7 +12,9 @@
   - **응급 `SAFETY_01`** — `'해당 없음'` 맨 끝은 **의도된 설계**였다(v2.3 §17 주석 "안전문항엔 재배치 절대 금지" + W8 CRITICAL 테스트가 잠금).
 - **쟁점 2건을 PO에게 올려 판단받았다**:
   - `SAFETY_01`: 구현자는 **그대로 두기**를 권장(satisficing → 가슴통증·편측 위약·의식소실·대량출혈 놓침, 7개라 스크롤 이득도 불확실).
-    **PO가 트레이드오프를 알고 최상단 배치 선택** → 구현. 재검토 조건을 `DECISIONS.md`에 명시(`red_flag_general=['none']` 비율 상승 시 되돌림).
+    **PO가 트레이드오프를 알고 최상단 배치 선택** → 구현. 구현자가 제안한 파일럿 모니터링(`red_flag_general=['none']` 비율 감시)은
+    **PO가 같은 날 철회**했다 — "1차의료원에 잘 오지도 않을 뿐더러, 본인이 알아서 판단하겠지"(base rate + 환자 자가 판단이 1차 방어선).
+    구현자 반론(소실된 증상인 TIA·실신은 오히려 1차 진료로 오고 자가 판단이 틀리는 유형)은 `DECISIONS.md`에 기록만 남겼다 — 결정 불변.
   - `HISTORY_01`(12개): 구현자 권장과 일치 → 올림. 단 `osteoporosis`가 골절 위험 red flag 원천인 하이브리드임을 기록.
 - **11문항 재배치**: `SAFETY_01` · `HISTORY_01` · `SEC_PAIN_01` · `SEC_URINARY_01` · `SEC_FATIGUE_01` · `SEC_STRESS_01` ·
   `SEC_WOMEN_01` · `STRESS_03` · `SEC_GI_01` · `SEC_BOWEL_01` · `SEC_SLEEP_01`. **표시 순서만** — 값 집합·타입·`exclusive`·저장·원장 payload 전부 무변경
@@ -33,7 +35,7 @@ CES 포함 일괄 변경은 승인 범위 밖이라 **손대지 않았다**.
 2. 이 브랜치 PR도 Fable 독립 검수 → PO 병합 판단.
 3. **클리닉 PC `.env` 확인**: 태블릿 전송 실패는 변수명이 원인일 수 있다 — 올바른 이름은 `VITE_SAMINDANG_SERVER_URL=http://<원장PC IP>:4317`
    (`src/lib/serverClient.ts:24`, RUNBOOK §5). 포트 `:4317` 필수. 수정 후 `npm run build` 재실행.
-4. 파일럿 관찰 시 `SAFETY_01` 재검토 조건(위 DECISIONS) 모니터링.
+4. ~~파일럿 관찰 시 `SAFETY_01` 재검토 조건 모니터링~~ — **PO 철회(2026-09-08)**. 파일럿 관찰 항목 아님.
 
 ---
 

@@ -238,3 +238,6 @@ tests/.neck-vignettes-*-bundle.mjs
 
 # esbuild bundles used by tests/*-exercise-core.vignettes.spec.mjs (shoulder/knee/wrist-hand/ankle-foot; regenerated, not source)
 tests/.region-vignettes-*-bundle.mjs
+
+# 운곡본초학 ingestion 텍스트 캐시 (원서 파생물 — 커밋 금지)
+_tools/ungok/_cache/

@@ -1,5 +1,52 @@
 # Current Handoff
 
+## 2026-09-10 (47): **운곡본초학 → AI 본초 KB — 원격 세션에서 원서 접근 불가 확정, 로컬 실행용 툴체인 + 회귀 테스트 83개 구축**
+
+**브랜치**: `claude/ungok-herbal-kb-full-build-2b9nml`.
+
+**지시**: 운곡본초학 상·하 PDF 를 Obsidian `07_본초_Library` 로 **전수 처리 + QA** 하라 (중간 샘플에서 멈추지 말 것).
+
+### 확정된 사실 — 이 환경에서는 전수 처리가 불가능하다
+
+원서 본문에 도달할 경로가 전부 막혀 있다(근거는 `docs/UNGOK_KB_INVENTORY_2026-09-10.md` §1):
+Drive 커넥터 `read_file_content` 가 상·하권 **둘 다 0바이트**를 반환하고(같은 계정 소형 PDF 는
+정상 반환 — 커넥터 문제 아님), 컨테이너는 `drive.google.com` 에 CONNECT 403 으로 차단되며,
+`.mcp.json` 의 `notebooklm` 은 `c:\Users\ASUS\...` 로컬 Windows 바이너리라 실행되지 않는다.
+기존 KB 의 하권 note 들은 **로컬 세션 산출물**로 보는 것이 정합적이다.
+
+→ 그래서 "일부 약재만 처리한 중간본"을 만들지 않고, **로컬 PC 에서 전수 실행할 수 있는
+툴체인 + 검증 테스트 + 현재 KB 실사**를 산출물로 삼았다.
+
+### 한 것
+- **기존 KB 전수 실사** (Drive 읽기 전용): `01_약재별` 126개 파일 frontmatter 덤프 +
+  `00_Source_Registry`/색인 3폴더 스냅샷. 원자료는 `_tools/reports/`.
+  - 상권 **0건**, 하권 125건. `ocr_uncertain: true` 99건. YAML 오류 0, 약재명 중복 0.
+  - **broken wikilink 93건** — A세대 note 가 전부 다는 "장 전체 원문 `[[보익약]]" 류 링크의
+    대상 note 가 12종 모두 미생성.
+  - **안전성 색인 요구 8종 중 0종 존재.** 효능 22축 중 축 파일 0개(복합 파일 10개로 9축 부분 커버).
+  - `00_Source_Registry` 에 **MASTER_INDEX 가 없다**(Drive 전체 검색 0건).
+  - **provenance 불일치**: MANIFEST 는 하권 chunk 1개만 IN_PROGRESS·검수면 p.180–181 2면인데,
+    A세대 93개 note 는 PDF p.173–681 을 인용한다. 추측하지 않고 대조 절차를 4단계로 남겼다.
+- **툴체인 `_tools/ungok/`** — extract / master_index / build_notes / build_indexes / qa / inventory
+  + `lib/` 9모듈 + 통제어휘·처방독음·한자독음 데이터. 사용법 `_tools/ungok/README.md`.
+- **회귀 테스트 `tests/ungok/` 83개** — 합성 PDF 로 추출→MASTER INDEX→note→색인→QA 전 구간.
+  원서 없이 돌아간다.
+
+### 검증
+`python3 -m pytest tests/ungok -q` → **83 passed**. 저장소 기존 코드는 건드리지 않았다
+(`src/`, `server/`, `tablet core/` 변경 0).
+
+### Next Recommended Action
+1. **로컬 PC 에서** `pip install PyMuPDF pyyaml pytest && python3 -m pytest tests/ungok -q`
+2. `_tools/ungok/README.md` 의 실행 순서대로 `ungok_extract.py` 부터 — 여기서 **상권의 페이지 수와
+   텍스트 레이어 유무가 처음으로 사실로 확정된다.**
+3. MASTER INDEX 의 `herb` 빈칸(= 한자표제 독음 미확정)이 전수처리의 실제 병목이다.
+   `_tools/ungok/data/kb_seed_readings.tsv` 보완이 우선순위.
+4. A세대 93건 `source_pdf_pages` ↔ 캐시 대조로 provenance 불일치 판정.
+5. QA exit 0 이 되기 전에는 "전수처리 완료"라고 쓰지 않는다.
+
+---
+
 ## 2026-09-08 (최신 46): **문진 "없음" 최상단 부위 팩 34문항 확장 (v2.4 §22 후속)** — 이제 문진 전체 단일 규칙(none/NONE = index 0). PR #34 merge 완료
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO에게 "34문항도 올릴까요?" 확인 질문 → **"34문항도 올린다."**

@@ -16,7 +16,7 @@
 // like-for-like. The patient screen resolves wording/options from coreSpec
 // by id; the server never carries question text.
 export const DETAIL_CHECK_COMMON_QUESTION_IDS = Object.freeze(['VISIT_04_SYMPTOM_IMPACT'])
-export const DETAIL_CHECK_LBP_QUESTION_IDS = Object.freeze(['LBP_12', 'LBP_13', 'LBP_14'])
+export const DETAIL_CHECK_LBP_QUESTION_IDS = Object.freeze(['LBP_12', 'LBP_13', 'LBP_14', 'LBP_15', 'LBP_16'])
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 

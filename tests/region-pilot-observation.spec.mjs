@@ -236,7 +236,7 @@ const FOLLOW_UPS = [
   assert('요통으로 돈다', status === 0 && out.includes('요통 운동 파일럿 — 관찰 항목 자동 집계'))
   assert('요통 주호소 2건 (목 제외)', /요통 주호소\s+:\s*2건/.test(out))
   assert('요통은 옛 필드에서 방향성 반응을 읽는다: 신전 1 / 굴곡 1', countFor(out, '신전 호전') === 1 && countFor(out, '굴곡 호전') === 1)
-  assert('요통 재질문 문항은 서버 표(LBP_12~14)', out.includes('대상 문항: LBP_12, LBP_13, LBP_14'))
+  assert('요통 재질문 문항은 서버 표(LBP_12~16)', out.includes('대상 문항: LBP_12, LBP_13, LBP_14, LBP_15, LBP_16'))
 }
 assert('본체에 부위 id가 하드코딩되지 않는다 (neck_exam_/NECK_12/NECK_DIR/\'neck\')', !/neck_exam_|NECK_12|NECK_DIR|'neck'/.test(SOURCE))
 assert('본체는 기록의 부위를 화면과 같은 규칙(drivingRegion)으로 정한다', /drivingRegion\(responses\) !== region/.test(SOURCE) && !/low_back_pelvis/.test(SOURCE))

@@ -156,5 +156,5 @@ export const LBP_REGION_PACK: RegionPack = {
   evaluateSafety: evaluateLbpSafety,
   // `server/detailCheck.js`의 `DETAIL_CHECK_LBP_QUESTION_IDS`와 같아야 한다
   // (`tests/detail-check.spec.mjs` parity).
-  detailCheckQuestionIds: ['LBP_12', 'LBP_13', 'LBP_14'],
+  detailCheckQuestionIds: ['LBP_12', 'LBP_13', 'LBP_14', 'LBP_15', 'LBP_16'],
 }

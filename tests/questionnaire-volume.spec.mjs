@@ -33,6 +33,7 @@
  * Run via `npm run test:questionnaire-volume` (part of `npm run test:all`).
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   ALL_QUESTIONS,
   visibleQuestions,
@@ -157,13 +158,13 @@ const MALE = { ...IDENTITY, ID_03: 'male' }
 // '추가상세(수면)' 프로필만 두 화면을 모두 seed하는데, walk는 seed된 질문을
 // 세지 않으므로 그 프로필의 수치에는 두 화면이 빠져 있다(실제 환자는 +2 화면).
 const PROFILES = [
-  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
+  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 25, taps: 50 },
   { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 28, taps: 58 },
   { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 27, taps: 54 },
-  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 25, taps: 50 },
+  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 27, taps: 54 },
   { name: 'symptom · 수면', seed: { ...IDENTITY, VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: 'sleep' }, screens: 16, taps: 32 },
   { name: 'herbal · 증상치료(소화)', seed: { ...IDENTITY, VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, screens: 24, taps: 49 },
-  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 22, taps: 44 },
+  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 24, taps: 48 },
 ]
 
 console.log('=== questionnaire information volume (minimum-burden floor) ===\n')
@@ -256,5 +257,48 @@ check(
   unexpected.length === 0,
   unexpected.map((ids) => ids.join('~')).join(' '),
 )
+
+/*
+ * LBP_15/LBP_16 (2026-09-19) — 목표 task anchor의 두 가지 계약.
+ *
+ * (1) LBP_15의 9개 값은 원장 화면 목표 기능 chip(`lbp_tf_*`)과 1:1이다.
+ *     한쪽만 늘면 매핑이 조용히 깨지므로 개수를 고정한다.
+ * (2) LBP_16을 PSFS라고 부르지 않는다. PSFS는 3항목 평균이고 보고된 MID/MCID
+ *     1.2~1.3은 어깨·상지 유래이며 요추 값이 없다(DR_07_재활_v1.md §1-4).
+ *     단일 항목 변형이 그 근거를 물려받은 것처럼 읽히면 안 된다. 주석에서
+ *     "PSFS라고 부르지 않는다"고 설명하는 것은 허용하고, **따옴표 안의 문자열
+ *     리터럴**(= 화면·EMR에 나갈 수 있는 텍스트)만 금지한다.
+ */
+{
+  const lbp15 = ALL_QUESTIONS.find((q) => q.id === 'LBP_15')
+  const lbp16 = ALL_QUESTIONS.find((q) => q.id === 'LBP_16')
+  check('LBP_15 exists and is a 9-option single choice (lbp_tf_* chips 9개와 1:1)',
+    lbp15 != null && lbp15.input === 'single_choice' && (lbp15.options ?? []).length === 9)
+  check('LBP_16 exists and is a 0~10 numeric scale',
+    lbp16 != null && lbp16.input === 'numeric_scale' && lbp16.scale?.min === 0 && lbp16.scale?.max === 10)
+  check('LBP_16 is only asked after LBP_15 is answered (빈 목표 task에 점수를 매기지 않는다)',
+    lbp16.showIf({ VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }) === false
+    && lbp16.showIf({ VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', LBP_15: 'WALKING' }) === true)
+
+  const surfaced = [lbp15.question, lbp16.question, lbp16.scale.minLabel, lbp16.scale.maxLabel,
+    ...(lbp15.options ?? []).map((o) => o.label)]
+  check('LBP_15/16의 환자 노출 문구에 PSFS가 없다', surfaced.every((t) => !/PSFS/i.test(t)))
+
+  const SOURCES = [
+    '../src/spec/coreSpec.ts',
+    '../src/spec/detailCheckQuestions.ts',
+    '../src/doctor/workspace/detailCheckBaseline.ts',
+    '../src/doctor/workspace/lbpTargetFunction.ts',
+  ].map((rel) => readFileSync(new URL(rel, import.meta.url), 'utf8'))
+  // 주석은 걷어내고 본다 — 설명하는 주석은 허용, 화면·EMR에 나갈 수 있는
+  // 코드 쪽 문자열만 금지. (주석 제거가 URL의 `//`까지 자를 수 있으나 이
+  // 검사는 특정 단어의 존재만 보므로 판정에 영향이 없다.)
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+  const quotedPsfs = /['"`][^'"`\n]*PSFS[^'"`\n]*['"`]/i
+  check('목표 기능 경로의 소스 어디에도 PSFS가 문자열 리터럴로 없다',
+    SOURCES.every((src) => !quotedPsfs.test(stripComments(src))))
+  // 이 단언이 살아 있는지(= 실제로 잡는지) 같은 규칙으로 확인한다.
+  check('PSFS 가드가 실제로 동작한다(양성 대조)', quotedPsfs.test("const label = 'PSFS 점수'"))
+}
 
 console.log(`\n${passed} questionnaire-volume assertions passed.`)

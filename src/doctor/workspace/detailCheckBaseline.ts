@@ -21,6 +21,8 @@ export const DETAIL_CHECK_RESPONSE_PATHS: Readonly<Record<string, readonly [modu
   LBP_12: ['lbp', 'recovery_expectation'],
   LBP_13: ['lbp', 'fear_avoidance'],
   LBP_14: ['lbp', 'work_impact'],
+  LBP_15: ['lbp', 'target_task'],
+  LBP_16: ['lbp', 'target_function_score'],
   NECK_12: ['neck', 'sustained_posture_aggravation'],
   SH08: ['shoulder', 'load_related_pattern'],
   KNEE_12: ['knee', 'morning_stiffness_duration'],

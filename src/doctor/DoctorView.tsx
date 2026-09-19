@@ -2074,6 +2074,8 @@ export function primaryModuleFields(
               { qid: 'LBP_12', value: m.lbp.recovery_expectation },
               { qid: 'LBP_13', value: m.lbp.fear_avoidance },
               { qid: 'LBP_14', value: m.lbp.work_impact },
+              { qid: 'LBP_15', value: m.lbp.target_task },
+              { qid: 'LBP_16', value: m.lbp.target_function_score },
             ]
           : []),
         /**

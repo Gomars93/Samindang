@@ -89,6 +89,9 @@ function deterministicValue(q, r) {
   if (q.input === 'single_choice') return opts[0].value
   if (q.input === 'short_text') return 'x'
   if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+  // 2026-09-19: LBP_16(목표 기능 점수)이 들어오며 walker가 numeric_scale을
+  // 처음 만났다. 결정적이어야 하므로 척도의 최솟값을 쓴다.
+  if (q.input === 'numeric_scale' && q.scale) return q.scale.min
   throw new Error(`deterministicValue: unknown input type ${q.input} for ${q.id}`)
 }
 
@@ -3804,6 +3807,9 @@ function benignPainFastPickLast(sex) {
     if (Object.prototype.hasOwnProperty.call(FORCED, q.id)) return FORCED[q.id]
     if (q.input === 'short_text') return 'x'
     if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+    // 2026-09-19: LBP_16(목표 기능 점수). "가장 양성인 답" walker이므로 척도는
+    // 최댓값(= 가장 잘 하는 쪽)을 고른다.
+    if (q.input === 'numeric_scale' && q.scale) return q.scale.max
     const opts = q.optionsIf ? q.optionsIf(r) : q.options
     const pick = opts[opts.length - 1]
     return q.input === 'multi_choice' ? [pick.value] : pick.value

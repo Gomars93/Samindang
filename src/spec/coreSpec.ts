@@ -1550,6 +1550,52 @@ const LBP_QUESTIONS: Question[] = [
       { value: 'UNKNOWN', label: '잘 모르겠어요' },
     ],
   },
+  /**
+   * LBP_15 / LBP_16 — Task–Load–Capacity 목표 task anchor (2026-09-19 PO 승인).
+   *
+   * `docs/CLINICAL_OS_NORTH_STAR.md` "통증 진료 모델" 절의 target task를 환자가
+   * 직접 고르게 한다. LBP_15의 9개 값은 원장 화면 목표 기능 chip
+   * (`lbpTargetFunction.ts`의 `lbp_tf_*`)과 **1:1**이다 — 둘 중 하나만 늘리면
+   * 매핑이 깨지므로 같이 바꾼다.
+   *
+   * ★ LBP_16을 **PSFS라고 부르지 않는다.** PSFS는 3항목 평균이고, 보고된
+   * 심리측정치(SEM 0.35~1.5, MID/MCID 1.2~1.3)는 **어깨·상지 연구에서 나온 값**
+   * 이다(`DR_07_재활_v1.md` §1-4). 요추 MCID 값은 존재하지 않는다. 단일 항목
+   * 변형은 그 근거를 물려받지 못하므로 **추적 anchor로만 쓰고 효과 주장
+   * outcome으로 쓰지 않는다.** 그 이름을 라벨·EMR 출력 등 **문자열 리터럴로**
+   * 넣지 않는다 — `tests/questionnaire-volume.spec.mjs`가 이 경로의 소스를
+   * 훑어 따옴표 안에 그 이름이 나타나면 실패시킨다(설명하는 주석은 허용).
+   */
+  {
+    id: 'LBP_15',
+    variable: 'lbp_target_task',
+    input: 'single_choice',
+    question: '허리 때문에 지금 가장 하기 힘든 동작 하나를 골라 주세요.',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r),
+    options: [
+      { value: 'WALKING', label: '걷기' },
+      { value: 'SITTING', label: '앉아 있기' },
+      { value: 'STANDING', label: '서 있기' },
+      { value: 'SIT_TO_STAND', label: '앉았다 일어서기' },
+      { value: 'DRESSING', label: '옷 입기·양말 신기' },
+      { value: 'LIFTING', label: '물건 들기' },
+      { value: 'SLEEP', label: '눕고 일어나기·자다가 뒤척이기' },
+      { value: 'WORK', label: '일·집안일 하기' },
+      { value: 'OTHER', label: '그 밖의 동작' },
+    ],
+  },
+  {
+    id: 'LBP_16',
+    variable: 'lbp_target_function_score',
+    input: 'numeric_scale',
+    question: '방금 고른 그 동작을 지금 어느 정도로 할 수 있나요?',
+    required: false,
+    step: '상세 증상',
+    showIf: (r) => IS_PRIMARY_LBP(r) && typeof r['LBP_15'] === 'string' && r['LBP_15'] !== '',
+    scale: { min: 0, max: 10, minLabel: '전혀 못 함', maxLabel: '문제 없이 함' },
+  },
 ]
 
 /**
@@ -4994,6 +5040,8 @@ export const buildResponsePayload = (r: Responses) => ({
       recovery_expectation: r['LBP_12'],
       fear_avoidance: r['LBP_13'],
       work_impact: r['LBP_14'],
+      target_task: r['LBP_15'],
+      target_function_score: r['LBP_16'],
     },
     neck: {
       recent_significant_trauma: r['NECK_01'],

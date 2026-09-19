@@ -44,7 +44,7 @@ function assert(name, cond) {
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const LBP_IDS = ['VISIT_04_SYMPTOM_IMPACT', 'LBP_12', 'LBP_13', 'LBP_14']
+const LBP_IDS = ['VISIT_04_SYMPTOM_IMPACT', 'LBP_12', 'LBP_13', 'LBP_14', 'LBP_15', 'LBP_16']
 
 function emptyWorkspaceFor(overrides) {
   return {
@@ -111,7 +111,7 @@ async function main() {
       }
       assert('parity: at least one due and one not-due case exercised (non-vacuous)', clientDue([{ createdAt: 'x', nextReassessmentPlan: plan('VISIT_COUNT', { afterVisitCount: 1 }) }], '2026-01-01') !== null)
       assert('localTodayISO is the LOCAL calendar date (yyyy-mm-dd)', /^\d{4}-\d{2}-\d{2}$/.test(localTodayISO()) && localTodayISO(new Date(2026, 8, 6, 23, 30)) === '2026-09-06')
-      assert('detailCheckQuestionIds: LBP set = common + 3 LBP items in order', detailCheckQuestionIds({ isLbp: true }).join(',') === LBP_IDS.join(','))
+      assert('detailCheckQuestionIds: LBP set = common + 5 LBP items in order', detailCheckQuestionIds({ isLbp: true }).join(',') === LBP_IDS.join(','))
       assert('detailCheckQuestionIds: non-LBP = common item only', detailCheckQuestionIds({ isLbp: false }).join(',') === 'VISIT_04_SYMPTOM_IMPACT')
     }
 
@@ -210,8 +210,13 @@ async function main() {
     /* ---------------- 4. patient screen ---------------- */
     {
       const questions = resolveDetailCheckQuestions([...LBP_IDS, 'UNKNOWN_ID', 'LBP_07B_NOT_A_REAL_ID'])
-      assert('resolver: unknown ids are skipped, the 4 planned items resolve in order', questions.map((q) => q.id).join(',') === LBP_IDS.join(','))
-      assert('resolver: LBP_12 is a 0~10 numeric scale, the other three single choice', questions[1].kind === 'numeric_scale' && questions[1].scale.max === 10 && questions.filter((q) => q.kind === 'single_choice').length === 3)
+      assert('resolver: unknown ids are skipped, the 6 planned items resolve in order', questions.map((q) => q.id).join(',') === LBP_IDS.join(','))
+      // 2026-09-19: LBP_15(목표 task, 단일선택) + LBP_16(목표 기능 점수, 0~10)이
+      // 재질문 표에 들어오면서 numeric_scale 2개 / single_choice 4개가 됐다.
+      assert('resolver: LBP_12·LBP_16은 0~10 numeric scale, 나머지 넷은 single choice',
+        questions[1].kind === 'numeric_scale' && questions[1].scale.max === 10
+        && questions[5].kind === 'numeric_scale' && questions[5].scale.max === 10
+        && questions.filter((q) => q.kind === 'single_choice').length === 4)
       assert('resolver: a free-text/other-input id is skipped, not rendered blank', resolveDetailCheckQuestions(['VISIT_01']).every((q) => q.kind === 'single_choice' || q.kind === 'numeric_scale'))
 
       // FollowUpScreen's privacy effects touch window.history/popstate; a
@@ -250,7 +255,9 @@ async function main() {
         const btn = groups[groupIndex].findAll((n) => n.type === 'button' && n.children.join('') === label)[0]
         await act(async () => btn.props.onClick())
       }
-      // groups: [0] pain NRS, [1] VISIT_04, [2] LBP_12 scale, [3] LBP_13, [4] LBP_14, [5] overall, [6] new symptom, [7] adverse
+      // groups: [0] pain NRS, [1] VISIT_04, [2] LBP_12 scale, [3] LBP_13, [4] LBP_14,
+      //         [5] LBP_15, [6] LBP_16 scale, [7] overall, [8] new symptom, [9] adverse
+      // (2026-09-19: LBP_15/LBP_16이 재질문 표에 들어오며 뒤쪽 3개 인덱스가 2씩 밀렸다.)
       // Answer EVERYTHING EXCEPT the detail items first -- the only thing
       // holding submit closed must then be the detail gate itself
       // (mutation: removing the detail gate has to flip this assertion).
@@ -259,15 +266,17 @@ async function main() {
       await act(async () => walkInput.props.onChange({ target: { value: '40분' } }))
       const groups = renderer.root.findAll((n) => n.props?.role === 'radiogroup')
       const firstOption = (g) => g.findAll((n) => n.type === 'button')[0]
-      await act(async () => firstOption(groups[5]).props.onClick())
-      await act(async () => firstOption(groups[6]).props.onClick())
       await act(async () => firstOption(groups[7]).props.onClick())
+      await act(async () => firstOption(groups[8]).props.onClick())
+      await act(async () => firstOption(groups[9]).props.onClick())
       assert('screen: with targets/overall/symptom/adverse answered, submit stays disabled ONLY because detail items are unanswered', submitBtn().props.disabled === true)
       await act(async () => firstOption(groups[1]).props.onClick())
       await clickRadio(2, '7')
       await act(async () => firstOption(groups[3]).props.onClick())
-      assert('screen: three of four detail items answered -> still disabled (every item required)', submitBtn().props.disabled === true)
       await act(async () => firstOption(groups[4]).props.onClick())
+      await act(async () => firstOption(groups[5]).props.onClick())
+      assert('screen: five of six detail items answered -> still disabled (every item required)', submitBtn().props.disabled === true)
+      await clickRadio(6, '6')
       assert('screen: submit enabled once every item including the detail items is answered', submitBtn().props.disabled === false)
       await act(async () => submitBtn().props.onClick())
       assert('screen: POST body carries detailAnswers for exactly the 4 asked ids', lastPost && lastPost.detailAnswers.map((a) => a.questionId).join(',') === LBP_IDS.join(','))

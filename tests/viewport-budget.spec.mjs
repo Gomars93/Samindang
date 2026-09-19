@@ -193,6 +193,11 @@ const PORTRAIT_ALLOWLISTS = {
     'BIRTH_03', 'HISTORY_01', 'SECONDARY_01', 'LBP_11', 'POSTPARTUM_02', 'SEC_PAIN_01',
     // Tablet UX v2.1 §11-13: ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01
     // replace SECONDARY_01's old mixed role with two longer grid2 screens.
+    // 2026-09-19 LBP_15(목표 task): 858px로 이 뷰포트의 850px를 8px 넘는다.
+    // 선택지 9개는 원장 화면 목표 기능 chip(`lbp_tf_*`)과 1:1이라 줄일 수 없다
+    // (`tests/questionnaire-volume.spec.mjs`가 개수를 단언한다). 800x1280
+    // 기준 뷰포트에서는 그대로 들어가므로 이 뷰포트만 내부 스크롤을 허용한다.
+    'LBP_15',
     'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01',
   ]),
   '1200x1920 (large portrait)': new Set(), // spacious enough that nothing needs inner scroll

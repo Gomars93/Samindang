@@ -87,7 +87,7 @@ assert('A: eligibilityRules === LBP_EXERCISE_ELIGIBILITY_RULES', same(LBP.eligib
 assert('A: hypothesisPatterns ids/labels == LBP 5 patterns in order', same(LBP.hypothesisPatterns.map((p) => [p.id, p.labelKo]), LBP_HYPOTHESIS_PATTERN_IDS.map((id) => [id, LBP_HYPOTHESIS_PATTERN_LABEL_KO[id]])))
 assert('A: targetFunctions === LBP_TARGET_FUNCTION_OPTIONS and id→enum table identical', same(LBP.targetFunctions, LBP_TARGET_FUNCTION_OPTIONS) && same(LBP.targetFunctionIdToEnum, LBP_TARGET_FUNCTION_ID_TO_ENUM))
 assert('A: directSupportByExam pins 하지직거상/슬럼프 → LBP_NEURAL_01 only', same(LBP.directSupportByExam, { lbp_exam_neurodynamic: ['LBP_NEURAL_01'] }))
-assert('A: detailCheckQuestionIds == server DETAIL_CHECK_LBP set', same(LBP.detailCheckQuestionIds, ['LBP_12', 'LBP_13', 'LBP_14']))
+assert('A: detailCheckQuestionIds == server DETAIL_CHECK_LBP set', same(LBP.detailCheckQuestionIds, ['LBP_12', 'LBP_13', 'LBP_14', 'LBP_15', 'LBP_16']))
 assert('A: LBP pack has zero content gaps', packContentGaps(LBP).length === 0)
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ assert('C: detailCheckQuestionIdsForRegion(neck) = common + NECK_12 (approved 20
 assert('C: detailCheckQuestionIdsForRegion(shoulder) = common + SH08 (approved 2026-09-07)', same(detailCheckQuestionIdsForRegion('shoulder'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'SH08']))
 assert('C: knee = common + KNEE_12, KNEE_13 / wrist_hand = common + WH_11 / ankle_foot = common + AF_00', same(detailCheckQuestionIdsForRegion('knee'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'KNEE_12', 'KNEE_13']) && same(detailCheckQuestionIdsForRegion('wrist_hand'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'WH_11']) && same(detailCheckQuestionIdsForRegion('ankle_foot'), [...DETAIL_CHECK_COMMON_QUESTION_IDS, 'AF_00']))
 assert('C: hip / elbow / tmj = common only (DRAFT)', ['hip', 'elbow', 'tmj'].every((k) => same(detailCheckQuestionIdsForRegion(k), [...DETAIL_CHECK_COMMON_QUESTION_IDS])))
-assert('C: detailCheckQuestionIdsForRegion(lbp) = common + LBP 3', same(detailCheckQuestionIdsForRegion('lbp'), ['VISIT_04_SYMPTOM_IMPACT', 'LBP_12', 'LBP_13', 'LBP_14']))
+assert('C: detailCheckQuestionIdsForRegion(lbp) = common + LBP 5', same(detailCheckQuestionIdsForRegion('lbp'), ['VISIT_04_SYMPTOM_IMPACT', 'LBP_12', 'LBP_13', 'LBP_14', 'LBP_15', 'LBP_16']))
 assert('C: legacy detailCheckQuestionIds({isLbp}) unchanged', same(detailCheckQuestionIds({ isLbp: true }), detailCheckQuestionIdsForRegion('lbp')) && same(detailCheckQuestionIds({ isLbp: false }), detailCheckQuestionIdsForRegion(null)))
 assert('C: a bogus region gets common only (no throw)', same(detailCheckQuestionIdsForRegion('__proto__'), [...DETAIL_CHECK_COMMON_QUESTION_IDS]))
 assert('C-fallback: candidates [hip, lbp] → LBP ids (hip unapproved → falls back to lbp, same rule as the screen)', same(detailCheckQuestionIdsForCandidates(['hip', 'lbp']), detailCheckQuestionIdsForRegion('lbp')))

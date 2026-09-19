@@ -28,6 +28,9 @@ import {
   QUICK_CHECK_EXERCISE_ADHERENCE_OPTIONS,
   QUICK_CHECK_EXERCISE_ADHERENCE_LABEL,
   REVISIT_QUICK_CHECK_GROUP_TITLE,
+  QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS,
+  QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL,
+  isValidQuickCheckNextDayRecovery,
 } from './.revisit-quick-check-bundle.mjs'
 import { RevisitQuickCheckCard } from './.revisit-quick-check-card-bundle.cjs'
 import { findLatestSubmissionBackedPriorVisit } from './.revisit-quick-check-longitudinal-bundle.mjs'
@@ -562,6 +565,76 @@ function assert(name, cond) {
 
   const cardSrc = readFileSync(fileURLToPath(new URL('../src/doctor/workspace/RevisitQuickCheckCard.tsx', import.meta.url)), 'utf8')
   assert('RevisitQuickCheckCard.tsx has no import statement naming microFollowUp.ts', !/from ['"]\.\/microFollowUp['"]/.test(cardSrc))
+}
+
+/* =========================================================================
+ * 2026-09-19 (Task–Load–Capacity) — 새 필드 2개
+ *   achievedDose     : 이번 기간에 해낸 부하 (자유 입력)
+ *   nextDayRecovery  : 다음날 아침 회복 (진행 판단 1차 게이트)
+ * 근거: DR_07_재활_v1.md §2.1.3 / §11-4.
+ * ========================================================================= */
+{
+  const base = emptyRevisitQuickCheck()
+  assert('신규 2필드: 기본값은 빈 문자열과 NOT_ASSESSED', base.achievedDose === '' && base.nextDayRecovery === 'NOT_ASSESSED')
+  assert('신규 칩 선택지는 3개(미평가 제외)', QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS.length === 3
+    && !QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS.includes('NOT_ASSESSED'))
+  assert('신규 칩 isValid: 모르는 값은 통과하지 않는다',
+    isValidQuickCheckNextDayRecovery('RECOVERED') && !isValidQuickCheckNextDayRecovery('MOSTLY'))
+
+  // 정화: 모르는 값/잘못된 타입은 안전한 쪽으로 떨어진다(없음으로 읽지 않는다).
+  const dirty = sanitizeRevisitQuickCheck({ nextDayRecovery: 'MOSTLY_FINE', achievedDose: 42 })
+  assert('정화: 모르는 회복 값 -> NOT_ASSESSED', dirty.nextDayRecovery === 'NOT_ASSESSED')
+  assert('정화: 문자열이 아닌 해낸 부하 -> 빈 문자열', dirty.achievedDose === '')
+  const clean = sanitizeRevisitQuickCheck({ nextDayRecovery: 'LINGERED', achievedDose: '  걷기 20분  ' })
+  assert('정화: 정상 값은 그대로 통과', clean.nextDayRecovery === 'LINGERED' && clean.achievedDose === '  걷기 20분  ')
+
+  // 안내문: 칩 하나당 문장 하나. 누르지 않았으면 아무 줄도 만들지 않는다.
+  const g = (v) => deriveRevisitQuickCheckGuidance({ ...emptyRevisitQuickCheck(), nextDayRecovery: v }).lines
+  assert('안내: 미평가면 회복 관련 줄이 없다', g('NOT_ASSESSED').length === 0)
+  assert('안내: 다음날 악화 -> 부하 한 단계 낮춤', g('WORSE_NEXT_DAY').join('') === '다음날 아침에 더 나빠짐: 부하를 한 단계 낮춘다.')
+  assert('안내: 다음날까지 남음 -> 유지 + 변수 하나만', g('LINGERED').join('') === '다음날까지 증상이 남음: 같은 용량을 유지하고 변수 하나만 줄인다.')
+  assert('안내: 다음날 회복 -> 한 번에 한 요소만', g('RECOVERED').join('') === '다음날 아침 기저로 회복: 한 번에 한 요소만 올린다(원장 판단).')
+
+  // 역호환: 기존 rule 7("유지·진행 가능")은 새 칩과 무관하게 5칩만으로 계속 발동한다.
+  const fiveChipsClean = {
+    ...emptyRevisitQuickCheck(),
+    targetFunctionChange: 'BETTER', overallResponse: 'BETTER',
+    newNeuroOrRedFlag: 'NO', exerciseAdherence: 'DONE_AS_PLANNED', adverseEffect: 'NO',
+  }
+  assert('역호환: 새 칩이 미평가여도 rule 7은 그대로 발동',
+    deriveRevisitQuickCheckGuidance(fiveChipsClean).lines.join('') === '유지·진행 가능(원장 판단).')
+
+  // 요약(=EMR O/S 재진 경과 줄)에 두 값이 실린다. 순서는 그룹 표시 순서와 같다.
+  const summarized = summarizeRevisitQuickCheckKo({
+    ...emptyRevisitQuickCheck(),
+    targetFunctionChange: 'BETTER', nextDayRecovery: 'RECOVERED', achievedDose: '박스 스쿼트 10회 × 2세트',
+  })
+  assert('요약: 다음날 회복과 해낸 부하가 실린다',
+    summarized === '이전 간단 체크: 목표 기능 좋아짐 · 다음날 기저로 회복 · 해낸 부하 박스 스쿼트 10회 × 2세트')
+  assert('요약: 해낸 부하가 공백뿐이면 싣지 않는다',
+    summarizeRevisitQuickCheckKo({ ...emptyRevisitQuickCheck(), targetFunctionChange: 'BETTER', achievedDose: '   ' })
+      === '이전 간단 체크: 목표 기능 좋아짐')
+  // 옛 저장본(두 필드가 아예 없음)이 정화를 거치지 않고 들어와도 죽지 않는다.
+  assert('요약: 두 필드가 없는 옛 기록도 안전하게 처리된다',
+    summarizeRevisitQuickCheckKo({ targetFunctionChange: 'BETTER', overallResponse: 'NOT_ASSESSED',
+      newNeuroOrRedFlag: 'NOT_ASSESSED', exerciseAdherence: 'NOT_ASSESSED', adverseEffect: 'NOT_ASSESSED',
+      note: '', recordedAt: null }) === '이전 간단 체크: 목표 기능 좋아짐')
+
+  /*
+   * 금지 표현 가드 — DR_07_재활_v1.md §10.2와 §1-6/§11-5.
+   * 이 카드가 원장에게 보여주는 어떤 문장도 (a) 통증 허용치를 숫자로 고정하거나
+   * (b) DR_07이 금지한 설명 문장을 쓰지 않는다.
+   */
+  const everyLine = [
+    ...QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS.flatMap((v) => g(v)),
+    ...Object.values(QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL),
+    REVISIT_QUICK_CHECK_GROUP_TITLE.nextDayRecovery,
+    REVISIT_QUICK_CHECK_GROUP_TITLE.achievedDose,
+  ]
+  assert('금지: 통증 허용치를 숫자로 고정하는 문구가 없다',
+    everyLine.every((t) => !/0\s*[~-]\s*[0-9]\s*\/\s*10|[0-9]\s*점까지/.test(t)))
+  assert('금지: DR_07 §10.2 문장이 없다',
+    everyLine.every((t) => !/코어가 약해서|골반이 틀어져|원인을 찾았|무조건 안전|고정됩니다/.test(t)))
 }
 
 console.log(`\n${passCount} revisit quick check assertions passed.`)

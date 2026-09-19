@@ -40,6 +40,21 @@ export type QuickCheckExerciseAdherence =
   | 'DONE_TOO_HARD'
   | 'DONE_TOO_EASY'
 
+/**
+ * 다음날 아침 회복 패턴 (2026-09-19, Task–Load–Capacity).
+ *
+ * **진행 판단의 1차 게이트는 그 자리 통증 점수가 아니라 이것이다.**
+ * `DR_07_재활_v1.md` §2.1.3 "핵심 성과는 task tolerance와 다음날 회복 패턴".
+ * 같은 문서 §11-4는 이 규칙이 건병증에서 합리적 근거가 있으나 요통·경부통·OA
+ * 전 질환에서 하나의 규칙으로 검증되지는 않았다고 적는다 — 그래서 여기서도
+ * 점수를 만들지 않고 원장이 고른 칩을 문장 하나로 되돌려줄 뿐이다.
+ *
+ * 운동 중 통증을 0~10 숫자로 받는 칸은 **의도적으로 두지 않았다.** `0~4/10`
+ * 같은 고정 허용치는 근거가 없고(§1-6, §11-5), 난이도 신호는 이미
+ * `exerciseAdherence`의 '너무 어려움'/'너무 쉬움'이 담는다.
+ */
+export type QuickCheckNextDayRecovery = 'NOT_ASSESSED' | 'RECOVERED' | 'LINGERED' | 'WORSE_NEXT_DAY'
+
 export type RevisitQuickCheck = {
   /** 목표 기능 변화. */
   targetFunctionChange: QuickCheckChange
@@ -51,6 +66,15 @@ export type RevisitQuickCheck = {
   exerciseAdherence: QuickCheckExerciseAdherence
   /** 치료 후 이상반응. */
   adverseEffect: QuickCheckYesNo
+  /**
+   * 2026-09-19 (Task–Load–Capacity): 지난 기간에 **실제로 해낸 부하** 한 줄.
+   * 재활 라이브러리 점검에서 드러난 빈 곳 — `progressionKo`는 데이터에만 있고
+   * 추천 모듈이 의도적으로 읽지 않는데(진행은 원장 판단), 그 판단을 적을 곳이
+   * 없었다. 자유 입력이며 어떤 규칙 엔진도 이 값을 읽지 않는다.
+   */
+  achievedDose: string
+  /** 2026-09-19: 다음날 아침 회복 패턴. 진행 판단의 1차 게이트. */
+  nextDayRecovery: QuickCheckNextDayRecovery
   /** 짧은 메모 1칸(선택) -- 이상반응/신경증상 내용 등. 그 외 free text 없음. */
   note: string
   /** 5항목 중 하나라도 NOT_ASSESSED가 아니게 된 시점. 전부 NOT_ASSESSED면 null. */
@@ -64,6 +88,8 @@ export function emptyRevisitQuickCheck(): RevisitQuickCheck {
     newNeuroOrRedFlag: 'NOT_ASSESSED',
     exerciseAdherence: 'NOT_ASSESSED',
     adverseEffect: 'NOT_ASSESSED',
+    achievedDose: '',
+    nextDayRecovery: 'NOT_ASSESSED',
     note: '',
     recordedAt: null,
   }
@@ -112,13 +138,33 @@ export const QUICK_CHECK_EXERCISE_ADHERENCE_OPTIONS: QuickCheckExerciseAdherence
   'DONE_TOO_EASY',
 ]
 
+/**
+ * 칩 라벨은 그룹 제목("다음날 아침 회복")이 이미 시점을 말하므로 시점을
+ * 반복하지 않는다 — `summarizeRevisitQuickCheckKo`가 `다음날 ` 접두사를 붙여
+ * "다음날 기저로 회복"처럼 읽히게 한다.
+ */
+export const QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL: Record<QuickCheckNextDayRecovery, string> = {
+  NOT_ASSESSED: '미평가',
+  RECOVERED: '기저로 회복',
+  LINGERED: '남아 있음',
+  WORSE_NEXT_DAY: '더 나빠짐',
+}
+
+export const QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS: QuickCheckNextDayRecovery[] = [
+  'RECOVERED',
+  'LINGERED',
+  'WORSE_NEXT_DAY',
+]
+
 /** Group titles, in display order -- also the order `summarizeRevisitQuickCheckKo` joins in. */
 export const REVISIT_QUICK_CHECK_GROUP_TITLE = {
   targetFunctionChange: '목표 기능 변화',
   overallResponse: '전체 증상 반응',
   newNeuroOrRedFlag: '새 신경증상·위험신호',
   exerciseAdherence: '운동 실제 시행·난이도',
+  nextDayRecovery: '다음날 아침 회복(진행 판단 1차 기준)',
   adverseEffect: '치료 후 이상반응',
+  achievedDose: '이번 기간에 해낸 부하',
 } as const
 
 /* -------------------------------- isValid* -------------------------------- */
@@ -133,6 +179,10 @@ export function isValidQuickCheckYesNo(v: unknown): v is QuickCheckYesNo {
 
 export function isValidQuickCheckExerciseAdherence(v: unknown): v is QuickCheckExerciseAdherence {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(QUICK_CHECK_EXERCISE_ADHERENCE_LABEL, v)
+}
+
+export function isValidQuickCheckNextDayRecovery(v: unknown): v is QuickCheckNextDayRecovery {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL, v)
 }
 
 /* ------------------------------ sanitization ------------------------------ */
@@ -159,6 +209,8 @@ export function sanitizeRevisitQuickCheck(raw: unknown): RevisitQuickCheck {
       ? raw.exerciseAdherence
       : 'NOT_ASSESSED',
     adverseEffect: isValidQuickCheckYesNo(raw.adverseEffect) ? raw.adverseEffect : 'NOT_ASSESSED',
+    achievedDose: typeof raw.achievedDose === 'string' ? raw.achievedDose : '',
+    nextDayRecovery: isValidQuickCheckNextDayRecovery(raw.nextDayRecovery) ? raw.nextDayRecovery : 'NOT_ASSESSED',
     note: typeof raw.note === 'string' ? raw.note : '',
     recordedAt: typeof raw.recordedAt === 'string' ? raw.recordedAt : null,
   }
@@ -240,6 +292,16 @@ export function deriveRevisitQuickCheckGuidance(value: RevisitQuickCheck): Revis
     lines.push('운동이 어려움: 쉬운 단계 또는 다른 운동 고려.')
   } else if (value.exerciseAdherence === 'DONE_TOO_EASY') {
     lines.push('운동이 쉬움: 진행 단계 고려(원장 판단).')
+  }
+  // Rule 5b (2026-09-19): 다음날 아침 회복 = 진행 판단의 1차 게이트.
+  // 칩을 누르지 않았으면 아무 줄도 만들지 않는다(NOT_ASSESSED를 '회복'으로
+  // 읽지 않는다 — 이 파일의 rule 7/8과 같은 원칙).
+  if (value.nextDayRecovery === 'WORSE_NEXT_DAY') {
+    lines.push('다음날 아침에 더 나빠짐: 부하를 한 단계 낮춘다.')
+  } else if (value.nextDayRecovery === 'LINGERED') {
+    lines.push('다음날까지 증상이 남음: 같은 용량을 유지하고 변수 하나만 줄인다.')
+  } else if (value.nextDayRecovery === 'RECOVERED') {
+    lines.push('다음날 아침 기저로 회복: 한 번에 한 요소만 올린다(원장 판단).')
   }
   // Rule 6.
   if (value.exerciseAdherence === 'NOT_DONE' || value.exerciseAdherence === 'PARTIAL') {
@@ -368,8 +430,19 @@ export function summarizeRevisitQuickCheckKo(value: RevisitQuickCheck): string |
   if (value.exerciseAdherence !== 'NOT_ASSESSED') {
     parts.push(`운동 ${QUICK_CHECK_EXERCISE_ADHERENCE_LABEL[value.exerciseAdherence]}`)
   }
+  // 위 `achievedDose`와 같은 이유로 valid 검사를 함께 건다 — 이 필드가 아예
+  // 없는 옛 저장본이 정화를 거치지 않고 들어와도 '다음날 undefined'를 찍지 않는다.
+  if (isValidQuickCheckNextDayRecovery(value.nextDayRecovery) && value.nextDayRecovery !== 'NOT_ASSESSED') {
+    parts.push(`다음날 ${QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL[value.nextDayRecovery]}`)
+  }
   if (value.adverseEffect !== 'NOT_ASSESSED') {
     parts.push(`이상반응 ${QUICK_CHECK_YES_NO_LABEL[value.adverseEffect]}`)
+  }
+  // 정화되지 않은 옛 기록(이 필드가 아예 없는 저장본)이 직접 들어올 수 있다 —
+  // 이 파일의 fail-closed 원칙대로 없으면 그냥 빠진다.
+  const dose = typeof value.achievedDose === 'string' ? value.achievedDose.trim() : ''
+  if (dose !== '') {
+    parts.push(`해낸 부하 ${dose}`)
   }
   if (parts.length === 0) return null
   return `이전 간단 체크: ${parts.join(' · ')}`

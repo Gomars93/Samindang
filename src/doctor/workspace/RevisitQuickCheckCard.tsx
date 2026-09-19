@@ -19,11 +19,14 @@ import {
   QUICK_CHECK_YES_NO_LABEL,
   QUICK_CHECK_YES_NO_OPTIONS,
   REVISIT_QUICK_CHECK_GROUP_TITLE,
+  QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL,
+  QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS,
   REVISIT_QUICK_CHECK_SAFETY_LINE,
   type QuickCheckChange,
   type QuickCheckExerciseAdherence,
   type QuickCheckYesNo,
   type RevisitQuickCheck,
+  type QuickCheckNextDayRecovery,
 } from './revisitQuickCheck'
 
 function ChipGroup<T extends string>({
@@ -70,6 +73,7 @@ function anyAssessed(v: RevisitQuickCheck): boolean {
     v.overallResponse !== 'NOT_ASSESSED' ||
     v.newNeuroOrRedFlag !== 'NOT_ASSESSED' ||
     v.exerciseAdherence !== 'NOT_ASSESSED' ||
+    v.nextDayRecovery !== 'NOT_ASSESSED' ||
     v.adverseEffect !== 'NOT_ASSESSED'
   )
 }
@@ -81,7 +85,7 @@ export function RevisitQuickCheckCard({
   value: RevisitQuickCheck
   onChange: (next: RevisitQuickCheck) => void
 }) {
-  function setField<K extends 'targetFunctionChange' | 'overallResponse' | 'newNeuroOrRedFlag' | 'exerciseAdherence' | 'adverseEffect'>(
+  function setField<K extends 'targetFunctionChange' | 'overallResponse' | 'newNeuroOrRedFlag' | 'exerciseAdherence' | 'nextDayRecovery' | 'adverseEffect'>(
     key: K,
     next: RevisitQuickCheck[K],
   ) {
@@ -136,6 +140,15 @@ export function RevisitQuickCheckCard({
         onSelect={(next) => setField('exerciseAdherence', next)}
       />
 
+      <ChipGroup<QuickCheckNextDayRecovery>
+        title={REVISIT_QUICK_CHECK_GROUP_TITLE.nextDayRecovery}
+        groupAriaLabel="다음날 아침 회복 선택"
+        options={QUICK_CHECK_NEXT_DAY_RECOVERY_OPTIONS}
+        labels={QUICK_CHECK_NEXT_DAY_RECOVERY_LABEL}
+        activeValue={value.nextDayRecovery}
+        onSelect={(next) => setField('nextDayRecovery', next)}
+      />
+
       <ChipGroup<QuickCheckYesNo>
         title={REVISIT_QUICK_CHECK_GROUP_TITLE.adverseEffect}
         groupAriaLabel="치료 후 이상반응 선택"
@@ -144,6 +157,17 @@ export function RevisitQuickCheckCard({
         activeValue={value.adverseEffect}
         onSelect={(next) => setField('adverseEffect', next)}
       />
+
+      <label className="workspace__finalAssessment__field workspace__revisit__quickCheckNote">
+        <span>{REVISIT_QUICK_CHECK_GROUP_TITLE.achievedDose}(선택)</span>
+        <input
+          type="text"
+          className="workspace__noteInput"
+          value={value.achievedDose}
+          onChange={(e) => onChange({ ...value, achievedDose: e.target.value })}
+          placeholder="예: 박스 스쿼트 10회 × 2세트, 걷기 20분"
+        />
+      </label>
 
       <label className="workspace__finalAssessment__field workspace__revisit__quickCheckNote">
         <span>메모(선택)</span>

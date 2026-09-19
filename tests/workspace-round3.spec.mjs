@@ -788,6 +788,9 @@ function assert(name, cond) {
       newNeuroOrRedFlag: 'NO',
       exerciseAdherence: 'DONE_AS_PLANNED',
       adverseEffect: 'NO',
+      // 2026-09-19 추가 2필드. 정화가 이 둘을 떨어뜨리지 않는지 함께 본다.
+      achievedDose: '박스 스쿼트 10회 × 2세트',
+      nextDayRecovery: 'RECOVERED',
       note: '메모',
       recordedAt: '2026-09-03T00:00:00.000Z',
     },

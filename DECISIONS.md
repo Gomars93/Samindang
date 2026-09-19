@@ -1,5 +1,47 @@
 # Decisions Log
 
+## 2026-09-19 (PR 2b 구현) — 목표 기능 chip을 환자가 고른 목표 task로 미리 선택
+
+**결정자**: Gomars93(원장, PO) — "추천안으로 진행". PR 2에서 위험을 이유로 분리해 둔 항목을 닫는다. 커밋 `8665983`.
+
+### 어디에 넣었나 — `seedWorkspaceState`
+
+`DoctorWorkspace.tsx`의 `seedWorkspaceState(initial, synthetic, payload)`가 **이미 payload를 받고, 이미 저장본(`initial`)과 새 기록을 구분하며, 이미 팩 자동 제안을 병합하는** 함수다. PR 2에서 위험하다고 본 것은 `emptyWorkspaceState()`(인자 없음)였는데, 그 함수를 고칠 필요가 없었다.
+
+### 조건은 하나 — `initial == null`
+
+"저장본의 목표가 비어 있으면 다시 채운다"는 **쓰지 않았다.** 그렇게 하면 원장이 **의도적으로 모두 해제한** 기록을 열 때마다 환자 답이 되살아난다 — CLAUDE.md가 네 번 기록한 "지우지 않은 쪽" 사고와 같은 모양이다. 저장본은 무엇이 들었든 건드리지 않는다.
+
+부수 조건 2개: synthetic 경로는 위에서 먼저 return하므로 도달하지 않고(예시 fixture에 환자 답을 섞지 않는다), `pack.region !== 'lbp'`면 멈춘다.
+
+### CLAUDE.md 필드 × 화면 표
+
+교체가 아니라 **비어 있던 초기값을 채우는 경로 1개 신설**이다.
+
+| 경로 | 화면 | 결과 |
+|---|---|---|
+| `seedWorkspaceState` → `painFollowUpTargets` | 원장 화면 재평가 대상 picker | chip 1개 pressed |
+| → `PainWorkspace`의 `followUpOptions`/`followUpGroups` | 목표 기능 그룹 | 기존 렌더 그대로 |
+| 그 값의 하류(EMR·재진 이어받기·micro follow-up) | 기존 경로 | **원장이 직접 누른 것과 구분되지 않는다** — 의도한 바다. picker는 출처를 구분하지 않고, 원장이 확인·변경하는 것이 전제다 |
+| 초진 / 재진 / 한약 / mixed / fixture 미리보기 | — | 한약·mixed는 `pack.region !== 'lbp'`에서, synthetic은 그 위에서 멈춘다. 재진 화면은 이 함수를 쓰지 않는다 |
+
+**입력 방향** — 시드된 chip은 picker에서 그대로 해제·변경되고 그 결과가 저장된다. 쓰기만 되고 읽히지 않는 필드가 생기지 않는다.
+**표시 조건** — latch가 아니라 초기 state 1회 계산. 편집 도중 값이 비어도 다시 채워지지 않는다(위 조건 때문에).
+
+### 전사표를 `lbpTargetFunction.ts`에 둔 이유
+
+`LBP_15`의 9개 값 ↔ `lbp_tf_*` chip 9개는 **양쪽이 함께 커야 하는 쌍**이다. 한쪽만 늘리면 환자가 고른 목표가 원장 화면에 도달하지 못한 채 조용히 사라진다. chip 정의 옆에 두고, 테스트가 **양방향 전사(키 집합 == 스펙 값 집합, 값 집합 == chip id 집합, onto·중복 없음)**를 단언한다.
+
+모르는 값·빈 값·타입 불일치는 전부 `null` — 기본값을 지어내지 않는다(fail closed).
+
+### 검증
+
+`npm run build` 통과, `npm run test:all` **exit 0**. 테스트 8개 추가(doctor-workspace 303→307, lbp-exam-suggestions 25→29).
+
+렌더 테스트 4개가 서로를 확인한다 — "새 기록이면 걷기 chip pressed"와 "저장본(빈 목표)이면 pressed 아님"이 함께 통과해야만 **시드가 원인**임이 증명된다(fixture가 원래 눌러둔 것이 아님).
+
+---
+
 ## 2026-09-19 (PR 1·2·3 구현) — 원칙 기록 · 태블릿 목표 task 2문항 · 재진 부하 반응 기록
 
 **결정자**: Gomars93(원장, PO) — "추천안으로 최대한 진행 부탁해요 순차적으로". PR 4에 이어 세 건을 순서대로 구현했다.

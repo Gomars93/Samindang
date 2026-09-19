@@ -1,6 +1,36 @@
 # Current Handoff
 
-## 2026-09-19 (최신 49): **승인된 PR 4건 전부 완료** — 원칙 기록 · 태블릿 목표 task 2문항 · 재진 부하 반응 · 0단계 교정
+## 2026-09-19 (최신 50): **PR 2b 완료 — 목표 기능 chip 자동 선택.** 승인 범위의 저장소 작업이 모두 끝났다
+
+**브랜치**: `claude/google-drive-questionnaire-review-m3sf70`. `npm run build` 통과, `npm run test:all` **exit 0**. 커밋 `8665983`.
+
+PR 2에서 "경계를 건드린다"는 이유로 분리했던 항목을 닫았다. **`emptyWorkspaceState`를 고칠 필요가 없었다** — `DoctorWorkspace.seedWorkspaceState`가 이미 payload를 받고 저장본/새 기록을 구분하며 팩 제안을 병합하고 있었다. 거기에 조건 하나(`initial == null`)로 붙였다.
+
+- **저장본은 건드리지 않는다.** "목표가 비어 있으면 다시 채운다"는 쓰지 않았다 — 원장이 의도적으로 모두 해제한 기록에서 환자 답이 되살아나는 모양이 되기 때문.
+- 전사표는 `lbpTargetFunction.ts`에 chip 정의 옆. 테스트가 **양방향 9↔9 onto**를 단언한다 — 한쪽만 늘리면 실패한다.
+- 렌더 테스트 4개가 서로를 확인한다: "새 기록 → pressed"와 "저장본(빈 목표) → pressed 아님"이 함께 통과해야 시드가 원인임이 증명된다.
+
+### 이 브랜치의 저장소 작업 요약 (커밋 6개)
+
+| 커밋 | 내용 |
+|---|---|
+| `c34d2b3` | PR 4 — 0단계를 "구조화된 고부하 운동 유예"로 교정 |
+| `c1ae585` | PR 1 — North Star에 Task–Load–Capacity 절 |
+| `dd2b7a1` | PR 2 — 태블릿 `LBP_15`/`LBP_16` + 재질문 배관 |
+| `cee142d` | PR 3 — 재진 `achievedDose` + `nextDayRecovery` |
+| `8665983` | PR 2b — 목표 기능 chip 자동 선택 |
+| (기록) | `4b3d030` 등 HANDOFF·DECISIONS |
+
+### Next Recommended Action
+
+1. **매선 v1.1 볼트 반영**(PO 작업) — `삼인당 임상 지식베이스/09_치료술기/06_매선/`에 `매선-SSOT.md`·`매선-근거매트릭스.md` 덮어쓰기. `매선-운영SOP.md`는 변경 없음.
+2. **술기별 SSOT 6종** — 침·약침·부항·추나·도침·재활. 딥리서치 7편 검수 완료, 원자료는 Drive `_inbox/`.
+3. **파일럿 관찰** — `LBP_15`/`LBP_16`이 실제로 채워지는 비율, 시드된 chip을 원장이 바꾸는 비율. 이 둘이 재발 격하 규칙 보류를 푸는 데도 쓰인다.
+4. **클리닉 PC**: `git pull` → `npm run build`, `.env`의 `VITE_SAMINDANG_SERVER_URL` 확인.
+
+---
+
+## 2026-09-19 (49): **승인된 PR 4건 전부 완료** — 원칙 기록 · 태블릿 목표 task 2문항 · 재진 부하 반응 · 0단계 교정
 
 **브랜치**: `claude/google-drive-questionnaire-review-m3sf70`. 네 PR 모두 각각 `npm run build` + `npm run test:all` **exit 0** 확인 후 커밋.
 

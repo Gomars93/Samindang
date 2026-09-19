@@ -33,6 +33,8 @@ import {
   LBP_TARGET_FUNCTION_OPTIONS,
   isLbpTargetFunctionId,
   selectedLbpTargetFunctions,
+  LBP_TARGET_TASK_TO_CHIP_ID,
+  lbpTargetFunctionFromPatientAnswer,
 } from './.lbp-target-function-bundle.mjs'
 
 let passed = 0
@@ -413,6 +415,46 @@ test('isLbpTargetFunctionId / selectedLbpTargetFunctions', () => {
     selectedLbpTargetFunctions(mixed).map((t) => t.id),
     ['lbp_tf_walking'],
   )
+})
+
+/* =========================================================================
+ * 2026-09-19 (PR 2b) — 태블릿 LBP_15 -> 목표 기능 chip 전사.
+ * 한쪽만 늘리면 환자가 고른 목표가 원장 화면에 도달하지 못한 채 사라진다.
+ * ========================================================================= */
+
+test('LBP_15의 선택지 값 집합과 전사표의 키 집합이 정확히 같다 (양방향, 9개)', () => {
+  const q = ALL_QUESTIONS.find((x) => x.id === 'LBP_15')
+  assert.ok(q, 'LBP_15 exists in the spec')
+  const specValues = q.options.map((o) => o.value).sort()
+  const mapKeys = Object.keys(LBP_TARGET_TASK_TO_CHIP_ID).sort()
+  assert.deepEqual(mapKeys, specValues)
+  assert.equal(specValues.length, 9)
+})
+
+test('전사표의 값 집합은 chip id 9개를 하나도 빠짐없이, 중복 없이 덮는다 (onto)', () => {
+  const mapped = Object.values(LBP_TARGET_TASK_TO_CHIP_ID).sort()
+  const chipIds = LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id).sort()
+  assert.deepEqual(mapped, chipIds)
+  assert.equal(new Set(mapped).size, 9)
+})
+
+test('lbpTargetFunctionFromPatientAnswer: 아는 값은 그 chip을, 모르는 값/빈 값은 null을 준다', () => {
+  const walking = lbpTargetFunctionFromPatientAnswer('WALKING')
+  assert.equal(walking.id, 'lbp_tf_walking')
+  assert.equal(walking.label, '걷기')
+  // FollowUpTarget shape: baseline/postTreatmentValue가 빈 문자열로 시작한다.
+  assert.equal(walking.baseline, '')
+  assert.equal(walking.postTreatmentValue, '')
+  assert.equal(lbpTargetFunctionFromPatientAnswer('OTHER').id, 'lbp_tf_custom')
+  for (const bad of [null, undefined, '', 'UNKNOWN', 'STAIRS', 42, {}, ['WALKING']]) {
+    assert.equal(lbpTargetFunctionFromPatientAnswer(bad), null, `${String(bad)} -> null`)
+  }
+})
+
+test('전사 결과는 항상 isLbpTargetFunctionId를 통과한다(picker가 고아 chip으로 렌더하지 않는다)', () => {
+  for (const v of Object.keys(LBP_TARGET_TASK_TO_CHIP_ID)) {
+    assert.ok(isLbpTargetFunctionId(lbpTargetFunctionFromPatientAnswer(v).id))
+  }
 })
 
 console.log(`\n${passed} tests passed.`)

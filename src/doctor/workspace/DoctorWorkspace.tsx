@@ -78,6 +78,7 @@ import { suggestExerciseStage, stageInputFromPayload } from './lbpExerciseStage'
 import { reassessmentExamItemFromPrevious } from './reassessmentExam'
 import type { PatientHistoryResult } from './longitudinal'
 import type { MicroFollowUpResponse } from './microFollowUp'
+import { lbpTargetFunctionFromPatientAnswer } from './lbpTargetFunction'
 import {
   deserializeWorkspaceState,
   emptyWorkspaceState,
@@ -142,7 +143,30 @@ function seedWorkspaceState(
   // (요통 이외 부위는 승인 전까지 여기서 아무것도 생성하지 않는다).
   const pack = activeDrivingPack(payload.responses)
   if (!pack) return base
-  return { ...base, painExamSuggestions: mergeExamSuggestions(pack.examHelp, pack.generateExamSuggestions(payload), base.painExamSuggestions) }
+  const merged = {
+    ...base,
+    painExamSuggestions: mergeExamSuggestions(pack.examHelp, pack.generateExamSuggestions(payload), base.painExamSuggestions),
+  }
+  /*
+   * 2026-09-19 (PR 2b): 환자가 태블릿에서 고른 목표 task(`LBP_15`)를 원장 화면
+   * 목표 기능 chip으로 미리 눌러둔다. 원장은 그대로 두거나 바꾸면 된다.
+   *
+   * ★ 조건은 `initial == null`(= 이 기록이 한 번도 저장된 적 없음) 하나다.
+   *   "저장본의 목표가 비어 있으면 다시 채운다"로 하면 원장이 **의도적으로
+   *   모두 해제한** 기록을 열 때마다 환자 답이 되살아난다 — CLAUDE.md가 네 번
+   *   기록한 "지우지 않은 쪽" 사고와 같은 모양이다. 저장본은 무엇이 들었든
+   *   건드리지 않는다.
+   * ★ synthetic 경로는 위에서 먼저 return하므로 여기에 도달하지 않는다 —
+   *   예시용 fixture에 환자 답을 섞지 않는다.
+   * ★ 값이 없거나 모르는 값이면 `null`이라 아무것도 넣지 않는다(지어내지 않는다).
+   */
+  if (initial) return merged
+  if (pack.region !== 'lbp') return merged
+  const seededTarget = lbpTargetFunctionFromPatientAnswer(
+    (payload.responses as { modules?: { lbp?: { target_task?: unknown } } } | undefined)?.modules?.lbp?.target_task,
+  )
+  if (!seededTarget) return merged
+  return { ...merged, painFollowUpTargets: [seededTarget] }
 }
 
 export function DoctorWorkspace({

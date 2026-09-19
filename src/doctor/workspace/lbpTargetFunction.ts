@@ -28,6 +28,40 @@ export const LBP_TARGET_FUNCTION_OPTIONS: FollowUpTarget[] = [
 
 const LBP_TARGET_FUNCTION_IDS = new Set(LBP_TARGET_FUNCTION_OPTIONS.map((o) => o.id))
 
+/**
+ * 태블릿 `LBP_15`(목표 task) 값 → 위 chip id. **coreSpec의 9개 값과 1:1**이며,
+ * 한쪽만 늘리면 환자가 고른 목표가 원장 화면에 도달하지 못한 채 조용히 사라진다.
+ * `tests/lbp-exercise-recommendation.spec.mjs`가 양방향 전사(9↔9, onto)를 단언한다.
+ *
+ * `OTHER` → `lbp_tf_custom`: 자유 목표는 Core-20 enum에 매칭되지 않지만(이 파일
+ * 아래 `LBP_TARGET_FUNCTION_ID_TO_ENUM` 주석 참조) **재평가 대상으로는 유효**하다 —
+ * 다음 방문에 같은 동작으로 비교하는 것이 목적이기 때문이다.
+ */
+export const LBP_TARGET_TASK_TO_CHIP_ID: Readonly<Record<string, string>> = Object.freeze({
+  WALKING: 'lbp_tf_walking',
+  SITTING: 'lbp_tf_sitting',
+  STANDING: 'lbp_tf_standing',
+  SIT_TO_STAND: 'lbp_tf_sit_to_stand',
+  DRESSING: 'lbp_tf_dressing',
+  LIFTING: 'lbp_tf_lifting',
+  SLEEP: 'lbp_tf_sleep',
+  WORK: 'lbp_tf_work',
+  OTHER: 'lbp_tf_custom',
+})
+
+/**
+ * 환자가 고른 목표 task 하나를 chip으로 바꾼다. 값이 없거나 모르는 값이면
+ * **null** — 기본값을 지어내지 않는다(fail closed). 호출부는
+ * `DoctorWorkspace.seedWorkspaceState` 하나뿐이며, **한 번도 저장된 적 없는
+ * 기록에만** 적용한다(저장본을 덮어쓰지 않는다).
+ */
+export function lbpTargetFunctionFromPatientAnswer(raw: unknown): FollowUpTarget | null {
+  if (typeof raw !== 'string') return null
+  const id = LBP_TARGET_TASK_TO_CHIP_ID[raw]
+  if (id === undefined) return null
+  return LBP_TARGET_FUNCTION_OPTIONS.find((o) => o.id === id) ?? null
+}
+
 export function isLbpTargetFunctionId(id: string): boolean {
   return LBP_TARGET_FUNCTION_IDS.has(id)
 }

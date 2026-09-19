@@ -2747,6 +2747,48 @@ function lbpLiveExtraProps(initialWorkspaceState, extra = {}) {
   return { synthetic: undefined, lbpObjectiveMotorDeficit: 'NONE', initialWorkspaceState, ...extra }
 }
 
+/* ---------- PR 2b (2026-09-19): 목표 기능 chip 자동 선택 ----------
+ * 환자가 태블릿에서 고른 목표 task(LBP_15 -> modules.lbp.target_task)를 원장
+ * 화면 chip으로 미리 눌러둔다. **저장된 적 없는 기록에만** 적용한다.
+ */
+function lbpScenarioWithTargetTask(value) {
+  const s = JSON.parse(JSON.stringify(PAIN_SCENARIO_1))
+  if (value === null) delete s.payload.responses.modules.lbp.target_task
+  else s.payload.responses.modules.lbp.target_task = value
+  return s
+}
+/** 특정 라벨의 chip이 눌려 있는가. 버튼 속성 순서에 의존하지 않도록 태그 전체를 본다. */
+function chipPressed(html, label) {
+  const re = new RegExp(`<button[^>]*aria-pressed="true"[^>]*>${label}</button>`)
+  return re.test(html)
+}
+
+test('PR 2b: 저장된 적 없는 요통 기록은 환자가 고른 목표 task(WALKING)를 목표 기능 chip으로 미리 눌러둔다', () => {
+  const html = renderWith(lbpScenarioWithTargetTask('WALKING'), { synthetic: undefined, lbpObjectiveMotorDeficit: 'NONE' })
+  assert.ok(chipPressed(html, '걷기'), '걷기 chip is pre-pressed from the patient answer')
+  assert.ok(!chipPressed(html, '앉기'), 'only the answered chip is pressed')
+})
+
+test('PR 2b: OTHER는 기타 목표 동작 chip으로 간다', () => {
+  const html = renderWith(lbpScenarioWithTargetTask('OTHER'), { synthetic: undefined, lbpObjectiveMotorDeficit: 'NONE' })
+  assert.ok(chipPressed(html, '기타 목표 동작'))
+})
+
+test('PR 2b: 저장본은 건드리지 않는다 — 원장이 목표를 모두 해제해 저장했어도 환자 답이 되살아나지 않는다', () => {
+  const html = renderWith(
+    lbpScenarioWithTargetTask('WALKING'),
+    lbpLiveExtraProps({ painFollowUpTargets: [] }),
+  )
+  assert.ok(!chipPressed(html, '걷기'), 'a saved record keeps its (empty) targets')
+})
+
+test('PR 2b: 답이 없거나 모르는 값이면 아무 chip도 눌리지 않는다(기본값을 지어내지 않는다)', () => {
+  for (const v of [null, 'STAIRS', '']) {
+    const html = renderWith(lbpScenarioWithTargetTask(v), { synthetic: undefined, lbpObjectiveMotorDeficit: 'NONE' })
+    assert.ok(!/aria-pressed="true"[^>]*>(걷기|앉기|서기|기타 목표 동작)</.test(html), `target_task=${String(v)} seeds nothing`)
+  }
+})
+
 // ---------- defect 4 (§2.2): >3 READY candidates -> first 3 + "더 보기 (N)" ----------
 
 test('defect 4: more than 3 READY LBP candidates -> first 3 candidate cards render outside <details>, the rest inside "더 보기 (N)" (nothing dropped)', () => {

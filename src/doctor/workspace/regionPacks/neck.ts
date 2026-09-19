@@ -11,7 +11,7 @@
  *   rehabDomains           PR#30 §7 도메인 9.
  *   coreExercises          Core 9 (초안 12 → 9; 아카이브 8개는 병합·대체로 전부 폐기). 용량은 삼인당 시작
  *                          기본값(요통 Core-20과 같은 경계: 임상 임계값 아님).
- *   stageTable             1단계 3 / 2단계 6 (0단계 = 능동 운동 미처방, 요통 방식).
+ *   stageTable             1단계 3 / 2단계 6 (0단계 = 고부하 운동 유예, 요통 방식).
  *   eligibilityRules       NECK_NEURAL_01만 신경 안정 요구 + 원위 악화 중단, NECK_DIR_01은 신전 호전 조건 +
  *                          원위 악화 중단, 나머지 기본값(false/false).
  *   directSupportByExam    검사 4 → 운동(순위 버킷만). Spurling/distraction은 가설 근거라 넣지 않는다.
@@ -178,7 +178,7 @@ export const NECK_REGION_PACK = buildDraftPack({
       targetFunctions: ['DESK_WORK'],
     },
   ],
-  // CLOSED §5 — 0단계는 표에 없음(능동 운동 미처방). 3단계 전용 행 없음: 2단계 운동은 3단계에서도 허용.
+  // CLOSED §5 — 0단계는 표에 없음(고부하 운동 유예). 3단계 전용 행 없음: 2단계 운동은 3단계에서도 허용.
   stageTable: {
     NECK_MOB_01: 1,
     NECK_DIR_01: 1,

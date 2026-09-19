@@ -3893,7 +3893,10 @@ test('stage card: a SYNTHETIC preview record does NOT render the stage card (no 
 test('stage card: confirmed 0단계 -> guidance text, a 1-tap "1단계로 올리기", the exercise block collapses to the STAGE_0 message, and no awaiting-capability list renders', () => {
   const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({ lbpConfirmedStage: 0, painFollowUpTargets: walkingFollowUpTarget }))
   assert.ok(html.includes('1단계로 올리기'), 'raising is one tap')
-  assert.ok(html.includes('능동 운동을 처방하지 않습니다'), 'stage-0 guidance renders')
+  // 2026-09-19: 옛 문구 '능동 운동을 처방하지 않습니다'를 교체했다(DR_07 §11-9).
+  // 화면에 실제로 나가는 문장이므로 여기서도 되돌림을 막는다.
+  assert.ok(html.includes('구조화된 고부하 운동을 유예합니다'), 'stage-0 guidance renders')
+  assert.ok(!html.includes('능동 운동을 처방하지 않'), 'stage-0 guidance must not read as a full stop on active movement')
   assert.ok(html.includes('0단계(보호/안정) 확정'), 'exercise block shows the STAGE_0 blocked message')
   assert.ok(!html.includes('확인하면 시작 가능'), 'no awaiting-capability list at stage 0')
   const stageGroup = html.slice(html.indexOf('aria-label="운동 단계 확정"'), html.indexOf('aria-label="운동 단계 확정"') + 1200)

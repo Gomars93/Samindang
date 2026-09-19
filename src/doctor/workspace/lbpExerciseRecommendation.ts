@@ -70,7 +70,7 @@ export type LbpRecommendationCandidate = {
 }
 export type RecommendationCandidate = LbpRecommendationCandidate
 
-/** `STAGE_0`: 원장이 0단계(보호/안정)를 확정 — 능동 운동 미처방이라 후보 블록 전체가 안내문으로 접힌다. */
+/** `STAGE_0`: 원장이 0단계(보호/안정)를 확정 — 구조화된 고부하 운동을 유예하므로 후보 블록 전체가 안내문으로 접힌다. */
 export type LbpRecommendationBlockedReason = 'SAFETY_REVIEW' | 'NEURO_REFRESH' | 'STAGE_0'
 
 export type LbpRecommendationResult = {
@@ -261,7 +261,7 @@ export function buildRecommendationContext(
     return EMPTY_RESULT(locked, lockedMessage, 'NEURO_REFRESH', neuroRefreshBlockedMessageKo(pack.labelKo), confirmedStage)
   }
 
-  // 2026-09-05: 0단계 확정 = 능동 운동 미처방. 안전 블록(위 두 개)보다는
+  // 2026-09-05: 0단계 확정 = 구조화된 고부하 운동 유예. 안전 블록(위 두 개)보다는
   // 뒤에 — 안전 재평가가 필요한 환자에게 0단계 안내문이 그 메시지를 가리면
   // 안 된다. 단계 카드 자체는 이 결과와 무관하게 항상 렌더되므로 원장이
   // 여기서 1단계로 올릴 수 있다.

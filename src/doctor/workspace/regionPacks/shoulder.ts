@@ -196,7 +196,7 @@ export const SHOULDER_REGION_PACK = buildDraftPack({
       targetFunctions: ['LIFTING', 'DRESSING'],
     },
   ],
-  // CLOSED §5 — 0단계는 표에 없음(능동 운동 미처방). 3단계 행 1(FUNC_01).
+  // CLOSED §5 — 0단계는 표에 없음(고부하 운동 유예). 3단계 행 1(FUNC_01).
   stageTable: {
     SH_EDU_01: 1,
     SH_MOB_01: 1,

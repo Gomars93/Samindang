@@ -18,8 +18,9 @@
  * `'ALL'`(전 단계 공통, `LBP_FUNC_01` 앉았다 일어서기)은 어느 단계에서도
  * 후보이고, 추정 계산에서는 1단계로 취급한다.
  *
- * 0단계에는 어떤 운동도 배정되지 않는다 — 0단계는 "능동 운동 미처방"이다
- * (`lbpExerciseStage.ts`).
+ * 0단계에는 이 표의 운동이 하나도 배정되지 않는다 — 0단계는 "구조화된 고부하
+ * 운동 유예"이고, 이 표가 담은 Core-20이 바로 그 구조화된 운동이기 때문이다
+ * (`lbpExerciseStage.ts`). 걷기·일상활동 유지는 표 밖의 안내문이 담당한다.
  */
 
 import type { LbpExerciseStage } from './lbpExerciseStage'
@@ -57,7 +58,7 @@ export function stageAssignmentAsNumber(a: LbpExerciseStageAssignment): 1 | 2 | 
 /**
  * 확정 단계 `stage`에서 이 운동이 후보가 될 수 있는가.
  * - `stage === null`(미확정) → 항상 true (필터 없음, 기존 동작 유지)
- * - `stage === 0` → 항상 false (능동 운동 미처방)
+ * - `stage === 0` → 항상 false (구조화된 고부하 운동 유예)
  * - 표에 없는 id → false (Core-20 밖의 id는 이 경로에 올 수 없다; 오면 막는다)
  */
 export function isLbpExerciseAllowedAtStage(exerciseId: string, stage: LbpExerciseStage | null): boolean {

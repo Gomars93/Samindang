@@ -535,7 +535,12 @@ test('stage 0 confirmed -> blocked STAGE_0 with the 0-stage guidance, no candida
   const payload = buildPayload(CLEAR_AXIAL_BASE)
   const r = buildLbpRecommendationContext(payload, 'NONE', ws({ painFollowUpTargets: workTarget, lbpConfirmedStage: 0 }))
   assert.equal(r.blocked, 'STAGE_0')
-  assert.ok(r.blockedMessageKo.includes('0단계') && r.blockedMessageKo.includes('능동 운동을 처방하지 않습니다'))
+  assert.ok(r.blockedMessageKo.includes('0단계'))
+  // 2026-09-19: 옛 문구 '능동 운동을 처방하지 않습니다'를 교체했다. DR_07 §11-9는
+  // 급성 요통에서 active approach 자체는 타당하고 불확실한 것은 초기 고강도
+  // structured exercise라고 본다. 블록 메시지가 옛 문구로 되돌아가면 여기서 막힌다.
+  assert.ok(!r.blockedMessageKo.includes('능동 운동을 처방하지 않'), 'stage-0 block message must not read as a full stop on active movement')
+  assert.ok(r.blockedMessageKo.includes('고부하') && r.blockedMessageKo.includes('일상활동'), 'stage-0 block message must name what is deferred and what is kept')
   assert.deepEqual(r.candidates, [])
   assert.equal(r.confirmedStage, 0)
 })

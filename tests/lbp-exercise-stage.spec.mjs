@@ -592,5 +592,18 @@ assert(
   '제약(지운 경로): 급성 상한 상수 ACUTE_ONSET_MAX_STAGE가 부활하지 않았다',
   !SOURCE.includes('ACUTE_ONSET_MAX_STAGE'),
 )
+// 2026-09-19 교체 경로 1개당 단언 1개 (CLAUDE.md "제거 또는 교체").
+// 아래 두 단언은 SOURCE가 아니라 **상수 자체**를 본다 — 교체 경위를 적은
+// 주석에는 옛 문구가 인용으로 남아 있어야 하고, 금지되는 것은 화면에 나가는
+// 문장이기 때문이다. 근거: `DR_07_재활_v1.md` §11-9(급성 요통에서 active
+// approach 자체는 타당, 불확실한 것은 초기 고강도 structured exercise).
+assert(
+  '제약(교체 경로 1/2): 0단계 안내문이 능동 운동 전면 중단으로 읽히지 않는다',
+  !/능동 운동을 처방하지 않/.test(LBP_STAGE_0_GUIDANCE_KO),
+)
+assert(
+  '제약(교체 경로 2/2): 0단계 안내문이 유예 대상(고부하)과 유지 대상(일상활동)을 함께 적는다',
+  LBP_STAGE_0_GUIDANCE_KO.includes('고부하') && LBP_STAGE_0_GUIDANCE_KO.includes('일상활동'),
+)
 
 console.log(`\n${passCount} assertions passed.`)

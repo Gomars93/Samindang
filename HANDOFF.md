@@ -1,5 +1,52 @@
 # Current Handoff
 
+## 2026-09-20 (최신 47): **한약 진료 개시 준비** — 명리 BLOCKER 해소(12시진만 사용) + 한약 실기기 절차 §5-c + 클리닉 원클릭 세팅 스크립트
+
+**브랜치**: `claude/google-drive-survey-readiness-3y1ews` (origin/main `c3cbdb2`에서 시작).
+PO 질문: *"구글 드라이브 설문지 한약 당장 다음주부터 쓸수 있는 상태인가?"* → 확인 결과
+**코드는 이미 준비돼 있었고**, 막고 있던 것은 배포 절차·문서·명리 정책이었다.
+
+### 먼저 확인한 것 (현 main 실측)
+- `npm run test:all` **exit 0**(67스위트) / `npm run build` **exit 0** — `c3cbdb2` 기준.
+- 한약 환자 흐름을 실제 엔진(`visibleQuestions`)으로 시뮬레이션: **체질·보약 20화면**
+  (상담 2 / 전신 8 / 병력 6 / 출생 3 / 마무리 1), **증상치료 25화면**(+방문목적 2 +모듈 3).
+  `pain_fast`에서는 안 나오는 `CONST_*` 4 + `HERB_*` 4가 정상적으로 전부 나온다.
+- 원장 화면: `viewProfile` → `한약·전신`, `HerbalWorkspace`(변증 후보·관찰 체크리스트·재평가·
+  Care Plan·이전 방문), EMR 미리보기 13필드. 과거 D-2(판단 3필드 소실)는 고쳐진 상태 확인.
+
+### 한 것
+- **명리 BLOCKER #1 해소**(PO 결정, `DECISIONS.md` 같은 날): 문진이 쓰는 명리 정보는
+  `BIRTH_03`(12시진) 하나. 파생 계산은 임상 미사용 → 야자시/진태양시 규칙은 **해당 없음**.
+  **코드 0줄 변경** — `policy.ts`의 `approved_by_clinician: false`는 그대로(안 쓴다 ≠ 승인했다).
+  체크리스트 §5) 성공 기준의 "명리 결과 섹션이 채워져 있다"는 **"출생 시간대가 보인다"**로 교체.
+- **`docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 신설** — 한약 경로 실기기 통과 절차
+  (가)체질·보약 (나)증상치료 (다)원장 화면 배지·판단 3칸 (라)**EMR 복사 붙여넣기 확인**.
+  통증은 6부위 절차가 있는데 한약만 없었다.
+- **`scripts/setup-and-start-clinic.{ps1,bat}` 신설** — pull → 커밋 해시 출력 → LAN IP 탐지 →
+  `.env.local` 재작성 → build(실패 시 중단) → 서버 2개. `SAMINDANG_DATA_DIR` 기본값을
+  **저장소 바깥**으로 둔다. RUNBOOK §0·§2.1a 갱신.
+- **드라이브 동기화 경고**(RUNBOOK §0): 클리닉 저장소가 구글 드라이브 동기화 폴더 안에 있어
+  `.data/`(환자 제출물)와 `.env.local`이 드라이브로 올라가고 있었다. 현재 올라간 것은
+  가명 visit 메타 3건·audit.log·`.env.local`뿐이고 **제출 답변·이름·연락처는 없었으며**
+  공유도 소유자 단독이다. 파일럿을 시작하면 실제 제출물이 동기화될 경로다.
+- `tests/clinic-setup.spec.mjs` 35단언 신설(`test:all` 편입).
+
+### 검증
+`test:clinic-setup` 35 / `test:all` exit 0 / `build` exit 0. 변이 2개 사망 확인.
+`src/`·`server/` 소스 변경 **0줄** — 스크립트·문서·테스트만.
+
+### Next Recommended Action — **원장이 테스트 환자가 되는 절차**
+1. 클리닉 PC에서 `scripts\setup-and-start-clinic.bat` 더블클릭 → 출력된 커밋 해시가
+   `c3cbdb2` 이상인지 확인.
+2. `docs/REAL_DEVICE_PILOT_CHECKLIST.md` **§5-c** 를 (가)→(라) 순서대로 통과.
+   특히 **(라) EMR 복사**에서 타이핑한 판단 3필드가 붙여넣기 결과에 들어 있는지.
+3. 통과하면 BLOCKER #2(실기기 시각 검증)·#3(방화벽/LAN)도 함께 해소된다 — 체크리스트에
+   결과를 기록하고 남은 BLOCKER 상태를 갱신할 것.
+4. **미결(PO 판단 필요)**: ① 드라이브에 올라간 `.env.local`·`.data/` 삭제 및 동기화 제외
+   여부 ② 원장 화면에서 명리 계산 영역을 아예 제거할지(별도 작업).
+
+---
+
 ## 2026-09-08 (최신 46): **문진 "없음" 최상단 부위 팩 34문항 확장 (v2.4 §22 후속)** — 이제 문진 전체 단일 규칙(none/NONE = index 0). PR #34 merge 완료
 
 **브랜치**: `claude/clinical-os-lbp-architecture-xym6po`. PO에게 "34문항도 올릴까요?" 확인 질문 → **"34문항도 올린다."**

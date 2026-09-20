@@ -12,9 +12,16 @@ PC 화면까지 도착하도록 하는 최소 서버(`server/index.js`)의 운�
 
 - **환자 데이터 저장 위치**: `SAMINDANG_DATA_DIR`(기본 `./.data/submissions`),
   제출 1건당 `<uuid>.json` 파일 1개. **git에 절대 커밋되지 않는다.**
+  ⚠️ **저장소 폴더가 클라우드(구글 드라이브 등) 동기화 대상이면 기본값을 쓰지 말 것** —
+  `.data/`가 통째로 외부로 동기화된다. `git`은 `.gitignore`로 막지만 동기화 클라이언트는
+  막지 않는다. `SAMINDANG_DATA_DIR`을 저장소 바깥(예: `C:\samindang-data\submissions`)으로
+  지정한다 (2.3절). `setup-and-start-clinic.bat`은 이 값을 기본으로 설정해 기동한다.
 - **보존기한 기본값: 30일.** `SAMINDANG_RETENTION_DAYS`로 바꾸거나
   `0`으로 자동삭제를 끌 수 있다 (7절).
-- **서버 기동(원클릭)**: `scripts\start-clinic.bat` 더블클릭, 또는
+- **세팅+기동 한 번에 (권장)**: `scripts\setup-and-start-clinic.bat` 더블클릭 —
+  `git pull` → LAN IP 자동 탐지 → `.env.local` 작성 → `npm run build` →
+  서버 2개 기동까지 한 파일로 처리한다 (2.1a절).
+- **서버 기동만 (이미 빌드된 상태)**: `scripts\start-clinic.bat` 더블클릭, 또는
   `npm run server` (2절).
 - **태블릿 URL**: `http://<원장 PC의 LAN IP>:4173` (4절로 IP 확인).
 - **원장 대시보드**: `http://localhost:4173/#doctor` (원장 PC에서).
@@ -69,6 +76,30 @@ PC 화면까지 도착하도록 하는 최소 서버(`server/index.js`)의 운�
 
 두 창을 닫거나 안에서 Ctrl+C를 누르면 그 서버가 멈춘다. 하루 끝에
 그렇게 종료하면 된다(11절).
+
+### 2.1a 세팅부터 한 번에 (`setup-and-start-clinic.bat`)
+
+`start-clinic.bat`은 **이미 빌드된 상태**를 전제로 서버 두 개만 띄운다. 클리닉 PC가
+며칠 만에 켜졌거나 `.env.local`을 손댄 적이 있다면 그 앞단계가 필요하다:
+
+```
+scripts\setup-and-start-clinic.bat
+```
+
+순서대로 이렇게 한다.
+
+1. `git pull --ff-only` — 커밋되지 않은 변경이 있거나 브랜치가 `main`이 아니면 먼저 묻는다.
+   끝나면 **현재 커밋 해시와 날짜를 출력**한다(클리닉 PC가 옛 코드에 멈춰 있는지 눈으로 확인).
+2. LAN IPv4 자동 탐지. 후보가 둘 이상이면 멈추고 `-Ip 192.168.0.10` 으로 지정하라고 안내한다
+   (VPN·가상 어댑터는 제외한다).
+3. `.env.local`의 `VITE_SAMINDANG_SERVER_URL` 줄만 다시 쓴다 — **변수명이 틀려 전송이
+   실패했던 과거 사고를 막기 위해 이 줄은 항상 스크립트가 쓴다.** 나머지 줄은 보존한다.
+4. `npm run build` (`node_modules`가 없으면 `npm install` 먼저). 빌드가 실패하면 **거기서
+   멈춘다** — 깨진 빌드로 진료에 들어가지 않는다.
+5. `SAMINDANG_DATA_DIR`(기본 `C:\samindang-data\submissions`)을 만들고 그 환경변수로
+   핸드오프 서버 + 프리뷰 서버를 각각 새 창에 띄운다.
+
+옵션: `-Ip <주소>` / `-SkipPull` / `-DataDir <경로>` / `-NoStart`(빌드까지만).
 
 ### 2.2 수동 기동
 

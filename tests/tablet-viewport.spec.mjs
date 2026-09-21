@@ -387,6 +387,85 @@ try {
       `(${m.openerSize}px)`,
     )
 
+    /*
+     * PR-B1(2026-09-21) 설맥복 체크식: 위 측정은 체크리스트가 **접힌** 기본
+     * 상태다. 체크식의 실제 비용(칩 23개 + ＋ 전체 손잡이 3개)은 원장이
+     * "빠른 입력"을 눌러 펼친 뒤에야 화면에 나타나므로, 그 상태를 따로
+     * 잰다 -- 접힌 상태만 재고 "높이 변화 없음"이라고 말하는 것은 측정하지
+     * 않은 것을 측정했다고 말하는 것이다.
+     *
+     * 여기서 확인하는 것은 (1) 펼친 화면이 천장을 넘지 않는지, (2) 칩이
+     * 가로 오버플로를 만들지 않는지, (3) 새 칩도 36px 하한을 지키는지.
+     * ＋ 전체 서랍은 일부러 열지 않는다 -- 2층은 "필요할 때만 여는 자리"이고,
+     * 늘 열린 상태를 기본 예산으로 잡으면 2층을 만든 이유가 없어진다.
+     */
+    await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const btns = [...document.querySelectorAll('button')]
+        const opener = btns.find((b) => b.textContent.trim() === '빠른 입력')
+        if (!opener) return 'already-open'
+        opener.click()
+        return 'opened'
+      })()`,
+      returnByValue: true,
+    })
+    await cdp.evalUntil(`document.querySelectorAll('.workspace__obsChip').length`, (v) => typeof v === 'number' && v > 0)
+    const me = await cdp.evalUntil(MEASURE, (v) => v && typeof v.workflow === 'number')
+    const chipCount = (
+      await cdp.send('Runtime.evaluate', {
+        /*
+         * **보이는** 칩만 센다. <details>는 닫혀 있어도 자식을 DOM에 유지하므로
+         * querySelectorAll만으로는 2층 칩까지 세어 60개가 나온다(실측에서
+         * 실제로 그랬다) -- 그 숫자는 "화면 부하"와 아무 상관이 없다.
+         */
+        expression: `[...document.querySelectorAll('.workspace__obsChip')].filter((el) => typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null).length`,
+        returnByValue: true,
+      })
+    ).result?.value
+    console.log(
+      `[measured] ${label} (설맥복 펼침): ${me.workflow}px / ${me.viewport}px = ${(me.workflow / me.viewport).toFixed(2)}x` +
+        ` | overflowX ${me.overflowX}px | 펼침 비용 +${me.workflow - m.workflow}px | 1층 칩 ${chipCount}개 | smallest target ${me.smallestTarget}px`,
+    )
+    check(
+      `${label} (설맥복 펼침): 1층 칩 23개가 실제로 렌더된다 (설 8 + 맥 9 + 복 6)`,
+      chipCount === 23,
+      `(${chipCount})`,
+    )
+    /*
+     * 펼친 상태의 예산은 **접힌 상태의 천장(vp.ceiling)을 빌려 쓰지 않는다.**
+     * 그 값들은 "아무것도 기록되지 않은 기본 화면"을 기준으로 잡힌 것이라,
+     * 원장이 설맥복을 펼쳐 입력하는 다른 상태에 그대로 들이대는 것은 측정
+     * 대상을 바꿔치기하는 것이다. 대신 두 가지를 각각 고정한다:
+     *
+     *  (1) 화면 배수 ≤ 2.0 — 펼쳐도 **한 번 스크롤이면 끝까지 닿는다**가
+     *      이 화면의 실질적 요구다. 실측 최대는 태블릿 가로 1.60배.
+     *  (2) 펼침 비용 ≤ 560px — 칩 블록 자체가 더해지는 높이. 뷰포트와
+     *      거의 무관한 값이라 회귀 감시에 더 예민하다. 실측: PC +354,
+     *      태블릿 가로 +504, 태블릿 세로 +378. 최대값 504에 약 11% 여유.
+     *
+     * (2)가 핵심 감시선이다 -- 누군가 칩을 늘리거나 줄 구성을 되돌리면
+     * 배수보다 먼저 여기서 걸린다. 실제로 이 배치에서 세 번 걸렸다:
+     * 처음 블록당 세 줄 구성이 +654px, grid-column 전 폭 시도가 +822px,
+     * 한 wrap 줄로 합친 지금이 +354~504px.
+     */
+    const expandCost = me.workflow - m.workflow
+    check(
+      `${label} (설맥복 펼침): 펼쳐도 2화면 이내 — 한 번 스크롤로 끝까지 닿는다`,
+      me.workflow / me.viewport <= 2.0,
+      `(${(me.workflow / me.viewport).toFixed(2)}x)`,
+    )
+    check(
+      `${label} (설맥복 펼침): 펼침 비용이 560px를 넘지 않는다 (칩 블록이 더하는 높이)`,
+      expandCost <= 560,
+      `(+${expandCost}px)`,
+    )
+    check(`${label} (설맥복 펼침): 가로 오버플로 없음`, me.overflowX === 0, `(${me.overflowX}px)`)
+    check(
+      `${label} (설맥복 펼침): 새 칩도 ${MIN_TARGET}px 하한을 지킨다`,
+      me.smallestTarget !== null && me.smallestTarget >= MIN_TARGET,
+      `(${me.smallestTarget}px)`,
+    )
+
     // 2026-09-06: 통증(LBP) 프로필을 따로 잰다 — 이번 배치가 접은 세 칸이 실제
     // 헤드리스 렌더에서 보이지 않는지, 그리고 처치 "기타" 한 칸만 남는지.
     // 옵션은 인덱스가 아니라 이름으로 고른다(fixture 재정렬에 안전).

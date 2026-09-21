@@ -3,6 +3,7 @@ import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
 import { DOCTOR_FIXTURES } from './fixtures'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
+import { PatientIdentityLinkAction } from './PatientIdentityLinkAction'
 import { buildPainWorkspaceEmrPreview, buildHerbalWorkspaceEmrPreview } from './workspace/emrPreview'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import {
@@ -3116,6 +3117,52 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   const chartNoForOpenRecord =
     resolvedIdentityForOpenRecord?.resolved === true ? resolvedIdentityForOpenRecord.sigma_chart_no : null
 
+  /**
+   * 차트번호 연결(2026-09-21) — 오늘 큐 행에 인라인으로 있던 핸들러를 이름
+   * 있는 함수로 꺼냈다. 이전에는 이 콜백이 `TodayUnifiedQueueSection` JSX
+   * 안에만 있어서, 열린 진료 레코드 쪽에서는 같은 낙관적 갱신 계약(revisits
+   * 행 패치 + patientIdentitiesSeqRef 증가 + 맵 갱신)을 재사용할 방법이
+   * 없었다. 두 번째 사본을 만드는 대신 하나를 공유한다 -- seq ref를 먼저
+   * 올리는 순서가 이 계약의 핵심이라(진행 중이던 identity fetch가 방금 연결한
+   * 결과를 덮어쓰지 못하게 한다) 복제하면 한쪽만 틀릴 위험이 크다.
+   */
+  function handleIdentityLinked(uuid: string, identity: ResolvedPatientIdentity) {
+    // Revisit identity: patch the matching row in `revisits`.
+    setRevisits((prev) => prev.map((r) => (r.patientId === uuid ? { ...r, resolvedIdentity: identity } : r)))
+    // CRM identity: same optimistic-update contract round 14 already
+    // established for TodayQueueSection -- bump the sequence ref first so an
+    // identity fetch already in flight can't overwrite this with a now-stale
+    // result (see patientIdentitiesSeqRef).
+    patientIdentitiesSeqRef.current += 1
+    setPatientIdentities((prev) => ({ ...prev, [uuid]: identity }))
+  }
+
+  /**
+   * 진료 화면 ①신원 블록의 "차트번호 연결" 슬롯.
+   *
+   * 왜 필요했나: `PatientIdentityLinkAction`(서버·UI·충돌감지·e2e 테스트까지
+   * 이미 완성돼 있다)은 **오늘 큐의 CRM 작업 행에만** 붙어 있었다. 그래서
+   * 오늘 CRM 작업이 없는 일반 문진 제출은 차트번호를 붙일 자리가 화면
+   * 어디에도 없었고, `chartNoForOpenRecord`는 영원히 null로 남았다 -- 위
+   * 주석이 말하는 "그 밖의 제출은 chart_no 없이 그대로 생략된다"가 바로 그
+   * 상태다. 재평가에서 지난 문진을 찾으려면 이 연결이 선행돼야 하므로,
+   * 진료를 여는 자리에서도 같은 액션에 닿을 수 있어야 한다.
+   *
+   * 새로 만든 것은 **이 슬롯뿐**이다 -- 서버 변경 0줄, 새 API 0개, 새 조회
+   * 경로 0개. 차트번호로 환자를 역조회하는 읽기 API는 일부러 만들지 않는다
+   * (patientIdentityStore.js 헤더: by-chart 역인덱스는 "never exposed via any
+   * read API"). 역조회를 열면 차트번호만 알면 환자명을 확인할 수 있게 된다.
+   *
+   * 렌더 조건: 서버 모드 + 실제 patient_id가 있고 + 아직 연결되지 않았을 때만.
+   * fixtures/미리보기에는 실환자가 없으므로 나오지 않고, 이미 연결된
+   * 레코드는 차트번호가 메타 줄에 이미 표시되므로 버튼을 다시 띄우지 않는다
+   * (이 연결은 UI에서 비가역이다 -- PatientIdentityLinkAction 헤더 참고).
+   */
+  const identityLinkSlotForOpenRecord =
+    mode === 'server' && selectedRecord?.patient_id && chartNoForOpenRecord === null ? (
+      <PatientIdentityLinkAction patientUuid={selectedRecord.patient_id} onLinked={handleIdentityLinked} />
+    ) : null
+
   // 진료 녹취·요약: 선택된 visit의 recorder 결과를 5초마다 폴링한다(기존
   // 목록 폴링과 동일한 최소 패턴 — v0.1은 websocket을 만들지 않는다).
   useEffect(() => {
@@ -4196,16 +4243,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
             setIssuedSession(null)
             setRevisitActionError(null)
           }}
-          onIdentityLinked={(uuid, identity) => {
-            // Revisit identity: patch the matching row in `revisits`.
-            setRevisits((prev) => prev.map((r) => (r.patientId === uuid ? { ...r, resolvedIdentity: identity } : r)))
-            // CRM identity: same optimistic-update contract round 14 already
-            // established for TodayQueueSection -- bump the sequence ref
-            // first so an identity fetch already in flight can't overwrite
-            // this with a now-stale result (see patientIdentitiesSeqRef).
-            patientIdentitiesSeqRef.current += 1
-            setPatientIdentities((prev) => ({ ...prev, [uuid]: identity }))
-          }}
+          onIdentityLinked={handleIdentityLinked}
           submissionsFreshness={{
             failed: submissionsPollFailed,
             lastGoodAt: submissionsLastGoodAt,
@@ -4341,6 +4379,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
         payload={payload}
         resetKey={unifiedResetKey}
         chartNo={chartNoForOpenRecord}
+        identityLinkSlot={identityLinkSlotForOpenRecord}
         lbpObjectiveMotorDeficit={
           mode === 'server' ? selectedRecord?.judgment?.lbp_objective_motor_deficit : undefined
         }

@@ -153,6 +153,7 @@ export function DoctorWorkspace({
   submissionId,
   resetKey,
   chartNo,
+  identityLinkSlot,
   initialWorkspaceState,
   initialRecordUpdatedAt,
   onSaveWorkspace,
@@ -186,6 +187,8 @@ export function DoctorWorkspace({
   resetKey?: string
   /** Resolved chart_no for the 좌측 요약 신원 block, when known (CRM identity link). Never fabricated when absent. */
   chartNo?: string | null
+  /** 차트번호 연결(2026-09-21): VisitSummaryAside ①신원 블록으로 그대로 흘려보내는 슬롯 — 이 파일은 내용을 해석하지 않는다. */
+  identityLinkSlot?: ReactNode
   initialWorkspaceState?: WorkspaceState | null
   /**
    * Round 18: the submission record's server-authoritative `updated_at` at
@@ -572,6 +575,7 @@ export function DoctorWorkspace({
         <VisitSummaryAside
           patientName={typeof r.patient.patient_name === 'string' ? r.patient.patient_name : ''}
           chartNo={chartNo}
+          identityLinkSlot={identityLinkSlot}
           sexAgeLine={sexAgeLine || null}
           chiefConcern={primaryConcernLabel(r)}
           durationFrequency={durationFrequencyText(r, payload.routing.primary_module)}

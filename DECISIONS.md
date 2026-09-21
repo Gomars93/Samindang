@@ -1,5 +1,88 @@
 # Decisions Log
 
+## 2026-09-21 — 차트번호 연결 진입점을 진료 화면 ①신원 블록에도 추가 (서버 변경 0줄)
+
+**PO 지시**: "차트번호 입력부터 먼저 넣자."
+
+### 먼저: 직전 세션 판단의 정정
+
+같은 세션에서 제가 "닥터뷰 레코드와 시그마 차트를 잇는 게 원장 머릿속뿐이니 차트번호를
+넣는 것이 급하다"고 말했는데, **사실이 아니었다.** 코드를 확인하니 시그마 `chart_no` 연결은
+이미 완성돼 있었다:
+
+- `server/patientIdentityStore.js` — `patient_uuid ↔ sigma_chart_no` 양방향 저장,
+  `by-chart/<sha256>` 역인덱스, orphan reservation 처리, 충돌 감지
+- `POST /api/crm/patient-identity` (원장 인증 필요)
+- `src/doctor/PatientIdentityLinkAction.tsx` — 비가역 연결이라 **2단계 확인**까지 구현
+- `tests/patient-identity-link-e2e.spec.mjs`
+
+만들기 전에 검색했기 때문에 중복 구현을 피했다. 이 항목은 그 정정을 남기기 위한 것이기도
+하다 — CLAUDE.md의 "새로 만들기 전에 기존 것을 먼저 검색한다" 규칙이 실제로 작동한 사례다.
+
+### 실제 갭: 코드가 아니라 **진입 시점**이었다
+
+연결 버튼이 **오늘 큐(Today Queue)의 CRM 작업 행에만** 붙어 있었다. 그래서 오늘 CRM 작업이
+없는 일반 문진 제출은 차트번호를 붙일 자리가 화면 어디에도 없었고, `chartNoForOpenRecord`는
+영원히 `null`로 남았다. `DoctorView.tsx`의 기존 주석이 그 상태를 이미 적어두고 있다 —
+"그 밖의 제출은 chart_no 없이(값을 지어내지 않고) 아래에서 그대로 생략된다."
+
+재평가에서 지난 문진을 찾으려면 이 연결이 선행돼야 한다. 연결이 없으면 설맥복 체크식의
+Layer 0("지난번 ✓"), 옴니핏 Δ 비교, 재처방 체크 설문의 조인 키가 **전부 작동하지 않는다** —
+셋 다 "지난 기록을 찾을 수 있다"를 전제하기 때문이다.
+
+### 한 것: 슬롯 하나
+
+`identityLinkSlot`을 `DoctorView → DoctorWorkspace → VisitSummaryAside` 3단으로 흘려보내
+①신원 블록에 렌더한다. 슬롯 내용은 기존 `PatientIdentityLinkAction` 그대로다.
+
+**새로 만든 것은 이 슬롯뿐** — 서버 0줄, 새 API 0개, 새 조회 경로 0개, 새 임상 로직 0개.
+
+렌더 조건: 서버 모드 + 실제 `patient_id` 존재 + **아직 미연결**. fixtures 미리보기에는
+실환자가 없어 나오지 않고, 이미 연결된 레코드에는 비가역 액션을 다시 띄우지 않는다.
+
+`VisitSummaryAside`가 `PatientIdentityLinkAction`을 직접 import하지 않고 노드를 주입받는
+이유: 순수 표시 컴포넌트가 서버 클라이언트(`linkPatientIdentity`)에 의존하면 그 테스트
+번들이 네트워크 모듈까지 끌고 온다. 호출부가 노드를 만든다.
+
+compact(834 세로) 행에는 **의도적으로 렌더하지 않는다** — §3.2가 2줄로 예산을 고정한
+자리이고(layout-budget 테스트가 감시), 닥터뷰는 PO 확인상 PC 전용이다. 연결 완료 후의
+차트번호 **표시**는 compact에도 그대로 나온다.
+
+### 의도적으로 만들지 않은 것: 차트번호 → 환자 역조회 읽기 API
+
+"태블릿 문진 시작 화면에서 환자/직원이 차트번호를 입력한다"는 대안을 검토하고 **버렸다.**
+
+1. **보안.** 차트번호로 환자를 찾는 읽기 API를 열면, 차트번호만 아는 사람이 환자명을 확인할
+   수 있다. `patientIdentityStore.js` 헤더가 by-chart 역인덱스를 두고 "never exposed via any
+   read API"라고 명시해둔 이유가 그것이다. 이 경계를 기능 하나 때문에 깨지 않는다.
+2. **검증 불가.** 위 이유로 역조회를 안 하면 입력값을 검증할 방법이 없다 — 오타가 그대로
+   들어가고, 잘못된 차트번호는 UI에서 되돌릴 수 없다(unlink 엔드포인트가 없다).
+3. **환자가 자기 차트번호를 모른다.** 결국 직원이 접수 시점에 대신 입력해야 하는데, 가장
+   바쁜 순간에 단계가 하나 늘어난다.
+
+반면 진료 화면에서는 원장/직원이 **이미 시그마를 보고 있어** 차트번호가 눈앞에 있고,
+서버가 충돌(`already_linked` / `chart_already_linked` / `legacy_reservation_ambiguous`)을
+이미 감지하며, 2단계 확인이 비가역성을 막아준다.
+
+### 부수 정리: 낙관적 갱신 핸들러를 하나로 공유
+
+`onIdentityLinked`가 `TodayUnifiedQueueSection` JSX 안에 인라인으로만 있어서 재사용할 수
+없었다. 이름 있는 `handleIdentityLinked`로 꺼내 두 곳이 공유한다. 사본을 만들지 않은 이유:
+이 계약의 핵심은 **`patientIdentitiesSeqRef`를 맵 갱신보다 먼저 올리는 순서**(진행 중이던
+identity fetch가 방금 연결한 결과를 덮어쓰지 못하게 한다)인데, 복제하면 한쪽만 틀릴 위험이
+크다. 테스트 D-3이 그 순서를 고정한다.
+
+### 테스트
+
+`tests/chart-no-link-slot.spec.mjs` 15단언 신설(`test:all` 편입):
+§A 슬롯 3단 경로 · §B 렌더 조건 4가지 · §C **보안 경계**(patient-identity 라우트가 여전히
+POST 하나뿐, 클라이언트에 새 조회 함수 없음, 저장소의 "never exposed" 계약 유지) ·
+§D 공유 핸들러 + seq ref 순서.
+
+뮤테이션 2회로 실효성 확인: 미연결 조건 제거 → B-3 실패 / seq ref 순서 뒤집기 → D-3 실패.
+
+**검증**: `npm run test:all` exit 0 / `npm run build` exit 0. `server/` 변경 0줄.
+
 ## 2026-09-21 — 한약 닥터뷰 `다음` 레인 전체 폐기 (herbal 단독만, PR-A) — 1.41화면 → 0.97화면
 
 **PO 지시(원문)**: "지금 너무 욕심이 많아서 너무 많이 넣은 것 같아. crm도 넣고 이것저것

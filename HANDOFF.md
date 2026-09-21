@@ -1,5 +1,39 @@
 # Current Handoff
 
+## 2026-09-21 (최신 51): **클리닉 진단 스크립트 신설** — `diagnose-clinic.{ps1,bat}`, 원격 세션 왕복 축소
+
+**브랜치**: `claude/chore-clinic-diagnose`. CORS 버그(최신 50) 수정 후 실기기 재검증 중
+Wi-Fi 끊김→재연결로 "연결 안 됨" 재발, 원인 좁히는 데 6번 왕복(IP/방화벽/네트워크
+프로필/포트 4317·4173/브라우저 콘솔)이 필요했다. PO가 이 왕복 자체를 지적 —
+**결과: 닥터뷰 최종 확인됨(4173 프리뷰 서버가 죽어 있었던 게 마지막 원인, `npm.cmd run
+preview -- --host`로 재기동).**
+
+### 한 것
+- `scripts/diagnose-clinic.{ps1,bat}` 신설 — IP 일치·네트워크 프로필·방화벽 규칙·포트
+  4317/4173 리스닝·`/api/health` 응답까지 6개 축을 한 번에 확인해 한 화면 요약(발견된
+  문제마다 다음에 칠 명령까지 포함). 브라우저 콘솔 에러는 이 스크립트가 볼 수 없다는 것도
+  명시.
+- `docs/RUNBOOK_LOCAL_HANDOFF.md` §2.1b 신설 — 진단 스크립트 안내 + `npm`을 프롬프트에
+  직접 칠 때 PowerShell 실행 정책에 막히면 `npm.cmd run ...`으로 우회하는 법(이번 세션에서
+  실제로 겪은 사고).
+- `tests/clinic-diagnose.spec.mjs` 13단언 신설(`test:all` 편입) — 새 스크립트가
+  setup-and-start-clinic.ps1의 이전 실기기 사고(백슬래시-쌍따옴표 이스케이프)를 반복하지
+  않는지, 6개 확인 축이 실제로 있는지 코드 대조.
+
+### 검증
+`test:all` exit 0 / `build` exit 0. `src/`·`server/` 변경 0줄 — 진단 도구·문서·테스트만.
+
+### Next Recommended Action
+1. **원장**: `git pull` 후 `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c로 한약 문진 최종
+   확인(태블릿 완주 → 원장 화면 배지·판단 3칸 → **EMR 복사** 붙여넣기 확인까지).
+2. 이번부터 접속 문제가 생기면 `scripts\diagnose-clinic.bat` 먼저 돌려서 그 출력 전체를
+   붙여넣을 것 — 왕복이 줄어든다.
+3. **UI 개선 요청 접수(같은 세션, 이어서 논의 중)**: 원장이 닥터뷰 UI를 더 직관적으로
+   고치고 싶다고 요청 — 구체적으로 어느 화면/어느 부분인지 범위를 좁혀야 시작 가능
+   (CLAUDE.md: 의미 없는 broad refactor 금지, unrelated 변경 금지).
+
+---
+
 ## 2026-09-21 (최신 50): **환자 제출 CORS preflight 오분류 버그 수정** — LAN IP 태블릿에서 "서버에 연결할 수 없습니다" (`server/index.js`)
 
 **브랜치**: `claude/fix-cors-lan-origin`. 한약 루프 버그(최신 49)를 고친 뒤 원장이 실기기

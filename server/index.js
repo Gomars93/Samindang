@@ -457,17 +457,41 @@ export function createApp({
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost')
     const parts = url.pathname.split('/').filter(Boolean) // ['api','submissions',':id',...]
+    // 2026-09-21 실기기 재현 버그: 아래 라우트 분류 상수들은 "이 요청이
+    // 진짜 어느 라우트인가"를 `req.method`로 판별한다(예:
+    // `req.method === 'POST'`). 그런데 브라우저가 cross-origin POST(JSON
+    // body -- application/json은 CORS "simple request" 목록에 없어 항상
+    // preflight를 보낸다) 전에 먼저 보내는 CORS preflight 요청은 실제
+    // method가 무엇이든 항상 `OPTIONS`다. 그 결과 `req.method === 'POST'`
+    // 조건은 preflight 자체에서는 절대 참이 될 수 없어, "patient POST
+    // /api/submissions는 예외"같은 method 기반 예외 처리가 정확히 preflight
+    // 단계에서만 뒤집힌다 -- 실제 POST는 맞게 분류되지만, 그 앞의 OPTIONS가
+    // 원장 라우트로 오분류되어 origin allowlist에 없는 LAN IP(환자 태블릿의
+    // 실제 origin)에 대해 프리플라이트가 CORS 헤더 없이 거부되고, 브라우저는
+    // 실제 POST를 아예 보내보지도 못한 채 "서버에 연결할 수 없습니다"로
+    // 실패한다(node의 fetch는 preflight를 하지 않으므로 HTTP 레벨 테스트가
+    // 이 클래스를 못 잡는다 -- x-station-credential 헤더가 이미 같은 이유로
+    // 한 번 이 파일에 추가된 적 있다, 아래 corsHeaders 주석 참고).
+    //
+    // 고침: preflight(OPTIONS)는 표준 헤더 `Access-Control-Request-Method`에
+    // "그 다음에 보낼 진짜 method"를 싣고 온다 -- 라우트 분류는 전부 이
+    // effectiveMethod로 판단하고, 실제 핸들러 디스패치(아래 try 블록, OPTIONS는
+    // 그 전에 이미 return됨)는 손대지 않는다.
+    const effectiveMethod =
+      req.method === 'OPTIONS' && typeof req.headers['access-control-request-method'] === 'string'
+        ? req.headers['access-control-request-method'].toUpperCase()
+        : req.method
     // 모든 /api/submissions, /api/visits, /api/current-visit(GET/clear
     // 둘 다) 라우트가 원장용이다 — 예외는 patient POST(제출 생성) 한 건뿐.
     // GET /api/current-visit는 과거 별도의 더 엄격한 가드를 썼지만, 다른
     // workstation의 Doctor 화면이 LAN으로 읽어야 하므로 다른 원장 라우트와
     // 동일한 requireDoctor()+origin allowlist 모델로 통합했다.
     const isSubmissionsRoute =
-      parts[1] === 'submissions' && !(parts.length === 2 && req.method === 'POST')
+      parts[1] === 'submissions' && !(parts.length === 2 && effectiveMethod === 'POST')
     const isVisitsRoute = parts[1] === 'visits'
     const isCurrentVisitClear = parts[1] === 'current-visit' && parts.length === 3 && parts[2] === 'clear'
     const isCurrentVisitRead =
-      parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2 && req.method === 'GET'
+      parts[0] === 'api' && parts[1] === 'current-visit' && parts.length === 2 && effectiveMethod === 'GET'
     // Round 3 Phase C(longitudinal linkage): GET /api/patients/:id/history is
     // doctor-only exactly like every route above -- must share the same
     // Origin-allowlist defense-in-depth layer, not just requireDoctor()'s
@@ -481,8 +505,8 @@ export function createApp({
     // and must stay reachable without a doctor token/Origin allowlist,
     // same posture as the existing patient POST /api/submissions.
     const isPatientRevisitRoute =
-      parts[1] === 'patients' && parts.length === 4 && parts[3] === 'start-revisit' && req.method === 'POST'
-    const isRevisitsQueueRoute = parts[1] === 'visits' && parts.length === 3 && parts[2] === 'revisits' && req.method === 'GET'
+      parts[1] === 'patients' && parts.length === 4 && parts[3] === 'start-revisit' && effectiveMethod === 'POST'
+    const isRevisitsQueueRoute = parts[1] === 'visits' && parts.length === 3 && parts[2] === 'revisits' && effectiveMethod === 'GET'
     // Round 8: /api/stations/* are STAFF routes (register a tablet, list
     // tablets, assign a patient to one, reset one) and carry the same
     // doctor guard as every other staff route. Deliberately NOT included
@@ -505,7 +529,7 @@ export function createApp({
     // see messagingStore.js's handleDeliveryWebhook doc comment on why an
     // unknown id is a safe no-op rather than an error).
     const isMessagesAdminRoute =
-      parts[1] === 'messages' && parts.length === 4 && (parts[3] === 'retry' || parts[3] === 'cancel') && req.method === 'POST'
+      parts[1] === 'messages' && parts.length === 4 && (parts[3] === 'retry' || parts[3] === 'cancel') && effectiveMethod === 'POST'
     const doctorRoute =
       parts[0] === 'api' &&
       (isSubmissionsRoute ||

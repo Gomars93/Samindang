@@ -1,5 +1,44 @@
 # Current Handoff
 
+## 2026-09-21 (최신 50): **환자 제출 CORS preflight 오분류 버그 수정** — LAN IP 태블릿에서 "서버에 연결할 수 없습니다" (`server/index.js`)
+
+**브랜치**: `claude/fix-cors-lan-origin`. 한약 루프 버그(최신 49)를 고친 뒤 원장이 실기기
+재시도 → 문진은 완주했으나 전송 단계에서 실패. `curl` 200 OK → 방화벽 규칙 추가 → Wi-Fi
+Public→Private 전환까지 다 해도 실패 → 브라우저 Console에서 진짜 원인 확보(CORS preflight
+차단).
+
+### 한 것
+- **원인**: `server/index.js`의 라우트 분류(`isSubmissionsRoute` 등 5곳)가 `req.method`로
+  판별하는데, JSON body cross-origin POST는 브라우저가 실제 요청 전 `OPTIONS` preflight를
+  먼저 보내고 그 `req.method`는 항상 `OPTIONS`다. "method가 POST면 환자 라우트 예외"
+  조건이 preflight에서는 절대 참이 안 돼 원장 전용으로 오분류 → LAN IP origin은 doctor
+  allowlist에 없어 `Access-Control-Allow-Origin` 없이 거부 → 브라우저가 실제 POST를 아예
+  안 보냄.
+- **왜 안 걸렸나**: 기존 서버 테스트는 node 내장 `fetch()`로 직접 호출 — node의 fetch는
+  브라우저처럼 preflight를 자동 생성하지 않아 이 클래스를 원천적으로 못 잡는다(이 파일
+  자체에 x-station-credential 관련 동일 교훈이 이미 한 번 적혀 있었다).
+- **중요도**: 이 조건(환자 태블릿 origin ≠ 서버 origin, JSON POST)은 **실제 클리닉의
+  정상 시나리오와 동일**하다 — 별도 태블릿으로 문진 받는 경우도 똑같이 걸렸을 것이다.
+  **저장소가 생긴 이래 태블릿에서의 실제 제출이 한 번도 성공한 적이 없었을 가능성.**
+- **고침**: `Access-Control-Request-Method` 헤더(preflight가 나르는 "진짜 다음 method")로
+  분류하는 `effectiveMethod`를 도입, 5곳 전부 교체. 핸들러 디스패치는 무변경.
+- `tests/server.spec.mjs` 5단언 신설 — 실제 브라우저 preflight를 fetch(OPTIONS)로 재현.
+
+### 검증
+고침 전 코드로 되돌려 새 단언이 실제로 실패함(`No Access-Control-Allow-Origin`) 확인 후
+복원. `test:all` exit 0 / `build` exit 0. `server/index.js` 외 인증·데이터 스키마 변경 0줄.
+
+### Next Recommended Action
+1. **원장**: `git pull` 후 `scripts\setup-and-start-clinic.bat` 재실행(빌드 필요 없음 —
+   서버 쪽 변경이라 `dist/` 재빌드는 무관하지만 서버 프로세스는 재시작해야 새 코드가
+   실행된다). 태블릿 화면에서 "다시 시도" → 이번엔 전송돼야 한다.
+2. 오늘 만든 방화벽 인바운드 규칙(`samindang-handoff-4317`, Private)과 Wi-Fi
+   Private 전환은 **그대로 유지**할 것 — 실제 별도 태블릿 기기가 접속할 때 필요하다
+   (오늘은 같은 PC라 결과적으로 원인이 아니었지만, 무해하고 계속 필요함).
+3. 여전히 안 되면 브라우저 Console의 새 에러 메시지를 그대로 받을 것.
+
+---
+
 ## 2026-09-21 (최신 49): **한약 전신 정보 블록 무한 재등장 버그 수정** — `reorderForDetailPhases` insertAt 고정 (`src/spec/coreSpec.ts`)
 
 **브랜치**: `claude/fix-herbal-systemic-block-loop`. 원장이 테스트 환자로 한약 문진 실기기

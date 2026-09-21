@@ -1,5 +1,84 @@
 # Decisions Log
 
+## 2026-09-21 — 환자 제출(POST /api/submissions) CORS preflight 오분류 버그 수정 — LAN IP 태블릿에서 문진 전송 실패
+
+**발견 경위**: 위 한약 루프 버그를 고친 뒤 원장이 같은 PC에서 실기기 재시도 → 문진을 끝까지
+완료했으나 "아직 전송되지 않았습니다 / 서버에 연결할 수 없습니다"로 실패. 순서대로 좁혀갔다:
+`curl http://localhost:4317/api/health` 200 OK → 방화벽 인바운드 규칙 추가 → Wi-Fi가
+Windows에 "공용(Public)"으로 잡혀 있어 그 규칙이 적용 안 됨을 발견, `Private`로 전환 →
+그래도 실패 → 브라우저 개발자 도구 Console에서 실제 원인 확보:
+
+```
+Access to fetch at 'http://192.168.10.7:4317/api/submissions' from origin
+'http://192.168.10.7:4173' has been blocked by CORS policy: Response to
+preflight request doesn't pass access control check: No
+'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+### 원인 (코드로 재현·확정)
+
+`server/index.js`의 `handle()`이 요청을 "원장 라우트"와 "환자 라우트"로 분류할 때
+`req.method`(예: `req.method === 'POST'`)로 판별한다 — `isSubmissionsRoute`는 명시적으로
+"`parts.length===2`(=`/api/submissions`)이고 method가 POST면 예외(환자 라우트)"로
+설계돼 있다. 그런데 **`Content-Type: application/json` body가 있는 cross-origin POST는
+CORS의 "simple request" 조건을 만족하지 못해 브라우저가 실제 요청 전에 반드시 `OPTIONS`
+preflight를 먼저 보낸다** — 이 preflight의 `req.method`는 실제로 뒤이어 보낼 method가
+무엇이든 항상 `OPTIONS`다. 그래서 "method가 POST면 예외" 조건은 **preflight 자체에서는
+절대 참이 될 수 없어**, 그 preflight가 원장 전용 라우트로 오분류되고, 환자 태블릿의 실제
+origin(LAN IP)은 doctor origin allowlist에 없으니 `Access-Control-Allow-Origin` 헤더
+없이 거부된다 — 브라우저는 이 시점에서 preflight가 실패했다고 판단해 **실제 POST 요청을
+아예 전송해 보지도 않는다.**
+
+**왜 여태 안 걸렸나**: `tests/server.spec.mjs`를 포함한 기존 서버 테스트는 전부 node의
+내장 `fetch()`로 직접 HTTP 요청을 보내는데, **node의 fetch는 브라우저처럼 CORS preflight를
+자동으로 만들어 보내지 않는다** — 그래서 실제 POST가 정상 분류되는 것만 확인되고, 그 앞의
+preflight(OPTIONS)가 어떻게 분류되는지는 어떤 테스트도 exercising하지 않았다. 이 파일 자체의
+기존 주석("x-station-credential... 헤더는... 실제 headless-browser QA로 발견됐다 -- HTTP
+레벨 테스트로는 못 잡는다")이 이미 같은 클래스의 함정을 한 번 지적한 적 있는데, 이번에 다른
+경로에서 재발했다.
+
+**영향 범위**: `isSubmissionsRoute`뿐 아니라 method로 분류하는 나머지 4곳
+(`isCurrentVisitRead`/GET, `isPatientRevisitRoute`/POST, `isRevisitsQueueRoute`/GET,
+`isMessagesAdminRoute`/POST)도 구조적으로 동일한 함정을 갖고 있었다 — 이 라우트들은 원래
+"원장 전용"이라 preflight가 잘못 분류돼도 (더 엄격한 쪽으로 오분류되므로) 보안상 뚫리진
+않지만, 정상 사용도 막힐 수 있다. **한 번에 근본 원인을 고쳤다.**
+
+**중요도**: 이 버그는 이 세션의 "같은 PC 테스트"에서만 걸린 게 아니다. **실제 클리닉에서
+별도 태블릿으로 문진을 받는 정상 시나리오도 정확히 같은 조건**(환자 태블릿의 origin ≠
+서버 origin, JSON POST → 항상 preflight)에 해당한다 — 즉 이 저장소가 만들어진 이래
+**태블릿에서의 환자 제출이 실제로는 한 번도 성공한 적이 없었을 가능성이 있다**(로컬 개발
+환경에서는 같은 origin으로 접근하거나 CORS를 신경 쓰지 않는 도구로 테스트했다면 드러나지
+않았을 것).
+
+### 고침
+
+preflight(OPTIONS) 요청은 표준 헤더 `Access-Control-Request-Method`에 "그 다음에 실제로
+보낼 method"를 싣고 온다. 라우트 분류 5곳 전부를 `req.method` 대신 이 헤더 기반의
+`effectiveMethod`로 판단하도록 바꿨다:
+
+```js
+const effectiveMethod =
+  req.method === 'OPTIONS' && typeof req.headers['access-control-request-method'] === 'string'
+    ? req.headers['access-control-request-method'].toUpperCase()
+    : req.method
+```
+
+실제 핸들러 디스패치(OPTIONS는 그 전에 이미 204로 반환되므로 도달하지 않는 코드)는
+전혀 건드리지 않았다.
+
+### 검증
+
+`tests/server.spec.mjs`에 5단언 신설 — 실제 브라우저 preflight를 `fetch(url, {method:
+'OPTIONS', headers: {Origin, 'Access-Control-Request-Method': 'POST'}})`로 재현한다.
+고침 전 코드(`origin/main`)로 되돌려 정확히 이 단언이 실패함을 확인(`No
+Access-Control-Allow-Origin`) 후 복원. 회귀 방지용 반대 케이스도 포함 — 진짜 원장
+라우트(`GET /api/current-visit`)의 preflight는 허용되지 않은 origin에서 **여전히
+거부**되는지(과도하게 넓어지지 않았는지), localhost origin에서는 **여전히 허용**되는지
+(기존 동작 무변경) 확인. `test:all` exit 0 / `build` exit 0.
+`server/index.js` 외 클리닉 로직·데이터 스키마·인증 방식 변경 0줄.
+
+---
+
 ## 2026-09-21 — 한약 전신 정보 블록(CONST_·HERB_ 8문항) 무한 재등장 버그 수정 — `reorderForDetailPhases` insertAt 고정
 
 **발견 경위**: 원장이 테스트 환자로 한약(체질·보약) 문진 실기기 테스트 중 "저 항목들이 다시

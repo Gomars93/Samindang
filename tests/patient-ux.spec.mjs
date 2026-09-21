@@ -218,4 +218,45 @@ for (const [label, fg, bg] of textPairs) {
  * 7. Summary
  * ========================================================================= */
 
+/* =========================================================================
+ * 7. Option Card contract: SingleChoice and MultiChoice must render the same
+ *    shared card skeleton. This guards the Figma-to-code component mapping
+ *    while leaving their independent selection/storage logic untouched.
+ * ========================================================================= */
+
+{
+  const singleHtml = renderToString(
+    React.createElement(SingleChoice, {
+      options: [{ value: 'walk', label: '걷기', description: '산책이나 이동' }],
+      value: 'walk',
+      onSelect: () => {},
+    }),
+  )
+  const multiHtml = renderToString(
+    React.createElement(MultiChoice, {
+      options: [{ value: 'walk', label: '걷기', description: '산책이나 이동' }],
+      value: ['walk'],
+      onChange: () => {},
+    }),
+  )
+
+  for (const [mode, html] of [['single', singleHtml], ['multiple', multiHtml]]) {
+    assert(`OptionCard (${mode}): shared option class is present`, html.includes('class="option option--selected"'))
+    assert(`OptionCard (${mode}): label-group skeleton is present`, html.includes('class="option__labelGroup"'))
+    assert(`OptionCard (${mode}): helper description remains visible`, html.includes('산책이나 이동'))
+    assert(`OptionCard (${mode}): selected state remains non-color-only`, html.includes('✓'))
+  }
+}
+
+{
+  const singleSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'SingleChoice.tsx'), 'utf8')
+  const multiSrc = readFileSync(join(__dirname, '..', 'src', 'components', 'MultiChoice.tsx'), 'utf8')
+  assert('OptionCard: SingleChoice delegates card markup to the shared component', singleSrc.includes('<OptionCard'))
+  assert('OptionCard: MultiChoice delegates card markup to the shared component', multiSrc.includes('<OptionCard'))
+}
+
+/* =========================================================================
+ * 8. Summary
+ * ========================================================================= */
+
 console.log(`\nSUMMARY: ${passCount} assertions passed, 0 failed (total ${passCount})`)

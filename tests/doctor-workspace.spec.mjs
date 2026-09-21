@@ -904,6 +904,112 @@ test('PR-B1: 설진·맥진·복진 행은 체크 칩으로 렌더되고, 1층 2
   assert.ok(html.includes('placeholder="소견 입력"') || html.includes('>메모<'))
 })
 
+/* ---------------------------------------------------------------------
+ * PR-B3(2026-09-21) 지난 방문 설맥복 비교 — 실렌더 확인.
+ * prior-visit-observations.spec.mjs는 순수 함수와 소스 대조를 고정하지만,
+ * "화면에 실제로 나오는가"는 여기서만 증명된다.
+ * ------------------------------------------------------------------- */
+/*
+ * 체크리스트는 **아무것도 기록되지 않으면 한 줄로 접힌다**(Round 14). 접힌
+ * 상태에서는 칩 자체가 렌더되지 않으므로, 지난번 표시를 검증하려면 오늘
+ * 기록이 하나는 있어야 한다 -- 이 시드를 빼면 아래 단언들이 "아무것도 없어서"
+ * 통과하는 가짜 초록이 된다(실제로 처음 작성했을 때 그렇게 됐다).
+ */
+const seededObservations = [
+  { id: 'obs_tongue', category: 'TONGUE', title: '설진 소견', checked: true, value: '담백설', recordedAt: '2026-09-21T00:00:00.000Z' },
+  { id: 'obs_pulse', category: 'PULSE', title: '맥진 소견', checked: false, value: '', recordedAt: null },
+  { id: 'obs_abdomen', category: 'ABDOMEN', title: '복진 소견', checked: false, value: '', recordedAt: null },
+  { id: 'obs_followup', category: 'FOLLOW_UP_QUESTION', title: '추가 확인문진', checked: false, value: '', recordedAt: null },
+]
+
+const priorVisitWithObservations = (items) => ({
+  patientId: 'patient-1',
+  visits: [
+    {
+      visitId: 'visit-prev',
+      submissionId: 'sub-prev',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      primaryConcern: '한약·보약 상담',
+      painFollowUpTargets: [],
+      herbalFollowUpTargets: [],
+      herbalClinicianObservations: items,
+      followUpTargets: [],
+      painFinalAssessmentSummary: null,
+      herbalFinalAssessmentSummary: null,
+      nextReassessmentPlan: null,
+    },
+  ],
+})
+
+test('PR-B3: 재평가 화면에 지난번 기록이 한 줄로 표시되고, 그때 체크됐던 칩에 ✓가 붙는다', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-prior-render',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: { herbalClinicianObservations: seededObservations },
+    priorVisits: priorVisitWithObservations([
+      { id: 'obs_tongue', category: 'TONGUE', title: '설진 소견', checked: true, value: '치흔·반대 · 황태', recordedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'obs_pulse', category: 'PULSE', title: '맥진 소견', checked: true, value: '특이없음', recordedAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'obs_abdomen', category: 'ABDOMEN', title: '복진 소견', checked: false, value: '', recordedAt: null },
+    ]),
+  })
+  assert.ok(html.includes('지난번'), '지난번 라벨이 렌더된다')
+  assert.ok(html.includes('치흔·반대 · 황태'), '지난번 설진 값이 그대로 보인다')
+  assert.ok(html.includes('미시행'), '값이 비어 있던 복진은 "미시행"으로 구분된다')
+  // 지난번에 체크됐던 칩에만 ✓가 붙는다.
+  assert.ok(
+    /workspace__obsChip--prior[^>]*>치흔·반대/.test(html) || /치흔·반대[\s\S]{0,80}?priorDot/.test(html),
+    '지난번 체크된 칩에 표시가 붙는다',
+  )
+  assert.ok(!/workspace__obsChip--prior[^>]*>담백설/.test(html), '지난번에 없던 칩에는 표시가 붙지 않는다')
+})
+
+test('PR-B3: 지난번 표시가 칩 순서를 바꾸지 않는다 — PR-B1의 "자리는 고정" 원칙을 재평가가 깨지 않는다', () => {
+  /*
+   * 클래스 이름을 **정확히** 겨냥한다. `workspace__obsChip[^"]*`로 느슨하게
+   * 잡으면 지난번 표시 스팬(`workspace__obsChip__priorDot`)까지 칩으로 세어
+   * 목록에 '✓'가 끼어들고, 순서가 멀쩡한데도 실패한다(처음 작성했을 때
+   * 실제로 그랬다 -- 순서는 동일했고 정규식이 틀렸다).
+   */
+  const order = (html) =>
+    [...html.matchAll(/class="workspace__obsChip(?:[ -][^"]*)?"[^>]*>([^<]+)/g)].map((m) => m[1].trim())
+  const initial = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-order-a',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: { herbalClinicianObservations: seededObservations },
+  })
+  const revisit = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-order-b',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: { herbalClinicianObservations: seededObservations },
+    priorVisits: priorVisitWithObservations([
+      // 일부러 1층 뒤쪽 칩만 지난번에 체크돼 있게 둔다 -- 앞으로 당기는
+      // 구현이었다면 여기서 순서가 달라진다.
+      { id: 'obs_tongue', category: 'TONGUE', title: '설진 소견', checked: true, value: '무태·박락', recordedAt: '2026-08-01T00:00:00.000Z' },
+    ]),
+  })
+  assert.deepEqual(order(revisit), order(initial), '재평가에서도 칩 순서가 초진과 동일해야 한다')
+})
+
+test('PR-B3: 초진(지난 방문 없음)에는 지난번 표시가 전혀 나오지 않는다', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-first-visit',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: { herbalClinicianObservations: seededObservations },
+  })
+  assert.ok(!html.includes('workspace__obsPrior'), '지난번 줄이 없다')
+  assert.ok(!html.includes('workspace__obsChip--prior'), '지난번 칩 표시가 없다')
+})
+
+test('PR-B3: 지난 방문은 있으나 설맥복 기록이 없으면 아무것도 표시하지 않는다 — 모르는 것을 아는 척하지 않는다', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-prior-empty',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: { herbalClinicianObservations: seededObservations },
+    priorVisits: priorVisitWithObservations([]),
+  })
+  assert.ok(!html.includes('workspace__obsPrior'), '"미시행"조차 표시하지 않는다')
+})
+
 test('PR-B1: 저장된 칩 값이 눌린 상태로 복원된다 (왕복이 화면까지 이어진다)', () => {
   const html = renderWith(HERBAL_SCENARIO_2, {
     submissionId: 'obs-chip-restore',

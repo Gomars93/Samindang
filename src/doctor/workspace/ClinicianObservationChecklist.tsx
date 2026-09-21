@@ -61,6 +61,7 @@ import {
   type PromotionState,
 } from './observationPromotion'
 import { ObservationTooltip } from './ObservationTooltip'
+import { priorObservationFor, type PriorVisitSummary } from './longitudinal'
 
 /**
  * 이 문자열은 Round 13부터 쓰던 값 그대로다 -- 바꾸면 그 버튼으로 이미
@@ -125,11 +126,14 @@ function Chip({
   pressed,
   disabled,
   onToggle,
+  wasPrior,
 }: {
   option: ObservationOption
   pressed: boolean
   disabled: boolean
   onToggle: () => void
+  /** PR-B3: 지난 방문에 이 칩이 체크돼 있었는가. **자리는 절대 바꾸지 않고** 표시만 더한다. */
+  wasPrior?: boolean
 }) {
   return (
     <ObservationTooltip text={option.tooltip}>
@@ -137,10 +141,15 @@ function Chip({
         type="button"
         aria-pressed={pressed}
         disabled={disabled}
-        className={`workspace__obsChip${pressed ? ' workspace__obsChip--on' : ''}`}
+        className={`workspace__obsChip${pressed ? ' workspace__obsChip--on' : ''}${wasPrior ? ' workspace__obsChip--prior' : ''}`}
         onClick={onToggle}
       >
         {option.label}
+        {wasPrior && (
+          <span className="workspace__obsChip__priorDot" aria-label="지난번에도 체크됨">
+            ✓
+          </span>
+        )}
       </button>
     </ObservationTooltip>
   )
@@ -152,12 +161,14 @@ function ChipRow({
   onChangeItem,
   promotion,
   onPromotionChange,
+  priorVisit,
 }: {
   item: ClinicianObservationItem
   options: ObservationOption[]
   onChangeItem: (next: ClinicianObservationItem) => void
   promotion: PromotionState
   onPromotionChange: (next: PromotionState) => void
+  priorVisit?: PriorVisitSummary | null
 }) {
   const parsed = parseObservationValue(item.value, options)
   const { selected, freeText, noFinding } = parsed
@@ -167,6 +178,17 @@ function ChipRow({
    * 지웠다고 칸이 손 밑에서 사라지면 안 된다(Batch 2.6 N-2와 같은 클래스의
    * 사고). 이미 내용이 있으면 마운트 시점부터 열려 있다.
    */
+  /*
+   * PR-B3: 지난 방문 기록. `null`이면 그 방문에 이 항목 자체가 없었다는 뜻
+   * (제출 없는 재진 등) -- **아무것도 표시하지 않는다.** 모르는 것을 아는
+   * 척하지 않는 것이 이 화면의 기본 규칙이다. `recorded: false`는 항목은
+   * 있는데 값이 비어 있는 경우 = 그때 안 봤다(미시행)이며, 이 둘을 구분하는
+   * 것이 재평가 비교의 전부다.
+   */
+  const prior = priorObservationFor(priorVisit, item.category)
+  const priorParsed = prior?.recorded ? parseObservationValue(prior.value, options) : null
+  const priorSelected = new Set(priorParsed?.selected ?? [])
+
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [freeOpen, setFreeOpen] = useState(freeText.trim() !== '')
   const showFree = freeOpen || freeText.trim() !== ''
@@ -219,6 +241,13 @@ function ChipRow({
         2층 서랍을 <details> 대신 버튼+상태로 만든 이유도 같다: <details>는
         summary가 반드시 제 줄을 차지해 같은 wrap 줄에 섞을 수 없다.
       */}
+      {prior && (
+        <p className="workspace__obsPrior">
+          <span className="workspace__obsPrior__label">지난번</span>{' '}
+          {prior.recorded ? prior.value : '미시행'}
+        </p>
+      )}
+
       <div className="workspace__obsChips" role="group" aria-label={`${item.title} 체크 항목`}>
         <button
           type="button"
@@ -235,6 +264,7 @@ function ChipRow({
             option={o}
             pressed={selected.includes(o.label)}
             disabled={noFinding}
+            wasPrior={priorSelected.has(o.label)}
             onToggle={() => toggleChip(o.label, o.tier)}
           />
         ))}
@@ -274,6 +304,7 @@ function ChipRow({
               option={o}
               pressed={selected.includes(o.label)}
               disabled={noFinding}
+              wasPrior={priorSelected.has(o.label)}
               onToggle={() => toggleChip(o.label, o.tier)}
             />
           ))}
@@ -301,12 +332,14 @@ function ObservationRow({
   onAddToReassessment,
   promotion,
   onPromotionChange,
+  priorVisit,
 }: {
   item: ClinicianObservationItem
   onChangeItem: (next: ClinicianObservationItem) => void
   onAddToReassessment?: (item: ClinicianObservationItem) => void
   promotion: PromotionState
   onPromotionChange: (next: PromotionState) => void
+  priorVisit?: PriorVisitSummary | null
 }) {
   const options = OBSERVATION_OPTIONS_BY_CATEGORY[item.category]
 
@@ -324,6 +357,7 @@ function ObservationRow({
           onChangeItem={onChangeItem}
           promotion={promotion}
           onPromotionChange={onPromotionChange}
+          priorVisit={priorVisit}
         />
       ) : (
         <FreeTextRow item={item} onChangeItem={onChangeItem} />
@@ -352,11 +386,14 @@ export function ClinicianObservationChecklist({
   items,
   onChangeItem,
   onAddToReassessment,
+  priorVisit,
 }: {
   items: ClinicianObservationItem[]
   onChangeItem: (next: ClinicianObservationItem) => void
   /** Round 3 Phase E: optional per-item "재검 항목으로 추가" promotion into Structured Reassessment. */
   onAddToReassessment?: (item: ClinicianObservationItem) => void
+  /** PR-B3: 가장 최근 지난 방문. 없으면(초진) 지난번 표시가 전혀 렌더되지 않는다. */
+  priorVisit?: PriorVisitSummary | null
 }) {
   const remaining = countStillNeedsCheck(items)
   const nothingRecorded = items.length > 0 && remaining === items.length
@@ -429,6 +466,7 @@ export function ClinicianObservationChecklist({
           onAddToReassessment={onAddToReassessment}
           promotion={promotion}
           onPromotionChange={updatePromotion}
+          priorVisit={priorVisit}
         />
       ))}
     </div>

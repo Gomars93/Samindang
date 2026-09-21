@@ -519,6 +519,17 @@ export function createStore(
         // 동일한 기준으로 맞춘다).
         const painTargets = Array.isArray(workspace?.painFollowUpTargets) ? workspace.painFollowUpTargets : []
         const herbalTargets = Array.isArray(workspace?.herbalFollowUpTargets) ? workspace.herbalFollowUpTargets : []
+        /*
+         * PR-B3(2026-09-21): 재평가 화면에서 "지난번엔 어땠나"를 보려면 지난
+         * 방문의 설맥복 기록이 필요한데, 이 투영에는 아예 없었다(재평가 대상과
+         * 최종 판단 요약만 나갔다). 위 MEDIUM-3 주석과 **같은 신뢰 경계**이므로
+         * 같은 방어를 적용한다 -- workspace는 인증되지 않은 PUT이 검증 없이
+         * 저장한 값이라 배열이 아닐 수 있고, 그러면 아래 클라이언트의 .map이
+         * 죽는다.
+         */
+        const herbalObservations = Array.isArray(workspace?.herbalClinicianObservations)
+          ? workspace.herbalClinicianObservations
+          : []
         summaries.push({
           visit_id: v.id,
           submission_id: v.submission_id,
@@ -526,6 +537,7 @@ export function createStore(
           primary_concern: record.submission?.metadata?.primary_concern ?? null,
           pain_follow_up_targets: painTargets,
           herbal_follow_up_targets: herbalTargets,
+          herbal_clinician_observations: herbalObservations,
           follow_up_targets: [...painTargets, ...herbalTargets],
           pain_final_assessment_summary: workspace?.painFinalAssessment?.finalWorkingAssessment || null,
           herbal_final_assessment_summary: workspace?.herbalFinalAssessment?.finalPatternOrMechanism || null,
@@ -545,6 +557,13 @@ export function createStore(
           primary_concern: null,
           pain_follow_up_targets: [],
           herbal_follow_up_targets: [],
+          /*
+           * 제출 없는 재진(VisitWorkspaceState)에는 설맥복 기록이 존재하지
+           * 않는다. **빈 배열은 "정상이었다"가 아니라 "이 방문에는 기록 자체가
+           * 없다"**이고, 클라이언트는 그 둘을 구분해 렌더한다(항목이 없으면
+           * 아무것도 표시하지 않고, 항목이 빈 값이면 "미시행"으로 표시).
+           */
+          herbal_clinician_observations: [],
           follow_up_targets: Array.isArray(workspace.followUpTargets) ? workspace.followUpTargets : [],
           // Reuses the pain_final_assessment_summary field for the
           // revisit's own generic assessment text -- consistent with the

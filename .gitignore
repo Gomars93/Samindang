@@ -243,3 +243,4 @@ tests/.observation-options-bundle.mjs
 tests/.observation-promotion-bundle.mjs
 tests/.red-flag-emrpreview-bundle.mjs
 tests/.red-flag-persistence-bundle.mjs
+tests/.prior-visit-longitudinal-bundle.mjs

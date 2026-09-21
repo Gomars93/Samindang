@@ -10,6 +10,7 @@
  * text, the next-reassessment plan they set) — never anything inferred.
  */
 import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
+import type { ClinicianObservationCategory, ClinicianObservationItem } from './clinicianObservation'
 import type { FollowUpTarget, NextReassessmentPlan, NextReassessmentPlanStatus } from './finalAssessment'
 
 export type PriorVisitSummary = {
@@ -19,6 +20,17 @@ export type PriorVisitSummary = {
   primaryConcern: string | null
   painFollowUpTargets: FollowUpTarget[]
   herbalFollowUpTargets: FollowUpTarget[]
+  /**
+   * PR-B3(2026-09-21): 지난 방문의 설맥복 기록. 재평가 화면에서 "지난번엔
+   * 어땠나"를 보여주기 위한 것이며, 이 파일 헤더의 RAW-FACTS-ONLY 원칙
+   * 그대로 **원장이 그때 기록한 값을 그대로** 나를 뿐 어떤 호전/악화 해석도
+   * 하지 않는다.
+   *
+   * 제출 없는 재진에는 이 기록이 존재하지 않아 빈 배열로 온다 -- **빈 배열은
+   * "정상이었다"가 아니라 "이 방문에는 기록 자체가 없다"**이고, 렌더 쪽은
+   * 그 경우 아무것도 표시하지 않는다(값이 빈 문자열인 항목은 "미시행").
+   */
+  herbalClinicianObservations: ClinicianObservationItem[]
   /**
    * Profile-agnostic union, correct regardless of visit type: pain+herbal
    * concatenated for a submission-backed visit, or the visit's own generic
@@ -201,4 +213,31 @@ export function findLatestSubmissionBackedPriorVisit(
     return { visitId, submissionId, createdAt: raw.createdAt }
   }
   return null
+}
+
+/**
+ * 지난 방문에서 이 카테고리(설진/맥진/복진)에 기록된 값.
+ *
+ * 세 가지를 **구분해서** 돌려준다 -- 이 구분이 재평가 비교의 전부다:
+ *  - `null`                      : 지난 방문에 그 항목 자체가 없다(제출 없는
+ *                                  재진 등). 화면에 아무것도 표시하지 않는다.
+ *                                  모르는 것을 아는 척하지 않는다.
+ *  - `{ recorded: false }`       : 항목은 있는데 값이 비어 있다 = 그때 안 봤다(미시행).
+ *  - `{ recorded: true, value }` : 그때 기록한 값 그대로.
+ *
+ * 이 함수는 값을 해석하지 않는다 -- 칩으로 쪼개는 것은 호출부가
+ * observationOptions.ts의 파서로 한다.
+ */
+export function priorObservationFor(
+  visit: PriorVisitSummary | null | undefined,
+  category: ClinicianObservationCategory,
+): { recorded: boolean; value: string } | null {
+  const items = asPriorVisitArray<ClinicianObservationItem>(visit?.herbalClinicianObservations)
+  const hit = items.find((i) => i != null && typeof i === 'object' && i.category === category)
+  if (!hit) return null
+  // 12차 리뷰 MEDIUM-3과 같은 이유: value가 문자열이 아닐 수 있다(검증 없이
+  // 저장된 workspace). 그 경우 "[object Object]"를 보여주는 대신 미시행으로
+  // 떨어뜨린다 -- 지어낸 값보다 "모른다"가 낫다.
+  const value = typeof hit.value === 'string' ? hit.value.trim() : ''
+  return { recorded: value !== '', value }
 }

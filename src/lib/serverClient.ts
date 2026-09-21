@@ -354,6 +354,8 @@ type PatientHistoryWire = {
     primary_concern: string | null
     pain_follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
     herbal_follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
+    /** PR-B3: 지난 방문의 설맥복 기록. 제출 없는 재진에는 존재하지 않아 []로 온다. */
+    herbal_clinician_observations: import('../doctor/workspace/clinicianObservation').ClinicianObservationItem[]
     follow_up_targets: import('../doctor/workspace/finalAssessment').FollowUpTarget[]
     pain_final_assessment_summary: string | null
     herbal_final_assessment_summary: string | null
@@ -391,6 +393,15 @@ export function getPatientHistory(
             primaryConcern: v.primary_concern,
             painFollowUpTargets: v.pain_follow_up_targets,
             herbalFollowUpTargets: v.herbal_follow_up_targets,
+            /*
+             * PR-B3: 서버가 이미 Array.isArray로 걸러 보내지만, 이 값은
+             * 여전히 인증되지 않은 PUT이 저장한 workspace에서 왔다 -- 이
+             * 파일의 다른 목록들과 같은 기준으로 한 번 더 막는다(방어를
+             * 한쪽에만 두면 다른 쪽이 바뀔 때 조용히 뚫린다).
+             */
+            herbalClinicianObservations: Array.isArray(v.herbal_clinician_observations)
+              ? v.herbal_clinician_observations
+              : [],
             followUpTargets: v.follow_up_targets,
             painFinalAssessmentSummary: v.pain_final_assessment_summary,
             herbalFinalAssessmentSummary: v.herbal_final_assessment_summary,

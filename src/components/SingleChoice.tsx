@@ -1,6 +1,6 @@
 import { optionKey } from '../types'
 import type { Option } from '../types'
-import { Icon } from './icons'
+import { OptionCard } from './OptionCard'
 
 type Props = {
   options: Option[]
@@ -21,23 +21,13 @@ export function SingleChoice({ options, value, onSelect, layout = 'list' }: Prop
         const key = optionKey(opt)
         const isSelected = value === key
         return (
-          <button
+          <OptionCard
             key={key}
-            type="button"
-            role="radio"
-            aria-checked={isSelected}
-            className={`option${isSelected ? ' option--selected' : ''}`}
-            onClick={() => onSelect(key)}
-          >
-            <span className="option__mark" aria-hidden="true">
-              {isSelected ? '✓' : ''}
-            </span>
-            {opt.icon && <Icon name={opt.icon} />}
-            <span className="option__labelGroup">
-              <span className="option__label">{opt.label}</span>
-              {opt.description && <span className="option__description">{opt.description}</span>}
-            </span>
-          </button>
+            option={opt}
+            selected={isSelected}
+            selectionMode="single"
+            onPress={() => onSelect(key)}
+          />
         )
       })}
     </div>

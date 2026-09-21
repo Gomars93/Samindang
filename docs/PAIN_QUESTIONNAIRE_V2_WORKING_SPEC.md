@@ -65,6 +65,8 @@ Exact wording and branching remain draft until clinical review. Existing answer 
 - Screen 02: Target Activity
 - Screen 03: Activity Tolerance — time-based (`11:32`)
 - Screen 03B: Activity Tolerance — repetition-based (`16:60`)
+- Screen 04: Limiting Response — clinical-review draft (`20:62`)
+- Screen 05: Recovery Time — clinical-review draft (`21:76`)
 
 Both Activity Tolerance variants use the same `3 / 5` progress position. The
 time-based variant is for `SITTING` and `WALKING`; the repetition-based variant
@@ -72,6 +74,17 @@ is for `SIT_TO_STAND`, `BEND_PICK_UP`, `LIFT_CARRY`, and `BED_MOBILITY`.
 `OTHER` and unknown activity values do not show `PAIN_F03` until a unit is
 clinically defined. The repetition screen was visually checked at 800×1280 with
 six option cards, Noto Sans KR typography, and no frame overflow.
+
+Screen 04 is a Figma-only multi-select draft with six plain-language reasons:
+pain increase, weakness, stiffness/mobility loss, numbness/sensory discomfort,
+fear of worsening, and other. Screen 05 is a Figma-only single-select draft
+with seven recovery buckets from immediate recovery through two or more days,
+plus unknown. Screen 04 was visually checked at 800×1280. Screen 05's seven-card
+layout was checked at the same size, but its cloned activity chip still needs a
+final rendered-screenshot confirmation even though the node is present in the
+frame tree. Both screens must remain outside the runtime schema until clinical
+review confirms wording, required status, multi-select behavior, and bucket
+boundaries.
 
 Figma uses Noto Sans KR because Pretendard is unavailable in the editor environment. Production code should continue to prefer Pretendard with a Korean system-font fallback.
 

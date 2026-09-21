@@ -39,13 +39,17 @@ Claude Code is best used here for repository-wide dependency tracing, React/Type
 - Added regression coverage for rendering, selection, answer cleanup, and unchanged safety behavior.
 - Added presentation-only `screenProgress` metadata for Region Focus (`1 / 5`), Target Activity (`2 / 5`), and Activity Tolerance (`3 / 5`).
 - Added DOM regression coverage for the six repetition choices, their Figma order, selected-state checkmark, and accessible `3 / 5` label.
+- Added Figma-only review drafts for `PAIN_F04` (`20:62`, multi-select limiting response) and `PAIN_F05` (`21:76`, single-select recovery time). No runtime schema or clinical logic was added.
 
 ## Next implementation slice
 
 - Keep the activity-to-unit mapping explicit: `SITTING`/`WALKING` use time buckets; `SIT_TO_STAND`/`BEND_PICK_UP`/`LIFT_CARRY`/`BED_MOBILITY` use repetition buckets.
 - Keep `PAIN_F03` hidden for `OTHER` or unknown activity values; do not infer a unit.
 - Preserve backward navigation and answer state while switching between target activities.
-- Design the next context-only screens (`PAIN_F04` limiting response and `PAIN_F05` recovery) in Figma before adding schemas; wording and required status remain `TODO(clinical-review)`.
+- After clinical approval, add context-only schemas for `PAIN_F04` and `PAIN_F05` using the reviewed Figma copy and stable enum values.
+- Keep both fields out of safety, diagnosis, treatment, stage, and urgency calculations.
+- Add pruning, backward-navigation, payload, and DOM tests before exposing either screen in the patient flow.
+- Recheck the Screen 05 activity chip in a fresh Figma render before treating the visual draft as implementation-ready.
 
 ## Review ledger
 
@@ -56,6 +60,8 @@ Record unresolved decisions here instead of guessing.
 | Region split | When should low-back selection branch into hip/pelvis discrimination? | Ask the discriminator; do not change diagnosis/routing automatically. |
 | Function scale | Should difficulty be 0–10, 1–5, or categorical? | Keep draft UI isolated from clinical scoring. |
 | Tolerance units | Time, repetitions, or distance by activity? | Store explicit unit/value fields; avoid derived severity. |
+| Limiting response | Are the six draft reasons complete, should selection be multi-select, and is an explicit unknown option required? | Keep `PAIN_F04` in Figma only; do not add a runtime schema before review. |
+| Recovery time | Are the draft bucket boundaries clinically useful, and should recovery be measured against baseline symptoms or pre-activity state? | Keep `PAIN_F05` in Figma only; do not derive irritability/severity. |
 | Neurologic answers | Which patterns alter urgency beyond existing rules? | Preserve existing rules; new fields are context-only. |
 | Doctor summary | Which functional findings affect prioritization? | Display after safety findings; do not alter safety priority. |
 
@@ -65,6 +71,7 @@ Record unresolved decisions here instead of guessing.
 - `PAIN_F01` stores one target activity as context only.
 - `PAIN_F03` stores explicit time- or repetition-unit buckets as context only. It is optional and must not be converted into severity, stage, routing, or treatment logic before clinical review.
 - Figma source nodes are `11:32` for the time-based tolerance screen and `16:60` for the repetition-based screen; both are step `3 / 5`.
+- Figma review nodes are `20:62` for limiting response (`4 / 5`) and `21:76` for recovery time (`5 / 5`). Their copy and interaction rules are not clinically approved.
 
 ## Definition of done for a night checkpoint
 

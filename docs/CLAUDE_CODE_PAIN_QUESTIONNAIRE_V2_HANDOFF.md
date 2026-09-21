@@ -30,13 +30,21 @@ Claude Code is best used here for repository-wide dependency tracing, React/Type
 5. Prefer incremental, reviewable commits; run the relevant tests before each push.
 6. Match the Figma intent without hard-coding screenshots or introducing a second styling system.
 
-## Recommended first implementation slice
+## Completed implementation slice
 
-- Add stable draft schemas for `PAIN_R01`, `PAIN_F01`, and `PAIN_F03`.
-- Extract a reusable option-card presentation primitive from the current choice components.
-- Implement region focus, target activity, and activity tolerance in the existing questionnaire engine.
-- Preserve backward navigation and answer state.
-- Add tests for rendering, selection, navigation, and unchanged safety routing.
+- Reused the existing CLOSED `HIP_00` contract for Region Focus instead of introducing duplicate `PAIN_R01` storage.
+- Added context-only schemas for `PAIN_F01` and `PAIN_F03`.
+- Extracted the shared `OptionCard` primitive used by single- and multi-choice controls.
+- Connected Region Focus, Target Activity, and Activity Tolerance without changing safety scoring or routing.
+- Added regression coverage for rendering, selection, answer cleanup, and unchanged safety behavior.
+
+## Next implementation slice
+
+- Match the running React screen to Figma nodes `11:32` (time) and `16:60` (repetitions) at an 800×1280 tablet viewport.
+- Keep the activity-to-unit mapping explicit: `SITTING`/`WALKING` use time buckets; `SIT_TO_STAND`/`BEND_PICK_UP`/`LIFT_CARRY`/`BED_MOBILITY` use repetition buckets.
+- Keep `PAIN_F03` hidden for `OTHER` or unknown activity values; do not infer a unit.
+- Add visual or DOM regression assertions for all six repetition choices and the `3 / 5` progress label.
+- Preserve backward navigation and answer state while switching between target activities.
 
 ## Review ledger
 
@@ -55,6 +63,7 @@ Record unresolved decisions here instead of guessing.
 - Region Focus reuses the existing clinically CLOSED `HIP_00` contract; do not create duplicate `PAIN_R01` storage.
 - `PAIN_F01` stores one target activity as context only.
 - `PAIN_F03` stores explicit time- or repetition-unit buckets as context only. It is optional and must not be converted into severity, stage, routing, or treatment logic before clinical review.
+- Figma source nodes are `11:32` for the time-based tolerance screen and `16:60` for the repetition-based screen; both are step `3 / 5`.
 
 ## Definition of done for a night checkpoint
 

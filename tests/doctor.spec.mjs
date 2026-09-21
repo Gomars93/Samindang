@@ -3544,15 +3544,17 @@ function detailsRange(html, classMarker) {
 }
 
 // 기본 free-text 증가 0: tests/tablet-viewport.spec.mjs의
-// EXPECTED_OPEN_INPUTS_HERBAL(=4, fixture 0 한약) + EXPECTED_OPEN_INPUTS_PAIN(=1, LBP: 처치 기타 한 칸 — 2026-09-06 판단/재검/메모 3개 접힘)
+// EXPECTED_OPEN_INPUTS_HERBAL(=3, fixture 0 한약 — 2026-09-21 PR-A에서 `다음`
+// 레인의 "다음 방문 확인 메모" 한 칸이 화면과 함께 사라져 4에서 3이 됐다;
+// 남은 3칸은 판단·처치 레인의 한약 판단 카드) + EXPECTED_OPEN_INPUTS_PAIN(=1, LBP: 처치 기타 한 칸 — 2026-09-06 판단/재검/메모 3개 접힘)
 // 가 실제 헤드리스 렌더로 이미 이 지표를 담당한다 -- 여기서는 그 계약이
 // 소스에 그대로 남아있는지만 구조로 재확인한다(중복 실측 없이 드리프트
 // 감시).
 {
   const src = await readFile(fileURLToPath(new URL('../tests/tablet-viewport.spec.mjs', import.meta.url)), 'utf8')
   assert(
-    'metric: 기본 free-text 증가 0 -- tablet-viewport.spec.mjs가 한약(4)/통증(1) 두 프로필의 기본 렌더 open input 개수를 계속 감시한다',
-    /const EXPECTED_OPEN_INPUTS_HERBAL = 4/.test(src) && /const EXPECTED_OPEN_INPUTS_PAIN = 1/.test(src),
+    'metric: 기본 free-text 증가 0 -- tablet-viewport.spec.mjs가 한약(3)/통증(1) 두 프로필의 기본 렌더 open input 개수를 계속 감시한다',
+    /const EXPECTED_OPEN_INPUTS_HERBAL = 3/.test(src) && /const EXPECTED_OPEN_INPUTS_PAIN = 1/.test(src),
   )
 }
 
@@ -3673,15 +3675,21 @@ function detailsRange(html, classMarker) {
     /buildEmrTextForRecord\(\)/.test(handleRebuildBody),
   )
   const dispatcherBody = doctorViewSrc.match(/function buildEmrTextForRecord\(\): string \{([\s\S]*?)\n  \}/)?.[1] ?? ''
+  // PR-A(한약 화면 축소, 2026-09-21): buildHerbalEmrTextForRecord가 `slim`
+  // 인자를 받는다 -- herbal 단독은 `다음` 레인(재평가 대상/관리 계획/다음
+  // 재평가)의 편집 UI가 아예 없으므로 그 키들을 EMR 텍스트에서도 빼야 하고,
+  // mixed는 HerbalWorkspaceNext가 그대로 있으므로 전부 넘긴다. 원래 단언이
+  // 인자 없는 `()` 형태를 고정하고 있었으므로, 형태를 느슨하게 푸는 대신
+  // **어느 프로필이 어떤 인자를 받는지까지** 고정하도록 강화한다.
   assert(
-    "defect #1: the dispatcher routes viewProfile === 'herbal' to buildHerbalEmrTextForRecord()",
-    /viewProfile === 'herbal'[\s\S]*?buildHerbalEmrTextForRecord\(\)/.test(dispatcherBody),
+    "defect #1 / PR-A: the dispatcher routes viewProfile === 'herbal' to buildHerbalEmrTextForRecord(true) — slim, 편집 UI 없는 키는 출력에서도 뺀다",
+    /viewProfile === 'herbal'[\s\S]*?buildHerbalEmrTextForRecord\(true\)/.test(dispatcherBody),
   )
   assert(
-    "defect #1: the dispatcher routes viewProfile === 'mixed' to BOTH buildPainEmrTextForRecord() and buildHerbalEmrTextForRecord(), pain block first",
-    /viewProfile === 'mixed'[\s\S]*?buildPainEmrTextForRecord\(\)[\s\S]*?buildHerbalEmrTextForRecord\(\)/.test(dispatcherBody),
+    "defect #1 / PR-A: the dispatcher routes viewProfile === 'mixed' to BOTH buildPainEmrTextForRecord() and buildHerbalEmrTextForRecord(false), pain block first",
+    /viewProfile === 'mixed'[\s\S]*?buildPainEmrTextForRecord\(\)[\s\S]*?buildHerbalEmrTextForRecord\(false\)/.test(dispatcherBody),
   )
-  const buildHerbalFnBody = doctorViewSrc.match(/function buildHerbalEmrTextForRecord\(\): string \{([\s\S]*?)\n  \}/)?.[1] ?? ''
+  const buildHerbalFnBody = doctorViewSrc.match(/function buildHerbalEmrTextForRecord\(slim: boolean\): string \{([\s\S]*?)\n  \}/)?.[1] ?? ''
   assert(
     'defect #1 (ii): buildHerbalEmrTextForRecord() calls buildHerbalWorkspaceEmrPreview (the untouched §14.7 function, not a reimplementation)',
     /buildHerbalWorkspaceEmrPreview\(/.test(buildHerbalFnBody),

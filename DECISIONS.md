@@ -1,5 +1,119 @@
 # Decisions Log
 
+## 2026-09-21 — 한약 닥터뷰 `다음` 레인 전체 폐기 (herbal 단독만, PR-A) — 1.41화면 → 0.97화면
+
+**PO 지시(원문)**: "지금 너무 욕심이 많아서 너무 많이 넣은 것 같아. crm도 넣고 이것저것
+넣어서 내게는 너무 복잡한 느낌이야. 정말 필요에 맞게 사전 수집한 정보를 전달하기 위한
+용도로만 활용하자. / 다음 섹션은 폐기하자. 오히려 못 써먹을 것 같아. / 정말정말 액기스만
+남기고 다 빼버리자." 이후 "당신의 추천안으로 진행하겠습니다"로 아래 범위를 승인했다.
+
+**용도 재정의**: 이 화면은 "진료를 운영하는 도구"가 아니라 **"사전 수집한 정보를 원장에게
+전달하는 도구"**다. 쓰는 시점은 초진과 재평가 두 번뿐이고, 나머지 기록은 EMR이 맡는다.
+`다음` 레인은 전자(운영)를 하려던 것이라 통째로 뗀다.
+
+### 범위: herbal 단독 프로필만. pain·mixed는 한 줄도 건드리지 않는다.
+
+`activeProfile !== 'herbal'` 가드 하나로 `다음` 레인 `<section>` 전체를 감쌌다. 개별
+블록을 하나씩 숨기지 않은 이유는, 그 방식이면 이 레인에 새 블록이 붙을 때마다 가드를
+빠뜨릴 수 있기 때문이다. mixed는 `HerbalWorkspaceNext`까지 지금 그대로 렌더된다.
+
+### 필드 × 화면 표 (CLAUDE.md "경로를 지우거나 교체하기 전에" 1항 — 출력 방향)
+
+화면 구분: **한약-초진 / 한약-재진 / mixed / pain / fixture 미리보기(SYNTHETIC)**.
+한약-초진과 한약-재진은 같은 `herbal` 프로필이며 재진에 micro follow-up이 붙는 차이뿐이라
+아래에서 `한약(초·재진)` 한 열로 적는다. fixture 미리보기는 `herbal` 프로필을 그대로
+렌더하므로 `한약` 열과 동일하다.
+
+| # | 지운 경로 | 나르던 필드 | 한약(초·재진) | mixed | pain |
+|---|---|---|---|---|---|
+| A | `FollowUpTargetPicker` | `herbalFollowUpTargets[]` (label/baseline/postTreatmentValue) | **의도적으로 버림** — 측정 추적은 PR-E(옴니핏 추출 + 지난값 Δ 비교)가 대체한다. EMR 라벨 `재평가 대상`도 함께 제거(§B) | 불변 — picker·EMR 라벨 모두 유지 | 무관 (`painFollowUpTargets`는 `PainWorkspaceNext`가 따로 소유) |
+| B | `다음 방문 확인 메모` textarea | `herbalCarePlan.nextVisitCheckItem` | **의도적으로 버림** — 원장이 EMR에 직접 적는다. EMR 라벨 `다음 방문 확인`도 함께 제거 | 불변 | 무관 (`painCarePlan` 별도) |
+| C | `NextActionCard` | (읽기 전용 표시) `homeLifestyleManagement` · `nextVisitCheckItem` · `nextReassessmentPlan` | **의도적으로 버림** — 표시 전용이라 소유 필드 없음. 세 원본 필드는 D·E에서 각각 처리 | 불변 | 무관 |
+| D | `HerbalCarePlanCard` | `herbalCarePlan` 6필드: `currentManagementGoal` / `medicationPlanNote` / `homeLifestyleManagement` / `symptomsToObserve` / `adverseEffectContactInstruction` / `nextVisitCheckItem` | **의도적으로 버림.** 단, 앞 2개는 판단·처치 레인에 대체 경로가 **있다** — `medicationPlanNote` → `finalAssessment.prescriptionPlanNote`(EMR `처방/계획 메모`), `symptomsToObserve` → `finalAssessment.symptomsToTrack`(EMR `추적할 증상`). 나머지 4개는 대체 없이 버리고 EMR 라벨도 함께 제거 | 불변 — 6필드 편집·출력 모두 유지 | 무관 |
+| E | `NextReassessmentPlanCard` | `nextReassessmentPlan` (pain과 **공유** 상태) | **의도적으로 버림**. 공유 상태이므로 mixed에서는 `PainWorkspaceNext` 경로로 계속 편집·출력된다 | 불변 (양쪽 경로 모두 살아 있음) | 불변 |
+| F | `PriorVisitHistoryCard` | (읽기 전용) `priorVisits` | **버리되 데이터는 남긴다** — `priorVisits` prop은 그대로 흐르고, PR-B의 Layer 0("재평가 화면에서 지난번 체크 항목을 맨 앞에 + `지난번 ✓`")이 같은 데이터를 더 쓸모 있는 자리에서 쓴다 | 불변 | 불변 |
+| G | `PatientCarePlanPreviewCard` | (읽기 전용 + 링크 발급) `buildHerbalPatientCarePlanPreview(carePlan)` | **의도적으로 버림** — 입력원인 `carePlan`(D)이 herbal에서 사라지므로 이 미리보기는 정의상 항상 빈 문자열이 된다. 화면만 남기면 D-1 사고의 정확한 재현 | 불변 — 링크 발급 포함 유지 | 불변 (`PainWorkspaceNext`가 별도 소유) |
+| H | `EmrPreviewCard` (레인 안 사본) | (읽기 전용) `buildHerbalWorkspaceEmrPreview(...)` | **중복 제거** — 같은 텍스트가 `종결` 섹션에 이미 있고, 실제 복사 버튼("EMR용 복사")도 거기 하나뿐이다(`tests/doctor.spec.mjs`가 "정확히 1회"로 고정). 읽는 자리가 하나 줄 뿐 도달 불가 필드는 생기지 않는다 | 불변 | 불변 |
+| I | `medicationCourseSlot` | `<MedicationCourseSection patientUuid={...}/>` (CRM 복약 코스) | **의도적으로 버림** — PO "crm도 넣고 이것저것 넣어서 너무 복잡하다". **서버 API·스토어·스키마는 지우지 않고 화면만 뗀다** (`test:crm-*`/`test:medication-course*` 전부 그대로 통과) | 불변 | 불변 |
+| J | `nextLaneFooter` | 재진 간단 문진(Micro Follow-up) 발급 + station 배정 UI | **의도적으로 버림** — 재처방 체크 설문은 PR-D에서 별도 진입점(문자 링크 + 원내 태블릿)으로 다시 만든다. **follow-up-session API 미변경** (`test:follow-up-session` 그대로 통과) | 불변 | 불변 |
+| K | `LaneJumpNav`의 `다음` 버튼 | `#next-h2` 앵커 | 함께 제거 — 앵커가 사라졌으므로 남기면 아무 데도 가지 않는 죽은 버튼이 된다 | 불변 (5개) | 불변 (5개) |
+
+### 입력 방향 (CLAUDE.md 2항) — 쓰기는 되는데 읽히지 않는 필드를 남기지 않았는가
+
+herbal 단독에서 **여전히 편집 가능한** 필드와 그 출력 도달 경로:
+
+| 편집 위치 | 필드 | EMR 도달 |
+|---|---|---|
+| 레인2 `ClinicianObservationChecklist` | `herbalClinicianObservations` | ✅ `설진/맥진/복진 소견` |
+| 레인2 `StructuredReassessmentCard` | `herbalReassessment` | ✅ `오늘 재검 소견` / `최종 재평가` |
+| 판단·처치 `HerbalFinalAssessmentCard` | `finalPatternOrMechanism` / `treatmentPrinciple` / `prescriptionPlanNote` / `symptomsToTrack` | ✅ 4칸 모두 |
+
+**반대 방향(출력은 되는데 편집 UI가 없는 필드)이 이번 변경의 실제 위험이었다.** 화면만
+떼고 `buildHerbalWorkspaceEmrPreview`를 그대로 뒀다면, herbal EMR 텍스트에 `관리 목표:`
+`재평가 대상:` 같은 **영원히 빈 라벨 7개**가 남고 원장은 "복사됨"을 보고 빈 값을 붙여넣게
+된다 — **Batch 4 D-1과 완전히 같은 사고**다. 그래서 짝을 맞춰 함께 고쳤다(§B).
+
+### §B EMR 조립기 짝맞춤
+
+- `buildHerbalWorkspaceEmrPreview`의 `followUpTargets`를 optional로 바꿨다
+  (`carePlan`/`reassessment`/`nextReassessmentPlan`은 이미 optional이었다).
+  넘기지 않으면 그 라벨 자체가 출력되지 않는다.
+- `DoctorView.buildHerbalEmrTextForRecord(slim)` — `viewProfile === 'herbal'`이면
+  `slim=true`로 호출해 위 키들을 아예 넘기지 않고, `mixed`는 `slim=false`로 전부 넘긴다.
+
+### 3항(표시 조건 latch↔파생식) — 해당 없음
+
+이번 변경에는 latch를 파생식으로 바꾸거나 그 반대로 바꾼 곳이 없다. 블록을 렌더할지
+말지를 결정하는 `activeProfile` 가드는 편집 중 값이 비는 것과 무관한, 레코드 단위로
+고정된 값이다(Batch 2.6 N-2 재발 경로 없음).
+
+### 기존 저장 데이터에 대한 정직한 기록
+
+`herbalCarePlan`·`herbalFollowUpTargets`에 **이미 저장된 값이 있는 herbal 레코드**는 이
+변경 이후 그 화면에서 보이지 않는다(삭제되지는 않는다 — persistence 스키마 무변경이고
+mixed 화면에서는 계속 읽힌다). 지금 이 시점에서 이것을 수용 가능한 비용으로 판단한 근거는
+**아직 실환자 한약 레코드가 없다**는 것이다 — PO 본인이 첫 테스트 환자로 파일럿을 시작하는
+단계다. 실데이터가 쌓인 뒤였다면 읽기 전용 표시라도 남겼어야 한다.
+
+### 승인 범위였으나 **하지 않은 것 2가지** (숨기지 않고 기록)
+
+1. **`+ 다른 유형 입력 추가` 토글 제거 — 하지 않았다.** 이 `<details>`는
+   `open={herbalFinalRecorded || additionalTypeOpen}`로, **반대 프로필에 이미 저장된
+   판단값이 있으면 자동으로 열린다.** 지우면 herbal 레코드에 저장돼 있던 통증 판단이
+   화면에서 사라진다 — CLAUDE.md가 금지하는 "쓰기는 됐는데 읽히지 않는 필드"를 새로
+   만드는 셈이다. PO 재승인 없이는 두는 것이 맞다고 판단했다.
+2. **진료 녹취·요약 제거 — 이번 PR에서 하지 않았다.** `DoctorView.tsx`의 `종결` 섹션
+   안에 있고 5초 폴링·`emrSeedRef`와 얽혀 있다. 이 저장소에서 **두 번 사고가 난 바로 그
+   코드 경로**(Batch 4 D-1/D-2가 모두 EMR 복사 영역)라, 화면 제거 PR에 섞지 않고 별도
+   PR로 분리한다(CLAUDE.md "하나의 논리적 작업 = 하나의 branch").
+
+### 실측 효과 (`tests/tablet-viewport.spec.mjs`, 헤드리스 실렌더)
+
+| 뷰포트 | 이전 | 이후 | 변화 |
+|---|---|---|---|
+| desktop 1440x900 | 1266px (1.41화면) | **871px (0.97화면)** | −31% |
+| tablet landscape 1024x768 | 1090px (1.42화면) | **727px (0.95화면)** | −33% |
+| tablet portrait 834x1112 | 1586px (1.43화면) | **1079px (0.97화면)** | −32% |
+| 기본 열림 자유입력 | 4칸 | **3칸** | −1 (판단 3칸만 남음) |
+
+세 뷰포트 모두 1.4화면 → **1화면 미만**. 한약 진료 화면이 스크롤 없이 한 화면에 들어온다.
+
+### 테스트 (CLAUDE.md 4항 — 지운 경로 1개당 단언 1개)
+
+`tests/herbal-workspace-slim.spec.mjs` 30단언 신설(`test:all` 편입):
+§A 화면(A-0 레인 가드 + A-1~A-5 경로별) / §B 출력(빈 라벨 7개가 남지 않는지 + 남긴 4경로가
+실제로 나오는지) / §C **지우지 않은 쪽**(mixed 7라벨 전부 유지, pain 조건 무변경, 레인2·
+판단 카드 무변경). 두 뮤테이션(가드 제거 / `재평가 대상` 라벨 복귀)으로 단언이 실제로
+회귀를 잡는 것을 확인했다.
+
+기존 테스트 4개는 **약화하지 않고 갱신**했다: `doctor.spec.mjs`의 디스패처 단언은 오히려
+"어느 프로필이 어떤 `slim` 인자를 받는지"까지 고정하도록 강화했고,
+`doctor-workspace.spec.mjs`의 한약 picker 단언은 picker가 살아 있는 mixed로 옮기면서
+"herbal 단독에는 picker가 아예 없다"는 새 단언을 함께 넣어 시나리오 교체가 회피로
+보이지 않게 했다.
+
+**검증**: `npm run test:all` exit 0 (6860 단언) / `npm run build` exit 0.
+
 ## 2026-09-21 — 클리닉 원클릭 진단 스크립트 신설 (`diagnose-clinic.{ps1,bat}`) — 원격 세션 왕복 줄이기
 
 **배경**: 같은 세션에서 CORS 버그를 고친 뒤, 실기기 재검증 중 Wi-Fi가 끊겼다 재연결되며

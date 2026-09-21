@@ -851,6 +851,22 @@ export function DoctorWorkspace({
             )}
           </section>
 
+          {/*
+            한약 화면 축소(PR-A, PO 승인 2026-09-21): herbal 단독 프로필에서는
+            `다음` 레인 전체를 렌더하지 않는다 -- 재평가 대상 칩, 다음 방문 확인
+            메모, 다음 액션 카드, 관리 계획·다음 재평가 disclosure, 참고 자료
+            drawer(이전 방문 / 환자 전달문 / 중복 EMR 미리보기), CRM 복약 코스,
+            재진 간단문진이 여기에 전부 들어 있었고, PO 판단은 "오히려 못 써먹을
+            것 같다 / 정말 액기스만 남긴다"였다. pain·mixed는 전혀 건드리지
+            않는다 -- mixed는 HerbalWorkspaceNext까지 지금 그대로 렌더된다.
+
+            EMR 쪽 짝: DoctorView.tsx의 buildHerbalEmrTextForRecord(slim=true)가
+            여기서 편집 UI를 잃은 키(재평가 대상 / 관리 계획 5필드 / 다음 상세
+            재평가)를 herbal 텍스트에서도 함께 뺀다. 화면만 떼고 출력 라벨을
+            남기면 Batch 4 D-1("빈 값을 복사하고 복사됨을 띄움")이 그대로
+            재현되기 때문이다.
+          */}
+          {activeProfile !== 'herbal' && (
           <section className="doctor__visitLane doctor__visitLane--next" aria-labelledby="next-h2">
             <h2 id="next-h2">다음</h2>
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
@@ -876,7 +892,12 @@ export function DoctorWorkspace({
                 onIssueCarePlanLink={onIssueCarePlanLink}
               />
             )}
-            {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
+            {/*
+              herbal 단독은 바깥 `activeProfile !== 'herbal'` 가드에서 이미
+              걸러졌으므로 여기 도달하는 한약 프로필은 mixed뿐이다(tsc가
+              TS2367로 확인해준다). 통증+한약 동시 진료는 기존 동작 그대로.
+            */}
+            {activeProfile === 'mixed' && (
               <HerbalWorkspaceNext
                 payload={payload}
                 clinicianObservations={workspaceState.herbalClinicianObservations}
@@ -896,8 +917,12 @@ export function DoctorWorkspace({
             {medicationCourseSlot}
             {nextLaneFooter}
           </section>
+          )}
 
-          <LaneJumpNav showExercise={activeProfile === 'pain' || activeProfile === 'mixed'} />
+          <LaneJumpNav
+            showExercise={activeProfile === 'pain' || activeProfile === 'mixed'}
+            showNext={activeProfile !== 'herbal'}
+          />
         </main>
       </div>
 
@@ -952,16 +977,28 @@ function jumpToLane(id: string): void {
   window.scrollTo({ top: Math.max(0, top) })
 }
 
-const LANE_JUMP_ITEMS: ReadonlyArray<{ id: string; label: string; exerciseOnly?: boolean }> = [
+const LANE_JUMP_ITEMS: ReadonlyArray<{
+  id: string
+  label: string
+  exerciseOnly?: boolean
+  nextOnly?: boolean
+}> = [
   { id: 'lane1-h2', label: '안전' },
   { id: 'lane2-h2', label: '확인' },
   { id: 'judgment-h2', label: '판단·처치' },
   { id: 'exercise-h3', label: '운동', exerciseOnly: true },
-  { id: 'next-h2', label: '다음' },
+  { id: 'next-h2', label: '다음', nextOnly: true },
 ]
 
-function LaneJumpNav({ showExercise }: { showExercise: boolean }) {
-  const items = LANE_JUMP_ITEMS.filter((it) => !it.exerciseOnly || showExercise)
+/**
+ * 한약 화면 축소(PR-A): herbal 단독 프로필은 `다음` 레인 자체가 렌더되지
+ * 않으므로 `#next-h2`로 점프하는 버튼도 함께 뺀다 -- 남겨두면 아무 데도 가지
+ * 않는 죽은 버튼이 된다(jumpToLane은 존재하지 않는 id를 조용히 무시한다).
+ */
+function LaneJumpNav({ showExercise, showNext }: { showExercise: boolean; showNext: boolean }) {
+  const items = LANE_JUMP_ITEMS.filter(
+    (it) => (!it.exerciseOnly || showExercise) && (!it.nextOnly || showNext),
+  )
   return (
     <nav className="doctor__laneNav" aria-label="진료 단계 바로가기">
       {items.map((it) => (

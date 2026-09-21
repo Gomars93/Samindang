@@ -679,6 +679,7 @@ function AppContent() {
         steps={STEPS}
         currentStep={stepInfo.step}
         stepProgress={stepInfo.progress}
+        screenProgress={current.screenProgress}
         questionId={current.id}
         // Tablet UX v2.2 §10: safety/protected/긴 문장 질문(layout 미지정,
         // 기본값 'list')은 wide landscape에서도 좁은 --content-max를

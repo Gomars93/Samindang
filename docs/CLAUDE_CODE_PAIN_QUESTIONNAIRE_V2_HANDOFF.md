@@ -37,14 +37,15 @@ Claude Code is best used here for repository-wide dependency tracing, React/Type
 - Extracted the shared `OptionCard` primitive used by single- and multi-choice controls.
 - Connected Region Focus, Target Activity, and Activity Tolerance without changing safety scoring or routing.
 - Added regression coverage for rendering, selection, answer cleanup, and unchanged safety behavior.
+- Added presentation-only `screenProgress` metadata for Region Focus (`1 / 5`), Target Activity (`2 / 5`), and Activity Tolerance (`3 / 5`).
+- Added DOM regression coverage for the six repetition choices, their Figma order, selected-state checkmark, and accessible `3 / 5` label.
 
 ## Next implementation slice
 
-- Match the running React screen to Figma nodes `11:32` (time) and `16:60` (repetitions) at an 800×1280 tablet viewport.
 - Keep the activity-to-unit mapping explicit: `SITTING`/`WALKING` use time buckets; `SIT_TO_STAND`/`BEND_PICK_UP`/`LIFT_CARRY`/`BED_MOBILITY` use repetition buckets.
 - Keep `PAIN_F03` hidden for `OTHER` or unknown activity values; do not infer a unit.
-- Add visual or DOM regression assertions for all six repetition choices and the `3 / 5` progress label.
 - Preserve backward navigation and answer state while switching between target activities.
+- Design the next context-only screens (`PAIN_F04` limiting response and `PAIN_F05` recovery) in Figma before adding schemas; wording and required status remain `TODO(clinical-review)`.
 
 ## Review ledger
 

@@ -62,6 +62,11 @@ export type Question = {
   required: boolean
   /** 단계형 progress의 단계 라벨 */
   step: string
+  /**
+   * 특정 하위 흐름의 화면 순서 표시. 전체 설문 단계형 progress와는 별개인
+   * 순수 presentation metadata다.
+   */
+  screenProgress?: { current: number; total: number }
   /** Master Spec의 show_if. 미지정 시 always */
   showIf?: (r: Responses) => boolean
   /** numeric 전용 */

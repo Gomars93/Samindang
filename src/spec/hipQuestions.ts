@@ -42,6 +42,7 @@ export const HIP_ROUTING_QUESTIONS: Question[] = [
     question: '허리·골반 부위 중 지금 가장 불편한 곳은 어디에 가깝나요?',
     required: true,
     step: '상세 증상',
+    screenProgress: { current: 1, total: 5 },
     showIf: IS_PRIMARY_HIP_POPULATION,
     options: [
       { value: 'LOW_BACK_DOMINANT', label: '허리가 가장 불편해요' },

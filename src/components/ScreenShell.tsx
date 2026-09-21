@@ -6,6 +6,8 @@ type Props = {
   currentStep: string
   /** 현재 단계 안에서의 진행률 0~1 */
   stepProgress: number
+  /** 특정 하위 흐름의 현재 화면/전체 화면 수. 전체 단계 progress와 독립적이다. */
+  screenProgress?: { current: number; total: number }
   onBack?: () => void
   canGoBack: boolean
   onHelp: () => void
@@ -50,6 +52,7 @@ export function ScreenShell({
   steps,
   currentStep,
   stepProgress,
+  screenProgress,
   onBack,
   canGoBack,
   onHelp,
@@ -153,7 +156,17 @@ export function ScreenShell({
             >
               <span aria-hidden="true">←</span> 이전
             </button>
-            <span className="stepLabel">{currentStep}</span>
+            <span className="stepLabel">
+              <span>{currentStep}</span>
+              {screenProgress && (
+                <span
+                  className="screenProgress"
+                  aria-label={`${screenProgress.total}개 화면 중 ${screenProgress.current}번째`}
+                >
+                  {screenProgress.current} / {screenProgress.total}
+                </span>
+              )}
+            </span>
           </div>
           <StepProgress
             steps={steps}
@@ -210,6 +223,11 @@ export function ScreenShell({
             </div>
           )}
           <span className="railStepLabel">{currentStep}</span>
+          {screenProgress && (
+            <span className="railScreenProgress" aria-hidden="true">
+              {screenProgress.current} / {screenProgress.total}
+            </span>
+          )}
         </div>
         <div className="shell__railBottom">
           <span

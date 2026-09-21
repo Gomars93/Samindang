@@ -1740,6 +1740,80 @@ async function main() {
     )
   }
 
+  /* ---------------- CORS preflight route classification (2026-09-21 실기기 재현) ---------------- */
+  // 원장이 실기기(같은 PC, LAN IP로 태블릿 화면 접속)에서 한약 문진을 끝까지
+  // 마쳤는데 "서버에 연결할 수 없습니다"로 실패했다. 브라우저 콘솔의 실제
+  // 에러: "Response to preflight request doesn't pass access control check:
+  // No 'Access-Control-Allow-Origin' header is present" -- POST
+  // /api/submissions로.
+  //
+  // 원인: handle()의 라우트 분류 상수들(isSubmissionsRoute 등)이
+  // `req.method === 'POST'`처럼 "실제 method"로 분류를 결정하는데,
+  // application/json body가 있는 cross-origin POST는 브라우저가 그 앞에
+  // 반드시 OPTIONS preflight를 먼저 보낸다(node의 fetch는 이 preflight를
+  // 하지 않으므로 HTTP 레벨에서만 부르는 기존 테스트들은 이 클래스를
+  // 원천적으로 못 잡는다 -- x-station-credential 헤더가 이미 같은 이유로
+  // 한 번 이 파일에 추가된 전례가 있다). preflight의 `req.method`는 항상
+  // `OPTIONS`이므로 "patient POST /api/submissions는 예외" 조건이
+  // preflight 자체에서는 절대 참이 되지 않아, 원장 전용 라우트로
+  // 오분류되고, LAN IP(환자 태블릿의 실제 origin)는 doctor origin
+  // allowlist에 없으니 preflight가 CORS 헤더 없이 거부되어 브라우저가
+  // 실제 POST를 아예 시도하지도 못한다.
+  //
+  // 고침: preflight는 표준 헤더 `Access-Control-Request-Method`에 그 다음에
+  //보낼 진짜 method를 싣고 온다 -- 라우트 분류를 이 값(effectiveMethod)으로
+  // 판단한다. 아래는 그 fetch()-with-explicit-OPTIONS 방식으로 실제
+  // 브라우저의 preflight를 재현한다.
+  {
+    const corsRoot = await mkdtemp(path.join(tmpdir(), 'samindang-cors-'))
+    const corsDataDir = path.join(corsRoot, 'submissions')
+    const { server: corsServer, base: corsBase } = await startServer(corsDataDir)
+    const lanOrigin = 'http://192.168.10.7:4173'
+    const preflight = await fetch(`${corsBase}/api/submissions`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: lanOrigin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    })
+    assert('CORS preflight CRITICAL: POST /api/submissions from a LAN-IP origin gets 204', preflight.status === 204)
+    assert(
+      'CORS preflight CRITICAL: POST /api/submissions reflects the LAN-IP origin back (실기기 재현 버그 -- 고치기 전엔 이 헤더가 아예 없었다)',
+      preflight.headers.get('access-control-allow-origin') === lanOrigin,
+    )
+
+    // 회귀 방지: 이 고침이 "OPTIONS는 전부 patient 취급"처럼 과하게
+    // 넓어지지 않았는지 -- 진짜 원장 라우트(GET /api/current-visit)의
+    // preflight는 여전히 허용되지 않은 origin에서 거부돼야 한다.
+    const doctorPreflightBlocked = await fetch(`${corsBase}/api/current-visit`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: lanOrigin,
+        'Access-Control-Request-Method': 'GET',
+      },
+    })
+    assert(
+      'CORS preflight: GET /api/current-visit(원장 라우트) preflight는 허용 목록에 없는 LAN origin에서 여전히 access-control-allow-origin이 없다(과도하게 넓어지지 않았다)',
+      !doctorPreflightBlocked.headers.has('access-control-allow-origin'),
+    )
+
+    // 같은 원장 라우트라도 localhost origin(항상 허용)에서는 여전히
+    // preflight가 통과한다 -- 기존 동작 무변경 확인.
+    const doctorPreflightAllowed = await fetch(`${corsBase}/api/current-visit`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'Access-Control-Request-Method': 'GET',
+      },
+    })
+    assert(
+      'CORS preflight: GET /api/current-visit preflight는 localhost origin에서는 그대로 허용된다(기존 동작 무변경)',
+      doctorPreflightAllowed.headers.get('access-control-allow-origin') === 'http://localhost:5173',
+    )
+    await stopServer(corsServer)
+  }
+
   /* ---------------- git: no secrets and no runtime patient data tracked ---------------- */
   {
     const repoRoot = fileURLToPath(new URL('..', import.meta.url))

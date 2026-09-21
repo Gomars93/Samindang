@@ -1115,6 +1115,97 @@ const PAIN_QUESTIONS: Question[] = [
 ]
 
 /**
+ * Pain Questionnaire v2 — function context (no clinical scoring).
+ *
+ * `HIP_00` already is the clinically CLOSED low-back / buttock-pelvis /
+ * hip-groin discriminator, so the Figma "Region Focus" screen reuses that
+ * question instead of adding the duplicate draft id `PAIN_R01`.
+ *
+ * These two questions only preserve the patient's functional anchor for
+ * the visit. No safety engine, diagnosis, stage assignment, routing, or
+ * treatment recommendation reads them. Tolerance values carry their unit
+ * in the enum name; they must not be compared across activity types or
+ * converted into severity until clinical review closes that contract.
+ */
+const PAIN_TARGET_ACTIVITY_OPTIONS: Option[] = [
+  { value: 'SITTING', label: '오래 앉아 있기' },
+  { value: 'SIT_TO_STAND', label: '앉았다 일어나기' },
+  { value: 'BEND_PICK_UP', label: '숙이기·바닥 물건 집기' },
+  { value: 'WALKING', label: '걷기' },
+  { value: 'LIFT_CARRY', label: '물건 들기·옮기기' },
+  { value: 'BED_MOBILITY', label: '돌아눕기·침대에서 일어나기' },
+  { value: 'OTHER', label: '그 밖의 활동' },
+  { value: 'UNKNOWN', label: '잘 모르겠어요' },
+]
+
+const PAIN_TOLERANCE_TIME_OPTIONS: Option[] = [
+  { value: 'TIME_IMMEDIATE', label: '시작하자마자' },
+  { value: 'TIME_LE_5M', label: '5분 이내' },
+  { value: 'TIME_5_10M', label: '5~10분' },
+  { value: 'TIME_10_30M', label: '10~30분' },
+  { value: 'TIME_30_60M', label: '30~60분' },
+  { value: 'TIME_GE_60M', label: '1시간 이상' },
+  { value: 'UNKNOWN', label: '잘 모르겠어요' },
+]
+
+const PAIN_TOLERANCE_REPETITION_OPTIONS: Option[] = [
+  { value: 'REPS_IMMEDIATE', label: '처음부터 불편해요' },
+  { value: 'REPS_1_2', label: '1~2번' },
+  { value: 'REPS_3_5', label: '3~5번' },
+  { value: 'REPS_6_10', label: '6~10번' },
+  { value: 'REPS_GE_11', label: '11번 이상' },
+  { value: 'UNKNOWN', label: '잘 모르겠어요' },
+]
+
+const PAIN_TIME_BASED_ACTIVITIES = new Set(['SITTING', 'WALKING'])
+const PAIN_REPETITION_BASED_ACTIVITIES = new Set([
+  'SIT_TO_STAND',
+  'BEND_PICK_UP',
+  'LIFT_CARRY',
+  'BED_MOBILITY',
+])
+
+const painToleranceOptions = (r: Responses): Option[] =>
+  PAIN_TIME_BASED_ACTIVITIES.has(r['PAIN_F01'] as string)
+    ? PAIN_TOLERANCE_TIME_OPTIONS
+    : PAIN_TOLERANCE_REPETITION_OPTIONS
+
+const PAIN_FUNCTION_QUESTIONS: Question[] = [
+  {
+    id: 'PAIN_F01',
+    variable: 'pain_target_activity',
+    input: 'single_choice',
+    question: '가장 먼저 편해졌으면 하는 활동은 무엇인가요?',
+    helper: '가장 중요한 한 가지를 선택해주세요.',
+    required: true,
+    step: '활동',
+    layout: 'grid2',
+    showIf: IS_PRIMARY_LBP,
+    options: PAIN_TARGET_ACTIVITY_OPTIONS,
+  },
+  {
+    id: 'PAIN_F03',
+    variable: 'pain_activity_tolerance',
+    input: 'single_choice',
+    question: '그 활동을 어느 정도 하면 불편해지기 시작하나요?',
+    helperIf: (r) =>
+      PAIN_TIME_BASED_ACTIVITIES.has(r['PAIN_F01'] as string)
+        ? '정확한 시간이 아니어도 괜찮아요.'
+        : '정확한 횟수가 아니어도 괜찮아요.',
+    // TODO(clinical-review): 시간/횟수 값의 임상 점수화와 필수 여부.
+    // 현재는 context-only라 건너뛰어도 안전 판정이나 진행을 막지 않는다.
+    required: false,
+    step: '활동',
+    layout: 'grid2',
+    showIf: (r) =>
+      IS_PRIMARY_LBP(r) &&
+      (PAIN_TIME_BASED_ACTIVITIES.has(r['PAIN_F01'] as string) ||
+        PAIN_REPETITION_BASED_ACTIVITIES.has(r['PAIN_F01'] as string)),
+    optionsIf: painToleranceOptions,
+  },
+]
+
+/**
  * ---------- LBP_V1 (허리 통증) — primary concern === pain && PAIN_01 ===
  * 'low_back_pelvis'인 경우만. 문항 문구/값/exclusive는
  * tablet-core/lbp_v1.0.yaml 원문 그대로이며 임의로 수정하지 않는다 (LBP_V1
@@ -4076,8 +4167,13 @@ export const CORE_QUESTIONS: Question[] = [
   ...BOWEL_QUESTIONS,
   ...URINARY_QUESTIONS,
   ...PAIN_QUESTIONS,
-  ...LBP_QUESTIONS,
+  // Patient Questionnaire v2: region focus(HIP_00) → target activity →
+  // tolerance comes before the existing regional safety/detail questions.
+  // This is presentation order only; FROZEN LBP/HIP showIf and safety
+  // computations remain unchanged.
   ...HIP_ROUTING_QUESTIONS,
+  ...PAIN_FUNCTION_QUESTIONS,
+  ...LBP_QUESTIONS,
   ...HIP_QUESTIONS,
   ...SHOULDER_QUESTIONS,
   ...NECK_QUESTIONS,
@@ -4585,8 +4681,9 @@ export const MODULE_QUESTION_IDS: Record<string, string[]> = {
   urinary: URINARY_QUESTIONS.map((q) => q.id),
   pain: [
     ...PAIN_QUESTIONS,
-    ...LBP_QUESTIONS,
     ...HIP_ROUTING_QUESTIONS,
+    ...PAIN_FUNCTION_QUESTIONS,
+    ...LBP_QUESTIONS,
     ...HIP_QUESTIONS,
     ...SHOULDER_QUESTIONS,
     ...NECK_QUESTIONS,
@@ -5001,6 +5098,9 @@ export const buildResponsePayload = (r: Responses) => ({
     },
     pain: {
       primary_location: r['PAIN_01'],
+      region_focus: r['HIP_00'],
+      target_activity: r['PAIN_F01'],
+      activity_tolerance: r['PAIN_F03'],
       pain_qualities: r['PAIN_02'],
       radiation: r['PAIN_04'],
     },

@@ -1,5 +1,37 @@
 # Current Handoff
 
+## 2026-09-21 (최신 48): **원장 PC 실기기에서 setup 스크립트 5단계 실패 → PowerShell 인용 버그 핫픽스** (PR #37)
+
+**브랜치**: `claude/fix-clinic-setup-quoting`. PR #35/#36 병합 직후 원장님이 실제 클리닉 PC에서
+`scripts\setup-and-start-clinic.bat`을 실행 — 1~4단계(pull/LAN IP/`.env.local`/build)는 전부
+성공했으나 5단계(서버 기동)에서 `ParameterBindingException`으로 죽었다.
+
+### 한 것
+- **원인**: PowerShell 이중따옴표 문자열 안에서 `\"`는 이스케이프로 동작하지 않는다(PowerShell은
+  백슬래시를 이스케이프 문자로 취급하지 않는다) — 그래서 `"... set \"SAMINDANG_DATA_DIR=$DataDir\" ..."`
+  의 첫 `\"`에서 문자열이 조기 종료되고 나머지가 `Start-Process -ArgumentList`의 엉뚱한 위치
+  인수로 튀었다.
+- **고침**: 명령 문자열을 홑따옴표(리터럴) 연결(`+`)로 조립해 이스케이프 자체를 없앴다.
+- **회귀 테스트 2건 추가**(`tests/clinic-setup.spec.mjs`, 40→42) — mutation으로 실제 버그 재현
+  시 새 단언이 정확히 실패함을 확인. 초안에서 그 단언 두 개를 처음 넣었을 때 내 설명 주석 자체가
+  예시로 `\"`를 담고 있어 false positive가 났었다 — 주석 문구를 고쳐 실제 코드만 검사하게 했다.
+- **이 버그가 드러난 경로가 이 저장소의 구조적 한계를 보여준다**: 이 세션에는 PowerShell이 없어
+  `.ps1`을 **실행**해서 검증할 수 없다 — `test:all`/`build`가 통과해도 실기기에서만 드러나는
+  클래스의 버그였다. 다음에 유사한 실기기 전용 문제가 또 나올 수 있다는 뜻이므로, 클리닉 PC에서
+  실제로 겪은 오류 메시지를 그대로 붙여넣는 이 패턴(사용자가 오류 텍스트 제공 → 원인 특정 →
+  핫픽스 → 회귀 테스트)을 앞으로도 기대한다.
+
+### 검증
+`test:clinic-setup` 42/42 / `test:all` exit 0(68 스위트) / `build` exit 0. `src/`·`server/` 변경 0줄.
+
+### Next Recommended Action
+1. **원장**: `git pull` 후 `scripts\setup-and-start-clinic.bat` 재실행 — 이번엔 5단계까지 통과해야
+   한다. 통과하면 곧장 `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c로.
+2. 다시 막히면 **뜬 오류 메시지 그대로** 알려줄 것 — 이 세션은 Windows 실행 환경이 없어 정적
+   코드 검토로만 대응 가능하다.
+
+---
+
 ## 2026-09-20 (최신 47): **한약 진료 개시 준비** — 명리 BLOCKER 해소(12시진만 사용) + 한약 실기기 절차 §5-c + 클리닉 원클릭 세팅 스크립트
 
 **브랜치**: `claude/google-drive-survey-readiness-3y1ews` (origin/main `c3cbdb2`에서 시작).

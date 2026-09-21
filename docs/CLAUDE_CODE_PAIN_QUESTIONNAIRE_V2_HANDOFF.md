@@ -50,6 +50,12 @@ Record unresolved decisions here instead of guessing.
 | Neurologic answers | Which patterns alter urgency beyond existing rules? | Preserve existing rules; new fields are context-only. |
 | Doctor summary | Which functional findings affect prioritization? | Display after safety findings; do not alter safety priority. |
 
+### Implemented interim decisions
+
+- Region Focus reuses the existing clinically CLOSED `HIP_00` contract; do not create duplicate `PAIN_R01` storage.
+- `PAIN_F01` stores one target activity as context only.
+- `PAIN_F03` stores explicit time- or repetition-unit buckets as context only. It is optional and must not be converted into severity, stage, routing, or treatment logic before clinical review.
+
 ## Definition of done for a night checkpoint
 
 - Branch is pushed and reproducible from GitHub.
@@ -57,4 +63,3 @@ Record unresolved decisions here instead of guessing.
 - Figma and code changes are cross-referenced in the commit/PR notes.
 - The review ledger contains every unresolved clinical decision.
 - No deployment has occurred.
-

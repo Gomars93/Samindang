@@ -1,5 +1,52 @@
 # Current Handoff
 
+## 2026-09-21 (최신 56): **지난 방문 설맥복 비교 (PR-B3)** — 서버 투영부터 신설
+
+**브랜치**: `claude/feat-prior-visit-observations`.
+
+### 발견
+지난 방문의 설맥복 기록이 `getPatientHistory` 투영에 **아예 없었다.** 서버 → 클라이언트 →
+타입 → 화면 4단을 모두 손댔다.
+
+### 한 것
+- `server/store.js`: `herbal_clinician_observations` 투영 추가(두 분기 모두, Array.isArray 방어).
+- `src/lib/serverClient.ts`: 서버를 믿지 않고 한 번 더 방어.
+- `longitudinal.ts`: `PriorVisitSummary.herbalClinicianObservations` + `priorObservationFor()`.
+- `ClinicianObservationChecklist`: 칩 줄 **위** 한 줄 요약 + 지난번 칩에 점선+✓.
+
+### 제 설계를 뒤집었다
+원래 Layer 0 설계는 "지난번 항목을 **맨 앞으로**"였는데, PR-B1에서 제가 세운
+"자리는 절대 안 움직인다" 원칙과 정면 충돌한다. **자리는 고정하고 표시만 더하는**
+방식으로 바꿨다. 되돌리려면 정렬 한 줄이다.
+
+### 3상태 구분
+기록 없음(아무것도 표시 안 함) / 미시행 / 기록됨. 첫 둘을 뭉개면 "안 본 것"이
+"정상이었던 것"으로 둔갑한다.
+
+### 검증
+`test:all` exit 0 (7022 단언) / `build` exit 0. 신설 25단언 + 실렌더 4단언 + 뮤테이션 3회.
+
+### 이 배치의 사고 둘
+- `git checkout --`로 미커밋 작업 삭제 (**세션 두 번째**). 뮤테이션 복원은 사전 백업 파일로만.
+- `python -c` 이스케이프 깨짐으로 **무력한 뮤테이션**을 통과로 착각할 뻔했다. heredoc으로 재확인.
+
+### Next Recommended Action
+1. **PR-A2 (진료 녹취 화면 제거)** — 갤럭시폰 시그마 external note로 대체 확정.
+   **화면만 떼고 서버 recorder API는 2주 남긴다.**
+2. **PR-E (옴니핏)** — PNG 전용·CSV 불가·큰 숫자만. Tesseract.js `eng.traineddata` 번들 +
+   `langPath` 로컬 고정 필수(인터넷 비노출 LAN). 목적은 타이핑 절약이 아니라 **지난값 Δ 비교**.
+3. PR-C(문진 문항 재설계), PR-D(재처방 체크 링크).
+
+### PO 쪽 미완료
+- **툴팁 문안 감수** — PR-B1 62개 + PR-B2 3개. 전부 초안.
+- 시그마 external note AI 요약의 **음성 데이터 처리 방식 확인**
+- 저장소 폴더를 Google Drive 동기화에서 제외 → 그 다음 Drive에서 `.env.local`/`.data/` 삭제
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 한약 경로 end-to-end
+
+### EMR 기록 원칙 (PO 합의)
+**닥터뷰 EMR = 사실** / **시그마 녹취 요약 = 맥락**. 순서는 닥터뷰 먼저, 녹취 뒤.
+AI 요약은 검수 없이 붙이지 않는다.
+
 ## 2026-09-21 (최신 55): **한약 상담 중단 사유(red flag) 3칸** — 안전 확인 레인 (PR-B2)
 
 **브랜치**: `claude/feat-herbal-red-flags`.

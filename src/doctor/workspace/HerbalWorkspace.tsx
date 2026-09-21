@@ -164,6 +164,9 @@ export function HerbalWorkspaceLane2({
           items={clinicianObservations}
           onChangeItem={onChangeClinicianObservation}
           onAddToReassessment={onAddObservationToReassessment}
+          priorVisit={
+            asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0] ?? null
+          }
         />
       </section>
 

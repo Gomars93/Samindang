@@ -2170,3 +2170,43 @@
   border-color: var(--danger, #c0392b);
   color: #fff;
 }
+
+/* ---------- 지난 방문 비교 (PR-B3, 2026-09-21) ---------- */
+
+/*
+ * 한 줄만 차지한다. 재평가 때만 렌더되므로 초진 화면 높이에는 영향이 없다.
+ */
+.workspace__obsPrior {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.workspace__obsPrior__label {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+  font-weight: 800;
+}
+
+/*
+ * 지난번에도 체크됐던 칩: **자리는 그대로 두고 표시만 더한다.**
+ * 재평가라고 칩 순서를 앞으로 당기면 초진과 재진에서 같은 항목이 다른
+ * 자리에 놓이고, PR-B1이 세운 "위치의 예측 가능성이 입력 속도를 결정한다"는
+ * 원칙이 깨진다. 점선 테두리 + ✓ 표시만으로 구분한다(색만으로 구별하지
+ * 않는다 -- ✓ 글리프가 색각 이상에서도 읽힌다).
+ */
+.workspace__obsChip--prior {
+  border-style: dashed;
+  border-width: 2px;
+}
+
+.workspace__obsChip__priorDot {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 900;
+  opacity: 0.8;
+}

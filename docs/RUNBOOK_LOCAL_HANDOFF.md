@@ -101,6 +101,33 @@ scripts\setup-and-start-clinic.bat
 
 옵션: `-Ip <주소>` / `-SkipPull` / `-DataDir <경로>` / `-NoStart`(빌드까지만).
 
+### 2.1b 뭔가 안 될 때 — 원클릭 진단 (`diagnose-clinic.bat`)
+
+"서버에 연결할 수 없습니다"류 문제는 원인이 IP 변경/방화벽/네트워크 프로필/서버 프로세스
+종료/CORS 등 여러 층에 걸쳐 있을 수 있어, 하나씩 확인하면 왕복이 길어진다. 이 스크립트는
+그 확인들을 한 번에 실행해 한 화면으로 보여준다:
+
+```
+scripts\diagnose-clinic.bat
+```
+
+확인 항목: 이 PC의 LAN IP가 `.env.local`에 빌드된 값과 일치하는지, Wi-Fi 네트워크 프로필이
+개인(Private)인지, 포트 4317 방화벽 인바운드 규칙이 있고 켜져 있는지, 핸드오프 서버(4317)와
+프리뷰 서버(4173)가 실제로 리스닝 중인지, `localhost`/LAN IP 양쪽에서 `/api/health`가
+실제로 응답하는지.
+
+**이 스크립트가 볼 수 없는 것**: 브라우저 안에서 실제로 나는 에러(CORS, JS 예외 등)는
+F12 개발자 도구의 Console/Network 탭으로만 보인다 — 위 항목이 전부 정상인데도 안 되면
+그쪽을 확인해야 한다.
+
+**PowerShell 스크립트 실행이 막힐 때**: `npm` 등을 프롬프트에 직접 쳤을 때 "이 시스템에서
+스크립트를 실행할 수 없으므로"(PSSecurityException) 오류가 나면, 그 PC의 기본 PowerShell
+실행 정책이 제한적인 것이다. `.bat` 파일들(`setup-and-start-clinic.bat`,
+`diagnose-clinic.bat`)은 내부에서 `-ExecutionPolicy Bypass`로 자기 자신의 `.ps1`을 실행하므로
+이 문제와 무관하다 — 대신 `npm` 자체를 프롬프트에 직접 칠 때는 `npm.cmd run ...`처럼
+`.cmd` 확장자를 명시하면 PowerShell의 `.ps1` 래퍼(`npm.ps1`)를 거치지 않아 정책과 무관하게
+동작한다.
+
 ### 2.2 수동 기동
 
 원장 PC(또는 클리닉 LAN 안의 아무 PC)에서:

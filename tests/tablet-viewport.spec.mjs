@@ -388,6 +388,39 @@ try {
     )
 
     /*
+     * PR-B2(2026-09-21) 한약 상담 중단 사유(red flag): 이 카드는 레인1에
+     * **항상 보이므로** 그 높이가 기본 화면에 그대로 얹힌다. 처음 구성
+     * (제목/안내/칩을 각자 줄에)에서는 기본 화면이 871 → 996px(+125px)로
+     * 늘어, PR-A가 한약 화면을 한 화면에 넣은 성과를 바로 깎아먹었다.
+     * 한 wrap 줄로 합치고 패딩을 조여 62px까지 줄였다.
+     *
+     * 안전 정보를 더 줄이지는 않는다 -- 읽기 어려워지면 존재 이유가 없어진다.
+     * 대신 **카드 자체의 높이**를 예산으로 고정해, 나중에 여기에 무언가
+     * 덧붙으면서 조용히 커지는 것을 막는다.
+     */
+    const redFlagHeight = (
+      await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const el = document.querySelector('.workspace__redFlag')
+          return el ? Math.round(el.getBoundingClientRect().height) : -1
+        })()`,
+        returnByValue: true,
+      })
+    ).result?.value
+    check(
+      `${label}: 한약 상담 중단 사유 카드가 레인1에 렌더된다`,
+      typeof redFlagHeight === 'number' && redFlagHeight > 0,
+      `(${redFlagHeight}px)`,
+    )
+    check(
+      `${label}: 그 카드 높이가 100px를 넘지 않는다 (항상 보이는 자리라 기본 화면에 그대로 얹힌다)`,
+      // 100px은 뷰포트별 실측 최대(태블릿 가로 87px — 폭이 좁아 칩이 한 줄 더
+      // 감긴다)에 여유를 둔 값이다. PC(1440)에서는 62px 한 줄로 들어간다.
+      redFlagHeight <= 100,
+      `(${redFlagHeight}px)`,
+    )
+
+    /*
      * PR-B1(2026-09-21) 설맥복 체크식: 위 측정은 체크리스트가 **접힌** 기본
      * 상태다. 체크식의 실제 비용(칩 23개 + ＋ 전체 손잡이 3개)은 원장이
      * "빠른 입력"을 눌러 펼친 뒤에야 화면에 나타나므로, 그 상태를 따로
@@ -418,7 +451,12 @@ try {
          * querySelectorAll만으로는 2층 칩까지 세어 60개가 나온다(실측에서
          * 실제로 그랬다) -- 그 숫자는 "화면 부하"와 아무 상관이 없다.
          */
-        expression: `[...document.querySelectorAll('.workspace__obsChip')].filter((el) => typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null).length`,
+        /*
+         * 레인2 체크리스트 안의 칩만 센다 -- 레인1의 red flag 칩 3개(PR-B2)도
+         * 같은 .workspace__obsChip 클래스를 쓰므로, 범위를 좁히지 않으면 26이
+         * 나와 "1층 23칸" 계약과 무관한 숫자를 감시하게 된다.
+         */
+        expression: `[...document.querySelectorAll('.workspace__observationChecklist .workspace__obsChip')].filter((el) => typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null).length`,
         returnByValue: true,
       })
     ).result?.value

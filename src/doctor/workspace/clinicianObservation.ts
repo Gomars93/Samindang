@@ -12,6 +12,14 @@ export type ClinicianObservationCategory =
   | 'TONGUE'
   | 'PULSE'
   | 'ABDOMEN'
+  /**
+   * PR-B2(2026-09-21): 설진·복진 중에 눈·손에 걸리는 소견 가운데, 의미가
+   * "변증 참고"가 아니라 **"한약 상담을 멈추고 보내야 함"**인 것들.
+   * 나머지 카테고리와 같은 타입·직렬화를 쓰지만 **렌더 위치가 다르다** --
+   * 레인2(오늘 확인할 것)가 아니라 레인1(안전 확인)에 있다. 접히는 서랍에
+   * 안전장치를 넣는 것은 안전장치를 넣지 않은 것과 같기 때문이다.
+   */
+  | 'RED_FLAG'
   | 'OTHER'
 
 export const CLINICIAN_OBSERVATION_CATEGORY_LABEL: Record<ClinicianObservationCategory, string> = {
@@ -19,6 +27,7 @@ export const CLINICIAN_OBSERVATION_CATEGORY_LABEL: Record<ClinicianObservationCa
   TONGUE: '설진',
   PULSE: '맥진',
   ABDOMEN: '복진',
+  RED_FLAG: '안전',
   OTHER: '기타 소견',
 }
 
@@ -58,6 +67,15 @@ export function defaultClinicianObservations(): ClinicianObservationItem[] {
     emptyClinicianObservation('obs_abdomen', 'ABDOMEN', '복진 소견'),
     emptyClinicianObservation('obs_followup', 'FOLLOW_UP_QUESTION', '추가 확인문진'),
   ]
+}
+
+/**
+ * 안전 확인 레인에 렌더되는 red flag 항목 (PR-B2). 체크리스트(레인2)와
+ * **별도 필드**로 저장된다 -- 같은 배열에 넣으면 "확인 필요 N건" 카운터와
+ * 접기 규칙이 안전 항목까지 함께 접어버린다.
+ */
+export function emptyHerbalSafetyObservation(): ClinicianObservationItem {
+  return emptyClinicianObservation('obs_red_flag', 'RED_FLAG', '전원 고려 소견')
 }
 
 export function countStillNeedsCheck(items: ClinicianObservationItem[]): number {

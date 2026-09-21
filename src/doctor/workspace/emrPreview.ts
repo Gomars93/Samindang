@@ -308,6 +308,17 @@ export function buildPainWorkspaceEmrPreview(input: {
 export function buildHerbalWorkspaceEmrPreview(input: {
   primaryConcern: string | null
   clinicianObservations: ClinicianObservationItem[]
+  /**
+   * PR-B2(2026-09-21): 레인1에서 원장이 직접 체크한 한약 상담 중단 사유.
+   * **체크된 것이 있을 때만** 줄이 생기고, 맨 앞에 온다 -- 붙여넣은 차트를
+   * 위에서부터 읽을 때 가장 먼저 걸려야 하는 정보다.
+   *
+   * 비어 있으면 라벨 자체를 내지 않는다. 이 파일 헤더의 규칙 2("아직 확인
+   * 안 한 항목을 음성 소견으로 적지 않는다")가 그대로 적용된다 -- 원장이
+   * 아직 복진을 안 했을 뿐인데 차트에 "상담 중단 사유: 없음"이 남으면
+   * 안 본 것이 본 것으로 둔갑한다.
+   */
+  safetyObservation?: ClinicianObservationItem
   finalAssessment: HerbalFinalAssessment
   /**
    * 한약 화면 축소(PR-A): `재평가 대상` 편집 UI(FollowUpTargetPicker)는 herbal
@@ -322,7 +333,9 @@ export function buildHerbalWorkspaceEmrPreview(input: {
   reassessment?: StructuredReassessment
   nextReassessmentPlan?: NextReassessmentPlan
 }): string {
+  const safetyValue = input.safetyObservation?.value.trim() ?? ''
   const lines: Array<{ label: string; value: string }> = [
+    ...(safetyValue ? [{ label: '⚠ 상담 중단 사유', value: safetyValue }] : []),
     { label: '상담 목적', value: input.primaryConcern ?? '' },
     { label: '설진/맥진/복진 소견', value: observationLines(input.clinicianObservations).join('; ') },
     { label: '최종 변증·병기', value: input.finalAssessment.finalPatternOrMechanism },

@@ -197,6 +197,7 @@ export function HerbalWorkspaceLane2({
 export function HerbalWorkspaceNext({
   payload,
   clinicianObservations,
+  safetyObservation,
   finalAssessment,
   followUpTargets,
   onChangeFollowUpTargets,
@@ -212,6 +213,8 @@ export function HerbalWorkspaceNext({
   payload: DoctorPayload
   /** EMR 미리보기 조립에만 쓰인다 -- 편집 UI는 레인2(확인)에 있다. */
   clinicianObservations: ClinicianObservationItem[]
+  /** PR-B2: EMR 미리보기 조립에만 쓰인다 — 편집 UI는 레인1(안전 확인)에 있다. */
+  safetyObservation?: ClinicianObservationItem
   finalAssessment: HerbalFinalAssessment
   followUpTargets: FollowUpTarget[]
   onChangeFollowUpTargets: (next: FollowUpTarget[]) => void
@@ -232,6 +235,7 @@ export function HerbalWorkspaceNext({
   const emrText = buildHerbalWorkspaceEmrPreview({
     primaryConcern: primaryConcernLabel(r),
     clinicianObservations,
+    safetyObservation,
     finalAssessment,
     followUpTargets,
     carePlan,

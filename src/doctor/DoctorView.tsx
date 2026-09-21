@@ -3277,6 +3277,12 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
     return buildHerbalWorkspaceEmrPreview({
       primaryConcern: primaryConcernLabel(r),
       clinicianObservations: workspaceState.herbalClinicianObservations,
+      /*
+       * PR-B2: 상담 중단 사유는 slim 여부와 무관하게 **항상** 넘긴다 --
+       * 편집 UI(레인1 안전 확인)가 herbal 단독에서도 살아 있고, 안전 정보는
+       * 화면 축소의 대상이 아니다.
+       */
+      safetyObservation: workspaceState.herbalSafetyObservation,
       finalAssessment: workspaceState.herbalFinalAssessment,
       reassessment: workspaceState.herbalReassessment,
       ...(slim

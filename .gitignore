@@ -241,3 +241,5 @@ tests/.region-vignettes-*-bundle.mjs
 tests/.herbal-slim-emrpreview-bundle.mjs
 tests/.observation-options-bundle.mjs
 tests/.observation-promotion-bundle.mjs
+tests/.red-flag-emrpreview-bundle.mjs
+tests/.red-flag-persistence-bundle.mjs

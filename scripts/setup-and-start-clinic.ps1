@@ -145,8 +145,16 @@ if ($NoStart) { Say '세팅만 완료(-NoStart). 서버는 띄우지 않았습�
 
 Say '[5/5] 서버 2개 기동 (각각 새 창)'
 # `set VAR=값 && ...` 은 && 앞의 공백까지 값에 넣는다(경로 끝에 공백이 붙는 고전적 버그).
-# 반드시 `set "VAR=값"` 형태로 쓴다. -WorkingDirectory도 명시해 더블클릭 실행에서 흔들리지 않게 한다.
-Start-Process -FilePath 'cmd.exe' -WorkingDirectory $repo -ArgumentList '/k', "title samindang-handoff-server && set \"SAMINDANG_DATA_DIR=$DataDir\" && node server\index.js"
+# 반드시 `set "VAR=값"` 형태로 쓴다.
+# 이 안의 큰따옴표는 PowerShell 이중따옴표 문자열 안에서 백슬래시로 이스케이프되지
+# 않는다(PowerShell은 백슬래시를 이스케이프 문자로 취급하지 않는다 -- 백슬래시+쌍따옴표는
+# 문자열을 조기 종료시키고 나머지가 Start-Process의 엉뚱한 위치 인수로 튀는 실제 사고를
+# 냈다, 실기기 재현 2026-09-21).
+# 그래서 이 명령 문자열 전체를 홑따옴표(리터럴, 보간 없음)로 조립하고 $DataDir는
+# 문자열 연결(+)로만 끼워 넣는다 -- 이스케이프가 아예 필요 없어진다.
+# -WorkingDirectory도 명시해 더블클릭 실행에서 흔들리지 않게 한다.
+$handoffCmd = 'title samindang-handoff-server && set "SAMINDANG_DATA_DIR=' + $DataDir + '" && node server\index.js'
+Start-Process -FilePath 'cmd.exe' -WorkingDirectory $repo -ArgumentList '/k', $handoffCmd
 Start-Process -FilePath 'cmd.exe' -WorkingDirectory $repo -ArgumentList '/k', 'title samindang-patient-preview && npm run preview -- --host'
 
 Say ''

@@ -62,6 +62,19 @@ check(
   /LASTEXITCODE -ne 0\) \{ Die '빌드 실패/.test(ps),
 )
 check(
+  // 실기기 사고(2026-09-21): PowerShell 이중따옴표 문자열 안에서 백슬래시(\\")는
+  // 이스케이프로 동작하지 않는다 -- 문자열이 조기 종료되고 나머지가 Start-Process의
+  // 엉뚱한 위치 인수로 튀어 "인수를 허용하는 위치 매개 변수를 찾을 수 없습니다"로
+  // 죽었다(원장 PC에서 재현). 같은 패턴이 다시 들어가면 여기서 잡는다.
+  '.ps1이 이중따옴표 문자열 안에 깨지는 백슬래시-쌍따옴표(\\") 이스케이프를 쓰지 않는다',
+  !/\\"/.test(ps),
+)
+check(
+  'SAMINDANG_DATA_DIR를 넘기는 cmd 명령 문자열이 홑따옴표 연결로 조립된다 (이스케이프 불필요)',
+  /\$handoffCmd\s*=\s*'[^']*'\s*\+\s*\$DataDir\s*\+\s*'/.test(ps),
+)
+
+check(
   '.ps1이 환자 데이터 디렉터리를 저장소 바깥으로 기본 설정한다 (클라우드 동기화 폴더 사고 방지)',
   /\$DataDir\s*=\s*'C:\\samindang-data\\submissions'/.test(ps) && ps.includes('SAMINDANG_DATA_DIR'),
 )

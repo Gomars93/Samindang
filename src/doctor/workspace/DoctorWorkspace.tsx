@@ -47,6 +47,7 @@ import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnreco
 import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { useOpenOnceContent } from './FinalAssessmentCard'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
+import { HerbalSafetyRedFlagCard } from './HerbalSafetyRedFlagCard'
 import {
   AnkleFootSafetyPanel,
 } from '../AnkleFootSafetyPanel'
@@ -638,6 +639,24 @@ export function DoctorWorkspace({
                 ))}
               </section>
             )}
+
+            {/*
+              PR-B2(2026-09-21): 한약 상담 중단 사유(red flag)는 설진·복진 중에
+              걸리지만 의미가 "변증 참고"가 아니라 "상담을 멈추고 보내야 함"
+              이므로 레인2 체크리스트가 아니라 **여기** 안전 확인 레인에 있다.
+              레인2는 아무것도 기록되지 않으면 한 줄로 접히는데, 접히는 자리에
+              안전장치를 넣는 것은 안전장치를 넣지 않은 것과 같다.
+
+              순서: 문진 응답에서 **계산된** flag(CommonSafetyBanner·부위별
+              입력)를 먼저 보이고, 원장이 **직접 본** 소견을 그 뒤에 둔다 --
+              이 레인이 이미 두 종류를 섞어 쓰던 순서 그대로다.
+            */}
+            {(activeProfile === 'herbal' || activeProfile === 'mixed') && (
+              <HerbalSafetyRedFlagCard
+                value={workspaceState.herbalSafetyObservation}
+                onChange={(next) => setWorkspaceState((s) => ({ ...s, herbalSafetyObservation: next }))}
+              />
+            )}
           </section>
 
           <section className="doctor__visitLane doctor__visitLane--lane2" aria-labelledby="lane2-h2">
@@ -905,6 +924,7 @@ export function DoctorWorkspace({
               <HerbalWorkspaceNext
                 payload={payload}
                 clinicianObservations={workspaceState.herbalClinicianObservations}
+                safetyObservation={workspaceState.herbalSafetyObservation}
                 finalAssessment={workspaceState.herbalFinalAssessment}
                 followUpTargets={workspaceState.herbalFollowUpTargets}
                 onChangeFollowUpTargets={(next) => setWorkspaceState((s) => ({ ...s, herbalFollowUpTargets: next }))}

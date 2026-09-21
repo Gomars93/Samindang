@@ -22,7 +22,7 @@
  */
 import { emptyExamResult, type PhysicalExamSuggestion, type ExamSuggestionReason } from './examSuggestion'
 import type { HerbalPatternCandidate, PatternEvidenceFact } from './patternCandidate'
-import { emptyClinicianObservation, type ClinicianObservationItem } from './clinicianObservation'
+import { emptyClinicianObservation, emptyHerbalSafetyObservation, type ClinicianObservationItem } from './clinicianObservation'
 import {
   followUpTarget,
   type FollowUpTarget,
@@ -177,6 +177,16 @@ export type WorkspaceState = {
   painFollowUpTargets: FollowUpTarget[]
   herbalPatternCandidates: HerbalPatternCandidate[]
   herbalClinicianObservations: ClinicianObservationItem[]
+  /**
+   * PR-B2(2026-09-21): 레인1(안전 확인)에 렌더되는 red flag 한 항목.
+   * `herbalClinicianObservations`와 **같은 타입이지만 별도 필드**다 -- 같은
+   * 배열에 넣으면 레인2의 "확인 필요 N건" 카운터와 "아무것도 없으면 접기"
+   * 규칙이 안전 항목까지 함께 접어버린다.
+   *
+   * 기존 필드들과 같은 additive 규약(파일 헤더): 이 필드가 없는 옛 레코드는
+   * 빈 기본값으로 역직렬화되고 schema_version은 올리지 않는다.
+   */
+  herbalSafetyObservation: ClinicianObservationItem
   herbalFinalAssessment: HerbalFinalAssessment
   herbalFollowUpTargets: FollowUpTarget[]
   /** Round 3 Phase A: clinician-owned Care Plan, one per profile. */
@@ -252,6 +262,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     painFollowUpTargets: [],
     herbalPatternCandidates: [],
     herbalClinicianObservations: [],
+    herbalSafetyObservation: emptyHerbalSafetyObservation(),
     herbalFinalAssessment: emptyHerbalFinalAssessment(),
     herbalFollowUpTargets: [],
     painCarePlan: emptyPainCarePlan(),
@@ -299,6 +310,12 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
       ? raw.herbalPatternCandidates.map(sanitizePatternCandidate)
       : [],
     herbalClinicianObservations: sanitizeArray(CLINICIAN_OBSERVATION_TEMPLATE, raw.herbalClinicianObservations),
+    /*
+     * 손상·누락 시 빈 안전 항목으로 되돌린다. **빈 값은 "이상 없음"이 아니라
+     * "아직 확인 안 함"**이며, EMR 조립기도 값이 없으면 라벨 자체를 내지
+     * 않는다(없는 것을 "없음"으로 기록하지 않는다는 저장소 전체 규칙).
+     */
+    herbalSafetyObservation: sanitizeShape(empty.herbalSafetyObservation, raw.herbalSafetyObservation),
     herbalFinalAssessment: sanitizeShape(empty.herbalFinalAssessment, raw.herbalFinalAssessment),
     herbalFollowUpTargets: sanitizeArray(FOLLOW_UP_TARGET_TEMPLATE, raw.herbalFollowUpTargets),
     painCarePlan: sanitizeShape(empty.painCarePlan, raw.painCarePlan),

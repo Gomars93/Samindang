@@ -1,5 +1,56 @@
 # Current Handoff
 
+## 2026-09-21 (최신 52): **한약 닥터뷰 `다음` 레인 폐기 (PR-A)** — 1.41화면 → 0.97화면
+
+**브랜치**: `claude/refactor-herbal-workspace-slim`. PO가 한약 문진의 목표를 재정의했다 —
+"진료를 운영하는 도구"가 아니라 **"사전 수집한 정보를 전달하는 도구"**, 쓰는 시점은
+초진·재평가 두 번뿐, 나머지는 EMR. 그 판단에 따라 `다음` 레인 전체를 herbal 단독
+프로필에서만 뗐다. **pain·mixed는 한 줄도 건드리지 않았다.**
+
+### 한 것
+- `DoctorWorkspace.tsx`: `다음` 레인 `<section>` 전체를 `activeProfile !== 'herbal'`
+  가드 하나로 감쌌다(개별 블록 숨김 방식이면 새 블록 추가 시 가드를 빠뜨린다).
+  `LaneJumpNav`에 `showNext`를 추가해 죽은 `다음` 버튼도 함께 제거.
+- `emrPreview.ts` + `DoctorView.tsx`: **화면과 출력의 짝을 맞췄다.** 편집 UI가 사라진
+  키(재평가 대상 / 관리 계획 5필드 / 다음 상세 재평가)를 herbal EMR 텍스트에서도 뺀다
+  (`buildHerbalEmrTextForRecord(slim)`). 이걸 안 하면 빈 라벨 7개를 "복사됨"과 함께
+  붙여넣는 **Batch 4 D-1 사고가 그대로 재현**된다.
+- `tests/herbal-workspace-slim.spec.mjs` 30단언 신설(`test:all` 편입) — 지운 경로 11개
+  각각 + **지우지 않은 쪽(mixed/pain)** 무변경 고정. 뮤테이션 2회로 실효성 확인.
+- 기존 테스트 4개 갱신(약화 아님 — 디스패처 단언은 `slim` 인자까지 고정하도록 강화).
+- `DECISIONS.md`에 **필드 × 화면 표**(CLAUDE.md 요구) 전체 기록.
+
+### 실측
+desktop 1266→871px · tablet landscape 1090→727px · tablet portrait 1586→1079px.
+세 뷰포트 모두 1.4화면 → **1화면 미만**. 기본 열림 자유입력 4→3칸.
+
+### 승인 범위였으나 하지 않은 것 (PO 확인 필요)
+1. **`+ 다른 유형 입력 추가` 토글** — 반대 프로필에 저장값이 있으면 자동으로 열리는
+   구조라, 지우면 이미 기록된 통증 판단이 herbal 화면에서 사라진다. 두는 것이 맞다고
+   판단. PO 재승인 시 제거 가능.
+2. **진료 녹취·요약** — `종결` 섹션의 5초 폴링·`emrSeedRef`와 얽혀 있고, 이 저장소에서
+   두 번 사고가 난 바로 그 코드 경로다. 별도 PR로 분리.
+
+### 검증
+`npm run test:all` exit 0 (6860 단언) / `npm run build` exit 0.
+
+### Next Recommended Action
+1. **PR-B (설맥복 체크식)** — PO 승인 완료된 설계: 3층 구조(Layer 0 재평가 시 지난번
+   체크 항목 / Layer 1 항상 보이는 23칸 / Layer 2 `＋ 전체`) + 3회 사용 시 승격 제안 +
+   PC 전용 호버 툴팁(감각 묘사까지만, 변증 귀속 금지) + red flag 3칸(왜사설 / 반발압통·
+   근성방어 / 박동성 종괴)을 `안전 확인` 레인으로. 툴팁 문안 40개는 초안→PO 감수.
+2. **PR-E (옴니핏 HRV/EEG 추출)** — PO 확인 결과 **CSV 내보내기 불가, PNG 전용,
+   큰 숫자만 필요**. 고정 좌표 crop + Tesseract.js(완전 로컬). ⚠️ Tesseract.js는 기본값이
+   CDN에서 언어 데이터를 내려받으므로 `eng.traineddata` 번들 + `langPath` 로컬 고정
+   필수(인터넷 비노출 LAN). 목적은 타이핑 절약이 아니라 **지난값 Δ 비교**.
+   참고 문서: 원장 작성 옴니핏 판독 가이드 v1(13개 지표 우선순위).
+3. PR-C(문진 문항 재설계), PR-D(재처방 체크 링크)는 그 뒤.
+
+### PO 쪽 미완료
+- 저장소 폴더를 Google Drive 동기화에서 제외 → 그 다음 Drive에서 `.env.local`/`.data/` 삭제
+  (순서 중요 — 미러 동기화라 먼저 지우면 PC 원본이 지워진다)
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 한약 경로 end-to-end (EMR 복사 확인 포함)
+
 ## 2026-09-21 (최신 51): **클리닉 진단 스크립트 신설** — `diagnose-clinic.{ps1,bat}`, 원격 세션 왕복 축소
 
 **브랜치**: `claude/chore-clinic-diagnose`. CORS 버그(최신 50) 수정 후 실기기 재검증 중

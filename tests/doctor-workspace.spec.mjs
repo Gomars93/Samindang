@@ -3828,6 +3828,28 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     )
     assert.ok(/<input[^>]*aria-label="움직임·기능 오늘 기준값"/.test(pain), '비NRS 통증 대상은 텍스트 input')
     assert.ok(!pain.includes('workspace__nrs'), 'NRS 마크업이 없다')
+    // PR-A(한약 화면 축소, 2026-09-21): 한약 재평가 대상 picker는 herbal
+    // 단독 프로필에서 `다음` 레인과 함께 제거됐고, mixed에만 남는다. 이
+    // 단언이 지키려던 것("한약 대상의 기준값은 NRS 버튼이 아니라 텍스트
+    // input")은 그 picker가 살아 있는 mixed에서 그대로 확인한다.
+    const mixed = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
+        initialWorkspaceState: { herbalFollowUpTargets: [{ id: 'sleep', label: '수면', baseline: '', postTreatmentValue: '' }] },
+      }),
+    )
+    assert.ok(/<input[^>]*aria-label="수면 오늘 기준값"/.test(mixed), '한약 대상은 텍스트 input (mixed)')
+    assert.ok(
+      !/aria-label="수면 오늘 기준값"[^>]*class="[^"]*workspace__nrs/.test(mixed),
+      '한약 대상에 NRS 마크업이 붙지 않는다 (같은 화면의 통증 대상은 NRS일 수 있다)',
+    )
+  })
+
+  // PR-A 계약: 위 단언이 mixed로 옮겨간 이유를 코드로 고정한다 -- herbal
+  // 단독 화면에는 재평가 대상 picker 자체가 없다. 이 단언이 없으면 위
+  // 수정은 "테스트를 통과시키려고 시나리오를 바꾼 것"과 구분되지 않는다.
+  test('PR-A: herbal 단독 화면에는 재평가 대상 picker가 아예 렌더되지 않는다', () => {
     const herbal = renderToString(
       React.createElement(DoctorWorkspace, {
         payload: HERBAL_SCENARIO_1.payload,
@@ -3835,8 +3857,13 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
         initialWorkspaceState: { herbalFollowUpTargets: [{ id: 'sleep', label: '수면', baseline: '', postTreatmentValue: '' }] },
       }),
     )
-    assert.ok(/<input[^>]*aria-label="수면 오늘 기준값"/.test(herbal), '한약 대상은 텍스트 input')
-    assert.ok(!herbal.includes('workspace__nrs'), '한약 화면에 NRS 마크업이 없다')
+    assert.ok(!/aria-label="수면 오늘 기준값"/.test(herbal), '재평가 대상 기준값 입력칸이 없다')
+    assert.ok(!herbal.includes('재평가 대상 (측정 추적)'), '재평가 대상 라벨이 없다')
+    assert.ok(!herbal.includes('다음 방문 확인 메모'), '다음 방문 확인 메모가 없다')
+    assert.ok(!herbal.includes('관리 계획 · 다음 재평가'), '관리 계획·다음 재평가 disclosure가 없다')
+    assert.ok(!herbal.includes('참고 자료 (이전 방문'), '참고 자료 drawer가 없다')
+    assert.ok(!/id="next-h2"/.test(herbal), '`다음` 레인 heading 자체가 없다')
+    assert.ok(!/data-target="next-h2"/.test(herbal), '`다음`으로 가는 점프 버튼도 없다')
   })
 
   test('NRS: 기준값 버튼을 누르면 문자열 값이 쓰이고, 같은 버튼을 다시 누르면 비워진다', () => {
@@ -4135,9 +4162,13 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
   })
   const herbal = render(HERBAL_SCENARIO_1)
   const herbalNav = navButtons(herbal)
-  test('점프 내비: 한약 화면은 운동 버튼 없이 4개', () => {
-    assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치', '다음'])
+  // PR-A(한약 화면 축소, 2026-09-21): 한약은 `다음` 레인 전체가 사라져
+  // 3개가 됐다. 이 파일의 바로 아래 "죽은 링크 없음" 단언과 짝을 이룬다 --
+  // 앵커가 없는 버튼을 남기지 않는 것이 이 내비의 원래 계약이었다.
+  test('점프 내비: 한약 화면은 운동·다음 버튼 없이 3개 (PR-A)', () => {
+    assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치'])
     assert.ok(!herbal.includes('id="exercise-h3"'))
+    assert.ok(!herbal.includes('id="next-h2"'), '`다음` 앵커 자체가 없다')
   })
   test('점프 내비: 한약 화면의 모든 버튼 대상 id가 실제로 렌더된다', () => {
     for (const b of herbalNav) assert.ok(herbal.includes(` id="${b.target}"`), `missing anchor ${b.target}`)

@@ -3217,16 +3217,28 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // HerbalWorkspace.tsx's own EmrPreviewCard already calls -- so a herbal
   // record with no voice recording no longer renders an empty box that
   // reports "복사됨" for an empty clipboard write.
-  function buildHerbalEmrTextForRecord(): string {
+  /**
+   * 한약 화면 축소(PR-A): `slim`은 herbal 단독 프로필 -- 그 화면에서는 다음
+   * 레인(재평가 대상 / 관리 계획 / 다음 재평가)의 **편집 UI 자체가 없으므로**
+   * 그 키들을 EMR 텍스트에서도 빼야 한다. 남겨두면 원장이 고칠 수도 볼 수도
+   * 없는 필드가 영원히 빈 라벨로 붙여넣기되는 Batch 4 D-1 사고가 재현된다.
+   * mixed는 HerbalWorkspaceNext가 그대로 렌더되어 편집 경로가 살아 있으므로
+   * 전부 넘긴다.
+   */
+  function buildHerbalEmrTextForRecord(slim: boolean): string {
     const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)
     return buildHerbalWorkspaceEmrPreview({
       primaryConcern: primaryConcernLabel(r),
       clinicianObservations: workspaceState.herbalClinicianObservations,
       finalAssessment: workspaceState.herbalFinalAssessment,
-      followUpTargets: workspaceState.herbalFollowUpTargets,
-      carePlan: workspaceState.herbalCarePlan,
       reassessment: workspaceState.herbalReassessment,
-      nextReassessmentPlan: workspaceState.nextReassessmentPlan,
+      ...(slim
+        ? {}
+        : {
+            followUpTargets: workspaceState.herbalFollowUpTargets,
+            carePlan: workspaceState.herbalCarePlan,
+            nextReassessmentPlan: workspaceState.nextReassessmentPlan,
+          }),
     })
   }
 
@@ -3235,8 +3247,8 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // separated by a blank line (CRLF+CRLF), so a mixed record's one copy
   // carries both halves instead of only ever one profile's worth of text.
   function buildEmrTextForRecord(): string {
-    if (viewProfile === 'herbal') return buildHerbalEmrTextForRecord()
-    if (viewProfile === 'mixed') return `${buildPainEmrTextForRecord()}\r\n\r\n${buildHerbalEmrTextForRecord()}`
+    if (viewProfile === 'herbal') return buildHerbalEmrTextForRecord(true)
+    if (viewProfile === 'mixed') return `${buildPainEmrTextForRecord()}\r\n\r\n${buildHerbalEmrTextForRecord(false)}`
     return buildPainEmrTextForRecord()
   }
 

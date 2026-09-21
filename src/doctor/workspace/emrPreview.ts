@@ -309,7 +309,15 @@ export function buildHerbalWorkspaceEmrPreview(input: {
   primaryConcern: string | null
   clinicianObservations: ClinicianObservationItem[]
   finalAssessment: HerbalFinalAssessment
-  followUpTargets: FollowUpTarget[]
+  /**
+   * 한약 화면 축소(PR-A): `재평가 대상` 편집 UI(FollowUpTargetPicker)는 herbal
+   * 단독 프로필에서 제거됐다. 그 화면에서는 이 키를 통째로 **넘기지 않는다** --
+   * 넘기면 영원히 빈 `재평가 대상:` 라벨만 붙고, 원장이 "복사됨"을 보고도
+   * 실제로는 빈 값을 붙여넣는 Batch 4 D-1 사고가 그대로 재현된다. mixed는
+   * 편집 UI(PainWorkspaceNext 옆 HerbalWorkspaceNext)가 남아 있으므로 계속
+   * 넘긴다. carePlan/reassessment/nextReassessmentPlan도 같은 이유로 optional.
+   */
+  followUpTargets?: FollowUpTarget[]
   carePlan?: HerbalCarePlan
   reassessment?: StructuredReassessment
   nextReassessmentPlan?: NextReassessmentPlan
@@ -336,7 +344,9 @@ export function buildHerbalWorkspaceEmrPreview(input: {
           { label: '다음 방문 확인', value: input.carePlan.nextVisitCheckItem },
         ]
       : []),
-    { label: '재평가 대상', value: followUpTargetsLine(input.followUpTargets) },
+    ...(input.followUpTargets
+      ? [{ label: '재평가 대상', value: followUpTargetsLine(input.followUpTargets) }]
+      : []),
     ...(input.nextReassessmentPlan
       ? [{ label: '다음 상세 재평가', value: nextReassessmentPlanLine(input.nextReassessmentPlan) }]
       : []),

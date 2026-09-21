@@ -1,4 +1,5 @@
 import type { Option } from '../types'
+import { OptionCard } from './OptionCard'
 
 type Props = {
   options: Option[]
@@ -58,23 +59,14 @@ export function MultiChoice({
         const isSelected = value.includes(opt.value)
         const disabled = !isSelected && max !== undefined && nonExclusiveCount >= max && !exclusives.has(opt.value)
         return (
-          <button
+          <OptionCard
             key={opt.value}
-            type="button"
-            role="checkbox"
-            aria-checked={isSelected}
+            option={opt}
+            selected={isSelected}
             disabled={disabled}
-            className={`option${isSelected ? ' option--selected' : ''}`}
-            onClick={() => toggle(opt.value)}
-          >
-            <span className="option__mark" aria-hidden="true">
-              {isSelected ? '✓' : ''}
-            </span>
-            <span className="option__labelGroup">
-              <span className="option__label">{opt.label}</span>
-              {opt.description && <span className="option__description">{opt.description}</span>}
-            </span>
-          </button>
+            selectionMode="multiple"
+            onPress={() => toggle(opt.value)}
+          />
         )
       })}
     </div>

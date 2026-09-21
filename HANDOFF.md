@@ -1,5 +1,38 @@
 # Current Handoff
 
+## 2026-09-21 (최신 49): **한약 전신 정보 블록 무한 재등장 버그 수정** — `reorderForDetailPhases` insertAt 고정 (`src/spec/coreSpec.ts`)
+
+**브랜치**: `claude/fix-herbal-systemic-block-loop`. 원장이 테스트 환자로 한약 문진 실기기
+테스트 중 "저 항목들이 다시 등장해 계속 뒤에서"라고 보고 — 실기기 재현 세션에서 원인을
+찾아 고쳤다.
+
+### 한 것
+- **원인**: 한약/체질 전신 정보 8문항(`CONST_ENERGY/SLEEP/DIGESTION/BOWEL` +
+  `HERB_APPETITE/THERMAL/THIRST/SWEAT`)의 삽입점이 매번 postList의 "현재 미응답 최전선"으로
+  재계산돼, 8문항을 다 답한 뒤에도 병력정보·출생정보 매 문항 뒤에서 블록 전체가 재생됐다
+  (11개 지점 × 8문항 = 위치기반 워크로 재현 시 각 문항 12회 방문).
+- App.tsx의 실제 `nextQuestion`(위치 기반, "이미 답했는지"는 안 봄)을 그대로 재현하지 않은
+  기존 `test:integration`의 워크 헬퍼("첫 미응답 스캔" 방식)는 이 버그 클래스를 구조적으로
+  못 잡는다는 것도 함께 확인 — 그래서 새 회귀 테스트는 production 알고리즘을 그대로 재현한다.
+- **고침**: 시스템 블록 중 하나라도 이미 답해졌으면 삽입점을 0(postList 맨 앞, 정적 순서와
+  동일)으로 고정 — 그 뒤로 postList가 진행돼도 블록이 다시 끼어들지 않는다.
+- `herbal_addon`(진료 중 활성화) 경로는 활성화 이전 postList 항목들이 **1회성**으로 재확인되는
+  트레이드오프가 생긴다(무한 아님, 값 보존, 클릭 1번씩) — 회귀 테스트가 이 경계(2회 초과=재실패)
+  를 명시적으로 고정한다.
+- `tests/herbal-systemic-block-loop.spec.mjs` 35단언 신설(`test:all` 편입, `test:herbal-loop`).
+
+### 검증
+`test:herbal-loop` 35 / `test:all` exit 0(69 스위트) / `build` exit 0. 고침 전 코드로 되돌려
+실제 실패(12회 중복 방문) 확인 후 복원. `src/spec/coreSpec.ts` 외 클리닉 threshold/safety
+계산 변경 0줄 — 화면 재생 순서만 고침.
+
+### Next Recommended Action
+1. **원장**: `git pull` 후 `scripts\setup-and-start-clinic.bat` 재실행 → §5-c (가)/(나) 다시
+   테스트. 이번엔 전신 정보 8문항이 병력정보/출생정보 진행 중 다시 나타나지 않아야 한다.
+2. 여전히 반복되면 **정확히 어느 화면 뒤에서** 다시 나타나는지 알려줄 것.
+
+---
+
 ## 2026-09-21 (최신 48): **원장 PC 실기기에서 setup 스크립트 5단계 실패 → PowerShell 인용 버그 핫픽스** (PR #37)
 
 **브랜치**: `claude/fix-clinic-setup-quoting`. PR #35/#36 병합 직후 원장님이 실제 클리닉 PC에서

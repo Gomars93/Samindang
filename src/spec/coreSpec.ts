@@ -4655,22 +4655,48 @@ function reorderForDetailPhases(r: Responses, list: Question[]): Question[] {
 
   // Tablet UX v2.2 §20-23 (herbal add-on): systemicItems를 postList의 "첫
   // 미응답" 항목 바로 앞에 끼워 넣는다 -- 고정된 그룹 경계가 아니라 실제
-  // 진행 상태 기준이다. 이 삽입점은 두 가지 경우 모두를 하나의 규칙으로
-  // 처리한다:
-  //  1. expanded 모드(한약 intent로 처음부터 시작): 이 시점에는 postList의
-  //     History/Birth/Free-text가 전부 미응답이므로 firstUnanswered는
-  //     postList[0]이 되어, systemicItems가 postList 맨 앞에 삽입된다 --
-  //     기존 정적 배열 순서(HISTORY_QUESTIONS 바로 앞)와 완전히 동일한
-  //     결과라 순수 no-op이다(기존 raw-Responses 테스트 회귀 없음).
+  // 진행 상태 기준이다. 이 삽입점은 두 가지 경우를 하나의 규칙으로 처리한다:
+  //  1. expanded 모드(한약 intent로 처음부터 시작): 시작 시점에는 postList가
+  //     전부 미응답이므로 firstUnanswered는 postList[0]이 되어,
+  //     systemicItems가 postList 맨 앞에 삽입된다 -- 기존 정적 배열 순서
+  //     (HISTORY_QUESTIONS 바로 앞)와 동일한 결과다.
   //  2. herbal_addon 모드(진료 중 나중에 활성화): 이미 History/Birth/
   //     Free-text 중 일부가 답해진 뒤이므로, 그 답해진 항목들 "다음"(아직
   //     안 답해진 첫 지점) 바로 앞에 삽입된다 -- App.tsx의 forward-only
   //     nextQuestion walk가 현재 위치에서 반드시 이 새 질문들을 거쳐가게
   //     보장한다(뒤에 남아 영원히 도달 불가능해지는 문제 방지).
+  //
+  // 2026-09-21 실기기 버그 수정: 위 두 시나리오의 삽입점을 매 호출마다
+  // "postList의 현재 미응답 최전선"으로 다시 계산하면, 8문항을 이미 다
+  // 답한 뒤에도 postList 최전선이 병력정보/출생정보를 하나씩 답할 때마다
+  // 전진하면서 systemicItems 블록 전체가 그 최전선을 "쫓아가며" 매번
+  // 재삽입됐다. App.tsx의 nextQuestion(from, r)은 `from`의 배열상 다음
+  // 위치만 보고 "이미 답했는지"는 보지 않으므로(App.tsx 자체 주석 참고),
+  // 재배치된 블록이 사용자의 현재 위치 바로 뒤에 다시 나타나 남은
+  // 병력정보 6문항·출생정보 4문항·마무리 1문항마다 8문항 전체가 재생됐다
+  // (실기기 재현: MED_USE/HISTORY_01/ALLERGY_01/SURGERY_01/
+  // WOMEN_SAFETY_01/TEST_01/BIRTH_01/BIRTH_02/BIRTH_03/BIRTH_03A/FREE_01
+  // 11개 지점 각각에서 8문항이 다시 나타나 총 88회 중복 방문,
+  // tests/herbal-systemic-block-loop.spec.mjs가 App.tsx의 실제 위치기반
+  // nextQuestion 알고리즘을 그대로 재현해 이를 잡는다).
+  //
+  // 고침: 삽입점은 systemicItems 중 **하나라도 답해지기 전**에만 동적으로
+  // 계산한다(herbal_addon이 진료 중 언제 활성화되든 그 순간의 현재 위치에서
+  // 도달 가능해야 하므로 -- 시나리오 2는 그대로 유지). 일단 블록이
+  // 시작되면(하나라도 답해지면) 삽입점을 0으로 고정한다 -- postList 전체
+  // 보다 앞, 정적 순서와 동일한 위치이며 그 뒤로 postList가 아무리
+  // 진행돼도 블록이 다시 끼어들지 않는다.
+  const systemicBlockStarted = systemicItems.some(
+    (q) => r[q.id] !== null && r[q.id] !== undefined,
+  )
   const firstUnansweredPostIdx = postList.findIndex(
     (q) => r[q.id] === null || r[q.id] === undefined,
   )
-  const insertAt = firstUnansweredPostIdx === -1 ? postList.length : firstUnansweredPostIdx
+  const insertAt = systemicBlockStarted
+    ? 0
+    : firstUnansweredPostIdx === -1
+      ? postList.length
+      : firstUnansweredPostIdx
   const post =
     systemicItems.length === 0
       ? postList

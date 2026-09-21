@@ -58,6 +58,7 @@ const LANE1_STATUS_GLYPH: Record<Lane1Summary['status'], string> = {
 export function VisitSummaryAside({
   patientName,
   chartNo,
+  identityLinkSlot,
   sexAgeLine,
   chiefConcern,
   durationFrequency,
@@ -79,6 +80,20 @@ export function VisitSummaryAside({
 }: {
   patientName: string
   chartNo?: string | null
+  /**
+   * 차트번호 연결(2026-09-21): 아직 시그마 차트번호가 연결되지 않은 서버
+   * 레코드에서만 호출부가 채워 보내는 슬롯 -- `PatientIdentityLinkAction`이
+   * 들어온다. 이 파일이 그 컴포넌트를 직접 import하지 않는 이유는, 순수
+   * 표시용인 이 aside가 서버 클라이언트(linkPatientIdentity)에 의존하게
+   * 되면 테스트 번들이 네트워크 모듈까지 끌고 오기 때문이다 -- 호출부가
+   * 노드를 만들어 넣는다.
+   *
+   * compact(834 세로)에는 **의도적으로 렌더하지 않는다**: 그 행은 §3.2가
+   * 2줄로 예산을 고정해 둔 자리이고(layout-budget 테스트가 감시한다),
+   * 닥터뷰는 PO 확인상 PC 전용이다. 연결이 끝난 뒤의 차트번호 표시는
+   * compact에도 그대로 나온다(위 `chartNo` 분기).
+   */
+  identityLinkSlot?: ReactNode
   sexAgeLine?: string | null
   chiefConcern: string
   durationFrequency?: string | null
@@ -166,6 +181,7 @@ export function VisitSummaryAside({
         <span className="doctor__visitSummary__meta">
           {[chartNo, sexAgeLine].filter((v): v is string => Boolean(v && v.trim())).join(' · ') || ' '}
         </span>
+        {identityLinkSlot}
       </div>
 
       <div className="doctor__visitSummary__chief">

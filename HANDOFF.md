@@ -1,5 +1,62 @@
 # Current Handoff
 
+## 2026-09-21 (최신 53): **차트번호 연결 진입점** — 진료 화면 ①신원 블록 (서버 0줄)
+
+**브랜치**: `claude/feat-observation-checklist` (PR-B용으로 만들었다가 PO가 "차트번호
+입력부터 먼저 넣자"로 우선순위를 바꿔 이 작업이 먼저 들어갔다).
+
+**중요한 정정**: 직전 세션에서 제가 "차트번호 연결이 없어서 급하다"고 한 것은 **틀렸다.**
+시그마 `chart_no` 연결은 서버·API·UI(2단계 확인)·충돌감지·e2e 테스트까지 이미 완성돼
+있었다. 실제 갭은 **진입 시점** — 연결 버튼이 오늘 큐의 CRM 작업 행에만 있어서, CRM 작업이
+없는 일반 문진 제출은 차트번호를 붙일 자리가 없었다.
+
+### 한 것
+- `identityLinkSlot`을 DoctorView → DoctorWorkspace → VisitSummaryAside 3단으로 흘려
+  ①신원 블록에 렌더. 내용은 기존 `PatientIdentityLinkAction` 그대로.
+- 렌더 조건: 서버 모드 + 실제 patient_id + **아직 미연결**.
+- `onIdentityLinked` 인라인 핸들러를 이름 있는 `handleIdentityLinked`로 꺼내 오늘 큐와 공유
+  (seq ref 순서 계약을 복제하지 않기 위해).
+- `tests/chart-no-link-slot.spec.mjs` 15단언 신설, 뮤테이션 2회 확인.
+
+### 의도적으로 안 한 것
+**차트번호 → 환자 역조회 읽기 API를 만들지 않았다.** 열면 차트번호만 아는 사람이 환자명을
+확인할 수 있고, `patientIdentityStore.js`가 "never exposed via any read API"로 못박은
+경계다. 그래서 "태블릿 문진 시작 화면에서 차트번호 입력" 대안은 버렸다(검증 불가 + 환자가
+자기 차트번호를 모름 + 접수 시점에 단계 추가).
+
+### 검증
+`npm run test:all` exit 0 / `npm run build` exit 0 / `server/` 변경 0줄.
+
+### Next Recommended Action
+1. **PR-B (설맥복 체크식)** — 설계 확정됨. **핵심 판단: 데이터 모델(`ClinicianObservationItem`)을
+   바꾸지 않고 입력 UI만 체크식으로.** 체크한 칩이 `value`에 `"치흔 · 황태"` 형태 문자열로
+   직렬화되므로 persistence 스키마·EMR 조립기(`observationLines`는 `title: value`)·기존 저장
+   레코드가 전부 무변경이고, 옛 자유입력 기록도 `기타` 칸에 그대로 읽힌다.
+   - Layer 1 = 23칸(설 8 / 맥 9 / 복 6) + 블록당 `특이소견 없음` · `기타`
+   - Layer 2 = `＋ 전체` + 3회 사용 시 **승격 제안**(자동 재배치 금지 — 위치 예측 가능성이
+     속도를 결정한다)
+   - Layer 0 = 재평가 시 지난번 체크 항목 맨 앞 + `지난번 ✓`
+   - PC 전용 호버 툴팁(150ms 등장 / 즉시 소멸) — **감각 묘사까지만, 변증 귀속 금지**
+   - red flag 3칸(왜사설 / 반발압통·근성방어 / 박동성 종괴) → `안전 확인` 레인
+   - 툴팁 문안 40개는 초안 → PO 감수
+2. **PR-A2 (진료 녹취 화면 제거)** — PO가 갤럭시폰 시그마 external note AI 요약으로
+   대체 확정. **화면만 떼고 서버 recorder API는 2주 남긴다**(되살리기 비용 0 유지).
+3. **PR-E (옴니핏)** — PNG 전용·CSV 불가·큰 숫자만 확정. Tesseract.js는 기본값이 CDN에서
+   언어 데이터를 받으므로 `eng.traineddata` 번들 + `langPath` 로컬 고정 필수.
+4. PR-C(문진 문항 재설계), PR-D(재처방 체크 링크).
+
+### EMR 기록 원칙 (PO와 합의, 2026-09-21)
+- **닥터뷰 EMR = 사실**(문진 답변·설맥복·판단 4칸, 재평가 비교 대상)
+- **시그마 녹취 요약 = 맥락**(환자가 한 말, 상담 뉘앙스, 재사용 안 함)
+- 붙이는 순서: 닥터뷰 EMR **먼저**, 녹취 요약 **뒤**
+- AI 요약은 검수 없이 붙이지 않는다(의무기록). 문진 답변과 충돌하면 그 자리에서 정리.
+
+### PO 쪽 미완료
+- 시그마 external note AI 요약의 **음성 데이터 처리 방식 확인** (기기 내 처리인지 외부
+  전송인지 — 환자 동의 필요 여부가 여기서 갈린다)
+- 저장소 폴더를 Google Drive 동기화에서 제외 → 그 다음 Drive에서 `.env.local`/`.data/` 삭제
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 한약 경로 end-to-end
+
 ## 2026-09-21 (최신 52): **한약 닥터뷰 `다음` 레인 폐기 (PR-A)** — 1.41화면 → 0.97화면
 
 **브랜치**: `claude/refactor-herbal-workspace-slim`. PO가 한약 문진의 목표를 재정의했다 —

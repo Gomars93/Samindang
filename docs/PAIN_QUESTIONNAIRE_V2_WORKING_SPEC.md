@@ -33,7 +33,7 @@ Rework the patient tablet questionnaire before Doctor View v2 so that the doctor
 
 | ID | Purpose | Input |
 |---|---|---|
-| `PAIN_R01` | Distinguish low back from hip/pelvis emphasis | single choice |
+| `HIP_00` | Distinguish low back from hip/pelvis emphasis (reuse the existing CLOSED contract; do not add `PAIN_R01`) | single choice |
 | `PAIN_F01` | Select target activity | single choice + other |
 | `PAIN_F02` | Rate target-activity difficulty | numeric scale |
 | `PAIN_F03` | Record tolerance | preset choices + optional detail |
@@ -63,7 +63,15 @@ Exact wording and branching remain draft until clinical review. Existing answer 
 - Navigation Button component set: primary, secondary, disabled, danger
 - Screen 01: Region Focus
 - Screen 02: Target Activity
-- Screen 03: Activity Tolerance
+- Screen 03: Activity Tolerance — time-based (`11:32`)
+- Screen 03B: Activity Tolerance — repetition-based (`16:60`)
+
+Both Activity Tolerance variants use the same `3 / 5` progress position. The
+time-based variant is for `SITTING` and `WALKING`; the repetition-based variant
+is for `SIT_TO_STAND`, `BEND_PICK_UP`, `LIFT_CARRY`, and `BED_MOBILITY`.
+`OTHER` and unknown activity values do not show `PAIN_F03` until a unit is
+clinically defined. The repetition screen was visually checked at 800×1280 with
+six option cards, Noto Sans KR typography, and no frame overflow.
 
 Figma uses Noto Sans KR because Pretendard is unavailable in the editor environment. Production code should continue to prefer Pretendard with a Korean system-font fallback.
 
@@ -84,4 +92,3 @@ Figma uses Noto Sans KR because Pretendard is unavailable in the editor environm
 - Back navigation does not erase completed answers.
 - Doctor View never hides a safety alert beneath functional findings.
 - All clinical-review TODOs are visible in the PR description or review ledger.
-

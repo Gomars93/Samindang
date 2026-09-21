@@ -5,9 +5,27 @@ import type { Question, Responses } from '../types'
  * Kept separate from coreSpec so the later shared low_back_pelvis wiring is a
  * minimal import/splice and cannot accidentally rewrite FROZEN LBP questions.
  */
+/**
+ * Core가 지원하는 새 intent route와 legacy raw-response route를 같은
+ * 기존 pain population으로 정규화한다. HIP 질문/enum/threshold는 전혀
+ * 바꾸지 않고, `VISIT_00_INTENT='pain_care'`가 기존 compatibility 의미인
+ * `VISIT_01='symptom' + VISIT_02_SYMPTOM_MAIN='pain'`과 동일하게 HIP_00에
+ * 도달하도록 한다. Additional Detail로 pain을 연 경우도 Core의 다른 MSK
+ * gates와 같은 방식으로 포함한다.
+ */
+const hasPrimaryPainRoute = (r: Responses): boolean => {
+  const intent = r['VISIT_00_INTENT']
+  if (intent === 'pain_care') return true
+
+  const symptomPain = r['VISIT_02_SYMPTOM_MAIN'] === 'pain'
+  if (intent == null) return r['VISIT_01'] === 'symptom' && symptomPain
+  if (intent === 'symptom_consult' || intent === 'undecided') return symptomPain
+  if (intent === 'herbal' && r['VISIT_00B_HERBAL_PURPOSE'] === 'symptom') return symptomPain
+  return false
+}
+
 export const IS_PRIMARY_HIP_POPULATION = (r: Responses): boolean =>
-  r['VISIT_01'] === 'symptom' &&
-  r['VISIT_02_SYMPTOM_MAIN'] === 'pain' &&
+  (hasPrimaryPainRoute(r) || r['ADDITIONAL_DETAIL_01'] === 'pain') &&
   r['PAIN_01'] === 'low_back_pelvis'
 
 export const IS_PRIMARY_HIP_SAFETY = (r: Responses): boolean =>

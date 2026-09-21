@@ -874,10 +874,61 @@ test('round 13/14: once the checklist is shown, rows are tap-first — 특이없
   // rather than an open box.
   assert.ok(html.includes('홍설, 소태'))
   assert.ok(html.includes('삭맥'))
-  const boxes = html.match(/placeholder="소견 입력"/g) ?? []
+  /*
+   * PR-B1(2026-09-21): 설진·맥진·복진 행이 체크식으로 바뀌면서 자유입력 칸의
+   * placeholder가 두 종류가 됐다 -- 칩이 있는 세 행은 "기타 (칩으로 안 되는
+   * 소견)", 칩이 없는 추가 문진·기타 소견 행은 예전 그대로 "소견 입력".
+   * 이 단언이 지키려던 것("기록이 있는 행만 입력칸이 열린다")은 그대로이므로
+   * 문자열만 넓히고 개수는 그대로 2로 고정한다 -- 느슨하게 푸는 것이 아니라,
+   * 두 종류를 합쳐서 여전히 정확히 2개여야 한다.
+   */
+  const boxes = html.match(/placeholder="(소견 입력|기타 \(칩으로 안 되는 소견\))"/g) ?? []
   assert.equal(boxes.length, 2, 'only the rows that already hold free text may open a note box')
   const memos = html.match(/>메모</g) ?? []
   assert.equal(memos.length, 2, 'the untouched rows offer the note toggle instead of an open box')
+})
+
+test('PR-B1: 설진·맥진·복진 행은 체크 칩으로 렌더되고, 1층 23칸만 펼쳐진 채 나머지는 ＋ 전체 뒤에 있다', () => {
+  const html = render(HERBAL_SCENARIO_2)
+  // 1층 칩이 실제로 버튼으로 나온다 (세 카테고리에서 하나씩).
+  for (const label of ['치흔·반대', '현', '심하비경']) {
+    assert.ok(
+      new RegExp(`aria-pressed="(true|false)"[^>]*>${label}<`).test(html) || html.includes(`>${label}<`),
+      `1층 칩 "${label}"이 렌더되지 않았다`,
+    )
+  }
+  // 2층은 접힘 뒤 -- 개수를 라벨에 노출한다(빈 서랍이 아님을 보이기 위해).
+  const drawers = html.match(/＋ 전체 \(\d+\)/g) ?? []
+  assert.equal(drawers.length, 3, '설·맥·복 각각 ＋ 전체 서랍이 하나씩')
+  // 칩이 없는 카테고리(추가 문진)는 예전 자유입력 경로 그대로.
+  assert.ok(html.includes('placeholder="소견 입력"') || html.includes('>메모<'))
+})
+
+test('PR-B1: 저장된 칩 값이 눌린 상태로 복원된다 (왕복이 화면까지 이어진다)', () => {
+  const html = renderWith(HERBAL_SCENARIO_2, {
+    submissionId: 'obs-chip-restore',
+    synthetic: { patternCandidates: [] },
+    initialWorkspaceState: {
+      herbalClinicianObservations: [
+        {
+          id: 'obs_tongue',
+          category: 'TONGUE',
+          title: '설진 소견',
+          checked: true,
+          value: '치흔·반대 · 황태 · 환자가 커피 다량',
+          recordedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    },
+  })
+  assert.ok(
+    /aria-pressed="true"[^>]*>치흔·반대</.test(html),
+    '저장된 칩 "치흔·반대"가 눌린 상태로 복원되어야 한다',
+  )
+  assert.ok(/aria-pressed="true"[^>]*>황태</.test(html), '저장된 칩 "황태"가 눌린 상태로 복원되어야 한다')
+  assert.ok(/aria-pressed="false"[^>]*>담백설</.test(html), '선택하지 않은 칩은 눌리지 않은 상태여야 한다')
+  // 칩으로 인식되지 않은 나머지는 기타 칸으로 되돌아온다 -- 조용히 사라지지 않는다.
+  assert.ok(html.includes('value="환자가 커피 다량"'), '칩이 아닌 부분은 기타 칸에 그대로 남아야 한다')
 })
 
 test('round 13: an observation that already holds free text renders its note box open', () => {
@@ -900,7 +951,23 @@ test('round 13: an observation that already holds free text renders its note box
   // the recorded wording is shown verbatim, in an OPEN input -- a compressed
   // default must never hide something the clinician already wrote.
   assert.ok(html.includes('설질 담백 · 치흔'))
-  assert.ok(html.includes('placeholder="소견 입력"'))
+  /*
+   * PR-B1(2026-09-21): 이 픽스처의 값("설질 담백 · 치흔")은 새 카탈로그의
+   * 어떤 라벨과도 일치하지 않는 **옛 자유입력 기록**이다 -- 카탈로그는
+   * "담백설"/"치흔·반대"를 쓴다. 그러므로 이 케이스는 체크식 전환에서 가장
+   * 중요한 회귀 경로 그 자체다: 파서가 칩으로 오인하지 않고 통째로 기타
+   * 칸으로 되돌려, 글자 그대로 보이고 고칠 수 있어야 한다. 칩 행의
+   * placeholder는 "기타 (…)"이므로 그쪽을 확인한다.
+   */
+  assert.ok(html.includes('placeholder="기타 (칩으로 안 되는 소견)"'))
+  assert.ok(
+    html.includes('value="설질 담백 · 치흔"'),
+    '옛 자유입력은 칩으로 쪼개지지 않고 원문 그대로 기타 칸에 남아야 한다',
+  )
+  assert.ok(
+    !/aria-pressed="true"/.test(html),
+    '옛 자유입력이 어떤 칩도 눌린 것으로 오인되게 만들어서는 안 된다',
+  )
 })
 
 test('round 14: the Herbal final-assessment card opens 판단/처치/재검 and collapses 치법', () => {

@@ -4261,3 +4261,85 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
 }
 
 console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
+
+/* ==================================================================== *
+ * 통증 닥터뷰 재설계 배선 1단계 — 읽기 4블록 + 스냅샷 띠 (2026-09-22)
+ *
+ * 여기서 붙드는 것은 **배선이 실제로 살아 있는가**다. `PainBriefing`은
+ * 컴파일만 되고 아무 데서도 렌더되지 않아도 `tsc -b`/`vite build`가 통과한다
+ * -- 실제로 이 모듈들은 한동안 그 상태였다("머지해도 원장 화면은 안 바뀐다").
+ * 그래서 소스 스캔이 아니라 **렌더 결과**를 본다.
+ *
+ * 그리고 **아무것도 대체하지 않았음**을 같이 고정한다. 기존 카드가 사라졌는지
+ * 매번 확인하는 것이 이 저장소가 네 번 겪은 사고("지운 쪽 화면에서는 옳았다")의
+ * 유일한 방어다.
+ * ==================================================================== */
+{
+  const pain = render(PAIN_SCENARIO_1)
+  const herbal = render(HERBAL_SCENARIO_1)
+  const mixed = render(MIXED_SCENARIO_1)
+
+  const BRIEFING_EYEBROWS = ['FUNCTION', 'LOAD / BEHAVIOR', 'NEURO', 'RECOVERY / CONTEXT']
+
+  test('배선: 통증 화면에 브리핑이 실제로 렌더된다 (컴파일만 되는 상태가 아니다)', () => {
+    assert.ok(pain.includes('painBriefingRoot'), '`painBriefingRoot`가 렌더 결과에 없다 = 배선 안 됨')
+    assert.ok(pain.includes('painBriefing'), '블록 컨테이너가 없다')
+  })
+
+  test('배선: 읽기 4블록이 전부 나온다', () => {
+    for (const e of BRIEFING_EYEBROWS) {
+      assert.ok(pain.includes(e), `읽기 블록 누락: ${e}`)
+    }
+  })
+
+  test('배선: 행 문법(라벨/값)이 실제로 그려진다 — 빈 껍데기가 아니다', () => {
+    assert.ok(pain.includes('painRow__label'), '행 라벨이 없다')
+    assert.ok(pain.includes('painRow__value'), '행 값 자리가 없다')
+    // 블록만 있고 행이 0개면 위 두 단언이 통과할 수 없다.
+  })
+
+  test('배선: 브리핑이 레인2(확인) 안에, 그 레인의 맨 위에 있다', () => {
+    const lane2 = pain.indexOf('id="lane2-h2"')
+    const judgment = pain.indexOf('id="judgment-h2"')
+    const briefing = pain.indexOf('painBriefingRoot')
+    assert.ok(lane2 > 0 && judgment > lane2, '레인 순서 전제가 깨졌다')
+    assert.ok(briefing > lane2 && briefing < judgment, '브리핑이 레인2 밖에 있다')
+    // 레인2의 기존 첫 카드(객관적 소견)보다 앞이어야 한다.
+    const objective = pain.indexOf('ObjectiveExamFindings') > 0
+      ? pain.indexOf('ObjectiveExamFindings')
+      : pain.indexOf('객관적', lane2)
+    if (objective > 0) assert.ok(briefing < objective, '브리핑이 레인2 맨 위가 아니다')
+  })
+
+  test('배선: 프로필 격리 — 한약 단독 화면에는 통증 브리핑이 없다', () => {
+    assert.ok(!herbal.includes('painBriefingRoot'))
+    for (const e of BRIEFING_EYEBROWS) {
+      assert.ok(!herbal.includes(e), `한약 화면에 통증 읽기 블록이 샜다: ${e}`)
+    }
+  })
+
+  test('배선: mixed 화면에는 브리핑이 있다 (통증이 주호소든 추가상세든)', () => {
+    assert.ok(mixed.includes('painBriefingRoot'))
+  })
+
+  /*
+   * 대체가 아니라 추가임을 고정한다. 아래 목록은 배선 직전(머지 커밋 d1fa519)
+   * 통증 화면이 이미 렌더하던 것들이다 -- 하나라도 빠지면 그때 표를 쓰고
+   * 근거를 남겨야 하며, 그냥 사라지면 안 된다.
+   */
+  test('배선: 기존 통증 카드가 하나도 사라지지 않았다 (추가이지 교체가 아니다)', () => {
+    for (const marker of ['id="lane1-h2"', 'id="lane2-h2"', 'id="judgment-h2"', 'id="next-h2"']) {
+      assert.ok(pain.includes(marker), `레인 누락: ${marker}`)
+    }
+    // 판단·처치 레인의 원장 입력 카드들(입력 3블록이 아직 대체하지 않는다).
+    assert.ok(pain.includes('최종 임상 판단') || pain.includes('최종 판단'), '최종 판단 입력이 사라졌다')
+  })
+
+  /*
+   * `priorNrs`를 아직 넘기지 않으므로 비교 행(8 → 5 ↓3)은 나오지 않아야 한다.
+   * 이게 통과해야 "없는 지난 값을 지어내지 않았다"가 성립한다.
+   */
+  test('배선: 지난 방문 NRS가 없으므로 비교 행을 지어내지 않는다', () => {
+    assert.ok(!pain.includes('painRow__delta'), '지난 값이 없는데 비교 행이 그려졌다')
+  })
+}

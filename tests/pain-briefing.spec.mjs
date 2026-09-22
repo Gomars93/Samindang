@@ -240,6 +240,123 @@ for (const f of PAIN) {
   )
 }
 
+/* ---------------- §F 형식 오류는 미응답이 아니다 (fail-closed) ---------------- */
+
+/*
+ * 11차 독립 리뷰 HIGH-1이 `PainWorkspace.tsx`에서 고친 버그가 이 모듈에
+ * 그대로 있었다. `DoctorWorkspace`에 배선하자마자
+ * `doctor-workspace.spec.mjs`의 그 회귀 테스트가 여기서도 걸렸다:
+ *
+ *   Number(['9']) === 9
+ *
+ * 즉 손상된 배열이 `Number.isFinite`를 통과해 **정상 점수로 둔갑**한다.
+ * 객체는 NaN이라 걸렸지만 배열은 안 걸렸다.
+ *
+ * 그리고 형식 오류를 `unanswered`("미응답")로 적는 것도 틀렸다 -- 미응답은
+ * "환자가 답하지 않았다"는 임상적 사실이고, 데이터가 깨진 것을 그렇게 쓰면
+ * 없는 사실을 지어내는 것이다. 그래서 `unreadable` 상태를 따로 뒀다.
+ *
+ * 판정 규칙은 `PainWorkspace.tsx`와 **같아야** 한다 -- number 타입, 유한,
+ * 정수, 0~10. 같은 값을 두 화면이 다르게 읽으면 원장이 어느 쪽을 믿을지
+ * 알 수 없다.
+ */
+
+const scaleFixture = PAIN.find((f) => f.payload.responses.modules?.lbp?.recovery_expectation != null)
+ok('§F 0~10 척도 값을 가진 픽스처가 있다 (아래 단언이 공허하지 않도록)', scaleFixture != null)
+
+if (scaleFixture) {
+  const rowFor = (value) => {
+    const p = structuredClone(scaleFixture.payload)
+    p.responses.modules.lbp.recovery_expectation = value
+    return buildPainBriefing(p)
+      .flatMap((b) => b.rows)
+      .find((r) => r.source === 'modules.lbp.recovery_expectation')
+  }
+
+  ok('§F 정상 정수는 answered다', rowFor(7)?.status === 'answered')
+  ok('§F 정상 정수 값이 그대로 나온다', rowFor(7)?.value === '7 / 10')
+
+  // 핵심: 배열. Number(['9']) === 9 이므로 순진한 isFinite 검사는 통과한다.
+  const arr = rowFor(['9'])
+  ok('§F 배열은 answered가 아니다 (손상된 값이 정상 점수로 둔갑하지 않는다)', arr?.status !== 'answered')
+  ok('§F 배열은 unreadable이다 (미응답이 아니다 — 없는 사실을 지어내지 않는다)', arr?.status === 'unreadable')
+  ok('§F 배열의 값 자리는 비어 있다 (9가 새어 나오지 않는다)', arr?.value == null)
+
+  const obj = rowFor({ corrupted: true })
+  ok('§F 객체도 unreadable이다', obj?.status === 'unreadable')
+
+  // 범위·정수 규칙도 PainWorkspace와 같아야 한다.
+  ok('§F 범위 밖(11)은 unreadable이다', rowFor(11)?.status === 'unreadable')
+  ok('§F 음수(-1)는 unreadable이다', rowFor(-1)?.status === 'unreadable')
+  ok('§F 소수(7.5)는 unreadable이다', rowFor(7.5)?.status === 'unreadable')
+  ok('§F 숫자 문자열("7")은 unreadable이다 (태블릿은 숫자로 저장한다)', rowFor('7')?.status === 'unreadable')
+
+  // 빈 값은 여전히 미응답 -- 형식 오류로 번지지 않는다.
+  ok('§F null은 unanswered다 (형식 오류가 아니다)', rowFor(null)?.status === 'unanswered')
+}
+
+/*
+ * NRS 두 행도 같은 규율을 쓴다 -- 같은 0~10 문항인데 한쪽만 막으면
+ * "같은 게 두 군데, 한 쪽만 고침"이 또 난다.
+ */
+{
+  const nrsFixture = PAIN.find((f) => f.payload.responses.modules?.pain?.nrs_now != null)
+  ok('§F NRS 값을 가진 픽스처가 있다 (아래 단언이 공허하지 않도록)', nrsFixture != null)
+  if (nrsFixture) {
+    const nrsRowFor = (value) => {
+      const p = structuredClone(nrsFixture.payload)
+      p.responses.modules.pain.nrs_now = value
+      return buildPainHeadline(p).rows.find((r) => r.source === 'modules.pain.nrs_now')
+    }
+    const normal = nrsRowFor(6)
+    ok('§F NRS 정상값은 answered다', normal?.status === 'answered')
+    ok('§F NRS 배열은 unreadable이다 (Number([\'9\']) === 9 함정)', nrsRowFor(['9'])?.status === 'unreadable')
+    ok('§F NRS 범위 밖(11)은 unreadable이다', nrsRowFor(11)?.status === 'unreadable')
+  }
+}
+
+// 렌더 쪽도 형식 오류를 "미응답"과 다른 말로 적는지 소스에서 본다 -- 저장소
+// 공통 문구(`확인 필요(값 형식 오류)`)를 새로 지어내지 않고 그대로 쓴다.
+{
+  const view = readFileSync(join(here, '..', 'src', 'doctor', 'clinical', 'PainBriefing.tsx'), 'utf8')
+  ok('§F 렌더가 unreadable을 별도 문구로 적는다', /unreadable/.test(view) && view.includes('확인 필요(값 형식 오류)'))
+  ok('§F 그 문구가 미응답과 다르다', view.includes('미응답'))
+}
+
+/* ---------------- §G 접기 기준은 뷰포트가 아니라 담긴 칸이다 ---------------- */
+
+/*
+ * 브리핑 그리드는 처음에 `@media (max-width: 1180px)`로 2열→1열을 접었다.
+ * 컨택트 시트(화면 전체를 쓰는 곳)에서는 맞았지만, `DoctorWorkspace`에
+ * 배선하자 1440px 데스크톱에서 **가로 오버플로 143px**이 났다 -- 닥터뷰는
+ * 왼쪽에 고정 요약이 있어 브리핑이 받는 실제 폭이 뷰포트보다 한참 좁은데,
+ * 미디어 쿼리는 뷰포트만 보므로 2열(560+20+560=1140)을 유지했기 때문이다.
+ * `tests/tablet-viewport.spec.mjs`가 잡았다.
+ *
+ * 실측은 그 파일이 계속 담당한다. 여기서는 **원인이 된 방식으로 되돌아가지
+ * 않는지**를 소스에서 고정한다 -- 놓이는 자리마다 미디어 쿼리를 하나씩 더하는
+ * 길로 가면 다음 배선에서 같은 사고가 난다.
+ */
+{
+  const css = readFileSync(join(here, '..', 'src', 'doctor', 'clinical', 'briefing.css'), 'utf8')
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  ok('§G 주석 제거 후에도 CSS가 남아 있다 (아래 단언이 공허하지 않도록)', stripped.includes('.painBriefing'))
+  ok(
+    '§G 그리드가 컨테이너 기준으로 접힌다 (auto-fit + minmax(min(…, 100%)))',
+    /grid-template-columns:\s*repeat\(\s*auto-fit\s*,\s*minmax\(\s*min\(/.test(stripped),
+  )
+  ok(
+    '§G 뷰포트 폭 미디어 쿼리로 열을 접지 않는다',
+    !/@media[^{]*max-width[^{]*\{[^}]*\{[^}]*grid-template-columns/.test(stripped),
+  )
+  ok('§G 띠도 미디어 쿼리 대신 flex-wrap으로 접힌다', /\.painSnapshot\s*\{[^}]*flex-wrap:\s*wrap/.test(stripped))
+  ok(
+    '§G NRS 행이 고정폭을 우기지 않는다 (줄바꿈 허용)',
+    /\.painSnapshot__rows\s*\{[^}]*max-width:\s*100%/.test(stripped),
+  )
+}
+
 /* ---------------- 결과 ---------------- */
 
 if (failures.length) {

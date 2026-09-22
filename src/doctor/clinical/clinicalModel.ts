@@ -46,6 +46,7 @@
  */
 import { HYPOTHESIS_SUPPORT_LABEL_KO, HYPOTHESIS_SUPPORT_OPTIONS, type HypothesisSupport } from '../workspace/workingHypothesis'
 import { EXAM_PRIORITY_LABEL, type PhysicalExamSuggestion } from '../workspace/examSuggestion'
+import { EXAM_CHECK_STATUS_LABEL, type ExamCheckStatus } from '../workspace/provenance'
 import { REHAB_SUGGESTION_STATUS_LABEL, type RehabSuggestion, type RehabSuggestionStatus } from '../workspace/rehabSuggestion'
 import type { HypothesisPattern } from '../workspace/regionPack'
 import type { WorkingHypothesis } from '../workspace/workingHypothesis'
@@ -106,27 +107,58 @@ export type ClinicalBlock = {
  * ------------------------------------------------------------------ */
 
 /**
- * 검사 결과는 자유 텍스트가 아니라 **세 상태**로 받는다. 기존
- * `PhysicalExamSuggestionResult`가 이미 그 모양이고, 칩 세 개가 자유입력보다
- * 빠르다 -- 진료 중에 타이핑하지 않는 것이 이번 재설계의 목적이다.
+ * 검사 결과 칩 -- **`provenance.ts`의 승인된 enum 그대로** 쓴다.
+ *
+ * 처음엔 여기서 `['양성', '음성', '시행 안 함']` 세 개를 직접 정의했다.
+ * 잘못이었다. `ExamCheckStatus`는 이미 여섯 값이고 라벨도 PO 검토를 거쳤다:
+ *
+ *   POSITIVE 양성/이상 소견 · NEGATIVE 음성/정상 · UNCLEAR 불명확
+ *   LIMITED 제한적 시행(판단 유보) · NOT_PERFORMED 시행 못 함
+ *   NOT_YET_CHECKED 아직 확인 안 됨
+ *
+ * 세 개짜리 어휘를 따로 만들면 (a) `UNCLEAR`·`LIMITED`가 도달 불가능해지고,
+ * (b) `시행 안 함`이 `시행 못 함`·`미시행`에 이은 **세 번째 철자**가 된다 --
+ * `provenance.ts`가 주석으로 명시하며 피했던 바로 그 충돌이다. 같은 것이 두
+ * 군데 있고 한 쪽만 고쳐지는 사고를 이 저장소는 이미 여러 번 겪었다.
+ *
+ * `NOT_YET_CHECKED`만 칩에서 뺀다 -- 그건 "아직 안 봤다"는 **기본 상태**이지
+ * 고를 수 있는 값이 아니다(판단의 `UNJUDGED`, 처치의 `SUGGESTED`와 같은 규칙).
+ * 아무 칩도 안 켜진 행이 곧 미확인이다.
  */
-export const EXAM_RESULT_CHIPS = ['양성', '음성', '시행 안 함'] as const
-export type ExamResultChip = (typeof EXAM_RESULT_CHIPS)[number]
+export const EXAM_RESULT_STATUSES: readonly ExamCheckStatus[] = [
+  'POSITIVE',
+  'NEGATIVE',
+  'UNCLEAR',
+  'LIMITED',
+  'NOT_PERFORMED',
+]
+export const EXAM_RESULT_CHIPS: readonly string[] = EXAM_RESULT_STATUSES.map((s) => EXAM_CHECK_STATUS_LABEL[s])
 
-function examBlock(items: readonly PhysicalExamSuggestion[], results: Record<string, string>): ClinicalBlock {
+function examBlock(items: readonly PhysicalExamSuggestion[], results: ExamResults): ClinicalBlock {
   return {
     key: 'exam',
     eyebrow: 'EXAM',
     question: '무엇을 확인했는가?',
     rows: items.map((item) => {
-      const current = results[item.id] ?? ''
+      /*
+       * 호출부는 `PhysicalExamSuggestionResult.status`를 그대로 넘긴다.
+       * `NOT_YET_CHECKED`는 칩이 아니므로 어떤 칩도 켜지지 않고, 행은
+       * untouched로 남는다 -- 별도 분기가 필요 없다.
+       */
+      const current = results[item.id] ?? 'NOT_YET_CHECKED'
       return {
         // 우선순위를 라벨에 붙이지 않는다 -- 라벨이 길어지면 행 문법이 무너진다.
         // 대신 `MUST_CHECK`는 아래 렌더에서 라벨 색으로만 구분한다.
         label: item.title,
-        chips: EXAM_RESULT_CHIPS.map((c) => ({ label: c, selected: current === c, value: c })),
+        chips: EXAM_RESULT_STATUSES.map((st) => ({
+          label: EXAM_CHECK_STATUS_LABEL[st],
+          selected: current === st,
+          // 토글은 라벨이 아니라 **enum 값**을 올려보낸다 -- 호출부가
+          // `result.status`에 그대로 넣을 수 있어야 한다.
+          value: st,
+        })),
         key: item.id,
-        untouched: current === '',
+        untouched: current === 'NOT_YET_CHECKED',
         source: `examSuggestion.${EXAM_PRIORITY_LABEL[item.priority] ?? item.priority}`,
       }
     }),
@@ -211,9 +243,12 @@ function planBlock(items: readonly RehabSuggestion[]): ClinicalBlock {
  * 본체
  * ------------------------------------------------------------------ */
 
+/** 검사 항목 id → 원장이 기록한 상태. 없으면 `NOT_YET_CHECKED`로 본다. */
+export type ExamResults = Record<string, ExamCheckStatus>
+
 export type ClinicalInput = {
   exams: readonly PhysicalExamSuggestion[]
-  examResults: Record<string, string>
+  examResults: ExamResults
   patterns: readonly HypothesisPattern[]
   hypothesis: WorkingHypothesis
   finalAssessment: string

@@ -44,6 +44,7 @@ import './workspace.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
 import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnrecordedHintForPack } from './PainWorkspace'
+import { PainBriefing } from '../clinical/PainBriefing'
 import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { useOpenOnceContent } from './FinalAssessmentCard'
 import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
@@ -661,6 +662,26 @@ export function DoctorWorkspace({
 
           <section className="doctor__visitLane doctor__visitLane--lane2" aria-labelledby="lane2-h2">
             <h2 id="lane2-h2">확인</h2>
+            {/*
+              통증 닥터뷰 재설계 배선 1단계 (2026-09-22): 읽기 4블록 + 스냅샷 띠.
+
+              **아무것도 대체하지 않는다.** `PainBriefing`은 payload에서 파생만
+              하는 순수 읽기 화면이라, 기존 카드가 나르던 값을 가로채지 않는다.
+              (입력 3블록은 아직 배선하지 않는다 -- 기존 카드보다 담는 필드가
+              적어서, 갈아끼우면 원장이 타이핑한 값이 사라진다. `DECISIONS.md`
+              같은 날 항목의 "배선 2단계에 남은 갭" 표 참고.)
+
+              위치: 레인2(확인)의 맨 위. 원장이 환자를 보기 시작하는 지점이고,
+              아래의 검사 제안·재평가가 이 요약을 근거로 읽히기 때문이다.
+
+              `priorNrs`를 아직 넘기지 않는다: 지난 방문 NRS는 `PriorVisitSummary`에
+              없고(재진 답은 `microFollowUpResponse.detailAnswers`에 **오늘 값**으로
+              들어온다), payload가 나르는 것은 초진 값이라 방향이 뒤집혀 있다.
+              없이 넘기면 비교 행 대신 척도 행이 나온다 -- 값을 지어내는 것보다 낫다.
+            */}
+            {(activeProfile === 'pain' || activeProfile === 'mixed') && (
+              <PainBriefing payload={payload} />
+            )}
             {trackedLine && (
               <p className="doctor__lastVisitTracked">
                 지난번 추적: {trackedLine.text}

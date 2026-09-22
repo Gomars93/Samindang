@@ -1486,4 +1486,59 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     LBP_13: 'NO',
     LBP_14: 'NONE',
   }),
+
+  /*
+   * LBP 안전 확인 게이트 회귀 (Doctor View Opus UX Review v0.1 §B3).
+   *
+   * 주호소가 비-통증(수면)이고 **추가 상세상담**으로 허리 통증을 선택한 환자.
+   * LBP_01~14를 실제로 응답하므로 `safety_flags.lbp`는 non-null이지만,
+   * 주호소 자체는 pain이 아니라 `routing.primary_module_detail`은 계속
+   * null이다(`additional_module_detail`만 'LBP'가 된다).
+   *
+   * `LbpSafetyPanel`이 `primary_module_detail` 리터럴로 게이트되면 이 환자의
+   * LBP 안전 정보가 원장 화면에서 **통째로 사라진다**. 게이트는 이미
+   * `safety_flags.lbp`로 고쳐져 있었지만(6차 독립 리뷰 HIGH-1) 그것을 지키는
+   * 픽스처와 테스트는 PR #25 브랜치에만 있고 main에는 없었다 -- 즉 되돌려도
+   * 아무것도 깨지지 않는 상태였다. #25를 닫으며 보호막만 떼어 왔다
+   * (2026-09-22).
+   *
+   * 위 허리 픽스처와 값을 맞춰 같은 REVIEW_REQUIRED 결과를 재현한다.
+   */
+  buildFixture('수면 주호소 + 추가 상세상담(허리 통증, LBP 안전확인 게이트 회귀)', {
+    ID_01: '오하늬',
+    ID_03: 'female',
+    BIRTH_01: '19850310',
+    VISIT_00_INTENT: 'symptom_consult',
+    VISIT_02_SYMPTOM_MAIN: 'sleep',
+    VISIT_03_SYMPTOM_DURATION: '3m_1y',
+    VISIT_04_SYMPTOM_IMPACT: 'moderate',
+    // ADDITIONAL_DETAIL_01은 REFERENCE_SYMPTOMS_01 답의 **부분집합만** 받는다
+    // (문항 순서가 바뀌면서 생긴 규칙). PR #25 시절 픽스처에는 이 줄이 없어
+    // 그대로 옮겼더니 pain module이 아예 열리지 않고 safety_flags.lbp가 null
+    // 이 됐다 -- 즉 공허하게 통과하는 테스트가 될 뻔했다.
+    REFERENCE_SYMPTOMS_01: ['pain'],
+    ADDITIONAL_DETAIL_01: 'pain',
+    SAFETY_01: ['none'],
+    SLEEP_01: ['sleep_onset'],
+    SLEEP_02: '1_2_days',
+    SLEEP_03: ['none'],
+    PAIN_01: 'low_back_pelvis',
+    PAIN_03: 6,
+    PAIN_03B: 8,
+    PAIN_02: ['aching', 'movement_related'],
+    PAIN_04: 'lower_limb',
+    LBP_01: 'BUTTOCK',
+    LBP_02: ['NUMBNESS'],
+    LBP_03: 'BILATERAL',
+    LBP_04: ['NONE'],
+    LBP_05: ['NONE'],
+    LBP_06: 'NO',
+    LBP_07: 'YES',
+    LBP_08: 'NO',
+    LBP_10: 'NO',
+    LBP_11: ['NONE'],
+    LBP_12: 6,
+    LBP_13: 'SOMEWHAT',
+    LBP_14: 'SOME',
+  }),
 ]

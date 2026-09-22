@@ -1,0 +1,132 @@
+/*
+ * 통증 브리핑 — 레이아웃.
+ *
+ * 규칙은 세 줄이다.
+ *   1. 행 모양은 하나다. `.painRow` 말고 다른 행 클래스를 만들지 않는다.
+ *   2. 색은 `tokens.css`의 3개만 쓴다. 여기서 새 색을 선언하지 않는다.
+ *   3. 간격은 `--pain-*` 스케일 밖의 값을 쓰지 않는다.
+ *
+ * 27" 모니터 양방향 대응: 2열 그리드 하나로 끝난다.
+ *   - 가로 2560px → 본문 1400px 상한, 가운데 정렬 (양옆 여백)
+ *   - 세로 1440px → 여백 40px 남기고 2열 유지 (560 + 20 + 560 = 1140)
+ *   - 1180px 미만 → 1열로 접힘 (노트북 대비, 깨지지 않게만)
+ */
+
+.painBriefing {
+  box-sizing: border-box;
+  max-width: var(--pain-content-max);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(var(--pain-col-min), 1fr));
+  gap: var(--pain-gap-block);
+  font-size: var(--pain-fs-row);
+  line-height: var(--pain-lh-row);
+  color: var(--pain-text);
+}
+
+@media (max-width: 1180px) {
+  .painBriefing {
+    grid-template-columns: 1fr;
+  }
+}
+
+.painBriefing *,
+.painBriefing *::before,
+.painBriefing *::after {
+  box-sizing: border-box;
+}
+
+/* ---------------- 블록 ---------------- */
+
+.painBlock {
+  background: var(--pain-surface);
+  border: 1px solid var(--pain-border);
+  border-radius: var(--pain-radius);
+  padding: var(--pain-pad-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pain-gap-row);
+  /* 블록 하나가 자기 행 수만큼만 높아지고, 옆 블록에 맞춰 늘어나지 않게. */
+  align-self: start;
+}
+
+.painBlock__head {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+}
+
+.painBlock__eyebrow {
+  margin: 0;
+  font-size: var(--pain-fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--pain-good);
+}
+
+.painBlock__question {
+  margin: 0;
+  font-size: var(--pain-fs-eyebrow);
+  font-weight: 400;
+  color: var(--pain-text-muted);
+}
+
+/* ---------------- 행 (하나뿐인 행 문법) ---------------- */
+
+.painRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: var(--pain-pad-row-y) 0;
+}
+
+.painRow__label {
+  font-weight: 500;
+  color: var(--pain-text);
+  /*
+   * 라벨은 줄바꿈시키지 않는다. 라벨이 두 줄이 되면 행 문법이 깨진다 --
+   * 라벨은 짧게 유지하는 것이 규율이고, 길어지면 라벨을 고친다.
+   */
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.painRow__value {
+  font-weight: 600;
+  text-align: right;
+  /*
+   * 값은 줄바꿈을 허용한다. 실제 환자 데이터에서 다중 선택 값
+   * ('저리거나 찌릿함 · 감각이 둔함')은 길어질 수 있고, 그때 잘라내
+   * 정보를 숨기는 것보다 두 줄이 되는 편이 낫다. 우측 정렬은 유지된다.
+   */
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.painRow__value--good {
+  color: var(--pain-good);
+}
+.painRow__value--neutral {
+  color: var(--pain-neutral);
+}
+.painRow__value--warn {
+  color: var(--pain-warn);
+}
+
+/*
+ * 아직 문진이 묻지 않는 행. 지우지 않고 자리를 남기되, 훑을 때 눈에
+ * 걸리지 않도록 확실히 뒤로 물린다 -- 이 행들은 정보가 아니라 로드맵이다.
+ */
+.painRow--pending .painRow__label,
+.painRow--pending .painRow__value {
+  color: var(--pain-text-faint);
+  font-weight: 400;
+}
+
+.painRow--pending .painRow__value {
+  font-size: 13px;
+  font-style: italic;
+}

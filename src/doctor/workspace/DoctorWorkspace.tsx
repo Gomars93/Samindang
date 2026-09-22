@@ -799,6 +799,10 @@ export function DoctorWorkspace({
                   rehabSuggestions={displayedPainRehabSuggestions}
                   onChangeRehabSuggestion={(next) =>
                     setWorkspaceState((s) => {
+                      const acceptedCountExcludingNext = s.painRehabSuggestions.filter(
+                        (it) => it.id !== next.id && it.status === 'ACCEPTED',
+                      ).length
+                      if (next.status === 'ACCEPTED' && acceptedCountExcludingNext >= 2) return s
                       // Upsert: a freshly live-merged LBP candidate (readiness
                       // just recomputed above, not yet in persisted state)
                       // must still be recordable on first status change, not

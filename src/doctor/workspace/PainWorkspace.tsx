@@ -566,6 +566,8 @@ function StageCard({
 }
 
 const VISIBLE_REHAB_CANDIDATE_COUNT = 3
+const MAX_ACCEPTED_REHAB_SUGGESTIONS = 2
+const ACCEPT_LIMIT_MESSAGE_KO = '최종 운동은 최대 2개까지 채택할 수 있습니다. 기존 채택을 해제한 뒤 선택해주세요.'
 
 /** 요통 안내문 원문(2026-09-05) — 글자 단위로 유지. 다른 부위는 `neuroUnrecordedHintForPack`. */
 export const LBP_NEURO_UNRECORDED_HINT_KO =
@@ -669,6 +671,7 @@ export function PainExerciseSection({
 
   const visibleSuggestions = rehabSuggestions.slice(0, VISIBLE_REHAB_CANDIDATE_COUNT)
   const moreSuggestions = rehabSuggestions.slice(VISIBLE_REHAB_CANDIDATE_COUNT)
+  const acceptedSuggestionCount = rehabSuggestions.filter((item) => item.status === 'ACCEPTED').length
 
   const renderCard = (s: RehabSuggestion) => (
     <RehabSuggestionCard
@@ -677,6 +680,11 @@ export function PainExerciseSection({
       onChange={onChangeRehabSuggestion}
       onAdoptToCarePlan={onAdoptRehabSuggestionToCarePlan ? () => onAdoptRehabSuggestionToCarePlan(s) : undefined}
       adoptDisabledReasonKo={regionActive ? (treatmentSafetyLockedReasonKo ?? undefined) : undefined}
+      acceptDisabledReasonKo={
+        s.status !== 'ACCEPTED' && acceptedSuggestionCount >= MAX_ACCEPTED_REHAB_SUGGESTIONS
+          ? ACCEPT_LIMIT_MESSAGE_KO
+          : undefined
+      }
     />
   )
 

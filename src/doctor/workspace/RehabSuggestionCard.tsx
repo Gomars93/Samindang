@@ -14,6 +14,7 @@ export function RehabSuggestionCard({
   onChange,
   onAdoptToCarePlan,
   adoptDisabledReasonKo,
+  acceptDisabledReasonKo,
 }: {
   suggestion: RehabSuggestion
   onChange: (next: RehabSuggestion) => void
@@ -26,6 +27,8 @@ export function RehabSuggestionCard({
    * `treatmentSafetyLocked`, `src/spec/lbpLogic.ts`).
    */
   adoptDisabledReasonKo?: string
+  /** Final exercise selection is capped at two; already-accepted cards stay reversible. */
+  acceptDisabledReasonKo?: string
 }) {
   /*
    * Batch 2.6 (E-6): follows ExamSuggestionCard.tsx's own 상세·메모 toggle
@@ -97,18 +100,27 @@ export function RehabSuggestionCard({
       )}
 
       <div className="workspace__candidateCard__actions" role="group" aria-label={`${suggestion.title} 원장 판단`}>
-        {STATUS_OPTIONS.map((s) => (
-          <button
-            key={s}
-            type="button"
-            aria-pressed={suggestion.status === s}
-            className={`workspace__statusBtn${suggestion.status === s ? ' workspace__statusBtn--active' : ''}`}
-            onClick={() => onChange({ ...suggestion, status: suggestion.status === s ? 'SUGGESTED' : s })}
-          >
-            {REHAB_SUGGESTION_STATUS_LABEL[s]}
-          </button>
-        ))}
+        {STATUS_OPTIONS.map((s) => {
+          const acceptDisabled =
+            s === 'ACCEPTED' && suggestion.status !== 'ACCEPTED' && Boolean(acceptDisabledReasonKo)
+          return (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={suggestion.status === s}
+              className={`workspace__statusBtn${suggestion.status === s ? ' workspace__statusBtn--active' : ''}`}
+              onClick={() => onChange({ ...suggestion, status: suggestion.status === s ? 'SUGGESTED' : s })}
+              disabled={acceptDisabled}
+              title={acceptDisabled ? acceptDisabledReasonKo : undefined}
+            >
+              {REHAB_SUGGESTION_STATUS_LABEL[s]}
+            </button>
+          )
+        })}
       </div>
+      {acceptDisabledReasonKo && suggestion.status !== 'ACCEPTED' && (
+        <p className="workspace__examCard__reason">{acceptDisabledReasonKo}</p>
+      )}
 
       {showInstruction ? (
         <input

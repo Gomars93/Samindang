@@ -2946,6 +2946,38 @@ test('defect 7 (differential): the same ACCEPTED-suggestion shape on an LBP reco
   assert.ok(html.includes('LBP 재활 제안 (SYNTHETIC)'))
   assert.ok(html.includes('workspace__adoptBtn'), 'an LBP record must still render the adopt button for an ACCEPTED item')
 })
+
+test('Pain v2 exercise workflow: after two clinician acceptances, further 원장 채택 actions are disabled but existing decisions remain visible', () => {
+  const suggestion = (id, title, status) => ({
+    id,
+    title,
+    goal: '',
+    rationale: '',
+    sourceFacts: [],
+    contraindicationFacts: [],
+    source: 'SUGGESTED',
+    status,
+    clinicianFinalInstruction: '',
+  })
+  const html = renderWith(PAIN_SCENARIO_1, {
+    synthetic: {
+      rehabSuggestions: [
+        suggestion('accepted-1', '채택 운동 1', 'ACCEPTED'),
+        suggestion('accepted-2', '채택 운동 2', 'ACCEPTED'),
+        suggestion('candidate-3', '세 번째 후보', 'SUGGESTED'),
+      ],
+    },
+  })
+  assert.ok(html.includes('채택 운동 1') && html.includes('채택 운동 2') && html.includes('세 번째 후보'))
+  assert.ok(html.includes('최종 운동은 최대 2개까지 채택할 수 있습니다'))
+  const thirdCard = html.slice(html.indexOf('세 번째 후보'))
+  assert.ok(/<button[^>]*disabled=""[^>]*>원장 채택<\/button>/.test(thirdCard), 'third acceptance is disabled')
+})
+
+test('Pain v2 exercise workflow: state wiring also rejects a third ACCEPTED status if UI disabling is bypassed', () => {
+  const src = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  assert.ok(src.includes("next.status === 'ACCEPTED' && acceptedCountExcludingNext >= 2"))
+})
 // ---------------------------------------------------------------------------
 // LBP v1 Batch 3 (§9.2(f)): RevisitWorkspace.tsx wiring for
 // RevisitQuickCheckCard + the detail-check-due indicator. RevisitWorkspace.tsx

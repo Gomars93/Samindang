@@ -82,6 +82,15 @@ F02 means `0 = cannot do the activity at all` and `10 = can do it as usual`. It 
 - Malformed or out-of-range values fail closed as `확인 필요(값 형식 오류)`.
 - The summary has no effect on safety ordering, clinical judgment, or exercise eligibility.
 
+### Exercise candidate/adoption UX
+
+- Existing eligibility and ranking rules remain unchanged.
+- The first three candidates remain visible; any additional candidates stay behind the existing `더 보기` disclosure.
+- Clinician acceptance is capped at two exercises.
+- After two acceptances, only additional `원장 채택` buttons are disabled; existing decisions stay visible and reversible.
+- The state update path independently rejects a third acceptance if UI disabling is bypassed.
+- No questionnaire answer auto-accepts or auto-adopts an exercise.
+
 ## 5. Figma source of truth
 
 | Purpose | Node | Status |
@@ -133,11 +142,11 @@ npm run build
 - Integration: 1,286 assertions passed.
 - TypeScript/Vite production build passed.
 - Vite emitted only the existing large-chunk advisory.
-- Doctor Workspace: 309 assertions passed after the summary connection.
+- Doctor Workspace: 311 assertions passed after summary and adoption-limit coverage.
 
 ## 8. Next safe implementation target
 
-The Doctor View presentation shell is complete. Do not implement F04 runtime behavior yet. The next code unit should inspect and reuse the existing LBP eligibility pipeline without changing its clinical rules, keeping the current `adopt, never automatic` behavior.
+The Doctor View presentation shell and the 1–2 exercise acceptance limit are complete. Do not implement F04 runtime behavior yet. Any next exercise unit must reuse the existing LBP eligibility pipeline without changing its clinical rules and keep `adopt, never automatic` behavior.
 
 Intended later exercise workflow:
 

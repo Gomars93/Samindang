@@ -65,6 +65,35 @@
   padding: 12px 16px;
   background: var(--surface);
   line-height: 1.3;
+  /*
+   * 결함 수정(2026-09-22): 좌측 컨텍스트 열이 1024px 이상에서 static이었다.
+   *
+   * V3 셸의 전제는 "우측 작업 열을 스크롤해도 좌측 컨텍스트(환자명·주호소·
+   * 레인1 안전 상태)는 남는다"인데, `position: sticky`가 아래
+   * `@media (max-width: 1023px) and (orientation: portrait)` 블록 **안에만**
+   * 있었다. 실측(헤드리스 Chromium, 현재 main): 27" 가로 2560×1440 / 27" 세로
+   * 1440×2560 / 노트북 1440×900 세 곳 모두 `position: static`이었고, 834×1112
+   * 태블릿에서만 sticky였다. 즉 원장이 실제로 쓰는 모니터 전부에서, 판단·처치
+   * 레인까지 스크롤하면 환자명과 안전 상태 칩이 화면에서 사라졌다 -- 처치를
+   * 입력하는 바로 그 순간에.
+   *
+   * 여기(기본 규칙)에 두면 두 레이아웃이 모두 받는다. 아래 portrait 블록은
+   * 같은 선언을 되풀이하지 않고 자기만의 상단 바 치수(max-height/overflow/
+   * z-index/배경)만 얹는다 -- 같은 규칙을 두 곳에 적는 것이 오늘 아침
+   * HIP/TMJ 게이트 사고의 형태였다.
+   *
+   * `align-self: flex-start`가 필요한 이유: 부모가 `align-items: flex-start`
+   * 인 flex row라 이미 그렇게 동작하지만, 명시하지 않으면 나중에 부모가
+   * stretch로 바뀌는 순간 열이 세로로 늘어나 sticky가 조용히 무력화된다
+   * (늘어난 요소는 붙을 여백이 없다).
+   */
+  position: sticky;
+  top: var(--doctor-sticky-top, 0);
+  align-self: flex-start;
+  /* 열 자체가 뷰포트보다 길어지면 열 안에서 스크롤한다 -- 밖으로 넘쳐
+     페이지 스크롤을 밀지 않는다. */
+  max-height: 100vh;
+  overflow-y: auto;
 }
 @media (min-width: 1280px) {
   .doctor__visitSummary {
@@ -97,9 +126,10 @@
     padding: 0 16px;
   }
   .doctor__visitSummary {
+    /* sticky/top/align-self는 기본 규칙이 이미 준다(위 주석 참고).
+       여기서는 "상단 스티키 바" 형태에만 필요한 것을 얹는다. */
     flex-basis: auto;
-    position: sticky;
-    top: 0;
+    align-self: auto;
     z-index: 10;
     max-height: 96px;
     overflow: hidden;
@@ -1452,6 +1482,71 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
+}
+
+/*
+ * 객관 소견 라디오 — 결함 수정(2026-09-22).
+ *
+ * `judgment__radioRow` / `judgment__radioOption`은 TSX에서 쓰이는데
+ * **어떤 스타일시트에도 규칙이 한 줄도 없었다.** 브라우저 기본 <label>
+ * 그대로라 실측(헤드리스 Chromium) 높이가 **18px**였다 -- 27" 가로/세로,
+ * 노트북, 태블릿 네 뷰포트 전부 동일. 이 입력은 레인1을 URGENT로 올릴 수
+ * 있는 **안전 입력**(객관적 하지 근력저하 / 회전근개 근력저하)인데 화면에서
+ * 가장 작은 타겟이었다.
+ *
+ * 44px로 올리고, 선택 상태를 **테두리 + 배경 + 라디오 점** 셋으로 표시한다
+ * (색 하나로만 구분하면 색각 이상에서 안 보인다). 마크업은 한 줄도 바꾸지
+ * 않았다 -- 네이티브 <input type="radio">를 그대로 두었으므로 키보드 화살표
+ * 이동과 스크린리더 동작이 유지된다.
+ */
+.judgment__radioRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.judgment__radioOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* 권장 최소 타겟. 세로는 min-height로, 가로는 padding으로 확보한다. */
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  /* 라벨 전체가 타겟이다 -- 글자만 누르려고 겨냥하지 않게. */
+  user-select: none;
+}
+
+.judgment__radioOption:hover {
+  border-color: var(--text-muted);
+}
+
+/* 선택 상태: 테두리 + 배경 + 점, 셋 다. */
+.judgment__radioOption:has(input:checked) {
+  border-color: var(--accent, var(--text));
+  background: var(--surface-active, rgba(0, 0, 0, 0.04));
+  font-weight: 600;
+}
+
+/* :has()를 모르는 브라우저에서도 최소한 라디오 점은 보인다(아래 input 규칙). */
+.judgment__radioOption input[type='radio'] {
+  /* 기본 라디오를 키운다 -- 점 자체가 선택의 1차 신호다. */
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent, var(--text));
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.judgment__radioOption:focus-within {
+  outline: 2px solid var(--accent, var(--text));
+  outline-offset: 2px;
 }
 
 .judgment__input,

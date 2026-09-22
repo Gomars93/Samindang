@@ -41,19 +41,23 @@ Master Spec v1.0이 `PAIN_03`을 제외한 판단을 뒤집었다. 상세는 `DE
 `required:false`+만성 게이트라 워커가 밟은 적 없음). `integration.spec.mjs`
 헬퍼 2곳 + `region-pack.spec.mjs`의 목록 리터럴 복제 1곳.
 
+### 이어서 한 것 (최신 59): **렌더 결함 2건 수정**
+`doctor.css`만. TSX 0줄. 실측 → 수정 → 재실측.
+- 좌측 컨텍스트 열: 27" 가로/세로, 노트북에서 **static → sticky**
+  (sticky가 834 portrait 미디어쿼리 안에만 있었다)
+- 안전 입력 라디오: **18px → 44px** (CSS 규칙이 한 줄도 없었다)
+- `tests/doctor-target-size.spec.mjs` 25단언 + 뮤테이션 3회.
+  소스 가드는 **중괄호 깊이를 세서** 미디어쿼리 밖인지 판정한다.
+- **PR #27은 닫는다** — main보다 247커밋 뒤처져 머지 불가. 결함만 떼어 왔다.
+
 ### Next Recommended Action
 1. **원장 판정** — `npm run contact-sheet` → `out/contact-sheet/index.html`.
    39케이스(재진 비교 데모 1 + 초진 38). 통과하면 2번.
-2. **PR #27 결함 2건** — 실측 확인 완료, 원장 결정 불필요. 바로 가능.
-   - 좌측 컨텍스트 열이 **27" 양방향에서 `static`** (sticky가 834 portrait
-     미디어쿼리 안에만 있음) → 스크롤하면 환자명·안전 칩이 사라짐
-   - `judgment__radioOption` 3개가 **18px** (CSS 규칙이 한 줄도 없음).
-     레인1을 URGENT로 올릴 수 있는 안전 입력인데 화면에서 가장 작은 타겟
-   - **PR #27 자체는 못 쓴다 — main보다 247커밋 뒤처짐.** 결함만 새로 고친다.
-3. 입력 행(체크식 칩) → 블록 5~9 → `DoctorView` 연결 → 옛 CSS 폐기.
-4. **PR #25는 이미 main에 반영돼 있다**(docstring 한 줄만 옛 문구). 닫아도 된다.
-5. 한약 프로필 — 통증 문법 판정 후.
-6. `codex/pain-questionnaire-v2-ux`(main 위 19커밋) 정리.
+2. 입력 행(체크식 칩) → 블록 5~9 → `DoctorView` 연결 → 옛 CSS 폐기.
+3. **PR #25 / #27 닫기** — #25는 이미 main에 반영(docstring 한 줄만 옛 문구),
+   #27은 결함 2건을 떼어 왔고 나머지는 방향이 어긋난다.
+4. 한약 프로필 — 통증 문법 판정 후.
+5. `codex/pain-questionnaire-v2-ux`(main 위 19커밋) 정리.
 
 ### PO 쪽 미완료 (이월)
 - **툴팁 문안 감수** — PR-B1의 62개 + PR-B2의 3개. 전부 제가 쓴 초안이다.

@@ -1179,11 +1179,38 @@ const PAIN_FUNCTION_QUESTIONS: Question[] = [
     helper: '가장 중요한 한 가지를 선택해주세요.',
     required: true,
     step: '활동',
-    screenProgress: { current: 2, total: 5 },
+    screenProgress: { current: 2, total: 4 },
     layout: 'grid2',
     showIf: IS_PRIMARY_LBP,
     options: PAIN_TARGET_ACTIVITY_OPTIONS,
   },
+  {
+    id: 'PAIN_F02',
+    variable: 'pain_target_activity_ability',
+    input: 'numeric_scale',
+    question: '이 활동을 현재 어느 정도 할 수 있나요?',
+    helper: '0은 전혀 할 수 없음, 10은 평소처럼 할 수 있음을 뜻해요.',
+    required: true,
+    step: '활동',
+    screenProgress: { current: 3, total: 4 },
+    showIf: (r) =>
+      IS_PRIMARY_LBP(r) &&
+      typeof r['PAIN_F01'] === 'string' &&
+      r['PAIN_F01'] !== 'UNKNOWN',
+    scale: {
+      min: 0,
+      max: 10,
+      minLabel: '전혀 할 수 없음',
+      maxLabel: '평소처럼 가능',
+    },
+  },
+]
+
+/**
+ * 보류안 보존: PAIN_F03은 이전 시안/호환성 검토를 위해 삭제하지 않는다.
+ * 다만 현재 합의된 환자 흐름과 ALL_QUESTIONS에는 연결하지 않는다.
+ */
+export const PAIN_FUNCTION_HELD_QUESTIONS: Question[] = [
   {
     id: 'PAIN_F03',
     variable: 'pain_activity_tolerance',
@@ -5102,7 +5129,9 @@ export const buildResponsePayload = (r: Responses) => ({
       primary_location: r['PAIN_01'],
       region_focus: r['HIP_00'],
       target_activity: r['PAIN_F01'],
-      activity_tolerance: r['PAIN_F03'],
+      target_activity_ability: r['PAIN_F02'],
+      // Held PAIN_F03 must not leak into the active patient/clinical contract.
+      activity_tolerance: null,
       pain_qualities: r['PAIN_02'],
       radiation: r['PAIN_04'],
     },

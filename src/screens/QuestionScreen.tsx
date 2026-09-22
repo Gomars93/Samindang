@@ -17,7 +17,7 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
   const helper = question.helperIf ? question.helperIf(responses) : question.helper
   const options = question.optionsIf ? question.optionsIf(responses) : question.options
   const activityLabel =
-    question.id === 'PAIN_F03'
+    question.id === 'PAIN_F02' || question.id === 'PAIN_F03'
       ? [
           { value: 'SITTING', label: '오래 앉아 있기' },
           { value: 'SIT_TO_STAND', label: '앉았다 일어나기' },
@@ -25,6 +25,7 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
           { value: 'WALKING', label: '걷기' },
           { value: 'LIFT_CARRY', label: '물건 들기·옮기기' },
           { value: 'BED_MOBILITY', label: '돌아눕기·침대에서 일어나기' },
+          { value: 'OTHER', label: '그 밖의 활동' },
         ].find((option) => option.value === responses.PAIN_F01)?.label
       : undefined
 

@@ -89,6 +89,7 @@ function deterministicValue(q, r) {
   if (q.input === 'single_choice') return opts[0].value
   if (q.input === 'short_text') return 'x'
   if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+  if (q.input === 'numeric_scale') return q.scale?.min ?? 0
   throw new Error(`deterministicValue: unknown input type ${q.input} for ${q.id}`)
 }
 
@@ -4594,26 +4595,25 @@ function regionOf(id) {
   const targetIndex = before.indexOf('PAIN_F01')
   assert('AB-1: existing HIP_00 is reused as Region Focus (no duplicate PAIN_R01)', regionIndex >= 0 && !ALL_QUESTIONS.some((q) => q.id === 'PAIN_R01'))
   assert('AB-1b: Region Focus appears immediately before Target Activity in the low-back/pelvis flow', targetIndex === regionIndex + 1)
-  assert('AB-1c: Activity Tolerance is hidden until a measurable target activity is selected', !before.includes('PAIN_F03'))
+  assert('AB-1c: Activity Ability is hidden until a concrete target activity is selected', !before.includes('PAIN_F02'))
+  assert('AB-1d: held Activity Tolerance is absent from the active flow', !ALL_QUESTIONS.some((q) => q.id === 'PAIN_F03'))
 
   r = set(r, { HIP_00: 'LOW_BACK_DOMINANT', PAIN_F01: 'SITTING' })
-  const timeQuestion = ALL_QUESTIONS.find((q) => q.id === 'PAIN_F03')
-  assert('AB-2: selecting sitting reveals Activity Tolerance', visibleIds(r).has('PAIN_F03'))
-  assert('AB-2b: sitting tolerance uses explicit TIME_* values', timeQuestion.optionsIf(r).every((o) => o.value === 'UNKNOWN' || o.value.startsWith('TIME_')))
+  assert('AB-2: selecting a concrete activity reveals Activity Ability', visibleIds(r).has('PAIN_F02'))
 
   const baselineFlags = JSON.stringify(computeFlags(r))
-  r = set(r, { PAIN_F03: 'TIME_10_30M' })
+  r = set(r, { PAIN_F02: 6 })
   assert('AB-3 CRITICAL: functional context does not change any safety flag', JSON.stringify(computeFlags(r)) === baselineFlags)
   const payload = buildResponsePayload(r)
   assert('AB-3b: pain payload preserves the target activity', payload.modules.pain.target_activity === 'SITTING')
-  assert('AB-3c: pain payload preserves the unit-explicit tolerance bucket', payload.modules.pain.activity_tolerance === 'TIME_10_30M')
+  assert('AB-3c: pain payload preserves the 0–10 ability score', payload.modules.pain.target_activity_ability === 6)
+  assert('AB-3d: held tolerance remains unset and has no active-flow value', payload.modules.pain.activity_tolerance == null)
 
-  const repetition = set(r, { PAIN_F01: 'SIT_TO_STAND' })
-  assert('AB-4: changing target activity prunes an incompatible tolerance answer', repetition.PAIN_F03 === null)
-  assert('AB-4b: sit-to-stand tolerance uses explicit REPS_* values', timeQuestion.optionsIf(repetition).every((o) => o.value === 'UNKNOWN' || o.value.startsWith('REPS_')))
+  const changedActivity = set(r, { PAIN_F01: 'SIT_TO_STAND' })
+  assert('AB-4: changing to another concrete target keeps the patient-provided ability score', changedActivity.PAIN_F02 === 6)
 
-  const unknown = set(repetition, { PAIN_F01: 'UNKNOWN' })
-  assert('AB-5: unknown target hides tolerance and leaves no stale value', !visibleIds(unknown).has('PAIN_F03') && unknown.PAIN_F03 === null)
+  const unknown = set(changedActivity, { PAIN_F01: 'UNKNOWN' })
+  assert('AB-5: unknown target hides ability and prunes the stale score', !visibleIds(unknown).has('PAIN_F02') && unknown.PAIN_F02 === null)
 }
 
 

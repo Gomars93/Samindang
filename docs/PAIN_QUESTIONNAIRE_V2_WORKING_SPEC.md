@@ -63,15 +63,23 @@ Exact wording and branching remain draft until clinical review. Existing answer 
 - Navigation Button component set: primary, secondary, disabled, danger
 - Screen 01: Region Focus
 - Screen 02: Target Activity
-- Screen 03: Activity Tolerance — time-based (`11:32`)
-- Screen 03B: Activity Tolerance — repetition-based (`16:60`)
+- Screen 03: Activity Ability 0–10 — active-flow draft (`33:92`)
+- Held Screen 03: Activity Tolerance — time-based (`11:32`)
+- Held Screen 03B: Activity Tolerance — repetition-based (`16:60`)
 - Screen 04: Limiting Response — clinical-review draft (`20:62`)
 - Screen 05: Recovery Time — clinical-review draft (`21:76`)
 
-Both Activity Tolerance variants use the same `3 / 5` progress position. The
+The approved compact activity flow is Target Activity (`PAIN_F01`) → Activity
+Ability 0–10 (`PAIN_F02`) → Limiting Response (`PAIN_F04`, pending clinical
+review). The F02 screen uses `3 / 4`, keeps the selected activity visible, and
+was checked at 800×1280 with 11 touch targets, Noto Sans KR, and no overflow.
+
+Both Activity Tolerance variants are preserved as held alternatives and use
+the old `3 / 5` progress position. They are not part of the active patient flow
+or any clinical decision. The
 time-based variant is for `SITTING` and `WALKING`; the repetition-based variant
 is for `SIT_TO_STAND`, `BEND_PICK_UP`, `LIFT_CARRY`, and `BED_MOBILITY`.
-`OTHER` and unknown activity values do not show `PAIN_F03` until a unit is
+`OTHER` and unknown activity values do not show held `PAIN_F03` until a unit is
 clinically defined. The repetition screen was visually checked at 800×1280 with
 six option cards, Noto Sans KR typography, and no frame overflow.
 

@@ -33,18 +33,18 @@ Claude Code is best used here for repository-wide dependency tracing, React/Type
 ## Completed implementation slice
 
 - Reused the existing CLOSED `HIP_00` contract for Region Focus instead of introducing duplicate `PAIN_R01` storage.
-- Added context-only schemas for `PAIN_F01` and `PAIN_F03`.
+- Added context-only schemas for active `PAIN_F01` and `PAIN_F02`.
 - Extracted the shared `OptionCard` primitive used by single- and multi-choice controls.
-- Connected Region Focus, Target Activity, and Activity Tolerance without changing safety scoring or routing.
+- Connected Region Focus, Target Activity, and Activity Ability without changing safety scoring or routing.
 - Added regression coverage for rendering, selection, answer cleanup, and unchanged safety behavior.
-- Added presentation-only `screenProgress` metadata for Region Focus (`1 / 5`), Target Activity (`2 / 5`), and Activity Tolerance (`3 / 5`).
-- Added DOM regression coverage for the six repetition choices, their Figma order, selected-state checkmark, and accessible `3 / 5` label.
+- Added presentation-only `screenProgress` metadata for Target Activity (`2 / 4`) and Activity Ability (`3 / 4`).
+- Added DOM regression coverage for the 11 score choices, selected radio state, activity context chip, and accessible `3 / 4` label.
 - Added Figma-only review drafts for `PAIN_F04` (`20:62`, multi-select limiting response) and `PAIN_F05` (`21:76`, single-select recovery time). No runtime schema or clinical logic was added.
 
 ## Next implementation slice
 
-- Keep the activity-to-unit mapping explicit: `SITTING`/`WALKING` use time buckets; `SIT_TO_STAND`/`BEND_PICK_UP`/`LIFT_CARRY`/`BED_MOBILITY` use repetition buckets.
-- Keep `PAIN_F03` hidden for `OTHER` or unknown activity values; do not infer a unit.
+- Preserve `PAIN_F03` time/repetition schemas as a held alternative, outside `ALL_QUESTIONS` and the active flow.
+- Keep `PAIN_F05` as a Figma-only held alternative; do not connect it to clinical judgment.
 - Preserve backward navigation and answer state while switching between target activities.
 - After clinical approval, add context-only schemas for `PAIN_F04` and `PAIN_F05` using the reviewed Figma copy and stable enum values.
 - Keep both fields out of safety, diagnosis, treatment, stage, and urgency calculations.
@@ -58,7 +58,7 @@ Record unresolved decisions here instead of guessing.
 | Topic | Question | Safe interim behavior |
 |---|---|---|
 | Region split | When should low-back selection branch into hip/pelvis discrimination? | Ask the discriminator; do not change diagnosis/routing automatically. |
-| Function scale | Should difficulty be 0–10, 1–5, or categorical? | Keep draft UI isolated from clinical scoring. |
+| Function scale | How, if at all, may the approved 0–10 ability score influence clinical prioritization? | Store and display it as context only; do not score or route from it. |
 | Tolerance units | Time, repetitions, or distance by activity? | Store explicit unit/value fields; avoid derived severity. |
 | Limiting response | Are the six draft reasons complete, should selection be multi-select, and is an explicit unknown option required? | Keep `PAIN_F04` in Figma only; do not add a runtime schema before review. |
 | Recovery time | Are the draft bucket boundaries clinically useful, and should recovery be measured against baseline symptoms or pre-activity state? | Keep `PAIN_F05` in Figma only; do not derive irritability/severity. |
@@ -68,9 +68,9 @@ Record unresolved decisions here instead of guessing.
 ### Implemented interim decisions
 
 - Region Focus reuses the existing clinically CLOSED `HIP_00` contract; do not create duplicate `PAIN_R01` storage.
-- `PAIN_F01` stores one target activity as context only.
-- `PAIN_F03` stores explicit time- or repetition-unit buckets as context only. It is optional and must not be converted into severity, stage, routing, or treatment logic before clinical review.
-- Figma source nodes are `11:32` for the time-based tolerance screen and `16:60` for the repetition-based screen; both are step `3 / 5`.
+- `PAIN_F01` stores one target activity as context only; `PAIN_F02` stores its 0–10 ability score as context only.
+- `PAIN_F03` preserves explicit time- or repetition-unit buckets as a held schema outside the active question registry.
+- Figma node `33:92` is the active-flow F02 screen (`3 / 4`). Held tolerance source nodes remain `11:32` and `16:60` (`3 / 5`).
 - Figma review nodes are `20:62` for limiting response (`4 / 5`) and `21:76` for recovery time (`5 / 5`). Their copy and interaction rules are not clinically approved.
 
 ## Definition of done for a night checkpoint

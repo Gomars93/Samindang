@@ -259,47 +259,48 @@ for (const [label, fg, bg] of textPairs) {
  * ========================================================================= */
 
 {
-  const tolerance = ALL_QUESTIONS.find((q) => q.id === 'PAIN_F03')
-  assert('Pain v2: PAIN_F03 exists', !!tolerance)
+  const ability = ALL_QUESTIONS.find((q) => q.id === 'PAIN_F02')
+  assert('Pain v2: PAIN_F02 exists in the active flow', !!ability)
+  assert('Pain v2: held PAIN_F03 is absent from the active flow', !ALL_QUESTIONS.some((q) => q.id === 'PAIN_F03'))
   assert(
-    'Pain v2: Activity Tolerance carries the Figma 3 / 5 screen position',
-    tolerance?.screenProgress?.current === 3 && tolerance?.screenProgress?.total === 5,
+    'Pain v2: Activity Ability carries the Figma 3 / 4 screen position',
+    ability?.screenProgress?.current === 3 && ability?.screenProgress?.total === 4,
   )
 
   const html = renderToString(
     React.createElement(QuestionBody, {
-      question: tolerance,
-      value: 'REPS_6_10',
+      question: ability,
+      value: 6,
       responses: { PAIN_F01: 'SIT_TO_STAND' },
       onChange: () => {},
     }),
   )
   const buttons = html.match(/<button[^>]*>[\s\S]*?<\/button>/g) ?? []
-  const labels = ['처음부터 불편해요', '1~2번', '3~5번', '6~10번', '11번 이상', '잘 모르겠어요']
-  assert('Pain v2: repetition tolerance renders exactly six option cards', buttons.length === 6)
+  const labels = Array.from({ length: 11 }, (_, index) => String(index))
+  assert('Pain v2: ability scale renders exactly eleven score buttons', buttons.length === 11)
   assert(
-    'Pain v2: all six repetition choices render in the Figma order',
+    'Pain v2: all 0–10 choices render in the Figma order',
     labels.every((label, index) => buttons[index]?.includes(label)),
   )
-  assert('Pain v2: selected repetition remains non-color-only', buttons[3]?.includes('✓'))
-  assert('Pain v2: tolerance keeps the selected activity visible in a context chip', html.includes('activityContextChip') && html.includes('앉았다 일어나기'))
+  assert('Pain v2: selected ability score exposes aria-checked', buttons[6]?.includes('aria-checked="true"'))
+  assert('Pain v2: ability keeps the selected activity visible in a context chip', html.includes('activityContextChip') && html.includes('앉았다 일어나기'))
 
   const shellHtml = renderToString(
     React.createElement(ScreenShell, {
       steps: ['활동'],
       currentStep: '활동',
       stepProgress: 0.5,
-      screenProgress: tolerance.screenProgress,
+      screenProgress: ability.screenProgress,
       canGoBack: true,
       onBack: () => {},
       onHelp: () => {},
-      questionId: 'PAIN_F03',
-      children: React.createElement('div', null, 'tolerance content'),
+      questionId: 'PAIN_F02',
+      children: React.createElement('div', null, 'ability content'),
     }),
   )
   const shellText = shellHtml.replaceAll('<!-- -->', '')
-  assert('Pain v2: shared tablet shell exposes the visible 3 / 5 label', shellText.includes('3 / 5'))
-  assert('Pain v2: 3 / 5 label has an accessible ordinal', shellHtml.includes('5개 화면 중 3번째'))
+  assert('Pain v2: shared tablet shell exposes the visible 3 / 4 label', shellText.includes('3 / 4'))
+  assert('Pain v2: 3 / 4 label has an accessible ordinal', shellHtml.includes('4개 화면 중 3번째'))
 }
 
 /* =========================================================================

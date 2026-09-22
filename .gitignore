@@ -18,6 +18,8 @@ fix-samindang-queue-loop.ps1
 
 # esbuild bundle used by tests/integration.spec.mjs (regenerated, not source)
 tests/.spec-bundle.mjs
+tests/.briefing-fixtures.mjs
+tests/.briefing-model.mjs
 
 # esbuild bundle used by tests/saju.spec.mjs (regenerated, not source)
 tests/.saju-bundle.mjs
@@ -243,3 +245,10 @@ tests/.observation-options-bundle.mjs
 tests/.observation-promotion-bundle.mjs
 tests/.red-flag-emrpreview-bundle.mjs
 tests/.red-flag-persistence-bundle.mjs
+
+# 통증 브리핑 테스트용 esbuild 번들 (재생성물, 소스 아님)
+tests/.briefing-fixtures.mjs
+tests/.briefing-model.mjs
+
+# 컨택트 시트 산출물 (재생성 가능)
+out/

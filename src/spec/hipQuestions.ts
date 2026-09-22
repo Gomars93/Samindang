@@ -1,14 +1,22 @@
 import type { Question, Responses } from '../types'
+import { IS_PRIMARY_PAIN } from './visitRouting'
 
 /**
  * HIP_V1 question definitions from the clinically CLOSED Tablet Question Set v0.1.
  * Kept separate from coreSpec so the later shared low_back_pelvis wiring is a
  * minimal import/splice and cannot accidentally rewrite FROZEN LBP questions.
  */
+/**
+ * 통증 주호소 판단은 `visitRouting.IS_PRIMARY_PAIN` **하나만** 쓴다.
+ * 예전에는 여기서 raw `VISIT_01`/`VISIT_02_SYMPTOM_MAIN`을 직접 읽었는데,
+ * 새 첫 화면 `VISIT_00_INTENT='pain_care'`가 그 두 필드를 채우지 않아
+ * HIP_00과 그 뒤 HIP 안전 문항 전체가 뜨지 않고 `clinical_flags.hip`이
+ * `null`로 남았다(`IS_PRIMARY_LBP`는 정규화를 타서 LBP 문항만 정상
+ * 노출 -- 화면상으로는 멀쩡해 보였다). HIP 문항/enum/threshold는 하나도
+ * 바뀌지 않는다.
+ */
 export const IS_PRIMARY_HIP_POPULATION = (r: Responses): boolean =>
-  r['VISIT_01'] === 'symptom' &&
-  r['VISIT_02_SYMPTOM_MAIN'] === 'pain' &&
-  r['PAIN_01'] === 'low_back_pelvis'
+  IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'low_back_pelvis'
 
 export const IS_PRIMARY_HIP_SAFETY = (r: Responses): boolean =>
   IS_PRIMARY_HIP_POPULATION(r) &&

@@ -156,14 +156,29 @@ const MALE = { ...IDENTITY, ID_03: 'male' }
 // (이전에는 '없음'을 고르려고 한 화면을 반드시 지나야 했다).
 // '추가상세(수면)' 프로필만 두 화면을 모두 seed하는데, walk는 seed된 질문을
 // 세지 않으므로 그 프로필의 수치에는 두 화면이 빠져 있다(실제 환자는 +2 화면).
+/*
+ * 2026-09-22 핀 갱신 — 허리·골반 프로필 3종 +1화면 / +2탭.
+ *
+ * `VISIT_00_INTENT='pain_care'`로 들어온 환자에게 HIP_00(허리/엉덩이·골반/
+ * 고관절 판별자)이 **뜨지 않던 회귀를 고친 결과**다. `hipQuestions.ts`가
+ * 정규화를 거치지 않은 raw `VISIT_01`/`VISIT_02_SYMPTOM_MAIN` 게이트를
+ * 쓰고 있어서, 새 첫 화면 경로에서는 HIP_00과 그 뒤 HIP 안전 문항 전체가
+ * 건너뛰어지고 `clinical_flags.hip`이 null로 남았다.
+ *
+ * 즉 늘어난 한 칸은 새 기능이 아니라 **원래 물었어야 하는 안전 판별자**다.
+ * 늘어난 값은 최소부담 경로(HIP_00에서 '허리가 가장 불편해요'를 고르는
+ * 경우) 기준이며, 다른 판별자를 고르면 HIP 안전 문항이 더 열린다 —
+ * 그건 설계대로다. 허리·골반이 아닌 프로필은 하나도 변하지 않았다.
+ * 고정 근거: `tests/visit-route-parity.spec.mjs`.
+ */
 const PROFILES = [
-  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
+  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 24, taps: 48 },
   { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 28, taps: 58 },
   { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 27, taps: 54 },
-  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 25, taps: 50 },
+  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 26, taps: 52 },
   { name: 'symptom · 수면', seed: { ...IDENTITY, VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: 'sleep' }, screens: 16, taps: 32 },
   { name: 'herbal · 증상치료(소화)', seed: { ...IDENTITY, VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, screens: 24, taps: 49 },
-  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 22, taps: 44 },
+  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
 ]
 
 console.log('=== questionnaire information volume (minimum-burden floor) ===\n')

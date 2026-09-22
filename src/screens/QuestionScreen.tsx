@@ -16,9 +16,21 @@ type Props = {
 export function QuestionBody({ question, value, responses, onChange }: Props) {
   const helper = question.helperIf ? question.helperIf(responses) : question.helper
   const options = question.optionsIf ? question.optionsIf(responses) : question.options
+  const activityLabel =
+    question.id === 'PAIN_F03'
+      ? [
+          { value: 'SITTING', label: '오래 앉아 있기' },
+          { value: 'SIT_TO_STAND', label: '앉았다 일어나기' },
+          { value: 'BEND_PICK_UP', label: '숙이기·바닥 물건 집기' },
+          { value: 'WALKING', label: '걷기' },
+          { value: 'LIFT_CARRY', label: '물건 들기·옮기기' },
+          { value: 'BED_MOBILITY', label: '돌아눕기·침대에서 일어나기' },
+        ].find((option) => option.value === responses.PAIN_F01)?.label
+      : undefined
 
   return (
     <>
+      {activityLabel && <p className="activityContextChip">{activityLabel}</p>}
       <h1 className="question">{question.question}</h1>
       {helper && <p className="helper">{helper}</p>}
 

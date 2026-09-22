@@ -49,7 +49,7 @@ Claude Code is best used here for repository-wide dependency tracing, React/Type
 - After clinical approval, add context-only schemas for `PAIN_F04` and `PAIN_F05` using the reviewed Figma copy and stable enum values.
 - Keep both fields out of safety, diagnosis, treatment, stage, and urgency calculations.
 - Add pruning, backward-navigation, payload, and DOM tests before exposing either screen in the patient flow.
-- Recheck the Screen 05 activity chip in a fresh Figma render before treating the visual draft as implementation-ready.
+- Screen 05 activity chip render/layout check is complete (`23:92`, `203×38`, no 800×1280 overflow). Keep the screen Figma-only until clinical approval.
 
 ## Review ledger
 

@@ -80,9 +80,10 @@ pain increase, weakness, stiffness/mobility loss, numbness/sensory discomfort,
 fear of worsening, and other. Screen 05 is a Figma-only single-select draft
 with seven recovery buckets from immediate recovery through two or more days,
 plus unknown. Screen 04 was visually checked at 800×1280. Screen 05's seven-card
-layout was checked at the same size, but its cloned activity chip still needs a
-final rendered-screenshot confirmation even though the node is present in the
-frame tree. Both screens must remain outside the runtime schema until clinical
+layout was checked at the same size. The cloned activity chip was subsequently
+confirmed in a fresh rendered screenshot and property inspection: `203×38`,
+`8/14/8/14` padding, 12 px radius, and no frame overflow. Both screens must
+remain outside the runtime schema until clinical
 review confirms wording, required status, multi-select behavior, and bucket
 boundaries.
 

@@ -282,6 +282,7 @@ for (const [label, fg, bg] of textPairs) {
     labels.every((label, index) => buttons[index]?.includes(label)),
   )
   assert('Pain v2: selected repetition remains non-color-only', buttons[3]?.includes('✓'))
+  assert('Pain v2: tolerance keeps the selected activity visible in a context chip', html.includes('activityContextChip') && html.includes('앉았다 일어나기'))
 
   const shellHtml = renderToString(
     React.createElement(ScreenShell, {

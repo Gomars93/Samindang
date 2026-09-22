@@ -1021,6 +1021,60 @@ const PAIN_QUESTIONS: Question[] = [
       { value: 'other', label: '그 밖의 부위' },
     ],
   },
+  /*
+   * PAIN_03 / PAIN_03B — 통증 강도(NRS 0~10).
+   *
+   * Master Spec v0.2는 `PAIN_03 NRS`("가장 아플 때의 통증은 0~10 중 어느
+   * 정도인가요?")를 이미 이 자리에 배정했고, v1.0이 그것을 **제외**하면서
+   * 근거를 이렇게 적었다:
+   *
+   *   "Pain Module 전용 severity 문항(PAIN_03)은 만들지 않았다. 모든 symptom
+   *    주호소 공통으로 이미 VISIT_04_SYMPTOM_IMPACT(일상생활에 얼마나 영향을
+   *    주나요?)가 **동일한 의미로** 수집되므로 그 값을 그대로 사용한다."
+   *
+   * 그 판단을 뒤집는다(2026-09-22 PO 결정). `통증 강도`와 `일상생활 영향`은
+   * 같은 것이 아니다 -- 통증이 줄었는데 기능은 그대로이거나 그 반대인 경우가
+   * 흔하고, 그 불일치 자체가 치료 방향을 바꾸는 정보다. 4단계(minimal/mild/
+   * moderate/severe)로는 재진 간 1~2점 변화가 보이지 않는다. PO가 실제로
+   * 차트에 NRS를 따로 적고 매 재진마다 추적하고 있다는 사실이 결정적이었다 --
+   * VISIT_04로 충분했다면 적지 않았을 것이다.
+   *
+   * ID는 v0.2가 NRS에 배정한 `PAIN_03`을 그대로 쓴다. 이 id는 이후 어떤 다른
+   * 의미로도 쓰인 적이 없으므로 "기존 answer ID의 새 의미 재사용"이 아니라
+   * 원래 자리로 되돌리는 것이다.
+   *
+   * 두 시점을 모두 묻는다(PO 지시): 진료실에서 확인하는 `지금`과, 치료 목표가
+   * 되는 `가장 아플 때`. 재진 비교가 성립하려면 매번 같은 시점이어야 하므로
+   * 두 값을 각각 따로 추적한다.
+   *
+   * **임상 판단에 쓰지 않는다.** 안전 게이트·분류·운동 적격성 어디에도
+   * 들어가지 않는다(`tests/pain-nrs.spec.mjs` §C가 소스에서 고정한다).
+   * 원장이 읽는 맥락이자 재진 추적의 기준선일 뿐이다.
+   *
+   * 앵커는 NRS 표준 그대로다(0 = 통증 없음, 10 = 상상할 수 있는 가장 심한
+   * 통증) -- 이 파일이 새 척도를 발명하지 않는다.
+   */
+  {
+    id: 'PAIN_03',
+    variable: 'pain_nrs_now',
+    input: 'numeric_scale',
+    question: '지금 이 순간, 통증은 어느 정도인가요?',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_PAIN,
+    scale: { min: 0, max: 10, minLabel: '통증 없음', maxLabel: '상상할 수 있는 가장 심한 통증' },
+  },
+  {
+    id: 'PAIN_03B',
+    variable: 'pain_nrs_worst',
+    input: 'numeric_scale',
+    question: '가장 아플 때는 어느 정도인가요?',
+    helper: '방금은 지금 상태였어요. 이번에는 가장 심할 때를 골라주세요.',
+    required: true,
+    step: '상세 증상',
+    showIf: IS_PRIMARY_PAIN,
+    scale: { min: 0, max: 10, minLabel: '통증 없음', maxLabel: '상상할 수 있는 가장 심한 통증' },
+  },
   {
     id: 'PAIN_02',
     variable: 'pain_qualities',
@@ -4945,6 +4999,9 @@ export const buildResponsePayload = (r: Responses) => ({
     },
     pain: {
       primary_location: r['PAIN_01'],
+      // NRS는 맥락·추적용이다. 어떤 안전/분류 로직도 이 값을 읽지 않는다.
+      nrs_now: r['PAIN_03'],
+      nrs_worst: r['PAIN_03B'],
       pain_qualities: r['PAIN_02'],
       radiation: r['PAIN_04'],
     },

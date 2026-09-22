@@ -89,6 +89,15 @@ function deterministicValue(q, r) {
   if (q.input === 'single_choice') return opts[0].value
   if (q.input === 'short_text') return 'x'
   if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+  // numeric_scale: 척도 중간값. 이 워커는 "어떤 답이든 하나 채워 다음으로
+  // 넘어간다"가 목적이라 값의 임상적 의미는 무관하다 --
+  // tests/herbal-systemic-block-loop.spec.mjs의 같은 헬퍼와 동일하게 다룬다
+  // (그쪽에는 이미 있었고 이쪽만 빠져 있어서, 항상 뜨는 numeric_scale 문항이
+  //  생기자마자 터졌다).
+  if (q.input === 'numeric_scale') {
+    const { min = 0, max = 10 } = q.scale ?? {}
+    return Math.round((min + max) / 2)
+  }
   throw new Error(`deterministicValue: unknown input type ${q.input} for ${q.id}`)
 }
 
@@ -3804,6 +3813,10 @@ function benignPainFastPickLast(sex) {
     if (Object.prototype.hasOwnProperty.call(FORCED, q.id)) return FORCED[q.id]
     if (q.input === 'short_text') return 'x'
     if (q.input === 'numeric') return '1'.repeat(q.maxLength || 1)
+    // numeric_scale에는 options가 없다 -- "마지막 선택지" 전략의 대응물은
+    // 척도의 최댓값이다(이 워커의 목적은 "가장 뒤쪽 답으로 끝까지 걸어도
+    // systemic 문항이 새지 않는가"이므로 값 자체에 임상 의미는 없다).
+    if (q.input === 'numeric_scale') return q.scale?.max ?? 10
     const opts = q.optionsIf ? q.optionsIf(r) : q.options
     const pick = opts[opts.length - 1]
     return q.input === 'multi_choice' ? [pick.value] : pick.value

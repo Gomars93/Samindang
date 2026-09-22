@@ -15,7 +15,22 @@
 // so the doctor can compare today's answer with the first-visit answer
 // like-for-like. The patient screen resolves wording/options from coreSpec
 // by id; the server never carries question text.
-export const DETAIL_CHECK_COMMON_QUESTION_IDS = Object.freeze(['VISIT_04_SYMPTOM_IMPACT'])
+// 공통 재질문: 부위와 무관하게 모든 재진에서 다시 묻는다.
+//
+// PAIN_03/PAIN_03B(NRS 지금/가장 아플 때)가 2026-09-22에 추가됐다. 이 둘이
+// 공통에 있는 이유는 통증 강도가 부위를 가리지 않기 때문이고, 재진 추적의
+// 기준선이기 때문이다 -- 부위별 목록에 넣으면 승인 전 부위(가슴·배·그 밖)
+// 환자는 영원히 추적이 안 된다. VISIT_04_SYMPTOM_IMPACT(일상 지장)는
+// 그대로 둔다: NRS가 재는 것(얼마나 아픈가)과 다른 축(얼마나 지장이 있나)
+// 이라, 통증↓ 기능→ 같은 불일치가 두 값의 차이로 드러난다.
+//
+// 통증 환자가 아니면 PAIN_03/03B는 초진에도 없었으므로 환자 화면이 조용히
+// 건너뛴다(resolveDetailCheckQuestions가 id를 못 찾으면 skip -- fail closed).
+export const DETAIL_CHECK_COMMON_QUESTION_IDS = Object.freeze([
+  'PAIN_03',
+  'PAIN_03B',
+  'VISIT_04_SYMPTOM_IMPACT',
+])
 export const DETAIL_CHECK_LBP_QUESTION_IDS = Object.freeze(['LBP_12', 'LBP_13', 'LBP_14'])
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/

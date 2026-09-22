@@ -44,7 +44,11 @@ function assert(name, cond) {
 }
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const LBP_IDS = ['VISIT_04_SYMPTOM_IMPACT', 'LBP_12', 'LBP_13', 'LBP_14']
+// 공통 재질문 = NRS 두 문항 + 일상 지장. 2026-09-22에 PAIN_03/PAIN_03B가
+// **공통**으로 들어왔다(부위별이 아니라) -- 통증 강도는 부위를 가리지 않고,
+// 부위별 목록에 두면 승인 전 부위 환자는 영원히 추적이 안 되기 때문이다.
+const COMMON_IDS = ['PAIN_03', 'PAIN_03B', 'VISIT_04_SYMPTOM_IMPACT']
+const LBP_IDS = [...COMMON_IDS, 'LBP_12', 'LBP_13', 'LBP_14']
 
 function emptyWorkspaceFor(overrides) {
   return {
@@ -112,7 +116,7 @@ async function main() {
       assert('parity: at least one due and one not-due case exercised (non-vacuous)', clientDue([{ createdAt: 'x', nextReassessmentPlan: plan('VISIT_COUNT', { afterVisitCount: 1 }) }], '2026-01-01') !== null)
       assert('localTodayISO is the LOCAL calendar date (yyyy-mm-dd)', /^\d{4}-\d{2}-\d{2}$/.test(localTodayISO()) && localTodayISO(new Date(2026, 8, 6, 23, 30)) === '2026-09-06')
       assert('detailCheckQuestionIds: LBP set = common + 3 LBP items in order', detailCheckQuestionIds({ isLbp: true }).join(',') === LBP_IDS.join(','))
-      assert('detailCheckQuestionIds: non-LBP = common item only', detailCheckQuestionIds({ isLbp: false }).join(',') === 'VISIT_04_SYMPTOM_IMPACT')
+      assert('detailCheckQuestionIds: non-LBP = common items only', detailCheckQuestionIds({ isLbp: false }).join(',') === COMMON_IDS.join(','))
     }
 
     /* ---------------- 2. token store normalization ---------------- */
@@ -164,7 +168,7 @@ async function main() {
 
         const sNon = await start(nonLbp.patient_id)
         const gNon = await pub(sNon.token)
-        assert('E2E non-LBP: only the common item is asked', gNon.detail_question_ids.join(',') === 'VISIT_04_SYMPTOM_IMPACT')
+        assert('E2E non-LBP: only the common items are asked', gNon.detail_question_ids.join(',') === COMMON_IDS.join(','))
 
         const sNo = await start(noPlan.patient_id)
         const gNo = await pub(sNo.token)
@@ -241,7 +245,7 @@ async function main() {
       const html = JSON.stringify(renderer.toJSON())
       assert('screen: 통증 강도 renders as a 0~10 scale (11 radio buttons), not a text field', renderer.root.findAll((n) => n.props?.role === 'radio' && n.type === 'button').length >= 11 && html.includes('통증 강도 (0~10)'))
       assert('screen: a non-NRS target still renders the text field', html.includes('걷기 시간') && renderer.root.findAll((n) => n.type === 'input').length >= 1)
-      assert('screen: 세부 확인 section renders all four question texts from coreSpec', html.includes('세부 확인') && LBP_IDS.every((id) => html.includes(detailCheckQuestionText(id))))
+      assert('screen: 세부 확인 section renders every question text from coreSpec', html.includes('세부 확인') && LBP_IDS.every((id) => html.includes(detailCheckQuestionText(id))))
       const submitBtn = () => renderer.root.findAll((n) => n.type === 'button' && n.props.className === 'primaryBtn')[0]
       assert('screen: submit disabled before detail items are answered', submitBtn().props.disabled === true)
 
@@ -250,7 +254,15 @@ async function main() {
         const btn = groups[groupIndex].findAll((n) => n.type === 'button' && n.children.join('') === label)[0]
         await act(async () => btn.props.onClick())
       }
-      // groups: [0] pain NRS, [1] VISIT_04, [2] LBP_12 scale, [3] LBP_13, [4] LBP_14, [5] overall, [6] new symptom, [7] adverse
+      // groups: [0] pain NRS target rating, then the detail items in
+      // DETAIL_CHECK order, then the three fixed items.
+      //   [1] PAIN_03   [2] PAIN_03B  [3] VISIT_04
+      //   [4] LBP_12    [5] LBP_13    [6] LBP_14
+      //   [7] overall   [8] new symptom   [9] adverse
+      // (2026-09-22: 세부 항목이 4개 -> 6개. PAIN_03/PAIN_03B가 **공통** 재질문으로
+      //  들어오면서 뒤 인덱스가 둘씩 밀렸다.)
+      const DETAIL_GROUPS = [1, 2, 3, 4, 5, 6]
+      const FIXED_GROUPS = [7, 8, 9]
       // Answer EVERYTHING EXCEPT the detail items first -- the only thing
       // holding submit closed must then be the detail gate itself
       // (mutation: removing the detail gate has to flip this assertion).
@@ -258,19 +270,20 @@ async function main() {
       const walkInput = renderer.root.findAll((n) => n.type === 'input')[0]
       await act(async () => walkInput.props.onChange({ target: { value: '40분' } }))
       const groups = renderer.root.findAll((n) => n.props?.role === 'radiogroup')
+      assert('screen: radiogroup layout is as documented (1 target + 6 detail + 3 fixed)', groups.length === 10)
       const firstOption = (g) => g.findAll((n) => n.type === 'button')[0]
-      await act(async () => firstOption(groups[5]).props.onClick())
-      await act(async () => firstOption(groups[6]).props.onClick())
-      await act(async () => firstOption(groups[7]).props.onClick())
+      for (const i of FIXED_GROUPS) await act(async () => firstOption(groups[i]).props.onClick())
       assert('screen: with targets/overall/symptom/adverse answered, submit stays disabled ONLY because detail items are unanswered', submitBtn().props.disabled === true)
-      await act(async () => firstOption(groups[1]).props.onClick())
-      await clickRadio(2, '7')
-      await act(async () => firstOption(groups[3]).props.onClick())
-      assert('screen: three of four detail items answered -> still disabled (every item required)', submitBtn().props.disabled === true)
-      await act(async () => firstOption(groups[4]).props.onClick())
+      // 마지막 하나만 남기고 세부 항목을 채운다 -- "전부 답해야 열린다"를 고정.
+      for (const i of DETAIL_GROUPS.slice(0, -1)) {
+        if (i === 4) await clickRadio(4, '7') // LBP_12는 값을 특정한다(아래 POST 단언이 '7'을 확인)
+        else await act(async () => firstOption(groups[i]).props.onClick())
+      }
+      assert('screen: five of six detail items answered -> still disabled (every item required)', submitBtn().props.disabled === true)
+      await act(async () => firstOption(groups[DETAIL_GROUPS[DETAIL_GROUPS.length - 1]]).props.onClick())
       assert('screen: submit enabled once every item including the detail items is answered', submitBtn().props.disabled === false)
       await act(async () => submitBtn().props.onClick())
-      assert('screen: POST body carries detailAnswers for exactly the 4 asked ids', lastPost && lastPost.detailAnswers.map((a) => a.questionId).join(',') === LBP_IDS.join(','))
+      assert('screen: POST body carries detailAnswers for exactly the 6 asked ids', lastPost && lastPost.detailAnswers.map((a) => a.questionId).join(',') === LBP_IDS.join(','))
       assert('screen: POST body NRS value is the string "4" and LBP_12 is "7"', lastPost.targetRatings[0].patientReportedValue === '4' && lastPost.detailAnswers.find((a) => a.questionId === 'LBP_12').value === '7')
       assert('screen: reaches the done screen after submit', JSON.stringify(renderer.toJSON()).includes('응답이 접수되었습니다'))
 

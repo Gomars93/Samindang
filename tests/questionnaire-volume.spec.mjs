@@ -171,14 +171,32 @@ const MALE = { ...IDENTITY, ID_03: 'male' }
  * 그건 설계대로다. 허리·골반이 아닌 프로필은 하나도 변하지 않았다.
  * 고정 근거: `tests/visit-route-parity.spec.mjs`.
  */
+/*
+ * 2026-09-22 핀 갱신 (2) — 통증 프로필 전부 +2화면 / +4탭.
+ *
+ * `PAIN_03`(지금 통증) / `PAIN_03B`(가장 아플 때) NRS 두 문항을 추가한 결과다.
+ * 위의 HIP_00 건과 달리 이번에는 **부위를 가리지 않는다** -- 통증 강도는 허리·
+ * 무릎·팔손 어디서나 같은 것을 재므로 `IS_PRIMARY_PAIN` 전체에 뜬다. 통증이
+ * 아닌 프로필(수면·한약)은 하나도 변하지 않았다.
+ *
+ * 왜 이 값을 지불하는가. Master Spec v1.0은 "VISIT_04_SYMPTOM_IMPACT가 동일한
+ * 의미로 수집된다"며 NRS를 뺐는데, 그 둘은 다른 축이다 -- `얼마나 아픈가`와
+ * `얼마나 지장이 있나`. 4단계로는 재진 간 1~2점 변화가 보이지 않고, 원장이
+ * 실제로 차트에 NRS를 따로 적으며 매 재진마다 추적하고 있었다. 즉 이 두 화면은
+ * 새 기능이 아니라 **이미 종이에서 하던 일을 태블릿으로 옮긴 것**이다.
+ *
+ * 2문항인 이유: 진료실에서 확인하는 `지금`과 치료 목표가 되는 `가장 아플 때`를
+ * PO가 둘 다 기록하고 있어서다. 하나로 합치면 재진 비교의 시점이 흔들린다.
+ * 근거: `tests/pain-nrs.spec.mjs`, `DECISIONS.md` 2026-09-22.
+ */
 const PROFILES = [
-  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 24, taps: 48 },
-  { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 28, taps: 58 },
-  { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 27, taps: 54 },
-  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 26, taps: 52 },
+  { name: 'pain_fast · 요통(LBP)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 26, taps: 52 },
+  { name: 'pain_fast · 무릎', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'knee' }, screens: 30, taps: 62 },
+  { name: 'pain_fast · 팔/손', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'arm_hand' }, screens: 29, taps: 58 },
+  { name: 'pain_fast · 요통 + 추가상세(수면)', seed: { ...IDENTITY, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis', REFERENCE_SYMPTOMS_01: ['sleep'], ADDITIONAL_DETAIL_01: 'sleep' }, screens: 28, taps: 56 },
   { name: 'symptom · 수면', seed: { ...IDENTITY, VISIT_00_INTENT: 'symptom_consult', VISIT_02_SYMPTOM_MAIN: 'sleep' }, screens: 16, taps: 32 },
   { name: 'herbal · 증상치료(소화)', seed: { ...IDENTITY, VISIT_00_INTENT: 'herbal', VISIT_00B_HERBAL_PURPOSE: 'symptom', VISIT_02_SYMPTOM_MAIN: 'digestion' }, screens: 24, taps: 49 },
-  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 23, taps: 46 },
+  { name: 'pain_fast · 요통(남성)', seed: { ...MALE, VISIT_00_INTENT: 'pain_care', PAIN_01: 'low_back_pelvis' }, screens: 25, taps: 50 },
 ]
 
 console.log('=== questionnaire information volume (minimum-burden floor) ===\n')

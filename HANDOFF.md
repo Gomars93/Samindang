@@ -1,5 +1,68 @@
 # Current Handoff
 
+## 2026-09-22 (최신 58): **통증 강도(NRS) 도입** — `PAIN_03`/`PAIN_03B` + 재진 추적 + 닥터뷰 스냅샷
+
+**브랜치**: `claude/gracious-bell-epfxem` (PR #47 머지 후 main에서 새로 시작).
+
+PO가 **차트에 NRS를 적고 매 재진마다 추적**하고 있다는 사실이 확인되면서,
+Master Spec v1.0이 `PAIN_03`을 제외한 판단을 뒤집었다. 상세는 `DECISIONS.md`
+같은 날 항목.
+
+### 한 것
+- `PAIN_03`(지금) / `PAIN_03B`(가장 아플 때) — `numeric_scale` 0~10, NRS 표준
+  앵커, 통증 환자 **전 부위**. v0.2가 NRS에 배정했던 id를 그대로 되돌렸다.
+- `server/detailCheck.js` — **공통** 재질문에 추가(부위별 아님). 승인 전 부위
+  환자도 추적된다. `VISIT_04_SYMPTOM_IMPACT`는 그대로 둔다(다른 축).
+- `briefingModel.buildPainHeadline()` — Figma `A · Clinical Snapshot` 대응.
+  블록 4개 상한은 **그대로**. 행 문법도 하나 그대로, 값 자리만 `text` /
+  `scale`(점 10개) / `delta`(`8 → 5 ↓3`) 세 가지로 파생.
+- 픽스처 38개에 NRS 값, 컨택트 시트에 **재진 비교 데모** 1건 추가.
+
+### 재진 인프라는 이미 있었다
+재진 문진이 초진 문항 id를 그대로 다시 묻고, 환자 화면이 `numeric_scale`을 이미
+지원하며, `MicroFollowUpCard`가 초진 답 옆에 오늘 답을 붙인다. **id를 목록에
+넣는 것이 전부였다.**
+
+### 임상 판단 무관여
+안전 게이트·분류·운동 적격성 어디에도 안 들어간다. 테스트가 두 방향으로 고정:
+부위 로직 파일이 NRS를 **언급조차** 안 할 것 + **NRS 0과 10의 안전 플래그가
+글자 단위로 같을 것**.
+
+### 비용
+통증 프로필 **전부 +2화면 / +4탭**. 비통증(수면·한약)은 무변화.
+"이미 종이에서 하던 일을 태블릿으로 옮긴 것"이라 지불했다.
+
+### 검증
+`test:all` exit 0 / `build` exit 0. 신설 **139단언**(`tests/pain-nrs.spec.mjs`)
++ **뮤테이션 3회**(부위 축소 9실패 / 재진 제거 9실패 / 안전 판단 끌어들임 2실패).
+
+### 테스트 하네스 구멍 3개를 메웠다
+항상 뜨는 `numeric_scale` 문항이 처음 생기며 드러났다(기존 LBP_12는
+`required:false`+만성 게이트라 워커가 밟은 적 없음). `integration.spec.mjs`
+헬퍼 2곳 + `region-pack.spec.mjs`의 목록 리터럴 복제 1곳.
+
+### Next Recommended Action
+1. **원장 판정** — `npm run contact-sheet` → `out/contact-sheet/index.html`.
+   39케이스(재진 비교 데모 1 + 초진 38). 통과하면 2번.
+2. **PR #27 결함 2건** — 실측 확인 완료, 원장 결정 불필요. 바로 가능.
+   - 좌측 컨텍스트 열이 **27" 양방향에서 `static`** (sticky가 834 portrait
+     미디어쿼리 안에만 있음) → 스크롤하면 환자명·안전 칩이 사라짐
+   - `judgment__radioOption` 3개가 **18px** (CSS 규칙이 한 줄도 없음).
+     레인1을 URGENT로 올릴 수 있는 안전 입력인데 화면에서 가장 작은 타겟
+   - **PR #27 자체는 못 쓴다 — main보다 247커밋 뒤처짐.** 결함만 새로 고친다.
+3. 입력 행(체크식 칩) → 블록 5~9 → `DoctorView` 연결 → 옛 CSS 폐기.
+4. **PR #25는 이미 main에 반영돼 있다**(docstring 한 줄만 옛 문구). 닫아도 된다.
+5. 한약 프로필 — 통증 문법 판정 후.
+6. `codex/pain-questionnaire-v2-ux`(main 위 19커밋) 정리.
+
+### PO 쪽 미완료 (이월)
+- **툴팁 문안 감수** — PR-B1의 62개 + PR-B2의 3개. 전부 제가 쓴 초안이다.
+- **NRS 문구 감수** — `지금 이 순간, 통증은 어느 정도인가요?` /
+  `가장 아플 때는 어느 정도인가요?`. 앵커는 NRS 표준을 그대로 썼다.
+- 시그마 external note AI 요약의 **음성 데이터 처리 방식 확인**(환자 동의 필요 여부)
+- 저장소 폴더를 Google Drive 동기화에서 제외 → 그 다음 Drive에서 `.env.local`/`.data/` 삭제
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 한약 경로 end-to-end
+
 ## 2026-09-22 (최신 57): **통증 닥터뷰 브리핑 4블록 + 컨택트 시트** — 재설계 1차 슬라이스
 
 **브랜치**: `claude/gracious-bell-epfxem` (최신 56과 같은 브랜치, 커밋 분리).

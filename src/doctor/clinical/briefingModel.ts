@@ -41,6 +41,15 @@ export type RowStatus =
   /** 문진이 아직 묻지 않는 항목이다. `note`에 이유를 적는다. */
   | 'not_collected'
 
+/**
+ * 값 자리에 무엇이 들어가는지. **행의 뼈대는 하나뿐이다** -- 라벨 왼쪽, 값
+ * 오른쪽. 여기서 바뀌는 것은 값의 생김새이지 행의 구조가 아니다.
+ *   text  : 그냥 문자열           `앉아 있기 ──── 10분`
+ *   scale : 0~10 점 10개 + 숫자    `지금 통증 ──── ●●●●●●●●○○ 8`
+ *   delta : 이전 → 현재 (+변화량)  `지금 통증 ──── 8 → 5  ↓3`
+ */
+export type RowKind = 'text' | 'scale' | 'delta'
+
 export type BriefingRow = {
   /** 행 라벨. 원장이 훑는 단어라 짧게 고정한다. */
   label: string
@@ -48,6 +57,14 @@ export type BriefingRow = {
   value: string | null
   tone: RowTone
   status: RowStatus
+  /** 값 자리의 생김새. 기본은 'text'. */
+  kind?: RowKind
+  /** kind==='scale' | 'delta'일 때의 현재 수치. */
+  n?: number
+  /** kind==='delta'일 때의 이전 수치. */
+  prev?: number
+  /** kind==='scale'일 때의 척도 상한(기본 10). */
+  max?: number
   /**
    * 이 값이 어디서 왔는지. 화면에는 안 나오지만 테스트가 이걸로
    * "필드 × 화면" 도달을 검증한다(CLAUDE.md의 경로 교체 규칙).
@@ -391,6 +408,71 @@ function recoveryExpectationRow(raw: RawValue): BriefingRow {
     tone: n <= 3 ? 'warn' : n >= 7 ? 'good' : 'neutral',
     status: 'answered',
     source,
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 상단 스냅샷 (Figma `A · Clinical Snapshot`)
+ *
+ * Figma에서 NRS는 4블록 **안**이 아니라 그 **위의 전폭 띠**에 있었다.
+ * 통증 강도는 어느 한 블록의 항목이 아니라 그 환자를 한 줄로 요약하는
+ * 값이기 때문이다. 그래서 블록 4개 상한을 흔들지 않고 별도 함수로 둔다 --
+ * 블록을 5개로 늘리는 순간 "한 화면" 규율이 무너지기 시작한다.
+ * ------------------------------------------------------------------ */
+
+export type BriefingHeadline = {
+  /** 좌측 큰 글씨. 부위 + 기간. */
+  title: string
+  /** 그 아래 한 줄. 양상 요약. */
+  subtitle: string
+  /** 우측 척도/비교 행들. */
+  rows: BriefingRow[]
+}
+
+/** 이전 방문의 NRS. 없으면 비교 행 대신 척도 행이 나온다. */
+export type PriorNrs = { now?: number | null; worst?: number | null }
+
+function nrsRow(label: string, raw: RawValue, prior: number | null | undefined, source: string): BriefingRow {
+  if (isEmpty(raw)) {
+    return { label, value: null, tone: 'neutral', status: 'unanswered', source }
+  }
+  const n = Number(raw)
+  if (!Number.isFinite(n)) {
+    return { label, value: null, tone: 'neutral', status: 'unanswered', source }
+  }
+  // NRS는 주관적 지표라 절대값으로 겁주지 않는다 -- 색은 추세(비교 행)에서만
+  // 의미를 갖고, 단일 값은 중립으로 읽는다.
+  if (typeof prior === 'number' && Number.isFinite(prior)) {
+    const delta = n - prior
+    return {
+      label,
+      value: `${prior} → ${n}`,
+      tone: delta < 0 ? 'good' : delta > 0 ? 'warn' : 'neutral',
+      status: 'answered',
+      kind: 'delta',
+      n,
+      prev: prior,
+      max: 10,
+      source,
+    }
+  }
+  return { label, value: `${n}`, tone: 'neutral', status: 'answered', kind: 'scale', n, max: 10, source }
+}
+
+export function buildPainHeadline(payload: DoctorPayload, prior?: PriorNrs): BriefingHeadline {
+  const r = payload.responses
+  const pain = r.modules?.pain
+  const region = pain?.primary_location ?? null
+  const duration = optionLabel('VISIT_03_SYMPTOM_DURATION', r.visit_goal?.chief_duration ?? null)
+  const quality = optionLabels('PAIN_02', (pain?.pain_qualities as string[] | null) ?? null).join(' · ')
+
+  return {
+    title: [region ? optionLabel('PAIN_01', region) : '부위 미상', duration].filter(Boolean).join(' · '),
+    subtitle: quality || '통증 양상 미응답',
+    rows: [
+      nrsRow('지금 통증', pain?.nrs_now, prior?.now, 'modules.pain.nrs_now'),
+      nrsRow('가장 아플 때', pain?.nrs_worst, prior?.worst, 'modules.pain.nrs_worst'),
+    ],
   }
 }
 

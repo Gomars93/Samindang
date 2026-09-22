@@ -52,6 +52,35 @@ import { DOCTOR_FIXTURES } from '${ROOT}/src/doctor/fixtures'
 import { PainBriefing } from '${ROOT}/src/doctor/clinical/PainBriefing'
 import { buildPainBriefing } from '${ROOT}/src/doctor/clinical/briefingModel'
 
+/*
+ * 재진 비교 데모.
+ *
+ * 비교 행(③)은 지난 방문의 NRS가 있어야 나온다. 픽스처는 초진 한 장뿐이라
+ * 그대로는 영원히 척도 행만 보인다 -- 그래서 첫 허리 케이스를 "지난번 값이
+ * 있는 상태"로 한 번 더 렌더해 비교 행이 실제로 어떻게 보이는지 시트에
+ * 넣는다. 지어낸 화면이 아니라 같은 컴포넌트에 prior만 넘긴 것이다.
+ */
+export function renderRevisitDemo() {
+  const f = DOCTOR_FIXTURES.find(
+    (x) => x.payload.responses.modules?.pain?.primary_location === 'low_back_pelvis',
+  )
+  if (!f) return []
+  const now = f.payload.responses.modules.pain.nrs_now
+  const worst = f.payload.responses.modules.pain.nrs_worst
+  return [
+    {
+      name: f.name + '  —  재진 3회차(지난번 대비)',
+      region: 'low_back_pelvis',
+      profile: '재진 비교',
+      blockCount: buildPainBriefing(f.payload).length,
+      rowCount: buildPainBriefing(f.payload).reduce((n, b) => n + b.rows.length, 0),
+      html: renderToStaticMarkup(
+        PainBriefing({ payload: f.payload, priorNrs: { now: Math.min(10, now + 2), worst: Math.min(10, worst + 1) } }),
+      ),
+    },
+  ]
+}
+
 export function render() {
   const painOnly = DOCTOR_FIXTURES.filter(
     (f) => f.payload.routing.primary_module === 'Pain' || f.payload.routing.additional_module === 'Pain',
@@ -329,7 +358,7 @@ console.log('컨택트 시트 생성 중...')
 
 const bundlePath = bundle()
 const mod = await import(bundlePath)
-const cards = mod.render()
+const cards = [...mod.renderRevisitDemo(), ...mod.render()]
 
 fs.mkdirSync(OUT, { recursive: true })
 fs.writeFileSync(path.join(OUT, 'index.html'), page(cards, { total: mod.TOTAL }))

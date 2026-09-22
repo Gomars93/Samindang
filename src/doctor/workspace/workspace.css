@@ -270,6 +270,51 @@
   vertical-align: 2px;
 }
 
+.workspace__functionSummary {
+  margin-top: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.workspace__functionSummary h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--primary);
+}
+
+.workspace__functionSummary dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.workspace__functionSummary dl > div {
+  min-width: 0;
+}
+
+.workspace__functionSummary dt {
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.workspace__functionSummary dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.workspace__functionSummary__pending {
+  color: var(--text-muted) !important;
+  font-weight: 600 !important;
+}
+
 .workspace__heroRows {
   display: flex;
   flex-direction: column;
@@ -1624,6 +1669,9 @@
   .workspace__heroGrid,
   .workspace__systemicGrid {
     grid-template-columns: 1fr 1fr;
+  }
+  .workspace__functionSummary dl {
+    grid-template-columns: 1fr;
   }
   .workspace__profileBar {
     flex-direction: column;

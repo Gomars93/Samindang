@@ -188,6 +188,38 @@ test('pain scenario 1: shows the pain-specific 오늘 확인할 것 section', ()
   assert.ok(html.includes('원장 최종 판단'))
 })
 
+test('Pain v2: Doctor View shows target activity and ability as context, with F04 explicitly pending', () => {
+  const payload = structuredClone(PAIN_SCENARIO_1.payload)
+  payload.responses.modules.pain.target_activity = 'SIT_TO_STAND'
+  payload.responses.modules.pain.target_activity_ability = 4
+  const html = renderToString(React.createElement(DoctorWorkspace, { payload, synthetic: PAIN_SCENARIO_1.synthetic }))
+  assert.ok(html.includes('aria-label="환자 활동 요약"'))
+  assert.ok(html.includes('목표 활동'))
+  assert.ok(html.includes('앉았다 일어나기'))
+  assert.ok(html.includes('수행능력'))
+  assert.ok(html.includes('4 / 10'))
+  assert.ok(html.includes('제한 이유'))
+  assert.ok(html.includes('수집 전 · 임상 검토 중'))
+})
+
+test('Pain v2: legacy records without F01/F02 do not gain an empty function summary', () => {
+  const payload = structuredClone(PAIN_SCENARIO_1.payload)
+  delete payload.responses.modules.pain.target_activity
+  delete payload.responses.modules.pain.target_activity_ability
+  const html = renderToString(React.createElement(DoctorWorkspace, { payload, synthetic: PAIN_SCENARIO_1.synthetic }))
+  assert.ok(!html.includes('aria-label="환자 활동 요약"'))
+})
+
+test('Pain v2: malformed activity context fails closed and never leaks object text', () => {
+  const payload = structuredClone(PAIN_SCENARIO_1.payload)
+  payload.responses.modules.pain.target_activity = { invalid: true }
+  payload.responses.modules.pain.target_activity_ability = 99
+  const html = renderToString(React.createElement(DoctorWorkspace, { payload, synthetic: PAIN_SCENARIO_1.synthetic }))
+  assert.ok(html.includes('확인 필요(값 형식 오류)'))
+  assert.ok(!html.includes('[object Object]'))
+  assert.ok(!html.includes('99 / 10'))
+})
+
 // Round 11: Myungri is no longer inside the clinical workspace AT ALL --
 // not collapsed within it, not below it. It is a separate record surface
 // (DoctorView's 명리 tab). This is the stronger form of the standing rule

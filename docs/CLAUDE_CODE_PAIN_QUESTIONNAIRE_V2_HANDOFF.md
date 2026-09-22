@@ -73,6 +73,15 @@ F02 means `0 = cannot do the activity at all` and `10 = can do it as usual`. It 
 - The scale renders semantic radio buttons with `aria-checked`.
 - Existing option-card, focus-visible, contrast, and tablet navigation behavior remains unchanged.
 
+### Doctor View summary
+
+- The pain glance card shows a read-only `목표 활동 · 수행능력 · 제한 이유` summary when F01/F02 data exists.
+- F01 uses the patient-facing Korean option label; F02 displays `n / 10`.
+- The unapproved F04 slot displays `수집 전 · 임상 검토 중`; no F04 value or clinical rule was invented.
+- Legacy records without F01/F02 do not gain an empty summary.
+- Malformed or out-of-range values fail closed as `확인 필요(값 형식 오류)`.
+- The summary has no effect on safety ordering, clinical judgment, or exercise eligibility.
+
 ## 5. Figma source of truth
 
 | Purpose | Node | Status |
@@ -106,6 +115,9 @@ F05 node `21:76` was previously checked at 800×1280. Its activity chip is `23:9
 - `src/styles.css`: numeric scale and activity-chip presentation.
 - `tests/patient-ux.spec.mjs`: score buttons, selected state, chip, accessible progress.
 - `tests/integration.spec.mjs`: visibility, payload, pruning/state preservation, unchanged safety.
+- `src/doctor/workspace/PainWorkspace.tsx`: read-only patient activity summary.
+- `src/doctor/workspace/workspace.css`: three-field summary layout and narrow-screen fallback.
+- `tests/doctor-workspace.spec.mjs`: valid, legacy-empty, and malformed-value display tests.
 - `src/spec/lbpLogic.ts`, `src/spec/lbpAdapter.ts`: protected clinical logic unless an independently approved task explicitly requires a change.
 
 ## 7. Verification at handoff
@@ -121,18 +133,11 @@ npm run build
 - Integration: 1,286 assertions passed.
 - TypeScript/Vite production build passed.
 - Vite emitted only the existing large-chunk advisory.
+- Doctor Workspace: 309 assertions passed after the summary connection.
 
 ## 8. Next safe implementation target
 
-Do not implement F04 runtime behavior yet. The next safe unit is a Doctor View presentation shell for already approved data:
-
-> 목표 활동 · 수행능력 · 제한 이유
-
-- Render `target_activity` and `target_activity_ability` as context-only summary fields.
-- Leave the `제한 이유` slot visibly pending/empty until F04 is approved and collected.
-- Place this summary after existing safety findings; it must not alter safety priority.
-- Add display-only tests.
-- Do not add exercise candidates in the same commit unless existing LBP eligibility can be reused without modifying its clinical rules.
+The Doctor View presentation shell is complete. Do not implement F04 runtime behavior yet. The next code unit should inspect and reuse the existing LBP eligibility pipeline without changing its clinical rules, keeping the current `adopt, never automatic` behavior.
 
 Intended later exercise workflow:
 

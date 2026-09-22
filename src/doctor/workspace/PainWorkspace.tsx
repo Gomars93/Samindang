@@ -99,6 +99,18 @@ import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
 import { MicroFollowUpCard } from './MicroFollowUpCard'
 
+const unreadableFunctionValue = '확인 필요(값 형식 오류)'
+
+function patientFunctionSummaryValue(value: unknown, kind: 'activity' | 'ability'): string {
+  if (value === null || value === undefined || value === '') return '미응답'
+  if (kind === 'activity') {
+    return typeof value === 'string' ? answerLabel('PAIN_F01', value) : unreadableFunctionValue
+  }
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 10
+    ? `${value} / 10`
+    : unreadableFunctionValue
+}
+
 /**
  * LBP v1 Batch 1 (G3/G4): "허리 움직임 반응" -- the clinician's own
  * directional-response observation. Record-only (no computed judgment);
@@ -281,6 +293,11 @@ export function PainWorkspaceLane2({
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0]?.painFollowUpTargets,
   )
+  const targetActivity = r.modules?.pain?.target_activity
+  const targetActivityAbility = r.modules?.pain?.target_activity_ability
+  const hasPatientFunctionContext =
+    (targetActivity !== null && targetActivity !== undefined && targetActivity !== '') ||
+    (targetActivityAbility !== null && targetActivityAbility !== undefined && targetActivityAbility !== '')
 
   return (
     <div className="workspace__pain">
@@ -330,6 +347,25 @@ export function PainWorkspaceLane2({
             </strong>
           </div>
         </div>
+        {hasPatientFunctionContext && (
+          <section className="workspace__functionSummary" aria-label="환자 활동 요약">
+            <h4>환자 활동 요약</h4>
+            <dl>
+              <div>
+                <dt>목표 활동</dt>
+                <dd>{patientFunctionSummaryValue(targetActivity, 'activity')}</dd>
+              </div>
+              <div>
+                <dt>수행능력</dt>
+                <dd>{patientFunctionSummaryValue(targetActivityAbility, 'ability')}</dd>
+              </div>
+              <div>
+                <dt>제한 이유</dt>
+                <dd className="workspace__functionSummary__pending">수집 전 · 임상 검토 중</dd>
+              </div>
+            </dl>
+          </section>
+        )}
         {(aggravatingText || freq || agg) && (
           <div className="workspace__heroRows">
             {aggravatingText && (

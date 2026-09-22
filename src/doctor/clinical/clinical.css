@@ -1,0 +1,217 @@
+/*
+ * 입력 블록 — 칩.
+ *
+ * 규칙은 읽기 블록과 같다.
+ *   1. 행 모양은 하나다. `.painRow`를 그대로 쓰고 값 자리만 칩으로 채운다.
+ *   2. 색은 `tokens.css`의 3개만 쓴다. 여기서 새 색을 선언하지 않는다.
+ *   3. 간격은 `--pain-*` 스케일 밖의 값을 쓰지 않는다.
+ *
+ * 타겟 크기: 칩은 44px 이상이다. 같은 날 고친 `judgment__radioOption` 18px
+ * 결함과 같은 사고를 여기서 되풀이하지 않는다.
+ */
+
+/* 입력 행은 칩이 여러 줄로 감길 수 있어 baseline이 아니라 위쪽 정렬이다. */
+.painRow--input {
+  align-items: flex-start;
+}
+
+.painRow--input .painRow__label {
+  /* 칩 높이(44px)의 가운데에 라벨이 오도록. */
+  padding-top: 11px;
+}
+
+.painRow__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  /* 값 자리는 읽기 행과 같은 규칙: 라벨을 밀지 않고 남는 폭을 쓴다. */
+  min-width: 0;
+}
+
+/* ---------------- 칩 ---------------- */
+
+.painChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 권장 최소 타겟. 세로는 min-height, 가로는 padding으로 확보한다. */
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--pain-border);
+  border-radius: 10px;
+  background: var(--pain-surface);
+  color: var(--pain-neutral);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  /* 진료 중 잘못 눌러 글자가 잡히는 것을 막는다. */
+  user-select: none;
+}
+
+.painChip:hover {
+  border-color: var(--pain-neutral);
+}
+
+.painChip:focus-visible {
+  outline: 2px solid var(--pain-good);
+  outline-offset: 2px;
+}
+
+/*
+ * 선택 상태는 **테두리 + 배경 + 굵기 + 색** 넷으로 표시한다.
+ * 색 하나로만 구분하면 색각 이상에서 안 보인다.
+ */
+.painChip--on {
+  border-color: var(--pain-good);
+  background: #eaf1ed;
+  color: var(--pain-good);
+  font-weight: 700;
+}
+
+/* 읽기 전용(컨택트 시트)에서는 커서를 바꾸지 않는다 -- 누를 수 없는 것이 눌릴 것처럼 보이면 안 된다. */
+span.painChip {
+  cursor: default;
+}
+
+/* ---------------- 2층 (`＋ 전체`) ---------------- */
+
+.painChips__more {
+  display: inline-block;
+  position: relative;
+}
+
+.painChip--more {
+  color: var(--pain-text-muted);
+  border-style: dashed;
+  /* <summary>의 기본 삼각형을 없앤다 -- 칩 모양이 하나여야 한다. */
+  list-style: none;
+}
+
+.painChips__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+/*
+ * 펼친 2층은 행 아래로 흐르지 않고 **띄워서** 연다. 행 높이가 갑자기
+ * 늘어나면 옆 블록이 밀리고 "한 화면" 예산이 무너진다.
+ */
+.painChips__moreBody {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  width: max-content;
+  max-width: 520px;
+  padding: 10px;
+  background: var(--pain-surface);
+  border: 1px solid var(--pain-border);
+  border-radius: var(--pain-radius);
+  box-shadow: 0 6px 20px rgba(48, 56, 52, 0.12);
+}
+
+/* ---------------- 아직 손대지 않은 행 ---------------- */
+
+/*
+ * 미체크는 "정상"이 아니라 **"아직 안 봤음"**이다(카탈로그 규약). 그래서
+ * 지우지 않고 라벨만 뒤로 물린다 -- 원장이 훑을 때 "여기 아직 안 했네"가
+ * 보여야 한다.
+ */
+.painRow--untouched .painRow__label {
+  color: var(--pain-text-faint);
+  font-weight: 400;
+}
+
+/* ---------------- 블록 부속 ---------------- */
+
+.painBlock__empty {
+  margin: 0;
+  color: var(--pain-text-faint);
+  font-size: 13px;
+}
+
+/*
+ * 블록당 자유입력 **한 칸**. 기존 화면의 textarea 10개가 화면을 늘린
+ * 주범이었고, 나머지는 칩으로 옮기거나 「마무리」 화면으로 뺐다.
+ */
+.painNote {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.painNote__label {
+  font-size: var(--pain-fs-eyebrow);
+  font-weight: 600;
+  color: var(--pain-text-muted);
+}
+
+.painNote__input {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--pain-border);
+  border-radius: 10px;
+  background: var(--pain-surface);
+  color: var(--pain-text);
+  resize: vertical;
+}
+
+.painNote__input:focus-visible {
+  outline: 2px solid var(--pain-good);
+  outline-offset: 1px;
+  border-color: var(--pain-good);
+}
+
+.painNote__input::placeholder {
+  color: var(--pain-text-faint);
+}
+
+/* ---------------- 안전 칩 (스냅샷 띠) ---------------- */
+
+/*
+ * Figma `A · Clinical Snapshot`의 우상단 칩(`✓ 긴급 Red flag 없음`) 자리.
+ * 블록이 아니라 띠에 있는 이유는, 안전이 어느 한 블록의 항목이 아니라
+ * **화면 전체의 전제**이기 때문이다. 접히지 않는다.
+ */
+.painSafety {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.painSafety--clear {
+  background: #eaf1ed;
+  color: var(--pain-good);
+}
+
+.painSafety--review {
+  background: #f6ecdd;
+  color: var(--pain-warn);
+}
+
+.painSafety--unknown {
+  background: var(--pain-divider);
+  color: var(--pain-text-muted);
+}
+
+/* 안전 칩이 어느 부위 때문인지 -- 칩 안에서 한 단계 물러난 글자. */
+.painSafety__regions {
+  font-weight: 500;
+  opacity: 0.75;
+}

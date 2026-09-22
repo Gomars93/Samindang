@@ -51,6 +51,62 @@ function bundle() {
 import { DOCTOR_FIXTURES } from '${ROOT}/src/doctor/fixtures'
 import { PainBriefing } from '${ROOT}/src/doctor/clinical/PainBriefing'
 import { buildPainBriefing } from '${ROOT}/src/doctor/clinical/briefingModel'
+import { ClinicalBlocks } from '${ROOT}/src/doctor/clinical/ClinicalBlocks'
+import { buildClinicalBlocks } from '${ROOT}/src/doctor/clinical/clinicalModel'
+import { emptyWorkingHypothesis } from '${ROOT}/src/doctor/workspace/workingHypothesis'
+
+/*
+ * 입력 블록 데모용 입력값.
+ *
+ * 실제 워크스페이스 상태에 아직 연결하지 않았으므로(원장 판정 후 연결),
+ * 시트에서는 **카탈로그에서 온 실제 항목 + 손으로 고른 몇 개의 선택 상태**로
+ * 그린다. 칩 라벨 자체는 지어내지 않는다 -- observationOptions / rehab /
+ * hypothesis 상수를 그대로 쓴다.
+ */
+const DEMO_PATTERNS = [
+  { id: 'disc', labelKo: '추간판성', patientEasyLabelKo: '디스크 쪽', particleKo: '과' },
+  { id: 'facet', labelKo: '후관절성', patientEasyLabelKo: '관절 쪽', particleKo: '과' },
+  { id: 'si', labelKo: '천장관절성', patientEasyLabelKo: '골반 쪽', particleKo: '과' },
+]
+
+function demoClinicalInput(variant) {
+  const touched = variant === 'touched'
+  return {
+    observation: touched
+      ? { TONGUE: '담백설 · 치흔·반대', PULSE: '침 · 무력', ABDOMEN: '복력 연약' }
+      : { TONGUE: '', PULSE: '', ABDOMEN: '' },
+    exams: [
+      { id: 'slr', title: 'SLR (하지직거상)', priority: 'MUST_CHECK', reasonFacts: [], source: 'SUGGESTED', result: {} },
+      { id: 'faber', title: 'FABER', priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: {} },
+      { id: 'slump', title: 'Slump test', priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: {} },
+    ],
+    examResults: touched ? { slr: '양성', faber: '음성' } : {},
+    patterns: DEMO_PATTERNS,
+    hypothesis: touched
+      ? { supports: { disc: 'HIGHER', facet: 'CONSIDER', si: 'LOWER' }, recordedAt: null }
+      : emptyWorkingHypothesis(DEMO_PATTERNS),
+    finalAssessment: touched ? '굴곡 부하에서 재현. 우측 L5 분절 우세로 본다.' : '',
+    rehab: [
+      { id: 'r1', title: '엎드려 상체 신전', goal: '', rationale: '', sourceFacts: [], contraindicationFacts: [], source: 'SUGGESTED', status: touched ? 'ACCEPTED' : 'SUGGESTED', clinicianFinalInstruction: '' },
+      { id: 'r2', title: '복횡근 활성', goal: '', rationale: '', sourceFacts: [], contraindicationFacts: [], source: 'SUGGESTED', status: touched ? 'HELD' : 'SUGGESTED', clinicianFinalInstruction: '' },
+    ],
+  }
+}
+
+export function renderClinicalDemo() {
+  return ['untouched', 'touched'].map((variant) => {
+    const input = demoClinicalInput(variant)
+    const blocks = buildClinicalBlocks(input)
+    return {
+      name: variant === 'touched' ? '입력 블록 — 원장이 기록한 뒤' : '입력 블록 — 진료 시작 시(빈 상태)',
+      region: 'low_back_pelvis',
+      profile: '입력 4블록',
+      blockCount: blocks.length,
+      rowCount: blocks.reduce((n, b) => n + b.rows.length, 0),
+      html: renderToStaticMarkup(ClinicalBlocks({ input, readOnly: true })),
+    }
+  })
+}
 
 /*
  * 재진 비교 데모.
@@ -142,6 +198,7 @@ function page(cards, meta) {
   const css = [
     fs.readFileSync(path.join(ROOT, 'src/doctor/clinical/tokens.css'), 'utf8'),
     fs.readFileSync(path.join(ROOT, 'src/doctor/clinical/briefing.css'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/doctor/clinical/clinical.css'), 'utf8'),
   ].join('\n')
 
   return `<!doctype html>
@@ -358,7 +415,7 @@ console.log('컨택트 시트 생성 중...')
 
 const bundlePath = bundle()
 const mod = await import(bundlePath)
-const cards = [...mod.renderRevisitDemo(), ...mod.render()]
+const cards = [...mod.renderClinicalDemo(), ...mod.renderRevisitDemo(), ...mod.render()]
 
 fs.mkdirSync(OUT, { recursive: true })
 fs.writeFileSync(path.join(OUT, 'index.html'), page(cards, { total: mod.TOTAL }))
@@ -375,13 +432,13 @@ console.log(`  index.html  픽스처 ${cards.length}개 / 전체 ${mod.TOTAL}개
  */
 const seen = new Set()
 const strip = []
-for (const c of [...cards].sort((a, b) => (a.region === 'low_back_pelvis' ? -1 : 0) - (b.region === 'low_back_pelvis' ? -1 : 0))) {
+for (const c of [...cards].filter((c) => c.profile !== '입력 4블록').sort((a, b) => (a.region === 'low_back_pelvis' ? -1 : 0) - (b.region === 'low_back_pelvis' ? -1 : 0))) {
   if (seen.has(c.region)) continue
   seen.add(c.region)
   strip.push(c)
   if (strip.length === 6) break
 }
-fs.writeFileSync(path.join(OUT, 'strip.html'), page(strip, { total: mod.TOTAL }))
+fs.writeFileSync(path.join(OUT, 'strip.html'), page([...mod.renderClinicalDemo(), ...strip], { total: mod.TOTAL }))
 console.log(`  strip.html  대표 ${strip.length}개 (${strip.map((c) => REGION_KO[c.region] ?? c.region).join(', ')})`)
 
 let shots = []

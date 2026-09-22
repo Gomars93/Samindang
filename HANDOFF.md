@@ -1,5 +1,73 @@
 # Current Handoff
 
+## 2026-09-22 (최신 60): **입력 4블록 + 안전 칩** — 행 문법 하나로 읽기·쓰기를 덮는다
+
+**브랜치**: `claude/gracious-bell-epfxem` (PR #49 머지 후 main에서 새로 시작).
+
+PO가 컨택트 시트를 보고 문법을 승인. 입력 블록과 블록 5~9를 만들었다.
+상세는 `DECISIONS.md` 같은 날 항목.
+
+### 화면 구성이 확정됐다
+```
+띠 1 (환자 요약 + 안전 칩 + NRS 2행)
+읽기 4  FUNCTION / LOAD / NEURO / RECOVERY
+입력 4  OBSERVATION / EXAM / ASSESSMENT / PLAN
+= 8블록
+```
+앞서 분류한 "진료 9블록"에서 안전이 블록이 아니라 **띠의 칩**으로 가면서
+8블록이 됐다 — Figma `A · Clinical Snapshot` 그대로다.
+
+### 한 것
+- `clinicalModel.ts` / `ClinicalBlocks.tsx` / `clinical.css` 신설.
+  **칩 항목은 전부 기존 카탈로그에서** 온다(설맥복 `observationOptions`,
+  가설 `HYPOTHESIS_SUPPORT_LABEL_KO`, 처치 `REHAB_SUGGESTION_STATUS_LABEL`).
+- PR-B1의 **3층 구조를 흡수**했다. 1층은 펼치고 2층은 `＋ 전체` 뒤로,
+  펼치면 띄워서 연다(행 높이가 안 늘어난다). 툴팁 62개가 그대로 산다.
+- **자유입력 10개 → 1개.** 판단 블록의 `최종 판단` 한 칸만 남겼다.
+- `buildSafetyChip()` — 스냅샷 띠의 안전 칩. `MAX_BRIEFING_BLOCKS = 4`는 그대로.
+- 칩 타겟 44px (오늘 고친 라디오 18px 결함과 같은 사고를 되풀이하지 않는다).
+
+### 테스트가 내 버그 두 개를 잡았다
+1. 설진 1층이 상한(6)을 다 채워서 **선택된 2층 칩이 잘려 나갔다** — 주석에
+   "그러지 않겠다"고 적어놓고 코드는 반대였다. 상한을 안 고른 칩에만 적용.
+2. `§D` 허용 목록을 모델 자신에서 만들어 **공허한 단언**이었다. 뮤테이션이
+   통과해서 발견. 검사 결과 세 칩만 테스트에 리터럴로 박았다.
+
+### 기존 단언을 지우지 않고 조였다
+안전 칩이 `§C 모델이 safety_flags를 읽지 않는다`에 걸렸다. 표시는 판단이
+아니므로 **원래 뜻하던 것으로** 조였다 — "읽어서 표시"는 허용, "재판정·
+새 상태값·다른 행에 번짐"은 금지. 우선순위는 `lane1Summary`를 미러링한 것이고
+레인1 패널은 그대로 상세를 담당한다.
+
+### 검증
+`test:all` exit 0 / `build` exit 0. 신설 **49단언**(`tests/pain-clinical.spec.mjs`)
++ **뮤테이션 4회**. `pain-briefing` 698 → **734단언**.
+
+### 아직 연결 안 됨
+`ClinicalBlocks`는 컨트롤드 컴포넌트(`onToggle`/`onNote`)로 만들었지만
+`DoctorWorkspace` 상태에 **배선되지 않았다.** 머지해도 원장 화면은 안 바뀐다.
+
+### Next Recommended Action
+1. **`DoctorWorkspace` 배선** — 8블록을 실제 상태에 연결. 여기까지 해야
+   **처음으로 원장이 새 화면을 쓴다.** 토글 핸들러는
+   `toggleObservationChip`(카탈로그 제공) 등 기존 함수를 그대로 쓴다.
+2. **「마무리」 화면 분리** — EMR·환자전달·QR·메시징·복약·재평가 7블록을
+   진료 화면에서 뺀다. 한약에서 이미 검증된 수술(최신 52, 1.41→0.97화면).
+3. **C그룹 5개 판단** — MicroFollowUp / AdditionalConcern /
+   StructuredReassessment / SupportContradiction / PriorVisitHistory.
+   진료 중 실제로 보시는지 PO 확인 필요.
+4. 옛 `doctor.css` 폐기 — 8블록이 실제로 가동된 **뒤에**.
+5. 한약 프로필 — 통증 문법이 실가동된 후.
+6. `codex/pain-questionnaire-v2-ux`(main 위 19커밋) 정리.
+
+### PO 쪽 미완료 (이월)
+- **툴팁 문안 감수** — PR-B1의 62개 + PR-B2의 3개. 전부 제가 쓴 초안이다.
+- **NRS 문구 감수** — `지금 이 순간, 통증은 어느 정도인가요?` /
+  `가장 아플 때는 어느 정도인가요?`. 앵커는 NRS 표준 그대로.
+- 시그마 external note AI 요약의 **음성 데이터 처리 방식 확인**(환자 동의 필요 여부)
+- 저장소 폴더를 Google Drive 동기화에서 제외 → 그 다음 Drive에서 `.env.local`/`.data/` 삭제
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 한약 경로 end-to-end
+
 ## 2026-09-22 (최신 58): **통증 강도(NRS) 도입** — `PAIN_03`/`PAIN_03B` + 재진 추적 + 닥터뷰 스냅샷
 
 **브랜치**: `claude/gracious-bell-epfxem` (PR #47 머지 후 main에서 새로 시작).

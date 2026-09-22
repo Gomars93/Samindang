@@ -16,7 +16,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DOCTOR_FIXTURES } from './.briefing-fixtures.mjs'
-import { buildPainBriefing, MAX_BRIEFING_BLOCKS } from './.briefing-model.mjs'
+import { buildPainBriefing, buildPainHeadline, MAX_BRIEFING_BLOCKS } from './.briefing-model.mjs'
+
+/** 소스 검사에서 주석은 뺀다 -- 설명문에 나온 단어를 코드로 오인하지 않게. */
+const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
 const here = dirname(fileURLToPath(import.meta.url))
 let passed = 0
@@ -118,11 +121,68 @@ ok('§B 허리 픽스처가 실제로 존재한다 (위 단언이 공허하지 �
 
 const modelSrc = readFileSync(join(here, '..', 'src', 'doctor', 'clinical', 'briefingModel.ts'), 'utf8')
 
-// 브리핑은 안전 판정에 관여하지 않는다. safety_flags를 읽는 순간 "화면이
-// 임상 판단을 한다"가 되고, 그건 레인1 안전 패널의 일이다.
-ok('§C 모델이 safety_flags를 읽지 않는다', !/safety_flags/.test(modelSrc))
+/*
+ * 브리핑은 안전을 **판정하지 않는다.**
+ *
+ * 처음에는 "safety_flags를 아예 읽지 않는다"로 두었는데, Figma 스냅샷 띠의
+ * 안전 칩(`✓ 긴급 red flag 없음`)을 구현하면서 그 단언이 걸렸다. 그 칩은
+ * 이미 계산된 상태를 **표시**할 뿐이라 원래 막으려던 것(화면이 몰래 임상
+ * 판단을 하는 것)이 아니다 -- 그래서 단언을 지우지 않고 **원래 뜻하던
+ * 것으로 조인다.**
+ *
+ *   허용: 이미 계산된 `<region>_safety_status`를 읽어 표시 단계로 매핑
+ *   금지: 임계값·재판정·새 상태값, 그리고 안전값으로 **다른 행**을 바꾸는 것
+ */
 ok('§C 모델이 clinical_flags를 읽지 않는다', !/clinical_flags/.test(modelSrc))
-ok('§C 모델이 payload.flags를 읽지 않는다', !/payload\.flags|\.flags\b/.test(modelSrc))
+ok('§C 모델이 payload.flags를 읽지 않는다', !/payload\.flags/.test(modelSrc))
+
+// C-1. 안전은 오직 `buildSafetyChip` 안에서만 읽는다. 다른 곳이 읽기
+//      시작하면 안전값이 행 내용에 번진다.
+{
+  const code = stripComments(modelSrc)
+  const fnStart = code.indexOf('function buildSafetyChip')
+  ok('§C buildSafetyChip이 존재한다', fnStart >= 0)
+  const fnEnd = code.indexOf('\n}', fnStart)
+  const inside = code.slice(fnStart, fnEnd)
+  const outside = code.slice(0, fnStart) + code.slice(fnEnd)
+  ok('§C 안전 필드를 읽는 코드는 buildSafetyChip뿐이다', !/safety_flags/.test(outside))
+  ok('§C buildSafetyChip은 실제로 safety_flags를 읽는다 (위 단언이 공허하지 않도록)', /safety_flags/.test(inside))
+  // C-2. 이미 있는 상태값 세 개만 매핑한다 -- 새 판정값을 만들지 않는다.
+  ok(
+    '§C 안전 칩은 기존 상태값 세 개만 매핑한다',
+    /'URGENT_REVIEW'/.test(inside) && /'REVIEW_REQUIRED'/.test(inside) && /'CLEAR'/.test(inside),
+  )
+}
+
+/*
+ * C-2b. 임계값이 없다는 것을 **소스가 아니라 동작으로** 고정한다.
+ *
+ * 처음에는 함수 본문에 `[<>]=?\s*\d`가 없는지 봤는데 `urgent.length > 0`
+ * 같은 목록 비어있음 검사까지 잡혔다 -- 그건 임계값이 아니다. 진짜 물어야
+ * 할 것은 "이 함수가 새 판정을 만드는가"이고, 그건 **나오는 값의 집합**으로
+ * 확인하는 편이 정확하다.
+ */
+const SAFETY_LEVELS = new Set(['urgent', 'review', 'clear', 'unknown'])
+{
+  const levels = new Set(PAIN.map((f) => buildPainHeadline(f.payload).safety.level))
+  ok('§C 안전 칩 단계가 넷을 벗어나지 않는다', [...levels].every((l) => SAFETY_LEVELS.has(l)), )
+  ok('§C 실제로 여러 단계가 나온다 (위 단언이 공허하지 않도록)', levels.size >= 2)
+  ok(
+    '§C 안전 칩 라벨은 항상 채워진다',
+    PAIN.every((f) => typeof buildPainHeadline(f.payload).safety.label === 'string' && buildPainHeadline(f.payload).safety.label.length > 0),
+  )
+}
+
+// C-3. 안전값이 **행**으로 새지 않는다. 블록 행의 출처는 언제나 문진 답변이다.
+for (const f of PAIN.slice(0, 12)) {
+  const sources = buildPainBriefing(f.payload)
+    .flatMap((b) => b.rows)
+    .map((r) => r.source)
+  ok(
+    `§C [${f.name}] 블록 행이 안전 필드에서 오지 않는다`,
+    sources.every((s) => !/safety|flag/i.test(s)),
+  )
+}
 
 // 브리핑을 만들어도 payload가 변형되지 않는다(순수 함수).
 for (const f of PAIN.slice(0, 5)) {

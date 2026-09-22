@@ -10,6 +10,7 @@
  */
 import './tokens.css'
 import './briefing.css'
+import './clinical.css'
 import type { BriefingBlock, BriefingRow } from './briefingModel'
 import {
   buildPainBriefing,
@@ -88,6 +89,18 @@ function Headline({ payload, prior }: { payload: DoctorPayload; prior?: PriorNrs
         <h2 className="painSnapshot__title">{h.title}</h2>
         <p className="painSnapshot__subtitle">{h.subtitle}</p>
       </div>
+      {/*
+        안전 칩. Figma 스냅샷 띠의 우상단 자리이고, 접히지 않는다 --
+        안전은 어느 블록의 항목이 아니라 화면 전체의 전제다.
+        레인1 안전 패널이 그대로 상세를 담당하고, 이 칩은 그 요약이다.
+      */}
+      <span className={`painSafety painSafety--${h.safety.level}`}>
+        <span aria-hidden="true">{h.safety.level === 'clear' ? '✓' : h.safety.level === 'unknown' ? '—' : '⚠'}</span>
+        {h.safety.label}
+        {h.safety.regions.length > 0 && h.safety.level !== 'clear' && (
+          <span className="painSafety__regions">{h.safety.regions.join(' · ')}</span>
+        )}
+      </span>
       <div className="painSnapshot__rows">
         {h.rows.map((row) => (
           <Row key={row.label} row={row} />

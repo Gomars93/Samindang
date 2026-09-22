@@ -427,6 +427,63 @@ export type BriefingHeadline = {
   subtitle: string
   /** 우측 척도/비교 행들. */
   rows: BriefingRow[]
+  /** 안전 칩. Figma `A · Clinical Snapshot` 우상단 자리. */
+  safety: SafetyChip
+}
+
+/**
+ * 안전 칩.
+ *
+ * Figma에서 `✓ 긴급 Red flag 없음`은 4블록 **안**이 아니라 스냅샷 띠에 있다 --
+ * 안전은 어느 한 블록의 항목이 아니라 **화면 전체의 전제**이기 때문이다.
+ * 그래서 블록으로 만들지 않고 띠에 둔다(블록 4개 상한도 그대로 지킨다).
+ *
+ * **이 함수는 안전을 판정하지 않는다.** 이미 계산된
+ * `safety_flags.<region>.<region>_safety_status`를 읽어 가장 높은 단계 하나를
+ * 고를 뿐이고, 판정 자체는 기존 부위 엔진이 한다. 레인1 안전 패널은 그대로
+ * 남아 상세를 담당한다 -- 이 칩은 그 요약이지 대체물이 아니다.
+ */
+export type SafetyLevel = 'urgent' | 'review' | 'clear' | 'unknown'
+
+export type SafetyChip = {
+  level: SafetyLevel
+  label: string
+  /** 어느 부위가 그 단계를 만들었는지. 여러 부위면 전부. */
+  regions: string[]
+}
+
+const SAFETY_REGION_LABEL: Record<string, string> = {
+  lbp: '허리',
+  neck: '목',
+  shoulder: '어깨',
+  knee: '무릎',
+  elbow: '팔꿈치',
+  wrist_hand: '손목·손',
+  ankle_foot: '발목·발',
+  tmj: '턱',
+  hip: '고관절',
+}
+
+function buildSafetyChip(payload: DoctorPayload): SafetyChip {
+  const flags = payload.responses?.safety_flags as Record<string, unknown> | undefined
+  const urgent: string[] = []
+  const review: string[] = []
+  const clear: string[] = []
+
+  for (const [key, label] of Object.entries(SAFETY_REGION_LABEL)) {
+    const f = flags?.[key] as Record<string, unknown> | null | undefined
+    if (f == null || typeof f !== 'object') continue
+    const status = f[`${key}_safety_status`]
+    if (status === 'URGENT_REVIEW') urgent.push(label)
+    else if (status === 'REVIEW_REQUIRED') review.push(label)
+    else if (status === 'CLEAR') clear.push(label)
+  }
+
+  if (urgent.length > 0) return { level: 'urgent', label: '긴급 확인', regions: urgent }
+  if (review.length > 0) return { level: 'review', label: '확인 필요', regions: review }
+  if (clear.length > 0) return { level: 'clear', label: '긴급 red flag 없음', regions: clear }
+  // 어느 부위 엔진도 돌지 않았다 -- "안전하다"가 아니라 "아직 판정이 없다"다.
+  return { level: 'unknown', label: '안전 판정 없음', regions: [] }
 }
 
 /** 이전 방문의 NRS. 없으면 비교 행 대신 척도 행이 나온다. */
@@ -473,6 +530,7 @@ export function buildPainHeadline(payload: DoctorPayload, prior?: PriorNrs): Bri
       nrsRow('지금 통증', pain?.nrs_now, prior?.now, 'modules.pain.nrs_now'),
       nrsRow('가장 아플 때', pain?.nrs_worst, prior?.worst, 'modules.pain.nrs_worst'),
     ],
+    safety: buildSafetyChip(payload),
   }
 }
 

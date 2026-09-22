@@ -155,6 +155,36 @@ for (const f of DOCTOR_FIXTURES) {
 }
 
 /* ---------------------------------------------------------------------
+ * 2c-1b. LBP 안전 확인 게이트 회귀 (Doctor View Opus UX Review v0.1 §B3).
+ *
+ *   주호소가 비-통증(수면)이고 추가 상세상담으로 허리 통증을 선택한 환자는
+ *   LBP_01~14를 실제로 응답하므로 safety_flags.lbp가 non-null이지만,
+ *   routing.primary_module_detail은 계속 null이다(additional_module_detail만
+ *   'LBP'). LbpSafetyPanel / showLbpExam이 primary_module_detail 리터럴로
+ *   게이트되면 이 환자의 LBP 안전 정보가 원장 화면에서 통째로 사라진다.
+ *
+ *   게이트 자체는 이미 safety_flags.lbp로 고쳐져 있었지만(6차 독립 리뷰
+ *   HIGH-1) 그것을 지키는 테스트는 PR #25 브랜치에만 있고 main에는 없었다 --
+ *   되돌려도 아무것도 깨지지 않는 상태였다. #25를 닫으며 보호막만 떼어 왔다
+ *   (2026-09-22).
+ * ------------------------------------------------------------------- */
+
+{
+  const name = '수면 주호소 + 추가 상세상담(허리 통증, LBP 안전확인 게이트 회귀)'
+  const f = byName(name)
+  assert('B3 회귀 픽스처: primary_module_detail이 null이다 (주호소가 pain이 아니므로)', f.payload.routing.primary_module_detail === null)
+  assert('B3 회귀 픽스처: additional_module_detail이 LBP다', f.payload.routing.additional_module_detail === 'LBP')
+  assert('B3 회귀 픽스처: primary_module_detail이 null인데도 safety_flags.lbp는 non-null이다', f.payload.responses.safety_flags.lbp !== null)
+  assert(
+    'B3 회귀 픽스처: lbp_safety_status가 REVIEW_REQUIRED다 (양측 + NUMBNESS, 위 primary-LBP 픽스처와 같은 패턴)',
+    f.payload.responses.safety_flags.lbp?.lbp_safety_status === 'REVIEW_REQUIRED',
+  )
+
+  const html = renderDoctorView(name)
+  assert('B3 회귀: primary_module_detail이 null이어도 「안전 확인 — 허리」 패널이 렌더된다', html.includes('안전 확인 — 허리'))
+}
+
+/* ---------------------------------------------------------------------
  * 2c-2. Tablet UX v2.1 §11-§24: Primary/Additional Detailed Concern/
  *       Reference Symptoms render as three distinct DoctorView sections.
  * ------------------------------------------------------------------- */

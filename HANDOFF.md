@@ -1,5 +1,68 @@
 # Current Handoff
 
+## 2026-09-22 (최신 56): **MSK 안전 게이트 드리프트 수정 (PR-1)** — `pain_care` 경로에서 HIP·TMJ 안전 문항 누락
+
+**브랜치**: `claude/gracious-bell-epfxem`.
+
+새 첫 화면 `VISIT_00_INTENT='pain_care'`로 들어온 환자에게 **HIP_00·HFJ_00과 그 뒤
+안전 문항 전체가 뜨지 않고** `clinical_flags.hip`/`.tmj`가 `null`로 남던 회귀.
+`hipQuestions.ts`/`tmjQuestions.ts`가 정규화를 거치지 않은 raw `VISIT_01` /
+`VISIT_02_SYMPTOM_MAIN` 게이트를 복제해 쓰고 있었다. LBP 문항은 정상으로 떴기 때문에
+화면상으로는 멀쩡해 보였다. 상세는 `DECISIONS.md` 같은 날 항목.
+
+### 한 것
+- `src/spec/visitRouting.ts` 신설 — `visitGoal`/`effectiveSymptomMain`/
+  `effectiveConstGoal`/`primaryConcernKey`/`hasDetailedConcern`/`IS_PRIMARY_PAIN`을
+  coreSpec에서 **글자 그대로** 옮겼다. coreSpec이 hip/tmjQuestions를 import하므로
+  반대 방향은 순환 — 양쪽이 의존할 수 있는 하위 모듈이어야 드리프트가 구조적으로
+  불가능해진다.
+- `hipQuestions.ts` / `tmjQuestions.ts` — 복제 게이트 제거, `IS_PRIMARY_PAIN`만 사용.
+- `coreSpec.ts` — 옮긴 정의 삭제 + import, `primaryConcernKey`는 re-export로 호환 유지.
+
+### 임상 규칙 무변경
+문항·enum·threshold·`IS_PRIMARY_HIP_SAFETY`/`IS_PRIMARY_TMJ_SAFETY`의 판정 조건은
+한 줄도 바뀌지 않았다. 바뀐 것은 **누가 그 문항을 보는가**뿐이다.
+
+### 비용을 숨기지 않는다
+허리·골반 프로필 3종 **+1화면 / +2탭**(23→24, 25→26, 22→23). 늘어난 칸은 새 기능이
+아니라 원래 물었어야 하는 안전 판별자다. 그 외 프로필은 전부 무변화.
+
+### 검증
+`test:all` exit 0 / `build` exit 0. 신설 62단언(`tests/visit-route-parity.spec.mjs`,
+`test:all`에 등록) + **뮤테이션 3회**(hip 되돌림 16실패 / tmj 되돌림 18실패 /
+정규화 무력화 45실패).
+
+### 과거 데이터
+PO 판단으로 무시(2026-09-22). 마이그레이션·재문진 배지 만들지 않는다.
+
+### 병렬 트랙 경고 — `codex/pain-questionnaire-v2-ux`
+origin에 **main 위 19커밋**짜리 문진 v2 브랜치가 따로 살아 있다(0 behind).
+`PAIN_F01`(목표 활동)/`PAIN_F02`(0~10 수행능력), `OptionCard` 공통화,
+`screenProgress` 등. main 쪽 HANDOFF에는 이 사실이 기록돼 있지 않았다(최신 55까지
+문진 재설계는 "PR-C 미착수"로 적혀 있었다). 이 PR-1은 그 브랜치에 섞여 있던 HIP
+수정만 떼어낸 것이고, **TMJ는 그 브랜치가 놓친 부분이라 여기서 함께 고쳤다.**
+
+### Next Recommended Action
+1. **PR-2 (refactor)** — `OptionCard` 공통화 + `ScreenShell`/`screenProgress`.
+   임상 0줄. codex 브랜치에서 가져오되 커밋 히스토리는 재구성(중복 커밋 3+2개 존재).
+2. **PR-3 (feat)** — `PAIN_F01`/`F02`. 단, `activity_tolerance: null` 하드코딩은
+   빼고 간다 — 키가 있는데 값이 영원히 null이면 나중에 `'key' in payload`로 존재
+   여부를 판단할 때 조용히 틀린다.
+3. **닥터뷰 Figma 재설계** — PO가 기존 UI/UX를 새로 설계하기로 결정(2026-09-22).
+   착수 전 결정 필요: 대상 화면 범위, 기존 워크스페이스 레인 구조(레인1 안전 확인 /
+   레인2 관찰)를 유지할지, PR-B3(Layer 0)를 재설계 이후로 미룰지.
+4. **`PAIN_F02` 척도 방향** — PO가 추천안 위임(2026-09-22). 기존 통증 NRS와 방향이
+   반대라 같은 문진에 0~10 척도 2개가 연달아 나오면 혼동한다. **5단계 언어 척도**로
+   가는 안을 PR-3에서 제시 예정.
+5. **`PAIN_F04`(제한 이유)** — PO가 보류 승인(2026-09-22). F01/F02가 닥터뷰에
+   실제로 도달하는 것을 먼저 닫는다.
+
+### PO 쪽 미완료 (최신 55에서 이월)
+- **툴팁 문안 감수** — PR-B1의 62개 + PR-B2의 3개. 전부 제가 쓴 초안이다.
+- 시그마 external note AI 요약의 **음성 데이터 처리 방식 확인**(환자 동의 필요 여부)
+- 저장소 폴더를 Google Drive 동기화에서 제외 → 그 다음 Drive에서 `.env.local`/`.data/` 삭제
+- `docs/REAL_DEVICE_PILOT_CHECKLIST.md` §5-c 한약 경로 end-to-end
+
 ## 2026-09-21 (최신 55): **한약 상담 중단 사유(red flag) 3칸** — 안전 확인 레인 (PR-B2)
 
 **브랜치**: `claude/feat-herbal-red-flags`.

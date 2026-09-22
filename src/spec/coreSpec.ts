@@ -32,9 +32,21 @@ import { computeAnkleFootFlags } from './ankleFootLogic'
 import { toTmjState } from './tmjAdapter'
 import { computeTmjFlags } from './tmjLogic'
 import { IS_PRIMARY_TMJ_SAFETY, TMJ_ROUTING_QUESTIONS, TMJ_QUESTIONS } from './tmjQuestions'
+import {
+  visitGoal,
+  effectiveSymptomMain,
+  effectiveConstGoal,
+  primaryConcernKey,
+  hasDetailedConcern,
+  IS_PRIMARY_PAIN,
+} from './visitRouting'
 import { toHipState } from './hipAdapter'
 import { computeHipFlags } from './hipLogic'
 import { IS_PRIMARY_HIP_SAFETY, HIP_ROUTING_QUESTIONS, HIP_QUESTIONS } from './hipQuestions'
+
+// App.tsx 등 기존 호출부가 coreSpec에서 import하므로 re-export로 호환을 유지한다.
+// 정의는 visitRouting.ts 한 곳에만 있다.
+export { primaryConcernKey } from './visitRouting'
 
 const has = (r: Responses, id: string, v: string): boolean => {
   const cur = r[id]
@@ -124,48 +136,6 @@ const VISIT_01_OPTIONS: Option[] = [
   { value: 'weight', label: '체중 관리 상담이에요' },
   { value: 'constitution', label: '체질·보약 상담을 받고 싶어요' },
 ]
-
-/**
- * VISIT_00_INTENT(신규) + VISIT_00B_HERBAL_PURPOSE(신규, 한약 route 전용)를
- * 기존 VISIT_01/VISIT_02_SYMPTOM_MAIN/VISIT_02_CONST raw 값으로 매핑한다.
- * 새 clinical value가 아니라 순수 routing 표현이며, 이 함수들 밖으로는
- * 절대 새 값이 노출되지 않는다(payload의 visit_goal/primary_symptom/
- * constitution_goal은 모두 이 함수들이 리턴하는 기존 enum 문자열 그대로다).
- */
-function visitGoal(r: Responses): string | null {
-  const intent = r['VISIT_00_INTENT']
-  if (intent === 'pain_care' || intent === 'symptom_consult' || intent === 'undecided') return 'symptom'
-  if (intent === 'herbal') {
-    return r['VISIT_00B_HERBAL_PURPOSE'] === 'symptom' ? 'symptom' : 'constitution'
-  }
-  if (intent === 'women') return 'women'
-  if (intent === 'weight') return 'weight'
-  // 하위호환: 새 intent 질문을 거치지 않고 raw Responses를 직접 구성한
-  // 기존 테스트/fixture 경로 -- 기존 VISIT_01 값을 그대로 사용한다.
-  const raw = r['VISIT_01']
-  return typeof raw === 'string' ? raw : null
-}
-
-function effectiveSymptomMain(r: Responses): string | null {
-  // pain_care는 "불편한 증상이 있어요 → 아픈 곳이 있어요" 두 단계를
-  // 반복하지 않고 곧장 Pain module로 연결한다(요청 §4) -- 화면 자체를
-  // 숨기는 대신(showIf) 이 값을 가상으로 'pain'으로 귀결시킨다.
-  if (r['VISIT_00_INTENT'] === 'pain_care') return 'pain'
-  const v = r['VISIT_02_SYMPTOM_MAIN']
-  return typeof v === 'string' ? v : null
-}
-
-function effectiveConstGoal(r: Responses): string | null {
-  if (r['VISIT_00_INTENT'] === 'herbal') {
-    const purpose = r['VISIT_00B_HERBAL_PURPOSE']
-    if (purpose === 'tonic') return 'tonic'
-    if (purpose === 'overall_check') return 'constitution'
-    if (purpose === 'undecided') return 'general'
-    return null // 'symptom' 선택 시 constitution route가 아니라 symptom bucket으로 이어진다.
-  }
-  const raw = r['VISIT_02_CONST']
-  return typeof raw === 'string' ? raw : null
-}
 
 const VISIT_QUESTIONS: Question[] = [
   {
@@ -312,25 +282,6 @@ const VISIT_QUESTIONS: Question[] = [
 
 /* ---------- 7. 동반문제 / 8. Red Flag ---------- */
 
-/**
- * 주호소를 secondary_concerns 카테고리 값으로 정규화한다.
- * pregnancy/postpartum은 동반문제 화면에 별도 항목이 없으므로 women으로 합친다.
- * 체질·보약(visit_goal=constitution)은 동반문제 카테고리가 없으므로 null.
- */
-export const primaryConcernKey = (r: Responses): string | null => {
-  const goal = visitGoal(r)
-  if (goal === 'symptom') {
-    const v = effectiveSymptomMain(r)
-    return typeof v === 'string' ? v : null
-  }
-  if (goal === 'women') {
-    const v = r['VISIT_02_WOMEN']
-    return typeof v === 'string' ? v : null
-  }
-  if (goal === 'weight') return 'weight'
-  return null
-}
-
 const primaryConcernSecondaryKey = (r: Responses): string | null => {
   const key = primaryConcernKey(r)
   if (key === 'pregnancy' || key === 'postpartum') return 'women'
@@ -471,7 +422,6 @@ const SAFETY_QUESTIONS: Question[] = [
  * 즉 이 두 질문 자체는 이제 어느 module 블록보다 정적으로 앞에 있을
  * 필요가 없다 -- 재정렬이 순서를 온전히 책임진다.
  */
-const hasDetailedConcern = (r: Responses, key: string): boolean => r['ADDITIONAL_DETAIL_01'] === key
 
 /**
  * Tablet UX v2.2 §12-21: Questionnaire Depth Mode.
@@ -1035,12 +985,6 @@ const URINARY_QUESTIONS: Question[] = [
 
 /* ---------- Pain 상세 Module (primary concern === pain 인 경우만) ---------- */
 
-// Tablet UX v2.1 §16: Primary가 pain이 아니어도 Additional detailed로
-// pain을 명시 선택하면 기존 PAIN_01 Body Map -> 기존 regional router(LBP/
-// NECK/SHOULDER/KNEE/ELBOW/WRIST_HAND/ANKLE_FOOT/TMJ/HIP) -> 기존 MSK
-// safety module을 그대로 탄다 -- 이 값들은 모두 IS_PRIMARY_PAIN에서
-// 파생되므로 이 한 곳만 확장하면 전부 일관되게 적용된다.
-const IS_PRIMARY_PAIN = (r: Responses) => primaryConcernKey(r) === 'pain' || hasDetailedConcern(r, 'pain')
 
 /**
  * LBP_V1 entry gate. There is no MSK domain/region routing layer in this

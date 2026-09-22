@@ -1,5 +1,104 @@
 # Decisions Log
 
+## 2026-09-22 — MSK 안전 게이트 드리프트 수정 (PR-1): `pain_care` 경로에서 HIP·TMJ 안전 문항이 통째로 누락되던 회귀
+
+**결론**: 통증 주호소 판단을 `src/spec/visitRouting.ts` 한 곳으로 모으고,
+`hipQuestions.ts`/`tmjQuestions.ts`의 복제 게이트를 제거했다. 임상 규칙·문항·enum·
+threshold는 한 줄도 바뀌지 않는다 — 바뀐 것은 **누가 그 문항을 보는가**뿐이다.
+
+### 무엇이 잘못돼 있었나
+
+새 첫 화면 `VISIT_00_INTENT`가 도입되면서 `coreSpec.ts`는 정규화 함수
+(`visitGoal` → `primaryConcernKey` → `IS_PRIMARY_PAIN`)를 타게 됐다. 그런데
+`hipQuestions.ts`와 `tmjQuestions.ts`는 같은 판단을 **raw 필드로 따로 적어** 두고
+있었다:
+
+```ts
+r['VISIT_01'] === 'symptom' && r['VISIT_02_SYMPTOM_MAIN'] === 'pain' && ...
+```
+
+`VISIT_00_INTENT='pain_care'`는 이 두 필드를 채우지 않는다. 결과:
+
+| 진입 경로 | HIP_00 | HIP 안전 문항 | `clinical_flags.hip` | HFJ_00 | TMJ 안전 문항 | `clinical_flags.tmj` |
+|---|---|---|---|---|---|---|
+| `VISIT_00_INTENT='pain_care'` (신규 첫 화면) | **안 뜸** | **0개** | **`null`** | **안 뜸** | **0개** | **`null`** |
+| `VISIT_01=symptom` + `VISIT_02_SYMPTOM_MAIN=pain` (레거시) | 뜸 | 정상 | `REVIEW_REQUIRED` 등 | 뜸 | 5개 | `REVIEW_REQUIRED` 등 |
+
+동일 임상 입력(`PAIN_01=low_back_pelvis`, `HIP_00=HIP_GROIN_DOMINANT`)에서 레거시
+경로는 `expedited_referral_consider: true`를 냈지만 신규 경로는 `hip: null`이었다.
+**LBP 문항은 정상으로 떴기 때문에 화면상으로는 멀쩡해 보였다** — 이게 이 버그가
+오래 남은 이유다.
+
+TMJ 쪽이 더 컸다: HFJ_00뿐 아니라 TMJ 안전 문항 5개(외상·탈구 응급 선별 포함)가
+전부 누락됐다.
+
+### 왜 "정규화 함수를 각 파일에 복제"가 아니라 "하위 모듈 추출"인가
+
+`coreSpec.ts`가 `hipQuestions`/`tmjQuestions`를 import하므로 반대 방향 import는
+순환이 된다. 그래서 각 파일에 판단을 다시 적는 유혹이 생기고, **이 버그가 바로 그
+방식으로 생겼다.** 양쪽이 모두 의존할 수 있는 하위 모듈(`visitRouting.ts`)로
+빼야만 같은 드리프트가 구조적으로 불가능해진다. 새 MSK 모듈도 `IS_PRIMARY_PAIN`
+하나만 쓴다.
+
+### 경로 교체 표 (CLAUDE.md "경로를 지우거나 교체하기 전에" 규칙)
+
+옛 경로: `hipQuestions.IS_PRIMARY_HIP_POPULATION` / `tmjQuestions.IS_PRIMARY_HFJ_POPULATION`
+(raw 필드 직접 판독). 새 경로: `visitRouting.IS_PRIMARY_PAIN`.
+
+**(출력 방향)** 옛 경로가 나르던 값 = "이 환자가 통증 주호소인가" 불리언 하나.
+
+| 화면 / 프로필 | 옛 경로 결과 | 새 경로 결과 | 비고 |
+|---|---|---|---|
+| 초진 · `pain_care` · 허리·골반 | `false` (회귀) | `true` | **고친 지점.** HIP_00 + 안전 문항 복구 |
+| 초진 · `pain_care` · 머리·얼굴·턱 | `false` (회귀) | `true` | **고친 지점.** HFJ_00 + TMJ 5문항 복구 |
+| 초진 · 레거시 raw · 허리·골반 | `true` | `true` | 무변화 (기존 fixture 수백 건이 이 경로) |
+| 초진 · 레거시 raw · 머리·얼굴·턱 | `true` | `true` | 무변화 |
+| 초진 · `symptom_consult` + `ADDITIONAL_DETAIL_01='pain'` | `true` | `true` | 무변화 (옛 경로도 이 항을 갖고 있었음) |
+| 초진 · `herbal`(purpose=symptom) + 주증상 pain | `false` | `true` | LBP가 이미 `true`였으므로 **LBP와 일치시킨 것** |
+| 재진 / 한약 / mixed 닥터뷰 | 이 게이트를 읽지 않음 | 동일 | 닥터뷰는 저장된 payload를 읽는다 |
+| fixture 미리보기 | 전부 레거시 raw 경로 | 무변화 | `test:all` 4천여 단언이 이를 고정 |
+
+**(입력 방향)** 새로 열리는 편집 가능 필드 = HIP_00/HFJ_00과 그 하위 안전 문항.
+이들은 이미 `buildResponsePayload`의 `clinical_flags.hip` / `.tmj`와
+`region_discriminator`로 출력에 도달한다 — 쓰기만 되고 읽히지 않는 필드는 없다.
+
+**(표시 조건)** latch↔파생식 변경 없음. `showIf`의 형태는 그대로이고 참조하는
+함수만 바뀌었다.
+
+**(테스트)** 지운 경로 2개(hip, tmj) 각각에 대해 소스 텍스트 단언 1개씩을
+`tests/visit-route-parity.spec.mjs` §D에 뒀다. 추가로 §D는 `src/spec/` 전체를
+스캔해 `visitRouting.ts` 밖에서 raw 게이트가 다시 생기면 실패시킨다.
+
+### 비용을 숨기지 않는다
+
+허리·골반 프로필 3종이 **+1화면 / +2탭**(23→24, 25→26, 22→23). 늘어난 한 칸은
+새 기능이 아니라 **원래 물었어야 하는 안전 판별자**다. 허리·골반이 아닌 프로필은
+하나도 변하지 않았다. `tests/questionnaire-volume.spec.mjs`의 핀을 갱신하고 그
+근거를 파일 안에 적었다.
+
+### 과거 데이터
+
+PO 판단으로 **무시**한다(2026-09-22). `pain_care` 경로로 저장된 기존 제출에는
+HIP_00/HFJ_00이 비어 있으나, 별도 마이그레이션이나 "재문진 필요" 배지는 만들지
+않는다.
+
+### 검증
+
+- 신설 `tests/visit-route-parity.spec.mjs` — 62단언. 부위 13종 × (문항 노출 등가성 /
+  안전 플래그 등가성) + 추가상세 경로 + 소스 텍스트 단언.
+- **뮤테이션 3회**: hip 게이트 되돌리면 16건 실패 / tmj 되돌리면 18건 실패 /
+  `visitRouting`의 `pain_care` 해석 제거하면 45건 실패. 테스트가 실제로 이 버그를
+  잡는다.
+- `npm run test:all` exit 0 / `npm run build` exit 0.
+
+### 이 PR에 넣지 않은 것
+
+`codex/pain-questionnaire-v2-ux` 브랜치(19커밋)에 이 수정의 HIP 부분이 UX 변경과
+**섞여** 들어 있었고, 그 브랜치의 핸드오프 문서는 "기존 Safety/CES 로직을 바꾸지
+않았다"고 적고 있었다. 안전 게이트 변경이 UX PR에 묻어가면 리뷰가 불가능하다.
+그래서 안전 수정만 떼어 이 PR로 만들고, TMJ(그 브랜치가 놓친 부분)를 함께 고쳤다.
+OptionCard 공통화(PR-2)와 `PAIN_F01`/`F02`(PR-3)는 별도 PR로 간다.
+
 ## 2026-09-21 — 한약 상담 중단 사유(red flag) 3칸을 안전 확인 레인에 (PR-B2)
 
 **배경**: 설맥복 체크 항목 후보를 추리다가, 설진·복진 중에 걸리는 소견 가운데 의미가

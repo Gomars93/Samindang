@@ -1,14 +1,19 @@
 import type { Question, Responses } from '../types'
+import { IS_PRIMARY_PAIN } from './visitRouting'
 
 /**
  * TMJ_V1 question definitions from the clinically CLOSED Tablet Question Set v0.1.
  * Kept separate from coreSpec so later HFJ routing integration remains a minimal,
  * auditable import/splice and HEADACHE_CRANIAL stays explicitly out of scope.
  */
+/**
+ * `hipQuestions.IS_PRIMARY_HIP_POPULATION`과 같은 이유로 `IS_PRIMARY_PAIN`
+ * 하나만 쓴다. 여기서는 회귀가 더 컸다 -- `VISIT_00_INTENT='pain_care'`로
+ * 들어온 환자는 HFJ_00 뿐 아니라 TMJ 안전 문항 5개(외상·탈구 응급 선별
+ * 포함)가 전부 뜨지 않았다. TMJ 문항/enum/threshold는 바뀌지 않는다.
+ */
 export const IS_PRIMARY_HFJ_POPULATION = (r: Responses): boolean =>
-  r['VISIT_01'] === 'symptom' &&
-  r['VISIT_02_SYMPTOM_MAIN'] === 'pain' &&
-  r['PAIN_01'] === 'head_face_jaw'
+  IS_PRIMARY_PAIN(r) && r['PAIN_01'] === 'head_face_jaw'
 
 export const IS_PRIMARY_TMJ_SAFETY = (r: Responses): boolean =>
   IS_PRIMARY_HFJ_POPULATION(r) &&

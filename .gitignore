@@ -258,3 +258,4 @@ tests/.clinical-model.mjs
 tests/.observation-options.mjs
 tests/.working-hypothesis.mjs
 tests/.rehab-suggestion.mjs
+tests/.provenance.mjs

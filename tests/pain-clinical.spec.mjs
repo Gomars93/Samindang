@@ -45,20 +45,28 @@ import {
   ABDOMEN_OPTIONS,
 } from './.observation-options.mjs'
 import { HYPOTHESIS_SUPPORT_LABEL_KO, emptyWorkingHypothesis } from './.working-hypothesis.mjs'
+import { EXAM_CHECK_STATUS_LABEL } from './.provenance.mjs'
 import { REHAB_SUGGESTION_STATUS_LABEL } from './.rehab-suggestion.mjs'
 
 /*
- * 검사 결과 칩만은 **테스트에 리터럴로 박는다.**
+ * 검사 결과 칩 -- **독립 카탈로그(`provenance.ts`)와 대조한다.**
  *
- * 다른 라벨(설·맥·복, 가설 지지도, 처치 상태)은 전부 독립된 카탈로그에서
- * 오므로 그걸 import해 대조하면 된다. 그런데 검사 결과 세 칩은 모델 자신이
- * 정의하는 유일한 라벨 집합이라, `EXAM_RESULT_CHIPS`를 import해서 허용
- * 목록을 만들면 **모델이 칩을 늘릴 때 허용 목록도 같이 늘어난다** -- 자기
- * 자신을 검증하는 공허한 단언이다. 실제로 뮤테이션('애매함' 추가)이 통과했고
- * 그래서 여기 박았다. 이 셋을 바꾸려면 이 줄도 함께 고쳐야 한다(= 의도한
- * 변경임을 사람이 한 번 더 확인하게 된다).
+ * 한동안은 여기 리터럴 세 개(`['양성','음성','시행 안 함']`)가 박혀 있었다.
+ * 모델이 자기 어휘를 직접 정의하던 시절, `EXAM_RESULT_CHIPS`를 import해
+ * 허용 목록을 만들면 공허한 자기검증이 돼서 그랬다.
+ *
+ * 그런데 그 세 값 자체가 틀렸다. `ExamCheckStatus`는 이미 여섯 값이고
+ * (`provenance.ts`), `시행 안 함`은 승인된 `시행 못 함`에 대한 세 번째
+ * 철자였다. 즉 이 리터럴은 **틀린 것을 고정하고 있었다** -- 테스트가 틀린
+ * 값을 지키면 고치는 쪽이 실패한다.
+ *
+ * 지금은 모델이 `EXAM_CHECK_STATUS_LABEL`을 그대로 쓰므로, 그 독립 카탈로그와
+ * 대조하면 된다(자기검증이 아니다). `NOT_YET_CHECKED`만 칩에서 빠지는지를
+ * 따로 단언한다 -- 그건 기본 상태이지 고를 수 있는 값이 아니다.
  */
-const EXPECTED_EXAM_RESULT_CHIPS = ['양성', '음성', '시행 안 함']
+const EXPECTED_EXAM_RESULT_CHIPS = Object.entries(EXAM_CHECK_STATUS_LABEL)
+  .filter(([k]) => k !== 'NOT_YET_CHECKED')
+  .map(([, v]) => v)
 
 const here = dirname(fileURLToPath(import.meta.url))
 let passed = 0
@@ -105,7 +113,7 @@ const emptyInput = () => ({
 
 const touchedInput = () => ({
   ...emptyInput(),
-  examResults: { slr: '양성' },
+  examResults: { slr: 'POSITIVE' },
   hypothesis: { supports: { disc: 'HIGHER', facet: 'LOWER' }, recordedAt: null },
   finalAssessment: '굴곡 부하에서 재현.',
   rehab: [rehab('r1', '엎드려 상체 신전', 'ACCEPTED')],
@@ -288,9 +296,26 @@ ok(
  * 항목이나 새 판정값을 만드는 순간 여기서 걸린다.
  */
 ok(
-  '§D 검사 결과 칩이 정확히 세 개다 (모델이 몰래 늘리지 못한다)',
+  '§D 검사 결과 칩이 승인된 enum 라벨 그대로다 (모델이 어휘를 새로 만들지 못한다)',
   JSON.stringify([...EXAM_RESULT_CHIPS]) === JSON.stringify(EXPECTED_EXAM_RESULT_CHIPS),
-  `(${[...EXAM_RESULT_CHIPS].join(', ')})`,
+  `(${[...EXAM_RESULT_CHIPS].join(' / ')})`,
+)
+ok(
+  '§D 대조 대상이 실제로 여섯 값짜리 enum이다 (공허하지 않도록)',
+  Object.keys(EXAM_CHECK_STATUS_LABEL).length === 6 && EXPECTED_EXAM_RESULT_CHIPS.length === 5,
+  `(${Object.keys(EXAM_CHECK_STATUS_LABEL).length} / ${EXPECTED_EXAM_RESULT_CHIPS.length})`,
+)
+ok(
+  '§D `아직 확인 안 됨`은 칩으로 나오지 않는다 (기본 상태이지 고를 수 있는 값이 아니다)',
+  ![...EXAM_RESULT_CHIPS].includes(EXAM_CHECK_STATUS_LABEL.NOT_YET_CHECKED),
+)
+ok(
+  '§D 칩의 value는 라벨이 아니라 enum 값이다 (호출부가 result.status에 그대로 넣는다)',
+  (() => {
+    const row = buildClinicalBlocks(emptyInput()).find((b) => b.key === 'exam').rows[0]
+    const values = row.chips.map((c) => c.value)
+    return JSON.stringify(values) === JSON.stringify(['POSITIVE', 'NEGATIVE', 'UNCLEAR', 'LIMITED', 'NOT_PERFORMED'])
+  })(),
 )
 
 /*
@@ -376,9 +401,16 @@ for (const [name, input] of [
   ok('§F 기록하지 않은 행은 여전히 untouched다 (FABER)', faber.untouched === true)
 
   // "시행 안 함"도 기록이다 -- "봤는데 안 했다"와 "아직 안 봄"은 다르다.
-  const notDone = buildClinicalBlocks({ ...emptyInput(), examResults: { faber: '시행 안 함' } })
+  const notDone = buildClinicalBlocks({ ...emptyInput(), examResults: { faber: 'NOT_PERFORMED' } })
   const faber2 = notDone.find((b) => b.key === 'exam').rows.find((r) => r.key === 'faber')
-  ok('§F `시행 안 함`을 기록하면 untouched가 아니다 ("확인함" ≠ "아직 안 봄")', faber2.untouched === false)
+  ok('§F `시행 못 함`을 기록하면 untouched가 아니다 ("확인함" ≠ "아직 안 봄")', faber2.untouched === false)
+
+  // 명시적 NOT_YET_CHECKED는 "아직 안 봄"과 같다 -- 호출부가 result.status를
+  // 그대로 넘기므로 이 값이 실제로 들어온다.
+  const explicitPending = buildClinicalBlocks({ ...emptyInput(), examResults: { faber: 'NOT_YET_CHECKED' } })
+  const faber3 = explicitPending.find((b) => b.key === 'exam').rows.find((r) => r.key === 'faber')
+  ok('§F NOT_YET_CHECKED는 untouched다', faber3.untouched === true)
+  ok('§F NOT_YET_CHECKED에서는 어떤 칩도 켜지지 않는다', faber3.chips.every((c) => !c.selected))
 }
 
 // 제안이 없는 블록은 자리를 차지하지 않는다 -- 단, 원장이 직접 쓰는 곳은 남는다.

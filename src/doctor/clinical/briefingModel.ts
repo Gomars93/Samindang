@@ -40,6 +40,15 @@ export type RowStatus =
   | 'unanswered'
   /** 문진이 아직 묻지 않는 항목이다. `note`에 이유를 적는다. */
   | 'not_collected'
+  /**
+   * 값이 있는데 **읽을 수 없는 형식**이다(0~10 문항에 배열·객체·범위 밖 수).
+   *
+   * `unanswered`와 반드시 구분한다 -- "미응답"은 "환자가 답하지 않았다"는
+   * 임상적 사실이고, 형식 오류를 그렇게 표시하면 없는 사실을 지어내는 것이다.
+   * 11차 독립 리뷰 HIGH-1이 `PainWorkspace`에서 고친 것과 같은 규율이며,
+   * 이 모듈을 배선하자 그 회귀 테스트가 여기서도 걸렸다.
+   */
+  | 'unreadable'
 
 /**
  * 값 자리에 무엇이 들어가는지. **행의 뼈대는 하나뿐이다** -- 라벨 왼쪽, 값
@@ -389,19 +398,42 @@ export function buildPainBriefing(
 }
 
 /**
+ * 0~10 척도 문항의 값을 읽는다. **`Number()`를 직접 쓰지 않는다.**
+ *
+ * `Number(['9'])`는 **9**다 -- 손상된 배열이 정상 점수로 둔갑한다. 11차 독립
+ * 리뷰 HIGH-1이 `PainWorkspace.tsx`에서 고쳤던 그 버그이고, 이 모듈을
+ * `DoctorWorkspace`에 배선하자 같은 회귀 테스트가 여기서도 걸렸다
+ * (`doctor-workspace.spec.mjs`의 "a wrong-typed (array) ... never displayed
+ * as if it were a real reported score").
+ *
+ * 판정은 `PainWorkspace.tsx`와 **같다** -- number 타입, 유한, 정수, 0~10.
+ * 같은 값을 두 화면이 다르게 읽으면 원장이 어느 쪽을 믿을지 알 수 없다.
+ */
+type ScaleRead = { kind: 'empty' } | { kind: 'unreadable' } | { kind: 'ok'; n: number }
+
+function readScale0to10(raw: RawValue): ScaleRead {
+  if (isEmpty(raw)) return { kind: 'empty' }
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw) || raw < 0 || raw > 10) {
+    return { kind: 'unreadable' }
+  }
+  return { kind: 'ok', n: raw }
+}
+
+/**
  * 회복 기대(LBP_12)는 0~10 숫자라 optionLabel이 라벨을 못 찾는다.
  * 숫자를 그대로 보여주되 척도를 함께 적어 원장이 방향을 헷갈리지 않게 한다.
  * 0=전혀 기대 못 함, 10=완전히 좋아질 것 — 문항 원문 그대로다.
  */
 function recoveryExpectationRow(raw: RawValue): BriefingRow {
   const source = 'modules.lbp.recovery_expectation'
-  if (isEmpty(raw)) {
+  const read = readScale0to10(raw)
+  if (read.kind === 'empty') {
     return { label: '회복 기대', value: null, tone: 'neutral', status: 'unanswered', source }
   }
-  const n = Number(raw)
-  if (!Number.isFinite(n)) {
-    return { label: '회복 기대', value: null, tone: 'neutral', status: 'unanswered', source }
+  if (read.kind === 'unreadable') {
+    return { label: '회복 기대', value: null, tone: 'neutral', status: 'unreadable', source }
   }
+  const n = read.n
   return {
     label: '회복 기대',
     value: `${n} / 10`,
@@ -490,16 +522,19 @@ function buildSafetyChip(payload: DoctorPayload): SafetyChip {
 export type PriorNrs = { now?: number | null; worst?: number | null }
 
 function nrsRow(label: string, raw: RawValue, prior: number | null | undefined, source: string): BriefingRow {
-  if (isEmpty(raw)) {
+  const read = readScale0to10(raw)
+  if (read.kind === 'empty') {
     return { label, value: null, tone: 'neutral', status: 'unanswered', source }
   }
-  const n = Number(raw)
-  if (!Number.isFinite(n)) {
-    return { label, value: null, tone: 'neutral', status: 'unanswered', source }
+  if (read.kind === 'unreadable') {
+    // 손상된 NRS를 "미응답"으로 적으면 임상적 사실을 지어내는 것이다.
+    return { label, value: null, tone: 'neutral', status: 'unreadable', source }
   }
+  const n = read.n
   // NRS는 주관적 지표라 절대값으로 겁주지 않는다 -- 색은 추세(비교 행)에서만
   // 의미를 갖고, 단일 값은 중립으로 읽는다.
-  if (typeof prior === 'number' && Number.isFinite(prior)) {
+  // 지난 값도 같은 규율로 읽는다 -- 손상된 지난 값으로 가짜 추세를 그리지 않는다.
+  if (readScale0to10(prior ?? null).kind === 'ok' && typeof prior === 'number') {
     const delta = n - prior
     return {
       label,

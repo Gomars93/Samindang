@@ -1,5 +1,78 @@
 # Current Handoff
 
+## 2026-09-22 (최신 62): **배선 1단계** — 읽기 4블록이 실제 닥터뷰에 올라갔다
+
+**브랜치**: `claude/gracious-bell-epfxem` (PR #50 머지 후 main에서 새로 시작).
+
+**원장이 처음으로 새 화면을 실제로 본다.** 상세는 `DECISIONS.md` 같은 날 첫 항목.
+
+### 한 것
+`PainBriefing`(스냅샷 띠 + 읽기 4블록)을 `DoctorWorkspace` **레인2(확인) 맨 위**에
+배선. pain/mixed 프로필만. **아무것도 대체하지 않았다.**
+
+### 배선하자 결함 3건이 드러났다 (머지·빌드·테스트는 전부 통과하던 코드였다)
+1. **검사 칩이 승인 enum과 평행한 어휘를 만들고 있었다.** `ExamCheckStatus`는
+   6값인데 모델이 3값을 따로 정의 → `UNCLEAR`·`LIMITED` 도달 불가, `시행 안 함`이
+   `시행 못 함`에 이은 세 번째 철자. **테스트(§D)가 그 틀린 값을 지키고 있었다.**
+   → `EXAM_CHECK_STATUS_LABEL` 그대로 쓰고, 독립 카탈로그와 대조하도록 교체.
+2. **`Number(['9']) === 9`** — 손상된 배열이 정상 점수로 둔갑. 11차 리뷰 HIGH-1이
+   `PainWorkspace`에서 고친 버그가 `briefingModel`에 그대로 있었고, **배선 즉시
+   `doctor-workspace.spec.mjs`의 기존 단언이 잡았다.** → `readScale0to10()`로
+   판정을 `PainWorkspace`와 동일하게 통일 + `RowStatus`에 `unreadable` 추가
+   (형식 오류를 "미응답"으로 적으면 없는 임상 사실을 지어내는 것).
+3. **가로 오버플로 143px** (`tablet-viewport.spec.mjs`). 뷰포트 미디어 쿼리로
+   열을 접었는데 닥터뷰는 좌측 고정 요약 때문에 실제 폭이 더 좁다.
+   → `auto-fit` + `minmax(min(…, 100%), 1fr)`로 **컨테이너 기준** 접기.
+
+### 화면이 길어졌다 (정직한 숫자)
+| | LBP 초진 1440×900 |
+|---|---|
+| 배선 전 | 2902px = **3.22화면** |
+| 배선 후 | 4182px = **4.65화면** |
+
+추가이지 교체가 아니라서다. **2단계(옛 카드 정리)에서 돌려받는다.**
+
+### 검증
+`test:all` exit 0 / `build` exit 0.
+`pain-clinical` 59→**64** · `pain-briefing` 752→**757** · `doctor-workspace` 306→**314**.
+**뮤테이션 5회** (되돌리면 4·7·9·8·2단언 실패). 배선 단언은 소스가 아니라
+**렌더 결과**를 본다 — 컴파일만 되고 렌더 안 되는 상태를 빌드는 못 잡는다.
+
+### Next Recommended Action
+
+**1. PO 답이 필요한 질문 3개 (배선 2단계의 전제)**
+입력 3블록으로 기존 카드를 대체하려면 아래 값들이 갈 곳이 있어야 한다:
+
+| 블록 | 기존 카드가 나르는 것 | 내 모델 | 갭 |
+|---|---|---|---|
+| EXAM | status + **laterality** + **note** | status만 | 좌/우·메모 |
+| ASSESSMENT | 최종 판단 / 치료 초점 / 시행·예정 처치 / 즉시 재검 대상 **4칸** | note **1칸** | 3필드 |
+| PLAN | status + **clinicianFinalInstruction** | status만 | 원장 지시문 |
+
+- **Q1.** 검사 결과에 **좌/우**를 기록하십니까? 메모는요?
+- **Q2.** 최종 판단 4칸 중 실제로 쓰시는 것은 몇 개입니까?
+- **Q3.** 처치에 **원장 지시문**을 따로 적으십니까?
+
+답에 따라 (a) 모델을 넓히거나 (b) 필드를 정식으로 버리거나 (c) 그 카드만 남긴다.
+**답 없이 진행하면 값이 조용히 사라진다**(Batch 4 D-2와 같은 사고).
+
+**2. 배선 2단계** — Q1~Q3 답 후, 입력 3블록 배선 + 대체되는 옛 카드 정리
+(CLAUDE.md 필드 × 화면 표 필수). 화면 높이 +1.43화면을 여기서 돌려받는다.
+
+**3. 재진 비교 행** — 지난 NRS가 어디에도 없다(`PriorVisitSummary`에 필드 없음,
+`detailAnswers`는 **오늘** 값, payload는 **초진** 값 → 방향 역전).
+`PriorVisitSummary`에 NRS를 싣거나 브리핑이 "오늘 값" override를 받게 한다.
+
+**4.** 「마무리」 화면 분리 — EMR·환자전달·QR·메시징·복약·재평가.
+
+**5.** C그룹 5개 판단(MicroFollowUp / AdditionalConcern / StructuredReassessment /
+SupportContradiction / PriorVisitHistory) — 진료 중 실제로 보시는지 PO 확인 필요.
+
+**6.** 옛 `doctor.css` 폐기 — 2단계 이후. 한약 프로필 — 통증 실가동 후
+(시트는 그때 `--profile=pain|herbal|mixed` 한 스크립트로).
+
+---
+
 ## 2026-09-22 (최신 61): **입력 4블록 → 3블록** — 설진·맥진·복진은 한약의 것이다
 
 **브랜치**: `claude/gracious-bell-epfxem` (최신 60 위에 이어서).

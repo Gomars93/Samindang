@@ -9,7 +9,21 @@
  * 27" 모니터 양방향 대응: 2열 그리드 하나로 끝난다.
  *   - 가로 2560px → 본문 1400px 상한, 가운데 정렬 (양옆 여백)
  *   - 세로 1440px → 여백 40px 남기고 2열 유지 (560 + 20 + 560 = 1140)
- *   - 1180px 미만 → 1열로 접힘 (노트북 대비, 깨지지 않게만)
+ *   - 좁아지면 1열로 접힘 (노트북 대비, 깨지지 않게만)
+ *
+ * 접는 기준은 **담긴 칸의 폭**이지 뷰포트가 아니다
+ * ------------------------------------------------
+ * 처음엔 `@media (max-width: 1180px)`로 접었다. 컨택트 시트(브리핑이 화면
+ * 전체를 쓰는 곳)에서는 맞았지만, `DoctorWorkspace`에 배선하자 1440px
+ * 데스크톱에서 **가로 오버플로 143px**이 났다 -- 닥터뷰는 왼쪽에 고정 요약이
+ * 있어 브리핑이 받는 실제 폭이 뷰포트보다 한참 좁은데, 미디어 쿼리는 뷰포트만
+ * 보므로 2열(560+20+560=1140)을 그대로 유지했다.
+ * `tests/tablet-viewport.spec.mjs`가 잡았다.
+ *
+ * 그래서 `auto-fit` + `minmax(min(…, 100%), 1fr)`로 바꾼다. 담긴 칸이 좁으면
+ * 스스로 1열이 되고, `min(…, 100%)`가 최소폭이 칸보다 커지는 것을 막는다.
+ * 브리핑이 어디에 놓이든 같은 규칙으로 접힌다 -- 놓이는 자리마다 미디어 쿼리를
+ * 하나씩 더하는 길로 가지 않는다. `pain-briefing.spec.mjs` §G가 고정한다.
  */
 
 .painBriefing {
@@ -17,17 +31,11 @@
   max-width: var(--pain-content-max);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(2, minmax(var(--pain-col-min), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(var(--pain-col-min), 100%), 1fr));
   gap: var(--pain-gap-block);
   font-size: var(--pain-fs-row);
   line-height: var(--pain-lh-row);
   color: var(--pain-text);
-}
-
-@media (max-width: 1180px) {
-  .painBriefing {
-    grid-template-columns: 1fr;
-  }
 }
 
 .painBriefing *,
@@ -153,8 +161,13 @@
   margin: 0;
 }
 
+/*
+ * 띠도 같은 이유로 컨테이너 기준이다(위 그리드 주석 참고). 뷰포트 미디어
+ * 쿼리 대신 `flex-wrap` -- 담긴 칸이 좁으면 NRS 행이 제목 아래로 내려간다.
+ */
 .painSnapshot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 32px;
   background: var(--pain-surface);
@@ -181,24 +194,17 @@
   color: var(--pain-text-muted);
 }
 
-/* 우측 NRS 두 행. 폭을 고정해 값이 바뀌어도 자리가 흔들리지 않는다. */
+/*
+ * 우측 NRS 두 행. 폭을 고정해 값이 바뀌어도 자리가 흔들리지 않는다.
+ * `flex-basis: 360px`이되 `max-width: 100%`라, 360px를 못 받으면 고정폭을
+ * 우기며 넘치는 대신 줄을 바꿔 내려간다.
+ */
 .painSnapshot__rows {
-  flex: 0 0 auto;
-  width: 360px;
+  flex: 0 1 360px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-@media (max-width: 1180px) {
-  .painSnapshot {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 14px;
-  }
-  .painSnapshot__rows {
-    width: auto;
-  }
 }
 
 /* ---------------- 값 자리의 세 가지 생김새 ---------------- */

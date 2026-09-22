@@ -40,12 +40,18 @@ function Dots({ n, max = 10 }: { n: number; max?: number }) {
 function Row({ row }: { row: BriefingRow }) {
   const isPending = row.status === 'not_collected'
   const isUnanswered = row.status === 'unanswered'
+  const isUnreadable = row.status === 'unreadable'
   const kind = row.kind ?? 'text'
 
   // 값 자리만 바뀐다. 행의 뼈대(라벨 왼쪽 / 값 오른쪽)는 세 종류 모두 같다.
   let valueNode: React.ReactNode
   if (row.status !== 'answered') {
-    valueNode = isPending ? '아직 안 물어봄' : isUnanswered ? '미응답' : ''
+    /*
+     * 형식 오류는 "미응답"과 다른 말로 적는다 -- 저장소 공통 문구를 그대로
+     * 쓴다(`longitudinal.ts` / `additionalConcern.ts` / `StructuredReassessmentCard`).
+     * 같은 사고를 원장이 화면마다 다른 말로 만나면 안 된다.
+     */
+    valueNode = isPending ? '아직 안 물어봄' : isUnreadable ? '확인 필요(값 형식 오류)' : isUnanswered ? '미응답' : ''
   } else if (kind === 'scale' && typeof row.n === 'number') {
     valueNode = (
       <>

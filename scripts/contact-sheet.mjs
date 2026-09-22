@@ -60,8 +60,11 @@ import { emptyWorkingHypothesis } from '${ROOT}/src/doctor/workspace/workingHypo
  *
  * 실제 워크스페이스 상태에 아직 연결하지 않았으므로(원장 판정 후 연결),
  * 시트에서는 **카탈로그에서 온 실제 항목 + 손으로 고른 몇 개의 선택 상태**로
- * 그린다. 칩 라벨 자체는 지어내지 않는다 -- observationOptions / rehab /
- * hypothesis 상수를 그대로 쓴다.
+ * 그린다. 칩 라벨 자체는 지어내지 않는다 -- rehab / hypothesis 상수를 그대로
+ * 쓴다.
+ *
+ * 설진·맥진·복진은 여기 없다: 한약 진료의 것이라 통증 뷰에서 뺐다
+ * (clinicalModel.ts 헤더 참고 -- 이 주석은 템플릿 리터럴 안이라 백틱을 못 쓴다).
  */
 const DEMO_PATTERNS = [
   { id: 'disc', labelKo: '추간판성', patientEasyLabelKo: '디스크 쪽', particleKo: '과' },
@@ -72,9 +75,6 @@ const DEMO_PATTERNS = [
 function demoClinicalInput(variant) {
   const touched = variant === 'touched'
   return {
-    observation: touched
-      ? { TONGUE: '담백설 · 치흔·반대', PULSE: '침 · 무력', ABDOMEN: '복력 연약' }
-      : { TONGUE: '', PULSE: '', ABDOMEN: '' },
     exams: [
       { id: 'slr', title: 'SLR (하지직거상)', priority: 'MUST_CHECK', reasonFacts: [], source: 'SUGGESTED', result: {} },
       { id: 'faber', title: 'FABER', priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: {} },
@@ -100,7 +100,7 @@ export function renderClinicalDemo() {
     return {
       name: variant === 'touched' ? '입력 블록 — 원장이 기록한 뒤' : '입력 블록 — 진료 시작 시(빈 상태)',
       region: 'low_back_pelvis',
-      profile: '입력 4블록',
+      profile: '입력 3블록',
       blockCount: blocks.length,
       rowCount: blocks.reduce((n, b) => n + b.rows.length, 0),
       html: renderToStaticMarkup(ClinicalBlocks({ input, readOnly: true })),
@@ -432,7 +432,7 @@ console.log(`  index.html  픽스처 ${cards.length}개 / 전체 ${mod.TOTAL}개
  */
 const seen = new Set()
 const strip = []
-for (const c of [...cards].filter((c) => c.profile !== '입력 4블록').sort((a, b) => (a.region === 'low_back_pelvis' ? -1 : 0) - (b.region === 'low_back_pelvis' ? -1 : 0))) {
+for (const c of [...cards].filter((c) => c.profile !== '입력 3블록').sort((a, b) => (a.region === 'low_back_pelvis' ? -1 : 0) - (b.region === 'low_back_pelvis' ? -1 : 0))) {
   if (seen.has(c.region)) continue
   seen.add(c.region)
   strip.push(c)

@@ -78,46 +78,6 @@ span.painChip {
   cursor: default;
 }
 
-/* ---------------- 2층 (`＋ 전체`) ---------------- */
-
-.painChips__more {
-  display: inline-block;
-  position: relative;
-}
-
-.painChip--more {
-  color: var(--pain-text-muted);
-  border-style: dashed;
-  /* <summary>의 기본 삼각형을 없앤다 -- 칩 모양이 하나여야 한다. */
-  list-style: none;
-}
-
-.painChips__more > summary::-webkit-details-marker {
-  display: none;
-}
-
-/*
- * 펼친 2층은 행 아래로 흐르지 않고 **띄워서** 연다. 행 높이가 갑자기
- * 늘어나면 옆 블록이 밀리고 "한 화면" 예산이 무너진다.
- */
-.painChips__moreBody {
-  position: absolute;
-  right: 0;
-  z-index: 20;
-  margin-top: 6px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-  width: max-content;
-  max-width: 520px;
-  padding: 10px;
-  background: var(--pain-surface);
-  border: 1px solid var(--pain-border);
-  border-radius: var(--pain-radius);
-  box-shadow: 0 6px 20px rgba(48, 56, 52, 0.12);
-}
-
 /* ---------------- 아직 손대지 않은 행 ---------------- */
 
 /*

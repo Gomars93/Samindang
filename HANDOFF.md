@@ -1,5 +1,74 @@
 # Current Handoff
 
+## 2026-09-22 (최신 61): **입력 4블록 → 3블록** — 설진·맥진·복진은 한약의 것이다
+
+**브랜치**: `claude/gracious-bell-epfxem` (최신 60 위에 이어서).
+
+PO가 컨택트 시트를 보고 잡았다 — "왜 한약이랑 통증을 섞었냐". 맞는 지적이었다.
+상세는 `DECISIONS.md` 같은 날 첫 항목.
+
+### 화면 구성이 바뀌었다
+```
+띠 1 (환자 요약 + 안전 칩 + NRS 2행)
+읽기 4  FUNCTION / LOAD / NEURO / RECOVERY
+입력 3  EXAM / ASSESSMENT / PLAN        ← OBSERVATION 제거
+= 7블록
+```
+
+### 무엇이 잘못됐나
+최신 60에서 SOAP 네 칸을 맞추려고 OBSERVATION 자리에 `observationOptions.ts`
+(설 24 / 맥 22 / 복 15)를 넣었다. 그 셋은 이미 **한약 진료의 것으로 분리**되어
+있었다 — `ClinicianObservationChecklist`를 렌더하는 곳은 `HerbalWorkspace`
+하나뿐이고 상태 필드명부터 `herbalClinicianObservations`다.
+**PO 확인: 통증 진료에서 맥진을 하지 않는다.**
+
+§D("칩을 지어내지 않는다")로는 안 잡혔다 — **출처**가 승인된 카탈로그인지만
+봤고 **도메인**이 맞는지는 안 봤다. 그래서 §B를 도메인 검증으로 새로 세웠다.
+
+### 한 것
+- `clinicalModel.ts` — `observationBlock` / `ObservationValues` /
+  `observationOptions` import 제거. `MAX_CLINICAL_BLOCKS` 4 → **3**.
+- 같이 지운 죽은 경로: `ClinicalRow.overflowChips`, `＋ 전체` UI(+CSS),
+  `Chip.exclusiveWith`, `ClinicalRow.freeText`, `NO_FINDING_VALUE` 재수출.
+  설·맥·복이 유일한 계층 카탈로그였어서, 빠지면 2층에 담길 것이 영원히 없다.
+  (**한약 쪽 2층 장치는 원형 그대로 살아 있다.**)
+- `MAX_INLINE_CHIPS`는 남겼다 — 접기 장치가 아니라 행 문법의 상한이다.
+- 대체 카탈로그는 **만들지 않았다.** 통증용 시진·촉진·ROM은 승인된 카탈로그가
+  없고, 없는 걸 지금 지어내면 같은 사고를 되풀이한다.
+
+### 새 §B — 양방향 차단 + 뮤테이션 3회
+| 뮤테이션 | 실패 | 확인 |
+|---|---|---|
+| ① 설진 행 재삽입 | 16 | 출력·소스가 동시에 잡는다 |
+| ② 출력에 안 나타나는 조건부 블록 | 2 | **소스 스캔만** 잡았다 (상호보완 실증) |
+| ③ `침`을 검사 칩에 하드코딩 | 6 | import 없이도 잡힌다 |
+
+### 잃은 값 0
+이 블록은 `DoctorWorkspace`에 배선된 적이 없어 읽는 곳도 쓰는 곳도 없었다.
+**배선 전에 발견된 것이 이번 건의 유일한 운이다.**
+
+### 검증
+`test:all` exit 0 / `build` exit 0. `pain-clinical` 49 → **59단언**.
+컨택트 시트 재생성 — 설·맥·복 문자열 **0건**, 입력 데모는 `EXAM/ASSESSMENT/PLAN`.
+
+### 아직 연결 안 됨
+`ClinicalBlocks`는 여전히 `DoctorWorkspace` 상태에 **배선되지 않았다.**
+머지해도 원장 화면은 안 바뀐다.
+
+### Next Recommended Action
+1. **`DoctorWorkspace` 배선** — 7블록을 실제 상태에 연결. 여기까지 해야
+   **처음으로 원장이 새 화면을 쓴다.**
+2. **「마무리」 화면 분리** — EMR·환자전달·QR·메시징·복약·재평가 7블록을
+   진료 화면에서 뺀다.
+3. **C그룹 5개 판단** — MicroFollowUp / AdditionalConcern /
+   StructuredReassessment / SupportContradiction / PriorVisitHistory.
+   진료 중 실제로 보시는지 PO 확인 필요.
+4. 옛 `doctor.css` 폐기 — 7블록이 실제로 가동된 **뒤에**.
+5. 한약 프로필 — 통증 문법이 실가동된 후. 시트는 그때
+   `--profile=pain|herbal|mixed` **한 스크립트**로 나눈다(지금은 나눌 것이 없다).
+
+---
+
 ## 2026-09-22 (최신 60): **입력 4블록 + 안전 칩** — 행 문법 하나로 읽기·쓰기를 덮는다
 
 **브랜치**: `claude/gracious-bell-epfxem` (PR #49 머지 후 main에서 새로 시작).

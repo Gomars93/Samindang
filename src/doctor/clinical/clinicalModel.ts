@@ -1,65 +1,71 @@
 /**
- * 통증 닥터뷰 — **원장이 쓰는** 4블록(소견 / 검사 / 판단 / 처치).
+ * 통증 닥터뷰 — **원장이 쓰는** 3블록(검사 / 판단 / 처치).
  *
  * 읽기 4블록(`briefingModel.ts`)과 같은 행 문법을 쓴다. 뼈대는 하나다:
  *
  *   읽기   앉아 있기   ────────────────  10분
- *   입력   설진        ────  담백설 [홍설] 암홍설  ＋ 전체
+ *   입력   SLR         ────  [양성] 음성 시행 안 함
  *
  * **값 자리만 바뀐다.** 이 파일에 두 번째 행 모양을 만들지 않는다.
+ *
+ * 왜 3블록인가 — 소견(OBSERVATION)이 여기 없는 이유
+ * -------------------------------------------------
+ * 처음엔 SOAP 네 칸을 맞추려고 OBSERVATION 블록에 **설진·맥진·복진**을 넣었다.
+ * 잘못이었다. 설·맥·복은 이 저장소에서 이미 **한약 진료의 것으로 분리되어**
+ * 있다 — `ClinicianObservationChecklist`를 렌더하는 곳은 `HerbalWorkspace`
+ * 하나뿐이고, 상태 필드 이름부터 `herbalClinicianObservations`다
+ * (`persistence.ts`). 그걸 통증 화면으로 끌어오면 원장이 허리 환자 앞에서
+ * 설태를 체크하는 칸을 보게 된다. PO 확인(2026-09-22): **통증 진료에서
+ * 맥진을 하지 않는다.**
+ *
+ * 그래서 대체 카탈로그를 **만들지 않았다.** 통증용 시진·촉진·ROM 항목은 아직
+ * 승인된 카탈로그가 없고, 없는 것을 이 파일이 지어내면 아래 "칩 항목을
+ * 지어내지 않는다" 규칙을 스스로 어기는 것이다. 통증 쪽 "무엇이 보이는가"는
+ * EXAM 블록(부위팩이 계산한 권장 검사)이 답한다.
+ *
+ * 교훈은 블록 하나가 아니다: **블록 수를 먼저 정하는 설계는 도메인 오염을
+ * 만든다.** 한약 뷰를 만들 때 "통증이 3블록이니 한약도 3블록"으로 가면 같은
+ * 사고가 반대 방향으로 난다.
  *
  * 칩 항목을 지어내지 않는다
  * -------------------------
  * 모든 선택지는 **이미 승인된 카탈로그**에서 온다:
- *   - 소견 → `observationOptions.ts` (설 24 / 맥 22 / 복 15, 툴팁 포함)
  *   - 검사 → 호출부가 넘긴 `PhysicalExamSuggestion[]` (임상 엔진 산출물)
  *   - 판단 → `workingHypothesis.ts`의 `HYPOTHESIS_SUPPORT_*` 고정 enum
  *   - 처치 → 호출부가 넘긴 `RehabSuggestion[]` + `REHAB_SUGGESTION_STATUS_LABEL`
  *
  * 이 파일이 새 임상 항목이나 새 판정값을 만들면 `tests/pain-clinical.spec.mjs`
- * §D가 실패한다 -- 모든 칩 라벨이 카탈로그에 실재하는지 대조한다.
- *
- * 3층 구조를 흡수한다
- * -------------------
- * `observationOptions`의 `tier`(1층 = 자주 쓰는 것, 2층 = 나머지)를 그대로
- * 쓴다. **1층만 행에 펼치고 2층은 `＋ 전체` 뒤로 민다** -- 설진 24개를 한 행에
- * 늘어놓으면 행 문법이 무너지기 때문이다. 한 행의 칩 상한은 `MAX_INLINE_CHIPS`.
+ * §D가 실패한다 -- 모든 칩 라벨이 카탈로그에 실재하는지 대조한다. §B는 그와
+ * 별개로 **한약 카탈로그(설·맥·복)가 이 파일에 다시 들어오지 못하게** 막는다.
  *
  * 순수 함수다
  * -----------
- * 상태를 갖지 않고 payload/카탈로그/현재 값만 보고 행 배열을 만든다. 실제
- * 토글은 렌더 컴포넌트가 `onToggle`로 위임받아 호출부(워크스페이스 상태)에서
- * 일어난다 -- 화면이 임상 값을 몰래 계산하지 않는다.
+ * 상태를 갖지 않고 카탈로그/현재 값만 보고 행 배열을 만든다. 실제 토글은 렌더
+ * 컴포넌트가 `onToggle`로 위임받아 호출부(워크스페이스 상태)에서 일어난다 --
+ * 화면이 임상 값을 몰래 계산하지 않는다.
  */
-import {
-  OBSERVATION_OPTIONS_BY_CATEGORY,
-  NO_FINDING_VALUE,
-  parseObservationValue,
-  type ObservationOption,
-} from '../workspace/observationOptions'
 import { HYPOTHESIS_SUPPORT_LABEL_KO, HYPOTHESIS_SUPPORT_OPTIONS, type HypothesisSupport } from '../workspace/workingHypothesis'
 import { EXAM_PRIORITY_LABEL, type PhysicalExamSuggestion } from '../workspace/examSuggestion'
 import { REHAB_SUGGESTION_STATUS_LABEL, type RehabSuggestion, type RehabSuggestionStatus } from '../workspace/rehabSuggestion'
 import type { HypothesisPattern } from '../workspace/regionPack'
 import type { WorkingHypothesis } from '../workspace/workingHypothesis'
 
-/** 한 행에 인라인으로 펼치는 칩 수 상한. 넘으면 나머지는 `＋ 전체` 뒤로 간다. */
+/**
+ * 한 행에 늘어놓는 칩 수 상한. 넘으면 행 문법(라벨 ──── 값)이 무너져 줄이
+ * 접히기 시작한다. 지금 세 블록의 칩은 모두 3개씩이라 여유가 있지만, 상한은
+ * 그대로 둔다 -- `pain-clinical.spec.mjs` §A가 이걸로 회귀를 잡는다.
+ */
 export const MAX_INLINE_CHIPS = 6
 
 /** 입력 블록 수 상한. 넘으면 테스트가 실패한다 -- 화면이 다시 길어지는 유일한 경로를 막는다. */
-export const MAX_CLINICAL_BLOCKS = 4
+export const MAX_CLINICAL_BLOCKS = 3
 
 export type Chip = {
   /** 칩에 보이는 글자. **저장값과 같다**(카탈로그 라벨 그대로). */
   label: string
   selected: boolean
-  /** 호버 시 감각·관찰 묘사. 카탈로그가 주는 것만 쓴다(변증 귀속 없음). */
+  /** 호버 시 설명. 카탈로그가 주는 것만 쓴다 -- 이 파일이 문구를 지어내지 않는다. */
   tooltip?: string
-  /**
-   * 이 칩이 켜지면 꺼져야 하는 짝(맥의 부/침처럼 한 축의 양 끝).
-   * 토글 처리는 카탈로그의 `toggleObservationChip`이 담당한다.
-   */
-  exclusiveWith?: string
   /** 상태형 칩(검사·처치)에서 이 칩이 나타내는 값. 토글 시 호출부로 그대로 넘어간다. */
   value?: string
 }
@@ -67,24 +73,20 @@ export type Chip = {
 export type ClinicalRow = {
   /** 행 라벨. 읽기 행과 같은 자리, 같은 규칙(줄바꿈하지 않는다). */
   label: string
-  /** 인라인으로 펼치는 칩. */
+  /** 이 행에 늘어놓는 칩. 접히는 것은 없다(2층은 한약 쪽에만 있다). */
   chips: Chip[]
-  /** `＋ 전체` 뒤로 민 칩. 비어 있으면 그 버튼이 나오지 않는다. */
-  overflowChips: Chip[]
   /**
    * 이 행이 무엇을 토글하는지 호출부가 알아볼 키.
-   * 소견은 카테고리(`TONGUE`), 검사·처치는 항목 id, 판단은 패턴 id다.
+   * 검사·처치는 항목 id, 판단은 패턴 id다.
    */
   key: string
   /** 아직 아무것도 기록되지 않았는가. 흐리게 표시한다. */
   untouched: boolean
-  /** 자유입력이 함께 붙는 행이면 현재 값. */
-  freeText?: string
   /** 추적용 -- 이 행의 선택지가 어느 카탈로그에서 왔는지. 테스트가 이걸로 대조한다. */
   source: string
 }
 
-export type ClinicalBlockKey = 'observation' | 'exam' | 'assessment' | 'plan'
+export type ClinicalBlockKey = 'exam' | 'assessment' | 'plan'
 
 export type ClinicalBlock = {
   key: ClinicalBlockKey
@@ -97,70 +99,6 @@ export type ClinicalBlock = {
    * textarea 10개가 화면을 늘린 주범이었고, 나머지는 칩으로 옮겼다.
    */
   note?: { label: string; value: string; placeholder: string }
-}
-
-/* ------------------------------------------------------------------ *
- * 소견 -- 설진 / 맥진 / 복진
- * ------------------------------------------------------------------ */
-
-const OBSERVATION_ROW_LABEL: Record<string, string> = {
-  TONGUE: '설진',
-  PULSE: '맥진',
-  ABDOMEN: '복진',
-}
-
-/** 저장 문자열 하나를 카탈로그와 대조해 칩 목록으로 만든다. */
-function observationRow(category: string, stored: string): ClinicalRow {
-  const options: ObservationOption[] = OBSERVATION_OPTIONS_BY_CATEGORY[category] ?? []
-  const parsed = parseObservationValue(stored ?? '', options)
-  const chosen = new Set(parsed.selected)
-
-  const toChip = (o: ObservationOption): Chip => ({
-    label: o.label,
-    selected: chosen.has(o.label),
-    tooltip: o.tooltip,
-    exclusiveWith: o.exclusiveWith,
-    value: o.label,
-  })
-
-  /*
-   * 인라인 자리를 채우는 순서. **선택된 칩이 절대 접히지 않는다**가 첫 규칙이다 --
-   * 기록된 소견이 `＋ 전체` 뒤에 숨으면 원장이 자기가 뭘 체크했는지 못 본다.
-   *
-   * 처음 구현은 `[...tier1, ...selectedTier2].slice(0, MAX)`였는데, 설진은
-   * 1층이 이미 6개(= 상한)라 **선택된 2층 칩이 통째로 잘려 나갔다.** 주석에
-   * 그러지 않겠다고 적어놓고 코드는 반대로 한 것이고, `pain-clinical.spec.mjs`
-   * §B가 그걸 잡았다. 상한은 **안 고른 칩에만** 적용한다.
-   */
-  const selected = options.filter((o) => chosen.has(o.label))
-  const unselectedTier1 = options.filter((o) => o.tier === 1 && !chosen.has(o.label))
-  const room = Math.max(0, MAX_INLINE_CHIPS - selected.length)
-  const inline = [...selected, ...unselectedTier1.slice(0, room)]
-  const inlineLabels = new Set(inline.map((o) => o.label))
-  // 원래 카탈로그 순서를 유지한다 -- 매번 순서가 바뀌면 근육 기억이 안 붙는다.
-  const inlineOrdered = options.filter((o) => inlineLabels.has(o.label))
-  const overflow = options.filter((o) => !inlineLabels.has(o.label))
-
-  return {
-    label: OBSERVATION_ROW_LABEL[category] ?? category,
-    chips: inlineOrdered.map(toChip),
-    overflowChips: overflow.map(toChip),
-    key: category,
-    untouched: parsed.selected.length === 0 && !parsed.noFinding && parsed.freeText.trim() === '',
-    freeText: parsed.freeText,
-    source: `observationOptions.${category}`,
-  }
-}
-
-export type ObservationValues = Record<string, string>
-
-function observationBlock(values: ObservationValues): ClinicalBlock {
-  return {
-    key: 'observation',
-    eyebrow: 'OBSERVATION',
-    question: '진찰에서 무엇이 보이는가?',
-    rows: ['TONGUE', 'PULSE', 'ABDOMEN'].map((c) => observationRow(c, values[c] ?? '')),
-  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -187,7 +125,6 @@ function examBlock(items: readonly PhysicalExamSuggestion[], results: Record<str
         // 대신 `MUST_CHECK`는 아래 렌더에서 라벨 색으로만 구분한다.
         label: item.title,
         chips: EXAM_RESULT_CHIPS.map((c) => ({ label: c, selected: current === c, value: c })),
-        overflowChips: [],
         key: item.id,
         untouched: current === '',
         source: `examSuggestion.${EXAM_PRIORITY_LABEL[item.priority] ?? item.priority}`,
@@ -222,7 +159,6 @@ function assessmentBlock(
           selected: current === s,
           value: s,
         })),
-        overflowChips: [],
         key: p.id,
         untouched: current === 'UNJUDGED',
         source: 'workingHypothesis.HYPOTHESIS_SUPPORT_OPTIONS',
@@ -264,7 +200,6 @@ function planBlock(items: readonly RehabSuggestion[]): ClinicalBlock {
         selected: item.status === s,
         value: s,
       })),
-      overflowChips: [],
       key: item.id,
       untouched: item.status === 'SUGGESTED',
       source: 'rehabSuggestion.REHAB_SUGGESTION_STATUS_LABEL',
@@ -277,7 +212,6 @@ function planBlock(items: readonly RehabSuggestion[]): ClinicalBlock {
  * ------------------------------------------------------------------ */
 
 export type ClinicalInput = {
-  observation: ObservationValues
   exams: readonly PhysicalExamSuggestion[]
   examResults: Record<string, string>
   patterns: readonly HypothesisPattern[]
@@ -288,16 +222,12 @@ export type ClinicalInput = {
 
 export function buildClinicalBlocks(input: ClinicalInput): ClinicalBlock[] {
   const blocks: ClinicalBlock[] = [
-    observationBlock(input.observation),
     examBlock(input.exams, input.examResults),
     assessmentBlock(input.patterns, input.hypothesis, input.finalAssessment),
     planBlock(input.rehab),
   ]
   // 제안이 하나도 없는 블록은 자리를 차지하지 않는다 -- 빈 카드가 화면을
-  // 늘리면 "덜 보여주기"라는 이번 재설계의 전제가 깨진다. 소견·판단은 항상
-  // 남는다(원장이 직접 쓰는 곳이라 비어 있어도 입력 자리가 필요하다).
-  return blocks.filter((b) => b.rows.length > 0 || b.key === 'observation' || b.key === 'assessment')
+  // 늘리면 "덜 보여주기"라는 이번 재설계의 전제가 깨진다. 판단만 항상 남는다
+  // (원장이 직접 쓰는 곳이라 비어 있어도 입력 자리가 필요하다).
+  return blocks.filter((b) => b.rows.length > 0 || b.key === 'assessment')
 }
-
-/** 블록 공통의 "봤는데 특이소견 없음" 값. 카탈로그 상수를 그대로 재노출한다. */
-export { NO_FINDING_VALUE }

@@ -1,5 +1,5 @@
 /**
- * 통증 닥터뷰 — 입력 4블록 렌더 (소견 / 검사 / 판단 / 처치).
+ * 통증 닥터뷰 — 입력 3블록 렌더 (검사 / 판단 / 처치).
  *
  * 읽기 블록(`PainBriefing.tsx`)과 **같은 행 뼈대**를 쓴다:
  *
@@ -7,6 +7,12 @@
  *
  * 읽기에서는 값 자리가 텍스트·점척도·비교였고, 여기서는 **칩**이다. 그것뿐이다.
  * 이 파일에 두 번째 행 모양을 만들지 않는다.
+ *
+ * 소견(설진·맥진·복진) 블록은 여기 없다 -- 그건 한약 진료의 것이고
+ * `HerbalWorkspace`의 `ClinicianObservationChecklist`가 담당한다. 이유는
+ * `clinicalModel.ts` 헤더에 적어뒀다. 2층(`＋ 전체`) 접기 UI도 그 블록과 함께
+ * 빠졌다 -- 남은 세 블록의 칩은 행마다 3개씩이라 접을 것이 없고, 아무것도
+ * 담기지 않는 버튼을 남겨두지 않는다.
  *
  * 값을 계산하지 않는다
  * --------------------
@@ -24,7 +30,6 @@ import './clinical.css'
 import {
   buildClinicalBlocks,
   MAX_INLINE_CHIPS,
-  NO_FINDING_VALUE,
   type Chip,
   type ClinicalBlock,
   type ClinicalInput,
@@ -70,7 +75,6 @@ function Row({
   readOnly?: boolean
 }) {
   const fire = (value: string) => () => onToggle?.(blockKey, row.key, value)
-  const hasOverflow = row.overflowChips.length > 0
 
   return (
     <div
@@ -83,22 +87,6 @@ function Row({
         {row.chips.map((c) => (
           <ChipButton key={c.label} chip={c} onClick={fire(c.value ?? c.label)} readOnly={readOnly} />
         ))}
-        {hasOverflow && (
-          /*
-           * 2층(`＋ 전체`). <details>를 쓰는 이유: 상태를 컴포넌트가 들지
-           * 않아도 되고, 키보드·스크린리더 동작이 네이티브로 따라온다.
-           * 선택된 2층 칩은 모델이 이미 인라인으로 올려 보내므로, 여기 접히는
-           * 것은 **아직 안 고른 것들**뿐이다.
-           */
-          <details className="painChips__more">
-            <summary className="painChip painChip--more">＋ 전체 {row.overflowChips.length}</summary>
-            <div className="painChips__moreBody">
-              {row.overflowChips.map((c) => (
-                <ChipButton key={c.label} chip={c} onClick={fire(c.value ?? c.label)} readOnly={readOnly} />
-              ))}
-            </div>
-          </details>
-        )}
       </span>
     </div>
   )
@@ -129,23 +117,6 @@ function Block({
       {block.rows.map((row) => (
         <Row key={row.key} row={row} blockKey={block.key} onToggle={onToggle} readOnly={readOnly} />
       ))}
-
-      {/*
-       * "봤는데 특이소견 없음". 미체크는 "정상"이 아니라 "아직 안 봤음"을
-       * 뜻하므로(카탈로그 헤더 참고) 이 한 번의 탭이 그 구분을 만든다.
-       */}
-      {block.key === 'observation' && (
-        <div className="painRow painRow--input">
-          <span className="painRow__label">전체</span>
-          <span className="painRow__value painRow__chips">
-            <ChipButton
-              chip={{ label: NO_FINDING_VALUE, selected: false }}
-              onClick={() => onToggle?.(block.key, '__all__', NO_FINDING_VALUE)}
-              readOnly={readOnly}
-            />
-          </span>
-        </div>
-      )}
 
       {block.note && (
         <label className="painNote">

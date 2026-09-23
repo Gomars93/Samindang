@@ -1,5 +1,51 @@
 # Current Handoff
 
+## 2026-09-23 (최신 66): 검사 **좌/우**를 입력 모델에 채움 (배선 전 준비)
+
+**브랜치**: `claude/gracious-bell-epfxem`. 상세는 `DECISIONS.md` 첫 항목.
+
+### 한 것
+`clinicalModel.ts` EXAM 블록에 좌/우 행 추가. PO 확정이고, **기존 화면
+(`ExamSuggestionCard`의 `workspace__lateralityRow`)에 이미 있는 입력**이라
+배선 때 떨어뜨리지 않도록 먼저 채웠다.
+
+- 어휘는 `provenance.ts`의 `LATERALITY_LABEL` 그대로(새로 만들지 않음).
+- `NOT_APPLICABLE`은 칩이 아니다 — 기본 상태이지 고를 수 있는 값이 아니다.
+- 좌우 행은 **결과를 기록한 항목에만** 붙는다(모든 항목에 붙이면 행이 2배).
+- 토글 값은 라벨이 아니라 enum — 호출부가 `result.laterality`에 그대로 넣는다.
+
+### 컨택트 시트 데모가 옛 어휘로 굳어 있었다
+`examResults`가 `{ slr: '양성' }` **라벨 문자열**이었다(enum 교체 때 놓침).
+그대로 두면 시트에서 칩이 **하나도 안 켜진다** — 잘못된 미리보기로 판단하게
+된다. enum으로 고치고 재생성 확인.
+
+### 검증
+`test:all` exit 0 / `build` exit 0. `pain-clinical` 64 → **80단언**.
+뮤테이션 3회(좌우 행 제거 11단언 / `NOT_APPLICABLE` 노출 / 미확인에도 붙임).
+
+### Next Recommended Action
+
+**1. 입력 3블록을 `DoctorWorkspace`에 배선** ← 다음 작업.
+모델은 이제 준비됐다(EXAM+좌우 / ASSESSMENT / PLAN). 배선하면서 대체되는
+옛 카드(`ExamSuggestionList` 등)를 정리한다 — **필드 × 화면 표 필수.**
+
+**2. `최종 임상 판단` 제거 — 전제 작업이 먼저.**
+`server/store.js`가 이 값으로 `pain_final_assessment_summary`를 만들고 그게
+`PriorVisitHistoryCard`「이전 최종 판단」과 `RevisitWorkspace` 요약 줄 **두
+화면**에 뜬다. 임상 가설 요약을 저장하는 새 필드가 필요하다(서버가 부위팩
+`labelKo`를 못 읽어 스스로 만들 수 없다).
+
+**3. 2주 무재진 자동 링크** — 설계 확정(최신 63). 예약 발송 +
+`PriorVisitSummary`에 NRS 싣기 둘뿐. 별도 PR.
+
+**4.** 「마무리」 화면 분리 / C그룹 5개 판단 / 옛 `doctor.css` 폐기 / 한약 프로필.
+
+### PO 확인 대기
+- **치료 초점 층 라벨** `증상 조절 · 가동성 확보 · 부하 능력` — 내 초안.
+- 약침 **제제**(미주란·태반) 기록 위치 — 지금은 `기타`로 떨어진다(PO 지시 유지).
+
+---
+
 ## 2026-09-23 (최신 65): **즉시 재검 대상 제거** (세 경로 전부)
 
 **브랜치**: `claude/gracious-bell-epfxem` (최신 64 위에). 상세는 `DECISIONS.md` 첫 항목.

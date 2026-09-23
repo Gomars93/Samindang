@@ -45,7 +45,7 @@ import {
   ABDOMEN_OPTIONS,
 } from './.observation-options.mjs'
 import { HYPOTHESIS_SUPPORT_LABEL_KO, emptyWorkingHypothesis } from './.working-hypothesis.mjs'
-import { EXAM_CHECK_STATUS_LABEL } from './.provenance.mjs'
+import { EXAM_CHECK_STATUS_LABEL, LATERALITY_LABEL } from './.provenance.mjs'
 import { REHAB_SUGGESTION_STATUS_LABEL } from './.rehab-suggestion.mjs'
 
 /*
@@ -105,6 +105,7 @@ const rehab = (id, title, status = 'SUGGESTED') => ({
 const emptyInput = () => ({
   exams: [exam('slr', 'SLR', 'MUST_CHECK'), exam('faber', 'FABER')],
   examResults: {},
+  examLateralities: {},
   patterns: PATTERNS,
   hypothesis: emptyWorkingHypothesis(PATTERNS),
   finalAssessment: '',
@@ -114,6 +115,7 @@ const emptyInput = () => ({
 const touchedInput = () => ({
   ...emptyInput(),
   examResults: { slr: 'POSITIVE' },
+  examLateralities: { slr: 'LEFT' },
   hypothesis: { supports: { disc: 'HIGHER', facet: 'LOWER' }, recordedAt: null },
   finalAssessment: '굴곡 부하에서 재현.',
   rehab: [rehab('r1', '엎드려 상체 신전', 'ACCEPTED')],
@@ -326,6 +328,9 @@ ok(
  */
 const ALLOWED_LABELS = new Set([
   ...Object.values(HYPOTHESIS_SUPPORT_LABEL_KO),
+  // 좌/우는 `provenance.ts`의 독립 카탈로그다 -- 모델이 정의하지 않으므로
+  // import해 대조해도 자기검증이 되지 않는다.
+  ...Object.values(LATERALITY_LABEL),
   ...Object.values(REHAB_SUGGESTION_STATUS_LABEL),
   // 모델이 아니라 위 리터럴을 쓴다 -- import하면 자기 검증이 된다.
   ...EXPECTED_EXAM_RESULT_CHIPS,
@@ -353,7 +358,7 @@ for (const [name, input] of [
   const rows = buildClinicalBlocks(emptyInput()).flatMap((b) => b.rows)
   ok(
     '§D 모든 행이 출처를 카탈로그로 표기한다',
-    rows.every((r) => /^(examSuggestion|workingHypothesis|rehabSuggestion)\./.test(r.source)),
+    rows.every((r) => /^(examSuggestion|workingHypothesis|rehabSuggestion|provenance)\./.test(r.source)),
     `(${[...new Set(rows.map((r) => r.source.split('.')[0]))].join(', ')})`,
   )
 }
@@ -421,6 +426,73 @@ for (const [name, input] of [
   ok('§F 제안 없는 처치 블록은 빠진다', !keys.includes('plan'))
   ok('§F 판단 블록은 비어도 남는다 (원장 입력 자리)', keys.includes('assessment'))
   ok('§F 그래도 소견 블록이 되살아나지는 않는다', !keys.includes('observation'), `(${keys.join(', ')})`)
+}
+
+/* ---------------- §G 좌/우 (PO 확정 2026-09-23) ---------------- */
+
+/*
+ * 기존 화면(`ExamSuggestionCard`의 `workspace__lateralityRow`)에 이미 있는
+ * 입력이다. 이 모델이 그 카드를 대체할 때 **떨어뜨리면 안 되는 값**이라
+ * 배선 전에 먼저 채웠다.
+ *
+ * 어휘는 `provenance.ts`의 `LATERALITY_LABEL` 그대로 쓴다 -- 검사 결과
+ * 어휘에서 겪은 "승인된 enum과 평행한 어휘를 새로 만드는" 사고를 되풀이하지
+ * 않는다(§D 참고).
+ */
+{
+  ok(
+    '§G 좌/우 카탈로그가 네 값이다 (아래 단언이 공허하지 않도록)',
+    Object.keys(LATERALITY_LABEL).length === 4,
+    `(${Object.keys(LATERALITY_LABEL).join(', ')})`,
+  )
+
+  const examRows = (input) => buildClinicalBlocks(input).find((b) => b.key === 'exam').rows
+
+  // 미확인 검사에는 좌우 행이 붙지 않는다 -- 순서가 거꾸로이고 행이 두 배가 된다.
+  const blank = examRows(emptyInput())
+  ok('§G 빈 상태에서는 좌우 행이 하나도 없다', blank.every((r) => !r.key.endsWith('::laterality')), `(${blank.length}행)`)
+  ok('§G 빈 상태에서도 검사 결과 행은 있다 (위 단언이 "행이 없다"를 뜻하지 않도록)', blank.length === 2)
+
+  // 결과를 기록한 항목에만 붙는다.
+  const oneChecked = examRows({ ...emptyInput(), examResults: { slr: 'POSITIVE' } })
+  const latRows = oneChecked.filter((r) => r.key.endsWith('::laterality'))
+  ok('§G 결과를 기록한 항목에만 좌우 행이 붙는다', latRows.length === 1, `(${latRows.length}개)`)
+  ok('§G 그 행은 기록한 항목의 것이다', latRows[0]?.key === 'slr::laterality')
+  ok('§G 라벨이 어느 검사인지 말한다', latRows[0]?.label === 'SLR 좌우')
+
+  // 칩은 좌·우·양측 셋. `해당 없음`은 기본 상태이지 고를 수 있는 값이 아니다.
+  ok(
+    '§G 좌우 칩이 좌·우·양측 셋이다',
+    JSON.stringify(latRows[0]?.chips.map((c) => c.label)) ===
+      JSON.stringify([LATERALITY_LABEL.LEFT, LATERALITY_LABEL.RIGHT, LATERALITY_LABEL.BILATERAL]),
+    `(${latRows[0]?.chips.map((c) => c.label).join(', ')})`,
+  )
+  ok(
+    '§G `해당 없음`은 칩으로 나오지 않는다 (기본 상태이지 고를 수 있는 값이 아니다)',
+    !latRows[0]?.chips.some((c) => c.label === LATERALITY_LABEL.NOT_APPLICABLE),
+  )
+  ok(
+    '§G 칩의 value는 라벨이 아니라 enum 값이다 (호출부가 result.laterality에 그대로 넣는다)',
+    JSON.stringify(latRows[0]?.chips.map((c) => c.value)) === JSON.stringify(['LEFT', 'RIGHT', 'BILATERAL']),
+  )
+
+  // 미기록 / 기록 구분.
+  ok('§G 좌우 미기록이면 untouched다', latRows[0]?.untouched === true)
+  ok('§G 좌우 미기록이면 선택된 칩이 없다', latRows[0]?.chips.every((c) => !c.selected))
+
+  const recorded = examRows(touchedInput()).find((r) => r.key === 'slr::laterality')
+  ok('§G 좌우를 기록하면 untouched가 아니다', recorded?.untouched === false)
+  ok('§G 기록한 쪽 칩이 켜진다', recorded?.chips.find((c) => c.value === 'LEFT')?.selected === true)
+  ok('§G 다른 쪽 칩은 꺼져 있다', recorded?.chips.find((c) => c.value === 'RIGHT')?.selected === false)
+
+  // 명시적 NOT_APPLICABLE은 미기록과 같다.
+  const na = examRows({ ...emptyInput(), examResults: { slr: 'POSITIVE' }, examLateralities: { slr: 'NOT_APPLICABLE' } })
+    .find((r) => r.key === 'slr::laterality')
+  ok('§G 명시적 `NOT_APPLICABLE`은 untouched다', na?.untouched === true)
+
+  // 행 키가 검사 결과 행과 충돌하지 않는다(§A의 중복 키 단언과 다른 축).
+  const all = examRows(touchedInput())
+  ok('§G 좌우 행 키가 검사 결과 행 키와 겹치지 않는다', new Set(all.map((r) => r.key)).size === all.length)
 }
 
 /* ---------------- 결과 ---------------- */

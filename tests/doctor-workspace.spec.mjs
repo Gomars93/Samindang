@@ -4416,6 +4416,113 @@ function enclosingDetailsTag(html, label) {
   return endBetween ? null : tag
 }
 
+/* ===========================================================================
+ * 2026-09-23: 즉시 재검 대상 — 신규 방문에서 사라지고, 기존 값은 그대로 산다.
+ *
+ * PO가 "치료 직후 즉시 재검"(타이밍 ①)을 하지 않기로 했다. 그 칸은 ①의
+ * 입력칸이었으므로 존재 이유가 사라졌다. 반응 측정은 2주 링크와 재진 문진이
+ * 전담한다.
+ *
+ * **세 경로를 함께 다뤘다**(CLAUDE.md 경로 제거 규칙):
+ *   편집 UI  -- 값이 있을 때만 렌더(래치). 신규 방문에는 안 나온다.
+ *   이어받기 -- `revisitCarryForward.ts`에서 제거(`workspace-round3.spec.mjs`).
+ *   EMR P줄  -- 그대로. 기록된 값은 계속 출력된다.
+ *
+ * 편집 UI만 닫고 이어받기를 남겼다면, 이전 값이 있는 환자에게 오늘 **편집
+ * 불가능한 값**이 생겼을 것이다 -- Batch 2.6 D-1과 정확히 같은 모양이다.
+ * =========================================================================== */
+{
+  // `findEmrTextarea`는 위 블록 스코프 안에 있어 여기서 보이지 않는다.
+  // 같은 셀렉터를 그대로 쓴다(두 벌이 아니라 같은 클래스 토큰 하나를 본다).
+  const emrText = (renderer) =>
+    renderer.root.findAll(
+      (n) => typeof n.props.className === 'string' && n.props.className.split(' ').includes('workspace__emrPreview__text'),
+    )[0].props.value
+
+  const withRetest = (retest) => ({
+    painFinalAssessment: {
+      finalWorkingAssessment: '',
+      treatmentFocus: '',
+      interventionPerformedOrPlanned: '',
+      immediateRetestTarget: retest,
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    },
+  })
+
+  test('즉시 재검 대상 2026-09-23: 값이 없으면 칸 자체가 렌더되지 않는다', () => {
+    const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+    assert.ok(!html.includes('<span>즉시 재검 대상</span>'), '값도 없는데 칸이 떠 있다')
+    assert.ok(!html.includes('숙일 때 통증 재현 여부'), 'placeholder도 나오면 안 된다')
+    // 접힘 자체는 남아 있다 -- 최종 임상 판단이 아직 그 안에 있다.
+    assert.ok(html.includes('최종 임상 판단 — 필요할 때 입력'))
+  })
+
+  test('즉시 재검 대상 2026-09-23 (경로 제거 안전): 기존 값은 보이고, 고칠 수 있고, EMR로 나간다', () => {
+    const legacy = 'ROUND29 숙일 때 통증 재현 여부'
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:retest-legacy',
+          initialWorkspaceState: withRetest(legacy),
+        }),
+      )
+    })
+    const area = renderer.root.findAll((n) => n.type === 'textarea' && n.props.value === legacy)
+    assert.equal(area.length, 1, '기존 값을 담은 편집 칸이 보이지 않는다 -- 읽히는데 못 고치는 필드가 됐다')
+    assert.ok(
+      emrText(renderer).includes(`즉시 재검 대상: ${legacy}`),
+      '기존 값이 EMR P줄에서 사라졌다',
+    )
+    // 실제로 고칠 수 있다.
+    act(() => {
+      area[0].props.onChange({ target: { value: `${legacy} 수정` } })
+    })
+    assert.ok(emrText(renderer).includes(`즉시 재검 대상: ${legacy} 수정`))
+  })
+
+  test('즉시 재검 대상 2026-09-23 (N-2 회귀): 기존 값을 전부 지워도 칸이 사라지지 않는다 (래치)', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:retest-latch',
+          initialWorkspaceState: withRetest('지울 값'),
+        }),
+      )
+    })
+    const area = () => renderer.root.find((n) => n.type === 'textarea' && n.props.placeholder === '예: 숙일 때 통증 재현 여부')
+    assert.equal(area().props.value, '지울 값')
+    act(() => {
+      area().props.onChange({ target: { value: '' } })
+    })
+    assert.equal(
+      renderer.root.findAll((n) => n.type === 'textarea' && n.props.placeholder === '예: 숙일 때 통증 재현 여부').length,
+      1,
+      '편집 도중 값을 비우자 칸이 사라졌다 -- 파생식으로 되돌아간 것이다(N-2 사고)',
+    )
+  })
+
+  // 이어받기 쪽은 `workspace-round3.spec.mjs`가 본다. 여기서는 **소스에서
+  // 그 필드가 사라졌는지**만 한 줄로 고정해 두 파일이 같은 사실을 가리키게 한다.
+  test('즉시 재검 대상 2026-09-23: 이어받기 소스 타입에서 제거됐다 (소스 단언)', () => {
+    const src = fs.readFileSync(
+      new URL('../src/doctor/workspace/revisitCarryForward.ts', import.meta.url),
+      'utf8',
+    )
+    const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    assert.ok(stripped.includes('CarryForwardTreatmentPlan'), '주석 제거 후에도 코드가 남아 있다 (공허하지 않도록)')
+    assert.ok(
+      !stripped.includes('immediateRetestTarget'),
+      '이어받기가 아직 즉시 재검 대상을 나른다 -- 편집 불가 값이 생기는 경로가 남아 있다',
+    )
+  })
+}
+
 /*
  * 2026-09-23: **치료 초점이 접힘에서 나왔다.**
  *
@@ -4427,14 +4534,16 @@ function enclosingDetailsTag(html, label) {
  * 아래에서 두 가지를 같이 본다: (1) 접힘 안에 없다, (2) 칩으로 실제 렌더된다.
  * (1)만 보면 필드가 통째로 사라져도 통과한다.
  */
-test('접기: 통증 최종판단 — 최종 임상 판단·즉시 재검 대상이 비어 있으면 닫힌 secondary 안에 있고, 칩 필드는 밖에 있다', () => {
+test('접기: 통증 최종판단 — 최종 임상 판단이 비어 있으면 닫힌 secondary 안에 있고, 칩 필드는 밖에 있다', () => {
   const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
-  for (const label of ['최종 임상 판단', '즉시 재검 대상']) {
+  for (const label of ['최종 임상 판단']) {
     const tag = enclosingDetailsTag(html, `<span>${label}</span>`)
     assert.ok(tag && tag.includes('workspace__finalAssessment__secondary'), `${label} 는 secondary disclosure 안에 있어야 한다`)
     assert.ok(!/\sopen(=|>|\s)/.test(tag), `${label} 의 disclosure는 비어 있을 때 닫혀 있어야 한다: ${tag}`)
   }
-  assert.ok(html.includes('최종 임상 판단 · 즉시 재검 대상 — 필요할 때 입력'), 'summary가 남은 두 라벨을 이름 붙인다')
+  assert.ok(html.includes('최종 임상 판단 — 필요할 때 입력'), 'summary가 남은 라벨을 이름 붙인다')
+  // 2026-09-23: 즉시 재검 대상은 신규 방문에서 아예 렌더되지 않는다(아래 전용 테스트).
+  assert.ok(!html.includes('<span>즉시 재검 대상</span>'), '즉시 재검 대상이 값도 없는데 렌더됐다')
   assert.ok(
     !html.includes('치료 초점 — 필요할 때 입력'),
     '치료 초점이 아직 접힘 summary에 남아 있다',

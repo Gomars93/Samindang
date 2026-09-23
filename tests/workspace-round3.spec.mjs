@@ -589,14 +589,29 @@ function assert(name, cond) {
   assert('carry-forward: the herbal prescription note survives the mapping', source.treatmentPlan.interventionPerformedOrPlanned.includes('보중익기탕'))
   assert('carry-forward: the herbal medication instruction survives the mapping', source.treatmentPlan.carePlan.patientInstruction.includes('식후 30분 복용'))
   assert('carry-forward: the herbal adverse-effect instruction survives the mapping', source.treatmentPlan.carePlan.patientInstruction.includes('두드러기'))
-  assert('carry-forward: herbal symptomsToTrack lands on the next-visit check, not the immediate retest target', source.treatmentPlan.carePlan.nextVisitCheckItem.includes('피로감') && !source.treatmentPlan.immediateRetestTarget.includes('피로감'))
+  assert('carry-forward: herbal symptomsToTrack lands on the next-visit check', source.treatmentPlan.carePlan.nextVisitCheckItem.includes('피로감'))
 
   /* ---- Round 10 review fix: each action's SOURCE contains exactly the
      fields its label names. 시행/예정 처치 and 즉시 재검 대상 are treatment
      records, so they must not be reachable from the judgment action. ---- */
   assert('carry-forward: the judgment source carries ONLY the judgment fields', Object.keys(source.judgment).sort().join(',') === 'finalWorkingAssessment,treatmentFocus')
   assert('carry-forward: 시행/예정 처치 belongs to the treatment-plan source', source.treatmentPlan.interventionPerformedOrPlanned.includes('침 + 도수'))
-  assert('carry-forward: 즉시 재검 대상 belongs to the treatment-plan source', source.treatmentPlan.immediateRetestTarget.includes('숙일 때'))
+  /*
+   * 2026-09-23: `즉시 재검 대상`이 이어받기에서 빠졌다.
+   *
+   * PO가 "치료 직후 즉시 재검"(타이밍 ①)을 하지 않기로 해서 그 필드의 존재
+   * 이유가 사라졌고, 편집 UI도 신규 방문에서는 렌더되지 않는다.
+   *
+   * **편집 UI만 닫고 이어받기를 남겨두면 안 된다** -- 이전 방문에 값이 있는
+   * 환자에게 「이전 처치·관리계획 유지」를 누르는 순간 오늘 방문에 편집
+   * 불가능한 값이 생긴다. 보이지도 고쳐지지도 않는데 이어받기는 계속 그
+   * 필드에 쓰던 Batch 2.6 D-1 사고와 정확히 같은 모양이다.
+   */
+  assert('carry-forward: 즉시 재검 대상은 이어받기 source에 더 이상 없다', !('immediateRetestTarget' in source.treatmentPlan))
+  assert(
+    'carry-forward: 처치 source가 여전히 나르는 것은 처치와 Care Plan뿐이다',
+    Object.keys(source.treatmentPlan).sort().join(',') === 'carePlan,interventionPerformedOrPlanned',
+  )
 
   // THE safety property: prior MEASUREMENTS never become today's values.
   assert('carry-forward: Follow-up Targets carry the tracking selection only', source.followUpTargets.length === 3)
@@ -618,12 +633,16 @@ function assert(name, cond) {
      able to author today's treatment text, under any circumstances. ---- */
   assert("judgment-only carry-forward cannot populate today's 시행/예정 처치", withJudgment.finalAssessment.interventionPerformedOrPlanned === '')
   assert("judgment-only carry-forward cannot populate today's 즉시 재검 대상", withJudgment.finalAssessment.immediateRetestTarget === '')
+  // 이제는 **어느 이어받기도** 그 필드를 채우지 못한다(아래 처치 이어받기에서 다시 본다).
   assert('judgment-only carry-forward cannot populate any Care Plan field', isTreatmentPlanBlank(withJudgment.finalAssessment, withJudgment.carePlan))
 
   const withPlan = applyTreatmentPlanCarryForward(withJudgment, source, now)
   assert('carry-forward: the treatment-plan action fills the care plan', withPlan.carePlan.currentTreatmentGoal.includes('통증 감소'))
   assert('carry-forward: the treatment-plan action is what fills 시행/예정 처치', withPlan.finalAssessment.interventionPerformedOrPlanned.includes('침 + 도수'))
-  assert('carry-forward: the treatment-plan action is what fills 즉시 재검 대상', withPlan.finalAssessment.immediateRetestTarget.includes('숙일 때'))
+  assert(
+    'carry-forward: 처치 이어받기도 즉시 재검 대상을 채우지 않는다 (편집 불가 값이 생기지 않는다)',
+    withPlan.finalAssessment.immediateRetestTarget === '',
+  )
   assert('carry-forward: the treatment-plan action never rewrites the judgment fields', withPlan.finalAssessment.finalWorkingAssessment === withJudgment.finalAssessment.finalWorkingAssessment && withPlan.finalAssessment.treatmentFocus === withJudgment.finalAssessment.treatmentFocus)
 
   // ...and the treatment-plan action works on its own, with no judgment carried.

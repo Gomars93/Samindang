@@ -1,5 +1,81 @@
 # Decisions Log
 
+## 2026-09-23 — 즉시 재검 대상 제거 (세 경로 전부) / 최종 임상 판단은 아직 남긴다
+
+**결론**: `immediateRetestTarget`을 **신규 방문에서 제거**했다. 세 경로를
+한꺼번에 다뤘다. `finalWorkingAssessment`는 PO 승인을 받았지만 **아직 남긴다** —
+아래 5번째 경로 때문이다.
+
+### 왜 즉시 재검 대상인가
+
+PO가 타이밍 ①("치료 직후 즉시 재검")을 하지 않기로 했다(같은 날 앞 항목).
+그 칸은 **①의 입력칸**이었으므로 존재 이유가 사라졌다. 반응 측정은 2주 링크와
+재진 문진이 전담하고, 무엇을 물을지는 `FollowUpTargetPicker`가 이미 담당한다.
+
+### 경로 표 — 두 필드는 소비처 수가 다르다
+
+| 경로 | `즉시 재검 대상` | `최종 임상 판단` |
+|---|---|---|
+| 편집 — 초진(`DoctorWorkspace`) | ✅ | ✅ |
+| 편집 — **재진**(`RevisitWorkspace`, **같은 카드**) | ✅ | ✅ |
+| EMR | P줄 | A줄 |
+| 재진 이어받기 | `treatmentPlan` | `judgment` |
+| blank 게이트(버튼 표시 조건) | `isTreatmentPlanBlank` | `isJudgmentBlank` |
+| **서버 `pain_final_assessment_summary`** | ❌ | ✅ → **2화면** |
+
+마지막 줄이 결정적이다. `server/store.js`가 `finalWorkingAssessment`로
+`pain_final_assessment_summary`를 만들고, 그게
+`PriorVisitHistoryCard`의 「이전 최종 판단」과 `RevisitWorkspace`의 요약 줄에
+뜬다. 지금 지우면 **그 두 칸이 앞으로 영구히 빈칸**이 된다.
+
+대체하려면 임상 가설 요약을 **저장하는 새 필드**가 필요하다 — 가설은
+`regionClinical[region].workingHypothesis`의 enum map이고, 사람이 읽는 한 줄로
+만들려면 부위팩의 `labelKo`가 필요한데 그건 클라이언트에만 있다. 서버가 못
+만든다. 그래서 별도 작업으로 분리한다.
+
+### `즉시 재검 대상` — 세 경로를 함께 다뤘다
+
+| 경로 | 처리 |
+|---|---|
+| 편집 UI | **값이 있을 때만 렌더**(래치). 신규 방문에는 안 나온다 |
+| 재진 이어받기 | `CarryForwardTreatmentPlan`·두 빌더·`applyTreatmentPlanCarryForward`·`isTreatmentPlanBlank`·`treatmentPlanHasText`에서 **전부 제거** |
+| EMR P줄 | **그대로.** 기록된 값은 계속 출력된다 |
+
+**이어받기를 함께 빼는 것이 핵심이다.** 편집 UI만 닫고 이어받기를 남겼다면,
+이전 방문에 값이 있는 환자에게 「이전 처치·관리계획 유지」를 누르는 순간 오늘
+방문에 **편집 불가능한 값**이 생긴다 — *보이지도 고쳐지지도 않는데 이어받기는
+계속 그 필드에 쓰던* Batch 2.6 D-1 사고와 **정확히 같은 모양**이다.
+
+**뮤테이션으로 그 사고를 일부러 재현했고, 테스트가 막았다:**
+
+| 뮤테이션 | 잡은 단언 |
+|---|---|
+| 편집 UI는 닫고 이어받기만 되살림 (= D-1 재현) | `이어받기가 아직 즉시 재검 대상을 나른다 -- 편집 불가 값이 생기는 경로가 남아 있다` |
+| 래치 → 파생식 | `편집 도중 값을 비우자 칸이 사라졌다 -- N-2 사고` |
+
+### 기존 값은 보이고, 고쳐지고, EMR로 나간다
+
+제거가 아니라 **신규 렌더 중단**이다. 값이 있으면 칸이 나오고, 한 번 나오면
+지워도 안 사라진다(`useOpenOnceContent`). 파생식이면 편집 도중 비우는 순간
+칸이 사라진다(Batch 2.6 N-2). 테스트가 셋 다 본다: 보인다 / 실제로 고쳐진다 /
+EMR P줄에 나간다.
+
+### 초진과 재진이 같은 카드를 쓴다
+
+`RevisitWorkspace.tsx:844`가 **같은 `PainFinalAssessmentCard`**를 렌더한다.
+그래서 카드 한 곳을 고치면 두 화면이 함께 바뀐다 — 한쪽만 바뀌는 비대칭이
+생기지 않는다. (이 저장소가 반복해 겪은 사고가 "지운 쪽 화면에서는 옳았다"라
+이 확인이 필요했다.)
+
+### 검증
+
+`test:all` exit 0 / `build` exit 0.
+`doctor-workspace` 321 → **325단언**, `workspace-round3` 갱신(이어받기 소스
+키가 `carePlan,interventionPerformedOrPlanned` 둘뿐임을 단언).
+
+두 스위트가 같은 사실을 양쪽에서 붙든다 — `doctor-workspace`는 소스 스캔으로,
+`workspace-round3`는 실제 이어받기 동작으로.
+
 ## 2026-09-23 — 운동처방 칩 제거 + 치료 초점을 Task–Load–Capacity 층 칩으로
 
 **결론**: 처치 칩이 **5개**(약침(소염)·약침(재생)·추나·도침·매선)가 됐고,

@@ -1,5 +1,57 @@
 # Current Handoff
 
+## 2026-09-23 (최신 65): **즉시 재검 대상 제거** (세 경로 전부)
+
+**브랜치**: `claude/gracious-bell-epfxem` (최신 64 위에). 상세는 `DECISIONS.md` 첫 항목.
+
+### 한 것
+`immediateRetestTarget`을 신규 방문에서 제거. PO가 타이밍 ①(치료 직후 즉시
+재검)을 안 하기로 해서 그 칸의 존재 이유가 사라졌다.
+
+| 경로 | 처리 |
+|---|---|
+| 편집 UI | **값 있을 때만 렌더**(래치) — 신규 방문엔 안 나옴 |
+| 재진 이어받기 | `revisitCarryForward.ts`에서 **전부 제거**(타입·빌더 2개·apply·blank 게이트) |
+| EMR P줄 | **그대로** — 기록된 값은 계속 출력 |
+
+**이어받기를 함께 뺀 것이 핵심.** 편집 UI만 닫으면 이전 값이 있는 환자에게
+「이전 처치·관리계획 유지」를 누르는 순간 **편집 불가 값**이 생긴다 = D-1 사고.
+그 사고를 뮤테이션으로 일부러 재현했고 테스트가 막았다.
+
+초진·재진이 **같은 `PainFinalAssessmentCard`**를 쓴다(`RevisitWorkspace.tsx:844`) —
+한쪽만 바뀌는 비대칭 없음.
+
+### 검증
+`test:all` exit 0 / `build` exit 0. `doctor-workspace` 321 → **325단언**.
+뮤테이션 2회(이어받기 되살림 / 래치→파생식) 전부 잡힘.
+
+### Next Recommended Action
+
+**1. 검사 결과 좌/우(`laterality`) 배선** — PO 확정. 다음 작업.
+
+**2. 입력 3블록을 `DoctorWorkspace`에 배선** + 대체되는 옛 카드 정리.
+
+**3. `최종 임상 판단` 제거 — 전제 작업이 먼저다.**
+PO 승인은 받았으나 **5번째 경로**가 있다: `server/store.js`가 이 값으로
+`pain_final_assessment_summary`를 만들고, 그게 `PriorVisitHistoryCard`의
+「이전 최종 판단」과 `RevisitWorkspace` 요약 줄 **두 화면**에 뜬다.
+지금 지우면 그 두 칸이 영구히 빈칸.
+
+대체하려면 **임상 가설 요약을 저장하는 새 필드**가 필요하다 — 가설은
+`regionClinical[region].workingHypothesis`의 enum map이고, 사람이 읽는 한 줄로
+만들려면 부위팩 `labelKo`가 필요한데 그건 클라이언트에만 있어 서버가 못 만든다.
+
+**4. 2주 무재진 자동 링크** — 설계 확정(최신 63). 새로 만들 것은 예약 발송과
+`PriorVisitSummary`에 NRS 싣기 둘뿐. 별도 PR.
+
+**5.** 「마무리」 화면 분리 / C그룹 5개 판단 / 옛 `doctor.css` 폐기 / 한약 프로필.
+
+### PO 확인 대기
+- **치료 초점 층 라벨** `증상 조절 · 가동성 확보 · 부하 능력` — 내 초안.
+- 약침 **제제**(미주란·태반) 기록 위치 — 지금은 `기타`로 떨어진다(PO 지시로 유지).
+
+---
+
 ## 2026-09-23 (최신 64): 운동처방 칩 제거 + **치료 초점을 3층 칩으로**
 
 **브랜치**: `claude/gracious-bell-epfxem` (최신 63 위에 이어서).

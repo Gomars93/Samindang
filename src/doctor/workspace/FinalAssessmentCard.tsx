@@ -386,6 +386,25 @@ export function PainFinalAssessmentCard({
   // **제거가 아니다.** 저장 형태는 여전히 같은 free-text `string`이고 EMR
   // A줄(`치료 초점: …`)도, 재진 이어받기(`revisitCarryForward.ts`)도 그대로다.
   // 옛 자유입력 값은 `기타` 칸에 그대로 보존된다 -- 처치 칩과 같은 메커니즘.
+  /*
+   * 2026-09-23: `즉시 재검 대상`은 **신규 방문에서 렌더되지 않는다.**
+   *
+   * PO가 "치료 직후 즉시 재검"(타이밍 ①)을 하지 않기로 했다 -- 반응 측정은
+   * 2주 링크와 재진 문진이 전담한다. 그 칸은 ①의 입력칸이었으므로 존재
+   * 이유가 사라졌다. `revisitCarryForward.ts`에서도 함께 뺐다(편집 UI만 닫고
+   * 이어받기를 남기면 오늘 방문에 편집 불가 값이 생긴다 -- Batch 2.6 D-1).
+   *
+   * **기존 값은 계속 보이고 고칠 수 있다.** 값이 있으면 칸이 나오고, 한 번
+   * 나오면 지워도 안 사라진다(`useOpenOnceContent` 래치) -- 파생식이면 편집
+   * 도중 비우는 순간 칸이 사라진다(Batch 2.6 N-2). EMR P줄도 그대로다.
+   *
+   * `최종 임상 판단`은 **아직 남긴다.** PO 승인은 받았지만, 서버가 그 값으로
+   * `pain_final_assessment_summary`를 만들고 그게 `PriorVisitHistoryCard`의
+   * 「이전 최종 판단」과 `RevisitWorkspace` 요약 줄 **두 화면**에 뜬다. 지금
+   * 지우면 그 두 칸이 영구히 빈칸이 된다. 대체하려면 임상 가설 요약을 저장할
+   * 새 필드가 필요하다(별도 작업, `HANDOFF.md` 참고).
+   */
+  const showRetestTarget = useOpenOnceContent(value.immediateRetestTarget.trim() !== '')
   const secondary: Field[] = [
     {
       key: 'finalWorkingAssessment',
@@ -393,12 +412,16 @@ export function PainFinalAssessmentCard({
       value: value.finalWorkingAssessment,
       placeholder: '원장이 직접 입력',
     },
-    {
-      key: 'immediateRetestTarget',
-      label: '즉시 재검 대상',
-      value: value.immediateRetestTarget,
-      placeholder: '예: 숙일 때 통증 재현 여부',
-    },
+    ...(showRetestTarget
+      ? [
+          {
+            key: 'immediateRetestTarget',
+            label: '즉시 재검 대상',
+            value: value.immediateRetestTarget,
+            placeholder: '예: 숙일 때 통증 재현 여부',
+          },
+        ]
+      : []),
   ]
   const handleChange = (key: string, v: string) =>
     onChange({ ...value, [key]: v, recordedAt: new Date().toISOString() } as PainFinalAssessment)

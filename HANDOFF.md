@@ -1,5 +1,70 @@
 # Current Handoff
 
+## 2026-09-23 (최신 64): 운동처방 칩 제거 + **치료 초점을 3층 칩으로**
+
+**브랜치**: `claude/gracious-bell-epfxem` (최신 63 위에 이어서).
+상세는 `DECISIONS.md` 같은 날 첫 항목.
+
+### 화면 상태
+```
+처치     ────  약침(소염) 약침(재생) 추나 도침 매선   + 기타(상시 1칸)
+치료 초점 ────  증상 조절 가동성 확보 부하 능력        + 기타(값 있을 때만)
+접힘     ────  최종 임상 판단 · 즉시 재검 대상 — 필요할 때 입력
+```
+**상시 자유입력 1칸 유지.**
+
+### 운동처방 칩 제거 — 전제를 검증하고 뺐다
+운동 카드(`RehabSuggestion` 채택/보류/거절 → `homeActionPlan`)가 더 많이 담는다.
+**단 팔꿈치는 `exercises: []`**라 운동 카드 후보가 0개다 — 그 부위만 `기타`가
+받는다. **이 예외를 테스트로 고정했다**(나중에 다시 발견하지 않도록).
+첫 단언은 `lbp.ts`에서 **공허하게 통과**했다(그 팩은 `exercises:` 키가 없고
+라이브러리를 import한다) — "인라인 비어있지 않음 **또는** 라이브러리 import"로 고침.
+
+### 치료 초점 = Task–Load–Capacity 3층
+PO 지식베이스 `09_치료술기/00_INDEX.md`가 답을 써놨다. 값이 셋뿐이라 자유입력일
+이유가 없다. 파서를 `parseChipValue`/`composeChipValue`로 **어휘 파라미터화**하고
+`InterventionChipField` → `ChipField`로 일반화(두 벌 금지).
+**제거가 아니라 승격** — 스키마·EMR A줄·재진 이어받기 전부 무변경.
+
+### 자유입력 예산이 걸렸고, 핀을 올리지 않았다
+`기타`를 상시로 달았더니 `EXPECTED_OPEN_INPUTS_PAIN = 1`이 실패. 핀 대신 코드를
+고쳤다 — `useOpenOnceContent` 래치(값 있으면 열림, **한 번 열리면 지워도 안 닫힘**).
+파생식이면 편집 중 비우는 순간 칸이 사라진다(N-2 사고).
+
+### 검증
+`test:all` exit 0 / `build` exit 0. `doctor-workspace` 316 → **321단언**.
+**뮤테이션 6회** 전부 잡힘.
+
+### Next Recommended Action
+
+**1. 최종 임상 판단 · 즉시 재검 대상 제거** — PO 승인됐으나 **소비처가 3곳**이다:
+
+| 필드 | 편집 UI | EMR | 재진 이어받기 |
+|---|---|---|---|
+| `finalWorkingAssessment` | 접힘 | A줄 | `revisitCarryForward.ts` ×4 |
+| `immediateRetestTarget` | 접힘 | P줄 | `revisitCarryForward.ts` ×4 |
+
+편집 UI만 지우면 EMR·이어받기는 계속 그 값을 나른다 = **Batch 2.6 D-1과 정확히
+같은 모양**. 세 경로 전부의 필드 × 화면 표가 먼저다.
+
+**2. 검사 결과 좌/우(`laterality`) 배선** — PO 확정.
+
+**3. 입력 3블록을 `DoctorWorkspace`에 배선** + 대체되는 옛 카드 정리.
+
+**4. 2주 무재진 자동 링크** — 설계는 최신 63에 확정. 새로 만들 것은 예약 발송과
+`PriorVisitSummary`에 NRS 싣기 **둘뿐**. 별도 PR.
+
+**5.** 「마무리」 화면 분리 / C그룹 5개 판단 / 옛 `doctor.css` 폐기 / 한약 프로필.
+
+### PO 확인 대기
+- **치료 초점 층 라벨** `증상 조절 · 가동성 확보 · 부하 능력` — 내 초안.
+  영문 층 이름(symptom modulation / movement option / capacity building)을
+  원장 서술에 맞춰 옮긴 것.
+- 약침 **제제**(미주란·태반·봉약침…) 기록 위치 — 지금은 `기타`로 떨어진다.
+  PO 지시로 이번엔 그대로 뒀다.
+
+---
+
 ## 2026-09-23 (최신 63): **처치 어휘 개정** + 2주 무재진 링크 설계 확정
 
 **브랜치**: `claude/gracious-bell-epfxem` (최신 62 위에 이어서).

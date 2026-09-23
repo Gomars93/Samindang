@@ -10,7 +10,6 @@
  */
 import './tokens.css'
 import './briefing.css'
-import './clinical.css'
 import type { BriefingBlock, BriefingRow } from './briefingModel'
 import {
   buildPainBriefing,

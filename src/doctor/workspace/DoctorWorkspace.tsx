@@ -41,6 +41,18 @@ import { microFollowUpQuoteLine, readableMicroFollowUpResponse } from './microFo
 import { ageFromDoctorPayload } from '../../spec/lbpAdapter'
 import { answerLabel } from '../labels'
 import './workspace.css'
+/*
+ * 토큰을 **명시적으로** 불러온다. `PainBriefing`이 같은 파일을 import하고
+ * 이 셸이 그걸 렌더하므로 번들에는 어차피 들어오지만, 그 경로에 기대면
+ * 브리핑을 떼는 날 워크스페이스의 `var(--pain-*)`가 통째로 해석 불가가 된다.
+ */
+import '../clinical/tokens.css'
+/*
+ * 옛 카드에 새 토큰을 입히는 레이어. `workspace.css` **뒤에** 온다 -- 선택자를
+ * `.workspace`로 한 단계 올려뒀지만(그 파일 헤더 참고), 순서까지 맞춰두면
+ * 둘 다 성립한다.
+ */
+import './painTheme.css'
 import type { DoctorPayload } from '../types'
 import type { ClinicianJudgment, ObjectiveExamSaveOutcome } from '../judgment'
 import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnrecordedHintForPack } from './PainWorkspace'

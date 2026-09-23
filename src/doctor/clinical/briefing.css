@@ -261,3 +261,67 @@
   min-width: 5.5ch;
   text-align: right;
 }
+
+/*
+ * 아래 안전 칩 규칙은 `clinical.css`(입력 3블록 전용 스타일시트)에서 옮겨왔다.
+ * 2026-09-23에 입력 3블록을 폐기하면서 그 파일이 사라졌는데, 안전 칩은
+ * **스냅샷 띠**의 일부라 브리핑이 계속 쓴다. 옮기지 않았으면 칩이 스타일
+ * 없이 맨 텍스트로 떨어졌을 것이다(`DECISIONS.md` 같은 날 항목 참고).
+ */
+
+/* ---------------- 안전 칩 (스냅샷 띠) ---------------- */
+
+/*
+ * Figma `A · Clinical Snapshot`의 우상단 칩(`✓ 긴급 Red flag 없음`) 자리.
+ * 블록이 아니라 띠에 있는 이유는, 안전이 어느 한 블록의 항목이 아니라
+ * **화면 전체의 전제**이기 때문이다. 접히지 않는다.
+ */
+.painSafety {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.painSafety--clear {
+  background: #eaf1ed;
+  color: var(--pain-good);
+}
+
+/*
+ * 네 레벨 중 가장 위험한 `urgent`에 **규칙이 없었다.**
+ *
+ * `buildSafetyChip`은 urgent / review / clear / unknown 넷을 내보내는데
+ * (`briefingModel.ts`), CSS에는 셋만 있었다. `painSafety--urgent`가 붙은 칩은
+ * 어떤 배경색도 못 받아 **기본 회색으로** 떴다 -- 가장 급한 신호가 가장
+ * 눈에 안 띄는 상태였다. 2026-09-23 이 규칙들을 `clinical.css`에서 옮기면서
+ * 컨택트 시트에 `--urgent`가 7번 렌더되는데 CSS에 없다는 것이 드러났다.
+ *
+ * 색은 의미 색 3개 안에서 고른다(`tokens.css` 규율 1항) -- warn을 쓰되
+ * review보다 **진한 면**으로 구분한다. 색만으로 알리지 않는 규약대로 글자도
+ * 흰색으로 반전시켜 대비를 확실히 올린다.
+ */
+.painSafety--urgent {
+  background: var(--pain-warn);
+  color: var(--pain-surface);
+}
+
+.painSafety--review {
+  background: #f6ecdd;
+  color: var(--pain-warn);
+}
+
+.painSafety--unknown {
+  background: var(--pain-divider);
+  color: var(--pain-text-muted);
+}
+
+/* 안전 칩이 어느 부위 때문인지 -- 칩 안에서 한 단계 물러난 글자. */
+.painSafety__regions {
+  font-weight: 500;
+  opacity: 0.75;
+}

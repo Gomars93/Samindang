@@ -357,6 +357,47 @@ if (scaleFixture) {
   )
 }
 
+/* ---------------- §H 안전 칩: 모델이 내는 레벨마다 CSS가 있다 ---------------- */
+
+/*
+ * 2026-09-23: `painSafety--urgent`에 **규칙이 없었다.** 모델은 네 레벨을
+ * 내보내는데 CSS에는 셋뿐이라, 가장 위험한 칩이 배경색 없이 기본 회색으로
+ * 떴다 -- 가장 급한 신호가 가장 눈에 안 띄는 상태였다.
+ *
+ * 입력 3블록을 폐기하면서 `clinical.css`의 안전 칩 규칙을 `briefing.css`로
+ * 옮기다가, 컨택트 시트에 `--urgent`가 7번 렌더되는데 CSS에 없다는 것이
+ * 드러났다. 눈으로는 알아채기 어려운 종류의 결함이다 -- 칩은 글자가 보이고
+ * 배치도 맞아서, 색 하나가 빠진 것은 나란히 놓고 비교해야 보인다.
+ *
+ * 그래서 **모델이 내는 레벨 집합과 CSS 규칙 집합을 대조**한다. 레벨을
+ * 하나 더하면서 CSS를 잊으면 여기서 걸린다.
+ */
+{
+  const css = readFileSync(join(here, '..', 'src', 'doctor', 'clinical', 'briefing.css'), 'utf8')
+  const styled = new Set([...css.matchAll(/\.painSafety--([a-z]+)\s*\{/g)].map((m) => m[1]))
+
+  // 모델이 실제로 내는 레벨을 소스에서 뽑는다 -- 손으로 적으면 모델이 늘 때 같이 안 는다.
+  const model = readFileSync(join(here, '..', 'src', 'doctor', 'clinical', 'briefingModel.ts'), 'utf8')
+  const emitted = new Set([...model.matchAll(/level:\s*'([a-z]+)'/g)].map((m) => m[1]))
+
+  ok('§H 모델이 내는 안전 레벨이 넷이다 (아래 단언이 공허하지 않도록)', emitted.size === 4, `(${[...emitted].join(', ')})`)
+  ok('§H CSS 규칙을 실제로 찾았다 (정규식이 죽지 않았다)', styled.size >= 3, `(${[...styled].join(', ')})`)
+
+  const missing = [...emitted].filter((l) => !styled.has(l))
+  ok('§H 모델이 내는 모든 레벨에 CSS 규칙이 있다', missing.length === 0, missing.length ? `(규칙 없음: ${missing.join(', ')})` : '')
+
+  // 반대 방향 -- 쓰이지 않는 규칙을 남기지 않는다.
+  const unused = [...styled].filter((l) => !emitted.has(l))
+  ok('§H 쓰이지 않는 안전 칩 규칙이 없다', unused.length === 0, unused.length ? `(모델이 안 냄: ${unused.join(', ')})` : '')
+
+  // urgent가 review와 다른 면으로 구분되는지 -- 같은 스타일이면 등급 구분이 사라진다.
+  const ruleOf = (lvl) => {
+    const m = css.match(new RegExp(`\\.painSafety--${lvl}\\s*\\{([^}]*)\\}`))
+    return m ? m[1].replace(/\s+/g, ' ').trim() : null
+  }
+  ok('§H urgent와 review의 스타일이 다르다 (등급 구분)', ruleOf('urgent') !== null && ruleOf('urgent') !== ruleOf('review'))
+}
+
 /* ---------------- 결과 ---------------- */
 
 if (failures.length) {

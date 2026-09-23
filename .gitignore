@@ -253,9 +253,3 @@ tests/.briefing-model.mjs
 # 컨택트 시트 산출물 (재생성 가능)
 out/
 
-# 입력 블록 테스트용 esbuild 번들 (재생성물, 소스 아님)
-tests/.clinical-model.mjs
-tests/.observation-options.mjs
-tests/.working-hypothesis.mjs
-tests/.rehab-suggestion.mjs
-tests/.provenance.mjs

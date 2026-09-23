@@ -19,7 +19,8 @@
  * 않게 하기 위해서다. 옛 화면과 새 화면이 한동안 공존한다.
  */
 
-.painClinical {
+.painClinical,
+.workspace {
   /* ---- 의미 색 (3개 상한) ---- */
   --pain-good: #2c5a43; /* 정상·가능·완화 */
   --pain-neutral: #4d5651; /* 중립 사실값 */

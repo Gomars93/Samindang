@@ -1,5 +1,72 @@
 # Current Handoff
 
+## 2026-09-23 (최신 67): **안 A** — 옛 카드에 토큰만 입히고 입력 3블록 폐기
+
+**브랜치**: `claude/gracious-bell-epfxem` (PR #52 머지 후 새로 시작).
+상세는 `DECISIONS.md` 첫 항목.
+
+### 배선 직전에 전제가 무너졌다
+필드 × 화면 표를 쓰다가, 입력 3블록으로 옛 카드를 대체하면 **provenance 표시가
+통째로 사라진다**는 것이 드러났다 — `reasonFacts`(왜 이 검사를 제안했는지),
+ⓘ 도움말, 우선순위 배지, 재평가 추가 버튼, 가설 카드의 환자 안내문 삽입.
+
+그리고 원래 목표("자유입력 → 체크식")는 **옛 카드가 이미 달성**하고 있었다.
+남은 차이는 생김새뿐이었다. → PO 판단으로 **안 A**.
+
+### 행 문법 레이아웃은 가져오지 않았다 (실측이 말해줌)
+검사 카드를 `제목(좌) ──── 칩(우)`로 묶었더니 화면이 **14px 더 길어졌다**.
+DOM 순서가 `정체 → 근거 → 답`이라 flex로는 못 올리고, `order`/grid로 옮기면
+스크린리더가 "정체 → 답 → 근거"로 읽는다 — **근거를 보고 답하는 것이 순서**다.
+이 카드는 `라벨 ──── 값` 한 쌍이 아니라 **세 덩어리**다.
+
+레이아웃을 뺀 뒤 재측정: **4182px, 기준선과 정확히 동일.**
+
+### 한 것
+- `src/doctor/workspace/painTheme.css` 신설 — 색·간격·모서리·타이포만.
+- `tokens.css` 스코프를 `.painClinical, .workspace`로 확장(**값 복사 없음**).
+- `tests/pain-theme.spec.mjs` **27단언** — 레이아웃 속성/리터럴/스코프/import 순서.
+- **폐기 1,166줄**: `clinicalModel.ts`·`ClinicalBlocks.tsx`·`clinical.css`·
+  `pain-clinical.spec.mjs` + package.json·gitignore·컨택트 시트 데모.
+  되살릴 일이 생기면 PR #50/#51/#52 히스토리에 있다.
+
+### 폐기하다 결함 하나가 드러났다
+**`painSafety--urgent`에 CSS 규칙이 없었다.** 모델은 네 레벨을 내는데 CSS는
+셋뿐 → **가장 위험한 칩이 회색으로** 떴다. 컨택트 시트에 7번 렌더되는데 CSS에
+없다는 걸 보고 발견. 눈으로는 알아채기 어려운 종류다.
+→ warn 진한 면 + 글자 반전으로 고치고, `pain-briefing` §H가 **모델 레벨 × CSS
+규칙을 양방향 대조**한다(레벨을 늘리며 CSS를 잊으면 걸린다).
+
+### 검증
+`test:all` exit 0 / `build` exit 0.
+`pain-theme` 27(신설) · `pain-briefing` 757 → **762** · `tablet-viewport` 높이 무변화.
+뮤테이션 7회 전부 잡힘.
+
+### Next Recommended Action
+
+**1. `최종 임상 판단` 제거 — 전제 작업이 먼저.**
+`server/store.js`가 이 값으로 `pain_final_assessment_summary`를 만들고 그게
+`PriorVisitHistoryCard`「이전 최종 판단」과 `RevisitWorkspace` 요약 줄 **두
+화면**에 뜬다. 임상 가설 요약을 저장하는 새 필드가 필요하다(서버가 부위팩
+`labelKo`를 못 읽어 스스로 만들 수 없다).
+
+**2. 2주 무재진 자동 링크** — 설계 확정(최신 63). 새로 만들 것은 **둘뿐**:
+예약 발송(`messagingStore.js`에 0건), `PriorVisitSummary`에 NRS 싣기.
+후자를 하면 재진 비교 행(`8 → 5 ↓3`)도 같이 살아난다.
+
+**3.** 「마무리」 화면 분리 — EMR·환자전달·QR·메시징·복약·재평가 7블록.
+
+**4.** C그룹 5개 판단(MicroFollowUp / AdditionalConcern / StructuredReassessment /
+SupportContradiction / PriorVisitHistory) — 진료 중 실제로 보시는지 PO 확인 필요.
+
+**5.** 옛 `doctor.css` 폐기 / 한약 프로필(시트는 그때
+`--profile=pain|herbal|mixed` 한 스크립트로).
+
+### PO 확인 대기
+- **치료 초점 층 라벨** `증상 조절 · 가동성 확보 · 부하 능력` — 내 초안.
+- 약침 **제제**(미주란·태반) 기록 위치 — 지금은 `기타`로 떨어진다(PO 지시 유지).
+
+---
+
 ## 2026-09-23 (최신 66): 검사 **좌/우**를 입력 모델에 채움 (배선 전 준비)
 
 **브랜치**: `claude/gracious-bell-epfxem`. 상세는 `DECISIONS.md` 첫 항목.

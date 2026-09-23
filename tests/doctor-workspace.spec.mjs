@@ -3525,7 +3525,7 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     )[0]
   }
 
-  test('§14.2: all 8 approved intervention chips render, none pressed, 기타 empty, when interventionPerformedOrPlanned starts \'\'', () => {
+  test('처치 어휘 2026-09-23: 승인된 6개 칩만 렌더되고, 아무것도 안 눌린 채 기타가 비어 있다', () => {
     let renderer
     act(() => {
       renderer = TestRenderer.create(
@@ -3534,11 +3534,22 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     })
     const group = findChipGroup(renderer)
     const chipLabels = group.findAll((n) => n.type === 'button').map((n) => n.props.children)
+    /*
+     * 목록을 **테스트에 리터럴로 박는다.** 모델에서 import하면 목록이 바뀔 때
+     * 기대값도 같이 바뀌어 공허한 자기검증이 된다(같은 날 §D에서 겪은 것).
+     * 이 줄을 고쳐야만 어휘가 바뀌므로, 사람이 한 번 더 확인하게 된다.
+     *
+     * 순서는 PO 지식베이스의 Task-Load-Capacity 층 순이다(1층 → 2층 → 3층).
+     */
     assert.deepEqual(
       chipLabels,
-      ['침', '약침', '부항', '추나', '물리치료', '한약', '테이핑', '운동처방'],
-      'exactly the 8 PO-approved words render, in the fixed order',
+      ['약침(소염)', '약침(재생)', '추나', '도침', '매선', '운동처방'],
+      'PO 승인 어휘 6개가 고정 순서로 렌더된다',
     )
+    // 뺀 다섯 단어가 칩으로 되살아나지 않는다.
+    for (const gone of ['침', '부항', '물리치료', '한약', '테이핑', '약침']) {
+      assert.ok(!chipLabels.includes(gone), `제거된 단어가 칩으로 남아 있다: ${gone}`)
+    }
     assert.ok(
       chipLabels.every((label) => findChip(renderer, label).props['aria-pressed'] === false),
       'no chip starts pressed',
@@ -3558,26 +3569,26 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       )
     })
     act(() => {
-      findChip(renderer, '약침').props.onClick()
+      findChip(renderer, '약침(재생)').props.onClick()
     })
     act(() => {
-      findChip(renderer, '침').props.onClick()
+      findChip(renderer, '도침').props.onClick()
     })
-    assert.equal(findChip(renderer, '침').props['aria-pressed'], true)
-    assert.equal(findChip(renderer, '약침').props['aria-pressed'], true)
-    assert.equal(findChip(renderer, '부항').props['aria-pressed'], false)
+    assert.equal(findChip(renderer, '도침').props['aria-pressed'], true)
+    assert.equal(findChip(renderer, '약침(재생)').props['aria-pressed'], true)
+    assert.equal(findChip(renderer, '추나').props['aria-pressed'], false)
     assert.ok(
-      findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 약침'),
+      findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침(재생), 도침'),
       'composed in fixed chip order (침 before 약침), not click order (약침 was clicked first)',
     )
 
     // Deselecting one keeps the other and drops it from the composed string.
     act(() => {
-      findChip(renderer, '침').props.onClick()
+      findChip(renderer, '도침').props.onClick()
     })
-    assert.equal(findChip(renderer, '침').props['aria-pressed'], false)
-    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침'))
-    assert.ok(!findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 약침'))
+    assert.equal(findChip(renderer, '도침').props['aria-pressed'], false)
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침(재생)'))
+    assert.ok(!findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침(재생), 도침'))
   })
 
   test('§14.2: typing in 기타 composes alongside any selected chips', () => {
@@ -3592,12 +3603,12 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       )
     })
     act(() => {
-      findChip(renderer, '테이핑').props.onClick()
+      findChip(renderer, '매선').props.onClick()
     })
     act(() => {
       findOtherInput(renderer).props.onChange({ target: { value: '얼음찜질 안내' } })
     })
-    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 테이핑, 얼음찜질 안내'))
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 매선, 얼음찜질 안내'))
   })
 
   // MANDATORY mutation-guarded test (§14.6 "레거시 자유입력 값 보존"): a
@@ -3608,6 +3619,105 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
   // this fail with "AssertionError [ERR_ASSERTION]: 기타 box must start
   // with the legacy value... expected false to be true" (observed,
   // reverted -- see the batch's final report for the exact message).
+  /*
+   * 2026-09-23 어휘 개정의 핵심 안전 단언.
+   *
+   * 칩 목록에서 다섯 단어(침·부항·물리치료·한약·테이핑)와 `약침`을 뺐다.
+   * 그 단어로 **이미 기록된 레코드**가 조용히 사라지면 안 된다.
+   *
+   * 설계상 안전하다 -- `parseInterventionValue`가 목록에 없는 토큰을 `기타`로
+   * 보낸다. 하지만 "설계상 안전하다"는 산문 주장이고, 이 저장소는 그 주장이
+   * 틀렸던 사고를 네 번 겪었다. 그래서 **제거한 단어 하나하나에 대해** 실제로
+   * 값이 살아 있는지 본다.
+   */
+  for (const legacyWord of ['침', '부항', '물리치료', '한약', '테이핑', '약침']) {
+    test(`처치 어휘 2026-09-23 (경로 제거 안전): 제거된 단어 '${legacyWord}'로 기록된 기존 값이 기타에 그대로 남는다`, () => {
+      let renderer
+      act(() => {
+        renderer = TestRenderer.create(
+          React.createElement(DoctorWorkspace, {
+            payload: PAIN_SCENARIO_1.payload,
+            synthetic: PAIN_SCENARIO_1.synthetic,
+            resetKey: `submission:legacy-word-${legacyWord}`,
+            initialWorkspaceState: {
+              painFinalAssessment: {
+                finalWorkingAssessment: '',
+                treatmentFocus: '',
+                interventionPerformedOrPlanned: legacyWord,
+                immediateRetestTarget: '',
+                recordedAt: '2026-01-01T00:00:00.000Z',
+              },
+            },
+          }),
+        )
+      })
+      assert.equal(
+        findOtherInput(renderer).props.value,
+        legacyWord,
+        `'${legacyWord}'이(가) 기타 칸에 그대로 보존되지 않았다 -- 조용한 소실`,
+      )
+      assert.ok(
+        findEmrTextarea(renderer).props.value.includes(`시행/예정 처치: ${legacyWord}`),
+        `'${legacyWord}'이(가) EMR 출력에서 사라졌다`,
+      )
+    })
+  }
+
+  // 옛 조합(`침, 부항`)도 통째로 살아남는다 -- 토큰 단위가 아니라 조합에서
+  // 순서가 뒤바뀌거나 하나만 남는 경우를 잡는다.
+  test('처치 어휘 2026-09-23 (경로 제거 안전): 제거된 단어들의 옛 조합도 기타에 통째로 남는다', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:legacy-combo',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '',
+              interventionPerformedOrPlanned: '침, 부항, 한약',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    assert.equal(findOtherInput(renderer).props.value, '침, 부항, 한약')
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 부항, 한약'))
+  })
+
+  // 옛 값 + 새 칩이 섞여도 옛 값이 밀려나지 않는다(칩이 먼저, 기타가 뒤).
+  test('처치 어휘 2026-09-23 (경로 제거 안전): 옛 값이 남은 상태에서 새 칩을 눌러도 옛 값이 유지된다', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:legacy-plus-new',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '',
+              interventionPerformedOrPlanned: '침, 부항',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    act(() => {
+      findChip(renderer, '도침').props.onClick()
+    })
+    const emr = findEmrTextarea(renderer).props.value
+    assert.ok(emr.includes('시행/예정 처치: 도침, 침, 부항'), `옛 값이 밀려났다: ${emr.slice(0, 200)}`)
+    assert.equal(findOtherInput(renderer).props.value, '침, 부항', '옛 값이 기타 칸에 그대로 남는다')
+  })
+
   test('§14.2 (mutation-guarded): a legacy free-text interventionPerformedOrPlanned value is preserved verbatim in 기타, not dropped', () => {
     let renderer
     act(() => {

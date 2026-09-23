@@ -100,16 +100,56 @@ export function SecondaryFields({
 }
 
 /**
- * LBP v1 Batch 4 (§14.2, CD-2.7-2026-09-04 "처치 어휘 확정"): the 8
- * PO-approved intervention words `interventionPerformedOrPlanned` can be
- * built from, in the fixed order chips render. The persisted shape stays
- * the exact SAME free-text `string` field (no schema change, no new EMR
- * output shape) -- these chips are only a structured way to COMPOSE that
- * string; a value typed before this batch existed (any text that isn't
- * exactly one of these 8 words) is never one this list can silently
- * absorb or drop, see `parseInterventionValue` below.
+ * PO-승인 처치 어휘. `interventionPerformedOrPlanned`를 이 단어들로 조립한다.
+ * 저장 형태는 여전히 같은 free-text `string`이다(스키마·EMR 출력 모양 무변경) --
+ * 칩은 그 문자열을 **구조적으로 조립하는 방법**일 뿐이고, 목록에 없는 값은
+ * 절대 흡수되거나 버려지지 않는다(`parseInterventionValue` 참고).
+ *
+ * 2026-09-23 개정 (PO 지시) -- 기록할 가치가 있는 것만 남긴다
+ * ----------------------------------------------------------
+ * 처음 8개는 `['침','약침','부항','추나','물리치료','한약','테이핑','운동처방']`
+ * 이었다. PO 판단으로 다섯을 뺐다:
+ *
+ *   침 · 부항  → **기본 치료**라 매 방문 들어간다. 매번 켜는 칩은 정보가 없다.
+ *   테이핑 · 물리치료 → 삼인당에서 쓰지 않는다.
+ *   한약  → 통증 진료에서 거의 쓰지 않는다(한약 프로필이 따로 담당한다).
+ *
+ * 그리고 **도침 · 매선**을 더했다. 원장 술기 스택의 2층(구조·지속형)인데
+ * 8개 목록에 애초에 없었다.
+ *
+ * 약침을 둘로 나눈 이유
+ * ---------------------
+ * PO 서술: "염증을 침·부항·약침으로 잡고 … 조직회복력이 떨어지면 미주란이나
+ * 태반을 같이 쓴다." 같은 약침이라도 **겨냥하는 것이 다르다.** 하나로 묶으면
+ * 그 구분이 기록에서 사라진다.
+ *
+ * 제제 이름(미주란·태반·봉약침…)이 아니라 **목적**으로 나눈 이유: 제제는
+ * 바뀌지만 목적은 안 바뀐다. 그리고 임상지식베이스 `09_치료술기/00_INDEX.md`가
+ * "재료·제제가 다르면 근거를 전용하지 않는다"고 못박았으므로, 제제는 이 칩이
+ * 아니라 별도 열로 기록해야 한다(아직 미구현).
+ *
+ * 순서는 PO 지식베이스의 Task-Load-Capacity 층을 따른다:
+ * 1층(증상 조절) → 2층(가동성·구조) → 3층(부하 능력).
+ *
+ * 뺀 단어는 사라지지 않는다
+ * -------------------------
+ * `parseInterventionValue`가 목록에 없는 토큰을 **`기타` 자유입력에 그대로**
+ * 넣는다. 그래서 이 개정 이전에 `침, 부항`으로 기록된 레코드는 값이 보존되고,
+ * 칩이 눌린 대신 `기타` 칸에 글로 보인다. EMR 출력도 같은 문자열 그대로다.
+ * `doctor-workspace.spec.mjs`가 이를 단언한다 -- 목록을 줄이는 변경에서 가장
+ * 위험한 것이 조용한 소실이고, 이 저장소는 그 사고를 네 번 겪었다.
  */
-export const PAIN_INTERVENTION_CHIP_OPTIONS = ['침', '약침', '부항', '추나', '물리치료', '한약', '테이핑', '운동처방'] as const
+export const PAIN_INTERVENTION_CHIP_OPTIONS = [
+  // 1층 -- 증상 조절
+  '약침(소염)',
+  '약침(재생)',
+  // 2층 -- 가동성 / 구조 / 지속형
+  '추나',
+  '도침',
+  '매선',
+  // 3층 -- 부하 능력
+  '운동처방',
+] as const
 
 /**
  * Splits the persisted comma-joined string into (a) which of the 8

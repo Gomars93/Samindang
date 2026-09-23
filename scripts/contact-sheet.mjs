@@ -80,7 +80,15 @@ function demoClinicalInput(variant) {
       { id: 'faber', title: 'FABER', priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: {} },
       { id: 'slump', title: 'Slump test', priority: 'CONTEXTUAL', reasonFacts: [], source: 'SUGGESTED', result: {} },
     ],
-    examResults: touched ? { slr: '양성', faber: '음성' } : {},
+    /*
+     * 검사 결과·좌우는 **enum 값**을 넘긴다(라벨이 아니다). 어휘 교체(2026-09-23)
+     * 전에는 여기 '양성'/'음성' 라벨이 박혀 있었고, enum으로 바뀐 뒤에도 그대로
+     * 남아 시트에서 칩이 하나도 안 켜졌다. 호출부가 result.status /
+     * result.laterality를 그대로 넘기는 실제 모양과 같게 맞춘다.
+     * (이 주석은 템플릿 리터럴 안이라 백틱을 쓸 수 없다.)
+     */
+    examResults: touched ? { slr: 'POSITIVE', faber: 'NEGATIVE' } : {},
+    examLateralities: touched ? { slr: 'RIGHT' } : {},
     patterns: DEMO_PATTERNS,
     hypothesis: touched
       ? { supports: { disc: 'HIGHER', facet: 'CONSIDER', si: 'LOWER' }, recordedAt: null }

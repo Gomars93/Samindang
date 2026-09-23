@@ -46,7 +46,7 @@
  */
 import { HYPOTHESIS_SUPPORT_LABEL_KO, HYPOTHESIS_SUPPORT_OPTIONS, type HypothesisSupport } from '../workspace/workingHypothesis'
 import { EXAM_PRIORITY_LABEL, type PhysicalExamSuggestion } from '../workspace/examSuggestion'
-import { EXAM_CHECK_STATUS_LABEL, type ExamCheckStatus } from '../workspace/provenance'
+import { EXAM_CHECK_STATUS_LABEL, LATERALITY_LABEL, type ExamCheckStatus, type Laterality } from '../workspace/provenance'
 import { REHAB_SUGGESTION_STATUS_LABEL, type RehabSuggestion, type RehabSuggestionStatus } from '../workspace/rehabSuggestion'
 import type { HypothesisPattern } from '../workspace/regionPack'
 import type { WorkingHypothesis } from '../workspace/workingHypothesis'
@@ -134,34 +134,74 @@ export const EXAM_RESULT_STATUSES: readonly ExamCheckStatus[] = [
 ]
 export const EXAM_RESULT_CHIPS: readonly string[] = EXAM_RESULT_STATUSES.map((s) => EXAM_CHECK_STATUS_LABEL[s])
 
-function examBlock(items: readonly PhysicalExamSuggestion[], results: ExamResults): ClinicalBlock {
+/**
+ * 좌/우 칩. `NOT_APPLICABLE`은 칩으로 내보내지 않는다 -- 그건 "아직 안 골랐다"는
+ * **기본 상태**이지 고를 수 있는 값이 아니다(검사의 `NOT_YET_CHECKED`, 판단의
+ * `UNJUDGED`, 처치의 `SUGGESTED`와 같은 규칙). 아무 칩도 안 켜진 행이 곧 미기록이다.
+ */
+const LATERALITY_CHOICES: readonly Laterality[] = ['LEFT', 'RIGHT', 'BILATERAL']
+
+function examBlock(
+  items: readonly PhysicalExamSuggestion[],
+  results: ExamResults,
+  lateralities: ExamLateralities,
+): ClinicalBlock {
+  const resultRows: ClinicalRow[] = items.map((item) => {
+    /*
+     * 호출부는 `PhysicalExamSuggestionResult.status`를 그대로 넘긴다.
+     * `NOT_YET_CHECKED`는 칩이 아니므로 어떤 칩도 켜지지 않고, 행은
+     * untouched로 남는다 -- 별도 분기가 필요 없다.
+     */
+    const current = results[item.id] ?? 'NOT_YET_CHECKED'
+    return {
+      // 우선순위를 라벨에 붙이지 않는다 -- 라벨이 길어지면 행 문법이 무너진다.
+      // 대신 `MUST_CHECK`는 렌더에서 라벨 색으로만 구분한다.
+      label: item.title,
+      chips: EXAM_RESULT_STATUSES.map((st) => ({
+        label: EXAM_CHECK_STATUS_LABEL[st],
+        selected: current === st,
+        // 토글은 라벨이 아니라 **enum 값**을 올려보낸다 -- 호출부가
+        // `result.status`에 그대로 넣을 수 있어야 한다.
+        value: st,
+      })),
+      key: item.id,
+      untouched: current === 'NOT_YET_CHECKED',
+      source: `examSuggestion.${EXAM_PRIORITY_LABEL[item.priority] ?? item.priority}`,
+    }
+  })
+
+  /*
+   * 좌/우 행은 **결과를 기록한 항목에만** 붙는다.
+   *
+   * 아직 확인하지 않은 검사에 좌우를 먼저 묻는 것은 순서가 거꾸로이고, 모든
+   * 항목에 붙이면 행이 두 배가 되어 "한 화면" 예산이 무너진다. 기존
+   * `ExamSuggestionCard`가 좌우·메모를 상세로 접어두는 이유와 같다.
+   *
+   * 토글 값은 라벨이 아니라 `Laterality` enum이다 -- 호출부가
+   * `result.laterality`에 그대로 넣는다.
+   */
+  const lateralityRows: ClinicalRow[] = items
+    .filter((item) => (results[item.id] ?? 'NOT_YET_CHECKED') !== 'NOT_YET_CHECKED')
+    .map((item) => {
+      const current = lateralities[item.id] ?? 'NOT_APPLICABLE'
+      return {
+        label: `${item.title} 좌우`,
+        chips: LATERALITY_CHOICES.map((l) => ({
+          label: LATERALITY_LABEL[l],
+          selected: current === l,
+          value: l,
+        })),
+        key: `${item.id}::laterality`,
+        untouched: current === 'NOT_APPLICABLE',
+        source: 'provenance.LATERALITY_LABEL',
+      }
+    })
+
   return {
     key: 'exam',
     eyebrow: 'EXAM',
     question: '무엇을 확인했는가?',
-    rows: items.map((item) => {
-      /*
-       * 호출부는 `PhysicalExamSuggestionResult.status`를 그대로 넘긴다.
-       * `NOT_YET_CHECKED`는 칩이 아니므로 어떤 칩도 켜지지 않고, 행은
-       * untouched로 남는다 -- 별도 분기가 필요 없다.
-       */
-      const current = results[item.id] ?? 'NOT_YET_CHECKED'
-      return {
-        // 우선순위를 라벨에 붙이지 않는다 -- 라벨이 길어지면 행 문법이 무너진다.
-        // 대신 `MUST_CHECK`는 아래 렌더에서 라벨 색으로만 구분한다.
-        label: item.title,
-        chips: EXAM_RESULT_STATUSES.map((st) => ({
-          label: EXAM_CHECK_STATUS_LABEL[st],
-          selected: current === st,
-          // 토글은 라벨이 아니라 **enum 값**을 올려보낸다 -- 호출부가
-          // `result.status`에 그대로 넣을 수 있어야 한다.
-          value: st,
-        })),
-        key: item.id,
-        untouched: current === 'NOT_YET_CHECKED',
-        source: `examSuggestion.${EXAM_PRIORITY_LABEL[item.priority] ?? item.priority}`,
-      }
-    }),
+    rows: [...resultRows, ...lateralityRows],
   }
 }
 
@@ -246,9 +286,22 @@ function planBlock(items: readonly RehabSuggestion[]): ClinicalBlock {
 /** 검사 항목 id → 원장이 기록한 상태. 없으면 `NOT_YET_CHECKED`로 본다. */
 export type ExamResults = Record<string, ExamCheckStatus>
 
+/**
+ * 검사 항목 id → 좌/우. 없으면 `NOT_APPLICABLE`(미기록)로 본다.
+ *
+ * PO 확인(2026-09-23): **좌우를 기록한다.** 기존 화면
+ * (`ExamSuggestionCard`의 `workspace__lateralityRow`)에 이미 있는 입력이고,
+ * 이 모델이 그 카드를 대체할 때 **떨어뜨리면 안 되는 값**이다. 어휘는
+ * `provenance.ts`의 `LATERALITY_LABEL` 그대로 쓴다 -- 검사 결과 어휘에서 겪은
+ * "승인된 enum과 평행한 어휘를 새로 만드는" 사고를 되풀이하지 않는다.
+ */
+export type ExamLateralities = Record<string, Laterality>
+
 export type ClinicalInput = {
   exams: readonly PhysicalExamSuggestion[]
   examResults: ExamResults
+  /** 검사별 좌/우. PO 확정(2026-09-23) -- 기록한다. */
+  examLateralities: ExamLateralities
   patterns: readonly HypothesisPattern[]
   hypothesis: WorkingHypothesis
   finalAssessment: string
@@ -257,7 +310,7 @@ export type ClinicalInput = {
 
 export function buildClinicalBlocks(input: ClinicalInput): ClinicalBlock[] {
   const blocks: ClinicalBlock[] = [
-    examBlock(input.exams, input.examResults),
+    examBlock(input.exams, input.examResults, input.examLateralities),
     assessmentBlock(input.patterns, input.hypothesis, input.finalAssessment),
     planBlock(input.rehab),
   ]

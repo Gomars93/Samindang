@@ -22,8 +22,9 @@
  *    affirming a judgment. The source is now split along the same line the
  *    labels draw:
  *      - `judgment`       -> 이전 판단 유지        (최종 임상 판단, 치료 초점)
- *      - `treatmentPlan`  -> 이전 처치·관리계획 유지 (시행/예정 처치,
- *                            즉시 재검 대상, and the whole Care Plan)
+ *      - `treatmentPlan`  -> 이전 처치·관리계획 유지 (시행/예정 처치와
+ *                            the whole Care Plan; 2026-09-23부터 즉시 재검
+ *                            대상은 제외 -- 아래 타입 주석 참고)
  *    The two field groups live in different objects on disk
  *    (`finalAssessment` vs `carePlan`), which is why `treatmentPlan`
  *    reaches into both -- it follows the meaning, not the storage shape.
@@ -63,7 +64,6 @@ export type CarryForwardJudgment = {
 /** What 이전 처치·관리계획 유지 writes, and nothing else. */
 export type CarryForwardTreatmentPlan = {
   interventionPerformedOrPlanned: string
-  immediateRetestTarget: string
   carePlan: PainCarePlan
 }
 
@@ -103,7 +103,6 @@ export function isJudgmentBlank(value: PainFinalAssessment): boolean {
 export function isTreatmentPlanBlank(value: PainFinalAssessment, carePlan: PainCarePlan): boolean {
   return !hasAnyText([
     value.interventionPerformedOrPlanned,
-    value.immediateRetestTarget,
     carePlan.currentTreatmentGoal,
     carePlan.rehabilitationGoal,
     carePlan.homeActionPlan,
@@ -143,10 +142,6 @@ export function carryForwardSourceFromSubmission(prior: SubmissionRecord | null)
       pain?.interventionPerformedOrPlanned,
       herbal?.prescriptionPlanNote,
     ]),
-    // Deliberately Pain-only: the Herbal side's `symptomsToTrack` is a
-    // list of things to watch over time, not an immediate retest target,
-    // so it goes to the care plan's next-visit check instead.
-    immediateRetestTarget: joinNonEmpty([pain?.immediateRetestTarget]),
     carePlan: {
       ...emptyPainCarePlan(),
       currentTreatmentGoal: joinNonEmpty([painPlan?.currentTreatmentGoal, herbalPlan?.currentManagementGoal]),
@@ -190,7 +185,6 @@ export function carryForwardSourceFromVisitWorkspace(prior: VisitWorkspaceState 
   }
   const treatmentPlan: CarryForwardTreatmentPlan = {
     interventionPerformedOrPlanned: prior.finalAssessment.interventionPerformedOrPlanned,
-    immediateRetestTarget: prior.finalAssessment.immediateRetestTarget,
     carePlan: { ...prior.carePlan, recordedAt: null },
   }
   return {
@@ -203,7 +197,6 @@ export function carryForwardSourceFromVisitWorkspace(prior: VisitWorkspaceState 
 function treatmentPlanHasText(value: CarryForwardTreatmentPlan): boolean {
   return hasAnyText([
     value.interventionPerformedOrPlanned,
-    value.immediateRetestTarget,
     value.carePlan.currentTreatmentGoal,
     value.carePlan.rehabilitationGoal,
     value.carePlan.homeActionPlan,
@@ -280,7 +273,6 @@ export function applyTreatmentPlanCarryForward(
     finalAssessment: {
       ...state.finalAssessment,
       interventionPerformedOrPlanned: source.treatmentPlan.interventionPerformedOrPlanned,
-      immediateRetestTarget: source.treatmentPlan.immediateRetestTarget,
       recordedAt: now,
     },
     carePlan: { ...source.treatmentPlan.carePlan, recordedAt: now },

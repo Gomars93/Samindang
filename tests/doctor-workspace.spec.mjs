@@ -3525,7 +3525,7 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     )[0]
   }
 
-  test('§14.2: all 8 approved intervention chips render, none pressed, 기타 empty, when interventionPerformedOrPlanned starts \'\'', () => {
+  test('처치 어휘 2026-09-23: 승인된 5개 칩만 렌더되고, 아무것도 안 눌린 채 기타가 비어 있다', () => {
     let renderer
     act(() => {
       renderer = TestRenderer.create(
@@ -3534,11 +3534,22 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     })
     const group = findChipGroup(renderer)
     const chipLabels = group.findAll((n) => n.type === 'button').map((n) => n.props.children)
+    /*
+     * 목록을 **테스트에 리터럴로 박는다.** 모델에서 import하면 목록이 바뀔 때
+     * 기대값도 같이 바뀌어 공허한 자기검증이 된다(같은 날 §D에서 겪은 것).
+     * 이 줄을 고쳐야만 어휘가 바뀌므로, 사람이 한 번 더 확인하게 된다.
+     *
+     * 순서는 PO 지식베이스의 Task-Load-Capacity 층 순이다(1층 → 2층 → 3층).
+     */
     assert.deepEqual(
       chipLabels,
-      ['침', '약침', '부항', '추나', '물리치료', '한약', '테이핑', '운동처방'],
-      'exactly the 8 PO-approved words render, in the fixed order',
+      ['약침(소염)', '약침(재생)', '추나', '도침', '매선'],
+      'PO 승인 어휘 5개가 고정 순서로 렌더된다',
     )
+    // 뺀 단어들이 칩으로 되살아나지 않는다.
+    for (const gone of ['침', '부항', '물리치료', '한약', '테이핑', '약침', '운동처방']) {
+      assert.ok(!chipLabels.includes(gone), `제거된 단어가 칩으로 남아 있다: ${gone}`)
+    }
     assert.ok(
       chipLabels.every((label) => findChip(renderer, label).props['aria-pressed'] === false),
       'no chip starts pressed',
@@ -3558,26 +3569,26 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       )
     })
     act(() => {
-      findChip(renderer, '약침').props.onClick()
+      findChip(renderer, '약침(재생)').props.onClick()
     })
     act(() => {
-      findChip(renderer, '침').props.onClick()
+      findChip(renderer, '도침').props.onClick()
     })
-    assert.equal(findChip(renderer, '침').props['aria-pressed'], true)
-    assert.equal(findChip(renderer, '약침').props['aria-pressed'], true)
-    assert.equal(findChip(renderer, '부항').props['aria-pressed'], false)
+    assert.equal(findChip(renderer, '도침').props['aria-pressed'], true)
+    assert.equal(findChip(renderer, '약침(재생)').props['aria-pressed'], true)
+    assert.equal(findChip(renderer, '추나').props['aria-pressed'], false)
     assert.ok(
-      findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 약침'),
+      findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침(재생), 도침'),
       'composed in fixed chip order (침 before 약침), not click order (약침 was clicked first)',
     )
 
     // Deselecting one keeps the other and drops it from the composed string.
     act(() => {
-      findChip(renderer, '침').props.onClick()
+      findChip(renderer, '도침').props.onClick()
     })
-    assert.equal(findChip(renderer, '침').props['aria-pressed'], false)
-    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침'))
-    assert.ok(!findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 약침'))
+    assert.equal(findChip(renderer, '도침').props['aria-pressed'], false)
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침(재생)'))
+    assert.ok(!findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 약침(재생), 도침'))
   })
 
   test('§14.2: typing in 기타 composes alongside any selected chips', () => {
@@ -3592,12 +3603,12 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
       )
     })
     act(() => {
-      findChip(renderer, '테이핑').props.onClick()
+      findChip(renderer, '매선').props.onClick()
     })
     act(() => {
       findOtherInput(renderer).props.onChange({ target: { value: '얼음찜질 안내' } })
     })
-    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 테이핑, 얼음찜질 안내'))
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 매선, 얼음찜질 안내'))
   })
 
   // MANDATORY mutation-guarded test (§14.6 "레거시 자유입력 값 보존"): a
@@ -3608,6 +3619,309 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
   // this fail with "AssertionError [ERR_ASSERTION]: 기타 box must start
   // with the legacy value... expected false to be true" (observed,
   // reverted -- see the batch's final report for the exact message).
+  /*
+   * 2026-09-23 어휘 개정의 핵심 안전 단언.
+   *
+   * 칩 목록에서 다섯 단어(침·부항·물리치료·한약·테이핑)와 `약침`을 뺐다.
+   * 그 단어로 **이미 기록된 레코드**가 조용히 사라지면 안 된다.
+   *
+   * 설계상 안전하다 -- `parseInterventionValue`가 목록에 없는 토큰을 `기타`로
+   * 보낸다. 하지만 "설계상 안전하다"는 산문 주장이고, 이 저장소는 그 주장이
+   * 틀렸던 사고를 네 번 겪었다. 그래서 **제거한 단어 하나하나에 대해** 실제로
+   * 값이 살아 있는지 본다.
+   */
+  for (const legacyWord of ['침', '부항', '물리치료', '한약', '테이핑', '약침', '운동처방']) {
+    test(`처치 어휘 2026-09-23 (경로 제거 안전): 제거된 단어 '${legacyWord}'로 기록된 기존 값이 기타에 그대로 남는다`, () => {
+      let renderer
+      act(() => {
+        renderer = TestRenderer.create(
+          React.createElement(DoctorWorkspace, {
+            payload: PAIN_SCENARIO_1.payload,
+            synthetic: PAIN_SCENARIO_1.synthetic,
+            resetKey: `submission:legacy-word-${legacyWord}`,
+            initialWorkspaceState: {
+              painFinalAssessment: {
+                finalWorkingAssessment: '',
+                treatmentFocus: '',
+                interventionPerformedOrPlanned: legacyWord,
+                immediateRetestTarget: '',
+                recordedAt: '2026-01-01T00:00:00.000Z',
+              },
+            },
+          }),
+        )
+      })
+      assert.equal(
+        findOtherInput(renderer).props.value,
+        legacyWord,
+        `'${legacyWord}'이(가) 기타 칸에 그대로 보존되지 않았다 -- 조용한 소실`,
+      )
+      assert.ok(
+        findEmrTextarea(renderer).props.value.includes(`시행/예정 처치: ${legacyWord}`),
+        `'${legacyWord}'이(가) EMR 출력에서 사라졌다`,
+      )
+    })
+  }
+
+  /*
+   * `운동처방` 칩을 뺀 근거의 **전제 검증**.
+   *
+   * 근거: "운동은 `PainExerciseSection`(운동 카드)이 이미 칩으로 담당한다."
+   * 그런데 그 카드의 후보는 **부위팩이 공급**하고, 부위팩마다 개수가 다르다.
+   * `regionPacks/elbow.ts`는 `exercises: []`다 -- "PR #30 범위 밖 부위,
+   * 도메인표 없음". 즉 팔꿈치 환자에게는 운동 카드에 후보가 하나도 안 뜬다.
+   *
+   * 그 부위에서는 운동 기록이 `기타` 자유입력으로만 남는다. 의도한 예외이고,
+   * 팔꿈치 운동 도메인표가 승인되면 스스로 사라진다. 여기 단언을 남기는
+   * 이유는 **나중에 "왜 팔꿈치만 다르지?"를 다시 발견하지 않도록** 하기
+   * 위해서다 -- 이 저장소가 반복해서 겪은 것이 정확히 그 재발견이다.
+   */
+  test('처치 어휘 2026-09-23 (전제 검증): 팔꿈치 팩은 운동 후보가 0개다 — 그 부위의 운동 기록은 기타로만 남는다', () => {
+    const packSrc = fs.readFileSync(
+      new URL('../src/doctor/workspace/regionPacks/elbow.ts', import.meta.url),
+      'utf8',
+    )
+    assert.ok(/exercises:\s*\[\s*\]/.test(packSrc), '팔꿈치 팩에 운동 후보가 생겼다 — 이 예외와 주석을 걷어낼 때다')
+
+    /*
+     * 그리고 다른 부위는 실제로 후보를 갖는다 -- 위 단언이 "전부 0개"를 뜻하면
+     * 운동 칩을 뺀 근거가 통째로 무너진다.
+     *
+     * `!비어있음`으로 검사하면 **키가 아예 없는 팩에서 공허하게 통과한다.**
+     * 실제로 `lbp.ts`는 `exercises:` 키가 없고 `lbpExerciseLibrary`를 import해
+     * 쓴다 -- 처음 이 단언을 그렇게 썼다가 그 구멍을 발견했다. 그래서 두 형태
+     * 중 **하나를 실제로 갖는지**를 본다.
+     */
+    for (const other of ['lbp', 'neck', 'shoulder', 'knee', 'hip', 'tmj', 'wristHand', 'ankleFoot']) {
+      const src = fs.readFileSync(
+        new URL(`../src/doctor/workspace/regionPacks/${other}.ts`, import.meta.url),
+        'utf8',
+      )
+      const inlineNonEmpty = /exercises:\s*\[\s*\{/.test(src)
+      const viaLibrary = /from '\.\.\/lbpExercise/.test(src)
+      assert.ok(
+        inlineNonEmpty || viaLibrary,
+        `${other} 팩이 운동 후보를 공급하지 않는다 — 운동 칩을 뺀 근거가 이 부위에서 깨진다`,
+      )
+    }
+  })
+
+  /*
+   * 치료 초점 칩화(2026-09-23) -- 처치 칩과 **같은 메커니즘**이므로 같은
+   * 방식으로 증명한다. 이 필드는 그동안 순수 자유입력이었으므로, 기존 값은
+   * 전부 "목록에 없는 값"이다. 하나도 사라지면 안 된다.
+   */
+  test('치료 초점 칩화: 3층 칩만 렌더되고 기타가 비어 있다', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:focus-empty',
+        }),
+      )
+    })
+    const group = renderer.root.findAll(
+      (n) => n.type === 'div' && n.props.role === 'group' && n.props['aria-label'] === '치료 초점 선택',
+    )
+    assert.equal(group.length, 1, '치료 초점 칩 그룹이 정확히 하나 렌더된다')
+    const labels = group[0].findAll((n) => n.type === 'button').map((n) => n.props.children)
+    /*
+     * 목록을 리터럴로 박는다 -- 모델에서 import하면 공허한 자기검증이 된다.
+     * 순서는 PO 지식베이스의 Task-Load-Capacity 층 순(1층 → 2층 → 3층).
+     */
+    assert.deepEqual(labels, ['증상 조절', '가동성 확보', '부하 능력'])
+    assert.ok(labels.every((l) => group[0].find((n) => n.type === 'button' && n.props.children === l).props['aria-pressed'] === false))
+  })
+
+  test('치료 초점 칩화 (경로 제거 안전): 기존 자유입력 값이 기타에 그대로 남고 EMR에도 나간다', () => {
+    const legacy = '굴곡 부하 줄이고 신전 가동 확보'
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:focus-legacy',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: legacy,
+              interventionPerformedOrPlanned: '',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    const other = renderer.root.findAll(
+      (n) => n.type === 'textarea' && n.props['aria-label'] === '치료 초점 기타',
+    )
+    assert.equal(other.length, 1)
+    assert.equal(other[0].props.value, legacy, '기존 자유입력 값이 기타 칸에 보존되지 않았다 -- 조용한 소실')
+    assert.ok(
+      findEmrTextarea(renderer).props.value.includes(`치료 초점: ${legacy}`),
+      '기존 값이 EMR A줄에서 사라졌다',
+    )
+  })
+
+  /*
+   * 치료 초점의 `기타` 칸은 **상시 열리지 않는다.**
+   *
+   * 상시로 두면 통증 화면의 자유입력이 1 → 2가 되고, `tablet-viewport.spec.mjs`의
+   * `EXPECTED_OPEN_INPUTS_PAIN = 1` 예산 핀이 걸린다(실제로 걸려서 발견했다).
+   * "자유입력을 최대한 피한다"가 이번 재설계의 전제다.
+   *
+   * 그렇다고 아예 없애면 목록에 없는 기존 값이 **읽히는데 못 고치는** 상태가
+   * 된다. 그래서 값이 있을 때만 열리되, **한 번 열리면 지워도 안 닫힌다**
+   * (`useOpenOnceContent` 래치). 파생식이면 편집 도중 전부 지우는 순간 칸이
+   * 사라진다 -- Batch 2.6 N-2가 정확히 그 사고였다.
+   */
+  test('치료 초점 칩화: 기타 칸은 값이 없으면 안 뜬다 (자유입력 예산 1칸 유지)', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:focus-no-other',
+        }),
+      )
+    })
+    assert.equal(
+      renderer.root.findAll((n) => n.type === 'textarea' && n.props['aria-label'] === '치료 초점 기타').length,
+      0,
+      '치료 초점 기타 칸이 값도 없는데 떠 있다',
+    )
+    // 처치 쪽 기타는 상시다 -- 그게 예산 1칸의 정체다(위 단언이 "둘 다 없다"를 뜻하지 않도록).
+    assert.equal(
+      renderer.root.findAll((n) => n.type === 'textarea' && n.props['aria-label'] === '시행/예정 처치 기타').length,
+      1,
+      '처치 기타 칸은 상시 열려 있어야 한다',
+    )
+  })
+
+  test('치료 초점 칩화 (N-2 회귀): 기타 값을 전부 지워도 칸이 사라지지 않는다 (래치)', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:focus-latch',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '굴곡 회피',
+              interventionPerformedOrPlanned: '',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    const other = () => renderer.root.find((n) => n.type === 'textarea' && n.props['aria-label'] === '치료 초점 기타')
+    assert.equal(other().props.value, '굴곡 회피')
+    act(() => {
+      other().props.onChange({ target: { value: '' } })
+    })
+    assert.equal(
+      renderer.root.findAll((n) => n.type === 'textarea' && n.props['aria-label'] === '치료 초점 기타').length,
+      1,
+      '편집 도중 값을 비우자 칸이 사라졌다 -- 파생식으로 되돌아간 것이다(N-2 사고)',
+    )
+  })
+
+  test('치료 초점 칩화 (경로 제거 안전): 기존 값이 남은 채로 칩을 눌러도 옛 값이 유지된다', () => {
+    const legacy = '굴곡 부하 줄이기'
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:focus-legacy-plus',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: legacy,
+              interventionPerformedOrPlanned: '',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    const chip = () =>
+      renderer.root.find(
+        (n) => n.type === 'button' && n.props.children === '가동성 확보',
+      )
+    act(() => {
+      chip().props.onClick()
+    })
+    const emr = findEmrTextarea(renderer).props.value
+    assert.ok(emr.includes(`치료 초점: 가동성 확보, ${legacy}`), `옛 값이 밀려났다: ${emr.slice(0, 200)}`)
+  })
+
+  // 옛 조합(`침, 부항`)도 통째로 살아남는다 -- 토큰 단위가 아니라 조합에서
+  // 순서가 뒤바뀌거나 하나만 남는 경우를 잡는다.
+  test('처치 어휘 2026-09-23 (경로 제거 안전): 제거된 단어들의 옛 조합도 기타에 통째로 남는다', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:legacy-combo',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '',
+              interventionPerformedOrPlanned: '침, 부항, 한약',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    assert.equal(findOtherInput(renderer).props.value, '침, 부항, 한약')
+    assert.ok(findEmrTextarea(renderer).props.value.includes('시행/예정 처치: 침, 부항, 한약'))
+  })
+
+  // 옛 값 + 새 칩이 섞여도 옛 값이 밀려나지 않는다(칩이 먼저, 기타가 뒤).
+  test('처치 어휘 2026-09-23 (경로 제거 안전): 옛 값이 남은 상태에서 새 칩을 눌러도 옛 값이 유지된다', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:legacy-plus-new',
+          initialWorkspaceState: {
+            painFinalAssessment: {
+              finalWorkingAssessment: '',
+              treatmentFocus: '',
+              interventionPerformedOrPlanned: '침, 부항',
+              immediateRetestTarget: '',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+      )
+    })
+    act(() => {
+      findChip(renderer, '도침').props.onClick()
+    })
+    const emr = findEmrTextarea(renderer).props.value
+    assert.ok(emr.includes('시행/예정 처치: 도침, 침, 부항'), `옛 값이 밀려났다: ${emr.slice(0, 200)}`)
+    assert.equal(findOtherInput(renderer).props.value, '침, 부항', '옛 값이 기타 칸에 그대로 남는다')
+  })
+
   test('§14.2 (mutation-guarded): a legacy free-text interventionPerformedOrPlanned value is preserved verbatim in 기타, not dropped', () => {
     let renderer
     act(() => {
@@ -4102,16 +4416,146 @@ function enclosingDetailsTag(html, label) {
   return endBetween ? null : tag
 }
 
-test('접기: 통증 최종판단 — 최종 임상 판단·즉시 재검 대상이 비어 있으면 닫힌 secondary 안에 있고, 처치 chip만 밖에 있다', () => {
+/* ===========================================================================
+ * 2026-09-23: 즉시 재검 대상 — 신규 방문에서 사라지고, 기존 값은 그대로 산다.
+ *
+ * PO가 "치료 직후 즉시 재검"(타이밍 ①)을 하지 않기로 했다. 그 칸은 ①의
+ * 입력칸이었으므로 존재 이유가 사라졌다. 반응 측정은 2주 링크와 재진 문진이
+ * 전담한다.
+ *
+ * **세 경로를 함께 다뤘다**(CLAUDE.md 경로 제거 규칙):
+ *   편집 UI  -- 값이 있을 때만 렌더(래치). 신규 방문에는 안 나온다.
+ *   이어받기 -- `revisitCarryForward.ts`에서 제거(`workspace-round3.spec.mjs`).
+ *   EMR P줄  -- 그대로. 기록된 값은 계속 출력된다.
+ *
+ * 편집 UI만 닫고 이어받기를 남겼다면, 이전 값이 있는 환자에게 오늘 **편집
+ * 불가능한 값**이 생겼을 것이다 -- Batch 2.6 D-1과 정확히 같은 모양이다.
+ * =========================================================================== */
+{
+  // `findEmrTextarea`는 위 블록 스코프 안에 있어 여기서 보이지 않는다.
+  // 같은 셀렉터를 그대로 쓴다(두 벌이 아니라 같은 클래스 토큰 하나를 본다).
+  const emrText = (renderer) =>
+    renderer.root.findAll(
+      (n) => typeof n.props.className === 'string' && n.props.className.split(' ').includes('workspace__emrPreview__text'),
+    )[0].props.value
+
+  const withRetest = (retest) => ({
+    painFinalAssessment: {
+      finalWorkingAssessment: '',
+      treatmentFocus: '',
+      interventionPerformedOrPlanned: '',
+      immediateRetestTarget: retest,
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    },
+  })
+
+  test('즉시 재검 대상 2026-09-23: 값이 없으면 칸 자체가 렌더되지 않는다', () => {
+    const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
+    assert.ok(!html.includes('<span>즉시 재검 대상</span>'), '값도 없는데 칸이 떠 있다')
+    assert.ok(!html.includes('숙일 때 통증 재현 여부'), 'placeholder도 나오면 안 된다')
+    // 접힘 자체는 남아 있다 -- 최종 임상 판단이 아직 그 안에 있다.
+    assert.ok(html.includes('최종 임상 판단 — 필요할 때 입력'))
+  })
+
+  test('즉시 재검 대상 2026-09-23 (경로 제거 안전): 기존 값은 보이고, 고칠 수 있고, EMR로 나간다', () => {
+    const legacy = 'ROUND29 숙일 때 통증 재현 여부'
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:retest-legacy',
+          initialWorkspaceState: withRetest(legacy),
+        }),
+      )
+    })
+    const area = renderer.root.findAll((n) => n.type === 'textarea' && n.props.value === legacy)
+    assert.equal(area.length, 1, '기존 값을 담은 편집 칸이 보이지 않는다 -- 읽히는데 못 고치는 필드가 됐다')
+    assert.ok(
+      emrText(renderer).includes(`즉시 재검 대상: ${legacy}`),
+      '기존 값이 EMR P줄에서 사라졌다',
+    )
+    // 실제로 고칠 수 있다.
+    act(() => {
+      area[0].props.onChange({ target: { value: `${legacy} 수정` } })
+    })
+    assert.ok(emrText(renderer).includes(`즉시 재검 대상: ${legacy} 수정`))
+  })
+
+  test('즉시 재검 대상 2026-09-23 (N-2 회귀): 기존 값을 전부 지워도 칸이 사라지지 않는다 (래치)', () => {
+    let renderer
+    act(() => {
+      renderer = TestRenderer.create(
+        React.createElement(DoctorWorkspace, {
+          payload: PAIN_SCENARIO_1.payload,
+          synthetic: PAIN_SCENARIO_1.synthetic,
+          resetKey: 'submission:retest-latch',
+          initialWorkspaceState: withRetest('지울 값'),
+        }),
+      )
+    })
+    const area = () => renderer.root.find((n) => n.type === 'textarea' && n.props.placeholder === '예: 숙일 때 통증 재현 여부')
+    assert.equal(area().props.value, '지울 값')
+    act(() => {
+      area().props.onChange({ target: { value: '' } })
+    })
+    assert.equal(
+      renderer.root.findAll((n) => n.type === 'textarea' && n.props.placeholder === '예: 숙일 때 통증 재현 여부').length,
+      1,
+      '편집 도중 값을 비우자 칸이 사라졌다 -- 파생식으로 되돌아간 것이다(N-2 사고)',
+    )
+  })
+
+  // 이어받기 쪽은 `workspace-round3.spec.mjs`가 본다. 여기서는 **소스에서
+  // 그 필드가 사라졌는지**만 한 줄로 고정해 두 파일이 같은 사실을 가리키게 한다.
+  test('즉시 재검 대상 2026-09-23: 이어받기 소스 타입에서 제거됐다 (소스 단언)', () => {
+    const src = fs.readFileSync(
+      new URL('../src/doctor/workspace/revisitCarryForward.ts', import.meta.url),
+      'utf8',
+    )
+    const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    assert.ok(stripped.includes('CarryForwardTreatmentPlan'), '주석 제거 후에도 코드가 남아 있다 (공허하지 않도록)')
+    assert.ok(
+      !stripped.includes('immediateRetestTarget'),
+      '이어받기가 아직 즉시 재검 대상을 나른다 -- 편집 불가 값이 생기는 경로가 남아 있다',
+    )
+  })
+}
+
+/*
+ * 2026-09-23: **치료 초점이 접힘에서 나왔다.**
+ *
+ * 2026-09-06에는 셋 다 접혀 있었고 이 테스트가 그것을 고정했다. PO 승인으로
+ * 치료 초점을 Task-Load-Capacity 3층 칩으로 바꾸면서 접힘 밖으로 나왔다 --
+ * 자유입력일 이유가 없는 필드이고(값이 셋뿐), 접혀 있으면 안 채운다.
+ *
+ * **삭제가 아니라 승격이다.** 저장 형태·EMR A줄·재진 이어받기 전부 그대로다.
+ * 아래에서 두 가지를 같이 본다: (1) 접힘 안에 없다, (2) 칩으로 실제 렌더된다.
+ * (1)만 보면 필드가 통째로 사라져도 통과한다.
+ */
+test('접기: 통증 최종판단 — 최종 임상 판단이 비어 있으면 닫힌 secondary 안에 있고, 칩 필드는 밖에 있다', () => {
   const html = renderWith(PAIN_SCENARIO_1, lbpLiveExtraProps({}))
-  for (const label of ['최종 임상 판단', '즉시 재검 대상', '치료 초점']) {
+  for (const label of ['최종 임상 판단']) {
     const tag = enclosingDetailsTag(html, `<span>${label}</span>`)
     assert.ok(tag && tag.includes('workspace__finalAssessment__secondary'), `${label} 는 secondary disclosure 안에 있어야 한다`)
     assert.ok(!/\sopen(=|>|\s)/.test(tag), `${label} 의 disclosure는 비어 있을 때 닫혀 있어야 한다: ${tag}`)
   }
-  assert.ok(html.includes('최종 임상 판단 · 즉시 재검 대상 · 치료 초점 — 필요할 때 입력'), 'summary가 세 라벨을 모두 이름 붙인다')
-  const chipTag = enclosingDetailsTag(html, '<span>시행/예정 처치</span>')
-  assert.ok(chipTag === null || !chipTag.includes('workspace__finalAssessment__secondary'), '처치 chip은 접히지 않는다')
+  assert.ok(html.includes('최종 임상 판단 — 필요할 때 입력'), 'summary가 남은 라벨을 이름 붙인다')
+  // 2026-09-23: 즉시 재검 대상은 신규 방문에서 아예 렌더되지 않는다(아래 전용 테스트).
+  assert.ok(!html.includes('<span>즉시 재검 대상</span>'), '즉시 재검 대상이 값도 없는데 렌더됐다')
+  assert.ok(
+    !html.includes('치료 초점 — 필요할 때 입력'),
+    '치료 초점이 아직 접힘 summary에 남아 있다',
+  )
+
+  for (const chipLabel of ['시행/예정 처치', '치료 초점']) {
+    const tag = enclosingDetailsTag(html, `<span>${chipLabel}</span>`)
+    assert.ok(
+      tag === null || !tag.includes('workspace__finalAssessment__secondary'),
+      `${chipLabel} 칩 필드는 접히지 않는다`,
+    )
+  }
 })
 
 test('접기: 최종 임상 판단에 글이 있으면 그 disclosure는 열려서 렌더된다 (쓴 것이 숨겨지지 않는다)', () => {

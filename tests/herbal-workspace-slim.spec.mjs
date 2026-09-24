@@ -38,9 +38,13 @@ const HERBAL = read('src/doctor/workspace/HerbalWorkspace.tsx')
 
 // A-0: 레인 전체가 하나의 프로필 가드 뒤에 있다 -- 개별 블록을 하나씩
 // 숨기는 방식이었다면 새 블록이 추가될 때마다 가드를 빠뜨릴 수 있다.
+// 2026-09-24 「마무리」 화면 분리: 이 레인은 `.doctor__visitStep[data-step=
+// "wrapup"]` 래퍼 한 겹 안으로 들어갔다(주석 포함). 가드 자체는 그대로
+// 바깥에 있어야 한다 -- 래퍼가 가드보다 바깥으로 나가면 herbal 단독에서
+// 빈 마무리 화면과 그 단계 전환 버튼이 되살아난다.
 check(
-  'A-0 `다음` 레인 <section>이 activeProfile !== "herbal" 가드 뒤에 있다',
-  /\{activeProfile !== 'herbal' && \(\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
+  'A-0 `다음` 레인 <section>이 activeProfile !== "herbal" 가드 뒤에 있다 (마무리 단계 래퍼까지 통째로)',
+  /\{activeProfile !== 'herbal' && \([\s\S]{0,900}?<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
     WORKSPACE,
   ),
 )
@@ -69,7 +73,7 @@ check(
 )
 check(
   'A-5 LaneJumpNav의 `다음` 버튼이 showNext로 분기하고, herbal에서 꺼진다 (아무 데도 가지 않는 죽은 버튼 방지)',
-  /\{ id: 'next-h2', label: '다음', nextOnly: true \}/.test(WORKSPACE) &&
+  /\{ id: 'next-h2', label: '마무리', step: 'wrapup', nextOnly: true \}/.test(WORKSPACE) &&
     /showNext=\{activeProfile !== 'herbal'\}/.test(WORKSPACE) &&
     /!it\.nextOnly \|\| showNext/.test(WORKSPACE),
 )

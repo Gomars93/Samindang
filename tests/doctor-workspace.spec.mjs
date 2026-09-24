@@ -3442,7 +3442,7 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
  * site's argument key set is accounted for against PainWorkspace.tsx's own
  * call, the seed-once guard exists, and the empty-text copy guard exists).
  *
- * Opus CLOSING review C-5: the "복사는 「다음」 레인의 「종결」 섹션에서
+ * Opus CLOSING review C-5: the "복사는 「마무리」 화면의 「종결」 섹션에서
  * 합니다." hint used to be unconditional -- but this exact render (no
  * `nextLaneFooter` prop, i.e. fixtures/preview mode, the same shape
  * DoctorView.tsx uses when `mode !== 'server'`) has no 종결 section
@@ -4800,8 +4800,10 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
   const navButtons = (html) => [...html.matchAll(/class="doctor__laneNav__btn" data-target="([^"]+)"[^>]*>([^<]*)</g)].map((m) => ({ target: m[1], label: m[2] }))
   const pain = render(PAIN_SCENARIO_1)
   const painNav = navButtons(pain)
-  test('점프 내비: 통증 화면은 안전·확인·판단·처치·운동·다음 5개 버튼', () => {
-    assert.deepEqual(painNav.map((b) => b.label), ['안전', '확인', '판단·처치', '운동', '다음'])
+  // 2026-09-24 「마무리」 화면 분리: 마지막 버튼의 라벨이 `다음` → `마무리`로
+  // 바뀌었다(앵커 id는 `next-h2` 그대로 -- DoctorWorkspace.tsx의 해당 주석 참고).
+  test('점프 내비: 통증 화면은 안전·확인·판단·처치·운동·마무리 5개 버튼', () => {
+    assert.deepEqual(painNav.map((b) => b.label), ['안전', '확인', '판단·처치', '운동', '마무리'])
   })
   test('점프 내비: 통증 화면의 모든 버튼 대상 id가 실제로 렌더된다 (죽은 링크 없음)', () => {
     for (const b of painNav) assert.ok(pain.includes(` id="${b.target}"`), `missing anchor ${b.target}`)
@@ -4811,7 +4813,7 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
   // PR-A(한약 화면 축소, 2026-09-21): 한약은 `다음` 레인 전체가 사라져
   // 3개가 됐다. 이 파일의 바로 아래 "죽은 링크 없음" 단언과 짝을 이룬다 --
   // 앵커가 없는 버튼을 남기지 않는 것이 이 내비의 원래 계약이었다.
-  test('점프 내비: 한약 화면은 운동·다음 버튼 없이 3개 (PR-A)', () => {
+  test('점프 내비: 한약 화면은 운동·마무리 버튼 없이 3개 (PR-A)', () => {
     assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치'])
     assert.ok(!herbal.includes('id="exercise-h3"'))
     assert.ok(!herbal.includes('id="next-h2"'), '`다음` 앵커 자체가 없다')
@@ -4923,3 +4925,282 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
     assert.ok(!pain.includes('painRow__delta'), '지난 값이 없는데 비교 행이 그려졌다')
   })
 }
+
+/* ====================================================================== *
+ * 「마무리」 화면 분리 (PO 지시 2026-09-24)
+ *
+ * 오른쪽 작업 열이 두 단계로 갈라진다: 「진료」(안전 확인 → 확인 → 판단·처치)
+ * 와 「마무리」(다음 레인 전체). 실측 근거는 DoctorWorkspace.tsx의 `visitStep`
+ * 주석에 있다.
+ *
+ * 이 배치가 지키려는 것은 CLAUDE.md의 "경로를 지우거나 다른 것으로 교체하기
+ * 전에" 규칙이다. 여기서 옮기는 것은 **경로가 아니라 위치**라서 -- DOM은
+ * 그대로 있고 `hidden`만 붙는다 -- 값이 사라질 자리가 원리적으로 없다. 그
+ * "원리적으로 없다"가 실제로 성립하는지를 아래 세 겹으로 고정한다:
+ *   §W-A 렌더: 두 래퍼가 정확히 하나씩, 기본은 진료.
+ *   §W-B 보존: 마무리로 간 블록이 하나도 DOM에서 사라지지 않았다 (블록당 1개).
+ *   §W-C 계약: 소스와 CSS가 "언마운트가 아니라 hidden"을 실제로 보장한다.
+ *   §W-D 전환: 실제 클릭으로 두 단계가 뒤집힌다.
+ * ====================================================================== */
+{
+  const STEP_TAG_RE = /<div class="doctor__visitStep" data-step="(consult|wrapup)"( hidden="")?>/g
+  const stepTags = (html) =>
+    [...html.matchAll(STEP_TAG_RE)].map((m) => ({ step: m[1], hidden: m[2] !== undefined }))
+
+  const painHtml = render(PAIN_SCENARIO_1)
+  const herbalHtml = render(HERBAL_SCENARIO_1)
+  const mixedHtml = render(MIXED_SCENARIO_1)
+  const DW_SRC = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+
+  /* ---------------------------------------------------- §W-A 렌더 */
+
+  test('W-A1 매처 자기점검: 단계 래퍼 태그 정규식이 실제로 무언가를 잡는다', () => {
+    // 이 스캔이 조용히 0개를 잡으면 아래 단언이 전부 무의미해진다.
+    assert.ok(stepTags(painHtml).length >= 2, `단계 래퍼를 못 찾았다 (${stepTags(painHtml).length}개)`)
+  })
+
+  test('W-A2 통증 화면: 진료/마무리 래퍼가 정확히 하나씩, 기본은 진료가 열려 있다', () => {
+    const tags = stepTags(painHtml)
+    assert.deepEqual(
+      tags,
+      [
+        { step: 'consult', hidden: false },
+        { step: 'wrapup', hidden: true },
+      ],
+      '기본 화면은 진료 단계여야 한다 (환자를 열자마자 마무리부터 보이면 안전 확인 레인을 건너뛴다)',
+    )
+  })
+
+  test('W-A3 mixed 화면도 같은 두 단계다 (통증+한약 동시 진료는 동작 그대로)', () => {
+    assert.deepEqual(stepTags(mixedHtml), [
+      { step: 'consult', hidden: false },
+      { step: 'wrapup', hidden: true },
+    ])
+  })
+
+  test('W-A4 한약 단독: 마무리 래퍼 자체가 없고 진료 래퍼는 열려 있다 (PR-A 유지)', () => {
+    assert.deepEqual(stepTags(herbalHtml), [{ step: 'consult', hidden: false }])
+    // 한약에는 갈 곳이 없으므로 단계 전환 버튼도 없어야 한다 -- 있으면
+    // "눌러도 아무 일도 안 일어나는 버튼"이 된다.
+    assert.ok(!herbalHtml.includes('data-step="wrapup"'), '한약에 마무리 단계 흔적이 남았다')
+  })
+
+  /*
+   * 눈과 스크린리더에 서로 다른 표시를 준다 -- 요구가 다르기 때문이다.
+   * `data-current`는 현재 단계 버튼 전부(두 화면 중 어디인지 한눈에),
+   * `aria-current="step"`은 첫 항목 하나뿐(ARIA는 같은 컨테이너 안에 같은
+   * 종류의 current를 하나만 허용한다). 이 둘이 어긋나면 한쪽이 틀린 것이라
+   * 두 표시를 각각 단언한다.
+   */
+  test('W-A5 눈: 현재 단계에 속한 버튼이 전부 칠해진다 (두 화면 중 어디인지가 읽힌다)', () => {
+    const current = [...painHtml.matchAll(/data-target="([^"]+)"[^>]*data-current="true"/g)].map((m) => m[1])
+    assert.deepEqual(current, ['lane1-h2', 'lane2-h2', 'judgment-h2', 'exercise-h3'])
+    assert.ok(!/data-target="next-h2"[^>]*data-current/.test(painHtml), '마무리 버튼까지 칠해졌다')
+  })
+
+  test('W-A6 스크린리더: aria-current="step"은 정확히 한 버튼에만 붙는다 (ARIA 제약)', () => {
+    const aria = [...painHtml.matchAll(/data-target="([^"]+)"[^>]*aria-current="step"/g)].map((m) => m[1])
+    assert.deepEqual(aria, ['lane1-h2'], '현재 단계의 첫 항목 하나여야 한다')
+    // 한약 단독에서도 하나뿐이어야 한다(운동·마무리가 필터로 빠진 상태).
+    const herbalAria = [...herbalHtml.matchAll(/data-target="([^"]+)"[^>]*aria-current="step"/g)].map((m) => m[1])
+    assert.deepEqual(herbalAria, ['lane1-h2'])
+  })
+
+  /* ---------------------------------------------------- §W-B 보존 */
+
+  /*
+   * CLAUDE.md의 "필드 × 화면 표"를 테스트로 옮긴 것. 아래 목록은 분리 직전
+   * (머지 커밋 75136db) `다음` 레인이 렌더하던 블록 전부다. 이 배치는 이들을
+   * **옮기기만** 하므로, 통증 화면 DOM에서 하나라도 사라지면 그건 이동이
+   * 아니라 제거이고 -- Batch 4 D-2("원장이 타이핑한 필드가 출력에서 사라짐")
+   * 와 같은 사고다. 블록 1개당 단언 1개.
+   */
+  const wrapupStart = painHtml.indexOf('data-step="wrapup"')
+  const navStart = painHtml.indexOf('<nav class="doctor__laneNav"')
+  const wrapupRegion = painHtml.slice(wrapupStart, navStart)
+  const consultRegion = painHtml.slice(painHtml.indexOf('data-step="consult"'), wrapupStart)
+
+  test('W-B0 자기점검: 마무리/진료 구간 슬라이스가 둘 다 비어 있지 않다', () => {
+    assert.ok(wrapupStart > 0 && navStart > wrapupStart, '구간 경계를 못 잡았다')
+    assert.ok(wrapupRegion.length > 500 && consultRegion.length > 500, '구간이 비었다')
+  })
+
+  const MOVED_BLOCKS = [
+    ['재평가 대상 칩 (FollowUpTargetPicker)', '재평가 대상'],
+    ['다음 방문 확인 메모', '다음 방문 확인 메모'],
+    ['다음 액션 카드 (NextActionCard)', '다음 액션'],
+    ['관리 계획 (PainCarePlanCard)', '관리 계획 · 다음 재평가'],
+    ['다음 재평가 계획 (NextReassessmentPlanCard)', '다음 상세 재평가'],
+    ['이전 방문 이력 (PriorVisitHistoryCard)', '이전 방문'],
+    ['환자 전달문 미리보기 (PatientCarePlanPreviewCard)', '환자 전달용 치료 계획'],
+    ['EMR 미리보기 (EmrPreviewCard)', 'EMR 미리보기'],
+  ]
+  for (const [name, marker] of MOVED_BLOCKS) {
+    test(`W-B 보존: ${name} 이 마무리 화면에 그대로 있다 (이동이지 제거가 아니다)`, () => {
+      assert.ok(painHtml.includes(marker), `통증 화면 DOM에서 사라졌다: ${marker}`)
+      assert.ok(wrapupRegion.includes(marker), `마무리 구간 밖으로 샜다: ${marker}`)
+    })
+  }
+
+  /*
+   * fixtures 렌더에는 서버 전용 슬롯 두 개(CRM 복약 코스 / 재진 발급·메시징·
+   * 종결)가 들어오지 않는다(`mode === 'server' && patient_id` 게이트).
+   * 그래서 이 둘만 소스 위치로 고정한다 -- 화면에서 확인할 수 없는 경로를
+   * "확인했다"고 적지 않기 위해서다.
+   */
+  test('W-B9 서버 전용 두 슬롯(복약 코스 / 재진 발급·메시징·종결)도 마무리 래퍼 안에 있다', () => {
+    const wrapupSrc = DW_SRC.slice(
+      DW_SRC.indexOf(`data-step="wrapup"`),
+      DW_SRC.indexOf('<LaneJumpNav'),
+    )
+    assert.ok(wrapupSrc.includes('{medicationCourseSlot}'), 'medicationCourseSlot이 마무리 밖으로 나갔다')
+    assert.ok(wrapupSrc.includes('{nextLaneFooter}'), 'nextLaneFooter가 마무리 밖으로 나갔다')
+    // 자기점검: 위 슬라이스가 비어 있으면 두 단언 다 무의미하다.
+    assert.ok(wrapupSrc.length > 200, '마무리 소스 구간을 못 잡았다')
+  })
+
+  test('W-B10 진료 화면은 진료 레인 3개만 들고 있다 (마무리 블록이 양쪽에 중복 렌더되지 않는다)', () => {
+    for (const anchor of ['id="lane1-h2"', 'id="lane2-h2"', 'id="judgment-h2"']) {
+      assert.ok(consultRegion.includes(anchor), `진료 구간에 없다: ${anchor}`)
+    }
+    assert.ok(!consultRegion.includes('id="next-h2"'), '마무리 헤딩이 진료 구간에도 있다')
+    assert.ok(!consultRegion.includes('EMR 미리보기'), 'EMR 미리보기가 양쪽에 있다')
+    // 문서 전체에서도 한 번뿐이어야 한다.
+    assert.equal(painHtml.split('id="next-h2"').length - 1, 1, '마무리 헤딩이 두 번 렌더됐다')
+  })
+
+  /* ---------------------------------------------------- §W-C 계약 */
+
+  test('W-C1 소스: 단계는 `hidden`으로만 감춘다 — visitStep이 렌더를 가르지 않는다', () => {
+    /*
+     * 이것이 이 배치의 핵심 안전장치다. 조건부 렌더(`visitStep === 'wrapup' &&`)
+     * 로 바꾸는 순간 마무리 안의 uncontrolled <details> 열림 상태와
+     * useOpenOnceContent latch가 화면을 오갈 때마다 초기화된다 -- D-3이
+     * 정확히 그 부류였다. 그래서 "hidden 두 개"를 글자로 못 박는다.
+     */
+    const hiddenUses = [...DW_SRC.matchAll(/hidden=\{visitStep !== '(consult|wrapup)'\}/g)].map((m) => m[1])
+    assert.deepEqual(hiddenUses, ['consult', 'wrapup'], '단계 래퍼의 hidden 표현이 바뀌었다')
+    assert.ok(
+      !/visitStep === '(consult|wrapup)' &&/.test(DW_SRC),
+      'visitStep이 조건부 렌더 가드로 쓰였다 — 단계 전환이 언마운트가 된다',
+    )
+    assert.ok(
+      !/\{visitStep === /.test(DW_SRC),
+      'visitStep이 JSX 표현식 안에서 렌더를 가르고 있다',
+    )
+  })
+
+  test('W-C2 소스: 단계가 바뀌면 점프는 커밋 뒤에 한다 (숨겨진 요소의 좌표를 읽지 않는다)', () => {
+    assert.ok(/useIsomorphicLayoutEffect\(\(\) => \{\s*\n\s*if \(pendingJump === null\) return/.test(DW_SRC))
+    assert.ok(/setVisitStep\(step\)\s*\n\s*setPendingJump\(id\)/.test(DW_SRC), '단계 변경과 점프 예약이 같은 곳에 있다')
+  })
+
+  test('W-C3 소스: 다른 환자를 열면 언제나 진료 단계부터 시작한다', () => {
+    const resetBlock = DW_SRC.slice(DW_SRC.indexOf('if (recordKey !== lastSeenRecordKey)'), DW_SRC.indexOf('// Round 18 fix'))
+    assert.ok(resetBlock.length > 200, '리셋 블록을 못 잡았다')
+    assert.ok(resetBlock.includes("setVisitStep('consult')"), '기록이 바뀌어도 마무리 화면이 남는다')
+    assert.ok(resetBlock.includes('setPendingJump(null)'), '앞 환자의 점프 예약이 남는다')
+  })
+
+  /*
+   * CSS 계약. `hidden`이 먹는 근거는 UA 기본 규칙 `[hidden] { display: none }`
+   * 하나뿐이다. `.doctor__visitStep`(또는 `.doctor__visitWork > *`)에
+   * display를 주는 규칙이 하나라도 생기면 그 규칙이 UA 규칙을 이겨서, 숨겼다고
+   * 믿은 마무리 화면이 진료 화면 아래에 그대로 붙는다 -- 그런데 위 §W-A는
+   * `hidden` 속성만 보므로 전부 통과한다. 그 조합을 여기서 막는다.
+   */
+  const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const selectorsOf = (css) =>
+    [...stripComments(css).matchAll(/(?:^|[}{;])\s*([^{}@;]+?)\s*\{/g)].map((m) => m[1].replace(/\s+/g, ' ').trim())
+  const CSS_FILES = fs
+    .readdirSync('src/doctor', { recursive: true })
+    .filter((f) => typeof f === 'string' && f.endsWith('.css'))
+    .map((f) => ({ file: `src/doctor/${f}`, css: fs.readFileSync(`src/doctor/${f}`, 'utf8') }))
+
+  test('W-C4 자기점검: CSS 선택자 스캐너가 실제로 규칙을 읽는다', () => {
+    assert.ok(CSS_FILES.length >= 3, `CSS 파일을 못 찾았다 (${CSS_FILES.length}개)`)
+    const all = CSS_FILES.flatMap((f) => selectorsOf(f.css))
+    assert.ok(all.length > 200, `선택자가 너무 적다 (${all.length}개) — 스캐너가 망가졌다`)
+    // 실재하는 선택자를 실제로 잡는지 (미디어쿼리 안까지 포함).
+    assert.ok(all.includes('.doctor__laneNav'), '.doctor__laneNav 규칙을 못 찾았다')
+    assert.ok(all.some((s) => s.includes('.doctor__visitLane')), '.doctor__visitLane 규칙을 못 찾았다')
+    // 주석 제거가 실제로 되는지: doctor.css 주석에는 `.doctor__visitStep`이
+    // 설명으로 등장한다. 그게 선택자로 잡히면 아래 단언이 헛돈다.
+    assert.ok(
+      fs.readFileSync('src/doctor/doctor.css', 'utf8').includes('.doctor__visitStep'),
+      '전제가 깨졌다: doctor.css 주석에 .doctor__visitStep 설명이 없다',
+    )
+  })
+
+  test('W-C5 CSS: 단계 래퍼에 레이아웃 규칙을 주지 않는다 (UA의 [hidden]을 이기면 안 된다)', () => {
+    for (const { file, css } of CSS_FILES) {
+      for (const sel of selectorsOf(css)) {
+        assert.ok(!sel.includes('doctor__visitStep'), `${file}: 단계 래퍼에 규칙이 생겼다 — "${sel}"`)
+        assert.ok(
+          !/\.doctor__visitWork\s*>/.test(sel),
+          `${file}: .doctor__visitWork 자식 결합자 규칙이 단계 래퍼를 덮친다 — "${sel}"`,
+        )
+      }
+    }
+  })
+
+  /* ---------------------------------------------------- §W-D 전환 */
+
+  test('W-D1 클릭 전환: 마무리 버튼 → 마무리가 열리고 진료가 닫힌다, 안전 버튼 → 되돌아온다', () => {
+    /*
+     * jumpToLane은 document/window를 쓴다(테스트 환경엔 없다). 여기서 재는
+     * 것은 스크롤이 아니라 단계 전환이므로, 앵커를 찾지 못하는 최소 스텁을
+     * 두고 jumpToLane이 조용히 빠져나가게 한다 -- 실제 스크롤 동작은
+     * tests/tablet-viewport.spec.mjs가 진짜 브라우저에서 잰다.
+     */
+    const hadDoc = 'document' in globalThis
+    const hadWin = 'window' in globalThis
+    globalThis.document = { getElementById: () => null, querySelector: () => null }
+    globalThis.window = { scrollY: 0, scrollTo: () => {}, getComputedStyle: () => ({ position: 'static' }) }
+    try {
+      let renderer
+      act(() => {
+        renderer = TestRenderer.create(
+          React.createElement(DoctorWorkspace, {
+            payload: PAIN_SCENARIO_1.payload,
+            synthetic: PAIN_SCENARIO_1.synthetic,
+          }),
+        )
+      })
+      const stepPanel = (step) =>
+        renderer.root.findAll(
+          (n) => n.type === 'div' && n.props['data-step'] === step && n.props.className === 'doctor__visitStep',
+        )[0]
+      const navBtn = (target) =>
+        renderer.root.findAll((n) => n.type === 'button' && n.props['data-target'] === target)[0]
+
+      assert.ok(stepPanel('consult') && stepPanel('wrapup'), '두 단계 패널이 다 마운트돼 있다')
+      assert.equal(stepPanel('consult').props.hidden, false, '시작은 진료')
+      assert.equal(stepPanel('wrapup').props.hidden, true)
+
+      act(() => navBtn('next-h2').props.onClick())
+      assert.equal(stepPanel('wrapup').props.hidden, false, '마무리로 넘어가지 않았다')
+      assert.equal(stepPanel('consult').props.hidden, true, '진료가 계속 열려 있다')
+      assert.equal(navBtn('next-h2').props['aria-current'], 'step', '현재 단계 표시가 따라오지 않았다')
+      assert.equal(navBtn('next-h2').props['data-current'], 'true')
+      assert.equal(navBtn('lane1-h2').props['aria-current'], undefined)
+      assert.equal(navBtn('lane1-h2').props['data-current'], undefined, '진료 버튼이 칠해진 채로 남았다')
+
+      act(() => navBtn('lane1-h2').props.onClick())
+      assert.equal(stepPanel('consult').props.hidden, false, '진료로 돌아오지 않았다')
+      assert.equal(stepPanel('wrapup').props.hidden, true)
+
+      // 언마운트가 아니라 hidden이라는 것의 직접 증거: 마무리 패널은 진료로
+      // 돌아온 뒤에도 자기 내용을 그대로 들고 있다.
+      assert.ok(
+        stepPanel('wrapup').findAll((n) => n.type === 'h2' && n.props.id === 'next-h2').length === 1,
+        '마무리로 갔다 돌아오니 그 안의 내용이 사라졌다 (언마운트됐다)',
+      )
+    } finally {
+      if (!hadDoc) delete globalThis.document
+      if (!hadWin) delete globalThis.window
+    }
+  })
+}
+
+console.log(`(+마무리 화면 분리) ${passed} doctor-workspace assertions passed.`)

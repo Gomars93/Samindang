@@ -36,7 +36,7 @@ import { activeDrivingPack } from './regionPacks'
 import { readRegionClinical, withRegionClinical, type RegionClinicalRecord } from './regionClinicalState'
 import { isPainFinalAssessmentRecorded, isHerbalFinalAssessmentRecorded } from './finalAssessment'
 import { computeLane1Summary, type Lane1RegionInput } from './lane1Summary'
-import { lastVisitTrackedLine } from './longitudinal'
+import { lastVisitTrackedLine, priorNrsFromHistory } from './longitudinal'
 import { microFollowUpQuoteLine, readableMicroFollowUpResponse } from './microFollowUp'
 import { ageFromDoctorPayload } from '../../spec/lbpAdapter'
 import { answerLabel } from '../labels'
@@ -686,13 +686,17 @@ export function DoctorWorkspace({
               위치: 레인2(확인)의 맨 위. 원장이 환자를 보기 시작하는 지점이고,
               아래의 검사 제안·재평가가 이 요약을 근거로 읽히기 때문이다.
 
-              `priorNrs`를 아직 넘기지 않는다: 지난 방문 NRS는 `PriorVisitSummary`에
-              없고(재진 답은 `microFollowUpResponse.detailAnswers`에 **오늘 값**으로
-              들어온다), payload가 나르는 것은 초진 값이라 방향이 뒤집혀 있다.
-              없이 넘기면 비교 행 대신 척도 행이 나온다 -- 값을 지어내는 것보다 낫다.
+              `priorNrs`는 이제 서버가 싣는다(2026-09-24). `PriorVisitSummary`에
+              `painNrsNow`/`painNrsWorst`가 생겼고, 초진은 submission의 응답에서,
+              재진은 재질문된 `detailAnswers`에서 읽는다. 어느 방문과 비교할지는
+              `priorNrsFromHistory`가 고른다 -- **값이 있는 가장 최근 방문 하나**에서
+              두 값을 함께 가져온다(필드별로 따로 찾으면 서로 다른 시점의 두 값이
+              한 줄에 나란히 서게 된다).
+
+              값이 없으면 비교 행 대신 척도 행이 나온다 -- 지어내지 않는다.
             */}
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
-              <PainBriefing payload={payload} />
+              <PainBriefing payload={payload} priorNrs={priorNrsFromHistory(priorVisits)} />
             )}
             {trackedLine && (
               <p className="doctor__lastVisitTracked">

@@ -618,7 +618,8 @@ try {
         wrapup: box('.doctor__visitStep[data-step="wrapup"]'),
         emrInDom: !!emr,
         drawerVisible: !!drawer && (typeof drawer.checkVisibility === 'function' ? drawer.checkVisibility() : true),
-        current: [...document.querySelectorAll('.doctor__laneNav__btn[aria-current="step"]')].map((b) => b.textContent),
+        current: [...document.querySelectorAll('.doctor__laneNav__btn[data-current="true"]')].map((b) => b.textContent),
+        ariaCurrent: [...document.querySelectorAll('.doctor__laneNav__btn[aria-current="step"]')].map((b) => b.textContent),
       }
     })()`
     const stepBefore = await cdp.evalUntil(stepMetrics, (v) => v && v.consult && v.wrapup)
@@ -631,6 +632,7 @@ try {
     check(`${label} (LBP): 진료 중에는 EMR 미리보기로 가는 「참고 자료」 서랍이 보이지 않는다`, stepBefore.drawerVisible === false)
     check(`${label} (LBP): 그래도 EMR 미리보기는 DOM에 그대로 있다 (숨긴 것이지 지운 것이 아니다)`, stepBefore.emrInDom === true)
     check(`${label} (LBP): 현재 단계 표시가 진료 버튼에만 붙는다`, stepBefore.current.join(',') === '안전,확인,판단·처치,운동', `(${stepBefore.current})`)
+    check(`${label} (LBP): aria-current="step"은 정확히 하나 (ARIA 제약)`, stepBefore.ariaCurrent.join(',') === '안전', `(${stepBefore.ariaCurrent})`)
 
     await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__laneNav__btn[data-target="next-h2"]').click()`, returnByValue: true })
     const stepAfter = await cdp.evalUntil(stepMetrics, (v) => v && v.wrapup && v.wrapup.h > 0)
@@ -639,6 +641,7 @@ try {
     check(`${label} (LBP): 마무리로 넘어가면 진료 화면이 접힌다 (두 화면이 동시에 쌓이지 않는다)`, stepAfter.consult.h === 0, `(${stepAfter.consult.h}px)`)
     check(`${label} (LBP): 마무리 화면에서 EMR 미리보기로 가는 「참고 자료」 서랍에 실제로 닿는다`, stepAfter.drawerVisible === true)
     check(`${label} (LBP): 현재 단계 표시가 마무리로 따라온다`, stepAfter.current.join(',') === '마무리', `(${stepAfter.current})`)
+    check(`${label} (LBP): 단계를 옮겨도 aria-current="step"은 여전히 하나`, stepAfter.ariaCurrent.join(',') === '마무리', `(${stepAfter.ariaCurrent})`)
     check(`${label} (LBP): 마무리 화면에도 가로 오버플로가 없다`, (await cdp.send('Runtime.evaluate', { expression: `Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)`, returnByValue: true }))?.result?.value === 0)
 
     await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__laneNav__btn[data-target="lane1-h2"]').click()`, returnByValue: true })

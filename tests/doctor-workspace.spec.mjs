@@ -4985,13 +4985,25 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
     assert.ok(!herbalHtml.includes('data-step="wrapup"'), '한약에 마무리 단계 흔적이 남았다')
   })
 
-  test('W-A5 지금 보고 있는 단계가 내비에 표시된다 (aria-current가 정확히 한 버튼에)', () => {
-    const current = [...painHtml.matchAll(/data-target="([^"]+)"[^>]*aria-current="step"/g)].map((m) => m[1])
-    assert.deepEqual(current, ['lane1-h2', 'lane2-h2', 'judgment-h2', 'exercise-h3'], '진료 단계 버튼 전부가 현재 단계로 표시된다')
-    assert.ok(
-      !/data-target="next-h2"[^>]*aria-current/.test(painHtml),
-      '마무리 버튼은 지금 보고 있는 단계가 아니다',
-    )
+  /*
+   * 눈과 스크린리더에 서로 다른 표시를 준다 -- 요구가 다르기 때문이다.
+   * `data-current`는 현재 단계 버튼 전부(두 화면 중 어디인지 한눈에),
+   * `aria-current="step"`은 첫 항목 하나뿐(ARIA는 같은 컨테이너 안에 같은
+   * 종류의 current를 하나만 허용한다). 이 둘이 어긋나면 한쪽이 틀린 것이라
+   * 두 표시를 각각 단언한다.
+   */
+  test('W-A5 눈: 현재 단계에 속한 버튼이 전부 칠해진다 (두 화면 중 어디인지가 읽힌다)', () => {
+    const current = [...painHtml.matchAll(/data-target="([^"]+)"[^>]*data-current="true"/g)].map((m) => m[1])
+    assert.deepEqual(current, ['lane1-h2', 'lane2-h2', 'judgment-h2', 'exercise-h3'])
+    assert.ok(!/data-target="next-h2"[^>]*data-current/.test(painHtml), '마무리 버튼까지 칠해졌다')
+  })
+
+  test('W-A6 스크린리더: aria-current="step"은 정확히 한 버튼에만 붙는다 (ARIA 제약)', () => {
+    const aria = [...painHtml.matchAll(/data-target="([^"]+)"[^>]*aria-current="step"/g)].map((m) => m[1])
+    assert.deepEqual(aria, ['lane1-h2'], '현재 단계의 첫 항목 하나여야 한다')
+    // 한약 단독에서도 하나뿐이어야 한다(운동·마무리가 필터로 빠진 상태).
+    const herbalAria = [...herbalHtml.matchAll(/data-target="([^"]+)"[^>]*aria-current="step"/g)].map((m) => m[1])
+    assert.deepEqual(herbalAria, ['lane1-h2'])
   })
 
   /* ---------------------------------------------------- §W-B 보존 */
@@ -5170,7 +5182,9 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
       assert.equal(stepPanel('wrapup').props.hidden, false, '마무리로 넘어가지 않았다')
       assert.equal(stepPanel('consult').props.hidden, true, '진료가 계속 열려 있다')
       assert.equal(navBtn('next-h2').props['aria-current'], 'step', '현재 단계 표시가 따라오지 않았다')
+      assert.equal(navBtn('next-h2').props['data-current'], 'true')
       assert.equal(navBtn('lane1-h2').props['aria-current'], undefined)
+      assert.equal(navBtn('lane1-h2').props['data-current'], undefined, '진료 버튼이 칠해진 채로 남았다')
 
       act(() => navBtn('lane1-h2').props.onClick())
       assert.equal(stepPanel('consult').props.hidden, false, '진료로 돌아오지 않았다')

@@ -1159,6 +1159,9 @@ function LaneJumpNav({
   const items = LANE_JUMP_ITEMS.filter(
     (it) => (!it.exerciseOnly || showExercise) && (!it.nextOnly || showNext),
   )
+  // 필터를 거친 뒤에 고른다 -- 걸러진 항목에 표시를 달면 아무 버튼에도 붙지
+  // 않는 조합이 생긴다(예: 운동 섹션이 없는 프로필).
+  const firstIdOfCurrentStep = items.find((it) => it.step === visitStep)?.id
   return (
     <nav className="doctor__laneNav" aria-label="진료 단계 바로가기">
       {items.map((it) => (
@@ -1169,13 +1172,23 @@ function LaneJumpNav({
           data-target={it.id}
           data-step={it.step}
           /*
-            지금 보고 있는 단계의 버튼에 `aria-current`를 준다 -- 두 단계가
-            같은 sticky 바를 공유하므로, 이것이 없으면 스크린리더에서 "지금
-            어느 화면인지"를 알 방법이 화면 내용밖에 없다. herbal 단독에서는
-            `마무리` 항목이 필터로 빠지고 단계도 항상 'consult'이므로
-            이 표시가 저절로 사라진다(죽은 표시가 남지 않는다).
+            지금 보고 있는 단계 표시를 눈과 스크린리더에 따로 준다 -- 요구가
+            다르기 때문이다.
+
+            `data-current`(눈): 현재 단계에 속한 버튼 **전부**를 칠한다. 두
+            단계가 같은 sticky 바를 공유하므로, 진료의 네 버튼이 한 덩어리로
+            칠해지고 마무리 하나만 비어 있어야 "지금 두 화면 중 어느 쪽인가"가
+            한눈에 읽힌다. 한 개만 칠하면 "지금 안전 레인에 있다"로 읽힌다.
+
+            `aria-current="step"`(스크린리더): 같은 컨테이너 안에서 같은 종류의
+            current는 **하나뿐**이어야 하므로(ARIA), 현재 단계의 **첫 항목**
+            하나에만 준다. 네 개에 전부 주면 "현재 단계"가 네 번 읽힌다.
+
+            herbal 단독에서는 `마무리` 항목이 필터로 빠지고 단계도 항상
+            'consult'이라, 두 표시 모두 진료 쪽에만 남는다(죽은 표시 없음).
           */
-          aria-current={it.step === visitStep ? 'step' : undefined}
+          data-current={it.step === visitStep ? 'true' : undefined}
+          aria-current={it.id === firstIdOfCurrentStep ? 'step' : undefined}
           onClick={() => onSelect(it.id, it.step)}
         >
           {it.label}

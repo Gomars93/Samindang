@@ -369,8 +369,14 @@
  * 이 바는 「진료」와 「마무리」 두 화면이 공유하는 유일한 컨트롤이라,
  * 지금 어느 쪽에 있는지가 여기서 안 보이면 화면 내용으로 되짚어야 한다.
  * 대비는 기존 --primary/--surface 쌍을 뒤집어 쓴다(새 색 도입 없음).
+ *
+ * `aria-current`가 아니라 `data-current`를 거는 이유: ARIA는 같은 컨테이너
+ * 안에 같은 종류의 current를 하나만 허용하므로 `aria-current`는 현재 단계의
+ * 첫 버튼에만 붙는다. 반면 눈에는 현재 단계의 버튼이 **전부** 칠해져야
+ * 두 화면 중 어디인지가 읽힌다 -- 두 표시의 대상이 다르다
+ * (DoctorWorkspace.tsx의 해당 주석 참고).
  */
-.doctor__laneNav__btn[aria-current='step'] {
+.doctor__laneNav__btn[data-current='true'] {
   background: var(--primary);
   border-color: var(--primary);
   color: var(--surface);

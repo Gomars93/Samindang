@@ -13,7 +13,7 @@
  * card renders (see emrPreview.ts's file header and DoctorView.tsx's own
  * 종결 section).
  *
- * Opus CLOSING review C-5: the "복사는 「다음」 레인의 「종결」 섹션에서
+ * Opus CLOSING review C-5: the "복사는 「마무리」 화면의 「종결」 섹션에서
  * 합니다." hint used to be hard-coded here, but 종결 only renders under
  * `mode === 'server' && selectedRecord?.patient_id`
  * (`DoctorView.tsx`'s `nextLaneFooterNode`) — in fixtures/preview mode and

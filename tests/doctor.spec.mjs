@@ -3822,7 +3822,7 @@ function detailsRange(html, classMarker) {
     !doctorViewBundleSrc.includes('judgmentRecordedFieldCount'),
   )
 
-  // C-5 (Opus closing review): EmrPreviewCard's "복사는 「다음」 레인의
+  // C-5 (Opus closing review): EmrPreviewCard's "복사는 「마무리」 화면의
   // 「종결」 섹션에서 합니다." hint used to be hard-coded inside
   // EmrPreviewCard.tsx itself, so it rendered even in fixtures/preview
   // mode and for legacy records with no patient_id -- contexts where 종결
@@ -3856,7 +3856,7 @@ function detailsRange(html, classMarker) {
   )
   assert(
     "C-5: DoctorWorkspace.tsx derives the hint from `nextLaneFooter` (the exact same signal DoctorView.tsx gates 종결's own render on) rather than always supplying it, and passes it as copyHint to both PainWorkspaceNext and HerbalWorkspaceNext",
-    /nextLaneFooter\s*!=\s*null\s*\?\s*'복사는 「다음」 레인의 「종결」 섹션에서 합니다\.'\s*:\s*undefined/.test(doctorWorkspaceSrc) &&
+    /nextLaneFooter\s*!=\s*null\s*\?\s*'복사는 「마무리」 화면의 「종결」 섹션에서 합니다\.'\s*:\s*undefined/.test(doctorWorkspaceSrc) &&
       (doctorWorkspaceSrc.match(/copyHint=\{emrPreviewCopyHint\}/g) ?? []).length === 2,
   )
 }

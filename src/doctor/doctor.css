@@ -318,8 +318,25 @@
   margin: 0 0 8px;
 }
 
+/*
+ * 「마무리」 화면 분리(2026-09-24) -- DoctorWorkspace.tsx의 `visitStep` 주석 참고.
+ *
+ * `.doctor__visitStep`(단계 래퍼)에는 `display`를 주면 안 된다 -- 그래서 이
+ * 파일에 그 선택자 규칙이 아예 없다. 단계 전환은 JSX의 `hidden` 속성
+ * 하나로만 이뤄지고, 그게 먹는 근거는 UA 기본 규칙 `[hidden] { display: none }`
+ * 뿐이다. `.doctor__visitStep`(또는 `.doctor__visitWork > *` 같은 자식
+ * 결합자)에 `display: block`/`flex`/`grid`를 얹는 순간 그 규칙을 이겨버려서,
+ * 숨겼다고 믿은
+ * 마무리 화면이 진료 화면 아래에 그대로 붙어 나온다 -- 화면이 짧아지지
+ * 않는데 테스트는 `hidden` 속성만 보고 통과할 수 있는 조합이다.
+ * tests/doctor-workspace.spec.mjs가 이 파일 원문에 대고 그걸 막는다.
+ *
+ * 레이아웃 속성을 일부러 하나도 주지 않으므로 규칙 자체가 필요 없고,
+ * 이 주석이 그 빈자리의 이유다.
+ */
+
 /* 점프 내비(안 A) -- DoctorWorkspace.tsx의 LaneJumpNav 주석 참고. 작업 영역의
-   마지막 자식, sticky bottom. */
+   마지막 자식, sticky bottom. 「마무리」 화면 분리 이후에는 단계 전환기도 겸한다. */
 .doctor__laneNav {
   position: sticky;
   bottom: 0;
@@ -345,6 +362,18 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/*
+ * 지금 보고 있는 단계 표시. 색 하나만 바꾸지 않고 배경까지 채우는 이유:
+ * 이 바는 「진료」와 「마무리」 두 화면이 공유하는 유일한 컨트롤이라,
+ * 지금 어느 쪽에 있는지가 여기서 안 보이면 화면 내용으로 되짚어야 한다.
+ * 대비는 기존 --primary/--surface 쌍을 뒤집어 쓴다(새 색 도입 없음).
+ */
+.doctor__laneNav__btn[aria-current='step'] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--surface);
 }
 
 /*

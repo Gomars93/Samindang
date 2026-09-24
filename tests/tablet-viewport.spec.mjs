@@ -554,7 +554,7 @@ try {
       returnByValue: true,
     })
     const nb = navBefore?.result?.value
-    check(`${label} (LBP): 점프 내비가 5개 버튼으로 렌더된다`, Array.isArray(nb?.labels) && nb.labels.join(',') === '안전,확인,판단·처치,운동,다음', `(${nb?.labels})`)
+    check(`${label} (LBP): 점프 내비가 5개 버튼으로 렌더된다`, Array.isArray(nb?.labels) && nb.labels.join(',') === '안전,확인,판단·처치,운동,마무리', `(${nb?.labels})`)
     check(`${label} (LBP): 스크롤 0에서 내비가 화면 안에 있다 (sticky bottom)`, nb && nb.navTop >= 0 && nb.navBottom <= nb.inner, `(top ${nb?.navTop}, bottom ${nb?.navBottom}, viewport ${nb?.inner})`)
     check(`${label} (LBP): 내비 버튼이 ${MIN_TARGET}px 이상`, nb && nb.minBtn >= MIN_TARGET, `(${nb?.minBtn}px)`)
     console.log(`[measured] ${label} (LBP): 운동 섹션 top = ${nb?.exerciseTop}px (viewport ${nb?.inner}px) → ${nb ? (nb.exerciseTop / nb.inner).toFixed(1) : '?'} 화면 아래`)
@@ -578,6 +578,77 @@ try {
     check(`${label} (LBP): 「운동」 탭 한 번으로 운동 섹션이 화면에 들어온다`, afterJump.exerciseTop >= 0 && afterJump.exerciseTop < afterJump.inner, `(top ${afterJump.exerciseTop}px)`)
     check(`${label} (LBP): 점프 뒤 운동 섹션이 sticky 헤더 뒤에 숨지 않는다`, afterJump.exerciseTop >= afterJump.headerBottom, `(heading ${afterJump.exerciseTop} ≥ header ${afterJump.headerBottom})`)
     check(`${label} (LBP): 점프 뒤에도 내비가 화면 안에 남는다`, afterJump.navBottom <= afterJump.inner, `(bottom ${afterJump.navBottom}, viewport ${afterJump.inner})`)
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
+
+    /*
+     * 「마무리」 화면 분리(2026-09-24)의 실측 계약.
+     *
+     * 왜 px 상한이 아니라 "숨은 화면의 높이가 0"인가: 이 배치가 줄인 높이
+     * (데스크톱 실측 4182px → 3605px)를 절대 상한으로 박으면, 기존 상한들처럼
+     * 기계 간 텍스트 메트릭 변동을 흡수할 여유(≈35%)를 주는 순간 분리를
+     * 되돌려도 통과하는 무의미한 핀이 되고, 여유를 안 주면 다른 기계에서
+     * 흔들린다. 대신 계약 자체를 잰다 -- 숨긴 단계가 진짜로 0px를 차지하고
+     * (즉 `hidden`이 CSS에 먹혔고), 버튼 한 번으로 실제로 열리고 닫힌다.
+     * 이건 기계와 무관하게 참이거나 거짓이다.
+     *
+     * 소스가 아니라 진짜 브라우저에서 재는 이유: `hidden`이 듣는 근거는 UA의
+     * `[hidden] { display: none }` 하나뿐이라, CSS 한 줄이 그걸 이기면 SSR
+     * 단언(hidden 속성만 본다)은 전부 통과하면서 화면은 그대로 길어진다.
+     */
+    const stepMetrics = `(() => {
+      const box = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { h: Math.round(r.height), visible: typeof el.checkVisibility === 'function' ? el.checkVisibility() : r.height > 0 }
+      }
+      /*
+       * EMR 미리보기 자체는 「참고 자료」 disclosure 안에 접혀 있어서, 마무리
+       * 화면을 열어도 그 헤딩은 checkVisibility() false다(정상). 원장이 실제로
+       * 닿는 지점은 그 서랍의 summary이므로 그걸 잰다 -- EMR 헤딩은 DOM에
+       * 있는지만 따로 확인한다.
+       */
+      const drawer = [...document.querySelectorAll('.workspace summary')].find((el) => el.textContent.includes('참고 자료'))
+      // 헤딩(h4)으로만 찾는다 -- 서랍 summary 텍스트가 "참고 자료 (이전 방문 ·
+      // 환자 전달문 · EMR 미리보기)"라서, 본문 전체 문자열로 찾으면 EMR 카드가
+      // 사라져도 통과하는 헛단언이 된다.
+      const emr = document.querySelector('.workspace__emrPreview h4')
+      return {
+        consult: box('.doctor__visitStep[data-step="consult"]'),
+        wrapup: box('.doctor__visitStep[data-step="wrapup"]'),
+        emrInDom: !!emr,
+        drawerVisible: !!drawer && (typeof drawer.checkVisibility === 'function' ? drawer.checkVisibility() : true),
+        current: [...document.querySelectorAll('.doctor__laneNav__btn[aria-current="step"]')].map((b) => b.textContent),
+      }
+    })()`
+    const stepBefore = await cdp.evalUntil(stepMetrics, (v) => v && v.consult && v.wrapup)
+    console.log(
+      `[measured] ${label} (LBP): 진료 화면 ${stepBefore.consult.h}px / 마무리 화면 ${stepBefore.wrapup.h}px (숨김)`,
+    )
+    check(`${label} (LBP): 두 단계가 둘 다 DOM에 있다 (언마운트가 아니라 hidden)`, !!stepBefore.consult && !!stepBefore.wrapup)
+    check(`${label} (LBP): 기본은 진료 화면 — 마무리가 높이를 0으로 접는다`, stepBefore.wrapup.h === 0 && stepBefore.wrapup.visible === false, `(마무리 ${stepBefore.wrapup.h}px, visible=${stepBefore.wrapup.visible})`)
+    check(`${label} (LBP): 진료 화면은 실제 높이를 갖는다 (자기점검 — 둘 다 0이면 위 단언이 헛돈다)`, stepBefore.consult.h > 500, `(${stepBefore.consult.h}px)`)
+    check(`${label} (LBP): 진료 중에는 EMR 미리보기로 가는 「참고 자료」 서랍이 보이지 않는다`, stepBefore.drawerVisible === false)
+    check(`${label} (LBP): 그래도 EMR 미리보기는 DOM에 그대로 있다 (숨긴 것이지 지운 것이 아니다)`, stepBefore.emrInDom === true)
+    check(`${label} (LBP): 현재 단계 표시가 진료 버튼에만 붙는다`, stepBefore.current.join(',') === '안전,확인,판단·처치,운동', `(${stepBefore.current})`)
+
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__laneNav__btn[data-target="next-h2"]').click()`, returnByValue: true })
+    const stepAfter = await cdp.evalUntil(stepMetrics, (v) => v && v.wrapup && v.wrapup.h > 0)
+    console.log(`[measured] ${label} (LBP): 마무리 화면 ${stepAfter.wrapup.h}px (열림) — 진료 화면은 ${stepAfter.consult.h}px로 접힘`)
+    check(`${label} (LBP): 「마무리」 버튼 한 번으로 마무리 화면이 열린다`, stepAfter.wrapup.h > 0 && stepAfter.wrapup.visible === true, `(${stepAfter.wrapup.h}px)`)
+    check(`${label} (LBP): 마무리로 넘어가면 진료 화면이 접힌다 (두 화면이 동시에 쌓이지 않는다)`, stepAfter.consult.h === 0, `(${stepAfter.consult.h}px)`)
+    check(`${label} (LBP): 마무리 화면에서 EMR 미리보기로 가는 「참고 자료」 서랍에 실제로 닿는다`, stepAfter.drawerVisible === true)
+    check(`${label} (LBP): 현재 단계 표시가 마무리로 따라온다`, stepAfter.current.join(',') === '마무리', `(${stepAfter.current})`)
+    check(`${label} (LBP): 마무리 화면에도 가로 오버플로가 없다`, (await cdp.send('Runtime.evaluate', { expression: `Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)`, returnByValue: true }))?.result?.value === 0)
+
+    await cdp.send('Runtime.evaluate', { expression: `document.querySelector('.doctor__laneNav__btn[data-target="lane1-h2"]').click()`, returnByValue: true })
+    const stepBack = await cdp.evalUntil(stepMetrics, (v) => v && v.consult && v.consult.h > 0)
+    check(`${label} (LBP): 「안전」 버튼으로 진료 화면에 돌아온다`, stepBack.consult.h > 500 && stepBack.wrapup.h === 0, `(진료 ${stepBack.consult.h}px, 마무리 ${stepBack.wrapup.h}px)`)
+    check(
+      `${label} (LBP): 돌아온 진료 화면 높이가 원래와 같다 (오갔다고 레이아웃이 달라지지 않는다)`,
+      Math.abs(stepBack.consult.h - stepBefore.consult.h) <= 2,
+      `(${stepBefore.consult.h}px → ${stepBack.consult.h}px)`,
+    )
     await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
 
     // 세 번째 측정: CLEAR인 LBP fixture — 레인1이 접혀야 한다.

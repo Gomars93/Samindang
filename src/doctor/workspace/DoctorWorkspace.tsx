@@ -23,7 +23,7 @@
  * Round 2 Phase 5's original profile-override history stays in git for
  * anyone tracing Phase 1 #38 forward; this file no longer implements it.
  */
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { CommonSafetyBanner } from '../CommonSafetyBanner'
 import { ConflictBanner } from '../ConflictBanner'
 import { DoctorTokenSetup } from '../DoctorTokenSetup'
@@ -297,6 +297,40 @@ export function DoctorWorkspace({
   // "추가입력열림" state name in Phase 7 §1.2's reset-key test contract).
   const [additionalTypeOpen, setAdditionalTypeOpen] = useState(false)
 
+  /*
+    「마무리」 화면 분리 (PO 지시 2026-09-24). 오른쪽 작업 열이 두 단계로
+    갈라진다: 「진료」(안전 확인 → 확인 → 판단·처치)와 「마무리」(다음 레인
+    전체 -- 재평가 대상·관리 계획·이전 방문·환자 전달문·EMR 미리보기·CRM
+    복약 코스·재진 발급/메시징/종결). 실측 근거: 다음 레인을 빼면 데스크톱
+    1440x900 LBP 워크플로가 4182px → 3605px (4.65화면 → 4.01화면)이다.
+
+    왜 언마운트가 아니라 `hidden`인가. 한약 축소(PR-A)는 다음 레인을 아예
+    렌더하지 않는 "제거"였지만 여기는 "이동"이다. 조건부 렌더로 바꾸면
+    그 안의 uncontrolled `<details>` 열림 상태, `useOpenOnceContent` latch,
+    입력 중이던 커서 위치가 화면을 왔다 갔다 할 때마다 초기화된다 -- D-3
+    (관리 계획 disclosure)이 정확히 그 부류의 사고였다. `hidden`은 DOM을
+    그대로 두고 높이만 0으로 만들므로 화면 길이는 똑같이 줄이면서 그 상태를
+    전부 보존한다. 저장 경로(`workspaceState` → autosave)도 건드리지 않는다
+    -- 두 단계가 같은 state를 공유하고 같은 타이밍에 저장된다.
+
+    `hidden`이 실제로 먹는지: `.doctor__visitStep`에는 `display` 규칙이
+    없고 `.doctor__visitWork`에 자식 결합자 규칙도 없으므로 UA의
+    `[hidden] { display: none }`이 그대로 적용된다(doctor.css에 확인 주석).
+  */
+  const [visitStep, setVisitStep] = useState<VisitStep>('consult')
+  /*
+    단계를 바꾸면서 동시에 스크롤해야 하는 경우(마무리에서 「안전」을 누름):
+    `setVisitStep` 직후에는 아직 숨겨진 상태라 getBoundingClientRect가 0을
+    돌려준다. 커밋 뒤에 재는 것이 유일하게 맞는 순서라서 pending 타깃을
+    한 번 거쳐 useLayoutEffect에서 점프한다(paint 전이라 깜빡임 없음).
+  */
+  const [pendingJump, setPendingJump] = useState<string | null>(null)
+  useIsomorphicLayoutEffect(() => {
+    if (pendingJump === null) return
+    jumpToLane(pendingJump)
+    setPendingJump(null)
+  }, [pendingJump])
+
   // Reset every piece of clinician-entered workspace state, plus the
   // per-record UI-only flags above, whenever the underlying record changes
   // (a different real submission, or a different SYNTHETIC preview
@@ -318,6 +352,11 @@ export function DoctorWorkspace({
   if (recordKey !== lastSeenRecordKey) {
     setLastSeenRecordKey(recordKey)
     setAdditionalTypeOpen(false)
+    // 「마무리」 화면 분리: 다른 환자를 열면 언제나 「진료」부터 시작한다 --
+    // 앞 환자에서 마무리까지 갔다고 다음 환자가 마무리 화면으로 열리면
+    // 안전 확인 레인을 건너뛴 채 진료가 시작된다.
+    setVisitStep('consult')
+    setPendingJump(null)
     const seeded = seedWorkspaceState(initialWorkspaceState, synthetic, payload)
     setWorkspaceState(seeded)
     lastSavedRef.current = seeded
@@ -556,7 +595,7 @@ export function DoctorWorkspace({
   const readableMicroFollowUp = readableMicroFollowUpResponse(microFollowUpResponse ?? null)
   const deltaQuoteLine = microFollowUpQuoteLine(readableMicroFollowUp)
 
-  // Opus closing review C-5: EmrPreviewCard's "복사는 「다음」 레인의
+  // Opus closing review C-5: EmrPreviewCard's "복사는 「마무리」 화면의
   // 「종결」 섹션에서 합니다." hint is only true when 종결 actually renders
   // on screen -- `nextLaneFooter` is the exact same signal DoctorView.tsx
   // already gates 종결's own render on (`nextLaneFooterNode`, gated by
@@ -565,7 +604,7 @@ export function DoctorWorkspace({
   // `patient_id` itself. `undefined` when absent (fixtures/preview mode,
   // legacy records with no patient_id) so EmrPreviewCard renders no hint
   // at all rather than naming a section that is not on screen.
-  const emrPreviewCopyHint = nextLaneFooter != null ? '복사는 「다음」 레인의 「종결」 섹션에서 합니다.' : undefined
+  const emrPreviewCopyHint = nextLaneFooter != null ? '복사는 「마무리」 화면의 「종결」 섹션에서 합니다.' : undefined
 
   const painFinalRecorded = isPainFinalAssessmentRecorded(workspaceState.painFinalAssessment)
   const herbalFinalRecorded = isHerbalFinalAssessmentRecorded(workspaceState.herbalFinalAssessment)
@@ -601,6 +640,12 @@ export function DoctorWorkspace({
         />
 
         <main className="doctor__visitWork" aria-label="진료 작업">
+          {/*
+            「마무리」 화면 분리: 여기부터 「진료」 단계 -- 안전 확인 → 확인 →
+            판단·처치. `hidden`으로만 감추고 언마운트하지 않는 이유는 위
+            `visitStep` 선언부 주석 참고.
+          */}
+          <div className="doctor__visitStep" data-step="consult" hidden={visitStep !== 'consult'}>
           <section className="doctor__visitLane doctor__visitLane--lane1" aria-labelledby="lane1-h2">
             <h2 id="lane1-h2">안전 확인</h2>
             {/*
@@ -911,6 +956,8 @@ export function DoctorWorkspace({
             )}
           </section>
 
+          </div>
+
           {/*
             한약 화면 축소(PR-A, PO 승인 2026-09-21): herbal 단독 프로필에서는
             `다음` 레인 전체를 렌더하지 않는다 -- 재평가 대상 칩, 다음 방문 확인
@@ -927,8 +974,17 @@ export function DoctorWorkspace({
             재현되기 때문이다.
           */}
           {activeProfile !== 'herbal' && (
+          /*
+            「마무리」 화면 분리: 이 레인이 통째로 「마무리」 단계다. 앵커 id
+            (`next-h2`)와 클래스(`doctor__visitLane--next`)는 그대로 둔다 --
+            선택자/앵커 정체성이라 이름을 바꾸면 doctor.spec / herbal-workspace
+            -slim / doctor-workspace / tablet-viewport 네 스위트와 CSS가 같이
+            움직여야 하고, 얻는 것은 표기 일관성뿐이다. 눈에 보이는 라벨만
+            「다음」 → 「마무리」로 바꾼다.
+          */
+          <div className="doctor__visitStep" data-step="wrapup" hidden={visitStep !== 'wrapup'}>
           <section className="doctor__visitLane doctor__visitLane--next" aria-labelledby="next-h2">
-            <h2 id="next-h2">다음</h2>
+            <h2 id="next-h2">마무리</h2>
             {(activeProfile === 'pain' || activeProfile === 'mixed') && (
               <PainWorkspaceNext
                 payload={payload}
@@ -978,11 +1034,21 @@ export function DoctorWorkspace({
             {medicationCourseSlot}
             {nextLaneFooter}
           </section>
+          </div>
           )}
 
           <LaneJumpNav
             showExercise={activeProfile === 'pain' || activeProfile === 'mixed'}
             showNext={activeProfile !== 'herbal'}
+            visitStep={visitStep}
+            onSelect={(id, step) => {
+              if (step === visitStep) {
+                jumpToLane(id)
+                return
+              }
+              setVisitStep(step)
+              setPendingJump(id)
+            }}
           />
         </main>
       </div>
@@ -1001,6 +1067,16 @@ export function DoctorWorkspace({
     </div>
   )
 }
+
+/*
+ * 서버 렌더에서 `useLayoutEffect`는 아무 일도 하지 않으면서 경고만 찍는다
+ * (tests/doctor-workspace.spec.mjs 등은 이 셸을 renderToString으로 수백 번
+ * 그린다 -- 매번 경고가 나오면 진짜 경고가 묻힌다). 단계 전환 뒤의 점프는
+ * paint 전에 일어나야 깜빡이지 않으므로 브라우저에서는 layout effect가
+ * 맞고, 서버에서는 어차피 실행되지 않으므로 `useEffect`로 낮춘다 -- 환경마다
+ * 한 번 정해지는 별칭이라 훅 순서는 렌더 간에 바뀌지 않는다.
+ */
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 /**
  * PO 결정(HANDOFF 최신 29 → "추천에 따라 진행", 안 A): 운동 후보가 첫 화면에서
@@ -1038,17 +1114,30 @@ function jumpToLane(id: string): void {
   window.scrollTo({ top: Math.max(0, top) })
 }
 
+/**
+ * 「마무리」 화면 분리(PO 지시 2026-09-24): 이 내비가 그대로 단계 전환기가
+ * 된다. 위에 탭 바를 따로 얹지 않는 이유는 그러면 같은 일을 하는 컨트롤이
+ * 화면에 둘이 되기 때문이다 -- 이 저장소가 Batch 2.6/4에서 반복해서 다친
+ * 지점이 정확히 "같은 것이 두 군데 있고 한쪽만 갱신된다"였다.
+ *
+ * 각 항목은 자기가 속한 단계를 들고 있다. 다른 단계의 항목을 누르면 단계를
+ * 먼저 바꾸고(숨김 해제) 그 다음에 점프한다 -- 순서가 반대면 숨겨진 요소의
+ * 좌표(0)를 읽는다.
+ */
+type VisitStep = 'consult' | 'wrapup'
+
 const LANE_JUMP_ITEMS: ReadonlyArray<{
   id: string
   label: string
+  step: VisitStep
   exerciseOnly?: boolean
   nextOnly?: boolean
 }> = [
-  { id: 'lane1-h2', label: '안전' },
-  { id: 'lane2-h2', label: '확인' },
-  { id: 'judgment-h2', label: '판단·처치' },
-  { id: 'exercise-h3', label: '운동', exerciseOnly: true },
-  { id: 'next-h2', label: '다음', nextOnly: true },
+  { id: 'lane1-h2', label: '안전', step: 'consult' },
+  { id: 'lane2-h2', label: '확인', step: 'consult' },
+  { id: 'judgment-h2', label: '판단·처치', step: 'consult' },
+  { id: 'exercise-h3', label: '운동', step: 'consult', exerciseOnly: true },
+  { id: 'next-h2', label: '마무리', step: 'wrapup', nextOnly: true },
 ]
 
 /**
@@ -1056,7 +1145,17 @@ const LANE_JUMP_ITEMS: ReadonlyArray<{
  * 않으므로 `#next-h2`로 점프하는 버튼도 함께 뺀다 -- 남겨두면 아무 데도 가지
  * 않는 죽은 버튼이 된다(jumpToLane은 존재하지 않는 id를 조용히 무시한다).
  */
-function LaneJumpNav({ showExercise, showNext }: { showExercise: boolean; showNext: boolean }) {
+function LaneJumpNav({
+  showExercise,
+  showNext,
+  visitStep,
+  onSelect,
+}: {
+  showExercise: boolean
+  showNext: boolean
+  visitStep: VisitStep
+  onSelect: (id: string, step: VisitStep) => void
+}) {
   const items = LANE_JUMP_ITEMS.filter(
     (it) => (!it.exerciseOnly || showExercise) && (!it.nextOnly || showNext),
   )
@@ -1068,7 +1167,16 @@ function LaneJumpNav({ showExercise, showNext }: { showExercise: boolean; showNe
           type="button"
           className="doctor__laneNav__btn"
           data-target={it.id}
-          onClick={() => jumpToLane(it.id)}
+          data-step={it.step}
+          /*
+            지금 보고 있는 단계의 버튼에 `aria-current`를 준다 -- 두 단계가
+            같은 sticky 바를 공유하므로, 이것이 없으면 스크린리더에서 "지금
+            어느 화면인지"를 알 방법이 화면 내용밖에 없다. herbal 단독에서는
+            `마무리` 항목이 필터로 빠지고 단계도 항상 'consult'이므로
+            이 표시가 저절로 사라진다(죽은 표시가 남지 않는다).
+          */
+          aria-current={it.step === visitStep ? 'step' : undefined}
+          onClick={() => onSelect(it.id, it.step)}
         >
           {it.label}
         </button>

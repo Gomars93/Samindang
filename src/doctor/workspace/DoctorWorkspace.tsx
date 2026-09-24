@@ -37,7 +37,7 @@ import { readRegionClinical, withRegionClinical, type RegionClinicalRecord } fro
 import { isPainFinalAssessmentRecorded, isHerbalFinalAssessmentRecorded } from './finalAssessment'
 import { computeLane1Summary, type Lane1RegionInput } from './lane1Summary'
 import { lastVisitTrackedLine, priorNrsFromHistory } from './longitudinal'
-import { microFollowUpQuoteLine, readableMicroFollowUpResponse } from './microFollowUp'
+import { microFollowUpAlertKind, microFollowUpQuoteLine, readableMicroFollowUpResponse } from './microFollowUp'
 import { ageFromDoctorPayload } from '../../spec/lbpAdapter'
 import { answerLabel } from '../labels'
 import './workspace.css'
@@ -594,6 +594,16 @@ export function DoctorWorkspace({
   const trackedLine = lastVisitTrackedLine(priorVisits)
   const readableMicroFollowUp = readableMicroFollowUpResponse(microFollowUpResponse ?? null)
   const deltaQuoteLine = microFollowUpQuoteLine(readableMicroFollowUp)
+  /*
+    2026-09-24 (PO 지시, 「간단 재확인」 카드 이동의 짝): 좌측 요약의
+    「지난 대비」는 문장 **하나**만 싣는다. 카드가 확인 레인에 있을 때는
+    그 카드가 `needsAttention`으로 저절로 펼쳐지며 "이 문장은 이상반응
+    신고다"를 따로 말해줬는데, 카드가 마무리로 내려가면 그 구분이 사라진다
+    -- 같은 글자를 원장이 "그냥 근황"으로 읽게 된다. 그래서 종류를 배지로
+    함께 싣는다. 우선순위는 `microFollowUpQuoteLine`과 같은 순서를 쓰므로
+    배지와 문장이 항상 같은 신고를 가리킨다(microFollowUp.ts 주석 참고).
+  */
+  const deltaAlertKind = microFollowUpAlertKind(readableMicroFollowUp)
 
   // Opus closing review C-5: EmrPreviewCard's "복사는 「마무리」 화면의
   // 「종결」 섹션에서 합니다." hint is only true when 종결 actually renders
@@ -633,6 +643,7 @@ export function DoctorWorkspace({
           chiefConcern={primaryConcernLabel(r)}
           durationFrequency={durationFrequencyText(r, payload.routing.primary_module)}
           lastVsDeltaLine={deltaQuoteLine}
+          lastVsAlertKind={deltaAlertKind}
           lane1={lane1Summary}
           saveStatus={submissionId && onSaveWorkspace ? saveStatus : undefined}
           lastSaveErrorKind={lastSaveErrorKind}
@@ -780,8 +791,6 @@ export function DoctorWorkspace({
                 }
                 reassessment={workspaceState.painReassessment}
                 onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, painReassessment: next }))}
-                microFollowUpResponse={microFollowUpResponse}
-                priorVisits={priorVisits}
                 regionPack={regionPack}
                 directionalResponse={regionState?.directionalResponse}
                 onChangeDirectionalResponse={(next) => setRegionClinical?.({ directionalResponse: next })}
@@ -1004,6 +1013,7 @@ export function DoctorWorkspace({
                 lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
                 lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
                 microFollowUpText={deltaQuoteLine}
+                microFollowUpResponse={microFollowUpResponse}
                 copyHint={emrPreviewCopyHint}
                 onIssueCarePlanLink={onIssueCarePlanLink}
               />

@@ -18,6 +18,7 @@ import {
   truncateRegionLabels,
   type Lane1Summary,
 } from './lane1Summary'
+import { MICRO_FOLLOW_UP_ALERT_LABEL, type MicroFollowUpAlertKind } from './microFollowUp'
 
 /**
  * §3.2's 834-portrait row (①+④를 1줄씩 압축해 96px) is a CONTENT
@@ -63,6 +64,7 @@ export function VisitSummaryAside({
   chiefConcern,
   durationFrequency,
   lastVsDeltaLine,
+  lastVsAlertKind,
   lane1,
   /**
    * §6.1/§3.2 "잠금 여부 🔒": approximated as "the union status itself is
@@ -98,6 +100,17 @@ export function VisitSummaryAside({
   chiefConcern: string
   durationFrequency?: string | null
   lastVsDeltaLine?: string | null
+  /**
+   * 2026-09-24 (PO 지시, 「간단 재확인」 카드가 확인 레인을 떠난 것의 짝):
+   * 위 한 줄이 환자의 **이상반응/새 증상 신고**에서 온 것이면 그 사실을
+   * 배지로 함께 보인다. 같은 글자라도 "이상반응으로 적은 것"과 "근황으로
+   * 적은 것"은 원장에게 전혀 다른 정보인데, 카드가 내려간 뒤로는 이 배지
+   * 말고 그 둘을 구분해 주는 것이 화면에 없다.
+   *
+   * `null`이면 배지를 아예 그리지 않는다 -- "신고 없음"이라는 빈 배지를
+   * 두면 그것대로 읽히기 때문이다.
+   */
+  lastVsAlertKind?: MicroFollowUpAlertKind | null
   lane1: Lane1Summary
   saveStatus?: VisitSummarySaveStatus
   lastSaveErrorKind?: 'auth' | 'network' | 'other' | null
@@ -190,7 +203,20 @@ export function VisitSummaryAside({
       </div>
 
       <div className="doctor__visitSummary__delta">
-        {lastVsDeltaLine ? <span className="doctor__patientFact">{lastVsDeltaLine}</span> : <span>&nbsp;</span>}
+        {lastVsDeltaLine ? (
+          <span className="doctor__patientFact">
+            {/*
+              배지는 문장 **앞**에 둔다 -- 한 줄이 좁아 문장이 잘릴 수 있는데,
+              뒤에 두면 잘리는 쪽이 배지가 된다(가장 중요한 것이 먼저 사라진다).
+            */}
+            {lastVsAlertKind && (
+              <span className="doctor__visitSummary__deltaAlert">{MICRO_FOLLOW_UP_ALERT_LABEL[lastVsAlertKind]}</span>
+            )}
+            {lastVsDeltaLine}
+          </span>
+        ) : (
+          <span>&nbsp;</span>
+        )}
       </div>
 
       <div

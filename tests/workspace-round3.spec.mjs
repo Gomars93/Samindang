@@ -525,9 +525,22 @@ function assert(name, cond) {
   // clinical meaning from them (needsAttention itself is untouched), so
   // the guard's limit moves from 6 to 8 rather than being weakened
   // wholesale.
+  //
+  // 2026-09-24 (PO 지시로 통증 확인 레인의 MicroFollowUpCard를 떼면서):
+  // `microFollowUpAlertKind()`가 같은 두 필드를 한 번씩 더 읽어 8 → 10.
+  // 같은 이유로 상한만 올린다 -- 이 함수도 **이미 기록된 사실 중 어느
+  // 쪽인지**를 되말할 뿐, 새 문턱값이나 임상적 의미를 만들지 않는다
+  // (돌려주는 것은 라벨 키 하나이고, needsAttention은 여전히 그대로다).
+  // 카드가 확인 레인을 떠난 뒤로는 좌측 요약 한 줄이 그 신고를 전하는
+  // 유일한 자리라, 그 줄이 "이상반응"인지 "근황"인지 구분되어야 해서
+  // 필요해진 함수다(microFollowUp.ts의 해당 주석 참고).
+  //
+  // 이 상한을 또 올려야 할 상황이 오면, 올리기 전에 그 새 코드가 정말로
+  // "되말하기"인지 "새 판단"인지부터 따진다 -- 이 가드가 막으려는 것은
+  // 숫자가 아니라 이 파일에서 임상 판단이 자라는 것이다.
   assert(
-    'microFollowUp.ts source contains no threshold/branching logic on newSymptomReported or adverseEffectReported beyond the needsAttention flag and the P2 quote-line picker',
-    (src.match(/newSymptomReported|adverseEffectReported/g) ?? []).length <= 8,
+    'microFollowUp.ts source contains no threshold/branching logic on newSymptomReported or adverseEffectReported beyond the needsAttention flag, the P2 quote-line picker, and the alert-kind label',
+    (src.match(/newSymptomReported|adverseEffectReported/g) ?? []).length <= 10,
   )
 }
 

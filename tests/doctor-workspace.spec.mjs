@@ -5204,3 +5204,162 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
 }
 
 console.log(`(+마무리 화면 분리) ${passed} doctor-workspace assertions passed.`)
+
+/* ====================================================================== *
+ * 「간단 재확인」 카드가 확인 레인을 떠난다 (PO 지시 2026-09-24)
+ *
+ * PO 판단: "재진 간단 문진은 (진료 중에 볼) 필요 없어". 카드만 빼고 기능은
+ * 그대로 둔다 -- 이 응답에서 비교 행(NRS), 「지난 대비」 한 줄, EMR §14.1 S가
+ * 전부 나오기 때문이다.
+ *
+ * CLAUDE.md 경로 규칙: 지운(옮긴) 경로 1개당 단언 1개. 그리고 이 이동에서
+ * 진짜 위험한 것은 **이상반응/새 증상 신고가 화면에서 사라지는 것**이다.
+ * 카드가 확인 레인에 있을 때는 `needsAttention`으로 저절로 펼쳐지면서
+ * `microFollowUpQuoteLine`의 결함(신고했는데 내용을 안 적으면 그 줄이 조용히
+ * 다른 문장으로 바뀌던 것)을 가려주고 있었다. §N-B가 그 구멍을 고정한다.
+ * ====================================================================== */
+{
+  const microResponse = (over = {}) => ({
+    visit_id: 'v-micro-1',
+    patient_id: 'p-micro-1',
+    targetRatings: [{ targetId: 't1', label: '계단 내려가기', patientReportedValue: '조금 좋아짐' }],
+    detailAnswers: [],
+    overallChange: '전체적으로 그럭저럭이요',
+    newSymptomReported: false,
+    newSymptomNote: '',
+    adverseEffectReported: false,
+    adverseEffectNote: '',
+    submitted_at: '2026-09-24T00:00:00.000Z',
+    ...over,
+  })
+
+  const renderMicro = (over = {}) => renderWith(PAIN_SCENARIO_1, { microFollowUpResponse: microResponse(over) })
+
+  const MICRO_CARD_MARK = '간단 재확인(Micro Follow-up)'
+
+  /* ------------------------------------------------- §N-A 자리 이동 */
+
+  test('N-A0 자기점검: 이 응답을 주면 「간단 재확인」 카드가 실제로 렌더된다', () => {
+    // 기본 fixture에는 응답도 후보도 없어 카드가 아예 null을 돌려준다 --
+    // 그 상태로 "확인 레인에 없다"를 단언하면 영원히 통과하는 헛단언이 된다.
+    assert.ok(renderMicro().includes(MICRO_CARD_MARK), '카드가 렌더되지 않았다 — 아래 단언이 전부 무의미해진다')
+    assert.ok(!render(PAIN_SCENARIO_1).includes(MICRO_CARD_MARK), '응답이 없을 때는 카드가 없다(전제)')
+  })
+
+  test('N-A1 카드가 확인 레인에서 빠졌다 (PO 지시) — 그리고 「마무리」 화면에 있다', () => {
+    const html = renderMicro()
+    const consult = html.slice(html.indexOf('data-step="consult"'), html.indexOf('data-step="wrapup"'))
+    const wrapup = html.slice(html.indexOf('data-step="wrapup"'), html.indexOf('<nav class="doctor__laneNav"'))
+    assert.ok(!consult.includes(MICRO_CARD_MARK), '아직 확인 레인에 있다')
+    assert.ok(wrapup.includes(MICRO_CARD_MARK), '마무리 화면에도 없다 — 이동이 아니라 제거가 됐다')
+    assert.equal(html.split(MICRO_CARD_MARK).length - 1, 1, '카드가 두 군데에 렌더됐다')
+  })
+
+  test('N-A2 카드가 「참고 자료」 서랍 안에 있고, 서랍 제목이 그 사실을 말한다', () => {
+    const html = renderMicro()
+    const summaryIdx = html.indexOf('참고 자료 (이전 방문 · 간단 재확인 · 환자 전달문 · EMR 미리보기)')
+    assert.ok(summaryIdx > 0, '서랍 제목이 카드가 들어온 것을 반영하지 않았다')
+    assert.ok(html.indexOf(MICRO_CARD_MARK) > summaryIdx, '카드가 서랍보다 앞에 있다')
+  })
+
+  test('N-A3 카드가 나르던 raw 값이 마무리에서 그대로 보인다 (이동이지 축소가 아니다)', () => {
+    const html = renderMicro()
+    assert.ok(html.includes('계단 내려가기'), 'target 답의 라벨이 사라졌다')
+    assert.ok(html.includes('조금 좋아짐'), 'target 답의 값이 사라졌다')
+    assert.ok(html.includes('전체적으로 그럭저럭이요'), '전반적 변화가 사라졌다')
+  })
+
+  test('N-A4 소스: PainWorkspace(확인 레인)는 더 이상 이 카드를 렌더하지 않는다', () => {
+    const src = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+    const nextIdx = src.indexOf('export function PainWorkspaceNext')
+    assert.ok(nextIdx > 0, 'PainWorkspaceNext를 못 찾았다(전제)')
+    const lane2Src = src.slice(0, nextIdx)
+    assert.ok(!lane2Src.includes('<MicroFollowUpCard'), '확인 레인 쪽 소스에 아직 카드가 있다')
+    assert.ok(src.slice(nextIdx).includes('<MicroFollowUpCard'), '마무리 쪽 소스에 카드가 없다')
+  })
+
+  test('N-A5 소스: 카드 전용이던 두 prop이 확인 레인 컴포넌트에서 빠졌다', () => {
+    const src = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+    const lane2Src = src.slice(0, src.indexOf('export function PainWorkspaceNext'))
+    // 화면에서 안 그리는 값을 prop으로만 계속 받으면 다음 사람이 찾다가 못 찾는다.
+    assert.ok(!/^\s*microFollowUpResponse,$/m.test(lane2Src), 'microFollowUpResponse가 아직 남아 있다')
+    assert.ok(!/^\s*priorVisits,$/m.test(lane2Src), 'priorVisits가 아직 남아 있다')
+    const dw = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+    assert.ok(/microFollowUpResponse=\{microFollowUpResponse\}/.test(dw), '어딘가로는 계속 넘어가야 한다')
+  })
+
+  /* --------------------------------------- §N-B 구멍 메우기 (핵심) */
+
+  /*
+   * 한 줄이 어떤 신고에서 왔는지를 배지가 말한다. 배지와 문장이 서로 다른
+   * 신고를 가리키면 원장이 이상반응 내용을 읽었다고 착각하므로, 둘의
+   * 우선순위가 같다는 것까지 단언한다.
+   */
+  const asideDelta = (html) => {
+    const i = html.indexOf('doctor__visitSummary__delta')
+    assert.ok(i > 0, '「지난 대비」 블록을 못 찾았다')
+    return html.slice(i, i + 700)
+  }
+
+  test('N-B0 자기점검: 「지난 대비」 블록 슬라이스가 실제 문장을 담는다', () => {
+    assert.ok(asideDelta(renderMicro()).includes('전체적으로 그럭저럭이요'))
+  })
+
+  test('N-B1 신고가 없으면 배지를 달지 않는다 (빈 배지를 두지 않는다)', () => {
+    const d = asideDelta(renderMicro())
+    assert.ok(!d.includes('doctor__visitSummary__deltaAlert'), '신고가 없는데 배지가 붙었다')
+    assert.ok(!d.includes('이상반응') && !d.includes('새 증상'))
+  })
+
+  test('N-B2 이상반응 신고 → 배지 「이상반응」 + 환자가 적은 내용', () => {
+    const d = asideDelta(renderMicro({ adverseEffectReported: true, adverseEffectNote: '치료 후 어지러웠어요' }))
+    assert.ok(d.includes('doctor__visitSummary__deltaAlert'), '배지가 없다')
+    assert.ok(d.includes('이상반응'))
+    assert.ok(d.includes('치료 후 어지러웠어요'), '신고 내용 대신 다른 문장이 실렸다')
+  })
+
+  test('N-B3 새 증상 신고 → 배지 「새 증상」 + 그 내용', () => {
+    const d = asideDelta(renderMicro({ newSymptomReported: true, newSymptomNote: '오른쪽 다리가 저려요' }))
+    assert.ok(d.includes('새 증상'))
+    assert.ok(d.includes('오른쪽 다리가 저려요'))
+  })
+
+  /*
+   * 이 배치가 고친 결함 그 자체. 고치기 전에는 `reported && note.trim()`이라
+   * 내용이 비면 다음 분기로 떨어져, 이상반응을 신고한 환자의 한 줄에
+   * "전체적으로 그럭저럭이요"가 실렸다 -- 좌측 요약에도, EMR §14.1 S에도.
+   * 카드가 확인 레인에 있을 때는 그 카드가 저절로 펼쳐져 가려주고 있었고,
+   * 카드를 떼는 순간 진짜 구멍이 된다.
+   */
+  test('N-B4 결함 회귀 가드: 이상반응을 신고하고 내용을 안 적어도 그 신고가 살아남는다', () => {
+    const d = asideDelta(renderMicro({ adverseEffectReported: true, adverseEffectNote: '   ' }))
+    assert.ok(d.includes('이상반응'), '배지가 없다')
+    assert.ok(d.includes('(내용 없음)'), '"신고는 있었고 내용은 없다"가 아니라 다른 문장이 실렸다')
+    assert.ok(
+      !d.includes('전체적으로 그럭저럭이요'),
+      '이상반응 신고가 아무 일 없다는 듯한 근황 문장으로 바뀌었다 — 고친 결함이 되살아났다',
+    )
+  })
+
+  test('N-B5 새 증상도 같은 규칙 (내용이 비어도 신고가 살아남는다)', () => {
+    const d = asideDelta(renderMicro({ newSymptomReported: true, newSymptomNote: '' }))
+    assert.ok(d.includes('새 증상') && d.includes('(내용 없음)'))
+    assert.ok(!d.includes('전체적으로 그럭저럭이요'))
+  })
+
+  test('N-B6 둘 다 신고되면 배지와 문장이 같은 쪽(이상반응)을 가리킨다', () => {
+    const d = asideDelta(
+      renderMicro({
+        adverseEffectReported: true,
+        adverseEffectNote: '어지러움',
+        newSymptomReported: true,
+        newSymptomNote: '다리 저림',
+      }),
+    )
+    assert.ok(d.includes('이상반응'), '더 급한 쪽이 배지가 아니다')
+    assert.ok(d.includes('어지러움'), '배지는 이상반응인데 문장은 새 증상 것이다 — 둘의 우선순위가 갈라졌다')
+    assert.ok(!d.includes('다리 저림'))
+  })
+}
+
+console.log(`(+간단 재확인 이동) ${passed} doctor-workspace assertions passed.`)

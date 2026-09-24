@@ -4417,6 +4417,141 @@ function enclosingDetailsTag(html, label) {
 }
 
 /* ===========================================================================
+ * 2026-09-24: 재진 비교 행 — 지난 NRS가 화면에 닿는다.
+ *
+ * `briefingModel.ts`의 `nrsRow`는 `prior`를 받으면 척도 행을 **비교 행**
+ * (`8 → 5 ↓3`)으로 바꾼다. 그 코드는 진작 있었는데 **값을 나르는 경로가 아예
+ * 없어서** 영원히 척도 행만 보였다 -- `PriorVisitSummary`에 NRS 필드가 없었다.
+ *
+ * 이제 서버가 싣는다(`server/store.js`): 초진은 submission 응답에서, 재진은
+ * 재질문된 `detailAnswers`에서. 여기서는 **렌더 결과**로 확인한다 -- 필드가
+ * 타입에만 생기고 화면에 안 닿는 상태를 빌드는 잡지 못한다.
+ * =========================================================================== */
+{
+  const priorVisit = (over = {}) => ({
+    visitId: 'prior-1',
+    submissionId: 'sub-prior',
+    createdAt: '2026-09-10T00:00:00.000Z',
+    primaryConcern: null,
+    painFollowUpTargets: [],
+    herbalFollowUpTargets: [],
+    followUpTargets: [],
+    painFinalAssessmentSummary: null,
+    herbalFinalAssessmentSummary: null,
+    nextReassessmentPlan: null,
+    painNrsNow: null,
+    painNrsWorst: null,
+    ...over,
+  })
+  const history = (...visits) => ({ patientId: 'patient-1', visits })
+
+  // 오늘 값은 픽스처가 갖고 있다 -- 그 값과 비교되는지 보려면 먼저 알아야 한다.
+  const todayNow = PAIN_SCENARIO_1.payload.responses.modules?.pain?.nrs_now
+  test('재진 비교: 픽스처가 오늘 NRS를 갖고 있다 (아래 단언이 공허하지 않도록)', () => {
+    assert.equal(typeof todayNow, 'number', `(${todayNow})`)
+  })
+
+  test('재진 비교: 지난 NRS가 있으면 비교 행이 그려진다', () => {
+    const prior = Math.min(10, (todayNow ?? 0) + 3)
+    const html = renderWith(PAIN_SCENARIO_1, {
+      priorVisits: history(priorVisit({ painNrsNow: prior, painNrsWorst: 10 })),
+    })
+    assert.ok(html.includes('painRow__delta'), '비교 행이 안 그려졌다 -- 값이 화면에 안 닿는다')
+    assert.ok(html.includes(`${prior}`), '지난 값이 화면에 없다')
+  })
+
+  test('재진 비교: 지난 NRS가 없으면 비교 행을 지어내지 않는다', () => {
+    const html = renderWith(PAIN_SCENARIO_1, { priorVisits: history(priorVisit()) })
+    assert.ok(!html.includes('painRow__delta'), '지난 값이 없는데 비교 행이 그려졌다')
+  })
+
+  test('재진 비교: priorVisits 자체가 없어도 깨지지 않는다', () => {
+    const html = renderWith(PAIN_SCENARIO_1, {})
+    assert.ok(!html.includes('painRow__delta'))
+    assert.ok(html.includes('painBriefingRoot'), '브리핑 자체는 그대로 렌더된다')
+  })
+
+  /*
+   * 값이 **없는 방문은 건너뛴다.** 직전 방문이 한약 단독이거나 재진 링크에
+   * 답하지 않았으면 NRS가 없는데, `visits[0]`만 보면 그 앞의 멀쩡한 값이
+   * 버려진다. 차트를 읽는 방식과 같게 마지막 측정치와 비교한다.
+   */
+  test('재진 비교: 값 없는 최근 방문을 건너뛰고 마지막 측정치와 비교한다', () => {
+    const prior = Math.min(10, (todayNow ?? 0) + 2)
+    const html = renderWith(PAIN_SCENARIO_1, {
+      priorVisits: history(
+        priorVisit({ visitId: 'recent-empty' }),
+        priorVisit({ visitId: 'older-with-value', painNrsNow: prior, painNrsWorst: 9 }),
+      ),
+    })
+    assert.ok(html.includes('painRow__delta'), '값 있는 방문을 못 찾았다')
+    assert.ok(html.includes(`${prior}`))
+  })
+
+  /*
+   * 두 값은 **같은 방문에서** 온다. 필드별로 따로 찾으면 `지금 통증`은 3주 전,
+   * `가장 아플 때`는 6주 전 값이 되는 조합이 생기고, 원장은 그 둘을 같은
+   * 시점으로 읽는다.
+   */
+  /*
+   * 행의 `data-kind`로 본다. 처음엔 `!html.includes('10 →')`로 썼는데 **공허했다** --
+   * 렌더 결과에서 값과 화살표는 서로 다른 `<span>`이라 그 문자열은 절대
+   * 나타나지 않는다. 뮤테이션(필드별로 따로 찾기)이 그대로 통과해서 발견했다.
+   */
+  const nrsRowKind = (html, variable) => {
+    const m = html.match(
+      new RegExp(`<div class="painRow[^"]*" data-source="modules\\.pain\\.${variable}" data-status="[^"]*" data-kind="([^"]*)"`),
+    )
+    return m ? m[1] : null
+  }
+
+  test('재진 비교: 행 kind 매처가 살아 있다 (아래 단언이 공허하지 않도록)', () => {
+    const html = renderWith(PAIN_SCENARIO_1, {
+      priorVisits: history(priorVisit({ painNrsNow: 6, painNrsWorst: 9 })),
+    })
+    assert.equal(nrsRowKind(html, 'nrs_now'), 'delta', '지난 값이 있으면 비교 행이어야 한다')
+    assert.equal(nrsRowKind(html, 'nrs_worst'), 'delta')
+  })
+
+  test('재진 비교: 두 값이 같은 방문에서 온다 (시점이 섞이지 않는다)', () => {
+    const html = renderWith(PAIN_SCENARIO_1, {
+      priorVisits: history(
+        // 최근 방문에는 now만 있고 worst가 없다.
+        priorVisit({ visitId: 'recent', painNrsNow: 6, painNrsWorst: null }),
+        // 그 앞 방문에는 worst가 있지만 여기서 끌어오면 안 된다.
+        priorVisit({ visitId: 'older', painNrsNow: 8, painNrsWorst: 10 }),
+      ),
+    })
+    assert.equal(nrsRowKind(html, 'nrs_now'), 'delta', '비교 행이 있어야 한다(now는 있다)')
+    assert.equal(
+      nrsRowKind(html, 'nrs_worst'),
+      'scale',
+      '앞 방문의 worst를 끌어왔다 -- 두 행이 서로 다른 시점이 된다',
+    )
+  })
+
+  /*
+   * 손상된 지난 값이 비교 행으로 둔갑하지 않는다. 서버가 `readNrs`로 걸러
+   * 보내지만 타입 선언은 약속일 뿐이고, `nrsRow`가 `readScale0to10`으로 한 번
+   * 더 판정한다 -- `Number(['9'])`가 9인 그 함정이 여기에도 있다.
+   */
+  for (const [name, bad] of [
+    ['배열', ['9']],
+    ['객체', { corrupted: true }],
+    ['문자열', '7'],
+    ['범위 밖', 11],
+    ['소수', 7.5],
+  ]) {
+    test(`재진 비교 (fail-closed): 손상된 지난 값(${name})이 비교 행으로 둔갑하지 않는다`, () => {
+      const html = renderWith(PAIN_SCENARIO_1, {
+        priorVisits: history(priorVisit({ painNrsNow: bad })),
+      })
+      assert.ok(!html.includes('painRow__delta'), `손상된 값(${name})으로 비교 행이 그려졌다`)
+    })
+  }
+}
+
+/* ===========================================================================
  * 2026-09-23: 즉시 재검 대상 — 신규 방문에서 사라지고, 기존 값은 그대로 산다.
  *
  * PO가 "치료 직후 즉시 재검"(타이밍 ①)을 하지 않기로 했다. 그 칸은 ①의
@@ -4780,10 +4915,11 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
   })
 
   /*
-   * `priorNrs`를 아직 넘기지 않으므로 비교 행(8 → 5 ↓3)은 나오지 않아야 한다.
-   * 이게 통과해야 "없는 지난 값을 지어내지 않았다"가 성립한다.
+   * 2026-09-24: `priorNrs`는 이제 넘긴다(위 "재진 비교" 블록 참고). 이 단언은
+   * 그대로 유효하다 -- 이 렌더에는 `priorVisits`를 주지 않으므로 지난 값이
+   * 없고, **없는 값을 지어내지 않는다**가 여전히 성립해야 한다.
    */
-  test('배선: 지난 방문 NRS가 없으므로 비교 행을 지어내지 않는다', () => {
+  test('배선: 지난 방문 NRS가 없으면 비교 행을 지어내지 않는다', () => {
     assert.ok(!pain.includes('painRow__delta'), '지난 값이 없는데 비교 행이 그려졌다')
   })
 }

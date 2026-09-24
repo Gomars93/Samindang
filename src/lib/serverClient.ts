@@ -358,6 +358,9 @@ type PatientHistoryWire = {
     pain_final_assessment_summary: string | null
     herbal_final_assessment_summary: string | null
     next_reassessment_plan: import('../doctor/workspace/finalAssessment').NextReassessmentPlan | null
+    /** 이전 방문 NRS. 서버가 이미 0~10 정수로 검증해 보낸다(`server/store.js`의 `readNrs`). */
+    pain_nrs_now: number | null
+    pain_nrs_worst: number | null
   }>
 }
 
@@ -395,6 +398,8 @@ export function getPatientHistory(
             painFinalAssessmentSummary: v.pain_final_assessment_summary,
             herbalFinalAssessmentSummary: v.herbal_final_assessment_summary,
             nextReassessmentPlan: v.next_reassessment_plan,
+            painNrsNow: v.pain_nrs_now ?? null,
+            painNrsWorst: v.pain_nrs_worst ?? null,
           })),
       },
     }

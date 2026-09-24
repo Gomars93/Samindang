@@ -1516,6 +1516,74 @@ async function main() {
     })
     assert('GET /api/patients/:id/history without doctor auth (evil Origin) -> 403, same guard as every other doctor route', resNoAuth.status === 403)
 
+    /* ------------------------------------------------------------------
+     * 2026-09-24: history가 이전 방문의 NRS를 싣는다.
+     *
+     * 다음 방문 화면의 비교 행(`지금 통증 ──── 8 → 5 ↓3`)이 이 값 없이는
+     * 안 그려진다. 그 행의 코드는 진작 있었는데 값을 나르는 경로가 아예
+     * 없었다.
+     *
+     * 읽을 수 없는 값은 **null로 떨어진다**. 이 레코드는 인증되지 않은 환자
+     * POST가 만든 것이라 타입을 신뢰할 수 없고, 특히 `Number(['9'])`가 9라서
+     * 손상된 배열이 정상 점수로 둔갑한 사고가 이미 두 번 있었다.
+     * ------------------------------------------------------------------ */
+    {
+      const nrsRoot = await mkdtemp(path.join(tmpdir(), 'samindang-nrs-'))
+      const nrsDataDir = path.join(nrsRoot, 'submissions')
+      const nrsStore = createStore(nrsDataDir)
+      try {
+        const mk = async (label, pain) =>
+          nrsStore.createSubmission({
+            submission: {
+              questionnaire_version: '1.0',
+              session_id: `sess-nrs-${label}`,
+              responses: { modules: { pain } },
+              metadata: {},
+            },
+            myungri: null,
+            patient_label: label,
+          })
+
+        const good = await mk('nrs-good', { nrs_now: 7, nrs_worst: 9 })
+        const hist = await nrsStore.getPatientHistory(good.patient_id)
+        const v = hist.visits[0]
+        assert('history: 정상 NRS가 그대로 실린다 (now)', v.pain_nrs_now === 7)
+        assert('history: 정상 NRS가 그대로 실린다 (worst)', v.pain_nrs_worst === 9)
+
+        // 경계값 -- 0과 10은 유효하다. `|| null` 같은 falsy 함정에 0이 걸리면 안 된다.
+        const edge = await mk('nrs-edge', { nrs_now: 0, nrs_worst: 10 })
+        const edgeV = (await nrsStore.getPatientHistory(edge.patient_id)).visits[0]
+        assert('history: NRS 0이 null로 떨어지지 않는다 (falsy 함정)', edgeV.pain_nrs_now === 0)
+        assert('history: NRS 10이 그대로 실린다', edgeV.pain_nrs_worst === 10)
+
+        // 손상된 값은 전부 null. 배열이 핵심이다 -- Number(['9']) === 9.
+        for (const [name, bad] of [
+          ['배열', ['9']],
+          ['객체', { corrupted: true }],
+          ['숫자 문자열', '7'],
+          ['범위 밖(11)', 11],
+          ['음수', -1],
+          ['소수', 7.5],
+          ['NaN', Number.NaN],
+        ]) {
+          const rec = await mk(`nrs-bad-${name}`, { nrs_now: bad, nrs_worst: bad })
+          const badV = (await nrsStore.getPatientHistory(rec.patient_id)).visits[0]
+          assert(`history: 손상된 NRS(${name})는 null로 떨어진다`, badV.pain_nrs_now === null && badV.pain_nrs_worst === null)
+        }
+
+        // pain 모듈 자체가 없어도 깨지지 않는다(한약 단독 환자).
+        const noPain = await nrsStore.createSubmission({
+          submission: { questionnaire_version: '1.0', session_id: 'sess-nrs-nopain', responses: {}, metadata: {} },
+          myungri: null,
+          patient_label: 'nrs-nopain',
+        })
+        const noPainV = (await nrsStore.getPatientHistory(noPain.patient_id)).visits[0]
+        assert('history: pain 모듈이 없으면 NRS는 null (크래시 없음)', noPainV.pain_nrs_now === null && noPainV.pain_nrs_worst === null)
+      } finally {
+        await rm(nrsRoot, { recursive: true, force: true })
+      }
+    }
+
     /* 12차 독립 리뷰 MEDIUM-3: workspace는 인증되지 않은 PUT
      * /api/submissions/:id/workspace가 검증 없이 저장한 값이라
      * painFollowUpTargets/herbalFollowUpTargets 자체가 배열이 아닐 수

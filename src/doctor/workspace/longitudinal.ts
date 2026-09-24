@@ -34,6 +34,21 @@ export type PriorVisitSummary = {
   /** Free text as the clinician wrote it — finalPatternOrMechanism, or null if never recorded. */
   herbalFinalAssessmentSummary: string | null
   nextReassessmentPlan: NextReassessmentPlan | null
+  /**
+   * 이전 방문의 NRS(0~10). 서버가 이미 **검증해서** 보낸다 -- 읽을 수 없는
+   * 값은 그쪽에서 null로 떨어진다(`server/store.js`의 `readNrs`, 판정 규칙은
+   * 화면 쪽 `readScale0to10`과 동일).
+   *
+   * 이 값이 있어야 다음 방문 화면의 **비교 행**(`지금 통증 ──── 8 → 5 ↓3`)이
+   * 그려진다. 여태 그 행의 코드는 있는데 값을 나르는 경로가 없어 척도 행만
+   * 보였다.
+   *
+   * 그래도 화면 쪽에서 한 번 더 판정한다 -- 이 타입 선언은 서버 응답에 대한
+   * 약속일 뿐이고, 같은 이유로 `primaryConcern`도 `readablePriorVisitText`를
+   * 거친다(11차 리뷰 MEDIUM-2).
+   */
+  painNrsNow: number | null
+  painNrsWorst: number | null
 }
 
 export type PatientHistoryResult = {
@@ -51,6 +66,41 @@ export type PatientHistoryResult = {
  * 신뢰하지 않고 렌더 직전에 검증해, string이 아니면 "[object Object]" 같은
  * 원문을 지어내는 대신 명시적 실패 토큰을 보여준다.
  */
+/**
+ * 비교에 쓸 **이전 NRS**를 고른다.
+ *
+ * 왜 "가장 최근 방문"이 아니라 "값이 있는 가장 최근 방문"인가
+ * ---------------------------------------------------------
+ * 직전 방문이 한약 단독이거나 재진 링크에 답하지 않은 방문이면 NRS가 없다.
+ * 그때 `visits[0]`만 보면 값이 null이라 비교 행이 안 그려진다 -- 그 앞 방문에
+ * 멀쩡한 값이 있는데도. 차트를 읽는 방식과 같게, **빈 방문은 건너뛰고 마지막
+ * 측정치**와 비교한다.
+ *
+ * 두 값을 **같은 방문에서** 가져오는 이유
+ * --------------------------------------
+ * 필드별로 각각 "값이 있는 최근 방문"을 찾으면 `지금 통증`은 3주 전,
+ * `가장 아플 때`는 6주 전 값이 되는 조합이 생긴다. 한 화면에 서로 다른
+ * 시점의 두 값을 나란히 두면 원장이 그걸 같은 시점으로 읽는다.
+ *
+ * 그래서 **`nrs_now`가 있는 가장 최근 방문 하나**를 고르고, 두 값 모두 그
+ * 방문에서 가져온다. 그 방문에 `nrs_worst`가 없으면 그쪽만 null이다.
+ *
+ * 값 검증은 하지 않는다 -- 서버가 이미 `readNrs`로 0~10 정수만 통과시키고
+ * (`server/store.js`), 화면 쪽 `nrsRow`도 `readScale0to10`으로 한 번 더
+ * 판정한다. 여기서 세 번째 판정을 두면 규칙이 세 군데가 된다.
+ */
+export function priorNrsFromHistory(
+  priorVisits: PatientHistoryResult | null | undefined,
+): { now: number | null; worst: number | null } {
+  const visits = Array.isArray(priorVisits?.visits) ? priorVisits.visits : []
+  const source = visits.find((v) => typeof v?.painNrsNow === 'number')
+  if (!source) return { now: null, worst: null }
+  return {
+    now: source.painNrsNow,
+    worst: typeof source.painNrsWorst === 'number' ? source.painNrsWorst : null,
+  }
+}
+
 export const PRIOR_VISIT_PRIMARY_CONCERN_UNREADABLE_LABEL = '확인 필요(값 형식 오류)'
 
 export function readablePriorVisitPrimaryConcern(value: unknown): string | null {

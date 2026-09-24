@@ -169,6 +169,16 @@ const PAIN_1_REHAB: RehabSuggestion[] = [
   },
 ]
 
+/*
+ * 2026-09-24: 통증 시나리오 넷에 `PAIN_03`/`PAIN_03B`(NRS)를 더했다.
+ *
+ * NRS 문항은 2026-09-22에 들어왔는데 이 미리보기 픽스처들은 그때 갱신되지
+ * 않아서, SYNTHETIC 화면의 `지금 통증`/`가장 아플 때`가 계속 **미응답**으로
+ * 떴다. 실제 환자 화면과 미리보기가 어긋나 있던 것이다.
+ *
+ * 시나리오마다 값을 다르게 준다 -- 전부 같은 숫자면 "이 값이 이 화면까지
+ * 흐르는가"를 테스트가 구분하지 못한다.
+ */
 export const PAIN_SCENARIO_1: WorkspaceScenario = {
   id: 'pain-1-mechanical-lbp',
   label: 'SYNTHETIC · 단순 기계적 요통',
@@ -184,6 +194,8 @@ export const PAIN_SCENARIO_1: WorkspaceScenario = {
     SAFETY_01: ['none'],
     PAIN_01: 'low_back_pelvis',
     PAIN_02: ['aching', 'movement_related'],
+    PAIN_03: 7,
+    PAIN_03B: 9,
     PAIN_04: 'none',
     LBP_01: 'CENTRAL',
     LBP_02: ['NONE'],
@@ -217,6 +229,8 @@ export const PAIN_SCENARIO_2: WorkspaceScenario = {
     SAFETY_01: ['none'],
     PAIN_01: 'low_back_pelvis',
     PAIN_02: ['aching', 'movement_related'],
+    PAIN_03: 5,
+    PAIN_03B: 8,
     PAIN_04: 'lower_limb',
     LBP_01: 'BUTTOCK',
     LBP_02: ['NUMBNESS', 'TINGLING'],
@@ -250,6 +264,8 @@ export const PAIN_SCENARIO_3: WorkspaceScenario = {
     SAFETY_01: ['none'],
     PAIN_01: 'neck_shoulder',
     PAIN_02: ['aching', 'movement_related'],
+    PAIN_03: 8,
+    PAIN_03B: 10,
     PAIN_04: 'none',
     NS01: 'SHOULDER_DOMINANT',
     N01: 'NONE',
@@ -412,6 +428,8 @@ export const MIXED_SCENARIO_1: WorkspaceScenario = {
     SAFETY_01: ['none'],
     PAIN_01: 'low_back_pelvis',
     PAIN_02: ['aching'],
+    PAIN_03: 4,
+    PAIN_03B: 6,
     PAIN_04: 'none',
     LBP_01: 'CENTRAL',
     LBP_02: ['NONE'],

@@ -503,6 +503,39 @@ export function createStore(
     if (!patientId) return { patient_id: patientId ?? null, visits: [] }
     const visitRecords = (await visits.listVisitsForPatient(patientId)).filter((v) => v.id !== excludeVisitId)
 
+    /*
+     * 이전 방문의 NRS(0~10). 없으면 null.
+     *
+     * 왜 서버가 싣는가: 다음 방문 화면의 **비교 행**(`지금 통증 ──── 8 → 5 ↓3`)이
+     * 이 값 없이는 그려지지 않는다. `briefingModel.ts`의 `nrsRow`가 `prior`를
+     * 받으면 척도 행을 비교 행으로 바꾸는데, 여태 그 값을 나르는 경로가
+     * 아예 없었다(`PriorVisitSummary`에 필드가 없었다).
+     *
+     * **읽을 수 없는 값은 null로 떨어뜨린다.** 이 레코드들은 인증되지 않은
+     * 환자 POST와 검증 없는 workspace PUT이 만든 것이라 타입 선언을 신뢰할 수
+     * 없다. 특히 `Number(['9'])`는 9라서, 손상된 배열이 정상 점수로 둔갑한
+     * 사고가 이 저장소에 이미 있었다(11차 리뷰 HIGH-1, 그리고 배선 때 재발).
+     * 판정은 화면 쪽 `readScale0to10`과 **같은 규칙**이다 -- number 타입 ·
+     * 유한 · 정수 · 0~10. 두 곳이 갈라지면 같은 값이 화면마다 다르게 읽힌다.
+     */
+    const readNrs = (raw) =>
+      typeof raw === 'number' && Number.isFinite(raw) && Number.isInteger(raw) && raw >= 0 && raw <= 10
+        ? raw
+        : null
+
+    /*
+     * 재진(submission 없는 방문)의 NRS는 `detailAnswers`에 있다 --
+     * `detailCheck.js`가 `PAIN_03`/`PAIN_03B`를 **같은 문항 id로** 다시 묻고,
+     * 환자 답이 여기 쌓인다. 값은 문자열로 저장되므로 숫자로 바꿔 같은
+     * 판정을 태운다(`'7'` → 7, `'x'`/`''` → null).
+     */
+    const readNrsFromDetailAnswers = (answers, questionId) => {
+      if (!Array.isArray(answers)) return null
+      const hit = answers.find((a) => a && a.questionId === questionId)
+      if (!hit || typeof hit.value !== 'string' || hit.value.trim() === '') return null
+      return readNrs(Number(hit.value))
+    }
+
     const summaries = []
     for (const v of visitRecords) {
       if (v.submission_id) {
@@ -530,6 +563,8 @@ export function createStore(
           pain_final_assessment_summary: workspace?.painFinalAssessment?.finalWorkingAssessment || null,
           herbal_final_assessment_summary: workspace?.herbalFinalAssessment?.finalPatternOrMechanism || null,
           next_reassessment_plan: workspace?.nextReassessmentPlan ?? null,
+          pain_nrs_now: readNrs(record.submission?.responses?.modules?.pain?.nrs_now),
+          pain_nrs_worst: readNrs(record.submission?.responses?.modules?.pain?.nrs_worst),
         })
       } else {
         // No-submission revisit: read the visit-owned VisitWorkspaceState
@@ -538,6 +573,7 @@ export function createStore(
         // genuinely nothing to summarize, not an error.
         const workspace = v.workspace ?? null
         if (!workspace) continue
+        const revisitDetailAnswers = (await microFollowUp.getResponse(v.id))?.detailAnswers ?? null
         summaries.push({
           visit_id: v.id,
           submission_id: null,
@@ -554,6 +590,9 @@ export function createStore(
           pain_final_assessment_summary: workspace.finalAssessment?.finalWorkingAssessment || null,
           herbal_final_assessment_summary: null,
           next_reassessment_plan: workspace.nextReassessmentPlan ?? null,
+          // 재진은 문진 submission이 없다 -- 재질문된 답에서 읽는다.
+          pain_nrs_now: readNrsFromDetailAnswers(revisitDetailAnswers, 'PAIN_03'),
+          pain_nrs_worst: readNrsFromDetailAnswers(revisitDetailAnswers, 'PAIN_03B'),
         })
       }
     }

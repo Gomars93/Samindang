@@ -91,6 +91,26 @@ check(
   /buildHerbalEmrTextForRecord\(false\)/.test(VIEW),
 )
 
+/* ------------------------------------------------------------------ *
+ * B-1a/B-1b (PO 지시 2026-09-25): `재평가 대상` 편집 UI가 herbal 단독에
+ * 되살아났다(판단·처치 레인의 HerbalFollowUpTargetsCard). 화면과 출력은
+ * 항상 같이 움직여야 한다 -- 화면만 되살리고 EMR 키를 안 넘기면 원장이
+ * 고른 값이 기록에 안 간다(D-1의 거울상이고, 이쪽이 더 나쁘다).
+ *
+ * `carePlan`/`nextReassessmentPlan`은 편집 UI가 여전히 없으므로 slim에서
+ * 계속 뺀다 -- 넘기면 그게 바로 원래의 D-1이다.
+ * ------------------------------------------------------------------ */
+{
+  const fnStart = VIEW.indexOf('function buildHerbalEmrTextForRecord(slim: boolean)')
+  const fn = VIEW.slice(fnStart, VIEW.indexOf('\n  }', fnStart))
+  check('B-1a slim 경로도 `재평가 대상`을 넘긴다 (편집 UI가 되살아났다)', fnStart > 0 && /^\s*followUpTargets: workspaceState\.herbalFollowUpTargets,/m.test(fn))
+  const slimBranch = fn.slice(fn.indexOf('...(slim'))
+  check('B-1b slim 분기에는 followUpTargets가 더 이상 없다 (조건부가 아니라 항상 넘긴다)', !slimBranch.includes('followUpTargets'))
+  check('B-1c carePlan/nextReassessmentPlan은 여전히 slim에서 빠진다 (편집 UI가 없다)',
+    /carePlan: workspaceState\.herbalCarePlan/.test(slimBranch) &&
+      /nextReassessmentPlan: workspaceState\.nextReassessmentPlan/.test(slimBranch))
+}
+
 const observations = [
   { id: 'obs_tongue', category: 'tongue', title: '설진', checked: true, value: '치흔', recordedAt: '2026-09-21T00:00:00.000Z' },
 ]
@@ -134,7 +154,29 @@ for (const label of ['관리 목표', '처방/한약 계획', '집·생활 관�
     !slim.includes(`${label}:`),
   )
 }
-check('B-3 slim 텍스트에 "재평가 대상" 라벨이 빈 채로 남지 않는다', !slim.includes('재평가 대상:'))
+/*
+  B-3 (2026-09-25 PO 지시로 뒤집혔다): `재평가 대상`의 편집 UI가 herbal 단독
+  판단·처치 레인에 되살아났으므로, slim 텍스트에도 그 라벨이 **있어야** 한다.
+
+  이전 판은 `followUpTargets`를 아예 넘기지 않는 fixture로 "라벨이 없다"를
+  단언했는데, 그 fixture는 실제 `buildHerbalEmrTextForRecord(true)` 호출을 더
+  이상 모사하지 않는다 -- 통과하지만 출하된 동작의 반대를 주장하는 단언이었다
+  (PR #57 검수 지적). 실제 호출 모양(followUpTargets 포함)으로 다시 만든다.
+*/
+const slimAsShipped = buildHerbalWorkspaceEmrPreview({
+  primaryConcern: '한약·보약 상담',
+  clinicianObservations: observations,
+  finalAssessment,
+  // DoctorView.tsx가 slim에서도 이 키를 넘긴다(B-1a) -- carePlan/
+  // nextReassessmentPlan은 여전히 안 넘긴다(B-1c).
+  followUpTargets,
+})
+check('B-3 slim 텍스트에 "재평가 대상"이 값과 함께 나온다 (편집 UI가 되살아났다)',
+  /재평가 대상: .*수면/.test(slimAsShipped))
+check('B-3a 그래도 관리 계획·다음 상세 재평가는 slim에서 빠진다 (편집 UI가 없다)',
+  !slimAsShipped.includes('관리 목표:') && !slimAsShipped.includes('다음 상세 재평가:'))
+check('B-3b followUpTargets를 안 넘기면 라벨 자체가 없다 (함수의 optional 계약은 그대로)',
+  !slim.includes('재평가 대상:'))
 check('B-4 slim 텍스트에 "다음 상세 재평가" 라벨이 빈 채로 남지 않는다', !slim.includes('다음 상세 재평가:'))
 
 // 남긴 경로는 그대로 나와야 한다 -- 편집 UI가 레인2/판단·처치에 살아 있다.

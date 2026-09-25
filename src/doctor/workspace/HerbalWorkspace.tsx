@@ -200,6 +200,48 @@ export function HerbalWorkspaceLane2({
   )
 }
 
+/**
+ * 한약 단독 진료의 「재평가 대상」 (PO 지시 2026-09-25).
+ *
+ * PR-A(2026-09-21, PO 승인)가 herbal 단독의 `다음` 레인을 통째로 폐기하면서
+ * 이 picker도 같이 사라졌다 -- 그 picker가 `HerbalWorkspaceNext` 안에 있었고,
+ * 그 컴포넌트는 mixed에서만 렌더되기 때문이다(PR #56 검수 F5가 그 사실을
+ * 뒤늦게 짚었다). PO 판단은 **레인은 그대로 없애두고 이 한 칸만 되살린다**
+ * 이다.
+ *
+ * 자리는 「판단·처치」 레인, `HerbalFinalAssessmentCard` 바로 뒤다 -- herbal
+ * 단독에는 `다음`도 「마무리」도 없고, 그 카드의 마지막 칸이 `추적할 증상`
+ * (자유 기록)이라 그 옆에 `재평가 대상`(측정 추적)이 오는 것이 읽는 순서와
+ * 맞는다. 한 칸 때문에 herbal에 단계 전환을 새로 만들지 않는다.
+ *
+ * mixed는 건드리지 않는다 -- 거기는 `HerbalWorkspaceNext`의 picker가 그대로
+ * 살아 있다. 이 컴포넌트는 herbal 단독에서만 렌더된다(두 군데 렌더되면 같은
+ * 값을 두 곳에서 고치게 된다).
+ *
+ * EMR 짝: 화면을 되살렸으므로 `DoctorView.tsx`의 slim 경로도 이 키를 다시
+ * 넘긴다. 안 넘기면 원장이 고른 값이 EMR에 안 간다 -- PR-A가 막았던
+ * D-1("빈 값을 복사하고 복사됨을 띄움")의 **거울상**이다.
+ */
+export function HerbalFollowUpTargetsCard({
+  followUpTargets,
+  onChangeFollowUpTargets,
+}: {
+  followUpTargets: FollowUpTarget[]
+  onChangeFollowUpTargets: (next: FollowUpTarget[]) => void
+}) {
+  return (
+    <section className="workspace__block workspace__herbalFollowUp">
+      <h3>재평가 대상 (측정 추적)</h3>
+      <FollowUpTargetPicker
+        options={HERBAL_FOLLOW_UP_OPTIONS}
+        selected={followUpTargets}
+        onChange={onChangeFollowUpTargets}
+        nrsTargetIds={HERBAL_NRS_TARGET_IDS}
+      />
+    </section>
+  )
+}
+
 export function HerbalWorkspaceNext({
   payload,
   clinicianObservations,

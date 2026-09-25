@@ -3265,12 +3265,22 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // record with no voice recording no longer renders an empty box that
   // reports "복사됨" for an empty clipboard write.
   /**
-   * 한약 화면 축소(PR-A): `slim`은 herbal 단독 프로필 -- 그 화면에서는 다음
-   * 레인(재평가 대상 / 관리 계획 / 다음 재평가)의 **편집 UI 자체가 없으므로**
-   * 그 키들을 EMR 텍스트에서도 빼야 한다. 남겨두면 원장이 고칠 수도 볼 수도
-   * 없는 필드가 영원히 빈 라벨로 붙여넣기되는 Batch 4 D-1 사고가 재현된다.
-   * mixed는 HerbalWorkspaceNext가 그대로 렌더되어 편집 경로가 살아 있으므로
-   * 전부 넘긴다.
+   * 한약 화면 축소(PR-A): `slim`은 herbal 단독 프로필 -- 그 화면에서 **편집
+   * UI를 잃은** 키는 EMR 텍스트에서도 빼야 한다. 남겨두면 원장이 고칠 수도 볼
+   * 수도 없는 필드가 영원히 빈 라벨로 붙여넣기되는 Batch 4 D-1 사고가
+   * 재현된다. mixed는 HerbalWorkspaceNext가 그대로 렌더되어 편집 경로가
+   * 살아 있으므로 전부 넘긴다.
+   *
+   * 2026-09-25 (PO 지시) 갱신: `재평가 대상`은 **더 이상 그 목록에 없다** --
+   * 편집 UI가 판단·처치 레인에 되살아났다(HerbalWorkspace의
+   * `HerbalFollowUpTargetsCard`). 그래서 아래에서 slim 분기 **밖**에서 항상
+   * 넘긴다. 이 문장을 보고 그 줄을 다시 slim 분기로 옮기면 원장이 고른 값이
+   * EMR에서 사라진다(D-1의 거울상) -- tests/herbal-workspace-slim.spec.mjs의
+   * B-1a/B-1b가 막는다.
+   *
+   * slim이 지금도 빼는 것은 `carePlan`(관리 계획 5필드)과
+   * `nextReassessmentPlan`(다음 상세 재평가)뿐이고, 그 둘은 herbal 단독에
+   * 편집 UI가 여전히 없다.
    */
   function buildHerbalEmrTextForRecord(slim: boolean): string {
     const workspaceState = deserializeWorkspaceState(selectedRecord?.workspace)

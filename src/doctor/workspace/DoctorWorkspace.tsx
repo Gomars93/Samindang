@@ -30,7 +30,6 @@ import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import { ObjectiveExamFindingsCard, type ObjectiveExamField } from '../ObjectiveExamFindingsCard'
 import { VisitSummaryAside } from './VisitSummaryAside'
 import { PainFinalAssessmentCard, HerbalFinalAssessmentCard } from './FinalAssessmentCard'
-import { HerbalFollowUpTargetsCard } from './HerbalWorkspace'
 import { WorkingHypothesisCard } from './WorkingHypothesisCard'
 import { appendLbpHypothesisSentenceToPatientInstruction } from './lbpWorkingHypothesis'
 import { activeDrivingPack } from './regionPacks'
@@ -60,7 +59,7 @@ import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnreco
 import { PainBriefing } from '../clinical/PainBriefing'
 import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { useOpenOnceContent } from './FinalAssessmentCard'
-import { HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
+import { HerbalFollowUpTargetsCard, HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
 import { HerbalSafetyRedFlagCard } from './HerbalSafetyRedFlagCard'
 import {
   AnkleFootSafetyPanel,
@@ -1020,10 +1019,23 @@ export function DoctorWorkspace({
             않는다 -- mixed는 HerbalWorkspaceNext까지 지금 그대로 렌더된다.
 
             EMR 쪽 짝: DoctorView.tsx의 buildHerbalEmrTextForRecord(slim=true)가
-            여기서 편집 UI를 잃은 키(재평가 대상 / 관리 계획 5필드 / 다음 상세
-            재평가)를 herbal 텍스트에서도 함께 뺀다. 화면만 떼고 출력 라벨을
-            남기면 Batch 4 D-1("빈 값을 복사하고 복사됨을 띄움")이 그대로
-            재현되기 때문이다.
+            여기서 편집 UI를 잃은 키를 herbal 텍스트에서도 함께 뺀다. 화면만
+            떼고 출력 라벨을 남기면 Batch 4 D-1("빈 값을 복사하고 복사됨을
+            띄움")이 그대로 재현되기 때문이다.
+
+            2026-09-25 갱신: 그 목록에서 **`재평가 대상`은 빠졌다** -- PO 지시로
+            그 편집 UI가 판단·처치 레인에 되살아났으므로(아래
+            HerbalFollowUpTargetsCard) slim도 그 키를 다시 넘긴다. 지금 slim이
+            빼는 것은 `관리 계획 5필드`와 `다음 상세 재평가`뿐이고, 그 둘은
+            여전히 편집 UI가 없다.
+
+            **다만 herbal 단독에는 그 EMR 텍스트를 화면에 띄우는 곳이 없다** --
+            EMR textarea·복사 버튼·재진 발급·진료 완료가 전부
+            `nextLaneFooter`(DoctorView의 nextLaneFooterNode) 안에 있고, 그것도
+            이 가드에 걸려 렌더되지 않는다. 즉 herbal 단독 방문은 그 방문
+            안에서 EMR을 복사할 수도, 재진 링크를 발급할 수도, 진료 완료를
+            누를 수도 없다. PR-A가 만든 구멍이고 이 배치의 범위가 아니다 --
+            HANDOFF 최신 75에 PO 판단 요청으로 올렸다.
           */}
           {activeProfile !== 'herbal' && (
           /*

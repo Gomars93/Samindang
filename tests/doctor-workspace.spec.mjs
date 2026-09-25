@@ -5663,12 +5663,17 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
     assert.ok(!d.includes('그럭저럭이요'), '신고가 근황 문장으로 바뀌었다 — 고친 결함이 되살아났다')
   })
 
-  test('F5 한약 단독에는 재평가 대상 picker 자체가 없다 (PR-A) — NRS는 mixed·재진 화면에만 닿는다', () => {
+  test('F5 NRS 집합이 mixed·한약 단독 **두 경로 모두**에 넘어간다 (한쪽만 버튼이 되면 불일치)', () => {
     /*
-      커밋 메시지가 "한약 재평가 대상도 NRS로 받는다"라고만 적으면 한약 단독
-      진료에도 닿는 것처럼 읽힌다. 실제로는 그 picker가 HerbalWorkspaceNext
-      안에 있고, 그 컴포넌트는 mixed에서만 렌더된다(PR-A가 herbal 단독의
-      `다음` 레인을 통째로 폐기했다). 이 단언은 그 사실을 코드로 고정한다.
+      원래 이 단언은 "한약 단독에는 picker 자체가 없다"였다(PR-A). 2026-09-25
+      PO 지시로 그 한 칸이 되살아났으므로(판단·처치 레인의
+      HerbalFollowUpTargetsCard) 이름과 주석을 출하된 동작으로 고쳤다 --
+      이전 판은 본문은 picker가 있다고 단언하면서 제목은 없다고 말해, CI가
+      사라진 동작을 검증된 것처럼 인쇄했다(PR #57 검수 지적).
+
+      지금 지키는 것: mixed 경로(HerbalWorkspaceNext 안)와 한약 단독 경로
+      (그 카드)가 **둘 다 같은 집합**을 넘긴다. 한쪽만 넘기면 원장은 0~10으로
+      기록하는데 환자는 텍스트로 답하거나 그 반대가 된다.
     */
     const nextIdx = HW.indexOf('export function HerbalWorkspaceNext')
     assert.ok(nextIdx > 0, 'HerbalWorkspaceNext를 못 찾았다')
@@ -5712,3 +5717,54 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
 }
 
 console.log(`(+검수 6건 회귀 가드) ${passed} doctor-workspace assertions passed.`)
+
+/* ====================================================================== *
+ * PR #57 검수 1번: 한약 단독의 「출력」 경로가 화면에 없다 (PR-A가 만든 구멍)
+ *
+ * 되살린 `재평가 대상` 값이 **어디까지 가는지**를 정확히 못박는다. 내가
+ * DECISIONS/HANDOFF에 "EMR에도 간다"고 적었는데, herbal 단독에는 그 EMR
+ * 텍스트를 띄우는 UI 자체가 없다 -- EMR textarea·복사·재진 발급·진료 완료가
+ * 전부 `nextLaneFooter` 안에 있고, 그게 `activeProfile !== 'herbal'` 가드에
+ * 걸린다.
+ *
+ * 이 배치가 고칠 범위가 아니다(레인을 되살리는 것은 PO 판단). 대신 사실을
+ * 테스트로 고정해 다음 사람이 같은 과장을 반복하지 않게 한다.
+ * ====================================================================== */
+{
+  const DWsrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+
+  test('검수1 소스: nextLaneFooter는 herbal 단독에 렌더되지 않는다 (EMR 복사·재진 발급·진료 완료가 그 안에 있다)', () => {
+    const guardIdx = DWsrc.indexOf("{activeProfile !== 'herbal' && (")
+    assert.ok(guardIdx > 0, '프로필 가드를 못 찾았다')
+    const footerIdx = DWsrc.indexOf('{nextLaneFooter}')
+    assert.ok(footerIdx > guardIdx, 'nextLaneFooter가 가드 밖으로 나갔다 — 그렇다면 이 단언의 전제가 바뀐다')
+  })
+
+  test('검수1 렌더: 한약 단독 화면에 EMR 복사·재진 발급·진료 완료가 없다', () => {
+    /*
+      fixture 모드에는 nextLaneFooter가 애초에 안 들어오므로(server 전용) 이
+      렌더만으로는 가드를 증명할 수 없다. 그래서 위 소스 단언과 짝으로 둔다 --
+      여기서는 "한약 단독 화면에 그 UI가 실제로 없다"는 사실만 고정한다.
+    */
+    const herbal = render(HERBAL_SCENARIO_1)
+    assert.ok(!herbal.includes('EMR용 요약'), 'EMR textarea가 있다')
+    assert.ok(!herbal.includes('진료 완료'), '진료 완료 버튼이 있다')
+    assert.ok(!herbal.includes('재진 간단 문진 (Micro Follow-up)'), '재진 발급 섹션이 있다')
+  })
+
+  test('검수1 대비: 되살린 값은 저장·다음 방문 경로에는 실제로 닿는다', () => {
+    /*
+      "EMR에 못 간다"가 "아무 데도 못 간다"는 아니다. 값은 workspaceState에
+      저장되고, 다음 방문에서 「지난번 추적」 줄·재진 링크 후보·이전 방문
+      원문으로 되살아난다. 그 경로가 프로필을 가르지 않음을 여기서 확인한다.
+    */
+    const lg = fs.readFileSync('src/doctor/workspace/longitudinal.ts', 'utf8')
+    assert.ok(/followUpTargets: FollowUpTarget\[\]/.test(lg), '프로필 무관 union이 사라졌다')
+    const hw = fs.readFileSync('src/doctor/workspace/HerbalWorkspace.tsx', 'utf8')
+    // 재진 링크 후보는 확인 레인(herbal 단독에도 있다)에서 지난 방문 타깃으로 만든다.
+    const lane2 = hw.slice(hw.indexOf('export function HerbalWorkspaceLane2'), hw.indexOf('export function HerbalFollowUpTargetsCard'))
+    assert.ok(/microFollowUpCandidatesFromPriorTargets\(/.test(lane2), '재진 링크 후보 계산이 확인 레인 밖으로 나갔다')
+  })
+}
+
+console.log(`(+검수1 출력 경로) ${passed} doctor-workspace assertions passed.`)

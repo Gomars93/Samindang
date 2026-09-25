@@ -260,9 +260,28 @@ test('ConflictBanner.tsx never merges anything -- no field-level merge helper/ut
   })
 
   test('DoctorWorkspace.tsx: clicking the auth-recovery action (VisitSummaryAside\'s onOpenTokenReentry) opens the token form at the top of the lane1 section, outside the left summary\'s budget', () => {
+    /*
+      2026-09-25 (검수 F1): 이 핸들러가 한 줄 화살표에서 블록으로 바뀌었다.
+      계약의 뜻("아사이드는 폼을 열기만 한다 -- 직접 재시도하지 않는다")은
+      그대로이므로 그 뜻을 그대로 단언하고, F1이 더한 한 가지를 함께 못박는다.
+
+      왜 필요해졌나: 「마무리」 화면 분리(최신 69) 이후 이 폼은 「진료」 단계
+      래퍼 **안**에 있다. 마무리 화면에서 401이 나면 좌측 요약의 버튼은 항상
+      보이는데 폼은 `hidden`이라 눌러도 아무 일이 안 일어난다 -- 그래서 여는
+      쪽에서 단계를 함께 되돌린다.
+    */
+    const openHandler = src.slice(src.indexOf('onOpenTokenReentry={'), src.indexOf('onOpenTokenReentry={') + 900)
     assert.ok(
-      /onOpenTokenReentry=\{\(\) => setTokenReentryOpen\(true\)\}/.test(src),
+      /setTokenReentryOpen\(true\)/.test(openHandler),
       'VisitSummaryAside must be wired to open the form, not to retry directly itself',
+    )
+    assert.ok(
+      !/performSave\(\)/.test(openHandler),
+      'the aside action must not retry the save directly -- it only opens the form',
+    )
+    assert.ok(
+      /setVisitStep\('consult'\)/.test(openHandler),
+      "검수 F1: 마무리 화면에서 눌렀을 때 폼이 hidden인 채로 남지 않도록 「진료」 단계로 함께 되돌려야 한다",
     )
     const lane1Start = src.indexOf('<section className="doctor__visitLane doctor__visitLane--lane1"')
     const lane1SafetyBanner = src.indexOf('<CommonSafetyBanner payload={payload} />')

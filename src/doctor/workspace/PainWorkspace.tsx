@@ -226,8 +226,6 @@ export function PainWorkspaceLane2({
   onChangeAdditionalConcernPromotion,
   reassessment,
   onChangeReassessment,
-  microFollowUpResponse,
-  priorVisits,
   regionPack,
   directionalResponse,
   onChangeDirectionalResponse,
@@ -242,8 +240,14 @@ export function PainWorkspaceLane2({
   onChangeAdditionalConcernPromotion: (next: AdditionalConcernPromotionState) => void
   reassessment: StructuredReassessment
   onChangeReassessment: (next: StructuredReassessment) => void
-  microFollowUpResponse?: MicroFollowUpResponse | null
-  priorVisits?: PatientHistoryResult | null
+  /*
+    2026-09-24 (PO 지시): `microFollowUpResponse`와 `priorVisits`가 이
+    컴포넌트에서 빠졌다 -- 「간단 재확인」 카드가 확인 레인을 떠나
+    PainWorkspaceNext(마무리)로 내려갔고, 이 둘은 **그 카드 전용**이었다
+    (`priorVisits`는 후보 목록을 만드는 데만 쓰였다). 화면에서 안 그리는
+    값을 prop으로만 계속 받으면, 다음 사람이 "여기 어딘가 쓰이겠지" 하고
+    찾다가 못 찾는다. 두 값 다 PainWorkspaceNext는 계속 받는다.
+  */
   /**
    * 부위 팩 일반화(2026-09-06): 이 기록의 구동 부위 팩(승인된 것만). 생략(undefined)
    * 하면 payload에서 직접 정한다(`drivingRegion` → `activeRegionPack`) — 요통 기록은
@@ -278,9 +282,6 @@ export function PainWorkspaceLane2({
   const freq = frequencyField(routing.primary_module, r.modules)
   const agg = aggravatingField(routing.primary_module, r.modules)
   const additionalConcern = deriveAdditionalConcernSummary(routing)
-  const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
-    asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0]?.painFollowUpTargets,
-  )
 
   return (
     <div className="workspace__pain">
@@ -354,7 +355,20 @@ export function PainWorkspaceLane2({
         )}
       </section>
 
-      <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
+      {/*
+        2026-09-24 (PO 지시): 「간단 재확인」 카드가 여기(확인 레인)에서
+        빠졌다 -- 원장이 진료 중에 이 raw 답을 들여다볼 일이 없다는 판단이다.
+        지워진 것이 아니라 「마무리」 화면의 참고 자료 서랍으로 내려갔다
+        (PainWorkspaceNext 하단). 이 카드가 나르던 값 중 화면에서 사라지면
+        안 되는 것 --  환자의 이상반응/새 증상 신고 -- 은 좌측 요약의
+        「지난 대비」 한 줄이 배지와 함께 싣는다(microFollowUp.ts의
+        `microFollowUpAlertKind`, VisitSummaryAside의 해당 블록).
+
+        순서가 중요했다: 카드가 `needsAttention`으로 저절로 펼쳐지면서
+        `microFollowUpQuoteLine`의 결함(신고했는데 내용을 안 적으면 그 줄이
+        조용히 다른 문장으로 바뀌던 것)을 가려주고 있었다. 그래서 카드를
+        떼기 **전에** 그 함수를 먼저 고쳤다.
+      */}
 
       {/*
         LBP v1 Batch 1 (§2.3): the region block renders whenever an approved
@@ -621,7 +635,7 @@ export function PainExerciseSection({
         <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
           <p className="workspace__block__hint">
-            목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
+            목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;마무리&apos; 화면의 재평가 대상에서
             선택하세요.
             {targetFunctionGap === 'CUSTOM_ONLY' &&
               ' "기타 목표 동작"은 자유 기록이라 대응하는 카탈로그 운동이 없습니다 — 목록에 있는 목표 기능도 함께 골라주세요.'}
@@ -690,6 +704,7 @@ export function PainWorkspaceNext({
   lbpWorkingHypothesis,
   lbpObjectiveMotorDeficit,
   microFollowUpText,
+  microFollowUpResponse,
   copyHint,
   onIssueCarePlanLink,
 }: {
@@ -718,6 +733,14 @@ export function PainWorkspaceNext({
   lbpObjectiveMotorDeficit?: ClinicianJudgment['lbp_objective_motor_deficit']
   /** Opus delta review defect #7 (§14.1 S "micro follow-up"): the patient's own MicroFollowUpResponse quote line -- EMR 미리보기 조립에만 쓰인다, patient self-report, S only. */
   microFollowUpText?: string | null
+  /**
+   * 2026-09-24 (PO 지시): 확인 레인에서 내려온 「간단 재확인」 카드의 원본
+   * 응답. `microFollowUpText`(EMR용 한 줄)와는 **다른 것**이다 -- 이쪽은
+   * 카드가 그대로 그리는 raw 응답 전체(target 답 목록 · 세부 확인 · 신고
+   * 내용)이고, 저쪽은 그중 한 줄만 뽑은 요약이다. 둘을 같은 prop으로
+   * 합치면 EMR에 raw 덩어리가 들어간다.
+   */
+  microFollowUpResponse?: MicroFollowUpResponse | null
   /** Opus closing review C-5: forwarded to EmrPreviewCard's `copyHint` -- the caller decides whether 종결 is actually on screen for this record; omitted (no hint rendered) when it is not. */
   copyHint?: string
   /** 플로우 정렬 4/5: server mode only -- turns the preview text into a read-only patient link (PatientCarePlanPreviewCard). */
@@ -728,6 +751,9 @@ export function PainWorkspaceNext({
   const pack = regionPack === undefined ? activeDrivingPack(r) : regionPack
   // LBP v1 Batch 4 (§14.1 O/S·S): patient tablet self-report only -- never
   // reaches the O key (see emrPreview.ts's own header for the O boundary).
+  const nextMicroFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
+    asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0]?.painFollowUpTargets,
+  )
   const onsetDurationText = durationFrequencyText(r, routing.primary_module)
   const aggravatingTextForEmr = aggravatingSummaryText(routing.primary_module, r.modules)
   const impactTextForEmr = isEmptyValue(r.visit_goal.chief_impact)
@@ -855,8 +881,15 @@ export function PainWorkspaceNext({
       </details>
 
       <details className="workspace__optional workspace__optional--reference">
-        <summary>참고 자료 (이전 방문 · 환자 전달문 · EMR 미리보기)</summary>
+        <summary>참고 자료 (이전 방문 · 간단 재확인 · 환자 전달문 · EMR 미리보기)</summary>
         <PriorVisitHistoryCard history={priorVisits} profile="pain" />
+        {/*
+          2026-09-24 (PO 지시): 확인 레인에서 내려온 「간단 재확인」 카드.
+          후보 목록은 여기서 다시 계산한다 -- 확인 레인 쪽과 **같은 입력
+          (priorVisits의 최신 방문 painFollowUpTargets)**에서 같은 함수로
+          만들므로 두 화면이 어긋날 수 없다.
+        */}
+        <MicroFollowUpCard candidates={nextMicroFollowUpCandidates} response={microFollowUpResponse ?? null} />
         <PatientCarePlanPreviewCard title="환자 전달용 치료 계획" text={patientCarePlanText} onIssueLink={onIssueCarePlanLink} />
         <EmrPreviewCard text={emrText} copyHint={copyHint} />
         </details>

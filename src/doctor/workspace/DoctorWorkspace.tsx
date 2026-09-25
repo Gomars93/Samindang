@@ -37,7 +37,7 @@ import { readRegionClinical, withRegionClinical, type RegionClinicalRecord } fro
 import { isPainFinalAssessmentRecorded, isHerbalFinalAssessmentRecorded } from './finalAssessment'
 import { computeLane1Summary, type Lane1RegionInput } from './lane1Summary'
 import { lastVisitTrackedLine, priorNrsFromHistory } from './longitudinal'
-import { microFollowUpQuoteLine, readableMicroFollowUpResponse } from './microFollowUp'
+import { microFollowUpAlertKind, microFollowUpQuoteLine, readableMicroFollowUpResponse } from './microFollowUp'
 import { ageFromDoctorPayload } from '../../spec/lbpAdapter'
 import { answerLabel } from '../labels'
 import './workspace.css'
@@ -591,9 +591,29 @@ export function DoctorWorkspace({
   ]
     .filter((v): v is string => Boolean(v))
     .join(' · ')
-  const trackedLine = lastVisitTrackedLine(priorVisits)
+  /*
+    2026-09-25: 오늘 기준값을 함께 넘긴다 -- 「지난번 추적」 줄이 지난 값만
+    싣고 있었는데, 한약 NRS가 생기면서 오른쪽 절반을 채울 수 있게 됐다.
+    두 프로필 목록을 합쳐서 넘긴다: 이 줄의 출처인 지난 방문 쪽
+    `followUpTargets`가 프로필 무관 union이라, 오늘 쪽만 한쪽 프로필로
+    좁히면 mixed에서 짝이 안 맞는다.
+  */
+  const trackedLine = lastVisitTrackedLine(priorVisits, [
+    ...workspaceState.painFollowUpTargets,
+    ...workspaceState.herbalFollowUpTargets,
+  ])
   const readableMicroFollowUp = readableMicroFollowUpResponse(microFollowUpResponse ?? null)
   const deltaQuoteLine = microFollowUpQuoteLine(readableMicroFollowUp)
+  /*
+    2026-09-24 (PO 지시, 「간단 재확인」 카드 이동의 짝): 좌측 요약의
+    「지난 대비」는 문장 **하나**만 싣는다. 카드가 확인 레인에 있을 때는
+    그 카드가 `needsAttention`으로 저절로 펼쳐지며 "이 문장은 이상반응
+    신고다"를 따로 말해줬는데, 카드가 마무리로 내려가면 그 구분이 사라진다
+    -- 같은 글자를 원장이 "그냥 근황"으로 읽게 된다. 그래서 종류를 배지로
+    함께 싣는다. 우선순위는 `microFollowUpQuoteLine`과 같은 순서를 쓰므로
+    배지와 문장이 항상 같은 신고를 가리킨다(microFollowUp.ts 주석 참고).
+  */
+  const deltaAlertKind = microFollowUpAlertKind(readableMicroFollowUp)
 
   // Opus closing review C-5: EmrPreviewCard's "복사는 「마무리」 화면의
   // 「종결」 섹션에서 합니다." hint is only true when 종결 actually renders
@@ -633,10 +653,27 @@ export function DoctorWorkspace({
           chiefConcern={primaryConcernLabel(r)}
           durationFrequency={durationFrequencyText(r, payload.routing.primary_module)}
           lastVsDeltaLine={deltaQuoteLine}
+          lastVsAlertKind={deltaAlertKind}
           lane1={lane1Summary}
           saveStatus={submissionId && onSaveWorkspace ? saveStatus : undefined}
           lastSaveErrorKind={lastSaveErrorKind}
-          onOpenTokenReentry={() => setTokenReentryOpen(true)}
+          onOpenTokenReentry={() => {
+            /*
+              검수 F1: `DoctorTokenSetup` 폼은 레인1 맨 위, 즉 「진료」 단계
+              래퍼 **안**에 있다(MAJOR-3이 좌측 요약 20px 예산 밖으로 내보낸
+              자리). 마무리 화면에서 401이 나면 좌측 요약의 "인증 만료 —
+              토큰 다시 입력"은 항상 보이는데 폼은 `hidden`이라, 눌러도
+              아무 일이 안 일어나고 저장은 계속 실패한다.
+
+              폼을 두 단계 밖으로 옮기는 대신 여는 쪽에서 단계를 함께
+              되돌린다 -- 폼을 밖으로 빼면 MAJOR-3이 정한 자리(레인1 상단)를
+              잃고, 인증이 끊긴 상황에서 원장이 가야 할 곳은 어차피 진료
+              화면이다.
+            */
+            setVisitStep('consult')
+            setPendingJump(null)
+            setTokenReentryOpen(true)
+          }}
         />
 
         <main className="doctor__visitWork" aria-label="진료 작업">
@@ -780,8 +817,6 @@ export function DoctorWorkspace({
                 }
                 reassessment={workspaceState.painReassessment}
                 onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, painReassessment: next }))}
-                microFollowUpResponse={microFollowUpResponse}
-                priorVisits={priorVisits}
                 regionPack={regionPack}
                 directionalResponse={regionState?.directionalResponse}
                 onChangeDirectionalResponse={(next) => setRegionClinical?.({ directionalResponse: next })}
@@ -1004,6 +1039,7 @@ export function DoctorWorkspace({
                 lbpWorkingHypothesis={workspaceState.lbpWorkingHypothesis}
                 lbpObjectiveMotorDeficit={lbpObjectiveMotorDeficit}
                 microFollowUpText={deltaQuoteLine}
+                microFollowUpResponse={microFollowUpResponse}
                 copyHint={emrPreviewCopyHint}
                 onIssueCarePlanLink={onIssueCarePlanLink}
               />

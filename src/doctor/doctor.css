@@ -189,6 +189,33 @@
   border-radius: 4px;
   padding: 0 4px;
 }
+/*
+ * 2026-09-24 (PO 지시, 「간단 재확인」 카드가 확인 레인을 떠난 것의 짝):
+ * 「지난 대비」 한 줄이 환자의 이상반응/새 증상 신고에서 왔을 때 붙는 배지.
+ *
+ * 새 색을 만들지 않고 기존 `--warning` 쌍을 쓴다 -- 이 셸에는 이미
+ * `--danger`(안전 URGENT)와 `--warning`(주의)이 있고, 세 번째 경보색을
+ * 더하면 원장이 색으로 급함을 구분하던 기준이 흐려진다. 이건 안전 플래그가
+ * 아니라 "환자가 이렇게 신고했다"는 사실이므로 danger가 아니라 warning이
+ * 맞다.
+ *
+ * `.doctor__visitSummary__delta`가 24px·nowrap·overflow hidden이라 줄은
+ * 잘릴 수 있다. 배지를 문장 앞에 두는 이유가 그것이다(VisitSummaryAside의
+ * 해당 주석). 배지 자체는 줄 높이를 늘리지 않도록 세로 padding을 주지 않는다.
+ */
+.doctor__visitSummary__deltaAlert {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 700;
+  font-style: normal;
+  white-space: nowrap;
+}
+
 .doctor__visitSummary__lane1 {
   max-height: 56px;
   overflow: hidden;

@@ -4199,7 +4199,7 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     assert.ok(!/aria-pressed="true"[^>]*aria-label="통증 강도 오늘 기준값/.test(html), '숫자가 아니라 눌린 버튼은 없다')
   })
 
-  test('NRS: 비NRS 통증 대상(움직임·기능)과 한약 대상(수면)은 예전처럼 텍스트 input — 바이트 단위 불변', () => {
+  test('NRS: 비NRS 통증 대상(움직임·기능)은 예전처럼 텍스트 input — 바이트 단위 불변', () => {
     const pain = renderToString(
       React.createElement(DoctorWorkspace, {
         payload: PAIN_SCENARIO_1.payload,
@@ -4209,22 +4209,63 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     )
     assert.ok(/<input[^>]*aria-label="움직임·기능 오늘 기준값"/.test(pain), '비NRS 통증 대상은 텍스트 input')
     assert.ok(!pain.includes('workspace__nrs'), 'NRS 마크업이 없다')
-    // PR-A(한약 화면 축소, 2026-09-21): 한약 재평가 대상 picker는 herbal
-    // 단독 프로필에서 `다음` 레인과 함께 제거됐고, mixed에만 남는다. 이
-    // 단언이 지키려던 것("한약 대상의 기준값은 NRS 버튼이 아니라 텍스트
-    // input")은 그 picker가 살아 있는 mixed에서 그대로 확인한다.
+  })
+
+  /*
+   * 2026-09-25 (PO 승인): 한약 재평가 대상도 NRS 버튼으로 받는다 —
+   * 2026-09-06에 통증에 켠 것과 **같은 스위치**(`nrsTargetIds`)다.
+   *
+   * 이 블록은 직전까지 정반대를 단언하고 있었다("한약 대상은 텍스트
+   * input"). 계약이 바뀐 것이므로 단언을 새 계약으로 고쳤다 — 지우지
+   * 않았다. 그리고 `대변`은 **일부러** 텍스트로 남았으므로 그 쪽을 같은
+   * 강도로 고정한다. 셋 다 안 하면 "NRS를 한약 전체에 켰다"와 "고른
+   * 셋에만 켰다"가 구분되지 않는다.
+   *
+   * PR-A(2026-09-21) 이후 한약 재평가 picker는 herbal 단독에 없고 mixed에만
+   * 있으므로 mixed로 잰다.
+   */
+  test('NRS(한약): 수면 불편은 0~10 버튼이 붙는다 (mixed)', () => {
     const mixed = renderToString(
       React.createElement(DoctorWorkspace, {
         payload: MIXED_SCENARIO_1.payload,
         synthetic: MIXED_SCENARIO_1.synthetic,
-        initialWorkspaceState: { herbalFollowUpTargets: [{ id: 'sleep', label: '수면', baseline: '', postTreatmentValue: '' }] },
+        initialWorkspaceState: {
+          herbalFollowUpTargets: [{ id: 'sleep', label: '수면 불편', baseline: '', postTreatmentValue: '' }],
+        },
       }),
     )
-    assert.ok(/<input[^>]*aria-label="수면 오늘 기준값"/.test(mixed), '한약 대상은 텍스트 input (mixed)')
-    assert.ok(
-      !/aria-label="수면 오늘 기준값"[^>]*class="[^"]*workspace__nrs/.test(mixed),
-      '한약 대상에 NRS 마크업이 붙지 않는다 (같은 화면의 통증 대상은 NRS일 수 있다)',
+    assert.ok(/role="group" aria-label="수면 불편 오늘 기준값"/.test(mixed), '버튼 그룹이 있다')
+    assert.ok(mixed.includes('workspace__nrs'), 'NRS 마크업이 있다')
+  })
+
+  test('NRS(한약): 대변은 일부러 텍스트로 남는다 — 횟수는 강도가 아니다', () => {
+    const mixed = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
+        initialWorkspaceState: {
+          herbalFollowUpTargets: [{ id: 'stool', label: '대변', baseline: '', postTreatmentValue: '' }],
+        },
+      }),
     )
+    assert.ok(/<input[^>]*aria-label="대변 오늘 기준값"/.test(mixed), '대변은 텍스트 input')
+    assert.ok(!/role="group" aria-label="대변 오늘 기준값"/.test(mixed), '대변에 버튼 그룹이 붙지 않는다')
+  })
+
+  test('NRS(한약) 소스 계약: 집합은 수면·속·피로 셋이고 대변은 빠져 있다', () => {
+    const fa = fs.readFileSync('src/doctor/workspace/finalAssessment.ts', 'utf8')
+    assert.ok(
+      /HERBAL_NRS_TARGET_IDS[^\n]*new Set\(\['sleep', 'digestion', 'fatigue'\]\)/.test(fa),
+      '집합이 바뀌었다 — 바꾸려면 환자 화면 문구(NRS_PROMPT)와 detail-check 대조 테스트도 같이 움직여야 한다',
+    )
+    // 라벨이 방향을 말해야 NRS가 ↓ 좋다로 읽힌다(중립 명사 '수면'으로 되돌아가면 실패).
+    assert.ok(/followUpTarget\('sleep', '수면 불편'\)/.test(fa))
+    assert.ok(/followUpTarget\('digestion', '속 불편'\)/.test(fa))
+    assert.ok(/followUpTarget\('fatigue', '피로'\)/.test(fa))
+    assert.ok(/followUpTarget\('stool', '대변'\)/.test(fa), '대변 라벨은 그대로다')
+    // 한약 호출부가 실제로 그 집합을 넘긴다 — 상수만 만들고 안 넘기면 화면은 그대로다.
+    const hw = fs.readFileSync('src/doctor/workspace/HerbalWorkspace.tsx', 'utf8')
+    assert.ok(/nrsTargetIds=\{HERBAL_NRS_TARGET_IDS\}/.test(hw), '한약 picker에 집합이 넘어가지 않는다')
   })
 
   // PR-A 계약: 위 단언이 mixed로 옮겨간 이유를 코드로 고정한다 -- herbal
@@ -5204,3 +5245,416 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
 }
 
 console.log(`(+마무리 화면 분리) ${passed} doctor-workspace assertions passed.`)
+
+/* ====================================================================== *
+ * 「간단 재확인」 카드가 확인 레인을 떠난다 (PO 지시 2026-09-24)
+ *
+ * PO 판단: "재진 간단 문진은 (진료 중에 볼) 필요 없어". 카드만 빼고 기능은
+ * 그대로 둔다 -- 이 응답에서 비교 행(NRS), 「지난 대비」 한 줄, EMR §14.1 S가
+ * 전부 나오기 때문이다.
+ *
+ * CLAUDE.md 경로 규칙: 지운(옮긴) 경로 1개당 단언 1개. 그리고 이 이동에서
+ * 진짜 위험한 것은 **이상반응/새 증상 신고가 화면에서 사라지는 것**이다.
+ * 카드가 확인 레인에 있을 때는 `needsAttention`으로 저절로 펼쳐지면서
+ * `microFollowUpQuoteLine`의 결함(신고했는데 내용을 안 적으면 그 줄이 조용히
+ * 다른 문장으로 바뀌던 것)을 가려주고 있었다. §N-B가 그 구멍을 고정한다.
+ * ====================================================================== */
+{
+  const microResponse = (over = {}) => ({
+    visit_id: 'v-micro-1',
+    patient_id: 'p-micro-1',
+    targetRatings: [{ targetId: 't1', label: '계단 내려가기', patientReportedValue: '조금 좋아짐' }],
+    detailAnswers: [],
+    overallChange: '전체적으로 그럭저럭이요',
+    newSymptomReported: false,
+    newSymptomNote: '',
+    adverseEffectReported: false,
+    adverseEffectNote: '',
+    submitted_at: '2026-09-24T00:00:00.000Z',
+    ...over,
+  })
+
+  const renderMicro = (over = {}) => renderWith(PAIN_SCENARIO_1, { microFollowUpResponse: microResponse(over) })
+
+  const MICRO_CARD_MARK = '간단 재확인(Micro Follow-up)'
+
+  /* ------------------------------------------------- §N-A 자리 이동 */
+
+  test('N-A0 자기점검: 이 응답을 주면 「간단 재확인」 카드가 실제로 렌더된다', () => {
+    // 기본 fixture에는 응답도 후보도 없어 카드가 아예 null을 돌려준다 --
+    // 그 상태로 "확인 레인에 없다"를 단언하면 영원히 통과하는 헛단언이 된다.
+    assert.ok(renderMicro().includes(MICRO_CARD_MARK), '카드가 렌더되지 않았다 — 아래 단언이 전부 무의미해진다')
+    assert.ok(!render(PAIN_SCENARIO_1).includes(MICRO_CARD_MARK), '응답이 없을 때는 카드가 없다(전제)')
+  })
+
+  test('N-A1 카드가 확인 레인에서 빠졌다 (PO 지시) — 그리고 「마무리」 화면에 있다', () => {
+    const html = renderMicro()
+    const consult = html.slice(html.indexOf('data-step="consult"'), html.indexOf('data-step="wrapup"'))
+    const wrapup = html.slice(html.indexOf('data-step="wrapup"'), html.indexOf('<nav class="doctor__laneNav"'))
+    assert.ok(!consult.includes(MICRO_CARD_MARK), '아직 확인 레인에 있다')
+    assert.ok(wrapup.includes(MICRO_CARD_MARK), '마무리 화면에도 없다 — 이동이 아니라 제거가 됐다')
+    assert.equal(html.split(MICRO_CARD_MARK).length - 1, 1, '카드가 두 군데에 렌더됐다')
+  })
+
+  test('N-A2 카드가 「참고 자료」 서랍 안에 있고, 서랍 제목이 그 사실을 말한다', () => {
+    const html = renderMicro()
+    const summaryIdx = html.indexOf('참고 자료 (이전 방문 · 간단 재확인 · 환자 전달문 · EMR 미리보기)')
+    assert.ok(summaryIdx > 0, '서랍 제목이 카드가 들어온 것을 반영하지 않았다')
+    assert.ok(html.indexOf(MICRO_CARD_MARK) > summaryIdx, '카드가 서랍보다 앞에 있다')
+  })
+
+  test('N-A3 카드가 나르던 raw 값이 마무리에서 그대로 보인다 (이동이지 축소가 아니다)', () => {
+    const html = renderMicro()
+    assert.ok(html.includes('계단 내려가기'), 'target 답의 라벨이 사라졌다')
+    assert.ok(html.includes('조금 좋아짐'), 'target 답의 값이 사라졌다')
+    assert.ok(html.includes('전체적으로 그럭저럭이요'), '전반적 변화가 사라졌다')
+  })
+
+  test('N-A4 소스: PainWorkspace(확인 레인)는 더 이상 이 카드를 렌더하지 않는다', () => {
+    const src = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+    const nextIdx = src.indexOf('export function PainWorkspaceNext')
+    assert.ok(nextIdx > 0, 'PainWorkspaceNext를 못 찾았다(전제)')
+    const lane2Src = src.slice(0, nextIdx)
+    assert.ok(!lane2Src.includes('<MicroFollowUpCard'), '확인 레인 쪽 소스에 아직 카드가 있다')
+    assert.ok(src.slice(nextIdx).includes('<MicroFollowUpCard'), '마무리 쪽 소스에 카드가 없다')
+  })
+
+  test('N-A5 소스: 카드 전용이던 두 prop이 확인 레인 컴포넌트에서 빠졌다', () => {
+    const src = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+    const lane2Src = src.slice(0, src.indexOf('export function PainWorkspaceNext'))
+    // 화면에서 안 그리는 값을 prop으로만 계속 받으면 다음 사람이 찾다가 못 찾는다.
+    assert.ok(!/^\s*microFollowUpResponse,$/m.test(lane2Src), 'microFollowUpResponse가 아직 남아 있다')
+    assert.ok(!/^\s*priorVisits,$/m.test(lane2Src), 'priorVisits가 아직 남아 있다')
+    const dw = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+    assert.ok(/microFollowUpResponse=\{microFollowUpResponse\}/.test(dw), '어딘가로는 계속 넘어가야 한다')
+  })
+
+  /* --------------------------------------- §N-B 구멍 메우기 (핵심) */
+
+  /*
+   * 한 줄이 어떤 신고에서 왔는지를 배지가 말한다. 배지와 문장이 서로 다른
+   * 신고를 가리키면 원장이 이상반응 내용을 읽었다고 착각하므로, 둘의
+   * 우선순위가 같다는 것까지 단언한다.
+   */
+  const asideDelta = (html) => {
+    const i = html.indexOf('doctor__visitSummary__delta')
+    assert.ok(i > 0, '「지난 대비」 블록을 못 찾았다')
+    return html.slice(i, i + 700)
+  }
+
+  test('N-B0 자기점검: 「지난 대비」 블록 슬라이스가 실제 문장을 담는다', () => {
+    assert.ok(asideDelta(renderMicro()).includes('전체적으로 그럭저럭이요'))
+  })
+
+  test('N-B1 신고가 없으면 배지를 달지 않는다 (빈 배지를 두지 않는다)', () => {
+    const d = asideDelta(renderMicro())
+    assert.ok(!d.includes('doctor__visitSummary__deltaAlert'), '신고가 없는데 배지가 붙었다')
+    assert.ok(!d.includes('이상반응') && !d.includes('새 증상'))
+  })
+
+  test('N-B2 이상반응 신고 → 배지 「이상반응」 + 환자가 적은 내용', () => {
+    const d = asideDelta(renderMicro({ adverseEffectReported: true, adverseEffectNote: '치료 후 어지러웠어요' }))
+    assert.ok(d.includes('doctor__visitSummary__deltaAlert'), '배지가 없다')
+    assert.ok(d.includes('이상반응'))
+    assert.ok(d.includes('치료 후 어지러웠어요'), '신고 내용 대신 다른 문장이 실렸다')
+  })
+
+  test('N-B3 새 증상 신고 → 배지 「새 증상」 + 그 내용', () => {
+    const d = asideDelta(renderMicro({ newSymptomReported: true, newSymptomNote: '오른쪽 다리가 저려요' }))
+    assert.ok(d.includes('새 증상'))
+    assert.ok(d.includes('오른쪽 다리가 저려요'))
+  })
+
+  /*
+   * 이 배치가 고친 결함 그 자체. 고치기 전에는 `reported && note.trim()`이라
+   * 내용이 비면 다음 분기로 떨어져, 이상반응을 신고한 환자의 한 줄에
+   * "전체적으로 그럭저럭이요"가 실렸다 -- 좌측 요약에도, EMR §14.1 S에도.
+   * 카드가 확인 레인에 있을 때는 그 카드가 저절로 펼쳐져 가려주고 있었고,
+   * 카드를 떼는 순간 진짜 구멍이 된다.
+   */
+  test('N-B4 결함 회귀 가드: 이상반응을 신고하고 내용을 안 적어도 그 신고가 살아남는다', () => {
+    const d = asideDelta(renderMicro({ adverseEffectReported: true, adverseEffectNote: '   ' }))
+    assert.ok(d.includes('이상반응'), '배지가 없다')
+    assert.ok(d.includes('(내용 없음)'), '"신고는 있었고 내용은 없다"가 아니라 다른 문장이 실렸다')
+    assert.ok(
+      !d.includes('전체적으로 그럭저럭이요'),
+      '이상반응 신고가 아무 일 없다는 듯한 근황 문장으로 바뀌었다 — 고친 결함이 되살아났다',
+    )
+  })
+
+  test('N-B5 새 증상도 같은 규칙 (내용이 비어도 신고가 살아남는다)', () => {
+    const d = asideDelta(renderMicro({ newSymptomReported: true, newSymptomNote: '' }))
+    assert.ok(d.includes('새 증상') && d.includes('(내용 없음)'))
+    assert.ok(!d.includes('전체적으로 그럭저럭이요'))
+  })
+
+  test('N-B6 둘 다 신고되면 배지와 문장이 같은 쪽(이상반응)을 가리킨다', () => {
+    const d = asideDelta(
+      renderMicro({
+        adverseEffectReported: true,
+        adverseEffectNote: '어지러움',
+        newSymptomReported: true,
+        newSymptomNote: '다리 저림',
+      }),
+    )
+    assert.ok(d.includes('이상반응'), '더 급한 쪽이 배지가 아니다')
+    assert.ok(d.includes('어지러움'), '배지는 이상반응인데 문장은 새 증상 것이다 — 둘의 우선순위가 갈라졌다')
+    assert.ok(!d.includes('다리 저림'))
+  })
+}
+
+console.log(`(+간단 재확인 이동) ${passed} doctor-workspace assertions passed.`)
+
+/* ====================================================================== *
+ * 「지난번 추적」 줄에 오늘 값을 나란히 놓는다 (2026-09-25, 한약 NRS의 짝)
+ *
+ * 한약 재평가가 0~10이 되면서 이 줄의 오른쪽 절반을 채울 수 있게 됐다.
+ * 산술(차이·화살표)만 만들고 호전/악화 판정은 만들지 않는다.
+ * ====================================================================== */
+{
+  const historyWith = (targets) => ({
+    patientId: 'p-track-1',
+    visits: [
+      {
+        visitId: 'v-track-1',
+        submissionId: null,
+        createdAt: '2026-09-11T00:00:00.000Z',
+        primaryConcern: null,
+        painFollowUpTargets: [],
+        herbalFollowUpTargets: targets,
+        followUpTargets: targets,
+        painFinalAssessmentSummary: null,
+        herbalFinalAssessmentSummary: null,
+        nextReassessmentPlan: null,
+        painNrsNow: null,
+        painNrsWorst: null,
+      },
+    ],
+  })
+  const target = (baseline) => [{ id: 'sleep', label: '수면 불편', baseline, postTreatmentValue: '' }]
+
+  // 지난 방문은 한약 프로필이지만 셸은 mixed로 그린다 — PR-A 이후 herbal
+  // 단독에도 이 줄은 뜨지만, mixed가 두 목록을 합쳐 넘기는 경로까지 함께 탄다.
+  const trackedLine = (priorBaseline, todayBaseline) => {
+    const html = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
+        priorVisits: historyWith(target(priorBaseline)),
+        initialWorkspaceState:
+          todayBaseline === undefined ? undefined : { herbalFollowUpTargets: target(todayBaseline) },
+      }),
+    )
+    const i = html.indexOf('doctor__lastVisitTracked')
+    assert.ok(i > 0, '「지난번 추적」 줄이 없다')
+    return html.slice(i, i + 260)
+  }
+
+  test('T-0 자기점검: 오늘 값을 안 넘기면 예전 문구 그대로 (바이트 단위 불변)', () => {
+    const line = trackedLine('7', undefined)
+    assert.ok(line.includes('수면 불편'), '라벨이 없다')
+    assert.ok(line.includes('기준값 7'), '지난 기준값이 없다')
+    assert.ok(!line.includes('→'), '오늘 값이 없는데 화살표가 붙었다')
+  })
+
+  test('T-1 둘 다 NRS면 오늘 값과 차이가 붙는다 (7 → 4 ↓3)', () => {
+    const line = trackedLine('7', '4')
+    assert.ok(line.includes('기준값 7 → 4 ↓3'), `실제: ${line.slice(0, 120)}`)
+  })
+
+  test('T-2 나빠진 방향도 그대로 산술로 (7 → 9 ↑2) — 좋다/나쁘다를 말하지 않는다', () => {
+    const line = trackedLine('7', '9')
+    assert.ok(line.includes('기준값 7 → 9 ↑2'))
+    assert.ok(!line.includes('악화') && !line.includes('호전'), '판정 단어가 들어갔다')
+  })
+
+  test('T-3 같은 값이면 화살표 없이 나란히만 (7 → 7)', () => {
+    const line = trackedLine('7', '7')
+    assert.ok(line.includes('기준값 7 → 7'))
+    assert.ok(!line.includes('↓') && !line.includes('↑'), '변화가 없는데 화살표가 붙었다')
+  })
+
+  test('T-4 경계값 0과 10도 NRS다 (0은 falsy라 흔히 떨어지는 값)', () => {
+    assert.ok(trackedLine('10', '0').includes('기준값 10 → 0 ↓10'))
+    assert.ok(trackedLine('0', '10').includes('기준값 0 → 10 ↑10'))
+  })
+
+  /*
+   * 한쪽이라도 NRS가 아니면 예전 문구다. 숫자처럼 생긴 자유값('7/10')을
+   * 조용히 숫자로 읽으면 없는 비교를 지어내게 된다 -- NRS 도입 전 기록이
+   * 정확히 그 모양이다(finalAssessment.ts의 `isNrsValue` 주석).
+   */
+  for (const [name, prior, today] of [
+    ['오늘이 자유 텍스트', '7', '많이 좋아짐'],
+    ['지난 값이 자유 텍스트', '푹 잠', '4'],
+    ['옛 자유값 7/10', '7/10', '4'],
+    ['범위 밖 11', '7', '11'],
+    ['소수 4.5', '7', '4.5'],
+    ['오늘 값이 빈 문자열', '7', ''],
+  ]) {
+    test(`T-5 ${name} → 비교를 지어내지 않는다`, () => {
+      const line = trackedLine(prior, today)
+      assert.ok(!line.includes('→'), `비교가 그려졌다: ${line.slice(0, 120)}`)
+    })
+  }
+
+  /*
+   * 검수 F4: 라벨이 바뀐 경계를 넘어 델타를 만들면 악화를 호전으로 표시할 수
+   * 있다. 옛 방문이 중립 라벨(`수면`)로 기록됐다면 그 숫자가 "잘 잔 정도"인지
+   * "불편한 정도"인지 알 수 없다.
+   */
+  const trackedLineWithLabels = (priorLabel, priorBaseline, todayLabel, todayBaseline) => {
+    const priorTargets = [{ id: 'sleep', label: priorLabel, baseline: priorBaseline, postTreatmentValue: '' }]
+    const html = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
+        priorVisits: historyWith(priorTargets),
+        initialWorkspaceState: {
+          herbalFollowUpTargets: [{ id: 'sleep', label: todayLabel, baseline: todayBaseline, postTreatmentValue: '' }],
+        },
+      }),
+    )
+    const i = html.indexOf('doctor__lastVisitTracked')
+    assert.ok(i > 0, '「지난번 추적」 줄이 없다')
+    return html.slice(i, i + 260)
+  }
+
+  test('T-7 라벨이 같으면 델타가 붙는다 (자기점검 — 아래 단언이 헛돌지 않게)', () => {
+    assert.ok(trackedLineWithLabels('수면 불편', '7', '수면 불편', '4').includes('기준값 7 → 4 ↓3'))
+  })
+
+  test('T-8 검수 F4: 라벨이 바뀐 경계를 넘어 델타를 만들지 않는다 (수면 → 수면 불편)', () => {
+    const line = trackedLineWithLabels('수면', '7', '수면 불편', '4')
+    assert.ok(!line.includes('→'), `옛 중립 라벨과 비교했다: ${line.slice(0, 140)}`)
+    assert.ok(line.includes('기준값 7'), '지난 값은 그대로 보여야 한다')
+  })
+
+  test('T-6 소스 계약: 산술만 만든다 — 판정 어휘가 이 함수에 없다', () => {
+    const src = fs.readFileSync('src/doctor/workspace/longitudinal.ts', 'utf8')
+    const fn = src.slice(src.indexOf('function trackedValueText'), src.indexOf('export function lastVisitTrackedLine'))
+    assert.ok(fn.length > 200, '함수 구간을 못 잡았다')
+    /*
+      주석은 빼고 **코드만** 본다. 검수 F4를 고치면서 "악화를 호전으로 표시할
+      수 있다"는 설명을 주석에 적었더니 이 스캔이 그걸 잡아 실패했다 -- 이
+      가드가 막으려는 것은 판정을 **계산하는 것**이지 판정을 설명하는 산문이
+      아니다.
+    */
+    const fnCode = fn.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    assert.ok(fnCode.length > 120, '주석을 걷어내니 코드가 남지 않았다 — 스캔 구간이 틀렸다')
+    assert.ok(!/호전|악화/.test(fn.slice(fn.indexOf('{'))) === false, '전제: 주석에는 그 단어가 실제로 있다 (스트리퍼 자기점검)')
+    for (const word of ['호전', '악화', '개선', '%']) {
+      assert.ok(!fnCode.includes(word), `판정 어휘가 코드에 들어갔다: ${word}`)
+    }
+    assert.ok(/isNrsValue\(priorRaw\)/.test(fnCode) && /isNrsValue\(today\.value\)/.test(fnCode), '양쪽 다 NRS인지 보지 않는다')
+    // 검수 F4: 라벨이 다르면 같은 자로 잰 것인지 확신할 수 없으므로 델타를 만들지 않는다.
+    assert.ok(/priorLabel !== today\.label\) return priorRaw/.test(fnCode), '라벨이 달라도 델타를 만든다')
+    // 오늘 값은 baseline끼리 짝짓는다 — 지난 postTreatmentValue(치료 직후)와 섞으면 다른 시점을 비교한다.
+    const caller = src.slice(src.indexOf('export function lastVisitTrackedLine'))
+    assert.ok(/typeof t\.baseline !== 'string'/.test(caller), '오늘 값을 baseline에서 읽지 않는다')
+    assert.ok(/value: t\.baseline\.trim\(\)/.test(caller), '오늘 값이 baseline에서 오지 않는다')
+    assert.ok(!/postTreatmentValue/.test(caller.slice(0, caller.indexOf('return {'))), '오늘 쪽에서 직후값을 읽고 있다')
+  })
+}
+
+console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions passed.`)
+
+/* ====================================================================== *
+ * 검수 지적 6건의 회귀 가드 (2026-09-25, PR #56 마지막 검수)
+ *
+ * 여섯 건 다 "테스트가 짚지 않던 자리"에서 나왔다. 고친 것마다 단언을
+ * 붙인다 -- 안 붙이면 다음 리팩터가 같은 구멍을 다시 만든다.
+ * ====================================================================== */
+{
+  const DW = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
+  const RW = fs.readFileSync('src/doctor/workspace/RevisitWorkspace.tsx', 'utf8')
+  const HW = fs.readFileSync('src/doctor/workspace/HerbalWorkspace.tsx', 'utf8')
+  const MFU = fs.readFileSync('src/doctor/workspace/microFollowUp.ts', 'utf8')
+  const PW = fs.readFileSync('src/doctor/workspace/PainWorkspace.tsx', 'utf8')
+
+  test('F1 인증 만료 복구: 토큰 재입력을 열면 「진료」 단계로 함께 돌아온다', () => {
+    /*
+      폼(DoctorTokenSetup)은 레인1 맨 위 = 「진료」 단계 래퍼 안이다. 마무리
+      화면에서 401이 나면 좌측 요약의 버튼은 보이는데 폼은 hidden이라 눌러도
+      아무 일이 안 일어나고 저장은 계속 실패한다.
+    */
+    const handler = DW.slice(DW.indexOf('onOpenTokenReentry={'), DW.indexOf('onOpenTokenReentry={') + 900)
+    assert.ok(/setVisitStep\('consult'\)/.test(handler), '단계를 진료로 되돌리지 않는다')
+    assert.ok(/setTokenReentryOpen\(true\)/.test(handler), '폼을 여는 동작이 사라졌다')
+    // 폼 자체는 여전히 진료 단계 안에 있다(MAJOR-3의 자리) — 그 전제가 깨지면 위 수정의 이유가 사라진다.
+    const consultRegion = DW.slice(DW.indexOf('data-step="consult"'), DW.indexOf('data-step="wrapup"'))
+    assert.ok(consultRegion.includes('<DoctorTokenSetup'), '전제가 깨졌다: 폼이 진료 단계 밖으로 나갔다')
+  })
+
+  test('F2 재진 화면: NRS 집합은 통증+한약 합이다 (프로필 무관 목록 하나를 다루므로)', () => {
+    assert.ok(/nrsTargetIds=\{REVISIT_NRS_TARGET_IDS\}/.test(RW), '통증 집합만 넘기고 있다')
+    assert.ok(
+      /REVISIT_NRS_TARGET_IDS[\s\S]{0,200}\.\.\.PAIN_NRS_TARGET_IDS,[\s\S]{0,40}\.\.\.HERBAL_NRS_TARGET_IDS,/.test(RW),
+      '합집합이 아니다',
+    )
+  })
+
+  test('F3 EMR이 스스로 말한다: 빈 내용 폴백이 종류를 밝힌다', () => {
+    /*
+      이 문구는 좌측 요약뿐 아니라 EMR §14.1 S로도 간다. `(내용 없음)` 다섯
+      글자만 남으면 기록만 보는 사람은 무엇이 비었는지 알 수 없다(EMR에는
+      배지가 없다).
+    */
+    assert.ok(/ADVERSE_EFFECT: '이상반응 보고됨\(내용 없음\)'/.test(MFU))
+    assert.ok(/NEW_SYMPTOM: '새 증상 보고됨\(내용 없음\)'/.test(MFU))
+  })
+
+  test('F3 렌더: 이상반응 + 빈 내용이면 좌측 요약 문장도 종류를 밝힌다', () => {
+    const html = renderWith(PAIN_SCENARIO_1, {
+      microFollowUpResponse: {
+        visit_id: 'v-f3',
+        patient_id: 'p-f3',
+        targetRatings: [],
+        detailAnswers: [],
+        overallChange: '그럭저럭이요',
+        newSymptomReported: false,
+        newSymptomNote: '',
+        adverseEffectReported: true,
+        adverseEffectNote: '   ',
+        submitted_at: '2026-09-25T00:00:00.000Z',
+      },
+    })
+    const d = html.slice(html.indexOf('doctor__visitSummary__delta'), html.indexOf('doctor__visitSummary__delta') + 700)
+    assert.ok(d.includes('이상반응 보고됨(내용 없음)'), `실제: ${d.slice(0, 160)}`)
+    assert.ok(!d.includes('그럭저럭이요'), '신고가 근황 문장으로 바뀌었다 — 고친 결함이 되살아났다')
+  })
+
+  test('F5 한약 단독에는 재평가 대상 picker 자체가 없다 (PR-A) — NRS는 mixed·재진 화면에만 닿는다', () => {
+    /*
+      커밋 메시지가 "한약 재평가 대상도 NRS로 받는다"라고만 적으면 한약 단독
+      진료에도 닿는 것처럼 읽힌다. 실제로는 그 picker가 HerbalWorkspaceNext
+      안에 있고, 그 컴포넌트는 mixed에서만 렌더된다(PR-A가 herbal 단독의
+      `다음` 레인을 통째로 폐기했다). 이 단언은 그 사실을 코드로 고정한다.
+    */
+    const nextIdx = HW.indexOf('export function HerbalWorkspaceNext')
+    assert.ok(nextIdx > 0, 'HerbalWorkspaceNext를 못 찾았다')
+    assert.ok(
+      HW.slice(nextIdx).includes('nrsTargetIds={HERBAL_NRS_TARGET_IDS}'),
+      '한약 NRS 스위치가 HerbalWorkspaceNext 안에 없다',
+    )
+    assert.ok(
+      !HW.slice(0, nextIdx).includes('<FollowUpTargetPicker'),
+      '레인2 쪽에도 picker가 생겼다 — 그러면 이 단언의 전제가 바뀐다',
+    )
+    assert.ok(/\{activeProfile === 'mixed' && \(\s*\n\s*<HerbalWorkspaceNext/.test(DW), 'HerbalWorkspaceNext가 mixed 전용이 아니다')
+    // 한약 단독 렌더에는 그 picker가 정말 없다.
+    const herbalOnly = render(HERBAL_SCENARIO_1)
+    assert.ok(!herbalOnly.includes('수면 불편'), '한약 단독 화면에 재평가 대상 칩이 나타났다')
+  })
+
+  test('F6 사용자 문구에 사라진 레인 이름이 남아 있지 않다', () => {
+    for (const [name, src] of [['PainWorkspace', PW], ['DoctorWorkspace', DW], ['HerbalWorkspace', HW]]) {
+      assert.ok(!/&apos;다음&apos; 레인/.test(src), `${name}: 옛 레인 이름이 남았다`)
+      assert.ok(!/「다음」 레인/.test(src), `${name}: 옛 레인 이름이 남았다`)
+    }
+    // 자기점검: 새 이름이 실제로 쓰이고 있다(문구를 통째로 지운 것이 아니다).
+    assert.ok(/&apos;마무리&apos; 화면의 재평가 대상/.test(PW), '운동 카드 안내문이 새 이름을 쓰지 않는다')
+  })
+}
+
+console.log(`(+검수 6건 회귀 가드) ${passed} doctor-workspace assertions passed.`)

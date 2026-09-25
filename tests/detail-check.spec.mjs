@@ -26,7 +26,7 @@ import { DETAIL_CHECK_RESPONSE_PATHS, baselineDetailAnswersFromResponses } from 
 import { DOCTOR_FIXTURES } from './.detail-check-doctor-fixtures-bundle.mjs'
 import { computeDetailCheckDue as clientDue } from './.detail-check-revisit-quick-check-bundle.mjs'
 import { resolveDetailCheckQuestions, describeDetailCheckValue, detailCheckQuestionText } from './.detail-check-questions-bundle.mjs'
-import { PAIN_NRS_TARGET_IDS } from './.detail-check-final-assessment-bundle.mjs'
+import { PAIN_NRS_TARGET_IDS, HERBAL_NRS_TARGET_IDS } from './.detail-check-final-assessment-bundle.mjs'
 
 const require = createRequire(import.meta.url)
 const React = require('react')
@@ -349,7 +349,25 @@ async function main() {
       const m = src.match(/const NRS_TARGET_IDS[^=]*=\s*new Set\(\[([^\]]*)\]\)/)
       assert('source: FollowUpScreen declares NRS_TARGET_IDS as a literal Set', m !== null)
       const screenIds = m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean).sort().join(',')
-      assert('source: the patient NRS id set equals the doctor PAIN_NRS_TARGET_IDS (finalAssessment.ts)', screenIds === [...PAIN_NRS_TARGET_IDS].sort().join(','))
+      /*
+        2026-09-25 (한약 NRS): 환자 화면의 집합은 이제 원장 쪽 **두** 집합의
+        합이어야 한다 -- 통증(2026-09-06)과 한약(2026-09-25). 한쪽만 늘리면
+        원장은 0~10으로 기록하는데 환자는 자유 텍스트로 답하거나(또는 반대)
+        두 숫자가 like-for-like로 비교되지 않는다.
+      */
+      const doctorIds = [...PAIN_NRS_TARGET_IDS, ...HERBAL_NRS_TARGET_IDS].sort().join(',')
+      assert('source: the patient NRS id set equals the doctor PAIN + HERBAL NRS target ids (finalAssessment.ts)', screenIds === doctorIds)
+      assert('source: the doctor sets do not overlap (한 id가 두 프로필에 걸치면 눈금 문구가 어느 쪽인지 알 수 없다)',
+        [...HERBAL_NRS_TARGET_IDS].every((id) => !PAIN_NRS_TARGET_IDS.has(id)))
+      /*
+        눈금 양끝 라벨·안내문이 없는 id가 이 화면에 들어오면, NumericScale이
+        폴백 문구('없음'/'매우 심함')로 조용히 그려진다 -- 환자에게 무엇을
+        묻는지 모호한 눈금이 뜬다. 집합과 문구 map의 key가 같은지 못박는다.
+      */
+      const promptKeys = [...src.matchAll(/^ {2}([a-z_]+): \{$/gm)].map((mm) => mm[1]).sort().join(',')
+      assert('source: FollowUpScreen NRS_PROMPT has wording for exactly the ids in NRS_TARGET_IDS', promptKeys === screenIds, `(${promptKeys} vs ${screenIds})`)
+      assert('source: 통증 NRS 양끝 문구는 그대로다 (확립된 도구 문구를 한약 때문에 바꾸지 않는다)',
+        /minLabel: '통증 없음',\s*\n\s*maxLabel: '상상할 수 있는 최악',/.test(src))
       assert('source: FollowUpScreen still never imports serverClient/doctorToken', !/from\s+['"].*(serverClient|doctorToken)['"]/.test(src))
     }
   } finally {

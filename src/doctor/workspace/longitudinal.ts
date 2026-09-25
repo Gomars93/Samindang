@@ -9,7 +9,7 @@
  * (follow-up target baseline/post-treatment values, final assessment free
  * text, the next-reassessment plan they set) — never anything inferred.
  */
-import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL } from './finalAssessment'
+import { NEXT_REASSESSMENT_PLAN_STATUS_LABEL, isNrsValue } from './finalAssessment'
 import type { FollowUpTarget, NextReassessmentPlan, NextReassessmentPlanStatus } from './finalAssessment'
 
 export type PriorVisitSummary = {
@@ -197,16 +197,82 @@ export type LastVisitTrackedLine = { text: string; overflowCount: number }
 
 const LAST_VISIT_TRACKED_MAX_SHOWN = 3
 
-export function lastVisitTrackedLine(priorVisits: PatientHistoryResult | null | undefined): LastVisitTrackedLine | null {
+/**
+ * 2026-09-25 (한약 NRS의 짝): 지난 기준값 옆에 **오늘 기준값**을 나란히
+ * 놓는다 -- 둘 다 NRS(0~10)일 때만.
+ *
+ *   수면 불편 — 기준값 7 → 4 ↓3
+ *
+ * 왜 여기인가: 이 줄은 이미 확인 레인 맨 위에 **프로필과 무관하게** 뜨고
+ * 있었고(가드 없음), 지난 기준값을 이미 싣고 있었다. 한약용 브리핑
+ * 컴포넌트를 새로 만드는 것보다 이미 있는 줄에 오른쪽 절반을 채우는 쪽이
+ * 정직하다.
+ *
+ * 계산하는 것은 **산술뿐**이다 -- 차이와 방향 화살표. `호전/악화`도, %도,
+ * 판정도 만들지 않는다(`REPEAT_VISIT_AUTO_COMPARE_STATUS`가 금지하는 것은
+ * 그 해석이지 이전 값 표시가 아니다 -- finalAssessment.ts의 그 상수 주석).
+ * 통증 브리핑의 비교 행이 이미 같은 선을 긋고 있다.
+ *
+ * 둘 중 하나라도 NRS가 아니면(자유 텍스트, 미기록, 손상) 예전 문구
+ * 그대로다 -- `todayTargets`를 생략한 호출자는 바이트 단위로 같다.
+ *
+ * `baseline` 대 `baseline`으로 짝짓는다. 지난 `postTreatmentValue`(치료
+ * 직후)는 다른 시점이라 오늘 기준값과 나란히 놓으면 안 된다.
+ *
+ * 프로필을 가르지 않는다 -- 이 줄의 출처인 `followUpTargets`가 원래
+ * 프로필 무관 union이고, 통증도 원장이 `pain_intensity` 기준값을 NRS로
+ * 적었다면 같은 규칙으로 델타가 붙는다. 그쪽에도 맞는 정보다.
+ */
+function trackedValueText(
+  priorRaw: string,
+  today: { value: string; label: string } | undefined,
+  priorLabel: string,
+): string {
+  if (today === undefined || !isNrsValue(priorRaw) || !isNrsValue(today.value)) return priorRaw
+  /*
+    검수 F4: **같은 자로 잰 것인지 확신할 수 없으면 델타를 만들지 않는다.**
+
+    2026-09-25에 한약 라벨이 중립 명사에서 방향 있는 이름으로 좁아졌다
+    (`수면` → `수면 불편`). 옛 방문에 `수면` 아래 맨 숫자를 적어뒀다면 그
+    숫자가 "잘 잔 정도"였는지 "불편한 정도"였는지 알 수 없는데, id가 같다는
+    이유로 화살표를 붙이면 **악화를 호전으로 표시**할 수 있다.
+
+    라벨이 같을 때만 비교한다 -- 이 배치 이후 기록은 모두 새 라벨이라 다음
+    방문부터 델타가 자연히 되살아난다. 라벨이 다르면 지난 값만 그대로 보여
+    주고 판단은 원장에게 남긴다(지어내지 않는다).
+
+    `HERBAL_NRS_TARGET_IDS` 주석이 "옛 값이 새 방문의 NRS 버튼으로 둔갑하는
+    경로는 없다"고만 적고 이 경로를 놓쳤다 -- 그 주석도 고쳤다.
+  */
+  const todayValue = today.value
+  if (priorLabel !== today.label) return priorRaw
+  const priorN = Number(priorRaw)
+  const todayN = Number(todayValue)
+  const diff = Math.abs(todayN - priorN)
+  const arrow = todayN < priorN ? ` ↓${diff}` : todayN > priorN ? ` ↑${diff}` : ''
+  return `${priorRaw} → ${todayValue}${arrow}`
+}
+
+export function lastVisitTrackedLine(
+  priorVisits: PatientHistoryResult | null | undefined,
+  todayTargets?: readonly FollowUpTarget[],
+): LastVisitTrackedLine | null {
   const visits = asPriorVisitArray<PriorVisitSummary>(priorVisits?.visits)
   const last = visits[0]
   if (!isRecordLike(last)) return null
   const rawTargets = asPriorVisitArray<unknown>((last as PriorVisitSummary).followUpTargets)
   if (rawTargets.length === 0) return null
+  // 오늘 값은 id로 짝짓는다. 오늘 목록도 검증 없는 PUT이 만든 것이라 원소별로 방어한다.
+  const todayById = new Map<string, { value: string; label: string }>()
+  for (const t of asPriorVisitArray<unknown>(todayTargets)) {
+    if (!isRecordLike(t)) continue
+    if (typeof t.id !== 'string' || typeof t.baseline !== 'string' || typeof t.label !== 'string') continue
+    if (!todayById.has(t.id)) todayById.set(t.id, { value: t.baseline.trim(), label: t.label })
+  }
   const shown = rawTargets.slice(0, LAST_VISIT_TRACKED_MAX_SHOWN).map((raw, i) => {
     const t = readablePriorVisitFollowUpTarget(raw, i)
     const rawValue = t.baselineText.replace(/^이전 baseline:\s*/, '')
-    return `${t.label} — 기준값 ${rawValue}`
+    return `${t.label} — 기준값 ${trackedValueText(rawValue, todayById.get(t.id), t.label)}`
   })
   return {
     text: shown.join(' · '),

@@ -165,24 +165,84 @@ export function microFollowUpNeedsAttention(response: MicroFollowUpResponse): bo
 }
 
 /**
+ * 「지난 대비」 한 줄에 붙는 경보 종류. `microFollowUpNeedsAttention`이
+ * true/false만 돌려주는 것과 달리 **어느 쪽인지**를 말한다 -- 좌측 요약은
+ * 문장 하나만 싣기 때문에, 그 문장이 "이상반응 신고"인지 "그냥 근황"인지가
+ * 배지로 구분되지 않으면 원장이 같은 글자를 다르게 읽을 수 없다.
+ *
+ * 우선순위는 `microFollowUpQuoteLine`과 **같아야 한다** -- 배지는 이상반응을
+ * 가리키는데 문장은 전반적 변화를 싣는 어긋남이 생기면, 둘을 나란히 읽는
+ * 원장이 이상반응 내용을 읽었다고 착각한다. 두 함수의 분기 순서가 같음을
+ * 테스트가 직접 단언한다.
+ */
+export type MicroFollowUpAlertKind = 'ADVERSE_EFFECT' | 'NEW_SYMPTOM'
+
+export function microFollowUpAlertKind(response: MicroFollowUpResponse | null): MicroFollowUpAlertKind | null {
+  if (!response) return null
+  if (response.adverseEffectReported) return 'ADVERSE_EFFECT'
+  if (response.newSymptomReported) return 'NEW_SYMPTOM'
+  return null
+}
+
+export const MICRO_FOLLOW_UP_ALERT_LABEL: Readonly<Record<MicroFollowUpAlertKind, string>> = {
+  ADVERSE_EFFECT: '이상반응',
+  NEW_SYMPTOM: '새 증상',
+}
+
+/**
+ * 환자가 이상반응/새 증상을 신고했으면서 **내용을 비워둔** 경우에 쓰는 문구.
+ * 빈 문자열을 그대로 흘리면 아래 우선순위가 다음 분기로 넘어가 버린다 --
+ * 그러면 "이상반응 있음"을 체크한 환자의 한 줄에 아무 일 없다는 듯한
+ * 전반적 변화 문장이 실린다(아래 본문 주석 참고).
+ *
+ * 검수 F3: 이 문구는 좌측 요약뿐 아니라 **EMR §14.1 S**로도 간다. 처음에
+ * `(내용 없음)` 한 종류만 뒀더니 EMR에 그 다섯 글자만 남아, 기록만 보는
+ * 사람은 무엇이 비었는지 알 수 없었다(좌측 요약에는 배지가 있어 괜찮았지만
+ * EMR에는 배지가 없다). 그래서 종류별로 자기설명적인 문구를 쓴다 -- 좌측
+ * 요약에서는 배지와 조금 겹치지만, 의무기록이 스스로 말하는 쪽이 맞다.
+ *
+ * 이 경우 환자의 `overallChange` 문장은 이 줄에 실리지 않는다. 신고가 더
+ * 급한 정보라 우선순위가 그렇게 정해져 있고, 원문 전체는 「마무리」의
+ * 「간단 재확인」 카드에 그대로 남아 있다.
+ */
+const MICRO_FOLLOW_UP_EMPTY_NOTE: Readonly<Record<MicroFollowUpAlertKind, string>> = {
+  ADVERSE_EFFECT: '이상반응 보고됨(내용 없음)',
+  NEW_SYMPTOM: '새 증상 보고됨(내용 없음)',
+}
+
+/**
  * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.3/§2.11, Phase 7 §3.2 block
  * ③ "지난 대비"): the left-column summary shows one PATIENT_FACT-styled
- * quote line, distinct from the full MicroFollowUpCard (which stays in
- * lane2, unchanged, gated by `open={needsAttention}` above). This never
- * invents a value the patient did not type -- it picks the single most
- * informative already-recorded string, in a fixed priority order (an
- * adverse-effect/new-symptom note first, since those are what
- * needsAttention flags; then the free-text overall-change answer; then the
- * first target rating), and returns null when nothing was ever recorded so
- * the caller can omit the block entirely rather than render an empty quote.
+ * quote line. This never invents a value the patient did not type -- it
+ * picks the single most informative already-recorded string, in a fixed
+ * priority order (an adverse-effect/new-symptom note first, since those are
+ * what needsAttention flags; then the free-text overall-change answer; then
+ * the first target rating), and returns null when nothing was ever recorded
+ * so the caller can omit the block entirely rather than render an empty
+ * quote.
+ *
+ * 2026-09-24 결함 수정 (PO 지시로 통증 확인 레인의 MicroFollowUpCard를
+ * 떼면서 드러났다). 이전 판은 두 신고 분기를 `reported && note.trim()`으로
+ * 걸었다 -- 그래서 **신고는 했는데 내용을 안 적은** 환자의 경우 조용히 다음
+ * 분기로 떨어져, 이상반응 신고가 "전반적 변화: 그럭저럭이요" 같은 문장으로
+ * 바뀌어 나갔다. 이 줄은 좌측 요약과 EMR 텍스트(§14.1 S) 양쪽으로 가므로,
+ * 신고 자체가 화면에서도 기록에서도 사라지고 있었다는 뜻이다.
+ *
+ * 카드가 확인 레인에 있을 때는 그 카드가 `needsAttention`으로 저절로 펼쳐져
+ * 이 구멍을 가려주고 있었다. 카드를 떼면 가려주던 것이 없어지므로, 떼기
+ * **전에** 여기를 먼저 메운다.
+ *
+ * 고친 뒤: 신고가 있으면 내용이 비어도 그 분기에서 멈추고 `(내용 없음)`을
+ * 돌려준다 -- 없는 값을 지어내는 것이 아니라 "신고는 있었고 내용은 없다"는
+ * 사실 그대로다.
  */
 export function microFollowUpQuoteLine(response: MicroFollowUpResponse | null): string | null {
   if (!response) return null
-  if (response.adverseEffectReported && response.adverseEffectNote.trim()) {
-    return response.adverseEffectNote.trim()
+  if (response.adverseEffectReported) {
+    return response.adverseEffectNote.trim() || MICRO_FOLLOW_UP_EMPTY_NOTE.ADVERSE_EFFECT
   }
-  if (response.newSymptomReported && response.newSymptomNote.trim()) {
-    return response.newSymptomNote.trim()
+  if (response.newSymptomReported) {
+    return response.newSymptomNote.trim() || MICRO_FOLLOW_UP_EMPTY_NOTE.NEW_SYMPTOM
   }
   if (response.overallChange.trim()) return response.overallChange.trim()
   const firstRated = response.targetRatings.find((t) => t.patientReportedValue.trim() !== '')

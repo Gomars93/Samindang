@@ -27,7 +27,13 @@ import { ClinicianObservationChecklist } from './ClinicianObservationChecklist'
 import { FollowUpTargetPicker } from './FollowUpTargetPicker'
 import { EmrPreviewCard } from './EmrPreviewCard'
 import { buildHerbalWorkspaceEmrPreview } from './emrPreview'
-import { HERBAL_FOLLOW_UP_OPTIONS, type FollowUpTarget, type HerbalFinalAssessment, type NextReassessmentPlan } from './finalAssessment'
+import {
+  HERBAL_FOLLOW_UP_OPTIONS,
+  HERBAL_NRS_TARGET_IDS,
+  type FollowUpTarget,
+  type HerbalFinalAssessment,
+  type NextReassessmentPlan,
+} from './finalAssessment'
 import type { HerbalPatternCandidate } from './patternCandidate'
 import type { ClinicianObservationItem } from './clinicianObservation'
 import type { HerbalCarePlan } from './carePlan'
@@ -249,7 +255,17 @@ export function HerbalWorkspaceNext({
       <div className="doctor__nextPairRow">
         <div className="doctor__nextPairRow__col">
           <p className="doctor__nextPairRow__label">재평가 대상 (측정 추적)</p>
-          <FollowUpTargetPicker options={HERBAL_FOLLOW_UP_OPTIONS} selected={followUpTargets} onChange={onChangeFollowUpTargets} />
+          {/*
+            2026-09-25 (PO 승인): 통증이 2026-09-06부터 쓰던 NRS 스위치를
+            한약에도 켠다 -- 같은 prop, 같은 컴포넌트. 이 한 줄로 원장
+            화면과 환자 재진 링크가 둘 다 0~10 버튼이 된다.
+          */}
+          <FollowUpTargetPicker
+            options={HERBAL_FOLLOW_UP_OPTIONS}
+            selected={followUpTargets}
+            onChange={onChangeFollowUpTargets}
+            nrsTargetIds={HERBAL_NRS_TARGET_IDS}
+          />
         </div>
         <div className="doctor__nextPairRow__col">
           <p className="doctor__nextPairRow__label">다음 방문 확인 메모 (자유 기록)</p>

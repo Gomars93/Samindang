@@ -58,8 +58,49 @@ const YES_NO_OPTIONS: Option[] = [
 // here as a literal (not imported from the doctor module) to keep this
 // patient screen's import surface to spec + presentational components; a
 // source-level test pins the two sets equal.
-const NRS_TARGET_IDS: ReadonlySet<string> = new Set(['pain_intensity'])
-const NRS_SCALE = { min: 0, max: 10, minLabel: '통증 없음', maxLabel: '상상할 수 있는 최악' }
+const NRS_TARGET_IDS: ReadonlySet<string> = new Set(['pain_intensity', 'sleep', 'digestion', 'fatigue'])
+
+/*
+  2026-09-25 (PO 승인, 한약 NRS): 눈금 양끝 라벨과 안내문은 **target마다
+  달라야 한다.** 통증 것을 그대로 쓰면 「수면 불편 (0~10)」 아래에 "통증
+  없음 ~ 상상할 수 있는 최악"이 붙는다.
+
+  통증 문구는 한 글자도 바꾸지 않았다 -- NRS 양끝 표현은 확립된 도구의
+  문구이고, 그걸 한약까지 덮는 일반어로 고치면 통증 환자 화면이 조용히
+  달라진다(임상 문구 변경은 PO 승인 사항이다).
+
+  한약 세 개의 문구는 **내 초안**이다. 라벨(수면 불편/속 불편/피로)은 PO가
+  승인했지만 이 양끝 표현까지 승인받은 것은 아니다 -- HANDOFF에 확인 요청을
+  남겼다.
+
+  `NRS_TARGET_IDS`를 이 map의 key에서 파생시키지 않고 따로 둔 이유: 원장
+  모듈(finalAssessment.ts)의 두 집합과 글자 단위로 대조하는 소스 테스트가
+  literal Set 형태를 본다(tests/detail-check.spec.mjs). 대신 "집합과 map의
+  key가 같다"를 같은 테스트가 따로 단언한다 -- 문구 없는 id가 이 화면에
+  들어오면 실패한다.
+*/
+const NRS_PROMPT: Record<string, { hint: string; minLabel: string; maxLabel: string }> = {
+  pain_intensity: {
+    hint: '지금 통증이 어느 정도인지 숫자를 눌러 주세요',
+    minLabel: '통증 없음',
+    maxLabel: '상상할 수 있는 최악',
+  },
+  sleep: {
+    hint: '요즘 수면이 얼마나 불편한지 숫자를 눌러 주세요',
+    minLabel: '전혀 불편하지 않음',
+    maxLabel: '매우 불편함',
+  },
+  digestion: {
+    hint: '요즘 속이 얼마나 불편한지 숫자를 눌러 주세요',
+    minLabel: '전혀 불편하지 않음',
+    maxLabel: '매우 불편함',
+  },
+  fatigue: {
+    hint: '요즘 피로가 어느 정도인지 숫자를 눌러 주세요',
+    minLabel: '전혀 피로하지 않음',
+    maxLabel: '매우 피로함',
+  },
+}
 
 const UNAVAILABLE_MESSAGE: Record<string, string> = {
   EXPIRED: '링크가 만료되었습니다. 직원에게 문의해 주세요.',
@@ -296,9 +337,12 @@ export function FollowUpScreen({
             NRS_TARGET_IDS.has(t.id) ? (
               <section key={t.id} className="followUp__section">
                 <h2 className="followUp__label">{`${t.label} (0~10)`}</h2>
-                <p className="followUp__targetHint">지금 통증이 어느 정도인지 숫자를 눌러 주세요</p>
+                <p className="followUp__targetHint">{NRS_PROMPT[t.id]?.hint ?? '지금 상태를 숫자로 눌러 주세요'}</p>
                 <NumericScale
-                  {...NRS_SCALE}
+                  min={0}
+                  max={10}
+                  minLabel={NRS_PROMPT[t.id]?.minLabel ?? '없음'}
+                  maxLabel={NRS_PROMPT[t.id]?.maxLabel ?? '매우 심함'}
                   value={targetAnswers[t.id] !== undefined && targetAnswers[t.id] !== '' ? Number(targetAnswers[t.id]) : null}
                   onSelect={(n) => setTargetAnswers((m) => ({ ...m, [t.id]: String(n) }))}
                 />

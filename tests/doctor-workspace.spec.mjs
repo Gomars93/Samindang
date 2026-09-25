@@ -4199,7 +4199,7 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     assert.ok(!/aria-pressed="true"[^>]*aria-label="통증 강도 오늘 기준값/.test(html), '숫자가 아니라 눌린 버튼은 없다')
   })
 
-  test('NRS: 비NRS 통증 대상(움직임·기능)과 한약 대상(수면)은 예전처럼 텍스트 input — 바이트 단위 불변', () => {
+  test('NRS: 비NRS 통증 대상(움직임·기능)은 예전처럼 텍스트 input — 바이트 단위 불변', () => {
     const pain = renderToString(
       React.createElement(DoctorWorkspace, {
         payload: PAIN_SCENARIO_1.payload,
@@ -4209,22 +4209,63 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     )
     assert.ok(/<input[^>]*aria-label="움직임·기능 오늘 기준값"/.test(pain), '비NRS 통증 대상은 텍스트 input')
     assert.ok(!pain.includes('workspace__nrs'), 'NRS 마크업이 없다')
-    // PR-A(한약 화면 축소, 2026-09-21): 한약 재평가 대상 picker는 herbal
-    // 단독 프로필에서 `다음` 레인과 함께 제거됐고, mixed에만 남는다. 이
-    // 단언이 지키려던 것("한약 대상의 기준값은 NRS 버튼이 아니라 텍스트
-    // input")은 그 picker가 살아 있는 mixed에서 그대로 확인한다.
+  })
+
+  /*
+   * 2026-09-25 (PO 승인): 한약 재평가 대상도 NRS 버튼으로 받는다 —
+   * 2026-09-06에 통증에 켠 것과 **같은 스위치**(`nrsTargetIds`)다.
+   *
+   * 이 블록은 직전까지 정반대를 단언하고 있었다("한약 대상은 텍스트
+   * input"). 계약이 바뀐 것이므로 단언을 새 계약으로 고쳤다 — 지우지
+   * 않았다. 그리고 `대변`은 **일부러** 텍스트로 남았으므로 그 쪽을 같은
+   * 강도로 고정한다. 셋 다 안 하면 "NRS를 한약 전체에 켰다"와 "고른
+   * 셋에만 켰다"가 구분되지 않는다.
+   *
+   * PR-A(2026-09-21) 이후 한약 재평가 picker는 herbal 단독에 없고 mixed에만
+   * 있으므로 mixed로 잰다.
+   */
+  test('NRS(한약): 수면 불편은 0~10 버튼이 붙는다 (mixed)', () => {
     const mixed = renderToString(
       React.createElement(DoctorWorkspace, {
         payload: MIXED_SCENARIO_1.payload,
         synthetic: MIXED_SCENARIO_1.synthetic,
-        initialWorkspaceState: { herbalFollowUpTargets: [{ id: 'sleep', label: '수면', baseline: '', postTreatmentValue: '' }] },
+        initialWorkspaceState: {
+          herbalFollowUpTargets: [{ id: 'sleep', label: '수면 불편', baseline: '', postTreatmentValue: '' }],
+        },
       }),
     )
-    assert.ok(/<input[^>]*aria-label="수면 오늘 기준값"/.test(mixed), '한약 대상은 텍스트 input (mixed)')
-    assert.ok(
-      !/aria-label="수면 오늘 기준값"[^>]*class="[^"]*workspace__nrs/.test(mixed),
-      '한약 대상에 NRS 마크업이 붙지 않는다 (같은 화면의 통증 대상은 NRS일 수 있다)',
+    assert.ok(/role="group" aria-label="수면 불편 오늘 기준값"/.test(mixed), '버튼 그룹이 있다')
+    assert.ok(mixed.includes('workspace__nrs'), 'NRS 마크업이 있다')
+  })
+
+  test('NRS(한약): 대변은 일부러 텍스트로 남는다 — 횟수는 강도가 아니다', () => {
+    const mixed = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
+        initialWorkspaceState: {
+          herbalFollowUpTargets: [{ id: 'stool', label: '대변', baseline: '', postTreatmentValue: '' }],
+        },
+      }),
     )
+    assert.ok(/<input[^>]*aria-label="대변 오늘 기준값"/.test(mixed), '대변은 텍스트 input')
+    assert.ok(!/role="group" aria-label="대변 오늘 기준값"/.test(mixed), '대변에 버튼 그룹이 붙지 않는다')
+  })
+
+  test('NRS(한약) 소스 계약: 집합은 수면·속·피로 셋이고 대변은 빠져 있다', () => {
+    const fa = fs.readFileSync('src/doctor/workspace/finalAssessment.ts', 'utf8')
+    assert.ok(
+      /HERBAL_NRS_TARGET_IDS[^\n]*new Set\(\['sleep', 'digestion', 'fatigue'\]\)/.test(fa),
+      '집합이 바뀌었다 — 바꾸려면 환자 화면 문구(NRS_PROMPT)와 detail-check 대조 테스트도 같이 움직여야 한다',
+    )
+    // 라벨이 방향을 말해야 NRS가 ↓ 좋다로 읽힌다(중립 명사 '수면'으로 되돌아가면 실패).
+    assert.ok(/followUpTarget\('sleep', '수면 불편'\)/.test(fa))
+    assert.ok(/followUpTarget\('digestion', '속 불편'\)/.test(fa))
+    assert.ok(/followUpTarget\('fatigue', '피로'\)/.test(fa))
+    assert.ok(/followUpTarget\('stool', '대변'\)/.test(fa), '대변 라벨은 그대로다')
+    // 한약 호출부가 실제로 그 집합을 넘긴다 — 상수만 만들고 안 넘기면 화면은 그대로다.
+    const hw = fs.readFileSync('src/doctor/workspace/HerbalWorkspace.tsx', 'utf8')
+    assert.ok(/nrsTargetIds=\{HERBAL_NRS_TARGET_IDS\}/.test(hw), '한약 picker에 집합이 넘어가지 않는다')
   })
 
   // PR-A 계약: 위 단언이 mixed로 옮겨간 이유를 코드로 고정한다 -- herbal

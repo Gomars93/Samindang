@@ -111,12 +111,49 @@ export function isNrsValue(v: string): boolean {
   return NRS_VALUES.includes(v)
 }
 
+/*
+  2026-09-25 (PO 승인): 라벨이 방향을 말하게 바꿨다 -- `수면`/`소화`는 중립
+  명사라 0~10 중 10이 좋은 쪽인지 나쁜 쪽인지 화면만 보고 알 수 없다.
+  `수면 불편`/`속 불편`이면 NRS가 통증과 같은 한 방향(↓ 좋다)으로 읽힌다.
+
+  id는 그대로 둔다. 바꾸면 이전 방문에서 이어받기·이전 방문 표시·EMR이
+  전부 끊긴다(그쪽이 훨씬 비싸다). 이건 같은 축(이 환자의 수면 문제)에
+  대한 라벨 정밀화이지 다른 것을 재는 것이 아니다 -- 다만 중립 명사에서
+  방향이 있는 이름으로 좁아지는 것은 사실이라, 옛 자유값('잘 자요')이
+  어떻게 처리되는지는 아래 `HERBAL_NRS_TARGET_IDS` 주석에 적었다.
+
+  `대변`은 라벨도 NRS도 그대로다 -- 아래 주석 참고.
+*/
 export const HERBAL_FOLLOW_UP_OPTIONS: FollowUpTarget[] = [
-  followUpTarget('sleep', '수면'),
-  followUpTarget('digestion', '소화'),
+  followUpTarget('sleep', '수면 불편'),
+  followUpTarget('digestion', '속 불편'),
   followUpTarget('stool', '대변'),
-  followUpTarget('fatigue', '피로·기력'),
+  followUpTarget('fatigue', '피로'),
 ]
+
+/**
+ * 2026-09-25 (PO 승인): 한약 재평가 대상도 기준값·직후값을 0~10 버튼으로
+ * 받는다 -- 통증의 `PAIN_NRS_TARGET_IDS`(2026-09-06 원장 지시 "재진시
+ * 추적항목만 체크 -- NRS라던지", "자유입력을 최대한 피하고")와 **같은
+ * 스위치**다. 이 집합에 id가 있으면 원장 화면(FollowUpTargetPicker)과
+ * 환자 재진 링크(FollowUpScreen)가 둘 다 텍스트 칸 대신 버튼을 그린다.
+ *
+ * 새 문진 문항을 만들지 않았다. 이미 있는 스위치를 한약에도 켰을 뿐이고,
+ * 그래서 문진 길이는 그대로다.
+ *
+ * `stool`(대변)은 **일부러 뺐다.** 대변은 강도가 아니라 횟수·양상이라
+ * 0~10에 얹으면 "대변 7점"이 무슨 뜻인지 아무도 모른다. 자유 기록으로
+ * 남긴다 -- 숫자가 필요해지면 그때 횟수 전용 형식을 따로 만든다.
+ *
+ * 옛 자유값 처리: 이 스위치 도입 전에 적힌 값('잘 자요', '보통')은
+ * `isNrsValue`가 false를 돌려주고 화면이 그 값을 담은 텍스트 칸을 버튼
+ * 위에 그대로 남긴다(통증과 같은 처리). 이어받기는 값을 나르지 않으므로
+ * (`revisitCarryForward.ts`의 `trackingOnly`가 baseline/직후값을 ''로
+ * 비운다) 옛 값이 새 방문의 NRS 버튼으로 둔갑하는 경로는 없다. 남는 유일한
+ * 애매함은 옛 방문에 **맨 숫자**('7')를 적어둔 경우로, 그건 이전 방문
+ * 표시에서 읽기 전용 원문으로만 보인다.
+ */
+export const HERBAL_NRS_TARGET_IDS: ReadonlySet<string> = new Set(['sleep', 'digestion', 'fatigue'])
 
 /**
  * This string means specifically "no automatic interpretation of the

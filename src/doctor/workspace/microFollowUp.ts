@@ -194,8 +194,21 @@ export const MICRO_FOLLOW_UP_ALERT_LABEL: Readonly<Record<MicroFollowUpAlertKind
  * 빈 문자열을 그대로 흘리면 아래 우선순위가 다음 분기로 넘어가 버린다 --
  * 그러면 "이상반응 있음"을 체크한 환자의 한 줄에 아무 일 없다는 듯한
  * 전반적 변화 문장이 실린다(아래 본문 주석 참고).
+ *
+ * 검수 F3: 이 문구는 좌측 요약뿐 아니라 **EMR §14.1 S**로도 간다. 처음에
+ * `(내용 없음)` 한 종류만 뒀더니 EMR에 그 다섯 글자만 남아, 기록만 보는
+ * 사람은 무엇이 비었는지 알 수 없었다(좌측 요약에는 배지가 있어 괜찮았지만
+ * EMR에는 배지가 없다). 그래서 종류별로 자기설명적인 문구를 쓴다 -- 좌측
+ * 요약에서는 배지와 조금 겹치지만, 의무기록이 스스로 말하는 쪽이 맞다.
+ *
+ * 이 경우 환자의 `overallChange` 문장은 이 줄에 실리지 않는다. 신고가 더
+ * 급한 정보라 우선순위가 그렇게 정해져 있고, 원문 전체는 「마무리」의
+ * 「간단 재확인」 카드에 그대로 남아 있다.
  */
-const MICRO_FOLLOW_UP_EMPTY_NOTE = '(내용 없음)'
+const MICRO_FOLLOW_UP_EMPTY_NOTE: Readonly<Record<MicroFollowUpAlertKind, string>> = {
+  ADVERSE_EFFECT: '이상반응 보고됨(내용 없음)',
+  NEW_SYMPTOM: '새 증상 보고됨(내용 없음)',
+}
 
 /**
  * Core Reduction P2 (Phase 5 Synthesis v1.2 §2.3/§2.11, Phase 7 §3.2 block
@@ -226,10 +239,10 @@ const MICRO_FOLLOW_UP_EMPTY_NOTE = '(내용 없음)'
 export function microFollowUpQuoteLine(response: MicroFollowUpResponse | null): string | null {
   if (!response) return null
   if (response.adverseEffectReported) {
-    return response.adverseEffectNote.trim() || MICRO_FOLLOW_UP_EMPTY_NOTE
+    return response.adverseEffectNote.trim() || MICRO_FOLLOW_UP_EMPTY_NOTE.ADVERSE_EFFECT
   }
   if (response.newSymptomReported) {
-    return response.newSymptomNote.trim() || MICRO_FOLLOW_UP_EMPTY_NOTE
+    return response.newSymptomNote.trim() || MICRO_FOLLOW_UP_EMPTY_NOTE.NEW_SYMPTOM
   }
   if (response.overallChange.trim()) return response.overallChange.trim()
   const firstRated = response.targetRatings.find((t) => t.patientReportedValue.trim() !== '')

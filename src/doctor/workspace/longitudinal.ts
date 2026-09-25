@@ -223,12 +223,33 @@ const LAST_VISIT_TRACKED_MAX_SHOWN = 3
  * 프로필 무관 union이고, 통증도 원장이 `pain_intensity` 기준값을 NRS로
  * 적었다면 같은 규칙으로 델타가 붙는다. 그쪽에도 맞는 정보다.
  */
-function trackedValueText(priorRaw: string, todayValue: string | undefined): string {
-  if (todayValue === undefined || !isNrsValue(priorRaw) || !isNrsValue(todayValue)) return priorRaw
-  const prior = Number(priorRaw)
-  const today = Number(todayValue)
-  const diff = Math.abs(today - prior)
-  const arrow = today < prior ? ` ↓${diff}` : today > prior ? ` ↑${diff}` : ''
+function trackedValueText(
+  priorRaw: string,
+  today: { value: string; label: string } | undefined,
+  priorLabel: string,
+): string {
+  if (today === undefined || !isNrsValue(priorRaw) || !isNrsValue(today.value)) return priorRaw
+  /*
+    검수 F4: **같은 자로 잰 것인지 확신할 수 없으면 델타를 만들지 않는다.**
+
+    2026-09-25에 한약 라벨이 중립 명사에서 방향 있는 이름으로 좁아졌다
+    (`수면` → `수면 불편`). 옛 방문에 `수면` 아래 맨 숫자를 적어뒀다면 그
+    숫자가 "잘 잔 정도"였는지 "불편한 정도"였는지 알 수 없는데, id가 같다는
+    이유로 화살표를 붙이면 **악화를 호전으로 표시**할 수 있다.
+
+    라벨이 같을 때만 비교한다 -- 이 배치 이후 기록은 모두 새 라벨이라 다음
+    방문부터 델타가 자연히 되살아난다. 라벨이 다르면 지난 값만 그대로 보여
+    주고 판단은 원장에게 남긴다(지어내지 않는다).
+
+    `HERBAL_NRS_TARGET_IDS` 주석이 "옛 값이 새 방문의 NRS 버튼으로 둔갑하는
+    경로는 없다"고만 적고 이 경로를 놓쳤다 -- 그 주석도 고쳤다.
+  */
+  const todayValue = today.value
+  if (priorLabel !== today.label) return priorRaw
+  const priorN = Number(priorRaw)
+  const todayN = Number(todayValue)
+  const diff = Math.abs(todayN - priorN)
+  const arrow = todayN < priorN ? ` ↓${diff}` : todayN > priorN ? ` ↑${diff}` : ''
   return `${priorRaw} → ${todayValue}${arrow}`
 }
 
@@ -242,16 +263,16 @@ export function lastVisitTrackedLine(
   const rawTargets = asPriorVisitArray<unknown>((last as PriorVisitSummary).followUpTargets)
   if (rawTargets.length === 0) return null
   // 오늘 값은 id로 짝짓는다. 오늘 목록도 검증 없는 PUT이 만든 것이라 원소별로 방어한다.
-  const todayById = new Map<string, string>()
+  const todayById = new Map<string, { value: string; label: string }>()
   for (const t of asPriorVisitArray<unknown>(todayTargets)) {
     if (!isRecordLike(t)) continue
-    if (typeof t.id !== 'string' || typeof t.baseline !== 'string') continue
-    if (!todayById.has(t.id)) todayById.set(t.id, t.baseline.trim())
+    if (typeof t.id !== 'string' || typeof t.baseline !== 'string' || typeof t.label !== 'string') continue
+    if (!todayById.has(t.id)) todayById.set(t.id, { value: t.baseline.trim(), label: t.label })
   }
   const shown = rawTargets.slice(0, LAST_VISIT_TRACKED_MAX_SHOWN).map((raw, i) => {
     const t = readablePriorVisitFollowUpTarget(raw, i)
     const rawValue = t.baselineText.replace(/^이전 baseline:\s*/, '')
-    return `${t.label} — 기준값 ${trackedValueText(rawValue, todayById.get(t.id))}`
+    return `${t.label} — 기준값 ${trackedValueText(rawValue, todayById.get(t.id), t.label)}`
   })
   return {
     text: shown.join(' · '),

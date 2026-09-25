@@ -657,7 +657,23 @@ export function DoctorWorkspace({
           lane1={lane1Summary}
           saveStatus={submissionId && onSaveWorkspace ? saveStatus : undefined}
           lastSaveErrorKind={lastSaveErrorKind}
-          onOpenTokenReentry={() => setTokenReentryOpen(true)}
+          onOpenTokenReentry={() => {
+            /*
+              검수 F1: `DoctorTokenSetup` 폼은 레인1 맨 위, 즉 「진료」 단계
+              래퍼 **안**에 있다(MAJOR-3이 좌측 요약 20px 예산 밖으로 내보낸
+              자리). 마무리 화면에서 401이 나면 좌측 요약의 "인증 만료 —
+              토큰 다시 입력"은 항상 보이는데 폼은 `hidden`이라, 눌러도
+              아무 일이 안 일어나고 저장은 계속 실패한다.
+
+              폼을 두 단계 밖으로 옮기는 대신 여는 쪽에서 단계를 함께
+              되돌린다 -- 폼을 밖으로 빼면 MAJOR-3이 정한 자리(레인1 상단)를
+              잃고, 인증이 끊긴 상황에서 원장이 가야 할 곳은 어차피 진료
+              화면이다.
+            */
+            setVisitStep('consult')
+            setPendingJump(null)
+            setTokenReentryOpen(true)
+          }}
         />
 
         <main className="doctor__visitWork" aria-label="진료 작업">

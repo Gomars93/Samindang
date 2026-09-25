@@ -635,7 +635,7 @@ export function PainExerciseSection({
         <section className="workspace__block" id="exercise-h3">
           <h3>재활/운동 제안</h3>
           <p className="workspace__block__hint">
-            목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;다음&apos; 레인의 재평가 대상에서
+            목표 기능을 먼저 고르면 그 기능에 맞는 운동 후보가 나타납니다 — &apos;마무리&apos; 화면의 재평가 대상에서
             선택하세요.
             {targetFunctionGap === 'CUSTOM_ONLY' &&
               ' "기타 목표 동작"은 자유 기록이라 대응하는 카탈로그 운동이 없습니다 — 목록에 있는 목표 기능도 함께 골라주세요.'}

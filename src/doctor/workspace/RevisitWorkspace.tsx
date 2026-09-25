@@ -101,6 +101,7 @@ import { REGION_PACKS, activeRegionPack, activeDrivingPack } from './regionPacks
 import { readRegionHypothesis, withRegionHypothesis, type RegionHypothesisHost } from './regionClinicalState'
 import { PAIN_FOLLOW_UP_OPTIONS, HERBAL_FOLLOW_UP_OPTIONS,
   PAIN_NRS_TARGET_IDS,
+  HERBAL_NRS_TARGET_IDS,
 } from './finalAssessment'
 import { EXAM_CHECK_STATUS_LABEL, isValidExamStatus, type ExamCheckStatus } from './provenance'
 import {
@@ -241,6 +242,16 @@ function todayISO(): string {
   const dd = String(d.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
 }
+
+/*
+  검수 F2: 이 화면은 프로필을 가르지 않는 하나의 `followUpTargets`를 다루므로
+  NRS 집합도 둘을 합쳐 쓴다. 두 집합은 서로 겹치지 않는다(detail-check가
+  단언한다).
+*/
+const REVISIT_NRS_TARGET_IDS: ReadonlySet<string> = new Set([
+  ...PAIN_NRS_TARGET_IDS,
+  ...HERBAL_NRS_TARGET_IDS,
+])
 
 export function RevisitWorkspace({ visitId, patientId }: { visitId: string; patientId: string }) {
   const [loading, setLoading] = useState(true)
@@ -879,7 +890,15 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         onChange={(next) => setWorkspaceState((s) => ({ ...s, followUpTargets: next }))}
         showPostTreatmentField
         groups={followUpPicker.groups}
-        nrsTargetIds={PAIN_NRS_TARGET_IDS}
+        /*
+          검수 F2: 이 화면의 picker는 프로필 무관 `followUpTargets` 하나를
+          다루므로(이어받기로 통증·한약 대상이 섞여 들어온다) 통증 집합만
+          넘기면 이어받은 `sleep`/`digestion`/`fatigue`가 원장 쪽에서는
+          자유 텍스트인데 환자 재진 링크에서는 0~10 버튼으로 뜬다 — 두
+          숫자가 like-for-like로 비교되지 않는다(detail-check가 지키는
+          계약이 바로 그것이다).
+        */
+        nrsTargetIds={REVISIT_NRS_TARGET_IDS}
       />
 
       {/* LBP v1 Batch 3 (§9.2(c)): a pure fact readout, never auto-opening

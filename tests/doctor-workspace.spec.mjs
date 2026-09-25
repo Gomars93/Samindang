@@ -5404,3 +5404,113 @@ console.log(`(+마무리 화면 분리) ${passed} doctor-workspace assertions pa
 }
 
 console.log(`(+간단 재확인 이동) ${passed} doctor-workspace assertions passed.`)
+
+/* ====================================================================== *
+ * 「지난번 추적」 줄에 오늘 값을 나란히 놓는다 (2026-09-25, 한약 NRS의 짝)
+ *
+ * 한약 재평가가 0~10이 되면서 이 줄의 오른쪽 절반을 채울 수 있게 됐다.
+ * 산술(차이·화살표)만 만들고 호전/악화 판정은 만들지 않는다.
+ * ====================================================================== */
+{
+  const historyWith = (targets) => ({
+    patientId: 'p-track-1',
+    visits: [
+      {
+        visitId: 'v-track-1',
+        submissionId: null,
+        createdAt: '2026-09-11T00:00:00.000Z',
+        primaryConcern: null,
+        painFollowUpTargets: [],
+        herbalFollowUpTargets: targets,
+        followUpTargets: targets,
+        painFinalAssessmentSummary: null,
+        herbalFinalAssessmentSummary: null,
+        nextReassessmentPlan: null,
+        painNrsNow: null,
+        painNrsWorst: null,
+      },
+    ],
+  })
+  const target = (baseline) => [{ id: 'sleep', label: '수면 불편', baseline, postTreatmentValue: '' }]
+
+  // 지난 방문은 한약 프로필이지만 셸은 mixed로 그린다 — PR-A 이후 herbal
+  // 단독에도 이 줄은 뜨지만, mixed가 두 목록을 합쳐 넘기는 경로까지 함께 탄다.
+  const trackedLine = (priorBaseline, todayBaseline) => {
+    const html = renderToString(
+      React.createElement(DoctorWorkspace, {
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
+        priorVisits: historyWith(target(priorBaseline)),
+        initialWorkspaceState:
+          todayBaseline === undefined ? undefined : { herbalFollowUpTargets: target(todayBaseline) },
+      }),
+    )
+    const i = html.indexOf('doctor__lastVisitTracked')
+    assert.ok(i > 0, '「지난번 추적」 줄이 없다')
+    return html.slice(i, i + 260)
+  }
+
+  test('T-0 자기점검: 오늘 값을 안 넘기면 예전 문구 그대로 (바이트 단위 불변)', () => {
+    const line = trackedLine('7', undefined)
+    assert.ok(line.includes('수면 불편'), '라벨이 없다')
+    assert.ok(line.includes('기준값 7'), '지난 기준값이 없다')
+    assert.ok(!line.includes('→'), '오늘 값이 없는데 화살표가 붙었다')
+  })
+
+  test('T-1 둘 다 NRS면 오늘 값과 차이가 붙는다 (7 → 4 ↓3)', () => {
+    const line = trackedLine('7', '4')
+    assert.ok(line.includes('기준값 7 → 4 ↓3'), `실제: ${line.slice(0, 120)}`)
+  })
+
+  test('T-2 나빠진 방향도 그대로 산술로 (7 → 9 ↑2) — 좋다/나쁘다를 말하지 않는다', () => {
+    const line = trackedLine('7', '9')
+    assert.ok(line.includes('기준값 7 → 9 ↑2'))
+    assert.ok(!line.includes('악화') && !line.includes('호전'), '판정 단어가 들어갔다')
+  })
+
+  test('T-3 같은 값이면 화살표 없이 나란히만 (7 → 7)', () => {
+    const line = trackedLine('7', '7')
+    assert.ok(line.includes('기준값 7 → 7'))
+    assert.ok(!line.includes('↓') && !line.includes('↑'), '변화가 없는데 화살표가 붙었다')
+  })
+
+  test('T-4 경계값 0과 10도 NRS다 (0은 falsy라 흔히 떨어지는 값)', () => {
+    assert.ok(trackedLine('10', '0').includes('기준값 10 → 0 ↓10'))
+    assert.ok(trackedLine('0', '10').includes('기준값 0 → 10 ↑10'))
+  })
+
+  /*
+   * 한쪽이라도 NRS가 아니면 예전 문구다. 숫자처럼 생긴 자유값('7/10')을
+   * 조용히 숫자로 읽으면 없는 비교를 지어내게 된다 -- NRS 도입 전 기록이
+   * 정확히 그 모양이다(finalAssessment.ts의 `isNrsValue` 주석).
+   */
+  for (const [name, prior, today] of [
+    ['오늘이 자유 텍스트', '7', '많이 좋아짐'],
+    ['지난 값이 자유 텍스트', '푹 잠', '4'],
+    ['옛 자유값 7/10', '7/10', '4'],
+    ['범위 밖 11', '7', '11'],
+    ['소수 4.5', '7', '4.5'],
+    ['오늘 값이 빈 문자열', '7', ''],
+  ]) {
+    test(`T-5 ${name} → 비교를 지어내지 않는다`, () => {
+      const line = trackedLine(prior, today)
+      assert.ok(!line.includes('→'), `비교가 그려졌다: ${line.slice(0, 120)}`)
+    })
+  }
+
+  test('T-6 소스 계약: 산술만 만든다 — 판정 어휘가 이 함수에 없다', () => {
+    const src = fs.readFileSync('src/doctor/workspace/longitudinal.ts', 'utf8')
+    const fn = src.slice(src.indexOf('function trackedValueText'), src.indexOf('export function lastVisitTrackedLine'))
+    assert.ok(fn.length > 200, '함수 구간을 못 잡았다')
+    for (const word of ['호전', '악화', '개선', '%']) {
+      assert.ok(!fn.includes(word), `판정 어휘가 들어갔다: ${word}`)
+    }
+    assert.ok(/isNrsValue\(priorRaw\)/.test(fn) && /isNrsValue\(todayValue\)/.test(fn), '양쪽 다 NRS인지 보지 않는다')
+    // 오늘 값은 baseline끼리 짝짓는다 — 지난 postTreatmentValue(치료 직후)와 섞으면 다른 시점을 비교한다.
+    const caller = src.slice(src.indexOf('export function lastVisitTrackedLine'))
+    assert.ok(/typeof t\.baseline !== 'string'\) continue/.test(caller), '오늘 값을 baseline에서 읽지 않는다')
+    assert.ok(!/postTreatmentValue/.test(caller.slice(0, caller.indexOf('return {'))), '오늘 쪽에서 직후값을 읽고 있다')
+  })
+}
+
+console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions passed.`)

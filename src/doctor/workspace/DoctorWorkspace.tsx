@@ -591,7 +591,17 @@ export function DoctorWorkspace({
   ]
     .filter((v): v is string => Boolean(v))
     .join(' · ')
-  const trackedLine = lastVisitTrackedLine(priorVisits)
+  /*
+    2026-09-25: 오늘 기준값을 함께 넘긴다 -- 「지난번 추적」 줄이 지난 값만
+    싣고 있었는데, 한약 NRS가 생기면서 오른쪽 절반을 채울 수 있게 됐다.
+    두 프로필 목록을 합쳐서 넘긴다: 이 줄의 출처인 지난 방문 쪽
+    `followUpTargets`가 프로필 무관 union이라, 오늘 쪽만 한쪽 프로필로
+    좁히면 mixed에서 짝이 안 맞는다.
+  */
+  const trackedLine = lastVisitTrackedLine(priorVisits, [
+    ...workspaceState.painFollowUpTargets,
+    ...workspaceState.herbalFollowUpTargets,
+  ])
   const readableMicroFollowUp = readableMicroFollowUpResponse(microFollowUpResponse ?? null)
   const deltaQuoteLine = microFollowUpQuoteLine(readableMicroFollowUp)
   /*

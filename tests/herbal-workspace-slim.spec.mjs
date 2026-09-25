@@ -91,6 +91,26 @@ check(
   /buildHerbalEmrTextForRecord\(false\)/.test(VIEW),
 )
 
+/* ------------------------------------------------------------------ *
+ * B-1a/B-1b (PO 지시 2026-09-25): `재평가 대상` 편집 UI가 herbal 단독에
+ * 되살아났다(판단·처치 레인의 HerbalFollowUpTargetsCard). 화면과 출력은
+ * 항상 같이 움직여야 한다 -- 화면만 되살리고 EMR 키를 안 넘기면 원장이
+ * 고른 값이 기록에 안 간다(D-1의 거울상이고, 이쪽이 더 나쁘다).
+ *
+ * `carePlan`/`nextReassessmentPlan`은 편집 UI가 여전히 없으므로 slim에서
+ * 계속 뺀다 -- 넘기면 그게 바로 원래의 D-1이다.
+ * ------------------------------------------------------------------ */
+{
+  const fnStart = VIEW.indexOf('function buildHerbalEmrTextForRecord(slim: boolean)')
+  const fn = VIEW.slice(fnStart, VIEW.indexOf('\n  }', fnStart))
+  check('B-1a slim 경로도 `재평가 대상`을 넘긴다 (편집 UI가 되살아났다)', fnStart > 0 && /^\s*followUpTargets: workspaceState\.herbalFollowUpTargets,/m.test(fn))
+  const slimBranch = fn.slice(fn.indexOf('...(slim'))
+  check('B-1b slim 분기에는 followUpTargets가 더 이상 없다 (조건부가 아니라 항상 넘긴다)', !slimBranch.includes('followUpTargets'))
+  check('B-1c carePlan/nextReassessmentPlan은 여전히 slim에서 빠진다 (편집 UI가 없다)',
+    /carePlan: workspaceState\.herbalCarePlan/.test(slimBranch) &&
+      /nextReassessmentPlan: workspaceState\.nextReassessmentPlan/.test(slimBranch))
+}
+
 const observations = [
   { id: 'obs_tongue', category: 'tongue', title: '설진', checked: true, value: '치흔', recordedAt: '2026-09-21T00:00:00.000Z' },
 ]

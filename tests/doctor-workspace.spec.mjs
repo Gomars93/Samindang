@@ -4268,24 +4268,63 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
     assert.ok(/nrsTargetIds=\{HERBAL_NRS_TARGET_IDS\}/.test(hw), '한약 picker에 집합이 넘어가지 않는다')
   })
 
-  // PR-A 계약: 위 단언이 mixed로 옮겨간 이유를 코드로 고정한다 -- herbal
-  // 단독 화면에는 재평가 대상 picker 자체가 없다. 이 단언이 없으면 위
-  // 수정은 "테스트를 통과시키려고 시나리오를 바꾼 것"과 구분되지 않는다.
-  test('PR-A: herbal 단독 화면에는 재평가 대상 picker가 아예 렌더되지 않는다', () => {
-    const herbal = renderToString(
+  /*
+   * PR-A(2026-09-21)는 herbal 단독의 `다음` 레인을 통째로 없앴고, 그 안에
+   * 있던 재평가 대상 picker까지 같이 사라졌다. PO 지시(2026-09-25)로 **그
+   * 한 칸만** 되살렸다 -- 레인은 그대로 없는 상태다.
+   *
+   * 그래서 이 단언은 둘로 갈린다: picker는 **있다**(판단·처치 레인),
+   * 나머지 `다음` 레인 내용물은 **여전히 없다**. 한쪽만 단언하면 "레인을
+   * 통째로 되살렸다"와 "한 칸만 되살렸다"가 구분되지 않는다.
+   */
+  const herbalOnlyHtml = renderToString(
+    React.createElement(DoctorWorkspace, {
+      payload: HERBAL_SCENARIO_1.payload,
+      synthetic: HERBAL_SCENARIO_1.synthetic,
+      initialWorkspaceState: {
+        herbalFollowUpTargets: [{ id: 'sleep', label: '수면 불편', baseline: '', postTreatmentValue: '' }],
+      },
+    }),
+  )
+
+  test('PO 2026-09-25: herbal 단독에 재평가 대상 picker가 되살아났다 (판단·처치 레인)', () => {
+    assert.ok(herbalOnlyHtml.includes('재평가 대상 (측정 추적)'), '재평가 대상 라벨이 없다')
+    assert.ok(/role="group" aria-label="수면 불편 오늘 기준값"/.test(herbalOnlyHtml), 'NRS 버튼이 안 붙었다')
+    // 판단·처치 레인 안이어야 한다 -- herbal 단독에는 `다음`도 「마무리」도 없다.
+    const judgment = herbalOnlyHtml.indexOf('id="judgment-h2"')
+    const picker = herbalOnlyHtml.indexOf('재평가 대상 (측정 추적)')
+    assert.ok(judgment > 0 && picker > judgment, 'picker가 판단·처치 레인보다 앞에 있다')
+  })
+
+  test('PR-A 계약은 그대로: herbal 단독에 `다음` 레인의 나머지는 여전히 없다', () => {
+    assert.ok(!herbalOnlyHtml.includes('다음 방문 확인 메모'), '다음 방문 확인 메모가 되살아났다')
+    assert.ok(!herbalOnlyHtml.includes('관리 계획 · 다음 재평가'), '관리 계획·다음 재평가 disclosure가 되살아났다')
+    assert.ok(!herbalOnlyHtml.includes('참고 자료 (이전 방문'), '참고 자료 drawer가 되살아났다')
+    assert.ok(!/id="next-h2"/.test(herbalOnlyHtml), '`다음` 레인 heading이 되살아났다')
+    assert.ok(!/data-target="next-h2"/.test(herbalOnlyHtml), '`다음` 점프 버튼이 되살아났다')
+  })
+
+  /*
+   * `재평가 대상 (측정 추적)` 라벨은 통증(PainWorkspaceNext)과
+   * 한약(HerbalWorkspaceNext)이 각각 쓰므로 mixed에서 2회 나오는 것이 정상이다.
+   * 여기서 막으려는 것은 **한약 picker가 두 곳에 그려지는 것**이라, herbal
+   * 단독 전용 카드의 래퍼 클래스로 센다.
+   */
+  test('중복 방지: herbal 단독 전용 카드는 mixed에 렌더되지 않는다 (같은 값을 두 곳에서 고치면 안 된다)', () => {
+    const mixed = renderToString(
       React.createElement(DoctorWorkspace, {
-        payload: HERBAL_SCENARIO_1.payload,
-        synthetic: HERBAL_SCENARIO_1.synthetic,
-        initialWorkspaceState: { herbalFollowUpTargets: [{ id: 'sleep', label: '수면', baseline: '', postTreatmentValue: '' }] },
+        payload: MIXED_SCENARIO_1.payload,
+        synthetic: MIXED_SCENARIO_1.synthetic,
       }),
     )
-    assert.ok(!/aria-label="수면 오늘 기준값"/.test(herbal), '재평가 대상 기준값 입력칸이 없다')
-    assert.ok(!herbal.includes('재평가 대상 (측정 추적)'), '재평가 대상 라벨이 없다')
-    assert.ok(!herbal.includes('다음 방문 확인 메모'), '다음 방문 확인 메모가 없다')
-    assert.ok(!herbal.includes('관리 계획 · 다음 재평가'), '관리 계획·다음 재평가 disclosure가 없다')
-    assert.ok(!herbal.includes('참고 자료 (이전 방문'), '참고 자료 drawer가 없다')
-    assert.ok(!/id="next-h2"/.test(herbal), '`다음` 레인 heading 자체가 없다')
-    assert.ok(!/data-target="next-h2"/.test(herbal), '`다음`으로 가는 점프 버튼도 없다')
+    assert.equal(mixed.split('workspace__herbalFollowUp').length - 1, 0, 'mixed에 herbal 단독 카드가 그려졌다')
+    assert.equal(
+      herbalOnlyHtml.split('workspace__herbalFollowUp').length - 1,
+      1,
+      '자기점검: herbal 단독에는 정확히 한 번 그려진다',
+    )
+    // mixed에서도 한약 picker는 여전히 한 곳(HerbalWorkspaceNext)에만 있다.
+    assert.equal(mixed.split('재평가 대상 (측정 추적)').length - 1, 2, 'mixed는 통증·한약 각 1개여야 한다')
   })
 
   test('NRS: 기준값 버튼을 누르면 문자열 값이 쓰이고, 같은 버튼을 다시 누르면 비워진다', () => {
@@ -5637,14 +5676,29 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
       HW.slice(nextIdx).includes('nrsTargetIds={HERBAL_NRS_TARGET_IDS}'),
       '한약 NRS 스위치가 HerbalWorkspaceNext 안에 없다',
     )
-    assert.ok(
-      !HW.slice(0, nextIdx).includes('<FollowUpTargetPicker'),
-      '레인2 쪽에도 picker가 생겼다 — 그러면 이 단언의 전제가 바뀐다',
-    )
+    /*
+      확인 레인(HerbalWorkspaceLane2)에는 여전히 picker가 없다 -- 재평가 대상은
+      "오늘 확인할 것"이 아니라 "다음에 볼 것"이라 판단·처치에 속한다.
+      2026-09-25에 그 사이로 `HerbalFollowUpTargetsCard`가 들어왔으므로
+      구간을 레인2 ~ 그 카드 사이로 좁힌다(카드 자신을 세지 않도록).
+    */
+    const lane2Only = HW.slice(HW.indexOf('export function HerbalWorkspaceLane2'), HW.indexOf('export function HerbalFollowUpTargetsCard'))
+    assert.ok(lane2Only.length > 500, '레인2 구간을 못 잡았다')
+    assert.ok(!lane2Only.includes('<FollowUpTargetPicker'), '확인 레인에도 picker가 생겼다 — 그러면 이 단언의 전제가 바뀐다')
     assert.ok(/\{activeProfile === 'mixed' && \(\s*\n\s*<HerbalWorkspaceNext/.test(DW), 'HerbalWorkspaceNext가 mixed 전용이 아니다')
-    // 한약 단독 렌더에는 그 picker가 정말 없다.
-    const herbalOnly = render(HERBAL_SCENARIO_1)
-    assert.ok(!herbalOnly.includes('수면 불편'), '한약 단독 화면에 재평가 대상 칩이 나타났다')
+    /*
+      2026-09-25 (PO 지시): herbal 단독에도 picker가 되살아났다 -- 다만
+      `HerbalWorkspaceNext`가 아니라 판단·처치 레인의 별도 컴포넌트
+      (`HerbalFollowUpTargetsCard`)로 들어갔다. 위 단언(NRS 스위치가
+      HerbalWorkspaceNext 안에 있다)은 mixed 경로를 지키는 것이고, herbal
+      단독 경로는 그 카드가 지킨다.
+    */
+    assert.ok(HW.includes('export function HerbalFollowUpTargetsCard'), 'herbal 단독용 카드가 없다')
+    assert.ok(
+      /export function HerbalFollowUpTargetsCard[\s\S]{0,1200}nrsTargetIds=\{HERBAL_NRS_TARGET_IDS\}/.test(HW),
+      'herbal 단독 카드가 NRS 집합을 넘기지 않는다 -- mixed만 버튼이 되면 F2와 같은 불일치가 생긴다',
+    )
+    assert.ok(/\{activeProfile === 'herbal' && \(\s*\n\s*<HerbalFollowUpTargetsCard/.test(DW), 'herbal 전용 가드가 아니다')
   })
 
   test('F6 사용자 문구에 사라진 레인 이름이 남아 있지 않다', () => {

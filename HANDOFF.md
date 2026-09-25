@@ -1,5 +1,27 @@
 # Current Handoff
 
+## 2026-09-25 (최신 74): **한약 단독에 「재평가 대상」 되살림** (PO 지시)
+
+**브랜치**: `claude/gracious-bell-epfxem` (PR #56 머지 후 새로 시작).
+상세는 `DECISIONS.md` 첫 항목.
+
+PR-A가 herbal 단독의 `다음` 레인을 없애면서 picker까지 같이 사라진 것을
+(PR #56 검수 F5) PO 지시로 **그 한 칸만** 되살렸다. 레인은 그대로 없다.
+
+- 자리: **판단·처치 레인**, `HerbalFinalAssessmentCard` 바로 뒤
+- NRS 0~10 그대로 붙는다(같은 집합 전달)
+- **EMR 짝**: slim 경로도 `followUpTargets`를 다시 넘긴다 — 안 넘기면 원장이
+  고른 값이 EMR에 안 간다(D-1의 거울상, 이쪽이 더 나쁘다)
+- `carePlan`/`nextReassessmentPlan`은 여전히 slim에서 뺀다(편집 UI가 없다)
+
+이제 한약 단독도 **재진 NRS 추적이 된다** — 최신 73에서 "안 된다"고 적었던
+제약이 풀렸다.
+
+검증: `doctor-workspace` 404 → **406단언** · `herbal-workspace-slim` 30 →
+**33단언**. 뮤테이션 3회 전부 잡힘.
+
+---
+
 ## 2026-09-25 (최신 73): **PR #56 검수 6건 수정** — F4가 위험했다
 
 [PR #56](https://github.com/Gomars93/Samindang/pull/56) 머지 전 검수에서 6건.

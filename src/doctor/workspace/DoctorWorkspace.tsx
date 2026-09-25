@@ -30,6 +30,7 @@ import { DoctorTokenSetup } from '../DoctorTokenSetup'
 import { ObjectiveExamFindingsCard, type ObjectiveExamField } from '../ObjectiveExamFindingsCard'
 import { VisitSummaryAside } from './VisitSummaryAside'
 import { PainFinalAssessmentCard, HerbalFinalAssessmentCard } from './FinalAssessmentCard'
+import { HerbalFollowUpTargetsCard } from './HerbalWorkspace'
 import { WorkingHypothesisCard } from './WorkingHypothesisCard'
 import { appendLbpHypothesisSentenceToPatientInstruction } from './lbpWorkingHypothesis'
 import { activeDrivingPack } from './regionPacks'
@@ -966,6 +967,22 @@ export function DoctorWorkspace({
               <HerbalFinalAssessmentCard
                 value={workspaceState.herbalFinalAssessment}
                 onChange={(next) => setWorkspaceState((s) => ({ ...s, herbalFinalAssessment: next }))}
+              />
+            )}
+            {/*
+              PO 지시 2026-09-25: herbal 단독에도 「재평가 대상」을 되살린다.
+              PR-A가 `다음` 레인을 통째로 없애면서 이 picker까지 같이 사라졌고
+              (PR #56 검수 F5), PO 판단은 레인은 그대로 두고 이 한 칸만
+              되살리는 것이다.
+
+              `herbal`에서만 렌더한다 -- mixed는 HerbalWorkspaceNext의 picker가
+              그대로 살아 있어서, 여기에도 그리면 같은 값을 두 곳에서 고치게
+              된다. 그 배타성을 herbal-workspace-slim이 단언한다.
+            */}
+            {activeProfile === 'herbal' && (
+              <HerbalFollowUpTargetsCard
+                followUpTargets={workspaceState.herbalFollowUpTargets}
+                onChangeFollowUpTargets={(next) => setWorkspaceState((s) => ({ ...s, herbalFollowUpTargets: next }))}
               />
             )}
             {activeProfile !== 'mixed' && (

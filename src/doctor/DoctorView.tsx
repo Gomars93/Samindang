@@ -3285,10 +3285,21 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       safetyObservation: workspaceState.herbalSafetyObservation,
       finalAssessment: workspaceState.herbalFinalAssessment,
       reassessment: workspaceState.herbalReassessment,
+      /*
+        PO 지시 2026-09-25: `재평가 대상`은 slim에서도 넘긴다. herbal 단독에
+        그 편집 UI가 되살아났기 때문이다(판단·처치 레인의
+        HerbalFollowUpTargetsCard). 안 넘기면 원장이 고른 값이 EMR에 안 간다 --
+        PR-A가 막았던 D-1("빈 값을 복사하고 복사됨을 띄움")의 **거울상**이고,
+        이쪽이 더 나쁘다(빈 라벨이 아니라 채운 값이 사라진다).
+
+        `carePlan`/`nextReassessmentPlan`은 그대로 slim에서 뺀다 -- 그 둘의
+        편집 UI는 여전히 herbal 단독에 없다. 화면 없는 키를 넘기면 그게 바로
+        원래의 D-1이다.
+      */
+      followUpTargets: workspaceState.herbalFollowUpTargets,
       ...(slim
         ? {}
         : {
-            followUpTargets: workspaceState.herbalFollowUpTargets,
             carePlan: workspaceState.herbalCarePlan,
             nextReassessmentPlan: workspaceState.nextReassessmentPlan,
           }),

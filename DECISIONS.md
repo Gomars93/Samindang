@@ -60,7 +60,7 @@ after:                                    <div data-step="wrapup"> …블록별 
 **의도적으로 버리는 것 없음.** 이 변경은 경로를 지우는 것이 아니라 닫혀 있던
 경로를 **여는** 것이다. 다만 마지막 두 행이 갈리는 데 주의 -- 단계 래퍼·앵커는
 조건 없이 생기지만 **점프 버튼은 그 단계에 내용이 있을 때만** 생긴다
-(`wrapupHasContent`, 검수 1번). 둘을 한 행으로 적으면 "미리보기에서도 버튼이
+(`showWrapup`의 실인자, 검수 1번). 둘을 한 행으로 적으면 "미리보기에서도 버튼이
 생긴다"로 읽혀, 실제 코드·실측 단언과 어긋난다. 반대로 PR-A의 판단("정말 액기스만 남긴다")을 유지해야
 하는 블록 2종(복약 코스 · `HerbalWorkspaceNext`)은 위 표의 "계속 없음" 행이고,
 바깥 가드가 없어졌으므로 각자 자기 가드를 들고 있는지를 테스트가 지킨다.
@@ -103,9 +103,13 @@ after:                                    <div data-step="wrapup"> …블록별 
 
 수정: 조건을 되살리되 **기준을 프로필에서 내용물의 유무로 바꿨다**.
 
-```ts
-const wrapupHasContent = activeProfile !== 'herbal' || nextLaneFooter != null
+```tsx
+<LaneJumpNav showWrapup={activeProfile !== 'herbal' || nextLaneFooter != null} … />
 ```
+
+(3차 검수 2번으로 이름 있는 상수 `wrapupHasContent`에서 호출부 인라인으로
+바뀌었다. **아래 서술에서 `wrapupHasContent`는 그 당시의 이름이고, 현재 코드에는
+그 식별자가 없다** — 조건식 자체는 그대로다.)
 
 옛 `showNext={activeProfile !== 'herbal'}`는 server 모드의 herbal에서도 버튼을
 빼서 **틀렸다**(이 PR이 고치려던 바로 그 구멍). 새 식은 두 경우 모두 맞다.
@@ -187,6 +191,35 @@ non-null → null로 갈 수 있는지(환자 링크 해제 UI가 없어 불가)
 좁혔다(이름 세기 → 렌더 표현식 세기). 좁힌 뒤 mutation 4종을 다시 돌려 둘 다
 여전히 이름 있는 실패로 잡는 것을 확인했다.
 
+### PR #58 4차 검수 3건 — 공허한 단언 **두 번째**, 그리고 죽은 식별자
+
+코드 결함 0(검수자가 도달가능성·중복 EMR 표면·CSS까지 다시 확인). 3건 다
+테스트/문서 품질인데, 1번은 이 PR에서 **같은 부류의 두 번째**다.
+
+1. **실측 단언이 또 공허했다 — 이번엔 `innerText` 때문이다.**
+   `document.body.innerText`는 **렌더된** 텍스트만 돌려주므로 `hidden`인 마무리
+   단계 안을 통째로 건너뛴다. 그런데 확인하려던 블록들이 바로 거기 들어간다 --
+   `HerbalWorkspaceNext`의 `=== 'mixed'` 가드를 지워도 단언이 그대로 통과했다
+   (mutation으로 확인). `textContent`로 바꾸고 대상을 마무리 단계 하나로
+   좁혔으며, "숨은 텍스트를 실제로 읽었는가" 자기점검을 붙였다. 고친 뒤 같은
+   mutation을 다시 돌리니 새어나온 내용까지 실패 메시지에 찍힌다.
+2. `hBefore.navLabels.every(...)`에 `Array.isArray` 가드가 빠져 있었다 -- 내비가
+   없으면 이름 있는 실패 대신 uncaught TypeError로 죽어, **바로 이 커밋이
+   보장하려 한 것**(이름 있는 실패)을 잃는다. 가드를 붙였다.
+3. **`wrapupHasContent`는 코드에 없는 식별자다.** 3차 검수 2번으로 인라인했는데,
+   `DECISIONS.md`의 코드 블록과 표 각주, `herbal-workspace-slim`의 A-5b 주석이
+   여전히 그것을 현행 코드로 인용하고 있었다 -- 스캐너를 새로 만들어가며 잡았던
+   **검수 2번과 정확히 같은 부류**다. 현행 표기(`showWrapup`의 실인자)로 고치고,
+   역사 서술에는 "당시의 이름이고 지금 코드에는 없다"를 명시했다.
+
+**부재를 단언할 때의 규칙(이 PR에서 두 번 당하고 확장한다):**
+- prop으로 들어오는 것의 부재를 렌더로 단언하면, 같은 prop을 실제로 넘긴
+  **대조군**을 함께 둔다. (3차 검수 3번)
+- 숨은 서브트리 안의 부재를 단언하면 `innerText`가 아니라 `textContent`를 쓰고,
+  **"대상 텍스트를 실제로 읽었는가" 자기점검**을 함께 둔다. (4차 검수 1번)
+- 두 경우 모두, 단언을 쓴 직후 **그 단언이 막으려는 mutation을 실제로 넣어본다.**
+  이 PR에서 공허했던 둘 다, 그 한 번을 생략한 자리에서 나왔다.
+
 ### 이번에 스스로 잡은 두 가지 (과거 사고의 재발)
 
 1. **A-5 초안이 주석을 스캔했다.** `!/showNext/.test(WORKSPACE)`가 폐기 이유를
@@ -206,8 +239,8 @@ non-null → null로 갈 수 있는지(환자 링크 해제 UI가 없어 불가)
   단순화). 임상 로직·조립 함수·서버 무변경.
 - 테스트: `herbal-workspace-slim` 37→42 / `doctor-workspace` 408→417 /
   `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→156 /
-  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7209 단언)**.
-- Mutation 14종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
+  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7212 단언)**.
+- Mutation 15종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
   푸터 재가드 / 복약 코스 자기 가드 제거 / `showNext`·`nextOnly` 재도입 /
   `DoctorView`의 푸터 게이트에 프로필 조건 주입 / `wrapupHasContent = true`
   (검수 1번 결함 재현) / `wrapupHasContent`를 프로필 기반으로 되돌리기 /

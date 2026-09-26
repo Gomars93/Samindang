@@ -548,14 +548,21 @@ try {
         navLabels: nav ? [...nav.querySelectorAll('.doctor__laneNav__btn')].map((b) => b.textContent) : null,
         /*
          * PR-A가 herbal 단독에서 뗀 블록이 「마무리」 단계를 열어주면서 따라
-         * 들어오지 않았는지. 화면 블록이라 innerText로 잡힌다.
+         * 들어오지 않았는지.
+         *
+         * **textContent를 쓴다.** 첫 판은 document.body.innerText였는데,
+         * innerText는 렌더된 텍스트만 돌려주므로 hidden인 마무리 단계 안을
+         * 통째로 건너뛴다 -- 그 블록들이 바로 거기 들어가므로, 가드를 지워도
+         * 단언이 그대로 통과했다(mutation으로 확인. PR #58 4차 검수).
+         * textContent는 숨은 서브트리도 읽는다. 대상도 body 전체가 아니라
+         * 마무리 단계 하나로 좁힌다.
+         *
          * medicationCourseSlot은 prop이라 fixtures에 애초에 안 들어오므로
-         * 여기서 보지 않는다 -- 보면 가드를 지워도 통과하는 공허한 단언이
-         * 된다(PR #58 검수 3번). 그쪽은 doctor-workspace가 stand-in으로
-         * 확인한다.
+         * 여기서 보지 않는다 -- 보면 같은 종류로 공허해진다(PR #58 3차 검수).
+         * 그쪽은 doctor-workspace가 stand-in으로 확인한다.
          * (이 주석은 JS 템플릿 리터럴 안이다 -- 백틱을 쓰면 문자열이 끊긴다.)
          */
-        herbalNextBlocks: /다음 방문 확인 메모|관리 계획 · 다음 재평가/.test(document.body.innerText),
+        wrapupText: (document.querySelector('.doctor__visitStep[data-step="wrapup"]') || {}).textContent || '',
       }
     })()`
     /*
@@ -592,11 +599,20 @@ try {
     )
     check(
       `${label} (한약 단독): 그래서 마무리 단계는 열 수 없다 — DOM에는 있고(위) 도달 경로만 없다`,
-      hBefore.navLabels.every((l) => l !== '마무리'),
+      Array.isArray(hBefore.navLabels) && hBefore.navLabels.every((l) => l !== '마무리'),
+      `(${hBefore.navLabels})`,
+    )
+    // 자기점검: 마무리 단계 텍스트를 실제로 읽었는가. 빈 문자열이면 아래
+    // "없다" 단언이 무조건 통과한다 -- 이 배치에서 그 부류로 두 번 당했다.
+    check(
+      `${label} (한약 단독): 마무리 단계의 숨은 텍스트를 읽었다 (아래 단언이 공허하지 않도록)`,
+      typeof hBefore.wrapupText === 'string' && hBefore.wrapupText.includes('마무리'),
+      `("${String(hBefore.wrapupText).slice(0, 40)}")`,
     )
     check(
       `${label} (한약 단독): PR-A가 뗀 화면 블록(다음 방문 확인 메모 · 관리 계획·다음 재평가)은 여전히 없다`,
-      hBefore.herbalNextBlocks === false,
+      !/다음 방문 확인 메모|관리 계획 · 다음 재평가/.test(hBefore.wrapupText),
+      `("${String(hBefore.wrapupText).slice(0, 60)}")`,
     )
     /*
      * 비공허성은 같은 브라우저 세션의 위쪽 LBP 단언이 준다 -- "점프 내비가

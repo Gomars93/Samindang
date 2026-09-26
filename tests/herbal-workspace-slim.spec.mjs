@@ -179,6 +179,38 @@ check(
   /it\.step !== 'wrapup' \|\| showWrapup/.test(WORKSPACE_CODE),
 )
 
+/*
+ * A-5d (PR #58 5차 검수, latent)
+ *
+ * `showWrapup`의 실인자(`activeProfile !== 'herbal' || nextLaneFooter != null`)는
+ * **마무리 단계의 내용물을 열거한 식**이다 -- "herbal에 남는 것은 푸터 하나뿐"이
+ * 참이어야 성립한다. 그런데 그 전제는 코드 어디에도 강제돼 있지 않다: 이 레인에
+ * 블록을 하나 더 추가하거나 `medicationCourseSlot`의 가드를 풀면, 푸터가 없는
+ * 미리보기에서 **렌더는 되는데 도달할 수 없는** 블록이 생긴다. 그리고 A-5b가
+ * 그 식을 글자로 고정하고 있어서, 다음 사람은 기준을 고치는 대신 테스트를
+ * "고치기" 쉽다.
+ *
+ * 그래서 레인의 **직계 렌더 대상 목록**을 고정한다. 블록이 늘거나 줄면 여기서
+ * 먼저 걸리고, 실패 메시지가 `showWrapup`을 다시 보라고 말한다. 목록 자체가
+ * 계약이므로, 바꾸는 것이 옳을 때는 이 줄과 그 식을 **함께** 고치게 된다.
+ */
+{
+  const laneCode = WORKSPACE_CODE.slice(
+    WORKSPACE_CODE.indexOf('data-step="wrapup"'),
+    WORKSPACE_CODE.indexOf('<LaneJumpNav'),
+  )
+  // 섹션의 직계 자식(12칸 들여쓰기)만 센다 -- prop 값(`payload={payload}` 등)을
+  // 같이 세면 목록이 무의미해진다.
+  const rendered = [...laneCode.matchAll(/^ {12}\{(?:[^{}\n]*&&\s*\(?)?\s*(?:<)?([A-Za-z]\w*)/gm)].map((m) => m[1])
+  check(
+    'A-5d 마무리 레인의 직계 렌더 대상은 정확히 4개다 — 늘리거나 줄이면 showWrapup의 기준도 같이 고쳐야 한다',
+    JSON.stringify(rendered) ===
+      JSON.stringify(['PainWorkspaceNext', 'HerbalWorkspaceNext', 'medicationCourseSlot', 'nextLaneFooter']),
+    `(실제: ${JSON.stringify(rendered)} — herbal 단독에 남는 것이 nextLaneFooter 하나뿐이라는 전제가 깨지면 ` +
+      `푸터 없는 미리보기에서 "렌더는 되는데 도달 불가"인 블록이 생긴다)`,
+  )
+}
+
 /* ------------------------------------------------------------------ *
  * §B 출력: 화면에서 뗀 입력은 EMR 라벨로도 남지 않는다 (D-1 재발 방지)
  * ------------------------------------------------------------------ */

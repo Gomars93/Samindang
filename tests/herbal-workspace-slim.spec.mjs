@@ -32,27 +32,75 @@ const WORKSPACE = read('src/doctor/workspace/DoctorWorkspace.tsx')
 const VIEW = read('src/doctor/DoctorView.tsx')
 const HERBAL = read('src/doctor/workspace/HerbalWorkspace.tsx')
 
+/*
+ * 주석을 뗀 사본. "이 식별자가 소스에 없다"를 단언할 때는 **코드만** 봐야
+ * 한다 -- 폐기 이유를 설명하는 JSDoc에 그 식별자 이름이 그대로 적혀 있으면
+ * 산문 때문에 통과/실패가 뒤집힌다. 이 저장소에서 같은 사고(T-6)가 이미
+ * 한 번 났다.
+ */
+const stripComments = (src) =>
+  src
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+const WORKSPACE_CODE = stripComments(WORKSPACE)
+/*
+ * 스트리퍼 자기점검은 **합성 표본**으로 한다. 실제 소스의 어떤 낱말이
+ * 주석에 남아 있는지에 기대면(예: "JSDoc에 `showNext`가 적혀 있다"),
+ * 나중에 그 산문만 정리해도 이 점검이 깨진다 -- 코드는 옳은데 테스트가
+ * 실패하는, 신호가 아닌 잡음이 된다.
+ */
+{
+  const SAMPLE = "{/* jsxComment */}\n/* blockComment */\nconst keepMe = 1 // lineComment\n"
+  const stripped = stripComments(SAMPLE)
+  check(
+    'A-pre 스트리퍼는 JSX·블록·라인 주석 세 형태를 모두 뗀다',
+    !stripped.includes('jsxComment') && !stripped.includes('blockComment') && !stripped.includes('lineComment'),
+    `(남은 것: ${JSON.stringify(stripped)})`,
+  )
+  check('A-pre 스트리퍼는 코드를 지우지 않는다', stripped.includes('const keepMe = 1'))
+}
+check(
+  'A-pre 주석 제거 후에도 점프 항목 리터럴이 남아 있다 (A-5가 공허하지 않도록)',
+  WORKSPACE_CODE.includes('LANE_JUMP_ITEMS') && WORKSPACE_CODE.includes("label: '마무리'"),
+)
+check(
+  'A-pre 실제 소스에도 주석이 있었다 (스트리퍼가 무엇도 안 뗐다면 A-5는 옛 형태와 같다)',
+  WORKSPACE_CODE.length < WORKSPACE.length - 2000,
+  `(원본 ${WORKSPACE.length}자 → 코드 ${WORKSPACE_CODE.length}자)`,
+)
+
 /* ------------------------------------------------------------------ *
  * §A 화면: herbal 단독은 `다음` 레인에 도달하지 않는다
  * ------------------------------------------------------------------ */
 
-// A-0: 레인 전체가 하나의 프로필 가드 뒤에 있다 -- 개별 블록을 하나씩
-// 숨기는 방식이었다면 새 블록이 추가될 때마다 가드를 빠뜨릴 수 있다.
-// 2026-09-24 「마무리」 화면 분리: 이 레인은 `.doctor__visitStep[data-step=
-// "wrapup"]` 래퍼 한 겹 안으로 들어갔다(주석 포함). 가드 자체는 그대로
-// 바깥에 있어야 한다 -- 래퍼가 가드보다 바깥으로 나가면 herbal 단독에서
-// 빈 마무리 화면과 그 단계 전환 버튼이 되살아난다.
+/* ------------------------------------------------------------------ *
+ * A-0 (2026-09-26 PO 지시 안 1로 뒤집혔다)
+ *
+ * PR-A는 `다음` 레인 전체를 하나의 프로필 가드 뒤에 두었다 -- 개별 블록을
+ * 하나씩 숨기면 새 블록이 추가될 때마다 가드를 빠뜨릴 수 있기 때문이다.
+ *
+ * 그런데 그 레인 안에는 화면 블록만 있는 게 아니라 `nextLaneFooter`
+ * (EMR 요약·복사 · 재진 간단 문진 발급·메시징 · **진료 완료**)가 함께 들어
+ * 있었고, 그래서 herbal 단독은 **그 방문 안에서 진료를 끝낼 수 없었다**
+ * (PR #57 검수 1번). PO 지시로 「마무리」 단계를 herbal에도 준다.
+ *
+ * 그래서 계약이 "레인 전체가 한 가드 뒤"에서 **"단계 래퍼는 가드 없이,
+ * 블록마다 자기 가드"**로 바뀌었다. 빠뜨리기 쉬운 형태가 된 것은 사실이라
+ * 아래에서 블록 하나하나를 명시적으로 단언한다 -- 그게 원래 A-0이 막으려던
+ * 것이다.
+ * ------------------------------------------------------------------ */
 check(
-  'A-0 `다음` 레인 <section>이 activeProfile !== "herbal" 가드 뒤에 있다 (마무리 단계 래퍼까지 통째로)',
-  /\{activeProfile !== 'herbal' && \([\s\S]{0,900}?<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
+  'A-0 「마무리」 단계 래퍼에는 프로필 가드가 없다 (세 프로필 모두 2단계 구조)',
+  /\{\/\*[\s\S]{0,2000}?\*\/\}\s*\n\s*<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
     WORKSPACE,
-  ),
+  ) && !/\{activeProfile !== 'herbal' && \(\s*\n?\s*(\/\*|<div className="doctor__visitStep")/.test(WORKSPACE),
 )
 
-// A-1..A-5: 지운 경로 1개당 단언 1개. 각 블록은 HerbalWorkspaceNext 안에
-// 있고, HerbalWorkspaceNext는 이제 mixed에서만 렌더된다.
+// A-1..A-5: PR-A가 herbal 단독에서 지운 블록 1개당 단언 1개. 단계 래퍼의
+// 가드가 없어졌으므로 **각 블록이 자기 가드를 들고 있는지**가 유일한 방어선이다.
 const nextLane = WORKSPACE.slice(
-  WORKSPACE.indexOf("{activeProfile !== 'herbal' && ("),
+  WORKSPACE.indexOf('data-step="wrapup"'),
   WORKSPACE.indexOf('<LaneJumpNav'),
 )
 check(
@@ -60,22 +108,25 @@ check(
   /\{activeProfile === 'mixed' && \(\s*\n\s*<HerbalWorkspaceNext/.test(nextLane),
 )
 check(
-  'A-2 HerbalWorkspaceNext 호출부가 `다음` 레인 가드 안에만 있다 (레인 밖 2차 렌더 경로 없음)',
+  'A-2 HerbalWorkspaceNext 호출부가 마무리 단계 안에만 있다 (단계 밖 2차 렌더 경로 없음)',
   WORKSPACE.split('<HerbalWorkspaceNext').length - 1 === 1,
 )
 check(
-  'A-3 CRM 복약 코스 슬롯(medicationCourseSlot)이 `다음` 레인 가드 안에 있다',
-  nextLane.includes('{medicationCourseSlot}') && !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('medicationCourseSlot'),
+  'A-3 CRM 복약 코스 슬롯(medicationCourseSlot)이 herbal 단독에서 여전히 빠진다 (자기 가드를 들고 있다)',
+  /\{activeProfile !== 'herbal' && medicationCourseSlot\}/.test(nextLane) &&
+    !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('medicationCourseSlot'),
 )
 check(
-  'A-4 재진 간단문진 푸터(nextLaneFooter)가 `다음` 레인 가드 안에 있다',
-  nextLane.includes('{nextLaneFooter}') && !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('nextLaneFooter'),
+  'A-4 재진 발급·EMR·진료 완료 푸터(nextLaneFooter)는 **가드 없이** 마무리 단계 안에 있다 (PO 지시로 herbal에도 닿는다)',
+  nextLane.includes('{nextLaneFooter}') &&
+    !/activeProfile[^\n]*&& nextLaneFooter/.test(nextLane) &&
+    !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('nextLaneFooter'),
 )
 check(
-  'A-5 LaneJumpNav의 `다음` 버튼이 showNext로 분기하고, herbal에서 꺼진다 (아무 데도 가지 않는 죽은 버튼 방지)',
-  /\{ id: 'next-h2', label: '마무리', step: 'wrapup', nextOnly: true \}/.test(WORKSPACE) &&
-    /showNext=\{activeProfile !== 'herbal'\}/.test(WORKSPACE) &&
-    /!it\.nextOnly \|\| showNext/.test(WORKSPACE),
+  'A-5 마무리 점프 버튼은 조건 없이 노출된다 (앵커가 항상 존재하므로 showNext/nextOnly가 폐기됐다)',
+  /\{ id: 'next-h2', label: '마무리', step: 'wrapup' \}/.test(WORKSPACE_CODE) &&
+    !/showNext/.test(WORKSPACE_CODE) &&
+    !/nextOnly/.test(WORKSPACE_CODE),
 )
 
 /* ------------------------------------------------------------------ *

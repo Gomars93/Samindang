@@ -265,8 +265,29 @@ test('MedicationCourseSection key remains {patient_id} unchanged (composed by Do
   // MedicationCourseSection's own internals -- this only pins that
   // DoctorWorkspace.tsx passes the slot through opaquely (`{medicationCourseSlot}`)
   // rather than re-keying or otherwise touching it.
+  //
+  // 2026-09-26 (PO instruction, option 1): the wrapup step lost its single
+  // profile guard, so the blocks PR-A removed from the herbal-only profile
+  // now carry their own. The slot therefore reads
+  // `{activeProfile !== 'herbal' && medicationCourseSlot}` rather than a bare
+  // `{medicationCourseSlot}`. That is still opaque pass-through -- what this
+  // assertion is about is that DoctorWorkspace never re-keys or rebuilds the
+  // element, so it pins the absence of a key/clone instead of one exact
+  // spelling.
   const workspaceSrc = readSrc('../src/doctor/workspace/DoctorWorkspace.tsx')
-  assert.ok(workspaceSrc.includes('{medicationCourseSlot}'), 'DoctorWorkspace renders the slot opaquely, without re-keying it')
+  // Only JSX render sites -- a single-line `{...medicationCourseSlot}` expression.
+  // The destructuring of props at the top of the component is a multi-line
+  // object literal, so excluding newlines keeps it out.
+  const slotUses = [...workspaceSrc.matchAll(/\{[^{}\n]*\bmedicationCourseSlot\b[^{}\n]*\}/g)].map((m) => m[0].trim())
+  assert.equal(slotUses.length, 1, `the slot is rendered from exactly one place (found ${slotUses.length})`)
+  assert.ok(
+    /^\{(?:activeProfile !== 'herbal' && )?medicationCourseSlot\}$/.test(slotUses[0]),
+    `DoctorWorkspace renders the slot opaquely, without re-keying it (found ${slotUses[0]})`,
+  )
+  assert.ok(
+    !/React\.cloneElement[\s\S]{0,80}medicationCourseSlot|medicationCourseSlot[\s\S]{0,40}key=/.test(workspaceSrc),
+    'DoctorWorkspace must not clone or re-key the slot',
+  )
 })
 
 // ---------- #9 ----------

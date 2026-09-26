@@ -504,6 +504,143 @@ try {
       `(${me.smallestTarget}px)`,
     )
 
+    /*
+     * PO 지시 2026-09-26(안 1): 「마무리」 단계를 **한약 단독에도** 준다.
+     *
+     * 왜 진짜 브라우저에서 한약 쪽을 따로 재는가: PR-A(2026-09-21)는 한약
+     * 단독에서 이 단계를 통째로 없앴고, 그 안에 EMR 요약·복사 · 재진 간단
+     * 문진 발급 · **진료 완료**가 함께 들어 있어서 한약 단독 방문은 그 방문
+     * 안에서 진료를 끝낼 수 없었다(PR #57 검수 1번). 이제 가드를 뗐으므로
+     * 한약 화면에도 숨은 단계 하나가 DOM에 얹힌다.
+     *
+     * 그 얹힘이 **높이 0이어야** PR-A가 줄인 한약 화면 성과가 그대로 남는다.
+     * 그리고 그 근거는 UA의 `[hidden] { display: none }` 한 줄뿐이라, CSS가
+     * 그걸 이기면 SSR 단언(hidden 속성만 본다)은 전부 통과하면서 한약 화면이
+     * 조용히 두 배로 길어진다. 위 LBP 블록과 같은 계약을, 이번에는 **가드를
+     * 뗀 쪽**에서 잰다 -- CLAUDE.md가 네 번의 사고 끝에 적어둔 "확인해야 하는
+     * 것은 지우지 않은 쪽 화면이다"의 이번 배치판이다.
+     */
+    const herbalStepMetrics = `(() => {
+      const box = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { h: Math.round(r.height), visible: typeof el.checkVisibility === 'function' ? el.checkVisibility() : r.height > 0 }
+      }
+      const nav = document.querySelector('.doctor__laneNav')
+      return {
+        consult: box('.doctor__visitStep[data-step="consult"]'),
+        wrapup: box('.doctor__visitStep[data-step="wrapup"]'),
+        navLabels: nav ? [...nav.querySelectorAll('.doctor__laneNav__btn')].map((b) => b.textContent) : null,
+        wrapupHeading: !!document.querySelector('.doctor__visitStep[data-step="wrapup"] #next-h2'),
+        // PR-A가 뗀 블록이 「마무리」를 열어주면서 따라 들어오지 않았는지.
+        medicationCourse: /복약 코스/.test(document.body.innerText),
+        herbalNextBlocks: /다음 방문 확인 메모|관리 계획 · 다음 재평가/.test(document.body.innerText),
+      }
+    })()`
+    /*
+     * 기다림의 조건은 `consult`만으로 둔다 -- `wrapup`까지 기다리면, 누군가
+     * 바깥 프로필 가드를 되살려 한약에서 마무리 단계를 다시 없앴을 때 이
+     * 스위트가 **이름 있는 실패 대신 20초 타임아웃**으로 죽는다(실제로 그렇게
+     * 죽는 것을 확인했고, 그러면 같은 뷰포트의 나머지 단언까지 통째로
+     * 날아간다). 존재 여부는 아래에서 check로 단언한다.
+     */
+    const hBefore = await cdp.evalUntil(herbalStepMetrics, (v) => v && v.consult)
+    console.log(
+      `[measured] ${label} (한약 단독): 진료 화면 ${hBefore.consult.h}px / 마무리 화면 ${hBefore.wrapup?.h ?? '없음'}px (숨김)` +
+        ` | 내비 ${hBefore.navLabels?.join(',')}`,
+    )
+    check(
+      `${label} (한약 단독): 마무리 단계가 DOM에 생겼다 (PR #57 검수 1번의 구멍이 메워졌다)`,
+      !!hBefore.wrapup,
+      '(바깥 프로필 가드가 되살아났는지 확인)',
+    )
+    check(
+      `${label} (한약 단독): 그 단계가 숨은 상태에서 높이 0이다 — 한약 화면이 길어지지 않았다`,
+      hBefore.wrapup?.h === 0 && hBefore.wrapup?.visible === false,
+      `(${hBefore.wrapup?.h}px, visible=${hBefore.wrapup?.visible})`,
+    )
+    check(
+      `${label} (한약 단독): 진료 화면은 실제 높이를 갖는다 (자기점검 — 둘 다 0이면 위 단언이 헛돈다)`,
+      hBefore.consult.h > 300,
+      `(${hBefore.consult.h}px)`,
+    )
+    check(
+      `${label} (한약 단독): 점프 내비가 운동 없이 4개 (안전·확인·판단·처치·마무리)`,
+      Array.isArray(hBefore.navLabels) && hBefore.navLabels.join(',') === '안전,확인,판단·처치,마무리',
+      `(${hBefore.navLabels})`,
+    )
+    await cdp.send('Runtime.evaluate', {
+      expression: `document.querySelector('.doctor__laneNav__btn[data-target="next-h2"]').click()`,
+      returnByValue: true,
+    })
+    const hAfter = await cdp.evalUntil(herbalStepMetrics, (v) => v && v.wrapup && v.wrapup.h > 0)
+    console.log(`[measured] ${label} (한약 단독): 마무리 화면 ${hAfter.wrapup.h}px (열림) — 진료 화면 ${hAfter.consult.h}px`)
+    check(
+      `${label} (한약 단독): 「마무리」 버튼 한 번으로 마무리 화면이 열린다`,
+      hAfter.wrapup.h > 0 && hAfter.wrapup.visible === true,
+      `(${hAfter.wrapup.h}px)`,
+    )
+    check(
+      `${label} (한약 단독): 마무리로 넘어가면 진료 화면이 접힌다 (두 화면이 동시에 쌓이지 않는다)`,
+      hAfter.consult.h === 0,
+      `(${hAfter.consult.h}px)`,
+    )
+    check(
+      `${label} (한약 단독): 마무리 화면에도 가로 오버플로가 없다`,
+      (
+        await cdp.send('Runtime.evaluate', {
+          expression: `Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)`,
+          returnByValue: true,
+        })
+      )?.result?.value === 0,
+    )
+    /*
+     * 열어준 것은 `nextLaneFooter`(EMR·발급·완료)뿐이다. PR-A가 뗀 화면 블록이
+     * 같이 돌아왔다면 여기서 걸린다 -- 소스 단언(herbal-workspace-slim §A)과
+     * 짝이지만, 실제 화면에서 확인하는 쪽이 더 강하다.
+     */
+    check(
+      `${label} (한약 단독): 마무리를 열어도 PR-A가 뗀 블록(다음 방문 확인 메모 · 관리 계획·다음 재평가)은 안 돌아온다`,
+      hAfter.herbalNextBlocks === false,
+    )
+    check(
+      `${label} (한약 단독): CRM 복약 코스도 안 돌아온다`,
+      hAfter.medicationCourse === false,
+    )
+    /*
+     * 열린 마무리 화면이 37~55px로 **작게** 나오는 것은 정상이며, 그 이유를
+     * 여기 적어둔다 -- 이 숫자를 "푸터가 렌더됐다"로 읽으면 안 된다.
+     *
+     * fixtures 모드에는 `nextLaneFooter`가 애초에 안 들어온다(DoctorView가
+     * `mode === 'server' && patient_id`에서만 만든다). 그래서 이 화면에서
+     * 실제로 검증되는 것은 **단계 셸**(앵커·hidden·전환)뿐이고, 푸터 내용물이
+     * 한약에 닿는다는 사실은 doctor-workspace의 「검수1(수정 후)」 절이
+     * 푸터 stand-in을 직접 넘겨 확인한다. 측정하지 않은 것을 측정했다고
+     * 적지 않기 위해 두 곳으로 나눴다.
+     */
+    check(
+      `${label} (한약 단독): 열린 마무리 화면에 「마무리」 헤딩이 있다 (fixtures 모드라 셸만 — 푸터는 server 전용)`,
+      hAfter.wrapupHeading === true,
+    )
+    // 다음 측정(LBP 프로필)이 진료 단계에서 시작하도록 되돌린다.
+    await cdp.send('Runtime.evaluate', {
+      expression: `document.querySelector('.doctor__laneNav__btn[data-target="lane1-h2"]').click()`,
+      returnByValue: true,
+    })
+    const hBack = await cdp.evalUntil(herbalStepMetrics, (v) => v && v.consult && v.consult.h > 0)
+    check(
+      `${label} (한약 단독): 「안전」 버튼으로 진료 화면에 돌아온다`,
+      hBack.consult.h > 300 && hBack.wrapup.h === 0,
+      `(진료 ${hBack.consult.h}px, 마무리 ${hBack.wrapup.h}px)`,
+    )
+    check(
+      `${label} (한약 단독): 돌아온 진료 화면 높이가 원래와 같다 (오갔다고 레이아웃이 달라지지 않는다)`,
+      Math.abs(hBack.consult.h - hBefore.consult.h) <= 2,
+      `(${hBefore.consult.h}px → ${hBack.consult.h}px)`,
+    )
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
+
     // 2026-09-06: 통증(LBP) 프로필을 따로 잰다 — 이번 배치가 접은 세 칸이 실제
     // 헤드리스 렌더에서 보이지 않는지, 그리고 처치 "기타" 한 칸만 남는지.
     // 옵션은 인덱스가 아니라 이름으로 고른다(fixture 재정렬에 안전).

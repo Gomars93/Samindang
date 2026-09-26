@@ -37,7 +37,14 @@ after:                                    <div data-step="wrapup"> …블록별 
 그래서 블록 하나하나를 테스트로 명시 단언했다 — 아래 §테스트.
 
 `LaneJumpNav`의 `showNext` prop과 `LANE_JUMP_ITEMS`의 `nextOnly` 플래그는
-폐기했다. 앵커(`next-h2`)가 이제 항상 존재하므로 조건이 가리킬 대상이 없다.
+폐기하고 `showWrapup`으로 바꿨다.
+
+> **처음에는 "앵커가 이제 항상 존재하므로 조건이 가리킬 대상이 없다"며 조건을
+> 통째로 없앴다 — 그게 틀렸다(1차 검수 1번).** herbal 마무리에 들어가는 것은
+> server 전용 `nextLaneFooter` 하나뿐이라, 미리보기에서는 빈 화면으로 가는 죽은
+> 버튼이 된다. 조건은 남되 **기준이 프로필에서 내용물 유무로** 바뀐 것이다.
+> 아래 §PR #58 독립 검수 1번 참고.
+
 `showExercise`는 그대로다 — 운동 섹션은 여전히 pain·mixed 전용이다.
 
 ### 필드 × 화면 표 (CLAUDE.md 경로 규칙 — **여는** 방향)
@@ -88,7 +95,8 @@ after:                                    <div data-step="wrapup"> …블록별 
 | `medicationCourseSlot` 자기 가드 신설 | A-3, `doctor-workspace` W-B9 |
 | `HerbalWorkspaceNext` mixed 전용 유지 | A-1, A-2 |
 | `showNext`/`nextOnly` 폐기 | A-5 (주석 제거 후 **코드만** 스캔) |
-| herbal 내비 3개 → 4개 | `doctor-workspace` 점프 내비, `tablet-viewport` 실측 |
+| herbal 내비: 푸터 있으면 4개 | `doctor-workspace` 점프 내비(stand-in 주입) |
+| herbal 내비: 푸터 없으면 3개 (죽은 버튼 없음) | `doctor-workspace` 점프 내비, `tablet-viewport` 실측 |
 | herbal 마무리 단계가 숨을 때 높이 0 | `tablet-viewport` (3 뷰포트 실측) |
 
 ### PR #58 독립 검수 3건 — 전부 CONFIRMED, 전부 수정
@@ -220,6 +228,32 @@ non-null → null로 갈 수 있는지(환자 링크 해제 UI가 없어 불가)
 - 두 경우 모두, 단언을 쓴 직후 **그 단언이 막으려는 mutation을 실제로 넣어본다.**
   이 PR에서 공허했던 둘 다, 그 한 번을 생략한 자리에서 나왔다.
 
+### PR #58 5차 검수 4건 — 전부 문서·테스트 품질
+
+코드 결함 0. 검수자가 도달가능성 외에 **새로 열린 herbal 경로가 빈 경로가
+아닌지**까지 확인했다: `buildEmrTextForRecord()`가 herbal을 slim 조립으로
+분기하고, `server/store.js`가 pain+herbal 재평가 대상을 union하므로 herbal
+단독 환자에게도 비어 있지 않은 재진 문진이 발급되며, 그 응답을 띄우는 화면
+(`MicroFollowUpCard`, 확인 레인)도 있다 — 쓰기만 되고 안 읽히는 필드가 없다.
+
+1. `DECISIONS.md`가 **철회된 근거를 현재형으로** 그대로 들고 있었다("앵커가 항상
+   존재하므로 조건이 가리킬 대상이 없다"). 두 줄 위의 표와도, 실제 코드와도
+   모순이다. 인용 블록으로 감싸 "처음엔 이렇게 판단했고 1차 검수에서 틀린 것으로
+   드러났다"로 바꿨다. `HANDOFF.md`도 같이.
+2. `tablet-viewport` 수치가 3 어긋났다(156 → 실제 159). 같은 커밋이 총계는
+   7209→7212로 고치면서 이 줄만 놓쳤다.
+3. 경로×테스트 표가 "herbal 내비 3개 → 4개"의 근거로 `tablet-viewport`를 들었는데,
+   그 스위트는 **3개**를 단언한다(fixtures엔 푸터가 없다). 두 행으로 갈랐다.
+4. **A-0이 산문에 결합돼 있었다** — 래퍼 바로 위에 `{/* … */}` 주석이 있을 것까지
+   요구해서, 설명 주석을 옮기기만 해도 코드 변경 없이 실패한다. **이 파일 자신의
+   A-pre 주석이 경고하는 결합**이다. 코드 사본만 보도록 고쳤고, 양방향 mutation
+   (바깥 가드 복원 → 실패 / 주석만 삭제 → 통과)으로 확인했다.
+
+**이 PR의 검수 5회 중 4회가 같은 뿌리에서 나왔다: "코드를 고치면서 그 코드를
+설명하는 글·그 코드를 검사하는 단언을 함께 옮기지 않는다."** 산문 결합(A-5 →
+스캐너 자기점검 → A-0)과 공허한 단언(복약 코스 → innerText)이 각각 세 번·두 번
+반복됐다. 규칙은 위 §4차 검수에 적었고, 남은 것은 그걸 실제로 지키는 것이다.
+
 ### 이번에 스스로 잡은 두 가지 (과거 사고의 재발)
 
 1. **A-5 초안이 주석을 스캔했다.** `!/showNext/.test(WORKSPACE)`가 폐기 이유를
@@ -238,9 +272,9 @@ non-null → null로 갈 수 있는지(환자 링크 해제 UI가 없어 불가)
 - 코드: `src/doctor/workspace/DoctorWorkspace.tsx` 하나(가드 재배치 + `LaneJumpNav`
   단순화). 임상 로직·조립 함수·서버 무변경.
 - 테스트: `herbal-workspace-slim` 37→42 / `doctor-workspace` 408→417 /
-  `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→156 /
+  `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→159 /
   `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7212 단언)**.
-- Mutation 15종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
+- Mutation 17종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
   푸터 재가드 / 복약 코스 자기 가드 제거 / `showNext`·`nextOnly` 재도입 /
   `DoctorView`의 푸터 게이트에 프로필 조건 주입 / `wrapupHasContent = true`
   (검수 1번 결함 재현) / `wrapupHasContent`를 프로필 기반으로 되돌리기 /

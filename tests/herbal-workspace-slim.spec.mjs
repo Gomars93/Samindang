@@ -90,11 +90,18 @@ check(
  * 아래에서 블록 하나하나를 명시적으로 단언한다 -- 그게 원래 A-0이 막으려던
  * 것이다.
  * ------------------------------------------------------------------ */
+/*
+ * A-0은 **코드 사본**만 본다. 첫 판은 래퍼 **바로 위에 `{/* … *\/}` 주석이
+ * 있을 것**까지 요구했는데, 그러면 설명 주석을 옮기거나 지우는 것만으로 코드
+ * 변경 없이 스위트가 실패한다 -- 이 파일의 A-pre 주석이 경고하는 바로 그
+ * 산문 결합이다(PR #58 5차 검수). 계약은 "래퍼에 프로필 가드가 없다"이지
+ * "래퍼 위에 주석이 있다"가 아니다.
+ */
 check(
   'A-0 「마무리」 단계 래퍼에는 프로필 가드가 없다 (세 프로필 모두 2단계 구조)',
-  /\{\/\*[\s\S]{0,2000}?\*\/\}\s*\n\s*<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
-    WORKSPACE,
-  ) && !/\{activeProfile !== 'herbal' && \(\s*\n?\s*(\/\*|<div className="doctor__visitStep")/.test(WORKSPACE),
+  /<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
+    WORKSPACE_CODE,
+  ) && !/\{activeProfile !== 'herbal' && \(\s*\n?\s*<div className="doctor__visitStep"/.test(WORKSPACE_CODE),
 )
 
 // A-1..A-5: PR-A가 herbal 단독에서 지운 블록 1개당 단언 1개. 단계 래퍼의

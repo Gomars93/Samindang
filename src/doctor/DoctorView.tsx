@@ -5,7 +5,6 @@ import { DOCTOR_FIXTURES } from './fixtures'
 import { DoctorRecordErrorBoundary } from './DoctorRecordErrorBoundary'
 import { PatientIdentityLinkAction } from './PatientIdentityLinkAction'
 import { buildPainWorkspaceEmrPreview, buildHerbalWorkspaceEmrPreview } from './workspace/emrPreview'
-import { hasPainFinalAssessmentText } from './workspace/finalAssessment'
 import { DOCTOR_SECTION_ORDER } from './sectionOrder'
 import {
   createEmptyJudgment,
@@ -3309,7 +3308,22 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       */
       followUpTargets: workspaceState.herbalFollowUpTargets,
       ...(slim
-        ? {}
+        ? {
+            /*
+             * PR #58 7차·8차 검수 (Batch 4 D-2): herbal 단독 화면의
+             * 「+ 다른 유형 입력 추가」가 통증 판단 4칸을 편집 가능하게
+             * 열어둔다. 이 PR이 그 화면에 EMR 복사를 붙였으므로, 원장이 적은
+             * 그 4칸이 복사 텍스트에 반드시 들어가야 한다 -- 안 그러면 빠진
+             * 텍스트에 "복사됨"을 띄운다.
+             *
+             * **slim(=herbal 단독)일 때만** 넘긴다. mixed는 `buildEmrTextForRecord`
+             * 가 통증 블록을 따로 앞에 붙이므로, 여기서도 넘기면 같은 값이 두 번
+             * 나온다.
+             *
+             * 비어 있으면 빌더가 라벨 자체를 내지 않는다(그쪽 주석 참고).
+             */
+            painFinalAssessment: workspaceState.painFinalAssessment,
+          }
         : {
             carePlan: workspaceState.herbalCarePlan,
             nextReassessmentPlan: workspaceState.nextReassessmentPlan,
@@ -3322,36 +3336,7 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
   // separated by a blank line (CRLF+CRLF), so a mixed record's one copy
   // carries both halves instead of only ever one profile's worth of text.
   function buildEmrTextForRecord(): string {
-    if (viewProfile === 'herbal') {
-      const herbal = buildHerbalEmrTextForRecord(true)
-      /*
-       * PR #58 7차 검수. herbal 단독 화면에도 「+ 다른 유형 입력 추가」
-       * disclosure가 있고(DoctorWorkspace의 `activeProfile !== 'mixed'` 가드),
-       * 그 안에서 원장이 **통증 판단 4칸을 실제로 편집할 수 있다**. 그런데
-       * herbal EMR 조립은 그 키를 안 내보낸다.
-       *
-       * 그 화면에 EMR 복사가 없던 동안에는 드러나지 않았다. 이 PR이 복사를
-       * 붙이면서, 원장이 적은 판단이 빠진 텍스트에 "복사됨"을 띄우게 된다 --
-       * CLAUDE.md가 네 번의 사고 끝에 규칙으로 적어둔 Batch 4 D-2 그 자체이고,
-       * 규칙의 2항("쓰기는 되는데 읽히지 않는 필드를 남기지 않는다")이 정확히
-       * 이 경우다.
-       *
-       * 합성 방식은 mixed와 **같다**(통증 블록 → 빈 줄 → 한약 블록). 새 형식을
-       * 만들지 않는다. 다만 통증 빌더는 비어 있어도 6키 뼈대를 항상 내므로,
-       * 원장이 실제로 적었을 때만 붙인다 -- 안 그러면 모든 한약 복사본에
-       * 빈 `A:`/`P:` 블록이 얹힌다.
-       *
-       * 기준이 `isPainFinalAssessmentRecorded`(저장 눌렀는가)가 아니라 내용인
-       * 이유는 `hasPainFinalAssessmentText`의 주석에 적었다.
-       *
-       * 통증 화면의 거울상(거기서 편집 가능한 한약 판단이 통증 EMR에 안 들어감)은
-       * **이 PR 이전부터 있던 것**이라 건드리지 않았다 -- 통증 EMR 출력이 바뀌는
-       * 것은 PO 판단 사항이다. PR 설명에 올렸다.
-       */
-      const ws = deserializeWorkspaceState(selectedRecord?.workspace)
-      if (!hasPainFinalAssessmentText(ws.painFinalAssessment)) return herbal
-      return `${buildPainEmrTextForRecord()}\r\n\r\n${herbal}`
-    }
+    if (viewProfile === 'herbal') return buildHerbalEmrTextForRecord(true)
     if (viewProfile === 'mixed') return `${buildPainEmrTextForRecord()}\r\n\r\n${buildHerbalEmrTextForRecord(false)}`
     return buildPainEmrTextForRecord()
   }

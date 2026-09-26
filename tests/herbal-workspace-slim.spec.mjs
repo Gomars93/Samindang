@@ -18,8 +18,11 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildHerbalWorkspaceEmrPreview } from './.herbal-slim-emrpreview-bundle.mjs'
-import { emptyPainFinalAssessment, hasPainFinalAssessmentText } from './.herbal-slim-finalassessment-bundle.mjs'
+import {
+  buildHerbalWorkspaceEmrPreview,
+  painFinalAssessmentSummaryLine,
+  PAIN_FINAL_ASSESSMENT_LABELS,
+} from './.herbal-slim-emrpreview-bundle.mjs'
 
 let passed = 0
 const check = (name, cond, extra = '') => {
@@ -218,63 +221,125 @@ check(
 
 check(
   'B-0 herbal 단독 EMR 조립이 slim=true로 호출된다',
-  /const herbal = buildHerbalEmrTextForRecord\(true\)/.test(VIEW),
+  /if \(viewProfile === 'herbal'\) return buildHerbalEmrTextForRecord\(true\)/.test(VIEW),
 )
 
 /* ------------------------------------------------------------------ *
- * B-0a~B-0e (PR #58 7차 검수) — Batch 4 D-2가 herbal 단독에서 재현될 뻔했다
+ * §B-0a~ (PR #58 7차·8차 검수) — Batch 4 D-2가 herbal 단독에서 재현될 뻔했다
  *
  * herbal 단독 화면에도 「+ 다른 유형 입력 추가」 disclosure가 있어서 원장이
  * **통증 판단 4칸을 실제로 편집할 수 있다**(DoctorWorkspace의
  * `activeProfile !== 'mixed'` 가드). 그런데 herbal EMR 조립은 그 키를 안
- * 내보낸다. 그 화면에 EMR 복사가 없던 동안에는 드러나지 않았지만, 이 PR이
+ * 내보냈다. 그 화면에 EMR 복사가 없던 동안에는 드러나지 않았지만, 이 PR이
  * 복사를 붙이는 순간 **원장이 적은 판단이 빠진 텍스트에 "복사됨"을 띄운다.**
  *
- * CLAUDE.md 경로 규칙 2항("쓰기는 되는데 읽히지 않는 필드를 남기지 않는다")이
- * 정확히 이 경우다. 내가 PR 설명의 입력 방향 칸에 "새로 편집 가능해진 필드는
- * 없다"고 적은 것은 사실이지만 **초점이 틀렸다** -- 새로 생긴 것은 출력이고,
- * 그래서 전부터 안 읽히던 필드가 이제 거짓말을 하게 된 것이다.
+ * 7차 수정의 첫 판은 통증 블록을 통째로 앞에 붙였다가 **8차 검수에서
+ * 뒤집혔다** -- 중복 `C/C:`, 환자 태블릿 `O/S:`/`S:`(slim이 일부러 빼는 재진
+ * 인용 포함), 빈 `O:`/`P:`까지 딸려 왔다. 필요한 것은 원장이 적은 4칸뿐이다.
  * ------------------------------------------------------------------ */
 
+const emptyPain = {
+  finalWorkingAssessment: '',
+  treatmentFocus: '',
+  interventionPerformedOrPlanned: '',
+  immediateRetestTarget: '',
+  recordedAt: null,
+}
+const herbalFa = {
+  finalPatternOrMechanism: '간울비허',
+  treatmentPrinciple: '소간건비',
+  prescriptionPlanNote: '처방 메모',
+  symptomsToTrack: '수면',
+  recordedAt: null,
+}
+const herbalText = (painFinalAssessment) =>
+  buildHerbalWorkspaceEmrPreview({
+    primaryConcern: '수면 불편',
+    clinicianObservations: [],
+    finalAssessment: herbalFa,
+    followUpTargets: [],
+    ...(painFinalAssessment ? { painFinalAssessment } : {}),
+  })
+
 check(
-  'B-0a herbal 분기가 통증 판단이 적혀 있으면 통증 블록을 함께 낸다 (빠진 채 "복사됨"을 띄우지 않는다)',
-  /if \(!hasPainFinalAssessmentText\(ws\.painFinalAssessment\)\) return herbal/.test(VIEW) &&
-    /return `\$\{buildPainEmrTextForRecord\(\)\}\\r\\n\\r\\n\$\{herbal\}`/.test(VIEW),
+  'B-0a 원장이 적은 통증 판단이 herbal 복사 텍스트에 들어간다 (빠진 채 "복사됨"을 띄우지 않는다)',
+  herbalText({ ...emptyPain, finalWorkingAssessment: '요추 추간판 의심', treatmentFocus: '침 + 부항' }).includes(
+    '통증 판단(다른 유형 입력): 최종 임상 판단: 요추 추간판 의심; 치료 초점: 침 + 부항',
+  ),
 )
 check(
-  'B-0b 합성 순서·구분자가 mixed와 같다 (새 형식을 만들지 않는다)',
-  /buildPainEmrTextForRecord\(\)\}\\r\\n\\r\\n\$\{buildHerbalEmrTextForRecord\(false\)\}/.test(VIEW),
-)
-check(
-  'B-0c 안 적었으면 통증 블록을 붙이지 않는다 (통증 빌더는 비어도 6키 뼈대를 내므로)',
-  hasPainFinalAssessmentText(emptyPainFinalAssessment()) === false,
+  'B-0b 안 적었으면 라벨 자체가 없다 (안 본 것을 음성 소견으로 적지 않는다)',
+  !herbalText({ ...emptyPain }).includes('통증 판단') && !herbalText(undefined).includes('통증 판단'),
 )
 /*
- * B-0d: 판정이 `recordedAt`(저장 눌렀는가)이 아니라 **내용**이어야 한다.
- * 저장 전이라도 workspace autosave로 기록에 들어와 있으면 복사에 넣는다.
+ * B-0c: 8차 검수가 뒤집은 지점. 통증 블록을 통째로 붙이면 이 네 가지가 딸려
+ * 온다 -- 중복 주호소(`C/C:`), 환자 태블릿 문장(`O/S:`/`S:`), 빈 `O:`/`P:`.
+ * slim의 존재 이유가 "화면에 없는 것을 차트에 적지 않는다"이므로, 한 줄만
+ * 더해야 한다.
  */
 check(
-  'B-0d 판정 기준은 recordedAt이 아니라 내용이다',
-  hasPainFinalAssessmentText({ ...emptyPainFinalAssessment(), finalWorkingAssessment: '요추 추간판 의심' }) === true &&
-    hasPainFinalAssessmentText({ ...emptyPainFinalAssessment(), recordedAt: '2026-09-26T00:00:00Z' }) === false,
+  'B-0c 통증 블록을 통째로 끌어오지 않는다 (중복 C/C · 태블릿 S · 빈 키 없음)',
+  (() => {
+    const t = herbalText({ ...emptyPain, treatmentFocus: '침' })
+    return !/(^|\r\n)C\/C:/.test(t) && !/(^|\r\n)O\/S:/.test(t) && !/(^|\r\n)S:/.test(t) && !/(^|\r\n)[OP]:/.test(t)
+  })(),
+  `(${JSON.stringify(herbalText({ ...emptyPain, treatmentFocus: '침' }))})`,
 )
 /*
- * B-0e: 나중에 `PainFinalAssessment`에 칸이 하나 더 생기면 그 칸도 판정에
+ * B-0d: 나중에 `PainFinalAssessment`에 칸이 하나 더 생기면 그 칸도 요약에
  * 들어가야 한다 -- 안 그러면 새 칸만 조용히 복사에서 빠진다(이번 사고의
- * 축소판). 타입의 문자열 키를 **열거해서** 하나씩 확인하므로, 칸이 늘어도
- * 테스트를 고칠 필요 없이 자동으로 커버된다.
+ * 축소판). 라벨 맵의 키를 **열거해서** 하나씩 확인하므로 자동으로 커버된다.
  */
 {
-  const empty = emptyPainFinalAssessment()
-  const textKeys = Object.keys(empty).filter((k) => k !== 'recordedAt' && typeof empty[k] === 'string')
-  check('B-0e 자기점검: 통증 판단의 텍스트 칸을 실제로 찾았다', textKeys.length >= 4, `(${textKeys})`)
-  for (const k of textKeys) {
+  const keys = Object.keys(PAIN_FINAL_ASSESSMENT_LABELS)
+  check('B-0d 자기점검: 통증 판단 라벨 맵을 실제로 읽었다', keys.length >= 4, `(${keys})`)
+  for (const k of keys) {
     check(
-      `B-0e 통증 판단 「${k}」 한 칸만 적어도 복사에 포함된다`,
-      hasPainFinalAssessmentText({ ...empty, [k]: '적음' }) === true,
+      `B-0d 통증 판단 「${k}」 한 칸만 적어도 요약에 들어간다`,
+      painFinalAssessmentSummaryLine({ ...emptyPain, [k]: '적음' }) ===
+        `${PAIN_FINAL_ASSESSMENT_LABELS[k]}: 적음`,
     )
   }
+  check('B-0d 다 비었으면 빈 문자열', painFinalAssessmentSummaryLine({ ...emptyPain }) === '')
 }
+/*
+ * B-0e: 라벨 문자열이 통증 빌더(A/P 조립)의 것과 **같아야** 한다. 두 벌을
+ * 두면 한쪽만 바뀌어 차트 용어가 갈린다. 통증 빌더 자체는 이 PR에서 안
+ * 건드렸으므로(그쪽 출력이 바뀐다) 소스에서 대조만 한다.
+ */
+{
+  const EMR = read('src/doctor/workspace/emrPreview.ts')
+  // 통증 빌더 구간(A/P 조립)만 본다 -- 라벨 맵 정의 자신과 대조하면 공허하다.
+  const painPart = EMR.slice(EMR.indexOf('const aParts'), EMR.indexOf('export function buildHerbalWorkspaceEmrPreview'))
+  check('B-0e 자기점검: 통증 빌더의 A/P 조립 구간을 잡았다', painPart.length > 400, `(${painPart.length}자)`)
+  for (const label of Object.values(PAIN_FINAL_ASSESSMENT_LABELS)) {
+    check(`B-0e 라벨 「${label}」이 통증 빌더와 일치한다`, painPart.includes(`${label}: `))
+  }
+}
+/*
+ * B-0f: `?` 분기에 **있고** `:` 분기에 **없어야** 한다. 첫 판은 앞쪽만 봐서,
+ * mixed에도 같이 넘기는 mutation(같은 값이 두 번 나온다)을 놓쳤다 -- 부재를
+ * 함께 단언하지 않으면 "한쪽에 있다"는 "양쪽에 있다"와 구분되지 않는다.
+ */
+{
+  const KEY = 'painFinalAssessment: workspaceState.painFinalAssessment'
+  const occurrences = VIEW.split(KEY).length - 1
+  check(
+    'B-0f 통증 판단을 넘기는 자리는 정확히 한 곳이다',
+    occurrences === 1,
+    `(${occurrences}곳 — mixed에도 넘기면 통증 블록과 겹쳐 같은 값이 두 번 나온다)`,
+  )
+  const i = VIEW.indexOf(KEY)
+  const before = VIEW.slice(Math.max(0, i - 1600), i)
+  const elseIdx = before.lastIndexOf('\n        : {')
+  const thenIdx = before.lastIndexOf('...(slim\n        ? {')
+  check(
+    'B-0f 그 한 곳은 slim(=herbal 단독) 분기다 — mixed 분기가 아니다',
+    thenIdx !== -1 && thenIdx > elseIdx,
+    `(then ${thenIdx}, else ${elseIdx})`,
+  )
+}
+
 check(
   'B-1 mixed EMR 조립은 slim=false -- 편집 UI가 살아 있으므로 키를 계속 넘긴다',
   /buildHerbalEmrTextForRecord\(false\)/.test(VIEW),

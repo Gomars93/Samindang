@@ -299,17 +299,29 @@ CLAUDE.md 2항("쓰기는 되는데 읽히지 않는 필드를 남기지 않는�
 편집 가능하던 모든 필드**를 싣는지 확인한다. 편집 UI가 이번에 생겼는지는
 무관하다 — 출력이 새로 생기면 기존의 모든 write-only 필드가 그 순간 거짓말이 된다.
 
-**수정**: herbal 분기가 통증 판단에 글자가 있으면 통증 블록을 함께 낸다.
-합성 순서·구분자는 mixed와 **동일**(통증 → 빈 줄 → 한약)이라 새 형식을 만들지
-않았다. 통증 빌더는 비어 있어도 6키 뼈대를 항상 내므로 **적었을 때만** 붙인다.
-판정은 `isPainFinalAssessmentRecorded`(= `recordedAt !== null`, "저장 눌렀는가")가
-아니라 **내용 기준**(`hasPainFinalAssessmentText` 신설)이다 — 저장 전이라도
-autosave로 기록에 들어와 있으면 잃으면 안 된다.
+**수정(8차 검수로 한 번 뒤집혔다)**: 첫 판은 **통증 블록을 통째로 앞에
+붙였는데**, 8차 검수가 그걸 잡았다 — 그러면 중복 `C/C:`, 환자 태블릿
+`O/S:`/`S:`(**slim이 일부러 빼는 재진 인용 포함**), 빈 `O:`/`P:`까지 딸려 온다.
+`slim`의 존재 이유가 "화면에 없는 것을 차트에 적지 않는다"인데, 그걸 정면으로
+어긴 수정이었다.
 
-**테스트 B-0a~B-0e** + mutation 3종(수정 되돌리기 / 판정을 `recordedAt` 기준으로 /
-타입에 칸 추가 후 판정에서 빠뜨리기). B-0e는 타입의 문자열 키를 **열거**하므로
-나중에 칸이 늘어도 자동으로 커버된다 — 이번 사고의 축소판(새 칸만 조용히 빠짐)을
-막는다.
+지금 수정은 한약 빌더가 이미 쓰는 **optional 라벨 줄** 패턴이다
+(`followUpTargets`/`carePlan`과 같은 방식: 안 넘기면 라벨 자체가 없다).
+`painFinalAssessment`를 optional로 받아, 적혀 있을 때만
+`통증 판단(다른 유형 입력): 최종 임상 판단: …; 치료 초점: …` **한 줄**을 낸다.
+라벨 4개는 통증 빌더가 쓰는 것과 같은 문자열을 `PAIN_FINAL_ASSESSMENT_LABELS`로
+한 번만 정의했고, 통증 빌더와 어긋나지 않는지는 B-0e가 소스에서 대조한다
+(통증 빌더 자체는 안 건드렸다 — 그쪽 출력이 바뀐다).
+
+**slim일 때만** 넘긴다 — mixed는 통증 블록이 따로 앞에 붙으므로 넘기면 같은
+값이 두 번 나온다.
+
+**테스트 B-0a~B-0f**(59단언) + mutation 5종: 안 넘기기 / mixed에도 넘기기 /
+slim↔mixed 자리 뒤바꾸기 / 통증 블록 통째로 / 라벨 줄은 두고 잔재만 추가.
+**B-0f의 첫 판은 `?` 분기만 봐서 "mixed에도 넘기기"를 놓쳤다** — 부재를 함께
+단언하지 않으면 "한쪽에 있다"와 "양쪽에 있다"가 구분되지 않는다(이 PR에서
+세 번째로 만난 같은 교훈). 자리 개수 + 위치 두 가지로 고쳤다. B-0d는 라벨 맵의
+키를 **열거**하므로 나중에 칸이 늘어도 자동 커버된다.
 
 **PO 판단이 필요한 것 2건** (이 PR에서 고치지 않았다 — 둘 다 임상 문서의 내용을
 바꾸는 결정이다):
@@ -337,12 +349,12 @@ autosave로 기록에 들어와 있으면 잃으면 안 된다.
 
 - 코드: `src/doctor/workspace/DoctorWorkspace.tsx`(가드 재배치 + `LaneJumpNav`
   조건 교체), `src/doctor/DoctorView.tsx`(7차 검수 — herbal EMR 합성),
-  `src/doctor/workspace/finalAssessment.ts`(`hasPainFinalAssessmentText` 신설),
+  `src/doctor/workspace/emrPreview.ts`(통증 판단 optional 라벨 줄 + 공유 라벨 맵),
   `HerbalWorkspace.tsx`(주석만). 임상 로직·서버 무변경.
-- 테스트: `herbal-workspace-slim` 37→52 / `doctor-workspace` 408→417 /
+- 테스트: `herbal-workspace-slim` 37→59 / `doctor-workspace` 408→417 /
   `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→159 /
-  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7222 단언)**.
-- Mutation 21종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
+  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7229 단언)**.
+- Mutation 26종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
   푸터 재가드 / 복약 코스 자기 가드 제거 / `showNext`·`nextOnly` 재도입 /
   `DoctorView`의 푸터 게이트에 프로필 조건 주입 / `wrapupHasContent = true`
   (검수 1번 결함 재현) / `wrapupHasContent`를 프로필 기반으로 되돌리기 /

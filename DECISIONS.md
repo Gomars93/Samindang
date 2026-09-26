@@ -87,6 +87,48 @@ after:                                    <div data-step="wrapup"> …블록별 
 | herbal 내비 3개 → 4개 | `doctor-workspace` 점프 내비, `tablet-viewport` 실측 |
 | herbal 마무리 단계가 숨을 때 높이 0 | `tablet-viewport` (3 뷰포트 실측) |
 
+### PR #58 독립 검수 3건 — 전부 CONFIRMED, 전부 수정
+
+**1. 죽은 버튼이 자리만 옮겨 되살아났다 (설계 결함).** 바깥 가드를 떼면서
+`showNext`까지 없앴는데, herbal 단독 마무리에 들어가는 것은 `nextLaneFooter`
+**하나뿐**이고 그건 `mode === 'server' && patient_id` 전용이다. 그래서 fixtures
+/미리보기 모드나 patient_id 없는 기록에서는 마무리 단계가 `<h2>마무리</h2>`
+하나만 남고(실측 155자 vs 통증 5336자), 항상 노출되는 점프 버튼이 원장을
+**빈 화면**으로 데려간다 — 같은 클릭이 진료 단계를 접기 때문이다. PR-A 이전의
+`showNext`가 막던 바로 그 죽은 버튼이다.
+
+수정: 조건을 되살리되 **기준을 프로필에서 내용물의 유무로 바꿨다**.
+
+```ts
+const wrapupHasContent = activeProfile !== 'herbal' || nextLaneFooter != null
+```
+
+옛 `showNext={activeProfile !== 'herbal'}`는 server 모드의 herbal에서도 버튼을
+빼서 **틀렸다**(이 PR이 고치려던 바로 그 구멍). 새 식은 두 경우 모두 맞다.
+필터는 `it.step !== 'wrapup' || showWrapup`으로 걸어 `next-h2` 하나를 특별
+취급하지 않는다. 단계 래퍼 자체는 조건 없이 남겼다 — `visitStep`을 'wrapup'으로
+만드는 경로가 이 내비 하나뿐이라(나머지 `setVisitStep` 호출부는 전부 'consult')
+버튼을 가리면 빈 화면은 **도달 불가**이고, 래퍼를 남겨야 `hidden`이 CSS에
+먹히는지 재는 실측 스위트가 herbal에서도 성립한다.
+
+**2. `data-current`/`aria-current` 주석이 낡았다.** "herbal 단독에서는 마무리
+항목이 필터로 빠지고 단계도 항상 'consult'" — 두 절 다 거짓이 됐다. 같은 hunk의
+다른 주석은 전부 고쳤는데 이것만 놓쳤다.
+
+**3. 새로 넣은 렌더 단언 2개가 공허했다.** `medicationCourseSlot`은 prop이라
+SSR·fixtures 브라우저 렌더 어디에도 안 들어온다. 그래서
+`!html.includes('복약 코스')`는 **가드를 지워도 그대로 통과했다** — 실제로
+mutation을 넣어 확인했다(세 프로필 전부 false). 소스 텍스트 단언만 그 mutation을
+잡고 있었다. 수정: stand-in을 직접 넘겨 herbal에서는 안 나오고 pain·mixed에서는
+나오는 것을 함께 본다(후자가 비공허성 담보). 브라우저 쪽은 prop 주입이 불가능해
+그 단언을 지우고 왜 지웠는지를 주석에 남겼다.
+
+**3번은 PR #57 검수 3번·5번과 같은 부류를 한 배치 만에 반복한 것이다.** 그때
+배운 것("fixture가 실제 호출을 모델링하지 않으면 통과하면서 반대를 단언한다")을
+새로 쓴 단언에는 적용하지 않았다. 교훈을 규칙으로 바꿔 적어둔다: **prop으로
+들어오는 것의 부재를 렌더로 단언할 때는, 같은 prop을 실제로 넘긴 대조군을
+반드시 함께 둔다.**
+
 ### 이번에 스스로 잡은 두 가지 (과거 사고의 재발)
 
 1. **A-5 초안이 주석을 스캔했다.** `!/showNext/.test(WORKSPACE)`가 폐기 이유를
@@ -104,13 +146,16 @@ after:                                    <div data-step="wrapup"> …블록별 
 
 - 코드: `src/doctor/workspace/DoctorWorkspace.tsx` 하나(가드 재배치 + `LaneJumpNav`
   단순화). 임상 로직·조립 함수·서버 무변경.
-- 테스트: `herbal-workspace-slim` 37→39 / `doctor-workspace` 408→413 /
-  `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→174 /
-  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7220 단언)**.
-- Mutation 5종을 실제로 넣어 각각 이름 있는 실패를 확인했다: 바깥 가드 복원 /
+- 테스트: `herbal-workspace-slim` 37→42 / `doctor-workspace` 408→416 /
+  `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→156 /
+  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7208 단언)**.
+- Mutation 8종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
   푸터 재가드 / 복약 코스 자기 가드 제거 / `showNext`·`nextOnly` 재도입 /
-  `DoctorView`의 푸터 게이트에 프로필 조건 주입. 마지막 것은 `DoctorWorkspace`가
-  옳아도 화면이 비는 경로라, 그것만 지키는 단언을 따로 뒀다.
+  `DoctorView`의 푸터 게이트에 프로필 조건 주입 / `wrapupHasContent = true`
+  (검수 1번 결함 재현) / `wrapupHasContent`를 프로필 기반으로 되돌리기 /
+  검수 3번 수정 후 복약 코스 가드 제거. 5번째는 `DoctorWorkspace`가 옳아도
+  화면이 비는 경로라 그것만 지키는 단언을 따로 뒀고, 6·7번째는 조건의 **양
+  방향**(항상 낸다 / 절대 안 낸다)을 각각 잡는지 확인한 것이다.
 - 남은 것: 실기기에서 한약 단독 진료를 **끝까지** 한 번 — 마무리 → EMR 복사 →
   진료 완료. fixtures 모드에는 `nextLaneFooter`가 안 들어오므로 그 내용물은
   자동 테스트가 stand-in으로만 확인한다.

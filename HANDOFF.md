@@ -24,6 +24,18 @@
 명시 단언했다. `LaneJumpNav`의 `showNext`·`nextOnly`는 폐기 — 앵커가 항상
 존재하므로 조건이 가리킬 대상이 없다.
 
+### PR #58 독립 검수 3건 (전부 CONFIRMED · 수정 완료)
+
+| | 내용 |
+|---|---|
+| **1** | **죽은 버튼이 자리만 옮겨 되살아났다.** herbal 마무리에 들어가는 건 server 전용 `nextLaneFooter` 하나뿐이라, 미리보기에서 버튼이 원장을 **빈 화면**(헤딩만, 실측 155자)으로 데려갔다. 조건을 되살리되 기준을 **프로필 → 내용물 유무**로 바꿨다(`wrapupHasContent`) — 옛 조건은 server 모드 herbal에서도 틀렸었다 |
+| **2** | `data-current`/`aria-current` 주석이 낡음("herbal은 마무리가 필터로 빠지고 단계도 항상 consult") — 두 절 다 거짓 |
+| **3** | **새 렌더 단언 2개가 공허했다.** `medicationCourseSlot`은 prop이라 fixtures에 안 들어와, 가드를 지워도 통과했다. stand-in 주입 + pain·mixed 대조군으로 고침 |
+
+**3번은 PR #57 검수 3번·5번과 같은 부류를 한 배치 만에 반복한 것이다.** 규칙으로
+적어둔다: **prop으로 들어오는 것의 부재를 렌더로 단언할 때는, 같은 prop을 실제로
+넘긴 대조군을 반드시 함께 둔다.**
+
 ### 이번에 스스로 잡은 두 가지
 
 - **A-5 초안이 주석을 스캔했다** — `!/showNext/`가 폐기 이유를 적은 JSDoc의
@@ -33,12 +45,13 @@
   뷰포트의 나머지 단언까지 날아갔다. 기다림 조건을 좁혀 이제 첫 뷰포트에서
   이름 있는 실패로 걸린다.
 
-검증: `herbal-workspace-slim` 37→**39** · `doctor-workspace` 408→**413** ·
-`tablet-viewport` 138→**174**(3 뷰포트 실측) · `doctor-reset-key` 12 ·
-`tsc -b` 0 · `build` 0 · **`test:all` exit 0 (7220 단언)**.
-Mutation 5종 전부 이름 있는 실패로 잡힘(바깥 가드 복원 / 푸터 재가드 / 복약
-코스 가드 제거 / `showNext`·`nextOnly` 재도입 / `DoctorView` 푸터 게이트에
-프로필 조건 주입).
+검증: `herbal-workspace-slim` 37→**42** · `doctor-workspace` 408→**416** ·
+`tablet-viewport` 138→**156**(3 뷰포트 실측) · `doctor-reset-key` 12 ·
+`tsc -b` 0 · `build` 0 · **`test:all` exit 0 (7208 단언)**.
+Mutation **8종** 전부 이름 있는 실패로 잡힘 — 그중 검수 후 추가한 3종은
+`wrapupHasContent = true`(결함 재현) / 프로필 기반으로 되돌리기 / 검수 3번 수정
+후 복약 코스 가드 제거. 앞의 둘은 조건의 **양 방향**(항상 낸다 / 절대 안 낸다)을
+각각 잡는지 본 것이다.
 
 ### Next Recommended Action
 

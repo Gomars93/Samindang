@@ -4322,14 +4322,51 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
    * 방향이다 -- 가드를 **떼면** 원래 없던 것이 실제로 나타나는지. 안 보면
    * "가드만 지우고 화면은 그대로"인 상태가 통과한다.
    */
-  test('PO 2026-09-26: herbal 단독에 「마무리」 단계·앵커·점프 버튼이 생겼다 (푸터 내용물은 prop이라 §검수1에서 따로 본다)', () => {
+  test('PO 2026-09-26: herbal 단독에 「마무리」 단계 래퍼와 앵커가 생겼다', () => {
     assert.ok(/id="next-h2"/.test(herbalOnlyHtml), '「마무리」 헤딩이 없다')
-    assert.ok(/data-target="next-h2"/.test(herbalOnlyHtml), '「마무리」 점프 버튼이 없다')
     assert.ok(/data-step="wrapup"/.test(herbalOnlyHtml), '마무리 단계 래퍼가 없다')
   })
 
-  test('PO 2026-09-26: 「마무리」를 열어줬어도 PR-A가 지운 CRM 복약 코스는 안 따라온다', () => {
-    assert.ok(!herbalOnlyHtml.includes('복약 코스'), 'CRM 복약 코스 슬롯이 herbal 단독에 따라 들어왔다')
+  /*
+   * PR #58 검수 1번. 점프 버튼은 **단계가 있으면**이 아니라 **그 단계에 내용이
+   * 있으면** 나온다. herbal 단독 마무리에 들어가는 것은 `nextLaneFooter`
+   * 하나뿐이고 그건 server 모드 전용이라, 푸터 없이 버튼만 내면 원장을 헤딩만
+   * 남은 빈 화면으로 데려간다(같은 클릭이 진료 단계를 접는다).
+   *
+   * 두 방향을 다 본다 -- 한쪽만 보면 "항상 낸다"와 "절대 안 낸다"가 구분되지
+   * 않는다. 이 배치에서 실제로 "항상 낸다"로 틀렸다.
+   */
+  test('PR #58 검수1: 푸터가 없으면(미리보기) herbal 단독에 「마무리」 버튼을 내지 않는다 — 빈 화면으로 가는 죽은 버튼 방지', () => {
+    assert.ok(!/data-target="next-h2"/.test(herbalOnlyHtml), '갈 데 없는 마무리 버튼이 있다')
+    const targets = [...herbalOnlyHtml.matchAll(/data-target="([^"]+)"/g)].map((m) => m[1])
+    assert.deepEqual(targets, ['lane1-h2', 'lane2-h2', 'judgment-h2'], `(${targets})`)
+  })
+
+  test('PR #58 검수1: 푸터가 있으면(실제 진료) herbal 단독에도 「마무리」 버튼이 나온다', () => {
+    const withFooter = renderWith(HERBAL_SCENARIO_1, {
+      nextLaneFooter: React.createElement('div', { id: 'footer-probe' }, '종결 stand-in'),
+    })
+    assert.ok(/data-target="next-h2"/.test(withFooter), '실제 진료에서도 버튼이 없다 — 이 PR이 고치려던 구멍 그대로다')
+    const targets = [...withFooter.matchAll(/data-target="([^"]+)"/g)].map((m) => m[1])
+    assert.deepEqual(targets, ['lane1-h2', 'lane2-h2', 'judgment-h2', 'next-h2'], `(${targets})`)
+  })
+
+  /*
+   * PR #58 검수 3번: 이 단언의 첫 판이 **공허했다.** `medicationCourseSlot`은
+   * prop이라 fixtures 렌더에는 애초에 안 들어온다 -- `!html.includes('복약 코스')`
+   * 는 가드를 지워도 그대로 통과했다(PR #57 검수 3번·5번과 같은 부류를 한 배치
+   * 만에 반복했다). stand-in을 **직접 넘겨** 가드가 실제로 거르는지 본다.
+   */
+  test('PR #58 검수3: CRM 복약 코스 슬롯은 넘겨줘도 herbal 단독에서 걸러진다 (PR-A 유지)', () => {
+    const slot = React.createElement('div', { id: 'medcourse-probe' }, '복약 코스 stand-in')
+    const herbal = renderWith(HERBAL_SCENARIO_1, { medicationCourseSlot: slot })
+    assert.ok(!herbal.includes('id="medcourse-probe"'), 'herbal 단독에 복약 코스가 들어왔다')
+    // 비공허성: 같은 slot이 pain·mixed에서는 실제로 렌더된다. 이게 없으면
+    // "slot 자체가 무시되는 것"과 "가드가 거르는 것"이 구분되지 않는다.
+    for (const [name, scenario] of [['pain', PAIN_SCENARIO_1], ['mixed', MIXED_SCENARIO_1]]) {
+      const html = renderWith(scenario, { medicationCourseSlot: slot })
+      assert.ok(html.includes('id="medcourse-probe"'), `${name}에서 복약 코스가 사라졌다 — 가드가 과하게 걸렀다`)
+    }
   })
 
   /*
@@ -4918,16 +4955,25 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
   })
   const herbal = render(HERBAL_SCENARIO_1)
   const herbalNav = navButtons(herbal)
-  // PR-A(한약 화면 축소, 2026-09-21)로 3개까지 줄었다가, PO 지시 2026-09-26
-  // (안 1)로 「마무리」 단계를 herbal에도 주면서 4개가 됐다 -- herbal 단독이
-  // 그 방문 안에서 진료를 끝낼 수 있어야 한다(PR #57 검수 1번).
-  // 운동 섹션은 여전히 없다(한약에 운동 후보를 만들지 않는다).
-  // 이 파일의 바로 아래 "죽은 링크 없음" 단언과 짝을 이룬다 -- 앵커가 없는
-  // 버튼을 남기지 않는 것이 이 내비의 원래 계약이었다.
-  test('점프 내비: 한약 화면은 운동 버튼 없이 4개 (마무리 포함, PO 2026-09-26)', () => {
-    assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치', '마무리'])
+  // PR-A(한약 화면 축소, 2026-09-21)로 3개까지 줄었고, PO 지시 2026-09-26(안 1)로
+  // 「마무리」 단계를 herbal에도 줬다. 다만 **버튼 수는 프로필이 아니라 그 단계에
+  // 내용이 있는지로 갈린다**(PR #58 검수 1번): herbal 마무리에 들어가는 것은
+  // server 전용 `nextLaneFooter` 하나뿐이라, 푸터가 없는 이 fixtures 렌더에서는
+  // 3개로 남는 것이 옳다. 실제 진료의 4개는 바로 아래 단언이 본다.
+  // 운동 섹션은 어느 쪽이든 없다(한약에 운동 후보를 만들지 않는다).
+  // "죽은 링크 없음" 단언과 짝을 이룬다 -- 갈 데 없는 버튼을 남기지 않는 것이
+  // 이 내비의 원래 계약이다.
+  test('점프 내비: 한약 화면(푸터 없음)은 3개 — 갈 데 없는 마무리 버튼을 내지 않는다', () => {
+    assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치'])
     assert.ok(!herbal.includes('id="exercise-h3"'))
-    assert.ok(herbal.includes('id="next-h2"'), '「마무리」 앵커가 없다 — 죽은 링크가 된다')
+  })
+  test('점프 내비: 한약 화면(푸터 있음 = 실제 진료)은 운동 없이 4개 — 마무리 포함', () => {
+    const withFooter = renderWith(HERBAL_SCENARIO_1, {
+      nextLaneFooter: React.createElement('div', null, '종결 stand-in'),
+    })
+    assert.deepEqual(navButtons(withFooter).map((b) => b.label), ['안전', '확인', '판단·처치', '마무리'])
+    assert.ok(!withFooter.includes('id="exercise-h3"'))
+    assert.ok(withFooter.includes('id="next-h2"'), '「마무리」 앵커가 없다 — 죽은 링크가 된다')
   })
   test('점프 내비: 한약 화면의 모든 버튼 대상 id가 실제로 렌더된다', () => {
     for (const b of herbalNav) assert.ok(herbal.includes(` id="${b.target}"`), `missing anchor ${b.target}`)

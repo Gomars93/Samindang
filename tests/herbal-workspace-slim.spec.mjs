@@ -103,6 +103,18 @@ const nextLane = WORKSPACE.slice(
   WORKSPACE.indexOf('data-step="wrapup"'),
   WORKSPACE.indexOf('<LaneJumpNav'),
 )
+/*
+ * "이 식별자가 마무리 단계 **밖에는** 없다"를 볼 때는 주석 뗀 사본을 쓴다.
+ * `LaneJumpNav`의 JSDoc이 왜 조건이 필요한지 설명하며 `nextLaneFooter`를
+ * 이름으로 언급하므로, 원본으로 보면 산문 때문에 실패한다 -- A-5를 고칠 때
+ * 이미 한 번 겪은 바로 그 함정이다(T-6과 같은 부류).
+ */
+const afterNavCode = WORKSPACE_CODE.slice(WORKSPACE_CODE.indexOf('<LaneJumpNav'))
+check(
+  'A-pre 내비 이후 코드 구간을 실제로 잡았다 (아래 "밖에 없다" 단언이 공허하지 않도록)',
+  afterNavCode.includes('LANE_JUMP_ITEMS') && afterNavCode.length > 500,
+  `(${afterNavCode.length}자)`,
+)
 check(
   'A-1 HerbalWorkspaceNext(재평가 대상 칩 + 다음 방문 확인 메모 + 다음 액션 + 관리계획·다음 재평가 + 참고 자료)는 mixed에서만 렌더된다',
   /\{activeProfile === 'mixed' && \(\s*\n\s*<HerbalWorkspaceNext/.test(nextLane),
@@ -114,19 +126,41 @@ check(
 check(
   'A-3 CRM 복약 코스 슬롯(medicationCourseSlot)이 herbal 단독에서 여전히 빠진다 (자기 가드를 들고 있다)',
   /\{activeProfile !== 'herbal' && medicationCourseSlot\}/.test(nextLane) &&
-    !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('medicationCourseSlot'),
+    !afterNavCode.includes('medicationCourseSlot'),
 )
 check(
   'A-4 재진 발급·EMR·진료 완료 푸터(nextLaneFooter)는 **가드 없이** 마무리 단계 안에 있다 (PO 지시로 herbal에도 닿는다)',
   nextLane.includes('{nextLaneFooter}') &&
     !/activeProfile[^\n]*&& nextLaneFooter/.test(nextLane) &&
-    !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('nextLaneFooter'),
+    !afterNavCode.includes('nextLaneFooter'),
 )
+/*
+ * A-5 (PR #58 검수 1번으로 한 번 고쳐졌다)
+ *
+ * 첫 판은 "마무리 버튼이 **조건 없이** 노출된다"였다 -- 틀렸다. herbal 단독
+ * 마무리에 들어가는 것은 server 전용 `nextLaneFooter` 하나뿐이라, 조건을
+ * 통째로 없애면 미리보기에서 헤딩만 남은 빈 화면으로 가는 죽은 버튼이 된다.
+ *
+ * 지금 계약: 조건은 있되 **프로필이 아니라 내용물의 유무**로 건다. 세 가지를
+ * 함께 못 박는다 -- (1) 옛 프로필 기반 이름(`showNext`/`nextOnly`)은 돌아오지
+ * 않았다, (2) 새 조건은 `wrapupHasContent`이고 그 정의가 푸터 유무를 본다,
+ * (3) 필터는 `next-h2` 하나를 특별 취급하지 않고 `step === 'wrapup'` 전체를
+ * 건다(앵커가 하나 더 생겨도 같은 규칙이 적용되도록).
+ */
 check(
-  'A-5 마무리 점프 버튼은 조건 없이 노출된다 (앵커가 항상 존재하므로 showNext/nextOnly가 폐기됐다)',
+  'A-5 마무리 점프 버튼의 조건은 프로필이 아니라 내용물의 유무다 (showNext/nextOnly는 돌아오지 않았다)',
   /\{ id: 'next-h2', label: '마무리', step: 'wrapup' \}/.test(WORKSPACE_CODE) &&
     !/showNext/.test(WORKSPACE_CODE) &&
     !/nextOnly/.test(WORKSPACE_CODE),
+)
+check(
+  'A-5b 그 조건은 `nextLaneFooter`의 유무를 본다 — 프로필만 보면 server 모드의 herbal에서 또 틀린다',
+  /const wrapupHasContent = activeProfile !== 'herbal' \|\| nextLaneFooter != null/.test(WORKSPACE_CODE) &&
+    /showWrapup=\{wrapupHasContent\}/.test(WORKSPACE_CODE),
+)
+check(
+  'A-5c 필터는 `step === \'wrapup\'` 항목 전체를 건다 (next-h2 하나를 특별 취급하지 않는다)',
+  /it\.step !== 'wrapup' \|\| showWrapup/.test(WORKSPACE_CODE),
 )
 
 /* ------------------------------------------------------------------ *

@@ -598,6 +598,36 @@ export function DoctorWorkspace({
     `followUpTargets`가 프로필 무관 union이라, 오늘 쪽만 한쪽 프로필로
     좁히면 mixed에서 짝이 안 맞는다.
   */
+  /*
+   * 「마무리」 단계에 이 프로필에서 실제로 들어가는 것이 있는가.
+   *
+   * 검수(PR #58 1번)가 잡은 것: 바깥 프로필 가드를 떼면서 `showNext`까지 같이
+   * 없앴는데, herbal 단독의 마무리 단계에 들어가는 것은 `nextLaneFooter`
+   * **하나뿐**이다. 그 푸터는 DoctorView가 `mode === 'server' && patient_id`
+   * 에서만 만든다. 그래서 fixtures/미리보기 모드나 patient_id가 없는 기록에서는
+   * 마무리 단계가 `<h2>마무리</h2>` 하나만 남고, 항상 노출되는 점프 버튼이
+   * 원장을 **빈 화면**으로 데려간다(같은 클릭이 진료 단계를 접으므로 화면에
+   * 헤딩만 남는다). PR-A 이전의 `showNext`가 막던 "죽은 버튼"이 자리만 옮겨
+   * 되살아난 셈이다.
+   *
+   * 조건을 되살리되 **기준을 바꾼다**: 프로필이 아니라 *내용물의 유무*다.
+   * 옛 `showNext={activeProfile !== 'herbal'}`는 server 모드에서도 herbal의
+   * 버튼을 빼서 틀렸다(이 PR이 고치려던 바로 그 구멍). 지금 식은 두 경우
+   * 모두 맞다 -- 실제 진료(server + patient_id)에서는 herbal도 버튼이 있고,
+   * 푸터가 없는 미리보기에서는 세 프로필 중 herbal만 버튼이 빠진다.
+   *
+   * pain·mixed는 `PainWorkspaceNext`(및 mixed의 `HerbalWorkspaceNext`)가 푸터와
+   * 무관하게 항상 들어가므로 참이다.
+   *
+   * 단계 래퍼 자체는 조건 없이 그대로 둔다 -- `visitStep`을 'wrapup'으로
+   * 만드는 경로는 이 내비 하나뿐이라(다른 setVisitStep 호출부는 전부
+   * 'consult'로 되돌린다) 버튼을 가리면 빈 화면은 **도달 불가**가 되고,
+   * 숨겨진 빈 래퍼는 높이 0이라 화면에 아무 비용도 주지 않는다. 래퍼를 남기면
+   * 세 프로필의 단계 구조가 그대로 같아서, `hidden`이 CSS에 먹히는지를 재는
+   * 실측 스위트가 herbal에서도 계속 성립한다.
+   */
+  const wrapupHasContent = activeProfile !== 'herbal' || nextLaneFooter != null
+
   const trackedLine = lastVisitTrackedLine(priorVisits, [
     ...workspaceState.painFollowUpTargets,
     ...workspaceState.herbalFollowUpTargets,
@@ -1133,6 +1163,7 @@ export function DoctorWorkspace({
 
           <LaneJumpNav
             showExercise={activeProfile === 'pain' || activeProfile === 'mixed'}
+            showWrapup={wrapupHasContent}
             visitStep={visitStep}
             onSelect={(id, step) => {
               if (step === visitStep) {
@@ -1233,28 +1264,39 @@ const LANE_JUMP_ITEMS: ReadonlyArray<{
 ]
 
 /**
- * 2026-09-26 (PO 지시 안 1): `showNext`가 없어졌다.
+ * 2026-09-26 (PO 지시 안 1 + PR #58 검수 1번): `showNext` -> `showWrapup`.
  *
- * PR-A(2026-09-21) 이후 herbal 단독에는 `다음` 레인 자체가 없어서 `#next-h2`로
- * 가는 버튼을 함께 빼야 했다(아무 데도 가지 않는 죽은 버튼 방지). 이제
- * 「마무리」 단계가 세 프로필 모두에 있으므로 그 앵커는 **항상 존재한다** --
- * 조건이 사라졌으니 조건 자체를 없앤다. prop만 남기고 항상 true를 넘기면,
- * 다음 사람이 "언제 false가 되나"를 찾다가 못 찾는다.
+ * 이 내비의 원래 계약은 "**갈 데가 있는 버튼만 노출한다**"이다. PR-A 이후
+ * herbal 단독에는 `다음` 레인 자체가 없어서 `showNext={activeProfile !==
+ * 'herbal'}`로 뺐다. 안 1이 그 레인을 herbal에도 주면서 나는 이 조건을
+ * 통째로 없앴는데 -- 그건 틀렸다. herbal 단독 마무리에 들어가는 것은
+ * `nextLaneFooter` 하나뿐이고 그건 server 모드 전용이라, 미리보기에서는
+ * 헤딩만 남은 **빈 화면**으로 가는 죽은 버튼이 된다.
+ *
+ * 그래서 조건을 프로필이 아니라 **내용물의 유무**로 다시 세웠다
+ * (`wrapupHasContent`, 호출부 참고). 옛 조건은 server 모드의 herbal에서도
+ * 버튼을 빼서 틀렸고, 새 조건은 두 경우 모두 맞다.
+ *
+ * `step === 'wrapup'`인 항목 전체를 거르는 것이지 `next-h2` 하나를 특별
+ * 취급하지 않는다 -- 나중에 마무리 단계에 앵커가 하나 더 생겨도 같은 규칙이
+ * 자동으로 적용된다.
  *
  * `showExercise`는 그대로다 -- 운동 섹션은 여전히 pain·mixed 전용이다.
- * "존재하는 앵커만 노출한다"는 이 내비의 원래 계약은 그 prop과
- * doctor-workspace의 "죽은 링크 없음" 단언이 계속 지킨다.
  */
 function LaneJumpNav({
   showExercise,
+  showWrapup,
   visitStep,
   onSelect,
 }: {
   showExercise: boolean
+  showWrapup: boolean
   visitStep: VisitStep
   onSelect: (id: string, step: VisitStep) => void
 }) {
-  const items = LANE_JUMP_ITEMS.filter((it) => !it.exerciseOnly || showExercise)
+  const items = LANE_JUMP_ITEMS.filter(
+    (it) => (!it.exerciseOnly || showExercise) && (it.step !== 'wrapup' || showWrapup),
+  )
   // 필터를 거친 뒤에 고른다 -- 걸러진 항목에 표시를 달면 아무 버튼에도 붙지
   // 않는 조합이 생긴다(예: 운동 섹션이 없는 프로필).
   const firstIdOfCurrentStep = items.find((it) => it.step === visitStep)?.id
@@ -1280,8 +1322,14 @@ function LaneJumpNav({
             current는 **하나뿐**이어야 하므로(ARIA), 현재 단계의 **첫 항목**
             하나에만 준다. 네 개에 전부 주면 "현재 단계"가 네 번 읽힌다.
 
-            herbal 단독에서는 `마무리` 항목이 필터로 빠지고 단계도 항상
-            'consult'이라, 두 표시 모두 진료 쪽에만 남는다(죽은 표시 없음).
+            2026-09-26(안 1)로 herbal 단독도 마무리 단계를 갖게 됐으므로, 옛
+            주석이 적어둔 "herbal에서는 마무리 항목이 필터로 빠지고 단계도 항상
+            'consult'"는 **더 이상 사실이 아니다**. 실제 진료(server 모드)의
+            herbal은 네 버튼 + 두 단계로, pain·mixed와 똑같이 동작한다.
+            푸터가 없는 미리보기에서만 마무리 항목이 빠지는데(`showWrapup`),
+            그때는 단계도 'consult'에 머물러 두 표시가 진료 쪽에만 남는다 --
+            `firstIdOfCurrentStep`을 **필터 뒤에** 고르는 것이 그 경우까지
+            커버한다(걸러진 항목에 표시를 달지 않는다).
           */
           data-current={it.step === visitStep ? 'true' : undefined}
           aria-current={it.id === firstIdOfCurrentStep ? 'step' : undefined}

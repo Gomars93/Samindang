@@ -5835,9 +5835,26 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
         )
       }
     }
-    // 자기점검: 패턴이 아무것도 못 잡으면 이 테스트는 공허하다. 두 파일이
-    // 실제로 옛 주장을 인용하며 철회하고 있으므로 최소 1건은 잡혀야 한다.
-    assert.ok(found >= 1, `낡은 주장 패턴이 하나도 안 잡혔다 (${found}건) — 문구가 바뀌었다면 패턴을 갱신할 것`)
+    /*
+      자기점검은 **합성 표본**으로 한다. 첫 판은 "실제 소스에서 최소 1건은
+      잡혀야 한다"였는데, 그걸 만족시키는 건 `HerbalWorkspace.tsx`의 산문 한
+      문장뿐이었다 -- 나중에 그 JSDoc을 정리하면 코드가 옳은데도 이 스위트가
+      실패한다. 바로 옆 `herbal-workspace-slim.spec.mjs`의 A-pre 주석이
+      경고해둔 그 결합을 한 파일 건너에서 그대로 재현한 것이다(PR #58 3차
+      검수). 그래서 스캐너의 동작만 합성 표본으로 검증하고, 실제 소스에서
+      몇 건이 잡히는지는 계약으로 삼지 않는다(0건도 정상 -- 낡은 주장이
+      없다는 뜻이다).
+    */
+    const STALE = '/*\n * herbal 단독에는 「마무리」도 없다.\n */'
+    const RETRACTED = '/*\n * PR-A 당시 herbal 단독에는 「마무리」도 없었다. 2026-09-26 갱신.\n */'
+    const scan = (src) =>
+      [...flatten(src).matchAll(CLAIM)].filter(
+        (m) => !RETRACTION.test(flatten(src).slice(Math.max(0, m.index - 400), m.index + 400)),
+      ).length
+    assert.equal(scan(STALE), 1, '철회 없는 낡은 주장을 못 잡는다')
+    assert.equal(scan(RETRACTED), 0, '철회된 인용까지 잡는다 (오탐)')
+    assert.equal(scan('const x = 1'), 0, '무관한 코드를 잡는다')
+    void found
   })
 
   test('F6 사용자 문구에 사라진 레인 이름이 남아 있지 않다', () => {

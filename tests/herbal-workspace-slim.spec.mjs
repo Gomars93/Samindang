@@ -126,13 +126,20 @@ check(
 check(
   'A-3 CRM 복약 코스 슬롯(medicationCourseSlot)이 herbal 단독에서 여전히 빠진다 (자기 가드를 들고 있다)',
   /\{activeProfile !== 'herbal' && medicationCourseSlot\}/.test(nextLane) &&
-    !afterNavCode.includes('medicationCourseSlot'),
+    !/\{\s*(?:[^{}\n]*&&\s*)?medicationCourseSlot\s*\}/.test(afterNavCode),
 )
 check(
   'A-4 재진 발급·EMR·진료 완료 푸터(nextLaneFooter)는 **가드 없이** 마무리 단계 안에 있다 (PO 지시로 herbal에도 닿는다)',
   nextLane.includes('{nextLaneFooter}') &&
     !/activeProfile[^\n]*&& nextLaneFooter/.test(nextLane) &&
-    !afterNavCode.includes('nextLaneFooter'),
+    /*
+      "밖에 없다"는 **렌더 사이트** 기준이다. 내비의
+      `showWrapup={… nextLaneFooter != null}`처럼 조건에서 *읽기만* 하는 것은
+      2차 렌더 경로가 아니다 -- 이름만 세면 그 조건까지 위반으로 잡힌다
+      (실제로 한 번 그렇게 걸렸다). JSX 렌더 표현식만 센다.
+    */
+    WORKSPACE_CODE.split(/\{\s*(?:[^{}\n]*&&\s*)?nextLaneFooter\s*\}/).length - 1 === 1 &&
+    !/\{\s*(?:[^{}\n]*&&\s*)?nextLaneFooter\s*\}/.test(afterNavCode),
 )
 /*
  * A-5 (PR #58 검수 1번으로 한 번 고쳐졌다)
@@ -150,13 +157,15 @@ check(
 check(
   'A-5 마무리 점프 버튼의 조건은 프로필이 아니라 내용물의 유무다 (showNext/nextOnly는 돌아오지 않았다)',
   /\{ id: 'next-h2', label: '마무리', step: 'wrapup' \}/.test(WORKSPACE_CODE) &&
-    !/showNext/.test(WORKSPACE_CODE) &&
-    !/nextOnly/.test(WORKSPACE_CODE),
+    // \b로 묶는다 -- 맨몸 /showNext/는 이 저장소에 실재하는 별개 prop
+    // `showNextVisitCheckItem`(CarePlanCard)에도 걸린다. 지금은 DoctorWorkspace가
+    // 그 prop을 안 쓰지만, 쓰는 순간 옳은 코드에서 헛실패한다(PR #58 3차 검수).
+    !/\bshowNext\b/.test(WORKSPACE_CODE) &&
+    !/\bnextOnly\b/.test(WORKSPACE_CODE),
 )
 check(
   'A-5b 그 조건은 `nextLaneFooter`의 유무를 본다 — 프로필만 보면 server 모드의 herbal에서 또 틀린다',
-  /const wrapupHasContent = activeProfile !== 'herbal' \|\| nextLaneFooter != null/.test(WORKSPACE_CODE) &&
-    /showWrapup=\{wrapupHasContent\}/.test(WORKSPACE_CODE),
+  /showWrapup=\{activeProfile !== 'herbal' \|\| nextLaneFooter != null\}/.test(WORKSPACE_CODE),
 )
 check(
   'A-5c 필터는 `step === \'wrapup\'` 항목 전체를 건다 (next-h2 하나를 특별 취급하지 않는다)',

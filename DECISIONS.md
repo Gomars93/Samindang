@@ -159,6 +159,34 @@ mutation을 넣어 확인했다(세 프로필 전부 false). 소스 텍스트 �
 자기점검이 그걸 잡아냈다). mutation 양방향 확인: 철회 없는 주장을 심으면
 실패하고, 철회 표지를 붙이면 통과한다.
 
+### PR #58 3차 검수 3건 — 코드 결함 0, 테스트 품질 3건
+
+검수자가 도달가능성을 직접 추적했다: `visitStep`을 'wrapup'으로 만드는 경로,
+`activeProfile`의 파생 출처, `nextLaneFooterNode` 게이트가 기록 안에서
+non-null → null로 갈 수 있는지(환자 링크 해제 UI가 없어 불가), pain·mixed
+동작이 바이트 단위로 동일한지. **`wrapupHasContent === false`인 채
+`visitStep === 'wrapup'`은 도달 불가**임이 확인됐다.
+
+1. **내가 만든 비공허성 가드가 산문에 결합돼 있었다.** 낡은 주장 스캐너의
+   `found >= 1`을 만족시키는 것은 `HerbalWorkspace.tsx`의 문장 **하나뿐**이라,
+   나중에 그 JSDoc을 정리하면 옳은 코드에서 스위트가 실패한다. **바로 옆
+   파일(`herbal-workspace-slim`)의 A-pre 주석에 "실제 소스의 낱말에 기대지
+   말라"고 적어둔 바로 그 결합을, 같은 배치에서 한 파일 건너 재현했다.**
+   합성 표본 3종(철회 없는 주장 / 철회된 인용 / 무관한 코드)으로 바꿨고,
+   실제 소스의 적중 건수는 계약에서 뺐다(0건도 정상 — 낡은 주장이 없다는 뜻).
+2. **`wrapupHasContent` 선언이 고아가 됐다.** `trackedLine` 문서화 주석과 그
+   문장 사이에 30줄짜리 주석과 함께 끼어들었고, 정작 쓰이는 곳은 545줄 뒤였다.
+   호출부에 인라인으로 옮기고 근거 주석도 같이 옮겼다.
+3. **A-5의 맨몸 `/showNext/`가 별개 prop에 걸릴 수 있었다.** 이 저장소에 실재하는
+   `showNextVisitCheckItem`(CarePlanCard)이 부분 일치한다. 지금은 잠재적이지만
+   `DoctorWorkspace`가 그 prop을 쓰는 순간 옳은 코드에서 헛실패한다. `\b`로 묶었다.
+
+부수적으로, 2번 수정이 A-4를 건드렸다 — 새 `showWrapup={… nextLaneFooter != null}`
+때문에 "내비 이후에 `nextLaneFooter`라는 **이름**이 없다"가 깨졌다. 조건에서
+*읽는* 것은 2차 렌더 경로가 아니므로, A-3·A-4를 **JSX 렌더 사이트** 기준으로
+좁혔다(이름 세기 → 렌더 표현식 세기). 좁힌 뒤 mutation 4종을 다시 돌려 둘 다
+여전히 이름 있는 실패로 잡는 것을 확인했다.
+
 ### 이번에 스스로 잡은 두 가지 (과거 사고의 재발)
 
 1. **A-5 초안이 주석을 스캔했다.** `!/showNext/.test(WORKSPACE)`가 폐기 이유를
@@ -179,7 +207,7 @@ mutation을 넣어 확인했다(세 프로필 전부 false). 소스 텍스트 �
 - 테스트: `herbal-workspace-slim` 37→42 / `doctor-workspace` 408→417 /
   `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→156 /
   `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7209 단언)**.
-- Mutation 10종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
+- Mutation 14종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
   푸터 재가드 / 복약 코스 자기 가드 제거 / `showNext`·`nextOnly` 재도입 /
   `DoctorView`의 푸터 게이트에 프로필 조건 주입 / `wrapupHasContent = true`
   (검수 1번 결함 재현) / `wrapupHasContent`를 프로필 기반으로 되돌리기 /

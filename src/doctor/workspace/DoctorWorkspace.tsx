@@ -598,36 +598,6 @@ export function DoctorWorkspace({
     `followUpTargets`가 프로필 무관 union이라, 오늘 쪽만 한쪽 프로필로
     좁히면 mixed에서 짝이 안 맞는다.
   */
-  /*
-   * 「마무리」 단계에 이 프로필에서 실제로 들어가는 것이 있는가.
-   *
-   * 검수(PR #58 1번)가 잡은 것: 바깥 프로필 가드를 떼면서 `showNext`까지 같이
-   * 없앴는데, herbal 단독의 마무리 단계에 들어가는 것은 `nextLaneFooter`
-   * **하나뿐**이다. 그 푸터는 DoctorView가 `mode === 'server' && patient_id`
-   * 에서만 만든다. 그래서 fixtures/미리보기 모드나 patient_id가 없는 기록에서는
-   * 마무리 단계가 `<h2>마무리</h2>` 하나만 남고, 항상 노출되는 점프 버튼이
-   * 원장을 **빈 화면**으로 데려간다(같은 클릭이 진료 단계를 접으므로 화면에
-   * 헤딩만 남는다). PR-A 이전의 `showNext`가 막던 "죽은 버튼"이 자리만 옮겨
-   * 되살아난 셈이다.
-   *
-   * 조건을 되살리되 **기준을 바꾼다**: 프로필이 아니라 *내용물의 유무*다.
-   * 옛 `showNext={activeProfile !== 'herbal'}`는 server 모드에서도 herbal의
-   * 버튼을 빼서 틀렸다(이 PR이 고치려던 바로 그 구멍). 지금 식은 두 경우
-   * 모두 맞다 -- 실제 진료(server + patient_id)에서는 herbal도 버튼이 있고,
-   * 푸터가 없는 미리보기에서는 세 프로필 중 herbal만 버튼이 빠진다.
-   *
-   * pain·mixed는 `PainWorkspaceNext`(및 mixed의 `HerbalWorkspaceNext`)가 푸터와
-   * 무관하게 항상 들어가므로 참이다.
-   *
-   * 단계 래퍼 자체는 조건 없이 그대로 둔다 -- `visitStep`을 'wrapup'으로
-   * 만드는 경로는 이 내비 하나뿐이라(다른 setVisitStep 호출부는 전부
-   * 'consult'로 되돌린다) 버튼을 가리면 빈 화면은 **도달 불가**가 되고,
-   * 숨겨진 빈 래퍼는 높이 0이라 화면에 아무 비용도 주지 않는다. 래퍼를 남기면
-   * 세 프로필의 단계 구조가 그대로 같아서, `hidden`이 CSS에 먹히는지를 재는
-   * 실측 스위트가 herbal에서도 계속 성립한다.
-   */
-  const wrapupHasContent = activeProfile !== 'herbal' || nextLaneFooter != null
-
   const trackedLine = lastVisitTrackedLine(priorVisits, [
     ...workspaceState.painFollowUpTargets,
     ...workspaceState.herbalFollowUpTargets,
@@ -1168,9 +1138,37 @@ export function DoctorWorkspace({
           </section>
           </div>
 
+          {/*
+            「마무리」 단계에 이 프로필에서 실제로 들어가는 것이 있는가.
+
+            검수(PR #58 1번)가 잡은 것: 바깥 프로필 가드를 떼면서 `showNext`까지 같이
+            없앴는데, herbal 단독의 마무리 단계에 들어가는 것은 `nextLaneFooter`
+            **하나뿐**이다. 그 푸터는 DoctorView가 `mode === 'server' && patient_id`
+            에서만 만든다. 그래서 fixtures/미리보기 모드나 patient_id가 없는 기록에서는
+            마무리 단계가 `<h2>마무리</h2>` 하나만 남고, 항상 노출되는 점프 버튼이
+            원장을 **빈 화면**으로 데려간다(같은 클릭이 진료 단계를 접으므로 화면에
+            헤딩만 남는다). PR-A 이전의 `showNext`가 막던 "죽은 버튼"이 자리만 옮겨
+            되살아난 셈이다.
+
+            조건을 되살리되 **기준을 바꾼다**: 프로필이 아니라 *내용물의 유무*다.
+            옛 `showNext={activeProfile !== 'herbal'}`는 server 모드에서도 herbal의
+            버튼을 빼서 틀렸다(이 PR이 고치려던 바로 그 구멍). 지금 식은 두 경우
+            모두 맞다 -- 실제 진료(server + patient_id)에서는 herbal도 버튼이 있고,
+            푸터가 없는 미리보기에서는 세 프로필 중 herbal만 버튼이 빠진다.
+
+            pain·mixed는 `PainWorkspaceNext`(및 mixed의 `HerbalWorkspaceNext`)가 푸터와
+            무관하게 항상 들어가므로 참이다.
+
+            단계 래퍼 자체는 조건 없이 그대로 둔다 -- `visitStep`을 'wrapup'으로
+            만드는 경로는 이 내비 하나뿐이라(다른 setVisitStep 호출부는 전부
+            'consult'로 되돌린다) 버튼을 가리면 빈 화면은 **도달 불가**가 되고,
+            숨겨진 빈 래퍼는 높이 0이라 화면에 아무 비용도 주지 않는다. 래퍼를 남기면
+            세 프로필의 단계 구조가 그대로 같아서, `hidden`이 CSS에 먹히는지를 재는
+            실측 스위트가 herbal에서도 계속 성립한다.
+          */}
           <LaneJumpNav
             showExercise={activeProfile === 'pain' || activeProfile === 'mixed'}
-            showWrapup={wrapupHasContent}
+            showWrapup={activeProfile !== 'herbal' || nextLaneFooter != null}
             visitStep={visitStep}
             onSelect={(id, step) => {
               if (step === visitStep) {
@@ -1281,8 +1279,8 @@ const LANE_JUMP_ITEMS: ReadonlyArray<{
  * 헤딩만 남은 **빈 화면**으로 가는 죽은 버튼이 된다.
  *
  * 그래서 조건을 프로필이 아니라 **내용물의 유무**로 다시 세웠다
- * (`wrapupHasContent`, 호출부 참고). 옛 조건은 server 모드의 herbal에서도
- * 버튼을 빼서 틀렸고, 새 조건은 두 경우 모두 맞다.
+ * (`showWrapup`의 실인자 -- 호출부의 주석에 근거를 적어뒀다). 옛 조건은
+ * server 모드의 herbal에서도 버튼을 빼서 틀렸고, 새 조건은 두 경우 모두 맞다.
  *
  * `step === 'wrapup'`인 항목 전체를 거르는 것이지 `next-h2` 하나를 특별
  * 취급하지 않는다 -- 나중에 마무리 단계에 앵커가 하나 더 생겨도 같은 규칙이

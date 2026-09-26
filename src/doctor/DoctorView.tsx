@@ -3308,7 +3308,22 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
       */
       followUpTargets: workspaceState.herbalFollowUpTargets,
       ...(slim
-        ? {}
+        ? {
+            /*
+             * PR #58 7차·8차 검수 (Batch 4 D-2): herbal 단독 화면의
+             * 「+ 다른 유형 입력 추가」가 통증 판단 4칸을 편집 가능하게
+             * 열어둔다. 이 PR이 그 화면에 EMR 복사를 붙였으므로, 원장이 적은
+             * 그 4칸이 복사 텍스트에 반드시 들어가야 한다 -- 안 그러면 빠진
+             * 텍스트에 "복사됨"을 띄운다.
+             *
+             * **slim(=herbal 단독)일 때만** 넘긴다. mixed는 `buildEmrTextForRecord`
+             * 가 통증 블록을 따로 앞에 붙이므로, 여기서도 넘기면 같은 값이 두 번
+             * 나온다.
+             *
+             * 비어 있으면 빌더가 라벨 자체를 내지 않는다(그쪽 주석 참고).
+             */
+            painFinalAssessment: workspaceState.painFinalAssessment,
+          }
         : {
             carePlan: workspaceState.herbalCarePlan,
             nextReassessmentPlan: workspaceState.nextReassessmentPlan,

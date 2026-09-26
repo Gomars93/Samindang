@@ -305,6 +305,28 @@ export function buildPainWorkspaceEmrPreview(input: {
   return lines.map(formatEmrLine).join(CRLF)
 }
 
+/**
+ * 통증 판단 4칸을 한 줄로 요약한다. 비어 있으면 빈 문자열.
+ *
+ * 이 라벨 4개는 통증 빌더(`buildPainWorkspaceEmrPreview`의 A/P 조립)가 쓰는
+ * 것과 **같은 문자열**이다. 두 벌을 두는 대신 여기서 한 번 정의하고, 통증
+ * 빌더와 어긋나지 않는지는 `herbal-workspace-slim`의 B-0f가 소스에서
+ * 대조한다 -- 통증 빌더 자체를 고치면 그쪽 출력이 바뀌므로 건드리지 않았다.
+ */
+export const PAIN_FINAL_ASSESSMENT_LABELS = {
+  finalWorkingAssessment: '최종 임상 판단',
+  treatmentFocus: '치료 초점',
+  interventionPerformedOrPlanned: '시행/예정 처치',
+  immediateRetestTarget: '즉시 재검 대상',
+} as const
+
+export function painFinalAssessmentSummaryLine(a: PainFinalAssessment): string {
+  return (Object.keys(PAIN_FINAL_ASSESSMENT_LABELS) as Array<keyof typeof PAIN_FINAL_ASSESSMENT_LABELS>)
+    .filter((k) => a[k].trim() !== '')
+    .map((k) => `${PAIN_FINAL_ASSESSMENT_LABELS[k]}: ${a[k].trim()}`)
+    .join('; ')
+}
+
 export function buildHerbalWorkspaceEmrPreview(input: {
   primaryConcern: string | null
   clinicianObservations: ClinicianObservationItem[]
@@ -332,6 +354,19 @@ export function buildHerbalWorkspaceEmrPreview(input: {
   carePlan?: HerbalCarePlan
   reassessment?: StructuredReassessment
   nextReassessmentPlan?: NextReassessmentPlan
+  /*
+   * PR #58 7차·8차 검수: herbal 단독 화면에도 「+ 다른 유형 입력 추가」
+   * disclosure가 있어 원장이 **통증 판단 4칸을 실제로 편집할 수 있다.** 그
+   * 화면에 EMR 복사가 없던 동안에는 안 보였지만, 이 PR이 복사를 붙이면서
+   * 원장이 타이핑한 판단이 빠진 텍스트에 "복사됨"을 띄우게 됐다(Batch 4 D-2).
+   *
+   * 7차 수정의 첫 판은 **통증 블록을 통째로 앞에 붙였다가 8차 검수에서
+   * 뒤집혔다** -- 그러면 중복 `C/C:`, 환자 태블릿 `O/S:`/`S:`(slim이 일부러
+   * 빼는 재진 인용 포함), 빈 `O:`/`P:`까지 딸려 온다. 필요한 것은 원장이 적은
+   * 4칸뿐이므로, 이 빌더가 이미 쓰는 **optional 라벨 줄** 패턴으로 받는다
+   * (`followUpTargets`/`carePlan`과 같은 방식: 안 넘기면 라벨 자체가 없다).
+   */
+  painFinalAssessment?: PainFinalAssessment
 }): string {
   const safetyValue = input.safetyObservation?.value.trim() ?? ''
   const lines: Array<{ label: string; value: string }> = [
@@ -362,6 +397,15 @@ export function buildHerbalWorkspaceEmrPreview(input: {
       : []),
     ...(input.nextReassessmentPlan
       ? [{ label: '다음 상세 재평가', value: nextReassessmentPlanLine(input.nextReassessmentPlan) }]
+      : []),
+    /*
+     * 적었을 때만 낸다. 다른 optional 키와 달리 "넘겼는데 비었으면 빈 라벨"도
+     * 내지 않는 이유: 이건 **한약 진료에 딸린 예외 입력**이라, 안 적은 방문에
+     * 빈 `통증 판단:` 라벨이 남으면 이 파일 헤더 규칙 2("아직 확인 안 한 것을
+     * 음성 소견으로 적지 않는다")에 걸린다.
+     */
+    ...(input.painFinalAssessment && painFinalAssessmentSummaryLine(input.painFinalAssessment)
+      ? [{ label: '통증 판단(다른 유형 입력)', value: painFinalAssessmentSummaryLine(input.painFinalAssessment) }]
       : []),
   ]
   return lines.map(({ label, value }) => (value.trim() ? `${label}: ${value.trim()}` : `${label}:`)).join(CRLF)

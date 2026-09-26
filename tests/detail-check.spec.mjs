@@ -364,7 +364,20 @@ async function main() {
         폴백 문구('없음'/'매우 심함')로 조용히 그려진다 -- 환자에게 무엇을
         묻는지 모호한 눈금이 뜬다. 집합과 문구 map의 key가 같은지 못박는다.
       */
-      const promptKeys = [...src.matchAll(/^ {2}([a-z_]+): \{$/gm)].map((mm) => mm[1]).sort().join(',')
+      /*
+        PR #58 9차 검수: 첫 판은 파일 **전체**에서 `^  key: {`를 긁었다. 그러면
+        (a) FollowUpScreen에 모듈 레벨 중첩 객체가 하나라도 더 생기면 옳은
+        코드에서 헛실패하고, (b) NRS_PROMPT의 들여쓰기가 바뀌면 문구 빠진 id를
+        그냥 통과시킨다. `NRS_PROMPT` 리터럴의 **구간을 먼저 잘라내고** 그
+        안에서만 key를 센다.
+      */
+      const promptStart = src.indexOf('const NRS_PROMPT')
+      assert('source: NRS_PROMPT 리터럴을 찾았다 (아래 비교가 공허하지 않도록)', promptStart !== -1)
+      const promptOpen = src.indexOf('{', promptStart)
+      const promptEnd = src.indexOf('\n}', promptOpen)
+      assert('source: NRS_PROMPT 리터럴의 끝을 찾았다', promptEnd > promptOpen, `(${promptStart}/${promptOpen}/${promptEnd})`)
+      const promptSrc = src.slice(promptOpen, promptEnd)
+      const promptKeys = [...promptSrc.matchAll(/^\s*([a-z_]+): \{/gm)].map((mm) => mm[1]).sort().join(',')
       assert('source: FollowUpScreen NRS_PROMPT has wording for exactly the ids in NRS_TARGET_IDS', promptKeys === screenIds, `(${promptKeys} vs ${screenIds})`)
       assert('source: 통증 NRS 양끝 문구는 그대로다 (확립된 도구 문구를 한약 때문에 바꾸지 않는다)',
         /minLabel: '통증 없음',\s*\n\s*maxLabel: '상상할 수 있는 최악',/.test(src))

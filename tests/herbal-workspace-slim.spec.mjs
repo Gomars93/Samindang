@@ -18,7 +18,11 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildHerbalWorkspaceEmrPreview } from './.herbal-slim-emrpreview-bundle.mjs'
+import {
+  buildHerbalWorkspaceEmrPreview,
+  painFinalAssessmentSummaryLine,
+  PAIN_FINAL_ASSESSMENT_LABELS,
+} from './.herbal-slim-emrpreview-bundle.mjs'
 
 let passed = 0
 const check = (name, cond, extra = '') => {
@@ -32,51 +36,184 @@ const WORKSPACE = read('src/doctor/workspace/DoctorWorkspace.tsx')
 const VIEW = read('src/doctor/DoctorView.tsx')
 const HERBAL = read('src/doctor/workspace/HerbalWorkspace.tsx')
 
+/*
+ * 주석을 뗀 사본. "이 식별자가 소스에 없다"를 단언할 때는 **코드만** 봐야
+ * 한다 -- 폐기 이유를 설명하는 JSDoc에 그 식별자 이름이 그대로 적혀 있으면
+ * 산문 때문에 통과/실패가 뒤집힌다. 이 저장소에서 같은 사고(T-6)가 이미
+ * 한 번 났다.
+ */
+const stripComments = (src) =>
+  src
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+const WORKSPACE_CODE = stripComments(WORKSPACE)
+/*
+ * 스트리퍼 자기점검은 **합성 표본**으로 한다. 실제 소스의 어떤 낱말이
+ * 주석에 남아 있는지에 기대면(예: "JSDoc에 `showNext`가 적혀 있다"),
+ * 나중에 그 산문만 정리해도 이 점검이 깨진다 -- 코드는 옳은데 테스트가
+ * 실패하는, 신호가 아닌 잡음이 된다.
+ */
+{
+  const SAMPLE = "{/* jsxComment */}\n/* blockComment */\nconst keepMe = 1 // lineComment\n"
+  const stripped = stripComments(SAMPLE)
+  check(
+    'A-pre 스트리퍼는 JSX·블록·라인 주석 세 형태를 모두 뗀다',
+    !stripped.includes('jsxComment') && !stripped.includes('blockComment') && !stripped.includes('lineComment'),
+    `(남은 것: ${JSON.stringify(stripped)})`,
+  )
+  check('A-pre 스트리퍼는 코드를 지우지 않는다', stripped.includes('const keepMe = 1'))
+}
+check(
+  'A-pre 주석 제거 후에도 점프 항목 리터럴이 남아 있다 (A-5가 공허하지 않도록)',
+  WORKSPACE_CODE.includes('LANE_JUMP_ITEMS') && WORKSPACE_CODE.includes("label: '마무리'"),
+)
+check(
+  'A-pre 실제 소스에도 주석이 있었다 (스트리퍼가 무엇도 안 뗐다면 A-5는 옛 형태와 같다)',
+  WORKSPACE_CODE.length < WORKSPACE.length - 2000,
+  `(원본 ${WORKSPACE.length}자 → 코드 ${WORKSPACE_CODE.length}자)`,
+)
+
 /* ------------------------------------------------------------------ *
  * §A 화면: herbal 단독은 `다음` 레인에 도달하지 않는다
  * ------------------------------------------------------------------ */
 
-// A-0: 레인 전체가 하나의 프로필 가드 뒤에 있다 -- 개별 블록을 하나씩
-// 숨기는 방식이었다면 새 블록이 추가될 때마다 가드를 빠뜨릴 수 있다.
-// 2026-09-24 「마무리」 화면 분리: 이 레인은 `.doctor__visitStep[data-step=
-// "wrapup"]` 래퍼 한 겹 안으로 들어갔다(주석 포함). 가드 자체는 그대로
-// 바깥에 있어야 한다 -- 래퍼가 가드보다 바깥으로 나가면 herbal 단독에서
-// 빈 마무리 화면과 그 단계 전환 버튼이 되살아난다.
+/* ------------------------------------------------------------------ *
+ * A-0 (2026-09-26 PO 지시 안 1로 뒤집혔다)
+ *
+ * PR-A는 `다음` 레인 전체를 하나의 프로필 가드 뒤에 두었다 -- 개별 블록을
+ * 하나씩 숨기면 새 블록이 추가될 때마다 가드를 빠뜨릴 수 있기 때문이다.
+ *
+ * 그런데 그 레인 안에는 화면 블록만 있는 게 아니라 `nextLaneFooter`
+ * (EMR 요약·복사 · 재진 간단 문진 발급·메시징 · **진료 완료**)가 함께 들어
+ * 있었고, 그래서 herbal 단독은 **그 방문 안에서 진료를 끝낼 수 없었다**
+ * (PR #57 검수 1번). PO 지시로 「마무리」 단계를 herbal에도 준다.
+ *
+ * 그래서 계약이 "레인 전체가 한 가드 뒤"에서 **"단계 래퍼는 가드 없이,
+ * 블록마다 자기 가드"**로 바뀌었다. 빠뜨리기 쉬운 형태가 된 것은 사실이라
+ * 아래에서 블록 하나하나를 명시적으로 단언한다 -- 그게 원래 A-0이 막으려던
+ * 것이다.
+ * ------------------------------------------------------------------ */
+/*
+ * A-0은 **코드 사본**만 본다. 첫 판은 래퍼 **바로 위에 `{/* … *\/}` 주석이
+ * 있을 것**까지 요구했는데, 그러면 설명 주석을 옮기거나 지우는 것만으로 코드
+ * 변경 없이 스위트가 실패한다 -- 이 파일의 A-pre 주석이 경고하는 바로 그
+ * 산문 결합이다(PR #58 5차 검수). 계약은 "래퍼에 프로필 가드가 없다"이지
+ * "래퍼 위에 주석이 있다"가 아니다.
+ */
 check(
-  'A-0 `다음` 레인 <section>이 activeProfile !== "herbal" 가드 뒤에 있다 (마무리 단계 래퍼까지 통째로)',
-  /\{activeProfile !== 'herbal' && \([\s\S]{0,900}?<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
-    WORKSPACE,
-  ),
+  'A-0 「마무리」 단계 래퍼에는 프로필 가드가 없다 (세 프로필 모두 2단계 구조)',
+  /<div className="doctor__visitStep" data-step="wrapup" hidden=\{visitStep !== 'wrapup'\}>\s*\n\s*<section className="doctor__visitLane doctor__visitLane--next"/.test(
+    WORKSPACE_CODE,
+  ) && !/\{activeProfile !== 'herbal' && \(\s*\n?\s*<div className="doctor__visitStep"/.test(WORKSPACE_CODE),
 )
 
-// A-1..A-5: 지운 경로 1개당 단언 1개. 각 블록은 HerbalWorkspaceNext 안에
-// 있고, HerbalWorkspaceNext는 이제 mixed에서만 렌더된다.
+// A-1..A-5: PR-A가 herbal 단독에서 지운 블록 1개당 단언 1개. 단계 래퍼의
+// 가드가 없어졌으므로 **각 블록이 자기 가드를 들고 있는지**가 유일한 방어선이다.
 const nextLane = WORKSPACE.slice(
-  WORKSPACE.indexOf("{activeProfile !== 'herbal' && ("),
+  WORKSPACE.indexOf('data-step="wrapup"'),
   WORKSPACE.indexOf('<LaneJumpNav'),
+)
+/*
+ * "이 식별자가 마무리 단계 **밖에는** 없다"를 볼 때는 주석 뗀 사본을 쓴다.
+ * `LaneJumpNav`의 JSDoc이 왜 조건이 필요한지 설명하며 `nextLaneFooter`를
+ * 이름으로 언급하므로, 원본으로 보면 산문 때문에 실패한다 -- A-5를 고칠 때
+ * 이미 한 번 겪은 바로 그 함정이다(T-6과 같은 부류).
+ */
+const afterNavCode = WORKSPACE_CODE.slice(WORKSPACE_CODE.indexOf('<LaneJumpNav'))
+check(
+  'A-pre 내비 이후 코드 구간을 실제로 잡았다 (아래 "밖에 없다" 단언이 공허하지 않도록)',
+  afterNavCode.includes('LANE_JUMP_ITEMS') && afterNavCode.length > 500,
+  `(${afterNavCode.length}자)`,
 )
 check(
   'A-1 HerbalWorkspaceNext(재평가 대상 칩 + 다음 방문 확인 메모 + 다음 액션 + 관리계획·다음 재평가 + 참고 자료)는 mixed에서만 렌더된다',
   /\{activeProfile === 'mixed' && \(\s*\n\s*<HerbalWorkspaceNext/.test(nextLane),
 )
 check(
-  'A-2 HerbalWorkspaceNext 호출부가 `다음` 레인 가드 안에만 있다 (레인 밖 2차 렌더 경로 없음)',
+  'A-2 HerbalWorkspaceNext 호출부가 마무리 단계 안에만 있다 (단계 밖 2차 렌더 경로 없음)',
   WORKSPACE.split('<HerbalWorkspaceNext').length - 1 === 1,
 )
 check(
-  'A-3 CRM 복약 코스 슬롯(medicationCourseSlot)이 `다음` 레인 가드 안에 있다',
-  nextLane.includes('{medicationCourseSlot}') && !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('medicationCourseSlot'),
+  'A-3 CRM 복약 코스 슬롯(medicationCourseSlot)이 herbal 단독에서 여전히 빠진다 (자기 가드를 들고 있다)',
+  /\{activeProfile !== 'herbal' && medicationCourseSlot\}/.test(nextLane) &&
+    !/\{\s*(?:[^{}\n]*&&\s*)?medicationCourseSlot\s*\}/.test(afterNavCode),
 )
 check(
-  'A-4 재진 간단문진 푸터(nextLaneFooter)가 `다음` 레인 가드 안에 있다',
-  nextLane.includes('{nextLaneFooter}') && !WORKSPACE.slice(WORKSPACE.indexOf('<LaneJumpNav')).includes('nextLaneFooter'),
+  'A-4 재진 발급·EMR·진료 완료 푸터(nextLaneFooter)는 **가드 없이** 마무리 단계 안에 있다 (PO 지시로 herbal에도 닿는다)',
+  nextLane.includes('{nextLaneFooter}') &&
+    !/activeProfile[^\n]*&& nextLaneFooter/.test(nextLane) &&
+    /*
+      "밖에 없다"는 **렌더 사이트** 기준이다. 내비의
+      `showWrapup={… nextLaneFooter != null}`처럼 조건에서 *읽기만* 하는 것은
+      2차 렌더 경로가 아니다 -- 이름만 세면 그 조건까지 위반으로 잡힌다
+      (실제로 한 번 그렇게 걸렸다). JSX 렌더 표현식만 센다.
+    */
+    WORKSPACE_CODE.split(/\{\s*(?:[^{}\n]*&&\s*)?nextLaneFooter\s*\}/).length - 1 === 1 &&
+    !/\{\s*(?:[^{}\n]*&&\s*)?nextLaneFooter\s*\}/.test(afterNavCode),
+)
+/*
+ * A-5 (PR #58 검수 1번으로 한 번 고쳐졌다)
+ *
+ * 첫 판은 "마무리 버튼이 **조건 없이** 노출된다"였다 -- 틀렸다. herbal 단독
+ * 마무리에 들어가는 것은 server 전용 `nextLaneFooter` 하나뿐이라, 조건을
+ * 통째로 없애면 미리보기에서 헤딩만 남은 빈 화면으로 가는 죽은 버튼이 된다.
+ *
+ * 지금 계약: 조건은 있되 **프로필이 아니라 내용물의 유무**로 건다. 세 가지를
+ * 함께 못 박는다 -- (1) 옛 프로필 기반 이름(`showNext`/`nextOnly`)은 돌아오지
+ * 않았다, (2) 새 조건은 `showWrapup`이고 그 실인자가 푸터 유무를 본다,
+ * (3) 필터는 `next-h2` 하나를 특별 취급하지 않고 `step === 'wrapup'` 전체를
+ * 건다(앵커가 하나 더 생겨도 같은 규칙이 적용되도록).
+ */
+check(
+  'A-5 마무리 점프 버튼의 조건은 프로필이 아니라 내용물의 유무다 (showNext/nextOnly는 돌아오지 않았다)',
+  /\{ id: 'next-h2', label: '마무리', step: 'wrapup' \}/.test(WORKSPACE_CODE) &&
+    // \b로 묶는다 -- 맨몸 /showNext/는 이 저장소에 실재하는 별개 prop
+    // `showNextVisitCheckItem`(CarePlanCard)에도 걸린다. 지금은 DoctorWorkspace가
+    // 그 prop을 안 쓰지만, 쓰는 순간 옳은 코드에서 헛실패한다(PR #58 3차 검수).
+    !/\bshowNext\b/.test(WORKSPACE_CODE) &&
+    !/\bnextOnly\b/.test(WORKSPACE_CODE),
 )
 check(
-  'A-5 LaneJumpNav의 `다음` 버튼이 showNext로 분기하고, herbal에서 꺼진다 (아무 데도 가지 않는 죽은 버튼 방지)',
-  /\{ id: 'next-h2', label: '마무리', step: 'wrapup', nextOnly: true \}/.test(WORKSPACE) &&
-    /showNext=\{activeProfile !== 'herbal'\}/.test(WORKSPACE) &&
-    /!it\.nextOnly \|\| showNext/.test(WORKSPACE),
+  'A-5b 그 조건은 `nextLaneFooter`의 유무를 본다 — 프로필만 보면 server 모드의 herbal에서 또 틀린다',
+  /showWrapup=\{activeProfile !== 'herbal' \|\| nextLaneFooter != null\}/.test(WORKSPACE_CODE),
 )
+check(
+  'A-5c 필터는 `step === \'wrapup\'` 항목 전체를 건다 (next-h2 하나를 특별 취급하지 않는다)',
+  /it\.step !== 'wrapup' \|\| showWrapup/.test(WORKSPACE_CODE),
+)
+
+/*
+ * A-5d (PR #58 5차 검수, latent)
+ *
+ * `showWrapup`의 실인자(`activeProfile !== 'herbal' || nextLaneFooter != null`)는
+ * **마무리 단계의 내용물을 열거한 식**이다 -- "herbal에 남는 것은 푸터 하나뿐"이
+ * 참이어야 성립한다. 그런데 그 전제는 코드 어디에도 강제돼 있지 않다: 이 레인에
+ * 블록을 하나 더 추가하거나 `medicationCourseSlot`의 가드를 풀면, 푸터가 없는
+ * 미리보기에서 **렌더는 되는데 도달할 수 없는** 블록이 생긴다. 그리고 A-5b가
+ * 그 식을 글자로 고정하고 있어서, 다음 사람은 기준을 고치는 대신 테스트를
+ * "고치기" 쉽다.
+ *
+ * 그래서 레인의 **직계 렌더 대상 목록**을 고정한다. 블록이 늘거나 줄면 여기서
+ * 먼저 걸리고, 실패 메시지가 `showWrapup`을 다시 보라고 말한다. 목록 자체가
+ * 계약이므로, 바꾸는 것이 옳을 때는 이 줄과 그 식을 **함께** 고치게 된다.
+ */
+{
+  const laneCode = WORKSPACE_CODE.slice(
+    WORKSPACE_CODE.indexOf('data-step="wrapup"'),
+    WORKSPACE_CODE.indexOf('<LaneJumpNav'),
+  )
+  // 섹션의 직계 자식(12칸 들여쓰기)만 센다 -- prop 값(`payload={payload}` 등)을
+  // 같이 세면 목록이 무의미해진다.
+  const rendered = [...laneCode.matchAll(/^ {12}\{(?:[^{}\n]*&&\s*\(?)?\s*(?:<)?([A-Za-z]\w*)/gm)].map((m) => m[1])
+  check(
+    'A-5d 마무리 레인의 직계 렌더 대상은 정확히 4개다 — 늘리거나 줄이면 showWrapup의 기준도 같이 고쳐야 한다',
+    JSON.stringify(rendered) ===
+      JSON.stringify(['PainWorkspaceNext', 'HerbalWorkspaceNext', 'medicationCourseSlot', 'nextLaneFooter']),
+    `(실제: ${JSON.stringify(rendered)} — herbal 단독에 남는 것이 nextLaneFooter 하나뿐이라는 전제가 깨지면 ` +
+      `푸터 없는 미리보기에서 "렌더는 되는데 도달 불가"인 블록이 생긴다)`,
+  )
+}
 
 /* ------------------------------------------------------------------ *
  * §B 출력: 화면에서 뗀 입력은 EMR 라벨로도 남지 않는다 (D-1 재발 방지)
@@ -86,6 +223,123 @@ check(
   'B-0 herbal 단독 EMR 조립이 slim=true로 호출된다',
   /if \(viewProfile === 'herbal'\) return buildHerbalEmrTextForRecord\(true\)/.test(VIEW),
 )
+
+/* ------------------------------------------------------------------ *
+ * §B-0a~ (PR #58 7차·8차 검수) — Batch 4 D-2가 herbal 단독에서 재현될 뻔했다
+ *
+ * herbal 단독 화면에도 「+ 다른 유형 입력 추가」 disclosure가 있어서 원장이
+ * **통증 판단 4칸을 실제로 편집할 수 있다**(DoctorWorkspace의
+ * `activeProfile !== 'mixed'` 가드). 그런데 herbal EMR 조립은 그 키를 안
+ * 내보냈다. 그 화면에 EMR 복사가 없던 동안에는 드러나지 않았지만, 이 PR이
+ * 복사를 붙이는 순간 **원장이 적은 판단이 빠진 텍스트에 "복사됨"을 띄운다.**
+ *
+ * 7차 수정의 첫 판은 통증 블록을 통째로 앞에 붙였다가 **8차 검수에서
+ * 뒤집혔다** -- 중복 `C/C:`, 환자 태블릿 `O/S:`/`S:`(slim이 일부러 빼는 재진
+ * 인용 포함), 빈 `O:`/`P:`까지 딸려 왔다. 필요한 것은 원장이 적은 4칸뿐이다.
+ * ------------------------------------------------------------------ */
+
+const emptyPain = {
+  finalWorkingAssessment: '',
+  treatmentFocus: '',
+  interventionPerformedOrPlanned: '',
+  immediateRetestTarget: '',
+  recordedAt: null,
+}
+const herbalFa = {
+  finalPatternOrMechanism: '간울비허',
+  treatmentPrinciple: '소간건비',
+  prescriptionPlanNote: '처방 메모',
+  symptomsToTrack: '수면',
+  recordedAt: null,
+}
+const herbalText = (painFinalAssessment) =>
+  buildHerbalWorkspaceEmrPreview({
+    primaryConcern: '수면 불편',
+    clinicianObservations: [],
+    finalAssessment: herbalFa,
+    followUpTargets: [],
+    ...(painFinalAssessment ? { painFinalAssessment } : {}),
+  })
+
+check(
+  'B-0a 원장이 적은 통증 판단이 herbal 복사 텍스트에 들어간다 (빠진 채 "복사됨"을 띄우지 않는다)',
+  herbalText({ ...emptyPain, finalWorkingAssessment: '요추 추간판 의심', treatmentFocus: '침 + 부항' }).includes(
+    '통증 판단(다른 유형 입력): 최종 임상 판단: 요추 추간판 의심; 치료 초점: 침 + 부항',
+  ),
+)
+check(
+  'B-0b 안 적었으면 라벨 자체가 없다 (안 본 것을 음성 소견으로 적지 않는다)',
+  !herbalText({ ...emptyPain }).includes('통증 판단') && !herbalText(undefined).includes('통증 판단'),
+)
+/*
+ * B-0c: 8차 검수가 뒤집은 지점. 통증 블록을 통째로 붙이면 이 네 가지가 딸려
+ * 온다 -- 중복 주호소(`C/C:`), 환자 태블릿 문장(`O/S:`/`S:`), 빈 `O:`/`P:`.
+ * slim의 존재 이유가 "화면에 없는 것을 차트에 적지 않는다"이므로, 한 줄만
+ * 더해야 한다.
+ */
+check(
+  'B-0c 통증 블록을 통째로 끌어오지 않는다 (중복 C/C · 태블릿 S · 빈 키 없음)',
+  (() => {
+    const t = herbalText({ ...emptyPain, treatmentFocus: '침' })
+    return !/(^|\r\n)C\/C:/.test(t) && !/(^|\r\n)O\/S:/.test(t) && !/(^|\r\n)S:/.test(t) && !/(^|\r\n)[OP]:/.test(t)
+  })(),
+  `(${JSON.stringify(herbalText({ ...emptyPain, treatmentFocus: '침' }))})`,
+)
+/*
+ * B-0d: 나중에 `PainFinalAssessment`에 칸이 하나 더 생기면 그 칸도 요약에
+ * 들어가야 한다 -- 안 그러면 새 칸만 조용히 복사에서 빠진다(이번 사고의
+ * 축소판). 라벨 맵의 키를 **열거해서** 하나씩 확인하므로 자동으로 커버된다.
+ */
+{
+  const keys = Object.keys(PAIN_FINAL_ASSESSMENT_LABELS)
+  check('B-0d 자기점검: 통증 판단 라벨 맵을 실제로 읽었다', keys.length >= 4, `(${keys})`)
+  for (const k of keys) {
+    check(
+      `B-0d 통증 판단 「${k}」 한 칸만 적어도 요약에 들어간다`,
+      painFinalAssessmentSummaryLine({ ...emptyPain, [k]: '적음' }) ===
+        `${PAIN_FINAL_ASSESSMENT_LABELS[k]}: 적음`,
+    )
+  }
+  check('B-0d 다 비었으면 빈 문자열', painFinalAssessmentSummaryLine({ ...emptyPain }) === '')
+}
+/*
+ * B-0e: 라벨 문자열이 통증 빌더(A/P 조립)의 것과 **같아야** 한다. 두 벌을
+ * 두면 한쪽만 바뀌어 차트 용어가 갈린다. 통증 빌더 자체는 이 PR에서 안
+ * 건드렸으므로(그쪽 출력이 바뀐다) 소스에서 대조만 한다.
+ */
+{
+  const EMR = read('src/doctor/workspace/emrPreview.ts')
+  // 통증 빌더 구간(A/P 조립)만 본다 -- 라벨 맵 정의 자신과 대조하면 공허하다.
+  const painPart = EMR.slice(EMR.indexOf('const aParts'), EMR.indexOf('export function buildHerbalWorkspaceEmrPreview'))
+  check('B-0e 자기점검: 통증 빌더의 A/P 조립 구간을 잡았다', painPart.length > 400, `(${painPart.length}자)`)
+  for (const label of Object.values(PAIN_FINAL_ASSESSMENT_LABELS)) {
+    check(`B-0e 라벨 「${label}」이 통증 빌더와 일치한다`, painPart.includes(`${label}: `))
+  }
+}
+/*
+ * B-0f: `?` 분기에 **있고** `:` 분기에 **없어야** 한다. 첫 판은 앞쪽만 봐서,
+ * mixed에도 같이 넘기는 mutation(같은 값이 두 번 나온다)을 놓쳤다 -- 부재를
+ * 함께 단언하지 않으면 "한쪽에 있다"는 "양쪽에 있다"와 구분되지 않는다.
+ */
+{
+  const KEY = 'painFinalAssessment: workspaceState.painFinalAssessment'
+  const occurrences = VIEW.split(KEY).length - 1
+  check(
+    'B-0f 통증 판단을 넘기는 자리는 정확히 한 곳이다',
+    occurrences === 1,
+    `(${occurrences}곳 — mixed에도 넘기면 통증 블록과 겹쳐 같은 값이 두 번 나온다)`,
+  )
+  const i = VIEW.indexOf(KEY)
+  const before = VIEW.slice(Math.max(0, i - 1600), i)
+  const elseIdx = before.lastIndexOf('\n        : {')
+  const thenIdx = before.lastIndexOf('...(slim\n        ? {')
+  check(
+    'B-0f 그 한 곳은 slim(=herbal 단독) 분기다 — mixed 분기가 아니다',
+    thenIdx !== -1 && thenIdx > elseIdx,
+    `(then ${thenIdx}, else ${elseIdx})`,
+  )
+}
+
 check(
   'B-1 mixed EMR 조립은 slim=false -- 편집 UI가 살아 있으므로 키를 계속 넘긴다',
   /buildHerbalEmrTextForRecord\(false\)/.test(VIEW),

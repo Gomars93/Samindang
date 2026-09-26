@@ -79,6 +79,7 @@ export function VisitSummaryAside({
   saveStatus,
   lastSaveErrorKind,
   onOpenTokenReentry,
+  onJumpToEvidence,
 }: {
   patientName: string
   chartNo?: string | null
@@ -124,6 +125,23 @@ export function VisitSummaryAside({
    * token form itself.
    */
   onOpenTokenReentry?: () => void
+  /**
+   * 「근거 보기」를 눌렀을 때 호출된다 (PR #58 9차 검수).
+   *
+   * 이 링크의 목적지 `#lane1-h2`는 **진료 단계 안에** 있다. 두 단계 셸
+   * (2026-09-24)이 생긴 뒤로, 원장이 「마무리」 단계에 있으면 그 앵커는
+   * `hidden`이라 박스가 없다 -- 클릭해도 fragment만 바뀌고 화면은 그대로다.
+   * 바로 위 `onOpenTokenReentry`가 같은 이유로 단계를 되돌리는데, 이 링크는
+   * 빠져 있었다.
+   *
+   * 이 PR이 herbal 단독에도 「마무리」 단계를 주므로, 그 프로필에서 **새로**
+   * 죽는 링크가 된다(전에는 herbal에 갈 단계가 없어 항상 살아 있었다).
+   * 그래서 여기서 함께 고친다.
+   *
+   * 안 넘기면 `href`가 그대로 동작한다 -- 단계가 하나뿐이던 시절의 동작이고,
+   * 이 컴포넌트는 단계의 존재를 모른다.
+   */
+  onJumpToEvidence?: () => void
 }) {
   const compact = usePortraitCompact()
   const locked = lane1.status === 'URGENT' || lane1.status === '확인 필요' || lane1.status === '계산불가'
@@ -240,7 +258,16 @@ export function VisitSummaryAside({
             {related.overflowCount > 0 && ` 외 ${related.overflowCount}`}
           </span>
         )}
-        <a href="#lane1-h2" className="doctor__visitSummary__evidenceLink">
+        <a
+          href="#lane1-h2"
+          className="doctor__visitSummary__evidenceLink"
+          onClick={(e) => {
+            if (!onJumpToEvidence) return
+            // 콜백이 단계 전환까지 책임진다. href는 콜백이 없을 때의 fallback.
+            e.preventDefault()
+            onJumpToEvidence()
+          }}
+        >
           근거 보기
         </a>
       </div>

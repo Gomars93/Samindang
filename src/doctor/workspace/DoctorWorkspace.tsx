@@ -674,6 +674,26 @@ export function DoctorWorkspace({
             setPendingJump(null)
             setTokenReentryOpen(true)
           }}
+          onJumpToEvidence={() => {
+            /*
+              9차 검수: 「근거 보기」의 목적지 `#lane1-h2`도 진료 단계 안에
+              있어서, 마무리 화면에서 누르면 fragment만 바뀌고 아무 일도
+              안 일어났다 -- 바로 위 F1과 같은 부류인데 이 링크만 빠져
+              있었다. 이 PR이 herbal 단독에도 마무리 단계를 주므로 그
+              프로필에서는 **새로** 죽는 링크가 된다.
+
+              `pendingJump`를 쓰는 이유: 단계를 막 바꾼 직후에는 대상이
+              아직 `hidden`이라 getBoundingClientRect가 0을 준다(위
+              `visitStep` 선언부 주석). 레이아웃 효과에서 한 박자 뒤에
+              점프한다.
+            */
+            if (visitStep === 'consult') {
+              jumpToLane('lane1-h2')
+              return
+            }
+            setVisitStep('consult')
+            setPendingJump('lane1-h2')
+          }}
         />
 
         <main className="doctor__visitWork" aria-label="진료 작업">
@@ -1010,13 +1030,20 @@ export function DoctorWorkspace({
           </div>
 
           {/*
-            한약 화면 축소(PR-A, PO 승인 2026-09-21): herbal 단독 프로필에서는
-            `다음` 레인 전체를 렌더하지 않는다 -- 재평가 대상 칩, 다음 방문 확인
-            메모, 다음 액션 카드, 관리 계획·다음 재평가 disclosure, 참고 자료
-            drawer(이전 방문 / 환자 전달문 / 중복 EMR 미리보기), CRM 복약 코스,
-            재진 간단문진이 여기에 전부 들어 있었고, PO 판단은 "오히려 못 써먹을
-            것 같다 / 정말 액기스만 남긴다"였다. pain·mixed는 전혀 건드리지
-            않는다 -- mixed는 HerbalWorkspaceNext까지 지금 그대로 렌더된다.
+            한약 화면 축소(PR-A, PO 승인 2026-09-21): **당시** herbal 단독
+            프로필에서는 `다음` 레인 전체를 렌더하지 않았다 -- 재평가 대상 칩,
+            다음 방문 확인 메모, 다음 액션 카드, 관리 계획·다음 재평가
+            disclosure, 참고 자료 drawer(이전 방문 / 환자 전달문 / 중복 EMR
+            미리보기), CRM 복약 코스, 재진 간단문진이 여기에 전부 들어 있었고,
+            PO 판단은 "오히려 못 써먹을 것 같다 / 정말 액기스만 남긴다"였다.
+            pain·mixed는 전혀 건드리지 않았다 -- mixed는 HerbalWorkspaceNext까지
+            지금 그대로 렌더된다.
+
+            **그 목록 중 둘은 그 뒤 되돌아왔다** (아래 단계 래퍼 주석이 상세):
+            `재평가 대상`은 2026-09-25에 판단·처치 레인으로, 재진 간단문진·EMR·
+            진료 완료(= `nextLaneFooter`)는 2026-09-26에 「마무리」 단계로.
+            나머지는 계속 herbal 단독에서 빠진다. 이 문단은 **PR-A 당시의
+            기록**이라 현재 상태로 읽으면 안 된다.
 
             EMR 쪽 짝: DoctorView.tsx의 buildHerbalEmrTextForRecord(slim=true)가
             여기서 편집 UI를 잃은 키를 herbal 텍스트에서도 함께 뺀다. 화면만
@@ -1029,23 +1056,40 @@ export function DoctorWorkspace({
             빼는 것은 `관리 계획 5필드`와 `다음 상세 재평가`뿐이고, 그 둘은
             여전히 편집 UI가 없다.
 
-            **다만 herbal 단독에는 그 EMR 텍스트를 화면에 띄우는 곳이 없다** --
-            EMR textarea·복사 버튼·재진 발급·진료 완료가 전부
-            `nextLaneFooter`(DoctorView의 nextLaneFooterNode) 안에 있고, 그것도
-            이 가드에 걸려 렌더되지 않는다. 즉 herbal 단독 방문은 그 방문
-            안에서 EMR을 복사할 수도, 재진 링크를 발급할 수도, 진료 완료를
-            누를 수도 없다. PR-A가 만든 구멍이고 이 배치의 범위가 아니다 --
-            HANDOFF 최신 75에 PO 판단 요청으로 올렸다.
+            2026-09-26 (PO 지시 안 1) 갱신: 한동안 **herbal 단독에는 그 EMR
+            텍스트를 화면에 띄우는 곳이 없었다** -- EMR textarea·복사 버튼·재진
+            발급·진료 완료가 전부 `nextLaneFooter`(DoctorView의
+            nextLaneFooterNode) 안에 있고, 그게 아래 「마무리」 단계의 바깥
+            프로필 가드에 걸렸기 때문이다. 즉 herbal 단독 방문은 그 방문 안에서
+            진료를 끝낼 수 없었다(PR #57 검수 1번). **그 가드를 없애 메웠다** --
+            아래 단계 래퍼의 주석을 볼 것. slim EMR 조립이 넘기는 키는 이제
+            herbal 단독에서도 화면에 도달한다.
           */}
-          {activeProfile !== 'herbal' && (
-          /*
+          {/*
             「마무리」 화면 분리: 이 레인이 통째로 「마무리」 단계다. 앵커 id
             (`next-h2`)와 클래스(`doctor__visitLane--next`)는 그대로 둔다 --
             선택자/앵커 정체성이라 이름을 바꾸면 doctor.spec / herbal-workspace
             -slim / doctor-workspace / tablet-viewport 네 스위트와 CSS가 같이
             움직여야 하고, 얻는 것은 표기 일관성뿐이다. 눈에 보이는 라벨만
-            「다음」 → 「마무리」로 바꾼다.
-          */
+            「다음」 → 「마무리」로 바꿨다.
+
+            PO 지시 2026-09-26 (안 1): **이 단계를 herbal 단독에도 준다.**
+
+            PR-A(2026-09-21)가 herbal 단독에서 이 레인을 통째로 없앴는데, 그
+            안에는 화면 블록만 있는 게 아니라 `nextLaneFooter`(EMR 요약
+            textarea·복사·재진 간단 문진 발급·메시징·**진료 완료**)가 함께
+            들어 있었다. 그래서 herbal 단독 방문은 **그 방문 안에서 EMR을
+            복사할 수도, 재진 링크를 발급할 수도, 진료를 완료할 수도 없었다**
+            (PR #57 검수 1번). 「진료 완료」는 원래 항상 보이는 헤더에 있다가
+            Core Reduction P3에서 이 레인으로 내려온 것이라, PR-A가 레인을
+            지우면서 같이 사라진 것이다.
+
+            그래서 바깥 프로필 가드를 없앤다 -- 세 프로필이 같은 구조
+            (진료 / 마무리 2단계)가 된다. **PR-A가 지운 화면 블록들은 여전히
+            안 돌아온다**: 아래 각 블록이 자기 프로필 가드를 그대로 들고 있고,
+            herbal 단독에 해당하는 것은 `nextLaneFooter` 하나뿐이다.
+            herbal-workspace-slim이 그 잔여 계약을 단언한다.
+          */}
           <div className="doctor__visitStep" data-step="wrapup" hidden={visitStep !== 'wrapup'}>
           <section className="doctor__visitLane doctor__visitLane--next" aria-labelledby="next-h2">
             <h2 id="next-h2">마무리</h2>
@@ -1074,9 +1118,12 @@ export function DoctorWorkspace({
               />
             )}
             {/*
-              herbal 단독은 바깥 `activeProfile !== 'herbal'` 가드에서 이미
-              걸러졌으므로 여기 도달하는 한약 프로필은 mixed뿐이다(tsc가
-              TS2367로 확인해준다). 통증+한약 동시 진료는 기존 동작 그대로.
+              PR-A(2026-09-21): `HerbalWorkspaceNext`(재평가 대상 칩 · 다음 방문
+              확인 메모 · 다음 액션 · 관리 계획·다음 재평가 · 참고 자료 drawer)는
+              **mixed에서만** 렌더된다. 2026-09-26에 바깥 프로필 가드가
+              없어졌지만 이 가드는 그대로다 -- PO가 herbal 단독에 되살리라고 한
+              것은 `nextLaneFooter`(EMR·발급·완료)뿐이고, 이 블록들에 대한
+              PR-A 판단("정말 액기스만 남긴다")은 계속 유효하다.
             */}
             {activeProfile === 'mixed' && (
               <HerbalWorkspaceNext
@@ -1096,15 +1143,52 @@ export function DoctorWorkspace({
                 onIssueCarePlanLink={onIssueCarePlanLink}
               />
             )}
-            {medicationCourseSlot}
+            {/*
+              CRM 복약 코스도 PR-A가 herbal 단독에서 뺀 블록이다 -- 2026-09-26에
+              되살린 것은 `nextLaneFooter`뿐이므로 이쪽 가드는 새로 명시한다
+              (바깥 가드가 없어졌으니 안 적으면 조용히 herbal에도 붙는다).
+            */}
+            {activeProfile !== 'herbal' && medicationCourseSlot}
+            {/*
+              PO 지시 2026-09-26: 이것만 herbal 단독에도 렌더한다 -- EMR 요약
+              textarea·복사, 재진 간단 문진 발급·메시징, 진료 완료가 전부 이
+              안에 있다. 프로필 가드가 없는 것이 의도다.
+            */}
             {nextLaneFooter}
           </section>
           </div>
-          )}
 
+          {/*
+            「마무리」 단계에 이 프로필에서 실제로 들어가는 것이 있는가.
+
+            검수(PR #58 1번)가 잡은 것: 바깥 프로필 가드를 떼면서 `showNext`까지 같이
+            없앴는데, herbal 단독의 마무리 단계에 들어가는 것은 `nextLaneFooter`
+            **하나뿐**이다. 그 푸터는 DoctorView가 `mode === 'server' && patient_id`
+            에서만 만든다. 그래서 fixtures/미리보기 모드나 patient_id가 없는 기록에서는
+            마무리 단계가 `<h2>마무리</h2>` 하나만 남고, 항상 노출되는 점프 버튼이
+            원장을 **빈 화면**으로 데려간다(같은 클릭이 진료 단계를 접으므로 화면에
+            헤딩만 남는다). PR-A 이전의 `showNext`가 막던 "죽은 버튼"이 자리만 옮겨
+            되살아난 셈이다.
+
+            조건을 되살리되 **기준을 바꾼다**: 프로필이 아니라 *내용물의 유무*다.
+            옛 `showNext={activeProfile !== 'herbal'}`는 server 모드에서도 herbal의
+            버튼을 빼서 틀렸다(이 PR이 고치려던 바로 그 구멍). 지금 식은 두 경우
+            모두 맞다 -- 실제 진료(server + patient_id)에서는 herbal도 버튼이 있고,
+            푸터가 없는 미리보기에서는 세 프로필 중 herbal만 버튼이 빠진다.
+
+            pain·mixed는 `PainWorkspaceNext`(및 mixed의 `HerbalWorkspaceNext`)가 푸터와
+            무관하게 항상 들어가므로 참이다.
+
+            단계 래퍼 자체는 조건 없이 그대로 둔다 -- `visitStep`을 'wrapup'으로
+            만드는 경로는 이 내비 하나뿐이라(다른 setVisitStep 호출부는 전부
+            'consult'로 되돌린다) 버튼을 가리면 빈 화면은 **도달 불가**가 되고,
+            숨겨진 빈 래퍼는 높이 0이라 화면에 아무 비용도 주지 않는다. 래퍼를 남기면
+            세 프로필의 단계 구조가 그대로 같아서, `hidden`이 CSS에 먹히는지를 재는
+            실측 스위트가 herbal에서도 계속 성립한다.
+          */}
           <LaneJumpNav
             showExercise={activeProfile === 'pain' || activeProfile === 'mixed'}
-            showNext={activeProfile !== 'herbal'}
+            showWrapup={activeProfile !== 'herbal' || nextLaneFooter != null}
             visitStep={visitStep}
             onSelect={(id, step) => {
               if (step === visitStep) {
@@ -1196,33 +1280,47 @@ const LANE_JUMP_ITEMS: ReadonlyArray<{
   label: string
   step: VisitStep
   exerciseOnly?: boolean
-  nextOnly?: boolean
 }> = [
   { id: 'lane1-h2', label: '안전', step: 'consult' },
   { id: 'lane2-h2', label: '확인', step: 'consult' },
   { id: 'judgment-h2', label: '판단·처치', step: 'consult' },
   { id: 'exercise-h3', label: '운동', step: 'consult', exerciseOnly: true },
-  { id: 'next-h2', label: '마무리', step: 'wrapup', nextOnly: true },
+  { id: 'next-h2', label: '마무리', step: 'wrapup' },
 ]
 
 /**
- * 한약 화면 축소(PR-A): herbal 단독 프로필은 `다음` 레인 자체가 렌더되지
- * 않으므로 `#next-h2`로 점프하는 버튼도 함께 뺀다 -- 남겨두면 아무 데도 가지
- * 않는 죽은 버튼이 된다(jumpToLane은 존재하지 않는 id를 조용히 무시한다).
+ * 2026-09-26 (PO 지시 안 1 + PR #58 검수 1번): `showNext` -> `showWrapup`.
+ *
+ * 이 내비의 원래 계약은 "**갈 데가 있는 버튼만 노출한다**"이다. PR-A 이후
+ * herbal 단독에는 `다음` 레인 자체가 없어서 `showNext={activeProfile !==
+ * 'herbal'}`로 뺐다. 안 1이 그 레인을 herbal에도 주면서 나는 이 조건을
+ * 통째로 없앴는데 -- 그건 틀렸다. herbal 단독 마무리에 들어가는 것은
+ * `nextLaneFooter` 하나뿐이고 그건 server 모드 전용이라, 미리보기에서는
+ * 헤딩만 남은 **빈 화면**으로 가는 죽은 버튼이 된다.
+ *
+ * 그래서 조건을 프로필이 아니라 **내용물의 유무**로 다시 세웠다
+ * (`showWrapup`의 실인자 -- 호출부의 주석에 근거를 적어뒀다). 옛 조건은
+ * server 모드의 herbal에서도 버튼을 빼서 틀렸고, 새 조건은 두 경우 모두 맞다.
+ *
+ * `step === 'wrapup'`인 항목 전체를 거르는 것이지 `next-h2` 하나를 특별
+ * 취급하지 않는다 -- 나중에 마무리 단계에 앵커가 하나 더 생겨도 같은 규칙이
+ * 자동으로 적용된다.
+ *
+ * `showExercise`는 그대로다 -- 운동 섹션은 여전히 pain·mixed 전용이다.
  */
 function LaneJumpNav({
   showExercise,
-  showNext,
+  showWrapup,
   visitStep,
   onSelect,
 }: {
   showExercise: boolean
-  showNext: boolean
+  showWrapup: boolean
   visitStep: VisitStep
   onSelect: (id: string, step: VisitStep) => void
 }) {
   const items = LANE_JUMP_ITEMS.filter(
-    (it) => (!it.exerciseOnly || showExercise) && (!it.nextOnly || showNext),
+    (it) => (!it.exerciseOnly || showExercise) && (it.step !== 'wrapup' || showWrapup),
   )
   // 필터를 거친 뒤에 고른다 -- 걸러진 항목에 표시를 달면 아무 버튼에도 붙지
   // 않는 조합이 생긴다(예: 운동 섹션이 없는 프로필).
@@ -1249,8 +1347,14 @@ function LaneJumpNav({
             current는 **하나뿐**이어야 하므로(ARIA), 현재 단계의 **첫 항목**
             하나에만 준다. 네 개에 전부 주면 "현재 단계"가 네 번 읽힌다.
 
-            herbal 단독에서는 `마무리` 항목이 필터로 빠지고 단계도 항상
-            'consult'이라, 두 표시 모두 진료 쪽에만 남는다(죽은 표시 없음).
+            2026-09-26(안 1)로 herbal 단독도 마무리 단계를 갖게 됐으므로, 옛
+            주석이 적어둔 "herbal에서는 마무리 항목이 필터로 빠지고 단계도 항상
+            'consult'"는 **더 이상 사실이 아니다**. 실제 진료(server 모드)의
+            herbal은 네 버튼 + 두 단계로, pain·mixed와 똑같이 동작한다.
+            푸터가 없는 미리보기에서만 마무리 항목이 빠지는데(`showWrapup`),
+            그때는 단계도 'consult'에 머물러 두 표시가 진료 쪽에만 남는다 --
+            `firstIdOfCurrentStep`을 **필터 뒤에** 고르는 것이 그 경우까지
+            커버한다(걸러진 항목에 표시를 달지 않는다).
           */
           data-current={it.step === visitStep ? 'true' : undefined}
           aria-current={it.id === firstIdOfCurrentStep ? 'step' : undefined}

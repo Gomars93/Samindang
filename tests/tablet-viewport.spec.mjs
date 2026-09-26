@@ -504,6 +504,124 @@ try {
       `(${me.smallestTarget}px)`,
     )
 
+    /*
+     * PO 지시 2026-09-26(안 1): 「마무리」 단계를 **한약 단독에도** 준다.
+     *
+     * 왜 진짜 브라우저에서 한약 쪽을 따로 재는가: PR-A(2026-09-21)는 한약
+     * 단독에서 이 단계를 통째로 없앴고, 그 안에 EMR 요약·복사 · 재진 간단
+     * 문진 발급 · **진료 완료**가 함께 들어 있어서 한약 단독 방문은 그 방문
+     * 안에서 진료를 끝낼 수 없었다(PR #57 검수 1번). 이제 가드를 뗐으므로
+     * 한약 화면에도 숨은 단계 하나가 DOM에 얹힌다.
+     *
+     * 그 얹힘이 **높이 0이어야** PR-A가 줄인 한약 화면 성과가 그대로 남는다.
+     * 그리고 그 근거는 UA의 `[hidden] { display: none }` 한 줄뿐이라, CSS가
+     * 그걸 이기면 SSR 단언(hidden 속성만 본다)은 전부 통과하면서 한약 화면이
+     * 조용히 두 배로 길어진다. 위 LBP 블록과 같은 계약을, 이번에는 **가드를
+     * 뗀 쪽**에서 잰다 -- CLAUDE.md가 네 번의 사고 끝에 적어둔 "확인해야 하는
+     * 것은 지우지 않은 쪽 화면이다"의 이번 배치판이다.
+     *
+     * PR #58 검수 1번으로 한 번 고쳐졌다. 여기는 **fixtures 모드**라
+     * `nextLaneFooter`가 안 들어오고(server 전용), 그래서 한약 마무리 단계에는
+     * 넣을 것이 없다. 그 상태에서 점프 버튼을 내면 원장을 헤딩만 남은 빈
+     * 화면으로 데려가므로, 버튼은 **없는 것이 옳다**. 첫 판은 버튼이 항상
+     * 있다고 단언해서 그 결함을 그대로 통과시켰다.
+     *
+     * 그래서 이 블록이 재는 것은 두 가지로 갈린다:
+     *  (1) 단계 래퍼는 있고, 숨은 채 높이 0이다 -- `hidden`이 CSS에 먹히는지를
+     *      실브라우저에서 확인하는 것이 이 스위트의 목적이고, 래퍼를 조건 없이
+     *      둔 덕분에 herbal에서도 그대로 성립한다.
+     *  (2) 그런데 그 단계로 가는 **버튼은 없다** -- 갈 데가 없기 때문이다.
+     * 푸터가 있을 때 버튼이 생긴다는 쪽은 브라우저에서 prop을 주입할 수 없어
+     * `doctor-workspace`의 「PR #58 검수1」 단언이 stand-in으로 확인한다.
+     */
+    const herbalStepMetrics = `(() => {
+      const box = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { h: Math.round(r.height), visible: typeof el.checkVisibility === 'function' ? el.checkVisibility() : r.height > 0 }
+      }
+      const nav = document.querySelector('.doctor__laneNav')
+      return {
+        consult: box('.doctor__visitStep[data-step="consult"]'),
+        wrapup: box('.doctor__visitStep[data-step="wrapup"]'),
+        navLabels: nav ? [...nav.querySelectorAll('.doctor__laneNav__btn')].map((b) => b.textContent) : null,
+        /*
+         * PR-A가 herbal 단독에서 뗀 블록이 「마무리」 단계를 열어주면서 따라
+         * 들어오지 않았는지.
+         *
+         * **textContent를 쓴다.** 첫 판은 document.body.innerText였는데,
+         * innerText는 렌더된 텍스트만 돌려주므로 hidden인 마무리 단계 안을
+         * 통째로 건너뛴다 -- 그 블록들이 바로 거기 들어가므로, 가드를 지워도
+         * 단언이 그대로 통과했다(mutation으로 확인. PR #58 4차 검수).
+         * textContent는 숨은 서브트리도 읽는다. 대상도 body 전체가 아니라
+         * 마무리 단계 하나로 좁힌다.
+         *
+         * medicationCourseSlot은 prop이라 fixtures에 애초에 안 들어오므로
+         * 여기서 보지 않는다 -- 보면 같은 종류로 공허해진다(PR #58 3차 검수).
+         * 그쪽은 doctor-workspace가 stand-in으로 확인한다.
+         * (이 주석은 JS 템플릿 리터럴 안이다 -- 백틱을 쓰면 문자열이 끊긴다.)
+         */
+        wrapupText: (document.querySelector('.doctor__visitStep[data-step="wrapup"]') || {}).textContent || '',
+      }
+    })()`
+    /*
+     * 기다림의 조건은 `consult`만으로 둔다 -- `wrapup`까지 기다리면, 누군가
+     * 바깥 프로필 가드를 되살려 한약에서 마무리 단계를 다시 없앴을 때 이
+     * 스위트가 **이름 있는 실패 대신 20초 타임아웃**으로 죽는다(실제로 그렇게
+     * 죽는 것을 확인했고, 그러면 같은 뷰포트의 나머지 단언까지 통째로
+     * 날아간다). 존재 여부는 아래에서 check로 단언한다.
+     */
+    const hBefore = await cdp.evalUntil(herbalStepMetrics, (v) => v && v.consult)
+    console.log(
+      `[measured] ${label} (한약 단독): 진료 화면 ${hBefore.consult.h}px / 마무리 화면 ${hBefore.wrapup?.h ?? '없음'}px (숨김)` +
+        ` | 내비 ${hBefore.navLabels?.join(',')}`,
+    )
+    check(
+      `${label} (한약 단독): 마무리 단계가 DOM에 생겼다 (PR #57 검수 1번의 구멍이 메워졌다)`,
+      !!hBefore.wrapup,
+      '(바깥 프로필 가드가 되살아났는지 확인)',
+    )
+    check(
+      `${label} (한약 단독): 그 단계가 숨은 상태에서 높이 0이다 — 한약 화면이 길어지지 않았다`,
+      hBefore.wrapup?.h === 0 && hBefore.wrapup?.visible === false,
+      `(${hBefore.wrapup?.h}px, visible=${hBefore.wrapup?.visible})`,
+    )
+    check(
+      `${label} (한약 단독): 진료 화면은 실제 높이를 갖는다 (자기점검 — 둘 다 0이면 위 단언이 헛돈다)`,
+      hBefore.consult.h > 300,
+      `(${hBefore.consult.h}px)`,
+    )
+    check(
+      `${label} (한약 단독): 점프 내비가 3개 — 갈 데 없는 「마무리」 버튼을 내지 않는다 (fixtures 모드엔 푸터가 없다)`,
+      Array.isArray(hBefore.navLabels) && hBefore.navLabels.join(',') === '안전,확인,판단·처치',
+      `(${hBefore.navLabels})`,
+    )
+    check(
+      `${label} (한약 단독): 그래서 마무리 단계는 열 수 없다 — DOM에는 있고(위) 도달 경로만 없다`,
+      Array.isArray(hBefore.navLabels) && hBefore.navLabels.every((l) => l !== '마무리'),
+      `(${hBefore.navLabels})`,
+    )
+    // 자기점검: 마무리 단계 텍스트를 실제로 읽었는가. 빈 문자열이면 아래
+    // "없다" 단언이 무조건 통과한다 -- 이 배치에서 그 부류로 두 번 당했다.
+    check(
+      `${label} (한약 단독): 마무리 단계의 숨은 텍스트를 읽었다 (아래 단언이 공허하지 않도록)`,
+      typeof hBefore.wrapupText === 'string' && hBefore.wrapupText.includes('마무리'),
+      `("${String(hBefore.wrapupText).slice(0, 40)}")`,
+    )
+    check(
+      `${label} (한약 단독): PR-A가 뗀 화면 블록(다음 방문 확인 메모 · 관리 계획·다음 재평가)은 여전히 없다`,
+      !/다음 방문 확인 메모|관리 계획 · 다음 재평가/.test(hBefore.wrapupText),
+      `("${String(hBefore.wrapupText).slice(0, 60)}")`,
+    )
+    /*
+     * 비공허성은 같은 브라우저 세션의 위쪽 LBP 단언이 준다 -- "점프 내비가
+     * 5개 버튼으로 렌더된다(…,마무리)". 통증에서는 버튼이 나오고 한약에서는
+     * 안 나오므로, 여기 3개가 "내비가 그냥 고장났다"가 아니라 "조건이 옳게
+     * 걸렸다"임이 확인된다.
+     */
+    await cdp.send('Runtime.evaluate', { expression: `window.scrollTo(0, 0)`, returnByValue: true })
+
     // 2026-09-06: 통증(LBP) 프로필을 따로 잰다 — 이번 배치가 접은 세 칸이 실제
     // 헤드리스 렌더에서 보이지 않는지, 그리고 처치 "기타" 한 칸만 남는지.
     // 옵션은 인덱스가 아니라 이름으로 고른다(fixture 재정렬에 안전).

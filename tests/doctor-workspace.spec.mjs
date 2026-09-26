@@ -4271,11 +4271,17 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
   /*
    * PR-A(2026-09-21)는 herbal 단독의 `다음` 레인을 통째로 없앴고, 그 안에
    * 있던 재평가 대상 picker까지 같이 사라졌다. PO 지시(2026-09-25)로 **그
-   * 한 칸만** 되살렸다 -- 레인은 그대로 없는 상태다.
+   * 한 칸만** 되살렸다.
    *
-   * 그래서 이 단언은 둘로 갈린다: picker는 **있다**(판단·처치 레인),
-   * 나머지 `다음` 레인 내용물은 **여전히 없다**. 한쪽만 단언하면 "레인을
-   * 통째로 되살렸다"와 "한 칸만 되살렸다"가 구분되지 않는다.
+   * 그 다음(PO 지시 2026-09-26, 안 1) 「마무리」 **단계**를 herbal에도 줬다 --
+   * PR #57 검수 1번(herbal 단독은 그 방문 안에서 진료를 끝낼 수 없었다)을
+   * 고치기 위해서다. 그래서 지금 계약은 세 갈래다:
+   *   - picker는 **있다** (판단·처치 레인)
+   *   - 「마무리」 단계와 그 안의 출력 3종(EMR·재진 발급·진료 완료)은 **있다**
+   *   - PR-A가 지운 **화면 블록**(다음 방문 확인 메모 / 관리 계획·다음 재평가 /
+   *     참고 자료 / CRM 복약 코스)은 **여전히 없다**
+   * 세 갈래를 따로 단언하지 않으면 "레인을 통째로 되살렸다"와 "출력만
+   * 되살렸다"가 구분되지 않는다.
    */
   const herbalOnlyHtml = renderToString(
     React.createElement(DoctorWorkspace, {
@@ -4290,18 +4296,77 @@ test('N-2: clearing an EXISTING clinicianFinalInstruction to \'\' keeps the free
   test('PO 2026-09-25: herbal 단독에 재평가 대상 picker가 되살아났다 (판단·처치 레인)', () => {
     assert.ok(herbalOnlyHtml.includes('재평가 대상 (측정 추적)'), '재평가 대상 라벨이 없다')
     assert.ok(/role="group" aria-label="수면 불편 오늘 기준값"/.test(herbalOnlyHtml), 'NRS 버튼이 안 붙었다')
-    // 판단·처치 레인 안이어야 한다 -- herbal 단독에는 `다음`도 「마무리」도 없다.
+    // 판단·처치 레인 안이어야 한다 -- 「마무리」 단계가 herbal에도 생겼으므로
+    // "judgment보다 뒤"만으로는 부족하다. 두 헤딩 **사이**인지 확인한다.
     const judgment = herbalOnlyHtml.indexOf('id="judgment-h2"')
     const picker = herbalOnlyHtml.indexOf('재평가 대상 (측정 추적)')
+    const wrapup = herbalOnlyHtml.indexOf('id="next-h2"')
     assert.ok(judgment > 0 && picker > judgment, 'picker가 판단·처치 레인보다 앞에 있다')
+    assert.ok(wrapup > 0, '「마무리」 헤딩이 없다 (이 단언이 공허해진다)')
+    assert.ok(picker < wrapup, 'picker가 「마무리」 단계로 넘어갔다')
   })
 
-  test('PR-A 계약은 그대로: herbal 단독에 `다음` 레인의 나머지는 여전히 없다', () => {
+  test('PR-A 계약은 그대로: herbal 단독에 PR-A가 지운 화면 블록은 여전히 없다', () => {
     assert.ok(!herbalOnlyHtml.includes('다음 방문 확인 메모'), '다음 방문 확인 메모가 되살아났다')
     assert.ok(!herbalOnlyHtml.includes('관리 계획 · 다음 재평가'), '관리 계획·다음 재평가 disclosure가 되살아났다')
     assert.ok(!herbalOnlyHtml.includes('참고 자료 (이전 방문'), '참고 자료 drawer가 되살아났다')
-    assert.ok(!/id="next-h2"/.test(herbalOnlyHtml), '`다음` 레인 heading이 되살아났다')
-    assert.ok(!/data-target="next-h2"/.test(herbalOnlyHtml), '`다음` 점프 버튼이 되살아났다')
+  })
+
+  /*
+   * PO 지시 2026-09-26(안 1). PR #57 검수 1번의 구멍: EMR 요약·복사 · 재진
+   * 간단 문진 발급 · **진료 완료**가 전부 `nextLaneFooter` 안에 있었고 그
+   * 푸터가 `다음` 레인 가드 뒤에 있었으므로, herbal 단독은 문진을 받아도
+   * **그 방문을 끝낼 수 없었다**. 「마무리」 단계를 herbal에도 줘서 메웠다.
+   *
+   * 여기서 보는 것은 CLAUDE.md 규칙의 "지우지 않은 쪽"이 아니라 그 반대
+   * 방향이다 -- 가드를 **떼면** 원래 없던 것이 실제로 나타나는지. 안 보면
+   * "가드만 지우고 화면은 그대로"인 상태가 통과한다.
+   */
+  test('PO 2026-09-26: herbal 단독에 「마무리」 단계 래퍼와 앵커가 생겼다', () => {
+    assert.ok(/id="next-h2"/.test(herbalOnlyHtml), '「마무리」 헤딩이 없다')
+    assert.ok(/data-step="wrapup"/.test(herbalOnlyHtml), '마무리 단계 래퍼가 없다')
+  })
+
+  /*
+   * PR #58 검수 1번. 점프 버튼은 **단계가 있으면**이 아니라 **그 단계에 내용이
+   * 있으면** 나온다. herbal 단독 마무리에 들어가는 것은 `nextLaneFooter`
+   * 하나뿐이고 그건 server 모드 전용이라, 푸터 없이 버튼만 내면 원장을 헤딩만
+   * 남은 빈 화면으로 데려간다(같은 클릭이 진료 단계를 접는다).
+   *
+   * 두 방향을 다 본다 -- 한쪽만 보면 "항상 낸다"와 "절대 안 낸다"가 구분되지
+   * 않는다. 이 배치에서 실제로 "항상 낸다"로 틀렸다.
+   */
+  test('PR #58 검수1: 푸터가 없으면(미리보기) herbal 단독에 「마무리」 버튼을 내지 않는다 — 빈 화면으로 가는 죽은 버튼 방지', () => {
+    assert.ok(!/data-target="next-h2"/.test(herbalOnlyHtml), '갈 데 없는 마무리 버튼이 있다')
+    const targets = [...herbalOnlyHtml.matchAll(/data-target="([^"]+)"/g)].map((m) => m[1])
+    assert.deepEqual(targets, ['lane1-h2', 'lane2-h2', 'judgment-h2'], `(${targets})`)
+  })
+
+  test('PR #58 검수1: 푸터가 있으면(실제 진료) herbal 단독에도 「마무리」 버튼이 나온다', () => {
+    const withFooter = renderWith(HERBAL_SCENARIO_1, {
+      nextLaneFooter: React.createElement('div', { id: 'footer-probe' }, '종결 stand-in'),
+    })
+    assert.ok(/data-target="next-h2"/.test(withFooter), '실제 진료에서도 버튼이 없다 — 이 PR이 고치려던 구멍 그대로다')
+    const targets = [...withFooter.matchAll(/data-target="([^"]+)"/g)].map((m) => m[1])
+    assert.deepEqual(targets, ['lane1-h2', 'lane2-h2', 'judgment-h2', 'next-h2'], `(${targets})`)
+  })
+
+  /*
+   * PR #58 검수 3번: 이 단언의 첫 판이 **공허했다.** `medicationCourseSlot`은
+   * prop이라 fixtures 렌더에는 애초에 안 들어온다 -- `!html.includes('복약 코스')`
+   * 는 가드를 지워도 그대로 통과했다(PR #57 검수 3번·5번과 같은 부류를 한 배치
+   * 만에 반복했다). stand-in을 **직접 넘겨** 가드가 실제로 거르는지 본다.
+   */
+  test('PR #58 검수3: CRM 복약 코스 슬롯은 넘겨줘도 herbal 단독에서 걸러진다 (PR-A 유지)', () => {
+    const slot = React.createElement('div', { id: 'medcourse-probe' }, '복약 코스 stand-in')
+    const herbal = renderWith(HERBAL_SCENARIO_1, { medicationCourseSlot: slot })
+    assert.ok(!herbal.includes('id="medcourse-probe"'), 'herbal 단독에 복약 코스가 들어왔다')
+    // 비공허성: 같은 slot이 pain·mixed에서는 실제로 렌더된다. 이게 없으면
+    // "slot 자체가 무시되는 것"과 "가드가 거르는 것"이 구분되지 않는다.
+    for (const [name, scenario] of [['pain', PAIN_SCENARIO_1], ['mixed', MIXED_SCENARIO_1]]) {
+      const html = renderWith(scenario, { medicationCourseSlot: slot })
+      assert.ok(html.includes('id="medcourse-probe"'), `${name}에서 복약 코스가 사라졌다 — 가드가 과하게 걸렀다`)
+    }
   })
 
   /*
@@ -4890,13 +4955,25 @@ test('레인1 접기 소스 계약: 판정은 lane1Summary.status 하나(새 임
   })
   const herbal = render(HERBAL_SCENARIO_1)
   const herbalNav = navButtons(herbal)
-  // PR-A(한약 화면 축소, 2026-09-21): 한약은 `다음` 레인 전체가 사라져
-  // 3개가 됐다. 이 파일의 바로 아래 "죽은 링크 없음" 단언과 짝을 이룬다 --
-  // 앵커가 없는 버튼을 남기지 않는 것이 이 내비의 원래 계약이었다.
-  test('점프 내비: 한약 화면은 운동·마무리 버튼 없이 3개 (PR-A)', () => {
+  // PR-A(한약 화면 축소, 2026-09-21)로 3개까지 줄었고, PO 지시 2026-09-26(안 1)로
+  // 「마무리」 단계를 herbal에도 줬다. 다만 **버튼 수는 프로필이 아니라 그 단계에
+  // 내용이 있는지로 갈린다**(PR #58 검수 1번): herbal 마무리에 들어가는 것은
+  // server 전용 `nextLaneFooter` 하나뿐이라, 푸터가 없는 이 fixtures 렌더에서는
+  // 3개로 남는 것이 옳다. 실제 진료의 4개는 바로 아래 단언이 본다.
+  // 운동 섹션은 어느 쪽이든 없다(한약에 운동 후보를 만들지 않는다).
+  // "죽은 링크 없음" 단언과 짝을 이룬다 -- 갈 데 없는 버튼을 남기지 않는 것이
+  // 이 내비의 원래 계약이다.
+  test('점프 내비: 한약 화면(푸터 없음)은 3개 — 갈 데 없는 마무리 버튼을 내지 않는다', () => {
     assert.deepEqual(herbalNav.map((b) => b.label), ['안전', '확인', '판단·처치'])
     assert.ok(!herbal.includes('id="exercise-h3"'))
-    assert.ok(!herbal.includes('id="next-h2"'), '`다음` 앵커 자체가 없다')
+  })
+  test('점프 내비: 한약 화면(푸터 있음 = 실제 진료)은 운동 없이 4개 — 마무리 포함', () => {
+    const withFooter = renderWith(HERBAL_SCENARIO_1, {
+      nextLaneFooter: React.createElement('div', null, '종결 stand-in'),
+    })
+    assert.deepEqual(navButtons(withFooter).map((b) => b.label), ['안전', '확인', '판단·처치', '마무리'])
+    assert.ok(!withFooter.includes('id="exercise-h3"'))
+    assert.ok(withFooter.includes('id="next-h2"'), '「마무리」 앵커가 없다 — 죽은 링크가 된다')
   })
   test('점프 내비: 한약 화면의 모든 버튼 대상 id가 실제로 렌더된다', () => {
     for (const b of herbalNav) assert.ok(herbal.includes(` id="${b.target}"`), `missing anchor ${b.target}`)
@@ -5058,11 +5135,18 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
     ])
   })
 
-  test('W-A4 한약 단독: 마무리 래퍼 자체가 없고 진료 래퍼는 열려 있다 (PR-A 유지)', () => {
-    assert.deepEqual(stepTags(herbalHtml), [{ step: 'consult', hidden: false }])
-    // 한약에는 갈 곳이 없으므로 단계 전환 버튼도 없어야 한다 -- 있으면
-    // "눌러도 아무 일도 안 일어나는 버튼"이 된다.
-    assert.ok(!herbalHtml.includes('data-step="wrapup"'), '한약에 마무리 단계 흔적이 남았다')
+  // PO 지시 2026-09-26(안 1)로 뒤집혔다. 원래 W-A4는 "한약 단독에는 마무리
+  // 래퍼가 없다(PR-A 유지)"였는데, 그 결과 herbal 단독은 EMR 요약·재진 발급·
+  // 진료 완료에 도달할 수 없었다(PR #57 검수 1번). 이제 세 프로필이 모두
+  // 같은 2단계 구조다 -- 그래서 W-A2/W-A3/W-A4의 기대값이 동일해진다.
+  test('W-A4 한약 단독도 같은 두 단계다 (PO 2026-09-26 안 1 — 세 프로필 동일 구조)', () => {
+    assert.deepEqual(stepTags(herbalHtml), [
+      { step: 'consult', hidden: false },
+      { step: 'wrapup', hidden: true },
+    ])
+    // 기본이 진료 단계라는 것은 herbal에서도 같다 -- 문진을 열자마자
+    // 마무리부터 보이면 레인1(안전)을 건너뛴다.
+    assert.ok(herbalHtml.includes('data-step="wrapup" hidden=""'), '한약 마무리 단계가 기본 열림이 됐다')
   })
 
   /*
@@ -5133,7 +5217,16 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
       DW_SRC.indexOf(`data-step="wrapup"`),
       DW_SRC.indexOf('<LaneJumpNav'),
     )
-    assert.ok(wrapupSrc.includes('{medicationCourseSlot}'), 'medicationCourseSlot이 마무리 밖으로 나갔다')
+    /*
+      PO 지시 2026-09-26(안 1)로 단계 래퍼의 프로필 가드가 없어졌으므로, PR-A가
+      herbal 단독에서 뗀 복약 코스는 **자기 가드**를 들고 있다. 그래서 여기서
+      찾는 글자가 `{medicationCourseSlot}`에서 그 가드 형태로 바뀌었다 --
+      "마무리 래퍼 안에 있다"는 이 테스트의 의도는 그대로다.
+    */
+    assert.ok(
+      /\{activeProfile !== 'herbal' && medicationCourseSlot\}/.test(wrapupSrc),
+      'medicationCourseSlot이 마무리 밖으로 나갔거나 자기 가드를 잃었다',
+    )
     assert.ok(wrapupSrc.includes('{nextLaneFooter}'), 'nextLaneFooter가 마무리 밖으로 나갔다')
     // 자기점검: 위 슬라이스가 비어 있으면 두 단언 다 무의미하다.
     assert.ok(wrapupSrc.length > 200, '마무리 소스 구간을 못 잡았다')
@@ -5225,6 +5318,67 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
   })
 
   /* ---------------------------------------------------- §W-D 전환 */
+
+  /*
+   * W-D0 (PR #58 9차 검수): 「근거 보기」가 마무리 화면에서 죽은 링크였다.
+   *
+   * 목적지 `#lane1-h2`는 진료 단계 안에 있으므로, 마무리에 있을 때는 `hidden`
+   * 이라 박스가 없다 -- 클릭해도 fragment만 바뀌고 화면은 그대로다. F1(인증
+   * 만료 버튼)이 같은 이유로 단계를 되돌리는데 이 링크만 빠져 있었다.
+   *
+   * 이 PR과의 관계: herbal 단독에는 갈 마무리 단계가 없어서 **항상 살아
+   * 있었다.** 이 PR이 그 단계를 주므로 herbal에서 새로 죽는다 -- 그래서
+   * 여기서 함께 고치고, 두 프로필 모두에 대해 잰다.
+   */
+  test('W-D0 「근거 보기」는 마무리 화면에서도 진료 단계로 되돌린다 (죽은 링크 아님)', () => {
+    const hadDoc = 'document' in globalThis
+    const hadWin = 'window' in globalThis
+    globalThis.document = { getElementById: () => null, querySelector: () => null }
+    globalThis.window = { scrollY: 0, scrollTo: () => {}, getComputedStyle: () => ({ position: 'static' }) }
+    try {
+      for (const [name, scenario] of [['pain', PAIN_SCENARIO_1], ['herbal', HERBAL_SCENARIO_1]]) {
+        let renderer
+        act(() => {
+          renderer = TestRenderer.create(
+            React.createElement(DoctorWorkspace, {
+              payload: scenario.payload,
+              synthetic: scenario.synthetic,
+              // herbal은 푸터가 있어야 마무리 버튼이 나온다(showWrapup).
+              nextLaneFooter: React.createElement('div', null, '종결 stand-in'),
+            }),
+          )
+        })
+        const stepHidden = (step) =>
+          renderer.root.find((n) => n.type === 'div' && n.props['data-step'] === step).props.hidden
+        const navBtn = (target) =>
+          renderer.root.find((n) => n.type === 'button' && n.props['data-target'] === target)
+        const evidence = renderer.root.find(
+          (n) => n.type === 'a' && n.props.className === 'doctor__visitSummary__evidenceLink',
+        )
+
+        // 마무리로 간다.
+        act(() => navBtn('next-h2').props.onClick())
+        assert.equal(stepHidden('wrapup'), false, `${name}: 마무리가 안 열렸다`)
+        assert.equal(stepHidden('consult'), true, `${name}: 진료가 안 닫혔다`)
+
+        // 「근거 보기」 클릭 → 진료 단계로 돌아와야 한다.
+        let defaultPrevented = false
+        act(() => evidence.props.onClick({ preventDefault: () => { defaultPrevented = true } }))
+        assert.ok(defaultPrevented, `${name}: preventDefault를 안 했다 — href가 그대로 듣는다`)
+        assert.equal(stepHidden('consult'), false, `${name}: 진료 단계로 되돌아오지 않았다 (죽은 링크)`)
+        assert.equal(stepHidden('wrapup'), true, `${name}: 마무리가 안 닫혔다`)
+      }
+    } finally {
+      if (!hadDoc) delete globalThis.document
+      if (!hadWin) delete globalThis.window
+    }
+  })
+
+  test('W-D0b 「근거 보기」의 href는 그대로 남는다 (콜백 없는 호출자의 fallback)', () => {
+    const src = fs.readFileSync('src/doctor/workspace/VisitSummaryAside.tsx', 'utf8')
+    assert.ok(/href="#lane1-h2"/.test(src), 'href가 사라졌다')
+    assert.ok(/if \(!onJumpToEvidence\) return/.test(src), '콜백이 없을 때 href를 막아버린다')
+  })
 
   test('W-D1 클릭 전환: 마무리 버튼 → 마무리가 열리고 진료가 닫힌다, 안전 버튼 → 되돌아온다', () => {
     /*
@@ -5706,6 +5860,64 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
     assert.ok(/\{activeProfile === 'herbal' && \(\s*\n\s*<HerbalFollowUpTargetsCard/.test(DW), 'herbal 전용 가드가 아니다')
   })
 
+  /*
+   * PR #58 검수 2번·4번. "herbal 단독에는 「마무리」가 없다"는 주장이 **두 배치
+   * 연속** 낡은 채로 남았다 -- 한 번은 `DoctorWorkspace`의 data-current 주석,
+   * 한 번은 `HerbalWorkspace`의 카드 JSDoc. 둘 다 같은 hunk를 고치면서 옆의
+   * 주석만 놓친 경우다. 산문은 grep으로 찾기 어려워 사람 눈에 의존하게 되므로,
+   * 반복된 이 한 문장만 테스트로 고정한다.
+   *
+   * 옛 주장을 **인용하고 철회하는** 서술은 정당하므로(지금 두 파일이 그렇다),
+   * 단순 금지가 아니라 "가까이에 철회 표지가 있는가"로 판정한다.
+   */
+  test('PR #58 검수2: "herbal에는 마무리가 없다"는 낡은 주장이 철회 없이 남아 있지 않다', () => {
+    /*
+     * 주석 줄바꿈(`\n * `, `\n// `)을 공백 하나로 눌러 한 줄로 만든 뒤 찾는다 --
+     * 안 그러면 두 줄에 걸친 문장을 놓친다(첫 판이 실제로 0건을 잡았고,
+     * 자기점검이 그걸 잡아냈다).
+     */
+    const flatten = (src) => src.replace(/\n\s*(\*|\/\/)?\s*/g, ' ')
+    const CLAIM = /herbal 단독에는.{0,40}「마무리」도? 없/g
+    const RETRACTION = /더 이상 사실이 아니|갱신|당시|없었다|뒤집|PR #58|안 1/
+    let found = 0
+    for (const [name, raw] of [
+      ['DoctorWorkspace', DW],
+      ['HerbalWorkspace', HW],
+      ['PainWorkspace', PW],
+    ]) {
+      const src = flatten(raw)
+      for (const m of src.matchAll(CLAIM)) {
+        found += 1
+        // 앞뒤 400자 안에 철회 표지가 있어야 한다.
+        const window = src.slice(Math.max(0, m.index - 400), m.index + 400)
+        assert.ok(
+          RETRACTION.test(window),
+          `${name}: 철회 없이 남은 낡은 주장 -- "${m[0]}" (주변 문맥에 철회 표지가 없다)`,
+        )
+      }
+    }
+    /*
+      자기점검은 **합성 표본**으로 한다. 첫 판은 "실제 소스에서 최소 1건은
+      잡혀야 한다"였는데, 그걸 만족시키는 건 `HerbalWorkspace.tsx`의 산문 한
+      문장뿐이었다 -- 나중에 그 JSDoc을 정리하면 코드가 옳은데도 이 스위트가
+      실패한다. 바로 옆 `herbal-workspace-slim.spec.mjs`의 A-pre 주석이
+      경고해둔 그 결합을 한 파일 건너에서 그대로 재현한 것이다(PR #58 3차
+      검수). 그래서 스캐너의 동작만 합성 표본으로 검증하고, 실제 소스에서
+      몇 건이 잡히는지는 계약으로 삼지 않는다(0건도 정상 -- 낡은 주장이
+      없다는 뜻이다).
+    */
+    const STALE = '/*\n * herbal 단독에는 「마무리」도 없다.\n */'
+    const RETRACTED = '/*\n * PR-A 당시 herbal 단독에는 「마무리」도 없었다. 2026-09-26 갱신.\n */'
+    const scan = (src) =>
+      [...flatten(src).matchAll(CLAIM)].filter(
+        (m) => !RETRACTION.test(flatten(src).slice(Math.max(0, m.index - 400), m.index + 400)),
+      ).length
+    assert.equal(scan(STALE), 1, '철회 없는 낡은 주장을 못 잡는다')
+    assert.equal(scan(RETRACTED), 0, '철회된 인용까지 잡는다 (오탐)')
+    assert.equal(scan('const x = 1'), 0, '무관한 코드를 잡는다')
+    void found
+  })
+
   test('F6 사용자 문구에 사라진 레인 이름이 남아 있지 않다', () => {
     for (const [name, src] of [['PainWorkspace', PW], ['DoctorWorkspace', DW], ['HerbalWorkspace', HW]]) {
       assert.ok(!/&apos;다음&apos; 레인/.test(src), `${name}: 옛 레인 이름이 남았다`)
@@ -5719,37 +5931,72 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
 console.log(`(+검수 6건 회귀 가드) ${passed} doctor-workspace assertions passed.`)
 
 /* ====================================================================== *
- * PR #57 검수 1번: 한약 단독의 「출력」 경로가 화면에 없다 (PR-A가 만든 구멍)
+ * PR #57 검수 1번 → PO 지시 2026-09-26(안 1)로 **고쳐졌다**
  *
- * 되살린 `재평가 대상` 값이 **어디까지 가는지**를 정확히 못박는다. 내가
- * DECISIONS/HANDOFF에 "EMR에도 간다"고 적었는데, herbal 단독에는 그 EMR
- * 텍스트를 띄우는 UI 자체가 없다 -- EMR textarea·복사·재진 발급·진료 완료가
- * 전부 `nextLaneFooter` 안에 있고, 그게 `activeProfile !== 'herbal'` 가드에
- * 걸린다.
+ * 검수 1번이 잡은 사실: 되살린 `재평가 대상` 값에 대해 내가 "EMR에도 간다"고
+ * 적었지만, herbal 단독에는 그 EMR 텍스트를 띄우는 UI 자체가 없었다 --
+ * EMR textarea·복사·재진 발급·진료 완료가 전부 `nextLaneFooter` 안에 있고,
+ * 그게 `다음` 레인의 `activeProfile !== 'herbal'` 가드에 걸렸다. 결과적으로
+ * **herbal 단독은 그 방문 안에서 진료를 끝낼 수 없었다.**
  *
- * 이 배치가 고칠 범위가 아니다(레인을 되살리는 것은 PO 판단). 대신 사실을
- * 테스트로 고정해 다음 사람이 같은 과장을 반복하지 않게 한다.
+ * PO가 안 1(「마무리」 단계를 herbal에도 준다)을 선택했으므로 이 절의 단언은
+ * 방향이 **뒤집힌다**. 그래도 절을 지우지 않는 이유는, 뒤집힌 방향을 그대로
+ * 고정해두지 않으면 "가드를 다시 넣어서 같은 구멍을 다시 만드는" 회귀가
+ * 조용히 통과하기 때문이다.
+ *
+ * fixture 모드에는 `nextLaneFooter`가 애초에 안 들어온다(server 전용). 그래서
+ * "herbal 화면에 EMR textarea가 보인다"를 SSR로 증명할 수는 없다 -- 세 갈래로
+ * 나눠 본다: (1) 푸터 슬롯이 가드 없이 마무리 단계 안에 있다(소스),
+ * (2) DoctorView가 그 푸터를 프로필과 무관하게 넘긴다(소스),
+ * (3) 푸터를 실제로 넘기면 herbal 단독 마무리 단계 안에 나타난다(렌더).
  * ====================================================================== */
 {
   const DWsrc = fs.readFileSync('src/doctor/workspace/DoctorWorkspace.tsx', 'utf8')
 
-  test('검수1 소스: nextLaneFooter는 herbal 단독에 렌더되지 않는다 (EMR 복사·재진 발급·진료 완료가 그 안에 있다)', () => {
-    const guardIdx = DWsrc.indexOf("{activeProfile !== 'herbal' && (")
-    assert.ok(guardIdx > 0, '프로필 가드를 못 찾았다')
-    const footerIdx = DWsrc.indexOf('{nextLaneFooter}')
-    assert.ok(footerIdx > guardIdx, 'nextLaneFooter가 가드 밖으로 나갔다 — 그렇다면 이 단언의 전제가 바뀐다')
+  test('검수1(수정 후) 소스: nextLaneFooter 슬롯은 프로필 가드 없이 마무리 단계 안에 있다', () => {
+    const wrapupIdx = DWsrc.indexOf('data-step="wrapup"')
+    assert.ok(wrapupIdx > 0, '마무리 단계 래퍼를 못 찾았다')
+    const navIdx = DWsrc.indexOf('<LaneJumpNav')
+    assert.ok(navIdx > wrapupIdx, '단계 래퍼와 내비의 순서 전제가 바뀌었다')
+    const wrapup = DWsrc.slice(wrapupIdx, navIdx)
+    assert.ok(wrapup.includes('{nextLaneFooter}'), 'nextLaneFooter가 마무리 단계 밖으로 나갔다')
+    assert.ok(
+      !/activeProfile[^\n]*&&[^\n]*nextLaneFooter/.test(wrapup),
+      '푸터에 프로필 가드가 다시 붙었다 — herbal 단독이 또 진료를 끝낼 수 없게 된다',
+    )
+    // 푸터 앞에 `다음` 레인 전체를 감싸는 프로필 가드가 되돌아오지 않았는지도 본다.
+    assert.ok(
+      !/\{activeProfile !== 'herbal' && \(\s*\n?\s*(\/\*|<div className="doctor__visitStep")/.test(DWsrc),
+      '단계 래퍼 전체를 감싸는 프로필 가드가 되살아났다',
+    )
   })
 
-  test('검수1 렌더: 한약 단독 화면에 EMR 복사·재진 발급·진료 완료가 없다', () => {
-    /*
-      fixture 모드에는 nextLaneFooter가 애초에 안 들어오므로(server 전용) 이
-      렌더만으로는 가드를 증명할 수 없다. 그래서 위 소스 단언과 짝으로 둔다 --
-      여기서는 "한약 단독 화면에 그 UI가 실제로 없다"는 사실만 고정한다.
-    */
+  test('검수1(수정 후) 소스: DoctorView는 nextLaneFooter를 프로필과 무관하게 넘긴다', () => {
+    const dv = fs.readFileSync('src/doctor/DoctorView.tsx', 'utf8')
+    assert.ok(/nextLaneFooter=\{nextLaneFooterNode\}/.test(dv), '푸터를 안 넘긴다')
+    const defIdx = dv.indexOf('const nextLaneFooterNode =')
+    assert.ok(defIdx > 0, '푸터 정의를 못 찾았다')
+    // 정의의 게이트 표현식(첫 줄)에 프로필 조건이 섞이면 herbal이 다시 빠진다.
+    const gate = dv.slice(defIdx, dv.indexOf('(\n', defIdx))
+    assert.ok(/mode === 'server'/.test(gate), '게이트 전제(server 모드)가 바뀌었다')
+    assert.ok(!/viewProfile|activeProfile/.test(gate), '푸터 정의에 프로필 조건이 섞였다')
+  })
+
+  test('검수1(수정 후) 렌더: 푸터를 넘기면 herbal 단독 마무리 단계 안에 나타난다', () => {
+    const herbal = renderWith(HERBAL_SCENARIO_1, {
+      nextLaneFooter: React.createElement('div', { id: 'footer-probe' }, '종결 stand-in'),
+    })
+    assert.ok(herbal.includes('id="footer-probe"'), 'herbal 단독에 푸터가 렌더되지 않았다 (검수 1번 구멍 재발)')
+    const wrapupIdx = herbal.indexOf('data-step="wrapup"')
+    const probeIdx = herbal.indexOf('id="footer-probe"')
+    assert.ok(wrapupIdx > 0 && probeIdx > wrapupIdx, '푸터가 마무리 단계 밖에 렌더됐다')
+  })
+
+  test('검수1(수정 후) 렌더: 푸터를 안 넘기면(fixture 모드) 그 UI는 여전히 없다', () => {
+    // 위 단언이 "푸터가 하드코딩됐다"를 잡아내지 못하는 일이 없도록 반대쪽도 본다.
     const herbal = render(HERBAL_SCENARIO_1)
-    assert.ok(!herbal.includes('EMR용 요약'), 'EMR textarea가 있다')
-    assert.ok(!herbal.includes('진료 완료'), '진료 완료 버튼이 있다')
-    assert.ok(!herbal.includes('재진 간단 문진 (Micro Follow-up)'), '재진 발급 섹션이 있다')
+    assert.ok(!herbal.includes('id="footer-probe"'), 'stand-in이 남아 있다')
+    assert.ok(!herbal.includes('재진 간단 문진 (Micro Follow-up)'), '재진 발급 섹션이 하드코딩됐다')
   })
 
   test('검수1 대비: 되살린 값은 저장·다음 방문 경로에는 실제로 닿는다', () => {

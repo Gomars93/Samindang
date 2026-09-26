@@ -5799,6 +5799,47 @@ console.log(`(+지난번 추적 비교) ${passed} doctor-workspace assertions pa
     assert.ok(/\{activeProfile === 'herbal' && \(\s*\n\s*<HerbalFollowUpTargetsCard/.test(DW), 'herbal 전용 가드가 아니다')
   })
 
+  /*
+   * PR #58 검수 2번·4번. "herbal 단독에는 「마무리」가 없다"는 주장이 **두 배치
+   * 연속** 낡은 채로 남았다 -- 한 번은 `DoctorWorkspace`의 data-current 주석,
+   * 한 번은 `HerbalWorkspace`의 카드 JSDoc. 둘 다 같은 hunk를 고치면서 옆의
+   * 주석만 놓친 경우다. 산문은 grep으로 찾기 어려워 사람 눈에 의존하게 되므로,
+   * 반복된 이 한 문장만 테스트로 고정한다.
+   *
+   * 옛 주장을 **인용하고 철회하는** 서술은 정당하므로(지금 두 파일이 그렇다),
+   * 단순 금지가 아니라 "가까이에 철회 표지가 있는가"로 판정한다.
+   */
+  test('PR #58 검수2: "herbal에는 마무리가 없다"는 낡은 주장이 철회 없이 남아 있지 않다', () => {
+    /*
+     * 주석 줄바꿈(`\n * `, `\n// `)을 공백 하나로 눌러 한 줄로 만든 뒤 찾는다 --
+     * 안 그러면 두 줄에 걸친 문장을 놓친다(첫 판이 실제로 0건을 잡았고,
+     * 자기점검이 그걸 잡아냈다).
+     */
+    const flatten = (src) => src.replace(/\n\s*(\*|\/\/)?\s*/g, ' ')
+    const CLAIM = /herbal 단독에는.{0,40}「마무리」도? 없/g
+    const RETRACTION = /더 이상 사실이 아니|갱신|당시|없었다|뒤집|PR #58|안 1/
+    let found = 0
+    for (const [name, raw] of [
+      ['DoctorWorkspace', DW],
+      ['HerbalWorkspace', HW],
+      ['PainWorkspace', PW],
+    ]) {
+      const src = flatten(raw)
+      for (const m of src.matchAll(CLAIM)) {
+        found += 1
+        // 앞뒤 400자 안에 철회 표지가 있어야 한다.
+        const window = src.slice(Math.max(0, m.index - 400), m.index + 400)
+        assert.ok(
+          RETRACTION.test(window),
+          `${name}: 철회 없이 남은 낡은 주장 -- "${m[0]}" (주변 문맥에 철회 표지가 없다)`,
+        )
+      }
+    }
+    // 자기점검: 패턴이 아무것도 못 잡으면 이 테스트는 공허하다. 두 파일이
+    // 실제로 옛 주장을 인용하며 철회하고 있으므로 최소 1건은 잡혀야 한다.
+    assert.ok(found >= 1, `낡은 주장 패턴이 하나도 안 잡혔다 (${found}건) — 문구가 바뀌었다면 패턴을 갱신할 것`)
+  })
+
   test('F6 사용자 문구에 사라진 레인 이름이 남아 있지 않다', () => {
     for (const [name, src] of [['PainWorkspace', PW], ['DoctorWorkspace', DW], ['HerbalWorkspace', HW]]) {
       assert.ok(!/&apos;다음&apos; 레인/.test(src), `${name}: 옛 레인 이름이 남았다`)

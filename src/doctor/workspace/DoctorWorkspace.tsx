@@ -674,6 +674,26 @@ export function DoctorWorkspace({
             setPendingJump(null)
             setTokenReentryOpen(true)
           }}
+          onJumpToEvidence={() => {
+            /*
+              9차 검수: 「근거 보기」의 목적지 `#lane1-h2`도 진료 단계 안에
+              있어서, 마무리 화면에서 누르면 fragment만 바뀌고 아무 일도
+              안 일어났다 -- 바로 위 F1과 같은 부류인데 이 링크만 빠져
+              있었다. 이 PR이 herbal 단독에도 마무리 단계를 주므로 그
+              프로필에서는 **새로** 죽는 링크가 된다.
+
+              `pendingJump`를 쓰는 이유: 단계를 막 바꾼 직후에는 대상이
+              아직 `hidden`이라 getBoundingClientRect가 0을 준다(위
+              `visitStep` 선언부 주석). 레이아웃 효과에서 한 박자 뒤에
+              점프한다.
+            */
+            if (visitStep === 'consult') {
+              jumpToLane('lane1-h2')
+              return
+            }
+            setVisitStep('consult')
+            setPendingJump('lane1-h2')
+          }}
         />
 
         <main className="doctor__visitWork" aria-label="진료 작업">

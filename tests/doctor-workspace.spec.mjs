@@ -5319,6 +5319,67 @@ console.log(`\n(+레인1 접기) ${passed} doctor-workspace assertions passed.`)
 
   /* ---------------------------------------------------- §W-D 전환 */
 
+  /*
+   * W-D0 (PR #58 9차 검수): 「근거 보기」가 마무리 화면에서 죽은 링크였다.
+   *
+   * 목적지 `#lane1-h2`는 진료 단계 안에 있으므로, 마무리에 있을 때는 `hidden`
+   * 이라 박스가 없다 -- 클릭해도 fragment만 바뀌고 화면은 그대로다. F1(인증
+   * 만료 버튼)이 같은 이유로 단계를 되돌리는데 이 링크만 빠져 있었다.
+   *
+   * 이 PR과의 관계: herbal 단독에는 갈 마무리 단계가 없어서 **항상 살아
+   * 있었다.** 이 PR이 그 단계를 주므로 herbal에서 새로 죽는다 -- 그래서
+   * 여기서 함께 고치고, 두 프로필 모두에 대해 잰다.
+   */
+  test('W-D0 「근거 보기」는 마무리 화면에서도 진료 단계로 되돌린다 (죽은 링크 아님)', () => {
+    const hadDoc = 'document' in globalThis
+    const hadWin = 'window' in globalThis
+    globalThis.document = { getElementById: () => null, querySelector: () => null }
+    globalThis.window = { scrollY: 0, scrollTo: () => {}, getComputedStyle: () => ({ position: 'static' }) }
+    try {
+      for (const [name, scenario] of [['pain', PAIN_SCENARIO_1], ['herbal', HERBAL_SCENARIO_1]]) {
+        let renderer
+        act(() => {
+          renderer = TestRenderer.create(
+            React.createElement(DoctorWorkspace, {
+              payload: scenario.payload,
+              synthetic: scenario.synthetic,
+              // herbal은 푸터가 있어야 마무리 버튼이 나온다(showWrapup).
+              nextLaneFooter: React.createElement('div', null, '종결 stand-in'),
+            }),
+          )
+        })
+        const stepHidden = (step) =>
+          renderer.root.find((n) => n.type === 'div' && n.props['data-step'] === step).props.hidden
+        const navBtn = (target) =>
+          renderer.root.find((n) => n.type === 'button' && n.props['data-target'] === target)
+        const evidence = renderer.root.find(
+          (n) => n.type === 'a' && n.props.className === 'doctor__visitSummary__evidenceLink',
+        )
+
+        // 마무리로 간다.
+        act(() => navBtn('next-h2').props.onClick())
+        assert.equal(stepHidden('wrapup'), false, `${name}: 마무리가 안 열렸다`)
+        assert.equal(stepHidden('consult'), true, `${name}: 진료가 안 닫혔다`)
+
+        // 「근거 보기」 클릭 → 진료 단계로 돌아와야 한다.
+        let defaultPrevented = false
+        act(() => evidence.props.onClick({ preventDefault: () => { defaultPrevented = true } }))
+        assert.ok(defaultPrevented, `${name}: preventDefault를 안 했다 — href가 그대로 듣는다`)
+        assert.equal(stepHidden('consult'), false, `${name}: 진료 단계로 되돌아오지 않았다 (죽은 링크)`)
+        assert.equal(stepHidden('wrapup'), true, `${name}: 마무리가 안 닫혔다`)
+      }
+    } finally {
+      if (!hadDoc) delete globalThis.document
+      if (!hadWin) delete globalThis.window
+    }
+  })
+
+  test('W-D0b 「근거 보기」의 href는 그대로 남는다 (콜백 없는 호출자의 fallback)', () => {
+    const src = fs.readFileSync('src/doctor/workspace/VisitSummaryAside.tsx', 'utf8')
+    assert.ok(/href="#lane1-h2"/.test(src), 'href가 사라졌다')
+    assert.ok(/if \(!onJumpToEvidence\) return/.test(src), '콜백이 없을 때 href를 막아버린다')
+  })
+
   test('W-D1 클릭 전환: 마무리 버튼 → 마무리가 열리고 진료가 닫힌다, 안전 버튼 → 되돌아온다', () => {
     /*
      * jumpToLane은 document/window를 쓴다(테스트 환경엔 없다). 여기서 재는

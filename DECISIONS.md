@@ -278,6 +278,48 @@ mutation(블록 1개 추가)으로 확인.
 ("고친 코드의 설명을 함께 옮기지 않는다")가 **저장소 밖 문서**에서 한 번 더
 났다. 갱신했다.
 
+### PR #58 7차 검수 — **Batch 4 D-2가 herbal 단독에서 재현될 뻔했다** (실제 결함)
+
+여섯 번의 검수가 전부 "코드 결함 0"이었는데, 일곱 번째에 **진짜 결함**이 나왔다.
+
+**무엇**: herbal 단독 화면에도 「+ 다른 유형 입력 추가」 disclosure가 있어
+(`DoctorWorkspace`의 `activeProfile !== 'mixed'` 가드) 원장이 **통증 판단 4칸을
+실제로 편집할 수 있다.** 그런데 `buildEmrTextForRecord()`의 herbal 분기는
+`painFinalAssessment`를 안 내보낸다. 그 화면에 EMR 복사가 **없던 동안에는**
+드러나지 않았지만, 이 PR이 복사를 붙이는 순간 **원장이 직접 타이핑한 판단이
+빠진 텍스트에 "복사됨"을 띄운다.** Batch 4 D-2 그 자체다.
+
+**왜 내 필드×화면 표가 못 잡았나**: 나는 입력 방향 칸에 "새로 편집 가능해진
+필드는 없다"고 적었고 그건 **사실이다.** 하지만 초점이 틀렸다 — 새로 생긴 것은
+**출력**이고, 그래서 **전부터 안 읽히던 필드가 이제 거짓말을 하게 된** 것이다.
+CLAUDE.md 2항("쓰기는 되는데 읽히지 않는 필드를 남기지 않는다")은 정확히 이
+경우를 겨냥하는데, 나는 그 항을 "이번에 편집 UI를 새로 열었나"로만 읽었다.
+
+**규칙 보강**: 경로를 **여는** 변경에서는, 새로 생긴 출력이 **그 화면에서 이미
+편집 가능하던 모든 필드**를 싣는지 확인한다. 편집 UI가 이번에 생겼는지는
+무관하다 — 출력이 새로 생기면 기존의 모든 write-only 필드가 그 순간 거짓말이 된다.
+
+**수정**: herbal 분기가 통증 판단에 글자가 있으면 통증 블록을 함께 낸다.
+합성 순서·구분자는 mixed와 **동일**(통증 → 빈 줄 → 한약)이라 새 형식을 만들지
+않았다. 통증 빌더는 비어 있어도 6키 뼈대를 항상 내므로 **적었을 때만** 붙인다.
+판정은 `isPainFinalAssessmentRecorded`(= `recordedAt !== null`, "저장 눌렀는가")가
+아니라 **내용 기준**(`hasPainFinalAssessmentText` 신설)이다 — 저장 전이라도
+autosave로 기록에 들어와 있으면 잃으면 안 된다.
+
+**테스트 B-0a~B-0e** + mutation 3종(수정 되돌리기 / 판정을 `recordedAt` 기준으로 /
+타입에 칸 추가 후 판정에서 빠뜨리기). B-0e는 타입의 문자열 키를 **열거**하므로
+나중에 칸이 늘어도 자동으로 커버된다 — 이번 사고의 축소판(새 칸만 조용히 빠짐)을
+막는다.
+
+**PO 판단이 필요한 것 2건** (이 PR에서 고치지 않았다 — 둘 다 임상 문서의 내용을
+바꾸는 결정이다):
+1. **통증 화면의 거울상.** 통증 단독 화면에서도 같은 disclosure로 **한약 판단**을
+   편집할 수 있는데 통증 EMR에는 안 들어간다. **이 PR 이전부터 있던 것**이고,
+   고치면 통증 EMR 출력이 바뀐다.
+2. **herbal EMR에 재진 간단 문진 인용이 없다.** 환자의 이상반응/새 증상 보고가
+   herbal 화면에는 두 곳에 보이는데(지난 대비 줄 + MicroFollowUpCard) 복사
+   텍스트에는 없다. 통증 빌더는 §14.1 S에 싣는다. 역시 이 PR 이전부터.
+
 ### 이번에 스스로 잡은 두 가지 (과거 사고의 재발)
 
 1. **A-5 초안이 주석을 스캔했다.** `!/showNext/.test(WORKSPACE)`가 폐기 이유를
@@ -293,12 +335,14 @@ mutation(블록 1개 추가)으로 확인.
 
 ### Consequences / 검증
 
-- 코드: `src/doctor/workspace/DoctorWorkspace.tsx` 하나(가드 재배치 + `LaneJumpNav`
-  단순화). 임상 로직·조립 함수·서버 무변경.
-- 테스트: `herbal-workspace-slim` 37→43 / `doctor-workspace` 408→417 /
+- 코드: `src/doctor/workspace/DoctorWorkspace.tsx`(가드 재배치 + `LaneJumpNav`
+  조건 교체), `src/doctor/DoctorView.tsx`(7차 검수 — herbal EMR 합성),
+  `src/doctor/workspace/finalAssessment.ts`(`hasPainFinalAssessmentText` 신설),
+  `HerbalWorkspace.tsx`(주석만). 임상 로직·서버 무변경.
+- 테스트: `herbal-workspace-slim` 37→52 / `doctor-workspace` 408→417 /
   `doctor-reset-key` 12(계약 표현 수정) / `tablet-viewport` 138→159 /
-  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7213 단언)**.
-- Mutation 18종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
+  `tsc -b` 0 / `build` 0 / **`test:all` exit 0 (7222 단언)**.
+- Mutation 21종을 실제로 넣어 각각 **이름 있는** 실패를 확인했다: 바깥 가드 복원 /
   푸터 재가드 / 복약 코스 자기 가드 제거 / `showNext`·`nextOnly` 재도입 /
   `DoctorView`의 푸터 게이트에 프로필 조건 주입 / `wrapupHasContent = true`
   (검수 1번 결함 재현) / `wrapupHasContent`를 프로필 기반으로 되돌리기 /

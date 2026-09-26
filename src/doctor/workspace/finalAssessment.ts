@@ -41,6 +41,29 @@ export function isPainFinalAssessmentRecorded(a: PainFinalAssessment): boolean {
   return a.recordedAt !== null
 }
 
+/**
+ * 원장이 통증 판단 4칸에 **글자를 적었는가**.
+ *
+ * `isPainFinalAssessmentRecorded`(= `recordedAt !== null`, "저장을 눌렀는가")와
+ * 일부러 다르다. 이것이 쓰이는 곳은 **EMR 복사 텍스트에 이 블록을 넣을지**를
+ * 정하는 자리라(DoctorView의 `buildEmrTextForRecord`), 기준은 "저장했는가"가
+ * 아니라 "잃을 글자가 있는가"여야 한다. 저장 버튼을 안 눌렀어도 workspace
+ * autosave로 기록에 들어와 있으면 복사에 포함한다 -- 빠뜨리는 쪽이 훨씬 나쁘다.
+ *
+ * PR #58 7차 검수에서 생겼다: herbal 단독 화면의 「+ 다른 유형 입력 추가」가
+ * 이 4칸을 편집 가능하게 열어두는데, herbal EMR 조립은 이 키를 안 내보낸다.
+ * 그 화면에 EMR 복사가 없던 동안에는 안 보였지만, 이 PR이 복사를 붙이면서
+ * **원장이 적은 판단이 빠진 텍스트에 "복사됨"을 띄우는** Batch 4 D-2가 됐다.
+ */
+export function hasPainFinalAssessmentText(a: PainFinalAssessment): boolean {
+  return (
+    a.finalWorkingAssessment.trim() !== '' ||
+    a.treatmentFocus.trim() !== '' ||
+    a.interventionPerformedOrPlanned.trim() !== '' ||
+    a.immediateRetestTarget.trim() !== ''
+  )
+}
+
 export type HerbalFinalAssessment = {
   /** 최종 변증·병기 — 원장 판단. Free text, starts empty. */
   finalPatternOrMechanism: string

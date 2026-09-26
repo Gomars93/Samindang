@@ -19,6 +19,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildHerbalWorkspaceEmrPreview } from './.herbal-slim-emrpreview-bundle.mjs'
+import { emptyPainFinalAssessment, hasPainFinalAssessmentText } from './.herbal-slim-finalassessment-bundle.mjs'
 
 let passed = 0
 const check = (name, cond, extra = '') => {
@@ -217,8 +218,63 @@ check(
 
 check(
   'B-0 herbal 단독 EMR 조립이 slim=true로 호출된다',
-  /if \(viewProfile === 'herbal'\) return buildHerbalEmrTextForRecord\(true\)/.test(VIEW),
+  /const herbal = buildHerbalEmrTextForRecord\(true\)/.test(VIEW),
 )
+
+/* ------------------------------------------------------------------ *
+ * B-0a~B-0e (PR #58 7차 검수) — Batch 4 D-2가 herbal 단독에서 재현될 뻔했다
+ *
+ * herbal 단독 화면에도 「+ 다른 유형 입력 추가」 disclosure가 있어서 원장이
+ * **통증 판단 4칸을 실제로 편집할 수 있다**(DoctorWorkspace의
+ * `activeProfile !== 'mixed'` 가드). 그런데 herbal EMR 조립은 그 키를 안
+ * 내보낸다. 그 화면에 EMR 복사가 없던 동안에는 드러나지 않았지만, 이 PR이
+ * 복사를 붙이는 순간 **원장이 적은 판단이 빠진 텍스트에 "복사됨"을 띄운다.**
+ *
+ * CLAUDE.md 경로 규칙 2항("쓰기는 되는데 읽히지 않는 필드를 남기지 않는다")이
+ * 정확히 이 경우다. 내가 PR 설명의 입력 방향 칸에 "새로 편집 가능해진 필드는
+ * 없다"고 적은 것은 사실이지만 **초점이 틀렸다** -- 새로 생긴 것은 출력이고,
+ * 그래서 전부터 안 읽히던 필드가 이제 거짓말을 하게 된 것이다.
+ * ------------------------------------------------------------------ */
+
+check(
+  'B-0a herbal 분기가 통증 판단이 적혀 있으면 통증 블록을 함께 낸다 (빠진 채 "복사됨"을 띄우지 않는다)',
+  /if \(!hasPainFinalAssessmentText\(ws\.painFinalAssessment\)\) return herbal/.test(VIEW) &&
+    /return `\$\{buildPainEmrTextForRecord\(\)\}\\r\\n\\r\\n\$\{herbal\}`/.test(VIEW),
+)
+check(
+  'B-0b 합성 순서·구분자가 mixed와 같다 (새 형식을 만들지 않는다)',
+  /buildPainEmrTextForRecord\(\)\}\\r\\n\\r\\n\$\{buildHerbalEmrTextForRecord\(false\)\}/.test(VIEW),
+)
+check(
+  'B-0c 안 적었으면 통증 블록을 붙이지 않는다 (통증 빌더는 비어도 6키 뼈대를 내므로)',
+  hasPainFinalAssessmentText(emptyPainFinalAssessment()) === false,
+)
+/*
+ * B-0d: 판정이 `recordedAt`(저장 눌렀는가)이 아니라 **내용**이어야 한다.
+ * 저장 전이라도 workspace autosave로 기록에 들어와 있으면 복사에 넣는다.
+ */
+check(
+  'B-0d 판정 기준은 recordedAt이 아니라 내용이다',
+  hasPainFinalAssessmentText({ ...emptyPainFinalAssessment(), finalWorkingAssessment: '요추 추간판 의심' }) === true &&
+    hasPainFinalAssessmentText({ ...emptyPainFinalAssessment(), recordedAt: '2026-09-26T00:00:00Z' }) === false,
+)
+/*
+ * B-0e: 나중에 `PainFinalAssessment`에 칸이 하나 더 생기면 그 칸도 판정에
+ * 들어가야 한다 -- 안 그러면 새 칸만 조용히 복사에서 빠진다(이번 사고의
+ * 축소판). 타입의 문자열 키를 **열거해서** 하나씩 확인하므로, 칸이 늘어도
+ * 테스트를 고칠 필요 없이 자동으로 커버된다.
+ */
+{
+  const empty = emptyPainFinalAssessment()
+  const textKeys = Object.keys(empty).filter((k) => k !== 'recordedAt' && typeof empty[k] === 'string')
+  check('B-0e 자기점검: 통증 판단의 텍스트 칸을 실제로 찾았다', textKeys.length >= 4, `(${textKeys})`)
+  for (const k of textKeys) {
+    check(
+      `B-0e 통증 판단 「${k}」 한 칸만 적어도 복사에 포함된다`,
+      hasPainFinalAssessmentText({ ...empty, [k]: '적음' }) === true,
+    )
+  }
+}
 check(
   'B-1 mixed EMR 조립은 slim=false -- 편집 UI가 살아 있으므로 키를 계속 넘긴다',
   /buildHerbalEmrTextForRecord\(false\)/.test(VIEW),

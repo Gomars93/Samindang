@@ -1,5 +1,37 @@
 # Current Handoff
 
+## 2026-09-27 (최신 76): **Midlife(갱년기·중년기) v0.1 최소 구현** (PO "추천안으로 v0.2 명세 정리 후 최소 구현까지")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6` (main `62f514a` 기준). 상세는 `DECISIONS.md` 첫 항목,
+명세는 `docs/MIDLIFE_UI_IA_v0.2.md`. **main merge는 Figma 대조 + 기능 QA 후**(PO 지시).
+
+| 영역 | 무엇이 생겼나 |
+|---|---|
+| 태블릿 | 여성 건강 → "갱년기·중년기 건강" → 5단계 15문항(`MID_01~15`), 질문 위 `갱년기 문진 · n/5` 표시 |
+| 안전 | URGENT/PRIORITY 2단계(`midlifeLogic.ts`). URGENT만 직원 확인 인터럽트(`MID_08`, `WOMEN_SAFETY_01`) |
+| 원장 화면 | 레인1 맨 앞 갱년기 안전 칸(좌측 칩·한약 "안전이슈" 줄·오늘 대기열 배지 연동) + 레인2 맨 위 7칸 요약 |
+| 저장 | `WorkspaceState.midlifeCare` 추가형 필드(스키마 버전 그대로) — 외부평가 5단계 상태, 2/4/8/12주 review |
+| 테스트 | `npm run test:midlife` 132단언, `test:all` 전체 통과, `npm run build` 통과 |
+
+### 첫 환자 전 PO 확인 필요 (명세 §7)
+
+1. 문구 전체 검토 — 특히 `MID_08` 자살·자해 문항 표현
+2. **자살·자해 문항 직원 응대 절차** — 절차 없이 문항만 있으면 더 위험하다
+3. "수술·약물로 판단 어려움" 선택지 추가 승인
+4. "임신 여부 모름 + 출혈 → PRIORITY" 승인
+5. Figma(`UjziuG6OOpVU1CtcNl6704`) 대조 — 이 세션에서 열어보지 않았다
+
+### 알려진 한계
+
+- 7칸 패널 900~1,020px — 1440×900에서 스크롤 없이 다 보이지는 않는다.
+- 주차 review는 초진 기록에만 누적(재진 화면이 이어받지 않음). EMR 복사 텍스트에 7칸 없음.
+- 레인1 공통 SafetyGlance의 "특이 안전정보 없음"(복약·알레르기·임신 요약)이 갱년기 안전 칸 바로 위에
+  나온다 — 부위 팩 기록과 같은 기존 설계라 이번에 바꾸지 않았다.
+
+### Next Recommended Action
+
+PO 확인 5건 → Fable 독립 검수 → Figma 대조 → merge 판단.
+
 ## 2026-09-26 (최신 75): **한약 단독에도 「마무리」 단계** (PO "1번으로 진행해")
 
 **브랜치**: `claude/gracious-bell-epfxem` (PR #57 머지 후 새로 시작).

@@ -43,6 +43,9 @@ import {
 import { toHipState } from './hipAdapter'
 import { computeHipFlags } from './hipLogic'
 import { IS_PRIMARY_HIP_SAFETY, HIP_ROUTING_QUESTIONS, HIP_QUESTIONS } from './hipQuestions'
+import { IS_PRIMARY_MIDLIFE, MIDLIFE_CONCERN_KEY, MIDLIFE_QUESTIONS } from './midlifeQuestions'
+import { toMidlifeState } from './midlifeAdapter'
+import { computeMidlifeSafety } from './midlifeLogic'
 
 // App.tsx 등 기존 호출부가 coreSpec에서 import하므로 re-export로 호환을 유지한다.
 // 정의는 visitRouting.ts 한 곳에만 있다.
@@ -252,13 +255,17 @@ const VISIT_QUESTIONS: Question[] = [
     variable: 'women_goal',
     input: 'single_choice',
     question: '어떤 상담이 가장 필요하신가요?',
-    helper: '생리·갱년기는 모두 "생리·여성 건강"에서 함께 확인합니다.',
+    // Midlife v0.2(PO 2026-09-27): 갱년기·중년기 관리는 별도 5단계 문진으로
+    // 간다. 기존 "생리·여성 건강" 안의 '갱년기 증상' 선택지(WOMEN_01)는 그대로
+    // 둔다 -- 이미 그 경로로 저장된 기록의 해석을 바꾸지 않기 위함이다.
+    helper: '갱년기 증상 관리는 "갱년기·중년기 건강"을 골라주세요.',
     required: true,
     step: '방문 목적',
     layout: 'grid2',
     showIf: (r) => visitGoal(r) === 'women',
     options: [
-      { value: 'women', label: '생리·여성 건강', description: '생리·갱년기 등' },
+      { value: 'women', label: '생리·여성 건강', description: '생리 불편·여성 질환 등' },
+      { value: MIDLIFE_CONCERN_KEY, label: '갱년기·중년기 건강', description: '월경 변화·열감·수면·기분 등' },
       { value: 'pregnancy', label: '임신 관련 상담' },
       { value: 'postpartum', label: '출산 후 회복 상담' },
     ],
@@ -284,7 +291,7 @@ const VISIT_QUESTIONS: Question[] = [
 
 const primaryConcernSecondaryKey = (r: Responses): string | null => {
   const key = primaryConcernKey(r)
-  if (key === 'pregnancy' || key === 'postpartum') return 'women'
+  if (key === 'pregnancy' || key === 'postpartum' || key === MIDLIFE_CONCERN_KEY) return 'women'
   return key
 }
 
@@ -4090,6 +4097,7 @@ export const CORE_QUESTIONS: Question[] = [
   ...FATIGUE_QUESTIONS,
   ...STRESS_QUESTIONS,
   ...WOMEN_QUESTIONS,
+  ...MIDLIFE_QUESTIONS,
   ...PREGNANCY_QUESTIONS,
   ...POSTPARTUM_QUESTIONS,
   ...WEIGHT_QUESTIONS,
@@ -4286,6 +4294,22 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   HIP_05: (r) =>
     IS_PRIMARY_HIP_SAFETY(r) &&
     computeHipFlags(toHipState(r, computeFlags(r).general_red)).hip_safety_status === 'URGENT_REVIEW',
+  /**
+   * Midlife v0.2 URGENT 즉시 인터럽트(PO 2026-09-27). 두 지점뿐이다:
+   *  - MID_08: 이 화면 자신의 URGENT 값(대량 출혈+어지러움, 구체적 자살·자해).
+   *    SAFETY_01 양성으로 이미 URGENT인 환자에게 같은 안내를 두 번 띄우지
+   *    않도록 SAFETY_01은 보지 않는다(그 화면이 이미 자기 트리거로 띄웠다).
+   *  - WOMEN_SAFETY_01: 임신 가능성 + 출혈 조합은 임신 가능성을 이 화면(병력
+   *    정보)에서야 알 수 있어서, 여기 제출 직후에 판정한다.
+   * PRIORITY_EVALUATION은 인터럽트하지 않는다 -- 다른 부위 팩의 REVIEW와 같다.
+   */
+  MID_08: (r) => {
+    if (!IS_PRIMARY_MIDLIFE(r)) return false
+    const reasons = computeMidlifeSafety(toMidlifeState(r)).urgentReasons
+    return reasons.includes('heavy_bleeding_faint') || reasons.includes('self_harm_plan')
+  },
+  WOMEN_SAFETY_01: (r) =>
+    IS_PRIMARY_MIDLIFE(r) && computeMidlifeSafety(toMidlifeState(r)).urgentReasons.includes('pregnancy_with_bleeding'),
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
@@ -4303,6 +4327,7 @@ export const MODULE_ROUTES: Record<string, string> = {
   pregnancy: 'Pregnancy',
   postpartum: 'Postpartum',
   weight: 'Weight',
+  [MIDLIFE_CONCERN_KEY]: 'Midlife',
 }
 
 /**
@@ -4603,6 +4628,7 @@ export const MODULE_QUESTION_IDS: Record<string, string[]> = {
   pregnancy: PREGNANCY_QUESTIONS.map((q) => q.id),
   postpartum: POSTPARTUM_QUESTIONS.map((q) => q.id),
   weight: WEIGHT_QUESTIONS.map((q) => q.id),
+  [MIDLIFE_CONCERN_KEY]: MIDLIFE_QUESTIONS.map((q) => q.id),
 }
 
 /**
@@ -4963,6 +4989,12 @@ export const buildResponsePayload = (r: Responses) => ({
      * simultaneously by design (H1/H7 coexistence contract).
      */
     hip: IS_PRIMARY_HIP_SAFETY(r) ? computeHipFlags(toHipState(r, computeFlags(r).general_red)) : null,
+    /**
+     * Midlife v0.2: 같은 게이트 패턴 -- 갱년기 문진을 받은 환자만 계산한다.
+     * 원장 화면(MidlifeSafetyPanel)은 이 값을 믿지 않고 원본 응답에서 다시
+     * 계산한다(다른 부위 패널과 같은 원칙). 여기 값은 기록/추적용이다.
+     */
+    midlife: IS_PRIMARY_MIDLIFE(r) ? computeMidlifeSafety(toMidlifeState(r)) : null,
   },
   modules: {
     sleep: {
@@ -5166,6 +5198,24 @@ export const buildResponsePayload = (r: Responses) => ({
       time_since_delivery: r['POSTPARTUM_01'],
       problems: r['POSTPARTUM_02'],
       breastfeeding_status: r['POSTPARTUM_03'],
+    },
+    /** Midlife v0.2 -- 필드명은 명세 v0.1의 "Tablet에서 수집할 최소 데이터" 이름 그대로. */
+    midlife: {
+      cycle_change: r['MID_01'],
+      last_menstrual_period: r['MID_02'],
+      hormone_or_contraception_use: r['MID_03'],
+      top_symptoms: r['MID_04'],
+      primary_symptom_0_10: r['MID_05'],
+      sleep_satisfaction_0_10: r['MID_06'],
+      function_interference_0_10: r['MID_07'],
+      urgent_screen: r['MID_08'],
+      priority_screen: r['MID_09'],
+      recent_provider_use: r['MID_10'],
+      existing_test_results: r['MID_11'],
+      coordination_burden: r['MID_12'],
+      patient_priority_1: r['MID_13'],
+      patient_priority_2: r['MID_14'],
+      next_action_confidence_0_10: r['MID_15'],
     },
     weight: {
       goal: r['WEIGHT_01'],

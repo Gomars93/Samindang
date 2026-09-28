@@ -532,6 +532,14 @@ input {
   margin: 0 0 28px;
 }
 
+/* Midlife v0.2: 모듈 안 소단계 표시(예: "갱년기 문진 · 2/5 주요 증상") -- 질문보다 약하게. */
+.question__section {
+  font-size: var(--fs-helper);
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+
 .question + .optionList,
 .question + .textField,
 .helper + .optionList,

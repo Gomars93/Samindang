@@ -2170,3 +2170,198 @@
   border-color: var(--danger, #c0392b);
   color: #fff;
 }
+
+/* ---------- Midlife v0.2: 갱년기 진료 요약 7칸 (MidlifeCarePanel.tsx) ----------
+ * 기존 토큰만 쓴다(새 디자인 시스템 없음). 1440 폭에서 좌·우 2열, 좁으면 1열. */
+.midlife__snapshot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 12px;
+}
+.midlife__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+@media (max-width: 1100px) {
+  .midlife__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.midlife__col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.midlife__cell {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.midlife__cellTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.midlife__cell--safety {
+  flex: 1 1 260px;
+}
+.midlife__tone--urgent {
+  border: 2px solid var(--danger);
+  background: #f6ece9;
+}
+.midlife__tone--priority {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+}
+.midlife__tone--unknown {
+  border-color: var(--text-muted);
+}
+.midlife__muted {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.midlife__alert {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+.midlife__alert--urgent {
+  border: 2px solid var(--danger);
+  color: var(--danger);
+  background: #f6ece9;
+}
+.midlife__alert--cleanup,
+.midlife__alert--reopen {
+  border: 1px solid var(--warning);
+  background: var(--warning-soft);
+}
+.midlife__badge {
+  align-self: flex-start;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.midlife__badge--reopen {
+  border: 1px solid var(--warning);
+  background: var(--warning-soft);
+}
+.midlife__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 14px;
+}
+.midlife__facts dt {
+  color: var(--text-muted);
+}
+.midlife__facts dd {
+  margin: 0;
+}
+.midlife__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+.midlife textarea,
+.midlife input,
+.midlife select {
+  font: inherit;
+  min-height: 36px;
+}
+.midlife__pro {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+.midlife__pro th,
+.midlife__pro td {
+  border-bottom: 1px solid var(--border);
+  padding: 4px;
+  text-align: left;
+}
+.midlife__referrals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.midlife__referral {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+/* 무엇을 어디에 -- 가장 긴 값이라 첫 줄 전체를 쓴다. */
+.midlife__referral > input:first-child {
+  grid-column: 1 / -1;
+}
+.midlife__referral--open {
+  border-left: 3px solid var(--warning);
+  padding-left: 6px;
+}
+.midlife__reasons {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 14px;
+}
+.midlife__reasons--urgent {
+  color: var(--danger);
+  font-weight: 700;
+}
+.midlife__weekTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.midlife__weekTabs button {
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+  cursor: pointer;
+}
+.midlife__weekTabs button[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  font-weight: 700;
+}
+.midlife__weekBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+.midlife__reviewEdit {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.midlife__field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.midlife__field--inline select {
+  flex: 1;
+}

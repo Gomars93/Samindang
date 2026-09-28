@@ -186,7 +186,10 @@ function estimateScreenHeight(q) {
 // ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01 (Tablet UX v2.1 §11-13) replace
 // SECONDARY_01's old mixed role with two longer, clearer grid2 screens --
 // same reasoning as SECONDARY_01 was already allowlisted for.
-const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01', 'HISTORY_01', 'BIRTH_03', 'LBP_11'])
+// MIDLIFE v0.2: MID_04(증상 11개)/MID_13·MID_14(목표 12~13개)는 REFERENCE_SYMPTOMS_01과
+// 같은 2열 카드(grid2) 화면이다 -- 이 추정기는 grid2를 1열로 세므로 실제보다 길게
+// 나오지만, 같은 선례대로 내부 스크롤을 허용 목록에 명시해 둔다.
+const INNER_SCROLL_ALLOWED = new Set(['SECONDARY_01', 'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01', 'HISTORY_01', 'BIRTH_03', 'LBP_11', 'MID_04', 'MID_13', 'MID_14'])
 
 const estimates = ALL_QUESTIONS.map((q) => ({
   id: q.id,

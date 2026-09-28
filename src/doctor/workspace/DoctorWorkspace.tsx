@@ -66,6 +66,8 @@ import {
 } from '../AnkleFootSafetyPanel'
 import { TmjSafetyPanel } from '../TmjSafetyPanel'
 import { HipSafetyPanel } from '../HipSafetyPanel'
+import { MidlifeSafetyPanel, isMidlifeRecord, MIDLIFE_SAFETY_LABEL } from '../MidlifeSafetyPanel'
+import { MidlifeCarePanel } from './MidlifeCarePanel'
 import {
   ElbowSafetyPanel,
   KneeSafetyPanel,
@@ -505,6 +507,14 @@ export function DoctorWorkspace({
   // still shows it (Phase 7 §1.1-#5).
   // ---------------------------------------------------------------------
   const regionInputs: Lane1RegionInput[] = [
+    /*
+      Midlife v0.2: 갱년기 문진 기록의 안전 판정도 같은 목록의 한 칸이다 -- 그래야
+      좌측 요약 칩·레인1 접힘 규칙이 **같은 판정**을 읽는다(URGENT → 좌측 URGENT,
+      우선 외부평가 → 확인 필요). 맨 앞에 두는 이유: 명세 AC2 "safety flag가
+      Doctor View 최상단". 갱년기 기록이 아니면 null(해당 없음)이라 다른 기록에는
+      아무 영향이 없다.
+    */
+    { key: 'midlife', label: MIDLIFE_SAFETY_LABEL, element: MidlifeSafetyPanel({ payload }) },
     { key: 'lbp', label: REGION_LABEL.lbp, element: LbpSafetyPanel({ payload, lbpObjectiveMotorDeficit }) },
     { key: 'hip', label: REGION_LABEL.hip, element: HipSafetyPanel({ payload }) },
     { key: 'neck', label: REGION_LABEL.neck, element: NeckSafetyPanel({ payload }) },
@@ -776,6 +786,19 @@ export function DoctorWorkspace({
 
           <section className="doctor__visitLane doctor__visitLane--lane2" aria-labelledby="lane2-h2">
             <h2 id="lane2-h2">확인</h2>
+            {/*
+              Midlife v0.2: 갱년기 문진 기록의 7칸 요약 -- 레인2(확인)의 맨 위. 안전
+              판정 자체는 바로 위 레인1이 먼저 보여주고, 여기 ③칸은 같은 계산을
+              한 줄로 다시 적는다. 원장 입력은 `workspaceState.midlifeCare` 한
+              필드로만 저장된다(갱년기 기록이 아니면 이 필드를 읽지도 쓰지도 않는다).
+            */}
+            {isMidlifeRecord(payload) && (
+              <MidlifeCarePanel
+                payload={payload}
+                value={workspaceState.midlifeCare}
+                onChange={(next) => setWorkspaceState((s) => ({ ...s, midlifeCare: next }))}
+              />
+            )}
             {/*
               통증 닥터뷰 재설계 배선 1단계 (2026-09-22): 읽기 4블록 + 스냅샷 띠.
 

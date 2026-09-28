@@ -118,6 +118,19 @@ function deriveSafetyBadge(flags, r) {
     }
   }
 
+  // Midlife v0.2(2026-09-27): 갱년기 문진은 통증 부위가 아니라 위 9개 키에 없다 --
+  // 그대로 두면 갱년기 URGENT 환자가 대기열에서 'NONE'(배지 없음)으로 보이는 fail-open이
+  // 된다. `safety_flags.midlife.status`를 같은 3단계로 옮긴다: URGENT_REVIEW → URGENT,
+  // 우선 외부평가(PRIORITY_EVALUATION)와 계산 불가(INCOMPLETE) → 확인 필요, CLEAR → CLEAR.
+  // 객체는 있는데 모르는 상태값이면 확인 필요(안전으로 읽지 않는다).
+  const midlife = safetyFlags != null && typeof safetyFlags === 'object' ? safetyFlags.midlife : null
+  if (midlife != null) {
+    const st = typeof midlife === 'object' && !Array.isArray(midlife) ? midlife.status : undefined
+    regionStatuses.push(
+      st === 'URGENT_REVIEW' ? 'URGENT_REVIEW' : st === 'CLEAR' ? 'CLEAR' : 'REVIEW_REQUIRED',
+    )
+  }
+
   const requiresStaffCheck = flags.requires_staff_check === true
   if (requiresStaffCheck || regionStatuses.includes('URGENT_REVIEW')) return 'URGENT'
   if (regionStatuses.includes('REVIEW_REQUIRED')) return 'REVIEW'

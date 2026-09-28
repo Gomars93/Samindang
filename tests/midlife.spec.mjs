@@ -110,7 +110,7 @@ const MIDLIFE_ENTRY = { VISIT_00_INTENT: 'women', VISIT_02_WOMEN: 'midlife', SAF
   assert('AC1: 걷기가 끝까지 종료된다(마지막 화면까지 도달)', order[order.length - 1] === 'FREE_01' || order.includes('FREE_01'))
   assert(
     'AC1: 갱년기 모듈 전체가 공통 안전문항(SAFETY_01) 뒤, 병력정보 앞에 온다',
-    order.indexOf('SAFETY_01') < order.indexOf('MID_01') && order.indexOf('MID_15') < order.indexOf('WOMEN_SAFETY_01'),
+    order.indexOf('SAFETY_01') < order.indexOf('MID_01') && order.indexOf('MID_14') < order.indexOf('WOMEN_SAFETY_01'),
   )
   assert('AC1: 기존 여성건강 모듈(WOMEN_01~03)은 열리지 않는다', !order.some((id) => /^WOMEN_0\d$/.test(id)))
   assert('AC1: 모듈 라우팅이 Midlife 하나로 기록된다', JSON.stringify(buildRoutingPayload(r).modules_activated) === '["Midlife"]')
@@ -264,7 +264,7 @@ const S = (patch) => computeMidlifeSafety({ ...base, ...patch })
   const FIELDS = [
     'cycle_change', 'last_menstrual_period', 'hormone_or_contraception_use', 'top_symptoms',
     'recent_provider_use', 'existing_test_results', 'patient_priority_1',
-    'patient_priority_2', 'next_action_confidence_0_10', 'primary_symptom_0_10',
+    'patient_priority_2', 'primary_symptom_0_10',
     'sleep_satisfaction_0_10', 'function_interference_0_10',
   ]
   assert(`DATA: modules.midlife에 명세 필드가 모두 있고 값이 채워져 있다`, FIELDS.every((f) => m[f] !== undefined && m[f] !== null))
@@ -272,6 +272,12 @@ const S = (patch) => computeMidlifeSafety({ ...base, ...patch })
   assert('REMOVED: MID_12 문항이 태블릿 정의에 없다', !ALL_QUESTIONS.some((q) => q.id === 'MID_12' || q.variable === 'coordination_burden'))
   assert('REMOVED: payload modules.midlife에 coordination_burden 키가 없다', !('coordination_burden' in m) && !/coordination_burden: r\[/.test(src('src/spec/coreSpec.ts')))
   assert('REMOVED: 원장 7칸 ②칸에 "진료 조율 부담" 행이 없다', !/진료 조율 부담|MID_12/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')))
+  // PO 2026-09-28: next_action_confidence(MID_15) 삭제 -- 진료 전 태블릿·진료 후 구두 모두 어색. 지운 경로 4개 × 단언 1개.
+  assert('REMOVED: MID_15 문항이 태블릿 정의에 없다', !ALL_QUESTIONS.some((q) => q.id === 'MID_15' || q.variable === 'next_action_confidence_0_10'))
+  assert('REMOVED: payload modules.midlife에 next_action_confidence_0_10 키가 없다', !('next_action_confidence_0_10' in m) && !/next_action_confidence_0_10: r\[/.test(src('src/spec/coreSpec.ts')))
+  assert('REMOVED: 원장 7칸 ⑦ PRO 표에 "행동 확신" 행(초진 칸·주차 입력칸)이 없다', !/행동 확신|nextActionConfidence|next_action_confidence/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')))
+  assert('REMOVED: 저장 모델 MidlifePro에 nextActionConfidence가 없고, 옛 저장본의 그 키는 정화 때 버려진다', !/nextActionConfidence:/.test(src('src/doctor/workspace/midlifeCare.ts')) && !('nextActionConfidence' in care.sanitizeMidlifeCareRecord({ reviews: [{ week: 2, pro: { primarySymptom: 3, nextActionConfidence: 7 } }] }).reviews[0].pro))
+  assert('REMOVED: 갱년기 모듈 마지막 화면은 MID_14(목표 2)다', MID_IDS[MID_IDS.length - 1] === 'MID_14')
   assert('DATA: safety_flags.midlife(=safety_flags)가 계산되어 있다', p.safety_flags.midlife && p.safety_flags.midlife.status === 'PRIORITY_EVALUATION')
   assert('DATA: abnormal_bleeding_flag = safety_flags.midlife.abnormalBleeding', p.safety_flags.midlife.abnormalBleeding === true)
   assert('DATA: pregnancy_possibility는 기존 WOMEN_SAFETY_01(reproductive_status)로 한 번만 묻는다', Array.isArray(p.reproductive_status.reproductive_status) && !ALL_QUESTIONS.some((q) => q.id.startsWith('MID_') && /임신/.test(q.question)))
@@ -400,7 +406,7 @@ const renderWs = (payload, extra = {}) => renderToString(React.createElement(Doc
     expectedCourse: '2–4주 내 새벽 각성 감소',
     nextReviewWeek: 4,
     referrals: [{ ...care.newMidlifeReferral('r1'), label: '부인과 초음파', urgency: 'urgent', status: 'ordered' }],
-    reviews: [2, 4, 8, 12].map((w) => rv(w, 'as_expected', { reviewedOn: '2026-10-01', pro: { primarySymptom: 5, sleepSatisfaction: 6, functionInterference: 4, nextActionConfidence: 7 } })),
+    reviews: [2, 4, 8, 12].map((w) => rv(w, 'as_expected', { reviewedOn: '2026-10-01', pro: { primarySymptom: 5, sleepSatisfaction: 6, functionInterference: 4 } })),
   }
   const ws = { ...emptyWorkspaceState(), midlifeCare: full }
   const back = deserializeWorkspaceState(JSON.parse(JSON.stringify(ws)))

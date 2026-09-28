@@ -145,7 +145,6 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     MID_11: ['blood_test'],
     MID_13: 'sleep',
     MID_14: 'plan_tests',
-    MID_15: 4,
     WOMEN_SAFETY_01: ['menopause'],
   }),
 
@@ -171,7 +170,6 @@ export const DOCTOR_FIXTURES: DoctorFixture[] = [
     MID_11: ['pelvic_ultrasound', 'hormone_test'],
     MID_13: 'mood_anxiety',
     MID_14: 'none',
-    MID_15: 6,
     WOMEN_SAFETY_01: ['none'],
   }),
 

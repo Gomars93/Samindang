@@ -66,7 +66,6 @@ const PRO_ROWS: { key: keyof MidlifePro; title: string; moduleField: string }[] 
   { key: 'primarySymptom', title: '주 증상', moduleField: 'primary_symptom_0_10' },
   { key: 'sleepSatisfaction', title: '수면 만족', moduleField: 'sleep_satisfaction_0_10' },
   { key: 'functionInterference', title: '일상 지장', moduleField: 'function_interference_0_10' },
-  { key: 'nextActionConfidence', title: '행동 확신', moduleField: 'next_action_confidence_0_10' },
 ]
 
 function newReferralId(): string {
@@ -235,7 +234,7 @@ export function MidlifeCarePanel({
               </tbody>
             </table>
 
-            {/* 입력: 한 번에 한 주차만 -- 네 주차 × 여섯 칸을 한꺼번에 펼치면 한 화면을 넘는다. */}
+            {/* 입력: 한 번에 한 주차만 -- 네 주차 × 다섯 칸을 한꺼번에 펼치면 한 화면을 넘는다. */}
             <div className="midlife__weekBar">
               <div className="midlife__weekTabs" role="group" aria-label="기록할 review 주차">
                 {MIDLIFE_REVIEW_WEEKS.map((w) => (

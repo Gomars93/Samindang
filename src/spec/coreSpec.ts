@@ -5221,7 +5221,7 @@ export const buildResponsePayload = (r: Responses) => ({
       // coordination_burden(MID_12)은 2026-09-28 삭제 -- midlifeQuestions.ts 주석 참고.
       patient_priority_1: r['MID_13'],
       patient_priority_2: r['MID_14'],
-      next_action_confidence_0_10: r['MID_15'],
+      // next_action_confidence_0_10(MID_15)은 2026-09-28 삭제 -- midlifeQuestions.ts 주석 참고.
     },
     weight: {
       goal: r['WEIGHT_01'],

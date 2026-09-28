@@ -78,12 +78,15 @@ export const MIDLIFE_COURSE_LABEL: Record<MidlifeCourseVsExpected, string> = {
   unclear: '판단 어려움',
 }
 
-/** Baseline PRO v0.1 4개와 같은 축 — 초진은 태블릿 값, 주차 review는 원장이 옮겨 적는다. */
+/**
+ * Baseline PRO 3개 — 초진은 태블릿 값, 주차 review는 원장이 옮겨 적는다.
+ * v0.1의 4번째 축 nextActionConfidence는 2026-09-28 삭제(midlifeQuestions.ts MID_15 주석).
+ * 옛 저장본에 남은 그 키는 sanitizePro가 버린다.
+ */
 export type MidlifePro = {
   primarySymptom: number | null
   sleepSatisfaction: number | null
   functionInterference: number | null
-  nextActionConfidence: number | null
 }
 
 export type MidlifeReview = {
@@ -109,7 +112,7 @@ export type MidlifeCareRecord = {
 }
 
 export function emptyMidlifePro(): MidlifePro {
-  return { primarySymptom: null, sleepSatisfaction: null, functionInterference: null, nextActionConfidence: null }
+  return { primarySymptom: null, sleepSatisfaction: null, functionInterference: null }
 }
 
 export function emptyMidlifeReview(week: MidlifeReviewWeek): MidlifeReview {
@@ -158,7 +161,6 @@ function sanitizePro(raw: unknown): MidlifePro {
     primarySymptom: sanitizeScore(r.primarySymptom),
     sleepSatisfaction: sanitizeScore(r.sleepSatisfaction),
     functionInterference: sanitizeScore(r.functionInterference),
-    nextActionConfidence: sanitizeScore(r.nextActionConfidence),
   }
 }
 

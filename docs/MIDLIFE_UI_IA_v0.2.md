@@ -44,7 +44,7 @@ v0.1과 달라진 점은 모두 §1 표에 근거와 함께 적었다.
 | | MID_09 | PRIORITY 화면 | 다중 — 폐경 후 출혈(12개월 무월경 응답자만) / 비정상 출혈 / 성교 후 출혈 / 복부팽만·골반통·종괴 / 체중감소·발열 / 심계항진 |
 | 4 기존 진료 | MID_10 | `recent_provider_use` | 다중 |
 | | MID_11 | `existing_test_results` | 다중 |
-| | MID_12 | `coordination_burden` | 단일 3지 |
+| | ~~MID_12~~ | ~~`coordination_burden`~~ | **삭제(PO 2026-09-28)** — 진료 방향을 바꾸지 않음(§1) |
 | 5 목표 | MID_13 | `patient_priority_1` | 단일 (2열 카드) |
 | | MID_14 | `patient_priority_2` | 단일, 1번 제외 + 없음 |
 | | MID_15 | `next_action_confidence_0_10` | 0–10 |

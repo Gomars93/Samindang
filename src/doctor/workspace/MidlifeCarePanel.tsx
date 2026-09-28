@@ -196,8 +196,6 @@ export function MidlifeCarePanel({
               <dd>{label('MID_10', m.recent_provider_use)}</dd>
               <dt>최근 검사</dt>
               <dd>{label('MID_11', m.existing_test_results)}</dd>
-              <dt>진료 조율 부담</dt>
-              <dd>{label('MID_12', m.coordination_burden)}</dd>
             </dl>
           </div>
 

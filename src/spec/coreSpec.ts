@@ -5212,7 +5212,7 @@ export const buildResponsePayload = (r: Responses) => ({
       priority_screen: r['MID_09'],
       recent_provider_use: r['MID_10'],
       existing_test_results: r['MID_11'],
-      coordination_burden: r['MID_12'],
+      // coordination_burden(MID_12)은 2026-09-28 삭제 -- midlifeQuestions.ts 주석 참고.
       patient_priority_1: r['MID_13'],
       patient_priority_2: r['MID_14'],
       next_action_confidence_0_10: r['MID_15'],

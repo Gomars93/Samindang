@@ -284,21 +284,13 @@ export const MIDLIFE_QUESTIONS: Question[] = [
       { value: 'unknown', label: '잘 모르겠어요' },
     ],
   },
-  {
-    id: 'MID_12',
-    variable: 'coordination_burden',
-    input: 'single_choice',
-    question: '병원·검사·약 챙기기가 부담되나요?',
-    required: true,
-    step: '상세 증상',
-    section: MIDLIFE_SECTIONS[3],
-    showIf: IS_PRIMARY_MIDLIFE,
-    options: [
-      { value: 'none', label: '괜찮아요' },
-      { value: 'some', label: '조금 부담돼요' },
-      { value: 'high', label: '많이 부담돼요' },
-    ],
-  },
+  /*
+   * MID_12(coordination_burden, "병원·검사·약 챙기기가 부담되나요?")는 삭제했다
+   * (PO 2026-09-28). 원장이 모든 환자에게 조율(navigation) 역할을 하므로 답이
+   * 진료 방향을 바꾸지 않았고 — v0.1 원칙 "진료방향을 바꾸지 않는 문항은 제외" —
+   * 조율 필요의 객관 근거는 MID_10(다닌 병원)·MID_11(받은 검사)과 7칸 ⑥ 외부평가
+   * 미해결 수가 이미 보여준다. ID는 재사용하지 않는다(옛 기록과 섞이지 않게).
+   */
 
   /* ---------- 5. 목표 ---------- */
   {

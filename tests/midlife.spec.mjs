@@ -254,11 +254,15 @@ const S = (patch) => computeMidlifeSafety({ ...base, ...patch })
   const m = p.modules.midlife
   const FIELDS = [
     'cycle_change', 'last_menstrual_period', 'hormone_or_contraception_use', 'top_symptoms',
-    'recent_provider_use', 'existing_test_results', 'coordination_burden', 'patient_priority_1',
+    'recent_provider_use', 'existing_test_results', 'patient_priority_1',
     'patient_priority_2', 'next_action_confidence_0_10', 'primary_symptom_0_10',
     'sleep_satisfaction_0_10', 'function_interference_0_10',
   ]
   assert(`DATA: modules.midlife에 명세 필드가 모두 있고 값이 채워져 있다`, FIELDS.every((f) => m[f] !== undefined && m[f] !== null))
+  // PO 2026-09-28: coordination_burden(MID_12) 삭제 -- 지운 경로마다 소스 단언 1개(CLAUDE.md 경로 규칙).
+  assert('REMOVED: MID_12 문항이 태블릿 정의에 없다', !ALL_QUESTIONS.some((q) => q.id === 'MID_12' || q.variable === 'coordination_burden'))
+  assert('REMOVED: payload modules.midlife에 coordination_burden 키가 없다', !('coordination_burden' in m) && !/coordination_burden: r\[/.test(src('src/spec/coreSpec.ts')))
+  assert('REMOVED: 원장 7칸 ②칸에 "진료 조율 부담" 행이 없다', !/진료 조율 부담|MID_12/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')))
   assert('DATA: safety_flags.midlife(=safety_flags)가 계산되어 있다', p.safety_flags.midlife && p.safety_flags.midlife.status === 'PRIORITY_EVALUATION')
   assert('DATA: abnormal_bleeding_flag = safety_flags.midlife.abnormalBleeding', p.safety_flags.midlife.abnormalBleeding === true)
   assert('DATA: pregnancy_possibility는 기존 WOMEN_SAFETY_01(reproductive_status)로 한 번만 묻는다', Array.isArray(p.reproductive_status.reproductive_status) && !ALL_QUESTIONS.some((q) => q.id.startsWith('MID_') && /임신/.test(q.question)))

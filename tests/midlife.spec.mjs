@@ -147,6 +147,16 @@ const MIDLIFE_ENTRY = { VISIT_00_INTENT: 'women', VISIT_02_WOMEN: 'midlife', SAF
     MID_IDS.every((id) => !['compact3', 'body_map'].includes(qById.get(id).layout)),
   )
   assert('AC1: 안전 화면(MID_08/09)은 1열(list) 레이아웃', !qById.get('MID_08').layout && !qById.get('MID_09').layout)
+  // 0~10 척도: 6열 격자(0~5 / 6~10), 모든 칸 같은 폭 -- PO 2026-09-28("점수별로 칸 크기가 같아야")
+  const scaleList = (css.match(/\n\.optionList--scale \{([^}]*)\}/) ?? [])[1] ?? ''
+  const scaleOpt = (css.match(/\n\.option--scale \{([^}]*)\}/) ?? [])[1] ?? ''
+  assert('SCALE: 척도는 6열 균등 격자(첫 줄 0~5, 둘째 줄 6~10)', /display:\s*grid/.test(scaleList) && /repeat\(6,\s*minmax\(0,\s*1fr\)\)/.test(scaleList))
+  assert('SCALE: 칸이 늘어나지 않는다(flex 늘림 없음) + 최소 높이 72px', !/flex:\s*1 1 auto/.test(scaleOpt) && /min-height:\s*var\(--btn-min-h\)/.test(scaleOpt))
+  // 문구 간결성: 갱년기 문항 질문은 한 줄 분량(띄어쓰기 포함 30자 이하), 선택지는 28자 이하
+  const longQ = MID_IDS.filter((id) => qById.get(id).question.length > 30)
+  const longO = MID_IDS.flatMap((id) => (qById.get(id).options ?? []).filter((o) => o.label.length > 28).map((o) => `${id}:${o.label}`))
+  assert(`WORDING: 질문 30자 이하 (초과: ${longQ.join(', ') || '없음'})`, longQ.length === 0)
+  assert(`WORDING: 선택지 28자 이하 (초과: ${longO.join(', ') || '없음'})`, longO.length === 0)
 
   // 남성은 진입 불가
   const male = set(emptyResponses(), { ID_03: 'male' })

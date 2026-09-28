@@ -325,14 +325,15 @@ export const MIDLIFE_QUESTIONS: Question[] = [
     id: 'MID_15',
     variable: 'next_action_confidence_0_10',
     input: 'numeric_scale',
-    // 주어·대상을 분명히(PO 2026-09-28): "무엇을 할지"만으로는 누가 무엇에 대해 하는지 알 수 없었다.
-    // 의도 = 환자 자신이 자기 증상을 위해 다음에 할 일(검사·치료·생활 관리)을 알고 있는가.
-    question: '내 증상을 위해 앞으로 뭘 해야 할지 알고 있나요?',
-    helper: '예: 받아야 할 검사, 치료, 생활에서 할 일',
+    // PO 2026-09-28: 주어·대상을 분명히 하고, "왜 묻는지"를 병원의 약속으로 보여준다 --
+    // 환자가 "이걸 왜 묻지?"라고 느끼지 않게. 의도 = 환자 자신이 자기 증상을 위해 다음에 할 일을
+    // 알고 있는가(0=모름, 10=앎 방향은 불변 -- 초진 기준선과 review 값을 그대로 비교하기 위함).
+    question: '내 증상, 앞으로 어떻게 관리할지 감이 오시나요?',
+    helper: '진료 후에는 잘 알 수 있도록 설명드릴게요.',
     required: true,
     step: '상세 증상',
     section: MIDLIFE_SECTIONS[4],
     showIf: IS_PRIMARY_MIDLIFE,
-    scale: { min: 0, max: 10, minLabel: '전혀 모름', maxLabel: '잘 알고 있음' },
+    scale: { min: 0, max: 10, minLabel: '전혀 모르겠어요', maxLabel: '잘 알고 있어요' },
   },
 ]

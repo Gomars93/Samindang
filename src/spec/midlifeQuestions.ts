@@ -325,11 +325,14 @@ export const MIDLIFE_QUESTIONS: Question[] = [
     id: 'MID_15',
     variable: 'next_action_confidence_0_10',
     input: 'numeric_scale',
-    question: '앞으로 무엇을 할지 얼마나 분명한가요?',
+    // 주어·대상을 분명히(PO 2026-09-28): "무엇을 할지"만으로는 누가 무엇에 대해 하는지 알 수 없었다.
+    // 의도 = 환자 자신이 자기 증상을 위해 다음에 할 일(검사·치료·생활 관리)을 알고 있는가.
+    question: '내 증상을 위해 앞으로 뭘 해야 할지 알고 있나요?',
+    helper: '예: 받아야 할 검사, 치료, 생활에서 할 일',
     required: true,
     step: '상세 증상',
     section: MIDLIFE_SECTIONS[4],
     showIf: IS_PRIMARY_MIDLIFE,
-    scale: { min: 0, max: 10, minLabel: '전혀 모름', maxLabel: '아주 분명함' },
+    scale: { min: 0, max: 10, minLabel: '전혀 모름', maxLabel: '잘 알고 있음' },
   },
 ]

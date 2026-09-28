@@ -157,6 +157,15 @@ const MIDLIFE_ENTRY = { VISIT_00_INTENT: 'women', VISIT_02_WOMEN: 'midlife', SAF
   const longO = MID_IDS.flatMap((id) => (qById.get(id).options ?? []).filter((o) => o.label.length > 28).map((o) => `${id}:${o.label}`))
   assert(`WORDING: 질문 30자 이하 (초과: ${longQ.join(', ') || '없음'})`, longQ.length === 0)
   assert(`WORDING: 선택지 28자 이하 (초과: ${longO.join(', ') || '없음'})`, longO.length === 0)
+  // 전체 설문 간결화(PO 2026-09-28) -- 반복 보조문구가 되살아나지 않고, 줄이면서도 안전 문항의 임상 한정어는 남아 있다.
+  const allText = ALL_QUESTIONS.flatMap((q) => [q.question, q.helper ?? '', ...(q.options ?? []).map((o) => o.label)]).join('\n')
+  assert('WORDING(전체): 옛 보조문구 "해당되는 것을 모두 선택해주세요"가 남아 있지 않다', !allText.includes('해당되는 것을 모두 선택해주세요'))
+  const q = (id) => qById.get(id)
+  assert('WORDING(안전): 외상 문항 5개에 기간 "3개월"이 남아 있다', ['NECK_01', 'SH01', 'KNEE_01', 'ELBOW_01', 'WH_01'].every((id) => q(id).question.includes('3개월')))
+  assert('WORDING(안전): 외상 기전 예시는 보조문구로 옮겨졌을 뿐 사라지지 않았다', q('KNEE_01').helper.includes('비틀림') && q('ELBOW_01').helper.includes('꺾이') && q('WH_01').helper.includes('손을 짚') && q('SH01').helper.includes('당겨짐'))
+  assert('WORDING(안전): 목 외상 "서서 넘어짐 포함"이 남아 있다', q('NECK_01').helper.includes('서 있다가 넘어진'))
+  assert('WORDING(안전): 능동 동작 한정어 "스스로"가 남아 있다', q('KNEE_04').question.includes('스스로') && q('ELBOW_05').question.includes('스스로') && q('WH_06A').question.includes('스스로'))
+  assert('WORDING(안전): 감염 문항의 "또는(OR)" 관계가 남아 있다', /붉거나 뜨겁게/.test(q('KNEE_07').question) && /이 있거나/.test(q('KNEE_07').question))
 
   // 남성은 진입 불가
   const male = set(emptyResponses(), { ID_03: 'male' })

@@ -3867,7 +3867,7 @@ for (const sex of ['male', 'female']) {
   const lbp10a = ALL_QUESTIONS.find((q) => q.id === 'LBP_10A_ONSET_AGE')
   assert('W4: LBP_10 exists', !!lbp10)
   assert('W4: LBP_10A_ONSET_AGE exists (new v2.3 §13 pre-question)', !!lbp10a)
-  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.')
+  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력한 나이로 미리 골라뒀어요. 맞으면 계속해주세요.')
   assert('W4: LBP_10 old direct 45-year wording is gone from patient-facing text', lbp10.question !== '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?' && lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
   assert('W4: LBP_10 variable unchanged (FROZEN adapter still reads this)', lbp10.variable === 'lbp_onset_before_45')
   assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)

@@ -1721,7 +1721,7 @@ test('CommonSafetyBanner.tsx optional-chains every r.modules.<submodule> read (s
     mutated.flags = {}
     const html = renderToString(React.createElement(DoctorWorkspace, { payload: mutated, synthetic: base.synthetic }))
     assert.ok(html.includes('안전 계산값을 읽을 수 없습니다'))
-    assert.ok(html.includes('새로 생긴 심한 가슴 통증이나 숨쉬기가 매우 힘든 증상'))
+    assert.ok(html.includes('새로 생긴 심한 가슴 통증, 또는 숨쉬기가 매우 힘듦'))
     assert.ok(!html.includes('특이 안전정보 없음'))
   })
 

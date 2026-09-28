@@ -4327,6 +4327,28 @@ export const STAFF_CHECK_NOTES: Partial<Record<string, string>> = {
   MID_08: MIDLIFE_STAFF_NOTE,
 }
 
+/**
+ * 문진 **중단** 트리거 -- 직원 확인 후 계속하는 STAFF_CHECK_TRIGGERS와 다르다.
+ * 참이면 태블릿은 다음 문항으로 가지 않고, 지금까지의 응답을 그대로 제출한 뒤
+ * 환자가 되돌아가거나 계속할 수 없는 대기 화면에 머문다.
+ *
+ * MID_08 자해·자살 구체적 생각/계획(self_harm_plan): PO 확정 SOP
+ * (A9_Midlife_자살자해_직원대응_SOP_v0.1, 2026-09-28) §1 "일반 문진 흐름을 계속
+ * 진행하지 않는다" + "원장이 직접 확인하기 전까지 URGENT 상태를 유지한다".
+ * 제출된 기록은 안전 판정이 URGENT_REVIEW로 남고(뒤 문항 미응답이어도 URGENT가
+ * INCOMPLETE보다 우선 -- midlifeLogic), 환자가 답을 바꿔 해제할 길이 없다.
+ * 대량 출혈(heavy_bleeding_faint)은 SOP 대상이 아니라 기존 직원 확인 흐름 그대로.
+ */
+export const QUESTIONNAIRE_HALT_TRIGGERS: Record<string, (r: Responses) => boolean> = {
+  MID_08: (r) =>
+    IS_PRIMARY_MIDLIFE(r) && computeMidlifeSafety(toMidlifeState(r)).urgentReasons.includes('self_harm_plan'),
+}
+
+/** 제출 metadata에 남기는 중단 사유 코드(구조 정보만 -- 환자 답 원문 아님). */
+export const QUESTIONNAIRE_HALT_REASON: Record<string, string> = {
+  MID_08: 'midlife_self_harm_sop',
+}
+
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */
 
 /** 주호소 -> 다음 Sprint에서 연결할 상세 Module 이름 (아직 구현하지 않음) */

@@ -2370,7 +2370,14 @@
   color: var(--danger);
   font-weight: 700;
 }
-/* 자살·자해 응대 최소판 3줄 -- URGENT 근거 바로 아래, 번호 순서대로 따라 한다. */
+/* SOP 문진 중단 표시 -- 뒤 문항이 비어 있다는 사실을 판정 칸 안에서 먼저 알린다. */
+.midlife__halted {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--danger);
+}
+/* 자살·자해 SOP 4줄 -- URGENT 근거 바로 아래, 번호 순서대로 따라 한다. */
 .midlife__protocol {
   margin: 6px 0 0;
   padding: 6px 8px 6px 26px;

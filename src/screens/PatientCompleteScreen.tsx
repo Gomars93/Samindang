@@ -61,7 +61,19 @@ type Props = {
   devMode: boolean
   /** 직원 세션 초기화. dev 전용 문 뒤에 둔다 — 자세한 내용은 이 파일 하단 주석 참고. */
   onStaffReset: () => void
+  /**
+   * SOP 문진 중단(coreSpec QUESTIONNAIRE_HALT_TRIGGERS)으로 온 제출. 환자에게는
+   * 판정·이유 없이 "직원이 바로 도와드린다"만 보이고, 진행 단계(상세문진 완료 등)나
+   * 계속·뒤로 버튼은 없다. 전송 실패 화면(다시 시도)은 그대로 -- 기록이 원장
+   * 화면에 도달해야 하기 때문이다.
+   */
+  halted?: boolean
 }
+
+/** SOP 중단 대기 화면 문구 — 환자가 먼저 읽는다: 판정·진단·이유를 쓰지 않는다. */
+export const HALTED_TITLE = '직원이 바로 도와드릴게요'
+export const HALTED_HELPER = '잠시 이 자리에서 기다려 주세요. 문진은 여기까지만 하셔도 괜찮습니다.'
+export const HALTED_STAFF_NOTE = '직원 안내: 환자분을 혼자 두지 말고 원장님께 바로 알려주세요. 직원이 혼자 괜찮다고 판단해 끝내지 않습니다.'
 
 /**
  * 환자용 완료/대기 화면.
@@ -82,8 +94,37 @@ export function PatientCompleteScreen({
   payload,
   devMode,
   onStaffReset,
+  halted = false,
 }: Props) {
   const [showJson, setShowJson] = useState(false)
+
+  if (halted && submitState !== 'error') {
+    return (
+      <div className="shell">
+        <main className="shell__main complete">
+          <div className="complete__inner" data-halted>
+            <h1 className="title">{HALTED_TITLE}</h1>
+            <p className="helper helper--strong">{HALTED_HELPER}</p>
+            <p className="notice__staff">{HALTED_STAFF_NOTE}</p>
+            {submitState === 'submitting' && (
+              <p className="submitIdMuted" role="status">
+                전송 중입니다
+              </p>
+            )}
+          </div>
+        </main>
+        <StaffResetHold onReset={onStaffReset} />
+        {devMode && (
+          <DevDoor
+            payload={payload}
+            showJson={showJson}
+            onToggle={() => setShowJson((s) => !s)}
+            onStaffReset={onStaffReset}
+          />
+        )}
+      </div>
+    )
+  }
 
   if (submitState === 'submitting') {
     return (

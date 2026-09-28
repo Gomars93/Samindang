@@ -29,6 +29,8 @@ import {
   LBP_ONSET_DECADE_FIELD,
   STAFF_CHECK_TRIGGERS,
   STAFF_CHECK_NOTES,
+  QUESTIONNAIRE_HALT_TRIGGERS,
+  QUESTIONNAIRE_HALT_REASON,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
@@ -228,6 +230,8 @@ function AppContent() {
   const [panelBackCount, setPanelBackCount] = useState(0)
   const [panelHelpCount, setPanelHelpCount] = useState(0)
   /** 화면별 직원 확인 안내는 한 번씩만 노출 (SAFETY_01 / GI_03 / BOWEL_03) */
+  // SOP 문진 중단(QUESTIONNAIRE_HALT_TRIGGERS)이 걸린 문항 id. null이면 정상 흐름.
+  const [haltedAt, setHaltedAt] = useState<string | null>(null)
   const [staffNoticeShownFor, setStaffNoticeShownFor] = useState<Set<string>>(
     () => new Set(),
   )
@@ -295,6 +299,10 @@ function AppContent() {
         metadata: {
           session_started_at: startedAt,
           answers: meta,
+          // 중단된 제출에만 붙는다 -- 정상 제출 payload는 그대로다.
+          ...(haltedAt
+            ? { questionnaire_halted: { at_question: haltedAt, reason: QUESTIONNAIRE_HALT_REASON[haltedAt] ?? 'halted' } }
+            : {}),
         },
         // MENOPAUSE_SLEEP v0.2 Compact UX telemetry (delta 9장). PII 없음 —
         // panelStartedAt이 null이면(Gate까지 도달하지 않음) 아예 만들지 않는다.
@@ -426,6 +434,16 @@ function AppContent() {
   const goNext = () => {
     if (!current) return
 
+    // SOP 문진 중단: 다음 문항으로 가지 않고 지금까지의 응답을 제출한 뒤 대기 화면에
+    // 머문다. 직원 확인 안내(아래)보다 먼저 본다 -- 같은 화면에 둘 다 걸리면 중단이 이긴다.
+    const halt = QUESTIONNAIRE_HALT_TRIGGERS[current.id]
+    if (halt && halt(responses)) {
+      setHaltedAt(current.id)
+      setVisited((v) => [...v, current.id])
+      setPhase('done')
+      return
+    }
+
     // Red Flag / module safety flag 제출 직후에만 직원 확인 안내 (스펙 8장 UX)
     const trigger = STAFF_CHECK_TRIGGERS[current.id]
     if (trigger && !staffNoticeShownFor.has(current.id) && trigger(responses)) {
@@ -556,6 +574,7 @@ function AppContent() {
     setVisited([])
     setCurrentId(ALL_QUESTIONS[0].id)
     setStaffNoticeShownFor(new Set())
+    setHaltedAt(null)
     setStartedAt(null)
     setPanelStartedAt(null)
     setPanelScreens([])
@@ -640,6 +659,7 @@ function AppContent() {
         payload={devPayload}
         devMode={import.meta.env.DEV}
         onStaffReset={restart}
+        halted={haltedAt !== null}
       />
     )
   }

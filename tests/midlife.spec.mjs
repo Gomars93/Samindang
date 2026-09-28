@@ -16,6 +16,8 @@ import {
   ALL_QUESTIONS,
   STAFF_CHECK_TRIGGERS,
   STAFF_CHECK_NOTES,
+  QUESTIONNAIRE_HALT_TRIGGERS,
+  QUESTIONNAIRE_HALT_REASON,
   MODULE_QUESTION_IDS,
   buildResponsePayload,
   buildRoutingPayload,
@@ -33,6 +35,11 @@ import { DOCTOR_FIXTURES } from './.midlife-doctor-fixtures-bundle.mjs'
 import { DoctorWorkspace } from './.midlife-doctor-workspace-bundle.cjs'
 import { QuestionBody } from './.midlife-question-screen-bundle.cjs'
 import { StaffCheckScreen } from './.midlife-staff-check-bundle.cjs'
+import { PatientCompleteScreen, HALTED_TITLE, HALTED_HELPER, HALTED_STAFF_NOTE } from './.midlife-complete-screen-bundle.cjs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { createStore } from '../server/store.js'
 
 let passed = 0
 let failed = 0
@@ -300,6 +307,11 @@ const withUrgent = (() => {
   return p
 })()
 const renderWs = (payload, extra = {}) => renderToString(React.createElement(DoctorWorkspace, { payload, ...extra }))
+const withSelfHarmPayload = () => {
+  const p = clone(MID_PRIORITY.payload)
+  p.responses.modules.midlife.urgent_screen = ['self_harm_plan']
+  return p
+}
 
 /* =========================================================================
  * 자살·자해 응대 최소판 (PO 2026-09-28 "최소판으로 확정")
@@ -309,11 +321,14 @@ const renderWs = (payload, extra = {}) => renderToString(React.createElement(Doc
   const withSelfHarm = clone(MID_PRIORITY.payload)
   withSelfHarm.responses.modules.midlife.urgent_screen = ['self_harm_plan']
   const h = renderWs(withSelfHarm)
-  assert('PROTOCOL: 절차는 정확히 3줄', MIDLIFE_SELF_HARM_PROTOCOL.length === 3)
-  assert('PROTOCOL: 1줄 = 혼자 두지 않기 + 원장 즉시', /혼자 두지 않/.test(MIDLIFE_SELF_HARM_PROTOCOL[0]) && /원장/.test(MIDLIFE_SELF_HARM_PROTOCOL[0]))
-  assert('PROTOCOL: 2줄 = 원장이 계획·수단·시점을 직접 묻는다', /계획·수단·시점/.test(MIDLIFE_SELF_HARM_PROTOCOL[1]))
-  assert('PROTOCOL: 3줄 = 임박 119 / 그 외 109·정신건강의학과 + 기록', /119/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]) && /109/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]) && /정신건강의학과/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]) && /기록/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]))
-  assert('PROTOCOL: 자해 URGENT 기록이면 원장 화면 갱년기 안전 칸에 3줄이 모두 보인다', /data-midlife-protocol="self_harm"/.test(h) && MIDLIFE_SELF_HARM_PROTOCOL.every((l) => h.includes(l)))
+  // PO 확정 SOP(A9 v0.1, 2026-09-28)가 채팅의 "3줄 최소판"을 대체 -- 4줄.
+  const P = MIDLIFE_SELF_HARM_PROTOCOL
+  assert('PROTOCOL(SOP): 절차는 4줄', P.length === 4)
+  assert('PROTOCOL(SOP) 1: 혼자 두지 않기 + 원장 즉시 + 직원 단독 해제 금지', /혼자 두지 않/.test(P[0]) && /원장 즉시/.test(P[0]) && /단독으로 해제하지 않/.test(P[0]))
+  assert('PROTOCOL(SOP) 2: 직접 묻기 -- 생각·계획·수단 접근·최근 시도·음주/약물·보호자', ['생각', '계획', '수단 접근', '최근 시도', '음주/약물', '보호자'].every((k) => P[1].includes(k)))
+  assert('PROTOCOL(SOP) 3: 임박 위험 → 112·119 / 그 외 → 109·정신건강복지센터·정신건강의학과', ['112', '119', '109', '정신건강복지센터', '정신건강의학과'].every((k) => P[2].includes(k)))
+  assert('PROTOCOL(SOP) 4: 기록 + 외부연계 완료 여부를 ⑥ 미해결로 추적', /기록/.test(P[3]) && /인계/.test(P[3]) && /⑥ 미해결/.test(P[3]))
+  assert('PROTOCOL: 자해 URGENT 기록이면 원장 화면 갱년기 안전 칸에 SOP 4줄이 모두 보인다', /data-midlife-protocol="self_harm"/.test(h) && MIDLIFE_SELF_HARM_PROTOCOL.every((l) => h.includes(l)))
   const iSafety = h.indexOf('data-midlife-safety="URGENT_REVIEW"')
   const iProto = h.indexOf('data-midlife-protocol')
   assert('PROTOCOL: 절차는 URGENT 안전 칸 안(레인2 7칸보다 앞)에 있다', iSafety > -1 && iProto > iSafety && iProto < h.indexOf('id="lane2-h2"'))
@@ -543,6 +558,108 @@ const renderWs = (payload, extra = {}) => renderToString(React.createElement(Doc
   assert('SCOPE: 네트워크/LLM 호출 없음(fetch/openai/anthropic)', !/fetch\(|openai|anthropic/i.test(code))
   assert('SCOPE: 점수 합산 엔진 없음(score 누적/가중치 없음)', !/weight\s*[*:]|totalScore|scoreSum/.test(code))
   assert('SCOPE: 원장 칸(가설·반증·예상경과)은 자동으로 채우지 않는다 -- 빈 기록에서 시작', JSON.stringify(care.emptyMidlifeCareRecord()) === JSON.stringify({ lifeStage: '', hypothesis: '', refutationTrigger: '', expectedCourse: '', nextReviewWeek: null, referrals: [], reviews: [] }))
+}
+
+/* =========================================================================
+ * SOP 문진 중단 — PO 확정 A9 SOP v0.1 코드 QA 기준 5개 (PR #59 코멘트 2026-09-28)
+ *  ① 양성 시 일반 문진 flow를 계속 진행하지 않음
+ *  ② 직원 확인/원장 호출 상태가 명확함
+ *  ③ URGENT 상태는 원장 확인 전 자동 해제되지 않음
+ *  ④ 환자 화면이 판정 문구를 노출하지 않고 "직원이 바로 도와드린다"로 안내
+ *  ⑤ 원장 화면에는 양성 이유가 사라지지 않음
+ * ========================================================================= */
+{
+  // App.tsx goNext와 같은 순서: 중단 트리거 → (아니면) 직원 확인 → 다음 문항.
+  function walkWithHalt(answers) {
+    let r = set(emptyResponses(), { ID_01: '테스트', ID_02: '1234', ID_03: 'female' })
+    const order = []
+    let cur = nextQuestion('ID_03', r)
+    for (let guard = 0; cur && guard < 300; guard++) {
+      const q = cur
+      let v = answers[q.id]
+      if (v === undefined) {
+        const opts = q.optionsIf ? q.optionsIf(r) : q.options
+        if (q.input === 'multi_choice') v = [(opts.find((o) => o.value === 'none') ?? opts[0]).value]
+        else if (q.input === 'single_choice') v = opts[0].value
+        else if (q.input === 'numeric_scale') v = 5
+        else if (q.input === 'numeric') v = '1'.repeat(q.maxLength || 1)
+        else v = 'x'
+      }
+      r = set(r, { [q.id]: v })
+      order.push(q.id)
+      const halt = QUESTIONNAIRE_HALT_TRIGGERS[q.id]
+      if (halt && halt(r)) return { r, order, haltedAt: q.id }
+      cur = nextQuestion(q.id, r)
+    }
+    return { r, order, haltedAt: null }
+  }
+
+  const selfHarm = walkWithHalt({ ...MIDLIFE_ENTRY, MID_08: ['self_harm_plan'] })
+  assert('SOP①: 자해 양성이면 MID_08에서 문진이 멈춘다', selfHarm.haltedAt === 'MID_08' && selfHarm.order[selfHarm.order.length - 1] === 'MID_08')
+  assert('SOP①: 멈춘 뒤 문항(MID_09·WOMEN_SAFETY_01·FREE_01)은 보지 않는다', !['MID_09', 'WOMEN_SAFETY_01', 'FREE_01'].some((id) => selfHarm.order.includes(id)))
+  assert('SOP① 대조군: 자해+대량출혈 동시 선택도 멈춘다', walkWithHalt({ ...MIDLIFE_ENTRY, MID_08: ['heavy_bleeding_faint', 'self_harm_plan'] }).haltedAt === 'MID_08')
+  const bleed = walkWithHalt({ ...MIDLIFE_ENTRY, MID_08: ['heavy_bleeding_faint'] })
+  assert('SOP① 대조군: 대량출혈만이면 멈추지 않고 기존 직원 확인 흐름(끝까지 진행)', bleed.haltedAt === null && bleed.order.includes('FREE_01') && STAFF_CHECK_TRIGGERS.MID_08(set(emptyResponses(), { ...MIDLIFE_ENTRY, ID_03: 'female', MID_08: ['heavy_bleeding_faint'] })))
+  assert('SOP① 대조군: 해당 없음이면 멈추지 않는다', walkWithHalt({ ...MIDLIFE_ENTRY }).haltedAt === null)
+  assert('SOP①: 중단 트리거는 MID_08 하나뿐(다른 문진 흐름 불변)', Object.keys(QUESTIONNAIRE_HALT_TRIGGERS).join() === 'MID_08' && QUESTIONNAIRE_HALT_REASON.MID_08 === 'midlife_self_harm_sop')
+  const app = src('src/App.tsx')
+  const iHalt = app.indexOf('QUESTIONNAIRE_HALT_TRIGGERS[current.id]')
+  const iStaff = app.indexOf('STAFF_CHECK_TRIGGERS[current.id]')
+  assert('SOP①: App.goNext는 중단 트리거를 직원 확인보다 먼저 보고, 걸리면 done으로 간다(다음 문항 없음)', iHalt > -1 && iHalt < iStaff && /if \(halt && halt\(responses\)\) \{\s*setHaltedAt\(current\.id\)\s*setVisited\(\(v\) => \[\.\.\.v, current\.id\]\)\s*setPhase\('done'\)\s*return/.test(app))
+  assert('SOP②: 중단 제출 metadata에 중단 문항·사유 코드가 남는다(정상 제출엔 없음)', /questionnaire_halted: \{ at_question: haltedAt, reason: QUESTIONNAIRE_HALT_REASON\[haltedAt\]/.test(app) && /\.\.\.\(haltedAt\s*\?/.test(app))
+  assert('SOP②: 직원 초기화 시 중단 상태도 풀린다(다음 환자에게 남지 않음)', /setHaltedAt\(null\)/.test(app.slice(app.indexOf('const restart'))))
+
+  // ③ 부분 응답만으로도 URGENT — 뒤 문항 미응답(INCOMPLETE)이 URGENT를 덮지 않는다.
+  const p = buildResponsePayload(selfHarm.r)
+  assert('SOP③: 중단 시점 payload의 갱년기 판정은 URGENT_REVIEW(자해 근거)', p.safety_flags.midlife.status === 'URGENT_REVIEW' && p.safety_flags.midlife.urgentReasons.includes('self_harm_plan'))
+  const root = await mkdtemp(path.join(tmpdir(), 'samindang-midlife-sop-'))
+  try {
+    const store = createStore(path.join(root, 'submissions'))
+    await store.createSubmission({
+      submission: {
+        questionnaire_version: '1.0',
+        session_id: 'midlife-sop-halt',
+        responses: p,
+        flags: computeFlags(selfHarm.r),
+        routing: buildRoutingPayload(selfHarm.r),
+        metadata: { session_started_at: null, answers: {}, questionnaire_halted: { at_question: 'MID_08', reason: 'midlife_self_harm_sop' } },
+      },
+      myungri: null,
+      patient_label: 'midlife-sop-halt',
+    })
+    const row = (await store.listSubmissions()).find((x) => x.patient_label === 'midlife-sop-halt')
+    assert('SOP③: 서버에 저장된 중단 제출은 오늘 대기열 배지 URGENT', row?.safety_badge === 'URGENT')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+
+  // ④ 환자 화면
+  const halted = renderToString(React.createElement(PatientCompleteScreen, { submitState: 'success', payload: null, devMode: false, onStaffReset() {}, halted: true }))
+  const normal = renderToString(React.createElement(PatientCompleteScreen, { submitState: 'success', payload: null, devMode: false, onStaffReset() {} }))
+  assert('SOP④: 중단 화면은 "직원이 바로 도와드릴게요" + 기다림 안내 + 직원 한 줄', halted.includes(HALTED_TITLE) && halted.includes(HALTED_HELPER) && halted.includes(HALTED_STAFF_NOTE) && /직원이 바로 도와드/.test(HALTED_TITLE))
+  assert('SOP④: 환자 화면에 판정·이유·번호 문구가 없다', !/자살|자해|URGENT|위험|응급|119|112|109/.test(HALTED_TITLE + HALTED_HELPER + HALTED_STAFF_NOTE))
+  assert('SOP④: 중단 화면은 "접수 완료" 흐름·진행 단계를 보이지 않는다(문진이 끝난 것처럼 말하지 않음)', !halted.includes('문진이 접수되었습니다') && !halted.includes('statusFlow'))
+  const buttons = (halted.match(/<button/g) || []).length
+  assert('SOP④: 중단 화면에 환자가 누를 계속·뒤로 버튼이 없다(직원용 2초 초기화 하나뿐)', buttons === 1 && /staffResetHold/.test(halted))
+  assert('SOP④ 대조군: 정상 완료 화면은 그대로', normal.includes('문진이 접수되었습니다') && normal.includes('statusFlow') && !normal.includes(HALTED_TITLE))
+  const haltedErr = renderToString(React.createElement(PatientCompleteScreen, { submitState: 'error', errorReason: 'x', onRetry() {}, payload: null, devMode: false, onStaffReset() {}, halted: true }))
+  assert('SOP④: 중단 제출이 전송 실패하면 "다시 시도"가 보인다(기록이 원장에게 가야 함)', haltedErr.includes('다시 시도'))
+  assert('SOP④: App이 중단 여부를 완료 화면에 넘긴다', /halted=\{haltedAt !== null\}/.test(app))
+
+  // ⑤ 원장 화면
+  const hp = clone(MID_PRIORITY.payload)
+  hp.responses = p
+  hp.flags = computeFlags(selfHarm.r)
+  hp.routing = buildRoutingPayload(selfHarm.r)
+  hp.metadata = { ...hp.metadata, questionnaire_halted: { at_question: 'MID_08', reason: 'midlife_self_harm_sop' } }
+  const dh = renderWs(hp)
+  assert('SOP⑤: 원장 화면 갱년기 안전 칸 = URGENT + 자해 근거 + SOP 4줄', /data-midlife-safety="URGENT_REVIEW"/.test(dh) && dh.includes('구체적인 자살·자해 생각 또는 계획') && MIDLIFE_SELF_HARM_PROTOCOL.every((l) => dh.includes(l)))
+  assert('SOP⑤: "문진이 MID_08에서 중단됨 — 이후 문항 응답 없음"이 보인다', /data-midlife-halted="MID_08"/.test(dh) && dh.includes('이후 문항(병력·복약·임신 여부 등)은 응답이 없습니다'))
+  assert('SOP⑤ 대조군: 중단되지 않은 자해 기록에는 중단 표시가 없다', !/data-midlife-halted/.test(renderWs(withSelfHarmPayload())))
+  const broken = clone(hp)
+  broken.metadata.questionnaire_halted = { at_question: 42 }
+  const db = renderWs(broken)
+  assert('SOP⑤: 손상된 중단 metadata여도 URGENT·자해 근거·SOP는 남는다(응답에서 재계산)', !/data-midlife-halted/.test(db) && /data-midlife-safety="URGENT_REVIEW"/.test(db) && /data-midlife-protocol="self_harm"/.test(db))
 }
 
 console.log(`\nSUMMARY: ${passed} assertions passed, ${failed} failed (total ${passed + failed})`)

@@ -39,9 +39,22 @@ export function isMidlifeRecord(payload: DoctorPayload): boolean {
   return payload.responses?.primary_concern?.key === 'midlife'
 }
 
+/**
+ * SOP 문진 중단 제출인지 -- 저장된 metadata는 검증 없는 값이라 모양을 다시 본다.
+ * 손상된 값은 "중단 아님"으로 떨어뜨리지만, 안전 판정 자체는 응답에서 다시 계산하므로
+ * URGENT 표시는 이 값과 무관하게 유지된다.
+ */
+export function midlifeHaltedAt(payload: DoctorPayload): string | null {
+  const h = (payload.metadata as { questionnaire_halted?: unknown } | undefined)?.questionnaire_halted
+  if (typeof h !== 'object' || h === null) return null
+  const at = (h as { at_question?: unknown }).at_question
+  return typeof at === 'string' && at !== '' ? at : null
+}
+
 export function MidlifeSafetyPanel({ payload }: { payload: DoctorPayload }) {
   if (!isMidlifeRecord(payload)) return null
   const safety = computeMidlifeSafety(toMidlifeStateFromDoctorPayload(payload.responses))
+  const haltedAt = midlifeHaltedAt(payload)
 
   return (
     <div
@@ -63,6 +76,11 @@ export function MidlifeSafetyPanel({ payload }: { payload: DoctorPayload }) {
             <li key={r}>{MIDLIFE_URGENT_REASON_LABEL[r]}</li>
           ))}
         </ul>
+      )}
+      {haltedAt && (
+        <p className="midlife__halted" data-midlife-halted={haltedAt}>
+          태블릿 문진이 {haltedAt}에서 중단됨(SOP) — 이후 문항(병력·복약·임신 여부 등)은 응답이 없습니다.
+        </p>
       )}
       {safety.urgentReasons.includes('self_harm_plan') && (
         <ol className="midlife__protocol" data-midlife-protocol="self_harm" aria-label="자살·자해 응대 절차">

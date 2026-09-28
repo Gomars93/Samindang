@@ -12,6 +12,7 @@ import { toMidlifeStateFromDoctorPayload } from '../spec/midlifeAdapter'
 import {
   computeMidlifeSafety,
   MIDLIFE_PRIORITY_REASON_LABEL,
+  MIDLIFE_SELF_HARM_PROTOCOL,
   MIDLIFE_URGENT_REASON_LABEL,
   type MidlifeSafetyStatus,
 } from '../spec/midlifeLogic'
@@ -62,6 +63,13 @@ export function MidlifeSafetyPanel({ payload }: { payload: DoctorPayload }) {
             <li key={r}>{MIDLIFE_URGENT_REASON_LABEL[r]}</li>
           ))}
         </ul>
+      )}
+      {safety.urgentReasons.includes('self_harm_plan') && (
+        <ol className="midlife__protocol" data-midlife-protocol="self_harm" aria-label="자살·자해 응대 절차">
+          {MIDLIFE_SELF_HARM_PROTOCOL.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ol>
       )}
       {safety.priorityReasons.length > 0 && (
         <ul className="midlife__reasons midlife__reasons--priority" aria-label="우선 외부평가 근거">

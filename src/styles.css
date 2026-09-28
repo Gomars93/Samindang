@@ -1160,6 +1160,18 @@ input {
   margin-bottom: 32px;
 }
 
+/* 직원용 한 줄 -- 환자 경고(.notice)보다 한 단계 약하게, 같은 폭. */
+.notice__staff {
+  margin: -16px 0 32px;
+  padding: 16px 24px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-helper);
+  font-weight: 600;
+}
+
 /* ---------- patient completion / waiting ---------- */
 
 .complete {

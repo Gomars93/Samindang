@@ -64,6 +64,24 @@ export const MIDLIFE_URGENT_REASON_LABEL: Record<MidlifeUrgentReason, string> = 
   pregnancy_with_bleeding: '임신 가능성 + 출혈',
 }
 
+/**
+ * 자살·자해(self_harm_plan) 응대 최소판 -- PO 확정(2026-09-28, "최소판으로 확정").
+ * 동네 한의원 규모에 맞춰 3줄만 둔다: 혼자 두지 않기 → 원장 먼저 → 연계·기록.
+ * 원장 화면(레인1 갱년기 안전 칸)에만 보인다 -- 환자가 들고 있는 태블릿에는
+ * 아래 MIDLIFE_STAFF_NOTE(중립 문구)만 나간다.
+ */
+export const MIDLIFE_SELF_HARM_PROTOCOL: readonly string[] = [
+  '환자를 혼자 두지 않고 조용한 곳으로 안내 — 원장에게 즉시 알림',
+  '원장이 다음 순서로 먼저 봄 — 계획·수단·시점을 직접 묻는다',
+  '임박 위험 → 119 / 그 외 → 109(자살예방상담전화)·정신건강의학과 안내, 진료기록에 남김',
+]
+
+/**
+ * MID_08 직원 확인 화면의 직원 안내 한 줄. 환자가 먼저 읽는 화면이라 이유(출혈/자해)를
+ * 드러내지 않는 중립 문구다 -- 두 URGENT 값 모두에 맞는 행동(곁에 머물기·원장 호출)만 적는다.
+ */
+export const MIDLIFE_STAFF_NOTE = '직원 안내: 환자분 곁에 머물며 조용한 곳으로 모시고, 원장님께 바로 알려주세요.'
+
 export const MIDLIFE_PRIORITY_REASON_LABEL: Record<MidlifePriorityReason, string> = {
   postmenopausal_bleeding: '폐경 후 출혈',
   abnormal_bleeding: '지속·반복 비정상 출혈',

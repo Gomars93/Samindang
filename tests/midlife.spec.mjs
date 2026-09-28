@@ -15,6 +15,7 @@ import TestRenderer, { act } from 'react-test-renderer'
 import {
   ALL_QUESTIONS,
   STAFF_CHECK_TRIGGERS,
+  STAFF_CHECK_NOTES,
   MODULE_QUESTION_IDS,
   buildResponsePayload,
   buildRoutingPayload,
@@ -24,13 +25,14 @@ import {
   shouldAutoAdvancePast,
   visibleQuestions,
 } from './.midlife-corespec-bundle.mjs'
-import { computeMidlifeSafety } from './.midlife-logic-bundle.mjs'
+import { computeMidlifeSafety, MIDLIFE_SELF_HARM_PROTOCOL } from './.midlife-logic-bundle.mjs'
 import { toMidlifeState, toMidlifeStateFromDoctorPayload } from './.midlife-adapter-bundle.mjs'
 import * as care from './.midlife-care-bundle.mjs'
 import { deserializeWorkspaceState, emptyWorkspaceState } from './.midlife-persistence-bundle.mjs'
 import { DOCTOR_FIXTURES } from './.midlife-doctor-fixtures-bundle.mjs'
 import { DoctorWorkspace } from './.midlife-doctor-workspace-bundle.cjs'
 import { QuestionBody } from './.midlife-question-screen-bundle.cjs'
+import { StaffCheckScreen } from './.midlife-staff-check-bundle.cjs'
 
 let passed = 0
 let failed = 0
@@ -298,6 +300,36 @@ const withUrgent = (() => {
   return p
 })()
 const renderWs = (payload, extra = {}) => renderToString(React.createElement(DoctorWorkspace, { payload, ...extra }))
+
+/* =========================================================================
+ * 자살·자해 응대 최소판 (PO 2026-09-28 "최소판으로 확정")
+ * 원장 화면: 3줄 절차. 태블릿 직원 확인 화면: 이유를 드러내지 않는 직원 한 줄.
+ * ========================================================================= */
+{
+  const withSelfHarm = clone(MID_PRIORITY.payload)
+  withSelfHarm.responses.modules.midlife.urgent_screen = ['self_harm_plan']
+  const h = renderWs(withSelfHarm)
+  assert('PROTOCOL: 절차는 정확히 3줄', MIDLIFE_SELF_HARM_PROTOCOL.length === 3)
+  assert('PROTOCOL: 1줄 = 혼자 두지 않기 + 원장 즉시', /혼자 두지 않/.test(MIDLIFE_SELF_HARM_PROTOCOL[0]) && /원장/.test(MIDLIFE_SELF_HARM_PROTOCOL[0]))
+  assert('PROTOCOL: 2줄 = 원장이 계획·수단·시점을 직접 묻는다', /계획·수단·시점/.test(MIDLIFE_SELF_HARM_PROTOCOL[1]))
+  assert('PROTOCOL: 3줄 = 임박 119 / 그 외 109·정신건강의학과 + 기록', /119/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]) && /109/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]) && /정신건강의학과/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]) && /기록/.test(MIDLIFE_SELF_HARM_PROTOCOL[2]))
+  assert('PROTOCOL: 자해 URGENT 기록이면 원장 화면 갱년기 안전 칸에 3줄이 모두 보인다', /data-midlife-protocol="self_harm"/.test(h) && MIDLIFE_SELF_HARM_PROTOCOL.every((l) => h.includes(l)))
+  const iSafety = h.indexOf('data-midlife-safety="URGENT_REVIEW"')
+  const iProto = h.indexOf('data-midlife-protocol')
+  assert('PROTOCOL: 절차는 URGENT 안전 칸 안(레인2 7칸보다 앞)에 있다', iSafety > -1 && iProto > iSafety && iProto < h.indexOf('id="lane2-h2"'))
+  assert('PROTOCOL 대조군: 대량출혈 URGENT만이면 자해 절차가 없다', !/data-midlife-protocol/.test(renderWs(withUrgent)))
+  assert('PROTOCOL 대조군: 안전 해당 없음 기록에도 없다', !/data-midlife-protocol/.test(renderWs(MID_CLEAR.payload)))
+
+  const note = STAFF_CHECK_NOTES.MID_08
+  assert('STAFF NOTE: MID_08 직원 확인 화면에 직원용 한 줄이 있다(곁에 머물기 + 원장 호출)', typeof note === 'string' && /곁에 머물/.test(note) && /원장/.test(note))
+  assert('STAFF NOTE: 환자가 먼저 읽는 화면이라 이유(자살·자해·출혈)와 번호를 드러내지 않는다', !/자살|자해|출혈|119|109/.test(note))
+  assert('STAFF NOTE: 다른 트리거 화면에는 직원 한 줄이 없다(기존 화면 그대로)', Object.keys(STAFF_CHECK_NOTES).join() === 'MID_08')
+  const withNote = renderToString(React.createElement(StaffCheckScreen, { onContinue() {}, staffNote: note }))
+  const noNote = renderToString(React.createElement(StaffCheckScreen, { onContinue() {} }))
+  assert('STAFF NOTE: 직원 확인 화면이 전달받은 한 줄을 그린다', withNote.includes('data-staff-note') && withNote.includes(note))
+  assert('STAFF NOTE 대조군: 한 줄이 없으면 기존 화면과 같다(환자 안내 문구 유지)', !noNote.includes('data-staff-note') && noNote.includes('태블릿을 직원에게 보여주세요'))
+  assert('STAFF NOTE: App이 현재 화면 id로 한 줄을 넘긴다', /staffNote=\{current \? STAFF_CHECK_NOTES\[current\.id\] : undefined\}/.test(src('src/App.tsx')))
+}
 {
   assert('FIX: 갱년기 fixture 2개가 DOCTOR_FIXTURES에 있다', !!MID_PRIORITY && !!MID_CLEAR)
 

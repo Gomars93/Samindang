@@ -28,6 +28,7 @@ import {
   LBP_LEG_AUTOFILL_FIELD,
   LBP_ONSET_DECADE_FIELD,
   STAFF_CHECK_TRIGGERS,
+  STAFF_CHECK_NOTES,
   STEPS,
   buildResponsePayload,
   buildRoutingPayload,
@@ -613,6 +614,7 @@ function AppContent() {
   if (phase === 'staff_check') {
     return (
       <StaffCheckScreen
+        staffNote={current ? STAFF_CHECK_NOTES[current.id] : undefined}
         onContinue={() => {
           if (!current) return
           const next = nextQuestion(current.id, responses)

@@ -46,7 +46,7 @@ import { computeHipFlags } from './hipLogic'
 import { IS_PRIMARY_HIP_SAFETY, HIP_ROUTING_QUESTIONS, HIP_QUESTIONS } from './hipQuestions'
 import { IS_PRIMARY_MIDLIFE, MIDLIFE_CONCERN_KEY, MIDLIFE_QUESTIONS } from './midlifeQuestions'
 import { toMidlifeState } from './midlifeAdapter'
-import { computeMidlifeSafety } from './midlifeLogic'
+import { computeMidlifeSafety, MIDLIFE_STAFF_NOTE } from './midlifeLogic'
 
 // App.tsx 등 기존 호출부가 coreSpec에서 import하므로 re-export로 호환을 유지한다.
 // 정의는 visitRouting.ts 한 곳에만 있다.
@@ -4316,6 +4316,15 @@ export const STAFF_CHECK_TRIGGERS: Record<string, (r: Responses) => boolean> = {
   },
   WOMEN_SAFETY_01: (r) =>
     IS_PRIMARY_MIDLIFE(r) && computeMidlifeSafety(toMidlifeState(r)).urgentReasons.includes('pregnancy_with_bleeding'),
+}
+
+/**
+ * 직원 확인 화면에 덧붙이는 직원용 한 줄(선택). 없으면 기존 화면 그대로다.
+ * 환자가 먼저 읽는 화면이므로 이유를 드러내지 않는 중립 문구만 둔다.
+ * MID_08: 자살·자해 응대 최소판(PO 2026-09-28) -- 전체 3줄은 원장 화면에만.
+ */
+export const STAFF_CHECK_NOTES: Partial<Record<string, string>> = {
+  MID_08: MIDLIFE_STAFF_NOTE,
 }
 
 /* ---------- 9. 상세 Module 연결점 (router target, placeholder) ---------- */

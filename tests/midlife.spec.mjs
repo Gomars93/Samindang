@@ -309,6 +309,16 @@ const renderWs = (payload, extra = {}) => renderToString(React.createElement(Doc
   assert('AC3: Baseline PRO 초진값이 태블릿 값 그대로(7/10)', htmlP.includes('data-midlife-baseline="primarySymptom">7/10'))
   assert('AC3: 없는 답은 "—"로(지어내지 않음) -- 무월경이면 마지막 월경 칸 —', /마지막 월경<\/dt><dd>—<\/dd>/.test(htmlP))
   assert('AC3: 7칸 패널은 기존 토큰만 쓴다(새 색상 변수 없음)', !/--midlife-/.test(src('src/doctor/workspace/workspace.css')))
+  {
+    // Figma `01 · Pain Doctor View`(frame 1:2)를 옮긴 --pain-* 토큰으로 카드·라벨·행을 그린다(명세: 같은 시각 언어 재사용).
+    const css = src('src/doctor/workspace/workspace.css')
+    const block = css.slice(css.indexOf('Midlife v0.2: 갱년기 진료 요약 7칸'))
+    const rule = (sel) => (block.match(new RegExp(`\\n${sel.replace(/\./g, '\\.')} \\{([^}]*)\\}`)) ?? [])[1] ?? ''
+    assert('FIGMA: 카드 테두리·모서리·바탕은 --pain-border/--pain-radius/--pain-surface', /var\(--pain-border\)/.test(rule('.midlife__cell')) && /var\(--pain-radius\)/.test(rule('.midlife__cell')) && /var\(--pain-surface\)/.test(rule('.midlife__cell')))
+    assert('FIGMA: 섹션 라벨은 13px(--pain-fs-eyebrow) semibold, 의미 색 good', /--pain-fs-eyebrow/.test(rule('.midlife__cellTitle')) && /600/.test(rule('.midlife__cellTitle')) && /--pain-good/.test(rule('.midlife__cellTitle')))
+    assert('FIGMA: 사실 행은 라벨 좌 / 값 우(행 문법 하나)', /\.midlife__facts dd \{[^}]*text-align:\s*right/.test(block))
+    assert('FIGMA: 옛 전역 토큰(--border/--surface)을 7칸 블록에서 쓰지 않는다', !/var\(--border\)|var\(--surface\)/.test(block))
+  }
 }
 
 /* =========================================================================

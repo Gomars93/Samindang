@@ -2172,18 +2172,24 @@
 }
 
 /* ---------- Midlife v0.2: 갱년기 진료 요약 7칸 (MidlifeCarePanel.tsx) ----------
- * 기존 토큰만 쓴다(새 디자인 시스템 없음). 1440 폭에서 좌·우 2열, 좁으면 1열. */
+ * 시각 언어는 Figma `01 · Pain Doctor View`(UjziuG6OOpVU1CtcNl6704, frame 1:2)를
+ * 옮긴 `--pain-*` 토큰(clinical/tokens.css)만 쓴다 -- 카드 테두리·모서리, 13px
+ * 섹션 라벨(의미 색 good) + 흐린 부제, 15px `라벨 ──── 값(우측)` 행. Figma에는
+ * Midlife 프레임이 없어(2026-09-28 확인) 레이아웃 자체는 명세 v0.1 문장을 따른다.
+ * 간격은 토큰 스케일 안의 값만 쓴다(카드 안쪽은 --pain-gap-row: 7칸을 한 화면에
+ * 가깝게 두려고 --pain-pad-card 대신 한 단계 작은 값). 경고 색은 부위 안전
+ * 패널과 같은 --danger/--warning을 쓴다(안전 표시는 통증 화면과 같은 규칙). */
 .midlife__snapshot {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--pain-gap-row);
   align-items: stretch;
-  margin-bottom: 12px;
+  margin-bottom: var(--pain-gap-row);
 }
 .midlife__grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--pain-gap-row);
 }
 @media (max-width: 1100px) {
   .midlife__grid {
@@ -2193,26 +2199,35 @@
 .midlife__col {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--pain-gap-row);
   min-width: 0;
 }
 .midlife__cell {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 10px 12px;
+  border: 1px solid var(--pain-border);
+  border-radius: var(--pain-radius);
+  background: var(--pain-surface);
+  padding: var(--pain-gap-row);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+  font-size: var(--pain-fs-row);
+  line-height: var(--pain-lh-row);
+  color: var(--pain-text);
 }
 .midlife__cellTitle {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-muted);
+  font-size: var(--pain-fs-eyebrow);
+  font-weight: 600;
+  color: var(--pain-good);
 }
 .midlife__cell--safety {
   flex: 1 1 260px;
+}
+/* 안전 상태 pill -- Figma "Safety Status"(#edf4ef 바탕 + good 글자)의 CLEAR 모양. */
+.midlife__tone--clear {
+  background: #edf4ef;
+  border-color: #edf4ef;
+  color: var(--pain-good);
 }
 .midlife__tone--urgent {
   border: 2px solid var(--danger);
@@ -2223,19 +2238,20 @@
   background: var(--warning-soft);
 }
 .midlife__tone--unknown {
-  border-color: var(--text-muted);
+  border-color: var(--pain-text-muted);
 }
 .midlife__muted {
-  font-size: 13px;
-  color: var(--text-muted);
+  font-size: var(--pain-fs-eyebrow);
+  color: var(--pain-text-muted);
   margin: 0;
 }
 .midlife__alert {
   flex: 1 1 100%;
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-weight: 700;
+  padding: 8px var(--pain-gap-row);
+  border-radius: 10px;
+  font-size: var(--pain-fs-row);
+  font-weight: 600;
 }
 .midlife__alert--urgent {
   border: 2px solid var(--danger);
@@ -2246,6 +2262,7 @@
 .midlife__alert--reopen {
   border: 1px solid var(--warning);
   background: var(--warning-soft);
+  color: var(--pain-warn);
 }
 .midlife__badge {
   align-self: flex-start;
@@ -2253,47 +2270,74 @@
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .midlife__badge--reopen {
   border: 1px solid var(--warning);
   background: var(--warning-soft);
+  color: var(--pain-warn);
 }
+/* 행 문법 하나: 라벨(좌) ──── 값(우). */
 .midlife__facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 2px 10px;
+  gap: 0 var(--pain-gap-row);
   margin: 0;
-  font-size: 14px;
+}
+.midlife__facts dt,
+.midlife__facts dd {
+  padding: var(--pain-pad-row-y) 0;
 }
 .midlife__facts dt {
-  color: var(--text-muted);
+  font-weight: 500;
+  color: var(--pain-text);
 }
 .midlife__facts dd {
   margin: 0;
+  text-align: right;
+  font-weight: 600;
+  color: var(--pain-neutral);
 }
 .midlife__field {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
+  font-size: var(--pain-fs-eyebrow);
+  color: var(--pain-text-muted);
 }
 .midlife textarea,
 .midlife input,
 .midlife select {
   font: inherit;
+  font-size: var(--pain-fs-row);
+  color: var(--pain-text);
   min-height: 36px;
+  border: 1px solid var(--pain-border);
+  border-radius: 8px;
+  background: var(--pain-surface);
 }
 .midlife__pro {
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--pain-fs-eyebrow);
   width: 100%;
 }
 .midlife__pro th,
 .midlife__pro td {
-  border-bottom: 1px solid var(--border);
-  padding: 4px;
+  border-bottom: 1px solid var(--pain-divider);
+  padding: var(--pain-pad-row-y) 4px;
   text-align: left;
+}
+.midlife__pro thead th {
+  color: var(--pain-text-muted);
+  font-weight: 600;
+}
+.midlife__pro tbody th {
+  font-weight: 500;
+  color: var(--pain-text);
+}
+.midlife__pro td {
+  color: var(--pain-neutral);
+  font-weight: 600;
 }
 .midlife__referrals {
   list-style: none;
@@ -2301,7 +2345,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .midlife__referral {
   display: grid;
@@ -2326,6 +2370,13 @@
   color: var(--danger);
   font-weight: 700;
 }
+.midlife__weekBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
 .midlife__weekTabs {
   display: flex;
   flex-wrap: wrap;
@@ -2334,23 +2385,19 @@
 .midlife__weekTabs button {
   min-height: 36px;
   padding: 4px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--pain-border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--pain-surface);
+  color: var(--pain-text);
   font: inherit;
+  font-size: var(--pain-fs-eyebrow);
   cursor: pointer;
 }
 .midlife__weekTabs button[aria-pressed='true'] {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-  font-weight: 700;
-}
-.midlife__weekBar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  justify-content: space-between;
+  border-color: var(--pain-good);
+  background: #edf4ef;
+  color: var(--pain-good);
+  font-weight: 600;
 }
 .midlife__reviewEdit {
   display: grid;

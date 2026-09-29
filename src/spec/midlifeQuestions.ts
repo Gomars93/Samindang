@@ -70,7 +70,7 @@ const PRIORITY_EXTRA_OPTIONS: Option[] = [
   { value: 'plan_tests', label: '검사·치료 계획 알기' },
 ]
 
-const PRIORITY_OPTIONS: Option[] = [...SYMPTOM_OPTIONS.filter((o) => o.value !== 'other'), ...PRIORITY_EXTRA_OPTIONS]
+export const MIDLIFE_PRIORITY_OPTIONS: Option[] = [...SYMPTOM_OPTIONS.filter((o) => o.value !== 'other'), ...PRIORITY_EXTRA_OPTIONS]
 
 /**
  * 3단계 안전 확인 — URGENT. PO(2026-09-27) 목록 중 공통 안전문항
@@ -304,7 +304,7 @@ export const MIDLIFE_QUESTIONS: Question[] = [
     step: '상세 증상',
     section: MIDLIFE_SECTIONS[4],
     showIf: IS_PRIMARY_MIDLIFE,
-    options: PRIORITY_OPTIONS,
+    options: MIDLIFE_PRIORITY_OPTIONS,
   },
   {
     id: 'MID_14',
@@ -317,9 +317,9 @@ export const MIDLIFE_QUESTIONS: Question[] = [
     step: '상세 증상',
     section: MIDLIFE_SECTIONS[4],
     showIf: (r) => IS_PRIMARY_MIDLIFE(r) && r['MID_13'] != null,
-    options: [...PRIORITY_OPTIONS, { value: 'none', label: '없어요' }],
+    options: [...MIDLIFE_PRIORITY_OPTIONS, { value: 'none', label: '없어요' }],
     // 첫 번째로 고른 것은 다시 보이지 않는다.
-    optionsIf: (r) => [...PRIORITY_OPTIONS, { value: 'none', label: '없어요' }].filter((o) => o.value !== r['MID_13']),
+    optionsIf: (r) => [...MIDLIFE_PRIORITY_OPTIONS, { value: 'none', label: '없어요' }].filter((o) => o.value !== r['MID_13']),
   },
   /*
    * MID_15(next_action_confidence_0_10, "앞으로 어떻게 관리할지 감이 오시나요?")는

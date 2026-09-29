@@ -1,21 +1,32 @@
 /**
- * Midlife v0.2 Doctor View — 한 화면 7칸 (`docs/MIDLIFE_UI_IA_v0.2.md` §5).
+ * Midlife Doctor View — Figma `02 · Midlife Care v0.1` / Doctor View · Midlife · 1440 (40:49) 구조.
  *
- *   상단 Clinical Snapshot : 생애단계 · 주요 증상 · 안전 · 미해결/재검토 경고
- *   좌측                  : ① Life-stage  ② Top 2 증상/환자 목표  ⑦ Baseline PRO + review
- *   우측                  : ④ 진단 가설  ⑤ 반증 trigger  ⑥ 외부평가/미해결  ⑦ 다음 review
- *   ③ Safety              : 스냅샷 맨 앞(레인1 `MidlifeSafetyPanel`과 같은 계산)
+ *   상단 Clinical Snapshot : 주기 · 주요 증상 · 가장 힘든 문제 · 안전 칩 · 미해결/재검토 경고
+ *   좌측  : LIFE STAGE · TOP SYMPTOMS · BASELINE PRO
+ *   우측  : DIAGNOSTIC HYPOTHESIS · REFUTATION TRIGGER · REFERRAL / UNRESOLVED · CARE PLAN / NEXT REVIEW
  *
- * 환자 응답 칸은 읽기 전용, 원장 칸은 전부 직접 입력이다. 자동 진단·점수·
- * 추천 문구를 만들지 않는다. 파생 표시는 `midlifeCare.ts`의 두 규칙
- * (미해결 경고, 연속 2회 이탈 → 가설 재검토)과 안전 판정뿐이다.
+ * 환자 응답 칸은 읽기 전용, 원장 칸은 전부 직접 입력이다. 자동 진단·점수·추천 문구를
+ * 만들지 않는다. 파생 표시는 `midlifeCare.ts`의 두 규칙(미해결 경고, 연속 2회 이탈 →
+ * 가설 재검토)과 안전 판정뿐이다.
+ *
+ * PO 재검수(2026-09-29, PR #59):
+ *  - BASELINE PRO는 **환자가 입력한 값만** 보인다 — 초진은 태블릿, 이후는 재진 링크에서
+ *    환자가 다시 답한 MID_05·06·07(`midlifeProReports`). 원장이 숫자를 옮겨 적는 칸은 없다.
+ *    재진 값은 주차 칸에 억지로 넣지 않고 실제 날짜(+N주)로 보인다 — 늦게 온 환자의 값이
+ *    엉뚱한 주차에 들어가는 오분류를 막는다. 원장 review는 경과 판정·기록일만.
+ *  - CARE PLAN의 4주 목표는 기존 `FollowUpTarget`(`herbalFollowUpTargets`)에 저장된다 —
+ *    다음 재진 링크의 Micro Follow-up 후보로 이어진다(`midlifeCare.ts` 4주 care goal 절).
+ *  - Figma BASELINE PRO의 "다음 행동 이해" 행은 그리지 않는다(MID_15 삭제 유지, PO 2026-09-29).
  */
 import { useState } from 'react'
 import { answerLabel } from '../labels'
 import type { DoctorPayload } from '../types'
+import type { MidlifeProReport } from './longitudinal'
+import type { FollowUpTarget } from './finalAssessment'
 import { toMidlifeStateFromDoctorPayload } from '../../spec/midlifeAdapter'
 import { computeMidlifeSafety, MIDLIFE_PRIORITY_REASON_LABEL, MIDLIFE_URGENT_REASON_LABEL } from '../../spec/midlifeLogic'
 import {
+  MIDLIFE_CARE_GOAL_MAX,
   MIDLIFE_COURSE_LABEL,
   MIDLIFE_COURSE_VALUES,
   MIDLIFE_LIFE_STAGES,
@@ -25,15 +36,17 @@ import {
   MIDLIFE_REVIEW_WEEKS,
   emptyMidlifeReview,
   isReferralUnresolved,
+  midlifeGoalOptions,
   midlifeHypothesisReopen,
   midlifeUnresolvedSummary,
   newMidlifeReferral,
   normalizeReviews,
   sanitizeScore,
+  selectedMidlifeGoals,
+  toggleMidlifeGoal,
   type MidlifeCareRecord,
   type MidlifeCourseVsExpected,
   type MidlifeLifeStage,
-  type MidlifePro,
   type MidlifeReferral,
   type MidlifeReview,
   type MidlifeReviewWeek,
@@ -62,11 +75,27 @@ function scoreText(v: unknown): string {
   return s === null ? '—' : `${s}/10`
 }
 
-const PRO_ROWS: { key: keyof MidlifePro; title: string; moduleField: string }[] = [
-  { key: 'primarySymptom', title: '주 증상', moduleField: 'primary_symptom_0_10' },
-  { key: 'sleepSatisfaction', title: '수면 만족', moduleField: 'sleep_satisfaction_0_10' },
-  { key: 'functionInterference', title: '일상 지장', moduleField: 'function_interference_0_10' },
+/** 환자 PRO 3축 -- 초진(태블릿 moduleField)과 재진 보고(reportKey)가 같은 문항 id(MID_05·06·07)다. */
+const PRO_ROWS: { title: string; moduleField: string; reportKey: 'primarySymptom' | 'sleepSatisfaction' | 'functionInterference' }[] = [
+  { title: '주증상', moduleField: 'primary_symptom_0_10', reportKey: 'primarySymptom' },
+  { title: '수면 만족도', moduleField: 'sleep_satisfaction_0_10', reportKey: 'sleepSatisfaction' },
+  { title: '일상 기능 방해', moduleField: 'function_interference_0_10', reportKey: 'functionInterference' },
 ]
+
+/** 표에 보이는 최근 재진 보고 수 -- 1440 폭에서 표가 넘치지 않게. */
+const MAX_REPORT_COLUMNS = 4
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** "M/D" + (초진일을 알면) "+N주". 날짜를 못 읽으면 "날짜 불명" -- 지어내지 않는다. */
+function reportHeading(createdAt: string, baselineMs: number | null): { date: string; weeks: string | null } {
+  const t = Date.parse(createdAt)
+  if (Number.isNaN(t)) return { date: '날짜 불명', weeks: null }
+  const d = new Date(t)
+  const date = `${d.getMonth() + 1}/${d.getDate()}`
+  if (baselineMs === null || t < baselineMs) return { date, weeks: null }
+  return { date, weeks: `+${Math.round((t - baselineMs) / (7 * DAY_MS))}주` }
+}
 
 function newReferralId(): string {
   return `mlref-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
@@ -76,10 +105,18 @@ export function MidlifeCarePanel({
   payload,
   value,
   onChange,
+  proReports = [],
+  followUpTargets = [],
+  onChangeFollowUpTargets,
 }: {
   payload: DoctorPayload
   value: MidlifeCareRecord
   onChange: (next: MidlifeCareRecord) => void
+  /** 재진 링크에서 환자가 다시 답한 PRO(`PatientHistoryResult.midlifeProReports`). 없으면 초진만. */
+  proReports?: MidlifeProReport[]
+  /** 4주 목표가 저장되는 기존 FollowUpTarget 배열(갱년기 = 한약 프로필 → herbalFollowUpTargets). */
+  followUpTargets?: FollowUpTarget[]
+  onChangeFollowUpTargets?: (next: FollowUpTarget[]) => void
 }) {
   const m = midlifeModule(payload)
   const safety = computeMidlifeSafety(toMidlifeStateFromDoctorPayload(payload.responses))
@@ -105,35 +142,65 @@ export function MidlifeCarePanel({
   const updateReview = (week: MidlifeReviewWeek, patch: Partial<MidlifeReview>) =>
     set({ reviews: normalizeReviews([...value.reviews.filter((r) => r.week !== week), { ...reviewFor(week), ...patch }]) })
 
+  // 재진 PRO 보고: 초진 이후 것만, 날짜 오름차순, 최근 MAX_REPORT_COLUMNS개.
+  const startedRaw = (payload.metadata as { session_started_at?: unknown } | undefined)?.session_started_at
+  const baselineMs = typeof startedRaw === 'string' && !Number.isNaN(Date.parse(startedRaw)) ? Date.parse(startedRaw) : null
+  const reports = (Array.isArray(proReports) ? proReports : [])
+    .filter((r) => baselineMs === null || Date.parse(r.createdAt) >= baselineMs)
+    .slice()
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .slice(-MAX_REPORT_COLUMNS)
+
+  const goals = selectedMidlifeGoals(followUpTargets)
+  const goalIds = new Set(goals.map((g) => g.id))
+  const goalsFull = goals.length >= MIDLIFE_CARE_GOAL_MAX
+  // 접힘 초기값은 마운트 때 한 번만 정한다(latch) -- 편집 도중 값이 비는 순간 칸이
+  // 닫혀 사라지지 않게(CLAUDE.md 경로 규칙 3항). 이후엔 원장이 여닫는다.
+  const [goalPickerOpen] = useState(() => goals.length === 0)
+  const [courseOpen] = useState(() => value.reviews.some((r) => r.courseVsExpected !== null || r.reviewedOn !== ''))
+  const courseSummary = MIDLIFE_REVIEW_WEEKS.map((w) => {
+    const c = reviewFor(w).courseVsExpected
+    return `${w}주 ${c ? MIDLIFE_COURSE_LABEL[c] : '—'}`
+  }).join(' · ')
+
   const safetyTone =
     safety.status === 'URGENT_REVIEW' ? 'urgent' : safety.status === 'CLEAR' ? 'clear' : safety.status === 'INCOMPLETE' ? 'unknown' : 'priority'
+  const safetyChip =
+    safety.status === 'URGENT_REVIEW'
+      ? 'URGENT — 레인1 먼저 확인'
+      : safety.status === 'PRIORITY_EVALUATION'
+        ? '우선 외부평가 필요'
+        : safety.status === 'CLEAR'
+          ? '긴급 Red flag 없음'
+          : '안전 판정 불가 — 확인 필요'
+  const headline = [label('MID_01', m.cycle_change), label('MID_04', m.top_symptoms)].join(' · ')
 
   return (
     <section className="workspace__block midlife" aria-labelledby="midlife-h3" data-midlife-panel>
       <h3 id="midlife-h3">갱년기 진료 요약</h3>
 
-      {/* ---------- 상단 Clinical Snapshot ---------- */}
-      <div className="midlife__snapshot" data-midlife-snapshot>
-        <div className={`midlife__cell midlife__cell--safety midlife__tone--${safetyTone}`} data-midlife-cell="3">
-          <span className="midlife__cellTitle">③ 안전</span>
-          <strong>
-            {safety.status === 'URGENT_REVIEW'
-              ? 'URGENT'
-              : safety.status === 'PRIORITY_EVALUATION'
-                ? '우선 외부평가'
-                : safety.status === 'CLEAR'
-                  ? '안전'
-                  : '계산 불가'}
-          </strong>
-          {(safety.urgentReasons.length > 0 || safety.priorityReasons.length > 0) && (
-            <span className="midlife__muted">
-              {[
-                ...safety.urgentReasons.map((r) => MIDLIFE_URGENT_REASON_LABEL[r]),
-                ...safety.priorityReasons.map((r) => MIDLIFE_PRIORITY_REASON_LABEL[r]),
-              ].join(' · ')}
-            </span>
-          )}
+      {/* ---------- Clinical Snapshot ---------- */}
+      <div className="midlife__cell midlife__snapshot" data-midlife-card="snapshot">
+        <span className="midlife__eyebrow">MIDLIFE · 초진</span>
+        <div className="midlife__snapshotHead">
+          <div>
+            <p className="midlife__headline">{headline}</p>
+            <p className="midlife__muted">
+              가장 힘든 문제: {label('MID_13', m.patient_priority_1)} · 일상 기능 방해 {scoreText(m.function_interference_0_10)}
+            </p>
+          </div>
+          <span className={`midlife__chip midlife__tone--${safetyTone}`} data-midlife-safety-chip={safety.status}>
+            {safetyChip}
+          </span>
         </div>
+        {(safety.urgentReasons.length > 0 || safety.priorityReasons.length > 0) && (
+          <p className="midlife__muted" data-midlife-safety-reasons>
+            {[
+              ...safety.urgentReasons.map((r) => MIDLIFE_URGENT_REASON_LABEL[r]),
+              ...safety.priorityReasons.map((r) => MIDLIFE_PRIORITY_REASON_LABEL[r]),
+            ].join(' · ')}
+          </p>
+        )}
         {unresolved.topWarning && (
           <p className="midlife__alert midlife__alert--urgent" role="alert" data-midlife-alert="urgent-unresolved">
             긴급 외부평가 미해결 {unresolved.urgentUnresolved}건 — 일반 care plan보다 먼저 정리하세요.
@@ -154,8 +221,19 @@ export function MidlifeCarePanel({
       <div className="midlife__grid">
         {/* ---------- 좌측 ---------- */}
         <div className="midlife__col">
-          <div className="midlife__cell" data-midlife-cell="1">
-            <span className="midlife__cellTitle">① 생애단계</span>
+          <div className="midlife__cell" data-midlife-card="life-stage">
+            <span className="midlife__cellTitle">LIFE STAGE</span>
+            <span className="midlife__cellSub">지금 어느 전환 단계인가?</span>
+            <dl className="midlife__facts">
+              <dt>마지막 월경</dt>
+              <dd>{label('MID_02', m.last_menstrual_period)}</dd>
+              <dt>최근 12개월</dt>
+              <dd>{label('MID_01', m.cycle_change)}</dd>
+              <dt>호르몬치료/피임</dt>
+              <dd>{label('MID_03', m.hormone_or_contraception_use)}</dd>
+              <dt>임신·수유 등</dt>
+              <dd>{label('WOMEN_SAFETY_01', reproductive)}</dd>
+            </dl>
             <label className="midlife__field midlife__field--inline">
               <span>원장 판단</span>
               <select
@@ -170,27 +248,18 @@ export function MidlifeCarePanel({
                 ))}
               </select>
             </label>
-            <dl className="midlife__facts">
-              <dt>월경 변화(12개월)</dt>
-              <dd>{label('MID_01', m.cycle_change)}</dd>
-              <dt>마지막 월경</dt>
-              <dd>{label('MID_02', m.last_menstrual_period)}</dd>
-              <dt>호르몬제·피임</dt>
-              <dd>{label('MID_03', m.hormone_or_contraception_use)}</dd>
-              <dt>임신·수유 등</dt>
-              <dd>{label('WOMEN_SAFETY_01', reproductive)}</dd>
-            </dl>
           </div>
 
-          <div className="midlife__cell" data-midlife-cell="2">
-            <span className="midlife__cellTitle">② 주요 증상 · 환자 목표</span>
+          <div className="midlife__cell" data-midlife-card="top-symptoms">
+            <span className="midlife__cellTitle">TOP SYMPTOMS</span>
+            <span className="midlife__cellSub">환자가 가장 바꾸고 싶은 것</span>
             <dl className="midlife__facts">
+              <dt>1순위</dt>
+              <dd>{label('MID_13', m.patient_priority_1)}</dd>
+              <dt>2순위</dt>
+              <dd>{label('MID_14', m.patient_priority_2)}</dd>
               <dt>가장 불편(최대 2)</dt>
               <dd>{label('MID_04', m.top_symptoms)}</dd>
-              <dt>목표 1</dt>
-              <dd>{label('MID_13', m.patient_priority_1)}</dd>
-              <dt>목표 2</dt>
-              <dd>{label('MID_14', m.patient_priority_2)}</dd>
               <dt>기존 진료</dt>
               <dd>{label('MID_10', m.recent_provider_use)}</dd>
               <dt>최근 검사</dt>
@@ -198,107 +267,50 @@ export function MidlifeCarePanel({
             </dl>
           </div>
 
-          <div className="midlife__cell" data-midlife-cell="7">
-            <span className="midlife__cellTitle">⑦ Baseline PRO · 주차 review</span>
-            {/* 읽기 표: 초진(태블릿) + 기록된 주차를 숫자로만 -- 좁은 칸에서도 한 화면에 든다. */}
+          <div className="midlife__cell" data-midlife-card="baseline-pro">
+            <span className="midlife__cellTitle">BASELINE PRO</span>
+            <span className="midlife__cellSub">이번 치료의 고정 기준 — 환자 입력값만(원장 재입력 없음)</span>
             <table className="midlife__pro">
               <thead>
                 <tr>
                   <th scope="col">항목</th>
                   <th scope="col">초진</th>
-                  {MIDLIFE_REVIEW_WEEKS.map((w) => (
-                    <th scope="col" key={w}>
-                      {w}주
-                    </th>
-                  ))}
+                  {reports.map((r) => {
+                    const h = reportHeading(r.createdAt, baselineMs)
+                    return (
+                      <th scope="col" key={r.visitId} data-midlife-report={r.visitId}>
+                        {h.date}
+                        {h.weeks && <span className="midlife__weeks">{h.weeks}</span>}
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {PRO_ROWS.map((row) => (
-                  <tr key={row.key}>
+                  <tr key={row.reportKey}>
                     <th scope="row">{row.title}</th>
-                    <td data-midlife-baseline={row.key}>{scoreText(m[row.moduleField])}</td>
-                    {MIDLIFE_REVIEW_WEEKS.map((w) => (
-                      <td key={w}>{scoreText(reviewFor(w).pro[row.key])}</td>
+                    <td data-midlife-baseline={row.reportKey}>{scoreText(m[row.moduleField])}</td>
+                    {reports.map((r) => (
+                      <td key={r.visitId}>{scoreText(r[row.reportKey])}</td>
                     ))}
                   </tr>
                 ))}
-                <tr>
-                  <th scope="row">경과</th>
-                  <td>—</td>
-                  {MIDLIFE_REVIEW_WEEKS.map((w) => {
-                    const c = reviewFor(w).courseVsExpected
-                    return <td key={w}>{c ? MIDLIFE_COURSE_LABEL[c] : '—'}</td>
-                  })}
-                </tr>
               </tbody>
             </table>
-
-            {/* 입력: 한 번에 한 주차만 -- 네 주차 × 다섯 칸을 한꺼번에 펼치면 한 화면을 넘는다. */}
-            <div className="midlife__weekBar">
-              <div className="midlife__weekTabs" role="group" aria-label="기록할 review 주차">
-                {MIDLIFE_REVIEW_WEEKS.map((w) => (
-                  <button key={w} type="button" aria-pressed={w === activeWeek} onClick={() => setActiveWeek(w)}>
-                    {w}주 기록
-                  </button>
-                ))}
-              </div>
-              <input
-                type="date"
-                aria-label={`${activeWeek}주 기록일`}
-                value={active.reviewedOn}
-                onChange={(e) => updateReview(activeWeek, { reviewedOn: e.target.value })}
-              />
-            </div>
-            <div className="midlife__reviewEdit" data-midlife-review-week={activeWeek}>
-              {PRO_ROWS.map((row) => (
-                <label key={row.key} className="midlife__field">
-                  <span>{row.title}</span>
-                  <select
-                    aria-label={`${activeWeek}주 ${row.title}`}
-                    value={active.pro[row.key] ?? ''}
-                    onChange={(e) =>
-                      updateReview(activeWeek, {
-                        pro: { ...active.pro, [row.key]: e.target.value === '' ? null : Number(e.target.value) },
-                      })
-                    }
-                  >
-                    <option value="">—</option>
-                    {Array.from({ length: 11 }, (_, i) => (
-                      <option key={i} value={i}>
-                        {i}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-              <label className="midlife__field">
-                <span>경과</span>
-                <select
-                  aria-label={`${activeWeek}주 경과`}
-                  value={active.courseVsExpected ?? ''}
-                  onChange={(e) =>
-                    updateReview(activeWeek, {
-                      courseVsExpected: e.target.value === '' ? null : (e.target.value as MidlifeCourseVsExpected),
-                    })
-                  }
-                >
-                  <option value="">—</option>
-                  {MIDLIFE_COURSE_VALUES.map((c) => (
-                    <option key={c} value={c}>
-                      {MIDLIFE_COURSE_LABEL[c]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            {reports.length === 0 && (
+              <p className="midlife__muted" data-midlife-pro-empty>
+                재진 링크에서 환자가 다시 답하면 여기에 날짜별로 자동으로 쌓입니다.
+              </p>
+            )}
           </div>
         </div>
 
         {/* ---------- 우측 ---------- */}
         <div className="midlife__col">
-          <div className="midlife__cell" data-midlife-cell="4">
-            <span className="midlife__cellTitle">④ 진단 가설</span>
+          <div className="midlife__cell" data-midlife-card="hypothesis">
+            <span className="midlife__cellTitle">DIAGNOSTIC HYPOTHESIS</span>
+            <span className="midlife__cellSub">현재 가장 가능성이 높은 설명</span>
             {reopen && <p className="midlife__badge midlife__badge--reopen">재검토(reopen)</p>}
             <textarea
               aria-label="진단 가설"
@@ -308,8 +320,9 @@ export function MidlifeCarePanel({
             />
           </div>
 
-          <div className="midlife__cell" data-midlife-cell="5">
-            <span className="midlife__cellTitle">⑤ 반증 trigger</span>
+          <div className="midlife__cell" data-midlife-card="refutation">
+            <span className="midlife__cellTitle midlife__cellTitle--warn">REFUTATION TRIGGER</span>
+            <span className="midlife__cellSub">이 설명을 다시 열어야 하는 조건</span>
             <textarea
               aria-label="반증 trigger"
               rows={2}
@@ -319,8 +332,9 @@ export function MidlifeCarePanel({
             />
           </div>
 
-          <div className="midlife__cell" data-midlife-cell="6">
-            <span className="midlife__cellTitle">⑥ 외부평가 · 미해결</span>
+          <div className="midlife__cell" data-midlife-card="referral">
+            <span className="midlife__cellTitle">REFERRAL / UNRESOLVED</span>
+            <span className="midlife__cellSub">외부평가와 미해결 항목</span>
             {value.referrals.length === 0 && <p className="midlife__muted">기록된 외부평가 없음</p>}
             <ul className="midlife__referrals">
               {value.referrals.map((r) => (
@@ -379,8 +393,40 @@ export function MidlifeCarePanel({
             </button>
           </div>
 
-          <div className="midlife__cell" data-midlife-cell="7-next">
-            <span className="midlife__cellTitle">⑦ 예상 경과 · 다음 review</span>
+          <div className="midlife__cell" data-midlife-card="care-plan">
+            <span className="midlife__cellTitle">CARE PLAN / NEXT REVIEW</span>
+            <span className="midlife__cellSub">이번 4주 무엇을 맡고 언제 다시 볼까?</span>
+            <dl className="midlife__facts">
+              <dt>4주 목표</dt>
+              <dd data-midlife-goal-summary>{goals.length > 0 ? goals.map((g) => g.label).join(' + ') : '미정'}</dd>
+            </dl>
+            <details className="midlife__disclosure" open={goalPickerOpen}>
+              <summary>
+                4주 목표 고르기 <span className="midlife__muted">(최대 {MIDLIFE_CARE_GOAL_MAX}개 · 다음 재진 확인 항목으로 이어짐)</span>
+              </summary>
+              <div className="midlife__goals" role="group" aria-label="4주 목표" data-midlife-goals>
+                {midlifeGoalOptions().map((g) => {
+                  const on = goalIds.has(g.id)
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      aria-pressed={on}
+                      disabled={!onChangeFollowUpTargets || (!on && goalsFull)}
+                      onClick={() => onChangeFollowUpTargets?.(toggleMidlifeGoal(followUpTargets, g))}
+                    >
+                      {g.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </details>
+            <dl className="midlife__facts">
+              <dt>2주 확인</dt>
+              <dd>악화 · 안전 · 순응</dd>
+              <dt>4주 재평가</dt>
+              <dd>PRO + 외부결과</dd>
+            </dl>
             <label className="midlife__field">
               <span>예상 경과</span>
               <input
@@ -407,6 +453,65 @@ export function MidlifeCarePanel({
                 ))}
               </select>
             </label>
+
+            {/* 경과 기록(원장 판단만): 주차별 "예상 대비" 판정 -- 연속 2회 이탈이면 가설 재검토. */}
+            <details className="midlife__disclosure" open={courseOpen} data-midlife-course-details>
+              <summary>
+                경과 기록 <span className="midlife__muted">{courseSummary}</span>
+              </summary>
+              <table className="midlife__pro midlife__course" data-midlife-course>
+                <thead>
+                  <tr>
+                    <th scope="col">경과</th>
+                    {MIDLIFE_REVIEW_WEEKS.map((w) => (
+                      <th scope="col" key={w}>
+                        {w}주
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">예상 대비</th>
+                    {MIDLIFE_REVIEW_WEEKS.map((w) => {
+                      const c = reviewFor(w).courseVsExpected
+                      return <td key={w}>{c ? MIDLIFE_COURSE_LABEL[c] : '—'}</td>
+                    })}
+                  </tr>
+                </tbody>
+              </table>
+              <div className="midlife__weekBar">
+                <div className="midlife__weekTabs" role="group" aria-label="기록할 review 주차">
+                  {MIDLIFE_REVIEW_WEEKS.map((w) => (
+                    <button key={w} type="button" aria-pressed={w === activeWeek} onClick={() => setActiveWeek(w)}>
+                      {w}주 기록
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="date"
+                  aria-label={`${activeWeek}주 기록일`}
+                  value={active.reviewedOn}
+                  onChange={(e) => updateReview(activeWeek, { reviewedOn: e.target.value })}
+                />
+                <select
+                  aria-label={`${activeWeek}주 경과`}
+                  value={active.courseVsExpected ?? ''}
+                  onChange={(e) =>
+                    updateReview(activeWeek, {
+                      courseVsExpected: e.target.value === '' ? null : (e.target.value as MidlifeCourseVsExpected),
+                    })
+                  }
+                >
+                  <option value="">경과 —</option>
+                  {MIDLIFE_COURSE_VALUES.map((c) => (
+                    <option key={c} value={c}>
+                      {MIDLIFE_COURSE_LABEL[c]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </details>
             {value.expectedCourse.trim() === '' && value.reviews.some((r) => r.courseVsExpected !== null) && (
               <p className="midlife__muted">예상 경과가 비어 있어 "예상 대비" 판정의 기준이 기록되지 않았습니다.</p>
             )}

@@ -33,6 +33,7 @@ import * as care from './.midlife-care-bundle.mjs'
 import { deserializeWorkspaceState, emptyWorkspaceState } from './.midlife-persistence-bundle.mjs'
 import { DOCTOR_FIXTURES } from './.midlife-doctor-fixtures-bundle.mjs'
 import { DoctorWorkspace } from './.midlife-doctor-workspace-bundle.cjs'
+import { MidlifeCarePanel } from './.midlife-care-panel-bundle.cjs'
 import { QuestionBody } from './.midlife-question-screen-bundle.cjs'
 import { StaffCheckScreen } from './.midlife-staff-check-bundle.cjs'
 import { PatientCompleteScreen, HALTED_TITLE, HALTED_HELPER, HALTED_STAFF_NOTE } from './.midlife-complete-screen-bundle.cjs'
@@ -40,6 +41,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createStore } from '../server/store.js'
+import { DETAIL_CHECK_MIDLIFE_QUESTION_IDS, isMidlifeSubmissionResponses } from '../server/detailCheck.js'
+import { readMidlifeProReports } from './.midlife-longitudinal-bundle.mjs'
+import { baselineDetailAnswersFromResponses } from './.midlife-detail-baseline-bundle.mjs'
 
 let passed = 0
 let failed = 0
@@ -285,7 +289,7 @@ const S = (patch) => computeMidlifeSafety({ ...base, ...patch })
   assert('REMOVED: MID_15 문항이 태블릿 정의에 없다', !ALL_QUESTIONS.some((q) => q.id === 'MID_15' || q.variable === 'next_action_confidence_0_10'))
   assert('REMOVED: payload modules.midlife에 next_action_confidence_0_10 키가 없다', !('next_action_confidence_0_10' in m) && !/next_action_confidence_0_10: r\[/.test(src('src/spec/coreSpec.ts')))
   assert('REMOVED: 원장 7칸 ⑦ PRO 표에 "행동 확신" 행(초진 칸·주차 입력칸)이 없다', !/행동 확신|nextActionConfidence|next_action_confidence/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')))
-  assert('REMOVED: 저장 모델 MidlifePro에 nextActionConfidence가 없고, 옛 저장본의 그 키는 정화 때 버려진다', !/nextActionConfidence:/.test(src('src/doctor/workspace/midlifeCare.ts')) && !('nextActionConfidence' in care.sanitizeMidlifeCareRecord({ reviews: [{ week: 2, pro: { primarySymptom: 3, nextActionConfidence: 7 } }] }).reviews[0].pro))
+  assert('REMOVED: 저장 모델에 nextActionConfidence가 없고, 옛 저장본의 review.pro(그 키 포함)는 정화 때 통째로 버려진다', !/nextActionConfidence:/.test(src('src/doctor/workspace/midlifeCare.ts')) && !('pro' in care.sanitizeMidlifeCareRecord({ reviews: [{ week: 2, pro: { primarySymptom: 3, nextActionConfidence: 7 } }] }).reviews[0]))
   assert('REMOVED: 갱년기 모듈 마지막 화면은 MID_14(목표 2)다', MID_IDS[MID_IDS.length - 1] === 'MID_14')
   assert('DATA: safety_flags.midlife(=safety_flags)가 계산되어 있다', p.safety_flags.midlife && p.safety_flags.midlife.status === 'PRIORITY_EVALUATION')
   assert('DATA: abnormal_bleeding_flag = safety_flags.midlife.abnormalBleeding', p.safety_flags.midlife.abnormalBleeding === true)
@@ -373,27 +377,36 @@ const withSelfHarmPayload = () => {
   assert('AC2 대조군: 안전 해당 없음 기록은 "안전이슈 없음"(같은 줄이 실제로 읽힌다)', heroIssue(htmlC) === '없음')
   assert('AC2: 안전 해당 없음 → clear 클래스', htmlC.includes('data-midlife-safety="CLEAR"') && htmlC.includes('doctor__lbpSafety--clear'))
 
-  // AC3 — 7칸
+  // AC3 — Figma 40:49 8카드(스냅샷 + 좌 3 + 우 4) — PO 재검수 2026-09-29 "Figma 구조 기준"
+  const CARDS = ['snapshot', 'life-stage', 'top-symptoms', 'baseline-pro', 'hypothesis', 'refutation', 'referral', 'care-plan']
   for (const [label, h] of [['URGENT', html], ['PRIORITY', htmlP], ['CLEAR', htmlC]]) {
-    const cells = ['1', '2', '3', '4', '5', '6', '7'].filter((c) => h.includes(`data-midlife-cell="${c}"`))
-    assert(`AC3(${label}): 7개 핵심 칸(1~7)이 모두 한 패널에 렌더된다`, cells.length === 7)
+    const found = CARDS.filter((c) => h.includes(`data-midlife-card="${c}"`))
+    assert(`AC3(${label}): Figma 8카드가 모두 한 패널에 렌더된다`, found.length === 8)
   }
   const panelHtml = html.slice(iPanel)
-  assert('AC3: 7칸이 모두 같은 section(갱년기 진료 요약) 안에 있다', ['1', '2', '3', '4', '5', '6', '7'].every((c) => panelHtml.indexOf(`data-midlife-cell="${c}"`) < panelHtml.indexOf('</section>')))
-  assert('AC3: ③안전 칸이 스냅샷 맨 앞(1·2칸보다 먼저)', panelHtml.indexOf('data-midlife-cell="3"') < panelHtml.indexOf('data-midlife-cell="1"'))
+  const pos = (c) => panelHtml.indexOf(`data-midlife-card="${c}"`)
+  assert('AC3: 8카드가 모두 같은 section(갱년기 진료 요약) 안에 있다', CARDS.every((c) => pos(c) > -1 && pos(c) < panelHtml.indexOf('</section>')))
+  assert('AC3: Figma 순서 — 스냅샷 → 좌(LIFE STAGE·TOP SYMPTOMS·BASELINE PRO) → 우(HYPOTHESIS·REFUTATION·REFERRAL·CARE PLAN)', CARDS.every((c, i) => i === 0 || pos(CARDS[i - 1]) < pos(c)))
+  assert('AC3: 안전 칩이 스냅샷 안에 있다(카드들보다 먼저)', panelHtml.indexOf('data-midlife-safety-chip') > pos('snapshot') && panelHtml.indexOf('data-midlife-safety-chip') < pos('life-stage'))
+  assert('AC3: 안전 칩 문구 = 판정(CLEAR "긴급 Red flag 없음" / URGENT / 우선 외부평가)', htmlC.includes('data-midlife-safety-chip="CLEAR">긴급 Red flag 없음') && html.includes('data-midlife-safety-chip="URGENT_REVIEW">URGENT') && htmlP.includes('data-midlife-safety-chip="PRIORITY_EVALUATION">우선 외부평가'))
+  assert('AC3: Figma 섹션 라벨·부제가 그대로', ['LIFE STAGE', '지금 어느 전환 단계인가?', 'TOP SYMPTOMS', '환자가 가장 바꾸고 싶은 것', 'BASELINE PRO', 'DIAGNOSTIC HYPOTHESIS', 'REFUTATION TRIGGER', '이 설명을 다시 열어야 하는 조건', 'REFERRAL / UNRESOLVED', 'CARE PLAN / NEXT REVIEW', '이번 4주 무엇을 맡고 언제 다시 볼까?'].every((t) => htmlP.includes(t)))
   assert('AC3: 환자 응답이 환자가 본 라벨로 보인다(주요 증상)', htmlP.includes('열감·땀, 수면 불편'))
   assert('AC3: Baseline PRO 초진값이 태블릿 값 그대로(7/10)', htmlP.includes('data-midlife-baseline="primarySymptom">7/10'))
   assert('AC3: 없는 답은 "—"로(지어내지 않음) -- 무월경이면 마지막 월경 칸 —', /마지막 월경<\/dt><dd>—<\/dd>/.test(htmlP))
-  assert('AC3: 7칸 패널은 기존 토큰만 쓴다(새 색상 변수 없음)', !/--midlife-/.test(src('src/doctor/workspace/workspace.css')))
+  assert('AC3: Figma BASELINE PRO의 "다음 행동 이해" 행은 그리지 않는다(MID_15 삭제 유지, PO 2026-09-29)', !htmlP.includes('다음 행동 이해'))
+  assert('AC3: 새 색상 변수를 만들지 않는다', !/--midlife-/.test(src('src/doctor/workspace/workspace.css')))
   {
-    // Figma `01 · Pain Doctor View`(frame 1:2)를 옮긴 --pain-* 토큰으로 카드·라벨·행을 그린다(명세: 같은 시각 언어 재사용).
+    // Figma `02 · Midlife Care v0.1` / Doctor View · Midlife · 1440 (40:49) get_design_context 실측값.
     const css = src('src/doctor/workspace/workspace.css')
-    const block = css.slice(css.indexOf('Midlife v0.2: 갱년기 진료 요약 7칸'))
+    const block = css.slice(css.indexOf('Midlife: 갱년기 진료 요약 (MidlifeCarePanel.tsx)'))
     const rule = (sel) => (block.match(new RegExp(`\\n${sel.replace(/\./g, '\\.')} \\{([^}]*)\\}`)) ?? [])[1] ?? ''
-    assert('FIGMA: 카드 테두리·모서리·바탕은 --pain-border/--pain-radius/--pain-surface', /var\(--pain-border\)/.test(rule('.midlife__cell')) && /var\(--pain-radius\)/.test(rule('.midlife__cell')) && /var\(--pain-surface\)/.test(rule('.midlife__cell')))
-    assert('FIGMA: 섹션 라벨은 13px(--pain-fs-eyebrow) semibold, 의미 색 good', /--pain-fs-eyebrow/.test(rule('.midlife__cellTitle')) && /600/.test(rule('.midlife__cellTitle')) && /--pain-good/.test(rule('.midlife__cellTitle')))
-    assert('FIGMA: 사실 행은 라벨 좌 / 값 우(행 문법 하나)', /\.midlife__facts dd \{[^}]*text-align:\s*right/.test(block))
-    assert('FIGMA: 옛 전역 토큰(--border/--surface)을 7칸 블록에서 쓰지 않는다', !/var\(--border\)|var\(--surface\)/.test(block))
+    const cell = rule('.midlife__cell')
+    assert('FIGMA(40:49): 카드 = --border 1px · 14px 모서리 · --surface · 22px 안쪽 · 12px 간격', /1px solid var\(--border\)/.test(cell) && /border-radius: 14px/.test(cell) && /var\(--surface\)/.test(cell) && /padding: 22px/.test(cell) && /gap: 12px/.test(cell))
+    assert('FIGMA(40:49): 섹션 라벨 13px semibold --primary, 반증만 --danger, 부제 13px --text-muted', /13px/.test(rule('.midlife__cellTitle')) && /600/.test(rule('.midlife__cellTitle')) && /var\(--primary\)/.test(rule('.midlife__cellTitle')) && /var\(--danger\)/.test(rule('.midlife__cellTitle--warn')) && /var\(--text-muted\)/.test(rule('.midlife__cellSub')))
+    assert('FIGMA(40:49): 행 30px, 라벨 좌 / 값 우(semibold)', /min-height: 30px/.test(block) && /\.midlife__facts dd \{[^}]*text-align:\s*right/.test(block) && /\.midlife__facts dd \{[^}]*font-weight: 600/.test(block))
+    assert('FIGMA(40:49): 스냅샷 16px 모서리 · 24/28px 안쪽 · 26px 제목 · --primary-soft 안전 칩', /border-radius: 16px/.test(rule('.midlife__snapshot')) && /padding: 24px 28px/.test(rule('.midlife__snapshot')) && /font-size: 26px/.test(rule('.midlife__headline')) && /var\(--primary-soft\)/.test(rule('.midlife__tone--clear')))
+    assert('FIGMA(40:49): 열 사이 20px, 카드 사이 16px', /gap: 20px/.test(rule('.midlife__grid')) && /gap: 16px/.test(rule('.midlife__col')))
+    assert('FIGMA(40:49): 옛 임시 기준(--pain-*)을 갱년기 블록에서 더 쓰지 않는다', !/var\(--pain-/.test(block.slice(0, block.indexOf('.midlife__field--inline select'))))
   }
 }
 
@@ -453,7 +466,7 @@ const withSelfHarmPayload = () => {
     expectedCourse: '2–4주 내 새벽 각성 감소',
     nextReviewWeek: 4,
     referrals: [{ ...care.newMidlifeReferral('r1'), label: '부인과 초음파', urgency: 'urgent', status: 'ordered' }],
-    reviews: [2, 4, 8, 12].map((w) => rv(w, 'as_expected', { reviewedOn: '2026-10-01', pro: { primarySymptom: 5, sleepSatisfaction: 6, functionInterference: 4 } })),
+    reviews: [2, 4, 8, 12].map((w) => rv(w, 'as_expected', { reviewedOn: '2026-10-01', note: `w${w}` })),
   }
   const ws = { ...emptyWorkspaceState(), midlifeCare: full }
   const back = deserializeWorkspaceState(JSON.parse(JSON.stringify(ws)))
@@ -497,14 +510,13 @@ const withSelfHarmPayload = () => {
   act(() => weekTab(12).props.onClick())
   act(() => courseSel(12).props.onChange({ target: { value: 'deviates' } }))
   act(() => weekTab(2).props.onClick())
-  const proSel = tr.root.findAll((n) => n.type === 'select' && n.props['aria-label'] === '2주 수면 만족')[0]
-  act(() => proSel.props.onChange({ target: { value: '4' } }))
+  assert('REMOVED(UI): review 입력칸에 PRO 선택칸이 없다 — 원장은 경과 판정·기록일만(PO BLOCKER 1)', tr.root.findAll((n) => n.type === 'select' && /주 (주증상|주 증상|수면|일상)/.test(String(n.props['aria-label'] ?? ''))).length === 0)
   assert('AC5(UI): 연속 2회 이탈 → 스냅샷에 가설 재검토 경고', tr.root.findAll((n) => n.props && n.props['data-midlife-alert'] === 'reopen').length === 1)
   await new Promise((res) => setTimeout(res, 1300))
   await act(async () => {})
   const last = saves[saves.length - 1]
-  assert('AC5(UI): 자동저장 payload에 midlifeCare.reviews가 실린다', !!last && last.midlifeCare.reviews.map((r) => `${r.week}:${r.courseVsExpected}`).join() === '2:null,8:deviates,12:deviates')
-  assert('AC5(UI): 2주 PRO(수면 만족=4)가 저장된다', !!last && last.midlifeCare.reviews[0].pro.sleepSatisfaction === 4)
+  assert('AC5(UI): 자동저장 payload에 midlifeCare.reviews가 실린다', !!last && last.midlifeCare.reviews.map((r) => `${r.week}:${r.courseVsExpected}`).join() === '8:deviates,12:deviates')
+  assert('REMOVED(UI): 자동저장된 review에 pro 필드가 없다', !!last && last.midlifeCare.reviews.every((r) => !('pro' in r)))
   act(() => tr.unmount())
 }
 
@@ -660,6 +672,162 @@ const withSelfHarmPayload = () => {
   broken.metadata.questionnaire_halted = { at_question: 42 }
   const db = renderWs(broken)
   assert('SOP⑤: 손상된 중단 metadata여도 URGENT·자해 근거·SOP는 남는다(응답에서 재계산)', !/data-midlife-halted/.test(db) && /data-midlife-safety="URGENT_REVIEW"/.test(db) && /data-midlife-protocol="self_harm"/.test(db))
+}
+
+/* =========================================================================
+ * PO 재검수 BLOCKER 1 — 재진 PRO는 환자가 직접, 원장은 다시 타이핑하지 않는다
+ * (PR #59 리뷰 2026-09-28 → 추천안 승인 2026-09-29: 갱년기 재진 링크마다 MID_05·06·07)
+ * ========================================================================= */
+{
+  assert('B1: 서버 재질문 표 = MID_05·06·07(같은 초진 문항 id)', DETAIL_CHECK_MIDLIFE_QUESTION_IDS.join() === 'MID_05,MID_06,MID_07')
+  assert('B1: 세 문항 모두 0~10 척도라 재진 화면이 그대로 그린다(resolveDetailCheckQuestions: numeric_scale)', DETAIL_CHECK_MIDLIFE_QUESTION_IDS.every((id) => qById.get(id)?.input === 'numeric_scale' && qById.get(id).scale?.max === 10))
+  assert('B1: 서버 갱년기 판정 = 원장 화면 isMidlifeRecord와 같은 키(primary_concern.key)', isMidlifeSubmissionResponses(MID_CLEAR.payload.responses) && !isMidlifeSubmissionResponses(DOCTOR_FIXTURES.find((f) => f.payload.routing.primary_module === 'Pain').payload.responses) && !isMidlifeSubmissionResponses(null))
+  const base = baselineDetailAnswersFromResponses(MID_PRIORITY.payload.responses)
+  assert('B1: 재진 카드의 "초진 → 오늘" 초진값이 태블릿 값에서 나온다(MID_05·06·07)', base.MID_05 === String(MID_PRIORITY.payload.responses.modules.midlife.primary_symptom_0_10) && base.MID_06 !== undefined && base.MID_07 !== undefined)
+
+  const root = await mkdtemp(path.join(tmpdir(), 'samindang-midlife-b1-'))
+  try {
+    const store = createStore(path.join(root, 'data'), { followUpTokenTtlMinutes: 30, followUpTokenRetentionHours: 24, startRevisitDedupWindowMs: 1 })
+    // 갱년기 환자: 초진 제출 + 원장이 4주 목표 2개(FollowUpTarget)를 저장
+    const subM = await store.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'mid-b1', responses: MID_CLEAR.payload.responses, flags: MID_CLEAR.payload.flags, routing: MID_CLEAR.payload.routing, metadata: {} },
+      myungri: null,
+      patient_label: 'mid-b1',
+    })
+    let targets = []
+    for (const g of care.midlifeGoalOptions().filter((o) => ['midlife_goal:sleep', 'midlife_goal:hot_flash_sweat'].includes(o.id))) targets = care.toggleMidlifeGoal(targets, g)
+    await store.saveWorkspace(subM.id, { ...emptyWorkspaceState(), herbalFollowUpTargets: targets })
+
+    const started = await store.startRevisit(subM.patient_id)
+    const dc = started.session.detail_check
+    assert('B1: 갱년기 재진 링크는 원장 재평가 계획이 없어도 MID_05·06·07을 싣는다', !!dc && dc.reason === 'MIDLIFE_REVIEW' && dc.question_ids.join() === 'MID_05,MID_06,MID_07')
+    assert('B1: 통증 공통 재질문(PAIN_03·VISIT_04)은 갱년기 환자에게 섞이지 않는다', !dc.question_ids.some((id) => id.startsWith('PAIN_') || id.startsWith('VISIT_')))
+    assert('B2: 4주 목표 2개가 다음 재진 링크의 확인 항목(Micro Follow-up 후보)으로 그대로 이어진다', started.session.targets.map((t) => t.id).join() === 'midlife_goal:hot_flash_sweat,midlife_goal:sleep')
+
+    const submitted = await store.submitFollowUpSession(started.token, {
+      targetRatings: [{ targetId: 'midlife_goal:sleep', label: 'x', patientReportedValue: '조금 나아짐' }],
+      detailAnswers: [
+        { questionId: 'MID_05', value: '4' },
+        { questionId: 'MID_06', value: '6' },
+        { questionId: 'MID_07', value: '3' },
+        { questionId: 'PAIN_03', value: '9' },
+      ],
+      overallChange: '',
+      newSymptomReported: false,
+      newSymptomNote: '',
+      adverseEffectReported: false,
+      adverseEffectNote: '',
+    })
+    assert('B1: 환자 답은 기존 MicroFollowUpResponse.detailAnswers에 저장(새 저장소 없음), 링크에 없던 문항(PAIN_03)은 버려진다', submitted.ok === true && submitted.response.detailAnswers.map((a) => a.questionId).join() === 'MID_05,MID_06,MID_07')
+
+    const hist = await store.getPatientHistory(subM.patient_id, subM.visit_id)
+    const rep = hist.midlife_pro_reports
+    assert('B1: 원장 워크스페이스를 아직 저장하지 않은 재진도 PRO 보고에 나온다', Array.isArray(rep) && rep.length === 1 && rep[0].visit_id === started.visit.id)
+    assert('B1: 보고 값 = 환자가 누른 값(4·6·3), 원장 입력 없음', rep[0].primary_symptom_0_10 === 4 && rep[0].sleep_satisfaction_0_10 === 6 && rep[0].function_interference_0_10 === 3)
+    assert('B1 회귀: 미저장 재진은 visits에 들어가지 않는다(Micro Follow-up 후보 carry-forward 불변)', hist.visits.every((v) => v.visit_id !== started.visit.id))
+    const again = await store.deriveMicroFollowUpCandidates(subM.patient_id, undefined)
+    assert('B1 회귀: 그래서 다음 링크 후보도 여전히 초진의 4주 목표', again.map((c) => c.id).join() === 'midlife_goal:hot_flash_sweat,midlife_goal:sleep')
+
+    // 대조군: 통증 환자는 계획이 없으면 재질문 없음(기존 동작 그대로)
+    const painFixture = DOCTOR_FIXTURES.find((f) => f.payload.routing.primary_module === 'Pain')
+    const subP = await store.createSubmission({
+      submission: { questionnaire_version: '1.0', session_id: 'pain-b1', responses: painFixture.payload.responses, flags: painFixture.payload.flags, routing: painFixture.payload.routing, metadata: {} },
+      myungri: null,
+      patient_label: 'pain-b1',
+    })
+    await store.saveWorkspace(subP.id, emptyWorkspaceState())
+    const startedP = await store.startRevisit(subP.patient_id)
+    assert('B1 대조군: 통증 환자(재평가 계획 없음)는 기존대로 재질문 없음', startedP.session.detail_check == null)
+    const histP = await store.getPatientHistory(subP.patient_id, subP.visit_id)
+    assert('B1 대조군: 통증 환자 이력의 갱년기 PRO 보고는 빈 목록', Array.isArray(histP.midlife_pro_reports) && histP.midlife_pro_reports.length === 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+
+  // 화면 쪽 파서 -- 검증 없는 저장값에서 온 응답
+  const parsed = readMidlifeProReports([
+    { visit_id: 'v1', created_at: '2026-10-12T01:00:00Z', primary_symptom_0_10: 4, sleep_satisfaction_0_10: 6, function_interference_0_10: 3 },
+    { visit_id: 'v2', created_at: '2026-10-26T01:00:00Z', primary_symptom_0_10: '5', sleep_satisfaction_0_10: 11, function_interference_0_10: 2.5 },
+    null,
+    { visit_id: 3 },
+  ])
+  assert('B1: 파서 — 0~10 정수만, 문자열·범위 밖·소수는 null, 깨진 원소는 버림(던지지 않음)', parsed.length === 2 && parsed[1].primarySymptom === null && parsed[1].sleepSatisfaction === null && parsed[1].functionInterference === null && parsed[0].sleepSatisfaction === 6)
+  assert('B1: 파서 — 배열이 아니면 빈 목록(옛 서버)', readMidlifeProReports(undefined).length === 0 && readMidlifeProReports({}).length === 0)
+
+  // 7칸 BASELINE PRO: 초진 + 재진 보고(실제 날짜·+N주), 원장 입력칸 없음
+  const started = '2026-10-01T00:00:00Z'
+  const pay = clone(MID_PRIORITY.payload)
+  pay.metadata = { ...pay.metadata, session_started_at: started }
+  const reports = [
+    { visitId: 'r2', createdAt: '2026-10-29T02:00:00Z', primarySymptom: 3, sleepSatisfaction: 7, functionInterference: 2 },
+    { visitId: 'r1', createdAt: '2026-10-15T02:00:00Z', primarySymptom: 5, sleepSatisfaction: 5, functionInterference: 4 },
+    { visitId: 'old', createdAt: '2026-01-01T00:00:00Z', primarySymptom: 9, sleepSatisfaction: 1, functionInterference: 9 },
+  ]
+  const hp = renderToString(React.createElement(MidlifeCarePanel, { payload: pay, value: care.emptyMidlifeCareRecord(), onChange() {}, proReports: reports }))
+  const cardPro = hp.slice(hp.indexOf('data-midlife-card="baseline-pro"'), hp.indexOf('data-midlife-card="hypothesis"'))
+  assert('B1(UI): 재진 보고가 날짜순 열로(10/15 → 10/29), +N주 표기', cardPro.indexOf('data-midlife-report="r1"') > -1 && cardPro.indexOf('data-midlife-report="r1"') < cardPro.indexOf('data-midlife-report="r2"') && cardPro.includes('+2주') && cardPro.includes('+4주'))
+  assert('B1(UI): 초진 이전 보고(다른 에피소드)는 섞지 않는다', !cardPro.includes('data-midlife-report="old"') && !cardPro.includes('9/10'))
+  assert('B1(UI): 값은 환자 보고 그대로(5/10 → 3/10)', /주증상<\/th><td[^>]*>[^<]*<\/td><td>5\/10<\/td><td>3\/10<\/td>/.test(cardPro))
+  assert('B1(UI): BASELINE PRO 카드에 입력칸(select·input)이 하나도 없다 — 원장 재입력 경로 없음', !/<(select|input|textarea)/.test(cardPro))
+  const hEmpty = renderToString(React.createElement(MidlifeCarePanel, { payload: MID_PRIORITY.payload, value: care.emptyMidlifeCareRecord(), onChange() {} }))
+  assert('B1(UI): 재진 보고가 없으면 "재진 링크에서 환자가 다시 답하면…" 안내(빈 칸을 지어내지 않음)', hEmpty.includes('data-midlife-pro-empty'))
+  const ws = src('src/doctor/workspace/DoctorWorkspace.tsx')
+  assert('B1: DoctorWorkspace가 이력의 midlifeProReports를 패널에 넘긴다', /proReports=\{priorVisits\?\.midlifeProReports\}/.test(ws))
+  // CLAUDE.md 경로 규칙 — 지운 경로 3개 × 소스 단언
+  assert('REMOVED(B1): 저장 모델 MidlifeReview에 pro 필드가 없다', !/\bpro: /.test(src('src/doctor/workspace/midlifeCare.ts')) && !/MidlifePro\b/.test(src('src/doctor/workspace/midlifeCare.ts')))
+  assert('REMOVED(B1): 패널에 review PRO 선택칸(`${activeWeek}주 ${row.title}`)이 없다', !/주 \$\{row\.title\}/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')) && !/active\.pro/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')))
+  assert('REMOVED(B1): PRO 표가 review.pro를 읽지 않는다(환자 보고만)', !/reviewFor\(w\)\.pro/.test(src('src/doctor/workspace/MidlifeCarePanel.tsx')))
+}
+
+/* =========================================================================
+ * PO 재검수 BLOCKER 2 — 4주 care goal = 기존 FollowUpTarget(최대 2)
+ * ========================================================================= */
+{
+  const opts = care.midlifeGoalOptions()
+  const ids = opts.map((o) => o.id)
+  assert('B2: 선택지 = MID_13 환자 목표 목록 그대로(라벨 복사 없이 스펙에서)', opts.length === qById.get('MID_13').options.length && qById.get('MID_13').options.every((o) => ids.includes(`midlife_goal:${o.value}`) && opts.find((x) => x.id === `midlife_goal:${o.value}`).label === o.label))
+  assert('B2: 목표는 FollowUpTarget 모양(id·label·baseline·postTreatmentValue)', JSON.stringify(Object.keys(opts[0]).sort()) === JSON.stringify(['baseline', 'id', 'label', 'postTreatmentValue']))
+  let t = []
+  t = care.toggleMidlifeGoal(t, opts[0])
+  t = care.toggleMidlifeGoal(t, opts[1])
+  const third = care.toggleMidlifeGoal(t, opts[2])
+  assert('B2: 갱년기 목표는 최대 2개 — 세 번째는 무시(다른 목표를 밀어내지 않음)', third === t && t.length === 2)
+  assert('B2: 다시 누르면 해제', care.toggleMidlifeGoal(t, opts[0]).map((x) => x.id).join() === opts[1].id)
+  const herbal = [{ id: 'sleep', label: '수면 불편', baseline: '', postTreatmentValue: '' }, { id: 'digestion', label: '속 불편', baseline: '', postTreatmentValue: '' }]
+  const withOne = care.toggleMidlifeGoal(herbal, opts[0])
+  assert('B2: 한약 재평가 대상과 같은 배열 — 전체 상한 3은 기존 규칙 그대로', withOne.length === 3 && care.toggleMidlifeGoal(withOne, opts[1]) === withOne)
+  assert('B2: 한약 대상은 갱년기 목표로 세지 않는다', care.selectedMidlifeGoals(withOne).length === 1)
+  assert('B2: 전용 careGoals 필드를 만들지 않았다', !/careGoals/.test(src('src/doctor/workspace/midlifeCare.ts')) && !/careGoals/.test(src('src/doctor/workspace/persistence.ts')))
+
+  // UI: 칩을 누르면 herbalFollowUpTargets에 저장되고, CARE PLAN 카드에 Figma 줄이 보인다
+  const saves = []
+  let tr
+  act(() => {
+    tr = TestRenderer.create(
+      React.createElement(DoctorWorkspace, {
+        payload: MID_CLEAR.payload,
+        submissionId: 'sub-midlife-b2',
+        initialWorkspaceState: emptyWorkspaceState(),
+        initialRecordUpdatedAt: 't0',
+        onSaveWorkspace: async (state) => {
+          saves.push(state)
+          return { ok: true, updatedAt: `t${saves.length}` }
+        },
+      }),
+    )
+  })
+  const goalBtn = (label) => tr.root.findAll((n) => n.type === 'button' && n.props['aria-pressed'] !== undefined && [].concat(n.props.children).join('') === label && n.parent?.props?.['data-midlife-goals'] !== undefined)[0]
+  act(() => goalBtn('수면 불편').props.onClick())
+  act(() => goalBtn('열감·땀').props.onClick())
+  assert('B2(UI): 2개를 고르면 나머지 목표 칩은 비활성', goalBtn('두통').props.disabled === true && goalBtn('수면 불편').props['aria-pressed'] === true)
+  await new Promise((res) => setTimeout(res, 1300))
+  await act(async () => {})
+  const last = saves[saves.length - 1]
+  assert('B2(UI): 자동저장 payload의 herbalFollowUpTargets에 4주 목표 2개가 실린다', !!last && last.herbalFollowUpTargets.map((x) => x.id).join() === 'midlife_goal:sleep,midlife_goal:hot_flash_sweat')
+  act(() => tr.unmount())
+  const hp = renderWs(MID_CLEAR.payload)
+  const plan = hp.slice(hp.indexOf('data-midlife-card="care-plan"'))
+  assert('B2(UI): CARE PLAN 카드에 Figma 줄(4주 목표 · 2주 확인 악화·안전·순응 · 4주 재평가 PRO + 외부결과)', plan.includes('4주 목표') && plan.includes('악화 · 안전 · 순응') && plan.includes('PRO + 외부결과'))
 }
 
 console.log(`\nSUMMARY: ${passed} assertions passed, ${failed} failed (total ${passed + failed})`)

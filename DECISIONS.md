@@ -1,5 +1,64 @@
 # Decisions Log
 
+## 2026-09-29 — PR #59 PO 재검수 BLOCKER 1·2 + Figma 재대조 설계 (PO "추천안으로 진행")
+
+PO 재검수 리뷰(2026-09-28)의 BLOCKER 2건과 Figma 2프레임(40:3 태블릿, 40:49 원장) 재대조 요구에 대해,
+PR 코멘트로 제시한 추천안 4건을 PO가 그대로 승인했다. **구현 전 계획 기록**이다(결과는 아래 "결과" 절에 덧붙인다).
+
+| # | 결정 | 근거 |
+|---|---|---|
+| 1 | **MID_15(행동 확신) 삭제 유지.** Figma Baseline PRO 카드의 "다음 행동 이해" 행은 코드에서 그리지 않는다(Figma 쪽 잔여 행). | 2026-09-28 채팅 결정(a40ed53)이 리뷰보다 나중·구체적. 리뷰는 삭제 전 커밋(a1994dd) 기준으로 작성됨 |
+| 2 | **갱년기 환자는 재진 링크마다 MID_05·06·07을 다시 묻는다**(원장 재평가 계획 시점과 무관). | 갱년기 "다음 review 주차"와 재평가 계획을 두 번 설정하지 않게. 3문항 ≈ 20초 |
+| 3 | **4주 care goal = 기존 `FollowUpTarget`**(갱년기 기록은 한약 프로필 → `herbalFollowUpTargets`), 갱년기 목표는 최대 2개, 선택지는 MID_13 목표 목록. 전용 `careGoals` 필드는 만들지 않는다. | Figma "4주 목표: 수면 + 야간 열감"은 목표 **영역**이라 FollowUpTarget {id, label, baseline}으로 표현된다. 다음 재진 Micro Follow-up 후보로 그대로 이어진다 |
+| 4 | **이번 PR은 원장 화면(40:49)만 Figma 8카드 구조로 맞춘다.** 태블릿(40:3) 차이는 목록만 남기고 별도 PR. | 태블릿 `QuestionScreen`은 모든 문진 공용 — 여기서 바꾸면 통증 등 다른 문진 화면으로 번진다 |
+
+### 설계 (BLOCKER 1 — 원장 재입력 제거)
+
+- 서버 `detailCheck.js`에 `DETAIL_CHECK_MIDLIFE_QUESTION_IDS = [MID_05, MID_06, MID_07]`. `store.js` `deriveDetailCheck`는
+  가장 최근 제출이 갱년기(`responses.primary_concern.key === 'midlife'`)면 계획 due 여부와 무관하게 이 3개만 싣는다
+  (reason `MIDLIFE_REVIEW`). 통증 공통 재질문(PAIN_03 등)은 갱년기 환자에게 묻지 않는다. 계획 due 계산(`computeDetailCheckDue`)은
+  건드리지 않는다 — 원장 화면 쪽 사본과의 case-for-case parity 유지.
+- 환자 답은 기존 `MicroFollowUpResponse.detailAnswers`에 저장된다(새 저장소 없음). `getPatientHistory` 결과에
+  **최상위 `midlife_pro_reports`**(재진 방문별 날짜 + 3점수)를 **추가**한다 — `visits` 배열은 건드리지 않는다
+  (워크스페이스 미저장 재진을 `visits`에 넣으면 Micro Follow-up 후보 carry-forward가 바뀌기 때문).
+- `detailCheckBaseline.ts`에 MID_05·06·07 경로 추가 → 재진 화면 `MicroFollowUpCard`가 "초진 → 오늘"을 자동 표시.
+- 7칸 Baseline PRO 표: 열 = 초진(태블릿) + 이후 재진 보고(날짜·+N주). **주차 칸에 억지로 넣지 않는다** — 늦게 온 환자의 값이
+  엉뚱한 주차에 들어가는 오분류를 막기 위해 실제 날짜로 보인다. 원장 review 입력은 **경과 판정·기록일만** 남긴다.
+- `MidlifeReview.pro` 필드 삭제 → CLAUDE.md 경로 제거 규칙(필드×화면 표 + 경로당 REMOVED 테스트).
+
+### 설계 (BLOCKER 2 — 4주 care goal)
+
+- Care Plan / Next Review 카드: 4주 목표 칩(MID_13 목표 목록, 최대 2개) → `herbalFollowUpTargets`에 id `midlife_goal:<값>`로
+  저장. 한약 "재평가 대상" 카드와 같은 배열이라 두 곳에서 같은 값이 보인다(전체 상한 3은 기존 규칙 그대로).
+  카드 나머지 줄: 2주 확인 "악화 · 안전 · 순응", 4주 재평가 "PRO + 외부결과"(고정 안내), 예상 경과, 다음 review 주차.
+
+### 결과 (2026-09-29 구현)
+
+- 서버: `DETAIL_CHECK_MIDLIFE_QUESTION_IDS`, `isMidlifeSubmissionResponses`, `deriveDetailCheck` 갱년기 분기(reason
+  `MIDLIFE_REVIEW` — `followUpSessionStore.normalizeDetailCheck`가 허용), `getPatientHistory().midlife_pro_reports`(추가 필드).
+- 화면: `MidlifeCarePanel`을 Figma 40:49의 8카드로 재구성(스냅샷 · LIFE STAGE · TOP SYMPTOMS · BASELINE PRO | HYPOTHESIS ·
+  REFUTATION · REFERRAL · CARE PLAN). CSS는 40:49 실측값(전역 토큰) — 2026-09-28 `--pain-*` 임시 기준을 대체(아래 "Pain 시각 언어로
+  갈음" 항목은 당시 기록으로 남긴다). 4주 목표 고르기·경과 기록은 접힘(마운트 때 한 번만 정하는 latch — 편집 중 사라지지 않음).
+- `detailCheckBaseline.ts`에 MID_05·06·07 경로 → 재진 카드 "초진 → 오늘" 자동. `tests/detail-check.spec.mjs`의 "baseline 경로 =
+  서버 재질문 id 집합" 단언은 갱년기 표를 포함하도록 **넓혔다**(단언 자체는 유지).
+- 테스트 `npm run test:midlife` 233/233(+42): B1 서버 왕복(링크에 MID_05·06·07 · 통증 공통 미포함 · 미저장 재진도 보고 · `visits`/후보
+  carry-forward 불변 · 통증 대조군 재질문 없음) · 파서 · UI(날짜 열·초진 이전 보고 제외·입력칸 0) · B2(선택지=MID_13 · 상한 2/전체 3 ·
+  같은 배열 · UI 자동저장 · Figma 3줄) · FIGMA(40:49) 6건 · REMOVED 3건. mutation 4종(갱년기 분기 끄기 · 보고에 워크스페이스 요구 ·
+  목표 상한 제거 · 이력 배선 끊기) 모두 실패로 잡힘. `test:all` exit 0, `build` 통과.
+- Playwright 1440×900: 8카드 모두 렌더, 카드 폭 455px, 카드 안 가로 넘침 0, 라벨 13px/600/--primary, 카드 14px/22px/--border, 제목 26px.
+
+경로 제거·교체 표(CLAUDE.md 규칙 — 필드 × 화면):
+
+| 경로 | 초진(갱년기) | 재진 | 한약 | mixed | fixture 미리보기 | 대체 |
+|---|---|---|---|---|---|---|
+| 저장 `midlifeCare.reviews[].pro`(주 증상·수면 만족·일상 지장) | 7칸 ⑦에서 주차별 원장 입력 | 재진 화면은 원래 안 이어받음 | 갱년기 패널에만 있던 칸 | 같음 | fixture엔 값 없음 | **환자 재진 링크 MID_05·06·07 → `midlife_pro_reports`**. 옛 저장본의 `pro`는 `sanitizeReview`가 버림(미병합 브랜치라 실제 저장본 없음) |
+| review PRO 선택칸 3개(UI) | 주차 입력칸 | — | — | — | 표시 | 삭제. 입력 방향: 편집 UI를 함께 닫아 쓰기만 되고 안 읽히는 필드 없음 |
+| PRO 표 주차 칸(`reviewFor(w).pro`) | 2/4/8/12주 열 | — | — | — | 표시 | 재진 보고 날짜 열(+N주)로 교체 — 주차 오분류 방지 |
+| ③ 안전 칸(스냅샷 첫 칸) | 상태 + 근거 | — | — | — | 표시 | 스냅샷 안전 칩(상태) + 근거 한 줄 — 값 손실 없음(레인1 안전 패널이 전체 근거·SOP 그대로) |
+| ⑦ 예상 경과 · 다음 review 칸 | 입력 | — | — | — | 표시 | CARE PLAN 카드로 이동(같은 필드·같은 입력) |
+
+테스트: `REMOVED(B1)` 소스 단언 3건 + `REMOVED(UI)` 2건 + AC3 안전 칩 단언.
+
 ## 2026-09-27 — Midlife(갱년기·중년기) v0.1 최소 구현 (PO "추천안으로 v0.2 명세 정리 후 최소 구현까지")
 
 **결론**: 여성건강 진입·내비·저장 인프라는 재사용하고, 임상 문항은 새 5단계 모듈

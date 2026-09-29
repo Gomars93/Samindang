@@ -21,7 +21,7 @@ import { createRequire } from 'node:module'
 import { createApp } from '../server/index.js'
 import { createStore } from '../server/store.js'
 import { createFollowUpSessionStore } from '../server/followUpSessionStore.js'
-import { computeDetailCheckDue as serverDue, detailCheckQuestionIds, localTodayISO, DETAIL_CHECK_REGION_QUESTION_IDS } from '../server/detailCheck.js'
+import { computeDetailCheckDue as serverDue, detailCheckQuestionIds, localTodayISO, DETAIL_CHECK_REGION_QUESTION_IDS, DETAIL_CHECK_MIDLIFE_QUESTION_IDS } from '../server/detailCheck.js'
 import { DETAIL_CHECK_RESPONSE_PATHS, baselineDetailAnswersFromResponses } from './.detail-check-baseline-bundle.mjs'
 import { DOCTOR_FIXTURES } from './.detail-check-doctor-fixtures-bundle.mjs'
 import { computeDetailCheckDue as clientDue } from './.detail-check-revisit-quick-check-bundle.mjs'
@@ -316,7 +316,7 @@ async function main() {
 
     /* ---------------- 7. baseline (초진 답) from the nested submission payload — 2026-09-08 Fable F-2 ---------------- */
     {
-      const serverIds = [...new Set(Object.values(DETAIL_CHECK_REGION_QUESTION_IDS).flat())].sort()
+      const serverIds = [...new Set([...Object.values(DETAIL_CHECK_REGION_QUESTION_IDS).flat(), ...DETAIL_CHECK_MIDLIFE_QUESTION_IDS])].sort()
       assert('baseline: DETAIL_CHECK_RESPONSE_PATHS covers exactly the server re-ask id set (no more, no less)', JSON.stringify(Object.keys(DETAIL_CHECK_RESPONSE_PATHS).sort()) === JSON.stringify(serverIds))
       const coreSrc = await readFile(path.join(__dirname, '..', 'src', 'spec', 'coreSpec.ts'), 'utf8')
       const modulesBlock = coreSrc.slice(coreSrc.indexOf('export const buildResponsePayload'))

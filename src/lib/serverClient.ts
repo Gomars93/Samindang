@@ -3,6 +3,7 @@
  * 설정되지 않으면 서버 미구성 상태로 동작한다 — 이 경우 어떤 네트워크 요청도
  * 시도하지 않는다(오늘까지의 동작 그대로).
  */
+import { readMidlifeProReports } from '../doctor/workspace/longitudinal'
 import type { ClinicianJudgment } from '../doctor/judgment'
 import type { WorkspaceState } from '../doctor/workspace/persistence'
 import type { VisitWorkspaceState } from '../doctor/workspace/visitWorkspace'
@@ -362,7 +363,10 @@ type PatientHistoryWire = {
     pain_nrs_now: number | null
     pain_nrs_worst: number | null
   }>
+  /** 갱년기 재진 PRO 보고(server/store.js getPatientHistory). 옛 서버에는 없다. */
+  midlife_pro_reports?: unknown
 }
+
 
 export function getPatientHistory(
   patientId: string,
@@ -401,6 +405,7 @@ export function getPatientHistory(
             painNrsNow: v.pain_nrs_now ?? null,
             painNrsWorst: v.pain_nrs_worst ?? null,
           })),
+        midlifeProReports: readMidlifeProReports(result.data.midlife_pro_reports),
       },
     }
   })

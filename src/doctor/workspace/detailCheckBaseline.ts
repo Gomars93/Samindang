@@ -27,6 +27,10 @@ export const DETAIL_CHECK_RESPONSE_PATHS: Readonly<Record<string, readonly [modu
   KNEE_13: ['knee', 'giving_way_instability'],
   WH_11: ['wrist_hand', 'trigger_catching_pattern'],
   AF_00: ['ankle_foot', 'region_discriminator'],
+  // 갱년기 재진 PRO(server/detailCheck.js DETAIL_CHECK_MIDLIFE_QUESTION_IDS) -- coreSpec modules.midlife.
+  MID_05: ['midlife', 'primary_symptom_0_10'],
+  MID_06: ['midlife', 'sleep_satisfaction_0_10'],
+  MID_07: ['midlife', 'function_interference_0_10'],
 })
 
 function isRecord(v: unknown): v is Record<string, unknown> {

@@ -787,16 +787,20 @@ export function DoctorWorkspace({
           <section className="doctor__visitLane doctor__visitLane--lane2" aria-labelledby="lane2-h2">
             <h2 id="lane2-h2">확인</h2>
             {/*
-              Midlife v0.2: 갱년기 문진 기록의 7칸 요약 -- 레인2(확인)의 맨 위. 안전
-              판정 자체는 바로 위 레인1이 먼저 보여주고, 여기 ③칸은 같은 계산을
-              한 줄로 다시 적는다. 원장 입력은 `workspaceState.midlifeCare` 한
-              필드로만 저장된다(갱년기 기록이 아니면 이 필드를 읽지도 쓰지도 않는다).
+              Midlife: 갱년기 문진 기록의 진료 요약(Figma 40:49 8카드) -- 레인2(확인)의 맨 위.
+              안전 판정 자체는 바로 위 레인1이 먼저 보여주고, 여기 스냅샷 칩은 같은 계산을
+              한 줄로 다시 적는다. 원장 입력은 `workspaceState.midlifeCare`에, 4주 목표는
+              기존 `herbalFollowUpTargets`(FollowUpTarget)에 저장된다. 재진 PRO는 이력의
+              `midlifeProReports`(환자가 재진 링크에서 직접 답한 값)를 읽기만 한다.
             */}
             {isMidlifeRecord(payload) && (
               <MidlifeCarePanel
                 payload={payload}
                 value={workspaceState.midlifeCare}
                 onChange={(next) => setWorkspaceState((s) => ({ ...s, midlifeCare: next }))}
+                proReports={priorVisits?.midlifeProReports}
+                followUpTargets={workspaceState.herbalFollowUpTargets}
+                onChangeFollowUpTargets={(next) => setWorkspaceState((s) => ({ ...s, herbalFollowUpTargets: next }))}
               />
             )}
             {/*

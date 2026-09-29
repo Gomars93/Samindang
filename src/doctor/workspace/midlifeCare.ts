@@ -20,6 +20,9 @@
  * 결정 — 명세 §6).
  */
 
+import { MIDLIFE_PRIORITY_OPTIONS } from '../../spec/midlifeQuestions'
+import { MAX_FOLLOW_UP_TARGETS, followUpTarget, type FollowUpTarget } from './finalAssessment'
+
 export const MIDLIFE_LIFE_STAGES = [
   '',
   'late_reproductive',
@@ -79,21 +82,18 @@ export const MIDLIFE_COURSE_LABEL: Record<MidlifeCourseVsExpected, string> = {
 }
 
 /**
- * Baseline PRO 3개 — 초진은 태블릿 값, 주차 review는 원장이 옮겨 적는다.
- * v0.1의 4번째 축 nextActionConfidence는 2026-09-28 삭제(midlifeQuestions.ts MID_15 주석).
- * 옛 저장본에 남은 그 키는 sanitizePro가 버린다.
+ * 주차 review — **원장 판단만** 담는다(경과 판정·기록일·메모).
+ *
+ * PRO(주 증상·수면 만족·일상 지장)는 2026-09-29 이 모델에서 빠졌다(PO PR #59 재검수
+ * BLOCKER 1 "환자 입력 PRO를 원장이 다시 타이핑하지 않는다"). 이제 환자가 재진 링크에서
+ * MID_05·06·07을 직접 다시 답하고(server/detailCheck.js), 원장 화면은 그 값을
+ * `PatientHistoryResult.midlifeProReports`로 읽는다. 옛 저장본의 `pro` 키는
+ * sanitizeReview가 버린다(던지지 않음). nextActionConfidence는 2026-09-28에 먼저 삭제됐다.
  */
-export type MidlifePro = {
-  primarySymptom: number | null
-  sleepSatisfaction: number | null
-  functionInterference: number | null
-}
-
 export type MidlifeReview = {
   week: MidlifeReviewWeek
   /** 원장이 기록한 날짜(YYYY-MM-DD). 빈 문자열 = 아직 안 함. */
   reviewedOn: string
-  pro: MidlifePro
   /** null = 경과 판정을 기록하지 않음(연속 판정에서 건너뜀). */
   courseVsExpected: MidlifeCourseVsExpected | null
   note: string
@@ -111,12 +111,8 @@ export type MidlifeCareRecord = {
   reviews: MidlifeReview[]
 }
 
-export function emptyMidlifePro(): MidlifePro {
-  return { primarySymptom: null, sleepSatisfaction: null, functionInterference: null }
-}
-
 export function emptyMidlifeReview(week: MidlifeReviewWeek): MidlifeReview {
-  return { week, reviewedOn: '', pro: emptyMidlifePro(), courseVsExpected: null, note: '' }
+  return { week, reviewedOn: '', courseVsExpected: null, note: '' }
 }
 
 export function emptyMidlifeCareRecord(): MidlifeCareRecord {
@@ -155,15 +151,6 @@ export function sanitizeScore(v: unknown): number | null {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10 ? v : null
 }
 
-function sanitizePro(raw: unknown): MidlifePro {
-  const r = isRecord(raw) ? raw : {}
-  return {
-    primarySymptom: sanitizeScore(r.primarySymptom),
-    sleepSatisfaction: sanitizeScore(r.sleepSatisfaction),
-    functionInterference: sanitizeScore(r.functionInterference),
-  }
-}
-
 function sanitizeReferral(raw: unknown, index: number): MidlifeReferral {
   const r = isRecord(raw) ? raw : {}
   return {
@@ -183,7 +170,6 @@ function sanitizeReview(raw: unknown): MidlifeReview | null {
   return {
     week: raw.week as MidlifeReviewWeek,
     reviewedOn: str(raw.reviewedOn),
-    pro: sanitizePro(raw.pro),
     courseVsExpected: (MIDLIFE_COURSE_VALUES as readonly unknown[]).includes(raw.courseVsExpected)
       ? (raw.courseVsExpected as MidlifeCourseVsExpected)
       : null,
@@ -251,4 +237,41 @@ export function midlifeHypothesisReopen(reviews: MidlifeReview[]): boolean {
   if (judged.length < 2) return false
   const [a, b] = judged.slice(-2)
   return a.courseVsExpected === 'deviates' && b.courseVsExpected === 'deviates'
+}
+
+/* ---------------------------------------------------------------------------
+ * 4주 care goal (PO 2026-09-29, PR #59 재검수 BLOCKER 2)
+ *
+ * 전용 필드를 만들지 않고 기존 `FollowUpTarget`에 싣는다 — 갱년기 기록은 원장 화면에서
+ * 한약 프로필이라 `herbalFollowUpTargets` 배열이다. 그래서 다음 재진 링크의 Micro
+ * Follow-up 후보(server deriveMicroFollowUpCandidates)로 그대로 이어진다.
+ * 갱년기 목표는 id 접두어로 구분하고 최대 2개, 배열 전체 상한(MAX_FOLLOW_UP_TARGETS)은
+ * 기존 규칙 그대로 지킨다. 선택지는 환자 목표 문항(MID_13)과 같은 목록이다.
+ * ------------------------------------------------------------------------- */
+
+export const MIDLIFE_GOAL_ID_PREFIX = 'midlife_goal:'
+export const MIDLIFE_CARE_GOAL_MAX = 2
+
+export function midlifeGoalOptions(): FollowUpTarget[] {
+  return MIDLIFE_PRIORITY_OPTIONS.map((o) => followUpTarget(`${MIDLIFE_GOAL_ID_PREFIX}${o.value}`, o.label))
+}
+
+export function isMidlifeGoal(t: FollowUpTarget): boolean {
+  return typeof t?.id === 'string' && t.id.startsWith(MIDLIFE_GOAL_ID_PREFIX)
+}
+
+export function selectedMidlifeGoals(targets: FollowUpTarget[]): FollowUpTarget[] {
+  return (Array.isArray(targets) ? targets : []).filter(isMidlifeGoal)
+}
+
+/**
+ * 목표 하나를 켜거나 끈다. 켤 때 갱년기 목표 2개 또는 배열 전체 3개가 이미 차 있으면
+ * **바꾸지 않고 같은 배열을 돌려준다**(조용히 다른 목표를 밀어내지 않는다).
+ */
+export function toggleMidlifeGoal(targets: FollowUpTarget[], goal: FollowUpTarget): FollowUpTarget[] {
+  const list = Array.isArray(targets) ? targets : []
+  if (list.some((t) => t.id === goal.id)) return list.filter((t) => t.id !== goal.id)
+  if (selectedMidlifeGoals(list).length >= MIDLIFE_CARE_GOAL_MAX) return list
+  if (list.length >= MAX_FOLLOW_UP_TARGETS) return list
+  return [...list, goal]
 }

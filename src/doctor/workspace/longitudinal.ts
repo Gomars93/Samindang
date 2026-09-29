@@ -55,6 +55,44 @@ export type PatientHistoryResult = {
   patientId: string
   /** Most recent first. Never includes the visit currently being viewed. */
   visits: PriorVisitSummary[]
+  /**
+   * 갱년기 재진 PRO 보고(PO 2026-09-29, PR #59 BLOCKER 1) -- 재진 링크에서 환자가 직접 다시
+   * 답한 MID_05·06·07. `visits`와 별개 목록이다(워크스페이스 미저장 재진도 포함). 옛 서버
+   * 응답에는 없을 수 있어 선택 필드다.
+   */
+  midlifeProReports?: MidlifeProReport[]
+}
+
+export type MidlifeProReport = {
+  visitId: string
+  createdAt: string
+  primarySymptom: number | null
+  sleepSatisfaction: number | null
+  functionInterference: number | null
+}
+
+/** 0~10 정수만 통과 -- 서버 readNrs와 같은 규칙. 검증 없는 저장값에서 온 응답이라 다시 본다. */
+function readScore0to10(v: unknown): number | null {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10 ? v : null
+}
+
+/** 서버 `midlife_pro_reports` → 화면 모양. 배열이 아니거나 원소가 깨졌으면 그 원소만 버린다(던지지 않음). */
+export function readMidlifeProReports(raw: unknown): MidlifeProReport[] {
+  if (!Array.isArray(raw)) return []
+  const out: MidlifeProReport[] = []
+  for (const r of raw) {
+    if (r == null || typeof r !== 'object' || Array.isArray(r)) continue
+    const o = r as Record<string, unknown>
+    if (typeof o.visit_id !== 'string' || typeof o.created_at !== 'string') continue
+    out.push({
+      visitId: o.visit_id,
+      createdAt: o.created_at,
+      primarySymptom: readScore0to10(o.primary_symptom_0_10),
+      sleepSatisfaction: readScore0to10(o.sleep_satisfaction_0_10),
+      functionInterference: readScore0to10(o.function_interference_0_10),
+    })
+  }
+  return out
 }
 
 /**

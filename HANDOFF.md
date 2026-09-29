@@ -1,5 +1,22 @@
 # Current Handoff
 
+## 2026-09-29 (최신 77): **PR #59 PO 재검수 BLOCKER 1·2 + 원장 화면 Figma 40:49 대조** (PO "추천안으로 진행")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(PR #59, Draft). 상세 `DECISIONS.md` 첫 항목, 명세 `docs/MIDLIFE_UI_IA_v0.2.md` §5·§9.
+
+| 항목 | 결과 |
+|---|---|
+| BLOCKER 1 재진 PRO 재입력 제거 | 갱년기 재진 링크마다 MID_05·06·07 재질문(서버) → 이력 `midlife_pro_reports` → BASELINE PRO 날짜 열. 원장 review는 경과 판정·기록일만 |
+| BLOCKER 2 4주 care goal | 기존 `FollowUpTarget`(`herbalFollowUpTargets`, `midlife_goal:*`, 최대 2) → 다음 재진 Micro Follow-up 후보로 이어짐 |
+| 3) Figma | 원장 40:49 8카드·토큰 일치(의도적 차이 표 §9). 태블릿 40:3은 차이 목록 T1–T6만 — **별도 PR** |
+| 4) MID_08 SOP | 반영 완료(176e11e, 최신 76 참고) |
+| MID_15 | 삭제 유지 — Figma BASELINE PRO "다음 행동 이해" 행은 그리지 않음(Figma 쪽 삭제 권장) |
+| 테스트 | `test:midlife` 233/233, `test:all` exit 0, build 통과 |
+
+### Next Recommended Action
+
+PO 재검수(BLOCKER 해소 확인) → 태블릿 40:3 별도 PR 범위 결정 → Fable 독립 검수 → 실기기 QA → merge 판단.
+
 ## 2026-09-27 (최신 76): **Midlife(갱년기·중년기) v0.1 최소 구현** (PO "추천안으로 v0.2 명세 정리 후 최소 구현까지")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6` (main `62f514a` 기준). 상세는 `DECISIONS.md` 첫 항목,

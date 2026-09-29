@@ -13,9 +13,13 @@
 | MID_15 | 삭제 유지 — Figma BASELINE PRO "다음 행동 이해" 행은 그리지 않음(Figma 쪽 삭제 권장) |
 | 테스트 | `test:midlife` 233/233, `test:all` exit 0, build 통과 |
 
+**PO 최종 재검수 통과(2026-09-29, PR #59 리뷰)**: BLOCKER 2건 해소·SOP·Figma 40:49·MID_15 삭제 확인, head 8b1c26f CI success,
+mergeable. 기능/안전 관점 최종 검수 통과 — **main merge는 PO 명시 승인 시**(아직 승인 아님).
+
 ### Next Recommended Action
 
-PO 재검수(BLOCKER 해소 확인) → 태블릿 40:3 별도 PR 범위 결정 → Fable 독립 검수 → 실기기 QA → merge 판단.
+PO의 명시적 merge 승인 대기. 후속(블로커 아님, 별도 작업): ① 태블릿 Figma 40:3 T1–T6 별도 PR ② 실기기 초진 3–5분 측정
+③ 첫 5–10명 SOP·referral 완료·review 부담 확인 ④ 원장 화면 1440×900 세로 스크롤(기능 문제 아님).
 
 ## 2026-09-27 (최신 76): **Midlife(갱년기·중년기) v0.1 최소 구현** (PO "추천안으로 v0.2 명세 정리 후 최소 구현까지")
 

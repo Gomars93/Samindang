@@ -43,6 +43,7 @@ import { sanitizeArray, sanitizeShape, isSanitizeRecord, sanitizeStringArray } f
 import { isValidLbpDirectionalResponse, type LbpDirectionalResponse } from './lbpExamSuggestions'
 import { emptyLbpWorkingHypothesis, sanitizeLbpWorkingHypothesis, type LbpWorkingHypothesis } from './lbpWorkingHypothesis'
 import { sanitizeConfirmedStage, sanitizeRegionClinicalMap, type RegionClinicalMap } from './regionClinicalState'
+import { emptyMidlifeCareRecord, sanitizeMidlifeCareRecord, type MidlifeCareRecord } from './midlifeCare'
 
 const FOLLOW_UP_TARGET_TEMPLATE: FollowUpTarget = followUpTarget('', '')
 const EXAM_SUGGESTION_TEMPLATE: PhysicalExamSuggestion = {
@@ -250,6 +251,13 @@ export type WorkspaceState = {
    * 빈 맵으로 읽힌다. 읽기/쓰기는 `readRegionClinical`/`withRegionClinical`로만.
    */
   regionClinical: RegionClinicalMap
+  /**
+   * Midlife v0.2(2026-09-27): 갱년기 문진 기록의 원장 입력 7칸 + 외부 평가 상태 +
+   * 2/4/8/12주 review(`midlifeCare.ts`). Additive field, does NOT bump
+   * WORKSPACE_STATE_SCHEMA_VERSION — 옛 기록은 빈 기록으로 읽힌다. 갱년기
+   * 문진이 아닌 기록에서는 화면이 이 필드를 읽지도 쓰지도 않는다.
+   */
+  midlifeCare: MidlifeCareRecord
   /** Set by the client immediately before each save attempt (not by the server). */
   updated_at: string | null
 }
@@ -276,6 +284,7 @@ export function emptyWorkspaceState(): WorkspaceState {
     lbpWorkingHypothesis: emptyLbpWorkingHypothesis(),
     lbpConfirmedStage: null,
     regionClinical: {},
+    midlifeCare: emptyMidlifeCareRecord(),
     updated_at: null,
   }
 }
@@ -331,6 +340,7 @@ export function deserializeWorkspaceState(raw: unknown): WorkspaceState {
     lbpWorkingHypothesis: sanitizeLbpWorkingHypothesis(raw.lbpWorkingHypothesis),
     lbpConfirmedStage: sanitizeLbpConfirmedStage(raw.lbpConfirmedStage),
     regionClinical: sanitizeRegionClinicalMap(raw.regionClinical),
+    midlifeCare: sanitizeMidlifeCareRecord(raw.midlifeCare),
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : null,
   }
 }

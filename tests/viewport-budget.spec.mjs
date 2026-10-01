@@ -194,6 +194,8 @@ const PORTRAIT_ALLOWLISTS = {
     // Tablet UX v2.1 §11-13: ADDITIONAL_DETAIL_01/REFERENCE_SYMPTOMS_01
     // replace SECONDARY_01's old mixed role with two longer grid2 screens.
     'ADDITIONAL_DETAIL_01', 'REFERENCE_SYMPTOMS_01',
+    // MIDLIFE v0.2: 같은 grid2 선례(layout-budget.spec.mjs INNER_SCROLL_ALLOWED 주석 참고).
+    'MID_04', 'MID_13', 'MID_14',
   ]),
   '1200x1920 (large portrait)': new Set(), // spacious enough that nothing needs inner scroll
 }

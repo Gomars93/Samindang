@@ -8,7 +8,13 @@ import { createVisitStore } from './visitStore.js'
 import { createRecorderResultStore } from './recorderResultStore.js'
 import { createMicroFollowUpStore } from './microFollowUpStore.js'
 import { createFollowUpSessionStore } from './followUpSessionStore.js'
-import { computeDetailCheckDue, detailCheckQuestionIdsForCandidates, localTodayISO } from './detailCheck.js'
+import {
+  computeDetailCheckDue,
+  detailCheckQuestionIdsForCandidates,
+  localTodayISO,
+  DETAIL_CHECK_MIDLIFE_QUESTION_IDS,
+  isMidlifeSubmissionResponses,
+} from './detailCheck.js'
 import { drivingRegionCandidates } from './regionRouting.js'
 import { createStationStore } from './stationStore.js'
 import { createPatientIdentityStore } from './patientIdentityStore.js'
@@ -116,6 +122,19 @@ function deriveSafetyBadge(flags, r) {
         if (VALID_SAFETY_STATUS_VALUES.has(status)) regionStatuses.push(status)
       }
     }
+  }
+
+  // Midlife v0.2(2026-09-27): 갱년기 문진은 통증 부위가 아니라 위 9개 키에 없다 --
+  // 그대로 두면 갱년기 URGENT 환자가 대기열에서 'NONE'(배지 없음)으로 보이는 fail-open이
+  // 된다. `safety_flags.midlife.status`를 같은 3단계로 옮긴다: URGENT_REVIEW → URGENT,
+  // 우선 외부평가(PRIORITY_EVALUATION)와 계산 불가(INCOMPLETE) → 확인 필요, CLEAR → CLEAR.
+  // 객체는 있는데 모르는 상태값이면 확인 필요(안전으로 읽지 않는다).
+  const midlife = safetyFlags != null && typeof safetyFlags === 'object' ? safetyFlags.midlife : null
+  if (midlife != null) {
+    const st = typeof midlife === 'object' && !Array.isArray(midlife) ? midlife.status : undefined
+    regionStatuses.push(
+      st === 'URGENT_REVIEW' ? 'URGENT_REVIEW' : st === 'CLEAR' ? 'CLEAR' : 'REVIEW_REQUIRED',
+    )
   }
 
   const requiresStaffCheck = flags.requires_staff_check === true
@@ -596,7 +615,31 @@ export function createStore(
         })
       }
     }
-    return { patient_id: patientId, visits: summaries }
+    /*
+     * 갱년기 재진 PRO 보고(PO 2026-09-29, PR #59 BLOCKER 1). 재진(제출 없는 방문)의
+     * detailAnswers에서 MID_05·06·07을 읽는다 -- `visits`와 달리 **워크스페이스 저장
+     * 여부와 무관**하다(환자가 답했으면 원장이 재진 화면을 아직 안 열었어도 보인다).
+     * `visits`에 넣지 않는 이유: 미저장 재진이 `visits[0]`이 되면 Micro Follow-up 후보
+     * carry-forward(deriveMicroFollowUpCandidates)가 빈 목록으로 바뀐다.
+     * 판정 규칙은 NRS와 같다(readNrs: number·정수·0~10, 아니면 null).
+     */
+    const midlifeProReports = []
+    for (const v of visitRecords) {
+      if (v.submission_id) continue
+      const answers = (await microFollowUp.getResponse(v.id))?.detailAnswers ?? null
+      const primary = readNrsFromDetailAnswers(answers, 'MID_05')
+      const sleep = readNrsFromDetailAnswers(answers, 'MID_06')
+      const fn = readNrsFromDetailAnswers(answers, 'MID_07')
+      if (primary === null && sleep === null && fn === null) continue
+      midlifeProReports.push({
+        visit_id: v.id,
+        created_at: v.created_at,
+        primary_symptom_0_10: primary,
+        sleep_satisfaction_0_10: sleep,
+        function_interference_0_10: fn,
+      })
+    }
+    return { patient_id: patientId, visits: summaries, midlife_pro_reports: midlifeProReports }
   }
 
   // Round 3(revisit linkage): candidate Follow-up Targets for a Micro
@@ -627,16 +670,19 @@ export function createStore(
   // null when not due, so the common case adds nothing to the token record.
   // 부위 팩 일반화(2026-09-06, R2): 승인된 팩의 부위만 재질문 id를 더 받고
   // (DETAIL_CHECK_REGION_QUESTION_IDS), 나머지는 공통 문항만 -- 옛 비요통 동작.
+  // 갱년기(PO 2026-09-29, PR #59 BLOCKER 1): 가장 최근 제출이 갱년기 문진이면 원장
+  // 재평가 계획의 due 여부와 무관하게 MID_05·06·07만 싣는다 -- 재진마다 환자가 PRO를
+  // 직접 입력하고 원장은 옮겨 적지 않는다. 계획 due 계산(computeDetailCheckDue)은 그대로.
   async function deriveDetailCheck(patientId, excludeVisitId) {
     const history = await getPatientHistory(patientId, excludeVisitId)
+    const latestWithSubmission = history.visits.find((v) => v.submission_id)
+    const record = latestWithSubmission ? await readRecord(latestWithSubmission.submission_id) : null
+    if (isMidlifeSubmissionResponses(record?.submission?.responses)) {
+      return { reason: 'MIDLIFE_REVIEW', plan_label: '갱년기 재진 PRO', question_ids: [...DETAIL_CHECK_MIDLIFE_QUESTION_IDS] }
+    }
     const due = computeDetailCheckDue(history.visits, localTodayISO())
     if (!due) return null
-    let candidates = []
-    const latestWithSubmission = history.visits.find((v) => v.submission_id)
-    if (latestWithSubmission) {
-      const record = await readRecord(latestWithSubmission.submission_id)
-      candidates = drivingRegionCandidates(record?.submission?.responses)
-    }
+    const candidates = record ? drivingRegionCandidates(record?.submission?.responses) : []
     return { reason: due.reason, plan_label: due.plan_label, question_ids: detailCheckQuestionIdsForCandidates(candidates) }
   }
 

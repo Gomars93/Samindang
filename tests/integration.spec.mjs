@@ -1017,10 +1017,13 @@ const H1_MODULES = [
 // HIP_V1: URGENT_REVIEW는 HIP_02(limb-threatening)/HIP_05(systemic/rapidly
 // worsening infection) 두 지점에서만 확정될 수 있어(H2/H3/H5/H6 CLOSED
 // semantics -- HIP_01/03/04/06은 REVIEW/expedited/flag 계층) 둘만 등록했다.
+// MIDLIFE v0.2(PO 2026-09-27): URGENT는 MID_08(자기 화면의 URGENT 값)과
+// WOMEN_SAFETY_01(임신 가능성 + 출혈 조합 -- 임신 가능성을 거기서야 안다) 두
+// 지점에서만 새로 확정된다. MID_09(PRIORITY)는 인터럽트하지 않는다.
 {
   const keys = Object.keys(STAFF_CHECK_TRIGGERS).sort()
   assert(
-    'I1: STAFF_CHECK_TRIGGERS keys include TMJ urgent TMJ_01/02/03, HIP urgent HIP_02/05, plus all existing frozen triggers',
+    'I1: STAFF_CHECK_TRIGGERS keys include TMJ urgent TMJ_01/02/03, HIP urgent HIP_02/05, MIDLIFE MID_08/WOMEN_SAFETY_01, plus all existing frozen triggers',
     JSON.stringify(keys) ===
       JSON.stringify([
         'AF_02',
@@ -1039,6 +1042,7 @@ const H1_MODULES = [
         'KNEE_06B',
         'KNEE_07',
         'LBP_04',
+        'MID_08',
         'NECK_02',
         'NECK_02A',
         'NECK_03B',
@@ -1053,6 +1057,7 @@ const H1_MODULES = [
         'WH_02',
         'WH_07',
         'WH_07A',
+        'WOMEN_SAFETY_01',
       ]),
   )
 }
@@ -3862,7 +3867,7 @@ for (const sex of ['male', 'female']) {
   const lbp10a = ALL_QUESTIONS.find((q) => q.id === 'LBP_10A_ONSET_AGE')
   assert('W4: LBP_10 exists', !!lbp10)
   assert('W4: LBP_10A_ONSET_AGE exists (new v2.3 §13 pre-question)', !!lbp10a)
-  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력하신 나이를 바탕으로 자동 확인했어요. 맞으면 그대로 계속해주세요.')
+  assert('W4: LBP_10 question text is the auto-confirm wording (v2.3 §13)', lbp10.question === '입력한 나이로 미리 골라뒀어요. 맞으면 계속해주세요.')
   assert('W4: LBP_10 old direct 45-year wording is gone from patient-facing text', lbp10.question !== '허리통증이 처음 시작된 나이가 만 45세 이전이었나요?' && lbp10.question !== '이 허리통증이 처음 시작된 것은 45세 이전인가요?')
   assert('W4: LBP_10 variable unchanged (FROZEN adapter still reads this)', lbp10.variable === 'lbp_onset_before_45')
   assert('W4: LBP_10 required unchanged (false)', lbp10.required === false)
@@ -4108,6 +4113,8 @@ function applyLbp02Or03DirectAnswer(r, id, value) {
     'AF_02', 'AF_04', 'AF_05', 'ELBOW_02', 'ELBOW_09A', 'ELBOW_10', 'ELBOW_11',
     'ELBOW_14', 'HIP_02', 'HIP_04', 'HISTORY_01', 'KNEE_02', 'KNEE_06A',
     'KNEE_06B', 'KNEE_08', 'KNEE_11', 'LBP_02', 'LBP_04', 'LBP_05', 'LBP_11',
+    // MIDLIFE v0.2 -- 안전 화면(MID_08/09)도 같은 단일 규칙(none 맨 앞)을 따른다.
+    'MID_03', 'MID_08', 'MID_09', 'MID_10', 'MID_11',
     'MS_05', 'NECK_02', 'NECK_04', 'NECK_05', 'NECK_09', 'REFERENCE_SYMPTOMS_01',
     'SAFETY_01', 'SECONDARY_01', 'SEC_BOWEL_01', 'SEC_FATIGUE_01', 'SEC_GI_01',
     'SEC_PAIN_01', 'SEC_SLEEP_01', 'SEC_STRESS_01', 'SEC_URINARY_01',

@@ -1,5 +1,7 @@
 type Props = {
   onContinue: () => void
+  /** 직원용 한 줄(STAFF_CHECK_NOTES). 없으면 기존 화면 그대로. */
+  staffNote?: string
 }
 
 /**
@@ -7,13 +9,18 @@ type Props = {
  * 선택 즉시 경고 팝업 금지, 화면 제출 후 안내한다.
  * 환자 화면에서 질환명·응급 진단 추정은 하지 않는다.
  */
-export function StaffCheckScreen({ onContinue }: Props) {
+export function StaffCheckScreen({ onContinue, staffNote }: Props) {
   return (
     <div className="center">
       <div className="center__inner">
         <p className="notice" role="alert">
           먼저 확인이 필요한 내용이 있습니다. 태블릿을 직원에게 보여주세요.
         </p>
+        {staffNote && (
+          <p className="notice__staff" data-staff-note>
+            {staffNote}
+          </p>
+        )}
         <button type="button" className="primaryBtn" onClick={onContinue}>
           확인했어요, 계속하기
         </button>

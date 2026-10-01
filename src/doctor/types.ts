@@ -17,7 +17,12 @@ export type DoctorPayload = {
   flags: ReturnType<typeof computeFlags>
   routing: ReturnType<typeof buildRoutingPayload>
   myungri_calculation: SajuResult
-  metadata: { session_started_at: string | null; answers: Record<string, unknown> }
+  metadata: {
+    session_started_at: string | null
+    answers: Record<string, unknown>
+    /** SOP 문진 중단 제출에만 있다(App.tsx, coreSpec QUESTIONNAIRE_HALT_TRIGGERS). 검증 없는 저장값이라 읽는 쪽이 다시 확인한다. */
+    questionnaire_halted?: { at_question: string; reason: string }
+  }
 }
 
 export type DoctorFixture = {

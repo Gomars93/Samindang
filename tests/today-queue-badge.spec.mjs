@@ -100,6 +100,47 @@ async function main() {
     ok(`field-name-typo guard covered all ${Object.keys(REGION_STATUS_FIELDS).length} regions`, n === 9)
   })
 
+  // ---------- 1b. Midlife v0.2: safety_flags.midlife.status도 배지에 반영된다 ----------
+  await withStore(async (store) => {
+    const cases = [
+      ['URGENT_REVIEW', 'URGENT'],
+      ['PRIORITY_EVALUATION', 'REVIEW'],
+      ['INCOMPLETE', 'REVIEW'],
+      ['CLEAR', 'CLEAR'],
+      ['SOMETHING_NEW', 'REVIEW'],
+    ]
+    for (const [status] of cases) {
+      await store.createSubmission({
+        submission: {
+          questionnaire_version: '1.0',
+          session_id: `midlife-${status}`,
+          responses: clearResponses({ safety_flags: { red_flag_general: ['none'], midlife: { status } } }),
+          flags: CLEAR_FLAGS,
+          metadata: {},
+        },
+        myungri: null,
+        patient_label: `midlife-${status}`,
+      })
+    }
+    await store.createSubmission({
+      submission: {
+        questionnaire_version: '1.0',
+        session_id: 'midlife-null',
+        responses: clearResponses({ safety_flags: { red_flag_general: ['none'], midlife: null } }),
+        flags: CLEAR_FLAGS,
+        metadata: {},
+      },
+      myungri: null,
+      patient_label: 'midlife-null',
+    })
+    const list = await store.listSubmissions()
+    for (const [status, badge] of cases) {
+      const row = list.find((r) => r.patient_label === `midlife-${status}`)
+      ok(`safety_badge: midlife.status=${status} -> ${badge} (갱년기 판정이 대기열에서 사라지지 않음)`, row?.safety_badge === badge)
+    }
+    ok('safety_badge: 갱년기가 아닌 기록(midlife: null)은 기존대로 NONE', list.find((r) => r.patient_label === 'midlife-null')?.safety_badge === 'NONE')
+  })
+
   // ---------- 2. severity ordering: URGENT > REVIEW > CLEAR > NONE ----------
   await withStore(async (store) => {
     await store.createSubmission({

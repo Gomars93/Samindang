@@ -33,6 +33,19 @@ export const DETAIL_CHECK_COMMON_QUESTION_IDS = Object.freeze([
 ])
 export const DETAIL_CHECK_LBP_QUESTION_IDS = Object.freeze(['LBP_12', 'LBP_13', 'LBP_14'])
 
+// 갱년기(Midlife) 재진 PRO — PO 2026-09-29 "추천안으로 진행"(PR #59 재검수 BLOCKER 1).
+// 초진 태블릿의 MID_05(주 증상)·MID_06(수면 만족)·MID_07(일상 지장)을 **같은 id로** 다시
+// 묻는다 -- 원장이 review 때 숫자를 옮겨 적지 않게. 원장 재평가 계획(due)과 무관하게 갱년기
+// 재진 링크마다 묻고(store.js deriveDetailCheck), 통증 공통 재질문은 섞지 않는다.
+export const DETAIL_CHECK_MIDLIFE_QUESTION_IDS = Object.freeze(['MID_05', 'MID_06', 'MID_07'])
+
+/** 제출 응답이 갱년기 문진인지 -- 원장 화면 `isMidlifeRecord`와 같은 판정(primary_concern.key). */
+export function isMidlifeSubmissionResponses(responses) {
+  if (!isRecord(responses)) return false
+  const pc = responses.primary_concern
+  return isRecord(pc) && pc.key === 'midlife'
+}
+
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 function isRecord(v) {

@@ -19,6 +19,11 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
 
   return (
     <>
+      {question.section && (
+        <p className="question__section" data-section-index={question.section.index}>
+          {`${question.section.group} · ${question.section.index}/${question.section.total} ${question.section.label}`}
+        </p>
+      )}
       <h1 className="question">{question.question}</h1>
       {helper && <p className="helper">{helper}</p>}
 

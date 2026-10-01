@@ -89,4 +89,11 @@ export type Question = {
    *  - 'body_map': 주 통증부위 전용, PAIN_01에만 사용
    */
   layout?: 'list' | 'grid2' | 'compact3' | 'body_map'
+  /**
+   * 순수 presentation 힌트(Midlife v0.2): 한 모듈 안에서 "몇 번째 소단계인지"를
+   * 질문 위에 작게 보여준다(예: `갱년기 문진 · 2/5 주요 증상`). `step`(상단 진행
+   * 막대의 대단계)과는 별개이며, showIf/required/value/안전 판정 어디에도
+   * 영향을 주지 않는다. 미지정 시 아무것도 렌더하지 않는다 -- 기존 문항은 그대로.
+   */
+  section?: { group: string; index: number; total: number; label: string }
 }

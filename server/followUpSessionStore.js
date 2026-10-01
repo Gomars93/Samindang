@@ -84,7 +84,7 @@ function normalizeDetailCheck(detail) {
     : []
   if (ids.length === 0) return null
   return {
-    reason: detail.reason === 'DATE' || detail.reason === 'VISIT_COUNT' ? detail.reason : 'UNKNOWN',
+    reason: detail.reason === 'DATE' || detail.reason === 'VISIT_COUNT' || detail.reason === 'MIDLIFE_REVIEW' ? detail.reason : 'UNKNOWN',
     plan_label: typeof detail.plan_label === 'string' ? detail.plan_label.slice(0, 100) : '',
     question_ids: ids,
   }

@@ -21,6 +21,9 @@
  * invariant, unchanged -- see DoctorView.tsx's separate 명리 accordion).
  */
 import { Field, isEmptyValue, isFlagsUsable, primaryConcernLabel, safetyIssueCategories } from '../DoctorView'
+import { isMidlifeRecord } from '../MidlifeSafetyPanel'
+import { toMidlifeStateFromDoctorPayload } from '../../spec/midlifeAdapter'
+import { computeMidlifeSafety, type MidlifeSafetyStatus } from '../../spec/midlifeLogic'
 import type { DoctorPayload } from '../types'
 import { PatternCandidateCard } from './PatternCandidateCard'
 import { ClinicianObservationChecklist } from './ClinicianObservationChecklist'
@@ -87,7 +90,23 @@ export function HerbalWorkspaceLane2({
   const r = payload.responses
   const { flags } = payload
   const flagsUsable = isFlagsUsable(flags, r)
-  const safetyCats = safetyIssueCategories(flags)
+  /*
+    Midlife v0.2: 공통 flags만 읽으면 갱년기 판정(폐경 후 출혈 등)이 있어도 이 줄이
+    "없음"을 띄운다 -- 레인1은 경고하는데 여기는 안전하다고 말하는 모순(fail-open).
+    갱년기 기록이면 레인1과 **같은 계산**의 결과를 한 항목으로 합친다(CLEAR면 추가 없음).
+  */
+  const MIDLIFE_CAT: Record<Exclude<MidlifeSafetyStatus, 'CLEAR'>, string> = {
+    URGENT_REVIEW: '갱년기 URGENT',
+    PRIORITY_EVALUATION: '갱년기 우선 외부평가',
+    INCOMPLETE: '갱년기 안전 계산 불가',
+  }
+  const midlifeStatus = isMidlifeRecord(payload)
+    ? computeMidlifeSafety(toMidlifeStateFromDoctorPayload(r)).status
+    : 'CLEAR'
+  const safetyCats = [
+    ...safetyIssueCategories(flags),
+    ...(midlifeStatus === 'CLEAR' ? [] : [MIDLIFE_CAT[midlifeStatus]]),
+  ]
   const safetyAnswered =
     Array.isArray(r.safety_flags?.red_flag_general) && r.safety_flags.red_flag_general.length > 0
 

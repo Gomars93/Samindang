@@ -1,5 +1,62 @@
 # Current Handoff
 
+## 2026-09-29 (최신 77): **PR #59 PO 재검수 BLOCKER 1·2 + 원장 화면 Figma 40:49 대조** (PO "추천안으로 진행")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(PR #59, Draft). 상세 `DECISIONS.md` 첫 항목, 명세 `docs/MIDLIFE_UI_IA_v0.2.md` §5·§9.
+
+| 항목 | 결과 |
+|---|---|
+| BLOCKER 1 재진 PRO 재입력 제거 | 갱년기 재진 링크마다 MID_05·06·07 재질문(서버) → 이력 `midlife_pro_reports` → BASELINE PRO 날짜 열. 원장 review는 경과 판정·기록일만 |
+| BLOCKER 2 4주 care goal | 기존 `FollowUpTarget`(`herbalFollowUpTargets`, `midlife_goal:*`, 최대 2) → 다음 재진 Micro Follow-up 후보로 이어짐 |
+| 3) Figma | 원장 40:49 8카드·토큰 일치(의도적 차이 표 §9). 태블릿 40:3은 차이 목록 T1–T6만 — **별도 PR** |
+| 4) MID_08 SOP | 반영 완료(176e11e, 최신 76 참고) |
+| MID_15 | 삭제 유지 — Figma BASELINE PRO "다음 행동 이해" 행은 그리지 않음(Figma 쪽 삭제 권장) |
+| 테스트 | `test:midlife` 233/233, `test:all` exit 0, build 통과 |
+
+**PO 최종 재검수 통과(2026-09-29, PR #59 리뷰)**: BLOCKER 2건 해소·SOP·Figma 40:49·MID_15 삭제 확인, head 8b1c26f CI success,
+mergeable. 기능/안전 관점 최종 검수 통과 — **main merge는 PO 명시 승인 시**(아직 승인 아님).
+
+### Next Recommended Action
+
+PO의 명시적 merge 승인 대기. 후속(블로커 아님, 별도 작업): ① 태블릿 Figma 40:3 T1–T6 별도 PR ② 실기기 초진 3–5분 측정
+③ 첫 5–10명 SOP·referral 완료·review 부담 확인 ④ 원장 화면 1440×900 세로 스크롤(기능 문제 아님).
+
+## 2026-09-27 (최신 76): **Midlife(갱년기·중년기) v0.1 최소 구현** (PO "추천안으로 v0.2 명세 정리 후 최소 구현까지")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6` (main `62f514a` 기준). 상세는 `DECISIONS.md` 첫 항목,
+명세는 `docs/MIDLIFE_UI_IA_v0.2.md`. **main merge는 Figma 대조 + 기능 QA 후**(PO 지시).
+
+| 영역 | 무엇이 생겼나 |
+|---|---|
+| 태블릿 | 여성 건강 → "갱년기·중년기 건강" → 5단계 13문항(`MID_01~14`, MID_12 삭제), 질문 위 `갱년기 문진 · n/5` 표시 |
+| 안전 | URGENT/PRIORITY 2단계(`midlifeLogic.ts`). URGENT만 직원 확인 인터럽트(`MID_08`, `WOMEN_SAFETY_01`) |
+| 원장 화면 | 레인1 맨 앞 갱년기 안전 칸(좌측 칩·한약 "안전이슈" 줄·오늘 대기열 배지 연동) + 레인2 맨 위 7칸 요약 |
+| 저장 | `WorkspaceState.midlifeCare` 추가형 필드(스키마 버전 그대로) — 외부평가 5단계 상태, 2/4/8/12주 review |
+| 테스트 | `npm run test:midlife` 191단언, `test:all` 전체 통과, `npm run build` 통과 |
+
+### 첫 환자 전 PO 확인 필요 (명세 §7)
+
+1. ~~문구~~ — 간결화 완료(2026-09-28)
+2. ~~자살·자해 문항 직원 응대 절차~~ — **PO SOP v0.1 확정·반영(2026-09-28)**: 양성이면 태블릿 문진 **중단**(응답 제출 후 "직원이 바로 도와드릴게요" 대기 화면, 계속·뒤로 없음), 원장 레인1에 URGENT + 중단 표시 + SOP 4줄. 첫 5–10명 pilot에서 양성 사례 동선·호출 시간 리뷰(SOP v0.1 운영 메모)
+3. ~~"수술·약물로 판단 어려움" 선택지~~ — **승인(2026-09-28)**
+4. ~~"임신 여부 모름 + 출혈 → PRIORITY"~~ — **승인(2026-09-28)**
+- 0~10 척도는 공용 부품이라 통증 NRS 등 다른 척도 화면도 0~5 / 6~10 균등 격자로 바뀌었다
+- MID_12(진료 조율 부담) **삭제**(PO 2026-09-28)
+- MID_15(행동 확신) **삭제**(PO 2026-09-28) — 진료 전 태블릿·진료 후 구두 모두 어색. 행동(⑥ 외부평가 진행·⑦ review 기록)으로 대신 봄, 집계 화면은 후속 과제. 갱년기 모듈 **13화면**
+- **전체 설문 문구 간결화**(PO 2026-09-28) — 화면 문구만, 판정 불변. 대응표 `docs/QUESTION_WORDING_CONCISE_2026-09-28.md`
+5. ~~Figma 대조~~ — **해결(PO 2026-09-28)**: 파일에 Midlife 프레임이 없어 "Pain 시각 언어 준수(`--pain-*` 토큰)"로 갈음
+
+### 알려진 한계
+
+- 7칸 패널 1,045~1,180px(Figma 토큰 적용 후) — 1440×900에서 스크롤 없이 다 보이지는 않는다.
+- 주차 review는 초진 기록에만 누적(재진 화면이 이어받지 않음). EMR 복사 텍스트에 7칸 없음.
+- 레인1 공통 SafetyGlance의 "특이 안전정보 없음"(복약·알레르기·임신 요약)이 갱년기 안전 칸 바로 위에
+  나온다 — 부위 팩 기록과 같은 기존 설계라 이번에 바꾸지 않았다.
+
+### Next Recommended Action
+
+PO 확인 4건 모두 완료 → Fable 독립 검수 → 기능 QA → merge 판단. (Figma 대조는 Pain 시각 언어 준수로 갈음 — PO 2026-09-28)
+
 ## 2026-09-26 (최신 75): **한약 단독에도 「마무리」 단계** (PO "1번으로 진행해")
 
 **브랜치**: `claude/gracious-bell-epfxem` (PR #57 머지 후 새로 시작).

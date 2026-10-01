@@ -138,10 +138,35 @@ const MIDLIFE_ENTRY = { VISIT_00_INTENT: 'women', VISIT_02_WOMEN: 'midlife', SAF
   assert('AC1: 갱년기 모듈 화면은 15개 이하(한 화면 한 질문)', midOrder.length <= 15)
 
   // 소단계 표시가 실제로 렌더된다
+  // Figma 40:3 T2(2026-10-01): 한 줄 "갱년기 문진 · n/5 라벨" -> 소단계 탭 5개.
   const html = renderToString(React.createElement(QuestionBody, { question: qById.get('MID_08'), value: null, responses: r, onChange: () => {} }))
-  assert('AC1: 질문 화면에 "갱년기 문진 · 3/5 안전 확인"이 렌더된다', html.includes('갱년기 문진 · 3/5 안전 확인'))
+  const tabs = [...html.matchAll(/<li class="sectionSteps__item[^"]*"[^>]*>([^<]*)<\/li>/g)].map((m) => m[1])
+  assert('T2: 소단계 탭 5개가 순서대로 렌더된다', JSON.stringify(tabs) === JSON.stringify(['1 생애단계', '2 주요 증상', '3 안전 확인', '4 기존 진료', '5 목표']))
+  assert('T2: 현재 단계(3 안전 확인) 하나만 채운 탭 + aria-current=step', (html.match(/sectionSteps__item--current/g) || []).length === 1 && /sectionSteps__item--current" aria-current="step">3 안전 확인</.test(html))
+  assert('T2: 모듈명·순서는 스크린리더 이름(aria-label)으로 남는다', html.includes('aria-label="갱년기 문진 3/5단계: 안전 확인"'))
+  assert('T2: 탭이 질문 바로 위에 온다', /<\/ol><h1 class="question">/.test(html))
+  assert('REMOVED(T2): 옛 한 줄 표시 "갱년기 문진 · 3/5 안전 확인" 텍스트는 화면에 없다', !html.includes('갱년기 문진 · 3/5') && !html.includes('question__section'))
+  const sectioned = ALL_QUESTIONS.filter((q) => q.section)
+  assert(
+    'T2: 모든 갱년기 문항(13개)의 탭 목록·현재 라벨·전체 수가 서로 맞는다',
+    sectioned.length === 13 && sectioned.every((q) => q.id.startsWith('MID_') && q.section.steps.length === q.section.total && q.section.steps[q.section.index - 1] === q.section.label),
+  )
   const htmlCtl = renderToString(React.createElement(QuestionBody, { question: qById.get('SAFETY_01'), value: null, responses: r, onChange: () => {} }))
-  assert('AC1 대조군: 소단계 메타데이터가 없는 기존 문항에는 표시가 없다', !htmlCtl.includes('question__section') && htmlCtl.includes('class="question"'))
+  assert('AC1 대조군: 소단계 메타데이터가 없는 기존 문항에는 탭이 없다', !htmlCtl.includes('sectionSteps') && htmlCtl.includes('class="question"'))
+
+  // Figma 40:3 T4: MID_01 선택지 설명 한 줄
+  const html01 = renderToString(React.createElement(QuestionBody, { question: qById.get('MID_01'), value: null, responses: r, onChange: () => {} }))
+  const desc01 = qById.get('MID_01').options.map((o) => o.description ?? null)
+  assert('T4: MID_01 설명 한 줄 = Figma 문구(4개) + PO 추가 5번째는 설명 없음', JSON.stringify(desc01) === JSON.stringify(['예전과 비슷하게 규칙적이에요', '주기가 짧아지거나 길어졌어요', '건너뛰는 달이 있거나 예측하기 어려워요', '마지막 자연월경 후 12개월 이상 지났어요', null]))
+  assert('T4: 설명 추가가 값(value)을 바꾸지 않는다', qById.get('MID_01').options.map((o) => o.value).join() === 'regular,slightly_changed,very_irregular,amenorrhea_12m_plus,not_assessable')
+  assert('T4: 설명이 선택지 안에 렌더된다', html01.includes('<span class="option__description">마지막 자연월경 후 12개월 이상 지났어요</span>'))
+  assert('T1: 모듈 제목·"약 3분" 칩은 넣지 않는다(1024×768 세로 예산, 소요시간 미측정)', !html01.includes('약 3분') && !html01.includes('생애주기 문진'))
+  const css403 = fs.readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert(
+    'T2/T4 세로 예산: 탭이 있는 1열 선택지만 위아래 여백 10px·간격 10px(1024×768에서 MID_01 5개가 한 화면, Playwright 실측 640/668px)',
+    /\.sectionSteps ~ \.optionList--list \{\s*gap: 10px;/.test(css403) && /\.sectionSteps ~ \.optionList--list \.option \{\s*padding-top: 10px;\s*padding-bottom: 10px;/.test(css403),
+  )
+  assert('T2 대조군: 공용 .option 여백(16px 24px)은 그대로다', /\.option \{[^}]*padding: 16px 24px;/.test(css403))
 
   // 뒤로 가서 답을 바꾸면 더 이상 해당 없는 화면의 답이 지워진다
   let r2 = set(emptyResponses(), { ID_03: 'female', ...MIDLIFE_ENTRY, MID_01: 'very_irregular', MID_02: '1_3m' })

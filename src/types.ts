@@ -91,9 +91,9 @@ export type Question = {
   layout?: 'list' | 'grid2' | 'compact3' | 'body_map'
   /**
    * 순수 presentation 힌트(Midlife v0.2): 한 모듈 안에서 "몇 번째 소단계인지"를
-   * 질문 위에 작게 보여준다(예: `갱년기 문진 · 2/5 주요 증상`). `step`(상단 진행
+   * 질문 위 단계 탭(`steps`, 현재 `index`번째를 채움 -- Figma 40:3 T2)으로 보여준다. `step`(상단 진행
    * 막대의 대단계)과는 별개이며, showIf/required/value/안전 판정 어디에도
    * 영향을 주지 않는다. 미지정 시 아무것도 렌더하지 않는다 -- 기존 문항은 그대로.
    */
-  section?: { group: string; index: number; total: number; label: string }
+  section?: { group: string; index: number; total: number; label: string; steps: readonly string[] }
 }

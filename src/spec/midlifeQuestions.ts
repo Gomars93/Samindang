@@ -32,15 +32,17 @@ export const IS_PRIMARY_MIDLIFE = (r: Responses): boolean => primaryConcernKey(r
 
 const GROUP = '갱년기 문진'
 const TOTAL = 5
-const section = (index: number, label: string) => ({ group: GROUP, index, total: TOTAL, label })
+/** 소단계 이름 -- Figma 40:3 단계 탭 5개(T2)에 그대로 쓰인다. */
+const SECTION_LABELS = ['생애단계', '주요 증상', '안전 확인', '기존 진료', '목표'] as const
+const section = (index: number) => ({
+  group: GROUP,
+  index,
+  total: TOTAL,
+  label: SECTION_LABELS[index - 1],
+  steps: SECTION_LABELS,
+})
 
-export const MIDLIFE_SECTIONS = [
-  section(1, '생애단계'),
-  section(2, '주요 증상'),
-  section(3, '안전 확인'),
-  section(4, '기존 진료'),
-  section(5, '목표'),
-] as const
+export const MIDLIFE_SECTIONS = [section(1), section(2), section(3), section(4), section(5)] as const
 
 /** 월경 판단이 불가능한 경우(자궁 수술·약물 등) -- 아래 폐경 후 출혈 규칙이 이 값을 무월경으로 읽지 않게 따로 둔다. */
 export const CYCLE_NOT_ASSESSABLE = 'not_assessable'
@@ -116,11 +118,13 @@ export const MIDLIFE_QUESTIONS: Question[] = [
     step: '상세 증상',
     section: MIDLIFE_SECTIONS[0],
     showIf: IS_PRIMARY_MIDLIFE,
+    // 설명 한 줄은 Figma 40:3 T4 문구 그대로(값·라벨·판정 불변). 5번째 선택지는
+    // Figma에 없는 PO 추가 항목(2026-09-28)이라 설명을 새로 지어 넣지 않는다.
     options: [
-      { value: 'regular', label: '규칙적' },
-      { value: 'slightly_changed', label: '조금 달라짐' },
-      { value: 'very_irregular', label: '많이 불규칙' },
-      { value: CYCLE_AMENORRHEA_12M, label: '1년 넘게 없음' },
+      { value: 'regular', label: '규칙적', description: '예전과 비슷하게 규칙적이에요' },
+      { value: 'slightly_changed', label: '조금 달라짐', description: '주기가 짧아지거나 길어졌어요' },
+      { value: 'very_irregular', label: '많이 불규칙', description: '건너뛰는 달이 있거나 예측하기 어려워요' },
+      { value: CYCLE_AMENORRHEA_12M, label: '1년 넘게 없음', description: '마지막 자연월경 후 12개월 이상 지났어요' },
       { value: CYCLE_NOT_ASSESSABLE, label: '수술·약 때문에 알기 어려움' },
     ],
   },

@@ -1,5 +1,25 @@
 # Current Handoff
 
+## 2026-10-01 (최신 78): **태블릿 Figma 40:3(T1–T6) 반영** (PO "추천안으로 진행")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `28213c3` = PR #59 병합 기준으로 재시작). 상세 `DECISIONS.md` 첫 항목,
+명세 `docs/MIDLIFE_UI_IA_v0.2.md` §9.
+
+| 항목 | 결과 |
+|---|---|
+| T2 단계 탭 | 갱년기 문항 질문 위 탭 5개(현재 단계 채움), 옛 한 줄 `갱년기 문진 · n/5` 대체 |
+| T4 설명 한 줄 | MID_01 선택지 4개에 Figma 문구 그대로 |
+| T1 / T3·T5·T6 | 제목·"약 3분" 미반영(1024×768 세로 예산·미측정) / PO 결정대로 현행 유지 |
+| 다른 문진 | 변화 없음(`section` 없는 문항은 탭·여백 규칙 미적용) |
+| 테스트 | `test:midlife` 244/244, mutation 4종 검출, 1024×768 Playwright MID_01 스크롤 없음 |
+
+**PR #59 상태 정정**: 2026-10-01 00:12 UTC main 병합 완료(PO). Figma 40:49 MID_15 잔여 행도 PO가 삭제.
+main 기준 `test:all`·build 통과, 로컬 서버 E2E(태블릿 갱년기 문진 → 서버 접수 → 원장 화면 갱년기 8카드) 확인.
+
+### Next Recommended Action
+
+PR 리뷰 후 PO merge 판단. 그 다음: ① 실기기 초진 3–5분 측정(측정되면 T1 "약 3분" 재검토) ② 첫 5–10명 SOP·referral·review 부담 확인.
+
 ## 2026-09-29 (최신 77): **PR #59 PO 재검수 BLOCKER 1·2 + 원장 화면 Figma 40:49 대조** (PO "추천안으로 진행")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(PR #59, Draft). 상세 `DECISIONS.md` 첫 항목, 명세 `docs/MIDLIFE_UI_IA_v0.2.md` §5·§9.

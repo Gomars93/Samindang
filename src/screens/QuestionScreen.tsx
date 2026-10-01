@@ -20,9 +20,25 @@ export function QuestionBody({ question, value, responses, onChange }: Props) {
   return (
     <>
       {question.section && (
-        <p className="question__section" data-section-index={question.section.index}>
-          {`${question.section.group} · ${question.section.index}/${question.section.total} ${question.section.label}`}
-        </p>
+        // Figma 40:3 T2: 소단계 탭. 모듈명·순서는 스크린리더용 이름으로 남긴다.
+        <ol
+          className="sectionSteps"
+          data-section-index={question.section.index}
+          aria-label={`${question.section.group} ${question.section.index}/${question.section.total}단계: ${question.section.label}`}
+        >
+          {question.section.steps.map((label, i) => {
+            const isCurrent = i + 1 === question.section?.index
+            return (
+              <li
+                key={label}
+                className={`sectionSteps__item${isCurrent ? ' sectionSteps__item--current' : ''}`}
+                aria-current={isCurrent ? 'step' : undefined}
+              >
+                {`${i + 1} ${label}`}
+              </li>
+            )
+          })}
+        </ol>
       )}
       <h1 className="question">{question.question}</h1>
       {helper && <p className="helper">{helper}</p>}

@@ -1,5 +1,21 @@
 # Current Handoff
 
+## 2026-10-02 (최신 83): **진료 화면 좌우 여백 결함 수정** (PO 실화면 스크린샷 지적)
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `d195700` = PR #64 병합 기준). 상세 `DECISIONS.md` 첫 항목.
+
+| 항목 | 결과 |
+|---|---|
+| 증상 | 진료 화면에서 "진료 전 요약" 제목·진료/참고 탭이 화면 왼쪽 가장자리(left=0)에 붙고 오른쪽 버튼이 잘려 보임 |
+| 원인 | `.doctor:has(.doctor__visitShell)`가 .doctor padding을 0으로 만들고 여백을 셸에 맡겼는데 헤더·탭은 셸 밖 |
+| 수정 | 좌우 여백·1440 상한을 `.doctor`로 이동(CSS만). 6개 폭(834~2560)에서 제목·탭·셸·요약 left 일치, 가로 넘침 0 |
+| 테스트 | `test:doctor-shell-gutter` 9단언 신설, `test:all`·build 통과 |
+| 아직 안 한 것 | **한약·전신 화면은 Figma 프레임이 없다.** Figma 기준 재작업은 프레임이 먼저 필요(PO 결정) |
+
+### Next Recommended Action
+
+PO가 한약 원장 화면을 Figma로 다시 그릴지 결정(프레임 필요). 5-d/5-e/5-f 실기기 리허설 결과도 대기.
+
 ## 2026-10-02 (최신 82): **진료실1 서버 + 진료실1·2 원장 화면 + 자동 시작(5-f)** (PO "원장화면 진료실1 진료실2에서 볼 수 있어야해")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `ea8561b` = PR #63 병합 기준). 상세 `DECISIONS.md` 첫 항목,

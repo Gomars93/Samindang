@@ -28,8 +28,27 @@
  * 컬럼 그대로 유지된다.
  */
 .doctor:has(.doctor__visitShell) {
+  box-sizing: border-box;
   max-width: none;
-  padding: 28px 0 96px;
+  /* 좌우 여백은 .doctor 자신이 맡는다 -- 헤더·탭·배너(.doctor의 직계 자식이고
+     .doctor__visitShell 밖)가 같은 여백 안에 들어와야 하기 때문이다. 이전에는
+     여백을 .doctor__visitShell이 전담해서 헤더·탭이 화면 가장자리에 붙었다
+     (2026-10-02 실측: 1920/1440 폭 모두 제목·탭 left=0). 값은 셸 본문 위치가
+     그대로이도록 이전 셸 padding과 같게 둔다(24/32/48, 세로 태블릿 16). */
+  padding: 28px 24px 96px;
+}
+@media (min-width: 1280px) {
+  .doctor:has(.doctor__visitShell) {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+@media (min-width: 1440px) {
+  .doctor:has(.doctor__visitShell) {
+    padding-left: 48px;
+    padding-right: 48px;
+    max-width: 1440px;
+  }
 }
 
 /* ---------------------------------------------------------------------
@@ -39,20 +58,15 @@
   display: flex;
   gap: 24px;
   align-items: flex-start;
-  padding: 0 24px;
 }
 @media (min-width: 1280px) {
   .doctor__visitShell {
     gap: 32px;
-    padding: 0 32px;
   }
 }
 @media (min-width: 1440px) {
   .doctor__visitShell {
     gap: 40px;
-    padding: 0 48px;
-    max-width: 1440px;
-    margin: 0 auto;
   }
 }
 
@@ -123,7 +137,10 @@
        row layout already gets implicitly from flex's default. */
     align-items: stretch;
     gap: 0;
-    padding: 0 16px;
+  }
+  .doctor:has(.doctor__visitShell) {
+    padding-left: 16px;
+    padding-right: 16px;
   }
   .doctor__visitSummary {
     /* sticky/top/align-self는 기본 규칙이 이미 준다(위 주석 참고).

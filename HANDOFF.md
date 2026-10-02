@@ -1,5 +1,23 @@
 # Current Handoff
 
+## 2026-10-02 (최신 80): **갱년기 실기기 리허설 절차(5-d)** (PO "다음 추천안으로 진행")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `b4ee971` = PR #61 병합 기준). 상세 `DECISIONS.md` 첫 항목,
+절차 `docs/REAL_DEVICE_PILOT_CHECKLIST.md` 5-d).
+
+| 항목 | 결과 |
+|---|---|
+| 내용 | 가짜 환자 2명: ① 정상(소요시간 시계 재기, 첫 화면 5지선다 한 화면 확인, 원장 8카드·저장) ② MID_08 SOP 중단(직원 동선·호출 시간 재기) → `npm run pilot:midlife-observation`으로 대조 후 가짜 제출 삭제 |
+| 테스트 | `test:clinic-setup` 63/63 — 문서가 지시한 화면 문구·카드명·명령이 코드와 같은지 대조 |
+| 상태 | **원장 PC·실기기 리허설은 아직 안 함**(이 클라우드 세션에서는 할 수 없다) |
+
+PR #59·#60·#61 main 병합 완료(PO "merge 진행").
+
+### Next Recommended Action
+
+원장 PC에서 5-d) 리허설 1회 → 결과(총 시간, 5지선다 잘림 여부, 호출 시간)를 알려 주면 그 숫자로 다음 수정을 정한다.
+이후 첫 5–10명 파일럿 → `pilot:midlife-observation` 출력.
+
 ## 2026-10-01 (최신 79): **갱년기 파일럿 관찰 자동 집계** (PO "다음 추천안으로 진행")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `317220f` = PR #60 병합 기준으로 재시작). 상세 `DECISIONS.md` 첫 항목, 명세 §10.

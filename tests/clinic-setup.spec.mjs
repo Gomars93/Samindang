@@ -172,7 +172,7 @@ check('체크리스트 결론이 갱년기 환자도 5-d를 통과해야 한다�
 // 5-e도 5-d와 같은 이유로 문구·화면 이름을 코드와 대조한다. 요통은 갱년기와 달리 긴급 신호가
 // 문진을 멈추지 않고 직원 확인 화면 뒤에 이어지므로, 그 동작(계속 버튼)도 코드로 고정한다.
 check('실기기 체크리스트에 요통 경로 절(5-e)이 있다', checklist.includes('## 5-e)'))
-const sec5e = checklist.slice(checklist.indexOf('## 5-e)'), checklist.indexOf('## 테스트 제출 정리'))
+const sec5e = checklist.slice(checklist.indexOf('## 5-e)'), checklist.indexOf('## 5-f)'))
 const coreSpecSrc = read('src/spec/coreSpec.ts')
 const doctorViewSrc = read('src/doctor/DoctorView.tsx')
 const staffCheckSrc = read('src/screens/StaffCheckScreen.tsx')
@@ -207,5 +207,47 @@ check('5-e의 "요통 소요시간 자동 집계 없음" 주의가 사실이다 
 check('5-e (다)의 "외상·비응급 신호는 직원 확인 화면을 띄우지 않는다"가 코드와 같다 -- LBP_05·LBP_06은 STAFF_CHECK_TRIGGERS 키가 아니다',
   !/\n  LBP_0[56]:/.test(coreSpecSrc) && sec5e.includes('직원 확인 화면이 **뜨지 않고**'))
 check('체크리스트 결론이 요통 환자도 5-e를 통과해야 한다고 말한다', checklist.includes('요통 환자(가장 흔한 경우)를 볼 예정이라면 5-e)'))
+
+// ---------------------------------------------------------- 진료실1 서버 + 진료실1·2 원장 화면 (5-f, 2026-10-02)
+// 5-f는 환경변수 이름·허용 주소·워크스테이션 ID 형식·자동 시작 방식을 직원에게 지시한다.
+// 틀리면 "원장 화면이 안 열린다"로만 보이므로 코드와 한 글자씩 대조한다.
+check('실기기 체크리스트에 진료실 구성 절(5-f)이 있다', checklist.includes('## 5-f)'))
+const sec5f = checklist.slice(checklist.indexOf('## 5-f)'), checklist.indexOf('## 테스트 제출 정리'))
+const serverAuth = read('server/auth.js')
+const wsSrc = read('src/doctor/workstation.ts')
+const tokenSetupSrc = read('src/doctor/DoctorTokenSetup.tsx')
+const wsSetupSrc = read('src/doctor/WorkstationSetup.tsx')
+const regDoctorTask = read('scripts/register-doctor-api-task.ps1')
+const regPreviewTask = read('scripts/register-patient-preview-task.ps1')
+for (const v of ['SAMINDANG_DATA_DIR', 'SAMINDANG_DOCTOR_TOKEN', 'SAMINDANG_ALLOWED_ORIGINS']) {
+  check(`5-f가 설정하라고 한 환경변수 ${v}를 서버(server/index.js)가 실제로 읽는다`, serverIndex.includes(v) && sec5f.includes(v))
+}
+check('5-f가 "서버 로그에 doctor token: set이 보인다"고 약속한다 -- server/index.js가 실제로 그 문구를 찍는다',
+  serverIndex.includes("doctor token: ${process.env.SAMINDANG_DOCTOR_TOKEN ? 'set'") && sec5f.includes('doctor token: set'))
+check('5-f가 쓰라고 한 VITE_SAMINDANG_WORKSTATIONS를 workstation.ts가 실제로 읽는다', wsSrc.includes('VITE_SAMINDANG_WORKSTATIONS') && sec5f.includes('VITE_SAMINDANG_WORKSTATIONS=ROOM-1,ROOM-2'))
+const WS_RE = /^[A-Za-z0-9_-]{1,32}$/
+check('5-f의 워크스테이션 이름 ROOM-1·ROOM-2는 형식 검사를 통과하고, 한글 "진료실1"은 통과하지 못한다(문서 주장과 같다)',
+  WS_RE.test('ROOM-1') && WS_RE.test('ROOM-2') && !WS_RE.test('진료실1') && wsSrc.includes('^[A-Za-z0-9_-]{1,32}$') && sec5f.includes('한글 "진료실1" 불가'))
+check('5-f가 약속한 배너 "원장 인증 필요"가 DoctorTokenSetup.tsx에 실제로 있다', tokenSetupSrc.includes('원장 인증 필요') && sec5f.includes('원장 인증 필요'))
+check('5-f가 약속한 배너 "워크스테이션 설정 필요"가 WorkstationSetup.tsx에 실제로 있다', wsSetupSrc.includes('워크스테이션 설정 필요') && sec5f.includes('워크스테이션 설정 필요'))
+check('5-f가 말하는 자동 시작 명령 register-clinic-autostart.ps1과 작업 이름 두 개가 실제로 있다',
+  existsSync(new URL('../scripts/register-clinic-autostart.ps1', import.meta.url)) &&
+    regDoctorTask.includes("'SamindangDoctorAPI'") && regPreviewTask.includes('SamindangPatientPreview') &&
+    sec5f.includes('scripts\\register-clinic-autostart.ps1') && sec5f.includes('SamindangDoctorAPI') && sec5f.includes('SamindangPatientPreview'))
+check('5-f의 "자동 시작은 로그온 시 뜬다(부팅만으로는 안 뜬다)"가 코드와 같다 -- 작업 트리거가 AtLogOn이다',
+  regDoctorTask.includes('New-ScheduledTaskTrigger -AtLogOn') && sec5f.includes('로그온 시'))
+check('5-f의 "서버는 자기 LAN IP로 들어온 요청을 loopback으로 보지 않는다"가 코드와 같다 -- isLoopback은 127.0.0.1/::1만 인정한다',
+  /const LOOPBACK = new Set\(\['127\.0\.0\.1', '::1', '::ffff:127\.0\.0\.1'\]\)/.test(serverAuth) && sec5f.includes('(loopback)로 보지 않는다'))
+check('5-f가 가리키는 MULTI_WORKSTATION_CONTRACT.md에 "LAN Doctor 접근 수동 스모크 테스트" 7항목이 실제로 있다',
+  (read('docs/MULTI_WORKSTATION_CONTRACT.md').split('LAN Doctor 접근 수동 스모크 테스트')[1] || '').split('- [ ]').length - 1 === 7 && sec5f.includes('7항목'))
+check('5-f는 구글 드라이브 동기화 위험을 경고하고 RUNBOOK도 같은 경고를 한다', sec5f.includes('구글 드라이브') && read('docs/RUNBOOK_LOCAL_HANDOFF.md').includes('구글 드라이브'))
+check('체크리스트 결론이 진료실1·2 구성은 5-f를 통과해야 한다고 말한다', checklist.includes('**5-f)도** 통과해야 한다'))
+// 지운 경로(REMOVED): 자동 시작 .bat 3개의 하드코딩 프로젝트 경로. 값(프로젝트 루트)은 scripts\의 상위로 대체됐다.
+for (const f of ['start-doctor-api.bat', 'start-patient-preview.bat', 'start-doctor-ui.bat']) {
+  const b = read(`scripts/${f}`)
+  check(`REMOVED(하드코딩 경로): ${f}에 특정 PC의 프로젝트 경로(ASUS)가 없고 %~dp0.. 로 루트를 구한다`,
+    !b.includes('ASUS') && b.includes('for %%I in ("%~dp0..") do set "PROJ=%%~fI"') && b.includes('cd /d "%PROJ%"'))
+  check(`${f}는 ASCII만 쓴다(cmd 코드페이지에서 한글 REM이 깨지는 사고 방지)`, !/[^\x00-\x7F]/.test(b))
+}
 
 console.log(`\nSUMMARY: ${passed} assertions passed, 0 failed (total ${passed})`)

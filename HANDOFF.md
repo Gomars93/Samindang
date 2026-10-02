@@ -1,5 +1,22 @@
 # Current Handoff
 
+## 2026-10-02 (최신 82): **진료실1 서버 + 진료실1·2 원장 화면 + 자동 시작(5-f)** (PO "원장화면 진료실1 진료실2에서 볼 수 있어야해")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `ea8561b` = PR #63 병합 기준). 상세 `DECISIONS.md` 첫 항목,
+절차 `docs/REAL_DEVICE_PILOT_CHECKLIST.md` 5-f).
+
+| 항목 | 결과 |
+|---|---|
+| 구성 | 서버 = 항시 켜 두는 진료실1 PC. 진료실1·2 원장은 Windows Chrome에서 `http://<서버 IP>:4173/#doctor`, 워크스테이션 `ROOM-1`/`ROOM-2` |
+| 설정 | 사용자 환경변수 3개(`SAMINDANG_DATA_DIR`·`SAMINDANG_DOCTOR_TOKEN`·`SAMINDANG_ALLOWED_ORIGINS`) + `.env.local`의 `VITE_SAMINDANG_WORKSTATIONS` + 서버 IP 고정 + `register-clinic-autostart.ps1` |
+| 코드 | 서버 변경 없음. 자동 시작 .bat 3개의 하드코딩 경로(ASUS)를 `%~dp0..`로 교체 |
+| 미확인 | **Windows에서 진료실1 PC 자신도 토큰이 필요한지**(Linux에선 자기 LAN IP → 403 재현). 실기기 7항목 스모크 미실시 |
+| 테스트 | `test:clinic-setup` 113/113 |
+
+### Next Recommended Action
+
+진료실1 PC에서 5-f) (가)~(마) 설정 후 진료실2에서 (바)(사) 확인. 5-d)·5-e) 리허설과 함께 결과를 알려 주면 그 숫자로 다음 수정을 정한다.
+
 ## 2026-10-02 (최신 81): **요통 실기기 점검 절차(5-e)** (PO "요통 실기기 점검 절차도 만들어줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `e749612` = PR #62 병합 기준). 상세 `DECISIONS.md` 첫 항목,

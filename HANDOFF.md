@@ -1,5 +1,22 @@
 # Current Handoff
 
+## 2026-10-01 (최신 79): **갱년기 파일럿 관찰 자동 집계** (PO "다음 추천안으로 진행")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `317220f` = PR #60 병합 기준으로 재시작). 상세 `DECISIONS.md` 첫 항목, 명세 §10.
+
+| 항목 | 결과 |
+|---|---|
+| 실행 | 원장 PC에서 `npm run pilot:midlife-observation` (데이터 폴더가 다르면 `SAMINDANG_DATA_DIR=...`) |
+| 세는 것 | ① 태블릿 소요시간(중앙값·3분/5분 이내·가장 오래 머문 화면) ② 안전 분포·SOP 중단 ③ 원장 저장·생애단계·가설·4주 목표·외부평가·review ④ 재진 PRO |
+| 개인정보 | 건수·비율·시간·문항 id만 출력. 이름·연락처·자유서술·메모 미출력(테스트 강제) |
+| 테스트 | `test:midlife-pilot-observation` 42/42, mutation 5종 검출, `test:all` 포함 |
+
+PR #60(태블릿 Figma 40:3) 2026-10-01 main 병합 완료(PO "merge 진행").
+
+### Next Recommended Action
+
+파일럿 5–10명 후 원장 PC에서 집계 1회 → 숫자로 ① 가장 오래 걸린 갱년기 화면 줄이기 ② "약 3분" 칩 ③ 임계값 조정을 결정.
+
 ## 2026-10-01 (최신 78): **태블릿 Figma 40:3(T1–T6) 반영** (PO "추천안으로 진행")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `28213c3` = PR #59 병합 기준으로 재시작). 상세 `DECISIONS.md` 첫 항목,

@@ -179,3 +179,21 @@ PRIORITY는 인터럽트하지 않는다(부위 팩 REVIEW와 같음).
 
 세로 예산: 탭 한 줄만큼 갱년기 1열 선택지의 위아래 여백 16→10px·간격 14→10px(최소 높이 72px 유지).
 Playwright 1024×768 실측 MID_01 마지막 선택지 하단 640px / 본문 영역 668px(스크롤 없음). main은 581px.
+
+## 10. 파일럿 관찰 자동 집계 (2026-10-01, PO "다음 추천안으로 진행")
+
+첫 5–10명 파일럿에서 확인하기로 한 것(초진 3–5분, SOP, 외부 평가 완료, review 부담) 중 기록에서 셀 수 있는 것은
+원장 PC에서 `npm run pilot:midlife-observation` 한 번으로 센다(스톱워치·수기 집계 없음). 요통·목 파일럿의
+`pilot:region-observation`과 같은 방식이다.
+
+| 항목 | 출처 | 비고 |
+|---|---|---|
+| ① 태블릿 소요시간(전체·갱년기 모듈) | 제출 `created_at` − `metadata.session_started_at`, 문항별 `metadata.answers[id].answered_at` | 30분 이상은 대기·자리 비움으로 보고 시간 집계에서 뺀다 |
+| ① 가장 오래 머문 갱년기 화면 3개 | 문항별 머문 시간 중앙값 | "다음에 줄일 문항" 후보 |
+| ② 안전 판정 분포·MID_08 SOP 중단 | `safety_flags.midlife.status`, `metadata.questionnaire_halted` | 건별 동선·호출 시간은 손으로 적는다 |
+| ③ 원장 기록 | 워크스페이스 `midlifeCare`(생애단계·가설 유무·외부 평가 상태·review), `herbalFollowUpTargets`의 `midlife_goal:*` | 가설은 "비어 있지 않은가"만 본다 |
+| ④ 재진 PRO | `micro-follow-up`의 MID_05·06·07 답 | 분모 = 초진 14일 지난 갱년기 방문 |
+
+판정 임계값(제안값 — 회의 소집 기준이지 임상 기준이 아니다): 기록 10건 미만이면 방향 참고용, 전체 소요시간 중앙값 5분 초과,
+원장 화면 저장 80% 미만, 4주 목표 설정 70% 미만, 14일 지난 방문의 재진 PRO 응답 50% 미만, 결과 미확인 외부 평가 있음.
+출력은 건수·비율·시간·문항 id·코드값뿐이다(이름·연락처·자유서술·메모 없음 — `tests/midlife-pilot-observation.spec.mjs`가 강제).

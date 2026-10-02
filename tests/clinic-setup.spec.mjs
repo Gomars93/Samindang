@@ -145,4 +145,27 @@ check(
   checklist.includes('2026-09-20 해소(PO 결정)') && !checklist.includes('BLOCKER 3건이 남아 있는 한'),
 )
 
+// ---------------------------------------------------------- 갱년기 실기기 절차 (5-d, 2026-10-02)
+// 5-d는 직원에게 "이 화면에서 이 문구를 고르라 / 이 문구가 보여야 한다 / 이 명령을 실행하라"고
+// 지시한다. 문구·명령이 코드와 한 글자라도 다르면 리허설이 헛돈다 -- 코드 대조로 고정한다.
+check('실기기 체크리스트에 갱년기 경로 절(5-d)이 있다', checklist.includes('## 5-d)'))
+const midQs = read('src/spec/midlifeQuestions.ts')
+const patientDone = read('src/screens/PatientCompleteScreen.tsx')
+const midPanel = read('src/doctor/workspace/MidlifeCarePanel.tsx')
+const midSafety = read('src/doctor/MidlifeSafetyPanel.tsx')
+const pkg = JSON.parse(read('package.json'))
+const sec5d = checklist.slice(checklist.indexOf('## 5-d)'), checklist.indexOf('## 테스트 제출 정리'))
+for (const t of ['최근 1년, 월경(생리)은 어땠나요?', '지금 이런 상태가 있나요?', '자해·자살에 대한 구체적인 생각이나 계획이 있어요', '수술·약 때문에 알기 어려움']) {
+  check(`5-d가 지시한 갱년기 화면 문구 "${t}"가 midlifeQuestions.ts에 실제로 있다`, midQs.includes(t) && sec5d.includes(t))
+}
+check('5-d가 약속한 중단 화면 문구 "직원이 바로 도와드릴게요"가 PatientCompleteScreen.tsx에 실제로 있다', patientDone.includes("'직원이 바로 도와드릴게요'") && sec5d.includes('직원이 바로 도와드릴게요'))
+check('5-d가 약속한 원장 화면 "중단됨" 표시가 MidlifeSafetyPanel.tsx에 실제로 있다', midSafety.includes('중단됨(SOP)') && sec5d.includes('MID_08에서 중단됨'))
+for (const t of ['LIFE STAGE', 'TOP SYMPTOMS', 'BASELINE PRO', 'DIAGNOSTIC HYPOTHESIS', 'REFUTATION TRIGGER', 'REFERRAL / UNRESOLVED', 'CARE PLAN', '갱년기 진료 요약', '주증상', '수면 만족도', '일상 기능 방해']) {
+  check(`5-d가 약속한 원장 화면 카드/행 "${t}"가 MidlifeCarePanel.tsx에 실제로 있다`, midPanel.includes(t) && sec5d.includes(t))
+}
+check('5-d가 실행하라고 한 npm run pilot:midlife-observation이 package.json에 실제로 있다', typeof pkg.scripts['pilot:midlife-observation'] === 'string' && sec5d.includes('npm run pilot:midlife-observation'))
+check('5-d는 첫 갱년기 화면 선택지 5개가 한 화면이라고 약속한다 -- midlifeQuestions.ts MID_01이 실제로 5개다',
+  (midQs.slice(midQs.indexOf("id: 'MID_01'"), midQs.indexOf("id: 'MID_02'")).match(/value: /g) || []).length === 5 && sec5d.includes('5개가 스크롤 없이'))
+check('체크리스트 결론이 갱년기 환자도 5-d를 통과해야 한다고 말한다', checklist.includes('갱년기 환자를 볼 예정이라면 5-d)'))
+
 console.log(`\nSUMMARY: ${passed} assertions passed, 0 failed (total ${passed})`)

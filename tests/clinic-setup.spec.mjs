@@ -154,7 +154,7 @@ const patientDone = read('src/screens/PatientCompleteScreen.tsx')
 const midPanel = read('src/doctor/workspace/MidlifeCarePanel.tsx')
 const midSafety = read('src/doctor/MidlifeSafetyPanel.tsx')
 const pkg = JSON.parse(read('package.json'))
-const sec5d = checklist.slice(checklist.indexOf('## 5-d)'), checklist.indexOf('## 테스트 제출 정리'))
+const sec5d = checklist.slice(checklist.indexOf('## 5-d)'), checklist.indexOf('## 5-e)'))
 for (const t of ['최근 1년, 월경(생리)은 어땠나요?', '지금 이런 상태가 있나요?', '자해·자살에 대한 구체적인 생각이나 계획이 있어요', '수술·약 때문에 알기 어려움']) {
   check(`5-d가 지시한 갱년기 화면 문구 "${t}"가 midlifeQuestions.ts에 실제로 있다`, midQs.includes(t) && sec5d.includes(t))
 }
@@ -167,5 +167,45 @@ check('5-d가 실행하라고 한 npm run pilot:midlife-observation이 package.j
 check('5-d는 첫 갱년기 화면 선택지 5개가 한 화면이라고 약속한다 -- midlifeQuestions.ts MID_01이 실제로 5개다',
   (midQs.slice(midQs.indexOf("id: 'MID_01'"), midQs.indexOf("id: 'MID_02'")).match(/value: /g) || []).length === 5 && sec5d.includes('5개가 스크롤 없이'))
 check('체크리스트 결론이 갱년기 환자도 5-d를 통과해야 한다고 말한다', checklist.includes('갱년기 환자를 볼 예정이라면 5-d)'))
+
+// ---------------------------------------------------------- 요통 실기기 절차 (5-e, 2026-10-02)
+// 5-e도 5-d와 같은 이유로 문구·화면 이름을 코드와 대조한다. 요통은 갱년기와 달리 긴급 신호가
+// 문진을 멈추지 않고 직원 확인 화면 뒤에 이어지므로, 그 동작(계속 버튼)도 코드로 고정한다.
+check('실기기 체크리스트에 요통 경로 절(5-e)이 있다', checklist.includes('## 5-e)'))
+const sec5e = checklist.slice(checklist.indexOf('## 5-e)'), checklist.indexOf('## 테스트 제출 정리'))
+const coreSpecSrc = read('src/spec/coreSpec.ts')
+const doctorViewSrc = read('src/doctor/DoctorView.tsx')
+const staffCheckSrc = read('src/screens/StaffCheckScreen.tsx')
+for (const t of [
+  '허리와 별개로 다리가 저리거나 둔하거나 힘이 빠지나요?',
+  '허리·다리와 함께 최근 새로 생긴 변화가 있나요?',
+  '소변이 잘 나오지 않거나 시작하기 어려워짐',
+  '최근 넘어짐·부딪힘 등 허리에 큰 충격이 있었나요?',
+  '허리 통증이나 불편감이 가장 멀리 어디까지 내려가나요?',
+  '저리거나 찌릿함',
+]) {
+  check(`5-e가 지시한 요통 화면 문구 "${t}"가 coreSpec.ts에 실제로 있다`, coreSpecSrc.includes(t) && sec5e.includes(t))
+}
+for (const t of ['허리만', '아픈 곳 치료', '허리·골반']) {
+  check(`5-e가 지시한 선택지 "${t}"가 coreSpec.ts에 실제로 있다`, coreSpecSrc.includes(`label: '${t}'`) && sec5e.includes(t))
+}
+check('5-e가 약속한 직원 확인 화면 문구가 StaffCheckScreen.tsx에 실제로 있다',
+  staffCheckSrc.includes('먼저 확인이 필요한 내용이 있습니다. 태블릿을 직원에게 보여주세요.') && sec5e.includes('먼저 확인이 필요한 내용이 있습니다. 태블릿을 직원에게 보여주세요.'))
+check('5-e가 약속한 "계속하기" 버튼(요통 인터럽트는 중단이 아니라 직원 확인 후 계속)이 StaffCheckScreen.tsx에 실제로 있다',
+  staffCheckSrc.includes('확인했어요, 계속하기') && sec5e.includes('확인했어요, 계속하기'))
+check('5-e의 "요통 긴급 신호는 문진을 멈추지 않는다"가 코드와 같다 -- LBP_04는 STAFF_CHECK_TRIGGERS에 있고 QUESTIONNAIRE_HALT_TRIGGERS에는 없다',
+  /STAFF_CHECK_TRIGGERS[\s\S]*?\n  LBP_04:/.test(coreSpecSrc) && !/QUESTIONNAIRE_HALT_TRIGGERS[^=]*=\s*\{[\s\S]*?LBP_/.test(coreSpecSrc))
+for (const t of ['안전 확인 — 허리(LBP)', '안전 확인', '치료 안전', '신경근성 증상 가능성', '추가 권장 검사', '긴급 확인 필요', '확인 필요', '안전 확인 전까지 일상적인 운동/치료 추천은 잠깁니다']) {
+  check(`5-e가 약속한 원장 화면 문구 "${t}"가 DoctorView.tsx에 실제로 있다`, doctorViewSrc.includes(t) && sec5e.includes(t))
+}
+for (const t of ['목표 기능 재현 검사', '요추 능동 움직임 반응 검사', '하지 근절(myotome) 근력 검사', '감각 검사', '반사 검사']) {
+  check(`5-e가 약속한 추가 권장 검사 "${t}"가 DoctorView.tsx LBP_EXAM_LABELS에 실제로 있다`, doctorViewSrc.includes(`'${t}'`) && sec5e.includes(t))
+}
+check('5-e의 "요통 소요시간 자동 집계 없음" 주의가 사실이다 -- 요통용 pilot 스크립트는 운동 단계 분포(pilot:lbp-stage)뿐이다',
+  typeof pkg.scripts['pilot:lbp-stage'] === 'string' && !Object.keys(pkg.scripts).some((k) => /^pilot:(lbp|back).*(time|dwell|duration|observation)/.test(k)) &&
+    sec5e.includes('소요시간·긴급 신호 건수를 세는 자동 집계가 없다') && sec5e.includes('pilot:lbp-stage'))
+check('5-e (다)의 "외상·비응급 신호는 직원 확인 화면을 띄우지 않는다"가 코드와 같다 -- LBP_05·LBP_06은 STAFF_CHECK_TRIGGERS 키가 아니다',
+  !/\n  LBP_0[56]:/.test(coreSpecSrc) && sec5e.includes('직원 확인 화면이 **뜨지 않고**'))
+check('체크리스트 결론이 요통 환자도 5-e를 통과해야 한다고 말한다', checklist.includes('요통 환자(가장 흔한 경우)를 볼 예정이라면 5-e)'))
 
 console.log(`\nSUMMARY: ${passed} assertions passed, 0 failed (total ${passed})`)

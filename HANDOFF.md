@@ -1,5 +1,20 @@
 # Current Handoff
 
+## 2026-10-03 (최신 86): **클리닉 PC 업데이트 스크립트** (PO "다음 추천안으로 진행해줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `1c808da` = PR #67 병합 기준). 상세 `DECISIONS.md` 첫 항목.
+
+| 항목 | 결과 |
+|---|---|
+| 내용 | `scripts\update-clinic.bat` 더블클릭 한 번 = 안전 확인 → `fetch` + `merge --ff-only` → (필요할 때만) `npm install` → 빌드 → 서버 두 개 재시작 → 응답 확인 |
+| 안전 | main 아님/커밋 안 된 변경/합칠 수 없음 → 아무것도 안 바꾸고 멈춤. 강제·삭제·reset·환자 데이터·`.env.local` 접근 없음 |
+| 테스트 | `test:clinic-update` 28단언(정적). 변이 2건으로 실패 확인 |
+| **미확인** | **PowerShell 실행 검증 못 함**(이 세션에 없음). 작업 스케줄러 중지가 자식 프로세스까지 끄는지도 실기기 확인 필요 |
+
+### Next Recommended Action
+
+진료실1 PC에서 `scripts\update-clinic.bat`를 한 번 실행하고(환자 없을 때) 화면 메시지를 그대로 알려 주세요. 한약 화면 사진(Figma와 다른 점 6개 승인)과 5-f 결과도 대기 중.
+
 ## 2026-10-03 (최신 85): **한약 단독 두 칼럼 배치 구현** (PO "Figma 프레임 승인, 코드 반영 진행해줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `df6c588` = PR #66 병합 기준). 상세 `DECISIONS.md` 첫 항목, 필드 표 `docs/HERBAL_DOCTOR_VIEW_FIGMA_BRIEF_v0.1.md`.

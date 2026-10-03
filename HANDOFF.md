@@ -1,5 +1,20 @@
 # Current Handoff
 
+## 2026-10-03 (최신 84): **한약·전신 원장 화면 Figma 프레임 초안** (PO "추천안으로 진행해줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `2cadd5c` = PR #65 병합 기준). 상세 `DECISIONS.md` 첫 항목, 내용 목록 `docs/HERBAL_DOCTOR_VIEW_FIGMA_BRIEF_v0.1.md`.
+
+| 항목 | 결과 |
+|---|---|
+| Figma | 파일 `UjziuG6OOpVU1CtcNl6704` 새 페이지 `03 · Herbal Doctor View v0.1`, 프레임 `44:3`(한약 단독 초진 1440), 설계 메모 `44:128` |
+| 내용 | 단계 탭 · A 스냅샷 · S 안전 띠 · B(왼쪽 SYSTEMIC·EXAM / 오른쪽 FINAL·FOLLOW-UP·PATTERN·접힌 두 줄). 필드 13행 모두 새 위치 지정 |
+| 코드 | **변경 없음.** PO 승인 전에는 구현하지 않는다 |
+| PO 확인 필요 | ① 카드 순서·좌우 배치(제 가정) ② 안전 띠를 A 아래 전폭으로 둔 것 ③ 재진·mixed·마무리 프레임 순서 |
+
+### Next Recommended Action
+
+PO가 Figma `03` 페이지의 프레임 `44:3`을 보고 승인/수정 지시 → 승인되면 코드 반영 PR(배치·스타일만, EMR·안전 경로 불변, 경로당 소스 단언 1개).
+
 ## 2026-10-02 (최신 83): **진료 화면 좌우 여백 결함 수정** (PO 실화면 스크린샷 지적)
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `d195700` = PR #64 병합 기준). 상세 `DECISIONS.md` 첫 항목.

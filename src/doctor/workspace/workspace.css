@@ -2522,3 +2522,195 @@
 .midlife__field--inline select {
   flex: 1;
 }
+
+/* ---------------------------------------------------------------------
+ * 한약 단독 두 칼럼 배치 (Figma `03 · Herbal Doctor View v0.1`, 프레임 44:3 — PO 승인 2026-10-03).
+ *
+ * 구조: .herbalSplit 안에 [스냅샷(A)] [안전 확인 레인(S, 전폭)] [확인 레인 = 왼쪽] [판단·처치 레인 = 오른쪽].
+ * 이 래퍼는 한약 단독(비갱년기)에만 있다 -- 다른 프로필의 DOM·CSS는 그대로다. 단계 래퍼
+ * (.doctor__visitStep)에는 규칙을 얹지 않는다(doctor.css 주석 -- `hidden`이 먹어야 한다).
+ * 값은 Figma에서 읽은 것을 그대로 쓴다: 카드 반경 14, 안쪽 여백 22, 칼럼 간격 20, 카드 간격 16.
+ * ------------------------------------------------------------------- */
+.herbalSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (min-width: 1280px) {
+  .herbalSplit {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+  }
+  .herbalSplit > .herbalSnapshot,
+  .herbalSplit > .doctor__visitLane--lane1 {
+    grid-column: 1 / -1;
+  }
+}
+
+/* 레인이 세로로 쌓이던 리듬(구분선·위 여백)은 칼럼 배치에서 필요 없다. */
+.herbalSplit > .doctor__visitLane {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+  min-width: 0;
+}
+
+/* 확인·판단·처치 레인 제목은 칼럼 머리 역할을 카드의 영문 라벨이 대신한다. 점프 내비의 도착점으로는 남긴다. */
+.herbalSplit > .doctor__visitLane--lane2 > h2,
+.herbalSplit > .doctor__visitLane--judgment > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.herbalSplit > .doctor__visitLane > .workspace__herbal--split,
+.herbalSplit > .doctor__visitLane--judgment {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.herbalSplit .workspace__hero,
+.herbalSplit .workspace__block,
+.herbalSplit .workspace__finalAssessment {
+  border-radius: 14px;
+  padding: 22px;
+  margin: 0;
+}
+/* 접힌 한 줄(오늘 재검·다른 유형 입력 추가)은 Figma처럼 얇게 -- 카드 여백 22를 그대로 쓰면 접힌 줄이 카드만큼 커진다. */
+.herbalSplit .workspace__optional {
+  border-radius: 14px;
+  margin: 0;
+}
+.herbalSplit .workspace__optional > summary {
+  padding: 4px 4px;
+}
+
+/* 카드 머리: 영문 라벨 + 한글 질문 한 줄 (통증·갱년기 프레임과 같은 문법). */
+.workspace__cardHead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.workspace__cardEyebrow,
+.workspace__hero__head .workspace__cardEyebrow {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--primary);
+}
+.workspace__cardQuestion {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.herbalSplit .workspace__hero__head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+/* SYSTEMIC: 라벨 왼쪽 / 값 오른쪽 행 (Figma 행 문법). */
+.herbalSplit .workspace__systemicGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 0;
+}
+.herbalSplit .workspace__systemCard {
+  border: none;
+  border-radius: 0;
+  padding: 6px 0;
+}
+.herbalSplit .workspace__systemCard .doctorField {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 0;
+  border-bottom: none;
+}
+.herbalSplit .workspace__systemCard .doctorField__label {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+.herbalSplit .workspace__systemCard .doctorField__value {
+  font-size: 15px;
+}
+.herbalSplit .workspace__systemCard .doctorField__value {
+  text-align: right;
+  font-weight: 600;
+}
+
+/* FINAL: 두 칸씩(최종 변증·병기 / 처방·계획 메모 / 추적할 증상). */
+.workspace__finalAssessment--cardHead .workspace__finalAssessment__fields--primary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 스냅샷(A)은 통증 프레임의 `painSnapshot`을 그대로 쓴다. */
+.herbalSnapshot {
+  margin: 0;
+}
+
+/*
+ * EXAM 카드는 절반 폭 칼럼(≈430px) 안에 들어가 있다. 옛 행 문법(카테고리 90 / 제목 140 / 칩 1fr / 배지)을
+ * 그대로 두면 칩 칸이 130px로 눌려 칩이 한 줄에 하나씩 쌓이고, 펼침 비용이 +354px → +946px로 불었다
+ * (tests/tablet-viewport.spec.mjs 2.19x, 실측 2026-10-03). 그래서 이 칼럼에서만 칩 블록을 제 줄(전폭)로 내린다.
+ * 위 주석의 "칩을 제 줄로 내리면 높아졌다"는 넓은 레인(칩 칸이 이미 충분히 넓음) 기준이었다.
+ */
+.herbalSplit .workspace__observationRow {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  row-gap: 6px;
+}
+.herbalSplit .workspace__observationRow > .workspace__obsChipBlock,
+.herbalSplit .workspace__observationRow > .workspace__observationRow__actions {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/*
+ * 한 칼럼으로 쌓이는 폭(<1280px: 태블릿 가로·세로)에서는 카드를 옛 구성만큼 촘촘하게 둔다.
+ * 두 칼럼용 값(여백 22, 머리 두 줄)을 그대로 쓰면 1024×768 진료 화면이 978px → 1,314px(1.71배)로 불어
+ * tests/tablet-viewport.spec.mjs의 1.5화면 예산(1,152px)을 넘는다(실측 2026-10-03).
+ * 칼럼 배치(≥1280px)에는 영향이 없다.
+ */
+@media (max-width: 1279px) {
+  .herbalSplit {
+    gap: 10px;
+  }
+  .herbalSplit .workspace__hero,
+  .herbalSplit .workspace__block,
+  .herbalSplit .workspace__finalAssessment {
+    padding: 12px 16px;
+  }
+  .herbalSplit .workspace__cardHead,
+  .herbalSplit .workspace__hero__head {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .herbalSplit > .herbalSnapshot .painSnapshot {
+    padding: 10px 16px;
+    gap: 16px;
+  }
+  .herbalSplit > .herbalSnapshot .painSnapshot__title {
+    font-size: 18px;
+  }
+  .herbalSplit .workspace__systemCard {
+    padding: 3px 0;
+  }
+}

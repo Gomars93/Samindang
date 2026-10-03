@@ -54,6 +54,107 @@ import type { MicroFollowUpResponse } from './microFollowUp'
 import { microFollowUpCandidatesFromPriorTargets } from './microFollowUp'
 import { MicroFollowUpCard } from './MicroFollowUpCard'
 
+/**
+ * 전신 문진 값(응답이 있는 항목만). 확인 레인의 hero(SYSTEMIC)와 스냅샷의 "응답 n항목"이
+ * **같은 목록**을 읽는다 -- 두 곳이 따로 세면 어긋난다.
+ */
+export function herbalSystemicFields(payload: DoctorPayload) {
+  const r = payload.responses
+  return [
+    { qid: 'SLEEP_01', label: '수면', value: r.modules.sleep?.problems },
+    { qid: 'GI_01', label: '소화', value: r.modules.gi?.problems },
+    { qid: 'BOWEL_01', label: '대변', value: r.modules.bowel?.problems },
+    { qid: 'URINARY_01', label: '소변', value: r.modules.urinary?.problems },
+    { qid: 'HERB_APPETITE', label: '식욕', value: r.constitution_basics.appetite_level },
+    { qid: 'WEIGHT_03', label: '체중 변화', value: r.modules.weight?.recent_weight_change },
+    { qid: 'HERB_THERMAL', label: '한열 경향', value: r.constitution_basics.thermal_tendency },
+    { qid: 'HERB_SWEAT', label: '땀', value: r.constitution_basics.sweat_pattern },
+    { qid: 'HERB_THIRST', label: '갈증', value: r.constitution_basics.thirst_level },
+  ].filter((f) => !isEmptyValue(f.value as never))
+}
+
+/**
+ * 안전이슈 한 줄의 문구와 위험 여부. hero 행(mixed)과 스냅샷 칩(한약 단독)이 **같은 계산**을 쓴다.
+ *
+ * Midlife v0.2: 공통 flags만 읽으면 갱년기 판정(폐경 후 출혈 등)이 있어도 "없음"을 띄운다 --
+ * 레인1은 경고하는데 여기는 안전하다고 말하는 모순(fail-open). 갱년기 기록이면 레인1과
+ * **같은 계산**의 결과를 한 항목으로 합친다(CLEAR면 추가 없음).
+ */
+export function herbalSafetyIssue(payload: DoctorPayload): {
+  text: string
+  danger: boolean
+  /** 스냅샷 칩 색: 공통 위험신호는 urgent, 그 밖의 확인 필요/읽기 불가는 review, 답했고 이상 없음은 clear, 아직 안 물음은 unknown. */
+  level: 'urgent' | 'review' | 'clear' | 'unknown'
+} {
+  const r = payload.responses
+  const { flags } = payload
+  const flagsUsable = isFlagsUsable(flags, r)
+  const MIDLIFE_CAT: Record<Exclude<MidlifeSafetyStatus, 'CLEAR'>, string> = {
+    URGENT_REVIEW: '갱년기 URGENT',
+    PRIORITY_EVALUATION: '갱년기 우선 외부평가',
+    INCOMPLETE: '갱년기 안전 계산 불가',
+  }
+  const midlifeStatus = isMidlifeRecord(payload)
+    ? computeMidlifeSafety(toMidlifeStateFromDoctorPayload(r)).status
+    : 'CLEAR'
+  const safetyCats = [
+    ...safetyIssueCategories(flags),
+    ...(midlifeStatus === 'CLEAR' ? [] : [MIDLIFE_CAT[midlifeStatus]]),
+  ]
+  const safetyAnswered =
+    Array.isArray(r.safety_flags?.red_flag_general) && r.safety_flags.red_flag_general.length > 0
+  const danger = !flagsUsable || safetyCats.length > 0
+  return {
+    text: !flagsUsable
+      ? '확인 필요 — 계산값 읽기 불가'
+      : safetyCats.length > 0
+        ? safetyCats.join(', ')
+        : safetyAnswered
+          ? '없음'
+          : '미확인',
+    danger,
+    level: danger
+      ? flagsUsable && (flags.general_red || midlifeStatus === 'URGENT_REVIEW')
+        ? 'urgent'
+        : 'review'
+      : safetyAnswered
+        ? 'clear'
+        : 'unknown',
+  }
+}
+
+/** "최종 판단에 가져오기" -- 후보 이름을 최종 변증·병기에 한 줄 덧붙인다. 확인 레인(mixed)과 판단 레인(한약 단독)이 같은 함수를 쓴다. */
+function adoptCandidateToFinal(finalAssessment: HerbalFinalAssessment, candidate: HerbalPatternCandidate): HerbalFinalAssessment {
+  const existing = finalAssessment.finalPatternOrMechanism.trim()
+  const next = existing ? `${existing}\n${candidate.displayName}` : candidate.displayName
+  return { ...finalAssessment, finalPatternOrMechanism: next, recordedAt: new Date().toISOString() }
+}
+
+/**
+ * 한약 단독 진료 화면의 맨 위 「A · Clinical Snapshot」 (Figma `03 · Herbal Doctor View v0.1`, 프레임 44:3).
+ * 값을 새로 계산하지 않는다 -- 상담 목적은 `primaryConcernLabel`, 안전이슈는 `herbalSafetyIssue`,
+ * 응답 항목 수는 `herbalSystemicFields`가 이미 만든 값을 그대로 읽는다.
+ */
+export function HerbalSnapshot({ payload }: { payload: DoctorPayload }) {
+  const issue = herbalSafetyIssue(payload)
+  const answered = herbalSystemicFields(payload).length
+  return (
+    <section className="painClinical herbalSnapshot" aria-label="환자 요약">
+      <div className="painSnapshot herbalSnapshot__body">
+        <div className="painSnapshot__lead">
+          <h2 className="painSnapshot__title">{primaryConcernLabel(payload.responses)}</h2>
+          <p className="painSnapshot__subtitle">{`상담 목적 · 전신 문진 응답 ${answered}항목`}</p>
+        </div>
+        <span className={`painSafety painSafety--${issue.level}`}>
+          <span aria-hidden="true">{issue.level === 'clear' ? '✓' : issue.level === 'unknown' ? '—' : '⚠'}</span>
+          <span>안전이슈</span>
+          <strong>{issue.text}</strong>
+        </span>
+      </div>
+    </section>
+  )
+}
+
 export function HerbalWorkspaceLane2({
   payload,
   patternCandidates,
@@ -67,6 +168,7 @@ export function HerbalWorkspaceLane2({
   priorVisits,
   finalAssessment,
   onChangeFinalAssessment,
+  split = false,
 }: {
   payload: DoctorPayload
   patternCandidates: HerbalPatternCandidate[]
@@ -86,59 +188,42 @@ export function HerbalWorkspaceLane2({
    */
   finalAssessment: HerbalFinalAssessment
   onChangeFinalAssessment: (next: HerbalFinalAssessment) => void
+  /**
+   * 한약 단독 두 칼럼 배치(Figma `03 · Herbal Doctor View v0.1`, 프레임 44:3). true면 이 레인은
+   * 왼쪽 칼럼(SYSTEMIC + EXAM)만 그린다: 상담 목적·안전이슈 행은 스냅샷(HerbalSnapshot)으로,
+   * 핵심 병기 후보·오늘 재검은 오른쪽 칼럼(HerbalWorkspaceDecisionExtras)으로 옮겨 갔다.
+   * false(기본, mixed)는 옛 구성 그대로다.
+   */
+  split?: boolean
 }) {
   const r = payload.responses
-  const { flags } = payload
-  const flagsUsable = isFlagsUsable(flags, r)
-  /*
-    Midlife v0.2: 공통 flags만 읽으면 갱년기 판정(폐경 후 출혈 등)이 있어도 이 줄이
-    "없음"을 띄운다 -- 레인1은 경고하는데 여기는 안전하다고 말하는 모순(fail-open).
-    갱년기 기록이면 레인1과 **같은 계산**의 결과를 한 항목으로 합친다(CLEAR면 추가 없음).
-  */
-  const MIDLIFE_CAT: Record<Exclude<MidlifeSafetyStatus, 'CLEAR'>, string> = {
-    URGENT_REVIEW: '갱년기 URGENT',
-    PRIORITY_EVALUATION: '갱년기 우선 외부평가',
-    INCOMPLETE: '갱년기 안전 계산 불가',
-  }
-  const midlifeStatus = isMidlifeRecord(payload)
-    ? computeMidlifeSafety(toMidlifeStateFromDoctorPayload(r)).status
-    : 'CLEAR'
-  const safetyCats = [
-    ...safetyIssueCategories(flags),
-    ...(midlifeStatus === 'CLEAR' ? [] : [MIDLIFE_CAT[midlifeStatus]]),
-  ]
-  const safetyAnswered =
-    Array.isArray(r.safety_flags?.red_flag_general) && r.safety_flags.red_flag_general.length > 0
-
-  const populatedSystemic = [
-    { qid: 'SLEEP_01', label: '수면', value: r.modules.sleep?.problems },
-    { qid: 'GI_01', label: '소화', value: r.modules.gi?.problems },
-    { qid: 'BOWEL_01', label: '대변', value: r.modules.bowel?.problems },
-    { qid: 'URINARY_01', label: '소변', value: r.modules.urinary?.problems },
-    { qid: 'HERB_APPETITE', label: '식욕', value: r.constitution_basics.appetite_level },
-    { qid: 'WEIGHT_03', label: '체중 변화', value: r.modules.weight?.recent_weight_change },
-    { qid: 'HERB_THERMAL', label: '한열 경향', value: r.constitution_basics.thermal_tendency },
-    { qid: 'HERB_SWEAT', label: '땀', value: r.constitution_basics.sweat_pattern },
-    { qid: 'HERB_THIRST', label: '갈증', value: r.constitution_basics.thirst_level },
-  ].filter((f) => !isEmptyValue(f.value as never))
+  const issue = herbalSafetyIssue(payload)
+  const populatedSystemic = herbalSystemicFields(payload)
 
   const microFollowUpCandidates = microFollowUpCandidatesFromPriorTargets(
     asPriorVisitArray<PatientHistoryResult['visits'][number]>(priorVisits?.visits)[0]?.herbalFollowUpTargets,
   )
 
   function handleAdoptToFinal(candidate: HerbalPatternCandidate) {
-    const existing = finalAssessment.finalPatternOrMechanism.trim()
-    const next = existing ? `${existing}\n${candidate.displayName}` : candidate.displayName
-    onChangeFinalAssessment({ ...finalAssessment, finalPatternOrMechanism: next, recordedAt: new Date().toISOString() })
+    onChangeFinalAssessment(adoptCandidateToFinal(finalAssessment, candidate))
   }
 
   return (
-    <div className="workspace__herbal">
-      <p className="workspace__layerLabel">오늘 한눈에</p>
+    <div className={`workspace__herbal${split ? ' workspace__herbal--split' : ''}`}>
+      {!split && <p className="workspace__layerLabel">오늘 한눈에</p>}
       <section className="workspace__hero">
         <div className="workspace__hero__head">
-          <h3>한약·전신</h3>
-          <span className="workspace__hero__hint">전신 상태와 한약 상담 정보를 먼저</span>
+          {split ? (
+            <>
+              <h3 className="workspace__cardEyebrow">SYSTEMIC</h3>
+              <p className="workspace__cardQuestion">전신 상태는 어떤가?</p>
+            </>
+          ) : (
+            <>
+              <h3>한약·전신</h3>
+              <span className="workspace__hero__hint">전신 상태와 한약 상담 정보를 먼저</span>
+            </>
+          )}
         </div>
         <div className="workspace__systemicGrid">
           {populatedSystemic.length === 0 && <p className="workspace__empty">전신 문진 응답이 없습니다.</p>}
@@ -157,34 +242,39 @@ export function HerbalWorkspaceLane2({
           side by side instead of stacking, removing one full row of
           height from the tallest card in this lane; every other viewport
           keeps the original stacked flex-column layout unchanged.
+
+          split(한약 단독 두 칼럼): 이 두 행은 스냅샷(HerbalSnapshot)이 같은 값(primaryConcernLabel,
+          herbalSafetyIssue)으로 그린다 -- 두 곳에 그리지 않는다.
         */}
-        <div className="workspace__heroRows">
-          <div className="workspace__heroRow">
-            <span>상담 목적</span>
-            <strong>{primaryConcernLabel(r)}</strong>
+        {!split && (
+          <div className="workspace__heroRows">
+            <div className="workspace__heroRow">
+              <span>상담 목적</span>
+              <strong>{primaryConcernLabel(r)}</strong>
+            </div>
+            <div className="workspace__heroRow">
+              <span>안전이슈</span>
+              <strong className={issue.danger ? 'workspace__heroRow__value--danger' : undefined}>{issue.text}</strong>
+            </div>
           </div>
-          <div className="workspace__heroRow">
-            <span>안전이슈</span>
-            <strong
-              className={!flagsUsable || safetyCats.length > 0 ? 'workspace__heroRow__value--danger' : undefined}
-            >
-              {!flagsUsable
-                ? '확인 필요 — 계산값 읽기 불가'
-                : safetyCats.length > 0
-                  ? safetyCats.join(', ')
-                  : safetyAnswered
-                    ? '없음'
-                    : '미확인'}
-            </strong>
-          </div>
-        </div>
+        )}
       </section>
 
       <MicroFollowUpCard candidates={microFollowUpCandidates} response={microFollowUpResponse ?? null} />
 
-      <p className="workspace__layerLabel">오늘 확인할 것</p>
-      <section className="workspace__block">
-        <h3>오늘 확인할 것</h3>
+      {!split && <p className="workspace__layerLabel">오늘 확인할 것</p>}
+      <section
+        className={`workspace__block${split ? ' workspace__examCard' : ''}`}
+        aria-label={split ? '오늘 확인할 것' : undefined}
+      >
+        {split ? (
+          <header className="workspace__cardHead">
+            <h3 className="workspace__cardEyebrow">EXAM</h3>
+            <p className="workspace__cardQuestion">오늘 직접 확인할 것은?</p>
+          </header>
+        ) : (
+          <h3>오늘 확인할 것</h3>
+        )}
         <ClinicianObservationChecklist
           items={clinicianObservations}
           onChangeItem={onChangeClinicianObservation}
@@ -192,7 +282,7 @@ export function HerbalWorkspaceLane2({
         />
       </section>
 
-      {patternCandidates.length > 0 && (
+      {!split && patternCandidates.length > 0 && (
         <section className="workspace__block">
           <h3>핵심 병기 후보</h3>
           {patternCandidates.map((c) => (
@@ -207,14 +297,16 @@ export function HerbalWorkspaceLane2({
       )}
 
       {/* Core Reduction P2 (§2.6-1): StructuredReassessment moves into 레인2. */}
-      <details className="workspace__optional" open={reassessment.items.length > 0}>
-        <summary>오늘 재검(Structured Reassessment) — 필요할 때 펼치기</summary>
-        <StructuredReassessmentCard
-          title="오늘 재검(Structured Reassessment)"
-          value={reassessment}
-          onChange={onChangeReassessment}
-        />
-      </details>
+      {!split && (
+        <details className="workspace__optional" open={reassessment.items.length > 0}>
+          <summary>오늘 재검(Structured Reassessment) — 필요할 때 펼치기</summary>
+          <StructuredReassessmentCard
+            title="오늘 재검(Structured Reassessment)"
+            value={reassessment}
+            onChange={onChangeReassessment}
+          />
+        </details>
+      )}
     </div>
   )
 }
@@ -251,13 +343,26 @@ export function HerbalWorkspaceLane2({
 export function HerbalFollowUpTargetsCard({
   followUpTargets,
   onChangeFollowUpTargets,
+  withCardHead = false,
 }: {
   followUpTargets: FollowUpTarget[]
   onChangeFollowUpTargets: (next: FollowUpTarget[]) => void
+  /** 한약 단독 두 칼럼(Figma 프레임 44:3): 영문 라벨 + 한글 질문 머리. 선택 값·저장 키는 그대로다. */
+  withCardHead?: boolean
 }) {
   return (
-    <section className="workspace__block workspace__herbalFollowUp">
-      <h3>재평가 대상 (측정 추적)</h3>
+    <section
+      className="workspace__block workspace__herbalFollowUp"
+      aria-label={withCardHead ? '재평가 대상 (측정 추적)' : undefined}
+    >
+      {withCardHead ? (
+        <header className="workspace__cardHead">
+          <h3 className="workspace__cardEyebrow">FOLLOW-UP</h3>
+          <p className="workspace__cardQuestion">다음에 무엇을 다시 잴까?</p>
+        </header>
+      ) : (
+        <h3>재평가 대상 (측정 추적)</h3>
+      )}
       <FollowUpTargetPicker
         options={HERBAL_FOLLOW_UP_OPTIONS}
         selected={followUpTargets}
@@ -265,6 +370,58 @@ export function HerbalFollowUpTargetsCard({
         nrsTargetIds={HERBAL_NRS_TARGET_IDS}
       />
     </section>
+  )
+}
+
+/**
+ * 한약 단독 두 칼럼의 오른쪽 칼럼 아래쪽: 핵심 병기 후보(조건부) + 오늘 재검.
+ *
+ * 옛 구성에서는 확인 레인(HerbalWorkspaceLane2)에 있던 두 블록이다. 후보의 "최종 판단에 가져오기"가
+ * 쓰는 곳(최종 변증·병기)이 같은 칼럼 바로 위로 와서, 가져오기 버튼과 그 결과가 한 화면에 붙는다.
+ * 값·저장 키는 그대로다(`herbalPatternCandidates`, `herbalReassessment`, `herbalFinalAssessment`).
+ */
+export function HerbalWorkspaceDecisionExtras({
+  patternCandidates,
+  onChangePatternCandidate,
+  finalAssessment,
+  onChangeFinalAssessment,
+  reassessment,
+  onChangeReassessment,
+}: {
+  patternCandidates: HerbalPatternCandidate[]
+  onChangePatternCandidate: (next: HerbalPatternCandidate) => void
+  finalAssessment: HerbalFinalAssessment
+  onChangeFinalAssessment: (next: HerbalFinalAssessment) => void
+  reassessment: StructuredReassessment
+  onChangeReassessment: (next: StructuredReassessment) => void
+}) {
+  return (
+    <>
+      {patternCandidates.length > 0 && (
+        <section className="workspace__block workspace__patternCard">
+          <header className="workspace__cardHead">
+            <h3 className="workspace__cardEyebrow">PATTERN</h3>
+            <p className="workspace__cardQuestion">핵심 병기 후보</p>
+          </header>
+          {patternCandidates.map((c) => (
+            <PatternCandidateCard
+              key={c.id}
+              candidate={c}
+              onChange={onChangePatternCandidate}
+              onAdoptToFinal={() => onChangeFinalAssessment(adoptCandidateToFinal(finalAssessment, c))}
+            />
+          ))}
+        </section>
+      )}
+      <details className="workspace__optional" open={reassessment.items.length > 0}>
+        <summary>오늘 재검(Structured Reassessment) — 필요할 때 펼치기</summary>
+        <StructuredReassessmentCard
+          title="오늘 재검(Structured Reassessment)"
+          value={reassessment}
+          onChange={onChangeReassessment}
+        />
+      </details>
+    </>
   )
 }
 

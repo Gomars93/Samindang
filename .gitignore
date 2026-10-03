@@ -257,3 +257,8 @@ out/
 # esbuild bundles used by tests/midlife.spec.mjs (regenerated, not source)
 tests/.midlife-*-bundle.mjs
 tests/.midlife-*-bundle.cjs
+
+# esbuild bundles used by tests/herbal-split-layout.spec.mjs (regenerated, not source)
+tests/.herbal-split-fixtures-bundle.mjs
+tests/.herbal-split-workspace-bundle.cjs
+tests/.herbal-split-herbal-bundle.cjs

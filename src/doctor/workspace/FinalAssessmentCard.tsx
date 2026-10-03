@@ -456,9 +456,12 @@ export function PainFinalAssessmentCard({
 export function HerbalFinalAssessmentCard({
   value,
   onChange,
+  withCardHead = false,
 }: {
   value: HerbalFinalAssessment
   onChange: (next: HerbalFinalAssessment) => void
+  /** 한약 단독 두 칼럼(Figma 프레임 44:3): 카드 머리에 영문 라벨 + 한글 질문 한 줄을 붙인다. 값·칸은 그대로다. */
+  withCardHead?: boolean
 }) {
   const primary: Field[] = [
     {
@@ -481,7 +484,16 @@ export function HerbalFinalAssessmentCard({
   const handleChange = (key: string, v: string) =>
     onChange({ ...value, [key]: v, recordedAt: new Date().toISOString() } as HerbalFinalAssessment)
   return (
-    <section className="workspace__finalAssessment" aria-label="최종 변증·병기 — 원장 판단">
+    <section
+      className={`workspace__finalAssessment${withCardHead ? ' workspace__finalAssessment--cardHead' : ''}`}
+      aria-label="최종 변증·병기 — 원장 판단"
+    >
+      {withCardHead && (
+        <header className="workspace__cardHead">
+          <h3 className="workspace__cardEyebrow">FINAL</h3>
+          <p className="workspace__cardQuestion">지금 내린 판단은 무엇인가?</p>
+        </header>
+      )}
       <div className="workspace__finalAssessment__badge">최종 변증·병기 — 원장 판단</div>
       <TextFields fields={primary} onChange={handleChange} primary />
       <SecondaryFields fields={secondary} onChange={handleChange} />

@@ -1,5 +1,22 @@
 # Current Handoff
 
+## 2026-10-03 (최신 85): **한약 단독 두 칼럼 배치 구현** (PO "Figma 프레임 승인, 코드 반영 진행해줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `df6c588` = PR #66 병합 기준). 상세 `DECISIONS.md` 첫 항목, 필드 표 `docs/HERBAL_DOCTOR_VIEW_FIGMA_BRIEF_v0.1.md`.
+
+| 항목 | 결과 |
+|---|---|
+| 범위 | 한약 단독·비갱년기 기록만. mixed·pain·갱년기는 옛 구성 그대로 |
+| 구성 | 스냅샷(A) · 안전 확인(S, 전폭) · 왼쪽 SYSTEMIC·EXAM · 오른쪽 FINAL·FOLLOW-UP·PATTERN·오늘 재검 · 다른 유형 입력. 1280px 이상만 두 칼럼 |
+| 테스트 | `test:herbal-split-layout` 36단언 신설(옮긴 경로 4개·입력/출력 방향·지우지 않은 쪽·CSS 계약). `test:all` 82스위트 통과 + build |
+| 높이 예산 | 실측으로 회귀 2건을 잡아 고침(펼침 +946px → +90px, 1024×768 1.71배 → 1.37배). 예산 값은 그대로 |
+| Figma와 다른 점 | 단계 탭 하단 유지 · 치법 접힘 유지 · EXAM은 기존 체크리스트 · 칼럼 폭 ≈470px · 레인 h2 시각 숨김 (DECISIONS 6항목) |
+| 미확인 | **원내 PC(Windows Chrome)에서 직접 본 적 없음**(Linux 헤드리스 Chromium 확인) |
+
+### Next Recommended Action
+
+PO가 진료실1 PC에서 한약 환자 화면을 보고 Figma와 다른 점 6개를 승인/수정 지시 → 이후 재진·mixed·마무리 프레임 순서 결정.
+
 ## 2026-10-03 (최신 84): **한약·전신 원장 화면 Figma 프레임 초안** (PO "추천안으로 진행해줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `2cadd5c` = PR #65 병합 기준). 상세 `DECISIONS.md` 첫 항목, 내용 목록 `docs/HERBAL_DOCTOR_VIEW_FIGMA_BRIEF_v0.1.md`.

@@ -59,7 +59,13 @@ import { PainWorkspaceLane2, PainWorkspaceNext, PainExerciseSection, neuroUnreco
 import { PainBriefing } from '../clinical/PainBriefing'
 import type { IssueCarePlanLink } from './PatientCarePlanPreviewCard'
 import { useOpenOnceContent } from './FinalAssessmentCard'
-import { HerbalFollowUpTargetsCard, HerbalWorkspaceLane2, HerbalWorkspaceNext } from './HerbalWorkspace'
+import {
+  HerbalFollowUpTargetsCard,
+  HerbalSnapshot,
+  HerbalWorkspaceDecisionExtras,
+  HerbalWorkspaceLane2,
+  HerbalWorkspaceNext,
+} from './HerbalWorkspace'
 import { HerbalSafetyRedFlagCard } from './HerbalSafetyRedFlagCard'
 import {
   AnkleFootSafetyPanel,
@@ -159,6 +165,21 @@ function seedWorkspaceState(
   const pack = activeDrivingPack(payload.responses)
   if (!pack) return base
   return { ...base, painExamSuggestions: mergeExamSuggestions(pack.examHelp, pack.generateExamSuggestions(payload), base.painExamSuggestions) }
+}
+
+/**
+ * 한약 단독 두 칼럼 배치의 그리드 래퍼. 모듈 수준 컴포넌트인 이유: 렌더 안에서 정의하면 매 렌더마다
+ * 정체성이 바뀌어 안쪽 입력칸이 언마운트된다. `active`가 false면 래퍼 없이 자식만 그대로 낸다(다른
+ * 프로필의 DOM은 이전과 완전히 같다).
+ */
+function HerbalSplitShell({ active, children }: { active: boolean; children: React.ReactNode }) {
+  return active ? (
+    <div className="herbalSplit" data-herbal-layout="split">
+      {children}
+    </div>
+  ) : (
+    <>{children}</>
+  )
 }
 
 export function DoctorWorkspace({
@@ -639,6 +660,13 @@ export function DoctorWorkspace({
   const painFinalRecorded = isPainFinalAssessmentRecorded(workspaceState.painFinalAssessment)
   const herbalFinalRecorded = isHerbalFinalAssessmentRecorded(workspaceState.herbalFinalAssessment)
 
+  /*
+    한약 단독 두 칼럼 배치(Figma `03 · Herbal Doctor View v0.1`, 프레임 44:3, PO 승인 2026-10-03).
+    갱년기 기록(isMidlifeRecord)도 profile이 herbal이지만 자기 패널(MidlifeCarePanel)이 확인 레인을
+    쓰므로 이 배치에서 **제외**한다. mixed·pain도 옛 구성 그대로다.
+  */
+  const herbalSplit = activeProfile === 'herbal' && !isMidlifeRecord(payload)
+
   const oppositeDetailsId = useId()
 
   return (
@@ -713,6 +741,12 @@ export function DoctorWorkspace({
             `visitStep` 선언부 주석 참고.
           */}
           <div className="doctor__visitStep" data-step="consult" hidden={visitStep !== 'consult'}>
+          {/*
+            한약 단독 두 칼럼 배치: 단계 래퍼(.doctor__visitStep)에는 속성도 규칙도 얹지 않는다(위
+            `visitStep` 주석 -- `hidden`만으로 단계를 가른다). 그리드는 이 안쪽 래퍼가 가진다.
+          */}
+          <HerbalSplitShell active={herbalSplit}>
+          {herbalSplit && <HerbalSnapshot payload={payload} />}
           <section className="doctor__visitLane doctor__visitLane--lane1" aria-labelledby="lane1-h2">
             <h2 id="lane1-h2">안전 확인</h2>
             {/*
@@ -904,6 +938,7 @@ export function DoctorWorkspace({
                 priorVisits={priorVisits}
                 finalAssessment={workspaceState.herbalFinalAssessment}
                 onChangeFinalAssessment={(next) => setWorkspaceState((s) => ({ ...s, herbalFinalAssessment: next }))}
+                split={herbalSplit}
               />
             )}
           </section>
@@ -1013,6 +1048,7 @@ export function DoctorWorkspace({
               <HerbalFinalAssessmentCard
                 value={workspaceState.herbalFinalAssessment}
                 onChange={(next) => setWorkspaceState((s) => ({ ...s, herbalFinalAssessment: next }))}
+                withCardHead={herbalSplit}
               />
             )}
             {/*
@@ -1029,6 +1065,26 @@ export function DoctorWorkspace({
               <HerbalFollowUpTargetsCard
                 followUpTargets={workspaceState.herbalFollowUpTargets}
                 onChangeFollowUpTargets={(next) => setWorkspaceState((s) => ({ ...s, herbalFollowUpTargets: next }))}
+                withCardHead={herbalSplit}
+              />
+            )}
+            {/*
+              한약 단독 두 칼럼: 확인 레인에서 옮겨 온 핵심 병기 후보(조건부) + 오늘 재검 -- 최종 변증·병기
+              바로 아래다. 같은 상태 키(herbalPatternCandidates / herbalReassessment)를 그대로 읽고 쓴다.
+            */}
+            {herbalSplit && (
+              <HerbalWorkspaceDecisionExtras
+                patternCandidates={workspaceState.herbalPatternCandidates}
+                onChangePatternCandidate={(next) =>
+                  setWorkspaceState((s) => ({
+                    ...s,
+                    herbalPatternCandidates: s.herbalPatternCandidates.map((c) => (c.id === next.id ? next : c)),
+                  }))
+                }
+                finalAssessment={workspaceState.herbalFinalAssessment}
+                onChangeFinalAssessment={(next) => setWorkspaceState((s) => ({ ...s, herbalFinalAssessment: next }))}
+                reassessment={workspaceState.herbalReassessment}
+                onChangeReassessment={(next) => setWorkspaceState((s) => ({ ...s, herbalReassessment: next }))}
               />
             )}
             {activeProfile !== 'mixed' && (
@@ -1053,6 +1109,7 @@ export function DoctorWorkspace({
               </details>
             )}
           </section>
+          </HerbalSplitShell>
 
           </div>
 

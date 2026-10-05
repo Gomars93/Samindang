@@ -1,5 +1,21 @@
 # Current Handoff
 
+## 2026-10-05 (최신 87): **한약 재진 Figma 프레임** (PO "한약 재진 화면 Figma 계속 그려줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `5c72969` 기준). 상세 `DECISIONS.md` 첫 항목, 필드 표 `docs/HERBAL_REVISIT_DOCTOR_VIEW_FIGMA_BRIEF_v0.1.md`.
+
+| 항목 | 결과 |
+|---|---|
+| Figma | 파일 `UjziuG6OOpVU1CtcNl6704` 페이지 03, 프레임 `46:2`(1440×1589) |
+| 코드 | **변경 없음**(문서·테스트만) |
+| 핵심 발견 | 재진 화면은 통증·한약 공용. 한약 재진에 통증 칩(`시행/예정 처치`·`치료 초점`)과 운동 그룹이 나옴 → D1·D2 |
+| 테스트 | `test:herbal-revisit-brief` 36단언 |
+| **미확인** | 클리닉 PC가 최신 빌드인지(PO 빌드는 성공했으나 `git log -1`을 못 받음). 초진 Figma 차이 6개 승인 대기 |
+
+### Next Recommended Action
+
+프레임 `46:2` 확인 후 D1~D4 답변 → 승인되면 구현(통증 재진 무변경 회귀 테스트 포함). 클리닉 PC는 `git log -1 --oneline` 결과(또는 `scripts\update-clinic.bat` 출력) 확인.
+
 ## 2026-10-03 (최신 86): **클리닉 PC 업데이트 스크립트** (PO "다음 추천안으로 진행해줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `1c808da` = PR #67 병합 기준). 상세 `DECISIONS.md` 첫 항목.

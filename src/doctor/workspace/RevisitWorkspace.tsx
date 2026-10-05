@@ -78,6 +78,7 @@ import {
 import { deserializeWorkspaceState } from './persistence'
 import { ConflictBanner } from '../ConflictBanner'
 import { PainFinalAssessmentCard } from './FinalAssessmentCard'
+import { isHerbalRevisitSource } from './revisitProfile'
 import { PainCarePlanCard } from './CarePlanCard'
 import { isCarePlanEmpty } from './NextActionCard'
 import { StructuredReassessmentCard } from './StructuredReassessmentCard'
@@ -560,6 +561,10 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
   // already recorded on this visit never becomes unreachable/uneditable --
   // see `isRegionPatientForRevisitHypothesisGate`'s own doc comment.
   const priorSubmissionSafetyFlagsForRegion = revisitPack ? priorSubmissionResponses?.safety_flags?.[revisitPack.region] : undefined
+  // 한약 재진(2026-10-05, PO D1·D2): 가장 최근 제출 문진이 한약 프로필이고 부위 팩이 구동 중이 아닐 때만. 애매하면
+  // false = 통증 재진 화면 그대로 -- `revisitProfile.ts` 머리 주석 참고.
+  const isHerbalRevisit =
+    revisitPack === null && isHerbalRevisitSource(rehabSourceSubmission?.submission?.submission)
   const isRegionPatient =
     revisitPack !== null &&
     todayHypothesis !== null &&
@@ -784,6 +789,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       <RevisitQuickCheckCard
         value={workspaceState.revisitQuickCheck}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, revisitQuickCheck: next }))}
+        hideExerciseGroup={isHerbalRevisit}
       />
 
       {/*
@@ -855,6 +861,7 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
       <PainFinalAssessmentCard
         value={workspaceState.finalAssessment}
         onChange={(next) => setWorkspaceState((s) => ({ ...s, finalAssessment: next }))}
+        freeTextTreatment={isHerbalRevisit}
       />
 
       {/* Batch 2.6 (E-3): matches the initial-visit treatment

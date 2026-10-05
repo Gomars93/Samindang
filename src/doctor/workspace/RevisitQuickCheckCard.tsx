@@ -10,6 +10,7 @@
  * shown above it in RevisitWorkspace.tsx) -- every value here starts
  * NOT_ASSESSED and is filled only by an explicit clinician tap.
  */
+import { useOpenOnceContent } from './FinalAssessmentCard'
 import {
   deriveRevisitQuickCheckGuidance,
   QUICK_CHECK_CHANGE_LABEL,
@@ -77,10 +78,18 @@ function anyAssessed(v: RevisitQuickCheck): boolean {
 export function RevisitQuickCheckCard({
   value,
   onChange,
+  hideExerciseGroup = false,
 }: {
   value: RevisitQuickCheck
   onChange: (next: RevisitQuickCheck) => void
+  /**
+   * 한약 재진(2026-10-05, PO D2 추천안): `운동 실제 시행·난이도`는 한약에 해당이 없어 숨긴다. 이미 값이 있으면 계속
+   * 보인다 -- 값이 있는데 못 고치는 상태를 만들지 않고, **한 번 보이면 지워도 안 사라진다**(`useOpenOnceContent`
+   * 래치; 파생식이면 편집 도중 칸이 사라진다 -- CLAUDE.md 규칙 3항). 저장 키·요약 문장은 그대로다.
+   */
+  hideExerciseGroup?: boolean
 }) {
+  const showExerciseGroup = useOpenOnceContent(!hideExerciseGroup || value.exerciseAdherence !== 'NOT_ASSESSED')
   function setField<K extends 'targetFunctionChange' | 'overallResponse' | 'newNeuroOrRedFlag' | 'exerciseAdherence' | 'adverseEffect'>(
     key: K,
     next: RevisitQuickCheck[K],
@@ -127,14 +136,16 @@ export function RevisitQuickCheckCard({
         onSelect={(next) => setField('newNeuroOrRedFlag', next)}
       />
 
-      <ChipGroup<QuickCheckExerciseAdherence>
-        title={REVISIT_QUICK_CHECK_GROUP_TITLE.exerciseAdherence}
-        groupAriaLabel="운동 실제 시행·난이도 선택"
-        options={QUICK_CHECK_EXERCISE_ADHERENCE_OPTIONS}
-        labels={QUICK_CHECK_EXERCISE_ADHERENCE_LABEL}
-        activeValue={value.exerciseAdherence}
-        onSelect={(next) => setField('exerciseAdherence', next)}
-      />
+      {showExerciseGroup && (
+        <ChipGroup<QuickCheckExerciseAdherence>
+          title={REVISIT_QUICK_CHECK_GROUP_TITLE.exerciseAdherence}
+          groupAriaLabel="운동 실제 시행·난이도 선택"
+          options={QUICK_CHECK_EXERCISE_ADHERENCE_OPTIONS}
+          labels={QUICK_CHECK_EXERCISE_ADHERENCE_LABEL}
+          activeValue={value.exerciseAdherence}
+          onSelect={(next) => setField('exerciseAdherence', next)}
+        />
+      )}
 
       <ChipGroup<QuickCheckYesNo>
         title={REVISIT_QUICK_CHECK_GROUP_TITLE.adverseEffect}

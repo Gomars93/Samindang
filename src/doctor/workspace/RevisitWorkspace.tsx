@@ -46,7 +46,7 @@
  *     the same way; they simply stop looking mandatory on a visit where
  *     the answer is "unchanged, continue".
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   getVisit,
   saveVisitWorkspace,
@@ -253,6 +253,38 @@ const REVISIT_NRS_TARGET_IDS: ReadonlySet<string> = new Set([
   ...PAIN_NRS_TARGET_IDS,
   ...HERBAL_NRS_TARGET_IDS,
 ])
+
+/**
+ * 한약 재진 두 칼럼(2026-10-05, PO "다음 추천안으로 진행", Figma `46:2`): 왼쪽 = 환자가 말한 것·지난 방문(읽기 전용),
+ * 오른쪽 = 오늘 원장 입력. **한약 재진에서만** 래퍼가 생긴다 -- 아니면 Fragment라 통증 재진의 DOM은 이전과 완전히 같다
+ * (`DoctorWorkspace.tsx`의 `HerbalSplitShell`과 같은 방식). 컴포넌트는 모듈 최상위에 둔다: 렌더 안에서 정의하면
+ * 매 렌더 새 타입이 되어 자식이 통째로 다시 마운트된다(입력 포커스 소실). 칸의 값·키·순서는 그대로고 배치만 바꾼다.
+ */
+export function RevisitSplitShell({ active, children }: { active: boolean; children: ReactNode }) {
+  return active ? (
+    <div className="revisitSplit" data-revisit-layout="split">
+      {children}
+    </div>
+  ) : (
+    <>{children}</>
+  )
+}
+
+export function RevisitSplitColumn({
+  active,
+  side,
+  children,
+}: {
+  active: boolean
+  side: 'left' | 'right'
+  children: ReactNode
+}) {
+  return active ? (
+    <div className={`revisitSplit__col revisitSplit__col--${side}`}>{children}</div>
+  ) : (
+    <>{children}</>
+  )
+}
 
 export function RevisitWorkspace({ visitId, patientId }: { visitId: string; patientId: string }) {
   const [loading, setLoading] = useState(true)
@@ -613,6 +645,8 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
         />
       )}
 
+      <RevisitSplitShell active={isHerbalRevisit}>
+      <RevisitSplitColumn active={isHerbalRevisit} side="left">
       <section className="workspace__block">
         <h3>
           오늘 환자 입력{' '}
@@ -725,6 +759,8 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           })()}
       </section>
 
+      </RevisitSplitColumn>
+      <RevisitSplitColumn active={isHerbalRevisit} side="right">
       <section className="workspace__block workspace__revisit__carryForward">
         {/* The mandated third provenance section. Round 9 gives it a
             carry-forward header row, but it is still "오늘 원장 입력" --
@@ -942,6 +978,8 @@ export function RevisitWorkspace({ visitId, patientId }: { visitId: string; pati
           onChange={(next) => setWorkspaceState((s) => ({ ...s, nextReassessmentPlan: next }))}
         />
       </details>
+      </RevisitSplitColumn>
+      </RevisitSplitShell>
 
       <p className="workspace__saveStatus" role="status" data-status={saveStatus}>
         {saveStatus === 'saving' && '저장 중…'}

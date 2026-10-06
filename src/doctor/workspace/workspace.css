@@ -2714,3 +2714,39 @@
     padding: 3px 0;
   }
 }
+
+/* ---------------------------------------------------------------------
+ * 한약 재진 두 칼럼 (Figma `03 · Herbal Doctor View v0.1`, 프레임 46:2 — 2026-10-05).
+ * 래퍼(.revisitSplit)는 한약 재진에만 있다 -- 통증 재진의 DOM·CSS는 그대로다.
+ * 왼쪽 = 오늘 환자 입력 + 이전 방문 참고(읽기 전용), 오른쪽 = 오늘 원장 입력.
+ * <1280px는 한 칼럼으로 쌓이고 순서는 같다(왼쪽 → 오른쪽).
+ * ------------------------------------------------------------------- */
+.revisitSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.revisitSplit__col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+@media (min-width: 1280px) {
+  .revisitSplit {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+  }
+}
+.revisitSplit .workspace__block {
+  border-radius: 14px;
+  padding: 22px;
+  margin: 0;
+}
+@media (max-width: 1279px) {
+  .revisitSplit,
+  .revisitSplit__col {
+    gap: 12px;
+  }
+}

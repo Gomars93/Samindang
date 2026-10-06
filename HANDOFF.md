@@ -1,5 +1,20 @@
 # Current Handoff
 
+## 2026-10-06 (최신 90): **설정 화면 "빌드 정보"** (PO "다음 추천안으로 진행해줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `5da8581` = PR #71 병합 기준). 상세 `DECISIONS.md` 첫 항목.
+
+| 항목 | 결과 |
+|---|---|
+| 내용 | 원장 화면 → 설정 → `빌드 정보`: 커밋 해시·빌드 시각(+커밋 안 된 변경 표시). "최신 반영 안 됨" 원인 구분용 |
+| 코드 | `vite.config.ts` define, `src/buildInfo.ts`, 설정 섹션 1개. 진료 화면 무변경 |
+| 테스트 | `test:build-info` 11단언, 변이 확인, 번들에 해시 포함 확인 |
+| **미확인** | 설정 화면 실제 렌더 육안 확인 못 함. 클리닉 PC `git log -1` 결과 대기 |
+
+### Next Recommended Action
+
+병합 후 클리닉 PC에서 `scripts\update-clinic.bat` 실행 → 설정 화면 `빌드 정보`가 병합 커밋과 같은지 확인(다르면 `docs/REAL_DEVICE_PILOT_CHECKLIST.md` 업데이트 절의 구분표). 그다음 한약 재진 화면 사진으로 Figma 차이 3곳 확인.
+
 ## 2026-10-06 (최신 89): **한약 재진 두 칼럼 배치 + D3·D4 추천안** (PO "다음 추천안으로 진행해줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `af3a9c2` = PR #70 병합 기준). 상세 `DECISIONS.md` 첫 항목.

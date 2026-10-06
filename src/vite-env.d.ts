@@ -24,3 +24,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+/** vite.config.ts가 빌드 시점에 주입한다(`src/buildInfo.ts`가 안전하게 읽는다). */
+declare const __SAMINDANG_BUILD__: { commit: string; dirty: boolean; builtAt: string } | undefined

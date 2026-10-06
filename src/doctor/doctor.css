@@ -1981,3 +1981,34 @@
     margin-bottom: 10px;
   }
 }
+
+/* ---------------------------------------------------------------------
+ * 한약 재진 두 칼럼(2026-10-05, Figma 46:2)도 진료 화면과 같은 폭·여백을 쓴다 -- 기본 .doctor 폭(1080)이면
+ * 칼럼당 530px라 Figma(670)보다 좁다. 위 `.doctor:has(.doctor__visitShell)` 규칙은 건드리지 않고(그 모양을
+ * tests/doctor-shell-gutter.spec.mjs가 고정한다) 같은 값을 별도 블록으로 둔다. 통증 재진에는 `.revisitSplit`이
+ * 없어 영향이 없다.
+ * ------------------------------------------------------------------- */
+.doctor:has(.revisitSplit) {
+  box-sizing: border-box;
+  max-width: none;
+  padding: 28px 24px 96px;
+}
+@media (min-width: 1280px) {
+  .doctor:has(.revisitSplit) {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+@media (min-width: 1440px) {
+  .doctor:has(.revisitSplit) {
+    padding-left: 48px;
+    padding-right: 48px;
+    max-width: 1440px;
+  }
+}
+@media (max-width: 1023px) and (orientation: portrait) {
+  .doctor:has(.revisitSplit) {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

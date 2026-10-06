@@ -1,5 +1,21 @@
 # Current Handoff
 
+## 2026-10-06 (최신 89): **한약 재진 두 칼럼 배치 + D3·D4 추천안** (PO "다음 추천안으로 진행해줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `af3a9c2` = PR #70 병합 기준). 상세 `DECISIONS.md` 첫 항목.
+
+| 항목 | 결과 |
+|---|---|
+| 내용 | 한약 재진만 ≥1280px 두 칼럼(왼쪽 환자 입력·이전 방문, 오른쪽 원장 입력). 통증 재진 DOM 무변경 |
+| D3·D4 | 추천안(배치 유지·상태 바 유지)으로 진행 — 실사용 뒤 PO 재결정 가능 |
+| 테스트 | `test:herbal-revisit-split` 20단언 |
+| **미확인** | 실데이터 렌더 육안 확인 못 함(서버 없음). Figma와 다른 3곳(영문 카드 머리·스냅샷·표 모양) PO 확인 대기 |
+| **클리닉 PC** | 최신 빌드 반영 안 됨(PO 보고 2026-10-06) — `git fetch` + `merge --ff-only` + 빌드 + 서버 재시작 필요. `git log -1` 결과 대기 |
+
+### Next Recommended Action
+
+클리닉 PC에서 `git log -1 --oneline` 결과 확인 → 업데이트(`scripts\update-clinic.bat`) → 한약 환자 재진 화면 사진으로 두 칼럼·D1·D2 확인.
+
 ## 2026-10-05 (최신 88): **한약 재진 D1·D2 구현** (PO "D1 D2 추천안으로 진행해줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `5371bfd` = PR #69 병합 기준). 상세 `DECISIONS.md` 첫 항목.

@@ -268,3 +268,6 @@ tests/.revisit-d1d2-fixtures-bundle.mjs
 tests/.revisit-d1d2-final-bundle.cjs
 tests/.revisit-d1d2-quick-bundle.cjs
 tests/.revisit-d1d2-profile-bundle.mjs
+
+# esbuild bundle used by tests/herbal-revisit-split.spec.mjs (regenerated, not source)
+tests/.revisit-split-bundle.cjs

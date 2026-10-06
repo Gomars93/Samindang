@@ -369,9 +369,16 @@ function ChipField({
 export function PainFinalAssessmentCard({
   value,
   onChange,
+  freeTextTreatment = false,
 }: {
   value: PainFinalAssessment
   onChange: (next: PainFinalAssessment) => void
+  /**
+   * 한약 재진(2026-10-05, PO D1 추천안): `시행/예정 처치`·`치료 초점`을 통증 칩 대신 자유 입력으로 보인다.
+   * 저장 키·EMR 출력·이어받기 경로는 그대로다 -- 같은 문자열 필드에 같은 키로 쓴다. 통증 칩 어휘는 한약에 맞지 않고,
+   * 한약 고유 어휘는 임상 결정이라 만들지 않았다. 옛 칩 값은 문자열 그대로 칸에 보인다.
+   */
+  freeTextTreatment?: boolean
 }) {
   // 2026-09-06 (원장 지시): 기본으로 보이는 것은 **처치 chip 하나**였고,
   // 최종 임상 판단·즉시 재검 대상·치료 초점 셋은 "필요할 때 입력"으로 접었다.
@@ -429,6 +436,29 @@ export function PainFinalAssessmentCard({
     <section className="workspace__finalAssessment" aria-label="원장 최종 판단">
       <div className="workspace__finalAssessment__badge">원장 최종 판단</div>
       <div className="workspace__finalAssessment__fields workspace__finalAssessment__fields--primary">
+        {freeTextTreatment ? (
+          <>
+            <TextField
+              field={{
+                key: 'interventionPerformedOrPlanned',
+                label: '시행/예정 처치',
+                value: value.interventionPerformedOrPlanned,
+                placeholder: '자동 처방 생성 없음 — 원장이 직접 입력',
+              }}
+              onChange={handleChange}
+            />
+            <TextField
+              field={{
+                key: 'treatmentFocus',
+                label: '치료 초점',
+                value: value.treatmentFocus,
+                placeholder: '원장이 직접 입력',
+              }}
+              onChange={handleChange}
+            />
+          </>
+        ) : (
+          <>
         <ChipField
           label="시행/예정 처치"
           vocabulary={PAIN_INTERVENTION_CHIP_OPTIONS}
@@ -447,6 +477,8 @@ export function PainFinalAssessmentCard({
           value={value.treatmentFocus}
           onChange={(v) => handleChange('treatmentFocus', v)}
         />
+          </>
+        )}
       </div>
       <SecondaryFields fields={secondary} onChange={handleChange} />
     </section>

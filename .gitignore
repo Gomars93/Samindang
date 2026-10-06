@@ -262,3 +262,9 @@ tests/.midlife-*-bundle.cjs
 tests/.herbal-split-fixtures-bundle.mjs
 tests/.herbal-split-workspace-bundle.cjs
 tests/.herbal-split-herbal-bundle.cjs
+
+# esbuild bundles used by tests/herbal-revisit-d1d2.spec.mjs (regenerated, not source)
+tests/.revisit-d1d2-fixtures-bundle.mjs
+tests/.revisit-d1d2-final-bundle.cjs
+tests/.revisit-d1d2-quick-bundle.cjs
+tests/.revisit-d1d2-profile-bundle.mjs

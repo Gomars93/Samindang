@@ -1,5 +1,21 @@
 # Current Handoff
 
+## 2026-10-05 (최신 88): **한약 재진 D1·D2 구현** (PO "D1 D2 추천안으로 진행해줘")
+
+**브랜치**: `claude/google-docs-link-review-kpduv6`(main `5371bfd` = PR #69 병합 기준). 상세 `DECISIONS.md` 첫 항목.
+
+| 항목 | 결과 |
+|---|---|
+| D1 | 한약 재진: `시행/예정 처치`·`치료 초점` 자유 입력(저장 키 그대로) |
+| D2 | 한약 재진: `운동 실제 시행·난이도` 숨김(값 있으면 보임·래치) |
+| 신호 | 가장 최근 제출 방문 routing에 통증 없음. 애매하면 통증 화면 그대로 |
+| 테스트 | `test:herbal-revisit-d1d2` 28단언, 변이 2건 확인 |
+| **미확인** | 실제 재진 연쇄 화면 육안 확인, D3·D4, 프레임 전체(두 칼럼) 재배치 미구현 |
+
+### Next Recommended Action
+
+한약 문진 환자로 재진을 시작해 최종 판단 칸이 자유 입력으로, 운동 그룹이 안 보이는지 확인(통증 환자 재진은 그대로여야 함). 그다음 D3·D4 결정 → 프레임 두 칼럼 구현.
+
 ## 2026-10-05 (최신 87): **한약 재진 Figma 프레임** (PO "한약 재진 화면 Figma 계속 그려줘")
 
 **브랜치**: `claude/google-docs-link-review-kpduv6`(main `5c72969` 기준). 상세 `DECISIONS.md` 첫 항목, 필드 표 `docs/HERBAL_REVISIT_DOCTOR_VIEW_FIGMA_BRIEF_v0.1.md`.

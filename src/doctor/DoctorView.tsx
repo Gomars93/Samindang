@@ -1,3 +1,4 @@
+import { formatBuildInfo, readBuildInfo } from '../buildInfo'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SECONDARY_SHORT_SCREENS } from '../spec/coreSpec'
 import { answerLabel, optionLabel, questionLabel } from './labels'
@@ -4941,6 +4942,13 @@ export function DoctorView({ initialFixtureIndex }: { initialFixtureIndex?: numb
               현재: {workstationId ?? '설정되지 않음'}
             </p>
             {!workstationId && <WorkstationSetup onSet={setWorkstationId} />}
+          </section>
+          <section className="doctor__section">
+            <h2>빌드 정보</h2>
+            <p className="doctor__derivedNote" data-testid="build-info">{formatBuildInfo(readBuildInfo())}</p>
+            <p className="doctor__empty">
+              최신 코드가 반영됐는지 확인하는 용도입니다. 커밋이 예상과 다르면 업데이트(scripts\update-clinic.bat) 후 Ctrl+Shift+R로 새로고침하세요.
+            </p>
           </section>
           {mode === 'server' && (
             <section className="doctor__section">

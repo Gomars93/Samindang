@@ -271,3 +271,6 @@ tests/.revisit-d1d2-profile-bundle.mjs
 
 # esbuild bundle used by tests/herbal-revisit-split.spec.mjs (regenerated, not source)
 tests/.revisit-split-bundle.cjs
+
+# esbuild bundle used by tests/build-info.spec.mjs (regenerated, not source)
+tests/.build-info-bundle.mjs
